@@ -208,10 +208,19 @@ impl WindowManager {
             // that might do better. Never persisting a value that was derived rather than
             // detected is what keeps that door open; a display value, where one is
             // wanted, is derived at the point of display instead (`Entry::info`).
-            let process = match headless_spec(id, kind, run.as_ref()) {
+            // Milestone 9 decision 11: a run window's role comes back with it.
+            let role = super::role_window::restored_role(id, kind, run.as_ref());
+            // M9.10 review: a lost role leaves no session to resume as a plain agent.
+            let lost = role.is_none() && super::role_window::lost_run(kind, run.as_ref()).is_some();
+            let session_id = session_id.filter(|_| !lost);
+            let process = match headless_spec(id, kind, run.as_ref(), runtime, &cwd) {
                 // Decision 28: the session's process died with the daemon; the window
                 // comes back ended, and `run resume` restarts its session.
-                Some(spec) => Process::Headless(Box::new(HeadlessWindow::restored(spec))),
+                Some((spec, placeholder)) => {
+                    let mut window = HeadlessWindow::restored(spec);
+                    window.placeholder = placeholder;
+                    Process::Headless(Box::new(window))
+                }
                 None => Process::Dormant {
                     output: broadcast::channel(1).0,
                     cols: RESTORED_SIZE.0,
@@ -248,6 +257,11 @@ impl WindowManager {
                 // Whole-branch-review Major 2: carried verbatim, not discarded — see
                 // `Entry.run`'s own doc comment.
                 run,
+                role,
+                run_live: false,
+                last_client_input: None,
+                attention_open: false,
+                prompt_since: None,
                 conversations: crate::conversation::ConversationSet::new(id, runtime),
                 conversation_viewers: 0,
                 transcript: Default::default(),
@@ -329,13 +343,17 @@ impl WindowManager {
     }
 }
 
-/// A headless record's spec, from its opaque `run` (decision 28). A value that does not
-/// parse loads as an exited PTY record, with a warning.
+/// A headless record's spec, from its opaque `run` (decision 28), and whether it is a
+/// placeholder. Milestone 9 decision 11a: a value that does not parse loads as an exited
+/// headless window with a placeholder spec (no run, no session, nothing to resume), with
+/// a warning; never as a PTY window a client could type into.
 fn headless_spec(
     id: u32,
     kind: WindowKind,
     run: Option<&serde_json::Value>,
-) -> Option<HeadlessSpec> {
+    runtime: proto::Runtime,
+    cwd: &std::path::Path,
+) -> Option<(HeadlessSpec, bool)> {
     if kind != WindowKind::Headless {
         return None;
     }
@@ -343,14 +361,14 @@ fn headless_spec(
         .ok_or_else(|| "it has no run value".to_string())
         .and_then(|run| HeadlessSpec::deserialize(run).map_err(|error| error.to_string()));
     match parsed {
-        Ok(spec) => Some(spec),
+        Ok(spec) => Some((spec, false)),
         Err(error) => {
             tracing::warn!(
                 id,
                 %error,
-                "restore: a headless window's run does not parse; restored as an exited PTY window"
+                "restore: headless window {id}'s run does not parse; restored as an exited headless window nothing drives"
             );
-            None
+            Some((super::role_window::placeholder_spec(runtime, cwd), true))
         }
     }
 }
@@ -414,7 +432,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn manager() -> std::sync::Arc<WindowManager> {
-        let (m, _events) = WindowManager::new(ManagerConfig::new(
+        let (m, _events) = WindowManager::new(ManagerConfig::for_tests(
             "/tmp/unused-restore-test.sock".into(),
             "/bin/sh".into(),
         ));

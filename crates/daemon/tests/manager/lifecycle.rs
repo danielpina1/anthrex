@@ -222,7 +222,7 @@ async fn shutdown_waits_for_cleanup_after_the_group_leader_exits() {
             ),
         )
         .unwrap();
-        let (m, mut events) = WindowManager::new(ManagerConfig::new(
+        let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
             "/tmp/unused.sock".into(),
             "/bin/sh".into(),
         ));

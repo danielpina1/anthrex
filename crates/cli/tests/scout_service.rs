@@ -71,7 +71,7 @@ impl Rig {
 
         let socket = dir.path().join("d.sock");
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-        let mut config = ManagerConfig::new(socket, "/bin/sh".into());
+        let mut config = ManagerConfig::for_tests(socket, "/bin/sh".into());
         config.exe = PathBuf::from(ANTHREX);
         config.claude_bin = wrapper.display().to_string();
         config.codex_bin = match runtime {
@@ -240,12 +240,15 @@ fn call(window_id: u32, scout: &str) -> ToolCall {
         tool: "submit_scout_report".into(),
         args: report_args(),
         scout_id: Some(scout.into()),
+        epic: None,
     }
 }
 
 fn refusal(reply: RunReply) -> String {
     match reply {
-        RunReply::ToolResult { ok: false, text } => text,
+        RunReply::ToolResult {
+            ok: false, text, ..
+        } => text,
         other => panic!("expected a refusal, got {other:?}"),
     }
 }

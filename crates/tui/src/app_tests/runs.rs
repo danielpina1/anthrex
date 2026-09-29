@@ -15,7 +15,7 @@ fn run_subscribes(effects: &[Effect]) -> usize {
     effects.iter().filter(|e| **e == run_subscribe()).count()
 }
 
-fn run_info(id: &str) -> RunInfo {
+pub(super) fn run_info(id: &str) -> RunInfo {
     serde_json::from_value(serde_json::json!({
         "run_id": id, "goal": "g", "project": "/p", "root": "/p", "state": "running",
         "base_branch": "main", "base_sha": "", "run_branch": "", "run_head": "",
@@ -27,7 +27,7 @@ fn run_info(id: &str) -> RunInfo {
     .expect("a minimal RunInfo")
 }
 
-fn snapshot(revision: u64, now: u64, runs: Vec<RunInfo>) -> RunsSnapshot {
+pub(super) fn snapshot(revision: u64, now: u64, runs: Vec<RunInfo>) -> RunsSnapshot {
     RunsSnapshot {
         revision,
         runs,
@@ -255,6 +255,7 @@ fn done_replies_toast_and_refusals_toast() {
     let done = RunReply::Done {
         request: "run approve".into(),
         message: "run r1 approved".into(),
+        request_id: None,
     };
     assert!(reply(&mut app, done).is_empty());
     assert_eq!(app.toast_text(), Some("run r1 approved"));
@@ -262,6 +263,7 @@ fn done_replies_toast_and_refusals_toast() {
     let refused = |message: &str| RunReply::Refused {
         request: "run reject".into(),
         message: message.into(),
+        request_id: None,
     };
     assert!(reply(&mut app, refused("no such run")).is_empty());
     assert_eq!(app.toast_text(), Some("no such run"));
@@ -282,6 +284,7 @@ fn a_refusal_without_text_still_toasts() {
         let _ = app.on_daemon(DaemonMsg::Run(RunReply::Refused {
             request: "run reject".into(),
             message: message.into(),
+            request_id: None,
         }));
         assert_eq!(app.toast_text(), Some("run reject refused"), "{message:?}");
     }
@@ -289,6 +292,7 @@ fn a_refusal_without_text_still_toasts() {
     let _ = app.on_daemon(DaemonMsg::Run(RunReply::Refused {
         request: "run edit".into(),
         message: "\n\nfirst\n\nsecond\n".into(),
+        request_id: None,
     }));
     assert_eq!(app.toast_text(), Some("first (+1 more)"));
 }
@@ -311,6 +315,7 @@ fn a_huge_reply_toast_is_capped_and_renders() {
     let _ = app.on_daemon(DaemonMsg::Run(RunReply::Refused {
         request: "run edit".into(),
         message: format!("{}\nsecond", "日".repeat(70_000)),
+        request_id: None,
     }));
     let expected = format!("{}… (+1 more)", "日".repeat(TOAST_MAX_CHARS));
     assert_eq!(app.toast_text(), Some(expected.as_str()));
@@ -318,6 +323,7 @@ fn a_huge_reply_toast_is_capped_and_renders() {
     let _ = app.on_daemon(DaemonMsg::Run(RunReply::Done {
         request: "run edit".into(),
         message: "x".repeat(TOAST_MAX_CHARS),
+        request_id: None,
     }));
     assert_eq!(
         app.toast_text().map(|t| t.chars().count()),
@@ -326,6 +332,7 @@ fn a_huge_reply_toast_is_capped_and_renders() {
     let _ = app.on_daemon(DaemonMsg::Run(RunReply::Done {
         request: "run edit".into(),
         message: "x".repeat(TOAST_MAX_CHARS + 1),
+        request_id: None,
     }));
     let expected = format!("{}…", "x".repeat(TOAST_MAX_CHARS));
     assert_eq!(app.toast_text(), Some(expected.as_str()));
@@ -380,25 +387,25 @@ fn other_run_replies_change_nothing() {
         RunReply::Started {
             run_id: "r1".into(),
             state: RunState::AwaitingApproval,
+            request_id: None,
         },
         RunReply::ConfirmNeeded {
             run_id: "r1".into(),
             prompt: "p".into(),
             base_moved: None,
+            request_id: None,
         },
-        RunReply::ToolResult {
-            ok: false,
-            text: "t".into(),
-        },
+        RunReply::tool_result(false, "t"),
         RunReply::Triaged {
             triage,
             run_id: None,
             message: "m".into(),
+            request_id: None,
         },
-        RunReply::Profile(Box::new(ProfileReply::Done {
+        RunReply::profile(ProfileReply::Done {
             message: "m".into(),
-        })),
-        RunReply::Stats(stats),
+        }),
+        RunReply::stats(stats),
     ];
     for reply in replies {
         let label = format!("{reply:?}");

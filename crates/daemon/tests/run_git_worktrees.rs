@@ -229,7 +229,10 @@ fn engine_paths_with_spaces_and_unicode_work() {
         T,
     )
     .unwrap();
-    assert_eq!(done.outside_owns, vec!["src/ü file.rs".to_string()]);
+    // Milestone 9 decision 23a (task M9.4): a changed path with a non-ASCII character
+    // is protected, even with no protected globs, until `owns` names it exactly.
+    assert!(done.outside_owns.is_empty(), "{:?}", done.outside_owns);
+    assert_eq!(done.protected_changed, vec!["src/ü file.rs".to_string()]);
     assert_eq!(done.untracked_in_owns, vec!["lib/ü new.rs".to_string()]);
     let (_, head_sha, patch) = prepare_review(
         real_git(),

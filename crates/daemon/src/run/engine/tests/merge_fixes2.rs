@@ -67,6 +67,8 @@ fn conflicted_onto_the_claim() -> OpResult {
         files: files(),
         head: Some(head_of("t1")),
         onto: Some(head_of("t1")),
+        merged: Vec::new(),
+        merged_total: 0,
     }
 }
 
@@ -212,6 +214,8 @@ fn an_undone_conflict_ends_the_straight_to_queue_pass() {
             files: vec![],
             head: Some(head_of("t1m")),
             onto: Some(head_of("t1")),
+            merged: Vec::new(),
+            merged_total: 0,
         },
     );
     acknowledge(&mut fx);

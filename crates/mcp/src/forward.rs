@@ -72,6 +72,7 @@ pub async fn forward(opts: &McpOptions, tool: &str, args: serde_json::Value) -> 
         tool: tool.to_string(),
         args,
         scout_id: opts.scout_id.clone(),
+        epic: opts.epic.clone(),
     };
     if let Err(e) = write_frame(&mut wr, &ClientMsg::Run(RunRequest::Tool(call))).await {
         return (false, unreachable(&e));
@@ -125,7 +126,7 @@ async fn handshake(rd: &mut OwnedReadHalf) -> Result<(), Handshake> {
 async fn reply(rd: &mut OwnedReadHalf, tool: &str) -> (bool, String) {
     loop {
         match read_frame::<_, DaemonMsg>(rd).await {
-            Ok(Some(DaemonMsg::Run(RunReply::ToolResult { ok, text }))) => return (ok, text),
+            Ok(Some(DaemonMsg::Run(RunReply::ToolResult { ok, text, .. }))) => return (ok, text),
             Ok(Some(DaemonMsg::Error { request, message }))
                 if request == proto::run_wire::request::TOOL =>
             {

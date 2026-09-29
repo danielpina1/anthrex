@@ -27,15 +27,18 @@ pub enum RunFilter {
 }
 
 /// An agent round's label: `worker #1`, `worker #1 r2`, `review #2` (decision 14).
-/// `number` is the display round; the orchestrator and scout roles, unreachable on a
-/// task, are labelled by their session so nothing is dropped.
+/// `number` is the display round; the orchestrator role, unreachable on a task, is
+/// labelled by its session so nothing is dropped.
 pub fn round_label(role: AgentRole, session: u32, number: u32) -> String {
     match role {
         AgentRole::Worker if number > 1 => format!("worker #{session} r{number}"),
         AgentRole::Worker => format!("worker #{session}"),
         AgentRole::Reviewer => format!("review #{number}"),
         AgentRole::Orchestrator => format!("orchestrator #{session}"),
-        AgentRole::Scout => format!("scout #{session}"),
+        // Milestone 9 decision 35: a scout round on a task is a research session.
+        AgentRole::Scout => format!("research #{session}"),
+        AgentRole::Planner => format!("planner #{session}"),
+        AgentRole::Decider => "decider".to_string(),
     }
 }
 
@@ -85,7 +88,11 @@ fn rounds_with<'a>(
                     });
                 }
             }
-            AgentRole::Reviewer | AgentRole::Orchestrator | AgentRole::Scout => {
+            AgentRole::Reviewer
+            | AgentRole::Orchestrator
+            | AgentRole::Scout
+            | AgentRole::Planner
+            | AgentRole::Decider => {
                 rounds.push(single(info.round));
             }
         }
@@ -102,6 +109,8 @@ fn role_rank(role: AgentRole) -> u8 {
         AgentRole::Reviewer => 1,
         AgentRole::Orchestrator => 2,
         AgentRole::Scout => 3,
+        AgentRole::Planner => 4,
+        AgentRole::Decider => 5,
     }
 }
 

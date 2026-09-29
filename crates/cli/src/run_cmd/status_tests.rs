@@ -107,6 +107,13 @@ fn task(
         brief: String::new(),
         acceptance: vec![],
         route_spec: Default::default(),
+        hold: None,
+        review_target: None,
+        research_bytes: None,
+        message_count: 0,
+        last_message_kind: None,
+        last_message_line: None,
+        task_notes: Vec::new(),
     }
 }
 
@@ -212,6 +219,11 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         planners: vec![],
         estimate_left_secs: None,
         bound_ratio_permille: None,
+        orchestrator: None,
+        holds: Vec::new(),
+        integration: Vec::new(),
+        digest_revision: 0,
+        research_report: None,
     }
 }
 
@@ -435,4 +447,114 @@ fn a_promoted_run_shows_its_local_request_time() {
         "{text}"
     );
     assert!(!run_block(&example(), 3_600).contains("promotion"));
+}
+
+/// Milestone 9 (the brief's CLI section): the orchestrator, planners, holds and summary
+/// lines, `planning` as a state, and the task table's `paused(message)`, `reported`
+/// and ` (held)`.
+#[test]
+fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
+    use proto::{BlockInfo, BlockReason, HoldInfo, HoldKind, HoldState, OrchestratorInfo};
+    use proto::{PlannerInfo, PlannerState};
+    let mut run = example();
+    assert!(!run_block(&run, 0).contains("orchestrator:"));
+    run.state = RunState::Planning;
+    run.orchestrator = Some(OrchestratorInfo {
+        route: route(Runtime::Claude, "", Effort::High),
+        window_id: Some(12),
+        live: true,
+        started_at: 1,
+        plan_submitted: false,
+        summary: None,
+        notes: vec![],
+        wakes: 0,
+    });
+    let planner = |epic: &str, state| PlannerInfo {
+        epic: epic.into(),
+        title: epic.into(),
+        area: vec![],
+        route: route(Runtime::Codex, "", Effort::Medium),
+        window_id: None,
+        state,
+        started_at: 1,
+        ended_at: None,
+        edits_accepted: 0,
+        edits_rejected: 0,
+        last_rejection: None,
+        replans: vec![],
+        note: None,
+    };
+    run.planners = vec![
+        planner("mail", PlannerState::Finished),
+        planner("api", PlannerState::Planning),
+    ];
+    let hold = |id: &str, state, tasks: &[&str]| HoldInfo {
+        id: id.into(),
+        kind: HoldKind::Promotion,
+        state,
+        tasks: tasks.iter().map(|t| t.to_string()).collect(),
+        created_at: 1,
+        decided_at: None,
+        decided_by: None,
+    };
+    run.holds = vec![
+        hold("promotion", HoldState::Approved, &["t1"]),
+        hold("epic:mail", HoldState::Awaiting, &["t3", "t4"]),
+    ];
+    run.tasks[2].epic = Some("mail".into());
+    run.tasks[2].hold = Some("epic:mail".into());
+    run.tasks[1].hold = Some("promotion".into());
+    run.tasks[3].epic = Some("mail".into());
+    run.tasks[3].block = Some(BlockInfo {
+        reason: BlockReason::MessagePause,
+        text: "asked to stop and wait: hold on".into(),
+    });
+    run.tasks[0].state = TaskState::Reported;
+    let text = run_block(&run, 0);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[0].starts_with("add-reset-3f9a  planning  0/4 merged  "),
+        "{text}"
+    );
+    assert_eq!(
+        &lines[3..6],
+        [
+            "  orchestrator: window 12, claude (default), live",
+            "  planners: mail finished (2 tasks), api planning",
+            "  holds: promotion approved (1 task), epic:mail awaiting (2 tasks)",
+        ],
+        "{text}"
+    );
+    assert_eq!(
+        &lines[7..11],
+        [
+            "  t1   M◆   tdd    reported       0    -              claude claude-opus-5 high      4 5",
+            "  t2   M    tdd    review         1    review 1       codex (default) medium         6 9",
+            "  t3   S    check  queued (held)  0    -              claude claude-sonnet-5 low",
+            "  t4   S    none   paused(message) 3    check 3        claude claude-sonnet-5 low     7",
+        ],
+        "{text}"
+    );
+
+    let o = run.orchestrator.as_mut().unwrap();
+    o.live = false;
+    o.window_id = None;
+    o.summary = Some("All done.".into());
+    o.route = route(Runtime::Codex, "gpt-5", Effort::High);
+    run.planners.clear();
+    run.holds.clear();
+    let text = run_block(&run, 0);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        &lines[3..5],
+        [
+            "  orchestrator: window -, codex gpt-5, exited",
+            "  summary: written",
+        ],
+        "{text}"
+    );
+    assert!(
+        !text.contains("planners:") && !text.contains("holds:"),
+        "{text}"
+    );
 }

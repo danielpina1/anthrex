@@ -100,6 +100,8 @@ pub(super) struct HeadlessWindow {
     /// The engine retired or killed the session (`headless_end.rs`): its process's exit
     /// ends the window, even a Codex exit after its turn ended.
     pub(super) ending: bool,
+    /// Milestone 9 decision 11a: restored from a record that did not parse.
+    pub(super) placeholder: bool,
 }
 
 /// A kill or interrupt that reached a window between its old process and its new one.
@@ -129,6 +131,7 @@ impl HeadlessWindow {
             start_failure: None,
             cancel: None,
             ending: false,
+            placeholder: false,
         }
     }
 
@@ -350,6 +353,11 @@ impl WindowManager {
             child_alive: false,
             process: Process::Headless(Box::new(window)),
             run: serde_json::to_value(spec).ok(),
+            role: None,
+            run_live: false,
+            last_client_input: None,
+            attention_open: false,
+            prompt_since: None,
             conversations: crate::conversation::ConversationSet::new(id, runtime),
             conversation_viewers: 0,
             transcript: Default::default(),

@@ -15,6 +15,7 @@ fn limits(max_tool_calls: u32) -> ScoutLimits {
         timeout_secs: 900,
         max_tool_calls,
         send_mid_turn: true,
+        texts: super::machine::SCOUT_TEXTS,
     }
 }
 
@@ -242,7 +243,8 @@ fn limits_send_mid_turn_only_on_claude() {
         ScoutLimits {
             timeout_secs: 900,
             max_tool_calls: 120,
-            send_mid_turn: true
+            send_mid_turn: true,
+            texts: super::machine::SCOUT_TEXTS,
         }
     );
     assert!(!ScoutLimits::new(&scouts, proto::Runtime::Codex).send_mid_turn);
@@ -272,7 +274,9 @@ fn session_events_become_machine_events() {
     };
     for runtime in [Runtime::Claude, Runtime::Codex] {
         let mut ended = HashSet::new();
-        let mut event = |e: &SessionEvent, pid| scout_event(e, pid, runtime, &mut ended);
+        let mut event = |e: &SessionEvent, pid| {
+            scout_event(e, pid, runtime, &mut ended, &super::machine::SCOUT_TEXTS)
+        };
         // The report call itself does not count toward the budget.
         assert_eq!(
             event(&tool("mcp__anthrex__submit_scout_report"), Some(1)),

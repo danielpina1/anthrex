@@ -255,3 +255,181 @@ fn a_held_call_of_another_role_is_refused_at_once() {
     );
     assert!(fx.state.pending.is_empty());
 }
+
+/// Task M9.8: a sub-planner's `submit_epic` joins the hold. A run's planner whose
+/// `StartPlanner` is in flight, epic `mail`.
+fn planner_launching() -> (Fixture, OpId) {
+    let mut fx = super::orch::launched(false);
+    super::planners::spawn(&mut fx, "mail");
+    let (op, _) = fx.op("StartPlanner");
+    (fx, op)
+}
+
+fn early_submit(fx: &mut Fixture) -> Vec<Effect> {
+    let edits = serde_json::json!([super::planners::task_in("m1", "mail")]);
+    super::planners::planner_tool(
+        fx,
+        (EARLY, "mail"),
+        "submit_epic",
+        serde_json::json!({ "edits": edits }),
+    )
+}
+
+#[test]
+fn a_planners_submit_before_its_window_is_answered_after_binding() {
+    let (mut fx, op) = planner_launching();
+    let effects = early_submit(&mut fx);
+    assert!(replies(&effects).is_empty(), "held: {effects:#?}");
+    let effects = fx.done(op, OpResult::PlannerStarted { window_id: EARLY });
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(crate::run::engine::planners::EPIC_RECORDED.to_string())]
+    );
+    assert!(effects.contains(&Effect::PlannerAccepted { window_id: EARLY }));
+    assert_eq!(fx.task("m1").spec.epic.as_deref(), Some("mail"));
+    assert!(fx.state.pending.is_empty());
+}
+
+#[test]
+fn a_planners_held_submit_is_refused_when_its_launch_fails() {
+    let (mut fx, op) = planner_launching();
+    assert!(replies(&early_submit(&mut fx)).is_empty());
+    let effects = fx.done(
+        op,
+        OpResult::Failed {
+            message: "no binary".into(),
+        },
+    );
+    let text = format!("this window is not the sub-planner of epic mail of run {RUN_ID}");
+    let error = serde_json::json!({ "error": text }).to_string();
+    assert_eq!(replies(&effects), vec![Err(error)]);
+    assert!(fx.run().task("m1").is_none());
+    assert!(fx.state.pending.is_empty());
+}
+
+/// Task M9.9: a research task's `submit_scout_report` joins the hold (the early-events
+/// fix's default for a headless role's tool), so its first turn's report is not lost.
+#[test]
+fn a_research_report_before_its_window_is_answered_after_binding() {
+    use super::kinds::{report_args, research, running, submit_report};
+    let mut fx = running("", &[research("r1", "")]);
+    let (op, _) = fx.op("CreateWindow");
+    let effects = submit_report(&mut fx, EARLY, "r1", report_args());
+    assert!(replies(&effects).is_empty(), "held: {effects:#?}");
+    assert_eq!(fx.task("r1").state, TaskState::Working);
+    let effects = bind(&mut fx, op, EARLY);
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(crate::scout::service::REPORT_ACCEPTED.to_string())]
+    );
+    assert_eq!(fx.task("r1").state, TaskState::Reported);
+}
+
+/// `call` of `role` from `window`, `mail`'s for a planner.
+fn m9_call(role: AgentRole, window: u32, tool: &str) -> proto::ToolCall {
+    proto::ToolCall {
+        run_id: RUN_ID.into(),
+        task_id: None,
+        role,
+        window_id: window,
+        tool: tool.into(),
+        args: serde_json::json!({}),
+        scout_id: None,
+        epic: (role == AgentRole::Planner).then(|| "mail".to_string()),
+    }
+}
+
+/// Task M9.11 (review finding 1): a sub-planner's read before its `StartPlanner`
+/// result names its window waits with the rule its `submit_epic` is held by, and so
+/// does no call once the launch is over, bound or failed.
+#[test]
+fn a_planners_read_before_its_window_waits_for_its_launch() {
+    use crate::run::engine::early::awaits_launch;
+    for bound in [true, false] {
+        let (mut fx, op) = planner_launching();
+        let read = m9_call(AgentRole::Planner, EARLY, "get_context");
+        assert!(awaits_launch(&fx.state, &read));
+        assert!(awaits_launch(
+            &fx.state,
+            &m9_call(AgentRole::Planner, EARLY, "submit_epic")
+        ));
+        // Another role's call never waits for a sub-planner's launch.
+        assert!(!awaits_launch(
+            &fx.state,
+            &m9_call(AgentRole::Worker, EARLY, "task_note")
+        ));
+        let result = if bound {
+            OpResult::PlannerStarted { window_id: EARLY }
+        } else {
+            OpResult::Failed {
+                message: "no binary".into(),
+            }
+        };
+        fx.done(op, result);
+        assert!(!awaits_launch(&fx.state, &read), "bound: {bound}");
+    }
+}
+
+/// Task M9.11 (review finding 1): the orchestrator's calls, reads and writes, before
+/// its `CreateOrchestrator` result names its window wait for it; once bound or failed
+/// they do not, and the orchestrator's own window never waits.
+#[test]
+fn the_orchestrators_calls_before_its_window_wait_for_its_launch() {
+    use super::orch::ORCH;
+    use crate::run::engine::early::awaits_launch;
+    for bound in [true, false] {
+        let mut fx = super::orch::planned(false);
+        let (op, _) = fx.op("CreateRunBranch");
+        fx.done(op, OpResult::Worktree { head: BASE.into() });
+        let (op, _) = fx.op("CreateOrchestrator");
+        for tool in ["get_context", "run_status", "edit_plan"] {
+            let call = m9_call(AgentRole::Orchestrator, ORCH, tool);
+            assert!(awaits_launch(&fx.state, &call), "{tool}");
+        }
+        let result = if bound {
+            OpResult::Window {
+                window_id: ORCH,
+                pid: None,
+            }
+        } else {
+            OpResult::Failed {
+                message: "no binary".into(),
+            }
+        };
+        fx.done(op, result);
+        for window in [ORCH, EARLY] {
+            let call = m9_call(AgentRole::Orchestrator, window, "run_status");
+            assert!(!awaits_launch(&fx.state, &call), "bound: {bound}, {window}");
+        }
+    }
+}
+
+/// Milestone 9 task M9.13a: a worker's `task_note` joins the hold (the PR #22 note's
+/// default), so a note made in the session's first moments is recorded, not refused.
+#[test]
+fn a_task_note_before_the_window_is_recorded_after_binding() {
+    let (mut fx, op) = launching();
+    let reply = fx.reply();
+    let call = proto::ToolCall {
+        run_id: RUN_ID.into(),
+        task_id: Some("t1".into()),
+        role: AgentRole::Worker,
+        window_id: EARLY,
+        tool: "task_note".into(),
+        args: serde_json::json!({"kind": "discovery", "text": "early"}),
+        scout_id: None,
+        epic: None,
+    };
+    let refusals = Vec::new();
+    let event = crate::run::engine::OrchEvent::Tool {
+        reply,
+        call,
+        refusals,
+    };
+    let effects = fx.next(EventKind::Orch(event));
+    assert!(replies(&effects).is_empty(), "held: {effects:#?}");
+    let effects = bind(&mut fx, op, EARLY);
+    let note = crate::run::orch::contract::NOTE_RECORDED.to_string();
+    assert_eq!(replies(&effects), vec![Ok(note)]);
+    assert_eq!(fx.task("t1").orch.worker_notes.len(), 1);
+}

@@ -5,6 +5,7 @@ use super::run_format::{
     clean, counts_text, effort_text, format_tokens, kind_glyph, local_hhmm, location, most_severe,
     progress_bar, reason_text, rows, size_letter, strength_text, test_mode_text,
 };
+use super::run_orch::{messages_text, notes_text};
 use super::{Inspection, field};
 use crate::app::App;
 use crate::theme;
@@ -37,6 +38,12 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
     if let Some(review) = review_text(task) {
         fields.push(field("review", review));
     }
+    if let Some(messages) = messages_text(task) {
+        fields.push(field("messages", messages));
+    }
+    if let Some(notes) = notes_text(task, app) {
+        fields.push(field("notes", notes));
+    }
     if !task.history.is_empty() {
         let history: Vec<String> = task
             .history
@@ -58,9 +65,22 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
     )
 }
 
+/// The stage, then ` · held` while the task waits in a hold (milestone 9 decision 28).
 fn stage_text(run: &RunInfo, task: &TaskInfo) -> String {
     if run.state == RunState::AwaitingApproval {
         return "planned".to_owned();
+    }
+    let stage = state_stage(task);
+    if crate::tree::task_held(run, task) {
+        format!("{stage} · held")
+    } else {
+        stage
+    }
+}
+
+fn state_stage(task: &TaskInfo) -> String {
+    if crate::tree::is_paused(task) {
+        return "paused (message)".to_owned();
     }
     match task.state {
         TaskState::Pending => "waiting".to_owned(),
@@ -73,6 +93,7 @@ fn stage_text(run: &RunInfo, task: &TaskInfo) -> String {
         TaskState::MergeQueue => "merge queue".to_owned(),
         TaskState::Merged => "merged".to_owned(),
         TaskState::Cancelled => "cancelled".to_owned(),
+        TaskState::Reported => "reported".to_owned(),
         TaskState::Blocked => {
             let mut text = match &task.block {
                 Some(block) => format!("blocked: {}", reason_text(block.reason)),
@@ -170,7 +191,16 @@ fn deps_text(run: &RunInfo, task: &TaskInfo, app: &App) -> Option<String> {
             |dep| match run.tasks.iter().find(|other| other.id == **dep) {
                 Some(other) if other.state == TaskState::Merged => format!("{dep} ✓"),
                 Some(other) => {
-                    let glyph = theme::task_glyph(other.state, gate_open, false, app.spinner_frame);
+                    let held = crate::tree::task_held(run, other);
+                    let paused = crate::tree::is_paused(other);
+                    let (glyph, _) = theme::task_look(
+                        other.state,
+                        gate_open,
+                        held,
+                        paused,
+                        false,
+                        app.spinner_frame,
+                    );
                     format!("{dep} {glyph}")
                 }
                 None => (*dep).clone(),

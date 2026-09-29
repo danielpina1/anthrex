@@ -35,10 +35,11 @@ use super::requests::log;
 use super::signals::end_round;
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, ReplyId, clock, complete, emit_op, merge, next_op,
-    op_done, outbox, review,
+    outbox, results::op_done, review,
 };
 use crate::run::contract::{RESUME_REVIEWER, RESUME_WORKER, sha7};
 use crate::run::model::{FallbackState, PendingOp, Run, StallState};
+use crate::run::orch::RefreshState;
 use crate::run::role_launch::session_uuid_of;
 
 /// The journal's answers: `(run id, op, result)`.
@@ -67,6 +68,8 @@ pub(super) fn restore(
             .map(|(_, op)| op)
             .collect();
         prepare(&mut run, &kept, now, fx);
+        // Milestone 9 decision 43: every session the old daemon ran is over.
+        super::history::interrupt_open(&mut run, fx);
         restored.push((run.id.clone(), original));
         state.runs.insert(run.id.clone(), run);
     }
@@ -79,9 +82,12 @@ pub(super) fn restore(
         };
         settle(run, now, fx);
         // Decision 47: a run the restore changed bumps its revision (review minor 5);
-        // `step` leaves a run new to the state at the revision it arrived with.
+        // `step` leaves a run new to the state at the revision it arrived with. The
+        // digest moves with it (M9.6 review fix I-1); an unchanged run is left as
+        // loaded, so restoring it writes nothing.
         if *run != original {
             run.revision += 1;
+            crate::run::orch::digest::note_change(run);
         }
     }
 }
@@ -109,9 +115,12 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
     for task in run.tasks.iter_mut() {
         clock::stop_at_restore(task);
     }
-    if run.state == RunState::Running {
+    // Milestone 9 decisions 20 and 32: run scouts and sub-planners are not resumed.
+    super::planners::restore(run, now);
+    // Milestone 9 decision 26: a planning run has live agents too.
+    if matches!(run.state, RunState::Running | RunState::Planning) {
+        run.paused_from = Some(run.state);
         run.state = RunState::Paused;
-        run.paused_from = Some(RunState::Running);
         log(run, now, "restored after a daemon restart; paused");
     }
     for message in run.outbox.iter_mut() {
@@ -181,6 +190,12 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         (OpKind::MergeCandidate { .. }, Some(i)) if run.tasks[i].merge_op == Some(op) => {
             run.tasks[i].merge_op = None;
         }
+        // Milestone 9 decision 42e: a lost refresh is due again at the next boundary.
+        (OpKind::HandBack { .. }, Some(i))
+            if run.tasks[i].orch.refresh == Some(RefreshState::InFlight(op)) =>
+        {
+            run.tasks[i].orch.refresh = Some(RefreshState::Due);
+        }
         // Carry T14-R2: a lost merge-queue hand-back is sent again by the running pass.
         (OpKind::HandBack { .. }, Some(i)) if run.tasks[i].merge_op == Some(op) => {
             let task = &mut run.tasks[i];
@@ -208,6 +223,7 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
             request: request.clone(),
             queued_at: now,
         }),
+        (OpKind::CreateOrchestrator { .. }, _) => super::orch_window::launch_lost(run, op),
         (OpKind::Accept { .. } | OpKind::Discard { .. }, _) => {
             let text = "an accept or discard did not finish before the restart; request it again";
             log(run, now, text);
@@ -225,6 +241,8 @@ fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if run.state.is_terminal() {
         return;
     }
+    // Milestone 9 decision 11: the orchestrator's window is restored dormant.
+    super::orch_window::restored(run);
     // Ruling T15-I1: whatever a session waited for died with the old daemon, so the
     // next resume re-engages every working task, whether or not a session was live.
     if run.tasks.iter().any(|t| !t.rounds.is_empty()) {
@@ -264,6 +282,18 @@ pub(super) fn resume(
         .get(run_id)
         .is_some_and(|r| r.state == RunState::Paused);
     if !paused {
+        // Milestone 9 decision 11: a run at the gate (or planning) keeps its state, and
+        // its dormant orchestrator restarts.
+        if let Some(run) = state.runs.get_mut(run_id)
+            && matches!(run.state, RunState::AwaitingApproval | RunState::Planning)
+            && super::orch_window::relaunch(run, now, fx)
+        {
+            let text = format!("run {run_id}: its orchestrator restarts");
+            return fx.push(Effect::Reply {
+                reply,
+                result: Ok(text),
+            });
+        }
         let halted = state
             .runs
             .get(run_id)
@@ -306,6 +336,10 @@ pub(super) fn unpause(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     run.state = run.paused_from.take().unwrap_or(RunState::Running);
     log(run, now, "resumed");
     resumed(run, now, fx);
+    // Milestone 9 decisions 11 and 29: the orchestrator restarts, and a promotion
+    // recorded before milestone 9 is performed.
+    super::orch_window::relaunch(run, now, fx);
+    super::promote::on_resume(run, now, fx);
 }
 
 /// Decision 45's resume of a run that runs again.
@@ -391,6 +425,8 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                     AgentRole::Worker => {
                         matches!(task.state, TaskState::Preparing | TaskState::Working)
                     }
+                    // Milestone 9 decision 35: a research task's session.
+                    AgentRole::Scout => task.state == TaskState::Working,
                     _ => task.state == TaskState::Review,
                 };
             if !wanted {

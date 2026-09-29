@@ -33,7 +33,13 @@ impl App {
             PendingAction::RemoveTask { run_id, task_id } => run(RunRequest::Edit {
                 run_id,
                 edits: vec![PlanEdit::CancelTask { task_id }],
+                submit: false,
             }),
+            // Milestone 9 decisions 28 and 13, after a `y`.
+            PendingAction::RejectHold { run_id, hold } => {
+                run(RunRequest::RejectHold { run_id, hold })
+            }
+            PendingAction::SubmitPlan(run_id) => self.send_submit(run_id),
         }
     }
 

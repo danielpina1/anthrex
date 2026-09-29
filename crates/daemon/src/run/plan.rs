@@ -186,6 +186,7 @@ pub fn run_limits(
         api_key_helper: config.claude.api_key_helper.clone(),
         decider_mode: config.deciders.mode,
         decider_slot_wait_secs: config.deciders.slot_wait_secs,
+        orch: super::orch::OrchLimits::from_config(config),
     }
 }
 
@@ -400,6 +401,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         unverified,
         final_check_failed: false,
         trusted_project: Vec::new(),
+        trust_project: false,
         protected_files: pre.protected_files,
         rate_limits: Default::default(),
         outcome: None,
@@ -441,6 +443,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         approved_at: None,
         plan_edits: Vec::new(),
         plan_edits_since_approval: 0,
+        orch: Default::default(),
+        role_routing_decisions: Vec::new(),
     })
 }
 

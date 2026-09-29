@@ -22,8 +22,16 @@ pub const GIT_LOCATION_VARS: [&str; 5] = [
 
 /// Decision 26: inherited variables removed from every headless session and every
 /// engine command, by prefix ... Since F2 round 2 (N1) also exported shell functions
-/// (`BASH_FUNC_<name>%%`), which bash imports at start-up.
-pub const SCRUBBED_PREFIXES: &[&str] = &["CLAUDE_CODE_", "BASH_FUNC_"];
+/// (`BASH_FUNC_<name>%%`), which bash imports at start-up. Since milestone 9 (M9.1
+/// real-CLI ruling 5) also `MCP_*`, which tunes an agent's MCP client (for example
+/// `MCP_CONNECTION_NONBLOCKING` from a daemon started inside Claude Code).
+pub const SCRUBBED_PREFIXES: &[&str] = &["CLAUDE_CODE_", "BASH_FUNC_", "MCP_"];
+/// M9.10 review: inherited variables removed from every agent session (the
+/// orchestrator's window and every headless session), not from engine commands, and not
+/// reserved: a profile may set them for a worker. `OTEL_*`: a signal-specific
+/// `OTEL_EXPORTER_OTLP_METRICS_*` would redirect or break the orchestrator's metrics,
+/// whose own variables are set after the scrub; no headless role reads them.
+pub const AGENT_SCRUBBED_PREFIXES: &[&str] = &["OTEL_"];
 /// ... and by name. Since F2 round 2 (N1) also the shell start-up inlets that exist
 /// only to run or reshape code at a shell's start (a user's own `ZDOTDIR`, `SHELL` or
 /// `PYTHONPATH` is kept: it is their own setting, and only a profile may not set it).
@@ -56,12 +64,27 @@ pub const CLAUDE_TOOL_SEARCH: (&str, &str) = ("ENABLE_TOOL_SEARCH", "false");
 /// Anthropic API credentials, removed from every session that does not authenticate
 /// with them (final fix batch F2, review C minor M2): with `auth = "login"`, `claude -p`
 /// would otherwise prefer a key the daemon happened to inherit over the user's login.
-pub const API_CREDENTIALS: &[&str] = &["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+/// The endpoint goes with them (user ruling 2026-09-29): an inherited
+/// `ANTHROPIC_BASE_URL` would otherwise send every such session, with the user's login,
+/// to whatever endpoint the daemon's shell named.
+pub const API_CREDENTIALS: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+];
 
 /// OpenAI and Codex env credentials (F2 round 2, N2). anthrex has no Codex auth setting:
 /// its Codex sessions use the user's own `codex login` (`~/.codex/auth.json`), so every
-/// session loses these, and a Codex session never bills an inherited key.
-pub const OPENAI_CREDENTIALS: &[&str] = &["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
+/// session loses these, and a Codex session never bills an inherited key. The endpoint
+/// goes with them (user ruling 2026-09-29): an inherited `OPENAI_BASE_URL` would
+/// otherwise send every Codex session, with the user's login, to whatever endpoint the
+/// daemon's shell named.
+pub const OPENAI_CREDENTIALS: &[&str] = &[
+    "OPENAI_API_KEY",
+    "CODEX_API_KEY",
+    "CODEX_ACCESS_TOKEN",
+    "OPENAI_BASE_URL",
+];
 
 /// Reserved families, matched on the upper-cased name, with the reason a profile may
 /// not set them.
@@ -94,6 +117,10 @@ const RESERVED_PREFIXES: &[(&str, &str)] = &[
         "it redirects git (AGENTS.md rule 11) or its configuration",
     ),
     ("ANTHREX_", "anthrex sets its own variables"),
+    (
+        "MCP_",
+        "it tunes the agent's MCP client, which anthrex configures",
+    ),
     (
         "DYLD_",
         "it loads code into the agent before its sandbox applies",
@@ -221,6 +248,21 @@ mod tests {
         for prefix in SCRUBBED_PREFIXES {
             let name = format!("{prefix}ANYTHING");
             assert!(reserved_env(&name).is_some(), "{name} is not reserved");
+        }
+    }
+
+    /// M9.1 real-CLI ruling 5: every agent session drops inherited `MCP_*` variables
+    /// (`MCP_CONNECTION_NONBLOCKING` from a daemon started inside Claude Code, say), and
+    /// a profile may not set one back.
+    #[test]
+    fn mcp_variables_are_scrubbed_and_reserved() {
+        assert!(SCRUBBED_PREFIXES.contains(&"MCP_"), "{SCRUBBED_PREFIXES:?}");
+        for key in [
+            "MCP_CONNECTION_NONBLOCKING",
+            "MCP_TOOL_TIMEOUT",
+            "mcp_timeout",
+        ] {
+            assert!(reserved_env(key).is_some(), "{key} is not reserved");
         }
     }
 

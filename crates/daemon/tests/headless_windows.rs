@@ -191,17 +191,19 @@ async fn headless_windows_persist_and_restore_as_ended() {
     );
     assert_eq!(restored.child_pid(info.id).unwrap(), None);
 
-    // An unparseable `run` loads as an exited PTY record (with a warning in the log).
+    // Milestone 9 decision 11a: an unparseable `run` loads as an exited headless window
+    // with a placeholder spec (with a warning in the log), never as a PTY window.
     let mut broken = state;
     let record: &mut WindowRecord = broken.windows.iter_mut().find(|r| r.id == info.id).unwrap();
     record.run = Some(serde_json::json!({"runtime": "not a runtime"}));
     let fallback = manager(&claude, &claude, |_| {});
     fallback.restore(broken);
     let window = find(&fallback, info.id);
-    assert_eq!(window.kind, WindowKind::Pty);
+    assert_eq!(window.kind, WindowKind::Headless);
     assert_eq!(window.status, Status::Exited);
     assert_eq!(window.run, None);
-    assert_eq!(fallback.headless_spec(info.id), None);
+    let placeholder = fallback.headless_spec(info.id).expect("a placeholder spec");
+    assert_eq!((placeholder.run_ref, placeholder.mcp), (None, None));
 }
 
 #[tokio::test]

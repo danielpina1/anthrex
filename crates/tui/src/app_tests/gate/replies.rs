@@ -10,9 +10,12 @@ fn a_refused_edit_shows_inline_and_a_done_edit_closes() {
     app.toast("");
     reply(
         &mut app,
-        refused(
-            proto::run_wire::request::EDIT,
-            "task t1: size: below the floor",
+        to(
+            1,
+            refused(
+                proto::run_wire::request::EDIT,
+                "task t1: size: below the floor",
+            ),
         ),
     );
     assert_eq!(
@@ -25,13 +28,16 @@ fn a_refused_edit_shows_inline_and_a_done_edit_closes() {
     // Resubmitting works once the refusal cleared `submitting`.
     assert_eq!(
         tap(&mut app, KeyCode::Enter),
-        edit(vec![amend(None, Some(Size::S))])
+        form_edit_as(2, vec![amend(None, Some(Size::S))])
     );
     reply(
         &mut app,
-        refused(
-            proto::run_wire::request::EDIT,
-            "task t1: size: one\ntask t1: route: two\n\ntask t1: brief: three\n",
+        to(
+            2,
+            refused(
+                proto::run_wire::request::EDIT,
+                "task t1: size: one\ntask t1: route: two\n\ntask t1: brief: three\n",
+            ),
         ),
     );
     assert_eq!(
@@ -42,7 +48,7 @@ fn a_refused_edit_shows_inline_and_a_done_edit_closes() {
     tap(&mut app, KeyCode::Enter);
     reply(
         &mut app,
-        done(proto::run_wire::request::EDIT, "applied 1 edit(s)"),
+        to(3, done(proto::run_wire::request::EDIT, "applied 1 edit(s)")),
     );
     assert_eq!(app.modal, None);
     assert_eq!(app.toast_text(), Some("applied 1 edit(s)"));
@@ -53,7 +59,10 @@ fn a_long_refusal_is_capped_inline() {
     let mut app = gate();
     submit_a_size_change(&mut app);
     let long = "x".repeat(1_000);
-    reply(&mut app, refused(proto::run_wire::request::EDIT, &long));
+    reply(
+        &mut app,
+        to(1, refused(proto::run_wire::request::EDIT, &long)),
+    );
     let error = form(&app).error.clone().expect("an error");
     assert_eq!(error.chars().count(), 301);
     assert!(error.ends_with('…'));
@@ -220,9 +229,36 @@ fn no_gate_path_sends_input() {
     effects.extend(tap(&mut app, KeyCode::Enter));
     effects.extend(app.on_paste("pasted".into()));
     assert!(
-        effects
-            .iter()
-            .all(|e| matches!(e, Effect::Send(ClientMsg::Run(_)))),
+        effects.iter().all(|e| matches!(
+            e,
+            Effect::Send(ClientMsg::Run(_) | ClientMsg::RunTagged { .. })
+        )),
         "{effects:?}"
     );
+}
+
+/// Milestone 9 decision 2: the form is matched by its request's id, never by the
+/// request's name, so another `run edit`'s reply (the `d` confirm's, or an older
+/// form's) leaves it submitting.
+#[test]
+fn an_edit_reply_for_another_request_leaves_the_form_submitting() {
+    let mut app = gate();
+    submit_a_size_change(&mut app);
+    let before = form(&app).clone();
+    reply(
+        &mut app,
+        refused(proto::run_wire::request::EDIT, "untagged"),
+    );
+    assert_eq!(form(&app), &before);
+    assert_eq!(app.toast_text(), Some("untagged"));
+    reply(
+        &mut app,
+        to(7, done(proto::run_wire::request::EDIT, "applied 1 edit(s)")),
+    );
+    assert_eq!(form(&app), &before);
+    reply(
+        &mut app,
+        to(1, done(proto::run_wire::request::EDIT, "applied 1 edit(s)")),
+    );
+    assert_eq!(app.modal, None);
 }

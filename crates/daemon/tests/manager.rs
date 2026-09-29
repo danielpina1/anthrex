@@ -42,7 +42,7 @@ fn spec(name: &str) -> WindowSpec {
 
 /// A manager whose events are pumped by a background task, like the daemon does.
 fn manager() -> Arc<WindowManager> {
-    let (m, mut events) = WindowManager::new(ManagerConfig::new(
+    let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
         "/tmp/unused.sock".into(),
         "/bin/sh".into(),
     ));

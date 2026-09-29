@@ -159,6 +159,9 @@ pub struct RunLimits {
     /// M8b decision 18: `[orchestrator.deciders] slot_wait_secs`.
     #[serde(default = "adapt::slot_wait_absent")]
     pub decider_slot_wait_secs: u64,
+    /// Milestone 9 (ruling D-5): the orchestrator settings, frozen at run start.
+    #[serde(default)]
+    pub orch: super::orch::OrchLimits,
 }
 
 /// A resolved task: the planner's spec plus everything decisions 8–10 and 35 derive
@@ -317,6 +320,9 @@ pub struct Task {
     /// worker launch records that escalation and clears it.
     #[serde(default)]
     pub escalated_from: Option<Route>,
+    /// Milestone 9's task state (`run::orch::TaskOrch`).
+    #[serde(default)]
+    pub orch: super::orch::TaskOrch,
 }
 
 impl Task {
@@ -396,6 +402,10 @@ pub struct Run {
     pub unverified: bool,
     pub final_check_failed: bool,
     pub trusted_project: Vec<String>,
+    /// Whether the run started with `--trust-project` (M9.13 review; decision 9's
+    /// `run promote` honours it). A run from before it: false.
+    #[serde(default)]
+    pub trust_project: bool,
     /// Tracked files at `base_sha` matching `profile.protected` (decision 56).
     pub protected_files: Vec<String>,
     pub rate_limits: BTreeMap<String, u32>,
@@ -495,6 +505,9 @@ pub struct Run {
     /// stored profile), for every routing decision's input.
     #[serde(default)]
     pub profile_languages: Vec<String>,
+    /// Milestone 9 decision 43: role-routing records not yet appended to the history.
+    #[serde(default)]
+    pub role_routing_decisions: Vec<proto::RoleRoutingDecision>,
     /// M8b decision 33: the run was started with history (milestone 8b.16 on). A run
     /// started before has no phases, diffs or routing decisions, and writes none.
     #[serde(default)]
@@ -508,6 +521,9 @@ pub struct Run {
     /// M8c: accepted plan-edit batches since the plan was approved.
     #[serde(default)]
     pub plan_edits_since_approval: u32,
+    /// Milestone 9's run state (`run::orch::RunOrch`).
+    #[serde(default)]
+    pub orch: super::orch::RunOrch,
 }
 
 impl Run {

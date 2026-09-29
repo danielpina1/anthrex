@@ -3,6 +3,7 @@
 use proto::{PlanEdit, PlanTask};
 
 use super::*;
+use crate::run::orch::EditSource;
 use crate::run::test_support::{EXAMPLE_PLAN, run_ok};
 
 fn a_task(id: &str) -> PlanTask {
@@ -31,6 +32,7 @@ fn describe_names_every_edit_op() {
             test_mode_reason: None,
             priority: None,
             size: None,
+            deps: None,
         },
         PlanEdit::AddDep {
             task_id: "t4".into(),
@@ -43,10 +45,19 @@ fn describe_names_every_edit_op() {
         PlanEdit::Pause,
         PlanEdit::Resume,
         PlanEdit::Finish,
+        PlanEdit::Message {
+            to: proto::MessageTarget::Tasks(vec!["t6".into(), "t7".into()]),
+            text: "the schema moved".into(),
+            kind: proto::MessageKind::Change,
+        },
+        PlanEdit::Refresh {
+            task_id: "t8".into(),
+        },
     ];
     assert_eq!(
         describe(&edits),
-        "add t9, split t2, cancel t3, amend t4, dep t4 on t2, answer t5, pause, resume, finish"
+        "add t9, split t2, cancel t3, amend t4, dep t4 on t2, answer t5, pause, resume, \
+         finish, message t6,t7 (change), refresh t8"
     );
     assert_eq!(describe(&[PlanEdit::Pause]), "pause");
 }
@@ -55,7 +66,13 @@ fn describe_names_every_edit_op() {
 fn record_keeps_the_last_fifty() {
     let mut run = run_ok(EXAMPLE_PLAN);
     for n in 0..(PLAN_EDITS_KEPT as u64 + 7) {
-        record(&mut run, &[PlanEdit::Pause], 1_000 + n);
+        record(
+            &mut run,
+            &[PlanEdit::Pause],
+            1_000 + n,
+            &EditSource::User,
+            EditOutcome::accepted(),
+        );
     }
     assert_eq!(run.plan_edits.len(), PLAN_EDITS_KEPT);
     assert_eq!(PLAN_EDITS_KEPT, 50);
@@ -67,14 +84,24 @@ fn record_keeps_the_last_fifty() {
     assert_eq!(run.plan_edits_since_approval, 0);
 
     run.approved_at = Some(2_000);
-    record(&mut run, &[PlanEdit::Resume], 2_001);
+    record(
+        &mut run,
+        &[PlanEdit::Resume],
+        2_001,
+        &EditSource::User,
+        EditOutcome::accepted(),
+    );
     assert_eq!(run.plan_edits_since_approval, 1);
     assert_eq!(run.plan_edits.len(), PLAN_EDITS_KEPT);
     assert_eq!(
         run.plan_edits.last(),
         Some(&PlanEditRecord {
             at: 2_001,
-            text: "resume".into()
+            text: "resume".into(),
+            source: "user".into(),
+            accepted: true,
+            error: None,
+            recipients: Vec::new(),
         })
     );
 }
@@ -92,6 +119,7 @@ fn describe_is_capped() {
             test_mode_reason: None,
             priority: Some(1),
             size: None,
+            deps: None,
         })
         .collect();
     let text = describe(&edits);
@@ -130,4 +158,151 @@ fn describe_replaces_control_characters() {
         task_id: "t\n1\u{1b}[31m\r\t".into(),
     }];
     assert_eq!(describe(&edits), "cancel t 1 [31m  ");
+}
+
+/// Decision 40 (task M9.9): a record keeps its source, whether it was accepted, a
+/// rejected batch's error and a message's recipients; only accepted batches count as
+/// edits after approval.
+#[test]
+fn record_keeps_source_outcome_and_recipients() {
+    let mut run = run_ok(EXAMPLE_PLAN);
+    run.approved_at = Some(2_000);
+    let planner = EditSource::Planner {
+        epic: "mail".into(),
+    };
+    record(
+        &mut run,
+        &[PlanEdit::Pause],
+        2_001,
+        &planner,
+        EditOutcome::Rejected {
+            error: "task t9: epic: nope".into(),
+        },
+    );
+    record(
+        &mut run,
+        &[PlanEdit::Resume],
+        2_002,
+        &EditSource::Orchestrator,
+        EditOutcome::Accepted {
+            recipients: vec!["t1".into(), "t2".into()],
+        },
+    );
+    assert_eq!(
+        run.plan_edits,
+        vec![
+            PlanEditRecord {
+                at: 2_001,
+                text: "pause".into(),
+                source: "planner:mail".into(),
+                accepted: false,
+                error: Some("task t9: epic: nope".into()),
+                recipients: Vec::new(),
+            },
+            PlanEditRecord {
+                at: 2_002,
+                text: "resume".into(),
+                source: "orchestrator".into(),
+                accepted: true,
+                error: None,
+                recipients: vec!["t1".into(), "t2".into()],
+            },
+        ]
+    );
+    assert_eq!(run.plan_edits_since_approval, 1);
+}
+
+fn rejected(error: &str) -> EditOutcome {
+    EditOutcome::Rejected {
+        error: error.to_string(),
+    }
+}
+
+/// M9.9 review fixes, M4: a rejected batch's stored error is one line of at most
+/// `ERROR_MAX_CHARS` characters.
+#[test]
+fn a_rejected_batchs_error_is_capped() {
+    assert_eq!(ERROR_MAX_CHARS, 300);
+    let mut run = run_ok(EXAMPLE_PLAN);
+    let long = format!("first\nline {}", "e".repeat(1_000));
+    record(
+        &mut run,
+        &[PlanEdit::Pause],
+        1,
+        &EditSource::User,
+        rejected(&long),
+    );
+    let error = run.plan_edits[0].error.clone().unwrap();
+    assert_eq!(error.chars().count(), ERROR_MAX_CHARS, "{error}");
+    assert!(error.starts_with("first line eee"), "{error}");
+    assert!(error.ends_with('…'), "{error}");
+    // A short one is kept as it is.
+    record(
+        &mut run,
+        &[PlanEdit::Pause],
+        2,
+        &EditSource::User,
+        rejected("no"),
+    );
+    assert_eq!(run.plan_edits[1].error.as_deref(), Some("no"));
+}
+
+/// M9.9 review fixes, M4: a full log drops its oldest rejected batch before any
+/// accepted one, so refusals never push the accepted edits out.
+#[test]
+fn a_full_log_drops_rejected_batches_first() {
+    let mut run = run_ok(EXAMPLE_PLAN);
+    let accepted = |run: &mut Run, at: u64| {
+        record(
+            run,
+            &[PlanEdit::Pause],
+            at,
+            &EditSource::User,
+            EditOutcome::accepted(),
+        );
+    };
+    accepted(&mut run, 1);
+    for at in 2..=40 {
+        record(
+            &mut run,
+            &[PlanEdit::Pause],
+            at,
+            &EditSource::Orchestrator,
+            rejected("no"),
+        );
+    }
+    for at in 41..=50 {
+        accepted(&mut run, at);
+    }
+    assert_eq!(run.plan_edits.len(), PLAN_EDITS_KEPT);
+    // Full: the next accepted batch drops the oldest rejected one, not the first edit.
+    accepted(&mut run, 51);
+    assert_eq!(run.plan_edits.len(), PLAN_EDITS_KEPT);
+    assert_eq!(run.plan_edits[0].at, 1);
+    assert_eq!(run.plan_edits[1].at, 3);
+    // Forty more refusals push out only refusals.
+    for at in 52..=91 {
+        record(
+            &mut run,
+            &[PlanEdit::Pause],
+            at,
+            &EditSource::Orchestrator,
+            rejected("no"),
+        );
+    }
+    let accepted_at: Vec<u64> = run
+        .plan_edits
+        .iter()
+        .filter(|r| r.accepted)
+        .map(|r| r.at)
+        .collect();
+    let mut want = vec![1];
+    want.extend(41..=51);
+    assert_eq!(accepted_at, want);
+    // With nothing rejected left to drop, the oldest goes.
+    let mut run = run_ok(EXAMPLE_PLAN);
+    for at in 1..=51 {
+        accepted(&mut run, at);
+    }
+    assert_eq!(run.plan_edits[0].at, 2);
 }

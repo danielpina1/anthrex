@@ -11,17 +11,21 @@ use std::path::Path;
 use proto::{AgentRole, BlockInfo, BlockReason, RunState, Runtime, TaskState};
 
 use super::schedule::{
-    deps_done, dispatch_order, held_hub_waits_for, hub_started, may_return_to_working,
-    op_in_flight, size_check_pending, writers_busy,
+    deps_done, dispatch_order, held_hub_waits_for, hub_started, is_reader_task,
+    may_return_to_working, op_in_flight, size_check_pending, writers_busy,
 };
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
 use super::{
-    clock, complete, deciders, done, gates, holds, ladder, merge, outbox, restore, review, signals,
+    clock, complete, deciders, done, gate_holds, gates, holds, kinds, ladder, merge, outbox,
+    restore, review, signals,
 };
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
-use crate::run::model::{AgentRound, FreshSession, OpId, Run, StallState, Task, TaskEvent};
+use crate::run::model::{FreshSession, OpId, Run, StallState, Task, TaskEvent};
+use crate::run::orch::contract::notes_section;
 use crate::run::role_launch::{jitter_ms, session_uuid_of, worker_spec};
+
+pub(super) use super::rounds::new_round;
 
 /// The scheduler, run after every event: runnability, then whatever the run's state
 /// allows to start, then clean-up and delivery.
@@ -42,6 +46,9 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 ladder::recover_sessionless(run, now);
                 ladder::start_fresh_sessions(run, fx);
                 complete::finish_pass(run, now, fx);
+                // Milestone 9 decision 37: an epic merged gets its integration review.
+                kinds::integration_pass(run, now);
+                kinds::watch(run, now, fx);
                 gates::start_gates(run, now, fx);
                 merge::start_due_hand_backs(run, now, fx);
                 merge::start_merge(run, now, fx);
@@ -51,12 +58,19 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 // M8b decision 18: queued deciders take free reader slots first.
                 fx.extend(deciders::dispatch(run, now));
                 review::dispatch_reviewers(run, fx);
+                // Milestone 9 decision 31: integration reviews go with the reviewers.
+                kinds::dispatch(run, now, true, fx);
             }
             _ => {}
         }
+        // Milestone 9 decision 31: sub-planners, then run scouts, in free reader slots.
+        super::planners::dispatch(run, now, fx);
+        // Then research and review tasks (decisions 35, 36).
+        kinds::dispatch(run, now, false, fx);
     }
     remove_cancelled_worktrees(run, now, fx);
     if run.state == RunState::Running {
+        super::worker_messages::refresh_pass(run, now, fx);
         outbox::deliver(run, now, fx);
         complete::complete_pass(run, now, fx);
     }
@@ -176,7 +190,10 @@ fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             break;
         }
         let task = &run.tasks[i];
+        // Milestone 9: a research or review task has no worktree to pre-warm.
         if task.state != TaskState::Queued
+            || is_reader_task(task)
+            || !gate_holds::released(run, task)
             || task.prewarmed
             || task.worktree_live
             || !task.spec.deps.is_empty()
@@ -197,9 +214,13 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     // F3 review N1: a held hub task lets only what it waits for start.
     let only = held_hub_waits_for(run);
     for i in dispatch_order(run) {
-        // M8b decision 19: a task waiting for its size cross-check is not runnable.
+        // M8b decision 19: a task waiting for its size cross-check is not runnable;
+        // milestone 9 decision 28: nor is one whose approval hold is not approved.
+        // Milestone 9 decisions 35, 36: research and review tasks take reader slots.
         if run.tasks[i].state != TaskState::Queued
+            || is_reader_task(&run.tasks[i])
             || size_check_pending(&run.tasks[i])
+            || !gate_holds::released(run, &run.tasks[i])
             || only
                 .as_ref()
                 .is_some_and(|waits| !waits.iter().any(|id| id == run.tasks[i].id()))
@@ -255,7 +276,9 @@ fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 
 /// A new worker session for task `i`, starting at `start` (decisions 24–26, 30).
 fn launch_worker(run: &mut Run, i: usize, start: String, now: u64, fx: &mut Vec<Effect>) {
-    launch(run, i, Some(start), worker_prompt, now, fx);
+    let prompt =
+        |run: &Run, task: &Task| worker_prompt(run, task, "", &notes_section(&task.orch.messages));
+    launch(run, i, Some(start), prompt, now, fx);
 }
 
 /// A fresh worker session for a started task (rung 2, or a resume that failed): its
@@ -271,7 +294,15 @@ pub(super) fn launch_fresh(
     fx: &mut Vec<Effect>,
 ) {
     let prompt = |run: &Run, task: &Task| {
-        let mut text = handover_prompt(run, task, &fresh.reason, stat, patch);
+        let mut text = handover_prompt(
+            run,
+            task,
+            &fresh.reason,
+            stat,
+            patch,
+            "",
+            &notes_section(&task.orch.messages),
+        );
         if let Some(append) = &fresh.append {
             text.push_str("\n\n");
             text.push_str(append);
@@ -313,6 +344,10 @@ fn launch(
     let task = &run.tasks[i];
     let spec = worker_spec(run, task);
     let first_turn = first_turn(run, task);
+    // Milestone 9 decision 42d: the first turn carries every recorded message.
+    super::worker_messages::launched(run, i);
+    let task = &run.tasks[i];
+    let extract = crate::run::orch::extract::worker_slot(run, task);
     let name = format!("{}/{}.w{}", run.short(), task.id(), task.session);
     let uuid = (task.route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
     let jitter = jitter_ms(&run.id, task.id(), task.session);
@@ -336,6 +371,7 @@ fn launch(
         project: run.project.clone(),
         worktree,
         jitter_ms: jitter,
+        extract,
     };
     emit_op(run, op, Some(&id), kind, fx);
 }
@@ -349,67 +385,6 @@ pub(super) fn window_limit_reached(run: &mut Run, i: usize, now: u64) -> bool {
     let text = format!("run window limit ({}) reached", run.limits.max_windows);
     block(run, i, BlockReason::Environment, text, now);
     true
-}
-
-/// A round whose first turn is open from its launch (decision 27: the reducer marks the
-/// turn open when it delivers one).
-pub(super) fn new_round(
-    role: AgentRole,
-    session: u32,
-    route: proto::Route,
-    op: OpId,
-    session_id: Option<String>,
-    now: u64,
-) -> AgentRound {
-    AgentRound {
-        role,
-        session,
-        round: session,
-        window_id: None,
-        route,
-        launch_op: op,
-        session_id,
-        pid: None,
-        ended: false,
-        started_at: now,
-        ended_at: None,
-        turn_open: true,
-        turns: 1,
-        turn_had_task_done: false,
-        last_event: now,
-        tool_calls: 0,
-        rate_limited_until: None,
-        rate_limited_since: None,
-        sent_back_at: Vec::new(),
-        in_retry_streak: false,
-        open_subagents: Default::default(),
-        denials: 0,
-        usage: Default::default(),
-        deaths: 0,
-        fallback: Default::default(),
-        stall: Default::default(),
-        failed_turn: Default::default(),
-        review_nudged: false,
-        wrap_up_sent: false,
-        retiring: false,
-        delivery_failures: 0,
-        delivery_retry_at: None,
-        turn_denied: Vec::new(),
-        excused_secs: 0,
-        last_denial: None,
-        fallback_waiting: false,
-        carried: Vec::new(),
-        failed_error: None,
-        resume_op: None,
-        count_op: None,
-        count_failures: 0,
-        count_retry_at: None,
-        count_turn: 0,
-        interrupted: false,
-        relaunch: None,
-        closed_pid: None,
-        exited_pid: None,
-    }
 }
 
 /// M8a.6's F5 and decision 14: a cancelled task whose worktree still exists and that has

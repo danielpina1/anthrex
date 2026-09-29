@@ -191,6 +191,8 @@ impl RunHarness {
             ("ANTHREX_DECIDER_BIN".into(), NO_DECIDER_BIN.into()),
             ("FAKE_AGENT_ARGS_FILE".into(), path(&io)),
             ("FAKE_AGENT_STDIN_FILE".into(), path(&io)),
+            // M9.16: every MCP call a `fake-agent` makes (`RunHarness::mcp_log`).
+            ("FAKE_AGENT_MCP_LOG".into(), path(&io.join("mcp.jsonl"))),
             ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
             ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
         ];

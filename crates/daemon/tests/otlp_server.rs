@@ -3,12 +3,12 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use daemon::metering::server::{
-    ADDR_FILE, OTLP_MAX_BODY, OTLP_MAX_CONNECTIONS, OTLP_MAX_HEADERS, OTLP_READ_TIMEOUT,
+    ADDR_FILE, OTLP_BASE_CONNECTIONS, OTLP_MAX_BODY, OTLP_MAX_HEADERS, OTLP_READ_TIMEOUT,
     OTLP_SLOT_WAIT,
 };
 use daemon::metering::{OtlpServer, UsageSink, bind};
@@ -17,6 +17,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::sync::CancellationToken;
+
+/// Milestone 9 decisions 14a and 14b: the run's token and the connection cap.
+#[path = "otlp_server/tokens.rs"]
+mod tokens;
 
 /// M8b.1 item 5's recorded body: run `r-fix`, role `orchestrator`.
 const FIXTURE: &[u8] = include_bytes!("fixtures/otlp/claude-2.1.280-metrics.json");
@@ -43,16 +47,26 @@ fn fixture_usage() -> TokenUsage {
     }
 }
 
-/// The run service's stand-in: a settable set of live runs, and every post recorded.
+/// Every live run's OTLP token in these tests (milestone 9 decision 14a).
+const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+/// The run service's stand-in: a settable set of live runs, each with [`TOKEN`], a
+/// settable count of live orchestrators, and every post recorded.
 struct TestSink {
     live: Mutex<HashSet<String>>,
     generation: AtomicU64,
+    orchestrators: AtomicUsize,
     posts: UnboundedSender<(String, TokenUsage)>,
 }
 
 impl TestSink {
     fn set_live(&self, runs: &[&str]) {
         *self.live.lock().unwrap() = runs.iter().map(|r| r.to_string()).collect();
+        self.generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn set_orchestrators(&self, n: usize) {
+        self.orchestrators.store(n, Ordering::SeqCst);
         self.generation.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -68,6 +82,14 @@ impl UsageSink for TestSink {
 
     fn post(&self, run_id: String, usage: TokenUsage) {
         let _ = self.posts.send((run_id, usage));
+    }
+
+    fn token(&self, run_id: &str) -> Option<String> {
+        self.is_live(run_id).then(|| TOKEN.to_string())
+    }
+
+    fn live_orchestrators(&self) -> usize {
+        self.orchestrators.load(Ordering::SeqCst)
     }
 }
 
@@ -86,6 +108,7 @@ async fn start() -> Receiver {
     let control = Arc::new(TestSink {
         live: Mutex::new(HashSet::from(["r-fix".to_string()])),
         generation: AtomicU64::new(0),
+        orchestrators: AtomicUsize::new(0),
         posts,
     });
     let shutdown = CancellationToken::new();
@@ -101,9 +124,17 @@ async fn start() -> Receiver {
     }
 }
 
+/// A request carrying the run's token, as Claude's exporter sends it.
 fn request(path: &str, content_type: &str, body: &[u8]) -> Vec<u8> {
+    request_with(path, content_type, body, Some(TOKEN))
+}
+
+fn request_with(path: &str, content_type: &str, body: &[u8], token: Option<&str>) -> Vec<u8> {
+    let auth = token
+        .map(|t| format!("Authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
     let mut out = format!(
-        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: {content_type}\r\n{auth}Content-Length: {}\r\nConnection: keep-alive\r\n\r\n",
         body.len()
     )
     .into_bytes();
@@ -112,7 +143,7 @@ fn request(path: &str, content_type: &str, body: &[u8]) -> Vec<u8> {
 }
 
 fn chunked(body: &[u8], size: usize) -> Vec<u8> {
-    let mut out = b"POST /v1/metrics HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+    let mut out = format!("POST /v1/metrics HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nauthorization: Bearer {TOKEN}\r\nTransfer-Encoding: chunked\r\n\r\n").into_bytes();
     for chunk in body.chunks(size) {
         out.extend_from_slice(format!("{:x};ext=1\r\n", chunk.len()).as_bytes());
         out.extend_from_slice(chunk);
@@ -494,15 +525,24 @@ async fn another_role_reaches_no_sink() {
     rx.shutdown.cancel();
 }
 
-/// Opens `OTLP_MAX_CONNECTIONS` connections that send nothing, each holding a slot.
-/// Never more than 64, so a cap raised far past its value fails the test rather than
-/// the machine's descriptor limit.
-async fn hold_every_slot(addr: SocketAddr) -> Vec<TcpStream> {
+/// Opens `n` connections that each post one tokened request, are answered, and stay
+/// open, each holding a slot (milestone 9 decision 14b: a tokened connection is never
+/// closed to make room). Never more than 64, so a cap raised far past its value fails
+/// the test rather than the machine's descriptor limit.
+async fn hold_slots(addr: SocketAddr, n: usize) -> Vec<TcpStream> {
     let mut held = Vec::new();
-    for _ in 0..OTLP_MAX_CONNECTIONS.min(64) {
-        held.push(TcpStream::connect(addr).await.unwrap());
+    // A worker's point: the connection presents its run's token, and no total is posted.
+    let body = export(&[("r-fix".to_string(), "worker")], 1);
+    for _ in 0..n.min(64) {
+        let (stream, answer) = send(addr, &request("/v1/metrics", "application/json", &body)).await;
+        assert_eq!(answer.map(|a| a.0), Some(200));
+        held.push(stream);
     }
     held
+}
+
+async fn hold_every_slot(addr: SocketAddr) -> Vec<TcpStream> {
+    hold_slots(addr, OTLP_BASE_CONNECTIONS).await
 }
 
 /// Review minor 3 and the 9th-connection ruling: with every slot held, a further

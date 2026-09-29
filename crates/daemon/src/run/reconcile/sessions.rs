@@ -64,6 +64,25 @@ pub(super) fn restored_window(
         })
 }
 
+/// Milestone 9 `CreateOrchestrator`: the restored PTY window whose persisted role names
+/// this run's orchestrator (any session); the highest id wins.
+pub(super) fn restored_orchestrator(run: &Run, windows: &[WindowInfo]) -> Reconciled {
+    let ours = |r: &RunRef| {
+        r.run_id == run.id && r.task_id.is_none() && r.role == proto::AgentRole::Orchestrator
+    };
+    windows
+        .iter()
+        .filter(|w| w.kind == WindowKind::Pty && w.run.as_ref().is_some_and(ours))
+        .map(|w| w.id)
+        .max()
+        .map_or(Reconciled::NotStarted, |window_id| {
+            Reconciled::Replay(OpResult::Window {
+                window_id,
+                pid: None,
+            })
+        })
+}
+
 /// The `RunRef` a round launched by `pending` was registered with.
 fn round_ref(run: &Run, pending: &PendingOp) -> Option<RunRef> {
     let task_id = pending.task_id.as_deref()?;

@@ -7,6 +7,7 @@
 
 pub mod contract;
 pub mod machine;
+pub mod planner;
 pub mod report;
 pub mod service;
 pub mod spec;
@@ -15,3 +16,5 @@ pub mod spec;
 mod tests;
 #[cfg(test)]
 mod tests_machine;
+#[cfg(test)]
+mod tests_planner;

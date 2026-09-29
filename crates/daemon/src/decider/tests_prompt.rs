@@ -16,6 +16,7 @@ fn triage(goal: &str) -> TriageInput {
         report_files: vec![],
         files: vec![],
         files_total: 0,
+        planner_task_cap: 12,
     }
 }
 
@@ -98,6 +99,26 @@ fn triage_prompt_is_exact_for_a_fixed_input() {
     assert_eq!(render(&request), TRIAGE_GOLDEN);
 }
 
+/// M9.3: the plan scale's upper bound is `[orchestrator] planner_task_cap`, which the
+/// driver passes in; with the default 12 the prompt is the golden one above.
+#[test]
+fn triage_prompt_uses_planner_task_cap() {
+    let prompt = render(&DeciderRequest::Triage(TriageInput {
+        planner_task_cap: 7,
+        ..triage("G")
+    }));
+    assert!(
+        prompt.contains("plan when it needs 2 to 7 tasks;"),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("2 to 12 tasks"), "{prompt}");
+    let default = render(&DeciderRequest::Triage(triage("G")));
+    assert!(
+        default.contains("plan when it needs 2 to 12 tasks;"),
+        "{default}"
+    );
+}
+
 #[test]
 fn sections_with_empty_inputs_are_omitted() {
     // Every triage section filled: each appears once, in order.
@@ -108,6 +129,7 @@ fn sections_with_empty_inputs_are_omitted() {
         report_files: vec!["Cargo.toml".into(), "src/lib.rs".into()],
         files: vec!["Cargo.toml".into()],
         files_total: 9,
+        planner_task_cap: 12,
     });
     let head = TRIAGE_GOLDEN.split("\n\nGoal:").next().unwrap();
     assert_eq!(
@@ -196,6 +218,7 @@ fn oversized_inputs_are_cut_in_order_with_the_marker() {
         report_files: vec!["a".into(), "b".into()],
         files: paths.clone(),
         files_total: 5000,
+        planner_task_cap: 12,
     });
     let prompt = render(&request);
     assert!(prompt.len() <= PROMPT_MAX_BYTES, "{}", prompt.len());
@@ -221,6 +244,7 @@ fn oversized_inputs_are_cut_in_order_with_the_marker() {
         report_files: vec!["a".into(), "b".into()],
         files: paths.clone(),
         files_total: 5000,
+        planner_task_cap: 12,
     });
     let prompt = render(&request);
     assert!(prompt.len() <= PROMPT_MAX_BYTES);
@@ -375,6 +399,7 @@ fn prompt_is_deterministic() {
     requests.push(DeciderRequest::Triage(TriageInput {
         files: many_paths(5000),
         files_total: 5000,
+        planner_task_cap: 12,
         report_summary: Some("y".repeat(50_000)),
         ..triage("G")
     }));

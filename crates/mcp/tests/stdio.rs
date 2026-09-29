@@ -25,7 +25,7 @@ async fn initialize_then_list_tools() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["task_done", "task_blocked"]);
+    assert_eq!(names, ["task_done", "task_blocked", "task_note"]);
     assert_eq!(
         list["result"]["tools"][0]["inputSchema"]["additionalProperties"],
         json!(false)
@@ -68,6 +68,7 @@ async fn tool_call_is_forwarded_with_role_run_task_and_window() {
             tool: "task_done".into(),
             args,
             scout_id: None,
+            epic: None,
         })
     );
 
@@ -126,7 +127,7 @@ async fn daemon_down_is_a_tool_error_not_a_crash() {
     let list = c.request("tools/list", json!({})).await;
     assert_eq!(
         list["result"]["tools"].as_array().unwrap().len(),
-        2,
+        3,
         "{list}"
     );
     assert!(!c.server.is_finished());
@@ -198,6 +199,73 @@ async fn a_scout_call_carries_its_scout_id() {
             tool: "submit_scout_report".into(),
             args,
             scout_id: Some("onboarding-1".into()),
+            epic: None,
         })
     );
+}
+
+/// Milestone 9 decision 15: `anthrex mcp` refuses a tool outside its role's list before
+/// it reaches the daemon. The socket does not exist, so a call that got through would
+/// say it cannot reach the daemon instead.
+#[tokio::test]
+async fn tool_outside_the_role_is_refused_without_a_daemon() {
+    let dir = tempfile::Builder::new()
+        .prefix("anthrex-mcp-none-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let socket = dir.path().join("nobody.sock");
+    let cases: [(AgentRole, &str, &str); 9] = [
+        (AgentRole::Orchestrator, "task_done", "orchestrator"),
+        (AgentRole::Orchestrator, "submit_epic", "orchestrator"),
+        (AgentRole::Orchestrator, "task_note", "orchestrator"),
+        (AgentRole::Planner, "edit_plan", "planner"),
+        (AgentRole::Planner, "run_status", "planner"),
+        (AgentRole::Planner, "spawn_scout", "planner"),
+        (AgentRole::Worker, "run_status", "worker"),
+        (AgentRole::Reviewer, "task_note", "reviewer"),
+        (AgentRole::Decider, "get_context", "decider"),
+    ];
+    for (role, tool, name) in cases {
+        let mut options = opts(role, socket.clone());
+        options.epic = (role == AgentRole::Planner).then(|| "mail".to_string());
+        let mut c = Client::start(options);
+        c.initialize().await;
+        let result = c.call(tool, json!({})).await;
+        assert!(Client::is_error(&result), "{result}");
+        assert_eq!(
+            Client::text(&result),
+            format!("tool {tool} is not available to the {name} role")
+        );
+    }
+    // A tool inside the role's list does go to the socket.
+    for (role, tool) in [
+        (AgentRole::Orchestrator, "run_status"),
+        (AgentRole::Planner, "get_context"),
+        (AgentRole::Worker, "task_note"),
+    ] {
+        let mut c = Client::start(opts(role, socket.clone()));
+        c.initialize().await;
+        let result = c.call(tool, json!({})).await;
+        assert!(
+            Client::text(&result).starts_with("cannot reach the anthrex daemon at "),
+            "{role:?} {tool}: {result}"
+        );
+    }
+}
+
+/// Milestone 9 decision 15: a sub-planner's call names its epic.
+#[tokio::test]
+async fn a_planner_call_carries_its_epic() {
+    let stub = StubDaemon::start((true, "{}"));
+    let mut options = opts(AgentRole::Planner, stub.socket.clone());
+    options.task_id = None;
+    options.epic = Some("mail".into());
+    let mut c = Client::start(options);
+    c.initialize().await;
+    let result = c.call("get_context", json!({})).await;
+    assert!(!Client::is_error(&result), "{result}");
+    let call = stub.seen()[0].call.clone().expect("the call");
+    assert_eq!(call.role, AgentRole::Planner);
+    assert_eq!(call.epic.as_deref(), Some("mail"));
+    assert_eq!(call.tool, "get_context");
 }

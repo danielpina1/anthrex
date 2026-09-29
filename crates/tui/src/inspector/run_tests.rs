@@ -186,6 +186,10 @@ fn run_fields_with_one_edit_and_yes() {
         run.plan_edits = vec![PlanEditInfo {
             at: GEMINI_DAY + 8 * 3600,
             text: "cancel t3".into(),
+            source: String::new(),
+            accepted: true,
+            error: None,
+            recipients: Vec::new(),
         }];
         run.plan_edits_since_approval = 1;
     });
@@ -298,24 +302,20 @@ fn attention_without_blocked_tasks_shows_the_first_other_line_and_counts_the_res
     );
 }
 
+/// Milestone 9 decision 29: the daemon no longer sends M8b's promotion line, and the
+/// client no longer rewrites one: any attention line is shown as sent.
 #[test]
-fn a_promotion_line_carries_the_local_request_time() {
+fn an_attention_line_is_shown_as_the_daemon_sent_it() {
     let mut app = gate_with(|run| {
         run.state = RunState::Running;
         run.promote_requested_at = Some(GEMINI_DAY + 11 * 3600 + 40 * 60);
-        run.attention = vec![
-            "promotion requested; it takes effect when the orchestrator exists (milestone 9)"
-                .into(),
-        ];
+        run.attention = vec!["promotion requested; it takes effect soon".into()];
     });
     app.utc_offset_secs = -3600;
     let inspection = inspect_node(&app, &run_key(RUN_ID));
     assert_eq!(
         value(&inspection, "attention"),
-        Some(
-            "promotion requested at 10:40; it takes effect when the orchestrator exists \
-             (milestone 9)"
-        )
+        Some("promotion requested; it takes effect soon")
     );
 }
 
@@ -416,6 +416,43 @@ fn every_progress_category_in_order() {
              · 1 blocked · 2 waiting"
         )
     );
+}
+
+/// M9.2 review ruling 3: a `Reported` task sits outside the progress categories. It is
+/// neither `waiting` nor part of the total, so the line reads as if it were absent.
+#[test]
+fn a_reported_task_is_outside_the_progress_line() {
+    let progress = |states: &[TaskState]| {
+        let app = gate_with(|run| {
+            run.state = RunState::Running;
+            run.tasks = states
+                .iter()
+                .enumerate()
+                .map(|(index, state)| {
+                    crate::tree::run_fixtures::task(
+                        &format!("t{index}"),
+                        "x",
+                        proto::Size::S,
+                        *state,
+                    )
+                })
+                .collect();
+        });
+        value(&inspect_node(&app, &run_key(RUN_ID)), "progress").map(str::to_owned)
+    };
+    let with = progress(&[
+        TaskState::Merged,
+        TaskState::Working,
+        TaskState::Reported,
+        TaskState::Pending,
+    ]);
+    let without = progress(&[TaskState::Merged, TaskState::Working, TaskState::Pending]);
+    let text = with.clone().expect("a progress line");
+    assert!(
+        text.contains("1/3 merged · 1 working · 1 waiting"),
+        "{text}"
+    );
+    assert_eq!(with, without);
 }
 
 #[test]

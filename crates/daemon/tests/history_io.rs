@@ -1,6 +1,7 @@
 //! M8b.16: the diff measurement (decision 32) against real temporary repositories, and
 //! `history.jsonl` on disk with its reconcile row (decision 33). M8b.17's revert
-//! detection is in `history_reverts.rs`.
+//! detection is in `history_reverts.rs`. Milestone 9 decision 43's `role_route` lines at
+//! the end.
 
 mod support;
 
@@ -8,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use daemon::run::engine::{OpKind, OpResult};
 use daemon::run::history_io::{
-    append_line, contains_record, fill_accepted_commit, measure_diff, read_history,
+    append_line, append_once, contains_record, fill_accepted_commit, measure_diff, read_history,
 };
 use daemon::run::journal::JournalLine;
 use daemon::run::model::{PendingOp, Run};
@@ -280,4 +281,120 @@ fn an_append_after_a_torn_last_line_starts_a_new_line() {
     std::fs::write(&empty, "").unwrap();
     append_line(&empty, &revert("revert/3", 3)).unwrap();
     assert!(std::fs::read_to_string(&empty).unwrap().starts_with('{'));
+}
+
+/// A pre-run triage record, finished with `outcome`.
+fn role_line(n: u64, outcome: proto::RoleOutcome) -> HistoryLine {
+    let route = proto::Route {
+        runtime: proto::Runtime::Claude,
+        model: "m".into(),
+        strength: proto::Strength::Fast,
+        effort: proto::Effort::Low,
+    };
+    let input = proto::RoleRoutingInput::default();
+    let session = format!("{n}/1");
+    let mut d = daemon::run::orch::roles::decider_record(
+        None,
+        (&session, "triage"),
+        &[],
+        (&route, Vec::new()),
+        input,
+        n,
+    );
+    daemon::run::orch::roles::finish(&mut d, outcome, None);
+    HistoryLine::RoleRoute(d)
+}
+
+/// Milestone 9 decision 43: a `role_route` line is written once per record id, by the
+/// engine's `AppendHistory` (reconciled after a restart as any line is) and by the
+/// driver's own append of pre-run triage's; the reader keeps one line per record.
+#[test]
+fn role_route_append_is_idempotent_by_record_id() {
+    use proto::RoleOutcome::{Fallback, Interrupted};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("repos").join("x").join("history.jsonl");
+    let line = role_line(7, Fallback);
+    assert!(append_once(&path, &line).unwrap(), "written");
+    assert!(!append_once(&path, &line).unwrap(), "held already");
+    assert_eq!(file_lines(&path).len(), 1);
+    // The engine's append of a run's record, across a restart.
+    let (mut run, _) = run_appending(dir.path(), &path);
+    let other = role_line(8, Interrupted);
+    let HistoryLine::RoleRoute(d) = &other else {
+        unreachable!()
+    };
+    let kind = OpKind::AppendHistory {
+        path: path.clone(),
+        record_id: d.record_id.clone(),
+        line: Box::new(other.clone()),
+    };
+    run.pending_ops.insert(
+        7,
+        PendingOp {
+            op: 7,
+            task_id: None,
+            kind: kind.clone(),
+        },
+    );
+    let journal = vec![JournalLine::Intent { op: 7, kind }];
+    let git = std::ffi::OsStr::new("/nonexistent/anthrex-test/git");
+    let answer = |run: &Run| reconcile(git, run, &journal, &[], T).ops;
+    assert_eq!(answer(&run), vec![(7, Reconciled::NotStarted)]);
+    append_line(&path, &other).unwrap();
+    assert_eq!(
+        answer(&run),
+        vec![(7, Reconciled::Replay(OpResult::HistoryAppended))]
+    );
+    // A record written twice anyway is read once, its last line kept.
+    append_line(&path, &other).unwrap();
+    let (lines, problems) = read_history(&path);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(lines, vec![line, other]);
+}
+
+/// Decision 43: a version-1 history (M8b's lines, with no `routing_decisions` and no
+/// `role_route` line) still reads, and so does a run persisted before any role record
+/// (M8b's `run.json`) and an orchestrator record made before its routing snapshot.
+#[test]
+fn version_1_history_and_an_old_run_json_still_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.jsonl");
+    let mut task = serde_json::to_value(support::history::merged_task("r", "t1", "c1")).unwrap();
+    task.as_object_mut().unwrap().remove("routing_decisions");
+    let mut run_record = serde_json::to_value(run_line("accepted")).unwrap();
+    run_record["v"] = 1.into();
+    let mut revert_record = serde_json::to_value(revert("revert/1", 1)).unwrap();
+    revert_record["v"] = 1.into();
+    let text: String = [task, run_record, revert_record]
+        .iter()
+        .map(|v| format!("{v}\n"))
+        .collect();
+    assert!(!text.contains("routing_decisions") && !text.contains("role_route"));
+    std::fs::write(&path, &text).unwrap();
+    append_line(&path, &role_line(9, proto::RoleOutcome::Completed)).unwrap();
+    let (lines, problems) = read_history(&path);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(lines.len(), 4, "{lines:#?}");
+    let HistoryLine::Task(t) = &lines[0] else {
+        panic!("{lines:#?}")
+    };
+    assert_eq!((t.v, t.routing_decisions.len()), (1, 0));
+    assert!(matches!(lines[3], HistoryLine::RoleRoute(_)));
+
+    let old: Run =
+        serde_json::from_str(include_str!("../src/run/engine/tests/m8b_run.json")).unwrap();
+    assert!(old.role_routing_decisions.is_empty());
+    let record = daemon::run::orch::OrchestratorRecord::new(
+        proto::Route {
+            runtime: proto::Runtime::Claude,
+            model: String::new(),
+            strength: proto::Strength::Frontier,
+            effort: proto::Effort::High,
+        },
+        1,
+    );
+    let mut value = serde_json::to_value(&record).unwrap();
+    value.as_object_mut().unwrap().remove("routing");
+    let back: daemon::run::orch::OrchestratorRecord = serde_json::from_value(value).unwrap();
+    assert_eq!(back, record);
 }

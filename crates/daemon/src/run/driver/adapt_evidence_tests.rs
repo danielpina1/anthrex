@@ -43,7 +43,7 @@ fn service_with_run(
     repo_dir: &Path,
     onboarding: Option<&str>,
 ) -> (Arc<RunService>, OpCtx) {
-    let config = ManagerConfig::new("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
     let (manager, _events) = WindowManager::new(config);
     let service = RunService::for_manager(&manager, data.to_path_buf(), Arc::new(NoRoots));
     let mut run = super::tests::run();

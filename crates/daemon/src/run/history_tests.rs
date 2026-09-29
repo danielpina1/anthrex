@@ -321,7 +321,7 @@ fn routing_history_keeps_choice_time_candidates() {
             ),
             (format!("{claude}claude-sonnet-5"), Effort::Medium, None),
             (
-                format!("{claude}claude-opus-5"),
+                format!("{claude}claude-opus-5-5"),
                 Effort::Medium,
                 s("strength frontier, the task needs standard")
             ),
@@ -339,7 +339,7 @@ fn routing_history_keeps_choice_time_candidates() {
             (format!("{claude}claude-sonnet-5"), Effort::High, None),
             (codex.to_string(), Effort::High, after.clone()),
             (
-                format!("{claude}claude-opus-5"),
+                format!("{claude}claude-opus-5-5"),
                 Effort::High,
                 after.clone()
             ),
@@ -361,7 +361,7 @@ fn routing_history_keeps_choice_time_candidates() {
         vec![
             (codex.to_string(), Effort::Medium, None),
             (
-                format!("{claude}claude-opus-5"),
+                format!("{claude}claude-opus-5-5"),
                 Effort::Medium,
                 after.clone()
             ),
@@ -381,7 +381,7 @@ fn routing_history_keeps_choice_time_candidates() {
     assert_eq!(
         candidates(&decisions[3]),
         vec![
-            (format!("{claude}claude-opus-5"), Effort::High, None),
+            (format!("{claude}claude-opus-5-5"), Effort::High, None),
             (
                 format!("{claude}claude-sonnet-5"),
                 Effort::High,

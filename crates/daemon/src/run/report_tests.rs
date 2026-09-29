@@ -379,6 +379,50 @@ fn task_lookup_helper_finds_t1() {
     assert_eq!(task(&run, "t1").id(), "t1");
 }
 
+/// Milestone 9 decision 42i: a task's section lists its messages, with their source
+/// and whether they reached the worker, and the worker's notes among its notes.
+#[test]
+fn task_section_lists_messages_and_worker_notes() {
+    use crate::run::orch::{EditSource, TaskMessage, WorkerNote};
+    let mut run = base_run();
+    let t = run.tasks.iter_mut().find(|t| t.id() == "t1").unwrap();
+    t.orch.messages.push(TaskMessage {
+        at: 0,
+        source: EditSource::Orchestrator,
+        kind: proto::MessageKind::Change,
+        text: "the client moved".into(),
+        delivered: true,
+        outbox: None,
+    });
+    t.orch.messages.push(TaskMessage {
+        at: 60,
+        source: EditSource::User,
+        kind: proto::MessageKind::Info,
+        text: "fyi".into(),
+        delivered: false,
+        outbox: Some(3),
+    });
+    t.orch.worker_notes.push(WorkerNote {
+        at: 120,
+        kind: proto::TaskNoteKind::Risk,
+        text: "the migration may lock".into(),
+        seq: 1,
+    });
+    let out = render(&run, 1_000);
+    let section = &out[out.find("## t1:").unwrap()..];
+    assert!(
+        section.contains(
+            "Messages:\n- 1970-01-01 00:00:00Z (change, from orchestrator) the client moved\n\
+             - 1970-01-01 00:01:00Z (info, from user, not delivered yet) fyi\n\n"
+        ),
+        "{section}"
+    );
+    assert!(
+        section.contains("- 1970-01-01 00:02:00Z (risk, from the worker) the migration may lock\n"),
+        "{section}"
+    );
+}
+
 #[path = "report_tests_escaping.rs"]
 mod escaping;
 

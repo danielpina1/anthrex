@@ -58,6 +58,7 @@ async fn an_error_for_another_request_is_skipped() {
         DaemonMsg::Run(RunReply::ToolResult {
             ok: true,
             text: "Task t1 recorded as done.".into(),
+            request_id: None,
         }),
     ]));
     let mut c = Client::start(opts(AgentRole::Worker, stub.socket.clone()));

@@ -8,14 +8,16 @@
 mod support;
 
 use daemon::run::git::{
-    count_commits, create_run_branch, diff_so_far, lock_worktree, preflight, prepare_review,
-    prepare_worktree, project_settings, protected_files, verify_done,
+    RefreshedIn, count_commits, count_commits_excluding, create_run_branch, diff_so_far,
+    hand_back_listing, lock_worktree, preflight, prepare_review, prepare_worktree,
+    project_settings, protected_files, resolve_target, task_summary, task_summary_excluding,
+    verify_done,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::plan::BUILTIN_PROTECTED;
 use std::ffi::OsString;
 use support::recording_git;
-use support::run_git::{T, commit_file, head, real_git, repo, wt_dir};
+use support::run_git::{T, commit_file, head, out, real_git, repo, wt_dir};
 
 const SCRUBBED: [&str; 5] = [
     "GIT_DIR",
@@ -56,6 +58,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     let task = wt.join("runs/env1/t1");
     prepare_worktree(real_git(), &repo.root, "anthrex/env1/t1", &base, &task, T).unwrap();
     let red = commit_file(&task, "src/t.rs", "t\n", "red");
+    let base_branch = out(&repo.root, &["rev-parse", "--abbrev-ref", "HEAD"]);
     let scripts = tempfile::tempdir().unwrap();
     let git = recording_git(scripts.path());
     let git = git.as_os_str();
@@ -187,6 +190,50 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
                 "anthrex/env1/t1",
                 &base,
                 &wt.join("runs/env1/t1.review"),
+                T,
+            )
+            .map(drop),
+        ),
+        // Milestone 9 (task M9.6): `task_result`'s reads and a review target's.
+        (
+            "task_summary",
+            task_summary(git, &repo.root, &base, "anthrex/env1/t1", T).map(drop),
+        ),
+        (
+            "resolve_target",
+            resolve_target(git, &repo.root, "anthrex/env1/t1", &base_branch, T).map(drop),
+        ),
+        // Milestone 9 (task M9.13a): a refresh's clean-tree check, hand-back and log.
+        (
+            "hand_back_listing",
+            hand_back_listing(git, &task, &newer, true, T).map(|(back, merged)| {
+                assert!(
+                    back.files.is_empty() && merged.lines.len() == 1 && merged.total == 1,
+                    "{back:?} {merged:?}"
+                );
+            }),
+        ),
+        // M9.13a review fixes: the counts and `task_result` without refresh merges.
+        (
+            "count_commits_excluding",
+            count_commits_excluding(
+                git,
+                &task,
+                &base,
+                &base,
+                &RefreshedIn::of(std::slice::from_ref(&base), std::slice::from_ref(&base)),
+                T,
+            )
+            .map(drop),
+        ),
+        (
+            "task_summary_excluding",
+            task_summary_excluding(
+                git,
+                &repo.root,
+                &base,
+                "anthrex/env1/t1",
+                &RefreshedIn::of(std::slice::from_ref(&base), std::slice::from_ref(&base)),
                 T,
             )
             .map(drop),

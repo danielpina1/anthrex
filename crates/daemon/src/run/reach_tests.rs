@@ -225,10 +225,60 @@ fn only_task_edits_may_widen_the_reach() {
         test_mode_reason: None,
         priority: None,
         size: Some(proto::Size::M),
+        deps: None,
     };
     assert!(edits_may_widen(&[PlanEdit::Pause, amend]));
     assert!(edits_may_widen(&[PlanEdit::SplitTask {
         task_id: "t1".into(),
         into: Vec::new(),
     }]));
+}
+
+/// Milestone 9 decision 26: a planned run has no task yet, but its orchestrator and its
+/// sub-planners reach their runtimes, so decisions 50 and 53 check them at start and
+/// every later batch's refusals keep covering them.
+#[test]
+fn reachable_runtimes_include_the_orchestrator_and_planners() {
+    let claude_only = vec![entry(Runtime::Claude, "claude-opus-5", Strength::Frontier)];
+    let mut run = run_of(
+        &config(claude_only.clone(), true),
+        "S",
+        r#"["crates/a/**"]"#,
+        "claude",
+        "claude-opus-5",
+        "low",
+    );
+    run.tasks.clear();
+    assert!(
+        reachable_runtimes(&run).is_empty(),
+        "no task, no orchestrator"
+    );
+    let orchestrator = |runtime| {
+        crate::run::orch::OrchestratorRecord::new(
+            proto::Route {
+                runtime,
+                model: String::new(),
+                strength: Strength::Frontier,
+                effort: proto::Effort::High,
+            },
+            0,
+        )
+    };
+    run.orch.orchestrator = Some(orchestrator(Runtime::Codex));
+    // The planners run on the orchestrator's runtime by default; the roster has no
+    // Codex entry, so their route falls back to Claude's.
+    assert_eq!(
+        reachable_runtimes(&run),
+        vec![Runtime::Claude, Runtime::Codex]
+    );
+    run.orch.orchestrator = Some(orchestrator(Runtime::Claude));
+    assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
+    // `[orchestrator.planners] runtime = "codex"` with a Codex entry.
+    run.roster
+        .push(entry(Runtime::Codex, "gpt-6", Strength::Frontier));
+    run.limits.orch.planners.runtime = Some(Runtime::Codex);
+    assert_eq!(
+        reachable_runtimes(&run),
+        vec![Runtime::Claude, Runtime::Codex]
+    );
 }

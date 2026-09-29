@@ -14,6 +14,9 @@ use super::engine::ladder::{round_spend, total_spend};
 use super::engine::schedule::{critical_path, readers_busy, waves, writers_busy};
 use super::messages::summary;
 use super::model::{AgentRound, Run, Task};
+pub use super::snapshot_orch::PAUSED_ATTENTION_SECS;
+pub use super::snapshot_orch::SNAPSHOT_NOTE_MAX;
+use super::snapshot_orch::{message_line, noted_lines, paused_line, plan_text_shown, task_notes};
 
 /// History entries a task shows, newest first.
 const HISTORY_SHOWN: usize = 10;
@@ -44,7 +47,10 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         .tasks
         .iter()
         .enumerate()
-        .map(|(i, t)| task_info(t, path.contains(&i), waves[i], now))
+        .map(|(i, t)| {
+            let text = plan_text_shown(run, t);
+            task_info(t, path.contains(&i), waves[i], now, text)
+        })
         .collect();
     RunInfo {
         run_id: run.id.clone(),
@@ -78,7 +84,9 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         rate_limits: run.rate_limits.clone(),
         tasks,
         critical_path: path.iter().map(|&i| run.tasks[i].spec.id.clone()).collect(),
-        attention: attention(run),
+        // Decision 42i: the run view's list also names the last discoveries and risks,
+        // which the digest carries as `task_notes`.
+        attention: [attention(run, now), noted_lines(run)].concat(),
         report_path: run.report_path(),
         outcome: run.outcome.clone(),
         created_at: run.created_at,
@@ -89,22 +97,34 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         profile_source: run.profile_source,
         usage: Some(run_usage(run)),
         scouts: Vec::new(),
-        // Milestone 8c; `planners` (M9) and the estimates (M9.5) are placeholders.
+        // Milestone 8c; the estimates (M9.5) are placeholders.
         approved_at: run.approved_at,
         plan_edits: run
             .plan_edits
             .iter()
             .rev()
             .take(PLAN_EDITS_SHOWN)
+            // Milestone 9 decision 40: sources, refusals and recipients.
             .map(|e| PlanEditInfo {
                 at: e.at,
                 text: e.text.clone(),
+                source: e.source.clone(),
+                accepted: e.accepted,
+                error: e.error.clone(),
+                recipients: e.recipients.clone(),
             })
             .collect(),
         plan_edits_since_approval: run.plan_edits_since_approval,
-        planners: Vec::new(),
+        planners: super::snapshot_orch::planners(run),
         estimate_left_secs: None,
         bound_ratio_permille: None,
+        // Milestone 9: the orchestrator and holds (task M9.7), the integration reviews
+        // and the research report (task M9.9).
+        orchestrator: super::snapshot_orch::orchestrator(run),
+        holds: super::snapshot_orch::holds(run),
+        integration: super::snapshot_orch::integration(run),
+        digest_revision: run.orch.digest_rev,
+        research_report: super::snapshot_orch::research_report(run),
     }
 }
 
@@ -112,11 +132,17 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
 /// deciders with triage, run scouts, and the orchestrator from OTLP. Every role is
 /// listed, and every sum saturates: OTLP totals come from any local process.
 pub(crate) fn run_usage(run: &Run) -> RunUsage {
-    let mut by_role: BTreeMap<String, TokenUsage> =
-        ["worker", "reviewer", "scout", "decider", "orchestrator"]
-            .into_iter()
-            .map(|role| (role.to_string(), TokenUsage::default()))
-            .collect();
+    let mut by_role: BTreeMap<String, TokenUsage> = [
+        "worker",
+        "reviewer",
+        "scout",
+        "decider",
+        "orchestrator",
+        "planner",
+    ]
+    .into_iter()
+    .map(|role| (role.to_string(), TokenUsage::default()))
+    .collect();
     let mut credit = |role: &str, u: TokenUsage| *by_role.entry(role.to_string()).or_default() += u;
     for round in run.tasks.iter().flat_map(|t| &t.rounds) {
         let role = match round.role {
@@ -124,6 +150,9 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
             AgentRole::Reviewer => "reviewer",
             AgentRole::Scout => "scout",
             AgentRole::Orchestrator => "orchestrator",
+            AgentRole::Planner => "planner",
+            // A decider has no rounds (decision 43); its usage is `decider_usage`.
+            AgentRole::Decider => "decider",
         };
         credit(role, round.usage);
     }
@@ -131,6 +160,8 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
     credit("decider", run.triage_usage);
     credit("scout", run.scout_usage);
     credit("orchestrator", run.orchestrator_usage);
+    // Milestone 9 decision 32: sub-planners' sessions.
+    credit("planner", run.orch.planner_usage);
     let mut total = TokenUsage::default();
     for u in by_role.values() {
         total += *u;
@@ -143,13 +174,17 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
     }
 }
 
-/// One line per thing the user must look at: blocked tasks, a moved base, a failed
-/// final check.
-fn attention(run: &Run) -> Vec<String> {
+/// One line per thing the user must look at at `now`: blocked tasks (a
+/// `paused(message)` one only after [`PAUSED_ATTENTION_SECS`], milestone 9 decision
+/// 42c), a moved base, a failed final check.
+pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
     let mut lines: Vec<String> = run
         .tasks
         .iter()
         .filter_map(|t| {
+            if crate::run::edits_state::is_paused(t) {
+                return paused_line(t, now);
+            }
             let block = t.block.as_ref()?;
             let reason = serde_json::to_value(block.reason).ok()?;
             Some(format!(
@@ -173,7 +208,18 @@ fn attention(run: &Run) -> Vec<String> {
         lines.push("final check failed on the run head".to_string());
     }
     lines.extend(run.stale_profile_line());
-    lines.extend(run.promotion_line());
+    lines.extend(crate::run::engine::integration_attention(run));
+    // Milestone 9 decision 13: the orchestrator could not start, or its window exited.
+    let terminal = run.state.is_terminal();
+    lines.extend(
+        run.orch
+            .orchestrator
+            .as_ref()
+            .and_then(|o| o.attention(terminal)),
+    );
+    if run.orch.wake_held && !terminal {
+        lines.push(crate::run::orch::WAKE_HELD.to_string());
+    }
     lines
 }
 
@@ -212,7 +258,7 @@ fn session_spend(task: &Task, now: u64) -> Spend {
         .unwrap_or_default()
 }
 
-fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo {
+fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: bool) -> TaskInfo {
     let done = t.done.as_ref();
     TaskInfo {
         id: t.spec.id.clone(),
@@ -308,8 +354,38 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
         diff: t.diff,
         phases: (t.phases != Default::default()).then_some(t.phases),
         block_source: t.block_source,
-        brief: t.spec.brief.clone(),
-        acceptance: t.spec.acceptance.clone(),
-        route_spec: t.spec.route.clone(),
+        // Decision 16a: only at the gate.
+        brief: if plan_text {
+            t.spec.brief.clone()
+        } else {
+            String::new()
+        },
+        acceptance: if plan_text {
+            t.spec.acceptance.clone()
+        } else {
+            Vec::new()
+        },
+        route_spec: if plan_text {
+            t.spec.route.clone()
+        } else {
+            Default::default()
+        },
+        hold: t.orch.gate_hold.clone(),
+        review_target: None,
+        research_bytes: None,
+        // Decision 42d: counts and one line, never message texts.
+        message_count: u32::try_from(t.orch.messages.len()).unwrap_or(u32::MAX),
+        last_message_kind: t.orch.messages.last().map(|m| m.kind),
+        last_message_line: message_line(t),
+        task_notes: task_notes(t),
     }
 }
+
+/// Decision 16a's test: 50 complete runs of 20 tasks encode under 1.25 KiB a task
+/// (the decision's 256 KiB cannot hold; Implementation notes, M9.6).
+#[cfg(test)]
+const SNAPSHOT_BOUND: usize = 50 * 20 * 1280;
+
+#[cfg(test)]
+#[path = "snapshot_tests.rs"]
+mod tests;

@@ -1,5 +1,6 @@
-//! The plan-edit log (milestone 8c decision 4): one record per accepted `run edit`
-//! batch, for the run view's inspector. Pure — no `std::fs`, `std::process`,
+//! The plan-edit log (milestone 8c decision 4): one record per `run edit` batch, for
+//! the run view's inspector; since milestone 9 (decision 40), every source's accepted
+//! batches and the orchestrator's and sub-planners' rejected ones. Pure — no `std::fs`, `std::process`,
 //! `std::thread`, `tokio` or `std::time::SystemTime` (design decision 2). Its own
 //! module, not `edits.rs`, which applies the edits.
 
@@ -7,6 +8,24 @@ use proto::PlanEdit;
 use serde::{Deserialize, Serialize};
 
 use super::model::Run;
+use super::orch::EditSource;
+
+/// Decision 40: how a batch ended. An accepted batch names a `message`'s resolved
+/// recipients (TT §12.5; none for any other edit); a rejected one its first error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditOutcome {
+    Accepted { recipients: Vec<String> },
+    Rejected { error: String },
+}
+
+impl EditOutcome {
+    /// An accepted batch with no `message` edit.
+    pub fn accepted() -> EditOutcome {
+        EditOutcome::Accepted {
+            recipients: Vec::new(),
+        }
+    }
+}
 
 /// One accepted batch: when, and what it did. Its own struct, not `TaskEvent`, so
 /// milestone 9 can add the edit's `source` with `#[serde(default)]`.
@@ -14,6 +33,25 @@ use super::model::Run;
 pub struct PlanEditRecord {
     pub at: u64,
     pub text: String,
+    /// Milestone 9 decision 40: `user`, `orchestrator` or `planner:<e>`; whether the
+    /// batch was accepted, a rejected one's first error, and a `message`'s recipients.
+    /// Absent from an older run: an accepted batch of the user's.
+    #[serde(default = "user_source")]
+    pub source: String,
+    #[serde(default = "accepted_by_default")]
+    pub accepted: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub recipients: Vec<String>,
+}
+
+fn user_source() -> String {
+    "user".to_string()
+}
+
+fn accepted_by_default() -> bool {
+    true
 }
 
 /// Records a run keeps; older ones are dropped.
@@ -48,6 +86,14 @@ pub fn describe(edits: &[PlanEdit]) -> String {
     out
 }
 
+fn kind_label(kind: proto::MessageKind) -> &'static str {
+    match kind {
+        proto::MessageKind::Info => "info",
+        proto::MessageKind::Change => "change",
+        proto::MessageKind::StopAndWait => "stop_and_wait",
+    }
+}
+
 fn describe_one(edit: &PlanEdit) -> String {
     match edit {
         PlanEdit::AddTask { task } => format!("add {}", task.id),
@@ -59,22 +105,74 @@ fn describe_one(edit: &PlanEdit) -> String {
         PlanEdit::Pause => "pause".to_string(),
         PlanEdit::Resume => "resume".to_string(),
         PlanEdit::Finish => "finish".to_string(),
+        // Decision 40's wording: `message t1,t2 (change)`.
+        PlanEdit::Message { to, kind, .. } => format!("message {to} ({})", kind_label(*kind)),
+        PlanEdit::Refresh { task_id } => format!("refresh {task_id}"),
     }
 }
 
-/// Records an accepted batch at `now`, keeping the last [`PLAN_EDITS_KEPT`], and counts
-/// it as an edit after approval when the plan has been approved.
-pub fn record(run: &mut Run, edits: &[PlanEdit], now: u64) {
+/// The longest stored error of a rejected batch, in characters, `…` included.
+pub const ERROR_MAX_CHARS: usize = 300;
+
+/// M9.9 review fixes, M4: a rejected batch's error, one line of at most
+/// [`ERROR_MAX_CHARS`] characters.
+fn clip_error(error: &str) -> String {
+    let one_line = |c: char| if c.is_control() { ' ' } else { c };
+    if error.chars().count() <= ERROR_MAX_CHARS {
+        return error.chars().map(one_line).collect();
+    }
+    let mut out: String = error
+        .chars()
+        .take(ERROR_MAX_CHARS - 1)
+        .map(one_line)
+        .collect();
+    out.push('…');
+    out
+}
+
+/// Records a batch from `source` at `now` with its `outcome` (decision 40), keeping the
+/// last [`PLAN_EDITS_KEPT`]; an accepted batch counts as an edit after approval when
+/// the plan has been approved.
+pub fn record(
+    run: &mut Run,
+    edits: &[PlanEdit],
+    now: u64,
+    source: &EditSource,
+    outcome: EditOutcome,
+) {
+    let (accepted, error, recipients) = match outcome {
+        EditOutcome::Accepted { recipients } => (true, None, recipients),
+        EditOutcome::Rejected { error } => (false, Some(clip_error(&error)), Vec::new()),
+    };
     run.plan_edits.push(PlanEditRecord {
         at: now,
         text: describe(edits),
+        source: source.label(),
+        accepted,
+        error,
+        recipients,
     });
-    if run.plan_edits.len() > PLAN_EDITS_KEPT {
-        let excess = run.plan_edits.len() - PLAN_EDITS_KEPT;
-        run.plan_edits.drain(..excess);
+    // M9.9 review fixes, M4: a full log drops its oldest rejected batch first, so a
+    // stream of refusals never pushes the accepted edits out.
+    while run.plan_edits.len() > PLAN_EDITS_KEPT {
+        let oldest = run.plan_edits.iter().position(|r| !r.accepted).unwrap_or(0);
+        run.plan_edits.remove(oldest);
     }
-    if run.approved_at.is_some() {
+    if accepted && run.approved_at.is_some() {
         run.plan_edits_since_approval = run.plan_edits_since_approval.saturating_add(1);
+    }
+}
+
+/// Milestone 9 decision 42e: a refresh that failed at its turn boundary sets the error
+/// of its accepted batch, the newest one described `text` (`refresh <t>`).
+pub fn set_error(run: &mut Run, text: &str, error: &str) {
+    let record = run
+        .plan_edits
+        .iter_mut()
+        .rev()
+        .find(|r| r.accepted && r.text == text);
+    if let Some(record) = record {
+        record.error = Some(clip_error(error));
     }
 }
 

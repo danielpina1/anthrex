@@ -19,6 +19,7 @@ use crate::run::contract::{
 };
 use crate::run::globs::names_literally;
 use crate::run::model::{DoneClaim, FallbackState, PendingClaim, Run, StallState};
+use crate::run::orch::contract::STOP_AND_WAIT_REFUSAL;
 
 fn reply(fx: &mut Vec<Effect>, reply: ReplyId, result: Result<String, String>) {
     fx.push(Effect::Reply { reply, result });
@@ -69,6 +70,10 @@ pub(super) fn answer(
     match call.tool.as_str() {
         "task_done" | "task_blocked" => worker_tool(run, id, &call, now, fx),
         "submit_review" => super::review::submit(run, id, &call, now, fx),
+        // Milestone 9 decision 42f, past M8a's run gate above.
+        "task_note" => super::worker_messages::task_note(run, id, &call, now, fx),
+        // Milestone 9 decision 35: a research task's report.
+        "submit_scout_report" => super::kinds::submit_research(run, id, &call, now, fx),
         other => {
             let role = serde_json::to_value(call.role)
                 .ok()
@@ -98,6 +103,10 @@ fn worker_tool(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: &mut V
         let text = format!("this window is not the current worker of task {task_id}");
         return reply(fx, id, Err(text));
     };
+    // Milestone 9 decision 42c: the fastest stop, ahead of the working-only check.
+    if call.tool == "task_done" && crate::run::edits_state::is_paused(&run.tasks[i]) {
+        return reply(fx, id, Err(STOP_AND_WAIT_REFUSAL.to_string()));
+    }
     let state = run.tasks[i].state;
     if state != TaskState::Working {
         let text = format!(
@@ -187,6 +196,8 @@ pub(super) fn claim(
         red: args.red.clone(),
         // Set exactly while `handed_back` is (merge::handed_back, ladder::end_hand_back).
         resolution: task.resolution.clone(),
+        not_own: super::worker_messages::not_own(task),
+        not_run: super::worker_messages::not_run(task),
     };
     let task_id = task.id().to_string();
     let window_id = session_window(run, i);
@@ -273,6 +284,7 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
     Some(if head_branch.as_deref() != Some(branch.as_str()) {
         "task_done rejected: this worktree's HEAD must be a detached commit with no rebase in progress; run git checkout --detach (or finish the rebase), commit, and call task_done again".to_string()
     } else if *commits == 0 {
+        // Milestone 9 decision 42e: the count leaves out refresh merges (`not_own`).
         "task_done rejected: the branch has no commit since the task started; commit your work first".into()
     } else if *dirty_tracked > 0 {
         format!(

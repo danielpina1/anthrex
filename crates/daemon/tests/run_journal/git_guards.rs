@@ -70,6 +70,7 @@ fn reconcile_hand_back_ignores_a_merge_of_something_else() {
         worktree: t1.clone(),
         run_head,
         task_head: None,
+        list_merged: false,
     };
     pend(&mut w.run, 1, Some("t1"), kind);
 

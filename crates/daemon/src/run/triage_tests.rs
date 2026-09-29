@@ -89,6 +89,7 @@ fn single_code_goal_takes_the_fast_path() {
             scout_refs: vec![],
             route: RouteSpec::default(),
             budget: None,
+            review_target: None,
         }
     );
     // A docs goal is fast too, with the kind carried.
@@ -181,6 +182,7 @@ fn fallback_triage_routes_plan_with_the_reason() {
         report_files: vec![],
         files: vec![],
         files_total: 0,
+        planner_task_cap: 12,
     });
     let d = fallback_decision(&request, OFF_REASON.into());
     let r = route(&d, true);
@@ -311,33 +313,8 @@ fn messages_are_exact() {
          t1  S  check  Fix the reset link\n\
          watch with: anthrex run status fix-the-reset-link-3f9a"
     );
-    let plan = decision(&[TaskKind::Code, TaskKind::Docs], Scale::Plan, None);
-    let refused = info(&plan, &route(&plan, true), 1);
-    assert_eq!(
-        refused_message(&refused),
-        "triage: code,docs/plan (decider): one small change in one module\n\
-         this goal needs a planned run, which arrives with the orchestrator (milestone 9). \
-         Write a plan file and run: anthrex run start --plan <file>"
-    );
-    let off = fallback_decision(
-        &DeciderRequest::Triage(TriageInput {
-            goal: "g".into(),
-            profile_summary: String::new(),
-            report_summary: None,
-            report_files: vec![],
-            files: vec![],
-            files_total: 0,
-        }),
-        OFF_REASON.into(),
-    );
-    let fell = info(&off, &route(&off, true), 1);
-    assert_eq!(
-        refused_message(&fell),
-        "triage: code/plan (fallback: deciders are off): triage fell back (deciders are off); \
-         without a decider the path is plan\n\
-         this goal needs a planned run, which arrives with the orchestrator (milestone 9). \
-         Write a plan file and run: anthrex run start --plan <file>"
-    );
+    // Milestone 9 decision 26: the planned and large paths start a planned run, so
+    // M8b's refusal text is gone (`run::orch::contract::planned_message`).
 }
 
 #[test]

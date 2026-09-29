@@ -1,0 +1,1160 @@
+{
+  "_about": "Milestone 9 brief, Interfaces \"MCP (crates/mcp)\": every tool of the orchestrator and the sub-planner, and the worker's task_note, as the table gives them. Built from the table alone, independently of the Rust schemas it checks.",
+  "orchestrator": [
+    {
+      "name": "get_context",
+      "description": "Read the run's context: the repository profile, the models you can route to, the limits, scout reports, epics and the plan so far.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "scouts": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 48
+            }
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "spawn_scout",
+      "description": "Start a read-only scout on one area with one question. Returns at once; its report appears in run_status and get_context.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "area": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "web": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "question",
+          "area"
+        ]
+      }
+    },
+    {
+      "name": "spawn_subplanner",
+      "description": "Start a sub-planner for one epic with its own area, or a fresh one to re-plan an existing epic. Returns at once.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "epic": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,10}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "area": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "brief": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          },
+          "scout_refs": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 48
+            }
+          }
+        },
+        "required": [
+          "epic",
+          "title",
+          "area",
+          "brief"
+        ]
+      }
+    },
+    {
+      "name": "edit_plan",
+      "description": "Apply plan edits as one batch. Set submit to open the plan gate. Add a summary for the user when the run is complete. Returns at once.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "edits": {
+            "type": "array",
+            "maxItems": 60,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "add_task",
+                    "split_task",
+                    "cancel_task",
+                    "amend_task",
+                    "add_dep",
+                    "answer",
+                    "pause",
+                    "resume",
+                    "finish",
+                    "message",
+                    "refresh"
+                  ]
+                },
+                "task": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9][a-z0-9-]{0,15}$"
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    },
+                    "epic": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 11
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "code",
+                        "docs",
+                        "research",
+                        "review"
+                      ]
+                    },
+                    "size": {
+                      "type": "string",
+                      "enum": [
+                        "S",
+                        "M",
+                        "L"
+                      ]
+                    },
+                    "interface_change": {
+                      "type": "boolean"
+                    },
+                    "test_mode": {
+                      "type": "string",
+                      "enum": [
+                        "tdd",
+                        "check",
+                        "none"
+                      ]
+                    },
+                    "test_mode_reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "owns": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                      }
+                    },
+                    "deps": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16
+                      }
+                    },
+                    "priority": {
+                      "type": "integer"
+                    },
+                    "brief": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8000
+                    },
+                    "acceptance": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "test_to_write": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "scout_refs": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 48
+                      }
+                    },
+                    "route": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "runtime": {
+                          "type": "string",
+                          "enum": [
+                            "claude",
+                            "codex"
+                          ]
+                        },
+                        "model": {
+                          "type": "string",
+                          "minLength": 0,
+                          "maxLength": 100
+                        },
+                        "strength": {
+                          "type": "string",
+                          "enum": [
+                            "fast",
+                            "standard",
+                            "frontier"
+                          ]
+                        },
+                        "effort": {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ]
+                        }
+                      },
+                      "required": []
+                    },
+                    "review_target": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "size",
+                    "owns",
+                    "brief",
+                    "acceptance"
+                  ]
+                },
+                "task_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16
+                },
+                "into": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 12,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,15}$"
+                      },
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "epic": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 11
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "code",
+                          "docs",
+                          "research",
+                          "review"
+                        ]
+                      },
+                      "size": {
+                        "type": "string",
+                        "enum": [
+                          "S",
+                          "M",
+                          "L"
+                        ]
+                      },
+                      "interface_change": {
+                        "type": "boolean"
+                      },
+                      "test_mode": {
+                        "type": "string",
+                        "enum": [
+                          "tdd",
+                          "check",
+                          "none"
+                        ]
+                      },
+                      "test_mode_reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                      },
+                      "owns": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 300
+                        }
+                      },
+                      "deps": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16
+                        }
+                      },
+                      "priority": {
+                        "type": "integer"
+                      },
+                      "brief": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8000
+                      },
+                      "acceptance": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        }
+                      },
+                      "test_to_write": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                      },
+                      "scout_refs": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 48
+                        }
+                      },
+                      "route": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "runtime": {
+                            "type": "string",
+                            "enum": [
+                              "claude",
+                              "codex"
+                            ]
+                          },
+                          "model": {
+                            "type": "string",
+                            "minLength": 0,
+                            "maxLength": 100
+                          },
+                          "strength": {
+                            "type": "string",
+                            "enum": [
+                              "fast",
+                              "standard",
+                              "frontier"
+                            ]
+                          },
+                          "effort": {
+                            "type": "string",
+                            "enum": [
+                              "low",
+                              "medium",
+                              "high"
+                            ]
+                          }
+                        },
+                        "required": []
+                      },
+                      "review_target": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title",
+                      "size",
+                      "owns",
+                      "brief",
+                      "acceptance"
+                    ]
+                  }
+                },
+                "brief": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8000
+                },
+                "acceptance": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
+                },
+                "route": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "runtime": {
+                      "type": "string",
+                      "enum": [
+                        "claude",
+                        "codex"
+                      ]
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 0,
+                      "maxLength": 100
+                    },
+                    "strength": {
+                      "type": "string",
+                      "enum": [
+                        "fast",
+                        "standard",
+                        "frontier"
+                      ]
+                    },
+                    "effort": {
+                      "type": "string",
+                      "enum": [
+                        "low",
+                        "medium",
+                        "high"
+                      ]
+                    }
+                  },
+                  "required": []
+                },
+                "test_mode": {
+                  "type": "string",
+                  "enum": [
+                    "tdd",
+                    "check",
+                    "none"
+                  ]
+                },
+                "test_mode_reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                },
+                "priority": {
+                  "type": "integer"
+                },
+                "size": {
+                  "type": "string",
+                  "enum": [
+                    "S",
+                    "M",
+                    "L"
+                  ]
+                },
+                "deps": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16
+                  }
+                },
+                "dep": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8000
+                },
+                "to": {
+                  "oneOf": [
+                    {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16
+                      }
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^(running|stage:[0-9]{1,4})$"
+                    }
+                  ]
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "info",
+                    "change",
+                    "stop_and_wait"
+                  ]
+                }
+              },
+              "required": [
+                "op"
+              ]
+            }
+          },
+          "submit": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          }
+        },
+        "required": [
+          "edits"
+        ]
+      }
+    },
+    {
+      "name": "run_status",
+      "description": "Read the run digest. With since and wait_secs, wait up to wait_secs seconds (at most 50) for it to change.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "since": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "wait_secs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "task_result",
+      "description": "Read everything about one task: brief, commits, diff size, checks, proofs, reviews, agent rounds and any report.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16
+          }
+        },
+        "required": [
+          "task_id"
+        ]
+      }
+    }
+  ],
+  "planner": [
+    {
+      "name": "get_context",
+      "description": "Read the run's context: the repository profile, the models you can route to, the limits, scout reports, epics and the plan so far.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "scouts": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 48
+            }
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "submit_epic",
+      "description": "Submit your epic's tasks as one batch of plan edits. If it returns errors, fix them and call it again. When it is accepted you are done.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "edits": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 60,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "add_task",
+                    "split_task",
+                    "cancel_task",
+                    "amend_task",
+                    "add_dep",
+                    "answer",
+                    "pause",
+                    "resume",
+                    "finish",
+                    "message",
+                    "refresh"
+                  ]
+                },
+                "task": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9][a-z0-9-]{0,15}$"
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    },
+                    "epic": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 11
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "code",
+                        "docs",
+                        "research",
+                        "review"
+                      ]
+                    },
+                    "size": {
+                      "type": "string",
+                      "enum": [
+                        "S",
+                        "M",
+                        "L"
+                      ]
+                    },
+                    "interface_change": {
+                      "type": "boolean"
+                    },
+                    "test_mode": {
+                      "type": "string",
+                      "enum": [
+                        "tdd",
+                        "check",
+                        "none"
+                      ]
+                    },
+                    "test_mode_reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "owns": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                      }
+                    },
+                    "deps": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16
+                      }
+                    },
+                    "priority": {
+                      "type": "integer"
+                    },
+                    "brief": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8000
+                    },
+                    "acceptance": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "test_to_write": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "scout_refs": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 48
+                      }
+                    },
+                    "route": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "runtime": {
+                          "type": "string",
+                          "enum": [
+                            "claude",
+                            "codex"
+                          ]
+                        },
+                        "model": {
+                          "type": "string",
+                          "minLength": 0,
+                          "maxLength": 100
+                        },
+                        "strength": {
+                          "type": "string",
+                          "enum": [
+                            "fast",
+                            "standard",
+                            "frontier"
+                          ]
+                        },
+                        "effort": {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ]
+                        }
+                      },
+                      "required": []
+                    },
+                    "review_target": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "size",
+                    "owns",
+                    "brief",
+                    "acceptance"
+                  ]
+                },
+                "task_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16
+                },
+                "into": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 12,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,15}$"
+                      },
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "epic": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 11
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "code",
+                          "docs",
+                          "research",
+                          "review"
+                        ]
+                      },
+                      "size": {
+                        "type": "string",
+                        "enum": [
+                          "S",
+                          "M",
+                          "L"
+                        ]
+                      },
+                      "interface_change": {
+                        "type": "boolean"
+                      },
+                      "test_mode": {
+                        "type": "string",
+                        "enum": [
+                          "tdd",
+                          "check",
+                          "none"
+                        ]
+                      },
+                      "test_mode_reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                      },
+                      "owns": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 300
+                        }
+                      },
+                      "deps": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16
+                        }
+                      },
+                      "priority": {
+                        "type": "integer"
+                      },
+                      "brief": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8000
+                      },
+                      "acceptance": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        }
+                      },
+                      "test_to_write": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                      },
+                      "scout_refs": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 48
+                        }
+                      },
+                      "route": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "runtime": {
+                            "type": "string",
+                            "enum": [
+                              "claude",
+                              "codex"
+                            ]
+                          },
+                          "model": {
+                            "type": "string",
+                            "minLength": 0,
+                            "maxLength": 100
+                          },
+                          "strength": {
+                            "type": "string",
+                            "enum": [
+                              "fast",
+                              "standard",
+                              "frontier"
+                            ]
+                          },
+                          "effort": {
+                            "type": "string",
+                            "enum": [
+                              "low",
+                              "medium",
+                              "high"
+                            ]
+                          }
+                        },
+                        "required": []
+                      },
+                      "review_target": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title",
+                      "size",
+                      "owns",
+                      "brief",
+                      "acceptance"
+                    ]
+                  }
+                },
+                "brief": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8000
+                },
+                "acceptance": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
+                },
+                "route": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "runtime": {
+                      "type": "string",
+                      "enum": [
+                        "claude",
+                        "codex"
+                      ]
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 0,
+                      "maxLength": 100
+                    },
+                    "strength": {
+                      "type": "string",
+                      "enum": [
+                        "fast",
+                        "standard",
+                        "frontier"
+                      ]
+                    },
+                    "effort": {
+                      "type": "string",
+                      "enum": [
+                        "low",
+                        "medium",
+                        "high"
+                      ]
+                    }
+                  },
+                  "required": []
+                },
+                "test_mode": {
+                  "type": "string",
+                  "enum": [
+                    "tdd",
+                    "check",
+                    "none"
+                  ]
+                },
+                "test_mode_reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                },
+                "priority": {
+                  "type": "integer"
+                },
+                "size": {
+                  "type": "string",
+                  "enum": [
+                    "S",
+                    "M",
+                    "L"
+                  ]
+                },
+                "deps": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16
+                  }
+                },
+                "dep": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8000
+                },
+                "to": {
+                  "oneOf": [
+                    {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16
+                      }
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^(running|stage:[0-9]{1,4})$"
+                    }
+                  ]
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "info",
+                    "change",
+                    "stop_and_wait"
+                  ]
+                }
+              },
+              "required": [
+                "op"
+              ]
+            }
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "edits"
+        ]
+      }
+    }
+  ],
+  "worker": [
+    {
+      "name": "task_note",
+      "description": "Report a discovery, risk or progress without blocking the task.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "discovery",
+              "risk",
+              "progress"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "kind",
+          "text"
+        ]
+      }
+    }
+  ]
+}

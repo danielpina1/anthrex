@@ -33,7 +33,7 @@ fn spec(name: &str, cwd: std::path::PathBuf) -> WindowSpec {
 /// outside the crate.
 #[tokio::test]
 async fn a_directory_gone_before_phase_c_does_not_leave_a_stale_cleanups_record() {
-    let (m, mut events) = WindowManager::new(ManagerConfig::new(
+    let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
         "/tmp/unused-restart-cleanup-test.sock".into(),
         "/bin/sh".into(),
     ));
@@ -114,7 +114,7 @@ async fn a_directory_gone_before_phase_c_does_not_leave_a_stale_cleanups_record(
 /// deterministically rather than depending on how fast a real shell dies to `SIGHUP`.
 #[tokio::test]
 async fn a_cwd_bail_before_phase_b_does_not_orphan_an_unrelated_kills_record() {
-    let (m, _events) = WindowManager::new(ManagerConfig::new(
+    let (m, _events) = WindowManager::new(ManagerConfig::for_tests(
         "/tmp/unused-restart-cwd-bail-test.sock".into(),
         "/bin/sh".into(),
     ));
@@ -190,7 +190,7 @@ async fn a_cwd_bail_before_phase_b_does_not_orphan_an_unrelated_kills_record() {
 /// test of the wrong path.
 #[tokio::test]
 async fn a_kill_wait_timeout_does_not_orphan_an_unrelated_kills_record() {
-    let mut config = ManagerConfig::new(
+    let mut config = ManagerConfig::for_tests(
         "/tmp/unused-restart-foreign-record-test.sock".into(),
         "/bin/sh".into(),
     );
@@ -259,7 +259,7 @@ async fn a_kill_wait_timeout_does_not_orphan_an_unrelated_kills_record() {
 /// live process is touched at all, not merely before the caller sees the error.
 #[tokio::test]
 async fn a_refused_restart_does_not_kill_the_live_process() {
-    let (m, mut events) = WindowManager::new(ManagerConfig::new(
+    let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
         "/tmp/unused-restart-refusal-test.sock".into(),
         "/bin/sh".into(),
     ));
@@ -332,5 +332,100 @@ async fn a_refused_restart_does_not_kill_the_live_process() {
     );
 
     // Clean up: this window still owns a real running shell.
+    let _ = m.kill(id);
+}
+
+/// Whole-branch fix round 2, item 3: a restart starts a new program, so the window's
+/// `attention_open` (a dialog of the old one left unanswered) is reset with the rest of
+/// its status, deterministically, rather than left for a hook of the new session.
+#[tokio::test]
+async fn a_restart_resets_attention_open() {
+    let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
+        "/tmp/unused-restart-attention-test.sock".into(),
+        "/bin/sh".into(),
+    ));
+    let pump = m.clone();
+    tokio::spawn(async move {
+        while let Some((id, ev)) = events.recv().await {
+            pump.handle_event(id, ev);
+        }
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let info = m
+        .create(spec("attention", cwd.clone()), cwd, None, 80, 24)
+        .await
+        .unwrap();
+    let id = info.id;
+    crate::lock(&m.inner)
+        .entries
+        .get_mut(&id)
+        .unwrap()
+        .attention_open = true;
+    assert!(m.attention_open(id));
+    m.restart(id).await.unwrap();
+    assert!(
+        !m.attention_open(id),
+        "the restart kept the old program's dialog"
+    );
+    // Clean up: this window owns the restarted shell.
+    let _ = m.kill(id);
+}
+
+/// Whole-branch fix round 3, item 3: how long a window has been held at a prompt is
+/// measured from when it reached `Idle` or `Done` with `attention_open` set; a move
+/// between `Done` and `Idle` (a client focusing a Codex window) does not restart it,
+/// and leaving the prompt (output) ends it.
+#[tokio::test]
+async fn a_done_to_idle_move_keeps_the_prompt_clock() {
+    let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
+        "/tmp/unused-prompt-clock-test.sock".into(),
+        "/bin/sh".into(),
+    ));
+    let pump = m.clone();
+    tokio::spawn(async move {
+        while let Some((id, ev)) = events.recv().await {
+            pump.handle_event(id, ev);
+        }
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let info = m
+        .create(spec("prompt-clock", cwd.clone()), cwd, None, 80, 24)
+        .await
+        .unwrap();
+    let id = info.id;
+    let since = {
+        let mut inner = crate::lock(&m.inner);
+        let entry = inner.entries.get_mut(&id).unwrap();
+        entry.status = Status::Done;
+        entry.attention_open = true;
+        entry.note_prompt();
+        entry.prompt_since.expect("held at a prompt")
+    };
+    std::thread::sleep(Duration::from_millis(20));
+    {
+        let mut inner = crate::lock(&m.inner);
+        let entry = inner.entries.get_mut(&id).unwrap();
+        assert!(
+            entry.apply(crate::status::StatusEvent::Focused),
+            "Done to Idle"
+        );
+        assert_eq!(entry.status, Status::Idle);
+        assert_eq!(
+            entry.prompt_since,
+            Some(since),
+            "the focus restarted the clock"
+        );
+    }
+    assert!(m.held_at_prompt_for(id).unwrap() >= Duration::from_millis(20));
+    {
+        let mut inner = crate::lock(&m.inner);
+        let entry = inner.entries.get_mut(&id).unwrap();
+        entry.apply(crate::status::StatusEvent::Output);
+        assert_eq!(entry.status, Status::Working);
+        assert_eq!(entry.prompt_since, None);
+    }
+    assert_eq!(m.held_at_prompt_for(id), None);
     let _ = m.kill(id);
 }

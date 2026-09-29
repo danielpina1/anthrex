@@ -205,7 +205,7 @@ fn history_lines_are_tagged() {
         assert!(json.starts_with(&format!("{{\"type\":\"{tag}\"")), "{json}");
         assert_eq!(serde_json::from_str::<HistoryLine>(&json).unwrap(), line);
     }
-    assert_eq!(HISTORY_VERSION, 1);
+    assert_eq!(HISTORY_VERSION, 2);
 }
 
 #[test]
@@ -282,9 +282,11 @@ fn every_new_request_and_reply_round_trips() {
             yes: true,
             trust_project: true,
             unconfined_checks: false,
+            orchestrator: None,
         },
         RunRequest::Promote {
             run_id: "run-a1b2".into(),
+            orchestrator: None,
         },
         RunRequest::Stats { dir: dir.clone() },
         RunRequest::Profile(ProfileRequest::Status { dir: dir.clone() }),
@@ -348,9 +350,10 @@ fn every_new_request_and_reply_round_trips() {
             triage: a_triage(),
             run_id: Some("run-a1b2".into()),
             message: "fast path".into(),
+            request_id: None,
         },
-        RunReply::Profile(Box::new(ProfileReply::Status(status))),
-        RunReply::Profile(Box::new(ProfileReply::Shown {
+        RunReply::profile(ProfileReply::Status(status)),
+        RunReply::profile(ProfileReply::Shown {
             source: ProfileSource::None,
             toml: SPEC_PROFILE.into(),
             meta: Some(ProfileMeta {
@@ -363,14 +366,14 @@ fn every_new_request_and_reply_round_trips() {
             }),
             verification: Some(a_verification()),
             dropped: vec![a_dropped()],
-        })),
-        RunReply::Profile(Box::new(ProfileReply::Done {
+        }),
+        RunReply::profile(ProfileReply::Done {
             message: "stored".into(),
-        })),
-        RunReply::Profile(Box::new(ProfileReply::Refused {
+        }),
+        RunReply::profile(ProfileReply::Refused {
             message: "no proposal".into(),
-        })),
-        RunReply::Stats(a_stats()),
+        }),
+        RunReply::stats(a_stats()),
     ];
     for reply in replies {
         let msg = DaemonMsg::Run(reply);

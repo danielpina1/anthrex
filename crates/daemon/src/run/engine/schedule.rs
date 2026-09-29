@@ -5,7 +5,7 @@
 
 use std::cmp::Reverse;
 
-use proto::{AgentRole, Size, TaskState};
+use proto::{AgentRole, Size, TaskKind, TaskState};
 
 use super::OpKind;
 use crate::run::model::{Run, Task};
@@ -19,8 +19,17 @@ pub fn holds_writer(state: TaskState) -> bool {
     )
 }
 
+/// Milestone 9 decisions 35 and 36: a research or review task reads and reports; it
+/// runs in a reader slot and never holds a writer slot.
+pub fn is_reader_task(task: &Task) -> bool {
+    matches!(task.spec.kind, TaskKind::Research | TaskKind::Review)
+}
+
 pub fn writers_busy(run: &Run) -> usize {
-    run.tasks.iter().filter(|t| holds_writer(t.state)).count()
+    run.tasks
+        .iter()
+        .filter(|t| holds_writer(t.state) && !is_reader_task(t))
+        .count()
 }
 
 /// A hub task holds a writer slot: nothing else starts, reviews included (decision
@@ -100,6 +109,10 @@ pub fn op_in_flight(run: &Run, task: &str, pred: impl Fn(&OpKind) -> bool) -> bo
 /// starts beside it. A reviewer the restart ended still holds it while it owes its
 /// verdict and can be resumed (M8a.15, decision 45): it is resumed, not replaced.
 pub fn holds_reader(run: &Run, task: &Task) -> bool {
+    // Milestone 9 decision 35: a research task holds its slot while it works.
+    if task.state == TaskState::Working && task.spec.kind == TaskKind::Research {
+        return true;
+    }
     task.state == TaskState::Review
         && (task
             .rounds
@@ -107,7 +120,11 @@ pub fn holds_reader(run: &Run, task: &Task) -> bool {
             .any(|r| r.role == AgentRole::Reviewer && !r.ended)
             || resumable_reviewer(task)
             || op_in_flight(run, task.id(), |k| {
-                matches!(k, OpKind::PrepareReview { .. })
+                // Milestone 9 decision 36: a review task's target first.
+                matches!(
+                    k,
+                    OpKind::PrepareReview { .. } | OpKind::ResolveTarget { .. }
+                )
             }))
 }
 
@@ -127,14 +144,17 @@ fn resumable_reviewer(task: &Task) -> bool {
         })
 }
 
-/// Live reviewers and, since M8b decision 18, deciders in flight.
+/// Live reviewers and, since M8b decision 18, deciders in flight; since milestone 9
+/// (decision 31), live sub-planners and run scouts.
 pub fn readers_busy(run: &Run) -> usize {
     let deciders = run
         .pending_ops
         .values()
         .filter(|p| matches!(p.kind, OpKind::Decide { .. }))
         .count();
-    run.tasks.iter().filter(|t| holds_reader(run, t)).count() + deciders
+    run.tasks.iter().filter(|t| holds_reader(run, t)).count()
+        + deciders
+        + super::planners::readers(run)
 }
 
 /// A task in `review` with no reviewer yet.
@@ -146,14 +166,17 @@ fn state_of(run: &Run, id: &str) -> Option<TaskState> {
     run.task(id).map(|t| t.state)
 }
 
-/// The dependencies `task` still waits for: declared ones not `merged`, implicit ones
-/// neither `merged` nor `cancelled` (decision 41).
+/// The dependencies `task` still waits for: declared ones neither `merged` nor, since
+/// milestone 9 (decision 35), `reported`; implicit ones neither `merged` nor
+/// `cancelled` (decision 41). Research and review tasks own nothing, so they are never
+/// an implicit dependency.
 pub fn unfinished_deps(run: &Run, task: &Task) -> Vec<String> {
-    let declared = task
-        .spec
-        .deps
-        .iter()
-        .filter(|d| state_of(run, d) != Some(TaskState::Merged));
+    let declared = task.spec.deps.iter().filter(|d| {
+        !matches!(
+            state_of(run, d),
+            Some(TaskState::Merged | TaskState::Reported)
+        )
+    });
     let implicit = task
         .implicit_deps
         .iter()

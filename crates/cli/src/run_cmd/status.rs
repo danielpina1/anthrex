@@ -4,6 +4,8 @@
 use daemon::run::triage::{kinds_scale, source_label};
 use proto::{BaseMovedInfo, GateCounts, Route, RunInfo, RunState, Size, TaskInfo, TestMode};
 
+use super::status_orch::{orchestrator_lines, state_text};
+
 /// Decision 20: the commits a moved-base prompt lists, at most.
 pub const LISTED_COMMITS: usize = 50;
 
@@ -23,7 +25,8 @@ pub fn render(runs: &[RunInfo], utc_offset: i64) -> String {
 }
 
 /// One run's block: the header, a halted run's reason, the goal, the report path, the
-/// task table, when promotion was requested (local time) and the attention lines.
+/// orchestrator's lines (milestone 9), the task table, when promotion was requested
+/// (local time) and the attention lines.
 pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
     let merged = run
         .tasks
@@ -82,11 +85,12 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
             "  checks: unconfined (this platform cannot confine checks, proofs and setup)\n",
         );
     }
+    out.push_str(&orchestrator_lines(run));
     out.push_str(&row(
         "ID", "SIZE", "MODE", "STATE", "RUNG", "BOUNCES", "ROUTE", "WINDOWS",
     ));
     for task in &run.tasks {
-        out.push_str(&task_row(task));
+        out.push_str(&task_row(run, task));
     }
     // Review I1 (M8c.1): the snapshot's promotion line carries no time; this is it, local.
     if let Some(at) = run.promote_requested_at {
@@ -139,7 +143,7 @@ fn cell(text: &str, width: usize) -> String {
     }
 }
 
-fn task_row(task: &TaskInfo) -> String {
+fn task_row(run: &RunInfo, task: &TaskInfo) -> String {
     let size = format!(
         "{}{}",
         size_label(task.size),
@@ -149,7 +153,7 @@ fn task_row(task: &TaskInfo) -> String {
         &task.id,
         &size,
         mode_label(task.test_mode),
-        task.state.label(),
+        &state_text(run, task),
         &task.rung.to_string(),
         &bounces_text(&task.bounces),
         &route_text(&task.route),
@@ -263,5 +267,14 @@ pub(super) mod tests;
 fn one_line(text: &str) -> String {
     text.chars()
         .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
+/// M9.14 review fixes, item 3: a daemon's reply or refusal, which may echo what the user
+/// typed, as the terminal is given it: every control character but the newline (an
+/// escape, a bell, a carriage return) shown as a space.
+pub fn printable(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() && c != '\n' { ' ' } else { c })
         .collect()
 }

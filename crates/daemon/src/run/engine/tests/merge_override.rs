@@ -48,6 +48,8 @@ fn handed_back_after_rung_3(exit_first: bool) -> (Fixture, Vec<Effect>) {
             files: vec!["b/shared.txt".into()],
             head: None,
             onto: Some(HEAD.into()),
+            merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);

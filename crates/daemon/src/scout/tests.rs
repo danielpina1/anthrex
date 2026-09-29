@@ -88,6 +88,7 @@ fn area_scout_spec_is_read_only() {
             run_id: "r1".into(),
             task_id: None,
             scout_id: Some("api-1".into()),
+            epic: None,
         })
     );
     assert_eq!(
@@ -182,6 +183,7 @@ fn onboarding_scout_spec_is_read_only_too() {
             run_id: String::new(),
             task_id: None,
             scout_id: Some("onboarding-1".into()),
+            epic: None,
         })
     );
     assert_eq!(spec.output_filter, None);
@@ -349,7 +351,7 @@ fn route_picks_the_lowest_strength_at_or_above() {
     let peer = route(&roster, Runtime::Codex, Strength::Frontier, Effort::Low);
     assert_eq!(
         (peer.runtime, peer.model.as_str()),
-        (Runtime::Claude, "claude-opus-5")
+        (Runtime::Claude, "claude-opus-5-5")
     );
     // Nothing at or above on either runtime: the runtime's first entry.
     let only_fast = vec![roster[0].clone(), roster[3].clone()];

@@ -6,7 +6,10 @@ use super::{
     NodeKey, ProjectChild, ProjectGroup, RuntimeCounts, TreeState, display_names, matches_filter,
     urgency,
 };
-use proto::{AgentRole, RunInfo, RunState, Runtime, Status, TaskState, WindowInfo};
+use proto::{
+    AgentRole, BlockReason, HoldInfo, HoldState, RunInfo, RunState, Runtime, Status, TaskInfo,
+    TaskState, WindowInfo,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -32,19 +35,47 @@ pub fn shown_runs(runs: &[RunInfo]) -> impl Iterator<Item = &RunInfo> {
     shown.into_iter()
 }
 
-/// Decision 9: the status a run contributes to its project's roll-up.
+/// Milestone 9 decision 42c: a `paused(message)` task — blocked, but by the
+/// orchestrator's `stop_and_wait`, not by anything the user must answer.
+pub fn is_paused(task: &TaskInfo) -> bool {
+    task.state == TaskState::Blocked
+        && task
+            .block
+            .as_ref()
+            .is_some_and(|block| block.reason == BlockReason::MessagePause)
+}
+
+/// Milestone 9 decision 28: the run's holds that await the user's approval.
+pub fn awaiting_holds(run: &RunInfo) -> impl Iterator<Item = &HoldInfo> {
+    run.holds
+        .iter()
+        .filter(|hold| hold.state == HoldState::Awaiting)
+}
+
+/// Milestone 9 decision 28: `task` waits in a hold not yet approved, so it is not
+/// runnable. A hold the snapshot does not list holds nothing.
+pub fn task_held(run: &RunInfo, task: &TaskInfo) -> bool {
+    let Some(id) = task.hold.as_deref() else {
+        return false;
+    };
+    run.holds.iter().any(|hold| {
+        hold.id == id && matches!(hold.state, HoldState::Drafting | HoldState::Awaiting)
+    })
+}
+
+/// Decision 9: the status a run contributes to its project's roll-up. Milestone 9: a
+/// hold awaiting approval asks for the user; a `paused(message)` task does not until
+/// the daemon lists it in the run's attention (after 600 s, decision 42c), since any
+/// line the daemon lists there asks for the user.
 pub fn run_status(run: &RunInfo) -> Status {
+    let blocked = |task: &TaskInfo| task.state == TaskState::Blocked && !is_paused(task);
+    let asks = run.tasks.iter().any(blocked)
+        || awaiting_holds(run).next().is_some()
+        || !run.attention.is_empty();
     match run.state {
         RunState::AwaitingApproval | RunState::Paused | RunState::Halted => Status::Attention,
-        RunState::Running
-            if run
-                .tasks
-                .iter()
-                .any(|task| task.state == TaskState::Blocked) =>
-        {
-            Status::Attention
-        }
-        RunState::Running => Status::Working,
+        RunState::Running | RunState::Planning if asks => Status::Attention,
+        RunState::Running | RunState::Planning => Status::Working,
         RunState::Complete | RunState::Accepted => Status::Done,
         // Terminal: never shown (decision 6), mapped only to keep the match exhaustive.
         RunState::Discarded | RunState::Failed => Status::Exited,

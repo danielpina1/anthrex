@@ -112,6 +112,7 @@ fn a_headless_spec_round_trips_through_json() {
             run_id: "r-3f9a".into(),
             task_id: Some("t1".into()),
             scout_id: None,
+            epic: None,
         }),
         allowed_tools: vec!["Bash".into()],
         claude_permission_mode: Some("acceptEdits".into()),
@@ -132,6 +133,22 @@ fn a_headless_spec_round_trips_through_json() {
     let json = serde_json::to_value(&spec).unwrap();
     assert_eq!(json["claude_auth"], "api_key");
     assert_eq!(serde_json::from_value::<HeadlessSpec>(json).unwrap(), spec);
+}
+
+/// Milestone 9 decision 31: a spec persisted before `McpTarget.epic` existed still
+/// loads, with no epic.
+#[test]
+fn a_persisted_spec_without_an_epic_still_loads() {
+    let target = McpTarget {
+        role: AgentRole::Worker,
+        run_id: "r-3f9a".into(),
+        task_id: Some("t1".into()),
+        scout_id: None,
+        epic: None,
+    };
+    let mut json = serde_json::to_value(&target).unwrap();
+    json.as_object_mut().unwrap().remove("epic");
+    assert_eq!(serde_json::from_value::<McpTarget>(json).unwrap(), target);
 }
 
 /// Final fix batch F2 (review C, M2; round 2, N2): only a Claude `api_key` session keeps
@@ -166,13 +183,20 @@ fn only_a_claude_api_key_session_keeps_the_api_credentials() {
         };
         credential_scrub(&spec).to_vec()
     };
-    let openai = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
+    let openai = [
+        "OPENAI_API_KEY",
+        "CODEX_API_KEY",
+        "CODEX_ACCESS_TOKEN",
+        "OPENAI_BASE_URL",
+    ];
     let all = [
         "OPENAI_API_KEY",
         "CODEX_API_KEY",
         "CODEX_ACCESS_TOKEN",
+        "OPENAI_BASE_URL",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
     ];
     assert_eq!(scrub(Runtime::Claude, config::ClaudeAuth::Login), all);
     assert_eq!(scrub(Runtime::Claude, config::ClaudeAuth::ApiKey), openai);

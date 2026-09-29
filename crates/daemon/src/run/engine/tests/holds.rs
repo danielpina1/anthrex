@@ -129,6 +129,8 @@ fn an_answer_after_the_new_dependency_merged_hands_back_first() {
             files: vec![],
             head: None,
             onto: None,
+            merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);
@@ -157,6 +159,8 @@ fn a_dependency_added_while_the_hand_back_runs_keeps_the_hold() {
             files: vec![],
             head: None,
             onto: None,
+            merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_held(&fx);
@@ -176,6 +180,8 @@ fn a_dependency_added_while_the_hand_back_runs_keeps_the_hold() {
             files: vec![],
             head: None,
             onto: None,
+            merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);
@@ -206,6 +212,8 @@ fn an_answer_while_the_hand_back_runs_waits_for_it() {
             files: files.clone(),
             head: None,
             onto: None,
+            merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let t1 = fx.task("t1");

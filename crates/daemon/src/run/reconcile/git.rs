@@ -11,8 +11,8 @@ use crate::run::engine::OpResult;
 use crate::run::git::is_id;
 use crate::run::git::{
     Git, Leftover, Repo, clear_merge_state, failure, finish_clean, forget_missing,
-    interrupted_conflict, is_ancestor, leftover, listed_worktree_in, os, read, reattach_in, short,
-    sync_in, undo_clean_merge, unmerged,
+    interrupted_conflict, is_ancestor, leftover, listed_worktree_in, merged_log, os, read,
+    reattach_in, short, sync_in, undo_clean_merge, unmerged,
 };
 
 /// `PrepareWorktree` (final fix batch F1c, 3a): the task's checkout is its own
@@ -204,7 +204,7 @@ fn reattach(
 pub(super) fn hand_back(
     g: Git<'_>,
     worktree: &Path,
-    run_head: &str,
+    (run_head, list_merged): (&str, bool),
     notes: &mut Vec<String>,
 ) -> Result<Reconciled, String> {
     let target = read(g, worktree, &format!("{run_head}^{{commit}}"))?;
@@ -245,6 +245,8 @@ pub(super) fn hand_back(
                     files,
                     onto: parent(1)?,
                     head,
+                    merged: Vec::new(),
+                    merged_total: 0,
                 }));
             }
             Leftover::Untouched => {
@@ -275,12 +277,25 @@ pub(super) fn hand_back(
             files,
             onto: head.clone(),
             head,
+            merged: Vec::new(),
+            merged_total: 0,
         }));
     }
     let Some(target) = target else {
         return Ok(Reconciled::NotStarted);
     };
     if parent(2)?.as_deref() == Some(target.as_str()) {
+        // M9.13a review, item 3: a refresh claims only a merge it could have made, a
+        // clean one whose tree is `merge-tree`'s. A merge the worker committed itself
+        // (a conflict it resolved) is not the refresh's, so the refresh runs again
+        // and finds the branch up to date.
+        if list_merged && !clean_merge_of(g, worktree, &tip, parent(1)?.as_deref(), &target)? {
+            notes.push(format!(
+                "{}'s merge of the run head is not a clean refresh merge; the refresh runs again",
+                worktree.display()
+            ));
+            return Ok(Reconciled::NotStarted);
+        }
         match finish_clean(g, worktree, &tip) {
             Ok(false) => {}
             Ok(true) => notes.push(format!(
@@ -295,10 +310,18 @@ pub(super) fn hand_back(
                 return Ok(Reconciled::NotStarted);
             }
         }
+        let onto = parent(1)?;
+        // Milestone 9 decision 42e: a refresh's clean merge names what it merged.
+        let merged = match (&onto, list_merged) {
+            (Some(onto), true) => merged_log(g, worktree, onto, &target)?,
+            _ => Default::default(),
+        };
         return Ok(Reconciled::Replay(OpResult::HandedBack {
             files: Vec::new(),
-            onto: parent(1)?,
+            onto,
             head,
+            merged: merged.lines,
+            merged_total: merged.total,
         }));
     }
     if let Some(tree) = interrupted_conflict(g, worktree, &tip, &target)? {
@@ -317,6 +340,33 @@ pub(super) fn hand_back(
         });
     }
     Ok(Reconciled::NotStarted)
+}
+
+/// Whether `tip` is the clean merge of `onto` and `target` the hand-back makes: `git
+/// merge-tree --write-tree` of the two merges cleanly, to `tip`'s own tree.
+fn clean_merge_of(
+    g: Git<'_>,
+    worktree: &Path,
+    tip: &str,
+    onto: Option<&str>,
+    target: &str,
+) -> Result<bool, String> {
+    let Some(onto) = onto else {
+        return Ok(false);
+    };
+    let args = [
+        os("merge-tree"),
+        os("--write-tree"),
+        os("--no-messages"),
+        os(onto),
+        os(target),
+    ];
+    let merged = g.read(worktree, &args)?;
+    if !merged.success {
+        return Ok(false);
+    }
+    let tree = read(g, worktree, &format!("{tip}^{{tree}}"))?;
+    Ok(tree.as_deref() == merged.stdout.lines().next().map(str::trim))
 }
 
 /// `AbortMerge` (carry to M8a.21, ruling on task 15): no `MERGE_HEAD` means the abort

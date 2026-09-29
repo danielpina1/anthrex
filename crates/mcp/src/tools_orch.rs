@@ -1,0 +1,261 @@
+//! Milestone 9's tools (decision 15, Interfaces "MCP"): the orchestrator's six, the
+//! sub-planner's two and the worker's `task_note`. Every schema is a closed object at
+//! every level. The limits are what the model sees; the daemon parses every call again
+//! (`daemon::run::orch::tools::parse_call`) and refuses what breaks them. No tool here
+//! approves, accepts, merges or overrides anything: `plan_edit`'s `op` has no such
+//! operation.
+
+use rmcp::model::{JsonObject, Tool};
+use serde_json::{Value, json};
+
+use crate::tools::{closed, one_of, text};
+
+pub const GET_CONTEXT: &str = "get_context";
+pub const SPAWN_SCOUT: &str = "spawn_scout";
+pub const SPAWN_SUBPLANNER: &str = "spawn_subplanner";
+pub const EDIT_PLAN: &str = "edit_plan";
+pub const RUN_STATUS: &str = "run_status";
+pub const TASK_RESULT: &str = "task_result";
+pub const SUBMIT_EPIC: &str = "submit_epic";
+pub const TASK_NOTE: &str = "task_note";
+
+/// The most `run_status` waits, in seconds (decision 16).
+pub const RUN_STATUS_MAX_WAIT: u64 = 50;
+
+/// `tools_for(Orchestrator)`, in decision 15's order.
+pub fn orchestrator_tools() -> Vec<Tool> {
+    vec![
+        get_context(),
+        spawn_scout(),
+        spawn_subplanner(),
+        edit_plan(),
+        run_status(),
+        task_result(),
+    ]
+}
+
+/// `tools_for(Planner)`.
+pub fn planner_tools() -> Vec<Tool> {
+    vec![get_context(), submit_epic()]
+}
+
+/// The worker's third tool (decision 42f).
+pub fn task_note() -> Tool {
+    Tool::new(
+        TASK_NOTE,
+        "Report a discovery, risk or progress without blocking the task.",
+        closed(
+            json!({
+                "kind": one_of(&["discovery", "risk", "progress"]),
+                "text": text(4000),
+            }),
+            &["kind", "text"],
+        ),
+    )
+}
+
+fn get_context() -> Tool {
+    Tool::new(
+        GET_CONTEXT,
+        "Read the run's context: the repository profile, the models you can route to, the \
+         limits, scout reports, epics and the plan so far.",
+        closed(json!({"scouts": array(text(48), None, 50)}), &[]),
+    )
+}
+
+fn spawn_scout() -> Tool {
+    Tool::new(
+        SPAWN_SCOUT,
+        "Start a read-only scout on one area with one question. Returns at once; its report \
+         appears in run_status and get_context.",
+        closed(
+            json!({
+                "id": pattern("^[a-z0-9][a-z0-9-]{0,31}$"),
+                "question": text(2000),
+                "area": array(text(300), Some(1), 20),
+                "web": boolean(),
+            }),
+            &["id", "question", "area"],
+        ),
+    )
+}
+
+fn spawn_subplanner() -> Tool {
+    Tool::new(
+        SPAWN_SUBPLANNER,
+        "Start a sub-planner for one epic with its own area, or a fresh one to re-plan an \
+         existing epic. Returns at once.",
+        closed(
+            json!({
+                "epic": pattern("^[a-z0-9][a-z0-9-]{0,10}$"),
+                "title": text(80),
+                "area": array(text(300), Some(1), 20),
+                "brief": text(8000),
+                "scout_refs": array(text(48), None, 20),
+            }),
+            &["epic", "title", "area", "brief"],
+        ),
+    )
+}
+
+fn edit_plan() -> Tool {
+    Tool::new(
+        EDIT_PLAN,
+        "Apply plan edits as one batch. Set submit to open the plan gate. Add a summary for \
+         the user when the run is complete. Returns at once.",
+        closed(
+            json!({
+                "edits": array(object(plan_edit()), None, 60),
+                "submit": boolean(),
+                "summary": text(8000),
+            }),
+            &["edits"],
+        ),
+    )
+}
+
+fn run_status() -> Tool {
+    Tool::new(
+        RUN_STATUS,
+        "Read the run digest. With since and wait_secs, wait up to wait_secs seconds (at most \
+         50) for it to change.",
+        closed(
+            json!({
+                "since": {"type": "integer", "minimum": 0},
+                "wait_secs": {"type": "integer", "minimum": 0, "maximum": RUN_STATUS_MAX_WAIT},
+            }),
+            &[],
+        ),
+    )
+}
+
+fn task_result() -> Tool {
+    Tool::new(
+        TASK_RESULT,
+        "Read everything about one task: brief, commits, diff size, checks, proofs, reviews, \
+         agent rounds and any report.",
+        closed(json!({"task_id": text(16)}), &["task_id"]),
+    )
+}
+
+fn submit_epic() -> Tool {
+    Tool::new(
+        SUBMIT_EPIC,
+        "Submit your epic's tasks as one batch of plan edits. If it returns errors, fix them \
+         and call it again. When it is accepted you are done.",
+        closed(
+            json!({
+                "edits": array(object(plan_edit()), Some(1), 60),
+                "note": text(2000),
+            }),
+            &["edits"],
+        ),
+    )
+}
+
+/// M8a's `PlanEdit` as the model writes it. Which keys each `op` needs is the daemon's
+/// serde shape; this schema only bounds them.
+fn plan_edit() -> JsonObject {
+    closed(
+        json!({
+            "op": one_of(&[
+                "add_task", "split_task", "cancel_task", "amend_task", "add_dep", "answer",
+                "pause", "resume", "finish", "message", "refresh",
+            ]),
+            "task": object(plan_task()),
+            "task_id": text(16),
+            "into": array(object(plan_task()), Some(1), 12),
+            "brief": text(8000),
+            "acceptance": array(text(500), Some(1), 20),
+            "route": object(route()),
+            "test_mode": test_mode(),
+            "test_mode_reason": text(300),
+            "priority": integer(),
+            "size": size(),
+            "deps": array(text(16), None, 20),
+            "dep": text(16),
+            "text": text(8000),
+            "to": {"oneOf": [
+                array(text(16), Some(1), 20),
+                pattern("^(running|stage:[0-9]{1,4})$"),
+            ]},
+            "kind": one_of(&["info", "change", "stop_and_wait"]),
+        }),
+        &["op"],
+    )
+}
+
+/// A task as `add_task` and `split_task` take it. `budget` is deliberately absent
+/// (decision 23.1).
+fn plan_task() -> JsonObject {
+    closed(
+        json!({
+            "id": pattern("^[a-z0-9][a-z0-9-]{0,15}$"),
+            "title": text(120),
+            "epic": text(11),
+            "kind": one_of(&["code", "docs", "research", "review"]),
+            "size": size(),
+            "interface_change": boolean(),
+            "test_mode": test_mode(),
+            "test_mode_reason": text(300),
+            "owns": array(text(300), None, 20),
+            "deps": array(text(16), None, 20),
+            "priority": integer(),
+            "brief": text(8000),
+            "acceptance": array(text(500), Some(1), 20),
+            "test_to_write": text(300),
+            "scout_refs": array(text(48), None, 20),
+            "route": object(route()),
+            "review_target": text(200),
+        }),
+        &["id", "title", "size", "owns", "brief", "acceptance"],
+    )
+}
+
+fn route() -> JsonObject {
+    closed(
+        json!({
+            "runtime": one_of(&["claude", "codex"]),
+            "model": {"type": "string", "minLength": 0, "maxLength": 100},
+            "strength": one_of(&["fast", "standard", "frontier"]),
+            "effort": one_of(&["low", "medium", "high"]),
+        }),
+        &[],
+    )
+}
+
+fn size() -> Value {
+    one_of(&["S", "M", "L"])
+}
+
+fn test_mode() -> Value {
+    one_of(&["tdd", "check", "none"])
+}
+
+fn boolean() -> Value {
+    json!({"type": "boolean"})
+}
+
+fn integer() -> Value {
+    json!({"type": "integer"})
+}
+
+fn pattern(re: &str) -> Value {
+    json!({"type": "string", "pattern": re})
+}
+
+fn object(o: JsonObject) -> Value {
+    Value::Object(o)
+}
+
+/// An array of `items`, `min` to `max` of them (no lower bound when `min` is `None`).
+fn array(items: Value, min: Option<u64>, max: u64) -> Value {
+    match min {
+        Some(min) => json!({"type": "array", "minItems": min, "maxItems": max, "items": items}),
+        None => json!({"type": "array", "maxItems": max, "items": items}),
+    }
+}
+
+#[cfg(test)]
+#[path = "tools_orch_tests.rs"]
+mod tests;

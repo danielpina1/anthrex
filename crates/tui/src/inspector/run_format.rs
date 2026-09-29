@@ -59,13 +59,12 @@ pub fn progress_bar(done: u64, total: u64, width: usize) -> String {
     format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
 }
 
-/// `text` with every control character a space, cut to [`TEXT_MAX_CHARS`] with `…`.
+/// `text` with every control character and line separator a space and every bidi
+/// control dropped (`safe_text::one_line`, milestone 9's M-6), cut to
+/// [`TEXT_MAX_CHARS`] with `…`.
 pub(super) fn clean(text: &str) -> String {
-    let mut out: String = text
-        .chars()
-        .take(TEXT_MAX_CHARS)
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
+    let head: String = text.chars().take(TEXT_MAX_CHARS).collect();
+    let mut out = crate::safe_text::one_line(&head);
     if text.chars().nth(TEXT_MAX_CHARS).is_some() {
         out.push('…');
     }
@@ -118,7 +117,7 @@ fn category(state: TaskState) -> Option<usize> {
         TaskState::MergeQueue => Some(3),
         TaskState::Blocked => Some(4),
         TaskState::Pending | TaskState::Queued => Some(5),
-        TaskState::Merged | TaskState::Cancelled => None,
+        TaskState::Merged | TaskState::Cancelled | TaskState::Reported => None,
     }
 }
 
@@ -127,7 +126,8 @@ const CATEGORIES: [&str; 6] = [
 ];
 
 /// Decision 30's progress line over `tasks`: the bar, `{merged}/{total} merged`, each
-/// non-zero category, then the cancelled; `no tasks yet` when nothing counts.
+/// non-zero category, then the cancelled; `no tasks yet` when nothing counts. A
+/// `Reported` task is not counted at all.
 pub(super) fn progress_text<'a>(tasks: impl Iterator<Item = &'a TaskInfo>, width: usize) -> String {
     let (mut merged, mut total, mut cancelled) = (0u64, 0u64, 0u64);
     let mut counts = [0u64; 6];
@@ -135,6 +135,9 @@ pub(super) fn progress_text<'a>(tasks: impl Iterator<Item = &'a TaskInfo>, width
         match task.state {
             TaskState::Cancelled => cancelled += 1,
             TaskState::Merged => merged += 1,
+            // A research or review task's report (M9.9) ends it without a merge: it
+            // is outside the progress categories and the total (M9.2 review ruling 3).
+            TaskState::Reported => continue,
             state => counts[category(state).unwrap_or(5)] += 1,
         }
         total += u64::from(task.state != TaskState::Cancelled);
@@ -166,6 +169,7 @@ pub(super) fn reason_text(reason: BlockReason) -> &'static str {
         BlockReason::DepCancelled => "dependency cancelled",
         BlockReason::Question => "question",
         BlockReason::Environment => "environment",
+        BlockReason::MessagePause => "paused(message)",
     }
 }
 

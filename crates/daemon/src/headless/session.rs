@@ -366,6 +366,7 @@ fn session_env(command: &mut Command, env: &[(String, String)], remove: &[&str])
         let bytes = key.as_bytes();
         if SCRUB_PREFIXES
             .iter()
+            .chain(config::reserved_env::AGENT_SCRUBBED_PREFIXES)
             .any(|prefix| bytes.starts_with(prefix.as_bytes()))
         {
             command.env_remove(&key);

@@ -183,6 +183,7 @@ pub fn create_window(cwd: &Path, run_ref: RunRef, uuid: Option<&str>) -> OpKind 
         project: cwd.to_path_buf(),
         worktree: cwd.to_path_buf(),
         jitter_ms: 0,
+        extract: None,
     }
 }
 
@@ -273,6 +274,7 @@ pub fn full_run(data_dir: &Path) -> Run {
             worktree: PathBuf::from("/tmp/t2"),
             run_head: "e".repeat(40),
             task_head: Some("f".repeat(40)),
+            list_merged: false,
         },
     );
 
@@ -412,6 +414,8 @@ pub fn some_results() -> Vec<OpResult> {
             files: vec!["x".into()],
             head: Some("b".repeat(40)),
             onto: None,
+            merged: Vec::new(),
+            merged_total: 0,
         },
         OpResult::Finished {
             outcome: "accepted as abcdef1".into(),

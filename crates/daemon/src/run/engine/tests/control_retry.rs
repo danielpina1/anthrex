@@ -87,7 +87,7 @@ fn retry_resets_counts_and_starts_a_fresh_session_at_rung_2() {
         unreachable!()
     };
     let why = format!("the user retried it (it was blocked(mis_sized): {text})");
-    let expected = handover_prompt(fx.run(), fx.task("t1"), &why, &stat, &patch);
+    let expected = handover_prompt(fx.run(), fx.task("t1"), &why, &stat, &patch, "", "");
     assert_eq!(first_turn, expected, "no stale append");
     assert_eq!(fx.task("t1").session, 2);
     fx.complete_windows();
@@ -208,6 +208,8 @@ fn a_retried_held_task_is_handed_back_before_its_fresh_session() {
             files: Vec::new(),
             head: Some(HEAD.into()),
             onto: Some(HEAD.into()),
+            merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let t1 = fx.task("t1");

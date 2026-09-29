@@ -1,0 +1,199 @@
+{
+  "attention": [
+    "t2 blocked (question): which endpoint?"
+  ],
+  "counts": {
+    "blocked": 1,
+    "cancelled": 0,
+    "checking": 0,
+    "held": 1,
+    "merged": 1,
+    "merging": 0,
+    "paused": 0,
+    "reported": 0,
+    "review": 0,
+    "total": 4,
+    "waiting": 1,
+    "working": 1
+  },
+  "edits": [
+    {
+      "accepted": true,
+      "at": "11:40",
+      "error": null,
+      "recipients": [
+        "t1"
+      ],
+      "source": "orchestrator",
+      "text": "message t1 (info)"
+    }
+  ],
+  "gate": {
+    "at": "11:02",
+    "holds": [
+      {
+        "id": "epic:c",
+        "state": "awaiting",
+        "tasks": 1
+      }
+    ],
+    "state": "approved"
+  },
+  "integration": [
+    {
+      "epic": "a",
+      "findings": null,
+      "round": 1,
+      "state": "changes",
+      "task": null
+    }
+  ],
+  "notes": [
+    "t2 blocked (question): which endpoint?"
+  ],
+  "now": 1789993860,
+  "omitted_tasks": 0,
+  "planners": [
+    {
+      "epic": "a",
+      "last_rejection": "task a1: size: needs evidence",
+      "note": null,
+      "rejected": 1,
+      "state": "finished",
+      "tasks": 1
+    }
+  ],
+  "revision": 42,
+  "run": {
+    "approved_by": "user",
+    "base": "main@bbbbbbb",
+    "complete": false,
+    "goal": "Test goal",
+    "halted_reason": null,
+    "id": "add-password-reset-3f9a",
+    "path": "large",
+    "state": "running",
+    "summary_written": false
+  },
+  "scouts": [
+    {
+      "failure": null,
+      "id": "3f9a-daemon",
+      "question": "What is in 3f9a-daemon?",
+      "state": "reported"
+    },
+    {
+      "failure": "the daemon restarted during this scout",
+      "id": "3f9a-tui",
+      "question": "What is in 3f9a-tui?",
+      "state": "failed"
+    }
+  ],
+  "slots": {
+    "readers": "0/3",
+    "writers": "1/3"
+  },
+  "spend": {
+    "tokens": 0,
+    "tool_calls": 0
+  },
+  "task_notes": [
+    {
+      "at": "12:29",
+      "kind": "discovery",
+      "task": "t1",
+      "text": "the hook fires twice"
+    }
+  ],
+  "tasks": [
+    {
+      "block": null,
+      "deps": [],
+      "epic": null,
+      "hold": null,
+      "hub": true,
+      "id": "t0",
+      "kind": "code",
+      "last": "11:30 merged",
+      "messages": {
+        "count": 0,
+        "refresh": null,
+        "undelivered": 0
+      },
+      "review": null,
+      "route": "claude claude-opus-5-5 high",
+      "rung": 0,
+      "size": "M",
+      "state": "merged",
+      "title": "Title t0"
+    },
+    {
+      "block": null,
+      "deps": [],
+      "epic": "a",
+      "hold": null,
+      "hub": false,
+      "id": "t1",
+      "kind": "code",
+      "last": null,
+      "messages": {
+        "count": 1,
+        "refresh": "due",
+        "undelivered": 1
+      },
+      "review": null,
+      "route": "codex (default) high",
+      "rung": 0,
+      "size": "S",
+      "state": "working",
+      "title": "Title t1"
+    },
+    {
+      "block": {
+        "reason": "question",
+        "text": "which endpoint?"
+      },
+      "deps": [
+        "t0"
+      ],
+      "epic": null,
+      "hold": null,
+      "hub": false,
+      "id": "t2",
+      "kind": "code",
+      "last": "12:31 review r1 changes",
+      "messages": {
+        "count": 0,
+        "refresh": null,
+        "undelivered": 0
+      },
+      "review": "r1 changes (1 critical)",
+      "route": "claude claude-sonnet-5 medium",
+      "rung": 1,
+      "size": "M",
+      "state": "blocked",
+      "title": "Title t2"
+    },
+    {
+      "block": null,
+      "deps": [],
+      "epic": "c",
+      "hold": "epic:c",
+      "hub": false,
+      "id": "t3",
+      "kind": "code",
+      "last": null,
+      "messages": {
+        "count": 0,
+        "refresh": null,
+        "undelivered": 0
+      },
+      "review": null,
+      "route": "claude claude-sonnet-5 low",
+      "rung": 0,
+      "size": "S",
+      "state": "pending",
+      "title": "Title t3"
+    }
+  ]
+}

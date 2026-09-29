@@ -12,10 +12,13 @@
 use super::phases::set_state;
 use std::collections::BTreeSet;
 
-use proto::{AgentRole, BlockInfo, BlockReason, PlanEdit, PlanTask, Size, TaskState};
+use proto::{BlockInfo, BlockReason, PlanEdit, PlanTask, Size, TaskState};
 
 use super::contract::{amend_message, answer_message};
+use super::edits_state::{has_live_worker, is_live, is_paused};
+pub(super) use super::edits_state::{not_started, state_label};
 use super::model::{Run, Task, TaskEvent, task_branch, task_path};
+use super::orch::EditSource;
 use super::plan::PlanError;
 use super::roster::pick_reviewer;
 use super::validate::{
@@ -36,21 +39,31 @@ pub enum EditConsequence {
         task_id: String,
         text: String,
     },
+    /// Milestone 9 decision 42b: queue a `message`'s `text`, recorded last in the
+    /// task's messages, for its worker.
+    Message {
+        task_id: String,
+        text: String,
+    },
+    /// Decision 42b: a `message`'s resolved recipients, for the reply and the edit log.
+    Recipients(super::edits_orch::MessageOutcome),
     Pause,
     Resume,
     Finish,
 }
 
 /// Applies `edits` in order to a copy of `run` and validates the result (decision 13).
-/// `scope` limits where added and amended tasks may own files (decision 12); `now`
-/// stamps the task history entries the edits write.
+/// `scope` limits where tasks may own files (decision 12); a batch from the orchestrator
+/// or a sub-planner (`source`) also meets `orch::rules`; `now` stamps task history.
 pub fn apply_edits(
     run: &Run,
     edits: &[PlanEdit],
     scope: &EditScope,
+    source: &EditSource,
     now: u64,
 ) -> Result<(Run, Vec<EditConsequence>), Vec<PlanError>> {
     let mut batch = Batch {
+        source: source.clone(),
         run: run.clone(),
         touched: BTreeSet::new(),
         added_deps: BTreeSet::new(),
@@ -77,6 +90,7 @@ pub fn apply_edits(
         edited.limits.max_tasks,
         edited.limits.default_runtime,
     ));
+    errors.extend(super::orch::rules::apply(&mut edited, run, source));
     // Decision 41's implicit dependencies follow the edited graph; the combined check
     // is the same backstop `build_run` runs (M8a.6 fix round 1, F2).
     let implicit = implicit_deps(&edited.tasks);
@@ -95,8 +109,8 @@ pub fn apply_edits(
 }
 
 /// Decision 31: `queued` means runnable. After a batch, a queued task that waits for a
-/// declared dependency that is not merged, or an implicit one that is neither merged
-/// nor cancelled (decision 41), goes back to `pending` (`add_dep`, and implicit
+/// declared dependency not merged or reported, or an implicit one not finished
+/// (decision 41), goes back to `pending` (`add_dep`, and implicit
 /// dependencies gained through a split or an added task, fix round 2, N2).
 fn requeue_waiting(run: &mut Run, now: u64) {
     let state_of = |tasks: &[Task], id: &str| tasks.iter().find(|t| t.id() == id).map(|t| t.state);
@@ -106,13 +120,15 @@ fn requeue_waiting(run: &mut Run, now: u64) {
         .enumerate()
         .filter(|(_, t)| t.state == TaskState::Queued)
         .filter(|(_, t)| {
-            t.spec
-                .deps
+            t.spec.deps.iter().any(|d| {
+                !matches!(
+                    state_of(&run.tasks, d),
+                    Some(TaskState::Merged | TaskState::Reported)
+                )
+            }) || t
+                .implicit_deps
                 .iter()
-                .any(|d| state_of(&run.tasks, d) != Some(TaskState::Merged))
-                || t.implicit_deps
-                    .iter()
-                    .any(|d| state_of(&run.tasks, d).is_some_and(|s| !s.is_finished()))
+                .any(|d| state_of(&run.tasks, d).is_some_and(|s| !s.is_finished()))
         })
         .map(|(i, _)| i)
         .collect();
@@ -121,73 +137,27 @@ fn requeue_waiting(run: &mut Run, now: u64) {
     }
 }
 
-/// The states in which a task has not started: route, size, test mode and dependencies
-/// may change, and it may be split.
-fn not_started(state: TaskState) -> bool {
-    matches!(
-        state,
-        TaskState::Pending | TaskState::Queued | TaskState::Blocked
-    )
-}
-
-/// A task with a session or an engine operation to stop when it is cancelled.
-fn is_live(task: &Task) -> bool {
-    matches!(
-        task.state,
-        TaskState::Preparing
-            | TaskState::Working
-            | TaskState::Proof
-            | TaskState::Check
-            | TaskState::Review
-            | TaskState::MergeQueue
-    ) || task.rounds.iter().any(|r| !r.ended)
-}
-
-/// A task whose worker can take an amendment as a message.
-fn has_live_worker(task: &Task) -> bool {
-    task.state == TaskState::Working
-        || task
-            .rounds
-            .iter()
-            .any(|r| r.role == AgentRole::Worker && !r.ended)
-}
-
-fn block_label(reason: BlockReason) -> &'static str {
-    match reason {
-        BlockReason::MisSized => "mis_sized",
-        BlockReason::Human => "human",
-        BlockReason::Conflict => "conflict",
-        BlockReason::DepCancelled => "dep_cancelled",
-        BlockReason::Question => "question",
-        BlockReason::Environment => "environment",
-    }
-}
-
-/// `working`, `merged`, or `blocked(<reason>)`.
-fn state_label(task: &Task) -> String {
-    match (task.state, &task.block) {
-        (TaskState::Blocked, Some(block)) => format!("blocked({})", block_label(block.reason)),
-        (state, _) => state.label().to_string(),
-    }
-}
-
-struct Batch {
-    run: Run,
+pub(super) struct Batch {
+    pub(super) source: EditSource,
+    pub(super) run: Run,
     touched: BTreeSet<String>,
     /// `(task, dep)` pairs this batch adds: the cancelled-dependency rule applies to
     /// these only (F3).
-    added_deps: BTreeSet<(String, String)>,
-    errors: Vec<PlanError>,
-    consequences: Vec<EditConsequence>,
-    now: u64,
+    pub(super) added_deps: BTreeSet<(String, String)>,
+    pub(super) errors: Vec<PlanError>,
+    pub(super) consequences: Vec<EditConsequence>,
+    pub(super) now: u64,
 }
 
 impl Batch {
     fn apply(&mut self, edit: &PlanEdit) {
         match edit {
-            PlanEdit::AddTask { task } => self.add_task(task.clone()),
-            PlanEdit::SplitTask { task_id, into } => self.split(task_id, into),
+            PlanEdit::AddTask { task } => self.add_owned(task),
+            PlanEdit::SplitTask { task_id, into } => self.split_owned(task_id, into),
             PlanEdit::CancelTask { task_id } => self.cancel(task_id),
+            // Milestone 9 decisions 42a and 42e.
+            PlanEdit::Message { to, text, kind } => self.message(to, text, *kind),
+            PlanEdit::Refresh { task_id } => self.refresh(task_id),
             PlanEdit::AmendTask { .. } => self.amend_task(edit),
             PlanEdit::AddDep { task_id, dep } => self.add_dep(task_id, dep),
             PlanEdit::Answer { task_id, text } => self.answer(task_id, text),
@@ -198,7 +168,7 @@ impl Batch {
     }
 
     /// The first task with `id`, or an error naming it.
-    fn find(&mut self, id: &str) -> Option<usize> {
+    pub(super) fn find(&mut self, id: &str) -> Option<usize> {
         let found = self.run.tasks.iter().position(|t| t.id() == id);
         if found.is_none() {
             self.errors
@@ -250,7 +220,7 @@ impl Batch {
         }
     }
 
-    fn add_task(&mut self, spec: PlanTask) {
+    pub(super) fn add_task(&mut self, spec: PlanTask) {
         let task = self.resolve(spec);
         self.add_deps_of(&task);
         self.run.tasks.push(task);
@@ -325,9 +295,9 @@ impl Batch {
 
     /// Cancels `id`, inserts `into` right after it in plan order, and makes every task
     /// that depended on `id` depend on all of `into` instead.
-    fn split(&mut self, id: &str, into: &[PlanTask]) {
+    pub(super) fn split(&mut self, id: &str, into: &[PlanTask]) {
         let Some(i) = self.find(id) else { return };
-        if !not_started(self.run.tasks[i].state) {
+        if !not_started(&self.run.tasks[i]) {
             return self.refuse(i, "only pending, queued or blocked tasks can be split");
         }
         if into.is_empty() {
@@ -392,6 +362,7 @@ impl Batch {
             test_mode_reason,
             priority,
             size,
+            deps,
         } = edit
         else {
             return;
@@ -403,7 +374,8 @@ impl Batch {
             && test_mode.is_none()
             && test_mode_reason.is_none()
             && priority.is_none()
-            && size.is_none();
+            && size.is_none()
+            && deps.is_none();
         if nothing {
             self.errors.push(PlanError::new(
                 Some(task_id),
@@ -422,9 +394,10 @@ impl Batch {
             ("test_mode", test_mode.is_some()),
             ("test_mode_reason", test_mode_reason.is_some()),
             ("size", size.is_some()),
+            ("deps", deps.is_some()),
         ];
-        let reresolve = restricted.iter().any(|(_, set)| *set);
-        if reresolve && !not_started(state) {
+        let reresolve = restricted[..4].iter().any(|(_, set)| *set);
+        if restricted.iter().any(|(_, set)| *set) && !not_started(&self.run.tasks[i]) {
             for (name, _) in restricted.iter().filter(|(_, set)| *set) {
                 self.refuse(
                     i,
@@ -471,12 +444,18 @@ impl Batch {
         } else {
             self.reresolve(i, spec, route.is_some());
         }
+        if let Some(deps) = deps {
+            self.amend_deps(i, deps, &mut changed);
+        }
         let task = &self.run.tasks[i];
-        if (brief.is_some() || acceptance.is_some()) && has_live_worker(task) {
+        // Decision 42c: a new brief or acceptance also releases a paused task.
+        let reaches = brief.is_some() || acceptance.is_some();
+        if reaches && (has_live_worker(task) || is_paused(task)) {
             self.consequences.push(EditConsequence::Deliver {
                 task_id: task.id().to_string(),
                 text: amend_message(task),
             });
+            self.release_pause(i);
         }
         self.log(i, format!("amended: {}", changed.join(", ")));
     }
@@ -532,7 +511,10 @@ impl Batch {
 
     fn add_dep(&mut self, id: &str, dep: &str) {
         let Some(i) = self.find(id) else { return };
-        if !not_started(self.run.tasks[i].state) {
+        if self.epic_being_planned(i) {
+            return;
+        }
+        if !not_started(&self.run.tasks[i]) {
             return self.refuse(
                 i,
                 "dependencies can be added only on pending, queued or blocked tasks",

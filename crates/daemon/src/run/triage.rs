@@ -19,9 +19,6 @@ use super::model::{Run, Task};
 use super::plan::PlanError;
 use crate::decider::{DeciderAnswer, Decision, TriageAnswer};
 
-/// Spec §22.3's `planner_task_cap` starting point; milestone 9 owns the config key.
-pub const PLAN_SCALE_MAX: usize = 12;
-
 /// The fast-path task's id.
 pub const FAST_TASK_ID: &str = "t1";
 
@@ -174,6 +171,7 @@ pub fn route(decision: &Decision, fast_path: bool) -> TriageRoute {
         scout_refs: Vec::new(),
         route: RouteSpec::default(),
         budget: None,
+        review_target: None,
     }))
 }
 
@@ -349,16 +347,6 @@ pub fn started_message(info: &TriageInfo, run_id: &str, task: &Task) -> String {
         size_label(task.size),
         mode_label(task.test_mode),
         task.spec.title
-    )
-}
-
-/// The planned and large paths' refusal (Interfaces, exact).
-pub fn refused_message(info: &TriageInfo) -> String {
-    format!(
-        "triage: {} ({}): {}\nthis goal needs a planned run, which arrives with the orchestrator (milestone 9). Write a plan file and run: anthrex run start --plan <file>",
-        kinds_scale(&info.kinds, info.scale),
-        source_text(info),
-        info.reason
     )
 }
 

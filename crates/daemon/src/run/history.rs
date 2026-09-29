@@ -48,6 +48,8 @@ pub fn outcome(task: &Task) -> TaskOutcome {
         TaskState::Merged => TaskOutcome::Merged,
         TaskState::Cancelled => TaskOutcome::Cancelled,
         TaskState::Blocked => TaskOutcome::Blocked,
+        // Milestone 9 decisions 35 and 36: finished, with nothing merged.
+        TaskState::Reported => TaskOutcome::Reported,
         _ => TaskOutcome::Unfinished,
     }
 }

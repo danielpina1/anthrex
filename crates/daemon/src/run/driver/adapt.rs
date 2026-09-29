@@ -36,8 +36,9 @@ use crate::decider::{DeciderContext, DeciderRequest, Evidence};
 use crate::profile::resolve::{apply_choice as apply_to_plan, run_profile};
 use crate::profile::service::ProfileService;
 use crate::profile::store::{self, PROFILE_FILE, Stored};
-use crate::run::engine::{EventKind, OpResult};
-use crate::run::model::{LogEntry, Run};
+use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent};
+use crate::run::model::{LogEntry, OpId, Run};
+use crate::run::orch::roles;
 use crate::run::plan::Preflight;
 use crate::scout::service::ScoutService;
 
@@ -85,19 +86,126 @@ pub struct Adaptation {
 const NO_DECIDERS: &str = "the decider could not start: the daemon has no decider context";
 
 impl RunService {
+    /// Op `op` of `ctx`'s run: a `Decide` is [`RunService::decide_as`] with its record
+    /// (milestone 9 decision 43), any other op `ops::run`.
+    pub(super) async fn run_op(self: &Arc<Self>, ctx: &OpCtx, op: OpId, kind: OpKind) -> OpResult {
+        match kind {
+            OpKind::Decide {
+                task_ids, request, ..
+            } => self.decide_as(ctx, Some((op, task_ids)), request).await,
+            kind => super::ops::run(self, ctx, kind).await,
+        }
+    }
+
+    /// `OpKind::Decide` (decision 18), with no role-routing record.
+    pub(super) async fn decide(&self, ctx: &OpCtx, request: DeciderRequest) -> OpResult {
+        self.decide_as(ctx, None, request).await
+    }
+
     /// `OpKind::Decide` (decision 18): the call, always answered, a fallback included.
     /// A size check's evidence is read first (decision 19); with none readable, the
-    /// check is its fallback.
-    pub(super) async fn decide(&self, ctx: &OpCtx, mut request: DeciderRequest) -> OpResult {
+    /// check is its fallback. Milestone 9 decision 43: a call that starts a decider
+    /// session is recorded as op `op`'s (about `task_ids`). Its record is kept, and
+    /// saved, by the engine before the call (review M-2), and its outcome sent after. A
+    /// daemon whose deciders are off starts no session and records none (review M-3).
+    pub(super) async fn decide_as(
+        &self,
+        ctx: &OpCtx,
+        record: Option<(OpId, Vec<String>)>,
+        mut request: DeciderRequest,
+    ) -> OpResult {
         if let Err(error) = self.with_evidence(ctx, &mut request).await {
             let reason = format!("the decider could not start: {error}");
             return OpResult::Decided(Box::new(fallback_decision(&request, reason)));
         }
         let decision = match self.adaptation.get() {
-            Some(adaptation) => decide(&adaptation.deciders, &request).await,
+            Some(adaptation) => {
+                let deciders = &adaptation.deciders;
+                let id = match record {
+                    Some((op, tasks)) if deciders.mode != proto::DeciderMode::Off => {
+                        let roster = &adaptation.scouts.context().roster;
+                        let at = (op, tasks.as_slice());
+                        self.decider_dispatched(ctx, at, (roster, &deciders.route), &request)
+                            .await
+                    }
+                    _ => None,
+                };
+                // M9.13b re-review 3: a record the engine could not save starts no
+                // session; the call is the fallback, and the record says why.
+                if let Some((record_id, Err(why))) = &id {
+                    let reason = format!("the decider could not start: {why}");
+                    self.send(EventKind::Orch(OrchEvent::RoleRouteEnded {
+                        run_id: ctx.run_id.clone(),
+                        record_id: record_id.clone(),
+                        outcome: proto::RoleOutcome::Failed,
+                        result: Some(format!("not started: {why}")),
+                    }));
+                    return OpResult::Decided(Box::new(fallback_decision(&request, reason)));
+                }
+                let decision = decide(&adaptation.deciders, &request).await;
+                if let Some((record_id, _)) = id {
+                    let (outcome, result) = roles::decider_outcome(&decision);
+                    self.send(EventKind::Orch(OrchEvent::RoleRouteEnded {
+                        run_id: ctx.run_id.clone(),
+                        record_id,
+                        outcome,
+                        result,
+                    }));
+                }
+                decision
+            }
             None => fallback_decision(&request, NO_DECIDERS.to_string()),
         };
         OpResult::Decided(Box::new(decision))
+    }
+
+    /// Decision 43: a run-bound decider's record, built under the engine's lock (pure),
+    /// with the full candidate snapshot (review I-2), and kept by the engine before the
+    /// call: the engine answers once the step that keeps it was saved (review M-2). No
+    /// lock is held across the wait. Its record id, and whether it was kept.
+    async fn decider_dispatched(
+        &self,
+        ctx: &OpCtx,
+        (op, tasks): (OpId, &[String]),
+        (roster, route): (&[proto::ModelEntry], &proto::Route),
+        request: &DeciderRequest,
+    ) -> Option<(String, Result<(), String>)> {
+        let strength = self.ctx.orchestrator.deciders.strength;
+        let decision = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
+            let session = (op.to_string(), request.kind().label());
+            let input = roles::input_of(run);
+            let candidates = roles::decider_candidates(roster, route, strength);
+            let at = super::unix_now();
+            let chosen = (route, candidates);
+            roles::decider_record(Some(run), (&session.0, session.1), tasks, chosen, input, at)
+        })?;
+        let record_id = decision.record_id.clone();
+        let kept = self.keep_record(&ctx.run_id, decision).await;
+        Some((record_id, kept))
+    }
+
+    /// Sends a record to the engine and waits for its answer, which comes after the
+    /// step that keeps it was saved. `Err` (the engine refused it, or `run.json` could
+    /// not be saved: M9.13b re-review 2 and 3) means the session must not start.
+    pub(super) async fn keep_record(
+        &self,
+        run_id: &str,
+        decision: proto::RoleRoutingDecision,
+    ) -> Result<(), String> {
+        let kept = self
+            .ask(|reply| {
+                crate::lock(&self.writes.record_replies).insert(reply, run_id.to_string());
+                EventKind::Orch(OrchEvent::RoleRoute {
+                    reply,
+                    run_id: run_id.to_string(),
+                    decision: Box::new(decision),
+                })
+            })
+            .await;
+        if let Err(error) = &kept {
+            tracing::warn!(run = %run_id, %error, "a role-routing record was not kept");
+        }
+        kept.map(|_| ())
     }
 
     /// Decision 19: fills a size check's `evidence` from its `evidence_refs`, resolved
@@ -144,25 +252,31 @@ impl RunService {
                 message: "the profile service is not running".to_string(),
             },
         };
-        RunReply::Profile(Box::new(reply))
+        RunReply::profile(reply)
     }
 
     /// A `submit_*` call from an agent (decision 15): a scout's goes to the scout
-    /// service, every other to the engine. Every text reaches the agent verbatim
-    /// (M8a.19), so each is worded for an agent.
+    /// service, every other to the engine, and so does a research task's (milestone 9
+    /// decision 35: a scout window bound to a task, with no scout id). Every text
+    /// reaches the agent verbatim (M8a.19), so each is worded for an agent.
     pub(super) async fn tool(&self, call: ToolCall) -> RunReply {
-        if call.role == AgentRole::Scout {
+        // Milestone 9 decision 15: its branches go ahead of the scout's.
+        if super::orch::is_orch_call(&call) {
+            return self.orch_tool(call).await;
+        }
+        let research = call.task_id.is_some() && call.scout_id.is_none();
+        if call.role == AgentRole::Scout && !research {
             return match self.adaptation.get() {
                 Some(adaptation) => adaptation.scouts.tool(call).await,
-                None => RunReply::ToolResult {
-                    ok: false,
-                    text: format!("unknown scout {}", call.scout_id.unwrap_or_default()),
-                },
+                None => RunReply::tool_result(
+                    false,
+                    format!("unknown scout {}", call.scout_id.unwrap_or_default()),
+                ),
             };
         }
         match self.ask(|reply| EventKind::Tool { reply, call }).await {
-            Ok(text) => RunReply::ToolResult { ok: true, text },
-            Err(text) => RunReply::ToolResult { ok: false, text },
+            Ok(text) => RunReply::tool_result(true, text),
+            Err(text) => RunReply::tool_result(false, text),
         }
     }
 
@@ -299,7 +413,7 @@ pub(super) fn read_evidence(
 /// without following a link (and without blocking on a FIFO), checked through the
 /// opened handle, and read through a cap one byte past the limit, so a file swapped
 /// or grown after the check is neither followed nor read whole (review m3).
-fn read_report(path: &Path) -> Result<proto::ScoutReport, String> {
+pub(super) fn read_report(path: &Path) -> Result<proto::ScoutReport, String> {
     use std::io::Read;
     use std::os::unix::fs::OpenOptionsExt;
     let file = std::fs::OpenOptions::new()

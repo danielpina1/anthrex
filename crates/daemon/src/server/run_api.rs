@@ -25,7 +25,10 @@ impl RunApi {
         }
     }
 
-    pub(super) fn handle(&mut self, request: RunRequest) {
+    /// `id`: a `ClientMsg::RunTagged` request's, echoed on every reply that answers it
+    /// (milestone 9 decision 2). Every answer is sent from here, so the connection's
+    /// loop sends nothing itself.
+    pub(super) fn handle(&mut self, request: RunRequest, id: Option<u64>) {
         match request {
             RunRequest::Subscribe => {
                 self.unsubscribe();
@@ -40,7 +43,7 @@ impl RunApi {
                 // the client leaves, but never keeps its connection's writer alive.
                 let (runs, out_tx) = (self.runs.clone(), self.out_tx.downgrade());
                 tokio::spawn(async move {
-                    let reply = runs.request(request).await;
+                    let reply = runs.request(request).await.tagged(id);
                     if let Some(out_tx) = out_tx.upgrade() {
                         let _ = out_tx.send(DaemonMsg::Run(reply)).await;
                     }

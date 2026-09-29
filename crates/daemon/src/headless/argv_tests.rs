@@ -26,10 +26,12 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
             run_id: "r-3f9a".into(),
             task_id: Some("t1".into()),
             scout_id: None,
+            epic: None,
         }),
         allowed_tools: [
             "mcp__anthrex__task_done",
             "mcp__anthrex__task_blocked",
+            "mcp__anthrex__task_note",
             "Bash",
             "Edit",
         ]
@@ -70,6 +72,7 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
             run_id: "r-3f9a".into(),
             task_id: Some("t2".into()),
             scout_id: None,
+            epic: None,
         }),
         allowed_tools: [
             "mcp__anthrex__submit_review",
@@ -204,10 +207,11 @@ fn mcp_args_for_a_worker() {
         run_id: "r-3f9a".into(),
         task_id: Some("t1".into()),
         scout_id: None,
+        epic: None,
     };
     assert_eq!(
         mcp_args(&target, 7, Path::new("/tmp/a.sock")),
-        strs(&[
+        Some(strs(&[
             "mcp",
             "--role",
             "worker",
@@ -219,7 +223,7 @@ fn mcp_args_for_a_worker() {
             "7",
             "--socket",
             "/tmp/a.sock"
-        ])
+        ]))
     );
     let no_task = McpTarget {
         task_id: None,
@@ -228,9 +232,9 @@ fn mcp_args_for_a_worker() {
     };
     assert_eq!(
         mcp_args(&no_task, 12, Path::new("/s")),
-        strs(&[
+        Some(strs(&[
             "mcp", "--role", "reviewer", "--run", "r-3f9a", "--window", "12", "--socket", "/s"
-        ])
+        ]))
     );
 }
 
@@ -258,7 +262,7 @@ fn argv_builders() {
             "--mcp-config",
             "<json>",
             "--allowedTools",
-            "mcp__anthrex__task_done,mcp__anthrex__task_blocked,Bash,Edit",
+            "mcp__anthrex__task_done,mcp__anthrex__task_blocked,mcp__anthrex__task_note,Bash,Edit",
             "--append-system-prompt",
             "Say \"done\" when done.\nThen stop.",
             "--permission-mode",

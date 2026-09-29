@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::runtime::McpServer;
+
 /// A bound on the one `git rev-parse` that finds the script directory.
 const GIT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -28,11 +30,14 @@ pub struct Script {
 }
 
 /// What a session carries from one process to the next: `capture` values and the last
-/// `mcp_call` text (`FAKE_AGENT_RESULT`).
+/// `mcp_call` text (`FAKE_AGENT_RESULT`) and whether it failed.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Vars {
     pub captures: BTreeMap<String, String>,
     pub result: String,
+    /// Whether the last `mcp_call` failed (`expect_error_contains`, M9.12).
+    #[serde(default)]
+    pub last_error: bool,
 }
 
 impl Script {
@@ -110,6 +115,31 @@ pub fn find(role: Option<&str>, task: Option<&str>, session: &str, resume: bool)
         }
     }
     Ok(fallback())
+}
+
+/// The role and the script key of a session's `anthrex mcp` server (M9.12, the flags
+/// `daemon::headless::argv::mcp_args` writes): an orchestrator's key is `run`, a
+/// sub-planner's its `--epic`, a run scout's its `--scout` id without the run's
+/// `<h4>-` prefix, a research task's scout its `--task`, and anyone else's its `--task`.
+pub fn key(server: Option<&McpServer>) -> (Option<String>, Option<String>) {
+    let Some(server) = server else {
+        return (None, None);
+    };
+    let role = server.flag("--role");
+    let key = match role {
+        Some("orchestrator") => Some("run"),
+        Some("planner") => server.flag("--epic"),
+        Some("scout") => match (server.flag("--scout"), server.flag("--run")) {
+            (Some(id), Some(run)) => {
+                let h4 = run.get(run.len().saturating_sub(4)..).unwrap_or(run);
+                Some(id.strip_prefix(&format!("{h4}-")).unwrap_or(id))
+            }
+            (Some(id), None) => Some(id),
+            (None, _) => server.flag("--task"),
+        },
+        _ => server.flag("--task"),
+    };
+    (role.map(String::from), key.map(String::from))
 }
 
 /// The fewest digits a scout id's timestamp suffix has (a unix time in seconds).

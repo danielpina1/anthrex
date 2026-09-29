@@ -7,6 +7,7 @@ pub mod diff;
 
 use crate::app::App;
 use crate::conversation::{DetailKind, Row, SUBAGENT_FOOTER, TEXT_INDENT, clean};
+use crate::conversation_label::user_turn_label;
 use crate::theme;
 use crate::ui::badge::Badge;
 use proto::{Block as ConvBlock, DropCause, Role, Status, ToolState, Turn};
@@ -247,11 +248,17 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
             (ROW_INDENT, vec![Span::styled(text, theme::muted())], vec![])
         }
         Row::TurnHeader {
-            role, at_unix_secs, ..
+            role,
+            at_unix_secs,
+            turn_id,
         } => {
             let bold = Style::default().add_modifier(Modifier::BOLD);
             let left = match role {
-                Role::User => vec![Span::styled("you", bold)],
+                // Milestone 9 decision 42i: a delivered message names its sender.
+                Role::User => vec![Span::styled(
+                    user_turn_label(ctx.turns.get(turn_id).copied()),
+                    bold,
+                )],
                 Role::Assistant => vec![badge(ctx.badge), Span::styled(" assistant", bold)],
                 Role::System => vec![Span::styled("system", bold)],
             };

@@ -79,10 +79,14 @@ pub struct McpTarget {
     pub role: AgentRole,
     /// Empty for a repository-level scout (M8b decision 15).
     pub run_id: String,
+    #[serde(default)]
     pub task_id: Option<String>,
     /// A scout's id (`--scout`), M8b decision 15.
     #[serde(default)]
     pub scout_id: Option<String>,
+    /// A sub-planner's epic (`--epic`), milestone 9 decision 31.
+    #[serde(default)]
+    pub epic: Option<String>,
 }
 
 /// Which session a launch starts or continues.
@@ -221,7 +225,8 @@ pub(crate) fn bounded_text(text: &str) -> String {
     )
 }
 
-/// Final fix batch F2 (review C, M2; round 2, N2): the inherited API credentials a
+/// Final fix batch F2 (review C, M2; round 2, N2): the inherited API credentials (and,
+/// by the user's rulings of 2026-09-29, `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`) a
 /// session's process must not see. Every session loses the OpenAI and Codex ones
 /// (anthrex's Codex sessions use the user's `codex login`), and the Anthropic ones
 /// unless it is a Claude session with `auth = "api_key"`, which authenticates with them

@@ -16,7 +16,7 @@ const ID: &str = "onboarding-1";
 const WINDOW: u32 = 5;
 
 fn service() -> Arc<ScoutService> {
-    let mut config = ManagerConfig::new("/tmp/ax-m8b9-unused.sock".into(), "/bin/sh".into());
+    let mut config = ManagerConfig::for_tests("/tmp/ax-m8b9-unused.sock".into(), "/bin/sh".into());
     config.claude_bin = "/nonexistent/anthrex-test/claude".into();
     config.codex_bin = "/nonexistent/anthrex-test/codex".into();
     let (manager, _events) = WindowManager::new(config);
@@ -80,6 +80,7 @@ fn insert(service: &ScoutService, window_id: Option<u32>) {
             installed: false,
             kill_at: None,
             remove_at: None,
+            planner: None,
         },
     );
 }
@@ -93,6 +94,7 @@ fn call(tool: &str) -> ToolCall {
         tool: tool.into(),
         args: serde_json::json!({"summary": "s", "files": []}),
         scout_id: Some(ID.into()),
+        epic: None,
     }
 }
 

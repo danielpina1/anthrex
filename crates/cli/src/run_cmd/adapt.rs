@@ -14,12 +14,15 @@ use super::{Runs, print_outcome};
 pub const GOAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(810);
 
 /// `run start --goal`: on the fast path the run id on stdout and triage's message on
-/// stderr; any refusal, the planned path's included, is the command's error (exit 1).
+/// stderr, and so on the plan and large paths with the planned message (milestone 9
+/// decision 26); any refusal is the command's error (exit 1). `orchestrator` is
+/// `--orchestrator`'s choice (decision 6).
 pub(super) async fn start_goal(
     socket: &Path,
     dir: Option<PathBuf>,
     goal: String,
     (yes, trust_project, unconfined_checks): (bool, bool, bool),
+    orchestrator: Option<proto::OrchestratorChoice>,
 ) -> anyhow::Result<()> {
     let dir = crate::resolve_dir(dir)?;
     tui::spawn::ensure_daemon(&std::env::current_exe()?, socket).await?;
@@ -31,6 +34,7 @@ pub(super) async fn start_goal(
             yes,
             trust_project,
             unconfined_checks,
+            orchestrator,
         })
         .await?;
     match reply {
@@ -40,7 +44,7 @@ pub(super) async fn start_goal(
             ..
         } => {
             println!("{run_id}");
-            eprintln!("{message}");
+            eprintln!("{}", super::status::printable(&message));
             Ok(())
         }
         RunReply::Triaged { message, .. } => anyhow::bail!(message),
@@ -53,11 +57,11 @@ pub(super) async fn start_goal(
 pub(super) async fn stats(runs: &mut Runs, dir: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
     let dir = crate::resolve_dir(dir)?;
     match runs.request(RunRequest::Stats { dir }).await? {
-        RunReply::Stats(stats) if json => {
+        RunReply::Stats { stats, .. } if json => {
             println!("{}", serde_json::to_string_pretty(&stats)?);
             Ok(())
         }
-        RunReply::Stats(stats) => {
+        RunReply::Stats { stats, .. } => {
             print!("{}", daemon::run::stats::render(&stats));
             Ok(())
         }
@@ -118,13 +122,17 @@ mod tests {
             yes: false,
             trust_project: false,
             unconfined_checks: false,
+            orchestrator: None,
         };
         assert_eq!(request_timeout(&goal), GOAL_REQUEST_TIMEOUT);
         assert_eq!(
             GOAL_REQUEST_TIMEOUT,
             super::super::RUN_REQUEST_TIMEOUT + Duration::from_secs(600 + 30)
         );
-        let promote = RunRequest::Promote { run_id: "r".into() };
+        let promote = RunRequest::Promote {
+            run_id: "r".into(),
+            orchestrator: None,
+        };
         assert_eq!(request_timeout(&promote), super::super::RUN_REQUEST_TIMEOUT);
     }
 

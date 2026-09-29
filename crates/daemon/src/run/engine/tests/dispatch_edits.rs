@@ -185,6 +185,8 @@ fn add_dep_then_answer_waits_for_the_dependency_then_hands_back() {
             files: vec![],
             head: None,
             onto: None,
+            merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);
@@ -370,6 +372,7 @@ fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
         edits: vec![PlanEdit::AddTask { task: on_codex }],
         scope: crate::run::validate::EditScope::Run,
         refusals: vec![(Runtime::Codex, refusal.clone())],
+        submit: false,
     });
     assert_eq!(replies(&effects), vec![Err(refusal.clone())]);
     assert_eq!(fx.run().tasks.len(), 1, "a refused edit changes nothing");
@@ -383,7 +386,45 @@ fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
         }],
         scope: crate::run::validate::EditScope::Run,
         refusals: vec![(Runtime::Codex, refusal)],
+        submit: false,
     });
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
     assert_eq!(fx.run().tasks.len(), 2);
+}
+
+/// M9.2 review ruling 8's pinning, as task M9.13a leaves it: a `message` or `refresh`
+/// beside any other edit, a pause or a finish included, is refused by decision 42's
+/// one-edit rule, and the run is left exactly as it was.
+#[test]
+fn message_or_refresh_beside_another_edit_leaves_the_run_unchanged() {
+    use proto::{MessageKind, MessageTarget};
+    let plan = plan_with(
+        PROFILE,
+        &[
+            task_toml("t1", "S", "[\"docs/a.md\"]", ""),
+            task_toml("t2", "S", "[\"docs/b.md\"]", ""),
+        ],
+    );
+    let mut fx = Fixture::new(&plan);
+    fx.ready(true);
+    assert_eq!(fx.run().state, proto::RunState::Running);
+    let message = PlanEdit::Message {
+        to: MessageTarget::Running,
+        text: "the API changed".into(),
+        kind: MessageKind::Info,
+    };
+    let refresh = PlanEdit::Refresh {
+        task_id: "t1".into(),
+    };
+    let rule = crate::run::orch::contract::ONE_EDIT_RULE.to_string();
+    for batch in [
+        vec![PlanEdit::Pause, message.clone()],
+        vec![PlanEdit::Finish, refresh.clone()],
+        vec![message, refresh],
+    ] {
+        let before = fx.run().clone();
+        let effects = edit(&mut fx, batch.clone());
+        assert_eq!(replies(&effects), vec![Err(rule.clone())], "{batch:?}");
+        assert_eq!(fx.run(), &before, "{batch:?}");
+    }
 }

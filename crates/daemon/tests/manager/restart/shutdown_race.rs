@@ -27,7 +27,7 @@ use super::*;
 /// `ManagerConfig.kill_grace`) is unaffected either way.
 #[tokio::test]
 async fn restart_refuses_when_the_kill_wait_times_out() {
-    let mut config = ManagerConfig::new("/tmp/unused.sock".into(), "/bin/sh".into());
+    let mut config = ManagerConfig::for_tests("/tmp/unused.sock".into(), "/bin/sh".into());
     config.restart_wait_deadline = Duration::from_millis(1);
     let (m, _events) = WindowManager::new(config);
     let id = create_id(
@@ -113,7 +113,7 @@ async fn restart_admitted_before_shutdown_is_refused_and_leaves_no_process_behin
     // comfortably past the ~3s the stubborn shell actually takes to die to `SIGKILL`, so
     // phase B's own wait succeeds for the right reason rather than timing out (that is
     // Minor 2's scenario, not this one).
-    let config = ManagerConfig::new("/tmp/unused.sock".into(), shell.display().to_string());
+    let config = ManagerConfig::for_tests("/tmp/unused.sock".into(), shell.display().to_string());
     let (m, mut events) = WindowManager::new(config);
     let pump = m.clone();
     tokio::spawn(async move {
@@ -300,7 +300,8 @@ async fn kill_after_a_timed_out_restart_still_signals_the_window() {
     .unwrap();
     std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let mut config = ManagerConfig::new("/tmp/unused.sock".into(), shell.display().to_string());
+    let mut config =
+        ManagerConfig::for_tests("/tmp/unused.sock".into(), shell.display().to_string());
     // See this test's own doc comment: `restart_wait_deadline` is independent of
     // `kill_grace` (left at its default), so this sets `wait_for_exit`'s own deadline
     // directly rather than deriving it from a value the real escalation also depends on.

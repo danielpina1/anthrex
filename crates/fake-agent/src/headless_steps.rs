@@ -10,10 +10,13 @@ use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
 use super::{Kind, Outcome, POLL, Runner, SH_TIMEOUT};
+use crate::runtime::McpServer;
 
 /// How often a `hang` looks for stdin's EOF.
 const HANG_POLL: Duration = Duration::from_millis(100);
-use crate::mcp;
+use crate::mcp::{self, Reply};
+use crate::orch_steps::{self, Flow, Host};
+use crate::roles::Vars;
 use crate::script::Step;
 
 impl Runner {
@@ -61,6 +64,16 @@ impl Runner {
                 Ok((out, code)) => self.events.command_finished(&cmd, &out.combined, code)?,
             },
             Step::Bash(cmd) => return self.bash(&cmd),
+            step @ (Step::McpUntil(_)
+            | Step::CaptureJson { .. }
+            | Step::Expect(_)
+            | Step::ExpectErrorContains(_)) => {
+                return Ok(match orch_steps::run(self, &step)? {
+                    Flow::Next => Outcome::Done,
+                    Flow::Exit(code) => Outcome::Exit(code),
+                    Flow::Interrupted(id) => Outcome::Interrupted(id),
+                });
+            }
             Step::Capture { name, sh } => match self.shell(&sh)? {
                 Err(id) => return Ok(Outcome::Interrupted(id)),
                 Ok((out, code)) => {
@@ -113,12 +126,7 @@ impl Runner {
             .server
             .clone()
             .context("mcp_call: this session has no anthrex MCP server")?;
-        let args = mcp::fill(args, &self.vars.captures);
-        self.events.mcp_started(tool, &args)?;
-        let reply = mcp::call(&server, tool, &args)?;
-        self.events.mcp_finished(tool, &args, &reply)?;
-        self.vars.result = reply.text.clone();
-        self.script.save_vars(&self.vars)?;
+        let reply = self.call_tool(&server, tool, args)?;
         if reply.ok == expect_error {
             let wanted = if expect_error { "an error" } else { "success" };
             eprintln!(
@@ -128,6 +136,20 @@ impl Runner {
             return Ok(Outcome::Exit(3));
         }
         Ok(Outcome::Done)
+    }
+
+    /// One call, announced and answered in the stream, logged, and kept as the result.
+    fn call_tool(&mut self, server: &McpServer, tool: &str, args: &Value) -> Result<Reply> {
+        let args = mcp::fill(args, &self.vars.captures);
+        self.events.mcp_started(tool, &args)?;
+        let started = std::time::Instant::now();
+        let reply = mcp::call(server, tool, &args)?;
+        mcp::log(&self.script.name, tool, &args, &reply, started.elapsed())?;
+        self.events.mcp_finished(tool, &args, &reply)?;
+        self.vars.result = reply.text.clone();
+        self.vars.last_error = !reply.ok;
+        self.script.save_vars(&self.vars)?;
+        Ok(reply)
     }
 
     /// The `bash {cmd}` step (M8b decision 37): every `PreToolUse` group for `Bash` may
@@ -213,6 +235,29 @@ impl Runner {
         let combined = format!("{stdout}{stderr}");
         let code = status.code().unwrap_or(-1);
         Ok(Ok((ShOutput { stdout, combined }, code)))
+    }
+}
+
+/// M9.12's steps in a turn: their waits honour interrupts.
+impl Host for Runner {
+    fn call(&mut self, tool: &str, args: &Value) -> Result<Reply> {
+        let server = self
+            .server
+            .clone()
+            .context("mcp_until: this session has no anthrex MCP server")?;
+        self.call_tool(&server, tool, args)
+    }
+
+    fn wait(&mut self, duration: Duration) -> Option<String> {
+        self.pause(duration)
+    }
+
+    fn vars(&mut self) -> &mut Vars {
+        &mut self.vars
+    }
+
+    fn save_vars(&mut self) -> Result<()> {
+        self.script.save_vars(&self.vars)
     }
 }
 

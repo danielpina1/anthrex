@@ -9,7 +9,7 @@ impl GitRoots for NoRoots {
 }
 
 fn service() -> Arc<RunService> {
-    let config = ManagerConfig::new("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
     let (manager, _events) = WindowManager::new(config);
     RunService::for_manager(&manager, "/tmp/ax-unused-data".into(), Arc::new(NoRoots))
 }
@@ -269,7 +269,7 @@ async fn a_panicking_step_keeps_the_state_and_the_loop() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_run_whose_restore_panics_does_not_stop_the_others() {
     let data = tempfile::tempdir().unwrap();
-    let config = ManagerConfig::new("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
     let (manager, _events) = WindowManager::new(config);
     let s = RunService::for_manager(&manager, data.path().to_path_buf(), Arc::new(NoRoots));
     let bad = poisoned_run("bad", data.path());
@@ -314,7 +314,7 @@ fn restored_with_window(run_id: &str, data: &Path) -> (Arc<RunService>, Arc<Wind
         "run": serde_json::to_value(&spec).unwrap(),
     }))
     .unwrap();
-    let config = ManagerConfig::new("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
     let (manager, _events) = WindowManager::new(config);
     manager.restore(crate::state::StateFile {
         version: crate::state::STATE_VERSION,
@@ -417,7 +417,7 @@ async fn an_op_whose_run_could_not_be_saved_is_not_started() {
 async fn restoring_an_unchanged_finished_run_writes_nothing() {
     use std::os::unix::fs::MetadataExt;
     let data = tempfile::tempdir().unwrap();
-    let config = ManagerConfig::new("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
     let (manager, _events) = WindowManager::new(config);
     let s = RunService::for_manager(&manager, data.path().to_path_buf(), Arc::new(NoRoots));
     let mut run = poisoned_run("done", data.path());

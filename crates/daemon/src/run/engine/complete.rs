@@ -55,6 +55,7 @@ fn cancel_task(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect
 pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect>) {
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
+    super::kinds::stop_research(run, i, fx);
     // Review m3: its queued deciders are dropped.
     let id = run.tasks[i].id().to_string();
     super::deciders::drop_queued(&mut run.decider_queue, &id);
@@ -96,16 +97,24 @@ pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut 
 /// that has not started is cancelled at once; once no task is live, the blocked ones
 /// are cancelled too, and completion follows.
 pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    if !run.finish_edit {
+    // M9.9 second review, C-1: a cancelled run starts nothing either; `cancel` halted
+    // its sub-planners and run scouts, and new ones are refused.
+    let why = if run.finish_edit {
+        // M9.9 review fixes: a finishing run runs no sub-planner or run scout.
+        super::planners::halt_all(run, super::planners::RUN_FINISHED, now, fx);
+        "the finish edit (not started)"
+    } else if run.cancelled {
+        "run cancel (not started)"
+    } else {
         return;
-    }
+    };
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
         if !task.state.is_finished() && task.start_commit.is_none() {
-            cancel_task(run, i, "the finish edit (not started)", now, fx);
+            cancel_task(run, i, why, now, fx);
         }
     }
-    if run.tasks.iter().any(|t| live(t.state)) {
+    if !run.finish_edit || run.tasks.iter().any(|t| live(t.state)) {
         return;
     }
     for i in 0..run.tasks.len() {
@@ -115,14 +124,13 @@ pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
 }
 
-/// Decision 37: a running run whose tasks are all `merged` or `cancelled`, with an
-/// empty merge queue, no op pending and no cancelled task's session still ending, runs
-/// the ref guard first.
+/// Decision 37: a running run whose tasks are all finished (`merged`, `cancelled` or,
+/// since milestone 9, `reported`), with an empty merge queue, no op pending and no
+/// cancelled task's session still ending, runs the ref guard first. With an
+/// orchestrator, milestone 9 decision 38's conditions hold too (`kinds::may_complete`).
 pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    let finished = run
-        .tasks
-        .iter()
-        .all(|t| matches!(t.state, TaskState::Merged | TaskState::Cancelled));
+    let finished =
+        run.tasks.iter().all(|t| t.state.is_finished()) && super::kinds::may_complete(run);
     let ending = run
         .tasks
         .iter()
@@ -153,6 +161,9 @@ pub(super) fn refs_verified(run: &mut Run, result: OpResult, now: u64, fx: &mut 
         run.verify_failures = 0;
     }
     match result {
+        // M9.9 second review, C-1: every task is still finished (none came since the
+        // guard started), else the next pass verifies again.
+        OpResult::RefsOk if run.state == RunState::Running && !all_finished(run) => {}
         OpResult::RefsOk if run.state == RunState::Running => {
             let green = run.last_green_candidate.as_deref() == Some(run.run_head.as_str());
             match run.profile.check.clone() {
@@ -214,18 +225,32 @@ pub(super) fn final_checked(run: &mut Run, result: OpResult, now: u64, fx: &mut 
         }
         _ => return,
     }
-    complete(run, now, fx);
+    if all_finished(run) {
+        complete(run, now, fx);
+    }
+}
+
+fn all_finished(run: &Run) -> bool {
+    run.tasks.iter().all(|t| t.state.is_finished())
 }
 
 fn complete(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let count = |state| run.tasks.iter().filter(|t| t.state == state).count();
     let (merged, cancelled) = (count(TaskState::Merged), count(TaskState::Cancelled));
+    let reported = count(TaskState::Reported);
     run.state = RunState::Complete;
+    let reported = match reported {
+        0 => String::new(),
+        n => format!(", {n} reported"),
+    };
     log(
         run,
         now,
-        format!("complete: {merged} merged, {cancelled} cancelled"),
+        format!("complete: {merged} merged, {cancelled} cancelled{reported}"),
     );
+    // Milestone 9 decision 38.
+    let text = "the run is complete; write your summary with edit_plan summary";
+    super::wake::note(run, text.to_string());
     fx.push(Effect::WriteReport {
         run_id: run.id.clone(),
     });
@@ -265,6 +290,7 @@ pub(super) fn cancel(
         }
     }
     run.cancelled = true;
+    super::planners::halt_all(run, super::planners::RUN_CANCELLED, now, fx);
     log(run, now, "cancelled by the user");
     let mut text = format!("run {run_id} cancelled; it completes once its sessions have ended");
     for id in merging {

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use proto::RunsSnapshot;
 
-use super::{INTERRUPT_GRACE, OpCtx, REPORT_EVERY, RETIRE_AFTER, Retiring, RunService, ops};
+use super::{INTERRUPT_GRACE, OpCtx, REPORT_EVERY, RETIRE_AFTER, Retiring, RunService};
 use crate::run::engine::{AgentSignal, Effect, EngineState, EventKind, OpKind};
 use crate::run::journal::{self, JournalLine};
 use crate::run::model::{OpId, Run};
@@ -120,7 +120,14 @@ pub(super) fn prepare(state: &EngineState, fx: Vec<Effect>, now: u64) -> Vec<Rea
 pub(super) struct RunWrites {
     next: AtomicU64,
     runs: Mutex<HashMap<String, Arc<Mutex<u64>>>>,
+    /// Milestone 9 decision 43 (M9.13b re-review 3): the replies that say a record was
+    /// kept, by run. Such a reply is turned into [`RECORD_UNSAVED`] when its step could
+    /// not save that run, so no session starts on a record `run.json` lacks.
+    pub(super) record_replies: Mutex<HashMap<crate::run::engine::ReplyId, String>>,
 }
+
+/// A kept record's reply when its step could not save `run.json`.
+pub(super) const RECORD_UNSAVED: &str = "its record could not be saved";
 
 impl RunWrites {
     /// The write of `run` as it is now, numbered now, to run on a blocking thread.
@@ -188,6 +195,15 @@ impl RunService {
                     self.not_started(ctx, op, "run.json could not be saved");
                 }
                 Ready::Op { ctx, op, kind } => self.start_op(ctx, op, kind).await,
+                Ready::Effect(Effect::Reply { reply, result }) => {
+                    let run = crate::lock(&self.writes.record_replies).remove(&reply);
+                    let unsaved = run.is_some_and(|id| unsaved.contains(&id));
+                    let result = match unsaved {
+                        true => Err(RECORD_UNSAVED.to_string()),
+                        false => result,
+                    };
+                    self.apply(Effect::Reply { reply, result }, now).await;
+                }
                 Ready::Publish(snap) => self.publish(*snap),
                 Ready::PublishLater => crate::lock(&self.book).publish_due = true,
                 Ready::Effect(effect) => self.apply(effect, now).await,
@@ -257,6 +273,30 @@ impl RunService {
                 crate::lock(&self.book).reports_due.insert(run_id);
                 self.write_due_reports(now, false).await;
             }
+            // Milestone 9 decision 22: a sub-planner's session on the scout machine.
+            Effect::PlannerAccepted { window_id } => {
+                if let Some(adaptation) = self.adaptation.get() {
+                    adaptation.scouts.accept_planner(window_id);
+                }
+            }
+            Effect::StopPlanner { window_id, reason } => {
+                if let Some(adaptation) = self.adaptation.get() {
+                    adaptation.scouts.stop_planner(window_id, &reason);
+                }
+            }
+            Effect::StopScout { scout_id, reason } => {
+                if let Some(adaptation) = self.adaptation.get() {
+                    adaptation.scouts.halt(&scout_id, &reason);
+                }
+            }
+            // Decision 39: the paste (`driver/wake.rs`).
+            Effect::WakeOrchestrator {
+                run_id,
+                window_id,
+                text,
+                digest_revision,
+                notes_seq,
+            } => self.queue_wake(run_id, window_id, text, (digest_revision, notes_seq)),
             Effect::Persist { .. } | Effect::Op { .. } | Effect::Publish { .. } => {}
         }
     }
@@ -328,7 +368,7 @@ impl RunService {
                 (false, Some(guard)) => (Some(guard), None),
                 (false, None) => (Some(order.read_owned().await), None),
             };
-            let result = ops::run(&service, &ctx, kind).await;
+            let result = service.run_op(&ctx, op, kind).await;
             if service.stopped.load(Ordering::SeqCst) {
                 return;
             }
@@ -444,7 +484,14 @@ impl RunService {
                 std::fs::create_dir_all(&run.data_dir)?;
                 let tmp = run.data_dir.join("REPORT.md.tmp");
                 std::fs::write(&tmp, text)?;
-                std::fs::rename(&tmp, &path)
+                std::fs::rename(&tmp, &path)?;
+                // Milestone 9 decision 35: the research alone, beside the report.
+                if let Some(text) = report::research_text(&run) {
+                    let tmp = run.data_dir.join("research.md.tmp");
+                    std::fs::write(&tmp, text)?;
+                    std::fs::rename(&tmp, run.data_dir.join(report::RESEARCH_FILE))?;
+                }
+                Ok::<(), std::io::Error>(())
             })
             .await;
             if !matches!(written, Ok(Ok(()))) {

@@ -25,7 +25,10 @@ pub const WORKER_CONTRACT: &str = "You are a worker in an anthrex orchestration 
 6. If you cannot continue, call task_blocked (in Claude: mcp__anthrex__task_blocked): kind question if you need an answer, mis_sized if the task is bigger than one task, environment if a tool or setup is broken. Then stop.
 7. If you believe a review finding is wrong, do not fix it: call task_blocked with kind question and say why.
 8. Messages that start with [anthrex] come from the orchestration engine. Do what they say, commit, and call task_done again.
-9. Nobody can answer a permission prompt. If a tool is denied, work without it or call task_blocked with kind environment.";
+9. Nobody can answer a permission prompt. If a tool is denied, work without it or call task_blocked with kind environment.
+10. If you learn something that affects other tasks or the plan, such as another place that must change, a wrong assumption in the brief, or a risk, report it with task_note (in Claude: mcp__anthrex__task_note) and keep working. Use task_blocked only when you cannot continue.
+11. A message of kind change means the plan or the code around this task changed: in your next task_done summary, start with Changes applied: and say how you applied it. A message of kind stop_and_wait means finish your current step, commit anything worth keeping, and end your turn without calling task_done; wait for the next message.
+12. After a commit, git may print Unable to create '.../packed-refs.lock': Operation not permitted. That is expected: the commit succeeded, and it needs no action. Do not try to fix it or change git settings.";
 
 /// The reviewer's system prompt (decision 30, exact).
 pub const REVIEWER_CONTRACT: &str = "You are a reviewer in an anthrex orchestration run.
@@ -66,8 +69,27 @@ fn level_label(level: Option<ReviewLevel>) -> &'static str {
 }
 
 /// The first turn of a worker session (decision 30, Interfaces "`worker_prompt`"): the
-/// task header and the profile summary, what it owns and must meet, then the brief last.
-pub fn worker_prompt(run: &Run, task: &Task) -> String {
+/// task header and the profile summary, what it owns and must meet, M9's scout
+/// `extract` and `notes` (decisions 34, 42d; `run::orch::contract`), then the brief last.
+pub fn worker_prompt(run: &Run, task: &Task, extract: &str, notes: &str) -> String {
+    let mut out = worker_head(run, task);
+    for section in [extract, notes].into_iter().filter(|s| !s.is_empty()) {
+        out.push_str("\n\n");
+        out.push_str(section);
+    }
+    out.push_str("\n\n");
+    out.push_str(&task.spec.brief);
+    out
+}
+
+/// Where a worker's (or a handover's) first turn built with no extract takes one:
+/// right after [`worker_head`], behind a blank line (decision 34; the driver fills it).
+pub fn worker_extract_at(run: &Run, task: &Task) -> usize {
+    worker_head(run, task).len()
+}
+
+/// [`worker_prompt`] up to its acceptance criteria.
+fn worker_head(run: &Run, task: &Task) -> String {
     let spec = &task.spec;
     let start = task.start_commit.as_deref().unwrap_or(&run.run_head);
     let mut lines = vec![
@@ -99,8 +121,6 @@ pub fn worker_prompt(run: &Run, task: &Task) -> String {
     lines.extend(spec.owns.iter().map(|glob| format!("- {glob}")));
     lines.push("Acceptance criteria:".to_string());
     lines.extend(spec.acceptance.iter().map(|item| format!("- {item}")));
-    lines.push(String::new());
-    lines.push(spec.brief.clone());
     lines.join("\n")
 }
 
@@ -108,9 +128,17 @@ pub fn worker_prompt(run: &Run, task: &Task) -> String {
 /// this is and why, the change so far (`git diff --stat` and the diff clamped to
 /// [`REVIEW_DIFF_MAX`]) and every earlier bounce message's text. The layout after the
 /// worker prompt is M8a.11's (the brief names the parts, not their wording).
-pub fn handover_prompt(run: &Run, task: &Task, reason: &str, stat: &str, patch: &str) -> String {
+pub fn handover_prompt(
+    run: &Run,
+    task: &Task,
+    reason: &str,
+    stat: &str,
+    patch: &str,
+    extract: &str,
+    notes: &str,
+) -> String {
     let start = task.start_commit.as_deref().unwrap_or(&run.run_head);
-    let mut out = worker_prompt(run, task);
+    let mut out = worker_prompt(run, task, extract, notes);
     out.push_str(&format!(
         "\n\nThis is session {} of this task.\nWhy a new session: {reason}\n",
         task.session
@@ -134,8 +162,9 @@ pub fn handover_prompt(run: &Run, task: &Task, reason: &str, stat: &str, patch: 
     out
 }
 
-/// One review round's first turn (decision 35, Interfaces "`reviewer_prompt`"). Never
-/// names the author's runtime, model or transcript.
+/// One review round's first turn (decision 35, Interfaces "`reviewer_prompt`"), with
+/// M9's `messages` section (decision 42d). Never names the author's runtime, model or
+/// transcript.
 pub fn reviewer_prompt(
     run: &Run,
     task: &Task,
@@ -143,6 +172,7 @@ pub fn reviewer_prompt(
     base: &str,
     head: &str,
     patch: &str,
+    messages: &str,
 ) -> String {
     let spec = &task.spec;
     let level = task.review_level;
@@ -193,6 +223,9 @@ pub fn reviewer_prompt(
     if round > 1 && !earlier.is_empty() {
         lines.push("Earlier findings to confirm fixed:".into());
         lines.extend(earlier);
+    }
+    if !messages.is_empty() {
+        lines.push(messages.to_string());
     }
     lines.push(String::new());
     lines.push(spec.brief.clone());
@@ -519,7 +552,7 @@ pub fn clamp_with(text: &str, max: usize, marker: &str) -> String {
     out
 }
 
-fn floor_boundary(text: &str, mut index: usize) -> usize {
+pub(crate) fn floor_boundary(text: &str, mut index: usize) -> usize {
     while !text.is_char_boundary(index) {
         index -= 1;
     }
@@ -531,52 +564,6 @@ fn ceil_boundary(text: &str, mut index: usize) -> usize {
         index += 1;
     }
     index
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Every cut position modulo a character: `k` ASCII bytes shift a body of 3-byte
-    /// (`世`) or 4-byte (`𝄞`) characters, so over `k` in 0..=3 each cut lands on every
-    /// offset inside a character.
-    #[test]
-    fn clamp_diff_cuts_on_character_boundaries_at_every_offset() {
-        for body in ["世", "𝄞", "a世𝄞"] {
-            for k in 0..=3 {
-                let text = format!("{}{}", "a".repeat(k), body.repeat(20_000));
-                for max in [REVIEW_DIFF_MAX, 1000, 1001, 1002, 1003] {
-                    let out = clamp_diff(&text, max);
-                    assert!(out.len() <= max, "{body} k={k} max={max}: {}", out.len());
-                    assert!(
-                        out.len() >= max - 3,
-                        "{body} k={k} max={max}: {}",
-                        out.len()
-                    );
-                    assert_eq!(out.matches(DIFF_CUT_MARKER).count(), 1);
-                    let (head, tail) = out.split_once(DIFF_CUT_MARKER).unwrap();
-                    assert!(text.starts_with(head), "{body} k={k} max={max}");
-                    assert!(text.ends_with(tail), "{body} k={k} max={max}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn clamp_diff_leaves_text_within_the_limit_alone() {
-        let text = "世".repeat(10);
-        assert_eq!(clamp_diff(&text, 30), text);
-        assert_eq!(clamp_diff(&text, 31), text);
-        let cut = clamp_diff(&text, 29);
-        assert!(cut.len() <= 29, "{cut:?}");
-    }
-
-    #[test]
-    fn clamp_diff_below_the_marker_keeps_a_head_only() {
-        let text = "世".repeat(100);
-        let out = clamp_diff(&text, 10);
-        assert_eq!(out, "世世世");
-    }
 }
 
 #[cfg(test)]

@@ -114,6 +114,8 @@ pub(super) struct Request {
     pub method: String,
     pub path: String,
     pub content_type: String,
+    /// The `Authorization` header (milestone 9 decision 14a), when sent.
+    pub authorization: Option<String>,
     pub body: Vec<u8>,
     pub keep_alive: bool,
 }
@@ -173,6 +175,7 @@ impl Conn {
             return Err(Unread::Refuse(400));
         }
         let mut content_type = String::new();
+        let mut authorization = None;
         let mut length: Option<usize> = None;
         let mut chunked = false;
         let mut keep_alive = version == "HTTP/1.1";
@@ -181,6 +184,7 @@ impl Conn {
             let value = value.trim();
             match name.trim().to_ascii_lowercase().as_str() {
                 "content-type" => content_type = value.to_string(),
+                "authorization" => authorization = Some(value.to_string()),
                 "content-length" => {
                     let n: usize = value.parse().map_err(|_| Unread::Refuse(400))?;
                     if length.is_some_and(|l| l != n) {
@@ -219,6 +223,7 @@ impl Conn {
             method: method.to_string(),
             path: path.to_string(),
             content_type,
+            authorization,
             body,
             keep_alive,
         })

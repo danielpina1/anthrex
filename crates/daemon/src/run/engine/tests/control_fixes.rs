@@ -223,6 +223,7 @@ fn an_override_with_a_due_hand_back_hands_back_first() {
         test_mode_reason: None,
         priority: None,
         size: None,
+        deps: None,
     };
     edit(&mut fx, vec![add_dep("t1", "t2"), amend]);
     fx.launch_all();
@@ -251,6 +252,8 @@ fn an_override_with_a_due_hand_back_hands_back_first() {
             files: vec![],
             head: Some(tip.clone()),
             onto: Some(HEAD.into()),
+            merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let (_, kind) = only_op(&effects, "MergeCandidate");

@@ -33,6 +33,9 @@ pub fn status_glyph(status: Status, spinner_frame: usize) -> &'static str {
     }
 }
 
+/// Milestone 9 decision 42i: a `paused(message)` task's own colour, beside `‖`.
+pub const PAUSED_COLOR: Color = Color::Rgb(0xcb, 0xa6, 0xf7);
+
 /// Milestone 8c: a run's node glyph, drawn in `run_color`.
 pub const RUN_GLYPH: &str = "◉";
 
@@ -42,7 +45,7 @@ pub fn run_color(state: RunState) -> Color {
         RunState::AwaitingApproval | RunState::Paused | RunState::Halted => {
             status_color(Status::Attention)
         }
-        RunState::Running => status_color(Status::Working),
+        RunState::Running | RunState::Planning => status_color(Status::Working),
         RunState::Complete | RunState::Accepted => status_color(Status::Done),
         RunState::Discarded | RunState::Failed => DIM,
     }
@@ -69,7 +72,7 @@ pub fn task_glyph(
         TaskState::Proof | TaskState::Check => "◇",
         TaskState::Review => "◐",
         TaskState::MergeQueue => "▸",
-        TaskState::Merged => "✓",
+        TaskState::Merged | TaskState::Reported => "✓",
         TaskState::Blocked => "⊘",
         TaskState::Cancelled => "–",
     }
@@ -87,10 +90,34 @@ pub fn task_color(state: TaskState) -> Color {
         | TaskState::Check
         | TaskState::Review
         | TaskState::MergeQueue => status_color(Status::Working),
-        TaskState::Merged => status_color(Status::Done),
+        TaskState::Merged | TaskState::Reported => status_color(Status::Done),
         TaskState::Blocked => status_color(Status::Attention),
         TaskState::Cancelled => DIM,
     }
+}
+
+/// Milestone 9 (decisions 28 and 42i): a task's glyph and colour, `task_glyph` and
+/// `task_color` with two marks of its own. A task held for approval is drawn as
+/// planned (`○`, the idle colour); a `paused(message)` task is `‖` in
+/// [`PAUSED_COLOR`].
+pub fn task_look(
+    state: TaskState,
+    gate_open: bool,
+    held: bool,
+    paused: bool,
+    animating: bool,
+    spinner_frame: usize,
+) -> (&'static str, Color) {
+    if gate_open || held {
+        return ("○", status_color(Status::Idle));
+    }
+    if paused {
+        return ("‖", PAUSED_COLOR);
+    }
+    (
+        task_glyph(state, false, animating, spinner_frame),
+        task_color(state),
+    )
 }
 
 pub fn border() -> Style {

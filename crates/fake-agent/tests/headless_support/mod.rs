@@ -165,6 +165,7 @@ impl Mcp {
             run_id: "r1".into(),
             task_id: self.task.map(String::from),
             scout_id: None,
+            epic: None,
         }
     }
 }
@@ -248,6 +249,15 @@ pub fn codex_argv(
     let (exe, socket) = exe_and_socket(mcp);
     let spec = spec(Runtime::Codex, mcp);
     argv::codex_args(&spec, &session, msg, &exe, WINDOW, &socket, &caps)
+}
+
+/// The daemon's own Codex argv for a first turn with any MCP target (milestone 9's
+/// planners and run scouts), its server at `exe` on `socket`.
+pub fn codex_argv_for(target: McpTarget, exe: &Path, socket: &Path, msg: &str) -> Vec<String> {
+    let mut spec = spec(Runtime::Codex, None);
+    spec.mcp = Some(target);
+    let session = SessionArg::New { uuid: None };
+    argv::codex_args(&spec, &session, msg, exe, WINDOW, socket, &argv::CLI_CAPS)
 }
 
 /// M8a.1's accepted stream-json user message (`claude_stream::user_message`).

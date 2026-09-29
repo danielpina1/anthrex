@@ -192,6 +192,8 @@ fn merged(
     fx: &mut Vec<Effect>,
 ) {
     let id = run.tasks[i].id().to_string();
+    // Milestone 9 decision 37: an epic's merges, for its integration review.
+    super::kinds::record_merge(run, i, &from, &commit);
     super::history::merged(run, i, from, commit.clone(), fx);
     let task = &mut run.tasks[i];
     set_state(task, TaskState::Merged, now);
@@ -265,6 +267,7 @@ fn conflict(run: &mut Run, i: usize, files: Vec<String>, now: u64, fx: &mut Vec<
         worktree: task.worktree.clone(),
         run_head: run.run_head.clone(),
         task_head: task.head.clone(),
+        list_merged: false,
     };
     let op = next_op(run);
     run.tasks[i].merge_op = Some(op);
@@ -302,7 +305,9 @@ pub(super) fn handed_back(
         return;
     }
     let (files, head, onto) = match result {
-        OpResult::HandedBack { files, head, onto } => (files, head, onto),
+        OpResult::HandedBack {
+            files, head, onto, ..
+        } => (files, head, onto),
         OpResult::Failed { message } => {
             let text = format!("could not merge the run head into its worktree: {message}");
             return block(run, i, BlockReason::Environment, text, now);
@@ -390,6 +395,7 @@ fn send_due(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
         worktree: task.worktree.clone(),
         run_head: run.run_head.clone(),
         task_head: task.head.clone(),
+        list_merged: false,
     };
     let op = next_op(run);
     run.tasks[i].merge_op = Some(op);
@@ -417,6 +423,8 @@ pub(crate) fn candidate_in_flight(run: &Run, i: usize) -> bool {
 pub(super) fn halt(run: &mut Run, reason: String, now: u64) {
     run.halt_retryable = false;
     log(run, now, format!("halted: {reason}"));
+    // Milestone 9 decision 39.
+    super::wake::note(run, format!("the run halted: {reason}"));
     run.state = RunState::Halted;
     run.halted_reason = Some(reason);
 }

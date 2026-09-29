@@ -7,7 +7,7 @@ use super::*;
 const NOT_SENT: &str = "the edit was not sent; press Enter to retry";
 
 fn the_edit() -> Vec<Effect> {
-    edit(vec![amend(None, Some(Size::S))])
+    form_edit(vec![amend(None, Some(Size::S))])
 }
 
 fn sent_edit() -> ClientMsg {
@@ -17,11 +17,15 @@ fn sent_edit() -> ClientMsg {
     }
 }
 
-/// The form is free again, the error inline, and `Enter` sends the same edit.
+/// The form is free again, the error inline, and `Enter` sends the same edit under a
+/// new id.
 fn retryable(app: &mut App) {
     assert!(!form(app).submitting);
     assert_eq!(form(app).error.as_deref(), Some(NOT_SENT));
-    assert_eq!(tap(app, KeyCode::Enter), the_edit());
+    assert_eq!(
+        tap(app, KeyCode::Enter),
+        form_edit_as(2, vec![amend(None, Some(Size::S))])
+    );
     assert!(form(app).submitting);
     assert_eq!(form(app).error, None);
 }

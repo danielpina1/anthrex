@@ -4,17 +4,15 @@
 //! replies this client asked for. Task M8c.6 adds the run view's state (decision 11):
 //! opening, leaving and the keys only it has; Enter inside it is `run_enter.rs`. Task
 //! M8c.9 adds the plan gate (decisions 32–34): `a`, `x`, `e` and `d`, the edit form's
-//! keys and its replies. The client only ever sends the user's own requests, each after
+//! keys and its replies, whose code is in `run_gate.rs`. The client only ever sends the user's own requests, each after
 //! a confirm (the `y` of a `Confirm`, or the form's `Enter`).
 
-use super::{App, Effect, Modal, PendingAction, TreeInput};
-use crate::run_edit::{EditOutcome, TaskEditForm};
+use super::{App, Effect, TreeInput};
 use crate::tree::{self, NodeKey, Row, RunFilter, TreeState};
 use crossterm::event::{KeyCode, KeyEvent};
-use proto::run_wire::request::EDIT;
 use proto::{
-    AgentRoundInfo, ClientMsg, RunInfo, RunPath, RunReply, RunRequest, RunState, RunsSnapshot,
-    Runtime, TaskInfo, TaskState, WindowInfo,
+    AgentRoundInfo, ClientMsg, RunInfo, RunReply, RunRequest, RunState, RunsSnapshot, Runtime,
+    WindowInfo,
 };
 use std::time::Instant;
 
@@ -80,20 +78,7 @@ pub(crate) fn state_text(state: RunState) -> &'static str {
         RunState::Accepted => "accepted",
         RunState::Discarded => "discarded",
         RunState::Failed => "failed",
-    }
-}
-
-fn confirm(message: String, action: PendingAction) -> Modal {
-    Modal::Confirm { message, action }
-}
-
-/// Decision 32's approve confirm: the tasks not `cancelled` are the ones that start.
-fn approve_message(run: &RunInfo) -> String {
-    let run_id = &run.run_id;
-    let starting = run.tasks.iter().filter(|t| t.state != TaskState::Cancelled);
-    match starting.count() {
-        1 => format!("Approve run {run_id}? 1 task starts."),
-        n => format!("Approve run {run_id}? {n} tasks start."),
+        RunState::Planning => "planning",
     }
 }
 
@@ -110,9 +95,11 @@ pub(super) fn no_runs() -> RunsSnapshot {
 /// the daemon's, and a toast is one status-bar line (review M1).
 pub(crate) const TOAST_MAX_CHARS: usize = 300;
 
-/// `text` cut to [`TOAST_MAX_CHARS`] characters plus `…`, on a char boundary.
-fn capped(text: &str) -> String {
-    let mut out: String = text.chars().take(TOAST_MAX_CHARS).collect();
+/// `text` cut to [`TOAST_MAX_CHARS`] characters plus `…`, on a char boundary, with no
+/// control, line-separator or bidi character (`safe_text`, milestone 9's M-6).
+pub(super) fn capped(text: &str) -> String {
+    let head: String = text.chars().take(TOAST_MAX_CHARS).collect();
+    let mut out = crate::safe_text::one_line(&head);
     if text.chars().nth(TOAST_MAX_CHARS).is_some() {
         out.push('…');
     }
@@ -158,6 +145,26 @@ impl App {
             .collect()
     }
 
+    /// Milestone 9 decision 2: `request` as a tagged request under a fresh id, which
+    /// its reply echoes. Ids count from 1 for the client's life.
+    pub(super) fn tagged_request(&mut self, request: RunRequest) -> (u64, Effect) {
+        self.next_request_id += 1;
+        let id = self.next_request_id;
+        (id, Effect::Send(ClientMsg::RunTagged { id, request }))
+    }
+
+    /// Decision 44: the run a goal started, opened once a snapshot names it.
+    pub(super) fn open_pending_run(&mut self) {
+        let Some(id) = self.pending_open.as_ref() else {
+            return;
+        };
+        if tree::shown_runs(&self.runs.runs).any(|run| run.run_id == *id) {
+            let id = id.clone();
+            self.pending_open = None;
+            self.open_run_view(id);
+        }
+    }
+
     pub(crate) fn on_run_reply(&mut self, reply: RunReply) -> Vec<Effect> {
         match reply {
             // Decision 1: every snapshot replaces the last, whatever its revision — a
@@ -170,29 +177,57 @@ impl App {
             }
             // Decision 34: an edit's reply ends a submitting form — closed on `Done`,
             // its error row filled on `Refused`. Every other reply is a toast.
-            RunReply::Done { request, message } => {
-                if request == EDIT && self.submitting_form().is_some() {
+            // Milestone 9 decision 2: a form's reply is the one carrying its request's
+            // id, never one that merely names the same request.
+            RunReply::Done {
+                message,
+                request_id,
+                ..
+            } => {
+                if self.form_waiting_on(request_id).is_some() {
                     self.modal = None;
                 }
                 self.toast(capped(&message));
             }
-            RunReply::Refused { request, message } => {
+            RunReply::Refused {
+                request,
+                message,
+                request_id,
+            } => {
                 let text =
                     first_line_and_more(&message).unwrap_or_else(|| format!("{request} refused"));
-                match self.submitting_form().filter(|_| request == EDIT) {
-                    Some(form) => {
-                        form.error = Some(text);
-                        form.submitting = false;
-                    }
-                    None => self.toast(text),
+                if let Some(form) = self.form_waiting_on(request_id) {
+                    form.error = Some(text);
+                    form.submitting = false;
+                    form.request_id = None;
+                } else if let Some(form) = self.goal_form_waiting_on(request_id) {
+                    form.error = Some(text);
+                    form.submitting = false;
+                    form.request_id = None;
+                } else {
+                    self.toast(text);
+                }
+            }
+            RunReply::Triaged {
+                run_id,
+                message,
+                request_id,
+                ..
+            } => {
+                // Review: a reply to this client's goal whose form was closed meanwhile
+                // is still shown. This client sends `StartGoal` only tagged, so an
+                // untagged `Triaged` is not its own and changes nothing (M8c).
+                if self.goal_form_waiting_on(request_id).is_some() {
+                    self.goal_triaged(run_id, &message);
+                } else if request_id.is_some() {
+                    self.toast(capped(&message));
                 }
             }
             RunReply::Started { .. }
             | RunReply::ConfirmNeeded { .. }
             | RunReply::ToolResult { .. }
-            | RunReply::Triaged { .. }
-            | RunReply::Profile(_)
-            | RunReply::Stats(_) => {}
+            | RunReply::Profile { .. }
+            | RunReply::Stats { .. } => {}
         }
         vec![]
     }
@@ -212,6 +247,7 @@ impl App {
         self.tree.prune(&self.windows);
         self.close_run_view_if_gone(run_row);
         self.close_gate_modal_if_stale();
+        self.open_pending_run();
         let rows = nav_rows_of(
             &self.windows,
             &self.runs.runs,
@@ -334,7 +370,8 @@ impl App {
     /// The keys only the run view has (decisions 21 and 23): `f` cycles the filter, `h`
     /// at the root and `Esc` leave. `None`: not one of them, so the project tree's rule
     /// applies (`h` below the root selects the parent). `a`, `x`, `e` and `d` are the
-    /// plan gate's (decision 32).
+    /// plan gate's (decision 32) and, past the gate, an approval hold's (milestone 9);
+    /// `s` submits a planning run.
     pub(crate) fn on_run_view_key(&mut self, key: KeyEvent) -> Option<Vec<Effect>> {
         let view = self.run_view.as_mut()?;
         match key.code {
@@ -357,163 +394,18 @@ impl App {
             KeyCode::Esc => self.close_run_view(),
             KeyCode::Char(c @ ('a' | 'x' | 'e' | 'd')) => {
                 let run_id = view.run_id.clone();
-                self.on_gate_key(run_id, c);
+                return Some(self.on_gate_key(run_id, c));
+            }
+            // Milestone 9 decision 13: the user's submit, on a planning run's root only.
+            KeyCode::Char('s') => {
+                let run_id = view.run_id.clone();
+                if !self.on_submit_key(&run_id) {
+                    return None;
+                }
             }
             _ => return None,
         }
         Some(vec![])
-    }
-
-    /// Decision 32: `Ok` with the run while it awaits approval — the gate is open —
-    /// else the toast saying why it is closed.
-    fn gate_run(&self, run_id: &str) -> Result<&RunInfo, String> {
-        let closed = |why: &str| format!("the plan gate is closed: run {run_id} is {why}");
-        match self.runs.runs.iter().find(|run| run.run_id == run_id) {
-            Some(run) if run.state == RunState::AwaitingApproval => Ok(run),
-            Some(run) if run.path == Some(RunPath::Fast) => Err(closed("on the fast path")),
-            Some(run) => Err(closed(state_text(run.state))),
-            None => Err(closed("gone")),
-        }
-    }
-
-    /// Decision 32's four keys: `a` and `x` ask to approve or reject the run, `d` to
-    /// remove the selected task, `e` opens the edit form on it. Nothing is sent here.
-    fn on_gate_key(&mut self, run_id: String, key: char) {
-        let run = match self.gate_run(&run_id) {
-            Ok(run) => run,
-            Err(text) => return self.toast(text),
-        };
-        let task = match &self.tree.selected {
-            Some(NodeKey::Task { run: r, id }) if *r == run_id => {
-                run.tasks.iter().find(|task| task.id == *id)
-            }
-            _ => None,
-        };
-        let modal = match (key, task) {
-            ('a', _) => confirm(approve_message(run), PendingAction::ApproveRun(run_id)),
-            ('x', _) => confirm(
-                format!(
-                    "Reject run {run_id}? Its branches and worktrees are removed; \
-                     salvage refs are kept."
-                ),
-                PendingAction::RejectRun(run_id),
-            ),
-            ('e', Some(task)) => Modal::EditTask(TaskEditForm::new(&run_id, task)),
-            (_, Some(task)) => confirm(
-                format!("Remove {} from run {run_id}'s plan?", task.id),
-                PendingAction::RemoveTask {
-                    task_id: task.id.clone(),
-                    run_id,
-                },
-            ),
-            (_, None) => return self.toast("select a task to edit or remove"),
-        };
-        self.modal = Some(modal);
-    }
-
-    /// Decision 33: the open edit form's keys. `Enter` sends the one `Edit` and leaves
-    /// the form open, submitting, until its reply (decision 34).
-    pub(crate) fn on_edit_task_key(&mut self, key: KeyEvent) -> Vec<Effect> {
-        let Some(Modal::EditTask(form)) = &mut self.modal else {
-            return vec![];
-        };
-        match form.on_key(key) {
-            EditOutcome::Stay => vec![],
-            EditOutcome::Cancel => {
-                self.modal = None;
-                vec![]
-            }
-            EditOutcome::Unchanged => {
-                self.modal = None;
-                self.toast("nothing changed");
-                vec![]
-            }
-            EditOutcome::Submit(edits) => {
-                let run_id = form.run_id.clone();
-                vec![Effect::Send(ClientMsg::Run(RunRequest::Edit {
-                    run_id,
-                    edits,
-                }))]
-            }
-        }
-    }
-
-    /// The edit form while it waits for its `run edit` reply.
-    fn submitting_form(&mut self) -> Option<&mut TaskEditForm> {
-        match &mut self.modal {
-            Some(Modal::EditTask(form)) if form.submitting => Some(form),
-            _ => None,
-        }
-    }
-
-    /// Whole-branch review M2: the `Edit` a submitting form waits on was refused by the
-    /// connection, or its reply went with a lost link, so no reply will come. The form
-    /// stops submitting and says so inline; `Enter` sends it again.
-    pub(super) fn edit_not_sent(&mut self) {
-        if let Some(form) = self.submitting_form() {
-            form.submitting = false;
-            form.error = Some("the edit was not sent; press Enter to retry".into());
-        }
-    }
-
-    /// Decision 32's task while the gate is open, else the toast saying why not.
-    fn gate_task(&self, run_id: &str, task_id: &str) -> Result<&TaskInfo, String> {
-        let gone = || format!("{task_id} is no longer in run {run_id}'s plan");
-        let run = self.gate_run(run_id)?;
-        run.tasks.iter().find(|t| t.id == task_id).ok_or_else(gone)
-    }
-
-    /// After every snapshot (review I1 and M6): an open gate `Confirm` or edit form
-    /// whose request could now only be refused, or would do other than it said, closes
-    /// with a toast saying why. A `y` or `Enter` after it sends nothing.
-    fn close_gate_modal_if_stale(&mut self) {
-        let text = match &self.modal {
-            Some(Modal::EditTask(form)) => self.stale_form(form),
-            Some(Modal::Confirm { message, action }) => self.stale_confirm(message, action),
-            _ => None,
-        };
-        if let Some(text) = text {
-            self.modal = None;
-            self.toast(text);
-        }
-    }
-
-    /// The gate closed, the task gone, or — while not submitting, since our own edit
-    /// changes these — the task's values changed elsewhere, so its route would revert.
-    fn stale_form(&self, form: &TaskEditForm) -> Option<String> {
-        let (run_id, task_id) = (&form.run_id, &form.task_id);
-        match self.gate_task(run_id, task_id) {
-            Err(text) => Some(text),
-            Ok(task) if !form.submitting && !form.opened_from(task) => {
-                Some(format!("{task_id} changed in run {run_id}; press e again"))
-            }
-            Ok(_) => None,
-        }
-    }
-
-    /// The gate closed; for a remove, its task gone or finished; for an approve, a
-    /// different number of tasks would start than the confirm says.
-    fn stale_confirm(&self, message: &str, action: &PendingAction) -> Option<String> {
-        match action {
-            PendingAction::ApproveRun(run_id) => match self.gate_run(run_id) {
-                Err(text) => Some(text),
-                Ok(run) if approve_message(run) != message => {
-                    Some(format!("run {run_id}'s plan changed; press a again"))
-                }
-                Ok(_) => None,
-            },
-            PendingAction::RejectRun(run_id) => self.gate_run(run_id).err(),
-            PendingAction::RemoveTask { run_id, task_id } => {
-                match self.gate_task(run_id, task_id) {
-                    Err(text) => Some(text),
-                    Ok(task) if task.state.is_finished() => {
-                        Some(format!("{task_id} is no longer in run {run_id}'s plan"))
-                    }
-                    Ok(_) => None,
-                }
-            }
-            _ => None,
-        }
     }
 
     /// Tests move the snapshot's arrival into the past instead of sleeping.

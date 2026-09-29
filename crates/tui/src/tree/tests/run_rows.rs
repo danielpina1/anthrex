@@ -347,7 +347,8 @@ fn an_unexpected_role_on_a_task_is_labelled_not_dropped() {
     info.tasks = vec![t1];
 
     let rows = run_rows(&info, &[], &TreeState::default(), RunFilter::All);
-    assert_eq!(round_labels(&rows), ["scout #1", "orchestrator #2"]);
+    // Milestone 9: a scout round on a task is a research session.
+    assert_eq!(round_labels(&rows), ["research #1", "orchestrator #2"]);
     assert_eq!(rows.len(), 4);
     assert_eq!(round_label(AgentRole::Reviewer, 7, 3), "review #3");
 }

@@ -22,7 +22,7 @@ pub use git::{
 };
 use git::{KNOWN_GIT_KEYS, read_git};
 pub use orchestrator::{
-    ClaudeAuth, ClaudeHeadless, Deciders, Metering, Onboarding, Orchestrator, Scouts,
+    AgentConfig, ClaudeAuth, ClaudeHeadless, Deciders, Metering, Onboarding, Orchestrator, Scouts,
     default_roster,
 };
 

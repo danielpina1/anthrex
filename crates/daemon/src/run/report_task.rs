@@ -33,10 +33,16 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
             plain_text_line(&info.reason)
         ));
     }
-    if !task.notes.is_empty() {
+    if !task.notes.is_empty() || !task.orch.worker_notes.is_empty() {
         out.push_str("Notes:\n");
         for note in &task.notes {
             out.push_str(&format!("- {}\n", list_item_text("", note)));
+        }
+        // Milestone 9 decision 42i: the worker's own `task_note`s follow.
+        for note in &task.orch.worker_notes {
+            let kind = crate::run::orch::json::label(&note.kind);
+            let prefix = format!("{} ({kind}, from the worker) ", format_utc(note.at));
+            out.push_str(&format!("- {}\n", list_item_text(&prefix, &note.text)));
         }
         // A blank line closes the list: without it, CommonMark's lazy continuation
         // would fold the next plain line (`Route:`) into the last note's own
@@ -111,6 +117,7 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
             plain_text_line(reason)
         ));
     }
+    messages(task, out);
     if !task.history.is_empty() {
         out.push_str("History:\n");
         for e in &task.history {
@@ -121,6 +128,29 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
         }
         out.push('\n');
     }
+}
+
+/// Milestone 9 decision 42i: every message the task was sent, with its source.
+fn messages(task: &Task, out: &mut String) {
+    if task.orch.messages.is_empty() {
+        return;
+    }
+    out.push_str("Messages:\n");
+    for m in &task.orch.messages {
+        let kind = crate::run::orch::json::label(&m.kind);
+        let waiting = if m.delivered {
+            ""
+        } else {
+            ", not delivered yet"
+        };
+        let prefix = format!(
+            "{} ({kind}, from {}{waiting}) ",
+            format_utc(m.at),
+            m.source.label()
+        );
+        out.push_str(&format!("- {}\n", list_item_text(&prefix, &m.text)));
+    }
+    out.push('\n');
 }
 
 fn budget_and_spend(task: &Task, now: u64, out: &mut String) {
@@ -220,7 +250,7 @@ fn runtime_label(runtime: Runtime) -> &'static str {
     }
 }
 
-fn strength_label(strength: Strength) -> &'static str {
+pub(super) fn strength_label(strength: Strength) -> &'static str {
     match strength {
         Strength::Fast => "fast",
         Strength::Standard => "standard",

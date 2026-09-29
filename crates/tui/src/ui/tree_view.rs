@@ -185,7 +185,7 @@ pub fn narrow_line(
                     Span::raw(format!(" {position:>pos_width$} ")),
                 ],
                 Span::styled(
-                    tree::run_title(run).to_owned(),
+                    crate::safe_text::one_line(tree::run_title(run)),
                     if focused { bold } else { Style::default() },
                 ),
                 None,

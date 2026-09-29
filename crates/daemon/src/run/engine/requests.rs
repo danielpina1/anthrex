@@ -1,6 +1,6 @@
 //! Client requests: start and the plan gate (decision 14), approve, reject (decision 20's
-//! discard), plan edits (decision 13, engine side, with decision 45's `pause` and
-//! `resume` edits), and `run retry` (decision 42). Pure (design decision 2). M8a.14's
+//! discard), `run edit` (decision 13; the batch itself is `batch.rs`), and `run retry`
+//! (decision 42). Pure (design decision 2). M8a.14's
 //! `complete.rs` and `merge.rs` answer cancel, finish and a halted run's resume;
 //! `restore.rs` (M8a.15) answers restore and a paused run's resume.
 
@@ -10,19 +10,17 @@ use proto::{
     TaskState,
 };
 
+use super::batch::{Refused, apply_batch};
 use super::dispatch::{finishing_as, history, salvage_ref};
 use super::schedule::deps_done;
 use super::signals::end_round;
 use super::{
-    Effect, EngineState, OpKind, OpResult, ReplyId, deciders, emit_op, ladder, next_op, outbox,
-    restore, review,
+    Effect, EngineState, OpKind, OpResult, ReplyId, deciders, emit_op, ladder, next_op, review,
 };
 use crate::decider::fallback::SIZED_BY_TRIAGE;
-use crate::run::edit_log;
-use crate::run::edits::{EditConsequence, apply_edits};
 use crate::run::env::profile_env;
-use crate::run::model::{FreshSession, LogEntry, Run, SizeCheckState, hh_mm};
-use crate::run::reach::reachable_runtimes;
+use crate::run::model::{FreshSession, LogEntry, Run, SizeCheckState};
+use crate::run::orch::EditSource;
 use crate::run::roster::escalate;
 use crate::run::triage::fast_refusal;
 use crate::run::validate::EditScope;
@@ -74,6 +72,9 @@ pub(super) fn start(
         run.state = RunState::Running;
         run.approved_at = Some(now);
         log(&mut run, now, "started on the fast path; no plan gate");
+    } else if run.state == RunState::Planning {
+        // Milestone 9 decision 26: no task and no gate yet; the orchestrator plans.
+        log(&mut run, now, "started; planning with its orchestrator");
     } else if run.approved_by.as_deref() == Some("--yes") {
         run.state = RunState::Running;
         run.approved_at = Some(now);
@@ -92,6 +93,9 @@ pub(super) fn start(
         env: profile_env(&run.profile, &path),
     };
     emit_op(&mut run, op, None, kind, fx);
+    if run.state == RunState::Planning {
+        super::orch_window::launch(&mut run, now, fx);
+    }
     // M8b decision 19: every task is cross-checked; one waiting is not runnable. The
     // fast path's task is not: triage sized it a moment earlier (ruling R-T13-1).
     if fast {
@@ -149,6 +153,12 @@ pub(super) fn approve(
     if let Some(how) = finishing_as(run) {
         return reply(fx, id, Err(format!("run {run_id} is being {how}")));
     }
+    if run.state == RunState::Planning {
+        let text = format!(
+            "run {run_id} is still being planned; approve it when the orchestrator has submitted the plan"
+        );
+        return reply(fx, id, Err(text));
+    }
     if run.state != RunState::AwaitingApproval {
         return reply(
             fx,
@@ -165,49 +175,9 @@ pub(super) fn approve(
         q.queued_at = now;
     }
     log(run, now, "approved by the user");
+    // Milestone 9 decisions 30, 39.
+    super::wake::note(run, "the user approved the plan".to_string());
     reply(fx, id, Ok(format!("run {run_id} approved")));
-}
-
-/// M8b decision 25: `run promote` records the user's wish on a live fast-path run (not
-/// terminal and not `complete`, review m3).
-/// Nothing else changes: no task, op or window. Milestone 9 performs the promotion.
-pub(super) fn promote(
-    state: &mut EngineState,
-    id: ReplyId,
-    run_id: &str,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let Some(run) = state.runs.get_mut(run_id) else {
-        return reply(fx, id, Err(unknown(run_id)));
-    };
-    if run.path != Some(RunPath::Fast) {
-        return reply(fx, id, Err(format!("run {run_id} is not a fast-path run")));
-    }
-    // Review m3: a `complete` run only waits for accept; nothing is left to promote.
-    if run.state.is_terminal() || run.state == RunState::Complete {
-        return reply(
-            fx,
-            id,
-            Err(format!("run {run_id} is {}", run.state.label())),
-        );
-    }
-    if let Some(at) = run.promote_requested_at {
-        let text = format!(
-            "run {run_id} was already marked for promotion at {}",
-            hh_mm(at)
-        );
-        return reply(fx, id, Ok(text));
-    }
-    run.promote_requested_at = Some(now);
-    log(run, now, "promotion to a planned run requested by the user");
-    reply(
-        fx,
-        id,
-        Ok(format!(
-            "recorded: run {run_id} is marked for promotion to a planned run. Until the orchestrator exists (milestone 9) nothing else changes: the fast-path task continues and the run finishes as a fast-path run."
-        )),
-    );
 }
 
 /// Decision 14: `run reject` discards the run (decision 20): every worktree salvaged and
@@ -226,7 +196,11 @@ pub(super) fn reject(
     if let Some(how) = finishing_as(run) {
         return reply(fx, id, Err(format!("run {run_id} is being {how}")));
     }
-    if run.state != RunState::AwaitingApproval {
+    // Milestone 9 decision 26: a run still being planned is discarded too, also when a
+    // daemon restart paused it there (M9.7 review fixes, ruling 4).
+    let planning = run.state == RunState::Planning
+        || (run.state == RunState::Paused && run.paused_from == Some(RunState::Planning));
+    if !planning && run.state != RunState::AwaitingApproval {
         let label = run.state.label();
         let text =
             format!("run {run_id} is {label}; reject applies only while its plan awaits approval");
@@ -255,27 +229,27 @@ pub(super) fn reject(
     };
     emit_op(run, op, None, kind, fx);
     log(run, now, "rejected by the user; discarding");
+    super::wake::note(run, "the user rejected the plan; run discarded".to_string());
     reply(fx, id, Ok(format!("run {run_id} rejected; discarding it")));
 }
 
-/// Decision 13, engine side: the batch goes through `apply_edits`; a live session of a
-/// cancelled task is killed (its worktree is removed once no session is left,
-/// `dispatch::remove_cancelled_worktrees`); a message is queued, and held while the task
-/// carries the N5 hold (`dispatch::enforce_holds`). `pause` pauses a running run with
-/// its sessions alive and `resume` resumes a paused one (decision 45); a batch whose
-/// `pause` or `resume` does not fit the run's state is refused whole. `finish` is
-/// decision 37's (`complete::finish_pass`).
+/// `run edit` (decision 13): the user's batch, through `batch::apply_batch`, and with
+/// `submit`, milestone 9 decision 13's user submit of a planning run's plan.
 pub(super) fn edit(
     state: &mut EngineState,
     id: ReplyId,
     run_id: &str,
-    (edits, scope, refusals): (&[PlanEdit], &EditScope, &[(Runtime, String)]),
+    (edits, scope, refusals, submit): (&[PlanEdit], &EditScope, &[(Runtime, String)], bool),
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
     let Some(run) = state.runs.get_mut(run_id) else {
         return reply(fx, id, Err(unknown(run_id)));
     };
+    // Milestone 9 decision 42: a `message` or `refresh` is alone in its request.
+    if let Err(error) = crate::run::edits_orch::one_edit_rule(edits, submit, false) {
+        return reply(fx, id, Err(error.to_string()));
+    }
     if run.state.is_terminal() || run.state == RunState::Complete {
         return reply(
             fx,
@@ -284,7 +258,8 @@ pub(super) fn edit(
         );
     }
     // Whole-branch review m1: a fast-path run runs one task; milestone 9's promotion,
-    // not an edit, turns it into a planned run.
+    // not an edit, turns it into a planned run (`promote.rs`; a promoted run's path is
+    // `plan`, so this no longer applies to it).
     let adds = |e: &PlanEdit| matches!(e, PlanEdit::AddTask { .. } | PlanEdit::SplitTask { .. });
     if run.path == Some(RunPath::Fast) && edits.iter().any(adds) {
         let text = format!(
@@ -292,138 +267,87 @@ pub(super) fn edit(
         );
         return reply(fx, id, Err(text));
     }
-    if let Err(text) = pause_or_resume_fits(run, edits) {
-        return reply(fx, id, Err(text));
+    // M9.9 second review, C-1: a cancelled run only loses work.
+    let adds = |e: &PlanEdit| matches!(e, PlanEdit::AddTask { .. } | PlanEdit::SplitTask { .. });
+    if run.cancelled && (submit || edits.iter().any(adds)) {
+        return reply(fx, id, Err(format!("run {run_id} was cancelled")));
     }
-    let (edited, consequences) = match apply_edits(run, edits, scope, now) {
-        Ok(ok) => ok,
-        Err(errors) => {
+    let batch = (edits, scope, refusals);
+    if submit {
+        let result = submit_edit(run, batch, now, fx);
+        return reply(fx, id, result);
+    }
+    match apply_batch(run, batch, &EditSource::User, now, fx) {
+        Ok(applied) => reply(fx, id, Ok(applied.text)),
+        Err(Refused::Text(text)) => reply(fx, id, Err(text)),
+        Err(Refused::Plan(errors)) => {
             let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
-            return reply(fx, id, Err(lines.join("\n")));
-        }
-    };
-    // Ruling T22-I1b: decisions 50 and 53 hold for every runtime the edited run can
-    // reach; one it could not reach before, whose checks failed, refuses the edit.
-    let before = reachable_runtimes(run);
-    let widened = reachable_runtimes(&edited)
-        .into_iter()
-        .filter(|runtime| !before.contains(runtime));
-    for runtime in widened {
-        if let Some((_, text)) = refusals.iter().find(|(r, _)| *r == runtime) {
-            return reply(fx, id, Err(text.clone()));
+            reply(fx, id, Err(lines.join("\n")))
         }
     }
-    // Ruling T14-R2 (#4): the reply says which cancels wait on an in-flight merge.
-    let deferred: Vec<String> = edited
-        .tasks
-        .iter()
-        .filter(|t| t.cancel_deferred)
-        .filter(|t| {
-            !run.tasks
-                .iter()
-                .any(|was| was.id() == t.id() && was.cancel_deferred)
-        })
-        .map(|t| t.id().to_string())
-        .collect();
-    // M8b decision 19: the unstarted tasks this batch added or amended.
-    let touched = touched_unstarted(&edited, edits);
+}
+
+/// Decision 13's user submit (M9.7 review fixes, ruling 5): a planning run whose
+/// orchestrator cannot go on is completed by the user alone. The batch and the submit
+/// are one unit, applied to a copy, as the orchestrator's `edit_plan` is; the submit is
+/// the orchestrator's (`orch::submit_plan`), and the user then approves as usual.
+fn submit_edit(
+    run: &mut Run,
+    batch: (&[PlanEdit], &EditScope, &[(Runtime, String)]),
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> Result<String, String> {
+    // M9.9 review fixes, C1: a promoted running run whose orchestrator has not
+    // submitted is submitted by the user as the orchestrator's `submit` would.
+    let promoted = run.state == RunState::Running
+        && run
+            .orch
+            .orchestrator
+            .as_ref()
+            .is_some_and(|o| !o.plan_submitted);
+    if run.state != RunState::Planning && !promoted {
+        let label = run.state.label();
+        return Err(format!(
+            "run {} is {label}; only a run being planned can be submitted",
+            run.id
+        ));
+    }
+    let mut edited = run.clone();
+    let mut effects = Vec::new();
+    let mut text = None;
+    if !batch.0.is_empty() {
+        match apply_batch(&mut edited, batch, &EditSource::User, now, &mut effects) {
+            Ok(applied) => text = Some(applied.text),
+            Err(Refused::Text(text)) => return Err(text),
+            Err(Refused::Plan(errors)) => {
+                let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
+                return Err(lines.join("\n"));
+            }
+        }
+    }
+    super::orch::submit_plan(&mut edited, "the user", now)?;
     *run = edited;
-    for consequence in consequences {
-        match consequence {
-            EditConsequence::CancelLive { task_id } => kill_sessions(run, &task_id, fx),
-            // A held task keeps its message until it resumes (`dispatch::enforce_holds`).
-            EditConsequence::Deliver { task_id, text } => outbox::queue(run, &task_id, text, now),
-            // Decision 37: the scheduler's `complete::finish_pass` does the rest.
-            EditConsequence::Finish => {
-                run.finish_edit = true;
-                log(run, now, "the finish edit: no new task starts");
-            }
-            // Decision 45: dispatch, gates and deliveries stop; a turn already open runs
-            // to its end, and every session stays alive.
-            EditConsequence::Pause => {
-                run.state = RunState::Paused;
-                run.paused_from = Some(RunState::Running);
-                log(run, now, "paused by a plan edit");
-            }
-            EditConsequence::Resume => restore::unpause(run, now, fx),
-        }
-    }
-    deciders::cross_check(run, &touched, now, fx);
-    edit_log::record(run, edits, now);
-    let n = edits.len();
-    log(
-        run,
-        now,
-        format!("applied {n} plan edit{}", if n == 1 { "" } else { "s" }),
-    );
-    let mut text = format!("applied {n} edit{}", if n == 1 { "" } else { "s" });
-    for task in &deferred {
-        text.push_str(&super::complete::deferred_note(task));
-    }
-    reply(fx, id, Ok(text));
-}
-
-/// M8b decision 19's edit side: decision 13's touched set (the tasks the batch added,
-/// split into, amended or gave a dependency), those still pending or queued (none
-/// dispatched), in plan order.
-fn touched_unstarted(edited: &Run, edits: &[PlanEdit]) -> Vec<String> {
-    // Keep in sync with `run::edits::Batch.touched`, which records the same set.
-    let mut touched: Vec<&str> = Vec::new();
-    for edit in edits {
-        match edit {
-            PlanEdit::AddTask { task } => touched.push(&task.id),
-            PlanEdit::SplitTask { into, .. } => touched.extend(into.iter().map(|t| t.id.as_str())),
-            PlanEdit::AmendTask { task_id, .. } | PlanEdit::AddDep { task_id, .. } => {
-                touched.push(task_id)
-            }
-            _ => {}
-        }
-    }
-    edited
-        .tasks
-        .iter()
-        .filter(|t| touched.contains(&t.id()))
-        .filter(|t| matches!(t.state, TaskState::Pending | TaskState::Queued))
-        .map(|t| t.id().to_string())
-        .collect()
-}
-
-fn kill_sessions(run: &mut Run, task_id: &str, fx: &mut Vec<Effect>) {
-    let Some(task) = run.tasks.iter_mut().find(|t| t.spec.id == task_id) else {
-        return;
+    fx.extend(effects);
+    let awaiting = |id: &str| {
+        run.orch
+            .gate_holds
+            .iter()
+            .any(|h| h.id == id && h.state == proto::HoldState::Awaiting)
     };
-    for round in task.rounds.iter_mut().filter(|r| !r.ended) {
-        if let Some(window_id) = round.window_id {
-            round.retiring = true;
-            fx.push(Effect::KillWindow { window_id });
-        }
-    }
-}
-
-/// Decision 45: a `pause` edit applies only to a running run and a `resume` edit only to
-/// a paused one, taken in batch order.
-fn pause_or_resume_fits(run: &Run, edits: &[PlanEdit]) -> Result<(), String> {
-    let mut state = run.state;
-    for edit in edits {
-        let (from, to, verb) = match edit {
-            PlanEdit::Pause => (
-                RunState::Running,
-                RunState::Paused,
-                "only a running run can be paused",
-            ),
-            PlanEdit::Resume => (
-                RunState::Paused,
-                RunState::Running,
-                "only a paused run can be resumed",
-            ),
-            _ => continue,
-        };
-        if state != from {
-            return Err(format!("run {} is {}; {verb}", run.id, state.label()));
-        }
-        state = to;
-    }
-    Ok(())
+    let outcome = if promoted && awaiting("promotion") {
+        "hold promotion awaits approval"
+    } else if promoted {
+        "it runs"
+    } else if run.state == RunState::Running {
+        "approved by --yes, it runs"
+    } else {
+        "it awaits approval"
+    };
+    let submitted = format!("the plan of run {} was submitted: {outcome}", run.id);
+    Ok(match text {
+        Some(text) => format!("{text}; {submitted}"),
+        None => submitted,
+    })
 }
 
 /// `run retry` (decision 42) of a blocked task that is neither L nor `dep_cancelled`:
@@ -458,6 +382,10 @@ pub(super) fn retry(
     };
     let task = &run.tasks[i];
     let refusal = match &task.block {
+        // Milestone 9 decision 42c.
+        _ if super::worker_messages::paused_refusal(task).is_some() => {
+            super::worker_messages::paused_refusal(task)
+        }
         _ if task.state != TaskState::Blocked => Some(format!(
             "task {task_id} is {}; retry applies only to a blocked task",
             task.state.label()
@@ -474,7 +402,37 @@ pub(super) fn retry(
     if let Some(text) = refusal {
         return reply(fx, id, Err(text));
     }
-    let block = task.block.clone();
+    let was = task.block.clone().map_or_else(String::new, |b| {
+        let label = serde_json::to_value(b.reason)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        format!(" (it was blocked({label}): {})", b.text)
+    });
+    // M9.9 second review, M-c: the user's retry lifts decision 25's cap.
+    run.tasks[i].orch.rewrite_restarts = 0;
+    let how = rung2(run, i, format!("the user retried it{was}"), now, fx);
+    history(run, i, now, format!("retried by the user at rung 2{was}"));
+    log(run, now, format!("{task_id} retried at rung 2"));
+    reply(
+        fx,
+        id,
+        Ok(format!("task {task_id} retried at rung 2: {how}")),
+    );
+}
+
+/// Decision 42's re-entry at rung 2 of blocked task `i`, which `run retry` and
+/// milestone 9 decision 25's rewrite of a mis-sized task share: `failures = 1`, the
+/// counters cleared, the route escalated, and a fresh session (`why` is its hand-over
+/// reason), or a dispatch again for a task that never started. Returns how it goes on.
+pub(super) fn rung2(
+    run: &mut Run,
+    i: usize,
+    why: String,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> &'static str {
+    let task = &run.tasks[i];
     let route = escalate(&run.roster, &task.route);
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
@@ -500,21 +458,17 @@ pub(super) fn retry(
     // `kill_worker`'s `supersede` ended the hand-back context (`handed_back`,
     // `resolution`); its gates' pass goes too (carry T14-R2).
     task.gates_after_handback = false;
-    let was = block.map_or_else(String::new, |b| {
-        let label = serde_json::to_value(b.reason)
-            .ok()
-            .and_then(|v| v.as_str().map(str::to_string))
-            .unwrap_or_default();
-        format!(" (it was blocked({label}): {})", b.text)
-    });
-    let how = if task.start_commit.is_none() {
+    // A research or review task has no worktree and never a start commit: it is
+    // dispatched again, as that kind starts (a fresh research session, a fresh review
+    // of its target), never a worker's fresh session (M9.9 review fixes).
+    if task.start_commit.is_none() || super::schedule::is_reader_task(task) {
         set_state(task, TaskState::Queued, now);
         task.block = None;
         task.fresh_session = None;
         "it is dispatched again"
     } else {
         task.fresh_session = Some(FreshSession {
-            reason: format!("the user retried it{was}"),
+            reason: why,
             append: None,
         });
         if task.awaiting_deps {
@@ -525,12 +479,5 @@ pub(super) fn retry(
             task.block = None;
             "a fresh session starts"
         }
-    };
-    history(run, i, now, format!("retried by the user at rung 2{was}"));
-    log(run, now, format!("{task_id} retried at rung 2"));
-    reply(
-        fx,
-        id,
-        Ok(format!("task {task_id} retried at rung 2: {how}")),
-    );
+    }
 }

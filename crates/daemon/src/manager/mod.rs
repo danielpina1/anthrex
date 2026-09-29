@@ -10,6 +10,7 @@ mod headless_turns;
 mod remove;
 mod restart;
 mod restore;
+mod role_window;
 
 pub use config::ManagerConfig;
 pub use conversation::{CONVERSATION_GONE, ReaderStep, conversation_delta_message};
@@ -19,6 +20,7 @@ pub use headless::{
 };
 pub use headless_turns::RESUME_START_TIMEOUT;
 pub use remove::{GitRoots, RemoveError};
+pub use role_window::{RUN_WINDOW_SIZE, lost_role_refusal, orchestrator_refusal};
 
 use crate::hooks;
 use crate::launch;

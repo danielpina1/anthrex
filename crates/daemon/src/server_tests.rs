@@ -22,6 +22,8 @@ async fn a_lagged_subscriber_is_resynced_without_replaying_retained_chunks() {
         ],
         cwd: std::env::temp_dir(),
         env: vec![("TERM".into(), "xterm-256color".into())],
+        scrub_agent_env: false,
+        remove_env: Vec::new(),
     };
     let (events, _events_rx) = mpsc::unbounded_channel();
     // `Window` is Send but not Sync, so the mutex is what lets the forwarder task

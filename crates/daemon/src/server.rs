@@ -347,7 +347,7 @@ async fn handle_client(
                 })
             }
             ClientMsg::Input { window_id, bytes } => manager
-                .write_input(window_id, &bytes)
+                .write_client_input(window_id, &bytes)
                 .err()
                 .map(|e| error("input", e.to_string())),
             ClientMsg::Resize {
@@ -450,7 +450,11 @@ async fn handle_client(
                 None
             }
             ClientMsg::Run(request) => {
-                run_api.handle(request);
+                run_api.handle(request, None);
+                None
+            }
+            ClientMsg::RunTagged { id, request } => {
+                run_api.handle(request, Some(id));
                 None
             }
         };

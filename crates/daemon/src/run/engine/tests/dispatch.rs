@@ -37,6 +37,7 @@ pub(super) fn edit(fx: &mut Fixture, edits: Vec<PlanEdit>) -> Vec<Effect> {
         edits,
         scope: EditScope::Run,
         refusals: Vec::new(),
+        submit: false,
     })
 }
 
@@ -149,18 +150,19 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
     assert_eq!(project, &PathBuf::from("/tmp/p"));
     assert!(matches!(
         &spec.mcp,
-        Some(McpTarget { role: AgentRole::Worker, task_id: Some(t), run_id, scout_id: None }) if t == "t1" && run_id == RUN_ID
+        Some(McpTarget { role: AgentRole::Worker, task_id: Some(t), run_id, scout_id: None, .. }) if t == "t1" && run_id == RUN_ID
     ));
     let mut tools = vec![
         "mcp__anthrex__task_done".to_string(),
         "mcp__anthrex__task_blocked".to_string(),
+        "mcp__anthrex__task_note".to_string(),
     ];
     tools.extend(config::Orchestrator::default().worker_allowed_tools);
     assert_eq!(spec.allowed_tools, tools);
     assert_eq!(spec.instructions, WORKER_CONTRACT);
     assert_eq!(spec.runtime, Runtime::Claude);
     assert_eq!(uuid, &Some(session_uuid(RUN_ID, *op)));
-    assert_eq!(first_turn, &worker_prompt(fx.run(), fx.task("t1")));
+    assert_eq!(first_turn, &worker_prompt(fx.run(), fx.task("t1"), "", ""));
     assert_eq!(fx.task("t1").start_commit.as_deref(), Some(BASE));
     let round = fx.task("t1").rounds.last().unwrap();
     assert!(round.turn_open, "the first turn is open from dispatch");
@@ -531,4 +533,25 @@ fn a_dispatch_overtaken_by_a_merge_is_prepared_again() {
         unreachable!()
     };
     assert_eq!(from, &head);
+}
+
+/// Milestone 9 decision 42f: a real Claude worker in `acceptEdits` may call
+/// `task_note` (`WORKER_MCP_TOOLS` has three tools).
+#[test]
+fn worker_spec_allows_task_note() {
+    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", "")]));
+    fx.ready(true);
+    let effects = fx.complete_prepares();
+    let (_, kind) = super::gates::only_op(&effects, "CreateWindow");
+    let OpKind::CreateWindow { spec, .. } = kind else {
+        unreachable!()
+    };
+    assert_eq!(
+        spec.allowed_tools[..3],
+        [
+            "mcp__anthrex__task_done",
+            "mcp__anthrex__task_blocked",
+            "mcp__anthrex__task_note"
+        ]
+    );
 }

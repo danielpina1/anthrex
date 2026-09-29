@@ -60,6 +60,76 @@ pub fn verify_done(
     red: Option<&str>,
     timeout: Duration,
 ) -> Result<DoneChecked, String> {
+    let (matchers, none) = ((generated, protected), &RefreshedIn::default());
+    verify_done_excluding(
+        git, worktree, start, run_head, owns, matchers, red, none, timeout,
+    )
+}
+
+/// Milestone 9 decision 42e: what a task's refreshes brought in, which is never the
+/// task's work. `targets` are the run heads they merged, clean or conflicted, and
+/// `merges` the clean merge commits they made, by full sha (M9.13a re-review, items
+/// 1 to 3). A conflicted refresh's merge commit is the worker's and is not listed:
+/// it counts as the task's own, while the run commits it merged do not.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RefreshedIn {
+    pub merges: Vec<String>,
+    pub targets: Vec<String>,
+}
+
+impl RefreshedIn {
+    pub fn of(merges: &[String], targets: &[String]) -> Self {
+        let (merges, targets) = (merges.to_vec(), targets.to_vec());
+        RefreshedIn { merges, targets }
+    }
+}
+
+/// The task's own commits: `<head> ^<start> ^<run_head>`, with `^<target>` for each
+/// recorded target `dir` has (so a run head rewound by `resume --rebaseline` cannot
+/// make merged run work count), less the recorded merges. A merge the branch no longer
+/// reaches (the worker rebased, or reset below it) is not there to leave out.
+fn own_commits(
+    g: Git<'_>,
+    dir: &Path,
+    (head, start, run_head): (&str, &str, &str),
+    refreshed: &RefreshedIn,
+) -> Result<Vec<String>, String> {
+    let mut args = vec![os("rev-list"), os(head)];
+    let mut revs = vec![format!("^{start}"), format!("^{run_head}")];
+    for target in &refreshed.targets {
+        let spec = format!("{target}^{{commit}}");
+        let known = !target.starts_with('-')
+            && g.read(dir, &[os("rev-parse"), os("-q"), os("--verify"), os(&spec)])?
+                .success;
+        if known {
+            revs.push(format!("^{target}"));
+        }
+    }
+    args.extend(revs.iter().map(|r| os(r)));
+    Ok(g.ok(dir, &args)?
+        .lines()
+        .filter(|c| !c.is_empty() && !refreshed.merges.iter().any(|m| m == c))
+        .map(str::to_string)
+        .collect())
+}
+
+/// [`verify_done`], whose commit count leaves out what the task's refreshes brought
+/// in ([`RefreshedIn`]; M9.13a review, item 3, and re-review).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "verify_done's arguments and the refreshed commits to leave out"
+)]
+pub fn verify_done_excluding(
+    git: &OsStr,
+    worktree: &Path,
+    start: &str,
+    run_head: &str,
+    owns: &[String],
+    (generated, protected): (&OwnsMatcher, &ProtectedMatcher),
+    red: Option<&str>,
+    refreshed: &RefreshedIn,
+    timeout: Duration,
+) -> Result<DoneChecked, String> {
     let owns_matcher = OwnsMatcher::new(owns)?;
     let g = Git::new(git, timeout);
     let pin = task_pin(worktree)?;
@@ -115,8 +185,13 @@ pub fn verify_done(
         os(&spill_range),
     ]);
     let changed = g.ok(worktree, &spill_args)?;
+    let refreshed_count = if *refreshed == RefreshedIn::default() {
+        own.len()
+    } else {
+        own_commits(g, worktree, (&head, start, run_head), refreshed)?.len()
+    } as u32;
     let mut result = DoneChecked {
-        commits: own.len() as u32,
+        commits: refreshed_count,
         dirty_tracked,
         merge_in_progress: merge_head.success,
         untracked_in_owns,
@@ -125,7 +200,7 @@ pub fn verify_done(
         ..DoneChecked::default()
     };
     for path in nul_fields(&changed) {
-        if protected.matches(path) {
+        if protected.guards_change(path) {
             if !names_literally(owns, path) {
                 result.protected_changed.push(path.to_string());
             }
@@ -178,7 +253,7 @@ fn parse_status(status: &str) -> (u32, Vec<String>) {
     (dirty, untracked)
 }
 
-/// The task's own commits (`git rev-list --count <head> ^<start> ^<run_head>`, as
+/// The task's own commits (`git rev-list <head> ^<start> ^<run_head>`, counted, as
 /// [`verify_done`] counts them) and `<head>`: the turn-end fallback's question (decision
 /// 32). With `run_head` excluded, a run head merged in by a hand-back is not counted
 /// as the task's work (fix round 1, finding 10). Final fix batch F1b: `<head>` is the
@@ -191,25 +266,30 @@ pub fn count_commits(
     run_head: &str,
     timeout: Duration,
 ) -> Result<(u32, String), String> {
+    count_commits_excluding(
+        git,
+        worktree,
+        start,
+        run_head,
+        &RefreshedIn::default(),
+        timeout,
+    )
+}
+
+/// [`count_commits`], leaving out what the task's refreshes brought in, as
+/// [`verify_done_excluding`] does (M9.13a review, item 3, and re-review).
+pub fn count_commits_excluding(
+    git: &OsStr,
+    worktree: &Path,
+    start: &str,
+    run_head: &str,
+    refreshed: &RefreshedIn,
+    timeout: Duration,
+) -> Result<(u32, String), String> {
     let g = Git::new(git, timeout);
     let head = sync_in(g, worktree)?;
-    let not_start = format!("^{start}");
-    let not_run_head = format!("^{run_head}");
-    let count = g.ok(
-        worktree,
-        &[
-            os("rev-list"),
-            os("--count"),
-            os(&head),
-            os(&not_start),
-            os(&not_run_head),
-        ],
-    )?;
-    let count = count
-        .trim()
-        .parse::<u32>()
-        .map_err(|_| format!("git rev-list --count printed {:?}", count.trim()))?;
-    Ok((count, head))
+    let own = own_commits(g, worktree, (&head, start, run_head), refreshed)?;
+    Ok((own.len() as u32, head))
 }
 
 /// Decision 30's hand-over material: the stat and the diff of the task's net change,

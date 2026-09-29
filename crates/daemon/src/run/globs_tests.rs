@@ -172,3 +172,43 @@ fn dot_and_empty_components_are_invalid() {
     assert_eq!(validate_glob("crates/a/"), Ok(()));
     assert_eq!(validate_glob("crates/.github/**"), Ok(()));
 }
+
+/// Milestone 9 decision 23a, as the M9.4 review fixes scope it: a case-insensitive
+/// volume folds some non-ASCII letters onto ASCII (`ſ` opens as `s`), so the done gate
+/// treats any changed path with a non-ASCII character as protected
+/// (`guards_change`). `matches`, which the run's protected files and the fast path use,
+/// and `may_cover_protected` keep M8a's answers.
+#[test]
+fn non_ascii_paths_are_protected() {
+    let matcher = ProtectedMatcher::new(&s(&["AGENTS.md", ".claude/**"])).unwrap();
+    for path in ["AGENTſ.md", "docs/café.md", "src/ﬁle.rs", "a/b/Ω"] {
+        assert!(matcher.guards_change(path), "{path}");
+        assert!(!matcher.matches(path), "{path}");
+    }
+    // Even with nothing configured.
+    let nothing = ProtectedMatcher::new(&[]).unwrap();
+    assert!(nothing.guards_change("naïve.txt"));
+    assert!(!nothing.matches("naïve.txt"));
+    // ASCII: M8a's answers, unchanged, from both.
+    for (path, protected) in [
+        ("AGENTS.md", true),
+        ("agents.md", true),
+        (".Claude/settings.json", true),
+        (".claude", true),
+        ("docs/cafe.md", false),
+        ("src/AGENTS.md.bak", false),
+    ] {
+        assert_eq!(matcher.matches(path), protected, "{path}");
+        assert_eq!(matcher.guards_change(path), protected, "{path}");
+    }
+    for (entry, covers) in [
+        ("**/*.md", true),
+        ("agents.md", true),
+        ("docs/**", false),
+        ("src/lib.rs", false),
+        ("docs/café/**", false),
+        ("é", false),
+    ] {
+        assert_eq!(may_cover_protected(entry, "AGENTS.md"), covers, "{entry}");
+    }
+}

@@ -295,7 +295,7 @@ fn a_failed_resume_starts_a_fresh_session() {
     };
     let t1 = fx.task("t1");
     let reason = "the session could not be resumed: no such session";
-    let expected = handover_prompt(fx.run(), t1, reason, &stat, &patch);
+    let expected = handover_prompt(fx.run(), t1, reason, &stat, &patch, "", "");
     assert_eq!(first_turn, format!("{expected}\n\n{RESUME_WORKER}"));
     assert_eq!((t1.session, t1.rung, t1.failures), (2, 0, 0));
     assert!(t1.rounds[0].ended && t1.rounds[0].window_id == Some(window));
@@ -468,6 +468,8 @@ fn a_lost_abort_is_sent_again_at_the_restore() {
             files: vec!["crates/a/x.rs".into()],
             head: None,
             onto: None,
+            merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let (lost, _) = only_op(&effects, "AbortMerge");
@@ -549,6 +551,8 @@ fn a_hand_back_result_after_a_cancel_is_dropped() {
             files,
             head: Some(HEAD.into()),
             onto: Some(head_of("t1")),
+            merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let t1 = fx.task("t1");

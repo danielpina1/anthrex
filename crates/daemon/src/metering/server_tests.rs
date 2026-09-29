@@ -38,6 +38,13 @@ impl UsageSink for Racing {
     }
 
     fn post(&self, _: String, _: TokenUsage) {}
+    fn token(&self, _: &str) -> Option<String> {
+        Some("t".into())
+    }
+
+    fn live_orchestrators(&self) -> usize {
+        0
+    }
 }
 
 fn point(run_id: &str, value: u64) -> UsagePoint {
@@ -156,6 +163,13 @@ impl UsageSink for Recording {
             }
         }
         crate::lock(&self.posts).push((run_id, usage));
+    }
+    fn token(&self, _: &str) -> Option<String> {
+        Some("t".into())
+    }
+
+    fn live_orchestrators(&self) -> usize {
+        0
     }
 }
 

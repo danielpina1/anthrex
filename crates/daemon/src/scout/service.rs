@@ -16,6 +16,7 @@ use tokio::sync::{broadcast, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use super::machine::{self, ScoutEffect, ScoutEvent, ScoutLimits, ScoutMachine};
+use super::planner::PlannerTag;
 use super::report::{self, build_report, report_path, state_label};
 use super::spec::{self, ScoutContext, ScoutSpec};
 use crate::headless::{SessionArg, SessionEvent};
@@ -34,7 +35,11 @@ pub const REPORT_ACCEPTED: &str = "Report recorded. You are done; end your turn 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScoutOutcome {
     Report(ScoutReport),
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
+    /// A sub-planner's epic was accepted by the engine (milestone 9 decision 22).
+    Accepted,
 }
 
 /// A started scout: its window, and where its outcome arrives.
@@ -95,20 +100,49 @@ impl ScoutService {
         &self.ctx
     }
 
+    /// A scout's limits, or a sub-planner's own (milestone 9 decision 31).
     fn limits(&self, scout: &Scout) -> ScoutLimits {
-        ScoutLimits::new(&self.ctx.scouts, scout.route.runtime)
+        match &scout.planner {
+            Some(tag) => tag.limits,
+            None => ScoutLimits::new(&self.ctx.scouts, scout.route.runtime),
+        }
     }
 
-    /// Starts scout `spec` as window `scout/<id>` (decision 12).
+    /// Starts scout `spec` as window `scout/<id>` (decision 12), on the route this
+    /// service gives every scout.
     pub async fn start(self: &Arc<Self>, spec: ScoutSpec) -> anyhow::Result<ScoutHandle> {
+        let route = spec::scout_route(&self.ctx);
+        self.start_on(spec, route).await
+    }
+
+    /// [`Self::start`] on `route`: a run scout's (M9.17 fix round 3), which the driver
+    /// resolves over the run's installed runtimes.
+    pub async fn start_on(
+        self: &Arc<Self>,
+        spec: ScoutSpec,
+        route: Route,
+    ) -> anyhow::Result<ScoutHandle> {
         anyhow::ensure!(spec::valid_id(&spec.id), "invalid scout id {:?}", spec.id);
         // Ruling M7: the run id is joined into the report's path. Run ids are decision
         // 15's slugs, whose alphabet and length `valid_id` covers.
         if let Some(run) = &spec.run_id {
             anyhow::ensure!(spec::valid_id(run), "invalid run id {run:?}");
         }
-        let headless = spec::headless_spec(&spec, &self.ctx);
-        let route = spec::scout_route(&self.ctx);
+        let headless = spec::headless_spec_on(&spec, &self.ctx, &route);
+        let name = format!("scout/{}", spec.id);
+        self.launch(spec, route, headless, name, None).await
+    }
+
+    /// Records scout (or sub-planner, `planner`) `spec` and starts its session as
+    /// headless window `name`.
+    pub(super) async fn launch(
+        self: &Arc<Self>,
+        spec: ScoutSpec,
+        route: Route,
+        headless: crate::headless::HeadlessSpec,
+        name: String,
+        planner: Option<PlannerTag>,
+    ) -> anyhow::Result<ScoutHandle> {
         let id = spec.id.clone();
         let (sender, outcome) = oneshot::channel();
         {
@@ -134,6 +168,7 @@ impl ScoutService {
                     installed: false,
                     kill_at: None,
                     remove_at: None,
+                    planner,
                 },
             );
         }
@@ -142,12 +177,12 @@ impl ScoutService {
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_nanos() as u64);
-            crate::run::role_launch::session_uuid(&format!("scout/{id}"), nanos)
+            crate::run::role_launch::session_uuid(&name, nanos)
         });
         let created = self
             .manager
             .create_headless(
-                format!("scout/{id}"),
+                name,
                 headless,
                 SessionArg::New { uuid },
                 spec.first_turn.clone(),
@@ -204,13 +239,26 @@ impl ScoutService {
                 return None;
             }
         }
-        let scout_id = self
+        let target = self
             .manager
             .headless_spec(window_id)
-            .and_then(|spec| spec.mcp)
-            .filter(|target| target.role == proto::AgentRole::Scout)
-            .and_then(|target| target.scout_id);
+            .and_then(|spec| spec.mcp);
         let mut table = crate::lock(&self.table);
+        let scout_id = target.and_then(|t| match t.role {
+            proto::AgentRole::Scout => t.scout_id,
+            // Milestone 9 decision 31: a sub-planner's unbound session of its epic.
+            proto::AgentRole::Planner => table
+                .scouts
+                .iter()
+                .find(|(_, s)| {
+                    s.window_id.is_none()
+                        && s.planner.as_ref().is_some_and(|p| {
+                            p.run_id == t.run_id && t.epic.as_ref() == Some(&p.epic)
+                        })
+                })
+                .map(|(id, _)| id.clone()),
+            _ => None,
+        });
         let unbound = scout_id
             .as_ref()
             .and_then(|id| table.scouts.get(id))
@@ -253,8 +301,9 @@ impl ScoutService {
                 return;
             };
             let runtime = scout.route.runtime;
+            let texts = self.limits(scout).texts;
             let turns = &mut scout.turn_ended_pids;
-            match machine::scout_event(&event, signal.pid, runtime, turns) {
+            match machine::scout_event(&event, signal.pid, runtime, turns, &texts) {
                 Some(scout_event) => scout_event,
                 None => return,
             }
@@ -263,7 +312,7 @@ impl ScoutService {
     }
 
     /// Steps scout `id`'s machine with `event` and executes what it asks.
-    fn drive(&self, id: &str, event: ScoutEvent) {
+    pub(super) fn drive(&self, id: &str, event: ScoutEvent) {
         let pending = {
             let mut table = crate::lock(&self.table);
             match table.scouts.get_mut(id) {
@@ -373,7 +422,7 @@ impl ScoutService {
             Ok(text) => (true, text),
             Err(text) => (false, text),
         };
-        RunReply::ToolResult { ok, text }
+        RunReply::tool_result(ok, text)
     }
 
     async fn submit(&self, call: ToolCall) -> Result<String, String> {
@@ -428,6 +477,7 @@ impl ScoutService {
         let scout = table
             .scouts
             .get_mut(&id)
+            .filter(|s| s.planner.is_none())
             .ok_or_else(|| format!("unknown scout {id}"))?;
         if scout.window_id != Some(call.window_id) {
             return Err(format!("this window is not scout {id}"));
@@ -493,18 +543,42 @@ impl ScoutService {
         self.drive(id, ScoutEvent::Stop);
     }
 
+    /// The engine halted run scout `id` (`run cancel`, the `finish` edit): the machine
+    /// kills the session with the engine's reason, as `stop_planner` does.
+    pub fn halt(&self, id: &str, reason: &str) {
+        let reason = reason.to_string();
+        self.drive(id, ScoutEvent::Halt { reason });
+    }
+
+    /// The sub-planner session in window `window_id`, if it is one of ours.
+    pub(super) fn planner_at(&self, window_id: u32) -> Option<String> {
+        let table = crate::lock(&self.table);
+        let id = table.by_window.get(&window_id)?;
+        table.scouts.get(id)?.planner.as_ref()?;
+        Some(id.clone())
+    }
+
     pub fn info(&self, id: &str) -> Option<ScoutInfo> {
         let table = crate::lock(&self.table);
         table.scouts.get(id).map(info)
     }
 
-    /// The scouts of run `run_id`, for its snapshot (none until milestone 9).
+    /// Runs `f` while holding the scout table's lock: a test's stand-in for a scout
+    /// step that holds it (the M9.6 second review's lock-order test).
+    #[cfg(test)]
+    pub(crate) fn with_table_held<R>(&self, f: impl FnOnce() -> R) -> R {
+        let _table = crate::lock(&self.table);
+        f()
+    }
+
+    /// The scouts of run `run_id`, for its snapshot; its sub-planners are reported
+    /// through `RunInfo.planners` (decision 33).
     pub fn run_scouts(&self, run_id: &str) -> Vec<ScoutInfo> {
         let table = crate::lock(&self.table);
         let mut scouts: Vec<ScoutInfo> = table
             .scouts
             .values()
-            .filter(|s| s.spec.run_id.as_deref() == Some(run_id))
+            .filter(|s| s.spec.run_id.as_deref() == Some(run_id) && s.planner.is_none())
             .map(info)
             .collect();
         scouts.sort_by(|a, b| (a.started_at, &a.id).cmp(&(b.started_at, &b.id)));

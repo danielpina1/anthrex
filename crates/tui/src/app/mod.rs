@@ -44,6 +44,12 @@ pub enum PendingAction {
         run_id: String,
         task_id: String,
     },
+    /// Milestone 9 decisions 28 and 13: a hold's rejection, and the user's submit.
+    RejectHold {
+        run_id: String,
+        hold: String,
+    },
+    SubmitPlan(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +81,8 @@ pub enum Modal {
     Rename(RenamePrompt),
     /// Milestone 8c decision 33: the plan gate's task edit form (`crate::run_edit`).
     EditTask(crate::run_edit::TaskEditForm),
+    /// Milestone 9 decision 44: the goal form (`crate::run_goal`).
+    StartGoal(crate::run_goal::GoalForm),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,6 +177,10 @@ pub struct App {
     runs_received_at: Instant,
     /// Decision 1: `false` only while a refused `Run(Subscribe)` waits for `on_tick`.
     run_subscribed: bool,
+    /// Milestone 9: the last tagged request's id (decision 2), and the run a goal
+    /// started, opened once a snapshot names it (decision 44).
+    next_request_id: u64,
+    pending_open: Option<String>,
 }
 
 impl App {
@@ -217,6 +229,8 @@ impl App {
             run_view: None,
             runs_received_at: Instant::now(),
             run_subscribed: true,
+            next_request_id: 0,
+            pending_open: None,
             settings,
         }
     }
@@ -251,8 +265,11 @@ impl App {
         self.toast.as_ref().map(|(t, _)| t.as_str())
     }
 
+    /// Shows `text` in the status bar for [`TOAST_TTL`], on one line and with no control
+    /// or bidi character: a toast often quotes the daemon, or an id an agent chose.
     pub fn toast(&mut self, text: impl Into<String>) {
-        self.toast = Some((text.into(), Instant::now()));
+        let text = crate::safe_text::one_line(&text.into());
+        self.toast = Some((text, Instant::now()));
     }
 
     /// Decision 7: every config `Problem` `attach` found, already formatted, shown
@@ -433,6 +450,7 @@ impl App {
             // `C-b r`: `link::reconnect_command` (decisions 23 and 32).
             Command::Reconnect => self.reconnect_command(),
             Command::ToggleConversation => self.toggle_conversation(),
+            Command::StartGoal => self.open_goal_form(),
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -485,6 +503,7 @@ impl App {
 
 mod conversation;
 mod daemon;
+mod goal;
 mod headless;
 mod lifecycle;
 mod link;
@@ -492,6 +511,8 @@ mod modal_keys;
 mod paste;
 pub(crate) mod prompt;
 mod run_enter;
+mod run_gate;
+mod run_holds;
 mod runs;
 mod windows;
 

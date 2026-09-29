@@ -92,6 +92,8 @@ fn a_hand_back_onto_a_post_claim_commit_goes_back_through_the_gates() {
                 files: files.clone(),
                 head: Some(if files.is_empty() { MERGED } else { LATER }.into()),
                 onto: Some(LATER.into()),
+                merged: Vec::new(),
+                merged_total: 0,
             },
         );
         assert!(
@@ -292,6 +294,8 @@ fn a_told_conflict_is_not_handed_back_into_when_the_task_is_held() {
                 files: files.clone(),
                 head: Some(head_of("t1")),
                 onto: Some(head_of("t1")),
+                merged: Vec::new(),
+                merged_total: 0,
             },
         );
         assert_eq!(delivers(&effects), vec![conflict_message(&files)]);
@@ -338,6 +342,7 @@ fn a_told_conflict_is_not_handed_back_into_when_the_task_is_held() {
                 worktree: task_path("t1"),
                 run_head: commit(2),
                 task_head: Some(resolved.clone()),
+                list_merged: false,
             }
         );
         assert_alive(&fx);
@@ -346,12 +351,16 @@ fn a_told_conflict_is_not_handed_back_into_when_the_task_is_held() {
                 files: vec![],
                 head: Some(MERGED.into()),
                 onto: Some(resolved.clone()),
+                merged: Vec::new(),
+                merged_total: 0,
             }
         } else {
             OpResult::HandedBack {
                 files: files.clone(),
                 head: Some(resolved.clone()),
                 onto: Some(resolved.clone()),
+                merged: Vec::new(),
+                merged_total: 0,
             }
         };
         let effects = fx.done(op, result);

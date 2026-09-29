@@ -239,7 +239,12 @@ fn read_otlp_port(t: &toml::Table, field: &mut u16, problems: &mut Vec<Problem>)
     }
 }
 
-fn read_strength(t: &toml::Table, prefix: &str, field: &mut Strength, problems: &mut Vec<Problem>) {
+pub(super) fn read_strength(
+    t: &toml::Table,
+    prefix: &str,
+    field: &mut Strength,
+    problems: &mut Vec<Problem>,
+) {
     let Some(v) = t.get("strength") else {
         return;
     };
@@ -260,7 +265,12 @@ fn read_strength(t: &toml::Table, prefix: &str, field: &mut Strength, problems: 
     }
 }
 
-fn read_effort(t: &toml::Table, prefix: &str, field: &mut Effort, problems: &mut Vec<Problem>) {
+pub(super) fn read_effort(
+    t: &toml::Table,
+    prefix: &str,
+    field: &mut Effort,
+    problems: &mut Vec<Problem>,
+) {
     let Some(v) = t.get("effort") else {
         return;
     };
@@ -290,7 +300,7 @@ fn mode_label(mode: DeciderMode) -> &'static str {
 }
 
 /// `[orchestrator.<key>]` as a table; a problem, and `None`, when it is something else.
-fn sub_table<'a>(
+pub(super) fn sub_table<'a>(
     table: &'a toml::Table,
     key: &str,
     problems: &mut Vec<Problem>,

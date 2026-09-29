@@ -320,6 +320,17 @@ fn tree_mode_returns_keys_instead_of_bytes() {
 }
 
 #[test]
+fn the_goal_key_is_g() {
+    let mut km = Keymap::new(Keymap::default_prefix());
+    let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
+    assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+    assert_eq!(
+        km.handle(key(KeyCode::Char('g'), KeyModifiers::NONE), false),
+        KeyAction::Run(Command::StartGoal)
+    );
+}
+
+#[test]
 fn the_conversation_key_is_m() {
     let mut km = Keymap::new(Keymap::default_prefix());
     let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);

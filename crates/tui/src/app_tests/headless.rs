@@ -267,3 +267,54 @@ fn enter_on_a_plain_listed_headless_windows_sub_agent_opens_its_conversation() {
     assert!(!subscribes(&effects, 2));
     assert!(!inputs(&effects));
 }
+
+/// Milestone 9 decision 11: `C-b x` and `C-b X` on the orchestrator of a run this client
+/// shows as not terminal open nothing and toast the daemon's refusal; `C-b R` still
+/// opens its dialog. Once the run is terminal, or when the client does not show the
+/// run, the dialogs open as for any PTY window.
+#[test]
+fn kill_and_remove_of_a_live_orchestrator_open_nothing() {
+    use super::runs::{app_with_runs, deliver, run_info, snapshot};
+    let mut orchestrator = win(5, "7a2c/orchestrator", Status::Idle);
+    orchestrator.run = Some(proto::RunRef {
+        run_id: "r-7a2c".into(),
+        task_id: None,
+        role: proto::AgentRole::Orchestrator,
+        session: 1,
+    });
+    let mut app = app_with_runs(
+        vec![orchestrator.clone()],
+        snapshot(1, 0, vec![run_info("r-7a2c")]),
+    );
+    assert_eq!(app.focused, Some(5));
+    let refusal = "window 5 is the orchestrator of run r-7a2c; stop the run with anthrex run cancel, or restart the orchestrator with anthrex restart 5";
+    let control = |app: &mut App, c: char| {
+        app.toast = None;
+        app.modal = None;
+        prefix(app);
+        let effects = press(app, KeyCode::Char(c), KeyModifiers::NONE);
+        (effects, app.toast_text().map(str::to_owned))
+    };
+    for c in ['x', 'X'] {
+        let (effects, toast) = control(&mut app, c);
+        assert!(effects.is_empty(), "{c}: {effects:?}");
+        assert_eq!(app.modal, None, "{c}");
+        assert_eq!(toast.as_deref(), Some(refusal), "{c}");
+    }
+    control(&mut app, 'R');
+    assert!(matches!(app.modal, Some(Modal::Confirm { .. })), "C-b R");
+
+    // Terminal: an ordinary PTY window again.
+    let mut done = run_info("r-7a2c");
+    done.state = proto::RunState::Accepted;
+    deliver(&mut app, snapshot(2, 0, vec![done]));
+    control(&mut app, 'x');
+    assert!(matches!(app.modal, Some(Modal::Confirm { .. })), "C-b x");
+    control(&mut app, 'X');
+    assert!(matches!(app.modal, Some(Modal::Remove(_))), "C-b X");
+
+    // A run the client does not show: the daemon decides.
+    let mut app = app_with(vec![orchestrator]);
+    control(&mut app, 'x');
+    assert!(matches!(app.modal, Some(Modal::Confirm { .. })));
+}

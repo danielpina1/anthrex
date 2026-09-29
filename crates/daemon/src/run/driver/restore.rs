@@ -130,6 +130,7 @@ impl RunService {
         self.execute(prepared, now).await;
         self.compact_after_restore(&quiet).await;
         self.watch_live_worktrees();
+        self.mark_restored_orchestrators_live();
         self.remove_stale_windows(&skipped);
     }
 

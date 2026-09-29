@@ -27,7 +27,7 @@ fn triage() -> TriageInfo {
 
 /// A one-task run with the deciders on and an onboarding report (so a plan run's task
 /// would be cross-checked), started without `--yes` and marked `fast` when `fast`.
-fn started(fast: bool) -> Fixture {
+pub(super) fn started(fast: bool) -> Fixture {
     let mut fx = Fixture::deciding(
         &plan_with(PROFILE, &[task("t1", "S", "auth", "")]),
         config::Orchestrator::default(),
@@ -46,6 +46,7 @@ fn promote(fx: &mut Fixture, run_id: &str) -> Vec<Effect> {
     fx.next(EventKind::Promote {
         reply,
         run_id: run_id.into(),
+        orchestrator: None,
     })
 }
 
@@ -122,51 +123,49 @@ fn a_fast_path_task_skips_the_cross_check() {
     ));
 }
 
+/// Milestone 9 decision 29 (rewritten from M8b's recording test): the first promote
+/// performs the promotion (an orchestrator, and nothing else of the run changes); the
+/// second answers with no time.
 #[test]
 fn promote_records_intent_once() {
     let mut fx = started(true);
     let (op, _) = fx.op("CreateRunBranch");
     fx.done(op, OpResult::Worktree { head: BASE.into() });
     let (tasks, ops) = (fx.run().tasks.clone(), fx.run().pending_ops.clone());
-    fx.now = 3_600 * 13 + 60 * 7 - 1; // the step is one second later: 13:07
     let first = promote(&mut fx, RUN_ID);
     assert_eq!(
         replies(&first),
         vec![Ok(format!(
-            "recorded: run {RUN_ID} is marked for promotion to a planned run. Until the orchestrator exists (milestone 9) nothing else changes: the fast-path task continues and the run finishes as a fast-path run."
+            "promoted: run {RUN_ID} now has an orchestrator; it starts in a moment (anthrex run status {RUN_ID})"
         ))]
     );
-    only_bookkeeping(&first);
-    assert!(first.iter().any(|e| matches!(e, Effect::Persist { .. })));
-    assert!(first.iter().any(|e| matches!(e, Effect::Publish { .. })));
-    let at = 3_600 * 13 + 60 * 7;
+    let created: Vec<_> = first
+        .iter()
+        .filter_map(|e| match e {
+            Effect::Op { kind, .. } => Some(op_name(kind)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(created, vec!["CreateOrchestrator"]);
+    let at = fx.now;
     assert_eq!(fx.run().promote_requested_at, Some(at));
     assert_eq!(
         fx.run().log.last().map(|e| (e.at, e.text.as_str())),
-        Some((at, "promotion to a planned run requested by the user"))
+        Some((at, "promoted to a planned run; its orchestrator starts"))
     );
     let info = &snapshot(&fx.state, fx.now).runs[0];
     assert_eq!(info.promote_requested_at, Some(at));
-    assert!(
-        info.attention.contains(
-            &"promotion requested; it takes effect when the orchestrator exists (milestone 9)"
-                .to_string()
-        ),
-        "{:?}",
-        info.attention
-    );
+    assert!(info.orchestrator.is_some());
     assert_eq!(fx.run().tasks, tasks);
-    assert_eq!(fx.run().pending_ops, ops);
-    assert_eq!(fx.run().path, Some(RunPath::Fast));
+    assert_eq!(fx.run().pending_ops.len(), ops.len() + 1);
+    assert_eq!(fx.run().path, Some(RunPath::Plan));
 
     let before = fx.run().clone();
     fx.now += 600;
     let second = promote(&mut fx, RUN_ID);
     assert_eq!(
         replies(&second),
-        vec![Ok(format!(
-            "run {RUN_ID} was already marked for promotion at 13:07"
-        ))]
+        vec![Ok(format!("run {RUN_ID} was already marked for promotion"))]
     );
     only_bookkeeping(&second);
     assert_eq!(*fx.run(), before, "a second promote changes nothing");
@@ -200,6 +199,13 @@ fn promote_refuses_plan_runs_and_terminal_runs() {
         );
         assert_eq!(fx.run().promote_requested_at, None);
     }
+
+    // Milestone 9: a planned run is not a fast-path run either.
+    let mut planned = super::orch::launched(false);
+    assert_eq!(
+        replies(&promote(&mut planned, RUN_ID)),
+        vec![Err(format!("run {RUN_ID} is not a fast-path run"))]
+    );
 
     let mut fx = started(true);
     assert_eq!(
@@ -313,6 +319,7 @@ fn a_fast_path_run_refuses_task_additions() {
         test_mode_reason: None,
         priority: None,
         size: None,
+        deps: None,
     };
     for batch in [vec![add()], vec![split()], vec![amend(), add()]] {
         let mut fx = started(true);

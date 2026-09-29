@@ -1,10 +1,12 @@
 #![allow(dead_code)]
 
 pub mod decider;
+pub mod orch_script;
 pub mod profile_rig;
 pub mod run_adapt;
 pub mod run_daemon;
 pub mod run_harness;
+pub mod run_orch;
 pub mod run_plans;
 pub mod run_watcher;
 
@@ -43,12 +45,24 @@ pub fn runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
+/// M9.13 re-review: the three agent programs, pinned to paths that do not exist, so an
+/// `anthrex` process a test starts (or a daemon a client command starts for it) never
+/// runs a real `claude` or `codex`, not even `codex --version` at the daemon's start. A
+/// test that needs a stand-in sets its own value after this.
+pub fn pin_agents(command: &mut Command) -> &mut Command {
+    command
+        .env("ANTHREX_CLAUDE_BIN", "/nonexistent/anthrex-test/claude")
+        .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex")
+        .env("ANTHREX_DECIDER_BIN", "/nonexistent/anthrex-test/decider")
+}
+
 pub fn isolated_command(dir: &Path, args: &[&str]) -> Command {
     let mut command = Command::new(ANTHREX);
     command
         .args(args)
         .env("ANTHREX_SOCKET", dir.join("daemon.sock"))
         .env("ANTHREX_DATA_DIR", dir.join("data"));
+    pin_agents(&mut command);
     command
 }
 
@@ -220,6 +234,8 @@ impl TestDaemon {
         command
             .env("ANTHREX_CLAUDE_BIN", fake_agent_bin())
             .env("ANTHREX_CODEX_BIN", fake_agent_bin())
+            // Pinned, not inherited: a test that wants a decider sets it in `configure`.
+            .env("ANTHREX_DECIDER_BIN", "/nonexistent/anthrex-test/decider")
             .env("FAKE_AGENT_SCRIPT", script_path)
             .env("FAKE_AGENT_ARGS_FILE", dir.path().join("data/args.json"))
             .stdin(Stdio::null())

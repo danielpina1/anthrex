@@ -62,6 +62,8 @@ pub struct TaskEditForm {
     pub focus: EditField,
     pub error: Option<String>,
     pub submitting: bool,
+    /// Milestone 9 decision 2: the id of the tagged `Edit` this form waits on.
+    pub request_id: Option<u64>,
     /// `TaskInfo.route`, shown muted beside a `policy` value.
     resolved: Route,
     original: TaskInfoValues,
@@ -233,6 +235,7 @@ impl TaskEditForm {
             focus: EditField::Runtime,
             error: None,
             submitting: false,
+            request_id: None,
             resolved: task.route.clone(),
             original: TaskInfoValues {
                 route_spec: spec,
@@ -425,6 +428,7 @@ impl TaskEditForm {
                 .then(|| reason.to_string()),
             priority: None,
             size: (self.size != original.size).then_some(self.size),
+            deps: None,
         };
         let changed = route_changed
             || mode_changed

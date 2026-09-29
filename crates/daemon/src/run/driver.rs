@@ -19,18 +19,23 @@
 
 mod adapt;
 mod book;
+mod build;
 mod cleanup;
+mod context;
 mod effects;
 mod guard;
 mod merge;
 mod observe;
 mod ops;
+mod orch;
+mod orch_ops;
+mod refresh;
 mod requests;
 mod restore;
 mod usage;
+mod wake;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -43,11 +48,14 @@ use tokio_util::sync::CancellationToken;
 use super::engine::{AgentSignal, EngineState, Event, EventKind, INTERRUPT_GRACE_SECS, ReplyId};
 use super::git::GitQueue;
 use super::snapshot::snapshot;
-use crate::headless::argv::CliCaps;
-use crate::manager::{GitRoots, ManagerConfig, WindowManager, WindowSignal};
+#[cfg(test)]
+use crate::manager::ManagerConfig;
+use crate::manager::{GitRoots, WindowManager, WindowSignal};
 use book::{Book, Retiring};
 
 pub use adapt::Adaptation;
+pub(crate) use context::OpCtx;
+pub use context::RunContext;
 pub use observe::{ACTIVITY_EVERY, translate};
 
 /// Decision 52: a retired window stays listed, `Exited`, this long.
@@ -62,70 +70,11 @@ pub const COUNTER_PERSIST_EVERY: Duration = Duration::from_secs(5);
 /// M8a.16: a run's report is rewritten at most this often.
 pub const REPORT_EVERY: Duration = Duration::from_millis(500);
 
-/// What the service needs from the daemon.
-pub struct RunContext {
-    pub data_dir: PathBuf,
-    pub worktrees_root: PathBuf,
-    pub orchestrator: config::Orchestrator,
-    pub git_roots: Arc<dyn GitRoots>,
-    pub git: OsString,
-    /// The manager's `cli_caps` (decision 53's project-settings check reads the same
-    /// caps the sessions are launched with, test overrides included).
-    pub cli_caps: CliCaps,
-}
-
-impl RunContext {
-    /// The context of a daemon whose manager was built from `manager`.
-    pub fn new(
-        data_dir: PathBuf,
-        manager: &ManagerConfig,
-        orchestrator: config::Orchestrator,
-        git_roots: Arc<dyn GitRoots>,
-    ) -> Self {
-        RunContext {
-            data_dir,
-            worktrees_root: manager.worktrees_root.clone(),
-            orchestrator,
-            git_roots,
-            git: OsString::from("git"),
-            cli_caps: manager.cli_caps,
-        }
-    }
-}
-
 enum Msg {
     Event(EventKind),
     /// Orchestrator totals are pending (`driver/usage.rs`).
     Usage,
     Stop(oneshot::Sender<()>),
-}
-
-/// Where an op's work goes: captured under the engine lock at the step that emitted it.
-#[derive(Clone)]
-pub(crate) struct OpCtx {
-    pub run_id: String,
-    pub project: PathBuf,
-    pub data_dir: PathBuf,
-    pub git_timeout: Duration,
-    pub check_timeout: Duration,
-    /// Final fix batch F1c (I2): how checks and proofs are confined, when the run's
-    /// workers are sandboxed and this platform can confine them. Boxed: it is large,
-    /// and every queued op carries a context.
-    pub confine: Option<Box<crate::run::confine::ConfineSpec>>,
-}
-
-impl OpCtx {
-    /// `run`'s context for an op.
-    pub(crate) fn of(run: &crate::run::model::Run) -> Self {
-        OpCtx {
-            run_id: run.id.clone(),
-            project: run.project.clone(),
-            data_dir: run.data_dir.clone(),
-            git_timeout: Duration::from_secs(run.limits.git_timeout_secs),
-            check_timeout: Duration::from_secs(run.profile.check_timeout_secs),
-            confine: crate::run::confine::ConfineSpec::for_run(run).map(Box::new),
-        }
-    }
 }
 
 /// Runs the engine. See the module doc.
@@ -165,6 +114,8 @@ pub struct RunService {
     adaptation: std::sync::OnceLock<Adaptation>,
     /// The OTLP receiver's live runs and pending totals (`driver/usage.rs`).
     metered: usage::Metered,
+    /// Milestone 9 decision 39's wake-ups not yet pasted (`driver/wake.rs`).
+    wakes: wake::Wakes,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -243,6 +194,7 @@ impl RunService {
             held_accepts: Mutex::new(Vec::new()),
             adaptation: std::sync::OnceLock::new(),
             metered: Default::default(),
+            wakes: Default::default(),
         })
     }
 
@@ -252,6 +204,7 @@ impl RunService {
         if let Some(signals) = signals {
             tokio::spawn(self.clone().forward(signals, shutdown.clone()));
         }
+        self.watch_windows(shutdown.clone());
         let ticker = self.clone();
         let tick_token = shutdown.clone();
         tokio::spawn(async move {
@@ -354,8 +307,10 @@ impl RunService {
 
     /// The runs as they are now (decision 47's snapshot).
     pub fn current(&self) -> RunsSnapshot {
-        let state = crate::lock(&self.state);
-        snapshot(&state, unix_now())
+        // The engine guard drops at the end of this `let`, before the scout table's
+        // lock is taken (AGENTS.md rule 2).
+        let snap = snapshot(&crate::lock(&self.state), unix_now());
+        self.with_scouts(snap)
     }
 
     fn send(&self, kind: EventKind) {
@@ -387,6 +342,7 @@ impl RunService {
             match guard::guarded_step(&mut state, Event { now, kind }) {
                 Ok(fx) => {
                     self.metered.refresh_live(&state);
+                    self.release_ended_orchestrators(&state);
                     Some(guard::prepare_guarded(&state, fx, now))
                 }
                 Err(panic) => {
@@ -477,9 +433,13 @@ impl RunService {
     /// and its intent lines: the tick runs between steps).
     async fn on_tick(self: &Arc<Self>, now: u64) {
         self.retire_deadlines();
+        self.check_orchestrators();
         let publish = std::mem::take(&mut crate::lock(&self.book).publish_due);
         if publish {
-            let snap = self.current();
+            // Bound first, so the engine guard drops before `publish` takes the scout
+            // table (AGENTS.md rule 2; M9.6 second review). `publish` lays the scouts
+            // over it (review fix M-5: once per tick).
+            let snap = snapshot(&crate::lock(&self.state), unix_now());
             self.publish(snap);
         }
         let dirty = {
@@ -561,7 +521,8 @@ impl RunService {
     }
 
     fn publish(&self, snap: RunsSnapshot) {
-        let _ = self.pushes.send(Arc::new(snap));
+        self.clear_ended_orchestrators(&snap);
+        let _ = self.pushes.send(Arc::new(self.with_scouts(snap)));
     }
 
     fn watch_root(&self, root: &Path) {

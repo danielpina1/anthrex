@@ -15,8 +15,13 @@ use crate::headless::codex_guard::{CodexConfigGuard, ObjectFormat};
 use crate::headless::{ClaudeSandbox, HeadlessSpec, McpTarget};
 use crate::output_filter::{FilterHook, LOG_DIR_NAME};
 
-/// Every worker's first two allowed tools; `worker_allowed_tools` follows (decision 24).
-pub const WORKER_MCP_TOOLS: [&str; 2] = ["mcp__anthrex__task_done", "mcp__anthrex__task_blocked"];
+/// Every worker's first three allowed tools; `worker_allowed_tools` follows (decision
+/// 24; milestone 9 decision 42f adds `task_note`).
+pub const WORKER_MCP_TOOLS: [&str; 3] = [
+    "mcp__anthrex__task_done",
+    "mcp__anthrex__task_blocked",
+    "mcp__anthrex__task_note",
+];
 
 /// A reviewer's allowed tools (decision 24, ruling Q4): its verdict, reading, and three
 /// read-only git commands.
@@ -207,6 +212,7 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
             run_id: run.id.clone(),
             task_id: Some(task.spec.id.clone()),
             scout_id: None,
+            epic: None,
         }),
         allowed_tools: allowed,
         claude_permission_mode: claude.then(|| limits.worker_permission_mode.clone()),
@@ -271,6 +277,7 @@ pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
             run_id: run.id.clone(),
             task_id: Some(task.spec.id.clone()),
             scout_id: None,
+            epic: None,
         }),
         allowed_tools: REVIEWER_TOOLS.iter().map(|s| s.to_string()).collect(),
         claude_permission_mode: claude.then(|| REVIEWER_PERMISSION_MODE.to_string()),

@@ -31,6 +31,8 @@ fn planner_fields_match_the_mockup() {
                 "edits",
                 "3 accepted · 1 rejected (owns outside area) · re-planned once (t2 split)"
             ),
+            // Milestone 9 (M9.15): a planner shows its session, as a scout does.
+            ("session", "no window yet"),
         ]
     );
 }

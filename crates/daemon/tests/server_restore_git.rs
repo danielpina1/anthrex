@@ -84,7 +84,7 @@ async fn start_daemon_restoring(state: StateFile) -> TestDaemon {
     let socket = dir.path().join("d.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let worktrees_root = dir.path().canonicalize().unwrap().join("worktrees");
-    let mut config = ManagerConfig::new(socket.clone(), "/bin/sh".into());
+    let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
     config.worktrees_root = worktrees_root.clone();
     let (manager, mut events) = WindowManager::new(config);
     let pump = manager.clone();

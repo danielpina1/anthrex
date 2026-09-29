@@ -118,6 +118,26 @@ pub(super) struct Entry {
     /// (decision 9).
     pub(super) conversation_viewers: u32,
     pub(super) transcript: super::conversation::TranscriptSlot,
+    /// Milestone 9 decision 11: the orchestrator's role, `None` for every other window.
+    pub(super) role: Option<crate::launch::role::RoleLaunch>,
+    /// Decision 11's run-live flag; not persisted (false after a daemon restart).
+    pub(super) run_live: bool,
+    /// When a client's `Input` last reached this window (decision 39's quiet time).
+    pub(super) last_client_input: Option<Instant>,
+    /// Whole-branch review, item 2: the window was in `Attention` and no turn end
+    /// (`Stop`, Codex's notify), prompt submit or new session has taken it out since. A
+    /// user key moves it on to `Working` though a dialog may still be open (an arrow
+    /// key), so the orchestrator's wake-up waits on this, never on the status alone.
+    /// Every event that leaves the status `Attention` sets it, so a clearing event
+    /// sticks only when it also takes the status out of `Attention`: `Stop` and
+    /// `UserPromptSubmit` always do; `SessionStart`, and Codex's notify once hooks were
+    /// seen, leave an `Attention` status as it is (`status::next`), and the flag with
+    /// it. A restart resets it (`manager/restart.rs`).
+    pub(super) attention_open: bool,
+    /// When the window reached a prompt (`Idle` or `Done`) with `attention_open` set,
+    /// not restarted by a move between the two ([`Entry::note_prompt`]): how long a
+    /// wake-up has been held there (`WindowManager::held_at_prompt_for`).
+    pub(super) prompt_since: Option<Instant>,
 }
 
 impl Entry {
@@ -149,7 +169,10 @@ impl Entry {
                 Process::Headless(_) => proto::WindowKind::Headless,
                 _ => proto::WindowKind::Pty,
             },
-            run: self.headless().and_then(|spec| spec.run_ref.clone()),
+            run: match &self.role {
+                Some(role) => Some(role.run_ref.clone()),
+                None => self.headless().and_then(|spec| spec.run_ref.clone()),
+            },
         }
     }
 
@@ -172,13 +195,36 @@ impl Entry {
     }
 
     pub(super) fn apply_with_context(&mut self, event: StatusEvent, ctx: StatusContext) -> bool {
-        let next = status::next(self.status, event, self.spec.runtime, ctx);
-        if next == self.status {
-            return false;
+        use StatusEvent as E;
+        if matches!(
+            event,
+            E::Stop | E::UserPromptSubmit | E::CodexNotify | E::SessionStart
+        ) {
+            self.attention_open = false;
         }
-        self.status = next;
-        self.since = Instant::now();
-        true
+        let next = status::next(self.status, event, self.spec.runtime, ctx);
+        if next == Status::Attention {
+            self.attention_open = true;
+        }
+        let changed = next != self.status;
+        if changed {
+            self.status = next;
+            self.since = Instant::now();
+        }
+        self.note_prompt();
+        changed
+    }
+
+    /// Whole-branch fix round 3, item 3: starts [`Entry::prompt_since`] when the window
+    /// is at a prompt (`Idle` or `Done`) with `attention_open` set, keeps it across a
+    /// move between the two (a client's focus), and ends it otherwise.
+    pub(super) fn note_prompt(&mut self) {
+        let at_prompt = self.attention_open && matches!(self.status, Status::Idle | Status::Done);
+        if !at_prompt {
+            self.prompt_since = None;
+        } else if self.prompt_since.is_none() {
+            self.prompt_since = Some(Instant::now());
+        }
     }
 
     pub(super) fn pid(&self) -> Option<u32> {

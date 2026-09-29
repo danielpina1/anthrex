@@ -27,6 +27,8 @@ pub enum Command {
     Reconnect,
     /// `C-b m` (task M6.5.12, spec §6): opens or closes the conversation view.
     ToggleConversation,
+    /// `C-b g` (milestone 9 decision 44): opens the goal form.
+    StartGoal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +135,7 @@ impl Keymap {
                 KeyCode::Char('r') => KeyAction::Run(Command::Reconnect),
                 KeyCode::Char('?') => KeyAction::Run(Command::Help),
                 KeyCode::Char('m') => KeyAction::Run(Command::ToggleConversation),
+                KeyCode::Char('g') => KeyAction::Run(Command::StartGoal),
                 KeyCode::Esc => KeyAction::Cancel,
                 _ => KeyAction::Nothing,
             };

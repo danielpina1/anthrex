@@ -16,7 +16,8 @@ use proto::{DoneSignal, RunState, Verdict};
 use super::contract::{mode_label, sha7, size_label};
 use super::model::Run;
 use super::report_escape::{escape_cell, list_item_text, plain_text_line};
-use super::report_task::render_task;
+pub use super::report_orch::{RESEARCH_FILE, research_text};
+use super::report_task::{render_task, strength_label};
 use super::triage::{kinds_scale, source_label};
 use crate::headless::argv::CodexProjectConfig;
 
@@ -30,6 +31,8 @@ pub fn render(run: &Run, now: u64) -> String {
         out.push('\n');
         render_task(task, now, &mut out);
     }
+    // Milestone 9 decisions 35 and 36.
+    super::report_orch::sections(run, &mut out);
     out.push_str("\n## Log\n\n");
     log_section(run, &mut out);
     out
@@ -37,9 +40,22 @@ pub fn render(run: &Run, now: u64) -> String {
 
 fn header(run: &Run, out: &mut String) {
     out.push_str(&format!("# anthrex run {}\n\n", run.id));
+    // Milestone 9 decision 19: the orchestrator's summary, the last one it wrote.
+    if let Some(summary) = run
+        .orch
+        .orchestrator
+        .as_ref()
+        .and_then(|o| o.summary.as_deref())
+    {
+        out.push_str("## Summary from the orchestrator\n\n");
+        out.push_str(&plain_text_line(summary));
+        out.push_str("\n\n");
+    }
     out.push_str(&format!("Goal: {}\n\n", plain_text_line(&run.goal)));
     out.push_str(&format!("State: {}\n", state_line(run)));
     out.push_str(&format!("Approved by: {}\n", approved_by_line(run)));
+    below_frontier(run, out);
+    not_metered(run, out);
     // M8b decision 24: `path: fast (triage: <kinds>/<scale>, <source>)`.
     if let (Some(proto::RunPath::Fast), Some(t)) = (run.path, &run.triage) {
         out.push_str(&format!(
@@ -79,6 +95,41 @@ fn header(run: &Run, out: &mut String) {
     limits(run, out);
     out.push('\n');
     containment(run, out);
+}
+
+/// Milestone 9 decision 14: only Claude Code exports OTLP usage, so a Codex
+/// orchestrator's usage is not metered, and its `by_role["orchestrator"]` stays zero.
+fn not_metered(run: &Run, out: &mut String) {
+    if run
+        .orch
+        .orchestrator
+        .as_ref()
+        .is_some_and(|o| o.route.runtime == proto::Runtime::Codex)
+    {
+        out.push_str("orchestrator usage: not metered (codex)\n");
+    }
+}
+
+/// Milestone 9 decision 6: an orchestrator whose resolved route is below `frontier`
+/// (with the built-in roster, a Codex orchestrator resolves to `""` at `standard`).
+fn below_frontier(run: &Run, out: &mut String) {
+    let Some(o) = &run.orch.orchestrator else {
+        return;
+    };
+    let route = &o.route;
+    if route.strength == proto::Strength::Frontier {
+        return;
+    }
+    let model = if route.model.is_empty() {
+        "default".to_string()
+    } else {
+        plain_text_line(&route.model)
+    };
+    out.push_str(&format!(
+        "orchestrator below the frontier tier: {} ({model}) {}\n",
+        route.runtime.label(),
+        strength_label(route.strength)
+    ));
 }
 
 fn state_line(run: &Run) -> String {

@@ -8,6 +8,7 @@ use proto::{
 use super::*;
 use crate::run::contract::{amend_message, answer_message};
 use crate::run::model::{AgentRound, Run};
+use crate::run::orch::EditSource;
 use crate::run::plan::parse_plan;
 use crate::run::test_support::*;
 
@@ -58,7 +59,7 @@ fn set_state(run: &mut Run, id: &str, state: TaskState, block: Option<BlockReaso
 }
 
 fn apply(run: &Run, edits: Vec<PlanEdit>) -> Result<(Run, Vec<EditConsequence>), Vec<PlanError>> {
-    apply_edits(run, &edits, &EditScope::Run, 5_000)
+    apply_edits(run, &edits, &EditScope::Run, &EditSource::User, 5_000)
 }
 
 fn applied(run: &Run, edits: Vec<PlanEdit>) -> (Run, Vec<EditConsequence>) {
@@ -97,6 +98,7 @@ fn amend(task_id: &str, a: Amend) -> PlanEdit {
         test_mode_reason: a.test_mode_reason,
         priority: a.priority,
         size: a.size,
+        deps: None,
     }
 }
 
@@ -478,3 +480,6 @@ mod rules;
 
 #[path = "edits_tests_state.rs"]
 mod state;
+
+#[path = "edits_tests_orch.rs"]
+mod orch;

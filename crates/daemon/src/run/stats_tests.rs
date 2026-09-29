@@ -399,3 +399,59 @@ fn an_unreadable_history_is_not_a_skipped_line() {
     let want = format!("history: could not read {}: ", dir.path().display());
     assert!(text.lines().any(|l| l.starts_with(&want)), "{text}");
 }
+
+/// M9.9 review fixes, M5: a research or review task's record (`reported`) is neither
+/// merged nor unmerged work: it is left out of the rows, though still a task record.
+#[test]
+fn reported_tasks_are_left_out_of_the_rows() {
+    let mut research = task("r1", "q1", Size::S, false, TaskOutcome::Reported, 1);
+    research.kind = TaskKind::Research;
+    research.bounces.review = 2;
+    let mut review = task("r1", "v1", Size::M, false, TaskOutcome::Reported, 1);
+    review.kind = TaskKind::Review;
+    let lines: Vec<HistoryLine> = [
+        merged("r1", "a1", Size::S, (8, 5, 1_500, 60)),
+        research,
+        review,
+    ]
+    .into_iter()
+    .map(HistoryLine::Task)
+    .collect();
+    let stats = aggregate(&lines, Path::new(PATH));
+    assert_eq!(stats.task_records, 3);
+    let s = row(&stats, "S");
+    assert_eq!((s.tasks, s.merged, s.bounces), (1, 1, 0));
+    let m = row(&stats, "M");
+    assert_eq!((m.tasks, m.merged), (0, 0));
+}
+
+/// Milestone 9 decision 43: `role_route` lines (the orchestrator's, sub-planners',
+/// scouts' and deciders' records, pre-run triage's included) change no aggregate.
+#[test]
+fn stats_ignores_role_route_lines() {
+    let mut lines = vec![
+        HistoryLine::Task(merged("r1", "a1", Size::S, (8, 5, 1_500, 60))),
+        HistoryLine::Run(run("r1", 3, 1)),
+    ];
+    let without = aggregate(&lines, Path::new(PATH));
+    let decider = crate::run::orch::roles::decider_record(
+        None,
+        ("5/1", "triage"),
+        &[],
+        (&route(), Vec::new()),
+        proto::RoleRoutingInput::default(),
+        300,
+    );
+    let mut planner = decider.clone();
+    planner.record_id = "r1/planner/mail/1".into();
+    planner.run_id = Some("r1".into());
+    planner.role = proto::AgentRole::Planner;
+    planner.outcome = Some(proto::RoleOutcome::Failed);
+    for d in [decider, planner] {
+        lines.push(HistoryLine::RoleRoute(d));
+    }
+    let with = aggregate(&lines, Path::new(PATH));
+    assert_eq!(with, without);
+    assert_eq!((with.task_records, with.run_records), (1, 1));
+    assert_eq!((with.decider_calls, with.decider_fallbacks), (3, 1));
+}

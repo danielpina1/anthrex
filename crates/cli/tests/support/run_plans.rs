@@ -89,7 +89,9 @@ pub fn no_run_branches(repo: &Path) -> bool {
 
 pub fn refused(reply: RunReply) -> String {
     match reply {
-        RunReply::Refused { request, message } => {
+        RunReply::Refused {
+            request, message, ..
+        } => {
             assert_eq!(request, "run start");
             message
         }

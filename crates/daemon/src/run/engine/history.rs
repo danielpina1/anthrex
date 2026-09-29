@@ -11,6 +11,15 @@ use super::{Effect, OpKind, OpResult, emit_op, next_op};
 use crate::run::history::{due, enabled, outcome, run_record, run_record_due, task_record};
 use crate::run::model::Run;
 
+// Milestone 9 decision 43: the role-routing records of the orchestrator, sub-planners,
+// run scouts and run-bound deciders.
+#[path = "role_routes.rs"]
+mod role_routes;
+pub(super) use role_routes::{
+    close, close_session, interrupt_open, keep, open, orchestrator_dispatched, orchestrator_ended,
+    planner_accepted, planner_ended, session_stopped,
+};
+
 /// `<repo_dir>/history.jsonl` (M8b decision 4).
 pub const HISTORY_FILE: &str = "history.jsonl";
 
@@ -33,6 +42,7 @@ fn append(run: &mut Run, task: Option<&str>, line: HistoryLine, fx: &mut Vec<Eff
         HistoryLine::Task(r) => r.record_id.clone(),
         HistoryLine::Run(r) => r.record_id.clone(),
         HistoryLine::Revert(r) => r.record_id.clone(),
+        HistoryLine::RoleRoute(r) => r.record_id.clone(),
     };
     let kind = OpKind::AppendHistory {
         path: run.repo_dir.join(HISTORY_FILE),
@@ -93,8 +103,9 @@ pub(super) fn measured(run: &mut Run, i: usize, result: OpResult, now: u64, fx: 
 /// Every step, for every run: the records that are due. A merged task waits for its
 /// diff; a cancelled or unfinished one with a recorded head has it measured first
 /// (from the run head, three dots); the run record waits until no task line is in
-/// flight.
+/// flight. A run that ended ends its orchestrator's record first (decision 43).
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    role_routes::pass(run, fx);
     for (i, outcome) in due(run) {
         let task = &run.tasks[i];
         if in_flight(run, Some(task.id()), false) {

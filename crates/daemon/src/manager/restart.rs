@@ -243,6 +243,7 @@ struct ForRelaunch {
     session_id: Option<String>,
     cols: u16,
     rows: u16,
+    role: Option<crate::launch::role::RoleLaunch>,
 }
 
 impl WindowManager {
@@ -375,6 +376,9 @@ impl WindowManager {
         if entry.removing {
             anyhow::bail!("window {id} is being removed");
         }
+        if let Some(run) = super::role_window::lost_role(entry) {
+            anyhow::bail!(super::role_window::lost_role_refusal(id, &run));
+        }
         let was_live = entry.child_alive;
         let cwd = entry.spec.cwd.clone();
         entry.restarting = true;
@@ -445,6 +449,7 @@ impl WindowManager {
             session_id: entry.state.session_id.clone(),
             cols,
             rows,
+            role: entry.role.clone(),
         })
     }
 
@@ -501,6 +506,10 @@ impl WindowManager {
         entry.last_output = now;
         entry.exit = None;
         entry.child_alive = true;
+        // Whole-branch fix round 2, item 3: a dialog of the old program cannot be open
+        // in the new one.
+        entry.attention_open = false;
+        entry.prompt_since = None;
         // Cleared here, under the same lock as the swap, rather than left for the
         // guard's `Drop` a moment later: this is the one lock acquisition decision 21
         // requires the swap to happen under, so the flag's own release rides along with
@@ -546,6 +555,8 @@ fn spawn_for_restart(
             codex_hook_source: config.codex_hook_source.as_deref(),
             codex_bypass_hook_trust: config.codex_bypass_hook_trust,
             resume: info.session_id.as_deref(),
+            caps: &config.cli_caps,
+            role: info.role.as_ref(),
         },
     );
     Window::spawn(id, &plan, info.cols.max(1), info.rows.max(1), events)

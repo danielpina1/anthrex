@@ -46,6 +46,13 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
             }
         }
     }
+    // Milestone 9 decision 26: the orchestrator's runtime and its sub-planners'; and
+    // (whole-branch review, item 1) its run scouts', on the keys the run froze.
+    if let Some(o) = &run.orch.orchestrator {
+        found.push(o.route.runtime);
+        found.extend(super::orch::launch::planner_route(run).map(|r| r.runtime));
+        found.push(super::orch::launch::frozen_scout_route(run).runtime);
+    }
     [Runtime::Claude, Runtime::Codex]
         .into_iter()
         .filter(|r| found.contains(r))

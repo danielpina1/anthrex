@@ -21,10 +21,12 @@ use std::str::FromStr;
 use super::*;
 
 mod adapt;
+mod agent;
 mod profile;
 mod roster;
 
 pub use adapt::{Deciders, Metering, Onboarding, Scouts};
+pub use agent::AgentConfig;
 
 use profile::{read_profile, report_unknown_profile};
 pub use roster::default_roster;
@@ -95,6 +97,8 @@ pub struct Orchestrator {
     pub scouts: Scouts,
     pub onboarding: Onboarding,
     pub metering: Metering,
+    /// Milestone 9: the orchestrator agent, planner, wake, message and note settings.
+    pub agent: agent::AgentSettings,
 }
 
 /// `[orchestrator.claude] auth`, decision 50: whether a headless Claude session reads
@@ -163,6 +167,7 @@ impl Default for Orchestrator {
             scouts: Scouts::default(),
             onboarding: Onboarding::default(),
             metering: Metering::default(),
+            agent: agent::AgentSettings::default(),
         }
     }
 }
@@ -288,6 +293,7 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
     read_models(t, &mut o, problems);
     read_profile(t, &mut o, problems);
     adapt::read_adapt(t, &mut o, problems);
+    o.agent = agent::read(t, problems);
 
     o
 }

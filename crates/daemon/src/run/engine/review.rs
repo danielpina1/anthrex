@@ -12,7 +12,7 @@ use proto::{
 
 use super::clock::{not_before, stall_due};
 use super::dispatch::{block, history, new_round, window_limit_reached};
-use super::schedule::{hub_holds_slot, needs_reviewer, readers_busy};
+use super::schedule::{hub_holds_slot, is_reader_task, needs_reviewer, readers_busy};
 use super::signals::{count_rate_limit, end_round};
 use super::tools::parse_review;
 use super::{
@@ -24,6 +24,7 @@ use crate::run::contract::{
     REVIEWER_STOPPED_TWICE, rate_limit_continue, review_changes_message, reviewer_prompt,
 };
 use crate::run::model::{AgentRound, FailedTurn, ReviewLevel, ReviewRecord, Run};
+use crate::run::orch::contract::worker_messages_for_review;
 use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid_of};
 use crate::run::roster::pick_reviewer;
 
@@ -59,19 +60,30 @@ pub(super) fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
         if !needs_reviewer(run, &run.tasks[i]) || run.tasks[i].gate_op.is_some() {
             continue;
         }
-        let op = next_op(run);
         let task = &run.tasks[i];
-        let kind = OpKind::PrepareReview {
-            root: run.root.clone(),
-            // Ruling T13-I3: the claimed commit, never the branch tip.
-            head_ref: task.head.clone().unwrap_or_else(|| task.branch.clone()),
-            // Final review A-I5: the run head; the git layer diffs from its merge base
-            // with the head (`run_head...head`), the task's net change, as the spill
-            // check does. `start_commit` would bring in every hand-back's merged work.
-            base_ref: run.run_head.clone(),
-            path: run.review_path(task.id()),
+        // Milestone 9 decision 36: a review task reviews its resolved range; one not
+        // resolved yet is `kinds::dispatch`'s.
+        let (head_ref, base_ref) = if is_reader_task(task) {
+            match super::kinds::review_refs(task) {
+                Some(refs) => refs,
+                None => continue,
+            }
+        } else {
+            // Ruling T13-I3: the claimed commit, never the branch tip. Final review
+            // A-I5: the run head; the git layer diffs from its merge base with the
+            // head (`run_head...head`), the task's net change, as the spill check
+            // does. `start_commit` would bring in every hand-back's merged work.
+            let head = task.head.clone().unwrap_or_else(|| task.branch.clone());
+            (head, run.run_head.clone())
         };
         let id = task.id().to_string();
+        let op = next_op(run);
+        let kind = OpKind::PrepareReview {
+            root: run.root.clone(),
+            head_ref,
+            base_ref,
+            path: run.review_path(&id),
+        };
         run.tasks[i].gate_op = Some(op);
         emit_op(run, op, Some(&id), kind, fx);
     }
@@ -120,26 +132,43 @@ pub(super) fn review_ready(
     // reviewers at the levels a task can have; a future path into review without one
     // would launch a reviewer `reach` never checked (T22 re-review 2, F4), so debug
     // builds refuse it.
+    let reader = is_reader_task(task);
     debug_assert!(
-        task.review_level.is_some(),
+        reader || task.review_level.is_some(),
         "task {} is in review with no review level",
         task.id()
     );
-    let level = task.review_level.unwrap_or(ReviewLevel::Medium);
-    // The reviewer is picked against the route of the session that wrote the claimed
-    // commit, the last worker round's (an escalation to the peer runtime included), so
-    // it stays on the other runtime. A route amended while that session lived applies
-    // from the next fresh session (final review A-6).
-    let author = task
-        .rounds
-        .iter()
-        .rfind(|r| r.role == AgentRole::Worker)
-        .map_or(&task.route, |r| &r.route)
-        .clone();
-    let route = pick_reviewer(&run.roster, &author, level);
-    let spec = reviewer_spec(run, task, &route);
+    let (author, level, route) = if reader {
+        // Milestone 9 decisions 36, 37: a review task's own route and level.
+        super::kinds::review_route(task)
+    } else {
+        let level = task.review_level.unwrap_or(ReviewLevel::Medium);
+        // The reviewer is picked against the route of the session that wrote the
+        // claimed commit, the last worker round's (an escalation to the peer runtime
+        // included), so it stays on the other runtime. A route amended while that
+        // session lived applies from the next fresh session (final review A-6).
+        let author = task
+            .rounds
+            .iter()
+            .rfind(|r| r.role == AgentRole::Worker)
+            .map_or(&task.route, |r| &r.route)
+            .clone();
+        let route = pick_reviewer(&run.roster, &author, level);
+        (author, level, route)
+    };
+    let spec = if reader {
+        crate::run::orch::launch::review_task_spec(run, task, &route)
+    } else {
+        reviewer_spec(run, task, &route)
+    };
     let round_no = spec.run_ref.as_ref().map_or(1, |r| r.session);
-    let first_turn = reviewer_prompt(run, task, round_no, &base, &head, &patch);
+    let first_turn = if reader {
+        super::kinds::review_first_turn(run, i, (&base, &head, &patch))
+    } else {
+        // Milestone 9 decision 42d: the `change` messages the worker received.
+        let messages = worker_messages_for_review(&task.orch.messages);
+        reviewer_prompt(run, task, round_no, &base, &head, &patch, &messages)
+    };
     let name = format!("{}/{}.r{round_no}", run.short(), task.id());
     let uuid = (route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
     let jitter = jitter_ms(&run.id, &format!("{}.r", task.id()), round_no);
@@ -178,6 +207,7 @@ pub(super) fn review_ready(
         project: run.project.clone(),
         worktree,
         jitter_ms: jitter,
+        extract: None,
     };
     emit_op(run, op, Some(&id), kind, fx);
 }
@@ -304,6 +334,11 @@ pub(super) fn submit(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: 
     }
     drop_mail(run, i);
     reply(fx, id, Ok(REVIEW_RECORDED.to_string()));
+    // Milestone 9 decision 36: a review task reports whatever the verdict; nothing
+    // is sent back and nothing merged.
+    if is_reader_task(&run.tasks[i]) {
+        return super::kinds::reviewed(run, i, now);
+    }
     if blocking {
         history(
             run,

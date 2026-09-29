@@ -149,6 +149,7 @@ fn minimal_task(id: &str) -> PlanTask {
         scout_refs: vec![],
         route: RouteSpec::default(),
         budget: None,
+        review_target: None,
     }
 }
 
@@ -179,6 +180,7 @@ fn plan_edits_parse_from_an_edit_file() {
             test_mode_reason: Some("no single_test configured".into()),
             priority: Some(5),
             size: Some(Size::L),
+            deps: Some(vec!["t0".into()]),
         },
         PlanEdit::AddDep {
             task_id: "t4".into(),
@@ -315,6 +317,7 @@ fn every_run_request_and_reply_round_trips() {
         RunRequest::Edit {
             run_id: "run-a1b2".into(),
             edits: vec![PlanEdit::Pause],
+            submit: false,
         },
         RunRequest::Retry {
             run_id: "run-a1b2".into(),
@@ -388,14 +391,17 @@ fn every_run_request_and_reply_round_trips() {
         RunReply::Started {
             run_id: "run-a1b2".into(),
             state: RunState::AwaitingApproval,
+            request_id: None,
         },
         RunReply::Done {
             request: run_wire::request::APPROVE.into(),
             message: "run approved".into(),
+            request_id: None,
         },
         RunReply::Refused {
             request: run_wire::request::START.into(),
             message: "runs are not available yet".into(),
+            request_id: None,
         },
         RunReply::ConfirmNeeded {
             run_id: "run-a1b2".into(),
@@ -406,11 +412,13 @@ fn every_run_request_and_reply_round_trips() {
                 commits: vec!["abc1234 alice: fix the thing".into()],
                 total: 3,
             }),
+            request_id: None,
         },
         RunReply::Snapshot(snapshot.clone()),
         RunReply::ToolResult {
             ok: true,
             text: "task marked done".into(),
+            request_id: None,
         },
     ];
     for reply in replies {
@@ -425,6 +433,7 @@ fn every_run_request_and_reply_round_trips() {
     let started = DaemonMsg::Run(RunReply::Started {
         run_id: "run-a1b2".into(),
         state: RunState::AwaitingApproval,
+        request_id: None,
     });
     let packed = rmp_serde::to_vec_named(&started).unwrap();
     let DaemonMsg::Run(RunReply::Started { run_id, .. }) = rmp_serde::from_slice(&packed).unwrap()

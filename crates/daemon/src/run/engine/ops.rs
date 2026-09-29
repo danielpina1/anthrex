@@ -45,6 +45,10 @@ pub enum OpKind {
         project: PathBuf,
         worktree: PathBuf,
         jitter_ms: u64,
+        /// Milestone 9 decision 34: where the driver puts the task's scout extract into
+        /// `first_turn`, when the task names scout reports.
+        #[serde(default)]
+        extract: Option<crate::run::orch::extract::ExtractSlot>,
     },
     ResumeSession {
         window_id: u32,
@@ -69,13 +73,25 @@ pub enum OpKind {
         /// fails the `DoneChecked` (ruling T14-R3).
         #[serde(default)]
         resolution: Option<ResolutionAt>,
+        /// Milestone 9 decision 42e (M9.13a review, item 3): the refresh merge commits
+        /// the count leaves out, each once (`worker_messages::not_own`).
+        #[serde(default)]
+        not_own: Vec<String>,
+        /// The run heads the task's refreshes merged (`worker_messages::not_run`): the
+        /// count leaves out all they reach (M9.13a re-review).
+        #[serde(default)]
+        not_run: Vec<String>,
     },
     /// `run_head`: M8a.8's interface change (the task's own commits exclude a merged
-    /// run head).
+    /// run head). `not_own` as `VerifyDone`'s.
     CountCommits {
         worktree: PathBuf,
         start: String,
         run_head: String,
+        #[serde(default)]
+        not_own: Vec<String>,
+        #[serde(default)]
+        not_run: Vec<String>,
     },
     DiffSoFar {
         worktree: PathBuf,
@@ -166,6 +182,11 @@ pub enum OpKind {
         /// in `HandedBack.onto`.
         #[serde(default)]
         task_head: Option<String>,
+        /// Milestone 9 decision 42e: a refresh's hand-back. The executor first checks
+        /// the tracked tree is clean (`Failed { "uncommitted changes" }` otherwise) and,
+        /// after a clean merge, lists the merged commits in `HandedBack.merged`.
+        #[serde(default)]
+        list_merged: bool,
     },
     /// Ruling T11-N1(b): `git::abort_merge` in a held task's worktree, undoing a
     /// hand-back that conflicted while another dependency was still unfinished.
@@ -256,6 +277,32 @@ pub enum OpKind {
         /// `large_enum_variant`); invisible in the journal.
         line: Box<proto::HistoryLine>,
     },
+    /// Milestone 9 decision 5: the run's orchestrator window, `WindowManager::
+    /// create_run_window`; the result is `Window`, or `Failed`. Boxed as `CreateWindow`'s
+    /// spec is.
+    CreateOrchestrator {
+        spec: Box<proto::WindowSpec>,
+        role: Box<crate::launch::role::RoleLaunch>,
+        project: PathBuf,
+    },
+    /// Decision 11: `WindowManager::restart` of the orchestrator window, which re-passes
+    /// its role with its session; the result is `Restarted`, or `Failed`.
+    RestartOrchestrator { window_id: u32 },
+    /// Decision 20: a run scout on M8b's `ScoutService`; the result is `ScoutStarted`.
+    StartScout {
+        spec: Box<crate::scout::spec::ScoutSpec>,
+    },
+    /// Decision 36: a review task's target, resolved in `root`; the result is `Target`.
+    ResolveTarget {
+        root: PathBuf,
+        target: String,
+        base_branch: String,
+    },
+    /// Decisions 31 and 32: a sub-planner session on M8b's scout machine; the result is
+    /// `PlannerStarted`, or `Failed`.
+    StartPlanner {
+        spec: Box<crate::scout::planner::PlannerSpec>,
+    },
 }
 
 impl OpKind {
@@ -283,6 +330,11 @@ impl OpKind {
             OpKind::Decide { .. } => "Decide",
             OpKind::MeasureDiff { .. } => "MeasureDiff",
             OpKind::AppendHistory { .. } => "AppendHistory",
+            OpKind::CreateOrchestrator { .. } => "CreateOrchestrator",
+            OpKind::RestartOrchestrator { .. } => "RestartOrchestrator",
+            OpKind::StartScout { .. } => "StartScout",
+            OpKind::ResolveTarget { .. } => "ResolveTarget",
+            OpKind::StartPlanner { .. } => "StartPlanner",
         }
     }
 }
@@ -408,6 +460,14 @@ pub enum OpResult {
         /// Only a merge onto the claimed commit re-queues without the gates.
         #[serde(default)]
         onto: Option<String>,
+        /// Milestone 9 decision 42e: with `list_merged`, the commits a clean merge
+        /// brought in, `<sha> <subject>`, newest first (at most 20).
+        #[serde(default)]
+        merged: Vec<String>,
+        /// M9.13a review, item 6: how many commits the clean merge brought in, all of
+        /// them (`git rev-list --count`), which `merged` lists at most 20 of.
+        #[serde(default)]
+        merged_total: u32,
     },
     /// `AbortMerge` succeeded (ruling T11-N1(b)).
     MergeAborted,
@@ -433,4 +493,19 @@ pub enum OpResult {
     DiffMeasured(proto::DiffStats),
     /// M8b decision 33: `AppendHistory` wrote its line.
     HistoryAppended,
+    /// Milestone 9: `RestartOrchestrator` restarted the window.
+    Restarted,
+    /// `StartScout`'s scout window.
+    ScoutStarted {
+        window_id: u32,
+    },
+    /// `ResolveTarget`'s `(base, head)` commits.
+    Target {
+        base: String,
+        head: String,
+    },
+    /// `StartPlanner`'s sub-planner window.
+    PlannerStarted {
+        window_id: u32,
+    },
 }

@@ -330,9 +330,10 @@ fn mcp_args_for_a_scout() {
         run_id: String::new(),
         task_id: None,
         scout_id: Some("onboarding-1".into()),
+        epic: None,
     };
     assert_eq!(
-        mcp_args(&target, 7, Path::new("/tmp/a.sock")),
+        mcp_args(&target, 7, Path::new("/tmp/a.sock")).unwrap(),
         [
             "mcp",
             "--role",
@@ -348,10 +349,71 @@ fn mcp_args_for_a_scout() {
     let run_scout = McpTarget {
         run_id: "r1".into(),
         scout_id: Some("api-1".into()),
+        epic: None,
         ..target
     };
     assert_eq!(
-        mcp_args(&run_scout, 7, Path::new("/tmp/a.sock"))[..7],
+        mcp_args(&run_scout, 7, Path::new("/tmp/a.sock")).unwrap()[..7],
         ["mcp", "--role", "scout", "--run", "r1", "--scout", "api-1"]
+    );
+}
+
+/// M9.2 review ruling 6: a decider never runs `anthrex mcp`. `mcp_args` refuses its
+/// target, and a session that names one gets no anthrex MCP server on either runtime.
+#[test]
+fn mcp_args_refuses_a_decider() {
+    let target = McpTarget {
+        role: AgentRole::Decider,
+        run_id: "r-3f9a".into(),
+        task_id: None,
+        scout_id: None,
+        epic: None,
+    };
+    assert_eq!(mcp_args(&target, 7, Path::new("/tmp/a.sock")), None);
+    for runtime in [Runtime::Claude, Runtime::Codex] {
+        let spec = HeadlessSpec {
+            mcp: Some(target.clone()),
+            ..worker(runtime)
+        };
+        let argv = match runtime {
+            Runtime::Codex => codex(&spec, &SessionArg::New { uuid: None }, "go", &CLI_CAPS),
+            _ => claude(&spec, &new_session(), &CLI_CAPS),
+        };
+        assert!(
+            !argv
+                .iter()
+                .any(|a| a == "--mcp-config" || a.contains("mcp_servers.anthrex")),
+            "{runtime:?}: {argv:?}"
+        );
+        assert!(!argv.iter().any(|a| a.contains("--role")), "{argv:?}");
+    }
+}
+
+/// Milestone 9 decision 31: a sub-planner's server names its run and its epic, `--epic`
+/// after `--scout`'s place and before `--window`.
+#[test]
+fn mcp_args_for_a_planner() {
+    let target = McpTarget {
+        role: AgentRole::Planner,
+        run_id: "r-3f9a".into(),
+        task_id: None,
+        scout_id: None,
+        epic: Some("mail".into()),
+    };
+    assert_eq!(
+        mcp_args(&target, 7, Path::new("/tmp/a.sock")).unwrap(),
+        [
+            "mcp",
+            "--role",
+            "planner",
+            "--run",
+            "r-3f9a",
+            "--epic",
+            "mail",
+            "--window",
+            "7",
+            "--socket",
+            "/tmp/a.sock"
+        ]
     );
 }

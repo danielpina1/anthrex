@@ -69,6 +69,9 @@ pub fn args(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> Vec<String> {
             ]);
         }
     }
+    if let Some(role) = ctx.role {
+        args.extend(super::role::codex_role_args(role, ctx, ctx.caps));
+    }
     if let Some(model) = &spec.model {
         // Design decision 16: kept on resume too. `codex resume --help` on codex-cli
         // 0.155.0 still lists `-m, --model <MODEL>`, and `codex -C /tmp -m gpt-x -c
@@ -228,6 +231,8 @@ mod tests {
             codex_hook_source: None,
             codex_bypass_hook_trust: false,
             resume: None,
+            caps: &crate::headless::argv::CLI_CAPS,
+            role: None,
         }
     }
 

@@ -28,6 +28,7 @@ fn amend(priority: i32) -> Vec<PlanEdit> {
         test_mode_reason: None,
         priority: Some(priority),
         size: None,
+        deps: None,
     }]
 }
 
@@ -343,10 +344,39 @@ fn old_run_json_loads() {
     // Everything it stored comes back as it was: only the new keys are added.
     let mut back = serde_json::to_value(&run).unwrap();
     let map = back.as_object_mut().unwrap();
-    for key in ["approved_at", "plan_edits", "plan_edits_since_approval"] {
+    for key in [
+        "approved_at",
+        "plan_edits",
+        "plan_edits_since_approval",
+        "role_routing_decisions",
+        // M9.13 review: whether the run started with `--trust-project`, false.
+        "trust_project",
+    ] {
         assert!(map.remove(key).is_some(), "{key}");
     }
+    // Milestone 9 task 4: the run's and each task's orchestrator state, empty.
+    let orch = map.remove("orch").expect("orch");
+    assert_eq!(
+        serde_json::from_value::<crate::run::orch::RunOrch>(orch).unwrap(),
+        crate::run::orch::RunOrch::default()
+    );
+    // Milestone 9 task 3: the orchestrator limits, at the config defaults.
+    let limits = map["limits"].as_object_mut().unwrap();
+    let orch = limits.remove("orch").expect("limits.orch");
+    assert_eq!(
+        serde_json::from_value::<crate::run::orch::OrchLimits>(orch).unwrap(),
+        crate::run::orch::OrchLimits::default()
+    );
     for task in back["tasks"].as_array_mut().unwrap() {
+        // Milestone 9 decision 24's plan field, and task 4's empty task state.
+        let task = task.as_object_mut().unwrap();
+        let orch = task.remove("orch").expect("task orch");
+        assert_eq!(
+            orch,
+            serde_json::to_value(crate::run::orch::TaskOrch::default()).unwrap()
+        );
+        let spec = task["spec"].as_object_mut().unwrap();
+        assert!(spec.remove("review_target").is_some(), "review_target");
         for round in task["rounds"].as_array_mut().unwrap() {
             let round = round.as_object_mut().unwrap();
             for key in ["rate_limited_since", "sent_back_at"] {
@@ -358,8 +388,16 @@ fn old_run_json_loads() {
     assert_eq!(back, stored);
 }
 
-/// Review I1: a promoted fast-path run's attention line carries no clock time; the view
-/// formats `promote_requested_at` itself, in local time.
+/// Milestone 9 task 2 (decision 43): a run persisted before role-routing history loads
+/// with no role-routing decisions; only dispatches from new runs record choices.
+#[test]
+fn old_run_defaults_role_routing_decisions_to_empty() {
+    let run: Run = serde_json::from_str(include_str!("m8b_run.json")).unwrap();
+    assert!(run.role_routing_decisions.is_empty());
+}
+
+/// Review I1: a promoted fast-path run publishes no clock time; the view formats
+/// `promote_requested_at` itself, in local time.
 #[test]
 fn a_promoted_run_publishes_no_clock_time() {
     let mut fx = one_task("");
@@ -380,6 +418,7 @@ fn a_promoted_run_publishes_no_clock_time() {
     fx.next(EventKind::Promote {
         reply,
         run_id: RUN_ID.into(),
+        orchestrator: None,
     });
     let at = 3_600 * 13 + 60 * 7;
     assert_eq!(fx.run().promote_requested_at, Some(at));
@@ -389,12 +428,15 @@ fn a_promoted_run_publishes_no_clock_time() {
     strings(&serde_json::to_value(&snap).unwrap(), &mut texts);
     let clocks: Vec<&String> = texts.iter().filter(|s| has_clock(s)).collect();
     assert!(clocks.is_empty(), "formatted times: {clocks:?}");
+    // Milestone 9 decision 29: the promoted run shows its orchestrator, not M8b's
+    // attention line.
     assert!(
-        snap.runs[0].attention.contains(
-            &"promotion requested; it takes effect when the orchestrator exists (milestone 9)"
-                .to_string()
-        ),
+        !snap.runs[0]
+            .attention
+            .iter()
+            .any(|a| a.starts_with("promotion requested")),
         "{:?}",
         snap.runs[0].attention
     );
+    assert!(snap.runs[0].orchestrator.is_some());
 }

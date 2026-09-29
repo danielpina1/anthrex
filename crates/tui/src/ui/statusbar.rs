@@ -141,13 +141,16 @@ fn navigate_hint(app: &App) -> String {
         return "j/k move  ⏎ focus  space fold  / filter  esc back".to_string();
     };
     let label = crate::app::filter_label(view.filter);
-    let gate = app
-        .runs
-        .runs
-        .iter()
-        .any(|run| run.run_id == view.run_id && run.state == proto::RunState::AwaitingApproval);
-    if gate {
+    let run = app.runs.runs.iter().find(|run| run.run_id == view.run_id);
+    let state = run.map(|run| run.state);
+    // Milestone 9: a planning run's submit, and a run's awaiting holds.
+    let holds = run.is_some_and(|run| crate::tree::awaiting_holds(run).next().is_some());
+    if state == Some(proto::RunState::AwaitingApproval) {
         format!("a approve  x reject  e edit  d remove  ⏎ open  f filter: {label}  esc back")
+    } else if state == Some(proto::RunState::Planning) {
+        format!("s submit  j/k move  ⏎ open  f filter: {label}  esc back")
+    } else if holds {
+        format!("a approve hold  x reject hold  ⏎ open  f filter: {label}  esc back")
     } else {
         format!("j/k move  h/l tier  ⏎ open  space fold  f filter: {label}  / find  esc back")
     }

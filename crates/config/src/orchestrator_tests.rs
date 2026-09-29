@@ -75,7 +75,7 @@ fn defaults_when_absent() {
     assert_eq!(o.models[0].strength, proto::Strength::Fast);
     assert_eq!(o.models[1].model, "claude-sonnet-5");
     assert_eq!(o.models[1].strength, proto::Strength::Standard);
-    assert_eq!(o.models[2].model, "claude-opus-5");
+    assert_eq!(o.models[2].model, "claude-opus-5-5");
     assert_eq!(o.models[2].strength, proto::Strength::Frontier);
     assert_eq!(o.models[3].runtime, proto::Runtime::Codex);
     assert_eq!(o.models[3].model, "");
@@ -535,6 +535,9 @@ mod confine;
 
 #[path = "orchestrator_tests_adapt.rs"]
 mod adapt;
+
+#[path = "orchestrator_tests_agent.rs"]
+mod orch_agent;
 
 /// Final fix batch F2 (C-I3), decision 50's recorded ruling: whether `--settings` hooks
 /// and `--mcp-config` still apply under `--bare` is not verified, so `auth = "api_key"`

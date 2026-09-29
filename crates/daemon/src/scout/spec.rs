@@ -18,8 +18,8 @@ use crate::run::roster::{lowest_at_or_above, peer};
 /// The scout's own MCP tool, as Claude names it.
 pub const SUBMIT_TOOL: &str = "mcp__anthrex__submit_scout_report";
 
-/// One scout to launch.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One scout to launch. Serializable: milestone 9's `StartScout` op carries it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScoutSpec {
     pub id: String,
     pub kind: ScoutKind,
@@ -55,8 +55,24 @@ pub struct ScoutContext {
 /// above `strength`, else the same on the peer runtime, else the first entry of
 /// `runtime`, else `runtime` with no model (the CLI's default).
 pub fn route(roster: &[ModelEntry], runtime: Runtime, strength: Strength, effort: Effort) -> Route {
+    route_within(roster, runtime, strength, effort, true)
+}
+
+/// [`route`], stepping to the peer runtime only when `peer_allowed` (M9.17 fix round 2:
+/// a run's sub-planners never step to a runtime its start check found not installed).
+pub fn route_within(
+    roster: &[ModelEntry],
+    runtime: Runtime,
+    strength: Strength,
+    effort: Effort,
+    peer_allowed: bool,
+) -> Route {
     let entry = lowest_at_or_above(roster, runtime, strength, None)
-        .or_else(|| lowest_at_or_above(roster, peer(runtime), strength, None))
+        .or_else(|| {
+            peer_allowed
+                .then(|| lowest_at_or_above(roster, peer(runtime), strength, None))
+                .flatten()
+        })
         .or_else(|| roster.iter().find(|e| e.runtime == runtime));
     match entry {
         Some(entry) => Route {
@@ -81,9 +97,73 @@ pub fn scout_route(ctx: &ScoutContext) -> Route {
     route(&ctx.roster, runtime, ctx.scouts.strength, ctx.scouts.effort)
 }
 
-/// Decision 12's read-only session for `scout`.
+/// `[orchestrator.scouts]`'s route keys and `orchestrator.default_runtime`, as a run
+/// froze them at its start (whole-branch review, item 1): its scouts' runtime is one its
+/// start checked (decisions 50 and 53), whatever the daemon's config says later.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ScoutRouting {
+    pub runtime: Option<Runtime>,
+    pub default_runtime: Runtime,
+    pub strength: Strength,
+    pub effort: Effort,
+}
+
+impl ScoutRouting {
+    /// The keys `config` gives a run built now.
+    pub fn from_config(config: &config::Orchestrator) -> ScoutRouting {
+        ScoutRouting {
+            runtime: config.scouts.runtime,
+            default_runtime: config.default_runtime,
+            strength: config.scouts.strength,
+            effort: config.scouts.effort,
+        }
+    }
+
+    /// The scout service's live keys (a run recorded before they were frozen).
+    pub fn of(ctx: &ScoutContext) -> ScoutRouting {
+        ScoutRouting {
+            runtime: ctx.scouts.runtime,
+            default_runtime: ctx.default_runtime,
+            strength: ctx.scouts.strength,
+            effort: ctx.scouts.effort,
+        }
+    }
+}
+
+/// A run scout's route (M9.17 fix round 3): [`scout_route`]'s rule on `routing` and
+/// `roster`, over the runtimes the run's start found installed (`run.orch.installed`,
+/// keyed by runtime label). When nothing pins `[orchestrator.scouts] runtime` and the
+/// default runtime is not installed, the installed peer is used; the strength step
+/// reaches the peer only when it is installed. A runtime with nothing recorded counts
+/// as installed. Onboarding scouts keep [`scout_route`].
+pub fn run_scout_route(
+    roster: &[ModelEntry],
+    routing: &ScoutRouting,
+    installed: &std::collections::BTreeMap<String, bool>,
+) -> Route {
+    let missing = |runtime: Runtime| installed.get(runtime.label()) == Some(&false);
+    let mut runtime = routing.runtime.unwrap_or(routing.default_runtime);
+    if routing.runtime.is_none() && missing(runtime) && !missing(peer(runtime)) {
+        runtime = peer(runtime);
+    }
+    let peer_allowed = !missing(peer(runtime));
+    route_within(
+        roster,
+        runtime,
+        routing.strength,
+        routing.effort,
+        peer_allowed,
+    )
+}
+
+/// Decision 12's read-only session for `scout`, on [`scout_route`].
 pub fn headless_spec(scout: &ScoutSpec, ctx: &ScoutContext) -> HeadlessSpec {
-    let route = scout_route(ctx);
+    headless_spec_on(scout, ctx, &scout_route(ctx))
+}
+
+/// Decision 12's read-only session for `scout` on `route` (a run scout's is
+/// [`run_scout_route`]).
+pub fn headless_spec_on(scout: &ScoutSpec, ctx: &ScoutContext, route: &Route) -> HeadlessSpec {
     let claude = route.runtime == Runtime::Claude;
     let (instructions, mut allowed) = match scout.kind {
         ScoutKind::Area => (SCOUT_CONTRACT, vec![SUBMIT_TOOL, "Read", "Glob", "Grep"]),
@@ -109,6 +189,7 @@ pub fn headless_spec(scout: &ScoutSpec, ctx: &ScoutContext) -> HeadlessSpec {
             run_id: run_id.clone(),
             task_id: None,
             scout_id: Some(scout.id.clone()),
+            epic: None,
         }),
         allowed_tools: allowed.into_iter().map(String::from).collect(),
         claude_permission_mode: claude.then(|| REVIEWER_PERMISSION_MODE.to_string()),

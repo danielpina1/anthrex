@@ -42,35 +42,52 @@ use proto::{FinishAction, PlanEdit, TokenUsage, ToolCall};
 use super::model::{OpId, PendingOp, Run};
 use super::validate::EditScope;
 
+mod batch;
 mod clock;
 mod complete;
 pub(crate) mod deciders;
 mod deciders_size;
 mod dispatch;
 mod done;
-mod early;
+pub(crate) mod early;
 mod fallback;
+mod gate_holds;
 mod gates;
 mod history;
 mod holds;
+mod integration;
+mod kinds;
 pub(crate) mod ladder;
 mod merge;
 mod ops;
+mod orch;
+mod orch_window;
 mod outbox;
+mod planners;
+mod promote;
 mod requests;
+mod research;
 mod restore;
+mod results;
 mod review;
+mod rounds;
+mod run_scouts;
 pub(crate) mod schedule;
 mod signals;
 mod tools;
+mod wake;
+mod worker_messages;
 
 pub use crate::headless::TurnOutcome;
 pub(crate) use clock::epoch_spend;
 pub use clock::{BudgetEpoch, TaskClock};
 pub use early::{HOLD_CAP, HOLD_LIMIT_SECS, HOLD_WINDOWS_CAP, HeldEvent, HeldWindow};
 pub use history::HISTORY_FILE;
+pub(crate) use integration::attention as integration_attention;
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
+pub use orch::{OrchEvent, ScoutEnd};
 pub use signals::INTERRUPT_GRACE_SECS;
+pub use wake::notes_seq;
 
 /// Identifies a client request waiting for its [`Effect::Reply`].
 pub type ReplyId = u64;
@@ -85,6 +102,9 @@ pub struct EngineState {
     /// The events of windows no round has yet, held while a launch is in flight
     /// (`early.rs`). In memory only: never persisted, empty after a restart.
     pub pending: BTreeMap<u32, HeldWindow>,
+    /// The run as the orchestrator's own tool call left it, before its handler's
+    /// scheduler pass (`orch::settle_quiet`); taken by the step that set it.
+    pub quiet_base: Option<Run>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -118,6 +138,9 @@ pub enum EventKind {
         /// not reach when the request came in and whose checks fail; an edit that makes
         /// one of them reachable is refused with its text.
         refusals: Vec<(proto::Runtime, String)>,
+        /// Milestone 9 decision 13: the user submits a planning run's plan after the
+        /// batch (M9.7 review fixes, ruling 5).
+        submit: bool,
     },
     Retry {
         reply: ReplyId,
@@ -155,10 +178,12 @@ pub enum EventKind {
         reply: ReplyId,
         call: ToolCall,
     },
-    /// M8b decision 25: `run promote`, recorded for milestone 9 to act on.
+    /// M8b decision 25: `run promote`, which milestone 9 performs (decision 29) with the
+    /// orchestrator the user chose, if any.
     Promote {
         reply: ReplyId,
         run_id: String,
+        orchestrator: Option<proto::OrchestratorChoice>,
     },
     /// M8b decision 30: the OTLP ledger's new total for `(run, "orchestrator")`. It
     /// replaces the one before, on top of the usage restored at the daemon's start.
@@ -191,6 +216,8 @@ pub enum EventKind {
     },
     Stop,
     Tick,
+    /// Milestone 9: the orchestrator's and sub-planners' events (`orch.rs`).
+    Orch(OrchEvent),
 }
 
 /// The driver's translation of a window's session events (decision 27).
@@ -305,6 +332,33 @@ pub enum Effect {
     Publish {
         structural: bool,
     },
+    /// Milestone 9 decision 22: a sub-planner's epic was accepted; the driver retires
+    /// its session (`ScoutService::accept_planner`).
+    PlannerAccepted {
+        window_id: u32,
+    },
+    /// Decision 22: a sub-planner failed in the engine; the driver stops its session.
+    StopPlanner {
+        window_id: u32,
+        reason: String,
+    },
+    /// Decision 20: a run scout is halted by the engine (`run cancel`, the `finish`
+    /// edit); the driver stops its session on the scout service with `reason`.
+    StopScout {
+        scout_id: String,
+        reason: String,
+    },
+    /// Decision 39: paste `text` into the idle orchestrator's window (the driver's
+    /// `wake.rs`, task M9.13), then answer `OrchEvent::OrchestratorWoken`.
+    WakeOrchestrator {
+        run_id: String,
+        window_id: u32,
+        text: String,
+        digest_revision: u64,
+        /// The highest note seq `text` holds (`OrchEvent::OrchestratorWoken` drops
+        /// the notes up to it).
+        notes_seq: u64,
+    },
 }
 
 /// One reducer step: apply the event, run the scheduler on every run, then bump the
@@ -317,6 +371,9 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
     let before = state.runs.clone();
     let before_revision = state.revision;
     let now = event.now;
+    // Milestone 9 decision 39: the orchestrator's own edits add no wake note.
+    let quiet = matches!(&event.kind, EventKind::Orch(OrchEvent::Tool { call, .. })
+        if call.role == proto::AgentRole::Orchestrator);
     let mut fx = Vec::new();
     match event.kind {
         EventKind::Start { reply, run } => requests::start(&mut state, reply, *run, now, &mut fx),
@@ -332,11 +389,12 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             edits,
             scope,
             refusals,
+            submit,
         } => requests::edit(
             &mut state,
             reply,
             &run_id,
-            (&edits, &scope, &refusals),
+            (&edits, &scope, &refusals, submit),
             now,
             &mut fx,
         ),
@@ -365,9 +423,12 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             action,
         } => complete::finish(&mut state, reply, &run_id, action, now, &mut fx),
         EventKind::Tool { reply, call } => done::tool(&mut state, reply, call, now, &mut fx),
-        EventKind::Promote { reply, run_id } => {
-            requests::promote(&mut state, reply, &run_id, now, &mut fx)
-        }
+        EventKind::Promote {
+            reply,
+            run_id,
+            orchestrator,
+        } => promote::request(&mut state, reply, &run_id, orchestrator, now, &mut fx),
+        EventKind::Orch(event) => orch::on_orch_event(&mut state, event, now, &mut fx),
         EventKind::BaseAdvanced {
             run_id,
             to,
@@ -386,7 +447,7 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             }
         }
         EventKind::OpDone { run_id, op, result } => {
-            op_done(&mut state, &run_id, op, result, now, &mut fx)
+            results::op_done(&mut state, &run_id, op, result, now, &mut fx)
         }
         EventKind::Signal { window_id, signal } => {
             signals::on_signal(&mut state, window_id, signal, now, &mut fx)
@@ -408,12 +469,29 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             state.stopped = true;
             return (state, fx);
         }
-        EventKind::Tick => {}
+        // Milestone 9 decision 29: a promotion recorded before milestone 9.
+        EventKind::Tick => promote::on_tick(&mut state, now, &mut fx),
     }
-    for run in state.runs.values_mut() {
+    // M9.9 review fixes, I2 and M-b: an orchestrator call's own blocks are compared
+    // away (the run before its handler's scheduler pass, `quiet_base`); what the
+    // scheduler's passes block, a stall among them, is still noted.
+    let base = state.quiet_base.take();
+    let applied = quiet.then(|| {
+        let mut runs = state.runs.clone();
+        if let Some(base) = base {
+            runs.insert(base.id.clone(), base);
+        }
+        runs
+    });
+    for (id, run) in state.runs.iter_mut() {
         dispatch::schedule(run, now, &mut fx);
+        orch_window::ended(run);
+        gate_holds::drop_empty_rounds(run, now);
         // M8b decision 33: the history records that are due, whatever the run's state.
         history::pass(run, now, &mut fx);
+        // Milestone 9 decision 39: a note for each task this step blocked.
+        let since = applied.as_ref().unwrap_or(&before);
+        wake::blocked_notes(since.get(id), run);
     }
     // Held events whose launches are over, or that waited too long (`early.rs`).
     early::sweep(&mut state, now, &mut fx);
@@ -432,13 +510,23 @@ fn finish(
     fx: Vec<Effect>,
 ) -> (EngineState, Vec<Effect>) {
     let mut persist = Vec::new();
+    let mut wakes = Vec::new();
     let mut structural = false;
     for (id, run) in state.runs.iter_mut() {
         let urgent = match before.get(id) {
             Some(old) if old == run => continue,
             Some(old) => {
                 run.revision += 1;
-                without_counters(old) != without_counters(run)
+                let urgent = without_counters(old) != without_counters(run);
+                // Decision 16: the digest's revision moves only with its fingerprint. A
+                // run new to the state (a restore) is left as loaded (final review B-5).
+                if urgent {
+                    super::orch::digest::note_change(run);
+                }
+                // Decision 39: a wake-up is due when the orchestrator should see its
+                // notes.
+                wakes.extend(wake::effect(run));
+                urgent
             }
             None => true,
         };
@@ -452,6 +540,7 @@ fn finish(
     let changed = state.revision != before_revision;
     let mut out = persist;
     out.extend(fx);
+    out.extend(wakes);
     if changed {
         out.push(Effect::Publish { structural });
     }
@@ -475,79 +564,6 @@ fn without_counters(run: &Run) -> Run {
         round.usage = Default::default();
     }
     run
-}
-
-/// Routes an op's result by the kind of the op it answers. A result for an op the run
-/// no longer has pending (stale, or replayed twice) is ignored.
-fn op_done(
-    state: &mut EngineState,
-    run_id: &str,
-    op: OpId,
-    result: OpResult,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let Some(run) = state.runs.get_mut(run_id) else {
-        return;
-    };
-    let Some(pending) = run.pending_ops.remove(&op) else {
-        return;
-    };
-    let task = pending
-        .task_id
-        .as_deref()
-        .and_then(|id| run.tasks.iter().position(|t| t.id() == id));
-    let mut bound = None;
-    match (pending.kind, task) {
-        (kind @ OpKind::Proof { .. }, Some(i)) => {
-            gates::proof_done(run, i, op, &kind, result, now, fx)
-        }
-        (kind @ OpKind::Check { .. }, Some(i)) => {
-            gates::check_done(run, i, op, &kind, result, now, fx)
-        }
-        (OpKind::Check { .. }, None) => complete::final_checked(run, result, now, fx),
-        (OpKind::VerifyRefs { .. }, _) => complete::refs_verified(run, result, now, fx),
-        (OpKind::MergeCandidate { .. }, i) => merge::candidate_done(run, i, op, result, now, fx),
-        (OpKind::CreateRunBranch { .. }, _) => requests::run_branch_done(run, result, now, fx),
-        (kind @ (OpKind::Discard { .. } | OpKind::Accept { .. }), _) => {
-            complete::finished(run, &kind, result, now, fx)
-        }
-        (OpKind::PrepareWorktree { from, .. }, Some(i)) => {
-            dispatch::worktree_done(run, i, from, result, now, fx)
-        }
-        (OpKind::CreateWindow { .. }, Some(i)) => {
-            if let OpResult::Window { window_id, .. } = result {
-                bound = Some(window_id);
-            }
-            dispatch::window_done(run, i, op, result, now, fx)
-        }
-        (OpKind::PrepareReview { .. }, Some(i)) => {
-            review::review_ready(run, i, op, result, now, fx)
-        }
-        (OpKind::HandBack { run_head, .. }, Some(i)) if merge::awaits(run, i, op) => {
-            merge::handed_back(run, i, op, &run_head, result, now, fx)
-        }
-        (OpKind::HandBack { .. }, Some(i)) => holds::handed_back(run, i, result, now, fx),
-        (OpKind::AbortMerge { .. }, Some(i)) => holds::merge_aborted(run, i, result, now),
-        (OpKind::RemoveWorktree { path, .. }, Some(i)) => {
-            dispatch::removed(run, i, &path, result, now)
-        }
-        (OpKind::VerifyDone { .. }, Some(i)) => done::checked(run, i, op, result, now, fx),
-        (OpKind::CountCommits { .. }, Some(i)) if gates::awaits_override(run, i, op) => {
-            gates::override_counted(run, i, result, now, fx)
-        }
-        (OpKind::CountCommits { .. }, Some(i)) => fallback::counted(run, i, op, result, now, fx),
-        (OpKind::DiffSoFar { .. }, Some(i)) => ladder::fresh_diff(run, i, result, now, fx),
-        (OpKind::ResumeSession { .. }, Some(i)) => outbox::resumed(run, i, op, result, now, fx),
-        (kind @ OpKind::Decide { .. }, _) => deciders::op_done(run, &kind, result, now, fx),
-        (OpKind::MeasureDiff { .. }, Some(i)) => history::measured(run, i, result, now, fx),
-        (kind @ OpKind::AppendHistory { .. }, _) => history::appended(run, &kind, result, now),
-        _ => {}
-    }
-    // The session's events that came before its window, now that its round has it.
-    if let Some(window_id) = bound {
-        early::replay(state, window_id, fx);
-    }
 }
 
 /// Allocates the next op id and records the op as pending, then emits it.

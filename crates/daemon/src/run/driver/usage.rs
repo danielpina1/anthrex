@@ -11,10 +11,10 @@
 //!   one message to the engine's queue, and the map holds at most one total per live
 //!   run.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use proto::TokenUsage;
 
@@ -28,6 +28,10 @@ pub(super) struct Metered {
     live: Mutex<HashSet<String>>,
     generation: AtomicU64,
     pending: Mutex<BTreeMap<String, TokenUsage>>,
+    /// Milestone 9 decisions 14a and 14b: each live run's OTLP token (its
+    /// orchestrator's, when set), and how many live runs have an orchestrator.
+    tokens: Mutex<HashMap<String, String>>,
+    orchestrators: AtomicUsize,
 }
 
 impl Metered {
@@ -35,6 +39,17 @@ impl Metered {
     /// have not ended. The generation moves only when they changed.
     pub(super) fn refresh_live(&self, state: &EngineState) {
         let open = || state.runs.values().filter(|run| !run.state.is_terminal());
+        let orchestrators = open().filter(|run| run.orch.orchestrator.is_some()).count();
+        let tokens: HashMap<String, String> = open()
+            .filter_map(|run| {
+                let token = &run.orch.orchestrator.as_ref()?.otlp_token;
+                (!token.is_empty()).then(|| (run.id.clone(), token.clone()))
+            })
+            .collect();
+        *crate::lock(&self.tokens) = tokens;
+        if self.orchestrators.swap(orchestrators, Ordering::SeqCst) != orchestrators {
+            self.generation.fetch_add(1, Ordering::SeqCst);
+        }
         let mut live = crate::lock(&self.live);
         if open().count() == live.len() && open().all(|run| live.contains(&run.id)) {
             return;
@@ -70,6 +85,14 @@ impl UsageSink for RunService {
         if self.metered.offer(run_id, usage) {
             let _ = self.tx.send(Msg::Usage);
         }
+    }
+
+    fn token(&self, run_id: &str) -> Option<String> {
+        crate::lock(&self.metered.tokens).get(run_id).cloned()
+    }
+
+    fn live_orchestrators(&self) -> usize {
+        self.metered.orchestrators.load(Ordering::SeqCst)
     }
 }
 

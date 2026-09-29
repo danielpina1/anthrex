@@ -12,7 +12,9 @@ use proto::{ClientMsg, DaemonMsg, RunReply, RunRequest, ToolCall};
 use super::{Mcp, anthrex, tempdir};
 
 /// A stub daemon on a `/tmp` socket: `Welcome` to every `Hello`, then the scripted
-/// `ToolResult { ok, text }` for each `Run(Tool(..))`, recording every call.
+/// `ToolResult { ok, text }` for each `Run(Tool(..))`, recording every call. With
+/// [`StubDaemon::replies`], the n-th call gets the n-th reply, and every later call the
+/// last one.
 pub struct StubDaemon {
     pub socket: PathBuf,
     calls: Arc<Mutex<Vec<ToolCall>>>,
@@ -21,12 +23,18 @@ pub struct StubDaemon {
 
 impl StubDaemon {
     pub fn start(ok: bool, text: &str) -> Self {
+        Self::replies(&[(ok, text)])
+    }
+
+    pub fn replies(replies: &[(bool, &str)]) -> Self {
+        let replies: Vec<(bool, String)> =
+            replies.iter().map(|(ok, t)| (*ok, t.to_string())).collect();
+        assert!(!replies.is_empty(), "a stub daemon needs a reply");
         let dir = tempdir();
         let socket = dir.path().join("d.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let calls = Arc::new(Mutex::new(Vec::new()));
         let record = calls.clone();
-        let text = text.to_string();
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { return };
@@ -41,11 +49,13 @@ impl StubDaemon {
                     },
                 );
                 if let Some(ClientMsg::Run(RunRequest::Tool(call))) = read_frame(&mut stream) {
-                    record.lock().unwrap().push(call);
-                    let reply = RunReply::ToolResult {
-                        ok,
-                        text: text.clone(),
+                    let n = {
+                        let mut calls = record.lock().unwrap();
+                        calls.push(call);
+                        calls.len()
                     };
+                    let (ok, text) = replies[n.min(replies.len()) - 1].clone();
+                    let reply = RunReply::tool_result(ok, text);
                     write_frame(&mut stream, &DaemonMsg::Run(reply));
                 }
             }

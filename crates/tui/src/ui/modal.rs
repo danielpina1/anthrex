@@ -28,6 +28,7 @@ fn help_lines(prefix_label: &str) -> Vec<(String, String)> {
         (format!("{prefix_label} R"), "restart agent".to_string()),
         (format!("{prefix_label} r"), "reconnect".to_string()),
         (format!("{prefix_label} m"), "conversation".to_string()),
+        (format!("{prefix_label} g"), "start a goal".to_string()),
         (
             format!("{prefix_label} t"),
             "tree mode (j/k, h/l, Enter, Space, /)".to_string(),
@@ -99,6 +100,18 @@ fn wrapped(text: &str, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
+/// A confirm's body: its message on one line per `width` (with no control, separator
+/// or bidi character — it may quote a hold id or a daemon text), a blank line, the keys.
+fn confirm_body(message: &str, width: usize) -> Vec<Line<'static>> {
+    let mut lines = wrapped(&crate::safe_text::one_line(message), width);
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "y / Enter = yes    n / Esc = no",
+        theme::muted(),
+    ));
+    lines
+}
+
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
@@ -124,19 +137,15 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             return dialog::render_force_remove(frame, name, message, area, accent);
         }
         Modal::EditTask(form) => return crate::ui::run_edit::render(frame, form, area, accent),
+        Modal::StartGoal(form) => return crate::ui::run_goal::render(frame, form, area, accent),
         Modal::Confirm { .. } | Modal::Help | Modal::Notice { .. } | Modal::Rename(_) => {}
     }
     let (title, body): (String, Vec<Line>) = match modal {
         // Review M5: a message wider than the screen wraps inside the box.
-        Modal::Confirm { message, .. } => (" confirm ".to_string(), {
-            let mut lines = wrapped(message, usize::from(area.width.saturating_sub(4)));
-            lines.push(Line::raw(""));
-            lines.push(Line::styled(
-                "y / Enter = yes    n / Esc = no",
-                theme::muted(),
-            ));
-            lines
-        }),
+        Modal::Confirm { message, .. } => (
+            " confirm ".to_string(),
+            confirm_body(message, usize::from(area.width.saturating_sub(4))),
+        ),
         Modal::Help => (
             " keys ".to_string(),
             help_lines(&app.settings.prefix_label)
@@ -170,7 +179,11 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 Line::styled("Enter = rename    Esc = cancel", theme::muted()),
             ],
         ),
-        Modal::NewAgent(_) | Modal::Remove(_) | Modal::ForceRemove { .. } | Modal::EditTask(_) => {
+        Modal::NewAgent(_)
+        | Modal::Remove(_)
+        | Modal::ForceRemove { .. }
+        | Modal::EditTask(_)
+        | Modal::StartGoal(_) => {
             unreachable!("handled and returned from above")
         }
     };
@@ -233,6 +246,24 @@ mod tests {
         assert!(
             box_rows.iter().all(|l| l.trim_end().ends_with('│')),
             "{lines:#?}"
+        );
+    }
+
+    /// M9.15 review: a confirm quoting a hold id carries none of `safe_text`'s hostile
+    /// characters into the lines it draws.
+    #[test]
+    fn a_confirm_quoting_a_hold_id_is_sanitised() {
+        let bad = crate::safe_text::tests::hostile_text();
+        let message = format!("Reject hold epic:{bad} of run r? Its 1 task is cancelled.");
+        let text: String = confirm_body(&message, 1_000)
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
+            .collect();
+        assert!(text.starts_with("Reject hold epic:a b"), "{text:?}");
+        assert_eq!(
+            crate::safe_text::tests::first_hostile(&text),
+            None,
+            "{text:?}"
         );
     }
 

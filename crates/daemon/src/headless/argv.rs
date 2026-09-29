@@ -234,13 +234,17 @@ fn insert_path(object: &mut Map<String, Value>, path: &str, value: Value) {
     }
 }
 
-/// The `anthrex mcp` argv of the CLI section.
-pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Vec<String> {
+/// The `anthrex mcp` argv of the CLI section. `None` for a decider (milestone 9
+/// decision 43): a decider never runs `anthrex mcp`, so a session that names one as
+/// its MCP target gets no anthrex server at all.
+pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec<String>> {
     let role = match target.role {
         AgentRole::Orchestrator => "orchestrator",
         AgentRole::Worker => "worker",
         AgentRole::Reviewer => "reviewer",
         AgentRole::Scout => "scout",
+        AgentRole::Planner => "planner",
+        AgentRole::Decider => return None,
     };
     let mut args = vec!["mcp".to_string(), "--role".into(), role.into()];
     // M8b decision 15: a repository-level scout belongs to no run.
@@ -253,13 +257,17 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Vec<String
     if let Some(scout) = &target.scout_id {
         args.extend(["--scout".into(), scout.clone()]);
     }
+    // Milestone 9 decision 31: a sub-planner names its epic.
+    if let Some(epic) = &target.epic {
+        args.extend(["--epic".into(), epic.clone()]);
+    }
     args.extend([
         "--window".into(),
         window_id.to_string(),
         "--socket".into(),
         socket.display().to_string(),
     ]);
-    args
+    Some(args)
 }
 
 /// A Claude session's argv (decision 24), in this order: the stream flags, the
@@ -312,11 +320,15 @@ pub fn claude_args(
         settings["apiKeyHelper"] = Value::String(helper.clone());
     }
     args.extend(["--settings".into(), settings.to_string()]);
-    if let Some(target) = &spec.mcp {
+    if let Some(mcp) = spec
+        .mcp
+        .as_ref()
+        .and_then(|target| mcp_args(target, window_id, socket))
+    {
         let config = json!({"mcpServers": {"anthrex": {
             "type": "stdio",
             "command": exe.display().to_string(),
-            "args": mcp_args(target, window_id, socket),
+            "args": mcp,
         }}});
         args.extend(["--mcp-config".into(), config.to_string()]);
     }
@@ -380,8 +392,11 @@ pub fn codex_args(
         args.extend(flags.iter().map(|f| f.to_string()));
     }
     let mut config = |value: String| args.extend(["-c".into(), value]);
-    if let Some(target) = &spec.mcp {
-        let mcp = mcp_args(target, window_id, socket);
+    if let Some(mcp) = spec
+        .mcp
+        .as_ref()
+        .and_then(|target| mcp_args(target, window_id, socket))
+    {
         config(format!(
             "mcp_servers.anthrex.command={}",
             toml_string(&exe.display().to_string())
@@ -432,12 +447,12 @@ pub fn codex_args(
 }
 
 /// A TOML array of basic strings: `[` + the strings joined by `,` + `]`.
-fn toml_array(items: &[String]) -> String {
+pub(crate) fn toml_array(items: &[String]) -> String {
     let strings: Vec<String> = items.iter().map(|s| toml_string(s)).collect();
     format!("[{}]", strings.join(","))
 }
 
-fn effort(effort: Effort) -> &'static str {
+pub(crate) fn effort(effort: Effort) -> &'static str {
     match effort {
         Effort::Low => "low",
         Effort::Medium => "medium",

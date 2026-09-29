@@ -60,7 +60,16 @@ impl Setup {
     /// Runs `script` with `sh -c` in the task worktree under `profile`, with the
     /// worker's environment; whether it exited 0.
     fn sandboxed(&self, profile: &str, script: &str) -> bool {
-        let output = Command::new(SANDBOX_EXEC)
+        let output = self.sandboxed_output(profile, script);
+        if !output.status.success() {
+            eprintln!("{script}: {}", String::from_utf8_lossy(&output.stderr));
+        }
+        output.status.success()
+    }
+
+    /// [`Setup::sandboxed`]'s whole output.
+    fn sandboxed_output(&self, profile: &str, script: &str) -> std::process::Output {
+        Command::new(SANDBOX_EXEC)
             .args(["-p", profile, "sh", "-c", script])
             .current_dir(&self.task)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -68,11 +77,7 @@ impl Setup {
             .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
             .envs(self.env())
             .output()
-            .unwrap();
-        if !output.status.success() {
-            eprintln!("{script}: {}", String::from_utf8_lossy(&output.stderr));
-        }
-        output.status.success()
+            .unwrap()
     }
 
     /// The worker's writable paths: its worktree and its grant.
@@ -489,6 +494,51 @@ fn the_grant_before_f1b_let_a_worker_rewrite_the_bases_content() {
         outside.join(&id[2..]).is_file(),
         "the engine's object write stayed in the repository"
     );
+}
+
+/// Task M9.13c (pinning; M9.1 check 11): `packed-refs` and its lock stay read-only to a
+/// worker, in its checkout's own git dir and in the common dir, and a commit under the
+/// grant still exits 0. git 2.50's commit deletes merge-state refs after it moves
+/// `HEAD`, which takes `packed-refs.lock` whatever the config, so it may warn
+/// `Unable to create '<gitdir>/packed-refs.lock'`; the worker contract says to ignore
+/// that, and the sandbox is not widened to silence it.
+#[test]
+fn packed_refs_stays_read_only_to_a_worker() {
+    if !Path::new(SANDBOX_EXEC).exists() {
+        eprintln!("skipped: no {SANDBOX_EXEC}");
+        return;
+    }
+    let s = setup("sb05");
+    let profile = profile(&s.writable());
+    let admin = PathBuf::from(out(&s.task, &["rev-parse", "--absolute-git-dir"]));
+    let files = [
+        admin.join("packed-refs"),
+        admin.join("packed-refs.lock"),
+        s.common.join("packed-refs"),
+        s.common.join("packed-refs.lock"),
+    ];
+    let before: Vec<_> = files.iter().map(|f| std::fs::read(f).ok()).collect();
+    for file in &files {
+        let script = format!("printf 'x\\n' >> '{}'", file.display());
+        assert!(!s.sandboxed(&profile, &script), "wrote {}", file.display());
+    }
+
+    let tip = head(&s.task);
+    let commit = s.sandboxed_output(
+        &profile,
+        "printf 'work\\n' > a.txt && git add a.txt && git commit -q -m work",
+    );
+    let stderr = String::from_utf8_lossy(&commit.stderr);
+    assert!(commit.status.success(), "the commit failed: {stderr}");
+    let commit_tip = head(&s.task);
+    assert_ne!(commit_tip, tip, "no commit was made: {stderr}");
+    assert_eq!(out(&s.task, &["rev-parse", "HEAD~1"]), tip);
+    // Any warning is the lock git could not take, never a write that got through.
+    for line in stderr.lines().filter(|l| l.contains("packed-refs")) {
+        assert!(line.contains("Operation not permitted"), "{stderr}");
+    }
+    let after: Vec<_> = files.iter().map(|f| std::fs::read(f).ok()).collect();
+    assert_eq!(after, before, "a packed-refs file changed");
 }
 
 /// The grant is found from the repository's side: a `.git` file the worker pointed at

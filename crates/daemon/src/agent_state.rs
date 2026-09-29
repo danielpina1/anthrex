@@ -64,7 +64,7 @@ impl AgentState {
         let tool = match hook.kind {
             HookKind::PreToolUse if hook.agent_id.is_none() => Some(hook.tool_name.clone()),
             HookKind::PostToolUse if hook.agent_id.is_none() => Some(None),
-            HookKind::Stop if hook.agent_id.is_none() => Some(None),
+            HookKind::Stop | HookKind::StopFailure if hook.agent_id.is_none() => Some(None),
             _ => None,
         };
         if let Some(tool) = tool

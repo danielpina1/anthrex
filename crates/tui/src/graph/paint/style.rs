@@ -141,16 +141,14 @@ pub(crate) fn node_glyph(row: &Row<'_>, app: &App) -> (&'static str, Color) {
         RowKind::Run { run, .. } => (theme::RUN_GLYPH, theme::run_color(run.state)),
         RowKind::Planner { planner, .. } => planner_glyph(planner, app),
         RowKind::Scout { scout, window, .. } => scout_glyph(scout, *window, frame),
-        RowKind::Task { run, task } => {
-            let gate_open = run.state == RunState::AwaitingApproval;
-            let glyph = theme::task_glyph(task.state, gate_open, animating(task, app), frame);
-            let color = if gate_open {
-                theme::status_color(Status::Idle)
-            } else {
-                theme::task_color(task.state)
-            };
-            (glyph, color)
-        }
+        RowKind::Task { run, task } => theme::task_look(
+            task.state,
+            run.state == RunState::AwaitingApproval,
+            crate::tree::task_held(run, task),
+            crate::tree::is_paused(task),
+            animating(task, app),
+            frame,
+        ),
         RowKind::AgentRound { task, round, .. } => round_glyph(task, round, app),
     }
 }
@@ -212,7 +210,7 @@ fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'stati
                 None => ("–", theme::DIM),
             }
         }
-        AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout => {
+        AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout | AgentRole::Planner => {
             if is_live {
                 live(round.window, app.rate_limited(info), app.spinner_frame)
             } else if task.state == TaskState::Blocked && last_worker_round(task, round) {
@@ -221,6 +219,8 @@ fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'stati
                 check()
             }
         }
+        // A decider has no rounds (decision 43); a stray one is drawn as ended.
+        AgentRole::Decider => ("–", theme::DIM),
     }
 }
 

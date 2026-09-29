@@ -25,7 +25,7 @@ impl Agent {
         };
         std::fs::write(&stub, body).unwrap();
         std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let mut config = ManagerConfig::new(dir.path().join("daemon.sock"), "/bin/sh".into());
+        let mut config = ManagerConfig::for_tests(dir.path().join("daemon.sock"), "/bin/sh".into());
         config.claude_bin = stub.to_str().unwrap().into();
         let (manager, events) = WindowManager::new(config);
         let id = manager

@@ -43,6 +43,7 @@ from pty_tree_smoke import (
 )
 from pty_smoke_run import run_engine_stage
 from pty_smoke_adapt import DECIDER_DIR, adapt_stage
+from pty_smoke_orch import orch_stage
 from pty_smoke_run_view import run_view_stage
 
 
@@ -1716,6 +1717,7 @@ def main():
     run_engine_stage(run_cmd, fail)
     adapt_stage(run_cmd, fail)
     run_view_stage(PtyProc, BIN, run_cmd, fail)
+    orch_stage(PtyProc, BIN, run_cmd, fail)
 
     print("== stage 12: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)

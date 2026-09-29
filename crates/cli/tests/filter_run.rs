@@ -9,21 +9,20 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::Duration;
 
-use support::{ANTHREX, RunningCommand, tempdir};
+use support::{ANTHREX, RunningCommand, pin_agents, tempdir};
 
 /// A `/bin/sh` and at most a few thousand lines of output: well under a second.
 const LIMIT: Duration = Duration::from_secs(20);
 
 fn filter_run(dir: &Path, log_dir: &Path, mode: &str, command: &str) -> Command {
     let mut cmd = Command::new(ANTHREX);
-    cmd.args(["filter-run", "--mode", mode, "--log-dir"])
+    pin_agents(&mut cmd)
+        .args(["filter-run", "--mode", mode, "--log-dir"])
         .arg(log_dir)
         .args(["-c", command])
         .current_dir(dir)
         .env("ANTHREX_SOCKET", dir.join("daemon.sock"))
         .env("ANTHREX_DATA_DIR", dir.join("data"))
-        .env("ANTHREX_CLAUDE_BIN", "/nonexistent/anthrex-test/claude")
-        .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex")
         // filter-run runs `$SHELL -c` for bash or zsh; pin plain sh so no startup file of
         // the user's can print into the exact output asserted below.
         .env("SHELL", "/bin/sh")
