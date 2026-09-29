@@ -27,8 +27,10 @@ use tokio_util::sync::CancellationToken;
 /// reconnected to a fresh daemon at the same path.
 async fn start_daemon_at(socket: &Path) -> CancellationToken {
     let listener = tokio::net::UnixListener::bind(socket).unwrap();
-    let (manager, mut events) =
-        WindowManager::new(ManagerConfig::new(socket.to_path_buf(), "/bin/sh".into()));
+    let (manager, mut events) = WindowManager::new(ManagerConfig::for_tests(
+        socket.to_path_buf(),
+        "/bin/sh".into(),
+    ));
     let pump = manager.clone();
     tokio::spawn(async move {
         while let Some((id, ev)) = events.recv().await {

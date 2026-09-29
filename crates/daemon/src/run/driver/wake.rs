@@ -33,6 +33,11 @@ use crate::run::orch::contract::{WAKE_CUT_MARKER, WAKE_MAX_BYTES};
 /// Decision 39: the paste, then this long, then the `\r` that submits it.
 pub const SUBMIT_DELAY: Duration = Duration::from_millis(200);
 
+/// M9.13 review, item 3: an orchestrator window listed `Exited` counts as exited only
+/// once it has stayed so this long (two of the driver's 1 s ticks), and never while a
+/// restart of it is under way; a window gone from the list counts at once.
+pub const EXIT_CONFIRM: Duration = Duration::from_secs(1);
+
 const PASTE_START: &str = "\x1b[200~";
 const PASTE_END: &str = "\x1b[201~";
 
@@ -68,11 +73,22 @@ pub(super) struct Pending {
     quiet: Duration,
 }
 
-/// The wake-ups not yet delivered, and the runs whose delivery is under way.
+/// The wake-ups not yet delivered, the runs whose delivery is under way, and when each
+/// orchestrator window was first seen `Exited` in a row.
 #[derive(Default)]
 pub(super) struct Wakes {
     pending: std::sync::Mutex<HashMap<String, Pending>>,
     delivering: std::sync::Mutex<HashSet<String>>,
+    exited_since: std::sync::Mutex<HashMap<u32, Instant>>,
+}
+
+/// An orchestrator window as the manager lists it now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Listed {
+    Gone,
+    Exited,
+    Restarting,
+    Running,
 }
 
 /// What the engine says of one run's orchestrator, read under its lock.
@@ -83,6 +99,7 @@ struct Seen {
     exited: bool,
     terminal: bool,
     launching: bool,
+    launches: u64,
 }
 
 /// Whether `window` takes a paste now: `Idle` or `Done`, and no client input for
@@ -126,12 +143,35 @@ impl RunService {
         let seen = self.orchestrators_seen();
         let windows = self.manager.list();
         let window = |id: u32| windows.iter().find(|w| w.id == id);
-        for s in &seen {
-            let exited = window(s.window_id).is_none_or(|w| w.status == Status::Exited);
+        let listed = |id: u32| match window(id) {
+            None => Listed::Gone,
+            Some(_) if self.manager.is_restarting(id) => Listed::Restarting,
+            Some(w) if w.status == Status::Exited => Listed::Exited,
+            Some(_) => Listed::Running,
+        };
+        let now: Vec<(u32, Listed)> = seen
+            .iter()
+            .map(|s| (s.window_id, listed(s.window_id)))
+            .collect();
+        // How long each has been `Exited` in a row.
+        let confirmed: HashSet<u32> = {
+            let mut since = crate::lock(&self.wakes.exited_since);
+            since.retain(|id, _| now.iter().any(|(w, l)| w == id && *l == Listed::Exited));
+            now.iter()
+                .filter(|(_, l)| *l == Listed::Exited)
+                .filter(|(id, _)| {
+                    since.entry(*id).or_insert_with(Instant::now).elapsed() >= EXIT_CONFIRM
+                })
+                .map(|(id, _)| *id)
+                .collect()
+        };
+        for (s, (_, l)) in seen.iter().zip(&now) {
+            let exited = *l == Listed::Gone || confirmed.contains(&s.window_id);
             let report = if s.live && exited {
                 Some(false)
             } else {
-                let back = !s.live && s.exited && !exited && !s.terminal && !s.launching;
+                let running = *l == Listed::Running;
+                let back = !s.live && s.exited && running && !s.terminal && !s.launching;
                 back.then_some(true)
             };
             if let Some(live) = report {
@@ -139,6 +179,7 @@ impl RunService {
                     run_id: s.run_id.clone(),
                     window_id: s.window_id,
                     live,
+                    launch: s.launches,
                 }));
             }
         }
@@ -195,6 +236,7 @@ impl RunService {
                     window_id: o.window_id?,
                     live: o.live,
                     exited: o.exited_at.is_some(),
+                    launches: o.launches,
                     terminal: run.state.is_terminal(),
                     launching: run.pending_ops.values().any(|p| {
                         matches!(

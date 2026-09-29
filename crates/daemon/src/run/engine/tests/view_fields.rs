@@ -349,6 +349,8 @@ fn old_run_json_loads() {
         "plan_edits",
         "plan_edits_since_approval",
         "role_routing_decisions",
+        // M9.13 review: whether the run started with `--trust-project`, false.
+        "trust_project",
     ] {
         assert!(map.remove(key).is_some(), "{key}");
     }

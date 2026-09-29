@@ -24,7 +24,7 @@ impl GitRoots for NoRoots {
 /// A service over `data` whose runtimes are nonexistent paths, and whose Claude caps
 /// check a repository's project settings (as `ANTHREX_TEST_NO_SETTING_SOURCES` does).
 fn service(data: &Path) -> Arc<RunService> {
-    let mut config = ManagerConfig::new("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let mut config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
     config.claude_bin = "/nonexistent/ax-claude".into();
     config.codex_bin = "/nonexistent/ax-codex".into();
     config.cli_caps.claude_user_settings_only = None;
@@ -191,7 +191,7 @@ fn repo_with_codex_config(root: &Path) {
 /// A service whose caps are the shipped ones (Claude excludes project settings; Codex
 /// cannot).
 fn shipped_service(data: &Path) -> Arc<RunService> {
-    let mut config = ManagerConfig::new("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let mut config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
     config.claude_bin = "/nonexistent/ax-claude".into();
     config.codex_bin = "/nonexistent/ax-codex".into();
     config.cli_caps = crate::headless::argv::CLI_CAPS;
@@ -315,6 +315,7 @@ async fn promote_repeats_the_project_settings_check() {
         ..run.roster[0].clone()
     });
     run.trusted_project.clear();
+    run.trust_project = false;
     assert_eq!(
         crate::run::reach::reachable_runtimes(&run),
         vec![proto::Runtime::Claude]
@@ -336,6 +337,12 @@ async fn promote_repeats_the_project_settings_check() {
         refusal.starts_with("promoting would start Codex sessions"),
         "{refusal}"
     );
+    assert!(
+        refusal.ends_with(
+            "this run started without --trust-project, so review them and start a new run with it"
+        ),
+        "{refusal}"
+    );
     // `run promote` itself is refused with it, before the engine (not running here)
     // is asked.
     let promote = service.promote(id.clone(), Some(choice.clone()));
@@ -349,10 +356,42 @@ async fn promote_repeats_the_project_settings_check() {
     // Trusted at the start: it passes.
     set(&|run| run.trusted_project = vec![".codex/config.toml".into()]);
     assert!(service.promote_refusal(&id, codex).await.is_ok());
+    // M9.13 review, item 2: a run started with `--trust-project` trusts the files its
+    // promotion reaches too, though its start saw none of them (decision 9).
+    set(&|run| {
+        run.trusted_project.clear();
+        run.trust_project = true;
+    });
+    assert!(service.promote_refusal(&id, codex).await.is_ok());
+    set(&|run| run.trust_project = false);
     // A Claude orchestrator (the run's default) reaches nothing new.
     set(&|run| {
         run.trusted_project.clear();
         run.limits.default_runtime = proto::Runtime::Claude;
     });
     assert!(service.promote_refusal(&id, claude).await.is_ok());
+}
+
+/// M9.13 review, item 2: `trust_project` is persisted with the run; a `run.json` written
+/// before it existed loads as a run started without it.
+#[tokio::test]
+async fn a_run_keeps_whether_it_started_with_trust_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    repo_with_codex_config(&root);
+    let service = shipped_service(&tmp.path().join("data"));
+    let plan = parse_plan(&one_task_plan()).unwrap();
+    let run = match service
+        .build_plan(plan, root, true, true, true, Shape::Fast)
+        .await
+    {
+        Ok(run) => run,
+        Err(error) => panic!("{}", error.text()),
+    };
+    assert!(run.trust_project);
+    let mut json = serde_json::to_value(&run).unwrap();
+    assert_eq!(json["trust_project"], serde_json::json!(true));
+    json.as_object_mut().unwrap().remove("trust_project");
+    let old: crate::run::model::Run = serde_json::from_value(json).unwrap();
+    assert!(!old.trust_project);
 }

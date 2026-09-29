@@ -79,7 +79,8 @@ pub fn manager(
     codex: &Path,
     configure: impl FnOnce(&mut ManagerConfig),
 ) -> Arc<WindowManager> {
-    let mut config = ManagerConfig::new("/tmp/anthrex-m8a17-unused.sock".into(), "/bin/sh".into());
+    let mut config =
+        ManagerConfig::for_tests("/tmp/anthrex-m8a17-unused.sock".into(), "/bin/sh".into());
     config.claude_bin = claude.to_str().unwrap().into();
     config.codex_bin = codex.to_str().unwrap().into();
     configure(&mut config);

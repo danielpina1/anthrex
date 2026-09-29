@@ -27,7 +27,7 @@ async fn run_scouts_appear_in_the_snapshot() {
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     let socket = dir.path().join("d.sock");
-    let mut config = ManagerConfig::new(socket.clone(), "/bin/sh".into());
+    let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
     config.claude_bin = stand_in.display().to_string();
     config.codex_bin = "/nonexistent/anthrex-test/codex".into();
     config.worktrees_root = dir.path().join("worktrees");
@@ -117,7 +117,7 @@ async fn run_scouts_appear_in_the_snapshot() {
 async fn the_tick_publishes_outside_the_engine_lock() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("d.sock");
-    let mut config = ManagerConfig::new(socket.clone(), "/bin/sh".into());
+    let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
     config.claude_bin = "/nonexistent/anthrex-test/claude".into();
     config.codex_bin = "/nonexistent/anthrex-test/codex".into();
     config.worktrees_root = dir.path().join("worktrees");

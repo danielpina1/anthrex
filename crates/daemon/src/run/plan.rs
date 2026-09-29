@@ -401,6 +401,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         unverified,
         final_check_failed: false,
         trusted_project: Vec::new(),
+        trust_project: false,
         protected_files: pre.protected_files,
         rate_limits: Default::default(),
         outcome: None,

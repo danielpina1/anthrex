@@ -402,6 +402,10 @@ pub struct Run {
     pub unverified: bool,
     pub final_check_failed: bool,
     pub trusted_project: Vec<String>,
+    /// Whether the run started with `--trust-project` (M9.13 review; decision 9's
+    /// `run promote` honours it). A run from before it: false.
+    #[serde(default)]
+    pub trust_project: bool,
     /// Tracked files at `base_sha` matching `profile.protected` (decision 56).
     pub protected_files: Vec<String>,
     pub rate_limits: BTreeMap<String, u32>,

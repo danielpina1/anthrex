@@ -170,6 +170,34 @@ impl WindowManager {
         }
     }
 
+    /// M9.13 review, item 1: replaces run window `id`'s role environment with
+    /// `refresh(<its current one>)`, in the persisted record too, so the next restart
+    /// launches with it. Under the lock, no I/O (`refresh` must be pure). `false` when
+    /// `id` is not a window with a role.
+    pub fn update_role_env(
+        &self,
+        id: u32,
+        refresh: impl FnOnce(&[(String, String)]) -> Vec<(String, String)>,
+    ) -> bool {
+        let mut inner = crate::lock(&self.inner);
+        let Some(entry) = inner.entries.get_mut(&id) else {
+            return false;
+        };
+        let Some(role) = entry.role.as_mut() else {
+            return false;
+        };
+        role.env = refresh(&role.env);
+        entry.run = Some(role_record(role));
+        true
+    }
+
+    /// Whether a restart of `id` is under way (M9.13 review: its exit then is the
+    /// restart's, not the program's). Under the lock, no I/O.
+    pub fn is_restarting(&self, id: u32) -> bool {
+        let inner = crate::lock(&self.inner);
+        inner.entries.get(&id).is_some_and(|entry| entry.restarting)
+    }
+
     /// `Some(run)` while `id` is a run window whose run is live: the guard's check.
     pub fn run_window_live(&self, id: u32) -> Option<RunRef> {
         let inner = crate::lock(&self.inner);

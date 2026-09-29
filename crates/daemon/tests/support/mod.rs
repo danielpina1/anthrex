@@ -66,7 +66,7 @@ pub async fn start_daemon_configured(
     std::fs::write(&stub, "#!/bin/sh\nexec sleep 300\n").unwrap();
     std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
     let worktrees_root = dir.path().canonicalize().unwrap().join("worktrees");
-    let mut config = ManagerConfig::new(socket.clone(), "/bin/sh".into());
+    let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
     config.claude_bin = stub.to_str().unwrap().into();
     config.worktrees_root = worktrees_root.clone();
     configure(&mut config);

@@ -58,7 +58,7 @@ impl Rig {
             .unwrap();
         let socket = dir.path().join("d.sock");
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-        let mut config = ManagerConfig::new(socket.clone(), "/bin/sh".into());
+        let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
         config.claude_bin = "/nonexistent/anthrex-test/claude".into();
         config.codex_bin = "/nonexistent/anthrex-test/codex".into();
         config.worktrees_root = dir.path().join("worktrees");

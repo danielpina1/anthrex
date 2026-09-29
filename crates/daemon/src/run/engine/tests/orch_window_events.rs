@@ -10,11 +10,19 @@ use super::orch::{ORCH, add, launched, planned};
 use crate::run::engine::{Effect, EventKind, OpResult, OrchEvent};
 use crate::run::snapshot::attention;
 
+/// The driver's report, made with the record as it is now.
 fn window(fx: &mut Fixture, window_id: u32, live: bool) -> Vec<Effect> {
+    let launch = fx.run().orch.orchestrator.as_ref().unwrap().launches;
+    window_at(fx, window_id, live, launch)
+}
+
+/// The driver's report, made when the record's `launches` was `launch`.
+fn window_at(fx: &mut Fixture, window_id: u32, live: bool, launch: u64) -> Vec<Effect> {
     fx.next(EventKind::Orch(OrchEvent::OrchestratorWindow {
         run_id: RUN_ID.into(),
         window_id,
         live,
+        launch,
     }))
 }
 
@@ -167,4 +175,32 @@ fn the_otlp_token_is_set_once_and_persisted() {
     // It is never in the snapshot.
     let snap = serde_json::to_string(&crate::run::snapshot::snapshot(&fx.state, 2_000)).unwrap();
     assert!(!snap.contains("0123456789abcdef0123456789abcdef"));
+}
+
+/// M9.13 review, item 3: an exit the driver saw before `run resume`'s `Restarted` was
+/// applied, reaching the engine after it, is dropped; one seen after it counts.
+#[test]
+fn a_stale_exit_from_before_the_restart_changes_nothing() {
+    let mut fx = launched(false);
+    let before = fx.run().orch.orchestrator.as_ref().unwrap().launches;
+    assert_eq!(before, 1, "one launch");
+    window(&mut fx, ORCH, false);
+    let reply = fx.reply();
+    fx.next(EventKind::Resume {
+        reply,
+        run_id: RUN_ID.into(),
+        rebaseline: None,
+    });
+    let (op, _) = fx.op("RestartOrchestrator");
+    fx.done(op, OpResult::Restarted);
+    assert!(fx.run().orch.orchestrator.as_ref().unwrap().live);
+    // The stale report: made at `before`, applied now.
+    window_at(&mut fx, ORCH, false, before);
+    let o = fx.run().orch.orchestrator.clone().unwrap();
+    assert!(o.live, "a stale exit made it not live");
+    assert!(!attention(fx.run()).contains(&EXITED.to_string()));
+    assert_eq!(wakes(&user_edit(&mut fx)), 1, "wakes still reach it");
+    // A report made after the restart counts.
+    window(&mut fx, ORCH, false);
+    assert!(!fx.run().orch.orchestrator.as_ref().unwrap().live);
 }

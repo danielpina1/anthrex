@@ -59,6 +59,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 .await
         }
         OpKind::RestartOrchestrator { window_id } => {
+            service.refresh_otlp(ctx, window_id).await;
             match service.manager.restart(window_id).await {
                 Ok(()) => {
                     service.mark_live(&ctx.run_id, window_id);
@@ -104,7 +105,64 @@ pub(super) async fn resolve_target(
     }
 }
 
+/// M9.13 review, item 1: `env` with its OTLP variables (every name `otlp_env` sets)
+/// taken out and, when `otlp` names a receiver as `(addr, run_id, token)`, set again for
+/// it. The other variables keep their order.
+pub(super) fn refreshed_otlp_env(
+    env: &[(String, String)],
+    otlp: Option<(&str, &str, &str)>,
+) -> Vec<(String, String)> {
+    let names: Vec<String> = otlp_env("", "", "").into_iter().map(|(k, _)| k).collect();
+    let mut out: Vec<(String, String)> = env
+        .iter()
+        .filter(|(k, _)| !names.contains(k))
+        .cloned()
+        .collect();
+    if let Some((addr, run_id, token)) = otlp {
+        out.extend(otlp_env(addr, run_id, token));
+    }
+    out
+}
+
 impl RunService {
+    /// The receiver's address as `otlp.addr` has it now, read off the runtime's threads;
+    /// `None` when the receiver is not up.
+    async fn otlp_addr(&self) -> Option<String> {
+        let path = self.ctx.data_dir.join(crate::metering::server::ADDR_FILE);
+        let addr = blocking(move || Ok(std::fs::read_to_string(path).ok())).await;
+        addr.ok()
+            .flatten()
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+    }
+
+    /// M9.13 review, item 1, correcting decision 14a's "re-passes the same
+    /// `RoleLaunch.env`": the receiver binds a new port with every daemon (`otlp_port =
+    /// 0`), so before `RestartOrchestrator` the role's OTLP variables are set again from
+    /// the `otlp.addr` of now, with the run's same token, or removed when no receiver is
+    /// up (a stale endpoint would carry the token to whatever holds the old port). A
+    /// Codex orchestrator is not metered this way and keeps none.
+    async fn refresh_otlp(&self, ctx: &OpCtx, window_id: u32) {
+        let claude = crate::lock(&self.state)
+            .runs
+            .get(&ctx.run_id)
+            .and_then(|run| run.orch.orchestrator.as_ref())
+            .is_some_and(|o| o.route.runtime == Runtime::Claude);
+        let mut addr = None;
+        let mut token = String::new();
+        if claude {
+            token = self.otlp_token(&ctx.run_id).await;
+            if !token.is_empty() {
+                addr = self.otlp_addr().await;
+            }
+        }
+        let otlp = addr
+            .as_deref()
+            .map(|a| (a, ctx.run_id.as_str(), token.as_str()));
+        self.manager
+            .update_role_env(window_id, |env| refreshed_otlp_env(env, otlp));
+    }
+
     /// Decisions 5, 10 and 14a: the role's environment (for Claude, the OTLP variables
     /// with the run's token when the receiver is up) and the credential scrub, then the
     /// window, then its run-live flag.
@@ -120,12 +178,11 @@ impl RunService {
             .runs
             .get(&ctx.run_id)
             .map_or(ClaudeAuth::Login, |run| run.limits.claude_auth);
-        if spec.runtime == Runtime::Claude && !token.is_empty() {
-            let path = self.ctx.data_dir.join(crate::metering::server::ADDR_FILE);
-            let addr = blocking(move || Ok(std::fs::read_to_string(path).ok())).await;
-            if let Ok(Some(addr)) = addr {
-                role.env.extend(otlp_env(addr.trim(), &ctx.run_id, &token));
-            }
+        if spec.runtime == Runtime::Claude
+            && !token.is_empty()
+            && let Some(addr) = self.otlp_addr().await
+        {
+            role.env.extend(otlp_env(&addr, &ctx.run_id, &token));
         }
         role.remove_env = crate::headless::credential_scrub_for(spec.runtime, auth(claude_auth))
             .into_iter()

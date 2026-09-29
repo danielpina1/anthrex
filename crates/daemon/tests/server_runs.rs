@@ -27,11 +27,7 @@ const PLAN: &str = "goal = \"x\"\n\n[[task]]\nid = \"t1\"\ntitle = \"T\"\nsize =
 /// tests start never reaches a real `claude` or `codex` (M9.13: a planned run starts
 /// its orchestrator).
 fn pinned(socket: std::path::PathBuf) -> ManagerConfig {
-    let mut config = ManagerConfig::new(socket, "/bin/sh".into());
-    config.claude_bin = "/nonexistent/anthrex-test/claude".into();
-    config.codex_bin = "/nonexistent/anthrex-test/codex".into();
-    config.decider_bin = Some("/nonexistent/anthrex-test/decider".into());
-    config
+    ManagerConfig::for_tests(socket, "/bin/sh".into())
 }
 
 #[tokio::test(flavor = "multi_thread")]

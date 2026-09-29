@@ -16,11 +16,11 @@ fn entry(runtime: Runtime, model: &str, strength: Strength) -> ModelEntry {
 }
 
 /// A manager whose runtime commands do not exist: these tests never spawn, and nothing
-/// built here could reach a real agent binary if one did.
+/// built here could reach a real agent binary if one did. No decider override, so the
+/// mode's own command is the program.
 fn manager() -> ManagerConfig {
-    let mut manager = ManagerConfig::new("/tmp/unused.sock".into(), "/bin/sh".into());
-    manager.claude_bin = "/nonexistent/anthrex-test/claude".into();
-    manager.codex_bin = "/nonexistent/anthrex-test/codex".into();
+    let mut manager = ManagerConfig::for_tests("/tmp/unused.sock".into(), "/bin/sh".into());
+    manager.decider_bin = None;
     manager
 }
 

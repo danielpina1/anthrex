@@ -3178,3 +3178,21 @@ Two commits: a preparatory move, `refactor(daemon): move run start's build and t
   - none on restore: `restore_sets_the_run_live_flag_for_a_non_terminal_run`;
   - the planner's first turn not filled: `start_planner_op_runs_a_planner_and_sends_planner_ended`;
   - `run promote` without the settings check: `promote_repeats_the_project_settings_check`.
+
+### M9.13 review fixes
+
+One commit, `fix(daemon): pin every test rig's agents, refresh a restarted orchestrator's OTLP endpoint, and steady its exit`. Each test was written first and seen red for the reason given; sources for the mutations were restored from copies.
+
+0. **Every test rig pins the agent programs.** `ManagerConfig::for_tests(socket, shell)` is `new` with `claude_bin`, `codex_bin` and `decider_bin` set to paths under `/nonexistent/anthrex-test/`. Every test that built a `ManagerConfig` (37 calls in 26 files, across the daemon, the TUI and the CLI's tests) now starts from it. `ManagerConfig::new`'s defaults and all program selection are unchanged. A rig that needs a stand-in still sets it afterwards, and `decider/tests_context.rs` clears `decider_bin` to test the mode's own command. `crates/daemon/tests/test_rigs_pin_agents.rs` fails if any `.rs` file under `crates/` other than `manager/config.rs` calls `ManagerConfig::new(`; it was red with all 26 files listed. The CLI's `TestDaemon` now sets `ANTHREX_DECIDER_BIN` to a nonexistent path instead of inheriting it (a test may still override it in `configure`).
+1. **Correction to decision 14a ("a restart re-passes the same `RoleLaunch.env`").** The receiver binds a new port with each daemon (`otlp_port = 0`), so a resumed orchestrator was unmetered and would have sent its bearer token to whatever held the old port. Before `RestartOrchestrator`, the driver now sets the role's OTLP variables again: the `otlp.addr` of now, with the same persisted token. When no receiver is up, it removes them. A run created while the receiver was down is metered after a restart that finds it up. The manager's `update_role_env` replaces `Entry.role.env` and the persisted record under the lock, with no I/O; the address file is read on `spawn_blocking` first. A Codex orchestrator keeps none. Tests:
+   - `a_restarted_orchestrator_names_the_receiver_that_is_up_now` (e2e; red: the persisted role still named the first port after `run resume`);
+   - `a_restart_refreshes_the_otlp_variables` (unit: stale replaced, missing added, none kept without a receiver; it did not compile before).
+2. **`run promote` honours the run's `--trust-project`.** `Run.trust_project` (`#[serde(default)]`, false for a run from before) records the start's flag. `promote_refusal` passes the settings of a run that started with it. The refusal now says `this run started without --trust-project, so review them and start a new run with it`. Tests:
+   - `promote_repeats_the_project_settings_check` gains the trusted case (red: refused);
+   - `a_run_keeps_whether_it_started_with_trust_project` covers persistence and the old-run default.
+
+   The same gap in the edit path's refusal (`runtime_refusals`, M8a's ruling T22-I1b) is in the follow-ups file.
+3. **A restart is not an exit.** The driver now treats an orchestrator window as exited only in two cases: it is gone from the list, or it has been `Exited` for `EXIT_CONFIRM` (1 s, two ticks) and is not restarting (`WindowManager::is_restarting`). A new `OrchestratorRecord.launches` counter (`#[serde(default)]`) goes up with each successful launch and restart. `OrchEvent::OrchestratorWindow` carries the count the driver saw, and the engine drops a report made before the last restart. Tests:
+   - `a_manual_restart_of_the_orchestrator_is_not_an_exit` (e2e: after `anthrex restart <n>`, no attention line, no log line, still live). It turned red only with both driver guards removed; either guard alone keeps it green.
+   - `a_stale_exit_from_before_the_restart_changes_nothing` (engine; red with the `launches` check removed).
+5. **Recorded: the plan path's decision 9 refusal comes after the triage call.** `make_planned` and the reach checks run once triage has answered `plan`, so a refused planned start still spends one decider call. It cannot come earlier: the orchestrator's runtime is known only once the start takes the plan path.

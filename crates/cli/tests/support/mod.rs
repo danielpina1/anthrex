@@ -221,6 +221,8 @@ impl TestDaemon {
         command
             .env("ANTHREX_CLAUDE_BIN", fake_agent_bin())
             .env("ANTHREX_CODEX_BIN", fake_agent_bin())
+            // Pinned, not inherited: a test that wants a decider sets it in `configure`.
+            .env("ANTHREX_DECIDER_BIN", "/nonexistent/anthrex-test/decider")
             .env("FAKE_AGENT_SCRIPT", script_path)
             .env("FAKE_AGENT_ARGS_FILE", dir.path().join("data/args.json"))
             .stdin(Stdio::null())

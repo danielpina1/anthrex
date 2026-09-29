@@ -162,3 +162,55 @@ fn orchestrator_exit_adds_the_attention_line_and_suspends_wakes() {
     );
     assert_eq!(info.state, proto::RunState::Planning);
 }
+
+/// M9.13 review, item 3: the user's `anthrex restart <n>` of the orchestrator is not
+/// its exit. At no point is it reported exited: no attention line, no log line, and it
+/// stays live, so a wake-up would not be dropped.
+#[test]
+fn a_manual_restart_of_the_orchestrator_is_not_an_exit() {
+    let steps = [
+        json!({"hook": "UserPromptSubmit", "payload": {"prompt": "plan"}}),
+        read_message(),
+        read_message(),
+    ];
+    let h = RunHarness::orch("", &[]);
+    h.script(ORCH, &steps);
+    let run = h.start_goal_id("rework storage", &[]);
+    let window = h.orchestrator_window(&run);
+    h.wait_window(window, "a session", |w| w.session_id.is_some(), ORCH_WAIT);
+    let line = format!(
+        "the orchestrator (window {window}) exited; restart it with anthrex restart {window}"
+    );
+    let out = h.anthrex(&["restart", &window.to_string()]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let until = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < until {
+        let info = h.run(&run).unwrap();
+        assert!(!info.attention.contains(&line), "{:?}", info.attention);
+        assert!(info.orchestrator.unwrap().live, "reported not live");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // A user edit persists the run at once; its log never says the window exited.
+    h.add_task(&run, "t1");
+    let exited = format!("the orchestrator's window {window} exited");
+    let deadline = Instant::now() + REQUEST_WAIT;
+    loop {
+        let json = h.run_json(&run);
+        let log: Vec<String> = json["log"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["text"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert!(!log.iter().any(|l| l.contains(&exited)), "{log:#?}");
+        if json["tasks"].as_array().is_some_and(|t| !t.is_empty()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the edit was not persisted");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}

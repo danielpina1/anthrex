@@ -218,6 +218,66 @@ fn orchestrator_token_is_persisted_and_survives_a_restart() {
     wait_until("the restarted role keeps the header", persisted);
 }
 
+/// The OTLP endpoint in the persisted role of the orchestrator window `window`.
+fn persisted_endpoint(h: &RunHarness, window: u32) -> Option<String> {
+    let text = std::fs::read_to_string(h.data().join("state.json")).ok()?;
+    let state: Value = serde_json::from_str(&text).ok()?;
+    let windows = state["windows"].as_array()?;
+    let w = windows.iter().find(|w| w["id"] == json!(window))?;
+    let env = w["run"]["role_launch"]["env"].as_array()?;
+    env.iter()
+        .find(|pair| pair[0] == "OTEL_EXPORTER_OTLP_ENDPOINT")
+        .and_then(|pair| pair[1].as_str())
+        .map(str::to_string)
+}
+
+/// The receiver's address as the daemon now publishes it.
+fn otlp_addr(h: &RunHarness) -> String {
+    let path = h.data().join("otlp.addr");
+    wait_until("otlp.addr", || path.exists());
+    std::fs::read_to_string(path).unwrap().trim().to_string()
+}
+
+/// M9.13 review, item 1 (a correction to decision 14a's "re-passes the same
+/// `RoleLaunch.env`"): after a daemon restart the receiver listens on a new port, and
+/// `run resume` restarts the orchestrator with the endpoint of the receiver that is up
+/// now, not the old one, and the same token.
+#[test]
+fn a_restarted_orchestrator_names_the_receiver_that_is_up_now() {
+    let (mut h, run, window) = waiting();
+    let first = otlp_addr(&h);
+    wait_until("the role names the first receiver", || {
+        persisted_endpoint(&h, window).as_deref() == Some(first.as_str())
+    });
+    let token = h.run_json(&run)["orch"]["orchestrator"]["otlp_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // The old address file goes, so the one read below is the new daemon's.
+    let _ = std::fs::remove_file(h.data().join("otlp.addr"));
+    h.restart_daemon(&[]);
+    let second = otlp_addr(&h);
+    assert_ne!(first, second, "the receiver took the same port again");
+    h.wait_run(&run, |r| r.state == RunState::Paused, REQUEST_WAIT);
+    let resume = h.anthrex(&["run", "resume", &run]);
+    assert!(resume.status.success(), "{}", stderr(&resume));
+    h.wait_run(
+        &run,
+        |r| r.orchestrator.as_ref().is_some_and(|o| o.live),
+        ORCH_WAIT,
+    );
+    wait_until("the restarted role names the new receiver", || {
+        persisted_endpoint(&h, window).as_deref() == Some(second.as_str())
+    });
+    let state = std::fs::read_to_string(h.data().join("state.json")).unwrap();
+    assert!(state.contains(&format!("authorization=Bearer {token}")));
+    assert!(
+        !state.contains(&first),
+        "the old endpoint is still persisted"
+    );
+}
+
 fn wait_until(what: &str, pred: impl Fn() -> bool) {
     let deadline = std::time::Instant::now() + REQUEST_WAIT;
     while !pred() {

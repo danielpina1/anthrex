@@ -537,7 +537,7 @@ mod tests {
     /// pre-validated, not just `Entry.name`.
     #[tokio::test]
     async fn create_sets_entrys_spec_name_to_the_same_validated_name_as_entry_name() {
-        let (m, mut events) = WindowManager::new(ManagerConfig::new(
+        let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
             "/tmp/unused-create-spec-name-test.sock".into(),
             "/bin/sh".into(),
         ));

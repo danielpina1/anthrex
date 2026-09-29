@@ -88,7 +88,25 @@ pub struct ManagerConfig {
     pub decider_bin: Option<String>,
 }
 
+/// The agent programs [`ManagerConfig::for_tests`] names: none of them exists, so a
+/// test that reaches an agent fails instead of starting a real `claude` or `codex`.
+pub const TEST_CLAUDE_BIN: &str = "/nonexistent/anthrex-test/claude";
+pub const TEST_CODEX_BIN: &str = "/nonexistent/anthrex-test/codex";
+pub const TEST_DECIDER_BIN: &str = "/nonexistent/anthrex-test/decider";
+
 impl ManagerConfig {
+    /// For tests only: [`ManagerConfig::new`] with `claude_bin`, `codex_bin` and
+    /// `decider_bin` pinned to paths that do not exist. Every test rig starts from this
+    /// (or sets all three itself), so none can reach a real agent through `new`'s
+    /// defaults. A test that needs a stand-in sets the one it needs afterwards.
+    pub fn for_tests(socket_path: PathBuf, shell: String) -> Self {
+        let mut config = Self::new(socket_path, shell);
+        config.claude_bin = TEST_CLAUDE_BIN.to_string();
+        config.codex_bin = TEST_CODEX_BIN.to_string();
+        config.decider_bin = Some(TEST_DECIDER_BIN.to_string());
+        config
+    }
+
     pub fn new(socket_path: PathBuf, shell: String) -> Self {
         Self {
             socket_path,

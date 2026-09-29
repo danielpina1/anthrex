@@ -144,6 +144,11 @@ pub struct OrchestratorRecord {
     /// Decision 13: why the last `CreateOrchestrator` failed, until one succeeds.
     #[serde(default)]
     pub start_error: Option<String>,
+    /// M9.13 review: +1 with every launch or restart that succeeded. The driver's
+    /// report of the window carries the count it saw, so a report older than the last
+    /// restart is dropped.
+    #[serde(default)]
+    pub launches: u64,
 }
 
 impl OrchestratorRecord {
@@ -546,6 +551,7 @@ impl OrchestratorRecord {
             otlp_token: String::new(),
             session: 1,
             start_error: None,
+            launches: 0,
         }
     }
 }

@@ -119,7 +119,7 @@ async fn a_planner_session_runs_on_the_scout_machine_and_is_accepted() {
     )
     .unwrap();
     std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let mut config = ManagerConfig::new(dir.path().join("d.sock"), "/bin/sh".into());
+    let mut config = ManagerConfig::for_tests(dir.path().join("d.sock"), "/bin/sh".into());
     config.exe = PathBuf::from(ANTHREX);
     config.claude_bin = wrapper.display().to_string();
     config.codex_bin = NO_CODEX_BIN.to_string();

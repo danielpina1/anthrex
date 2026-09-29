@@ -51,6 +51,7 @@ pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64) {
             o.live = true;
             o.exited_at = None;
             o.start_error = None;
+            o.launches += 1;
             run.windows_created += 1;
             log(
                 run,
@@ -74,13 +75,15 @@ pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64) {
 /// Decision 13: the driver saw the orchestrator's window exit, or come back after an
 /// exit (the user's `anthrex restart`). An exit suspends wake-ups (the record is not
 /// live) and shows the attention line; the run goes on. A report about any other
-/// window, or a return on a finished run, changes nothing.
-pub(super) fn window_seen(run: &mut Run, window_id: u32, live: bool, now: u64) {
+/// window, a return on a finished run, or a report the driver made before the last
+/// launch or restart (`launch`, M9.13 review) changes nothing.
+pub(super) fn window_seen(run: &mut Run, (window_id, launch): (u32, u64), live: bool, now: u64) {
     let terminal = run.state.is_terminal();
     let Some(o) = run.orch.orchestrator.as_mut() else {
         return;
     };
-    if o.window_id != Some(window_id) || o.live == live || (live && terminal) {
+    let stale = o.launches != launch;
+    if o.window_id != Some(window_id) || o.live == live || (live && terminal) || stale {
         return;
     }
     o.live = live;
@@ -110,6 +113,7 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64) {
         OpResult::Restarted => {
             o.live = true;
             o.exited_at = None;
+            o.launches += 1;
             log(run, now, "the orchestrator restarted");
         }
         OpResult::Failed { message } => {

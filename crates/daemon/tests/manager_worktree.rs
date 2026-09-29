@@ -60,7 +60,7 @@ fn manager_with_socket(socket: PathBuf) -> (Arc<WindowManager>, TempDir, PathBuf
 fn manager_with_kill_grace(kill_grace: Duration) -> (Arc<WindowManager>, TempDir, PathBuf) {
     let keep = tempfile::tempdir().unwrap();
     let worktrees_root = keep.path().canonicalize().unwrap();
-    let mut config = ManagerConfig::new("/tmp/unused-m54.sock".into(), "/bin/sh".to_string());
+    let mut config = ManagerConfig::for_tests("/tmp/unused-m54.sock".into(), "/bin/sh".to_string());
     config.worktrees_root = worktrees_root.clone();
     config.kill_grace = kill_grace;
     let (m, mut events) = WindowManager::new(config);
@@ -96,7 +96,7 @@ fn manager_watching_events_with_socket(
 ) {
     let keep = tempfile::tempdir().unwrap();
     let worktrees_root = keep.path().canonicalize().unwrap();
-    let mut config = ManagerConfig::new(socket, "/bin/sh".to_string());
+    let mut config = ManagerConfig::for_tests(socket, "/bin/sh".to_string());
     config.worktrees_root = worktrees_root.clone();
     let (m, events) = WindowManager::new(config);
     (m, keep, worktrees_root, events)

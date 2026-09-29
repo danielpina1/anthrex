@@ -33,7 +33,7 @@ fn spec(name: &str, cwd: std::path::PathBuf) -> WindowSpec {
 /// outside the crate.
 #[tokio::test]
 async fn a_directory_gone_before_phase_c_does_not_leave_a_stale_cleanups_record() {
-    let (m, mut events) = WindowManager::new(ManagerConfig::new(
+    let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
         "/tmp/unused-restart-cleanup-test.sock".into(),
         "/bin/sh".into(),
     ));
@@ -114,7 +114,7 @@ async fn a_directory_gone_before_phase_c_does_not_leave_a_stale_cleanups_record(
 /// deterministically rather than depending on how fast a real shell dies to `SIGHUP`.
 #[tokio::test]
 async fn a_cwd_bail_before_phase_b_does_not_orphan_an_unrelated_kills_record() {
-    let (m, _events) = WindowManager::new(ManagerConfig::new(
+    let (m, _events) = WindowManager::new(ManagerConfig::for_tests(
         "/tmp/unused-restart-cwd-bail-test.sock".into(),
         "/bin/sh".into(),
     ));
@@ -190,7 +190,7 @@ async fn a_cwd_bail_before_phase_b_does_not_orphan_an_unrelated_kills_record() {
 /// test of the wrong path.
 #[tokio::test]
 async fn a_kill_wait_timeout_does_not_orphan_an_unrelated_kills_record() {
-    let mut config = ManagerConfig::new(
+    let mut config = ManagerConfig::for_tests(
         "/tmp/unused-restart-foreign-record-test.sock".into(),
         "/bin/sh".into(),
     );
@@ -259,7 +259,7 @@ async fn a_kill_wait_timeout_does_not_orphan_an_unrelated_kills_record() {
 /// live process is touched at all, not merely before the caller sees the error.
 #[tokio::test]
 async fn a_refused_restart_does_not_kill_the_live_process() {
-    let (m, mut events) = WindowManager::new(ManagerConfig::new(
+    let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
         "/tmp/unused-restart-refusal-test.sock".into(),
         "/bin/sh".into(),
     ));

@@ -127,3 +127,39 @@ fn otlp_tokens_are_32_lowercase_hex_and_fresh() {
     );
     assert_ne!(a, b);
 }
+
+/// M9.13 review, item 1: a restarted orchestrator's OTLP variables name the receiver
+/// that is up now, with the run's token; stale ones are replaced, missing ones added,
+/// and with no receiver none is kept. Every other variable is left as it was.
+#[test]
+fn a_restart_refreshes_the_otlp_variables() {
+    let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+    let old = crate::launch::role::otlp_env("http://127.0.0.1:62405", "r1", "t0k");
+    let mut env = vec![pair("ANTHREX_KEEP", "1")];
+    env.extend(old.clone());
+    env.push(pair("OTHER", "2"));
+    let now = crate::launch::role::otlp_env("http://127.0.0.1:62406", "r1", "t0k");
+
+    let got = refreshed_otlp_env(&env, Some(("http://127.0.0.1:62406", "r1", "t0k")));
+    let mut want = vec![pair("ANTHREX_KEEP", "1"), pair("OTHER", "2")];
+    want.extend(now.clone());
+    assert_eq!(got, want);
+    let endpoint = |env: &[(String, String)]| {
+        env.iter()
+            .filter(|(k, _)| k == "OTEL_EXPORTER_OTLP_ENDPOINT")
+            .map(|(_, v)| v.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(endpoint(&got), vec!["http://127.0.0.1:62406".to_string()]);
+
+    // Created while the receiver was down: added now.
+    let bare = vec![pair("ANTHREX_KEEP", "1")];
+    let got = refreshed_otlp_env(&bare, Some(("http://127.0.0.1:62406", "r1", "t0k")));
+    let mut want = bare.clone();
+    want.extend(now);
+    assert_eq!(got, want);
+
+    // No receiver now: nothing stale is kept.
+    let got = refreshed_otlp_env(&env, None);
+    assert_eq!(got, vec![pair("ANTHREX_KEEP", "1"), pair("OTHER", "2")]);
+}

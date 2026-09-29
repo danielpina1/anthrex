@@ -430,7 +430,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn manager() -> std::sync::Arc<WindowManager> {
-        let (m, _events) = WindowManager::new(ManagerConfig::new(
+        let (m, _events) = WindowManager::new(ManagerConfig::for_tests(
             "/tmp/unused-restore-test.sock".into(),
             "/bin/sh".into(),
         ));

@@ -63,7 +63,7 @@ impl GitRoots for NoRoots {
 async fn wake_writes_happen_outside_every_lock() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("d.sock");
-    let mut config = ManagerConfig::new(socket, "/bin/sh".into());
+    let mut config = ManagerConfig::for_tests(socket, "/bin/sh".into());
     config.claude_bin = "/nonexistent/anthrex-test/claude".into();
     config.codex_bin = "/nonexistent/anthrex-test/codex".into();
     config.worktrees_root = dir.path().join("worktrees");

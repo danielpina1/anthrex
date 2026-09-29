@@ -54,7 +54,7 @@ fn edit_settings_refusal(who: &str, paths: &[String]) -> String {
 /// sessions of the promoted run would load unasked.
 fn promote_settings_refusal(who: &str, paths: &[String]) -> String {
     format!(
-        "promoting would start {who} sessions, and this repository has project settings they would run without asking: {}; a run trusts only what its start checked, so review them and start a new run with --trust-project",
+        "promoting would start {who} sessions, and this repository has project settings they would run without asking: {}; this run started without --trust-project, so review them and start a new run with it",
         paths.join(", ")
     )
 }
@@ -241,6 +241,7 @@ impl RunService {
             .collect();
         run.trusted_project.sort();
         run.trusted_project.dedup();
+        run.trust_project = trust_project;
         Ok(run)
     }
 
@@ -275,8 +276,8 @@ impl RunService {
 
     /// Milestone 9 decisions 9 and 29: `run promote` repeats the project-settings check
     /// (and decision 50's) against the run's base commit for the runtimes its new
-    /// orchestrator and sub-planners reach and the run does not, the files the run's
-    /// start trusted passing (its `--trust-project`). A request the engine will refuse
+    /// orchestrator and sub-planners reach and the run does not, honouring the
+    /// `--trust-project` the run started with. A request the engine will refuse
     /// anyway (not a fast-path run, an ended one, a route that does not resolve) is left
     /// to the engine.
     pub(super) async fn promote_refusal(
@@ -314,7 +315,8 @@ impl RunService {
         let checks = self.check_runtimes(&run, &unreached, timeout).await?;
         let mut refusals: Vec<String> = checks.api_key.into_iter().map(|(_, t)| t).collect();
         for (_, who, paths) in checks.settings {
-            if !paths.iter().all(|p| run.trusted_project.contains(p)) {
+            // Decision 9: a run started with `--trust-project` trusts them too.
+            if !run.trust_project && !paths.iter().all(|p| run.trusted_project.contains(p)) {
                 refusals.push(promote_settings_refusal(who, &paths));
             }
         }

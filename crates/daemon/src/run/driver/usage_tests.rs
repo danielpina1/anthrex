@@ -20,7 +20,7 @@ impl GitRoots for NoRoots {
 }
 
 fn service(data: &Path) -> Arc<RunService> {
-    let config = ManagerConfig::new("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
     let (manager, _events) = WindowManager::new(config);
     RunService::for_manager(&manager, data.to_path_buf(), Arc::new(NoRoots))
 }

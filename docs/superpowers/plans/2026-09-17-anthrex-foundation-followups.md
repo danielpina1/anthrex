@@ -1655,3 +1655,7 @@ scope.
 ## From M9.10 (2026-09-28), for M9.15
 
 - **The TUI still refuses `C-b x` and `C-b X` for a placeholder headless window.** Milestone 9 decision 11a restores an unparseable headless record as an exited headless window with no run, which the daemon lets a client kill and remove. `WindowInfo` does not tell it apart from a repository-level scout's window (both are `Headless` with `run: None`), so `app/headless.rs::headless_control_refusal` toasts the scout refusal and the user cannot remove it from the TUI; `anthrex rm <id>` works. A fix needs the snapshot to say so (a protocol field) or the daemon to answer the TUI's refusal case differently.
+
+## From M9.13's review (2026-09-29), for M9
+
+- **`run edit`'s and `edit_plan`'s project-settings refusal ignores the run's `--trust-project`.** `RunService::runtime_refusals` (`crates/daemon/src/run/driver/build.rs`) passes only the files the start recorded in `Run.trusted_project`, and its text (`edit_settings_refusal`) tells a user who did start with `--trust-project` to start a new run with it. M9.13's review fix persisted `Run.trust_project` and made `run promote` honour it; the edit path could read the same field. Left alone because it is M8a's ruling T22-I1b and the review named only promotion.

@@ -71,7 +71,7 @@ impl Rig {
 
         let socket = dir.path().join("d.sock");
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-        let mut config = ManagerConfig::new(socket, "/bin/sh".into());
+        let mut config = ManagerConfig::for_tests(socket, "/bin/sh".into());
         config.exe = PathBuf::from(ANTHREX);
         config.claude_bin = wrapper.display().to_string();
         config.codex_bin = match runtime {

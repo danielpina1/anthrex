@@ -77,6 +77,8 @@ pub enum OrchEvent {
         run_id: String,
         window_id: u32,
         live: bool,
+        /// The record's `launches` when the driver looked (M9.13 review).
+        launch: u64,
     },
     /// Decision 14a: the run's OTLP token, drawn by the driver from the OS random
     /// source when it launches an orchestrator whose record has none.
@@ -178,9 +180,10 @@ pub(super) fn on_orch_event(
             run_id,
             window_id,
             live,
+            launch,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                super::orch_window::window_seen(run, window_id, live, now);
+                super::orch_window::window_seen(run, (window_id, launch), live, now);
             }
         }
         OrchEvent::OtlpToken { run_id, token } => {

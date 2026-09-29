@@ -13,7 +13,7 @@ use tui::connection::Connection;
 async fn start_daemon_at(socket: &PathBuf) -> CancellationToken {
     let listener = tokio::net::UnixListener::bind(socket).unwrap();
     let (manager, mut events) =
-        WindowManager::new(ManagerConfig::new(socket.clone(), "/bin/sh".into()));
+        WindowManager::new(ManagerConfig::for_tests(socket.clone(), "/bin/sh".into()));
     let pump = manager.clone();
     tokio::spawn(async move {
         while let Some((id, ev)) = events.recv().await {

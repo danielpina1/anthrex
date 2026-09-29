@@ -24,7 +24,7 @@ use crate::manager::{ManagerConfig, WindowManager};
 /// calls (none, in these tests) would not need anywhere to go, matching the pattern
 /// every other daemon test harness uses.
 fn test_manager() -> Arc<WindowManager> {
-    let (m, mut events) = WindowManager::new(ManagerConfig::new(
+    let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
         "/tmp/anthrex-persister-test.sock".into(),
         "/bin/sh".into(),
     ));
