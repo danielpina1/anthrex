@@ -252,13 +252,13 @@ impl WindowManager {
         inner.entries.get(&id).is_some_and(|e| e.attention_open)
     }
 
-    /// Whole-branch fix round 2, item 2: how long `id` has been `Idle` or `Done` with
-    /// its `attention_open` set (a wake-up is held only by that), else `None`.
+    /// Whole-branch fix round 2, item 2: how long `id` has been at a prompt (`Idle` or
+    /// `Done`) with its `attention_open` set (a wake-up is held only by that), else
+    /// `None`. Fix round 3: measured from `Entry::prompt_since`, which a `Done`/`Idle`
+    /// move on focus does not restart.
     pub fn held_at_prompt_for(&self, id: u32) -> Option<std::time::Duration> {
         let inner = crate::lock(&self.inner);
-        let e = inner.entries.get(&id)?;
-        let at_prompt = matches!(e.status, proto::Status::Idle | proto::Status::Done);
-        (e.attention_open && at_prompt).then(|| e.since.elapsed())
+        inner.entries.get(&id)?.prompt_since.map(|at| at.elapsed())
     }
 
     /// A client's `Input`: noted, then written. The engine's own writes (a wake-up) go

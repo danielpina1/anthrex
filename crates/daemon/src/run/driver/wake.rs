@@ -357,19 +357,24 @@ impl RunService {
             })
             .map(|(run_id, _, _)| run_id)
             .collect();
-        let changes: Vec<(String, bool)> = {
-            let mut held = crate::lock(&self.wakes.held);
-            let gone: Vec<String> = held.difference(&now_held).cloned().collect();
-            let new: Vec<String> = now_held.difference(&held).cloned().collect();
-            *held = now_held;
-            gone.into_iter()
-                .map(|r| (r, false))
-                .chain(new.into_iter().map(|r| (r, true)))
-                .collect()
-        };
-        for (run_id, held) in changes {
-            self.send(EventKind::Orch(OrchEvent::WakeHeld { run_id, held }));
+        // Fix round 3, item 1: the changes are sent under the `held` lock (`send` is a
+        // non-blocking unbounded send), so two checks at once (the tick and the window
+        // watch) send in the order they updated the set, and the engine's last word is
+        // always the set's.
+        let mut held = crate::lock(&self.wakes.held);
+        let gone: Vec<String> = held.difference(&now_held).cloned().collect();
+        let new: Vec<String> = now_held.difference(&held).cloned().collect();
+        let changes = gone
+            .into_iter()
+            .map(|r| (r, false))
+            .chain(new.into_iter().map(|r| (r, true)));
+        for (run_id, is_held) in changes {
+            self.send(EventKind::Orch(OrchEvent::WakeHeld {
+                run_id,
+                held: is_held,
+            }));
         }
+        *held = now_held;
     }
 
     /// Every run's orchestrator window, as the engine has it.

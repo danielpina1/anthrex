@@ -371,3 +371,61 @@ async fn a_restart_resets_attention_open() {
     // Clean up: this window owns the restarted shell.
     let _ = m.kill(id);
 }
+
+/// Whole-branch fix round 3, item 3: how long a window has been held at a prompt is
+/// measured from when it reached `Idle` or `Done` with `attention_open` set; a move
+/// between `Done` and `Idle` (a client focusing a Codex window) does not restart it,
+/// and leaving the prompt (output) ends it.
+#[tokio::test]
+async fn a_done_to_idle_move_keeps_the_prompt_clock() {
+    let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
+        "/tmp/unused-prompt-clock-test.sock".into(),
+        "/bin/sh".into(),
+    ));
+    let pump = m.clone();
+    tokio::spawn(async move {
+        while let Some((id, ev)) = events.recv().await {
+            pump.handle_event(id, ev);
+        }
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let info = m
+        .create(spec("prompt-clock", cwd.clone()), cwd, None, 80, 24)
+        .await
+        .unwrap();
+    let id = info.id;
+    let since = {
+        let mut inner = crate::lock(&m.inner);
+        let entry = inner.entries.get_mut(&id).unwrap();
+        entry.status = Status::Done;
+        entry.attention_open = true;
+        entry.note_prompt();
+        entry.prompt_since.expect("held at a prompt")
+    };
+    std::thread::sleep(Duration::from_millis(20));
+    {
+        let mut inner = crate::lock(&m.inner);
+        let entry = inner.entries.get_mut(&id).unwrap();
+        assert!(
+            entry.apply(crate::status::StatusEvent::Focused),
+            "Done to Idle"
+        );
+        assert_eq!(entry.status, Status::Idle);
+        assert_eq!(
+            entry.prompt_since,
+            Some(since),
+            "the focus restarted the clock"
+        );
+    }
+    assert!(m.held_at_prompt_for(id).unwrap() >= Duration::from_millis(20));
+    {
+        let mut inner = crate::lock(&m.inner);
+        let entry = inner.entries.get_mut(&id).unwrap();
+        entry.apply(crate::status::StatusEvent::Output);
+        assert_eq!(entry.status, Status::Working);
+        assert_eq!(entry.prompt_since, None);
+    }
+    assert_eq!(m.held_at_prompt_for(id), None);
+    let _ = m.kill(id);
+}

@@ -424,3 +424,22 @@ async fn a_run_scout_is_started_on_the_keys_its_run_froze() {
         "{records:#?}"
     );
 }
+
+/// Whole-branch fix round 3, item 2: a scout whose run is gone is refused, never routed
+/// on the daemon's config.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scout_of_a_run_that_is_gone_is_refused() {
+    let rig = Rig::new(DeciderMode::Off, None);
+    std::fs::create_dir_all(rig.dir.path().join("repo")).unwrap();
+    let ctx = rig.ctx();
+    crate::lock(&rig.runs.state).runs.remove(&rig.run_id);
+    let spec = crate::scout::spec::ScoutSpec {
+        id: "s1".into(),
+        ..bad_scout(&rig)
+    };
+    let result = rig.runs.start_scout(&ctx, spec).await;
+    let OpResult::Failed { message } = &result else {
+        panic!("{result:?}");
+    };
+    assert_eq!(message, "the run is gone");
+}

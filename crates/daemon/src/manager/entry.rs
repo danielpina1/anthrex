@@ -134,6 +134,10 @@ pub(super) struct Entry {
     /// seen, leave an `Attention` status as it is (`status::next`), and the flag with
     /// it. A restart resets it (`manager/restart.rs`).
     pub(super) attention_open: bool,
+    /// When the window reached a prompt (`Idle` or `Done`) with `attention_open` set,
+    /// not restarted by a move between the two ([`Entry::note_prompt`]): how long a
+    /// wake-up has been held there (`WindowManager::held_at_prompt_for`).
+    pub(super) prompt_since: Option<Instant>,
 }
 
 impl Entry {
@@ -202,12 +206,25 @@ impl Entry {
         if next == Status::Attention {
             self.attention_open = true;
         }
-        if next == self.status {
-            return false;
+        let changed = next != self.status;
+        if changed {
+            self.status = next;
+            self.since = Instant::now();
         }
-        self.status = next;
-        self.since = Instant::now();
-        true
+        self.note_prompt();
+        changed
+    }
+
+    /// Whole-branch fix round 3, item 3: starts [`Entry::prompt_since`] when the window
+    /// is at a prompt (`Idle` or `Done`) with `attention_open` set, keeps it across a
+    /// move between the two (a client's focus), and ends it otherwise.
+    pub(super) fn note_prompt(&mut self) {
+        let at_prompt = self.attention_open && matches!(self.status, Status::Idle | Status::Done);
+        if !at_prompt {
+            self.prompt_since = None;
+        } else if self.prompt_since.is_none() {
+            self.prompt_since = Some(Instant::now());
+        }
     }
 
     pub(super) fn pid(&self) -> Option<u32> {

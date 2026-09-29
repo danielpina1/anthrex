@@ -327,11 +327,13 @@ impl RunService {
             let run = state.runs.get(&ctx.run_id);
             let record =
                 run.map(|run| crate::run::orch::roles::scout_record(run, &scout_id, unix_now()));
-            let route = match run {
-                Some(run) => crate::run::orch::launch::scout_route_of(run),
-                None => crate::scout::spec::scout_route(scouts.context()),
-            };
+            let route = run.map(crate::run::orch::launch::scout_route_of);
             (record, route)
+        };
+        // Fix round 3, item 2: a run scout is routed from its run alone; with the run
+        // gone there is nothing to route it from, and never the daemon's config.
+        let Some(route) = route else {
+            return failed("the run is gone");
         };
         // Review M-2: kept, and saved, before the session starts; a refusal (the scout
         // was stopped meanwhile, or the save failed) starts none (re-review 2, 3).
