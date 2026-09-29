@@ -30,11 +30,14 @@ pub struct Script {
 }
 
 /// What a session carries from one process to the next: `capture` values and the last
-/// `mcp_call` text (`FAKE_AGENT_RESULT`).
+/// `mcp_call` text (`FAKE_AGENT_RESULT`) and whether it failed.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Vars {
     pub captures: BTreeMap<String, String>,
     pub result: String,
+    /// Whether the last `mcp_call` failed (`expect_error_contains`, M9.12).
+    #[serde(default)]
+    pub last_error: bool,
 }
 
 impl Script {

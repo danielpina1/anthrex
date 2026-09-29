@@ -3116,3 +3116,38 @@ One commit, `fix(daemon): null is absent in tool bounds, and an early orchestrat
   | `headless_steps.rs` | 358 |
   | `tests/orch_modes.rs` | 361 |
   | `tests/orch_support/mod.rs` | 274 |
+
+### M9.12 review fixes
+
+These supersede the raw-mode and step readings above where they differ.
+
+1. **Raw mode only while reading a message.** `read_message` puts the terminal in raw mode before its `Stop` hook and restores the saved settings before its `UserPromptSubmit`. A guard (`RawMode`) restores them on every way out, including a timeout or EOF. M3's `read_line` therefore reads a typed `\r` (as `\n`, through `ICRNL`) before and after a `read_message`, in the orchestrator's script and in the `FAKE_AGENT_SCRIPT` fallback.
+   - Test: `read_line_works_around_read_message_in_pty_mode`.
+   - Red: the first `read_line` never returned, and the test hit its 20 s bound.
+2. **Restored on exit.** The saved settings come back after every `read_message` and on every return from it, so the process exits with the settings it started with. A signal that kills it mid-read cannot restore them, but the PTY is the window's own.
+   - Covered by the same test: the `read_line` after the message reads `y\r`.
+3. **`\r\n` is one Enter.** I chose to swallow the `\n` rather than skip empty messages outside a paste: skipping would also swallow a deliberate empty Enter, and would hide a script's mistake.
+   - After a message that ends at `\r`, a `\n` already buffered is dropped at once. One that has not arrived yet is dropped if it is the next read's first byte.
+   - The message's text has `\r\n` and `\r` as `\n`, as Claude reports a prompt. `raw` keeps the bytes, without the dropped `\n`.
+   - Test: `crlf_is_one_enter_and_the_text_normalises_line_ends`. It covers both a buffered and a late `\n`, and a paste with `\r\n` and `\r`.
+   - Red: the prompts were `["first", "", "a\r\nb\rc"]`.
+4. **Three more fixes.**
+   - **`expect_error_contains` needs an error.** It requires the last `mcp_call` (or `mcp_until` call) to have failed; `Vars` gains `#[serde(default)] last_error`, set by both modes' calls. Otherwise it exits 3.
+     - Test: `expect_error_contains_needs_an_error_reply`.
+     - Red: exit 0.
+   - **`first_at`.** Each `FAKE_AGENT_STDIN_FILE` line gains `first_at`, the time its first byte was read, beside `at`, the time its last byte was read. A byte typed while no `read_message` is waiting sits in the terminal until the next read, so its `first_at` is that read's time.
+     - Test: `stdin_file_records_when_a_message_started`, with 400 ms between two writes.
+     - Red: `first_at` was missing.
+   - **The `mcp_until` bound.** No call starts once the deadline has passed; the wait after a call is cut at the deadline. The step therefore ends at most one call's duration after `timeout_ms`, the call already in flight.
+     - Unit test: `orch_steps_tests.rs::mcp_until_starts_no_call_after_its_deadline`, a host whose calls take 50 ms, with a 120 ms timeout.
+     - Red: 2 calls. The old loop started a call at the deadline.
+     - A stub-daemon version of this test depended on the real `anthrex mcp`'s start-up time and was not reliably red, so it was dropped for the unit test.
+- **Files.** `orch_steps.rs`'s unit tests moved to `src/orch_steps_tests.rs`, with `#[path]` as elsewhere in the workspace, to keep it under 600 lines.
+
+  | File | Lines |
+  |------|-------|
+  | `orch_steps.rs` | 525 |
+  | `orch_steps_tests.rs` | 139 |
+  | `roles.rs` | 373 |
+  | `headless_steps.rs` | 359 |
+  | `tests/orch_modes.rs` | 484 |

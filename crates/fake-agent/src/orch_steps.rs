@@ -110,7 +110,8 @@ fn fail(text: String) -> Result<Flow> {
 
 /// Runs a step [`owns`] accepts. Exit 3 for a result that differs from what the step
 /// expects (an error reply to `mcp_until` included, as for `mcp_call`); exit 4 when
-/// `mcp_until` times out.
+/// `mcp_until` times out. No `mcp_until` call starts once its deadline has passed, so
+/// the step ends at most one call's time after it.
 pub fn run(host: &mut impl Host, step: &Step) -> Result<Flow> {
     match step {
         Step::McpUntil(until) => {
@@ -127,15 +128,15 @@ pub fn run(host: &mut impl Host, step: &Step) -> Result<Flow> {
                     return Ok(Flow::Next);
                 }
                 let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() {
-                    eprintln!(
-                        "fake-agent: mcp_until {} timed out; last result {:?}",
-                        until.tool, reply.text
-                    );
-                    return Ok(Flow::Exit(4));
-                }
-                if let Some(id) = host.wait(UNTIL_POLL.min(left)) {
+                if !left.is_zero()
+                    && let Some(id) = host.wait(UNTIL_POLL.min(left))
+                {
                     return Ok(Flow::Interrupted(id));
+                }
+                if Instant::now() >= deadline {
+                    let (tool, text) = (&until.tool, &reply.text);
+                    eprintln!("fake-agent: mcp_until {tool} timed out; last result {text:?}");
+                    return Ok(Flow::Exit(4));
                 }
             }
         }
@@ -164,12 +165,14 @@ pub fn run(host: &mut impl Host, step: &Step) -> Result<Flow> {
             fail(format!("expected {equals} at {pointer}, got {result:?}"))
         }
         Step::ExpectErrorContains(text) => {
-            let result = &host.vars().result;
-            if result.contains(text.as_str()) {
+            let vars = host.vars();
+            let result = &vars.result;
+            if vars.last_error && result.contains(text.as_str()) {
                 return Ok(Flow::Next);
             }
+            let got = if vars.last_error { "error" } else { "success" };
             fail(format!(
-                "expected an error containing {text:?}, got {result:?}"
+                "expected an error containing {text:?}, got {got} {result:?}"
             ))
         }
         other => anyhow::bail!("{other:?} is not an M9.12 step"),
@@ -206,7 +209,6 @@ pub fn pty(args: &[String]) -> Result<Option<i32>> {
             },
         },
     };
-    raw_terminal();
     let mut pty = Pty {
         pos: script.pos(),
         vars: script.vars(),
@@ -217,6 +219,7 @@ pub fn pty(args: &[String]) -> Result<Option<i32>> {
         session,
         message: prompt(args),
         input: BufReader::new(io::stdin()),
+        after_cr: false,
     };
     pty.run().map(Some)
 }
@@ -238,24 +241,42 @@ fn prompt(args: &[String]) -> String {
     }
 }
 
-/// A TUI's terminal: no line editing, no echo, and `\r` as typed. Signals stay on, so a
-/// `^C` still ends the agent as in M3.
-fn raw_terminal() {
-    let fd = io::stdin().as_raw_fd();
-    // SAFETY: `termios` is plain data; both calls only read or write it for `fd`.
-    unsafe {
-        if libc::isatty(fd) != 1 {
-            return;
+/// While alive, a TUI's terminal: no line editing, no echo, and `\r` as typed. Signals
+/// stay on, so a `^C` still ends the agent as in M3. The saved settings come back on
+/// drop, so M3's `read_line` reads lines again.
+struct RawMode(Option<libc::termios>);
+
+impl RawMode {
+    fn enter() -> Self {
+        let fd = io::stdin().as_raw_fd();
+        // SAFETY: `termios` is plain data; both calls only read or write it for `fd`.
+        unsafe {
+            if libc::isatty(fd) != 1 {
+                return Self(None);
+            }
+            let mut saved: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(fd, &mut saved) != 0 {
+                return Self(None);
+            }
+            let mut raw = saved;
+            raw.c_lflag &= !(libc::ICANON | libc::ECHO);
+            raw.c_iflag &= !libc::ICRNL;
+            raw.c_cc[libc::VMIN] = 1;
+            raw.c_cc[libc::VTIME] = 0;
+            libc::tcsetattr(fd, libc::TCSANOW, &raw);
+            Self(Some(saved))
         }
-        let mut termios: libc::termios = std::mem::zeroed();
-        if libc::tcgetattr(fd, &mut termios) != 0 {
-            return;
+    }
+}
+
+impl Drop for RawMode {
+    fn drop(&mut self) {
+        if let Some(saved) = &self.0 {
+            // SAFETY: restores the settings `enter` read for the same descriptor.
+            unsafe {
+                libc::tcsetattr(io::stdin().as_raw_fd(), libc::TCSANOW, saved);
+            }
         }
-        termios.c_lflag &= !(libc::ICANON | libc::ECHO);
-        termios.c_iflag &= !libc::ICRNL;
-        termios.c_cc[libc::VMIN] = 1;
-        termios.c_cc[libc::VTIME] = 0;
-        libc::tcsetattr(fd, libc::TCSANOW, &termios);
     }
 }
 
@@ -276,6 +297,8 @@ struct Pty {
     /// The last message read (`FAKE_AGENT_MESSAGE`), at first the argv's prompt.
     message: String,
     input: BufReader<Stdin>,
+    /// The last message ended at a `\r` whose `\n` (a `\r\n` Enter) has not arrived.
+    after_cr: bool,
 }
 
 impl Pty {
@@ -348,12 +371,17 @@ impl Pty {
 
     /// The turn ends (`Stop`, or Codex's `notify`); then a bracketed paste or typed
     /// bytes up to `\r` (or `\n`) are the next message, recorded to
-    /// `FAKE_AGENT_STDIN_FILE` with the time, and announced with `UserPromptSubmit`.
+    /// `FAKE_AGENT_STDIN_FILE` with the times of its first and last byte, and announced
+    /// with `UserPromptSubmit`. A `\r\n` is one Enter: its `\n` is dropped, now or at the
+    /// next read. The text's line ends are `\n`, as Claude reports a prompt; `raw` keeps
+    /// the bytes.
     fn read_message(&mut self, timeout_ms: Option<u64>) -> Result<Read> {
+        let raw_mode = RawMode::enter();
         self.turn_ended()?;
         let deadline = timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms));
         let mut raw = Vec::new();
         let mut in_paste = false;
+        let mut first_at = String::new();
         loop {
             if self.input.buffer().is_empty() && !readable(deadline) {
                 return Ok(Read::Timeout);
@@ -366,6 +394,12 @@ impl Pty {
                 Err(_) => return Ok(Read::Eof),
             };
             self.input.consume(1);
+            if raw.is_empty() {
+                if std::mem::take(&mut self.after_cr) && byte == b'\n' {
+                    continue;
+                }
+                first_at = crate::headless::timestamp();
+            }
             raw.push(byte);
             if raw.ends_with(PASTE_START) {
                 in_paste = true;
@@ -375,8 +409,18 @@ impl Pty {
                 break;
             }
         }
-        let text = String::from_utf8_lossy(&unframe(&raw[..raw.len() - 1])).into_owned();
-        let line = json!({"at": crate::headless::timestamp(),
+        if raw.ends_with(b"\r") {
+            match self.input.buffer().first() {
+                Some(b'\n') => self.input.consume(1),
+                Some(_) => {}
+                None => self.after_cr = true,
+            }
+        }
+        drop(raw_mode);
+        let text = String::from_utf8_lossy(&unframe(&raw[..raw.len() - 1]))
+            .replace("\r\n", "\n")
+            .replace('\r', "\n");
+        let line = json!({"at": crate::headless::timestamp(), "first_at": first_at,
             "raw": String::from_utf8_lossy(&raw), "text": text});
         roles::record_stdin(&self.script.name, &line.to_string())?;
         if let Some(command) = self.hooks.hook("UserPromptSubmit") {
@@ -409,6 +453,7 @@ impl Host for Pty {
         let reply = mcp::call(&self.server, tool, &args)?;
         mcp::log(&self.script.name, tool, &args, &reply)?;
         self.vars.result = reply.text.clone();
+        self.vars.last_error = !reply.ok;
         self.script.save_vars(&self.vars)?;
         Ok(reply)
     }
@@ -476,88 +521,5 @@ fn readable(deadline: Option<Instant>) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{Match, Until, prompt, resumed, unframe};
-    use crate::script::{Step, parse_script};
-    use serde_json::json;
-    use std::io::Cursor;
-
-    fn strings(values: &[&str]) -> Vec<String> {
-        values.iter().map(|v| (*v).to_owned()).collect()
-    }
-
-    #[test]
-    fn parses_the_m9_steps_and_rejects_unknown_keys() {
-        let input = concat!(
-            "{\"mcp_until\":{\"tool\":\"run_status\",\"args\":{\"wait_secs\":50},",
-            "\"until\":{\"pointer\":\"/gate/state\",\"equals\":\"approved\"},\"timeout_ms\":9}}\n",
-            "{\"capture_json\":{\"name\":\"sid\",\"pointer\":\"/scout_id\"}}\n",
-            "{\"expect\":{\"pointer\":\"/n\",\"equals\":3}}\n",
-            "{\"expect_error_contains\":{\"text\":\"closed\"}}\n",
-        );
-        let steps = parse_script(Cursor::new(input)).unwrap();
-        let until = Match {
-            pointer: "/gate/state".into(),
-            equals: json!("approved"),
-        };
-        assert_eq!(
-            steps,
-            vec![
-                Step::McpUntil(Until {
-                    tool: "run_status".into(),
-                    args: json!({"wait_secs": 50}),
-                    until,
-                    timeout_ms: 9,
-                }),
-                Step::CaptureJson {
-                    name: "sid".into(),
-                    pointer: "/scout_id".into(),
-                },
-                Step::Expect(Match {
-                    pointer: "/n".into(),
-                    equals: json!(3),
-                }),
-                Step::ExpectErrorContains("closed".into()),
-            ]
-        );
-        for line in [
-            "{\"expect\":{\"pointer\":\"/n\",\"equals\":3,\"x\":1}}\n",
-            "{\"capture_json\":{\"name\":\"a\"}}\n",
-            "{\"mcp_until\":{\"tool\":\"t\",\"args\":{},\"until\":{\"pointer\":\"/a\"},\"timeout_ms\":1}}\n",
-        ] {
-            assert!(parse_script(Cursor::new(line)).is_err(), "{line}");
-        }
-    }
-
-    #[test]
-    fn a_match_needs_json_and_the_exact_value() {
-        let m = Match {
-            pointer: "/a/b".into(),
-            equals: json!(1),
-        };
-        assert!(m.holds(r#"{"a":{"b":1}}"#));
-        assert!(!m.holds(r#"{"a":{"b":"1"}}"#));
-        assert!(!m.holds(r#"{"a":{}}"#));
-        assert!(!m.holds("not json"));
-    }
-
-    #[test]
-    fn unframe_drops_only_the_paste_brackets() {
-        let raw = b"x \x1b[200~a\nb\x1b[201~ y\x1b[A";
-        assert_eq!(unframe(raw), b"x a\nb y\x1b[A");
-    }
-
-    #[test]
-    fn resume_and_prompt_come_from_either_runtimes_argv() {
-        let claude = strings(&["--name", "n", "--model", "opus", "--resume", "s-1"]);
-        assert_eq!(resumed(&claude).as_deref(), Some("s-1"));
-        assert_eq!(prompt(&claude), "");
-        let codex = strings(&["-C", "/r", "-m", "gpt", "resume", "thr-1"]);
-        assert_eq!(resumed(&codex).as_deref(), Some("thr-1"));
-        let fresh = strings(&["--model", "opus", "--", "resume thr-1"]);
-        assert_eq!(
-            (resumed(&fresh), prompt(&fresh)),
-            (None, "resume thr-1".into())
-        );
-    }
-}
+#[path = "orch_steps_tests.rs"]
+mod tests;

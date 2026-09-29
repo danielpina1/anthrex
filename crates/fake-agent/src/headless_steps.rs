@@ -146,6 +146,7 @@ impl Runner {
         mcp::log(&self.script.name, tool, &args, &reply)?;
         self.events.mcp_finished(tool, &args, &reply)?;
         self.vars.result = reply.text.clone();
+        self.vars.last_error = !reply.ok;
         self.script.save_vars(&self.vars)?;
         Ok(reply)
     }

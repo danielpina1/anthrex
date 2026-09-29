@@ -10,6 +10,8 @@ mod orch_support;
 
 use std::fs;
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
 use daemon::headless::McpTarget;
 use headless_support::*;
@@ -358,4 +360,125 @@ fn mcp_log_records_each_call() {
                 "ok": true, "result": "noted"}),
         ]
     );
+}
+
+/// Review fixes 1 and 2: raw mode is only for `read_message`, and restored after it, so
+/// M3's `read_line` reads a typed `\r` as a line end before and after one.
+#[test]
+fn read_line_works_around_read_message_in_pty_mode() {
+    let orch = Orch::new(
+        &[
+            json!({"read_line": true}),
+            json!({"read_message": {"expect": "m"}}),
+            json!({"read_line": true}),
+            json!({"exit": 9}),
+        ],
+        &[(true, "{}")],
+    );
+    let log = orch.path("hooks.log");
+    let count = |event: &'static str, n: usize| {
+        let log = log.clone();
+        move || hooks(&log).iter().filter(|(e, _)| e == event).count() >= n
+    };
+    let mut pty = orch.spawn(Runtime::Claude, &[]);
+    pty.write(b"x\r");
+    wait_for("the Stop of read_message", RUN, count("Stop", 1));
+    pty.write(b"\x1b[200~m\x1b[201~\r");
+    wait_for(
+        "the message's prompt hook",
+        RUN,
+        count("UserPromptSubmit", 1),
+    );
+    pty.write(b"y\r");
+    assert_eq!(pty.wait(RUN), 9, "screen {:?}", pty.screen());
+}
+
+/// Review fix 3: `\r\n` is one Enter, and the text's line ends are `\n` while `raw`
+/// keeps the bytes.
+#[test]
+fn crlf_is_one_enter_and_the_text_normalises_line_ends() {
+    let orch = Orch::new(
+        &[
+            json!({"read_message": {}}),
+            json!({"read_message": {}}),
+            json!({"read_message": {}}),
+            json!({"exit": 0}),
+        ],
+        &[(true, "{}")],
+    );
+    let (log, stdin) = (orch.path("hooks.log"), orch.path("stdin.jsonl"));
+    let stops = |n: usize| {
+        let log = log.clone();
+        move || hooks(&log).iter().filter(|(e, _)| e == "Stop").count() >= n
+    };
+    let mut pty = orch.spawn(Runtime::Claude, &[("FAKE_AGENT_STDIN_FILE", &stdin)]);
+    wait_for("the first Stop", RUN, stops(1));
+    pty.write(b"first\r\n");
+    wait_for("the second Stop", RUN, stops(2));
+    pty.write(b"\x1b[200~a\r\nb\rc\x1b[201~\r");
+    wait_for("the third Stop", RUN, stops(3));
+    // The `\n` of the paste's Enter, arriving late.
+    pty.write(b"\nthird\r");
+    assert_eq!(pty.wait(RUN), 0, "screen {:?}", pty.screen());
+
+    let prompts: Vec<Value> = hooks(&log)
+        .into_iter()
+        .filter(|(e, _)| e == "UserPromptSubmit")
+        .map(|(_, p)| p["prompt"].clone())
+        .collect();
+    assert_eq!(prompts, [json!("first"), json!("a\nb\nc"), json!("third")]);
+    let raws: Vec<Value> = lines(&stdin)
+        .iter()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap()["raw"].clone())
+        .collect();
+    assert_eq!(
+        raws,
+        [
+            json!("first\r"),
+            json!("\u{1b}[200~a\r\nb\rc\u{1b}[201~\r"),
+            json!("third\r")
+        ]
+    );
+}
+
+/// Review fix 4: `expect_error_contains` needs the last `mcp_call` to have failed.
+#[test]
+fn expect_error_contains_needs_an_error_reply() {
+    let orch = Orch::new(
+        &[
+            json!({"mcp_call": {"tool": "run_status", "args": {}}}),
+            json!({"expect_error_contains": {"text": "closed"}}),
+            json!({"exit": 0}),
+        ],
+        &[(true, "the gate is closed")],
+    );
+    assert_eq!(orch.run(&[]), 3);
+}
+
+/// Milliseconds since midnight of a `YYYY-MM-DDTHH:MM:SS.mmmZ` time.
+fn millis(at: &Value) -> i64 {
+    let at = at.as_str().unwrap();
+    let field = |range: std::ops::Range<usize>| at[range].parse::<i64>().unwrap();
+    ((field(11..13) * 60 + field(14..16)) * 60 + field(17..19)) * 1000 + field(20..23)
+}
+
+/// Review fix 4: each read records when its first byte arrived (`first_at`) beside when
+/// it ended (`at`), so typing can be told from a paste.
+#[test]
+fn stdin_file_records_when_a_message_started() {
+    let orch = Orch::new(
+        &[json!({"read_message": {}}), json!({"exit": 0})],
+        &[(true, "{}")],
+    );
+    let (log, stdin) = (orch.path("hooks.log"), orch.path("stdin.jsonl"));
+    let mut pty = orch.spawn(Runtime::Claude, &[("FAKE_AGENT_STDIN_FILE", &stdin)]);
+    wait_for("the Stop", RUN, || !hooks(&log).is_empty());
+    pty.write(b"ty");
+    thread::sleep(Duration::from_millis(400));
+    pty.write(b"ped\r");
+    assert_eq!(pty.wait(RUN), 0, "screen {:?}", pty.screen());
+
+    let read: Value = serde_json::from_str(&lines(&stdin)[0]).unwrap();
+    let typing = millis(&read["at"]) - millis(&read["first_at"]);
+    assert!((350..5000).contains(&typing), "{read}");
 }
