@@ -104,13 +104,37 @@ pub(super) struct Planned {
     pub choice: Option<proto::OrchestratorChoice>,
 }
 
-/// Decision 17's `installed`: each runtime's configured binary resolves to an executable
-/// file, directly or on `PATH` (blocking: it stats files).
-fn installed(claude: &str, codex: &str) -> BTreeMap<String, bool> {
-    [(Runtime::Claude, claude), (Runtime::Codex, codex)]
-        .into_iter()
-        .map(|(runtime, bin)| (runtime.label().to_string(), executable(bin)))
-        .collect()
+/// Decision 17's `installed`, by how a session is launched (M9.17 fix round 3): each
+/// runtime's configured binary resolves to an executable file, directly or on `PATH`.
+/// `window` is for the orchestrator, whose window starts the agent through
+/// `/bin/sh -c 'exec "$0" "$@"'`; `headless` for the sub-planners and scouts, spawned
+/// directly, and it is the map a run records (`run.orch.installed`).
+pub(super) struct Found {
+    pub window: BTreeMap<String, bool>,
+    pub headless: BTreeMap<String, bool>,
+}
+
+/// [`Found`] from the daemon's `PATH` and `HOME` (blocking: it stats files).
+fn found(claude: &str, codex: &str) -> Found {
+    let (path, home) = (std::env::var_os("PATH"), std::env::var_os("HOME"));
+    let macos = cfg!(target_os = "macos");
+    found_in((claude, codex), path.as_deref(), home.as_deref(), macos)
+}
+
+/// [`Found`] for `bins` (Claude's, then Codex's). Only macOS's `/bin/sh` (bash) expands
+/// a `~` entry of `PATH` (Linux's dash does not), and a direct spawn's `PATH` search
+/// never does, so only `window` on `macos` reads `~` against `home`.
+fn found_in(bins: (&str, &str), path: Option<&OsStr>, home: Option<&OsStr>, macos: bool) -> Found {
+    let map = |home: Option<&OsStr>| -> BTreeMap<String, bool> {
+        [(Runtime::Claude, bins.0), (Runtime::Codex, bins.1)]
+            .into_iter()
+            .map(|(runtime, bin)| (runtime.label().to_string(), executable_in(bin, path, home)))
+            .collect()
+    };
+    Found {
+        window: map(home.filter(|_| macos)),
+        headless: map(None),
+    }
 }
 
 /// What [`not_installed`] reads: a runtime's configured binary (`bins`: Claude's, then
@@ -143,14 +167,9 @@ fn planner_refusal(run: &Run, missing: Missing<'_>) -> Option<String> {
     not_installed("the sub-planners'", route.runtime, missing, hint)
 }
 
-fn executable(bin: &str) -> bool {
-    let (path, home) = (std::env::var_os("PATH"), std::env::var_os("HOME"));
-    executable_in(bin, path.as_deref(), home.as_deref())
-}
-
 /// `bin` is an executable file: itself when it names a path, else in a `PATH` entry.
-/// A `PATH` entry of `~` or `~/...` is read against `home`, as the shell a window starts
-/// the agent through does (M9.17 fix round 2); with no `home` it names nothing.
+/// A `PATH` entry of `~` or `~/...` is read against `home` (M9.17 fix round 2); with no
+/// `home`, or an empty one, it names nothing (fix round 3: never the relative `bin`).
 fn executable_in(bin: &str, path: Option<&OsStr>, home: Option<&OsStr>) -> bool {
     use std::os::unix::fs::PermissionsExt;
     let is = |path: &Path| {
@@ -160,17 +179,21 @@ fn executable_in(bin: &str, path: Option<&OsStr>, home: Option<&OsStr>) -> bool 
     if bin.contains('/') {
         return is(Path::new(bin));
     }
-    let expand = |dir: PathBuf| -> Option<PathBuf> {
-        let Ok(rest) = dir.strip_prefix("~") else {
-            return Some(dir);
-        };
-        home.map(|home| Path::new(home).join(rest))
-    };
     path.is_some_and(|paths| {
         std::env::split_paths(paths)
-            .filter_map(expand)
+            .filter_map(|dir| path_entry(dir, home))
             .any(|dir| is(&dir.join(bin)))
     })
+}
+
+/// A `PATH` entry as [`executable_in`] reads it: `~` or `~/...` against `home`, and
+/// nothing with no `home` or an empty one.
+fn path_entry(dir: PathBuf, home: Option<&OsStr>) -> Option<PathBuf> {
+    let Ok(rest) = dir.strip_prefix("~") else {
+        return Some(dir);
+    };
+    home.filter(|home| !home.is_empty())
+        .map(|home| Path::new(home).join(rest))
 }
 
 impl RunService {
@@ -187,19 +210,24 @@ impl RunService {
             let token = super::orch_ops::fresh_token()
                 .inspect_err(|error| tracing::warn!(%error, "no OTLP token"))
                 .unwrap_or_default();
-            Ok((installed(&claude, &codex), token))
+            Ok((found(&claude, &codex), token))
         })
         .await?;
-        let missing = missing_in(&found, &bins);
         let resolved = resolve_installed(
             planned.choice.as_ref(),
             &run.limits.orch.agent.config(),
             run.limits.default_runtime,
             &run.roster,
-            &missing,
+            &missing_in(&found.window, &bins),
         )?;
-        make_planned(run, planned.triage, resolved, planned.yes, found.clone());
-        if let Some(refusal) = planner_refusal(run, &missing) {
+        make_planned(
+            run,
+            planned.triage,
+            resolved,
+            planned.yes,
+            found.headless.clone(),
+        );
+        if let Some(refusal) = planner_refusal(run, &missing_in(&found.headless, &bins)) {
             return Err(refusal);
         }
         run.triage_usage = planned.usage.unwrap_or_default();
@@ -365,15 +393,16 @@ impl RunService {
         let config = self.manager.config();
         let bins = (config.claude_bin.clone(), config.codex_bin.clone());
         let (claude, codex) = bins.clone();
-        let found = blocking(move || Ok(installed(&claude, &codex))).await?;
-        let missing = missing_in(&found, &bins);
+        let found = blocking(move || Ok(found(&claude, &codex))).await?;
+        let window = missing_in(&found.window, &bins);
         let runtime = resolved.route.runtime;
         let hint = "choose another runtime with --orchestrator";
-        if let Some(refusal) = not_installed("the orchestrator's", runtime, &missing, hint) {
+        if let Some(refusal) = not_installed("the orchestrator's", runtime, &window, hint) {
             return Err(refusal);
         }
+        let missing = missing_in(&found.headless, &bins);
         let mut promoted = run.clone();
-        promoted.orch.installed = found.clone();
+        promoted.orch.installed = found.headless.clone();
         promoted.orch.orchestrator = Some(crate::run::orch::OrchestratorRecord::new(
             resolved.route,
             unix_now(),
