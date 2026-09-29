@@ -1832,7 +1832,7 @@ Seven failure modes the reviewer checks first, each with the test that covers it
 | Replies matched by request name only | Followups file, M8c.9 review M7 | Decision 2 (request ids), tasks M9.2, M9.15 |
 | A restored headless record whose `run` does not parse comes back as a PTY window | M8c Risk 9 | Decision 11a, task M9.10 |
 | A real Claude worker could not see `task_done` | Followups file, "From the Claude tool-search fix" | Fixed on `fix-claude-tool-search`; decision 10 extends it to the orchestrator, decision 42f to `task_note`; M9.1 item 10 re-verifies |
-| `packed-refs.lock` under the worker sandbox (owner M9) | Followups file, "From the Claude tool-search fix" | Task M9.13c (pending the controller's ruling) |
+| `packed-refs.lock` under the worker sandbox (owner M9) | Followups file, "From the Claude tool-search fix" | Task M9.13c (closed as "no git change"; a worker-contract line) |
 | `headless/conversation.rs` over its budget (452 of 430) | M8c file-size table | Not touched by M9; a task that must touch it moves the turn-end handling out first (file-size table) |
 
 Not taken, and why:
@@ -2254,7 +2254,7 @@ These controller rulings answer the second M9.4 review, of `2e2c8ca`. They repla
 ### Task M9.5 (Contracts and prompts)
 
 - **The texts.** `ORCHESTRATOR_CONTRACT` and `PLANNER_CONTRACT` were copied from Interfaces "Contracts (exact)" by script, not by hand, as were the worker contract's lines 10 and 11. `orchestrator_contract_is_exact`, `planner_contract_is_exact` and `worker_contract_is_exact` compare them byte for byte with a second copy made the same way. Every row of "Prompts and messages" is a `const` or a function in `run/orch/contract.rs`.
-- **The worker contract has 12 lines, and no `packed-refs.lock` line.** M9.1 check 11 assigns that line to task M9.13c ("What M9.13c still owes is a line in the worker contract"), and M9.5's `worker_contract_is_exact` fixes the contract at 12 lines. So M9.13c adds it, and updates this test to 13 lines.
+- **The worker contract has 12 lines, and no `packed-refs.lock` line.** M9.1 check 11 assigns that line to task M9.13c ("What M9.13c still owes is a line in the worker contract"), and M9.5's `worker_contract_is_exact` fixes the contract at 12 lines. So M9.13c adds it, and updates this test to 13 lines. *(Done in M9.13c: the contract now has 13 lines.)*
 - **Readings of the prompt table:**
   - **`review_task_prompt` takes `patch`**, which the table's signature leaves out. The table has a clamp line, "The diff below was cut at 16 KiB", and `REVIEWER_CONTRACT` says "The change's diff is in your prompt", but the table's lines never include the diff. So after the acceptance criteria come `Diff (<b>..<h>):` and the patch, clamped to `REVIEW_DIFF_MAX`, as in `reviewer_prompt`. The brief stays last. The clamp line appears when the clamped patch is shorter than the patch. An S task is reviewed at `small`, and any other size at `medium`.
   - **Both planner prompts end with `epic.request`**, the live or last session's brief. The engine sets it to the `spawn_subplanner` brief on each start. `integration_review_prompt` ends with `epic.brief`, which is what the epic asked for.
@@ -3439,3 +3439,39 @@ One commit, `fix(daemon): …`, on top of `6a7c91b`. Each test was written first
 
    `an_orchestrator_exit_is_failed_before_its_plan_and_completed_after` and `a_run_never_attributes_its_outcome_to_one_role` now expect these texts; both were red on `6a7c91b`'s wording.
 
+### Task M9.13c (`packed-refs.lock` under the worker sandbox)
+
+One commit on top of `b7d08b4`. It closes the task as "no git change", following M9.1 check 11 and controller ruling 1.
+
+1. **No git config change, and the sandbox is not widened.**
+   - M9.1 check 11 found that `git commit` itself takes `packed-refs.lock` in the checkout's own git dir. After it moves `HEAD`, it deletes the merge-state refs, and the files backend locks `packed-refs` for any ref deletion. None of `gc.auto=0`, `maintenance.auto=false` or `maintenance.pack-refs.enabled=false` stops it.
+   - So the brief's **Change** (add a key to `run/git/checkout.rs`'s config) does not apply. `checkout.rs` and `run_git_checkout.rs` are untouched.
+   - `role_launch::worker_git_roots` and its test are untouched, and so is `worker_git_dirs`.
+2. **Two of the brief's tests are not written.** No config key exists, so there is nothing for them to check:
+   - `task_checkout_config_stops_ref_packing`, which would read a key with `git config --get`;
+   - `a_worker_commit_under_the_sandbox_prints_no_packed_refs_error`. Under git 2.50.1 that stderr does contain the warning.
+
+   Instead, the pinning test below also asserts that the commit exits 0 despite the warning.
+3. **`run_git_sandbox.rs::packed_refs_stays_read_only_to_a_worker`** (pinning; macOS, skipped where `sandbox-exec` is missing).
+   - **The profile.** The worker's grant as this file already models it: the task worktree plus `worker_git_dirs(worker_git_roots(..))`, under the file's `profile()`. The daemon has no builder for a worker's seatbelt profile. The agent CLI builds that profile from the daemon's writable roots, and `run/seatbelt.rs` is the confined check's profile, not the worker's. So "the daemon's own profile builder" means the grant functions here.
+   - **What it checks.**
+     - Writes to `packed-refs` and `packed-refs.lock` are denied, both in the checkout's own git dir and in the common dir.
+     - A `git commit` under the grant exits 0 and makes a commit on the old tip.
+     - Every stderr line that names `packed-refs` says `Operation not permitted`.
+     - None of the four files changes.
+   - **Evidence.** It passed at once, as a pinning test should. Its stderr was `error: Unable to create '<tmp>/tasks/t1/git/packed-refs.lock': Operation not permitted`, which reproduces check 11 under the real grant.
+   - **Mutation.** With the checkout's git dir added to the writable set, the test fails with `wrote …/tasks/t1/git/packed-refs`. The file was restored from a copy afterwards.
+   - `Setup::sandboxed` now calls a new `Setup::sandboxed_output`, which returns the whole output.
+4. **The worker contract gains line 12** in `run/contract.rs`. It has 13 lines and ends with the new line:
+
+   ```text
+   12. After a commit, git may print Unable to create '.../packed-refs.lock': Operation not permitted. That is expected: the commit succeeded, and it needs no action. Do not try to fix it or change git settings.
+   ```
+
+   - The path is written as `...` in ASCII. `contracts_have_no_em_dash_and_survive_toml` still passes.
+   - Updated tests: `worker_contract_is_exact` (`WORKER_EXPECTED`), and `contracts_round_trip_through_toml_string`, which now checks 13 lines and the new last sentence.
+   - New test: `the_packed_refs_lock_warning_is_expected`.
+   - All three were red before the contract change: the count, the exact text, and a missing line 12.
+   - Interfaces "Contracts" and decision 41 still describe 12 lines. This note and the M9.5 note supersede them.
+5. **Commit subject changed.** The brief's subject is `fix(daemon): keep a sandboxed worker's git from packing refs it cannot write`, but no git behaviour changes. The commit is `docs(daemon): tell a sandboxed worker the packed-refs.lock warning is expected`.
+6. **The followups entry** ("From the Claude tool-search fix", "Not fixed: `packed-refs.lock`…") is marked resolved.

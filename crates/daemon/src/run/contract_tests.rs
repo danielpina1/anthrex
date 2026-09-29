@@ -18,11 +18,8 @@ fn contracts_round_trip_through_toml_string() {
         let table: toml::Table = toml::from_str(&text).expect("the contract is a TOML string");
         assert_eq!(table["x"].as_str(), Some(contract));
     }
-    assert!(
-        WORKER_CONTRACT
-            .ends_with("end your turn without calling task_done; wait for the next message.")
-    );
-    assert_eq!(WORKER_CONTRACT.lines().count(), 12);
+    assert!(WORKER_CONTRACT.ends_with("Do not try to fix it or change git settings."));
+    assert_eq!(WORKER_CONTRACT.lines().count(), 13);
     assert_eq!(REVIEWER_CONTRACT.lines().count(), 7);
 }
 
@@ -122,8 +119,9 @@ fn contracts_name_each_tool_by_its_claude_id() {
     assert!(REVIEWER_CONTRACT.contains(named), "{named}");
 }
 
-/// M8a's worker contract with decision 41's lines 10 and 11 (Interfaces "Contracts"),
-/// byte for byte.
+/// M8a's worker contract with decision 41's lines 10 and 11 (Interfaces "Contracts")
+/// and task M9.13c's line 12 (M9.1 check 11: the `packed-refs.lock` warning), byte for
+/// byte.
 #[test]
 fn worker_contract_is_exact() {
     assert_eq!(WORKER_CONTRACT, WORKER_EXPECTED);
@@ -140,7 +138,8 @@ const WORKER_EXPECTED: &str = r#"You are a worker in an anthrex orchestration ru
 8. Messages that start with [anthrex] come from the orchestration engine. Do what they say, commit, and call task_done again.
 9. Nobody can answer a permission prompt. If a tool is denied, work without it or call task_blocked with kind environment.
 10. If you learn something that affects other tasks or the plan, such as another place that must change, a wrong assumption in the brief, or a risk, report it with task_note (in Claude: mcp__anthrex__task_note) and keep working. Use task_blocked only when you cannot continue.
-11. A message of kind change means the plan or the code around this task changed: in your next task_done summary, start with Changes applied: and say how you applied it. A message of kind stop_and_wait means finish your current step, commit anything worth keeping, and end your turn without calling task_done; wait for the next message."#;
+11. A message of kind change means the plan or the code around this task changed: in your next task_done summary, start with Changes applied: and say how you applied it. A message of kind stop_and_wait means finish your current step, commit anything worth keeping, and end your turn without calling task_done; wait for the next message.
+12. After a commit, git may print Unable to create '.../packed-refs.lock': Operation not permitted. That is expected: the commit succeeded, and it needs no action. Do not try to fix it or change git settings."#;
 
 /// Decision 42d and ruling D-11: the contract asks a worker to acknowledge a change
 /// message in its next task_done summary; the engine never checks the summary.
@@ -156,6 +155,25 @@ fn change_message_requires_acknowledgement_in_task_done() {
         line.contains("A message of kind stop_and_wait means"),
         "{line}"
     );
+}
+
+/// Task M9.13c (M9.1 check 11): a sandboxed worker's commit may warn that git cannot
+/// create `packed-refs.lock`. The commit succeeded; the contract says so, so the worker
+/// neither "fixes" it nor changes git settings, and the sandbox is not widened.
+#[test]
+fn the_packed_refs_lock_warning_is_expected() {
+    let line = WORKER_CONTRACT.lines().nth(12).expect("line 12");
+    assert!(
+        line.starts_with("12. After a commit, git may print "),
+        "{line}"
+    );
+    for part in [
+        "packed-refs.lock': Operation not permitted",
+        "the commit succeeded",
+        "Do not try to fix it or change git settings.",
+    ] {
+        assert!(line.contains(part), "{part}: {line}");
+    }
 }
 
 const EXTRACT: &str = "Scout report s1:\n  Summary one\nFiles: crates/a/src/x.rs";
