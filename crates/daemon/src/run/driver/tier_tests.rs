@@ -215,9 +215,15 @@ impl Rig {
         }
     }
 
+    /// A job with the result cache off.
     async fn tier(&self, op: OpId, spec: &TierSpec) -> TierOutcome {
+        self.tier_with(op, spec, &TestCache::new(0)).await
+    }
+
+    async fn tier_with(&self, op: OpId, spec: &TierSpec, cache: &TestCache) -> TierOutcome {
         let (sched, queue) = (TestScheduler::new(2), GitQueue::new());
-        match run_tier(&self.ctx(), &sched, &queue, OsStr::new("git"), op, spec).await {
+        let git = OsStr::new("git");
+        match run_tier(&self.ctx(), &sched, cache, &queue, git, op, spec).await {
             OpResult::Tier(outcome) => *outcome,
             other => panic!("not a tier outcome: {other:?}"),
         }
@@ -529,3 +535,7 @@ async fn test_at_checks_out_the_commit_and_runs_the_named_tests_twice_on_red() {
 // Decision 33 and ruling C-7: the retry.
 #[path = "tier_tests_retry.rs"]
 mod retry;
+
+// Decisions 30 and 31: the result cache.
+#[path = "tier_tests_cache.rs"]
+mod cache;

@@ -395,7 +395,8 @@ fn names_of(run: StepRun) -> (ShellOutcome, Vec<String>) {
 }
 
 /// Step `k` of the job, with decision 33's retry (ruling C-7) when `tiered`. Returns
-/// the outcome and, when it is red, its tail.
+/// the outcome and the tail of the run that decided it (the red one's, or the green
+/// one's the result cache keeps).
 pub(super) async fn run_step(
     job: &Job<'_>,
     spec: &TierSpec,
@@ -426,7 +427,7 @@ pub(super) async fn run_step(
         granted: grant.slots(),
     };
     if first.ok {
-        return Ok((ran, String::new()));
+        return Ok((ran, first.tail));
     }
     if !tiered || step.kind == StepKind::Build || first.timed_out {
         ran.failing = first_names;
@@ -471,7 +472,7 @@ pub(super) async fn run_step(
     ran.timed_out = whole.timed_out;
     if whole.ok {
         ran.flaky = first_names;
-        return Ok((ran, String::new()));
+        return Ok((ran, whole.tail));
     }
     ran.failing = if whole_names.is_empty() {
         first_names

@@ -54,6 +54,7 @@ use super::engine::{AgentSignal, EngineState, Event, EventKind, INTERRUPT_GRACE_
 use super::git::GitQueue;
 use super::slots::{self, TestScheduler};
 use super::snapshot::snapshot;
+use super::test_cache::TestCache;
 #[cfg(test)]
 use crate::manager::ManagerConfig;
 use crate::manager::{GitRoots, WindowManager, WindowSignal};
@@ -124,6 +125,8 @@ pub struct RunService {
     wakes: wake::Wakes,
     /// Milestone 9.1 decision 23: the daemon's one test scheduler.
     scheduler: Arc<TestScheduler>,
+    /// Milestone 9.1 decision 30: the daemon's one result cache.
+    test_cache: TestCache,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -168,6 +171,7 @@ impl RunService {
         let signals = manager.signals();
         let (pushes, _) = broadcast::channel(256);
         let slots = ctx.testing.test_slots.unwrap_or_else(slots::default_slots);
+        let test_cache_days = ctx.testing.test_cache_days;
         Arc::new(RunService {
             manager,
             ctx,
@@ -205,11 +209,16 @@ impl RunService {
             metered: Default::default(),
             wakes: Default::default(),
             scheduler: TestScheduler::new(slots),
+            test_cache: TestCache::new(test_cache_days),
         })
     }
 
     pub fn scheduler(&self) -> &Arc<TestScheduler> {
         &self.scheduler
+    }
+
+    pub fn test_cache(&self) -> &TestCache {
+        &self.test_cache
     }
 
     /// Starts the event loop, the session-feed forwarder and the 1-second ticker.

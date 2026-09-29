@@ -11,14 +11,21 @@
 //! whole step with a new grant. A build step and a timed-out step are never retried.
 //! An untiered profile runs M8a's `check` once, exactly as written.
 //!
-//! Every git read, command, directory creation and removal runs on `spawn_blocking`
-//! with a timeout; every git write goes through the run's [`GitQueue`]. No lock is held
-//! here, and no slot is held across anything but its own step.
+//! Decisions 30 and 31 (task M9.1.10): a tiered job with a cache context looks each
+//! step up in the daemon's [`TestCache`] before it asks for slots; a hit is not run and
+//! is recorded `cached`. A step whose last whole run passed is stored, with its flaky
+//! names; a red or timed-out step never is. An untiered profile, and a toolchain that
+//! is `"unknown"`, neither reads nor writes the cache.
+//!
+//! Every git read, command, cache access, directory creation and removal runs on
+//! `spawn_blocking` with a timeout; every git write goes through the run's
+//! [`GitQueue`]. No lock is held here, and no slot is held across anything but its own
+//! step.
 
 use std::ffi::OsStr;
 
 use super::OpCtx;
-use super::graph::{module_graph, toolchain};
+use super::graph::{TOOLCHAIN_UNKNOWN, module_graph, toolchain};
 use super::tier_step::{
     Job, JobSpec, SLACK, Stop, bounded, failed, fresh_dir, isolation_env, remove_dir, run_step,
     stop,
@@ -27,11 +34,13 @@ use crate::run::engine::{OpResult, ScratchAt};
 use crate::run::git::{self, GitQueue};
 use crate::run::model::OpId;
 use crate::run::slots::{Priority, TestScheduler, Want};
+use crate::run::test_cache::{CacheEntry, TestCache};
 use crate::run::tiers::affected::affected;
+use crate::run::tiers::cache_key::{CacheKey, key};
 use crate::run::tiers::steps::plan;
 use crate::run::tiers::{
-    Affected, GRAPH_TIMEOUT, GraphState, Scope, Step, StepKind, TOOLCHAIN_TIMEOUT, TestAtSpec,
-    TierOutcome, TierSpec,
+    Affected, CacheCtx, GRAPH_TIMEOUT, GraphState, Scope, Step, StepKind, StepOutcome,
+    TOOLCHAIN_TIMEOUT, TestAtSpec, TierOutcome, TierSpec,
 };
 
 /// The affected set a tier-3 job records: one fixed value, so a tier-3 cache key never
@@ -40,16 +49,17 @@ pub(crate) const FULL_SUITE: &str = "full suite";
 /// The affected set of an untiered profile's single `check`.
 pub(crate) const UNTIERED: &str = "untiered profile";
 
-/// Executes `OpKind::Tier` (decisions 14, 16, 18, 20–28, 32, 33).
+/// Executes `OpKind::Tier` (decisions 14, 16, 18, 20–28, 30–33).
 pub(crate) async fn run_tier(
     ctx: &OpCtx,
     sched: &TestScheduler,
+    cache: &TestCache,
     queue: &GitQueue,
     git: &OsStr,
     op: OpId,
     spec: &TierSpec,
 ) -> OpResult {
-    match tier_job(ctx, (sched, queue, git), op, spec).await {
+    match tier_job(ctx, (sched, queue, git), cache, op, spec).await {
         Ok(outcome) => OpResult::Tier(Box::new(outcome)),
         Err(result) => *result,
     }
@@ -58,6 +68,7 @@ pub(crate) async fn run_tier(
 async fn tier_job(
     ctx: &OpCtx,
     shared: (&TestScheduler, &GitQueue, &OsStr),
+    cache: &TestCache,
     op: OpId,
     spec: &TierSpec,
 ) -> Result<TierOutcome, Stop> {
@@ -125,18 +136,92 @@ async fn tier_job(
             })
             .collect()
     };
+    let keys = cache_ctx(spec, tiered, outcome.toolchain.as_deref());
     for (k, step) in steps.iter().enumerate() {
+        let key = keys
+            .as_ref()
+            .map(|c| key(&outcome.tree, scope, &step.command, &step.affected_key, c));
+        if let Some(key) = &key
+            && lookup(cache, &spec.repo_dir, key).await
+        {
+            outcome.steps.push(hit(step));
+            continue;
+        }
         let (ran, tail) = run_step(&job, spec, tiered, k + 1, step).await?;
         outcome.secs += ran.secs;
-        let red = !ran.ok;
-        outcome.steps.push(ran);
-        if red {
+        if !ran.ok {
+            outcome.steps.push(ran);
             outcome.ok = false;
             outcome.tail = tail;
             break;
         }
+        if let Some(key) = key {
+            let entry = CacheEntry {
+                ok: true,
+                secs: ran.secs,
+                flaky: ran.flaky.clone(),
+                tail,
+                at: super::unix_now(),
+                run: ctx.run_id.clone(),
+                tier: spec.tier,
+            };
+            store(cache, &spec.repo_dir, key, entry).await;
+        }
+        outcome.steps.push(ran);
     }
     Ok(outcome)
+}
+
+/// Decision 30's context for this job's keys: none for an untiered profile, without a
+/// context, or with an `"unknown"` toolchain. A toolchain this job ran (decision 11)
+/// replaces the context's.
+fn cache_ctx(spec: &TierSpec, tiered: bool, ran_toolchain: Option<&str>) -> Option<CacheCtx> {
+    let mut ctx = spec.cache.clone().filter(|_| tiered)?;
+    if let Some(id) = ran_toolchain {
+        ctx.toolchain = id.to_string();
+    }
+    (ctx.toolchain != TOOLCHAIN_UNKNOWN).then_some(ctx)
+}
+
+/// Whether `key` is a green hit, read on a bounded blocking thread. Anything that goes
+/// wrong is a miss.
+async fn lookup(cache: &TestCache, repo_dir: &std::path::Path, key: &CacheKey) -> bool {
+    let (cache, repo_dir, key) = (cache.clone(), repo_dir.to_path_buf(), key.clone());
+    bounded(SLACK, move || Ok(cache.lookup(&repo_dir, &key).is_some()))
+        .await
+        .unwrap_or(false)
+}
+
+/// Records a green step on a bounded blocking thread. A failure costs a later re-run
+/// only, so it is logged and ignored.
+async fn store(cache: &TestCache, repo_dir: &std::path::Path, key: CacheKey, entry: CacheEntry) {
+    let (cache, repo_dir) = (cache.clone(), repo_dir.to_path_buf());
+    let stored = bounded(SLACK, move || {
+        cache
+            .store(&repo_dir, key, entry)
+            .map_err(|error| error.to_string())
+    })
+    .await;
+    if let Err(error) = stored {
+        tracing::debug!(%error, "could not store a green tier step in the test cache");
+    }
+}
+
+/// Decision 31: a cached step, not run. Its flakes were recorded when it ran.
+fn hit(step: &Step) -> StepOutcome {
+    StepOutcome {
+        kind: step.kind,
+        command: step.command.clone(),
+        ok: true,
+        code: Some(0),
+        timed_out: false,
+        secs: 0,
+        cached: true,
+        retried: false,
+        failing: Vec::new(),
+        flaky: Vec::new(),
+        granted: 0,
+    }
 }
 
 /// Decision 22 (with ruling C-5) on the job's change, and decision 9's graph note.

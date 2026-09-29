@@ -456,7 +456,8 @@ pub(super) async fn run(
         // Milestone 9.1 (task M9.1.9): a tier job and a bisect probe.
         OpKind::Tier(spec) => {
             let (sched, queue) = (service.scheduler(), &service.queue);
-            tier::run_tier(ctx, sched, queue, &git, op, &spec).await
+            let cache = service.test_cache();
+            tier::run_tier(ctx, sched, cache, queue, &git, op, &spec).await
         }
         OpKind::TestAt(spec) => {
             let (sched, queue) = (service.scheduler(), &service.queue);

@@ -1686,3 +1686,7 @@ scope.
 ## From M9.1.6 (2026-09-29), for any later milestone with `cargo nextest` and `go`
 
 - **Replace the hand-written failing-test fixtures with captured output** (controller ruling C-2 on M9.1.1). `crates/daemon/src/run/tiers/fixtures/nextest.txt`, `go.txt`, `go-build-failed.txt`, `go-timeout.txt` and `go-testmain.txt` were written by hand from the tools' documented formats, because neither `cargo nextest` nor `go` was installed where the other fixtures were captured; each says so on its first line. On a machine with both, capture one passing, one failing and (for nextest) one timed-out test with stderr merged, as `libtest.txt` and `pytest.txt` were, and check `failing_names_from_libtest_nextest_pytest_and_go` still passes. The nextest filter syntax in M9.1's "Risks" stays unverified until then.
+
+## From M9.1.10 (2026-09-30), for M9.1.21 or M9.5
+
+- **A crashed rewrite of the tier caches leaves its temporary file behind.** `test-cache.jsonl` (M9.1.10) and `module-graph.json` (M9.1.7) are rewritten with `profile::store::write_atomic`, whose temporary file is `<file>.<pid>.<n>.tmp` in the repository's data directory. `profile::store::sweep_leftovers`, which `ProfileService::restore` runs at daemon start, removes only the profile store's own files' leftovers (`PROFILE_FILE`, `META_FILE`, `PROPOSAL_FILE`, `DETECTION_FILE`), so a daemon killed mid-rewrite leaves one stray file per crash. Harmless (nothing reads it), but it accumulates. Adding the two cache files to that list closes it.
