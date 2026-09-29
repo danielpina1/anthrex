@@ -159,26 +159,31 @@ pub fn orchestrator_window_spec(run: &Run, route: &Route, first_prompt: &str) ->
     }
 }
 
-/// A run scout's route: [`crate::scout::spec::run_scout_route`] on the keys and roster
-/// the run froze (whole-branch review, item 1), else, for a run recorded before them,
-/// the scout service's live ones (`ctx`).
-pub fn scout_route_of(run: &Run, ctx: &crate::scout::spec::ScoutContext) -> Route {
-    use crate::scout::spec::{ScoutRouting, run_scout_route};
-    match &run.limits.orch.scouts {
-        Some(routing) => run_scout_route(&run.roster, routing, &run.orch.installed),
-        None => run_scout_route(&ctx.roster, &ScoutRouting::of(ctx), &run.orch.installed),
-    }
+/// The run scouts' route keys: the ones the run froze at its start (whole-branch
+/// review, item 1), else, for a run recorded on this branch before they were frozen,
+/// the default scout keys on the run's own frozen `default_runtime` (fix round 2, item
+/// 4). Never the daemon's live config: what the start checked is what launches.
+pub fn scout_routing(run: &Run) -> crate::scout::spec::ScoutRouting {
+    run.limits.orch.scouts.clone().unwrap_or_else(|| {
+        let defaults = config::Scouts::default();
+        crate::scout::spec::ScoutRouting {
+            runtime: None,
+            default_runtime: run.limits.default_runtime,
+            strength: defaults.strength,
+            effort: defaults.effort,
+        }
+    })
 }
 
-/// The run scouts' route on the run's frozen keys alone, `None` for a run recorded
-/// before them (what `reach::reachable_runtimes` can count).
-pub fn frozen_scout_route(run: &Run) -> Option<Route> {
-    let routing = run.limits.orch.scouts.as_ref()?;
-    Some(crate::scout::spec::run_scout_route(
-        &run.roster,
-        routing,
-        &run.orch.installed,
-    ))
+/// A run scout's route: [`crate::scout::spec::run_scout_route`] on [`scout_routing`]
+/// and the run's roster, over its installed runtimes.
+pub fn scout_route_of(run: &Run) -> Route {
+    crate::scout::spec::run_scout_route(&run.roster, &scout_routing(run), &run.orch.installed)
+}
+
+/// The run scouts' route as `reach::reachable_runtimes` counts it: [`scout_route_of`].
+pub fn frozen_scout_route(run: &Run) -> Route {
+    scout_route_of(run)
 }
 
 /// Decision 31: a sub-planner's route, `[orchestrator.planners]` as the run was built

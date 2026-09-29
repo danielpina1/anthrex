@@ -111,7 +111,7 @@ fn a_codex_only_run_scout_is_routed_to_codex() {
     let got = run_scout_route(&ctx, &installed(false));
     assert_eq!((got.runtime, got.model.as_str()), (Runtime::Codex, ""));
     let run = run_on(installed(false), codex_route(Strength::Standard));
-    let d = scout_record(&run, "s1", &ctx, 2_000);
+    let d = scout_record(&run, "s1", 2_000);
     assert_eq!(d.chosen, got);
     let claude: Vec<_> = reasons(&d)
         .into_iter()
@@ -149,7 +149,7 @@ fn a_run_scout_with_both_runtimes_is_routed_as_before() {
     // Nothing recorded (a run from before the start check): as before.
     assert_eq!(run_scout_route(&ctx, &BTreeMap::new()), before);
     let run = run_on(installed(true), codex_route(Strength::Standard));
-    let d = scout_record(&run, "s1", &ctx, 2_000);
+    let d = scout_record(&run, "s1", 2_000);
     assert_eq!(d.chosen, before);
     assert!(
         reasons(&d)
@@ -166,22 +166,32 @@ fn a_config_change_after_the_start_does_not_reroute_a_runs_scouts() {
     config.scouts.runtime = Some(Runtime::Codex);
     let mut run = run_on(installed(true), codex_route(Strength::Standard));
     run.limits.orch = crate::run::orch::OrchLimits::from_config(&config);
-    // The daemon's config now says Claude, as `ctx()` does.
-    let ctx = ctx();
-    let d = scout_record(&run, "s1", &ctx, 2_000);
+    // The daemon's config now says Claude (`ctx()`); the routing takes the run alone.
+    let d = scout_record(&run, "s1", 2_000);
     assert_eq!(d.chosen.runtime, Runtime::Codex);
     assert_eq!(
-        crate::run::orch::launch::scout_route_of(&run, &ctx).runtime,
+        crate::run::orch::launch::scout_route_of(&run).runtime,
         Runtime::Codex
     );
-    // A run recorded before the keys were frozen follows the live config.
+}
+
+/// Whole-branch fix round 2, item 4: a run recorded before its scouts' keys were frozen
+/// (`OrchLimits.scouts` absent) routes them on its own frozen `default_runtime` and the
+/// default scout keys, never on the daemon's live config, so what its start checked
+/// (and `reach` counts) is what launches.
+#[test]
+fn a_run_recorded_before_the_frozen_keys_never_reads_the_live_config() {
+    let mut run = run_on(installed(true), codex_route(Strength::Standard));
+    run.limits.default_runtime = Runtime::Claude;
     let mut json = serde_json::to_value(&run.limits.orch).unwrap();
     json.as_object_mut().unwrap().remove("scouts");
     run.limits.orch = serde_json::from_value(json).unwrap();
     assert_eq!(run.limits.orch.scouts, None);
-    assert_eq!(
-        crate::run::orch::launch::scout_route_of(&run, &ctx).runtime,
-        Runtime::Claude
-    );
-    assert_eq!(crate::run::orch::launch::frozen_scout_route(&run), None);
+    // Nothing here reads the daemon's config (the routing takes the run alone), so a
+    // live config routing every scout to Codex cannot reach it.
+    let route = crate::run::orch::launch::scout_route_of(&run);
+    assert_eq!(route.runtime, Runtime::Claude);
+    assert_eq!(route.strength, config::Scouts::default().strength);
+    assert_eq!(scout_record(&run, "s1", 2_000).chosen, route);
+    assert_eq!(crate::run::orch::launch::frozen_scout_route(&run), route);
 }

@@ -325,11 +325,10 @@ impl RunService {
         let (record, route) = {
             let state = crate::lock(&self.state);
             let run = state.runs.get(&ctx.run_id);
-            let record = run.map(|run| {
-                crate::run::orch::roles::scout_record(run, &scout_id, scouts.context(), unix_now())
-            });
+            let record =
+                run.map(|run| crate::run::orch::roles::scout_record(run, &scout_id, unix_now()));
             let route = match run {
-                Some(run) => crate::run::orch::launch::scout_route_of(run, scouts.context()),
+                Some(run) => crate::run::orch::launch::scout_route_of(run),
                 None => crate::scout::spec::scout_route(scouts.context()),
             };
             (record, route)

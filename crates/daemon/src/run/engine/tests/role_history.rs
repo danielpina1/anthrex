@@ -16,7 +16,6 @@ use super::planners::{PLANNER, planner_ended, planner_started, planning_mail, sp
 use crate::decider::{DeciderAnswer, DeciderKind, Decision};
 use crate::run::engine::{Effect, EngineState, EventKind, OpKind, OpResult, OrchEvent, ScoutEnd};
 use crate::run::orch::roles;
-use crate::scout::spec::ScoutContext;
 
 const REPO: &str = "/tmp/data/repos/x-3f9a";
 
@@ -59,29 +58,16 @@ pub(super) fn of_role(fx: &Fixture, role: AgentRole) -> Vec<RoleRoutingDecision>
         .collect()
 }
 
-/// The scout service's context of these tests: the default configuration.
-fn scout_ctx() -> ScoutContext {
-    let orchestrator = config::Orchestrator::default();
-    ScoutContext {
-        roster: orchestrator.models.clone(),
-        default_runtime: proto::Runtime::Claude,
-        scouts: orchestrator.scouts.clone(),
-        claude: orchestrator.claude.clone(),
-        caps: crate::headless::argv::CLI_CAPS,
-        data_dir: PathBuf::from("/nonexistent/anthrex-test/data"),
-    }
-}
-
 /// The orchestrator spawns scout `id`; its `StartScout` is issued and the driver sends
 /// its record (as `start_scout` does) before the session starts. Returns the full id.
-fn scout_dispatched(fx: &mut Fixture, id: &str, ctx: &ScoutContext) -> String {
+fn scout_dispatched(fx: &mut Fixture, id: &str) -> String {
     let args = json!({"id": id, "question": "How is auth wired?", "area": ["crates/auth/**"]});
     orch_tool(fx, ORCH, "spawn_scout", args);
     let (_, kind) = fx.op("StartScout");
     let OpKind::StartScout { spec } = kind else {
         unreachable!()
     };
-    let decision = roles::scout_record(fx.run(), &spec.id, ctx, 1_500);
+    let decision = roles::scout_record(fx.run(), &spec.id, 1_500);
     let reply = fx.reply();
     fx.next(EventKind::Orch(OrchEvent::RoleRoute {
         reply,
@@ -180,8 +166,7 @@ fn running() -> Fixture {
 #[test]
 fn each_role_keeps_its_dispatch_snapshot_after_a_config_change() {
     let mut fx = running();
-    let ctx = scout_ctx();
-    let scout = scout_dispatched(&mut fx, "api", &ctx);
+    let scout = scout_dispatched(&mut fx, "api");
     let decider = decider_dispatched(&mut fx, 77);
     let dispatched = fx.run().role_routing_decisions.clone();
     let roles_seen: Vec<AgentRole> = dispatched.iter().map(|d| d.role).collect();
@@ -326,8 +311,7 @@ fn planner_retry_gets_a_new_session_id() {
 #[test]
 fn scout_retry_gets_a_new_session_id() {
     let mut fx = running();
-    let ctx = scout_ctx();
-    let first = scout_dispatched(&mut fx, "api", &ctx);
+    let first = scout_dispatched(&mut fx, "api");
     let (op, _) = fx.op("StartScout");
     let effects = fx.done(
         op,
@@ -339,7 +323,7 @@ fn scout_retry_gets_a_new_session_id() {
     assert_eq!(lines.len(), 1, "{effects:#?}");
     assert_eq!(lines[0].1.outcome, Some(RoleOutcome::Failed));
     // A scout id is used once per run (decision 20): the retry is a new scout.
-    let second = scout_dispatched(&mut fx, "api2", &ctx);
+    let second = scout_dispatched(&mut fx, "api2");
     let records = of_role(&fx, AgentRole::Scout);
     assert_eq!(records.len(), 2, "{records:#?}");
     assert_eq!(records[0].session_id, first);
@@ -403,8 +387,7 @@ fn session_end_appends_one_line_with_the_outcome() {
     assert!(role_lines(&again).is_empty(), "{again:#?}");
     // A run whose history is off keeps its records and appends none.
     fx.run_mut().history = false;
-    let ctx = scout_ctx();
-    let scout = scout_dispatched(&mut fx, "api", &ctx);
+    let scout = scout_dispatched(&mut fx, "api");
     let effects = scout_ended(&mut fx, &scout, ScoutEnd::Reported);
     assert!(role_lines(&effects).is_empty());
     let kept = of_role(&fx, AgentRole::Scout);
@@ -414,8 +397,7 @@ fn session_end_appends_one_line_with_the_outcome() {
 #[test]
 fn scout_failed_on_restore_is_recorded_interrupted() {
     let mut fx = running();
-    let ctx = scout_ctx();
-    let scout = scout_dispatched(&mut fx, "api", &ctx);
+    let scout = scout_dispatched(&mut fx, "api");
     let effects = restart(&mut fx);
     let state = &fx.run().orch.run_scouts[0].state;
     assert!(
@@ -438,8 +420,7 @@ fn scout_failed_on_restore_is_recorded_interrupted() {
 #[test]
 fn restore_marks_every_open_record_interrupted_once() {
     let mut fx = running();
-    let ctx = scout_ctx();
-    scout_dispatched(&mut fx, "api", &ctx);
+    scout_dispatched(&mut fx, "api");
     let decider = decider_dispatched(&mut fx, 77);
     let ended = decider_ended(&mut fx, &decider, &fallback("no reader slot"));
     // Its line was written before the restart.
@@ -527,7 +508,7 @@ fn a_run_never_attributes_its_outcome_to_one_role() {
     // sessions were stopped by anthrex, not failed: `interrupted`, with a reason that
     // names neither the run's outcome nor the user's action.
     let mut fx = running();
-    let scout = scout_dispatched(&mut fx, "api", &scout_ctx());
+    let scout = scout_dispatched(&mut fx, "api");
     let reply = fx.reply();
     let mut effects = fx.next(EventKind::Cancel {
         reply,

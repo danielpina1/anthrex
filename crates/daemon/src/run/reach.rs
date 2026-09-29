@@ -51,7 +51,7 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
     if let Some(o) = &run.orch.orchestrator {
         found.push(o.route.runtime);
         found.extend(super::orch::launch::planner_route(run).map(|r| r.runtime));
-        found.extend(super::orch::launch::frozen_scout_route(run).map(|r| r.runtime));
+        found.push(super::orch::launch::frozen_scout_route(run).runtime);
     }
     [Runtime::Claude, Runtime::Codex]
         .into_iter()

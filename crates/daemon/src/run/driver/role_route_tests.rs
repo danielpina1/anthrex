@@ -381,3 +381,46 @@ async fn a_codex_only_run_scout_is_started_on_codex() {
         "{records:#?}"
     );
 }
+
+/// Whole-branch fix round 2, item 1: the scout the driver starts runs on the route keys
+/// the run froze at its start, not on the scout service's live ones. Here the run froze
+/// `[orchestrator.scouts] runtime = "codex"` while the daemon's config (the service's
+/// context) says Claude; the launch fails naming the binary it tried.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_scout_is_started_on_the_keys_its_run_froze() {
+    let rig = Rig::new(DeciderMode::Off, None);
+    std::fs::create_dir_all(rig.dir.path().join("repo")).unwrap();
+    rig.scout_in("s1", RunScoutState::Running);
+    {
+        let mut engine = crate::lock(&rig.runs.state);
+        let run = engine.runs.get_mut(&rig.run_id).unwrap();
+        let frozen = run
+            .limits
+            .orch
+            .scouts
+            .as_mut()
+            .expect("frozen at the start");
+        frozen.runtime = Some(proto::Runtime::Codex);
+    }
+    let live = rig.runs.adaptation.get().unwrap().scouts.context().clone();
+    assert_eq!(
+        crate::scout::spec::scout_route(&live).runtime,
+        proto::Runtime::Claude
+    );
+    let spec = crate::scout::spec::ScoutSpec {
+        id: "s1".into(),
+        ..bad_scout(&rig)
+    };
+    let result = rig.runs.start_scout(&rig.ctx(), spec).await;
+    let OpResult::Failed { message } = &result else {
+        panic!("{result:?}");
+    };
+    assert_eq!(message, "could not start /nonexistent/anthrex-test/codex");
+    rig.settled().await;
+    let records = rig.records(AgentRole::Scout);
+    assert_eq!(
+        records[0].chosen.runtime,
+        proto::Runtime::Codex,
+        "{records:#?}"
+    );
+}
