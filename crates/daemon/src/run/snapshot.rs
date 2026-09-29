@@ -202,6 +202,14 @@ pub(crate) fn attention(run: &Run) -> Vec<String> {
     }
     lines.extend(run.stale_profile_line());
     lines.extend(crate::run::engine::integration_attention(run));
+    // Milestone 9 decision 13: the orchestrator could not start, or its window exited.
+    let terminal = run.state.is_terminal();
+    lines.extend(
+        run.orch
+            .orchestrator
+            .as_ref()
+            .and_then(|o| o.attention(terminal)),
+    );
     lines
 }
 

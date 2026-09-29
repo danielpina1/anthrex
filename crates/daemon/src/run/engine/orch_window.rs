@@ -50,6 +50,7 @@ pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64) {
             o.window_id = Some(window_id);
             o.live = true;
             o.exited_at = None;
+            o.start_error = None;
             run.windows_created += 1;
             log(
                 run,
@@ -58,6 +59,8 @@ pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64) {
             );
         }
         OpResult::Failed { message } => {
+            // Decision 13: an attention line too, until a launch succeeds.
+            o.start_error = Some(message.clone());
             log(
                 run,
                 now,
@@ -65,6 +68,36 @@ pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64) {
             );
         }
         _ => {}
+    }
+}
+
+/// Decision 13: the driver saw the orchestrator's window exit, or come back after an
+/// exit (the user's `anthrex restart`). An exit suspends wake-ups (the record is not
+/// live) and shows the attention line; the run goes on. A report about any other
+/// window, or a return on a finished run, changes nothing.
+pub(super) fn window_seen(run: &mut Run, window_id: u32, live: bool, now: u64) {
+    let terminal = run.state.is_terminal();
+    let Some(o) = run.orch.orchestrator.as_mut() else {
+        return;
+    };
+    if o.window_id != Some(window_id) || o.live == live || (live && terminal) {
+        return;
+    }
+    o.live = live;
+    if live {
+        o.exited_at = None;
+        log(
+            run,
+            now,
+            format!("the orchestrator's window {window_id} is back"),
+        );
+    } else {
+        o.exited_at = Some(now);
+        log(
+            run,
+            now,
+            format!("the orchestrator's window {window_id} exited"),
+        );
     }
 }
 

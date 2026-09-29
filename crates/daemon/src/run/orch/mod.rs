@@ -141,6 +141,23 @@ pub struct OrchestratorRecord {
     pub otlp_token: String,
     /// Decision 43: 1 at launch, +1 per restart.
     pub session: u32,
+    /// Decision 13: why the last `CreateOrchestrator` failed, until one succeeds.
+    #[serde(default)]
+    pub start_error: Option<String>,
+}
+
+impl OrchestratorRecord {
+    /// Decision 13's attention line: the launch failed, or the window exited while the
+    /// run goes on (a finished run's window is a plain one, decision 30).
+    pub fn attention(&self, terminal: bool) -> Option<String> {
+        if let Some(error) = &self.start_error {
+            return Some(format!("the orchestrator could not start: {error}"));
+        }
+        let n = self.window_id?;
+        (!terminal && !self.live && self.exited_at.is_some()).then(|| {
+            format!("the orchestrator (window {n}) exited; restart it with anthrex restart {n}")
+        })
+    }
 }
 
 /// Decision 28's approval hold, as the daemon keeps it (the wire's is `HoldInfo`).
@@ -528,6 +545,7 @@ impl OrchestratorRecord {
             wakes: 0,
             otlp_token: String::new(),
             session: 1,
+            start_error: None,
         }
     }
 }

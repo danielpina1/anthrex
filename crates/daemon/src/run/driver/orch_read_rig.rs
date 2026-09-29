@@ -84,6 +84,10 @@ impl Rig {
         run.root = dir.path().join("repo");
         let mut record = orchestrator();
         record.window_id = Some(ORCH);
+        // Window `ORCH` does not exist. A live record over a missing window is one the
+        // driver reports exited (task M9.13, decision 13), which changes the digest; the
+        // read path checks only the window id, so the record is left dormant.
+        record.live = false;
         run.orch.orchestrator = Some(record);
         let now = unix_now();
         let t0 = task_mut(&mut run, "t0");

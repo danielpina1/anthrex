@@ -1,0 +1,264 @@
+//! Milestone 9 decision 39, the driver's half: pasting a wake-up into the orchestrator's
+//! PTY window, the one run window that takes a paste (M8a decision 29's outbox and its
+//! `Effect::Deliver` are unchanged, and no headless window ever gets one). Decision 13's
+//! watch of that window is here too, since both read the manager's window list.
+//!
+//! **When.** An `Effect::WakeOrchestrator` is kept per run, a newer one replacing one not
+//! yet delivered. It is delivered once the window is `Idle` or `Done` (never `Working`,
+//! never `Attention`, which may be a permission prompt) and no client input reached it
+//! for the run's `wake_quiet_secs`; it is looked at again on every tick and every change
+//! of the window list. Delivered, it is answered `OrchEvent::OrchestratorWoken` with
+//! the effect's revision and note seq.
+//!
+//! **How.** `ESC [200~`, the text (`\r\n` and `\n` as `\r`, paste markers removed, cut
+//! to the contract's `WAKE_MAX_BYTES`), `ESC [201~`; then, after [`SUBMIT_DELAY`], a
+//! lone `\r`. Both go through `WindowManager::write_input`, which only queues the bytes
+//! for the window's writer thread, and the delay is a `tokio` sleep on a task of its
+//! own: no lock is held across it and nothing waits for it (AGENTS.md rule 2).
+
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
+
+use proto::{Status, WindowInfo};
+use tokio_util::sync::CancellationToken;
+
+use super::RunService;
+use crate::manager::WindowManager;
+use crate::run::contract::clamp_with;
+use crate::run::engine::{EventKind, OpKind, OrchEvent};
+use crate::run::orch::contract::{WAKE_CUT_MARKER, WAKE_MAX_BYTES};
+
+/// Decision 39: the paste, then this long, then the `\r` that submits it.
+pub const SUBMIT_DELAY: Duration = Duration::from_millis(200);
+
+const PASTE_START: &str = "\x1b[200~";
+const PASTE_END: &str = "\x1b[201~";
+
+/// Decision 39's bracketed paste of `text`: line ends as `\r`, paste markers removed
+/// (again until none is left, so no removal can join one), cut to `WAKE_MAX_BYTES`.
+pub fn encode_paste(text: &str) -> Vec<u8> {
+    let mut body = text.replace("\r\n", "\r").replace('\n', "\r");
+    while body.contains(PASTE_START) || body.contains(PASTE_END) {
+        body = body.replace(PASTE_START, "").replace(PASTE_END, "");
+    }
+    let body = clamp_with(&body, WAKE_MAX_BYTES, WAKE_CUT_MARKER);
+    [PASTE_START, &body, PASTE_END].concat().into_bytes()
+}
+
+/// Writes the paste, waits [`SUBMIT_DELAY`] holding nothing, then writes the `\r`.
+pub async fn deliver_wake(
+    manager: &WindowManager,
+    window_id: u32,
+    text: &str,
+) -> anyhow::Result<()> {
+    manager.write_input(window_id, &encode_paste(text))?;
+    tokio::time::sleep(SUBMIT_DELAY).await;
+    manager.write_input(window_id, b"\r")
+}
+
+/// One run's wake-up, waiting for its window.
+#[derive(Debug, Clone)]
+pub(super) struct Pending {
+    window_id: u32,
+    text: String,
+    digest_revision: u64,
+    notes_seq: u64,
+    quiet: Duration,
+}
+
+/// The wake-ups not yet delivered, and the runs whose delivery is under way.
+#[derive(Default)]
+pub(super) struct Wakes {
+    pending: std::sync::Mutex<HashMap<String, Pending>>,
+    delivering: std::sync::Mutex<HashSet<String>>,
+}
+
+/// What the engine says of one run's orchestrator, read under its lock.
+struct Seen {
+    run_id: String,
+    window_id: u32,
+    live: bool,
+    exited: bool,
+    terminal: bool,
+    launching: bool,
+}
+
+/// Whether `window` takes a paste now: `Idle` or `Done`, and no client input for
+/// `quiet`.
+fn ready(window: &WindowInfo, last_input: Option<Instant>, quiet: Duration) -> bool {
+    matches!(window.status, Status::Idle | Status::Done)
+        && last_input.is_none_or(|at| at.elapsed() >= quiet)
+}
+
+impl RunService {
+    /// `Effect::WakeOrchestrator`: kept for its run, replacing one not yet delivered,
+    /// then looked at at once.
+    pub(super) fn queue_wake(
+        self: &Arc<Self>,
+        run_id: String,
+        window_id: u32,
+        text: String,
+        (digest_revision, notes_seq): (u64, u64),
+    ) {
+        let quiet = crate::lock(&self.state)
+            .runs
+            .get(&run_id)
+            .map_or(0, |run| run.limits.orch.wake_quiet_secs);
+        let pending = Pending {
+            window_id,
+            text,
+            digest_revision,
+            notes_seq,
+            quiet: Duration::from_secs(quiet),
+        };
+        crate::lock(&self.wakes.pending).insert(run_id, pending);
+        self.check_orchestrators();
+    }
+
+    /// Decisions 13 and 39, on every tick and every change of the window list: reports
+    /// an orchestrator window that exited (or came back after an exit) to the engine,
+    /// drops the wake-ups of orchestrators that are not live, and delivers each one
+    /// whose window takes it now. The engine's lock and the manager's are each taken
+    /// for one read, never together and never across an await.
+    pub(super) fn check_orchestrators(self: &Arc<Self>) {
+        let seen = self.orchestrators_seen();
+        let windows = self.manager.list();
+        let window = |id: u32| windows.iter().find(|w| w.id == id);
+        for s in &seen {
+            let exited = window(s.window_id).is_none_or(|w| w.status == Status::Exited);
+            let report = if s.live && exited {
+                Some(false)
+            } else {
+                let back = !s.live && s.exited && !exited && !s.terminal && !s.launching;
+                back.then_some(true)
+            };
+            if let Some(live) = report {
+                self.send(EventKind::Orch(OrchEvent::OrchestratorWindow {
+                    run_id: s.run_id.clone(),
+                    window_id: s.window_id,
+                    live,
+                }));
+            }
+        }
+        // Which wake-ups the windows take now, read with no lock of ours held.
+        let waiting: Vec<(String, u32, Duration)> = {
+            let mut pending = crate::lock(&self.wakes.pending);
+            pending.retain(|run_id, p| {
+                seen.iter()
+                    .any(|s| &s.run_id == run_id && s.window_id == p.window_id && s.live)
+            });
+            pending
+                .iter()
+                .map(|(run_id, p)| (run_id.clone(), p.window_id, p.quiet))
+                .collect()
+        };
+        let takes: Vec<(String, u32)> = waiting
+            .into_iter()
+            .filter(|(_, id, quiet)| {
+                window(*id).is_some_and(|w| ready(w, self.manager.last_client_input(*id), *quiet))
+            })
+            .map(|(run_id, id, _)| (run_id, id))
+            .collect();
+        let due: Vec<(String, Pending)> = {
+            let mut pending = crate::lock(&self.wakes.pending);
+            let mut delivering = crate::lock(&self.wakes.delivering);
+            takes
+                .into_iter()
+                .filter_map(|(run_id, id)| {
+                    let same = pending.get(&run_id).is_some_and(|p| p.window_id == id);
+                    if !same || delivering.contains(&run_id) {
+                        return None;
+                    }
+                    let p = pending.remove(&run_id)?;
+                    delivering.insert(run_id.clone());
+                    Some((run_id, p))
+                })
+                .collect()
+        };
+        for (run_id, p) in due {
+            self.deliver(run_id, p);
+        }
+    }
+
+    /// Every run's orchestrator window, as the engine has it.
+    fn orchestrators_seen(&self) -> Vec<Seen> {
+        let state = crate::lock(&self.state);
+        state
+            .runs
+            .values()
+            .filter_map(|run| {
+                let o = run.orch.orchestrator.as_ref()?;
+                Some(Seen {
+                    run_id: run.id.clone(),
+                    window_id: o.window_id?,
+                    live: o.live,
+                    exited: o.exited_at.is_some(),
+                    terminal: run.state.is_terminal(),
+                    launching: run.pending_ops.values().any(|p| {
+                        matches!(
+                            p.kind,
+                            OpKind::CreateOrchestrator { .. } | OpKind::RestartOrchestrator { .. }
+                        )
+                    }),
+                })
+            })
+            .collect()
+    }
+
+    /// The paste, on a task of its own; then `OrchestratorWoken`. A failed write is
+    /// logged and dropped: the notes stay, and the next change wakes it again.
+    fn deliver(self: &Arc<Self>, run_id: String, p: Pending) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            let delivered = deliver_wake(&service.manager, p.window_id, &p.text).await;
+            crate::lock(&service.wakes.delivering).remove(&run_id);
+            match delivered {
+                Ok(()) if !service.stopped.load(Ordering::SeqCst) => {
+                    // A wake-up still waiting that holds no newer note was just pasted.
+                    let mut pending = crate::lock(&service.wakes.pending);
+                    if pending
+                        .get(&run_id)
+                        .is_some_and(|next| next.notes_seq <= p.notes_seq)
+                    {
+                        pending.remove(&run_id);
+                    }
+                    drop(pending);
+                    service.send(EventKind::Orch(OrchEvent::OrchestratorWoken {
+                        run_id,
+                        digest_revision: p.digest_revision,
+                        notes_seq: p.notes_seq,
+                    }));
+                }
+                Ok(()) => {}
+                Err(error) => {
+                    tracing::warn!(run = %run_id, window = p.window_id, %error, "the wake-up was not delivered");
+                }
+            }
+        });
+    }
+
+    /// The window list's changes, for decisions 13 and 39 (the tick looks too).
+    pub(super) fn watch_windows(self: &Arc<Self>, shutdown: CancellationToken) {
+        let mut changes = self.manager.watch();
+        let service = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => return,
+                    changed = changes.changed() => {
+                        if changed.is_err() {
+                            return;
+                        }
+                        service.check_orchestrators();
+                    }
+                }
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+#[path = "wake_tests.rs"]
+mod tests;

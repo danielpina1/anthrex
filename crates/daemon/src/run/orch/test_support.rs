@@ -86,6 +86,7 @@ pub fn orchestrator() -> OrchestratorRecord {
         wakes: 0,
         otlp_token: "secret-token".into(),
         session: 1,
+        start_error: None,
     }
 }
 

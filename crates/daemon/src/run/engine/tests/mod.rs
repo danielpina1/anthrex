@@ -54,6 +54,7 @@ mod merge_override;
 mod orch;
 mod orch_edit;
 mod orch_restore;
+mod orch_window_events;
 mod planners;
 mod planners_confine;
 mod planners_holds;

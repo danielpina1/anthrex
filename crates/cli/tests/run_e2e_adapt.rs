@@ -1,6 +1,7 @@
 //! Milestone 8b, task 18 (I): `anthrex run start --goal` end to end, through a real
 //! daemon with `fake-agent` as both runtimes and as the decider (`ANTHREX_DECIDER_BIN`):
-//! the fast path, the goals it refuses without creating anything, the plan path without
+//! the fast path, the goals it sends to the plan path (a planned run since milestone 9,
+//! decision 26; `run_e2e_orch_ops.rs` has the rest of it), the plan path without
 //! deciders, the missing profile, M8a's start checks and `run promote`. The engine's
 //! deciders, the output filter and metering are in `run_e2e_adapt_engine.rs`.
 
@@ -8,10 +9,10 @@ mod support;
 
 use std::process::Output;
 
-use daemon::run::triage::refused_message;
+use daemon::run::orch::contract::planned_message;
 use proto::{
     DaemonMsg, DeciderSource, ProposalOrigin, ProposalState, RunPath, RunReply, RunState, Scale,
-    TaskKind, TaskState, TriageInfo,
+    TaskState,
 };
 use serde_json::{Value, json};
 use support::run_adapt::{ADAPT_FILES, PROFILE_LINES, PROFILE_WAIT, STORED_PROFILE, triage_single};
@@ -72,17 +73,24 @@ fn refused_without_side_effects(h: &RunHarness, out: &Output, message: &str) {
     assert!(h.windows().is_empty(), "{:?}", h.windows());
 }
 
-/// The planned path's refusal for a triage of `kinds`/`scale` by `source`.
-fn planned(scale: Scale, source: DeciderSource, fallback: Option<&str>, reason: &str) -> String {
-    refused_message(&TriageInfo {
-        kinds: vec![TaskKind::Code],
-        scale,
-        path: RunPath::Plan,
-        reason: reason.to_string(),
-        source,
-        fallback_reason: fallback.map(str::to_string),
-        at: 0,
-    })
+/// Milestone 9 decision 26: `run start --goal` started a planned run on the plan path,
+/// with no task, triage's `scale`, `source` and `reason`, and decision 26's message.
+fn planned(h: &RunHarness, out: &Output, scale: Scale, source: DeciderSource, reason: &str) {
+    let id = started(h, out);
+    let run = h.run(&id).expect("the run is listed");
+    assert_eq!(run.state, RunState::Planning);
+    assert_eq!(run.path, Some(RunPath::Plan));
+    assert!(run.tasks.is_empty(), "{:?}", run.tasks);
+    assert!(run.orchestrator.is_some());
+    let triage = run.triage.clone().expect("the triage is recorded");
+    assert_eq!(
+        (triage.scale, triage.source, triage.reason.as_str()),
+        (scale, source, reason)
+    );
+    assert_eq!(
+        stderr(out).trim_end(),
+        planned_message(&triage, &id, RunPath::Plan)
+    );
 }
 
 fn triage_calls(h: &RunHarness) -> usize {
@@ -142,45 +150,24 @@ fn e2e_green_s_task_on_the_fast_path() {
 }
 
 #[test]
-fn e2e_goal_needing_a_plan_is_refused_without_side_effects() {
-    let h = harness("claude", "", &[], &[]);
-    let reason = "it needs a new module and a migration";
-    h.decider(
-        "triage",
-        1,
-        json!({"answer": {"kinds": ["code"], "scale": "plan", "reason": reason, "task": null}}),
-    );
-    let out = h.start_goal("rework storage", &[]);
-    let message = planned(Scale::Plan, DeciderSource::Decider, None, reason);
-    assert!(
-        message.contains("this goal needs a planned run"),
-        "{message}"
-    );
-    refused_without_side_effects(&h, &out, &message);
-    assert_eq!(triage_calls(&h), 1);
-}
-
-#[test]
-fn e2e_goal_touching_a_hub_file_is_refused_without_side_effects() {
+fn e2e_goal_touching_a_hub_file_takes_the_plan_path() {
     let h = harness("claude", "hub = [\"core/**\"]\n", &[], &[]);
     h.decider("triage", 1, triage_single(&["core/x.txt"]));
     let out = h.start_goal("change the core", &[]);
     let reason = "the fast path does not apply: task t1 touches a hub file";
-    let message = planned(Scale::Single, DeciderSource::Decider, None, reason);
-    refused_without_side_effects(&h, &out, &message);
+    planned(&h, &out, Scale::Single, DeciderSource::Decider, reason);
 }
 
 /// Whole-branch review I1: a fast-path task that owns a protected agent-config file
 /// would get decision 56's grant with no plan the user approves, so the goal takes the
-/// planned path, which M8b refuses, creating nothing.
+/// planned path, whose plan gate the user approves (milestone 9 decision 26).
 #[test]
 fn e2e_goal_owning_a_protected_file_takes_the_plan_path() {
     let h = harness("claude", "", &[], &[]);
     h.decider("triage", 1, triage_single(&["AGENTS.md"]));
     let out = h.start_goal("rewrite the agent instructions", &[]);
     let reason = "the fast path does not apply: task t1 owns a protected file (AGENTS.md)";
-    let message = planned(Scale::Single, DeciderSource::Decider, None, reason);
-    refused_without_side_effects(&h, &out, &message);
+    planned(&h, &out, Scale::Single, DeciderSource::Decider, reason);
 }
 
 #[test]
@@ -189,14 +176,12 @@ fn e2e_goal_without_deciders_takes_the_plan_path() {
     h.decider("triage", 1, triage_single(&["a.txt"]));
     let out = h.start_goal("add a", &[]);
     let reason = "triage fell back (deciders are off); without a decider the path is plan";
-    let message = planned(
-        Scale::Plan,
-        DeciderSource::Fallback,
-        Some("deciders are off"),
-        reason,
+    planned(&h, &out, Scale::Plan, DeciderSource::Fallback, reason);
+    assert!(
+        stderr(&out).contains("deciders are off"),
+        "{}",
+        stderr(&out)
     );
-    assert!(message.contains("deciders are off"), "{message}");
-    refused_without_side_effects(&h, &out, &message);
     assert_eq!(triage_calls(&h), 0, "mode off spawns no decider");
 }
 

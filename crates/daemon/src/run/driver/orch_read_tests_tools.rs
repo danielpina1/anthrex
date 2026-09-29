@@ -65,7 +65,7 @@ async fn get_context_and_task_result_answer_from_the_driver() {
             &["crates/m0/**"],
         )];
         run.scout_reports = vec!["3f9a-api".into()];
-        let run_dir = crate::run::journal::runs_dir(&run.data_dir).join(&run.id);
+        let run_dir = run.data_dir.clone();
         let path = report_path(&run.repo_dir, Some(&run_dir), "3f9a-api");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let report = proto::ScoutReport {

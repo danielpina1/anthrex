@@ -273,8 +273,14 @@ impl RunService {
                     adaptation.scouts.halt(&scout_id, &reason);
                 }
             }
-            // Decision 39: the paste is task M9.13's (`driver/wake.rs`).
-            Effect::WakeOrchestrator { .. } => {}
+            // Decision 39: the paste (`driver/wake.rs`).
+            Effect::WakeOrchestrator {
+                run_id,
+                window_id,
+                text,
+                digest_revision,
+                notes_seq,
+            } => self.queue_wake(run_id, window_id, text, (digest_revision, notes_seq)),
             Effect::Persist { .. } | Effect::Op { .. } | Effect::Publish { .. } => {}
         }
     }

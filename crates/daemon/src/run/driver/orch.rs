@@ -373,6 +373,9 @@ impl RunService {
         run_id: String,
         orchestrator: Option<OrchestratorChoice>,
     ) -> RunReply {
+        if let Err(text) = self.promote_refusal(&run_id, orchestrator.as_ref()).await {
+            return RunReply::refused(request::PROMOTE, text);
+        }
         let event = |reply| EventKind::Promote {
             reply,
             run_id,
@@ -424,7 +427,8 @@ pub(super) fn context_reads(run: &Run) -> (Option<RepoProfile>, Vec<ScoutReport>
         Stored::Found { profile, .. } => Some(profile),
         _ => None,
     };
-    let run_dir = crate::run::journal::runs_dir(&run.data_dir).join(&run.id);
+    // The run's own directory, `<data_dir>/runs/<id>` (task M9.13's fix).
+    let run_dir = &run.data_dir;
     let onboarding = run.onboarding_report.as_deref().filter(|id| valid_id(id));
     let mut refs: Vec<&str> = onboarding.map(|_| ONBOARDING_ALIAS).into_iter().collect();
     for id in &run.scout_reports {
@@ -435,7 +439,7 @@ pub(super) fn context_reads(run: &Run) -> (Option<RepoProfile>, Vec<ScoutReport>
     let reports = refs
         .into_iter()
         .filter_map(|reference| {
-            let path = resolve_ref(reference, &run_dir, repo_dir, onboarding);
+            let path = resolve_ref(reference, run_dir, repo_dir, onboarding);
             super::adapt::read_report(&path)
                 .inspect_err(
                     |error| tracing::warn!(run = %run.id, "scout report {reference}: {error}"),
@@ -446,25 +450,35 @@ pub(super) fn context_reads(run: &Run) -> (Option<RepoProfile>, Vec<ScoutReport>
     (profile, reports)
 }
 
-/// Decision 34, the driver's half: a first turn with the scout extract of its slot's
-/// reports, read on a blocking thread (each resolved only to a report anthrex stored,
-/// through `read_report`'s guards); a report that cannot be read is left out with a
-/// warning (`readable_reports`). With no slot, the turn as the engine built it.
-pub(super) async fn fill_extract(
-    ctx: &super::OpCtx,
-    project: &std::path::Path,
-    slot: Option<ExtractSlot>,
-    first_turn: String,
-) -> String {
-    let Some(slot) = slot else {
-        return first_turn;
-    };
-    let run_dir = crate::run::journal::runs_dir(&ctx.data_dir).join(&ctx.run_id);
-    let repo_dir = crate::profile::repo_dir(&ctx.data_dir, project);
-    let fallback = first_turn.clone();
-    tokio::task::spawn_blocking(move || filled(&slot, &run_dir, &repo_dir, &first_turn))
-        .await
-        .unwrap_or(fallback)
+impl RunService {
+    /// Decision 34, the driver's half: a first turn with the scout extract of its
+    /// slot's reports, read on a blocking thread (each resolved only to a report anthrex
+    /// stored, through `read_report`'s guards); a report that cannot be read is left out
+    /// with a warning (`readable_reports`). With no slot, the turn as the engine built
+    /// it. A run scout's report is in the run's own directory (`OpCtx::data_dir`,
+    /// `<data_dir>/runs/<id>`), the onboarding report in the repository's (`Run::
+    /// repo_dir`, read under the engine lock): task M9.13 found both paths built from the
+    /// run's directory as if it were the daemon's, so no extract was ever filled.
+    pub(super) async fn fill_extract(
+        &self,
+        ctx: &super::OpCtx,
+        slot: Option<ExtractSlot>,
+        first_turn: String,
+    ) -> String {
+        let Some(slot) = slot else {
+            return first_turn;
+        };
+        let run_dir = ctx.data_dir.clone();
+        let repo_dir = crate::lock(&self.state)
+            .runs
+            .get(&ctx.run_id)
+            .map(|run| run.repo_dir.clone())
+            .unwrap_or_default();
+        let fallback = first_turn.clone();
+        tokio::task::spawn_blocking(move || filled(&slot, &run_dir, &repo_dir, &first_turn))
+            .await
+            .unwrap_or(fallback)
+    }
 }
 
 /// [`fill_extract`]'s blocking body.

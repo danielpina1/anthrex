@@ -23,6 +23,17 @@ const CLOSE_WITHIN: Duration = Duration::from_secs(5);
 /// A plan that parses, so the request reaches its preflight's git call.
 const PLAN: &str = "goal = \"x\"\n\n[[task]]\nid = \"t1\"\ntitle = \"T\"\nsize = \"S\"\ntest_mode = \"check\"\ntest_mode_reason = \"r\"\nowns = [\"a.txt\"]\nbrief = \"b\"\nacceptance = [\"a\"]\n";
 
+/// A manager configuration whose agent programs are nonexistent paths: a run these
+/// tests start never reaches a real `claude` or `codex` (M9.13: a planned run starts
+/// its orchestrator).
+fn pinned(socket: std::path::PathBuf) -> ManagerConfig {
+    let mut config = ManagerConfig::new(socket, "/bin/sh".into());
+    config.claude_bin = "/nonexistent/anthrex-test/claude".into();
+    config.codex_bin = "/nonexistent/anthrex-test/codex".into();
+    config.decider_bin = Some("/nonexistent/anthrex-test/decider".into());
+    config
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_disconnected_client_is_not_held_open_by_its_run_request() {
     let dir = tempfile::Builder::new()
@@ -35,8 +46,7 @@ async fn a_disconnected_client_is_not_held_open_by_its_run_request() {
 
     let socket = dir.path().join("d.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    let (manager, _events) =
-        WindowManager::new(ManagerConfig::new(socket.clone(), "/bin/sh".into()));
+    let (manager, _events) = WindowManager::new(pinned(socket.clone()));
     let git = GitWiring::new(config::Git {
         enabled: false,
         ..config::Git::default()
@@ -110,10 +120,7 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
         .prefix("ax-runs8b")
         .tempdir_in("/tmp")
         .unwrap();
-    let (manager, _events) = WindowManager::new(ManagerConfig::new(
-        dir.path().join("d.sock"),
-        "/bin/sh".into(),
-    ));
+    let (manager, _events) = WindowManager::new(pinned(dir.path().join("d.sock")));
     let git = GitWiring::new(config::Git::default());
     let ctx = RunContext::new(
         dir.path().join("data"),
@@ -170,10 +177,7 @@ async fn approval_holds_are_answered_by_the_engine() {
         .prefix("ax-runs9h")
         .tempdir_in("/tmp")
         .unwrap();
-    let (manager, _events) = WindowManager::new(ManagerConfig::new(
-        dir.path().join("d.sock"),
-        "/bin/sh".into(),
-    ));
+    let (manager, _events) = WindowManager::new(pinned(dir.path().join("d.sock")));
     let git = GitWiring::new(config::Git::default());
     let ctx = RunContext::new(
         dir.path().join("data"),
@@ -214,8 +218,7 @@ async fn tagged_rig(
     let socket = dir.join("d.sock");
     let data = dir.join("data");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    let (manager, _events) =
-        WindowManager::new(ManagerConfig::new(socket.clone(), "/bin/sh".into()));
+    let (manager, _events) = WindowManager::new(pinned(socket.clone()));
     let git = GitWiring::new(config::Git {
         enabled: false,
         ..config::Git::default()
@@ -298,7 +301,8 @@ async fn a_tagged_run_request_is_answered_with_its_id() {
 
 /// M9.2 review ruling 1: a tagged request's success reply carries its id too. A goal
 /// start in a repository with a stored profile and the deciders off takes triage's
-/// fallback (the plan path), so it is answered `Triaged` with no run and no agent.
+/// fallback (the plan path); since M9.13 that path builds a planned run, so it is
+/// answered `Triaged` with the run's id (its orchestrator's program does not exist).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_tagged_goal_start_is_triaged_with_its_id() {
     use proto::RunReply;
@@ -338,6 +342,7 @@ async fn a_tagged_goal_start_is_triaged_with_its_id() {
     else {
         panic!("triaged: {reply:?}");
     };
-    assert_eq!((run_id, request_id), (None, Some(11)));
+    assert!(run_id.is_some(), "a planned run");
+    assert_eq!(request_id, Some(11));
     shutdown.cancel();
 }

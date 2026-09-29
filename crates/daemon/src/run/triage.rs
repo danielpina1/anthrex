@@ -350,16 +350,6 @@ pub fn started_message(info: &TriageInfo, run_id: &str, task: &Task) -> String {
     )
 }
 
-/// The planned and large paths' refusal (Interfaces, exact).
-pub fn refused_message(info: &TriageInfo) -> String {
-    format!(
-        "triage: {} ({}): {}\nthis goal needs a planned run, which arrives with the orchestrator (milestone 9). Write a plan file and run: anthrex run start --plan <file>",
-        kinds_scale(&info.kinds, info.scale),
-        source_text(info),
-        info.reason
-    )
-}
-
 #[cfg(test)]
 #[path = "triage_tests.rs"]
 mod tests;

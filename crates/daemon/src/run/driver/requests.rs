@@ -12,6 +12,7 @@ use proto::{BaseMovedInfo, FinishAction, RunReply, RunRequest};
 
 use super::RunService;
 use super::adapt::BuildError;
+use super::build::Shape;
 use crate::run::engine::EventKind;
 use crate::run::git::{self, Git};
 use crate::run::model::Run;
@@ -99,13 +100,13 @@ impl RunService {
             RunRequest::StartGoal {
                 goal,
                 dir,
-                yes: _,
+                yes,
                 trust_project,
                 unconfined_checks,
-                orchestrator: _,
+                orchestrator,
             } => {
-                self.start_goal(goal, dir, trust_project, unconfined_checks)
-                    .await
+                let flags = (trust_project, unconfined_checks);
+                self.start_goal(goal, dir, flags, yes, orchestrator).await
             }
             RunRequest::Promote {
                 run_id,
@@ -173,9 +174,16 @@ impl RunService {
         unconfined_checks: bool,
     ) -> Result<Run, String> {
         let plan = parse_plan(&plan_toml)?;
-        self.build_plan(plan, dir, yes, trust_project, unconfined_checks, false)
-            .await
-            .map_err(BuildError::text)
+        self.build_plan(
+            plan,
+            dir,
+            yes,
+            trust_project,
+            unconfined_checks,
+            Shape::PlanFile,
+        )
+        .await
+        .map_err(BuildError::text)
     }
 
     /// `run edit`, with its [`Self::runtime_refusals`].

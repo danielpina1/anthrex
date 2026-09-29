@@ -4,6 +4,7 @@
 //! `runtime_refusals`. Every git read runs on `spawn_blocking`; the engine lock is taken
 //! only to read a run's fields.
 
+use std::collections::BTreeMap;
 use std::collections::hash_map::RandomState;
 use std::ffi::OsString;
 use std::hash::{BuildHasher, Hasher};
@@ -20,6 +21,8 @@ use crate::run::git::{self, Git, os};
 use crate::run::globs::ProtectedMatcher;
 use crate::run::journal::runs_dir;
 use crate::run::model::{ClaudeAuth, Run};
+use crate::run::orch::launch::resolve_orchestrator;
+use crate::run::orch::make_planned;
 use crate::run::plan::{BuildContext, random_suffix, resolve_profile, run_id_taken, slug};
 use crate::run::reach::{edits_may_widen, reachable_runtimes};
 use crate::worktree::repo_worktrees_dir;
@@ -43,6 +46,15 @@ fn settings_refusal(who: &str, paths: &[String]) -> String {
 fn edit_settings_refusal(who: &str, paths: &[String]) -> String {
     format!(
         "this edit would start headless {who} sessions, and this repository has project settings they would run without asking: {}; a run trusts only what its start checked, so review them and start a new run with --trust-project",
+        paths.join(", ")
+    )
+}
+
+/// Decisions 9 and 29's refusal of `run promote`, for the project settings `who`
+/// sessions of the promoted run would load unasked.
+fn promote_settings_refusal(who: &str, paths: &[String]) -> String {
+    format!(
+        "promoting would start {who} sessions, and this repository has project settings they would run without asking: {}; a run trusts only what its start checked, so review them and start a new run with --trust-project",
         paths.join(", ")
     )
 }
@@ -75,10 +87,77 @@ fn run_refs(git: &OsString, root: &Path, timeout: Duration) -> Result<Vec<String
     Ok(listing.lines().map(str::to_string).collect())
 }
 
+/// What [`RunService::build_plan`] builds: a plan file's run, the fast path's one-task
+/// run, or a goal's planned run.
+pub(super) enum Shape {
+    PlanFile,
+    Fast,
+    Planned(Box<Planned>),
+}
+
+/// Decision 26: what makes a built run a planned one.
+pub(super) struct Planned {
+    pub triage: proto::TriageInfo,
+    pub usage: Option<proto::TokenUsage>,
+    pub yes: bool,
+    pub choice: Option<proto::OrchestratorChoice>,
+}
+
+/// Decision 17's `installed`: each runtime's configured binary resolves to an executable
+/// file, directly or on `PATH` (blocking: it stats files).
+fn installed(claude: &str, codex: &str) -> BTreeMap<String, bool> {
+    [(Runtime::Claude, claude), (Runtime::Codex, codex)]
+        .into_iter()
+        .map(|(runtime, bin)| (runtime.label().to_string(), executable(bin)))
+        .collect()
+}
+
+fn executable(bin: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let is = |path: &Path| {
+        path.metadata()
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
+    if bin.contains('/') {
+        return is(Path::new(bin));
+    }
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| is(&dir.join(bin))))
+}
+
 impl RunService {
+    /// Decision 26 on a built run: the orchestrator's route (decision 6, from the run's
+    /// frozen `[orchestrator.agent]`, default runtime and roster), `installed` and the
+    /// OTLP token (decision 14a) read on `spawn_blocking`, then `make_planned`.
+    async fn make_planned(&self, run: &mut Run, planned: Planned) -> Result<(), String> {
+        let resolved = resolve_orchestrator(
+            planned.choice.as_ref(),
+            &run.limits.orch.agent.config(),
+            run.limits.default_runtime,
+            &run.roster,
+        )?;
+        let config = self.manager.config();
+        let (claude, codex) = (config.claude_bin.clone(), config.codex_bin.clone());
+        let (found, token) = blocking(move || {
+            let token = super::orch_ops::fresh_token()
+                .inspect_err(|error| tracing::warn!(%error, "no OTLP token"))
+                .unwrap_or_default();
+            Ok((installed(&claude, &codex), token))
+        })
+        .await?;
+        make_planned(run, planned.triage, resolved.route, planned.yes, found);
+        run.triage_usage = planned.usage.unwrap_or_default();
+        if let Some(o) = run.orch.orchestrator.as_mut() {
+            o.otlp_token = token;
+        }
+        Ok(())
+    }
+
     /// Everything `run start` checks and builds for a parsed plan (M8b decision 22 shares
-    /// it with the fast path, `fast`: its barrier before the runtime checks, review m1);
-    /// decision 6's profile choice right after preflight.
+    /// it with the fast path, [`Shape::Fast`]: its barrier before the runtime checks,
+    /// review m1; milestone 9 decision 26 with the planned path, [`Shape::Planned`]: the
+    /// orchestrator's record before the runtime checks, so they cover its runtime and
+    /// its sub-planners'); decision 6's profile choice right after preflight.
     pub(super) async fn build_plan(
         &self,
         mut plan: Plan,
@@ -86,8 +165,9 @@ impl RunService {
         yes: bool,
         trust_project: bool,
         unconfined_checks: bool,
-        fast: bool,
+        shape: Shape,
     ) -> Result<Run, BuildError> {
+        let fast = matches!(shape, Shape::Fast);
         let mut config = self.ctx.orchestrator.clone();
         // Final fix batch F1c round 2: never run worker-written code unconfined unless
         // the user said so, on the command line or in their own config.
@@ -134,6 +214,9 @@ impl RunService {
         let (g, root, base) = (git.clone(), run.root.clone(), run.base_sha.clone());
         run.codex_config_base =
             blocking(move || git::codex_config_tree(&g, &root, &base, timeout)).await?;
+        if let Shape::Planned(planned) = shape {
+            self.make_planned(&mut run, *planned).await?;
+        }
 
         let runtimes = reachable_runtimes(&run);
         let checks = self.check_runtimes(&run, &runtimes, timeout).await?;
@@ -188,6 +271,58 @@ impl RunService {
             }
         }
         Ok(refusals)
+    }
+
+    /// Milestone 9 decisions 9 and 29: `run promote` repeats the project-settings check
+    /// (and decision 50's) against the run's base commit for the runtimes its new
+    /// orchestrator and sub-planners reach and the run does not, the files the run's
+    /// start trusted passing (its `--trust-project`). A request the engine will refuse
+    /// anyway (not a fast-path run, an ended one, a route that does not resolve) is left
+    /// to the engine.
+    pub(super) async fn promote_refusal(
+        &self,
+        run_id: &str,
+        choice: Option<&proto::OrchestratorChoice>,
+    ) -> Result<(), String> {
+        let run = crate::lock(&self.state).runs.get(run_id).cloned();
+        let Some(run) = run.filter(|r| {
+            r.path == Some(proto::RunPath::Fast)
+                && r.orch.orchestrator.is_none()
+                && !r.state.is_terminal()
+        }) else {
+            return Ok(());
+        };
+        let Ok(resolved) = resolve_orchestrator(
+            choice,
+            &run.limits.orch.agent.config(),
+            run.limits.default_runtime,
+            &run.roster,
+        ) else {
+            return Ok(());
+        };
+        let mut promoted = run.clone();
+        promoted.orch.orchestrator = Some(crate::run::orch::OrchestratorRecord::new(
+            resolved.route,
+            unix_now(),
+        ));
+        let before = reachable_runtimes(&run);
+        let unreached: Vec<Runtime> = reachable_runtimes(&promoted)
+            .into_iter()
+            .filter(|r| !before.contains(r))
+            .collect();
+        let timeout = Duration::from_secs(run.limits.git_timeout_secs);
+        let checks = self.check_runtimes(&run, &unreached, timeout).await?;
+        let mut refusals: Vec<String> = checks.api_key.into_iter().map(|(_, t)| t).collect();
+        for (_, who, paths) in checks.settings {
+            if !paths.iter().all(|p| run.trusted_project.contains(p)) {
+                refusals.push(promote_settings_refusal(who, &paths));
+            }
+        }
+        if refusals.is_empty() {
+            Ok(())
+        } else {
+            Err(refusals.join("\n"))
+        }
     }
 
     /// Decisions 50 and 53 for `runtimes`: decision 50's refusal when Claude is among

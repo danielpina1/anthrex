@@ -28,9 +28,11 @@ mod merge;
 mod observe;
 mod ops;
 mod orch;
+mod orch_ops;
 mod requests;
 mod restore;
 mod usage;
+mod wake;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -111,6 +113,8 @@ pub struct RunService {
     adaptation: std::sync::OnceLock<Adaptation>,
     /// The OTLP receiver's live runs and pending totals (`driver/usage.rs`).
     metered: usage::Metered,
+    /// Milestone 9 decision 39's wake-ups not yet pasted (`driver/wake.rs`).
+    wakes: wake::Wakes,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -189,6 +193,7 @@ impl RunService {
             held_accepts: Mutex::new(Vec::new()),
             adaptation: std::sync::OnceLock::new(),
             metered: Default::default(),
+            wakes: Default::default(),
         })
     }
 
@@ -198,6 +203,7 @@ impl RunService {
         if let Some(signals) = signals {
             tokio::spawn(self.clone().forward(signals, shutdown.clone()));
         }
+        self.watch_windows(shutdown.clone());
         let ticker = self.clone();
         let tick_token = shutdown.clone();
         tokio::spawn(async move {
@@ -425,6 +431,7 @@ impl RunService {
     /// and its intent lines: the tick runs between steps).
     async fn on_tick(self: &Arc<Self>, now: u64) {
         self.retire_deadlines();
+        self.check_orchestrators();
         let publish = std::mem::take(&mut crate::lock(&self.book).publish_due);
         if publish {
             // Bound first, so the engine guard drops before `publish` takes the scout
@@ -512,6 +519,7 @@ impl RunService {
     }
 
     fn publish(&self, snap: RunsSnapshot) {
+        self.clear_ended_orchestrators(&snap);
         let _ = self.pushes.send(Arc::new(self.with_scouts(snap)));
     }
 

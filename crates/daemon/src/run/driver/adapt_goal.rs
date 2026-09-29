@@ -1,15 +1,20 @@
 //! M8b.14: `anthrex run start --goal` (decision 22). Everything happens before any engine
 //! event, with no lock held across an await: M8a's early refusals, the stored profile,
-//! the triage call, [`triage::route`], and then either M8a's whole start path for the
-//! fast path's one-task plan ([`RunService::build_plan`]) or a refusal that creates
-//! nothing. Triage takes no reader slot: no run exists yet.
+//! the triage call, [`triage::route`], and then M8a's whole start path
+//! ([`RunService::build_plan`]) for the fast path's one-task plan or, from milestone 9
+//! (decision 26, replacing M8b's refusal), for a planned run with no task yet, whose
+//! orchestrator plans it. Triage takes no reader slot: no run exists yet.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use proto::run_wire::request;
-use proto::{DeciderMode, ProposalOrigin, ProposalState, RepoProfile, RunReply};
+use proto::{
+    DeciderMode, OrchestratorChoice, Plan, ProfileSpec, ProposalOrigin, ProposalState, RepoProfile,
+    RunPath, RunReply, TriageInfo,
+};
 
+use super::super::build::{Planned, Shape};
 use super::super::{RunService, unix_now};
 use super::{Adaptation, read_evidence, unparseable};
 use crate::decider::call::decide;
@@ -20,6 +25,7 @@ use crate::run::confine;
 use crate::run::engine::EventKind;
 use crate::run::git::{self, Git, os};
 use crate::run::model::Run;
+use crate::run::orch::contract::planned_message;
 use crate::run::plan::{PlanError, Preflight};
 use crate::run::triage::{self, TriageRoute};
 use crate::scout::report::ONBOARDING_ALIAS;
@@ -95,8 +101,9 @@ impl RunService {
         &self,
         goal: String,
         dir: PathBuf,
-        trust_project: bool,
-        unconfined_checks: bool,
+        (trust_project, unconfined_checks): (bool, bool),
+        yes: bool,
+        orchestrator: Option<OrchestratorChoice>,
     ) -> RunReply {
         // Review m2: a blank goal never spends a triage call.
         if let Some(refusal) = triage::blank_goal(&goal) {
@@ -142,24 +149,47 @@ impl RunService {
         // 4. The route.
         let route = triage::route(&decision, config.fast_path);
         let info = triage::info(&decision, &route, unix_now());
+        // 6. Milestone 9 decision 26: the planned and large paths build a planned run.
+        let flags = (trust_project, unconfined_checks);
+        let planned = |info: TriageInfo| Planned {
+            triage: info,
+            usage: decision.usage,
+            yes,
+            choice: orchestrator.clone(),
+        };
+        let spec = profile.spec();
         let TriageRoute::Fast(task) = route else {
-            // 6. Nothing is created.
-            return planned(info);
+            return self
+                .start_planned(&goal, &spec, dir.clone(), flags, planned(info))
+                .await;
         };
         // 5. The fast path: M8a's whole start path for a one-task plan.
-        let plan = triage::fast_plan(&goal, *task, profile.spec());
+        let plan = triage::fast_plan(&goal, *task, spec.clone());
         let built = match self
-            .build_plan(plan, dir, true, trust_project, unconfined_checks, true)
+            .build_plan(
+                plan,
+                dir.clone(),
+                true,
+                trust_project,
+                unconfined_checks,
+                Shape::Fast,
+            )
             .await
         {
             Ok(run) => Ok(run),
             Err(BuildError::Plan(errors)) => Err(errors),
-            Err(BuildError::NotFast(reason)) => return planned(triage::not_fast(info, reason)),
+            Err(BuildError::NotFast(reason)) => {
+                let p = planned(triage::not_fast(info, reason));
+                return self.start_planned(&goal, &spec, dir, flags, p).await;
+            }
             Err(BuildError::Refused(message)) => return refused(message),
         };
         let mut run = match triage::check_fast(built) {
             Ok(run) => run,
-            Err(reason) => return planned(triage::not_fast(info, reason)),
+            Err(reason) => {
+                let p = planned(triage::not_fast(info, reason));
+                return self.start_planned(&goal, &spec, dir, flags, p).await;
+            }
         };
         triage::mark_fast(&mut run, info.clone(), decision.usage);
         let message = triage::started_message(&info, &run.id, &run.tasks[0]);
@@ -249,14 +279,54 @@ fn triage_input(
     }
 }
 
-/// Decision 22 step 6: the planned or large path, refused until milestone 9.
-fn planned(info: proto::TriageInfo) -> RunReply {
-    let message = triage::refused_message(&info);
-    RunReply::Triaged {
-        triage: info,
-        run_id: None,
-        message,
-        request_id: None,
+impl RunService {
+    /// Milestone 9 decision 26: a planned run for `goal`, built with no task through
+    /// M8a's whole start path (every start check, decision 9's project-settings check
+    /// covering the orchestrator's and its sub-planners' runtimes), then started: the
+    /// engine makes its run branch and launches its orchestrator. `BuildContext.yes` is
+    /// false; the run's `yes` applies when the orchestrator submits (decision 27).
+    async fn start_planned(
+        &self,
+        goal: &str,
+        profile: &ProfileSpec,
+        dir: PathBuf,
+        (trust_project, unconfined_checks): (bool, bool),
+        planned: Planned,
+    ) -> RunReply {
+        let info = planned.triage.clone();
+        let plan = Plan {
+            goal: goal.to_string(),
+            max_writers: None,
+            max_readers: None,
+            max_bounces: None,
+            profile: profile.clone(),
+            tasks: Vec::new(),
+        };
+        let shape = Shape::Planned(Box::new(planned));
+        let run = match self
+            .build_plan(plan, dir, false, trust_project, unconfined_checks, shape)
+            .await
+        {
+            Ok(run) => run,
+            Err(error) => return refused(error.text()),
+        };
+        let (run_id, path) = (run.id.clone(), run.path.unwrap_or(RunPath::Plan));
+        let message = planned_message(&info, &run_id, path);
+        match self
+            .ask(|reply| EventKind::Start {
+                reply,
+                run: Box::new(run),
+            })
+            .await
+        {
+            Ok(_) => RunReply::Triaged {
+                triage: info,
+                run_id: Some(run_id),
+                message,
+                request_id: None,
+            },
+            Err(message) => refused(message),
+        }
     }
 }
 
