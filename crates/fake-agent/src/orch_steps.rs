@@ -450,8 +450,9 @@ impl Pty {
 impl Host for Pty {
     fn call(&mut self, tool: &str, args: &Value) -> Result<Reply> {
         let args = mcp::fill(args, &self.vars.captures);
+        let started = Instant::now();
         let reply = mcp::call(&self.server, tool, &args)?;
-        mcp::log(&self.script.name, tool, &args, &reply)?;
+        mcp::log(&self.script.name, tool, &args, &reply, started.elapsed())?;
         self.vars.result = reply.text.clone();
         self.vars.last_error = !reply.ok;
         self.script.save_vars(&self.vars)?;

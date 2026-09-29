@@ -142,8 +142,9 @@ impl Runner {
     fn call_tool(&mut self, server: &McpServer, tool: &str, args: &Value) -> Result<Reply> {
         let args = mcp::fill(args, &self.vars.captures);
         self.events.mcp_started(tool, &args)?;
+        let started = std::time::Instant::now();
         let reply = mcp::call(server, tool, &args)?;
-        mcp::log(&self.script.name, tool, &args, &reply)?;
+        mcp::log(&self.script.name, tool, &args, &reply, started.elapsed())?;
         self.events.mcp_finished(tool, &args, &reply)?;
         self.vars.result = reply.text.clone();
         self.vars.last_error = !reply.ok;

@@ -149,6 +149,22 @@ fn e2e_green_s_task_on_the_fast_path() {
     assert_eq!(h.git(&["show", "main:a.txt"]), "a");
 }
 
+/// Milestone 9 decision 26 (M9.16, rewritten from M8b's refusal): a goal the decider
+/// scales `plan` starts a planned run, with its orchestrator.
+#[test]
+fn e2e_goal_needing_a_plan_starts_a_planning_run() {
+    let h = harness("claude", "", &[], &[]);
+    let reason = "it needs a new module and a migration";
+    h.decider(
+        "triage",
+        1,
+        json!({"answer": {"kinds": ["code"], "scale": "plan", "reason": reason, "task": null}}),
+    );
+    let out = h.start_goal("rework storage", &[]);
+    planned(&h, &out, Scale::Plan, DeciderSource::Decider, reason);
+    assert_eq!(triage_calls(&h), 1);
+}
+
 #[test]
 fn e2e_goal_touching_a_hub_file_takes_the_plan_path() {
     let h = harness("claude", "hub = [\"core/**\"]\n", &[], &[]);
@@ -253,8 +269,9 @@ fn wait_for_file(path: &std::path::Path) -> Value {
 }
 
 /// Milestone 9 decision 29 (M9.7): `run promote` performs the promotion. The run gets
-/// an orchestrator record and the planned path, and the fast-path task runs on through
-/// its gates. The orchestrator's window itself is the driver's (task M9.13).
+/// its orchestrator, in a window of its own, and the planned path, and the fast-path
+/// task runs on through its gates. The promotion hold on the orchestrator's additions
+/// is `run_e2e_orch.rs`'s `e2e_promote_starts_an_orchestrator_and_holds_its_tasks`.
 #[test]
 fn e2e_promote_performs_and_the_task_continues() {
     let h = harness("claude", "", &[], &[]);
@@ -301,9 +318,19 @@ fn e2e_promote_performs_and_the_task_continues() {
     let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Merged, RUN_WAIT);
     assert_eq!(run.path, Some(RunPath::Plan));
     assert!(run.promote_requested_at.is_some());
-    // Decision 38 holds a run with an orchestrator until its plan is submitted, and
-    // the orchestrator's launch fails in the driver's placeholder until M9.13. The
-    // user can always end the run (M9.9 review fixes, C1): `run cancel` completes it.
+    // The orchestrator (unscripted here) is live in its window.
+    h.wait_run(
+        &id,
+        |r| {
+            r.orchestrator
+                .as_ref()
+                .is_some_and(|o| o.live && o.window_id.is_some())
+        },
+        RUN_WAIT,
+    );
+    // Decision 38 holds a run with an orchestrator until its plan is submitted; this
+    // one submits nothing. The user can always end the run (M9.9 review fixes, C1):
+    // `run cancel` completes it.
     let out = h.anthrex(&["run", "cancel", &id]);
     assert!(out.status.success(), "{}", stderr(&out));
     let run = h.wait_run(&id, complete, RUN_WAIT);

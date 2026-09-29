@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod decider;
+pub mod orch_script;
 pub mod profile_rig;
 pub mod run_adapt;
 pub mod run_daemon;

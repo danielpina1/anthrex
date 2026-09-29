@@ -345,9 +345,15 @@ fn mcp_log_records_each_call() {
     let mut agent = Agent::codex(&args, &orch.repo, &[("FAKE_AGENT_MCP_LOG", &log)]);
     assert_eq!(agent.wait(MCP_RUN).code(), Some(0), "{}", agent.stderr());
 
+    // M9.16: each line says how long its call took; the rest is compared exactly.
     let logged: Vec<Value> = lines(&log)
         .iter()
-        .map(|l| serde_json::from_str(l).unwrap())
+        .map(|l| {
+            let mut line: Value = serde_json::from_str(l).unwrap();
+            let ms = line.as_object_mut().unwrap().remove("ms");
+            assert!(ms.as_ref().is_some_and(Value::is_u64), "{l}");
+            line
+        })
         .collect();
     assert_eq!(
         logged,

@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use proto::{ClientMsg, PlanEdit, RunInfo, RunReply, RunRequest, WindowInfo};
+use proto::{ClientMsg, PlanEdit, RunInfo, RunReply, RunRequest, Status, WindowInfo};
 use serde_json::{Value, json};
 
 use super::run_adapt::{ADAPT_FILES, STORED_PROFILE};
@@ -108,6 +108,34 @@ impl RunHarness {
         });
     }
 
+    /// One run request sent tagged with `id` (`ClientMsg::RunTagged`, as the TUI's goal
+    /// form sends it, decision 2) on a fresh connection, and the reply that names `id`,
+    /// waiting at most `wait`.
+    pub fn tagged(&self, id: u64, request: RunRequest, wait: Duration) -> RunReply {
+        let socket = self.socket();
+        runtime().block_on(async move {
+            let mut stream = connect(&socket).await;
+            proto::write_frame(&mut stream, &ClientMsg::RunTagged { id, request })
+                .await
+                .unwrap();
+            tokio::time::timeout(wait, async {
+                loop {
+                    match proto::read_frame::<_, proto::DaemonMsg>(&mut stream).await {
+                        Ok(Some(proto::DaemonMsg::Run(reply)))
+                            if reply.request_id() == Some(id) =>
+                        {
+                            return reply;
+                        }
+                        Ok(Some(_)) => {}
+                        other => panic!("connection ended: {other:?}"),
+                    }
+                }
+            })
+            .await
+            .expect("the tagged request timed out")
+        })
+    }
+
     /// Every message `fake-agent`'s `read_message` took from the terminal of the
     /// session claimed as `name` (`<io>/<name>.stdin`, one JSON line each).
     pub fn read_messages(&self, name: &str) -> Vec<Value> {
@@ -158,6 +186,94 @@ impl RunHarness {
     pub fn run_json(&self, run: &str) -> Value {
         let path = self.data().join("runs").join(run).join("run.json");
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    /// Every MCP call a `fake-agent` made (`FAKE_AGENT_MCP_LOG`,
+    /// `<tmp>/agent-io/mcp.jsonl`): `{script, tool, args, ok, result, ms}`.
+    pub fn mcp_log(&self) -> Vec<Value> {
+        self.io_lines("mcp", "jsonl")
+            .iter()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect()
+    }
+
+    /// Waits, at most `wait`, until the MCP log satisfies `pred`; the log.
+    pub fn wait_log(
+        &self,
+        what: &str,
+        pred: impl Fn(&[Value]) -> bool,
+        wait: Duration,
+    ) -> Vec<Value> {
+        let deadline = Instant::now() + wait;
+        loop {
+            let log = self.mcp_log();
+            if pred(&log) {
+                return log;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{what}: not within {wait:?}; the MCP log:\n{}\n{}",
+                log.iter()
+                    .map(Value::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                self.log_tail()
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// `anthrex run status <run> --json`: the run's `RunInfo` as JSON.
+    pub fn status_json(&self, run: &str) -> Value {
+        let out = self.anthrex(&["run", "status", run, "--json"]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let snapshot: Value = serde_json::from_slice(&out.stdout).unwrap();
+        snapshot["runs"][0].clone()
+    }
+
+    /// Polls `run status --json` until `pointer` into the run equals `value`, at most
+    /// `wait`; the run.
+    pub fn wait_digest(&self, run: &str, pointer: &str, value: Value, wait: Duration) -> Value {
+        let deadline = Instant::now() + wait;
+        loop {
+            let info = self.status_json(run);
+            if info.pointer(pointer) == Some(&value) {
+                return info;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{pointer} of run {run} is not {value} within {wait:?}: {:?}\n{}",
+                info.pointer(pointer),
+                self.log_tail()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
+    /// The repository's `history.jsonl` lines of `type` `kind` (decision 43).
+    pub fn history_lines(&self, kind: &str) -> Vec<Value> {
+        let path = self.repo_dir().join(daemon::run::engine::HISTORY_FILE);
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|l| l["type"] == kind)
+            .collect()
+    }
+
+    /// Waits, at most [`ORCH_WAIT`], until the orchestrator's turn has ended (its
+    /// window is `Idle` or `Done`): it waits in `read_message`.
+    pub fn wait_orchestrator_idle(&self, window: u32) {
+        self.wait_window(
+            window,
+            "idle",
+            |w| matches!(w.status, Status::Idle | Status::Done),
+            ORCH_WAIT,
+        );
     }
 }
 

@@ -52,14 +52,16 @@ pub fn fill(args: &Value, captures: &BTreeMap<String, String>) -> Value {
 }
 
 /// `FAKE_AGENT_MCP_LOG` (M9.12): when set, one JSON line per call,
-/// `{"script","tool","args","ok","result"}`, `result` being the reply's text. The line
-/// is one `write` in append mode, so sessions sharing the file do not interleave.
-pub fn log(script: &str, tool: &str, args: &Value, reply: &Reply) -> Result<()> {
+/// `{"script","tool","args","ok","result","ms"}`, `result` being the reply's text and
+/// `ms` how long the call took (M9.16: a `run_status` long-poll's bound is asserted
+/// from it). The line is one `write` in append mode, so sessions sharing the file do
+/// not interleave.
+pub fn log(script: &str, tool: &str, args: &Value, reply: &Reply, took: Duration) -> Result<()> {
     let Some(path) = std::env::var_os("FAKE_AGENT_MCP_LOG") else {
         return Ok(());
     };
     let line = json!({"script": script, "tool": tool, "args": args, "ok": reply.ok,
-        "result": reply.text});
+        "result": reply.text, "ms": u64::try_from(took.as_millis()).unwrap_or(u64::MAX)});
     let mut bytes = serde_json::to_vec(&line).context("encode the MCP log line")?;
     bytes.push(b'\n');
     std::fs::OpenOptions::new()
