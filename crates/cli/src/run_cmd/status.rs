@@ -2,7 +2,10 @@
 //! listing (decision 20). Pure: every function takes the snapshot and returns text.
 
 use daemon::run::triage::{kinds_scale, source_label};
-use proto::{BaseMovedInfo, GateCounts, Route, RunInfo, RunState, Size, TaskInfo, TestMode};
+use proto::{
+    BaseMovedInfo, BlockReason, GateCounts, HoldState, PlannerState, Route, RunInfo, RunState,
+    Size, TaskInfo, TestMode,
+};
 
 /// Decision 20: the commits a moved-base prompt lists, at most.
 pub const LISTED_COMMITS: usize = 50;
@@ -23,7 +26,8 @@ pub fn render(runs: &[RunInfo], utc_offset: i64) -> String {
 }
 
 /// One run's block: the header, a halted run's reason, the goal, the report path, the
-/// task table, when promotion was requested (local time) and the attention lines.
+/// orchestrator's lines (milestone 9), the task table, when promotion was requested
+/// (local time) and the attention lines.
 pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
     let merged = run
         .tasks
@@ -82,11 +86,12 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
             "  checks: unconfined (this platform cannot confine checks, proofs and setup)\n",
         );
     }
+    out.push_str(&orchestrator_lines(run));
     out.push_str(&row(
         "ID", "SIZE", "MODE", "STATE", "RUNG", "BOUNCES", "ROUTE", "WINDOWS",
     ));
     for task in &run.tasks {
-        out.push_str(&task_row(task));
+        out.push_str(&task_row(run, task));
     }
     // Review I1 (M8c.1): the snapshot's promotion line carries no time; this is it, local.
     if let Some(at) = run.promote_requested_at {
@@ -139,7 +144,106 @@ fn cell(text: &str, width: usize) -> String {
     }
 }
 
-fn task_row(task: &TaskInfo) -> String {
+/// Milestone 9's lines: the orchestrator's window, route and liveness; each planner
+/// with the tasks of its epic; each hold with its tasks; whether the summary is written.
+fn orchestrator_lines(run: &RunInfo) -> String {
+    let mut out = String::new();
+    if let Some(o) = &run.orchestrator {
+        let window = o.window_id.map_or("-".to_string(), |w| w.to_string());
+        let model = if o.route.model.is_empty() {
+            "(default)"
+        } else {
+            o.route.model.as_str()
+        };
+        out.push_str(&format!(
+            "  orchestrator: window {window}, {} {model}, {}\n",
+            o.route.runtime.label(),
+            if o.live { "live" } else { "exited" }
+        ));
+    }
+    if !run.planners.is_empty() {
+        let planners: Vec<String> = run
+            .planners
+            .iter()
+            .map(|p| {
+                let n = run
+                    .tasks
+                    .iter()
+                    .filter(|t| t.epic.as_deref() == Some(p.epic.as_str()))
+                    .count();
+                let tasks = if n == 0 {
+                    String::new()
+                } else {
+                    format!(" ({})", tasks_count(n))
+                };
+                format!("{} {}{tasks}", p.epic, planner_label(p.state))
+            })
+            .collect();
+        out.push_str(&format!("  planners: {}\n", planners.join(", ")));
+    }
+    if !run.holds.is_empty() {
+        let holds: Vec<String> = run
+            .holds
+            .iter()
+            .map(|h| {
+                let n = tasks_count(h.tasks.len());
+                format!("{} {} ({n})", h.id, hold_label(h.state))
+            })
+            .collect();
+        out.push_str(&format!("  holds: {}\n", holds.join(", ")));
+    }
+    if run
+        .orchestrator
+        .as_ref()
+        .is_some_and(|o| o.summary.is_some())
+    {
+        out.push_str("  summary: written\n");
+    }
+    out
+}
+
+fn tasks_count(n: usize) -> String {
+    format!("{n} task{}", if n == 1 { "" } else { "s" })
+}
+
+fn planner_label(state: PlannerState) -> &'static str {
+    match state {
+        PlannerState::Planning => "planning",
+        PlannerState::Finished => "finished",
+        PlannerState::Failed => "failed",
+    }
+}
+
+fn hold_label(state: HoldState) -> &'static str {
+    match state {
+        HoldState::Drafting => "drafting",
+        HoldState::Awaiting => "awaiting",
+        HoldState::Approved => "approved",
+        HoldState::Rejected => "rejected",
+    }
+}
+
+/// The task table's `STATE`: `paused(message)` for a task stopped by `stop_and_wait`
+/// (decision 42c), and ` (held)` after the state of a task whose hold is not approved
+/// (decision 28).
+fn state_text(run: &RunInfo, task: &TaskInfo) -> String {
+    let state = match &task.block {
+        Some(block) if block.reason == BlockReason::MessagePause => "paused(message)",
+        _ => task.state.label(),
+    };
+    let held = task.hold.as_ref().is_some_and(|id| {
+        run.holds
+            .iter()
+            .any(|h| &h.id == id && h.state != HoldState::Approved)
+    });
+    if held {
+        format!("{state} (held)")
+    } else {
+        state.to_string()
+    }
+}
+
+fn task_row(run: &RunInfo, task: &TaskInfo) -> String {
     let size = format!(
         "{}{}",
         size_label(task.size),
@@ -149,7 +253,7 @@ fn task_row(task: &TaskInfo) -> String {
         &task.id,
         &size,
         mode_label(task.test_mode),
-        task.state.label(),
+        &state_text(run, task),
         &task.rung.to_string(),
         &bounces_text(&task.bounces),
         &route_text(&task.route),

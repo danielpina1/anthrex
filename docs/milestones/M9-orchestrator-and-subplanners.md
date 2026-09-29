@@ -3475,3 +3475,38 @@ One commit on top of `b7d08b4`. It closes the task as "no git change", following
    - Interfaces "Contracts" and decision 41 still describe 12 lines. This note and the M9.5 note supersede them.
 5. **Commit subject changed.** The brief's subject is `fix(daemon): keep a sandboxed worker's git from packing refs it cannot write`, but no git behaviour changes. The commit is `docs(daemon): tell a sandboxed worker the packed-refs.lock warning is expected`.
 6. **The followups entry** ("From the Claude tool-search fix", "Not fixed: `packed-refs.lock`…") is marked resolved.
+
+### Task M9.14 (CLI)
+
+One commit, `feat(cli): start planned goals, approve holds, message and refresh tasks, and show the orchestrator in run status`. No move commit was needed: `main.rs` is untouched (600), the new command bodies are in `run_cmd/orch.rs` (its unit tests in `run_cmd/orch_tests.rs`), `run_cmd.rs` takes the variants and grows to 552, and `run edit`'s file reading moved into `orch.rs`. No protocol change: every command sends an existing `RunRequest`.
+
+**Red before green.** Both new test binaries were built and run against the unchanged CLI. Every test failed except the two pinning ones (`start_goal_on_the_plan_path_prints_the_planned_message`, `promote_twice_answers_without_a_time`): the new subcommands and flags exited 2 (clap), `approve_without_hold_names_waiting_holds` got the daemon's `run <id> is running`, and the research run's accept asked M8a's merge question with no report line. `status_shows_orchestrator_planners_holds_summary_and_paused_lines` failed on the missing lines. The `orch_tests.rs` unit tests were written with the module they test, so their red was the missing module.
+
+**Deviations and choices**
+
+- **Test placement.** `run_cli.rs` is 480 lines, so the e2e tests are in two new binaries: `crates/cli/tests/run_cli_orch.rs` (`--orchestrator`, the planned start, holds, status JSON, the research accept, promote, `run edit --submit`) and `crates/cli/tests/run_cli_message.rs` (message, refresh, help). Every command goes through the harness (`h.anthrex`, pinned) or `isolated_command`.
+- **`status_shows_orchestrator_planners_holds_summary_and_paused_lines` is a pure test** in `run_cmd/status_tests.rs`, with exact lines for planners, holds, summary, `reported`, `paused(message)` and ` (held)`, which no single real run produces at once. Against a real daemon, `status_json_carries_the_new_fields` checks the orchestrator line, the hold line and a held task's ` (held)` on a promoted run, and `run_message_kind_defaults_to_info` checks a `stop_and_wait` task's `paused(message)` row.
+- **A refused recipient's line is the daemon's.** `run message` prints the `run edit` reply as the daemon wrote it. That reply already has one `not delivered: <reason>` line per refused recipient (M9.13a), and each reason names its task. So the CLI does not print its own `  <task>: <reason>`; the reply has no structured refusals to build one from.
+- **`run message` takes a comma-separated task list** (`t1,t2`, `MessageTarget::Tasks`). With only one task per call, a refusal of one recipient beside a delivery to another could not happen from the CLI. `running` and `stage:<n>` stand alone. A `stage:` that is not a number is refused by the CLI, with `expected stage:<n>, not <to>`. `stage:<n>` is sent, and the daemon refuses it with `stage recipients arrive with milestone 9.1` (D-3).
+- **`--orchestrator`** is parsed in the CLI for its runtime only (`claude`, `codex`, optionally `:<model>`; an empty model is the default). A model that is not in the roster is refused by the daemon, in its words: `<runtime>:<model> is not in the roster`. The test pins that refusal too. Both refusals of the flag come before any request, and the `--plan` one comes first.
+- **`run approve <run>` without `--hold`** reads the snapshot. On a `running` run with an `awaiting` hold it exits 1 with `run <id> has holds waiting for approval: <ids>; pass --hold <id>` (with the literal placeholder `<id>`). Otherwise it sends M8a's `Approve`, as before. `run reject --hold` conflicts with `--confirm` (a clap error) and asks nothing.
+- **`run edit`**: `--file` is optional, and a clap group requires `--file`, `--submit` or both. The reply is the engine's (`applied <n> edit; the plan of run <id> was submitted: it awaits approval`). `run message` and `run refresh` send `submit: false`.
+- **Status lines**: the counts are plural-aware, so a hold with one task shows `(1 task)`. A planner's count is the run's tasks naming its epic, shown only when non-zero. An orchestrator with no window yet shows `window -`. The lines come after `report:` and `checks:` and before the task table, in this order: orchestrator, planners, holds, summary.
+- **`run accept`** prints `research report: <path>` on stderr before any question, including with `--yes`, like the moved-base listing. It asks the nothing-to-merge question whenever `run_head == base_sha`.
+- **Help**: `run message --help` names `info`, `change` and `stop_and_wait` (clap's possible values, each described) and the three recipient forms. `run refresh --help` names the follow-up `anthrex run message --kind change`.
+- **Obligations checked**:
+  - Decision 6's report line was already written by the M9.7 review fixes (ruling 3), so the CLI has nothing to do for it.
+  - M9.13b has no CLI part: routing history is daemon-only.
+  - The message-target, one-edit, 4000-character, rate-limit and refresh refusals reach the user verbatim through `print_outcome`. `run_refresh_refuses_uncommitted_work` and the stage test compare the CLI's stderr with the raw request's refusal.
+
+**Tests.**
+- Unit, `run_cmd/orch_tests.rs`:
+  - `orchestrator_values_parse`
+  - `orchestrator_applies_to_goals_only`
+  - `message_targets_parse`
+  - `message_text_is_the_words_joined_with_one_space`
+  - `message_kind_defaults_to_info_and_names_three_kinds`
+  - `edit_needs_a_file_or_submit`
+  - `hold_flags_parse`
+- Unit, `run_cmd/status_tests.rs`: `status_shows_orchestrator_planners_holds_summary_and_paused_lines`.
+- E2e: every test the task names, under the names it gives, split across the two files above. Each binary passed three times in a row, with no retry.

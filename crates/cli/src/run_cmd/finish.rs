@@ -33,6 +33,8 @@ const BASE_PREFIX_MIN: usize = 7;
 /// - A moved base is listed before any question (M3). The merge question follows,
 ///   unless `--yes`; then the moved-base question, which only `--base` naming the
 ///   listed head (or a prefix of it) answers. A yes resends `confirm = "<id>@<to>"`.
+/// - Milestone 9 (decision 35): a research report is named first, and a run whose head
+///   is its base (it merged nothing) is asked [`nothing_to_merge`] instead.
 pub(super) async fn accept(
     runs: &mut Runs,
     info: &RunInfo,
@@ -45,6 +47,9 @@ pub(super) async fn accept(
             "run {run_id} is {}; accept applies only to a complete run",
             info.state.label()
         );
+    }
+    if let Some(report) = &info.research_report {
+        eprintln!("research report: {}", report.display());
     }
     let mut asked = yes;
     let mut confirm = None;
@@ -81,7 +86,12 @@ pub(super) async fn accept(
             );
         }
         if !asked {
-            if !ask_yes(&format!("{prompt} [y/N] "), NOT_A_TERMINAL_ACCEPT).await? {
+            let question = if info.run_head == info.base_sha {
+                nothing_to_merge(run_id)
+            } else {
+                format!("{prompt} [y/N] ")
+            };
+            if !ask_yes(&question, NOT_A_TERMINAL_ACCEPT).await? {
                 anyhow::bail!("not merged");
             }
             asked = true;
@@ -103,6 +113,12 @@ pub(super) async fn accept(
         "{} kept moving; not merged; run accept again",
         info.base_branch
     )
+}
+
+/// The question for a run that merged nothing (a research or review run): accepting
+/// only records it and removes its branches.
+fn nothing_to_merge(run_id: &str) -> String {
+    format!("nothing to merge; accept run {run_id} and remove its branches? [y/N] ")
 }
 
 /// Whether `--base` names the listed head `to`: the full sha, or a hex prefix of it of

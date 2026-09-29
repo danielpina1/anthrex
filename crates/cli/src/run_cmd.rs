@@ -4,6 +4,7 @@
 
 mod adapt;
 mod finish;
+mod orch;
 mod status;
 
 use finish::{accept, confirm_id};
@@ -11,7 +12,7 @@ use finish::{accept, confirm_id};
 use crate::client::CliClient;
 use clap::{Args, Subcommand};
 use proto::{
-    ClientMsg, DaemonMsg, EditFile, FinishAction, RunInfo, RunReply, RunRequest, RunsSnapshot,
+    ClientMsg, DaemonMsg, FinishAction, PlanEdit, RunInfo, RunReply, RunRequest, RunsSnapshot,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -64,6 +65,9 @@ enum RunCommand {
         /// the workers wrote), run them unconfined anyway
         #[arg(long)]
         unconfined_checks: bool,
+        /// A goal's orchestrator: claude or codex, optionally :<model>
+        #[arg(long, value_name = "RUNTIME[:MODEL]")]
+        orchestrator: Option<String>,
     },
     /// Show every run, or one, newest first
     Status {
@@ -72,21 +76,51 @@ enum RunCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Approve a run's plan
-    Approve { run: String },
-    /// Reject a run's plan: remove its worktrees and delete its branches
+    /// Approve a run's plan, or with --hold one hold of work added after it
+    Approve {
+        run: String,
+        /// The hold to approve (`anthrex run status` lists them)
+        #[arg(long)]
+        hold: Option<String>,
+    },
+    /// Reject a run's plan: remove its worktrees and delete its branches; with --hold,
+    /// cancel that hold's tasks, none of which has started
     Reject {
         run: String,
         /// The run id, instead of typing it
-        #[arg(long)]
+        #[arg(long, conflicts_with = "hold")]
         confirm: Option<String>,
+        /// The hold to reject
+        #[arg(long)]
+        hold: Option<String>,
     },
-    /// Apply a file of plan edits
+    /// Apply a file of plan edits, or submit a plan being written
+    #[command(group(clap::ArgGroup::new("what").required(true).multiple(true).args(["file", "submit"])))]
     Edit {
         run: String,
         #[arg(long)]
-        file: PathBuf,
+        file: Option<PathBuf>,
+        /// After the file's edits, submit the plan for approval (a run being planned)
+        #[arg(long)]
+        submit: bool,
     },
+    /// Send a message to a task's worker, delivered when its current turn ends
+    Message {
+        run: String,
+        /// A task id (or several, comma-separated), stage:<n>, or running for every
+        /// task with a live worker
+        to: String,
+        /// info: context; change: the plan or code around the task changed;
+        /// stop_and_wait: finish the current step, commit and wait
+        #[arg(long, value_enum, default_value = "info")]
+        kind: orch::KindArg,
+        /// The message; the words are joined with one space
+        #[arg(required = true)]
+        text: Vec<String>,
+    },
+    /// Merge the run's latest merged work into a task's branch at its next turn
+    /// boundary; then tell it why with anthrex run message --kind change
+    Refresh { run: String, task: String },
     /// Retry a task
     Retry { run: String, task: String },
     /// Merge a task without its review's approval
@@ -98,8 +132,13 @@ enum RunCommand {
     },
     /// Cancel a run
     Cancel { run: String },
-    /// Mark a fast-path run for promotion to a planned run (acted on from milestone 9)
-    Promote { run: String },
+    /// Promote a fast-path run to a planned run with an orchestrator
+    Promote {
+        run: String,
+        /// Its orchestrator: claude or codex, optionally :<model>
+        #[arg(long, value_name = "RUNTIME[:MODEL]")]
+        orchestrator: Option<String>,
+    },
     /// Summarise this repository's run history, by task class
     Stats {
         /// Print the summary as pretty JSON
@@ -148,16 +187,30 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
         yes,
         trust_project,
         unconfined_checks,
+        orchestrator,
     } = command
     {
+        let choice = orch::start_orchestrator(plan.as_ref(), orchestrator.as_deref())?;
         let flags = (yes, trust_project, unconfined_checks);
         return match (plan, goal) {
             (Some(plan), _) => {
                 start(socket, dir, &plan, yes, trust_project, unconfined_checks).await
             }
-            (None, goal) => adapt::start_goal(socket, dir, goal.unwrap_or_default(), flags).await,
+            (None, goal) => {
+                let goal = goal.unwrap_or_default();
+                adapt::start_goal(socket, dir, goal, flags, choice).await
+            }
         };
     }
+    // Every flag is checked before the daemon is asked anything.
+    let promote_choice = match &command {
+        RunCommand::Promote { orchestrator, .. } => orch::orchestrator(orchestrator.as_deref())?,
+        _ => None,
+    };
+    let message = match &command {
+        RunCommand::Message { to, kind, text, .. } => Some(orch::message_edit(to, *kind, text)?),
+        _ => None,
+    };
     let mut runs = Runs::connect(socket).await?;
     match command {
         RunCommand::Start { .. } => unreachable!("handled above"),
@@ -179,29 +232,29 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             }
             Ok(())
         }
-        RunCommand::Approve { run } => {
-            let run_id = runs.resolve(&run).await?;
-            runs.done(RunRequest::Approve { run_id }).await
-        }
-        RunCommand::Reject { run, confirm } => {
+        RunCommand::Approve { run, hold } => orch::approve(&mut runs, &run, hold).await,
+        RunCommand::Reject {
+            run,
+            hold: Some(hold),
+            ..
+        } => orch::reject_hold(&mut runs, &run, hold).await,
+        RunCommand::Reject { run, confirm, .. } => {
             let run_id = runs.resolve(&run).await?;
             let prompt =
                 format!("reject run {run_id}: remove its worktrees and delete its branches?");
             confirm_id(&run_id, confirm, &prompt).await?;
             runs.done(RunRequest::Reject { run_id }).await
         }
-        RunCommand::Edit { run, file } => {
-            let run_id = runs.resolve(&run).await?;
-            let text = std::fs::read_to_string(&file)
-                .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", file.display()))?;
-            let edits: EditFile =
-                toml::from_str(&text).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
-            runs.done(RunRequest::Edit {
-                run_id,
-                edits: edits.edits,
-                submit: false,
-            })
-            .await
+        RunCommand::Edit { run, file, submit } => {
+            orch::edit(&mut runs, &run, file.as_deref(), submit).await
+        }
+        RunCommand::Message { run, .. } => {
+            let edit = message.expect("parsed above");
+            orch::edit_one(&mut runs, &run, edit).await
+        }
+        RunCommand::Refresh { run, task } => {
+            let edit = PlanEdit::Refresh { task_id: task };
+            orch::edit_one(&mut runs, &run, edit).await
         }
         RunCommand::Retry { run, task } => {
             let run_id = runs.resolve(&run).await?;
@@ -224,14 +277,7 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             let run_id = runs.resolve(&run).await?;
             runs.done(RunRequest::Cancel { run_id }).await
         }
-        RunCommand::Promote { run } => {
-            let run_id = runs.resolve(&run).await?;
-            runs.done(RunRequest::Promote {
-                run_id,
-                orchestrator: None,
-            })
-            .await
-        }
+        RunCommand::Promote { run, .. } => orch::promote(&mut runs, &run, promote_choice).await,
         RunCommand::Stats { json } => adapt::stats(&mut runs, dir, json).await,
         RunCommand::Resume { run, rebaseline } => {
             let run_id = runs.resolve(&run).await?;

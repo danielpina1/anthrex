@@ -14,12 +14,15 @@ use super::{Runs, print_outcome};
 pub const GOAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(810);
 
 /// `run start --goal`: on the fast path the run id on stdout and triage's message on
-/// stderr; any refusal, the planned path's included, is the command's error (exit 1).
+/// stderr, and so on the plan and large paths with the planned message (milestone 9
+/// decision 26); any refusal is the command's error (exit 1). `orchestrator` is
+/// `--orchestrator`'s choice (decision 6).
 pub(super) async fn start_goal(
     socket: &Path,
     dir: Option<PathBuf>,
     goal: String,
     (yes, trust_project, unconfined_checks): (bool, bool, bool),
+    orchestrator: Option<proto::OrchestratorChoice>,
 ) -> anyhow::Result<()> {
     let dir = crate::resolve_dir(dir)?;
     tui::spawn::ensure_daemon(&std::env::current_exe()?, socket).await?;
@@ -31,7 +34,7 @@ pub(super) async fn start_goal(
             yes,
             trust_project,
             unconfined_checks,
-            orchestrator: None,
+            orchestrator,
         })
         .await?;
     match reply {
