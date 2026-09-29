@@ -50,6 +50,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::engine::{AgentSignal, EngineState, Event, EventKind, INTERRUPT_GRACE_SECS, ReplyId};
 use super::git::GitQueue;
+use super::slots::{self, TestScheduler};
 use super::snapshot::snapshot;
 #[cfg(test)]
 use crate::manager::ManagerConfig;
@@ -119,6 +120,8 @@ pub struct RunService {
     metered: usage::Metered,
     /// Milestone 9 decision 39's wake-ups not yet pasted (`driver/wake.rs`).
     wakes: wake::Wakes,
+    /// Milestone 9.1 decision 23: the daemon's one test scheduler.
+    scheduler: Arc<TestScheduler>,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -162,6 +165,7 @@ impl RunService {
         let (tx, rx) = mpsc::unbounded_channel();
         let signals = manager.signals();
         let (pushes, _) = broadcast::channel(256);
+        let slots = ctx.testing.test_slots.unwrap_or_else(slots::default_slots);
         Arc::new(RunService {
             manager,
             ctx,
@@ -198,7 +202,12 @@ impl RunService {
             adaptation: std::sync::OnceLock::new(),
             metered: Default::default(),
             wakes: Default::default(),
+            scheduler: TestScheduler::new(slots),
         })
+    }
+
+    pub fn scheduler(&self) -> &Arc<TestScheduler> {
+        &self.scheduler
     }
 
     /// Starts the event loop, the session-feed forwarder and the 1-second ticker.
@@ -338,7 +347,7 @@ impl RunService {
     async fn handle(self: &Arc<Self>, kind: EventKind) {
         let now = unix_now();
         let tick = matches!(kind, EventKind::Tick);
-        let kind = self.mark_killed(kind);
+        let kind = slots::stamp(self.mark_killed(kind), self.scheduler.slots());
         let reply = guard::reply_of(&kind);
         let prepared = {
             let mut state = crate::lock(&self.state);

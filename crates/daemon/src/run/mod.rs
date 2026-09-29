@@ -56,6 +56,7 @@ pub mod role_launch;
 pub mod roster;
 pub mod routing;
 pub mod seatbelt;
+pub mod slots;
 pub mod snapshot;
 mod snapshot_orch;
 pub mod stats;

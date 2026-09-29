@@ -379,6 +379,8 @@ fn old_run_json_loads() {
     // Milestone 9.1 decisions 9 and 11: no toolchain id and no graph note yet.
     assert_eq!(map.remove("toolchain"), Some(serde_json::Value::Null));
     assert_eq!(map.remove("graph_note"), Some(serde_json::Value::Null));
+    // Milestone 9.1 decision 27: not stamped with a daemon's slots.
+    assert_eq!(map.remove("test_slots"), Some(serde_json::json!(0)));
     let tiers = map["profile"].as_object_mut().unwrap().remove("tiers");
     assert_eq!(
         serde_json::from_value::<crate::run::tiers::TierProfile>(tiers.expect("profile.tiers"))

@@ -285,6 +285,12 @@ The driver's read path (`crates/daemon/src/run/driver/orch_read_tests.rs` and `o
 | Hang guards with no timing property | `crates/daemon/src/run/driver/live_flag_tests.rs` (`wait_freed`, `10s`); `crates/daemon/src/run/driver/refresh_tests.rs` (`prepare_worktree`'s git timeout, `30s`); `crates/daemon/src/run/driver/adapt_goal_installed_tests.rs` (`run promote`'s reply, `10s` refused before the engine and `30s` through the engine loop); `crates/cli/tests/scout_service_planner.rs` (`SESSION_WAIT`, `30s`, M8b.9's) | as listed | Each waits on one event: a window's run flag cleared in one engine step, one local `git worktree add`, one `promote` request (a refusal answered before the engine is asked, or one engine step with the launch gate closed), a fake-agent planner session's start, turn or exit. Each is a deadline loop or a `timeout` that returns as soon as the event happens. | **Recorded.** |
 | `RETIRE` | `crates/daemon/src/scout/tests_planner.rs` | `30s` | Not a wall-clock bound: the value the pure scout machine's `RemoveAfter` effect carries, `RETIRE_AFTER` (30 s), copied into the test's expected effects. A change to `RETIRE_AFTER` fails the test, as it should. | **Recorded.** |
 
+### Recorded, from M9.1.8 (2026-09-29)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `acquire_waits_without_blocking_the_runtime`, `a_dropped_acquire_gives_up_its_place`: the waiter's grant | `crates/daemon/src/run/slots/mod_tests.rs` (`DEADLINE`, `10s`, a deadline loop of `yield_now`) | `10s` | None: the scheduler has no timeout. A grant is made inside the call that releases the slot, and the waiter is woken by its `Notify` at once, so the cost is a few polls of a current-thread runtime. The bound only turns a lost wake-up into a failure. The same `10s` is the `tokio::time::timeout` that shows the runtime still runs other work; `async {}` finishes on its first poll. | **Recorded.** No test here holds a slot of another daemon; none asserts a wall-clock bound on a scheduled command (standing rule 5). |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |
@@ -423,6 +429,22 @@ close to genuine danger today.
    silently corrupting both. A rate that looks too clean (100% or 0%) or a comparison that
    does not fall where the mechanism predicts is a reason to re-check the harness before
    trusting the numbers, not a reason to report them faster.
+
+5. **Load scaling.** A command anthrex's test scheduler runs gets `ANTHREX_TEST_LOAD`: the
+   share of the machine's test slots in use when it started, one decimal place, from 0.0
+   to 1.0. A wall-clock bound may be multiplied by `1 + ANTHREX_TEST_LOAD` (read once at
+   the start of the test; absent means 0), which at most doubles it. Scaling adds margin
+   on a loaded machine; it never replaces rule 1: the unscaled bound must already exceed
+   the code's own legal worst case.
+
+   **The scheduler's wait is part of the worst case.** A test that asserts a wall-clock
+   bound on work that goes through the scheduler (a check, a proof, `setup`, a tier step,
+   a bisect probe, profile verification) may count the scheduler's wait as zero only
+   when the test's own daemon holds no other slot while that work runs, and its row here
+   says so. Otherwise the bound adds the longest step that can hold the slots first: a
+   step is never pre-empted, so a higher-priority or earlier request waits for every
+   step already running to end (`crates/daemon/src/run/slots/book.rs`), and an exclusive
+   step waits for all of them.
 
 ## What this document deliberately does not recommend
 
