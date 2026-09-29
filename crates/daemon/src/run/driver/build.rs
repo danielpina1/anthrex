@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::hash_map::RandomState;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -21,7 +21,7 @@ use crate::run::git::{self, Git, os};
 use crate::run::globs::ProtectedMatcher;
 use crate::run::journal::runs_dir;
 use crate::run::model::{ClaudeAuth, Run};
-use crate::run::orch::installed::{not_installed, resolve_installed};
+use crate::run::orch::installed::{Missing, not_installed, resolve_installed};
 use crate::run::orch::launch::resolve_orchestrator;
 use crate::run::orch::make_planned;
 use crate::run::plan::{BuildContext, random_suffix, resolve_profile, run_id_taken, slug};
@@ -113,7 +113,45 @@ fn installed(claude: &str, codex: &str) -> BTreeMap<String, bool> {
         .collect()
 }
 
+/// What [`not_installed`] reads: a runtime's configured binary (`bins`: Claude's, then
+/// Codex's) when `found` says it is not installed.
+fn missing_in<'a>(
+    found: &'a BTreeMap<String, bool>,
+    bins: &'a (String, String),
+) -> impl Fn(Runtime) -> Option<String> + 'a {
+    move |runtime| {
+        let bin = match runtime {
+            Runtime::Claude => &bins.0,
+            _ => &bins.1,
+        };
+        let present = found.get(runtime.label()).copied().unwrap_or(false);
+        (!present).then(|| bin.clone())
+    }
+}
+
+/// Decision 26's check of the sub-planners' runtime (`planner_route`, which steps to the
+/// peer runtime only when it is installed, M9.17 fix round 2), on a run whose
+/// `orch.installed` is set. The planners run on the orchestrator's runtime (checked
+/// before this) unless `[orchestrator.planners] runtime` names another, so the hint
+/// names what to change.
+fn planner_refusal(run: &Run, missing: Missing<'_>) -> Option<String> {
+    let route = crate::run::orch::launch::planner_route(run)?;
+    let hint = match run.limits.orch.planners.runtime {
+        Some(_) => "change [orchestrator.planners] runtime",
+        None => "choose another runtime with --orchestrator",
+    };
+    not_installed("the sub-planners'", route.runtime, missing, hint)
+}
+
 fn executable(bin: &str) -> bool {
+    let (path, home) = (std::env::var_os("PATH"), std::env::var_os("HOME"));
+    executable_in(bin, path.as_deref(), home.as_deref())
+}
+
+/// `bin` is an executable file: itself when it names a path, else in a `PATH` entry.
+/// A `PATH` entry of `~` or `~/...` is read against `home`, as the shell a window starts
+/// the agent through does (M9.17 fix round 2); with no `home` it names nothing.
+fn executable_in(bin: &str, path: Option<&OsStr>, home: Option<&OsStr>) -> bool {
     use std::os::unix::fs::PermissionsExt;
     let is = |path: &Path| {
         path.metadata()
@@ -122,8 +160,17 @@ fn executable(bin: &str) -> bool {
     if bin.contains('/') {
         return is(Path::new(bin));
     }
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| is(&dir.join(bin))))
+    let expand = |dir: PathBuf| -> Option<PathBuf> {
+        let Ok(rest) = dir.strip_prefix("~") else {
+            return Some(dir);
+        };
+        home.map(|home| Path::new(home).join(rest))
+    };
+    path.is_some_and(|paths| {
+        std::env::split_paths(paths)
+            .filter_map(expand)
+            .any(|dir| is(&dir.join(bin)))
+    })
 }
 
 impl RunService {
@@ -143,14 +190,7 @@ impl RunService {
             Ok((installed(&claude, &codex), token))
         })
         .await?;
-        let missing = |runtime: Runtime| -> Option<String> {
-            let bin = match runtime {
-                Runtime::Claude => &bins.0,
-                _ => &bins.1,
-            };
-            let present = found.get(runtime.label()).copied().unwrap_or(false);
-            (!present).then(|| bin.clone())
-        };
+        let missing = missing_in(&found, &bins);
         let resolved = resolve_installed(
             planned.choice.as_ref(),
             &run.limits.orch.agent.config(),
@@ -159,15 +199,7 @@ impl RunService {
             &missing,
         )?;
         make_planned(run, planned.triage, resolved, planned.yes, found.clone());
-        let planners = crate::run::orch::launch::planner_route(run).map(|r| r.runtime);
-        if let Some(refusal) = planners.and_then(|runtime| {
-            not_installed(
-                "the sub-planners'",
-                runtime,
-                &missing,
-                "change [orchestrator.planners] runtime",
-            )
-        }) {
+        if let Some(refusal) = planner_refusal(run, &missing) {
             return Err(refusal);
         }
         run.triage_usage = planned.usage.unwrap_or_default();
@@ -304,18 +336,23 @@ impl RunService {
     /// `--trust-project` the run started with. A request the engine will refuse
     /// anyway (not a fast-path run, an ended one, a route that does not resolve) is left
     /// to the engine.
+    ///
+    /// M9.17 fix round 2: it also repeats decision 26's installed check, for the new
+    /// orchestrator's runtime (the engine resolves it the same way, with no fallback)
+    /// and the sub-planners'. `Ok(Some(installed))` is what the promoted run records as
+    /// `orch.installed`, so its planners' route at spawn agrees with this check.
     pub(super) async fn promote_refusal(
         &self,
         run_id: &str,
         choice: Option<&proto::OrchestratorChoice>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<BTreeMap<String, bool>>, String> {
         let run = crate::lock(&self.state).runs.get(run_id).cloned();
         let Some(run) = run.filter(|r| {
             r.path == Some(proto::RunPath::Fast)
                 && r.orch.orchestrator.is_none()
                 && !r.state.is_terminal()
         }) else {
-            return Ok(());
+            return Ok(None);
         };
         let Ok(resolved) = resolve_orchestrator(
             choice,
@@ -323,13 +360,27 @@ impl RunService {
             run.limits.default_runtime,
             &run.roster,
         ) else {
-            return Ok(());
+            return Ok(None);
         };
+        let config = self.manager.config();
+        let bins = (config.claude_bin.clone(), config.codex_bin.clone());
+        let (claude, codex) = bins.clone();
+        let found = blocking(move || Ok(installed(&claude, &codex))).await?;
+        let missing = missing_in(&found, &bins);
+        let runtime = resolved.route.runtime;
+        let hint = "choose another runtime with --orchestrator";
+        if let Some(refusal) = not_installed("the orchestrator's", runtime, &missing, hint) {
+            return Err(refusal);
+        }
         let mut promoted = run.clone();
+        promoted.orch.installed = found.clone();
         promoted.orch.orchestrator = Some(crate::run::orch::OrchestratorRecord::new(
             resolved.route,
             unix_now(),
         ));
+        if let Some(refusal) = planner_refusal(&promoted, &missing) {
+            return Err(refusal);
+        }
         let before = reachable_runtimes(&run);
         let unreached: Vec<Runtime> = reachable_runtimes(&promoted)
             .into_iter()
@@ -345,7 +396,7 @@ impl RunService {
             }
         }
         if refusals.is_empty() {
-            Ok(())
+            Ok(Some(promoted.orch.installed))
         } else {
             Err(refusals.join("\n"))
         }
@@ -409,3 +460,7 @@ impl RunService {
         Err("could not pick a free run id".to_string())
     }
 }
+
+#[cfg(test)]
+#[path = "build_tests.rs"]
+mod tests;

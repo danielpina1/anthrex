@@ -55,8 +55,24 @@ pub struct ScoutContext {
 /// above `strength`, else the same on the peer runtime, else the first entry of
 /// `runtime`, else `runtime` with no model (the CLI's default).
 pub fn route(roster: &[ModelEntry], runtime: Runtime, strength: Strength, effort: Effort) -> Route {
+    route_within(roster, runtime, strength, effort, true)
+}
+
+/// [`route`], stepping to the peer runtime only when `peer_allowed` (M9.17 fix round 2:
+/// a run's sub-planners never step to a runtime its start check found not installed).
+pub fn route_within(
+    roster: &[ModelEntry],
+    runtime: Runtime,
+    strength: Strength,
+    effort: Effort,
+    peer_allowed: bool,
+) -> Route {
     let entry = lowest_at_or_above(roster, runtime, strength, None)
-        .or_else(|| lowest_at_or_above(roster, peer(runtime), strength, None))
+        .or_else(|| {
+            peer_allowed
+                .then(|| lowest_at_or_above(roster, peer(runtime), strength, None))
+                .flatten()
+        })
         .or_else(|| roster.iter().find(|e| e.runtime == runtime));
     match entry {
         Some(entry) => Route {

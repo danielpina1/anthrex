@@ -69,6 +69,13 @@ pub enum OrchEvent {
     /// Decision 14a: the run's OTLP token, drawn by the driver from the OS random
     /// source when it launches an orchestrator whose record has none.
     OtlpToken { run_id: String, token: String },
+    /// M9.17 fix round 2: `run promote`'s installed check found `installed` (decision
+    /// 17's map); a fast-path run with no orchestrator yet records it, so its promoted
+    /// sub-planners' route agrees with the check.
+    Installed {
+        run_id: String,
+        installed: std::collections::BTreeMap<String, bool>,
+    },
     /// Decision 43: the record of a session the driver dispatches (a run-bound decider,
     /// a run scout), sent before the session starts.
     /// Answered once the record is kept (review M-2): the driver starts the session
@@ -109,6 +116,7 @@ impl OrchEvent {
             | OrchEvent::DigestRead { .. }
             | OrchEvent::OrchestratorWindow { .. }
             | OrchEvent::OtlpToken { .. }
+            | OrchEvent::Installed { .. }
             | OrchEvent::RoleRouteEnded { .. } => None,
         }
     }

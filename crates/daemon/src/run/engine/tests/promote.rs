@@ -14,7 +14,7 @@ use crate::run::model::Run;
 use crate::run::triage::mark_fast;
 
 /// A running fast-path run of `t1` with the deciders off, its run branch made.
-fn fast() -> Fixture {
+pub(super) fn fast() -> Fixture {
     let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "auth", "")]));
     fx.start_with(false, |run: &mut Run| {
         mark_fast(run, super::orch::triage(RunPath::Fast), None);
@@ -24,7 +24,7 @@ fn fast() -> Fixture {
     fx
 }
 
-fn promote(fx: &mut Fixture, choice: Option<OrchestratorChoice>) -> Vec<Effect> {
+pub(super) fn promote(fx: &mut Fixture, choice: Option<OrchestratorChoice>) -> Vec<Effect> {
     let reply = fx.reply();
     fx.next(EventKind::Promote {
         reply,

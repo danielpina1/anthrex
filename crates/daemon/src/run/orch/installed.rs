@@ -58,6 +58,19 @@ pub fn resolve_installed(
             skipped_reason: Some(NOT_INSTALLED.to_string()),
         })
         .collect();
+    if candidates.is_empty() {
+        // Item 6: a skipped runtime with no roster entry is still recorded, as the one
+        // candidate it would have had, the CLI's default model.
+        candidates.push(RoutingCandidate {
+            route: Route {
+                runtime,
+                model: String::new(),
+                strength: proto::Strength::Standard,
+                effort: agent.effort,
+            },
+            skipped_reason: Some(NOT_INSTALLED.to_string()),
+        });
+    }
     candidates.append(&mut resolved.candidates);
     resolved.candidates = candidates;
     Ok(resolved)

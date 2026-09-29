@@ -160,16 +160,27 @@ pub fn orchestrator_window_spec(run: &Run, route: &Route, first_prompt: &str) ->
 }
 
 /// Decision 31: a sub-planner's route, `[orchestrator.planners]` as the run was built
-/// with it, on its runtime or else the orchestrator's (M8b's `scout::spec::route`).
+/// with it, on its runtime or else the orchestrator's (M8b's `scout::spec::route`). The
+/// route steps to the peer runtime only when the run's start check did not find the peer
+/// missing (`run.orch.installed`; M9.17 fix round 2), so a Codex-only user's frontier
+/// planner stays on Codex instead of naming an uninstalled Claude model.
 pub fn planner_route(run: &Run) -> Option<Route> {
     let orchestrator = run.orch.orchestrator.as_ref()?;
     let p = &run.limits.orch.planners;
     let runtime = p.runtime.unwrap_or(orchestrator.route.runtime);
-    Some(crate::scout::spec::route(
+    let peer = crate::run::roster::peer(runtime);
+    let peer_allowed = run
+        .orch
+        .installed
+        .get(peer.label())
+        .copied()
+        .unwrap_or(true);
+    Some(crate::scout::spec::route_within(
         &run.roster,
         runtime,
         p.strength,
         p.effort,
+        peer_allowed,
     ))
 }
 

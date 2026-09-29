@@ -393,8 +393,15 @@ impl RunService {
         run_id: String,
         orchestrator: Option<OrchestratorChoice>,
     ) -> RunReply {
-        if let Err(text) = self.promote_refusal(&run_id, orchestrator.as_ref()).await {
-            return RunReply::refused(request::PROMOTE, text);
+        match self.promote_refusal(&run_id, orchestrator.as_ref()).await {
+            Err(text) => return RunReply::refused(request::PROMOTE, text),
+            // M9.17 fix round 2: what the check found, recorded before the engine
+            // performs the promotion (events are handled in order).
+            Ok(Some(installed)) => self.send(EventKind::Orch(OrchEvent::Installed {
+                run_id: run_id.clone(),
+                installed,
+            })),
+            Ok(None) => {}
         }
         let event = |reply| EventKind::Promote {
             reply,

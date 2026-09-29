@@ -113,6 +113,13 @@ pub(super) fn on_orch_event(
                 o.otlp_token = token;
             }
         }
+        OrchEvent::Installed { run_id, installed } => {
+            if let Some(run) = state.runs.get_mut(&run_id)
+                && run.orch.orchestrator.is_none()
+            {
+                run.orch.installed = installed;
+            }
+        }
         OrchEvent::RoleRoute {
             reply,
             run_id,

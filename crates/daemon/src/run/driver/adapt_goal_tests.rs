@@ -401,3 +401,6 @@ async fn a_run_keeps_whether_it_started_with_trust_project() {
     let old: crate::run::model::Run = serde_json::from_value(json).unwrap();
     assert!(!old.trust_project);
 }
+
+#[path = "adapt_goal_installed_tests.rs"]
+mod installed;

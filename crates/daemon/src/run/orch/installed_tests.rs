@@ -126,3 +126,60 @@ fn not_installed_names_who_the_runtime_and_the_binary() {
         )
     );
 }
+
+/// A run whose orchestrator is on `runtime`, with the built-in roster.
+fn run_on(runtime: Runtime) -> crate::run::model::Run {
+    let mut run = crate::run::orch::test_support::run_of(1);
+    run.roster = config::default_roster();
+    let mut record = crate::run::orch::test_support::orchestrator();
+    record.route.runtime = runtime;
+    run.orch.orchestrator = Some(record);
+    run
+}
+
+/// M9.17 fix round 2: the sub-planners' route (frontier by default) steps to the peer
+/// runtime only when the peer is installed or not known; the built-in roster has no
+/// Codex frontier entry, so a Codex-only user's planners stay on Codex.
+#[test]
+fn the_planner_route_steps_to_the_peer_only_when_it_is_installed() {
+    use crate::run::orch::launch::planner_route;
+    let mut run = run_on(Runtime::Codex);
+    // Not known (a run from before the start check): M8b's route, the peer's frontier.
+    assert_eq!(planner_route(&run).unwrap().runtime, Runtime::Claude);
+    run.orch.installed = [("claude".to_string(), true), ("codex".to_string(), true)].into();
+    assert_eq!(planner_route(&run).unwrap().runtime, Runtime::Claude);
+    run.orch.installed.insert("claude".into(), false);
+    let route = planner_route(&run).unwrap();
+    assert_eq!(route.runtime, Runtime::Codex);
+    assert_eq!(route.model, "");
+    // Configured on Codex, the same.
+    run.limits.orch.planners.runtime = Some(Runtime::Codex);
+    assert_eq!(planner_route(&run).unwrap().runtime, Runtime::Codex);
+    // A Claude orchestrator with both installed keeps its frontier planner.
+    let mut run = run_on(Runtime::Claude);
+    run.orch.installed = [("claude".to_string(), true), ("codex".to_string(), true)].into();
+    let route = planner_route(&run).unwrap();
+    assert_eq!(
+        (route.runtime, route.model.as_str()),
+        (Runtime::Claude, "claude-opus-5-5")
+    );
+}
+
+/// M9.17 fix round 2, item 6: a skipped runtime with no roster entry is still recorded,
+/// as its one default-model candidate, `not installed`.
+#[test]
+fn a_skipped_runtime_with_no_roster_entry_is_recorded() {
+    let roster: Vec<_> = config::default_roster()
+        .into_iter()
+        .filter(|e| e.runtime == Runtime::Claude)
+        .collect();
+    let missing = without(&[Runtime::Codex]);
+    let got = resolve_installed(None, &agent(None), Runtime::Codex, &roster, &missing).unwrap();
+    assert_eq!(got.route.runtime, Runtime::Claude);
+    let first = &got.candidates[0];
+    assert_eq!(
+        (first.route.runtime, first.route.model.as_str()),
+        (Runtime::Codex, "")
+    );
+    assert_eq!(first.skipped_reason.as_deref(), Some(NOT_INSTALLED));
+}
