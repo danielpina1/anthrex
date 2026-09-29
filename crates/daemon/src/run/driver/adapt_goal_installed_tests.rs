@@ -353,8 +353,10 @@ async fn run_promote_records_what_its_check_found() {
 /// starts with it, the file trusted. With the default config (Claude scouts) it starts.
 #[tokio::test]
 async fn a_codex_run_scout_is_covered_by_the_project_settings_check() {
-    let mut codex_default = config::Orchestrator::default();
-    codex_default.default_runtime = Runtime::Codex;
+    let codex_default = config::Orchestrator {
+        default_runtime: Runtime::Codex,
+        ..Default::default()
+    };
     let mut codex_scouts = config::Orchestrator::default();
     codex_scouts.scouts.runtime = Some(Runtime::Codex);
     for (name, config) in [("default_runtime", codex_default), ("scouts", codex_scouts)] {
