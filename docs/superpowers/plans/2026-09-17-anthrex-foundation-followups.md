@@ -1737,3 +1737,12 @@ scope.
 - **Stray step directories.** Every tier step gets a fresh `TMPDIR` (`<base>/s<op>-<step>`, M9.1 decision 28), which is removed after the step on the step's blocking thread. A step whose command started a daemon that escaped the process group (a test that daemonises, as `anthrex daemon start` does) can hold files in it past the removal, and a daemon killed mid-step never removes it. Nothing sweeps these directories. Fix: at daemon start, remove step directories under each repository's tmp base that are older than a day.
 - **An `--ignored` job.** No tier runs ignored tests: tier 3's `check` is the profile's full suite as written, and no profile key names an ignored-tests command. A tier (or a tier-3 step) that runs them, from a new key such as `ignored_tests`, would give anthrex's own `#[ignore]`d tests a home (see the ignored-test note above, `:193-200`).
 - **A hand-edited `run.json` with a gap in its stages** (stages 1 and 3 recorded, 2 missing) restores without complaint (ruling C-27, item 12; the whole-branch review's scenario s6c). What the run then does was only printed, never asserted. Decide whether a restore refuses such a run (halts it with a clear reason) or recreates the missing stage, and test that.
+
+## From M9.1's final review (2026-09-30, ruling C-28), for M9.5
+
+- **Three tier-3 states raise no alert.** Milestone 9.0.5's decision 18 lists what the Alerts box shows, and none of these three appears in it:
+  - A stage whose tier 3 is held after three executor failures (ruling C-18). It waits for `anthrex run resume`, and nothing but its attention line says so.
+  - A red propagate (`StageInfo.propagate_red`).
+  - A red tier 3 (`FullState::Red`), with or without a bisect fix task.
+  Decision 18's priorities should gain these. The held stage needs a human, so it belongs with the halted run. The two reds belong with the blocked tasks, unless an orchestrator is live and will be woken.
+- **The STATUS section's three stage labels read alike.** The inspector's STATUS shows `stage`, `stages` and `stage no.` (the last since the 9.0.5 merge renamed 9.1's duplicate row). Relabel them in M9.5 so each says what it counts, for example `stage state`, `stages in run` and `task's stage`, and update `run_stage_tests.rs`.
