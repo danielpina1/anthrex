@@ -71,6 +71,7 @@ pub(super) fn check(ok: bool, on_candidate: bool) -> CheckRecord {
         on_candidate,
         summary: None,
         summary_source: None,
+        tier: None,
     }
 }
 

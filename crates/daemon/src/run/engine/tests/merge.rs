@@ -156,7 +156,13 @@ fn candidates_in(fx: &Fixture, effects: &[Effect]) -> Vec<String> {
 /// Merges `id` at `at`, then completes every worktree removal that follows.
 pub(super) fn merge(fx: &mut Fixture, id: &str, at: &str) -> Vec<Effect> {
     let (op, _) = candidate(fx, id);
-    let mut effects = fx.done(op, OpResult::Merged { commit: at.into() });
+    let mut effects = fx.done(
+        op,
+        OpResult::Merged {
+            commit: at.into(),
+            tier: None,
+        },
+    );
     for (op, _) in pending(fx, "RemoveWorktree", Some(id)) {
         effects.extend(fx.done(op, OpResult::Removed { salvage_ref: None }));
     }
@@ -188,6 +194,7 @@ fn merges_are_one_at_a_time_in_arrival_order() {
             // Milestone 9.1 decision 53: a one-stage run guards `integration` alone.
             guarded: vec![(format!("anthrex/{RUN_ID}/integration"), BASE.into())],
             also_integration: false,
+            tier: None,
         }
     );
     // Width 1: the others wait, in the order they arrived.
@@ -215,7 +222,13 @@ fn merges_are_one_at_a_time_in_arrival_order() {
     };
     assert_eq!(expected_run_head, commit(2));
     assert_alive(&fx);
-    let effects = fx.done(op, OpResult::Merged { commit: commit(3) });
+    let effects = fx.done(
+        op,
+        OpResult::Merged {
+            commit: commit(3),
+            tier: None,
+        },
+    );
     assert_eq!(candidates_in(&fx, &effects), vec!["t1"]);
     assert_eq!(fx.run().merge_queue, vec!["t1"]);
     assert_alive(&fx);
@@ -229,7 +242,13 @@ fn merged_updates_run_head_cleans_up_and_retires_the_worker() {
     assert_eq!(fx.task("t2").state, TaskState::Pending);
     let (op, task_head) = candidate(&fx, "t1");
     assert_eq!(task_head, head_of("t1"));
-    let effects = fx.done(op, OpResult::Merged { commit: commit(1) });
+    let effects = fx.done(
+        op,
+        OpResult::Merged {
+            commit: commit(1),
+            tier: None,
+        },
+    );
     let run = fx.run();
     assert_eq!(run.run_head, commit(1));
     assert_eq!(run.last_green_candidate, Some(commit(1)));
@@ -320,7 +339,13 @@ fn salvage_numbers_follow_the_highest_recorded_ref() {
     let salvage = |n: u32| format!("refs/anthrex/salvage/{RUN_ID}/t1/{n}");
     fx.task_mut("t1").salvage_refs = vec![salvage(3)];
     let (op, _) = candidate(&fx, "t1");
-    let effects = fx.done(op, OpResult::Merged { commit: commit(1) });
+    let effects = fx.done(
+        op,
+        OpResult::Merged {
+            commit: commit(1),
+            tier: None,
+        },
+    );
     let refs: Vec<String> = ops_in(&effects, "RemoveWorktree")
         .into_iter()
         .map(|(_, k)| match k {
@@ -487,6 +512,7 @@ fn red_candidate_is_a_merge_failure() {
             timed_out: false,
             tail: "compiling\ntest a::works ... FAILED".into(),
             secs: 42,
+            tier: None,
         },
     );
     let record = CheckRecord {
@@ -500,6 +526,7 @@ fn red_candidate_is_a_merge_failure() {
         // M8b.12: the fixture's deciders are off, so the summary is the fallback.
         summary: None,
         summary_source: Some(DeciderSource::Fallback),
+        tier: None,
     };
     let t1 = fx.task("t1");
     assert_eq!(t1.state, TaskState::Working);

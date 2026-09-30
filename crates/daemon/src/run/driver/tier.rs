@@ -315,37 +315,51 @@ async fn affected_set(
     if scope == Scope::Full {
         return Ok((Affected::Full(FULL_SUITE.to_string()), None));
     }
+    let changed = changed_paths(job, spec).await?;
+    Ok(affected_of(job, spec, &changed).await)
+}
+
+/// The paths the job's change touches: decision 15's `<diff_base>...<head>` for tier 1,
+/// decision 16's `<diff_base> <head>` for tier 2.
+async fn changed_paths(job: &Job<'_>, spec: &TierSpec) -> Result<Vec<String>, Stop> {
     let range = if spec.tier == 1 {
         format!("{}...{}", spec.diff_base, spec.head)
     } else {
         format!("{} {}", spec.diff_base, spec.head)
     };
     let root = job.root.clone();
-    let changed = job
-        .read(move |g, t| git::changed_paths(g, &root, &range, t))
+    job.read(move |g, t| git::changed_paths(g, &root, &range, t))
         .await
-        .map_err(stop)?;
+        .map_err(stop)
+}
+
+/// Decision 22 on `changed`, with the graph read in the job's checkout (ruling C-5:
+/// with no `check`, a known graph runs the module tests of every module).
+async fn affected_of(
+    job: &Job<'_>,
+    spec: &TierSpec,
+    changed: &[String],
+) -> (Affected, Option<String>) {
     let graph = read_graph(job, spec).await;
     let note = match &graph {
         GraphState::Unknown(reason) => Some(reason.clone()),
         GraphState::Known(_) => None,
     };
     let mut set = affected(
-        &changed,
+        changed,
         &spec.profile,
         &spec.hub,
         &spec.source,
         &spec.modules,
         &graph,
     );
-    // Ruling C-5: with no `check`, a known graph runs the module tests of every module.
     if spec.check.is_none()
         && matches!(set, Affected::Full(_))
         && let GraphState::Known(graph) = &graph
     {
         set = Affected::Modules(graph.modules.keys().cloned().collect());
     }
-    Ok((set, note))
+    (set, note)
 }
 
 /// Decision 9's graph in the job's checkout, confined as its commands are, with its own
@@ -475,6 +489,12 @@ pub(crate) async fn run_test_at(
         show: None,
     }
 }
+
+// Decision 16's pre-check of a candidate's tier-2 job (task M9.1.13), split out for
+// the 600-line rule.
+#[path = "tier_cached.rs"]
+mod cached;
+pub(crate) use cached::cached_outcome;
 
 #[cfg(test)]
 #[path = "tier_tests.rs"]

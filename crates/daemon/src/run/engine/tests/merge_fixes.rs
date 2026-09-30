@@ -129,7 +129,13 @@ fn a_cancel_during_a_merge_that_lands_is_too_late() {
     assert!(text.contains("t1's merge is in flight"), "{text}");
     assert_eq!(fx.task("t1").state, TaskState::MergeQueue);
     assert_alive(&fx);
-    fx.done(op, OpResult::Merged { commit: commit(1) });
+    fx.done(
+        op,
+        OpResult::Merged {
+            commit: commit(1),
+            tier: None,
+        },
+    );
     let t1 = fx.task("t1");
     assert_eq!(t1.state, TaskState::Merged);
     assert_eq!(t1.merge_commit, Some(commit(1)));
@@ -166,7 +172,10 @@ fn a_cancel_edit_during_a_merge_applies_only_if_it_does_not_land() {
         assert_eq!(fx.task("t1").state, TaskState::MergeQueue);
         assert_eq!(fx.task("t2").state, TaskState::Pending);
         let result = match outcome {
-            "merged" => OpResult::Merged { commit: commit(1) },
+            "merged" => OpResult::Merged {
+                commit: commit(1),
+                tier: None,
+            },
             "conflict" => OpResult::Conflict {
                 files: vec!["docs/t1/a.md".into()],
             },

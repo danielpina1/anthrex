@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, cleanup, merge, stage_ops, tier};
 use crate::headless::{HeadlessSpec, SessionArg};
-use crate::run::confine::confined;
 use crate::run::engine::{OpKind, OpResult, ResolutionAt};
 use crate::run::exec::ShellOutcome;
 use crate::run::git::{self, RefreshedIn};
@@ -18,6 +17,7 @@ use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
 use crate::run::model::OpId;
 use crate::run::proof::ProofOp;
 use crate::run::role_launch::worker_git_roots;
+use crate::run::slots::{Priority, Want};
 use proto::AgentRole;
 
 // Decision 33's proof and decision 34's check (split out to keep this file under the
@@ -25,6 +25,11 @@ use proto::AgentRole;
 #[path = "gate_ops.rs"]
 mod gate_ops;
 use gate_ops::{check, proof};
+
+// Controller ruling 1 and ruling C-12b: M8a's commands through the test scheduler.
+#[path = "scheduled.rs"]
+pub(super) mod scheduled;
+use scheduled::scheduled;
 
 pub(super) fn failed(message: impl Into<String>) -> OpResult {
     OpResult::Failed {
@@ -76,30 +81,22 @@ impl RunService {
     }
 
     /// `setup` in `dir` after a worktree op (M8a.8's carry T8-I4): a failure is
-    /// `SetupFailed` with its tail.
+    /// `SetupFailed` with its tail. It waits for one slot (decision 24, ruling C-12b).
     async fn setup(
-        &self,
+        self: &Arc<Self>,
         ctx: &OpCtx,
+        op: OpId,
         dir: &Path,
-        setup: Option<String>,
-        env: Vec<(String, String)>,
+        (setup, env): (Option<String>, Vec<(String, String)>),
         head: String,
     ) -> OpResult {
         let Some(setup) = setup else {
             return OpResult::Worktree { head };
         };
-        let (dir, timeout, confine) = (dir.to_path_buf(), ctx.check_timeout, ctx.confine.clone());
-        match blocking(move || {
-            Ok(confined(
-                &dir,
-                &setup,
-                &env,
-                &[],
-                timeout,
-                confine.as_deref(),
-            ))
-        })
-        .await
+        let class = (Priority::Gate, Want::One, "setup".to_string());
+        match scheduled(self, ctx, op, class)
+            .run(dir, &setup, &env, ctx.check_timeout)
+            .await
         {
             Ok(outcome) if outcome.ok => OpResult::Worktree { head },
             Ok(outcome) => OpResult::SetupFailed {
@@ -189,7 +186,7 @@ pub(super) async fn run(
                 })
                 .await;
             match made {
-                Ok(head) => service.setup(ctx, &path, setup, env, head).await,
+                Ok(head) => service.setup(ctx, op, &path, (setup, env), head).await,
                 Err(error) => failed(error),
             }
         }
@@ -211,7 +208,7 @@ pub(super) async fn run(
                 })
                 .await;
             match made {
-                Ok(head) => service.setup(ctx, &path, setup, env, head).await,
+                Ok(head) => service.setup(ctx, op, &path, (setup, env), head).await,
                 Err(error) => failed(error),
             }
         }
@@ -332,6 +329,7 @@ pub(super) async fn run(
             setup,
             env,
         } => {
+            let op_id = op;
             let op = ProofOp {
                 root,
                 repo: git::checkout_repo_dir(&ctx.data_dir, &path),
@@ -345,7 +343,7 @@ pub(super) async fn run(
                 env,
                 confine: ctx.confine.as_deref().cloned(),
             };
-            proof(service, ctx, op).await
+            proof(service, ctx, op_id, op).await
         }
         OpKind::Check {
             dir,
@@ -353,7 +351,10 @@ pub(super) async fn run(
             timeout_secs,
             env,
             scratch,
-        } => check(service, ctx, dir, command, timeout_secs, env, scratch).await,
+        } => {
+            let at = (dir, scratch);
+            check(service, ctx, op, at, command, timeout_secs, env).await
+        }
         OpKind::PrepareReview {
             root,
             head_ref,
@@ -368,7 +369,7 @@ pub(super) async fn run(
                 .await
                 .map(|(base, head, patch)| OpResult::Review { base, head, patch })
         }),
-        OpKind::MergeCandidate { .. } => settle(merge::candidate(service, ctx, kind).await),
+        OpKind::MergeCandidate { .. } => settle(merge::candidate(service, ctx, op, kind).await),
         OpKind::HandBack {
             worktree,
             run_head,

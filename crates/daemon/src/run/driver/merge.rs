@@ -2,20 +2,28 @@
 //! `OpKind::MergeCandidate`): the ref guard, `merge-tree`, the candidate commit, its
 //! check in the integration worktree, the guard again, the compare-and-swap and the
 //! reattach. Writes go through the run's `GitQueue`; reads run on `spawn_blocking`.
+//!
+//! Milestone 9.1 decision 16: a tiered profile's candidate runs its tier-2 job where
+//! M8a runs `check`, through the tier executor; the result cache is consulted first,
+//! and when every step hits the candidate is not materialized at all. M8a's check waits
+//! for its slots in the test scheduler (controller ruling 1).
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::ops::blocking;
+use super::ops::{blocking, scheduled::scheduled};
 use super::stage_ops::guard_list;
-use super::{OpCtx, RunService};
+use super::{OpCtx, RunService, tier};
 use crate::run::engine::{EventKind, OpKind, OpResult};
 use crate::run::git::{self, CandidateStep, RefCheck};
+use crate::run::model::OpId;
+use crate::run::slots::{Priority, Want};
 
 /// Decision 36, one attempt of the merge queue (see `OpKind::MergeCandidate`).
 pub(super) async fn candidate(
     service: &Arc<RunService>,
     ctx: &OpCtx,
+    op: OpId,
     kind: OpKind,
 ) -> Result<OpResult, String> {
     let OpKind::MergeCandidate {
@@ -32,6 +40,7 @@ pub(super) async fn candidate(
         env,
         guarded,
         also_integration,
+        tier: tier_spec,
     } = kind
     else {
         unreachable!("candidate takes a MergeCandidate");
@@ -89,30 +98,56 @@ pub(super) async fn candidate(
             git::commit_tree(g, &r, &tree, &[rh.as_str(), th.as_str()], &message, t)
         })
         .await?;
+    // Milestone 9.1 decision 16: tier 2 judges this candidate; the cache first.
+    let tier_spec = tier_spec.map(|mut spec| {
+        spec.head = commit.clone();
+        spec
+    });
+    let (sched, cache, git) = (service.scheduler(), service.test_cache(), service.git());
+    let mut green = None;
+    if let Some(spec) = &tier_spec {
+        let shared = (sched.as_ref(), service.queue.as_ref(), git.as_os_str());
+        green = tier::cached_outcome(ctx, shared, cache, op, spec)
+            .await
+            .map(Box::new);
+    }
     // Ruling T22-minors, m3: once the candidate is materialized, every way out puts the
     // integration worktree back on the run branch, an error included.
     let mut materialized = false;
     let landed = async {
-        if let Some(check) = check {
+        let materialize = || {
             let (at, c) = (integration.clone(), commit.clone());
+            service.write(ctx, move |g, t| git::materialize(g, &at, &c, t))
+        };
+        if let Some(spec) = tier_spec.as_ref().filter(|_| green.is_none()) {
             materialized = true;
-            service
-                .write(ctx, move |g, t| git::materialize(g, &at, &c, t))
-                .await?;
+            materialize().await?;
+            let queue = &service.queue;
+            match tier::run_tier(ctx, sched, cache, queue, &git, op, spec).await {
+                OpResult::Tier(outcome) if outcome.ok => green = Some(outcome),
+                OpResult::Tier(outcome) => {
+                    reattach().await?;
+                    let red = outcome.steps.iter().rev().find(|s| !s.ok);
+                    return Ok(OpResult::CandidateRed {
+                        code: red.and_then(|s| s.code),
+                        timed_out: red.is_some_and(|s| s.timed_out),
+                        tail: outcome.tail.clone(),
+                        secs: outcome.secs,
+                        tier: Some(outcome),
+                    });
+                }
+                OpResult::Failed { message } => return Err(message),
+                other => return Err(format!("tier 2 did not run: {other:?}")),
+            }
+        } else if let Some(check) = check.filter(|_| tier_spec.is_none()) {
+            materialized = true;
+            materialize().await?;
             let at = integration.clone();
             let timeout = Duration::from_secs(timeout_secs);
-            let confine = ctx.confine.clone();
-            let outcome = blocking(move || {
-                Ok(crate::run::confine::confined(
-                    &at,
-                    &check,
-                    &env,
-                    &[],
-                    timeout,
-                    confine.as_deref(),
-                ))
-            })
-            .await?;
+            let label = "candidate check".to_string();
+            let outcome = scheduled(service, ctx, op, (Priority::Candidate, Want::All, label))
+                .run(&at, &check, &env, timeout)
+                .await?;
             if !outcome.ok {
                 reattach().await?;
                 return Ok(OpResult::CandidateRed {
@@ -120,6 +155,7 @@ pub(super) async fn candidate(
                     timed_out: outcome.timed_out,
                     tail: outcome.tail,
                     secs: outcome.secs,
+                    tier: None,
                 });
             }
         }
@@ -167,7 +203,10 @@ pub(super) async fn candidate(
                 "merged, but the integration worktree could not go back on its branch"
             );
         }
-        Ok(OpResult::Merged { commit })
+        Ok(OpResult::Merged {
+            commit,
+            tier: green,
+        })
     }
     .await;
     if landed.is_err() && materialized {
@@ -175,3 +214,7 @@ pub(super) async fn candidate(
     }
     landed
 }
+
+#[cfg(test)]
+#[path = "merge_tier_tests.rs"]
+mod tier_tests;

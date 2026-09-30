@@ -72,20 +72,24 @@ pub(super) fn start_merge(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     // it when that is a `Multi` run's highest stage.
     let n = run.tasks[i].stage();
     let multi = run.stage_layout == StageLayout::Multi;
+    let expected = run.head_for(&run.tasks[i]).to_string();
+    // Milestone 9.1 decision 16: a tiered profile's candidate runs tier 2, not `check`.
+    let tier = super::tiers::tier2_spec(run, n, &expected);
     let kind = OpKind::MergeCandidate {
         root: run.root.clone(),
         integration: integration.clone(),
         run_branch: run.stage_branch(n),
-        expected_run_head: run.head_for(&run.tasks[i]).to_string(),
+        expected_run_head: expected,
         base_branch: run.base_branch.clone(),
         expected_base: run.base_sha.clone(),
         task_head,
         message: format!("anthrex: merge {id}: {}", run.tasks[i].spec.title),
-        check: run.profile.check.clone(),
+        check: run.profile.check.clone().filter(|_| tier.is_none()),
         timeout_secs: run.profile.check_timeout_secs,
         env: profile_env(&run.profile, &integration),
         guarded: stages::guard_list(run),
         also_integration: multi && n >= stages::highest(run),
+        tier,
     };
     let op = next_op(run);
     run.tasks[i].merge_op = Some(op);
@@ -114,7 +118,19 @@ pub(super) fn candidate_done(
     // from. Milestone 9.1 decision 47: the merge landed on the stage of `branch`.
     let n = stages::stage_of_branch(run, branch);
     let before = run.stage_head(n).unwrap_or(&run.run_head).to_string();
-    if let OpResult::Merged { commit } = &result {
+    // Milestone 9.1: what a tier-2 job tells the run, whoever awaits it.
+    if let OpResult::Merged {
+        tier: Some(outcome),
+        ..
+    }
+    | OpResult::CandidateRed {
+        tier: Some(outcome),
+        ..
+    } = &result
+    {
+        super::tiers::run_facts(run, outcome, now);
+    }
+    if let OpResult::Merged { commit, .. } = &result {
         let id = i.map(|i| run.tasks[i].id().to_string());
         stages::task_merged(run, n, id.as_deref(), commit);
     }
@@ -131,7 +147,7 @@ pub(super) fn candidate_done(
         return halt(run, reason.clone(), now);
     }
     let Some(i) = i.filter(|&i| awaits(run, i, op)) else {
-        if let OpResult::Merged { commit } = &result {
+        if let OpResult::Merged { commit, .. } = &result {
             log(run, now, format!("a merge landed at {}", sha7(commit)));
         }
         return;
@@ -139,7 +155,7 @@ pub(super) fn candidate_done(
     run.tasks[i].merge_op = None;
     let id = run.tasks[i].id().to_string();
     if run.tasks[i].state != TaskState::MergeQueue {
-        if let OpResult::Merged { commit } = &result {
+        if let OpResult::Merged { commit, .. } = &result {
             let text = format!("{id} merged at {} after it left the queue", sha7(commit));
             log(run, now, text);
         }
@@ -149,7 +165,10 @@ pub(super) fn candidate_done(
     // Ruling T14-I1: a cancel that arrived during the merge applies only if the merge
     // did not land; one that landed makes the task merged and the cancel too late.
     if std::mem::take(&mut run.tasks[i].cancel_deferred) {
-        if let OpResult::Merged { commit } = result {
+        if let OpResult::Merged { commit, tier } = result {
+            if let Some(outcome) = tier {
+                super::tiers::tier2_facts(run, i, &outcome, now);
+            }
             log(
                 run,
                 now,
@@ -160,13 +179,29 @@ pub(super) fn candidate_done(
         return complete::cancel_now(run, i, "its cancel, after its merge did not land", now, fx);
     }
     match result {
-        OpResult::Merged { commit } => merged(run, i, (before, commit), now, fx),
+        OpResult::Merged { commit, tier } => {
+            if let Some(outcome) = tier {
+                super::tiers::tier2_facts(run, i, &outcome, now);
+            }
+            merged(run, i, (before, commit), now, fx)
+        }
         OpResult::Conflict { files } => conflict(run, i, files, now, fx),
+        // Milestone 9.1 decision 16: a red tier 2 is M8a's red candidate, naming the
+        // red step's command.
+        OpResult::CandidateRed {
+            tier: Some(outcome),
+            ..
+        } => {
+            let command = super::tiers::tier2_facts(run, i, &outcome, now);
+            history(run, i, now, "tier 2 failed on the merge candidate");
+            super::deciders::summarise(run, i, GateKind::Merge, &command, now, fx);
+        }
         OpResult::CandidateRed {
             code,
             timed_out,
             tail,
             secs,
+            tier: None,
         } => {
             let record = CheckRecord {
                 at: now,
@@ -178,6 +213,7 @@ pub(super) fn candidate_done(
                 on_candidate: true,
                 summary: None,
                 summary_source: None,
+                tier: None,
             };
             let command = run.profile.check.clone().unwrap_or_default();
             run.tasks[i].checks.push(record);

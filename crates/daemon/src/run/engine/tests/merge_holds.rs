@@ -170,6 +170,7 @@ fn a_resolved_conflict_does_not_skip_a_later_hand_back() {
             timed_out: false,
             tail: "red".into(),
             secs: 1,
+            tier: None,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);

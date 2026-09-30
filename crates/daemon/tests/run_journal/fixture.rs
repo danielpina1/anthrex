@@ -379,6 +379,7 @@ pub fn full_run(data_dir: &Path) -> Run {
         on_candidate: true,
         summary: Some("the decider's summary".into()),
         summary_source: Some(proto::DeciderSource::Decider),
+        tier: None,
     });
     task.proofs.push(ProofRecord {
         at: 1_260,

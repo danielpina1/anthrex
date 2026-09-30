@@ -40,6 +40,7 @@ pub(super) fn merge_real(fx: &mut Fixture, id: &str, commit: &str) -> Vec<Effect
         op,
         OpResult::Merged {
             commit: commit.into(),
+            tier: None,
         },
     );
     let removals: Vec<_> = fx

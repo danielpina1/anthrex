@@ -162,3 +162,9 @@ pub fn err(task: Option<&str>, field: &str, rule: &str, message: &str) -> PlanEr
         message: message.to_string(),
     }
 }
+
+/// Writes a checked-in fixture a test records on request (milestone 9.1 task
+/// M9.1.13's `m9_gate_ops.json`), outside the pure engine's own files.
+pub fn record_fixture(path: &str, text: &str) {
+    std::fs::write(path, text).unwrap_or_else(|e| panic!("could not write {path}: {e}"));
+}

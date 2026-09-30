@@ -75,6 +75,7 @@ mod run_scouts;
 pub(crate) mod schedule;
 mod signals;
 pub(crate) mod stages;
+mod tiers;
 mod tools;
 mod wake;
 mod worker_messages;

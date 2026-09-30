@@ -167,6 +167,10 @@ pub struct CheckRecord {
     pub summary: Option<String>,
     #[serde(default)]
     pub summary_source: Option<proto::DeciderSource>,
+    /// Milestone 9.1 decisions 14 and 16: the tier job this record is (tiers 1 and 2 of
+    /// a tiered profile); `None` for M8a's check.
+    #[serde(default)]
+    pub tier: Option<TierRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -146,11 +146,12 @@ impl Rig {
             env: Vec::new(),
             guarded,
             also_integration,
+            tier: None,
         }
     }
 
     async fn run(&self, kind: OpKind) -> OpResult {
-        merge::candidate(&self.service, &self.ctx, kind)
+        merge::candidate(&self.service, &self.ctx, 1, kind)
             .await
             .unwrap()
     }
@@ -167,7 +168,7 @@ impl Rig {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_merge_into_the_highest_stage_moves_it_and_integration_together() {
     let rig = Rig::new();
-    let OpResult::Merged { commit } = rig.run(rig.candidate(STAGE_2, true)).await else {
+    let OpResult::Merged { commit, .. } = rig.run(rig.candidate(STAGE_2, true)).await else {
         panic!("not merged")
     };
     assert_eq!(rig.head(STAGE_2), commit);
@@ -182,7 +183,7 @@ async fn a_merge_into_the_highest_stage_moves_it_and_integration_together() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_merge_into_a_lower_stage_moves_only_its_ref() {
     let rig = Rig::new();
-    let OpResult::Merged { commit } = rig.run(rig.candidate(STAGE_1, false)).await else {
+    let OpResult::Merged { commit, .. } = rig.run(rig.candidate(STAGE_1, false)).await else {
         panic!("not merged")
     };
     assert_eq!(rig.head(STAGE_1), commit);
@@ -290,7 +291,7 @@ async fn rebaseline_puts_a_moved_integration_back_and_salvages_it() {
     assert_eq!(rig.salvage_refs(), vec![(salvage, x.clone())]);
     assert_eq!(rig.head(INTEGRATION), rig.base);
     // The next merge, guarded at the rebaselined heads, lands.
-    let OpResult::Merged { commit } = rig.run(rig.candidate(STAGE_2, true)).await else {
+    let OpResult::Merged { commit, .. } = rig.run(rig.candidate(STAGE_2, true)).await else {
         panic!("not merged")
     };
     assert_eq!(rig.head(INTEGRATION), commit);

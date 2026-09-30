@@ -49,6 +49,7 @@ fn reconciled(root: &std::path::Path, base: &str, task: &str) -> Reconciled {
         env: Vec::new(),
         guarded: Vec::new(),
         also_integration: true,
+        tier: None,
     };
     run.pending_ops.insert(
         1,
@@ -100,6 +101,9 @@ fn a_torn_paired_merge_is_a_moved_integration() {
     git(root, &["update-ref", INTEGRATION, &merged]);
     assert_eq!(
         reconciled(root, &base, &task),
-        Reconciled::Replay(OpResult::Merged { commit: merged })
+        Reconciled::Replay(OpResult::Merged {
+            commit: merged,
+            tier: None
+        })
     );
 }

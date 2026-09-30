@@ -109,7 +109,13 @@ fn restore_replays_journaled_results() {
     let (check_op, _) = pending_one(&fx, "Check", Some("t2"));
     let effects = restart(
         &mut fx,
-        vec![(merge_op, OpResult::Merged { commit: commit(1) })],
+        vec![(
+            merge_op,
+            OpResult::Merged {
+                commit: commit(1),
+                tier: None,
+            },
+        )],
     );
     assert_eq!(fx.run().state, RunState::Paused);
     assert_eq!(fx.task("t1").state, TaskState::Merged);

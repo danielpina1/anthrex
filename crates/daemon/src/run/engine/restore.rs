@@ -205,9 +205,14 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
             task.handback_due = task.state == TaskState::MergeQueue;
         }
         // Carry T13: `start_gates` and `dispatch_reviewers` re-issue a gate's op.
-        (OpKind::Proof { .. } | OpKind::Check { .. } | OpKind::PrepareReview { .. }, Some(i))
-            if run.tasks[i].gate_op == Some(op) =>
-        {
+        // Milestone 9.1 decision 29: tier 1 is a check gate's op too.
+        (
+            OpKind::Proof { .. }
+            | OpKind::Check { .. }
+            | OpKind::PrepareReview { .. }
+            | OpKind::Tier(_),
+            Some(i),
+        ) if run.tasks[i].gate_op == Some(op) => {
             run.tasks[i].gate_op = None;
         }
         // M8b decision 18: a dropped decider is queued again under its own id, so the

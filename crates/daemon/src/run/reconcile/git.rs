@@ -178,7 +178,10 @@ pub(super) fn merge_candidate(
         }
         // The compare-and-swap landed; the daemon may have died before `reattach`.
         reattach(g, integration, &alias_ref, run_branch, notes);
-        return Ok(Reconciled::Replay(OpResult::Merged { commit: head }));
+        return Ok(Reconciled::Replay(OpResult::Merged {
+            commit: head,
+            tier: None,
+        }));
     }
     Ok(Reconciled::Replay(OpResult::RefMoved {
         reason: format!(

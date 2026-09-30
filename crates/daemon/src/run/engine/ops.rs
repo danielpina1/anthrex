@@ -175,6 +175,10 @@ pub enum OpKind {
         /// moves with it, in one `refs_tx::cas` transaction.
         #[serde(default)]
         also_integration: bool,
+        /// Milestone 9.1 decision 16: a tiered profile's tier-2 job, run on the
+        /// candidate where M8a runs `check` (then `None`); `None` for an untiered one.
+        #[serde(default)]
+        tier: Option<Box<crate::run::tiers::TierSpec>>,
     },
     /// Decision 36 step 6 (the merge queue's, M8a.14) and M8a.6 ruling N5's (M8a.11):
     /// `git::hand_back(worktree, run_head)`, a write through `GitQueue::write`. The
@@ -462,6 +466,9 @@ pub enum OpResult {
     },
     Merged {
         commit: String,
+        /// Milestone 9.1 decision 16: the tier-2 job that passed (a tiered profile).
+        #[serde(default)]
+        tier: Option<Box<crate::run::tiers::TierOutcome>>,
     },
     Conflict {
         files: Vec<String>,
@@ -471,6 +478,9 @@ pub enum OpResult {
         timed_out: bool,
         tail: String,
         secs: u64,
+        /// Milestone 9.1 decision 16: the red tier-2 job (a tiered profile).
+        #[serde(default)]
+        tier: Option<Box<crate::run::tiers::TierOutcome>>,
     },
     RefMoved {
         reason: String,

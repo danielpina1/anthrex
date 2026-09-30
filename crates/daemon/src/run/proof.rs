@@ -105,6 +105,27 @@ pub fn direct(step: GitStep) -> Result<(), String> {
     step()
 }
 
+/// Which of the proof's commands is about to run (milestone 9.1, ruling C-12b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofStep {
+    Setup,
+    Red,
+    Head,
+}
+
+/// What a [`SlotHook`] gives a command: the variables to add after the profile's `env`
+/// (the slot and isolation variables of milestone 9.1 decisions 26 and 28), and what to
+/// hold while it runs (its slots), dropped right after it.
+pub type Slot = (Vec<(String, String)>, Box<dyn Send>);
+
+/// Called before each of the proof's commands.
+pub type SlotHook<'a> = &'a dyn Fn(ProofStep) -> Result<Slot, String>;
+
+/// The hook for a caller with no scheduler: nothing added, nothing held.
+pub fn unscheduled(_: ProofStep) -> Result<Slot, String> {
+    Ok((Vec::new(), Box::new(())))
+}
+
 /// Decision 33's proof. Each git step is bounded by `git_timeout` and runs through
 /// `git_write`; `setup` and each test run are bounded by `op.timeout_secs` and run
 /// outside it. The `head` run is skipped when the `red` run did not fail, since the
@@ -115,6 +136,19 @@ pub fn run_proof(
     git_timeout: Duration,
     git_write: &dyn Fn(GitStep) -> Result<(), String>,
 ) -> Result<ProofRuns, ProofError> {
+    run_proof_scheduled(git, op, git_timeout, git_write, &unscheduled)
+}
+
+/// [`run_proof`], with `slot` called before each command and its hold dropped after it
+/// (never across a git step).
+pub fn run_proof_scheduled(
+    git: &OsStr,
+    op: &ProofOp,
+    git_timeout: Duration,
+    git_write: &dyn Fn(GitStep) -> Result<(), String>,
+    slot: SlotHook<'_>,
+) -> Result<ProofRuns, ProofError> {
+    let slot = |step| slot(step).map_err(ProofError::Failed);
     let pattern = Regex::new(&op.passed).map_err(|error| {
         ProofError::Failed(format!(
             "test_passed is not a valid regular expression: {error}"
@@ -142,8 +176,10 @@ pub fn run_proof(
         if let Some(setup) = &op.setup {
             // A reused worktree may be at any commit; setup runs at red, as in a new one.
             git_write(checkout(git, &op.path, &op.red, git_timeout)).map_err(ProofError::Failed)?;
+            let (extra, held) = slot(ProofStep::Setup)?;
             let (outcome, _) =
-                run_matching(&op.path, setup, (&op.env, &[]), timeout, None, confined);
+                run_matching(&op.path, setup, (&op.env, &extra), timeout, None, confined);
+            drop(held);
             if !outcome.ok {
                 return Err(ProofError::SetupFailed {
                     output: with_timeout_note(outcome),
@@ -156,14 +192,16 @@ pub fn run_proof(
     }
 
     git_write(checkout(git, &op.path, &op.red, git_timeout)).map_err(ProofError::Failed)?;
+    let (extra, held) = slot(ProofStep::Red)?;
     let (red, _) = run_matching(
         &op.path,
         &op.command,
-        (&op.env, &[]),
+        (&op.env, &extra),
         timeout,
         None,
         confined,
     );
+    drop(held);
     let mut runs = ProofRuns {
         red_failed: !red.ok && !red.timed_out,
         ..ProofRuns::default()
@@ -174,14 +212,16 @@ pub fn run_proof(
     }
 
     git_write(checkout(git, &op.path, &op.head, git_timeout)).map_err(ProofError::Failed)?;
+    let (extra, held) = slot(ProofStep::Head)?;
     let (head, matched) = run_matching(
         &op.path,
         &op.command,
-        (&op.env, &[]),
+        (&op.env, &extra),
         timeout,
         Some(&pattern),
         confined,
     );
+    drop(held);
     runs.head_passed = head.ok;
     runs.matched = matched;
     runs.head_tail = with_timeout_note(head);

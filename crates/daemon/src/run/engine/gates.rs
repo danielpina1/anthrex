@@ -37,7 +37,8 @@ pub(super) fn next_gate(run: &Run, i: usize, passed: Option<TaskState>) -> TaskS
     let task = &run.tasks[i];
     let wanted = |state: TaskState| match state {
         TaskState::Proof => task.test_mode == TestMode::Tdd,
-        TaskState::Check => run.profile.check.is_some(),
+        // Milestone 9.1 decision 14: or a tiered profile's tier-1 commands.
+        TaskState::Check => super::tiers::has_check_gate(run),
         TaskState::Review => task.review_level.is_some(),
         _ => true,
     };
@@ -62,7 +63,7 @@ pub(super) fn enter(run: &mut Run, i: usize, state: TaskState, now: u64) {
 }
 
 /// Task `i` passed `gate`: on to the next one.
-fn passed(run: &mut Run, i: usize, gate: TaskState, now: u64) {
+pub(super) fn passed(run: &mut Run, i: usize, gate: TaskState, now: u64) {
     let next = next_gate(run, i, Some(gate));
     enter(run, i, next, now);
     history(
@@ -150,6 +151,10 @@ fn start_proof(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
 
 /// Decision 34: `Op Check` in the task's worktree.
 fn start_check(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.1 decision 14: a tiered profile's check gate is tier 1.
+    if super::tiers::tiered(run) && super::tiers::has_check_gate(run) {
+        return super::tiers::start_tier1(run, i, now, fx);
+    }
     let Some(command) = run.profile.check.clone() else {
         // No check: the gate is skipped (the run is `unverified` from its start).
         return passed(run, i, TaskState::Check, now);
@@ -177,7 +182,7 @@ fn start_check(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
 }
 
 /// Whether task `i` awaits `op` in `state`; either way, it awaits it no longer.
-fn awaited(run: &mut Run, i: usize, op: OpId, state: TaskState) -> bool {
+pub(super) fn awaited(run: &mut Run, i: usize, op: OpId, state: TaskState) -> bool {
     let task = &mut run.tasks[i];
     if task.gate_op != Some(op) {
         return false;
@@ -291,6 +296,7 @@ pub(super) fn check_done(
                 on_candidate: false,
                 summary: None,
                 summary_source: None,
+                tier: None,
             };
             run.tasks[i].checks.push(record);
             if ok {

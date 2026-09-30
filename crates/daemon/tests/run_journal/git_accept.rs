@@ -169,6 +169,7 @@ fn reconcile_done_line_replays_without_touching_git() {
     );
     let merged = OpResult::Merged {
         commit: "c".repeat(40),
+        tier: None,
     };
     let prepared = OpResult::Worktree {
         head: "d".repeat(40),
@@ -187,6 +188,7 @@ fn reconcile_done_line_replays_without_touching_git() {
         env: Vec::new(),
         guarded: Vec::new(),
         also_integration: false,
+        tier: None,
     };
     let t1 = prepare(&run, "t1", "anthrex/x/t1", None);
     let t2 = prepare(&run, "t2", "anthrex/x/t2", None);

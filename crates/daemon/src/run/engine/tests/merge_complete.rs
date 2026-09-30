@@ -343,7 +343,13 @@ fn finish_cancels_unstarted_then_completes_when_live_ones_end() {
     assert_eq!(fx.task("t2").state, TaskState::Blocked);
     to_queue(&mut fx, "t1", window_of(&windows, "t1"));
     let (op, _) = candidate(&fx, "t1");
-    let effects = fx.done(op, OpResult::Merged { commit: commit(1) });
+    let effects = fx.done(
+        op,
+        OpResult::Merged {
+            commit: commit(1),
+            tier: None,
+        },
+    );
     assert_eq!(fx.task("t2").state, TaskState::Cancelled);
     assert!(effects.contains(&Effect::KillWindow { window_id: t2 }));
     assert_eq!(fx.task("t4").state, TaskState::Cancelled);

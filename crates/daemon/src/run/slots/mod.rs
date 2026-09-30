@@ -77,6 +77,12 @@ impl TestScheduler {
         crate::lock(&self.shared.inner).book.slots()
     }
 
+    /// How many requests wait for a grant (tests of the callers' waits).
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> usize {
+        crate::lock(&self.shared.inner).book.waiting()
+    }
+
     /// Waits, without blocking the runtime, until `req` is granted. The grant holds its
     /// slots until it is dropped; dropping this future first gives up its place.
     pub async fn acquire(&self, req: SlotRequest) -> SlotGrant {
