@@ -494,3 +494,71 @@ fn worker_text_is_sanitised() {
         assert!(field(&sections, title, label).is_some(), "{title} {label}");
     }
 }
+
+/// Review of fd9dd25: one criterion or owns entry is one row, whatever line breaks
+/// it carries, so it cannot forge another `☐` criterion.
+#[test]
+fn a_list_entry_with_a_line_break_stays_one_row() {
+    let mut app = gemini_with(|run| t2(run).owns = vec!["src/a.rs\nsrc/forged.rs".into()]);
+    with_detail(&mut app, "brief", None);
+    if let Some(DetailState::Ready(detail)) = app.task_detail.as_mut().map(|c| &mut c.state) {
+        detail.acceptance = vec!["real\n☐ FORGED".into(), "x\r☐ FORGED2".into()];
+    }
+    let rows = body(&sections(&app));
+    let criteria: Vec<&str> = rows
+        .iter()
+        .filter_map(|row| {
+            row.split_once('☐')
+                .map(|_| row.trim_start_matches("done when").trim())
+        })
+        .collect();
+    assert_eq!(criteria, ["☐ real ☐ FORGED", "☐ x ☐ FORGED2"], "{rows:?}");
+    assert!(
+        rows.contains(&"owns      src/a.rs src/forged.rs".to_owned()),
+        "{rows:?}"
+    );
+}
+
+/// Ruling D-2: a merged or reported task's outcome heads STATUS, so it shows without
+/// scrolling; the sections keep decision 22's order.
+#[test]
+fn a_finished_task_leads_status_with_its_result() {
+    for state in [TaskState::Merged, TaskState::Reported] {
+        let mut app = gemini_with(|run| {
+            let task = t2(run);
+            task.state = state;
+            task.merge_commit = Some("0123456789".into());
+        });
+        with_detail(
+            &mut app,
+            "brief",
+            Some((
+                "\n  Mapped the hooks.  \nAdded a test.",
+                SummarySource::TaskDone,
+            )),
+        );
+        let sections = sections(&app);
+        let titles: Vec<&str> = sections.iter().map(|s| s.title).collect();
+        assert_eq!(titles, ["GOAL", "STATUS", "RESULT"]);
+        let first = &sections[1].fields[0];
+        assert_eq!(
+            (first.label, first.value.as_str()),
+            ("result", "Mapped the hooks."),
+            "{state:?}"
+        );
+        // Before the detail lands: RESULT's first line stands in.
+        let mut app = gemini_with(|run| {
+            let task = t2(run);
+            task.state = state;
+            task.merge_commit = Some("0123456789".into());
+        });
+        app.task_detail = None;
+        assert_eq!(
+            value(&self::sections(&app), "STATUS", "result"),
+            "changes · one pairing bug"
+        );
+    }
+    // A task still in review has no result line.
+    let app = app_of(gemini_fixture());
+    assert!(field(&sections(&app), "STATUS", "result").is_none());
+}

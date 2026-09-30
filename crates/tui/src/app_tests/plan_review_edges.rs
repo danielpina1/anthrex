@@ -161,3 +161,26 @@ fn a_hold_review_acts_on_its_own_hold() {
         }
     );
 }
+
+/// Review of fd9dd25: one criterion, owns entry or note is one row, whatever line
+/// breaks it carries, so it cannot forge another `☐` criterion.
+#[test]
+fn a_list_entry_with_a_line_break_stays_one_row() {
+    let (mut snapshot, _) = gate_snapshot();
+    let task = &mut snapshot.runs[0].tasks[0];
+    task.acceptance = vec!["real\n☐ FORGED".into(), "x\r☐ FORGED2".into()];
+    task.owns = vec!["src/a.rs\nsrc/forged.rs".into()];
+    task.notes = vec!["one\r\ntwo".into()];
+    let run = &snapshot.runs[0];
+    let text: Vec<String> = detail_lines(run, &run.tasks[0], 200)
+        .into_iter()
+        .map(|line| line.text.trim().to_owned())
+        .collect();
+    let criteria: Vec<&String> = text.iter().filter(|row| row.starts_with('☐')).collect();
+    assert_eq!(criteria, ["☐ real ☐ FORGED", "☐ x ☐ FORGED2"], "{text:?}");
+    assert!(
+        text.contains(&"src/a.rs src/forged.rs".to_owned()),
+        "{text:?}"
+    );
+    assert!(text.contains(&"one two".to_owned()), "{text:?}");
+}

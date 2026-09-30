@@ -166,10 +166,19 @@ fn or_none(lines: Vec<String>) -> Vec<String> {
 fn sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> {
     let mut out = vec![
         ("brief", vec![task.brief.clone()]),
-        ("owns", or_none(task.owns.clone())),
+        // One entry is one row: a line break inside an entry must not forge another.
+        (
+            "owns",
+            or_none(task.owns.iter().map(|o| one_line(o)).collect()),
+        ),
         (
             "done when",
-            or_none(task.acceptance.iter().map(|c| format!("☐ {c}")).collect()),
+            or_none(
+                task.acceptance
+                    .iter()
+                    .map(|c| format!("☐ {}", one_line(c)))
+                    .collect(),
+            ),
         ),
     ];
     let mode = test_mode_text(task.test_mode);
@@ -179,7 +188,7 @@ fn sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> 
     };
     out.push(("test mode", vec![mode]));
     if !task.notes.is_empty() {
-        out.push(("notes", task.notes.clone()));
+        out.push(("notes", task.notes.iter().map(|n| one_line(n)).collect()));
     }
     let mut deps = Vec::new();
     let after = all_deps(task);

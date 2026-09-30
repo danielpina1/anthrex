@@ -134,12 +134,13 @@ impl App {
         }
     }
 
-    /// A lost link took the reply with it: an in-flight request is forgotten, so the
-    /// next tick after reconnecting asks again.
+    /// A lost link took the reply with it: an in-flight request is forgotten, and so
+    /// is a failed one (its failure may have been the link's), so the next tick after
+    /// reconnecting asks again, once. A landed detail stays.
     pub(super) fn forget_task_detail_in_flight(&mut self) {
         if matches!(
             self.task_detail.as_ref().map(|cache| &cache.state),
-            Some(DetailState::InFlight(_))
+            Some(DetailState::InFlight(_) | DetailState::Failed(_))
         ) {
             self.task_detail = None;
         }

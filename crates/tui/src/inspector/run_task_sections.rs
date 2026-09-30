@@ -9,7 +9,7 @@ use super::run_format::{format_duration, reason_text};
 use super::{Field, Section, SectionField};
 use crate::app::App;
 use crate::app::task_detail::DetailState;
-use crate::safe_text::one_line;
+use crate::safe_text::{multi_line, one_line};
 use crate::tree::{NodeKey, is_paused, round_label, task_held};
 use proto::{
     AgentRole, AgentRoundInfo, DeciderSource, RunInfo, RunState, SummarySource, TaskInfo,
@@ -188,10 +188,15 @@ fn goal(run: &RunInfo, task: &TaskInfo, app: &App) -> Section {
         collapse: !app.brief_expanded_for(&key),
     });
     if !task.owns.is_empty() {
-        fields.push(plain("owns", task.owns.join(", ")));
+        let owns: Vec<String> = task.owns.iter().map(|o| one_line(o)).collect();
+        fields.push(plain("owns", owns.join(", ")));
     }
     if !acceptance.is_empty() {
-        let lines: Vec<String> = acceptance.iter().map(|c| format!("☐ {c}")).collect();
+        // One criterion is one row: a line break inside it must not forge another.
+        let lines: Vec<String> = acceptance
+            .iter()
+            .map(|c| format!("☐ {}", one_line(c)))
+            .collect();
         fields.push(plain("done when", lines.join("\n")));
     }
     Section {
@@ -271,9 +276,25 @@ fn result(run: &RunInfo, task: &TaskInfo, flat: &[Field], app: &App) -> Section 
 /// Decision 22's three sections. `flat` is milestone 8c's field list for the task,
 /// which STATUS carries on (and RESULT takes its `diff` from).
 pub(super) fn sections(run: &RunInfo, task: &TaskInfo, flat: &[Field], app: &App) -> Vec<Section> {
-    vec![
-        goal(run, task, app),
-        status(run, task, flat, app),
-        result(run, task, flat, app),
-    ]
+    let result = result(run, task, flat, app);
+    let mut status = status(run, task, flat, app);
+    if let Some(line) = outcome_line(task, &result) {
+        status.fields.insert(0, plain("result", line));
+    }
+    vec![goal(run, task, app), status, result]
+}
+
+/// Ruling D-2: a merged or reported task's outcome, for the head of STATUS, so it
+/// shows without scrolling. The first line of the worker's summary, else of RESULT's
+/// first field (the detail may not have landed); `None` while the task is unfinished
+/// or RESULT reads `nothing yet`.
+fn outcome_line(task: &TaskInfo, result: &Section) -> Option<String> {
+    if !matches!(task.state, TaskState::Merged | TaskState::Reported) {
+        return None;
+    }
+    let first = result
+        .fields
+        .first()
+        .filter(|field| !field.label.is_empty())?;
+    first_line(&multi_line(&first.value)).map(one_line)
 }

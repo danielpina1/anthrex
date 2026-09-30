@@ -100,15 +100,34 @@ pub(crate) fn body_lines(sections: &[Section], width: usize) -> Vec<Line<'static
     out
 }
 
+/// The first body row drawn: `scroll`, clamped so the last body row is the last
+/// panel row.
+fn first_row(len: usize, room: usize, scroll: u16) -> usize {
+    usize::from(scroll).min(len.saturating_sub(room))
+}
+
 /// The panel's interior: the title row, then `height − 1` body rows from `scroll`,
 /// clamped to the end.
 pub(super) fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec<Line<'static>> {
     let mut out = vec![rows::title(inspection, width)];
     let room = height.saturating_sub(1);
     let body = body_lines(&inspection.sections, width);
-    let first = usize::from(inspection.scroll).min(body.len().saturating_sub(room));
+    let first = first_row(body.len(), room, inspection.scroll);
     out.extend(body.into_iter().skip(first).take(room));
     out
+}
+
+/// The marks ruling D-2 puts in the borders.
+pub(super) const MORE_ABOVE: &str = " ↑ PgUp ";
+pub(super) const MORE_BELOW: &str = " ↓ PgDn ";
+
+/// Ruling D-2: whether body rows lie above and below what an interior of `width` x
+/// `height` draws.
+pub(super) fn more(inspection: &Inspection, width: usize, height: usize) -> (bool, bool) {
+    let room = height.saturating_sub(1);
+    let len = body_lines(&inspection.sections, width).len();
+    let first = first_row(len, room, inspection.scroll);
+    (first > 0, first + room < len)
 }
 
 #[cfg(test)]

@@ -480,3 +480,63 @@ fn alert_churn_keeps_a_wheel_scrolled_sidebar() {
         "row {focused} in view from {top}"
     );
 }
+
+/// Review of 5903754: alert churn keeps a revealed anchor revealed. With no wheel,
+/// the focused window stays in view when the Alerts box grows and the list shrinks;
+/// the same holds for a tree-mode selection.
+#[test]
+fn alert_churn_keeps_a_revealed_anchor_in_view() {
+    use crate::tree::run_fixtures::{run, snapshot};
+    use proto::RunState;
+    let runs = |halted: usize| {
+        let runs = (0..3)
+            .map(|n| {
+                let state = if n < halted {
+                    RunState::Halted
+                } else {
+                    RunState::Running
+                };
+                let mut info = run(&format!("r{n}"), "/tmp", state);
+                info.created_at = n as u64;
+                info
+            })
+            .collect();
+        proto::DaemonMsg::Run(proto::RunReply::Snapshot(snapshot(1, runs)))
+    };
+    let frame = |app: &mut App| {
+        let l = crate::ui::layout_for(app, ratatui::layout::Rect::new(0, 0, 120, 20));
+        app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
+        l
+    };
+    let in_view = |app: &App, key: &NodeKey, height: u16| {
+        let rows = app.rows();
+        let index = tree::row_index(&rows, key).unwrap();
+        let top = app.tree.sidebar.top;
+        (top..top + usize::from(height)).contains(&index)
+    };
+    for tree_mode in [false, true] {
+        let shells = (1..=20)
+            .map(|id| win(id, &format!("shell-{id}"), Status::Idle))
+            .collect();
+        let mut app = app_with(shells);
+        app.on_daemon(runs(1));
+        frame(&mut app);
+        app.focus(20);
+        let before = frame(&mut app);
+        let key = NodeKey::Window(20);
+        if tree_mode {
+            prefix(&mut app);
+            let _ = press(&mut app, KeyCode::Char('t'), KeyModifiers::NONE);
+            assert_eq!(app.tree.selected, Some(key.clone()), "starts on the focus");
+        }
+        assert!(in_view(&app, &key, before.sidebar_list.height), "revealed");
+        app.on_daemon(runs(3));
+        let after = frame(&mut app);
+        assert!(after.sidebar_list.height < before.sidebar_list.height);
+        assert!(
+            in_view(&app, &key, after.sidebar_list.height),
+            "tree mode {tree_mode}: still in view from top {}",
+            app.tree.sidebar.top
+        );
+    }
+}

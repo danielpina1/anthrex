@@ -209,3 +209,86 @@ fn round_doing_reads_now() {
         "a review round has no doing"
     );
 }
+
+/// A value's lone CR is a line break, as `multi_line` reads it everywhere else, and a
+/// CRLF is one break, not two.
+#[test]
+fn a_lone_carriage_return_breaks_the_line() {
+    let app = t2_with_brief(0);
+    let mut inspection = inspect_node(&app, &t2_key());
+    inspection.sections[0].fields[0].value = "first\rsecond\r\nthird".into();
+    let rows = text(&body_lines(&inspection.sections, 76));
+    assert_eq!(
+        rows[1..4],
+        ["brief     first", "          second", "          third"]
+    );
+}
+
+/// Ruling D-2: the panel's borders say when there is more: ` ↓ PgDn ` right-aligned
+/// in the bottom border while rows lie below, ` ↑ PgUp ` in the top border once
+/// scrolled down, both muted, and neither when it does not fit.
+#[test]
+fn the_borders_say_there_is_more() {
+    use ratatui::{Terminal, backend::TestBackend};
+    let draw = |inspection: &Inspection, width: u16, height: u16| {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| super::super::render(frame, inspection, Rect::new(0, 0, width, height)))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    };
+    let row = |buffer: &ratatui::buffer::Buffer, y: u16| -> String {
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect()
+    };
+    let app = t2_with_brief(3);
+    let mut inspection = inspect_node(&app, &t2_key());
+    let rows = body_lines(&inspection.sections, 80).len();
+    // 84 x 18: an interior of 80 x 16, 15 body rows, more below.
+    let buffer = draw(&inspection, 84, 18);
+    assert!(
+        row(&buffer, 17).ends_with(" ↓ PgDn ╯"),
+        "{}",
+        row(&buffer, 17)
+    );
+    assert!(!row(&buffer, 0).contains("PgUp"), "{}", row(&buffer, 0));
+    let mark = row(&buffer, 17).find("↓").unwrap();
+    let x = u16::try_from(row(&buffer, 17)[..mark].chars().count()).unwrap();
+    assert_eq!(buffer[(x, 17)].style().fg, theme::muted().fg, "muted");
+    // Scrolled into the middle: both.
+    inspection.scroll = 3;
+    let buffer = draw(&inspection, 84, 18);
+    assert!(
+        row(&buffer, 0).ends_with(" ↑ PgUp ╮"),
+        "{}",
+        row(&buffer, 0)
+    );
+    assert!(row(&buffer, 17).ends_with(" ↓ PgDn ╯"));
+    // At the end: only the top one.
+    inspection.scroll = u16::try_from(rows).unwrap();
+    let buffer = draw(&inspection, 84, 18);
+    assert!(row(&buffer, 0).contains("↑ PgUp"));
+    assert!(!row(&buffer, 17).contains("PgDn"), "{}", row(&buffer, 17));
+    // Everything fits: neither.
+    inspection.scroll = 0;
+    let buffer = draw(&inspection, 84, u16::try_from(rows).unwrap() + 3);
+    let last = buffer.area.height - 1;
+    assert!(!row(&buffer, 0).contains("PgUp") && !row(&buffer, last).contains("PgDn"));
+    // Too narrow for the mark: dropped, the corners intact.
+    for width in [2, 5, 9] {
+        inspection.scroll = 3;
+        let buffer = draw(&inspection, width, 18);
+        assert!(
+            !row(&buffer, 17).contains('↓'),
+            "{width}: {}",
+            row(&buffer, 17)
+        );
+        assert!(
+            !row(&buffer, 0).contains('↑'),
+            "{width}: {}",
+            row(&buffer, 0)
+        );
+        assert!(row(&buffer, 17).ends_with('╯'), "{width}");
+    }
+}

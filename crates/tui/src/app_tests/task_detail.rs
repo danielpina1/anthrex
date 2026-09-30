@@ -115,11 +115,24 @@ fn a_new_turn_or_state_asks_again() {
     let first = ticks(&mut app, 1);
     let _ = reply(&mut app, "t2", "the brief", first[0].0);
     assert!(ticks(&mut app, 3).is_empty(), "the key did not change");
-    let changes: [fn(&mut proto::TaskInfo); 4] = [
+    // Each change alone moves one part of decision 23's key.
+    let changes: [fn(&mut proto::TaskInfo); 8] = [
         |task| task.state = TaskState::MergeQueue,
         |task| task.rounds[0].turns += 1,
         |task| task.merge_commit = Some("abcdef0123".into()),
         |task| task.reviews.clear(),
+        // `rounds.len()`: a review round has no worker turns.
+        |task| {
+            let mut round = task.rounds[1].clone();
+            round.started_at += 1;
+            task.rounds.push(round);
+        },
+        // `done_signal`.
+        |task| task.done_signal = None,
+        // `turn_open` of the latest worker round: opening, then closing a turn, which
+        // is when a summary first exists.
+        |task| task.rounds[0].turn_open = true,
+        |task| task.rounds[0].turn_open = false,
     ];
     for (n, change) in changes.into_iter().enumerate() {
         change_t2(&mut app, change);
@@ -304,4 +317,92 @@ fn page_keys_and_b_apply_only_to_the_selected_task() {
     let _ = press(&mut app, KeyCode::Char('b'), none);
     let _ = press(&mut app, KeyCode::Char('b'), none);
     assert!(!app.brief_expanded_for(&t("t2")));
+}
+
+/// Review of fd9dd25: a failed send is retried after a reconnect, once.
+#[test]
+fn a_failed_send_is_asked_again_after_a_reconnect() {
+    let mut app = gemini_view();
+    let msg = app
+        .on_tick()
+        .into_iter()
+        .find_map(|effect| match effect {
+            Effect::Send(msg @ ClientMsg::RunTagged { .. }) => Some(msg),
+            _ => None,
+        })
+        .expect("a request");
+    let _ = app.on_send_failed(&msg);
+    assert!(matches!(state(&app), Some(DetailState::Failed(_))));
+    let _ = app.on_link_lost("gone");
+    let _ = app.on_reconnected(app.windows.clone());
+    let sent = ticks(&mut app, 3);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].1, "t2");
+}
+
+/// Two runs with a task of the same id and equal keys: each is its own detail.
+#[test]
+fn the_same_task_id_in_another_run_is_asked_for_too() {
+    let (mut snapshot, windows) = gemini_fixture();
+    let mut r2 = snapshot.runs[0].clone();
+    r2.run_id = "r2".into();
+    r2.created_at += 1;
+    snapshot.runs.push(r2);
+    let mut app = app_with_runs(windows, snapshot);
+    open_run_view(&mut app, "r1");
+    select(&mut app, "t2");
+    let (id, _) = ticks(&mut app, 1)[0].clone();
+    let _ = reply(&mut app, "t2", "r1's brief", id);
+    assert!(
+        app.task_detail_for("r2", "t2").is_none(),
+        "r1's detail is not r2's"
+    );
+    app.open_run_view("r2".into());
+    let key = NodeKey::Task {
+        run: "r2".into(),
+        id: "t2".into(),
+    };
+    let run = app.runs.runs.iter().find(|r| r.run_id == "r2").unwrap();
+    let rows = tree::run_rows(run, &app.windows, &app.tree, RunFilter::All);
+    app.tree.select(&rows, key.clone());
+    assert_eq!(app.tree.selected, Some(key));
+    let sent: Vec<(String, String)> = (0..3)
+        .flat_map(|_| app.on_tick())
+        .filter_map(|effect| match effect {
+            Effect::Send(ClientMsg::RunTagged {
+                request: RunRequest::TaskDetail { run_id, task_id },
+                ..
+            }) => Some((run_id, task_id)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, [("r2".to_owned(), "t2".to_owned())]);
+}
+
+/// `b` collapses a brief scrolled far down: the stored scroll is past the new end,
+/// and one PageUp still moves the view up from where it is drawn.
+#[test]
+fn page_up_after_the_brief_collapsed_moves_from_the_drawn_end() {
+    let mut app = gemini_view();
+    let id = ticks(&mut app, 1)[0].0;
+    let long = (1..=60).map(|n| format!("line {n}")).collect::<Vec<_>>();
+    let _ = reply(&mut app, "t2", &long.join("\n"), id);
+    let none = KeyModifiers::NONE;
+    let _ = press(&mut app, KeyCode::Char('b'), none);
+    for _ in 0..20 {
+        let _ = press(&mut app, KeyCode::PageDown, none);
+    }
+    let _ = press(&mut app, KeyCode::Char('b'), none);
+    let (width, height) = app.task_panel_interior();
+    let rows = crate::inspector::task_panel_rows(&app, width);
+    let max = u16::try_from(rows).unwrap().saturating_sub(height - 1);
+    assert!(
+        app.inspector_scroll_for(&t("t2")) > max,
+        "the stored scroll is past the end"
+    );
+    let _ = press(&mut app, KeyCode::PageUp, none);
+    assert_eq!(
+        app.inspector_scroll_for(&t("t2")),
+        max.saturating_sub(height - 1)
+    );
 }

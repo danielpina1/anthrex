@@ -301,9 +301,13 @@ fn with_t2_detail(app: &mut App) {
 fn task_panel(width: u16, height: u16) -> Vec<String> {
     let mut app = gemini_view();
     with_t2_detail(&mut app);
-    let layout = laid_out(&mut app, width, height);
-    let view = overview::view(&app, layout.main);
-    text_in(&drawn(&app, width, height), view.footer)
+    panel_rows(&mut app, width, height)
+}
+
+fn panel_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
+    let layout = laid_out(app, width, height);
+    let view = overview::view(app, layout.main);
+    text_in(&drawn(app, width, height), view.footer)
         .lines()
         .map(str::to_owned)
         .collect()
@@ -326,7 +330,7 @@ fn task_panel_renders_at_80x24() {
             "│           ☐ stop marks idle              │",
             "│ STATUS                                   │",
             "│ stage     in review                      │",
-            "╰──────────────────────────────────────────╯",
+            "╰────────────────────────────────── ↓ PgDn ╯",
         ]
     );
 }
@@ -362,4 +366,69 @@ fn task_panel_renders_at_120x40() {
         ]
     );
     assert!(rows[0].starts_with('╭') && rows[17].starts_with('╰'));
+    // Ruling D-2: RESULT is below the fold, and the border says so.
+    assert!(rows[17].ends_with(" ↓ PgDn ╯"), "{}", rows[17]);
+    assert!(!rows[0].contains("PgUp"), "{}", rows[0]);
+}
+
+/// The reducer's page size comes from the panel the frame draws: its interior is
+/// the rows between the borders and the columns inside the padding.
+#[test]
+fn the_page_size_is_the_drawn_panels_interior() {
+    for (width, height) in [(80, 24), (120, 40)] {
+        let mut app = gemini_view();
+        let layout = laid_out(&mut app, width, height);
+        let view = overview::view(&app, layout.main);
+        let rows: Vec<String> = text_in(&drawn(&app, width, height), view.footer)
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        let top = rows.iter().position(|r| r.starts_with('╭')).unwrap();
+        let bottom = rows.iter().position(|r| r.starts_with('╰')).unwrap();
+        let inner_rows = u16::try_from(bottom - top - 1).unwrap();
+        // `│ ` and ` │` on either side.
+        let inner_cols = u16::try_from(rows[top].chars().count() - 4).unwrap();
+        assert_eq!(
+            app.task_panel_interior(),
+            (inner_cols, inner_rows),
+            "{width}x{height}"
+        );
+    }
+}
+
+/// Ruling D-2: a merged task's outcome shows without scrolling, at both sizes.
+#[test]
+fn a_merged_tasks_result_shows_without_scrolling() {
+    for (width, height, result_row) in [(80, 24, 10), (120, 40, 10)] {
+        let (mut snapshot, windows) = crate::tree::run_fixtures::gemini_fixture();
+        let t2 = snapshot.runs[0]
+            .tasks
+            .iter_mut()
+            .find(|t| t.id == "t2")
+            .unwrap();
+        t2.state = proto::TaskState::Merged;
+        t2.merge_commit = Some("0123456789".into());
+        let mut app = app_with_runs(windows, snapshot);
+        open_run_view(&mut app, "r1");
+        let key = NodeKey::Task {
+            run: "r1".into(),
+            id: "t2".into(),
+        };
+        let rows = tree::run_rows(&app.runs.runs[0], &app.windows, &app.tree, RunFilter::All);
+        app.tree.select(&rows, key);
+        with_t2_detail(&mut app);
+        if let Some(crate::app::task_detail::DetailState::Ready(detail)) =
+            app.task_detail.as_mut().map(|cache| &mut cache.state)
+        {
+            detail.worker_summary = Some("Mapped all nine hook events.\nAdded a test.".into());
+            detail.summary_source = Some(proto::SummarySource::TaskDone);
+        }
+        let panel = panel_rows(&mut app, width, height);
+        assert!(
+            panel[result_row].starts_with("│ result    Mapped all nine hook events."),
+            "{width}x{height}: {panel:#?}"
+        );
+        assert!(panel[result_row - 1].starts_with("│ STATUS"), "{panel:#?}");
+        assert!(panel.last().unwrap().ends_with(" ↓ PgDn ╯"), "{panel:#?}");
+    }
 }
