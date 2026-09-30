@@ -8,12 +8,15 @@
 //! the pre-check trusts that graph only when it is the candidate's too: the worktree is
 //! clean and at the stage head's tree, and the change touches no file the graph is read
 //! from (a `Cargo.toml` or `Cargo.lock` for `cargo`; a `manifests` match for a command,
-//! and with no `manifests` any change at all) and adds no module directory. Anything
+//! and with no `manifests` any change at all) and adds no module directory; those files
+//! are all the graph is read from (ruling C-9's check, `graph::inputs_suffice`); and the
+//! stage head's read gives a known graph (ruling C-17). Anything
 //! else, and anything that goes wrong, is a miss: the executor materializes and runs
 //! the job as usual. A miss costs one materialize; a wrong hit would skip a test.
 
 use std::path::Path;
 
+use super::super::graph::inputs_suffice;
 use super::{
     Job, JobSpec, OpCtx, TierSpec, affected_of, cache_ctx, changed_paths, hit, lookup_all,
     usable_hits,
@@ -85,10 +88,14 @@ pub(crate) async fn cached_outcome(
         spec.manifests.clone(),
     );
     let names = changed.clone();
-    let same_graph = super::bounded(super::SLACK, move || {
-        Ok(graph_unchanged(
-            &profile, &names, &manifests, &modules, &dir,
-        ))
+    let (git, t) = (job.git.clone(), job.ctx.git_timeout);
+    let same_graph = super::bounded(t * 2 + super::SLACK, move || {
+        // Ruling C-17 (2b): the files the graph is keyed on must be all it reads
+        // (ruling C-9, as `driver/graph.rs` decides it for its own cache key).
+        Ok(
+            graph_unchanged(&profile, &names, &manifests, &modules, &dir)
+                && inputs_suffice(&git, &dir, &profile, &manifests, t),
+        )
     })
     .await
     .unwrap_or(false);
@@ -96,6 +103,10 @@ pub(crate) async fn cached_outcome(
         return None;
     }
     let (affected, graph_note) = affected_of(&job, spec, &changed).await;
+    // Ruling C-17 (2a): a graph the stage head's read could not know is not trusted.
+    if graph_note.is_some() && spec.profile.module_graph != GraphSource::None {
+        return None;
+    }
     let steps = plan(spec.tier, &affected, &spec.profile, spec.check.as_deref()).steps;
     let keys: Vec<_> = steps
         .iter()

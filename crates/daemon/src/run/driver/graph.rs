@@ -337,6 +337,65 @@ fn manifests_suffice(
     Some(true)
 }
 
+/// The files the graph `source` is keyed on in `dir`, path and fingerprint in path
+/// order, and whether they are all the graph is read from (ruling C-9; with no
+/// `manifests`, never: C-8 (2b)). `None` when there is no graph to read, the files
+/// cannot be listed, or a `manifests` entry is not a valid glob.
+fn inputs(
+    git: &OsStr,
+    dir: &Path,
+    source: &GraphSource,
+    manifests: &[String],
+    timeout: Duration,
+) -> Option<(BTreeMap<String, String>, bool)> {
+    let listed = || listed_files(git, dir, timeout);
+    match source {
+        GraphSource::None => None,
+        GraphSource::Cargo => {
+            let paths: Vec<String> = listed()?
+                .into_iter()
+                .filter(|p| {
+                    let name = p.rsplit('/').next().unwrap_or(p);
+                    name == "Cargo.toml" || name == "Cargo.lock"
+                })
+                .collect();
+            let prints = fingerprint(dir, &paths);
+            let suffice = cargo_files_suffice(dir, &prints);
+            Some((prints, suffice))
+        }
+        GraphSource::Command(_) if manifests.is_empty() => Some((BTreeMap::new(), false)),
+        GraphSource::Command(_) => {
+            let matcher = OwnsMatcher::new(manifests).ok()?;
+            let listed = listed()?;
+            let paths: Vec<String> = listed
+                .iter()
+                .filter(|p| matcher.matches(p))
+                .cloned()
+                .collect();
+            let prints = fingerprint(dir, &paths);
+            let suffice = manifests_suffice(manifests, &listed, &prints)?;
+            Some((prints, suffice))
+        }
+    }
+}
+
+/// Ruling C-17 (2b): whether the graph `source` would be read in `dir` from exactly
+/// the files its cache key fingerprints (ruling C-9's check, as [`cache_key`] makes
+/// it). A profile with no graph reads none, so it is `true`; anything that cannot be
+/// checked is `false`. Blocking.
+pub(crate) fn inputs_suffice(
+    git: &OsStr,
+    dir: &Path,
+    source: &GraphSource,
+    manifests: &[String],
+    timeout: Duration,
+) -> bool {
+    match source {
+        GraphSource::None => true,
+        _ => inputs(git, dir, source, manifests, timeout).is_some_and(|(_, ok)| ok),
+    }
+}
+
 /// The cache key of the graph `source` gives in `dir`, or `None` when it cannot be
 /// computed (then the graph is read and nothing is cached):
 /// - `cargo`: every listed `Cargo.toml` and `Cargo.lock`, path and content;
@@ -358,25 +417,9 @@ fn cache_key(
         hash.update(bytes);
         hash.update(&[0]);
     };
-    let listed = || listed_files(git, dir, timeout);
-    let with_tree = match source {
+    match source {
         GraphSource::None => return None,
-        GraphSource::Cargo => {
-            field(b"cargo");
-            let paths: Vec<String> = listed()?
-                .into_iter()
-                .filter(|p| {
-                    let name = p.rsplit('/').next().unwrap_or(p);
-                    name == "Cargo.toml" || name == "Cargo.lock"
-                })
-                .collect();
-            let prints = fingerprint(dir, &paths);
-            for (path, print) in &prints {
-                field(path.as_bytes());
-                field(print.as_bytes());
-            }
-            !cargo_files_suffice(dir, &prints)
-        }
+        GraphSource::Cargo => field(b"cargo"),
         GraphSource::Command(command) => {
             field(b"command");
             field(command.as_bytes());
@@ -384,27 +427,17 @@ fn cache_key(
                 field(name.as_bytes());
                 field(module_dir.as_bytes());
             }
-            if manifests.is_empty() {
-                true
-            } else {
+            if !manifests.is_empty() {
                 field(b"manifests");
-                let matcher = OwnsMatcher::new(manifests).ok()?;
-                let listed = listed()?;
-                let paths: Vec<String> = listed
-                    .iter()
-                    .filter(|p| matcher.matches(p))
-                    .cloned()
-                    .collect();
-                let prints = fingerprint(dir, &paths);
-                for (path, print) in &prints {
-                    field(path.as_bytes());
-                    field(print.as_bytes());
-                }
-                !manifests_suffice(manifests, &listed, &prints)?
             }
         }
-    };
-    if with_tree {
+    }
+    let (prints, suffice) = inputs(git, dir, source, manifests, timeout)?;
+    for (path, print) in &prints {
+        field(path.as_bytes());
+        field(print.as_bytes());
+    }
+    if !suffice {
         field(b"tree");
         let tree = Git::new(git, timeout)
             .ok(dir, &[os("rev-parse"), os("--verify"), os("HEAD^{tree}")])

@@ -73,6 +73,11 @@ struct Rig {
 
 impl Rig {
     fn new(task_files: &[(&str, &str)]) -> Rig {
+        Rig::with_base(|_| {}, task_files)
+    }
+
+    /// [`Rig::new`], with `base` run in the repository before the base commit.
+    fn with_base(base: impl FnOnce(&Path), task_files: &[(&str, &str)]) -> Rig {
         let tmp = tempfile::tempdir().unwrap();
         let top = tmp.path().canonicalize().unwrap();
         let root = top.join("repo");
@@ -87,6 +92,7 @@ impl Rig {
         ] {
             write(&root.join(path), text);
         }
+        base(&root);
         git(&root, &["init", "-q", "-b", "main"]);
         git(&root, &["config", "user.name", "Tier Test"]);
         git(&root, &["config", "user.email", "tier@test"]);
@@ -353,4 +359,84 @@ async fn an_untiered_candidate_check_waits_for_all_slots_and_runs_isolated() {
     assert!(tmp.ends_with("/s9-candidate"), "{line}");
     assert!(line.ends_with(&format!("sock={tmp}/d.sock")), "{line}");
     assert!(!Path::new(tmp).exists(), "the step directory is removed");
+}
+
+/// Ruling C-17: the candidate merged once with `tier`, `integration` put back, then
+/// `before` done to the integration worktree, and the same candidate again. How many
+/// times the second candidate materialized the worktree.
+async fn materialized_again(
+    rig: &Rig,
+    tier: impl Fn() -> TierSpec,
+    before: impl FnOnce(&Rig),
+) -> usize {
+    let first = rig.run(1, rig.candidate(Some(tier()), None)).await;
+    assert!(matches!(first, OpResult::Merged { .. }), "{first:?}");
+    rig.undo_merge();
+    before(rig);
+    let already = detaches(rig);
+    let second = rig.run(2, rig.candidate(Some(tier()), None)).await;
+    assert!(matches!(second, OpResult::Merged { .. }), "{second:?}");
+    detaches(rig) - already
+}
+
+/// Ruling C-17 (1): the pre-check reads the graph in the integration worktree, so it
+/// trusts it only when the worktree is clean and at the stage head's tree.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dirty_or_moved_integration_worktree_is_materialized() {
+    let rig = Rig::new(&[("mods/a/x.txt", "x\n")]);
+    let dirty = |rig: &Rig| write(&rig.integration.join("mods/b/lib.txt"), "edited\n");
+    assert_eq!(materialized_again(&rig, || rig.tier(), dirty).await, 1);
+
+    let rig = Rig::new(&[("mods/a/x.txt", "x\n")]);
+    let moved = |rig: &Rig| {
+        let task = git(&rig.root, &["rev-parse", "refs/heads/anthrex/r1/t1"]);
+        git(&rig.integration, &["checkout", "-q", "--detach", &task]);
+    };
+    assert_eq!(materialized_again(&rig, || rig.tier(), moved).await, 1);
+}
+
+/// Ruling C-17 (2a): a graph the stage head's read cannot know is not trusted, even
+/// when every step's key would hit.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unknown_graph_at_the_stage_head_is_materialized() {
+    let rig = Rig::with_base(
+        |root| write(&root.join("broken-graph.sh"), "exit 1\n"),
+        &[("mods/a/x.txt", "x\n")],
+    );
+    let tier = || {
+        let mut spec = rig.tier();
+        spec.profile.module_graph = GraphSource::Command("sh broken-graph.sh".into());
+        spec.manifests = vec!["broken-graph.sh".into()];
+        spec
+    };
+    assert_eq!(materialized_again(&rig, tier, |_| {}).await, 1);
+}
+
+/// Ruling C-17 (2b): ruling C-9's sufficiency, as `driver/graph.rs` keys the graph: a
+/// `manifests` entry that matches nothing, or matches a symlink, is not all the graph
+/// is read from.
+#[tokio::test(flavor = "multi_thread")]
+async fn manifests_that_do_not_suffice_are_materialized() {
+    let rig = Rig::new(&[("mods/a/x.txt", "x\n")]);
+    let tier = || {
+        let mut spec = rig.tier();
+        spec.manifests = vec!["graph.sh".into(), "nothing-here.txt".into()];
+        spec
+    };
+    assert_eq!(materialized_again(&rig, tier, |_| {}).await, 1);
+
+    let rig = Rig::with_base(
+        |root| {
+            write(&root.join("graph.sh"), GRAPH);
+            std::os::unix::fs::symlink("graph.sh", root.join("graph-link.sh")).unwrap();
+        },
+        &[("mods/a/x.txt", "x\n")],
+    );
+    let tier = || {
+        let mut spec = rig.tier();
+        spec.profile.module_graph = GraphSource::Command("sh graph-link.sh".into());
+        spec.manifests = vec!["graph-link.sh".into()];
+        spec
+    };
+    assert_eq!(materialized_again(&rig, tier, |_| {}).await, 1);
 }
