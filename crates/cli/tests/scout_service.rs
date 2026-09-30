@@ -128,6 +128,7 @@ impl Rig {
                 git_queue: runs.git_queue(),
                 cli_caps: manager.config().cli_caps,
                 daemon_socket: dir.path().join("d.sock"),
+                scheduler: runs.scheduler().clone(),
             },
         );
         // No run here asks a decider; mode off keeps any call from spawning one.

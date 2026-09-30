@@ -88,24 +88,6 @@ pub struct StepRun {
 /// Runs `step` in a fresh `<base>/<name>`, removed afterwards. A directory that cannot
 /// be made, or a checkout that cannot be confined, fails the command unrun.
 pub fn run_isolated(step: &StepCommand) -> StepRun {
-    let refused = |reason: String| StepRun {
-        outcome: ShellOutcome::refused(reason),
-        names: None,
-    };
-    let tmp = match fresh_dir(&step.common, &step.base, &step.name) {
-        Ok(tmp) => tmp,
-        Err(error) => return refused(error),
-    };
-    let confinement = match step.confine.as_ref().map(|c| c.for_checkout(&step.dir)) {
-        Some(Err(error)) => {
-            remove_dir(&tmp);
-            return refused(error);
-        }
-        Some(Ok(confinement)) => Some(confinement),
-        None => None,
-    };
-    let mut extra = step.slots.clone();
-    extra.extend(isolation_env(&tmp));
     let mut lines = step.collect.then(Vec::new);
     let mut bytes = 0usize;
     let mut on_line = |line: &str| {
@@ -119,17 +101,39 @@ pub fn run_isolated(step: &StepCommand) -> StepRun {
             lines.push(line.to_string());
         }
     };
+    let outcome = run_isolated_with(step, &mut on_line);
+    let names = lines.map(|lines| names(lines.into_iter()));
+    StepRun { outcome, names }
+}
+
+/// [`run_isolated`]'s run, handing every output line to `on_line`: decision 28's fresh
+/// directory and variables after the slot variables, the checkout confined when the
+/// step says so. Also profile verification's runner (ruling C-27, I-2).
+pub fn run_isolated_with(step: &StepCommand, on_line: &mut dyn FnMut(&str)) -> ShellOutcome {
+    let tmp = match fresh_dir(&step.common, &step.base, &step.name) {
+        Ok(tmp) => tmp,
+        Err(error) => return ShellOutcome::refused(error),
+    };
+    let confinement = match step.confine.as_ref().map(|c| c.for_checkout(&step.dir)) {
+        Some(Err(error)) => {
+            remove_dir(&tmp);
+            return ShellOutcome::refused(error);
+        }
+        Some(Ok(confinement)) => Some(confinement),
+        None => None,
+    };
+    let mut extra = step.slots.clone();
+    extra.extend(isolation_env(&tmp));
     let outcome = run_lines(
         &step.dir,
         &step.command,
         (&step.env, &extra),
         step.timeout,
         confinement.as_ref(),
-        &mut on_line,
+        on_line,
     );
     remove_dir(&tmp);
-    let names = lines.map(|lines| names(lines.into_iter()));
-    StepRun { outcome, names }
+    outcome
 }
 
 /// `<base>/<name>`, made now (mode 0700) under the private `base`: whatever an earlier

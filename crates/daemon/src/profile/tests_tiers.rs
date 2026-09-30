@@ -11,6 +11,34 @@ use super::proposal_tiers::{NEEDS_GRAPH, SHARDS_NEED_CHECK};
 use super::summary;
 use super::verify::run_commands;
 
+/// Verification's step runner for a test checkout at `dir`: a scheduler of 2 slots on
+/// a runtime kept for the test binary, the checkout's data directory beside it, and a
+/// git common directory that overlaps no step directory (ruling C-27, I-2).
+pub(super) fn steps(dir: &Path) -> super::verify::Steps {
+    steps_on(crate::run::slots::TestScheduler::new(2), dir)
+}
+
+/// [`steps`] on the scheduler `sched`.
+pub(super) fn steps_on(
+    sched: std::sync::Arc<crate::run::slots::TestScheduler>,
+    dir: &Path,
+) -> super::verify::Steps {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let runtime = RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap()
+    });
+    super::verify::Steps::new(
+        sched,
+        runtime.handle().clone(),
+        dir.join(".git"),
+        dir.join(".anthrex-data"),
+    )
+}
+
 pub(super) fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
 }
@@ -99,7 +127,7 @@ fn verification_runs_the_new_commands_in_order_and_drops_failures() {
     // A command graph and directory names: the first module by name is `a`.
     let dir = scratch(true, true);
     let proposed = tiered();
-    let v = run_commands(dir.path(), &proposed, None, timeout, 1);
+    let v = run_commands(dir.path(), &proposed, None, timeout, 1, &steps(dir.path()));
     assert_eq!(
         log(dir.path()),
         [
@@ -151,7 +179,7 @@ fn verification_runs_the_new_commands_in_order_and_drops_failures() {
         module_names: Some(ModuleNames::Cargo),
         ..tiered()
     };
-    let v = run_commands(dir.path(), &proposed, None, timeout, 1);
+    let v = run_commands(dir.path(), &proposed, None, timeout, 1, &steps(dir.path()));
     assert!(!check_of(&v, "module_graph").ok, "{v:?}");
     assert_eq!(check_of(&v, "module_graph").command, "cargo");
     assert_eq!(v.module_test, None);
@@ -196,7 +224,7 @@ fn verification_runs_the_new_commands_in_order_and_drops_failures() {
     // A graph that prints something other than a module graph is unknown.
     let dir = scratch(true, true);
     std::fs::write(dir.path().join("graph.sh"), "echo '{\"a\": [\"zz\"]}'\n").unwrap();
-    let v = run_commands(dir.path(), &tiered(), None, timeout, 1);
+    let v = run_commands(dir.path(), &tiered(), None, timeout, 1, &steps(dir.path()));
     let graph = check_of(&v, "module_graph");
     assert!(!graph.ok);
     assert!(
@@ -216,7 +244,14 @@ fn a_module_command_with_no_module_directory_is_not_verified() {
         modules: strings(&["nowhere/*"]),
         ..tiered()
     };
-    let v = run_commands(dir.path(), &proposed, None, Duration::from_secs(30), 1);
+    let v = run_commands(
+        dir.path(),
+        &proposed,
+        None,
+        Duration::from_secs(30),
+        1,
+        &steps(dir.path()),
+    );
     let test = check_of(&v, "module_test");
     assert!(!test.ok);
     assert!(

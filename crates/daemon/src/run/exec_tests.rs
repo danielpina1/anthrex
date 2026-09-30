@@ -50,7 +50,11 @@ fn summary_of_an_empty_tail_is_empty() {
 #[test]
 fn engine_env_is_applied_to_the_command() {
     let mut command = Command::new("env");
-    let a = [("A".to_string(), "1".to_string())];
+    // Ruling C-27 (M-4): `env` has a key of its own (`B`), so dropping it goes red.
+    let a = [
+        ("A".to_string(), "1".to_string()),
+        ("B".to_string(), "1".to_string()),
+    ];
     let b = [("A".to_string(), "2".to_string())];
     engine_env(&mut command, (&a, &b), false);
     let envs: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
@@ -60,6 +64,10 @@ fn engine_env_is_applied_to_the_command() {
     // Milestone 9.1 decision 26: `extra` is set after `env`, so it wins.
     assert!(
         envs.contains(&(OsStr::new("A"), Some(OsStr::new("2")))),
+        "{envs:?}"
+    );
+    assert!(
+        envs.contains(&(OsStr::new("B"), Some(OsStr::new("1")))),
         "{envs:?}"
     );
     // T14-P1 (F4): `GIT_NO_REPLACE_OBJECTS` is for the engine's own git calls; a

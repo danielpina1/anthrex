@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use proto::{ModuleNames, ProfileVerification, RepoProfile};
 
 use super::proposal_tiers::module_command;
-use super::verify::record;
+use super::verify::{Steps, record};
 use crate::launch::shell_quote;
 use crate::run::confine::ConfineSpec;
 use crate::run::exec::{ShellOutcome, run_matching};
@@ -34,31 +34,6 @@ const GRAPH_BYTES_MAX: u64 = 16 * 1024 * 1024;
 /// The graph command's bound: its own (decision 9), or verification's when shorter.
 pub(super) fn graph_timeout(verify: Duration) -> Duration {
     GRAPH_TIMEOUT.min(verify)
-}
-
-/// One command in `dir` as `verify.rs` runs it: confined when `confine` is set, and
-/// unrun (failed) when the checkout cannot be confined.
-fn run(
-    dir: &Path,
-    command: &str,
-    env: &[(String, String)],
-    timeout: Duration,
-    confine: Option<&ConfineSpec>,
-) -> ShellOutcome {
-    match confine.map(|spec| spec.for_checkout(dir)).transpose() {
-        Ok(confinement) => {
-            run_matching(
-                dir,
-                command,
-                (env, &[]),
-                timeout,
-                None,
-                confinement.as_ref(),
-            )
-            .0
-        }
-        Err(error) => ShellOutcome::refused(error),
-    }
 }
 
 /// `command`'s stdout, read from a file in its `TMPDIR`, with its outcome. Also the
@@ -179,18 +154,17 @@ fn module_names(
 
 /// Decision 12's tier checks, into `v`, in order. `env` is the environment M8b's
 /// commands ran with; `timeout` bounds each command (the graph and the toolchain id
-/// also by their own bounds).
+/// also by their own bounds). Each runs through `steps` (ruling C-27, I-2).
 pub fn run_commands(
     dir: &Path,
     profile: &RepoProfile,
-    env: &[(String, String)],
-    timeout: Duration,
-    confine: Option<&ConfineSpec>,
+    (env, timeout, confine): (&[(String, String)], Duration, Option<&ConfineSpec>),
+    steps: &Steps,
     v: &mut ProfileVerification,
 ) {
     let tiers = TierProfile::from_repo(profile);
     let plain = |command: &str, timeout: Duration| {
-        let outcome = run(dir, command, env, timeout, confine);
+        let (outcome, _) = steps.run(dir, command, env, timeout, None, confine);
         let ok = outcome.ok;
         (outcome, ok)
     };
@@ -205,7 +179,8 @@ pub fn run_commands(
         GraphSource::Command(command) => Some(command.clone()),
     };
     if let (Some(key), Some(command)) = (&profile.module_graph, graph_command) {
-        let (mut outcome, stdout) = capture(dir, &command, env, graph_timeout(timeout), confine);
+        let (mut outcome, stdout) =
+            steps.capture(dir, &command, env, graph_timeout(timeout), confine);
         let parsed = match (&tiers.module_graph, stdout) {
             _ if !outcome.ok => Err(String::new()),
             (_, None) => Err("its output could not be read".to_string()),

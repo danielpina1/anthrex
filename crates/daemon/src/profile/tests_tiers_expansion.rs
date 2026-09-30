@@ -11,7 +11,7 @@ use super::proposal::apply_verification;
 use super::proposal_tiers::{
     FILTER_UNUSED, NEEDS_GRAPH, UNTIERED_CHECK, module_command, verified_form,
 };
-use super::tests_tiers::{check_of, log, scratch, strings};
+use super::tests_tiers::{check_of, log, scratch, steps, strings};
 use super::verify::run_commands;
 use crate::run::globs::path_module;
 
@@ -58,7 +58,14 @@ fn case_a_an_untiered_check_with_tier_placeholders_is_dropped() {
         module_test: Some("sh test.sh".into()),
         ..Default::default()
     };
-    let v = run_commands(dir.path(), &proposed, None, Duration::from_secs(30), 1);
+    let v = run_commands(
+        dir.path(),
+        &proposed,
+        None,
+        Duration::from_secs(30),
+        1,
+        &steps(dir.path()),
+    );
     assert_eq!(log(dir.path())[0], "check.sh 1");
     let (kept, dropped) = apply_verification(&proposed, &v, Path::new("/work/app"));
     assert_eq!(
@@ -81,7 +88,14 @@ fn case_a_an_untiered_check_with_tier_placeholders_is_dropped() {
         build_check: Some("sh build.sh".into()),
         ..Default::default()
     };
-    let v = run_commands(dir.path(), &proposed, None, Duration::from_secs(30), 1);
+    let v = run_commands(
+        dir.path(),
+        &proposed,
+        None,
+        Duration::from_secs(30),
+        1,
+        &steps(dir.path()),
+    );
     let (kept, dropped) = apply_verification(&proposed, &v, Path::new("/work/app"));
     let keys: Vec<&str> = dropped.iter().map(|d| d.key.as_str()).collect();
     assert!(keys.contains(&"build_check"), "{dropped:?}");
@@ -108,7 +122,14 @@ fn case_b_a_module_command_without_a_filter_slot_is_dropped_not_the_filters() {
         timing_tests: Some("timing".into()),
         ..Default::default()
     };
-    let v = run_commands(dir.path(), &proposed, None, Duration::from_secs(30), 1);
+    let v = run_commands(
+        dir.path(),
+        &proposed,
+        None,
+        Duration::from_secs(30),
+        1,
+        &steps(dir.path()),
+    );
     assert!(check_of(&v, "module_test").ok && check_of(&v, "module_tests").ok);
     let (kept, dropped) = apply_verification(&proposed, &v, Path::new("/work/app"));
     assert_eq!(
@@ -195,7 +216,14 @@ fn a_partial_wildcard_component_names_no_module_for_verification_or_path_module(
         module_test: Some("sh test.sh {module}".into()),
         ..Default::default()
     };
-    let v = run_commands(dir.path(), &proposed, None, Duration::from_secs(30), 1);
+    let v = run_commands(
+        dir.path(),
+        &proposed,
+        None,
+        Duration::from_secs(30),
+        1,
+        &steps(dir.path()),
+    );
     let test = check_of(&v, "module_test");
     assert!(!test.ok);
     assert!(

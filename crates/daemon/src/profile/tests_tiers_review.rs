@@ -9,7 +9,7 @@ use proto::{CommandCheck, ModuleNames, ProfileSpec, ProfileVerification, RepoPro
 use super::proposal::{apply_verification, from_findings, validate};
 use super::proposal_tiers::NEEDS_GRAPH;
 use super::resolve::run_profile;
-use super::tests_tiers::{check_of, log, scratch, strings, tiered};
+use super::tests_tiers::{check_of, log, scratch, steps, strings, tiered};
 use super::verify::run_commands;
 use super::verify_tiers::graph_timeout;
 use crate::run::plan::Preflight;
@@ -245,7 +245,14 @@ fn verification_skips_option_like_and_glob_named_module_directories() {
     for name in ["-rf", "[a]", "a*", "?"] {
         std::fs::create_dir_all(dir.path().join("mods").join(name)).unwrap();
     }
-    let v = run_commands(dir.path(), &tiered(), None, Duration::from_secs(30), 1);
+    let v = run_commands(
+        dir.path(),
+        &tiered(),
+        None,
+        Duration::from_secs(30),
+        1,
+        &steps(dir.path()),
+    );
     assert!(check_of(&v, "module_test").ok);
     let tests: Vec<String> = log(dir.path())
         .into_iter()
@@ -268,13 +275,21 @@ fn an_untiered_check_is_verified_as_written() {
         check: Some("sh check.sh {shard} {filter:x}".into()),
         ..Default::default()
     };
-    let v = run_commands(dir.path(), &profile, None, Duration::from_secs(30), 1);
+    let v = run_commands(
+        dir.path(),
+        &profile,
+        None,
+        Duration::from_secs(30),
+        1,
+        &steps(dir.path()),
+    );
     assert!(v.check.unwrap().ok);
     assert_eq!(log(dir.path()), ["check.sh {shard} {filter:x}"]);
 }
 
-/// m2: the graph's stdout goes to a file in the command's `TMPDIR`, never into the
-/// checkout.
+/// m2: the graph's stdout goes to a file in the step base, the parent of the
+/// command's own `TMPDIR` (ruling C-27, I-2: each command has a fresh directory there),
+/// never into the checkout.
 #[test]
 fn the_graph_output_file_is_in_tmpdir_not_the_checkout() {
     let dir = scratch(true, true);
@@ -282,14 +297,21 @@ fn the_graph_output_file_is_in_tmpdir_not_the_checkout() {
     std::fs::write(
         dir.path().join("graph.sh"),
         format!(
-            "ls -a \"${{TMPDIR:-/tmp}}\" | grep anthrex-graph- | sed 's/^/tmp: /' >> '{seen}'\n\
+            "ls -a \"$TMPDIR/..\" | grep anthrex-graph- | sed 's/^/tmp: /' >> '{seen}'\n\
              ls -a . | grep anthrex-graph- | sed 's/^/checkout: /' >> '{seen}'\n\
              echo '{{\"a\": [], \"b\": [\"a\"]}}'\n",
             seen = seen.display()
         ),
     )
     .unwrap();
-    let v = run_commands(dir.path(), &tiered(), None, Duration::from_secs(30), 1);
+    let v = run_commands(
+        dir.path(),
+        &tiered(),
+        None,
+        Duration::from_secs(30),
+        1,
+        &steps(dir.path()),
+    );
     assert!(check_of(&v, "module_graph").ok, "{v:?}");
     let seen = std::fs::read_to_string(&seen).unwrap();
     assert!(seen.lines().any(|l| l.starts_with("tmp: ")), "{seen}");
@@ -323,7 +345,14 @@ fn the_graph_timeout_is_the_shorter_bound() {
         timing_tests: None,
         ..tiered()
     };
-    let v = run_commands(dir.path(), &profile, None, Duration::from_secs(1), 1);
+    let v = run_commands(
+        dir.path(),
+        &profile,
+        None,
+        Duration::from_secs(1),
+        1,
+        &steps(dir.path()),
+    );
     assert!(check_of(&v, "module_graph").timed_out, "{v:?}");
 }
 

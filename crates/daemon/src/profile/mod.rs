@@ -32,6 +32,7 @@ pub mod service_run;
 pub mod service_start;
 pub mod store;
 pub mod verify;
+mod verify_steps;
 pub(crate) mod verify_tiers;
 
 /// The onboarding scout's disposable checkout, under `<wt>/runs/` (decision 8).
@@ -108,3 +109,5 @@ mod tests_tiers_expansion;
 mod tests_tiers_review;
 #[cfg(test)]
 mod tests_verify;
+#[cfg(test)]
+mod tests_verify_steps;

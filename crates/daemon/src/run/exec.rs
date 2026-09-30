@@ -125,7 +125,9 @@ pub fn run_confined(
 /// what `command` inherits, then sets `env`. When `confined`, every `ANTHREX_*`
 /// variable is removed too (F1c round 3, N1): a confined command runs code the workers
 /// wrote, so it must not be handed the daemon's own coordinates (`ANTHREX_SOCKET`,
-/// `ANTHREX_DATA_DIR`), even though the sandbox already denies the connection.
+/// `ANTHREX_DATA_DIR`), even though the sandbox already denies the connection. An
+/// isolated step ([`run_lines`], ruling C-27 M-6) is scrubbed the same way, confined or
+/// not: its caller sets decision 28's own socket and data directory in `extra`.
 fn engine_env(command: &mut Command, (env, extra): Env<'_>, confined: bool) {
     use config::reserved_env::{SCRUBBED_NAMES, SCRUBBED_PREFIXES};
     scrub_git_location_env(command);
@@ -205,6 +207,8 @@ fn run_observed<'a>(
     confine: Option<&Confinement>,
 ) -> (ShellOutcome, bool) {
     let started = Instant::now();
+    // Only `run_lines` observes lines: the isolated step runner.
+    let isolated = on_line.is_some();
     let not_started = |error: io::Error| ShellOutcome {
         ok: false,
         code: None,
@@ -244,7 +248,7 @@ fn run_observed<'a>(
             .stdout(writer)
             .stderr(stderr)
             .process_group(0);
-        engine_env(&mut shell, env, confine.is_some());
+        engine_env(&mut shell, env, confine.is_some() || isolated);
         shell.spawn()
         // `shell`, and with it this process's copies of the pipe's write end, drops
         // here, so the pipe reaches EOF once the command's own copies close.

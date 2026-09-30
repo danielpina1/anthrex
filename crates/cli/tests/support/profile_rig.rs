@@ -94,6 +94,7 @@ impl Rig {
             confine,
             timeout,
             git_timeout: GIT_TIMEOUT,
+            sched: daemon::run::slots::TestScheduler::new(2),
         };
         runtime().block_on(verify(&GitQueue::new(), job))
     }
