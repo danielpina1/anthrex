@@ -345,3 +345,34 @@ fn a_null_text_field_is_absent() {
     );
     assert_eq!(response_text(&json!({"output": null})), None);
 }
+
+/// M9.0.5.2 review finding 3 (pinning): `truncate_graphemes` stops reading at the cap
+/// plus one, and its output is what the collect-everything version gave: text at, one
+/// under and one over the cap, a multi-codepoint cluster straddling the cut, and a long
+/// input.
+#[test]
+fn truncation_reads_only_past_the_cap_and_keeps_its_output() {
+    let reference = |s: &str| -> String {
+        let all: Vec<&str> = s.graphemes(true).collect();
+        if all.len() <= SUMMARY_MAX_GRAPHEMES {
+            return s.to_string();
+        }
+        format!("{}…", all[..SUMMARY_MAX_GRAPHEMES].concat())
+    };
+    let family = "👨\u{200d}👩\u{200d}👧";
+    let e_acute = "e\u{301}";
+    let cases = [
+        String::new(),
+        "x".repeat(SUMMARY_MAX_GRAPHEMES - 1),
+        "x".repeat(SUMMARY_MAX_GRAPHEMES),
+        "x".repeat(SUMMARY_MAX_GRAPHEMES + 1),
+        format!("{}{family}tail", "x".repeat(SUMMARY_MAX_GRAPHEMES - 1)),
+        format!("{}{family}", "x".repeat(SUMMARY_MAX_GRAPHEMES)),
+        e_acute.repeat(SUMMARY_MAX_GRAPHEMES + 1),
+        e_acute.repeat(SUMMARY_MAX_GRAPHEMES),
+        "y".repeat(1_000_000),
+    ];
+    for case in &cases {
+        assert_eq!(truncate_graphemes(case), reference(case), "{:.40}", case);
+    }
+}

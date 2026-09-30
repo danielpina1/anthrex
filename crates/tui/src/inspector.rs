@@ -32,6 +32,10 @@ pub const MIN_INTERIOR_FOR_PANEL: u16 = INSPECTOR_HEIGHT + 6;
 /// border — and the interior it needs before the panel takes that height.
 pub const RUN_INSPECTOR_HEIGHT: u16 = 12;
 pub const MIN_INTERIOR_FOR_RUN_PANEL: u16 = RUN_INSPECTOR_HEIGHT + 6;
+/// Milestone 9.0.5 decision 25: the run view's tall panel, and the overview interior
+/// it needs (a terminal of 37 rows or more).
+pub const RUN_INSPECTOR_TALL_HEIGHT: u16 = 18;
+pub const MIN_INTERIOR_FOR_TALL_RUN_PANEL: u16 = 34;
 /// Decision 29: a run inspection's label column.
 pub const RUN_LABEL_WIDTH: usize = 10;
 /// Decision 30: the run's progress bar, and a planner's and a task budget's.
@@ -44,7 +48,34 @@ pub enum FieldLayout {
     #[default]
     Columns,
     Rows,
+    /// Milestone 9.0.5 decision 22: a task's GOAL, STATUS and RESULT, each a bold
+    /// title row and its fields, every value wrapping under itself, scrolled by
+    /// `Inspection.scroll`.
+    Sections,
 }
+
+/// One titled part of a `Sections` inspection (decision 22).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    pub title: &'static str,
+    pub fields: Vec<SectionField>,
+}
+
+/// One labelled value of a section. `value` may hold several lines and any text an
+/// agent wrote: the panel sanitises and wraps it. `note` follows the label, muted
+/// (the summary's source); `collapse` cuts the value to its first `BRIEF_LINES`
+/// wrapped lines and `… (b: more)`. An empty label puts the value at the left edge
+/// (RESULT's `nothing yet`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SectionField {
+    pub label: &'static str,
+    pub note: Option<&'static str>,
+    pub value: String,
+    pub collapse: bool,
+}
+
+/// Decision 22: a collapsed brief's wrapped lines.
+pub const BRIEF_LINES: usize = 3;
 
 /// One labelled value. `wrap` marks the one field a column may not elide: the
 /// sub-agent's task, which the panel exists to show whole (decision 5).
@@ -65,6 +96,9 @@ pub struct Inspection {
     pub right: Option<String>,
     pub fields: Vec<Field>,
     pub layout: FieldLayout,
+    /// `Sections` only: the sections, and the first body row shown (decision 25).
+    pub sections: Vec<Section>,
+    pub scroll: u16,
 }
 
 fn field(label: &'static str, value: impl Into<String>) -> Field {
@@ -327,10 +361,31 @@ fn git_text(state: &GitState) -> String {
 
 mod panel;
 mod run;
-mod run_format;
+pub(crate) mod run_format;
 mod run_orch;
 mod run_round;
 mod run_task;
+mod run_task_sections;
+
+/// Decision 25: the rows the selected task's sections take at `width` columns of
+/// panel interior, the title row not counted; 0 when no task is selected. The
+/// reducer clamps the panel's scroll with it, as the renderer draws.
+pub fn task_panel_rows(app: &App, width: u16) -> usize {
+    let rows = app.nav_rows();
+    let Some(row) = app
+        .tree
+        .selected
+        .as_ref()
+        .and_then(|key| rows.iter().find(|row| &row.key == key))
+    else {
+        return 0;
+    };
+    if !matches!(row.kind, RowKind::Task { .. }) {
+        return 0;
+    }
+    let inspection = inspect(row, app);
+    panel::sections::body_lines(&inspection.sections, usize::from(width)).len()
+}
 
 pub use panel::render;
 pub use run_format::{format_duration, format_tokens, local_hhmm, progress_bar};
@@ -352,3 +407,6 @@ mod run_round_tests;
 
 #[cfg(test)]
 mod run_orch_tests;
+
+#[cfg(test)]
+mod run_task_sections_tests;

@@ -73,6 +73,8 @@ impl AgentState {
             self.tool = tool;
             changed = true;
         }
+        // Decision 9 (M9.0.5): the first signal is published on its own.
+        changed |= !self.signals_seen;
         self.signals_seen = true;
         self.hooks_seen |= matches!(hook.source, HookSource::Claude | HookSource::CodexHook);
         HookOutcome {
@@ -249,6 +251,19 @@ mod tests {
             state.subagents.infos(now)[0].state,
             proto::SubagentState::Done
         );
+    }
+
+    /// Milestone 9.0.5 decision 9: the first signal is a change on its own, so the
+    /// window's `signals_seen` is published even when the hook changes nothing else.
+    #[test]
+    fn the_first_signal_is_a_change() {
+        let mut state = AgentState::default();
+        let quiet = hook(HookSource::CodexHook, HookKind::PostToolUse, "s", None);
+        let first = state.on_hook(Runtime::Codex, &quiet, Instant::now());
+        assert!(first.changed);
+        assert!(state.signals_seen);
+        let again = state.on_hook(Runtime::Codex, &quiet, Instant::now());
+        assert!(!again.changed);
     }
 
     #[test]

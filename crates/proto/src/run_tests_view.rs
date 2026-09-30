@@ -80,6 +80,7 @@ fn a_view_snapshot() -> RunsSnapshot {
         revision: 42,
         runs: vec![run],
         now: 1_700_001_000,
+        proposals: Vec::new(),
     }
 }
 
@@ -241,6 +242,7 @@ fn orchestrator_snapshot_fields_round_trip() {
         summary: None,
         notes: vec!["t1 is blocked".into()],
         wakes: 2,
+        wake_held: false,
     });
     run.holds = vec![HoldInfo {
         id: "h1".into(),
@@ -296,4 +298,113 @@ fn orchestrator_snapshot_fields_round_trip() {
     assert_eq!(task.research_bytes, Some(4_096));
     assert_eq!(task.hold.as_deref(), Some("h1"));
     assert_eq!(task.review_target.as_deref(), Some("main..feature"));
+}
+
+/// Milestone 9.0.5 task 1: every new field set survives the wire, by name.
+#[test]
+fn new_fields_round_trip() {
+    use crate::orch::OrchestratorInfo;
+    use crate::profile::ProposalAlertInfo;
+    let mut snapshot = a_view_snapshot();
+    snapshot.proposals = vec![
+        ProposalAlertInfo {
+            project: "/tmp/calc".into(),
+            updated_at: 1_700_000_700,
+        },
+        ProposalAlertInfo {
+            project: "/tmp/web".into(),
+            updated_at: 1_700_000_800,
+        },
+    ];
+    let run = &mut snapshot.runs[0];
+    run.orchestrator = Some(OrchestratorInfo {
+        route: a_route(Runtime::Codex, Strength::Frontier, Effort::High, "gpt-5"),
+        window_id: Some(4),
+        live: true,
+        started_at: 1_700_000_020,
+        plan_submitted: false,
+        summary: None,
+        notes: Vec::new(),
+        wakes: 0,
+        wake_held: true,
+    });
+    run.tasks[0].activity = Some("Bash cargo test -p calc".into());
+    let msg = DaemonMsg::Run(RunReply::Snapshot(snapshot.clone()));
+    let packed = rmp_serde::to_vec_named(&msg).unwrap();
+    let DaemonMsg::Run(RunReply::Snapshot(back)) = rmp_serde::from_slice(&packed).unwrap() else {
+        panic!("must decode back to RunReply::Snapshot");
+    };
+    assert_eq!(back, snapshot);
+    let json: RunsSnapshot =
+        serde_json::from_str(&serde_json::to_string(&snapshot).unwrap()).unwrap();
+    assert_eq!(json, snapshot);
+    assert_eq!(back.proposals.len(), 2);
+    assert_eq!(back.proposals[1].project, std::path::Path::new("/tmp/web"));
+    assert_eq!(back.proposals[1].updated_at, 1_700_000_800);
+    let run = &back.runs[0];
+    assert!(run.orchestrator.as_ref().unwrap().wake_held);
+    assert_eq!(
+        run.tasks[0].activity.as_deref(),
+        Some("Bash cargo test -p calc")
+    );
+
+    let mut window: crate::WindowInfo = serde_json::from_value(m9_window_json()).unwrap();
+    window.signals_seen = true;
+    let packed = rmp_serde::to_vec_named(&window).unwrap();
+    let back: crate::WindowInfo = rmp_serde::from_slice(&packed).unwrap();
+    assert_eq!(back, window);
+    assert!(back.signals_seen);
+    let json = serde_json::to_string(&window).unwrap();
+    assert_eq!(
+        serde_json::from_str::<crate::WindowInfo>(&json).unwrap(),
+        window
+    );
+}
+
+/// A `WindowInfo` as milestone 9 serialized it: no `signals_seen`.
+fn m9_window_json() -> serde_json::Value {
+    serde_json::json!({
+        "id": 7, "name": "orchestrator", "runtime": "claude",
+        "cwd": "/tmp/repo", "project": "/tmp/repo", "worktree": null, "branch": null,
+        "status": "idle", "tool": null, "since_secs": 12,
+        "last_output_secs": 1, "session_id": null, "model": null,
+        "subagents": [], "exit": null, "kind": "pty",
+        "run": {"run_id": "run-a1b2", "task_id": null, "role": "orchestrator", "session": 1}
+    })
+}
+
+/// Milestone 9.0.5 task 1: `m9_run_info.json` is milestone 9's
+/// `orchestrator_snapshot_fields_round_trip` run as milestone 9's `RunInfo` serialized
+/// it (written from `main`'s types at `566a653`, before this milestone changed them). It,
+/// a snapshot holding it, and a milestone-9 window decode with every new field at its
+/// default.
+#[test]
+fn m9_snapshot_and_window_decode_with_defaults() {
+    let run: crate::RunInfo =
+        serde_json::from_str(include_str!("m9_run_info.json")).expect("an M9 RunInfo decodes");
+    assert_eq!(run.run_id, a_run_info().run_id);
+    let orchestrator = run.orchestrator.as_ref().expect("the M9 run has one");
+    assert_eq!(orchestrator.window_id, Some(21));
+    assert!(!orchestrator.wake_held);
+    assert!(!run.tasks.is_empty());
+    for task in &run.tasks {
+        assert_eq!(task.activity, None);
+    }
+    let snapshot = format!(
+        r#"{{"revision": 3, "runs": [{}], "now": 1700001000}}"#,
+        include_str!("m9_run_info.json")
+    );
+    let snapshot: RunsSnapshot = serde_json::from_str(&snapshot).expect("an M9 snapshot");
+    assert!(snapshot.proposals.is_empty());
+    assert_eq!(snapshot.runs[0], run);
+    let packed = rmp_serde::to_vec_named(&snapshot).unwrap();
+    assert_eq!(
+        rmp_serde::from_slice::<RunsSnapshot>(&packed).unwrap(),
+        snapshot
+    );
+
+    let window: crate::WindowInfo =
+        serde_json::from_value(m9_window_json()).expect("an M9 window decodes");
+    assert!(!window.signals_seen);
+    assert_eq!(window.id, 7);
 }

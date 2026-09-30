@@ -20,7 +20,7 @@
 //! `<data>/worktrees/<repo>/runs/`, and the only writes into the repository's `.git`
 //! are M8a's salvage refs.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,7 +28,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use proto::{
-    ProfileMeta, ProfileReply, ProfileRequest, ProposalRecord, ProposalState, RepoProfile,
+    ProfileMeta, ProfileReply, ProfileRequest, ProposalAlertInfo, ProposalRecord, ProposalState,
+    RepoProfile,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -92,6 +93,12 @@ pub(super) struct Table {
     pub(super) last_scout_secs: u64,
     /// Stored profiles `restore` found, checked for staleness by `spawn` (re-review r1).
     pub(super) auto_at_start: Vec<(PathBuf, ProfileMeta)>,
+    /// Milestone 9.0.5 decision 10: each project whose `proposal.json` is `Ready`, with
+    /// its `updated_at`, as the last successful write or delete left it. Memory only:
+    /// `restore` rebuilds it from disk.
+    pub(super) ready: BTreeMap<PathBuf, u64>,
+    /// Moves on every change to `ready`, so the run service publishes it once.
+    pub(super) ready_generation: u64,
 }
 
 /// See the module doc.
@@ -308,6 +315,38 @@ impl ProfileService {
             .is_some_and(|active| active.generation == generation && !active.token.is_cancelled())
     }
 
+    /// Decision 10 (M9.0.5): the ready proposals, and a generation that moves whenever
+    /// they change. Memory only, one short hold of the table.
+    pub fn ready_proposals(&self) -> (u64, Vec<ProposalAlertInfo>) {
+        let table = crate::lock(&self.table);
+        let list = table
+            .ready
+            .iter()
+            .map(|(project, updated_at)| ProposalAlertInfo {
+                project: project.clone(),
+                updated_at: *updated_at,
+            })
+            .collect();
+        (table.ready_generation, list)
+    }
+
+    /// Records what `project`'s `proposal.json` now holds, called only after the write
+    /// (`Some`) or the delete (`None`) succeeded, and by `restore` for what it loaded.
+    /// Memory only, never across an `.await`.
+    pub(super) fn note_proposal(&self, project: &Path, record: Option<&ProposalRecord>) {
+        let ready = record
+            .filter(|record| record.state == ProposalState::Ready)
+            .map(|record| record.updated_at);
+        let mut table = crate::lock(&self.table);
+        let changed = match ready {
+            Some(at) => table.ready.insert(project.to_path_buf(), at) != Some(at),
+            None => table.ready.remove(project).is_some(),
+        };
+        if changed {
+            table.ready_generation += 1;
+        }
+    }
+
     /// Saves `record` only while `generation` still owns its proposal, ordered against
     /// `reject` by `writes`. `false`: the proposal was rejected, nothing was written.
     pub(super) async fn save_if_current(&self, generation: u64, record: &ProposalRecord) -> bool {
@@ -316,9 +355,13 @@ impl ProfileService {
             return false;
         }
         let (dir, record) = (self.repo_dir(&record.project), record.clone());
+        let saved = record.clone();
         match blocking(move || store::save_proposal(&dir, &record).map_err(|e| e.to_string())).await
         {
-            Ok(()) => true,
+            Ok(()) => {
+                self.note_proposal(&saved.project, Some(&saved));
+                true
+            }
             Err(error) => {
                 tracing::warn!(%error, "could not save a profile proposal");
                 true

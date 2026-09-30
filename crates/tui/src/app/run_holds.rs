@@ -39,77 +39,99 @@ enum HoldTarget<'a> {
     Several,
 }
 
+/// The hold `a` or `x` names for `selected`: a held task's own, or on the root the
+/// one hold awaiting approval. `None` when neither applies, so the plan gate's rule
+/// does.
+fn hold_target<'a>(run: &'a RunInfo, selected: Option<&NodeKey>) -> Option<HoldTarget<'a>> {
+    match selected? {
+        NodeKey::Task { run: r, id } if *r == run.run_id => {
+            let task = run.tasks.iter().find(|task| task.id == *id)?;
+            if !task_held(run, task) {
+                return None;
+            }
+            let hold = run
+                .holds
+                .iter()
+                .find(|h| Some(&h.id) == task.hold.as_ref())?;
+            Some(if hold.state == HoldState::Awaiting {
+                HoldTarget::Hold(hold)
+            } else {
+                HoldTarget::NotAwaiting(hold)
+            })
+        }
+        NodeKey::Run(r) if *r == run.run_id => {
+            let mut awaiting = awaiting_holds(run);
+            match (awaiting.next(), awaiting.next()) {
+                (Some(hold), None) => Some(HoldTarget::Hold(hold)),
+                (Some(_), Some(_)) => Some(HoldTarget::Several),
+                (None, _) => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 impl App {
     fn shown_run(&self, run_id: &str) -> Option<&RunInfo> {
         self.runs.runs.iter().find(|run| run.run_id == run_id)
     }
 
-    /// The hold `a` or `x` names: a held task's own, or on the root the one hold
-    /// awaiting approval. `None` when neither applies, so the plan gate's rule does.
-    fn hold_target<'a>(&self, run: &'a RunInfo) -> Option<HoldTarget<'a>> {
-        match self.tree.selected.as_ref()? {
-            NodeKey::Task { run: r, id } if *r == run.run_id => {
-                let task = run.tasks.iter().find(|task| task.id == *id)?;
-                if !task_held(run, task) {
-                    return None;
-                }
-                let hold = run
-                    .holds
-                    .iter()
-                    .find(|h| Some(&h.id) == task.hold.as_ref())?;
-                Some(if hold.state == HoldState::Awaiting {
-                    HoldTarget::Hold(hold)
-                } else {
-                    HoldTarget::NotAwaiting(hold)
-                })
-            }
-            NodeKey::Run(r) if *r == run.run_id => {
-                let mut awaiting = awaiting_holds(run);
-                match (awaiting.next(), awaiting.next()) {
-                    (Some(hold), None) => Some(HoldTarget::Hold(hold)),
-                    (Some(_), Some(_)) => Some(HoldTarget::Several),
-                    (None, _) => None,
-                }
-            }
-            _ => None,
-        }
-    }
-
     /// Decision 28's keys on a run past its gate: `a` sends `ApproveHold`, `x` asks,
-    /// then sends `RejectHold`. `None`: not a hold's key here.
-    pub(super) fn on_hold_key(&mut self, run_id: &str, key: char) -> Option<Vec<Effect>> {
+    /// then sends `RejectHold`, on the hold `selected` names. `None`: not a hold's key
+    /// here.
+    pub(super) fn on_hold_key(
+        &mut self,
+        run_id: &str,
+        key: char,
+        selected: Option<&NodeKey>,
+    ) -> Option<Vec<Effect>> {
         let run = self.shown_run(run_id)?;
         if run.state == RunState::AwaitingApproval || !matches!(key, 'a' | 'x') {
             return None;
         }
-        let (verb, done) = if key == 'a' {
-            ("approve", "approved")
-        } else {
-            ("reject", "rejected")
-        };
-        let (hold, message) = match self.hold_target(run)? {
-            HoldTarget::Hold(hold) => (hold.id.clone(), reject_message(run_id, hold)),
-            HoldTarget::NotAwaiting(hold) => {
-                let text = format!(
-                    "hold {} is {}; it can be {done} once it awaits approval",
-                    hold.id,
-                    hold_state_text(hold.state)
-                );
-                self.toast(text);
-                return Some(vec![]);
-            }
+        let verb = if key == 'a' { "approve" } else { "reject" };
+        let hold = match hold_target(run, selected)? {
+            HoldTarget::Hold(hold) | HoldTarget::NotAwaiting(hold) => hold.id.clone(),
             HoldTarget::Several => {
                 self.toast(format!("select a held task to {verb} its hold"));
                 return Some(vec![]);
             }
         };
-        let run_id = run_id.to_owned();
+        Some(self.decide_hold(run_id, key, &hold))
+    }
+
+    /// `a` (sends `ApproveHold` at once) or `x` (asks, then `RejectHold`) on the hold
+    /// `hold` of `run_id`, named by the caller: the run view's selection, or the plan
+    /// review's own hold (milestone 9.0.5 review finding 6). A hold not awaiting
+    /// approval, or not listed, toasts why.
+    pub(super) fn decide_hold(&mut self, run_id: &str, key: char, hold: &str) -> Vec<Effect> {
+        let done = if key == 'a' { "approved" } else { "rejected" };
+        let found = self
+            .shown_run(run_id)
+            .and_then(|run| run.holds.iter().find(|h| h.id == hold));
+        let message = match found {
+            Some(h) if h.state == HoldState::Awaiting => reject_message(run_id, h),
+            Some(h) => {
+                let text = format!(
+                    "hold {} is {}; it can be {done} once it awaits approval",
+                    h.id,
+                    hold_state_text(h.state)
+                );
+                self.toast(text);
+                return vec![];
+            }
+            None => {
+                self.toast(format!("run {run_id} has no hold {hold}"));
+                return vec![];
+            }
+        };
+        let (run_id, hold) = (run_id.to_owned(), hold.to_owned());
         if key == 'a' {
             let request = RunRequest::ApproveHold { run_id, hold };
-            return Some(vec![Effect::Send(ClientMsg::Run(request))]);
+            return vec![Effect::Send(ClientMsg::Run(request))];
         }
         self.modal = Some(confirm(message, PendingAction::RejectHold { run_id, hold }));
-        Some(vec![])
+        vec![]
     }
 
     /// Decision 13's `s`: on a planning run's root, the confirm that sends the user's

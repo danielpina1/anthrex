@@ -1,6 +1,8 @@
 mod support;
 
-use proto::{Runtime, Status, WindowSpec};
+use std::time::Duration;
+
+use proto::{DaemonMsg, Runtime, Status, WindowSpec};
 use serde_json::json;
 use support::{ANTHREX, TestDaemon};
 
@@ -40,6 +42,32 @@ fn waiting_title_and_bell_mean_attention() {
     client.wait_window(id, "working", |w| w.status == Status::Working);
     client.input(id, b"go\r");
     client.wait_window(id, "bell", |w| w.status == Status::Attention);
+}
+
+/// Milestone 9.0.5 decision 9: a Codex window already `Working` on output, before any
+/// signal, keeps its status on its first recognised "working" title, but the title
+/// still sets `signals_seen`, so the window is published with it.
+#[test]
+fn a_first_title_that_keeps_the_status_is_still_published() {
+    let daemon = TestDaemon::start(&[
+        json!({"print":"booting"}),
+        json!({"read_line":true}),
+        json!({"title":"Working"}),
+        json!({"read_line":true}),
+    ]);
+    let mut client = daemon.client();
+    let id = client.create(Runtime::Codex, "first-title");
+    client.wait_window(id, "working on output", |w| {
+        w.status == Status::Working && !w.signals_seen
+    });
+    // From here on nothing asks for the list, so a window carrying `signals_seen` can
+    // only arrive as a push: the title's own publish.
+    client.input(id, b"go\r");
+    client.receive_within(Duration::from_secs(5), |msg| {
+        matches!(msg, DaemonMsg::WindowsChanged { windows } if windows
+            .iter()
+            .any(|w| w.id == id && w.status == Status::Working && w.signals_seen))
+    });
 }
 
 #[test]

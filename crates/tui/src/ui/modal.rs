@@ -29,6 +29,7 @@ fn help_lines(prefix_label: &str) -> Vec<(String, String)> {
         (format!("{prefix_label} r"), "reconnect".to_string()),
         (format!("{prefix_label} m"), "conversation".to_string()),
         (format!("{prefix_label} g"), "start a goal".to_string()),
+        (format!("{prefix_label} a"), "alerts".to_string()),
         (
             format!("{prefix_label} t"),
             "tree mode (j/k, h/l, Enter, Space, /)".to_string(),
@@ -273,6 +274,16 @@ mod tests {
         assert_eq!(
             inner(&lines),
             vec!["Kill 'a'?", "", "y / Enter = yes    n / Esc = no"]
+        );
+    }
+
+    /// Milestone 9.0.5: the help lists `C-b a`, with the configured prefix.
+    #[test]
+    fn help_lists_the_alerts_key() {
+        let lines = help_lines("C-a");
+        assert!(
+            lines.contains(&("C-a a".to_owned(), "alerts".to_owned())),
+            "{lines:?}"
         );
     }
 }

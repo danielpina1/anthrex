@@ -1,10 +1,16 @@
 //! A new agent round of a task, moved out of `dispatch.rs` (task M9.9, no behaviour
-//! change), whose size limit milestone 9 would otherwise pass. Pure (design decision
-//! 2).
+//! change), whose size limit milestone 9 would otherwise pass, and milestone 9.0.5's
+//! record of a round's latest action and last message (`note_tool`, `note_said`). Pure
+//! (design decision 2).
 
-use proto::AgentRole;
+use proto::safe_text::{multi_line, one_line};
+use proto::{ACTIVITY_MAX, AgentRole, WORKER_SUMMARY_MAX};
 
 use crate::run::model::{AgentRound, OpId};
+use crate::run::snapshot_detail::cut;
+
+/// The anthrex MCP server's tool prefix, dropped from an activity line.
+const ANTHREX_TOOL_PREFIX: &str = "mcp__anthrex__";
 
 /// A round whose first turn is open from its launch (decision 27: the reducer marks the
 /// turn open when it delivers one).
@@ -64,5 +70,37 @@ pub(super) fn new_round(
         relaunch: None,
         closed_pid: None,
         exited_pid: None,
+        activity: None,
+        last_text: None,
     }
+}
+
+/// Milestone 9.0.5 decision 3: a top-level tool call is the round's latest action,
+/// `<tool> <target>` (the bare name when its summary is empty), the anthrex server's
+/// prefix dropped. A sub-agent's call (`target: None`) changes nothing, as the
+/// window's `tool` ignores it.
+pub(super) fn note_tool(round: &mut AgentRound, name: &str, target: Option<&str>) {
+    let Some(target) = target else { return };
+    let name = name.strip_prefix(ANTHREX_TOOL_PREFIX).unwrap_or(name);
+    set_activity(round, &format!("{name} {target}"));
+}
+
+/// Decisions 3 and 4: top-level text is the round's latest action (`says: ` and its
+/// first non-blank line) and, for a worker, its last message, line breaks kept. A text
+/// that is blank once sanitised (a Codex `agent_message` with no text) changes neither.
+pub(super) fn note_said(round: &mut AgentRound, text: &str) {
+    let first = text.lines().map(one_line).find(|l| !l.trim().is_empty());
+    if let Some(first) = first {
+        set_activity(round, &format!("says: {}", first.trim()));
+    }
+    let text = multi_line(text);
+    if round.role == AgentRole::Worker && !text.trim().is_empty() {
+        round.last_text = Some(cut(&text, WORKER_SUMMARY_MAX));
+    }
+}
+
+/// One sanitised line of at most `ACTIVITY_MAX` characters, `…` included.
+fn set_activity(round: &mut AgentRound, line: &str) {
+    let line = one_line(line);
+    round.activity = Some(cut(line.trim(), ACTIVITY_MAX - 1));
 }

@@ -47,7 +47,15 @@
 /// so a milestone-8c `run.json` and snapshot still load. Derivation: `PROTO_VERSION`
 /// was 9 at `crates/proto/src/lib.rs:40` before this change (set by M8c task 1);
 /// 9 + 1 = 10.
-pub const PROTO_VERSION: u32 = 10;
+///
+/// Milestone 9.0.5 task 1 bumps this to 11: it adds `RunRequest::TaskDetail` and
+/// `RunReply::TaskDetail` (with `proto::task_detail`), appended last, which a milestone-9
+/// peer cannot decode, plus the `#[serde(default)]` fields `TaskInfo.activity`,
+/// `RunsSnapshot.proposals`, `OrchestratorInfo.wake_held` and `WindowInfo.signals_seen`,
+/// so a milestone-9 `run.json`, window record and snapshot still load. Derivation:
+/// `PROTO_VERSION` was 10 at `crates/proto/src/lib.rs:50` before this change (set by M9
+/// task 2); 10 + 1 = 11.
+pub const PROTO_VERSION: u32 = 11;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -68,7 +76,9 @@ pub mod profile;
 pub mod run;
 pub mod run_info;
 pub mod run_wire;
+pub mod safe_text;
 pub mod scout;
+pub mod task_detail;
 pub mod types;
 
 pub use adapt::{
@@ -97,7 +107,8 @@ pub use orch::{
 pub use planner::{PlannerInfo, PlannerState};
 pub use profile::{
     CommandCheck, DroppedCommand, OutputFilter, ProfileMeta, ProfileSource, ProfileStatus,
-    ProfileVerification, ProposalOrigin, ProposalRecord, ProposalState, RepoProfile,
+    ProfileVerification, ProposalAlertInfo, ProposalOrigin, ProposalRecord, ProposalState,
+    RepoProfile,
 };
 pub use run::{
     AgentRole, BlockReason, Budget, DoneSignal, EditFile, Effort, Finding, FinishAction,
@@ -110,6 +121,7 @@ pub use run_info::{
 };
 pub use run_wire::{ProfileReply, ProfileRequest, RunReply, RunRequest, ToolCall};
 pub use scout::{ScoutFile, ScoutInfo, ScoutKind, ScoutReport, ScoutState};
+pub use task_detail::{ACTIVITY_MAX, SummarySource, TaskDetailInfo, WORKER_SUMMARY_MAX};
 pub use types::{
     ClientKind, ExitInfo, GitOperation, GitState, Head, Runtime, Status, SubagentInfo,
     SubagentState, WindowInfo, WindowKind, WindowSpec,
@@ -126,8 +138,8 @@ mod orch_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_ten() {
-        assert_eq!(super::PROTO_VERSION, 10);
+    fn proto_version_is_eleven() {
+        assert_eq!(super::PROTO_VERSION, 11);
     }
 
     #[test]

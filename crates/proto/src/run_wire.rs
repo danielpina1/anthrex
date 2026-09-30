@@ -12,6 +12,7 @@ use crate::profile::{
 };
 use crate::run::{AgentRole, FinishAction, PlanEdit, RunState};
 use crate::run_info::{BaseMovedInfo, RunsSnapshot};
+use crate::task_detail::TaskDetailInfo;
 
 /// One MCP tool call an agent round makes into the run engine, such as `task_done`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -112,6 +113,12 @@ pub enum RunRequest {
     RejectHold {
         run_id: String,
         hold: String,
+    },
+    // Milestone 9.0.5 decision 7: answered with `RunReply::TaskDetail`, or refused under
+    // `request::TASK_DETAIL`.
+    TaskDetail {
+        run_id: String,
+        task_id: String,
     },
 }
 
@@ -215,6 +222,13 @@ pub enum RunReply {
         #[serde(default)]
         request_id: Option<u64>,
     },
+    /// Milestone 9.0.5 decision 2: one task's brief, acceptance and worker summary, on
+    /// request only. Boxed for the same reason as `Profile`.
+    TaskDetail {
+        detail: Box<TaskDetailInfo>,
+        #[serde(default)]
+        request_id: Option<u64>,
+    },
 }
 
 impl RunReply {
@@ -272,7 +286,8 @@ impl RunReply {
             | RunReply::ToolResult { request_id, .. }
             | RunReply::Triaged { request_id, .. }
             | RunReply::Profile { request_id, .. }
-            | RunReply::Stats { request_id, .. } => *request_id = id,
+            | RunReply::Stats { request_id, .. }
+            | RunReply::TaskDetail { request_id, .. } => *request_id = id,
             RunReply::Snapshot(_) => {}
         }
         self
@@ -288,7 +303,8 @@ impl RunReply {
             | RunReply::ToolResult { request_id, .. }
             | RunReply::Triaged { request_id, .. }
             | RunReply::Profile { request_id, .. }
-            | RunReply::Stats { request_id, .. } => *request_id,
+            | RunReply::Stats { request_id, .. }
+            | RunReply::TaskDetail { request_id, .. } => *request_id,
             RunReply::Snapshot(_) => None,
         }
     }
@@ -336,4 +352,6 @@ pub mod request {
     pub const PROMOTE: &str = "run promote";
     pub const STATS: &str = "run stats";
     pub const PROFILE: &str = "profile";
+    /// Milestone 9.0.5 decision 7.
+    pub const TASK_DETAIL: &str = "run task-detail";
 }

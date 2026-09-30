@@ -1288,7 +1288,9 @@ def main():
     proc = PtyProc([BIN])
     proc.wait_for("agents", label="initial banner")
     proc.wait_for("no agents yet", label="empty sidebar hint")
-    print("ok: initial frame shows anthrex UI with no agents yet")
+    # Milestone 9.0.5: the Alerts box sits under the agent list, empty on a fresh daemon.
+    proc.wait_for("no alerts", label="empty Alerts box")
+    print("ok: initial frame shows anthrex UI with no agents yet and no alerts")
 
     print("== stage 2: create shell-1, run a command ==")
     new_shell(proc, "shell-1")

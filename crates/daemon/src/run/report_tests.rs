@@ -73,6 +73,8 @@ fn round(role: AgentRole, session: u32, turns: u32, tool_calls: u32, denials: u3
         relaunch: None,
         closed_pid: None,
         exited_pid: None,
+        activity: None,
+        last_text: None,
     }
 }
 
@@ -141,6 +143,7 @@ fn report_has_every_section() {
             test: Some("token::expires_after_one_hour".to_string()),
             red: Some("a".repeat(40)),
             signal: DoneSignal::TaskDone,
+            session: None,
         });
     }
     run.log.push(LogEntry {
@@ -221,6 +224,7 @@ fn turn_end_fallback_is_named() {
         test: None,
         red: None,
         signal: DoneSignal::TurnEndFallback,
+        session: None,
     });
     let out = render(&run, 2_000);
     assert!(out.contains("| turn-end fallback |"));

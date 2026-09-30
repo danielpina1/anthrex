@@ -48,7 +48,8 @@ fn task_fields_match_the_mockup() {
         inspection.right.as_deref(),
         Some("M · tdd · review round 2")
     );
-    assert_eq!(inspection.layout, FieldLayout::Rows);
+    // Milestone 9.0.5: drawn as sections; the flat list below is kept.
+    assert_eq!(inspection.layout, FieldLayout::Sections);
     assert_eq!(
         pairs(&inspection),
         [

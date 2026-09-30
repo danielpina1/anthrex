@@ -37,6 +37,7 @@ fn win(id: u32, name: &str, runtime: Runtime, status: Status) -> WindowInfo {
         exit: None,
         kind: proto::WindowKind::Pty,
         run: None,
+        signals_seen: false,
     }
 }
 
@@ -206,7 +207,7 @@ fn tree_mode_shows_the_badge_the_title_and_the_selection() {
         .iter()
         .position(|row| &row.key == selected)
         .unwrap();
-    let l = layout(Rect::new(0, 0, 120, 30), app.sidebar_width);
+    let l = layout_for(&app, Rect::new(0, 0, 120, 30));
     let y = l.sidebar_list.y + index as u16;
     for x in l.sidebar_list.x..l.sidebar_list.right() {
         assert!(
@@ -368,17 +369,17 @@ fn layout_uses_the_configured_sidebar_width() {
 
 #[test]
 fn layout_uses_the_sidebar_width() {
-    let l = layout(Rect::new(0, 0, 120, 40), 34);
+    let l = layout(Rect::new(0, 0, 120, 40), 34, 0);
     assert_eq!(l.sidebar.width, 34);
     assert_eq!(l.main.x, 34);
-    assert_eq!(l.sidebar_list, Rect::new(1, 1, 32, 35));
-    assert_eq!(l.sidebar_footer, Rect::new(1, 37, 32, 1));
+    assert_eq!(l.sidebar_list, Rect::new(1, 1, 32, 32));
+    assert_eq!(l.sidebar_footer, Rect::new(1, 34, 32, 1));
     assert_eq!(l.statusbar, Rect::new(0, 39, 120, 1));
-    let hidden = layout(Rect::new(0, 0, 120, 40), 0);
+    let hidden = layout(Rect::new(0, 0, 120, 40), 0, 0);
     assert_eq!(hidden.sidebar.width, 0);
     assert_eq!(hidden.sidebar_list.width, 0);
     assert_eq!(hidden.main.width, 120);
-    let narrow = layout(Rect::new(0, 0, 80, 24), 24);
+    let narrow = layout(Rect::new(0, 0, 80, 24), 24, 0);
     assert_eq!(narrow.sidebar.width, 24);
     assert_eq!(narrow.main_inner.width, 54);
 }
@@ -394,7 +395,7 @@ fn hit_test_uses_the_render_geometry() {
     let mut app = example_app();
     app.set_tree_viewports(10, 12);
     app.tree.sidebar.top = 4;
-    let mut terminal = Terminal::new(TestBackend::new(120, 15)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(120, 18)).unwrap();
     let mut l = None;
     terminal.draw(|f| l = Some(draw(f, &app))).unwrap();
     let l = l.unwrap();
@@ -460,9 +461,9 @@ fn shells_app() -> App {
 fn sidebar_scrolls_to_keep_the_focused_window_visible() {
     let mut app = shells_app();
     app.focus(20);
-    let l = layout(Rect::new(0, 0, 120, 14), 34);
+    let l = layout(Rect::new(0, 0, 120, 17), 34, crate::app::alerts(&app).len());
     app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
-    let (out, _) = render(&app, 120, 14);
+    let (out, _) = render(&app, 120, 17);
     assert!(out.contains("20 shell-20"), "{out}");
     assert!(!out.contains(" 1 shell-1 "), "{out}");
     assert_eq!(app.tree.sidebar.top, 12);
@@ -486,7 +487,7 @@ fn sidebar_scrolls_to_keep_the_focused_window_visible() {
 #[test]
 fn wheel_over_the_sidebar_scrolls_the_tree() {
     let mut app = shells_app();
-    let l = layout(Rect::new(0, 0, 120, 14), 34);
+    let l = layout(Rect::new(0, 0, 120, 14), 34, crate::app::alerts(&app).len());
     app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
     assert!(app.on_scroll(false, 2, 2, &l).is_empty());
     assert_eq!(app.tree.sidebar.top, 3);
@@ -508,7 +509,7 @@ fn a_click_on_a_row_focuses_toggles_or_focuses_the_parent() {
     use crate::app::Effect;
     use proto::ClientMsg;
     let mut app = example_app();
-    let l = layout(Rect::new(0, 0, 120, 30), 34);
+    let l = layout(Rect::new(0, 0, 120, 30), 34, crate::app::alerts(&app).len());
     app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
     assert!(app.on_click(2, 2, &l).is_empty());
     assert_eq!(

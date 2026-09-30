@@ -115,6 +115,7 @@ impl App {
             .and_then(|id| previous_order.iter().position(|candidate| *candidate == id));
         let previous_selection = self.tree.selected.clone();
         self.windows = windows;
+        self.repair_alerts_focus();
         self.prune_git();
         self.windows_received_at = Instant::now();
         self.tree.prune_runs(&self.runs.runs);

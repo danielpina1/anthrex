@@ -446,6 +446,7 @@ fn a_failed_rate_limit_turn_is_a_rate_limit_event() {
         window,
         AgentSignal::ToolUse {
             name: "Bash".into(),
+            target: None,
         },
     );
     fx.turn_ended(window, limited);

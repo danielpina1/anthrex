@@ -217,7 +217,11 @@ fn a_sidebar_click_moves_the_view_to_the_clicked_window() {
     let mut app = app_with(three_windows());
     open_on_seven(&mut app);
 
-    let layout = crate::ui::layout(ratatui::layout::Rect::new(0, 0, 120, 30), 34);
+    let layout = crate::ui::layout(
+        ratatui::layout::Rect::new(0, 0, 120, 30),
+        34,
+        crate::app::alerts(&app).len(),
+    );
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     let rows = crate::tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
     let index = rows

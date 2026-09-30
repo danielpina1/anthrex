@@ -22,7 +22,7 @@ fn overview_replaces_the_terminal_with_the_graph() {
     });
     assert!(render(&app, 200, 50).0.contains("TERMINAL-TEXT"));
     open_overview(&mut app);
-    app.set_graph_viewport(layout(Rect::new(0, 0, 200, 50), app.sidebar_width).main);
+    app.set_graph_viewport(layout(Rect::new(0, 0, 200, 50), app.sidebar_width, 0).main);
     let (out, _) = render(&app, 200, 50);
     for expected in [
         " tree overview ",

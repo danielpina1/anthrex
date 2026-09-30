@@ -4,8 +4,10 @@ use crate::dialog::{FormDefaults, NewAgentForm, RemoveConfirm};
 use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
+pub use alerts::{Alert, AlertKey, AlertsFocus, alerts};
 use crossterm::event::KeyEvent;
 pub use link::Link;
+pub use plan_review::{PlanReview, ReviewTarget};
 use prompt::RenamePrompt;
 use proto::{ClientMsg, GitState, WindowInfo};
 pub(crate) use runs::state_text;
@@ -181,6 +183,19 @@ pub struct App {
     /// started, opened once a snapshot names it (decision 44).
     next_request_id: u64,
     pending_open: Option<String>,
+    /// Milestone 9.0.5 decision 11: the open plan review; `app/plan_review.rs` keeps
+    /// the keymap's review mode in step with it.
+    pub plan_review: Option<plan_review::PlanReview>,
+    /// The body the review draws in (sidebar column included), as the last frame gave it.
+    pub(crate) body_area: ratatui::layout::Rect,
+    /// Decision 21: the Alerts box's focus; `app/alerts.rs` keeps the keymap's alerts
+    /// mode in step with it.
+    pub alerts_focus: Option<alerts::AlertsFocus>,
+    /// Decisions 23 and 25: the inspected task's detail, and the task panel's scroll
+    /// and brief expansion, each honoured only while its node is the selection.
+    pub task_detail: Option<task_detail::TaskDetailCache>,
+    pub inspector_scroll: Option<(tree::NodeKey, u16)>,
+    pub brief_expanded: Option<tree::NodeKey>,
 }
 
 impl App {
@@ -231,6 +246,12 @@ impl App {
             run_subscribed: true,
             next_request_id: 0,
             pending_open: None,
+            plan_review: None,
+            body_area: ratatui::layout::Rect::default(),
+            alerts_focus: None,
+            task_detail: None,
+            inspector_scroll: None,
+            brief_expanded: None,
             settings,
         }
     }
@@ -384,6 +405,7 @@ impl App {
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        self.forget_stale_panel_state();
         if self.modal.is_some() {
             return self.on_modal_key(key);
         }
@@ -402,6 +424,8 @@ impl App {
             KeyAction::Run(cmd) => self.run(cmd),
             KeyAction::Tree(key) => self.on_tree_key(key),
             KeyAction::Conversation(key) => self.on_conversation_key(key),
+            KeyAction::Review(key) => self.on_review_key(key),
+            KeyAction::Alerts(key) => self.on_alerts_key(key),
             KeyAction::AwaitPrefix | KeyAction::Cancel | KeyAction::Nothing => vec![],
         }
     }
@@ -451,6 +475,7 @@ impl App {
             Command::Reconnect => self.reconnect_command(),
             Command::ToggleConversation => self.toggle_conversation(),
             Command::StartGoal => self.open_goal_form(),
+            Command::FocusAlerts => self.focus_alerts(),
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -469,6 +494,7 @@ impl App {
     /// `Subscribe`, flushes a debounced resize.
     pub fn on_tick(&mut self) -> Vec<Effect> {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
+        self.forget_stale_panel_state();
         if self
             .toast
             .as_ref()
@@ -497,10 +523,12 @@ impl App {
                 })];
             }
         }
-        vec![]
+        // Decision 23: the inspected task's detail, once per task and key.
+        self.check_task_detail().into_iter().collect()
     }
 }
 
+pub(crate) mod alerts;
 mod conversation;
 mod daemon;
 mod goal;
@@ -509,11 +537,13 @@ mod lifecycle;
 mod link;
 mod modal_keys;
 mod paste;
+pub(crate) mod plan_review;
 pub(crate) mod prompt;
 mod run_enter;
 mod run_gate;
 mod run_holds;
 mod runs;
+pub(crate) mod task_detail;
 mod windows;
 
 #[cfg(test)]

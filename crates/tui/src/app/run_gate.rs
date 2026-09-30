@@ -41,9 +41,15 @@ impl App {
     /// Decision 32's four keys: `a` and `x` ask to approve or reject the run, `d` to
     /// remove the selected task, `e` opens the edit form on it. Nothing is sent here,
     /// except milestone 9's hold approval (`app/run_holds.rs`), which `a` and `x` try
-    /// first.
-    pub(super) fn on_gate_key(&mut self, run_id: String, key: char) -> Vec<Effect> {
-        if let Some(effects) = self.on_hold_key(&run_id, key) {
+    /// first. `selected` is the node they act on (milestone 9.0.5 decision 16): the
+    /// run view passes the tree's selection, the plan review its own.
+    pub(super) fn on_gate_key(
+        &mut self,
+        run_id: String,
+        key: char,
+        selected: Option<NodeKey>,
+    ) -> Vec<Effect> {
+        if let Some(effects) = self.on_hold_key(&run_id, key, selected.as_ref()) {
             return effects;
         }
         let run = match self.gate_run(&run_id) {
@@ -53,7 +59,7 @@ impl App {
                 return vec![];
             }
         };
-        let task = match &self.tree.selected {
+        let task = match &selected {
             Some(NodeKey::Task { run: r, id }) if *r == run_id => {
                 run.tasks.iter().find(|task| task.id == *id)
             }

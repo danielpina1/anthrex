@@ -77,6 +77,7 @@ fn rows(name: &str, right: Option<&str>, fields: Vec<Field>) -> Inspection {
         right: right.map(str::to_owned),
         fields,
         layout: FieldLayout::Rows,
+        ..Default::default()
     }
 }
 
@@ -219,13 +220,17 @@ fn planner_panel_matches_the_mockup() {
 
 #[test]
 fn task_panel_matches_the_mockup() {
-    let inspection = node(gemini_fixture(), task_key("t2"));
+    // Milestone 9.0.5 draws a task as sections (`panel/sections.rs`); M8c's flat rows
+    // still pin this layout on the task's flat field list.
+    let mut inspection = node(gemini_fixture(), task_key("t2"));
+    inspection.layout = FieldLayout::Rows;
     assert_eq!(panel(&inspection, 86, RUN_INSPECTOR_HEIGHT), TASK);
 }
 
 #[test]
 fn task_panel_drops_the_right_text_and_elides_values() {
-    let inspection = node(gemini_fixture(), task_key("t2"));
+    let mut inspection = node(gemini_fixture(), task_key("t2"));
+    inspection.layout = FieldLayout::Rows;
     assert_eq!(panel(&inspection, 60, RUN_INSPECTOR_HEIGHT), TASK_NARROW);
 }
 

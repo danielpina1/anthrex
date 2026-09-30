@@ -1607,7 +1607,10 @@ scope.
 
 ## From milestone 8c (2026-09-27), recorded by M8c.10
 
-- **The run inspector's `doing` field has no tool target** (brief Risks 6, for M9 or a
+- **Handled in milestone 9.0.5.** `TaskInfo.activity` now publishes the live round's
+  latest action with its target, and the round panel's `doing` reads `now: <activity>`
+  for that round (M9.0.5 decisions 2, 3 and 26).
+  **The run inspector's `doing` field has no tool target** (brief Risks 6, for M9 or a
   later snapshot change). The spec's mockup shows `editing crates/daemon/src/status.rs
   (last tool: apply_patch)`; neither `AgentRoundInfo` nor `WindowInfo` carries a tool's
   target, only its name. The view does not read M6.5's conversation state for it, which
@@ -1676,3 +1679,33 @@ scope.
 - **Decision 16a's snapshot is bounded, not slimmed (controller ruling, M9's whole-branch review; for M9.5).** The brief's 256 KiB bound was accepted as measured: the snapshot pins what 16a removes, under 1.25 KiB a task (`SNAPSHOT_BOUND`). A terminal run still carries its tasks in full; slimming them is left to M9.5.
 - **`OPENAI_BASE_URL` is not scrubbed from the environment a Codex session gets (M9's whole-branch review; resolved: user ruling 2026-09-29: scrub).** It is now in `config::reserved_env::OPENAI_CREDENTIALS`, so it is removed wherever the OpenAI and Codex keys are: every headless session, the orchestrator's PTY window and the engine's commands (M9 brief, "User rulings 2026-09-29", item 3). The original finding: the user's 2026-09-29 ruling named only `ANTHROPIC_BASE_URL`, which M9 scrubs. Whether Codex's base URL should be scrubbed the same way is the user's call.
 - **Onboarding scouts and deciders have no installed check (M9.17 fix round 3; for M9.5).** Run scouts and sub-planners route over the runtimes the run's start found installed; the repository-level onboarding scout (`profile/service_run.rs`, `profile/service_start.rs`) and the deciders still route by the daemon-wide config. A Codex-only user with the default config gets a Claude onboarding scout and Claude deciders, which fail at launch (the deciders then fall back).
+
+## From milestone 9.0.5 (2026-09-30), for M9.1 (tiered testing and flake handling)
+
+- **Fixed in M9.0.5: `fake-agent/tests/orch_modes.rs` timed out at its first hook** ("the first
+  Stop within 20s").
+  - Root cause: every test wrote its own fresh `anthrex-wrap` script and execed it at its first
+    hook. macOS assesses a newly written executable on its first exec (about 470 ms) and
+    serialises those assessments. Measured: 4, 12 and 24 fresh files execed at once took up to
+    1.6, 5.1 and 10.4 s, against 0.6 s for 12 or 24 execs of one file.
+  - With twelve tests the worst case passed fake-agent's 5 s `STEP_TIMEOUT` for a hook, so
+    fake-agent printed "step timed out after 5 seconds" and exited 1, and the test waited out
+    its 20 s.
+  - The `*_BIN` variables were not the cause; the earlier comparison was noise.
+  - Fix, test support only: `orch_support::wrapper()` writes one shared stand-in per test
+    process under `CARGO_TARGET_TMPDIR`, rewritten only when its text changes. Pinned by
+    `every_orch_shares_one_wrapper`.
+  - Repro: two copies of the test binary at once failed in 5 of 5 pairs before the fix and
+    passed in 5 of 5 after, cold cache included. The binary now runs in about 1.5 s instead of
+    6.5 s.
+- **`run::driver::orch_ops::tests::resolve_target_op_runs_git_off_the_worker_threads` is load
+  sensitive.** Its first, real `git rev-parse` has an 8 s timeout that expired once, under the
+  full `cargo test --workspace` on a loaded machine (load average about 5 to 6). It then passed
+  8 of 8 runs alone. It needs a measured budget per `docs/timing-budgets.md`.
+
+## From milestone 9.0.5's whole-branch review (2026-09-30), for M9.5
+
+- **The plan review has no indicator for new alerts.** While the review covers the screen, an alert
+  that arrives shows nowhere: the status bar's `⚑ n` is drawn only when the sidebar is hidden, and
+  the Alerts box sits under the review. Give the review's header or the status bar a count
+  while it is open.

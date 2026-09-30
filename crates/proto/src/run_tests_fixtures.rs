@@ -177,6 +177,7 @@ pub(super) fn a_task_info() -> TaskInfo {
         last_message_kind: None,
         last_message_line: None,
         task_notes: Vec::new(),
+        activity: None,
     }
 }
 

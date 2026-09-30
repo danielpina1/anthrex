@@ -379,7 +379,13 @@ fn old_run_json_loads() {
         assert!(spec.remove("review_target").is_some(), "review_target");
         for round in task["rounds"].as_array_mut().unwrap() {
             let round = round.as_object_mut().unwrap();
-            for key in ["rate_limited_since", "sent_back_at"] {
+            // Milestone 9.0.5 decisions 3 and 4: `activity` and `last_text`, `None`.
+            for key in [
+                "rate_limited_since",
+                "sent_back_at",
+                "activity",
+                "last_text",
+            ] {
                 assert!(round.remove(key).is_some(), "{key}");
             }
         }

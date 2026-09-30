@@ -57,6 +57,7 @@ pub mod roster;
 pub mod routing;
 pub mod seatbelt;
 pub mod snapshot;
+mod snapshot_detail;
 mod snapshot_orch;
 pub mod stats;
 pub mod triage;

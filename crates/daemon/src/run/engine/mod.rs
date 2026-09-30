@@ -39,7 +39,7 @@ use std::path::PathBuf;
 
 use proto::{FinishAction, PlanEdit, TokenUsage, ToolCall};
 
-use super::model::{OpId, PendingOp, Run};
+use super::model::{AgentRound, OpId, PendingOp, Run};
 use super::validate::EditScope;
 
 mod batch;
@@ -244,6 +244,7 @@ pub enum AgentSignal {
     TurnStarted,
     ToolUse {
         name: String,
+        target: Option<String>, // 9.0.5 decision 5: its summary; `None` for a sub-agent's
     },
     /// `denials`: the tool names of the result's `permission_denials` (M8a.12 fix round
     /// 1, review m-4: the Interfaces' `u32` became the names, which `denied_text` needs).
@@ -271,7 +272,7 @@ pub enum AgentSignal {
     Spend {
         usage: TokenUsage,
     },
-    /// Any other event: text, a tool result, compaction, an unknown line.
+    /// Any other event: a sub-agent's text, a tool result, compaction, an unknown line.
     Activity,
     ProcessExited {
         code: Option<i32>,
@@ -280,6 +281,10 @@ pub enum AgentSignal {
     },
     ProcessStarted {
         pid: u32,
+    },
+    /// Top-level assistant text, cut at `proto::WORKER_SUMMARY_MAX` (9.0.5 decision 5).
+    Said {
+        text: String,
     },
 }
 
@@ -499,10 +504,9 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
 }
 
 /// Decision 47: a run that changed gets its revision bumped, and the global one with it;
-/// a run new to the state keeps the revision it arrived with. A change to a round's
-/// counters alone (`last_event`, `tool_calls`, `usage`) is persisted lazily and published
-/// as a counter update (decisions 43, 47); any other change is urgent and structural.
-/// `Persist` goes first and `Publish` last.
+/// a run new to the state keeps the revision it arrived with. A change to counters alone
+/// (`AgentRound::clear_counters`) is persisted lazily and published as a counter update
+/// (decisions 43, 47); any other is urgent and structural. `Persist` first, `Publish` last.
 fn finish(
     state: &mut EngineState,
     before: &BTreeMap<String, Run>,
@@ -557,11 +561,7 @@ fn without_counters(run: &Run) -> Run {
     run.scout_usage = Default::default();
     for task in run.tasks.iter_mut() {
         task.spent_total = Default::default();
-    }
-    for round in run.tasks.iter_mut().flat_map(|t| t.rounds.iter_mut()) {
-        round.last_event = 0;
-        round.tool_calls = 0;
-        round.usage = Default::default();
+        task.rounds.iter_mut().for_each(AgentRound::clear_counters);
     }
     run
 }

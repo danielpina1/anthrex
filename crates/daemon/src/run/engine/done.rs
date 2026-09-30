@@ -202,6 +202,7 @@ pub(super) fn claim(
     let task_id = task.id().to_string();
     let window_id = session_window(run, i);
     let turn = worker_round(task).map_or(0, |r| task.rounds[r].turns);
+    let session = worker_round(task).map(|r| task.rounds[r].session);
     let op = next_op(run);
     run.tasks[i].claim = Some(PendingClaim {
         window_id,
@@ -213,6 +214,7 @@ pub(super) fn claim(
             test: args.test,
             red: args.red,
             signal,
+            session,
         },
     });
     emit_op(run, op, Some(&task_id), kind, fx);

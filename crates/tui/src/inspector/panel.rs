@@ -32,18 +32,50 @@ pub fn render(frame: &mut Frame, inspection: &Inspection, area: Rect) {
         // flush against it the way the graph's boxes never do.
         .padding(Padding::horizontal(1));
     let inner = block.inner(area);
+    let (width, height) = (usize::from(inner.width), usize::from(inner.height));
+    let block = if inspection.layout == FieldLayout::Sections {
+        scroll_marks(block, inspection, area, width, height)
+    } else {
+        block
+    };
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let (width, height) = (usize::from(inner.width), usize::from(inner.height));
     // Milestone 8c decision 29: a run-view node is one field per row; every other
     // node keeps milestone 4.7's columns.
     let lines = match inspection.layout {
         FieldLayout::Columns => lines(inspection, width, height),
         FieldLayout::Rows => rows::lines(inspection, width, height),
+        FieldLayout::Sections => sections::lines(inspection, width, height),
     };
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Ruling D-2: ` ↑ PgUp ` in the top border once scrolled down, ` ↓ PgDn ` in the
+/// bottom one while rows lie below, right-aligned and muted; dropped when a mark and
+/// the two corners do not fit.
+fn scroll_marks<'a>(
+    block: Block<'a>,
+    inspection: &Inspection,
+    area: Rect,
+    width: usize,
+    height: usize,
+) -> Block<'a> {
+    let fits = |mark: &str| usize::from(area.width) >= mark.chars().count() + 2;
+    let (above, below) = sections::more(inspection, width, height);
+    let mut block = block;
+    if above && fits(sections::MORE_ABOVE) {
+        block = block.title_top(
+            Line::from(Span::styled(sections::MORE_ABOVE, theme::muted())).right_aligned(),
+        );
+    }
+    if below && fits(sections::MORE_BELOW) {
+        block = block.title_bottom(
+            Line::from(Span::styled(sections::MORE_BELOW, theme::muted())).right_aligned(),
+        );
+    }
+    block
 }
 
 /// The panel's interior, row by row: the title, the fields that fit in columns,
@@ -343,6 +375,7 @@ fn pad(text: &str, width: usize) -> String {
 }
 
 mod rows;
+pub(super) mod sections;
 
 #[cfg(test)]
 mod tests;

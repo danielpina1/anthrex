@@ -516,3 +516,6 @@ fn conversation_mode_wins_over_tree_mode() {
     let j = key(KeyCode::Char('j'), KeyModifiers::NONE);
     assert_eq!(km.handle(j, false), KeyAction::Conversation(j));
 }
+
+#[path = "keymap_tests/modes.rs"]
+mod modes;

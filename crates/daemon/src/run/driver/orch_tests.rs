@@ -187,6 +187,77 @@ async fn the_tick_publishes_outside_the_engine_lock() {
     assert_eq!(pushed.runs.len(), 1);
 }
 
+/// Milestone 9.0.5 decision 10: a change to the ready profile proposals is pushed on
+/// the next tick even with no run change, and `current` (a `List` answer) carries the
+/// same list. The change here is `restore` seeding the list from a `Ready`
+/// `proposal.json` on disk; a tick with nothing new publishes nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proposal_change_publishes_on_the_next_tick() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("d.sock");
+    let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
+    config.claude_bin = "/nonexistent/anthrex-test/claude".into();
+    config.codex_bin = "/nonexistent/anthrex-test/codex".into();
+    config.worktrees_root = dir.path().join("worktrees");
+    config.launch_gate = LaunchGate::open_already();
+    let (manager, _events) = WindowManager::new(config);
+    let data = dir.path().join("data");
+    let project = PathBuf::from("/work/ready-app");
+    let repo_dir = crate::profile::repo_dir(&data, &project);
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    let record = proto::ProposalRecord {
+        project: project.clone(),
+        state: proto::ProposalState::Ready,
+        origin: proto::ProposalOrigin::Detect,
+        started_at: 1_790_000_000,
+        updated_at: 1_790_000_001,
+        base_sha: String::new(),
+        scout_id: None,
+        window_id: None,
+        profile: Some(proto::RepoProfile::default()),
+        verification: None,
+        dropped: Vec::new(),
+        proposed: None,
+        trusted_project: Vec::new(),
+        unconfined_checks: false,
+        auto_confirm: false,
+    };
+    crate::profile::store::save_proposal(&repo_dir, &record).unwrap();
+    let runs = RunService::for_manager(&manager, data.clone(), Arc::new(NoRoots));
+    let profiles = crate::profile::service::wire(
+        &manager,
+        &runs,
+        &data,
+        &socket,
+        &config::Orchestrator::default(),
+    );
+    let mut pushes = runs.pushes();
+    runs.on_tick(unix_now()).await;
+    assert!(pushes.try_recv().is_err(), "nothing changed yet");
+    assert!(runs.current().proposals.is_empty());
+
+    profiles.restore().await;
+    let ticking = runs.clone();
+    tokio::spawn(async move { ticking.on_tick(unix_now()).await });
+    let pushed = tokio::time::timeout(Duration::from_secs(10), pushes.recv())
+        .await
+        .expect("the tick after the change publishes")
+        .unwrap();
+    let listed: Vec<_> = pushed
+        .proposals
+        .iter()
+        .map(|p| (p.project.clone(), p.updated_at))
+        .collect();
+    assert_eq!(listed, vec![(project.clone(), 1_790_000_001)]);
+    assert_eq!(runs.current().proposals, pushed.proposals);
+
+    runs.on_tick(unix_now()).await;
+    assert!(
+        pushes.try_recv().is_err(),
+        "an unchanged list is not pushed again"
+    );
+}
+
 /// Task M9.8 (decision 34): the driver reads the stored reports a first turn's slot
 /// names, each resolved as `scout::report::resolve_ref` says (a run scout's under the
 /// run, `onboarding` under the repository), and puts their extract in the slot. One

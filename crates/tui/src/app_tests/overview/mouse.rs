@@ -216,7 +216,7 @@ fn overview_clicks_ignore_modals_borders_and_the_sidebar_stays_live() {
 fn the_overview_click_works_with_a_filter_and_a_hidden_sidebar() {
     let (mut app, _) = opened_at(200, 50);
     app.sidebar_visible = false;
-    let layout = crate::ui::layout(Rect::new(0, 0, 200, 50), 0);
+    let layout = crate::ui::layout(Rect::new(0, 0, 200, 50), 0, crate::app::alerts(&app).len());
     app.set_graph_viewport(layout.main);
     press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
     assert!(app.on_paste("billing".into()).is_empty());
@@ -254,7 +254,11 @@ fn the_graph_stays_inside_tiny_main_areas() {
                 } else {
                     0
                 };
-                let layout = crate::ui::layout(Rect::new(0, 0, width, height), sidebar_width);
+                let layout = crate::ui::layout(
+                    Rect::new(0, 0, width, height),
+                    sidebar_width,
+                    crate::app::alerts(&app).len(),
+                );
                 app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
                 app.set_graph_viewport(layout.main);
                 for pan in [Pan::default(), Pan { x: 60000, y: 60000 }] {
@@ -390,6 +394,24 @@ fn a_drag_begun_before_the_view_opened_does_not_pan_the_hidden_graph() {
     assert!(app.on_click(x, y, &layout).is_empty());
     app.toggle_conversation();
     assert!(app.conversation.is_open());
+    let pan = app.graph_pan;
+    assert!(app.on_drag(x - 8, y - 5, &layout).is_empty());
+    assert_eq!(app.graph_pan, pan, "the drag panned the hidden graph");
+}
+
+/// M9.0.5 review: the same for the plan review, which covers the body. The press is
+/// made before the review opens, so `drag_from` holds a real anchor and only
+/// `on_drag`'s review guard keeps the hidden graph from panning.
+#[test]
+fn a_drag_begun_before_the_review_opened_does_not_pan_the_hidden_graph() {
+    let (mut app, layout) = opened();
+    let (x, y) = box_middle(&app, layout.main, &NodeKey::Window(4));
+    assert!(app.on_click(x, y, &layout).is_empty());
+    // The review of a run the snapshot does not list yet: open, with nothing selected.
+    assert!(
+        app.open_plan_review("r".into(), crate::app::ReviewTarget::Gate)
+            .is_empty()
+    );
     let pan = app.graph_pan;
     assert!(app.on_drag(x - 8, y - 5, &layout).is_empty());
     assert_eq!(app.graph_pan, pan, "the drag panned the hidden graph");

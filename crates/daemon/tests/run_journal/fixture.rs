@@ -138,6 +138,8 @@ pub fn round(
         relaunch: None,
         closed_pid: None,
         exited_pid: None,
+        activity: None,
+        last_text: None,
     }
 }
 
@@ -220,6 +222,7 @@ pub fn window(id: u32, run_ref: Option<RunRef>, kind: WindowKind) -> WindowInfo 
         exit: None,
         kind,
         run: run_ref,
+        signals_seen: false,
     }
 }
 
@@ -313,6 +316,7 @@ pub fn full_run(data_dir: &Path) -> Run {
         test: Some("a_test".into()),
         red: Some("a".repeat(40)),
         signal: DoneSignal::TaskDone,
+        session: None,
     };
     task.done = Some(claim.clone());
     task.claim = Some(PendingClaim {

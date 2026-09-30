@@ -310,6 +310,7 @@ fn a_refused_fresh_launch_keeps_its_messages() {
             window,
             AgentSignal::ToolUse {
                 name: "Bash".into(),
+                target: None,
             },
         );
     }

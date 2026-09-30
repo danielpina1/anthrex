@@ -29,6 +29,8 @@ pub enum Command {
     ToggleConversation,
     /// `C-b g` (milestone 9 decision 44): opens the goal form.
     StartGoal,
+    /// `C-b a` (milestone 9.0.5 decision 21): focuses the Alerts box.
+    FocusAlerts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +46,10 @@ pub enum KeyAction {
     Tree(KeyEvent),
     /// A bare key pressed while the conversation view is open; the view interprets it.
     Conversation(KeyEvent),
+    /// A bare key pressed while the plan review is open (milestone 9.0.5 decision 13).
+    Review(KeyEvent),
+    /// A bare key pressed while the Alerts box has the focus (decision 21).
+    Alerts(KeyEvent),
     Nothing,
 }
 
@@ -53,6 +59,8 @@ pub struct Keymap {
     pending: bool,
     tree_mode: bool,
     conversation_mode: bool,
+    review_mode: bool,
+    alerts_mode: bool,
 }
 
 impl Keymap {
@@ -66,6 +74,8 @@ impl Keymap {
             pending: false,
             tree_mode: false,
             conversation_mode: false,
+            review_mode: false,
+            alerts_mode: false,
         }
     }
 
@@ -91,6 +101,26 @@ impl Keymap {
         self.conversation_mode
     }
 
+    /// Milestone 9.0.5 decision 13: while set, bare keys go to the plan review. It
+    /// wins over the conversation view and the tree (Risks 1); the prefix still works.
+    pub fn set_review_mode(&mut self, on: bool) {
+        self.review_mode = on;
+    }
+
+    pub fn review_mode(&self) -> bool {
+        self.review_mode
+    }
+
+    /// Decision 21: while set, bare keys go to the Alerts box. The review wins over
+    /// it, and it over the conversation view and the tree (Risks 1).
+    pub fn set_alerts_mode(&mut self, on: bool) {
+        self.alerts_mode = on;
+    }
+
+    pub fn alerts_mode(&self) -> bool {
+        self.alerts_mode
+    }
+
     fn is_prefix(&self, key: &KeyEvent) -> bool {
         key.code == self.prefix.0 && key.modifiers == self.prefix.1
     }
@@ -106,8 +136,9 @@ impl Keymap {
             self.pending = false;
             if self.is_prefix(&key) {
                 // Decision 11 (review N3): the conversation view is read-only, so the
-                // literal prefix byte reaches no PTY while it is open.
-                if self.conversation_mode {
+                // literal prefix byte reaches no PTY while it is open; nor while the
+                // plan review is (milestone 9.0.5).
+                if self.conversation_mode || self.review_mode || self.alerts_mode {
                     return KeyAction::Nothing;
                 }
                 return encode_key(KeyEvent::new(self.prefix.0, self.prefix.1), app_cursor)
@@ -136,6 +167,7 @@ impl Keymap {
                 KeyCode::Char('?') => KeyAction::Run(Command::Help),
                 KeyCode::Char('m') => KeyAction::Run(Command::ToggleConversation),
                 KeyCode::Char('g') => KeyAction::Run(Command::StartGoal),
+                KeyCode::Char('a') => KeyAction::Run(Command::FocusAlerts),
                 KeyCode::Esc => KeyAction::Cancel,
                 _ => KeyAction::Nothing,
             };
@@ -143,6 +175,12 @@ impl Keymap {
         if self.is_prefix(&key) {
             self.pending = true;
             return KeyAction::AwaitPrefix;
+        }
+        if self.review_mode {
+            return KeyAction::Review(key);
+        }
+        if self.alerts_mode {
+            return KeyAction::Alerts(key);
         }
         if self.conversation_mode {
             return KeyAction::Conversation(key);

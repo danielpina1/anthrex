@@ -270,7 +270,11 @@ fn enter_on_a_headless_window_in_the_plain_tree_opens_its_conversation() {
     assert!(app.overview);
 
     // A canvas double click.
-    let layout = crate::ui::layout(Rect::new(0, 0, 120, 30), app.sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, 120, 30),
+        app.sidebar_width,
+        crate::app::alerts(&app).len(),
+    );
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     app.set_graph_viewport(layout.main);
     let (x, y) = box_middle(&app, layout.main, &window);
@@ -321,9 +325,18 @@ fn reopen(app: &mut App, log: &mut Vec<Effect>) {
     if app.modal.is_some() {
         log.extend(tap(app, KeyCode::Esc));
     }
-    while app.conversation.is_open() {
+    // Bounded: a keymap that sent `q` elsewhere would otherwise loop for ever (a
+    // precedence mutant hung the whole test binary here, milestone 9.0.5 review).
+    for _ in 0..16 {
+        if !app.conversation.is_open() {
+            break;
+        }
         log.extend(tap(app, KeyCode::Char('q')));
     }
+    assert!(
+        !app.conversation.is_open(),
+        "`q` did not close the conversation"
+    );
     if app.tree_input == Some(TreeInput::Filter) {
         log.extend(tap(app, KeyCode::Esc));
     }
@@ -342,7 +355,11 @@ fn reopen(app: &mut App, log: &mut Vec<Effect>) {
 fn no_run_view_path_sends_input() {
     let mut app = three();
     let _ = app.focus(1);
-    let layout = crate::ui::layout(Rect::new(0, 0, 120, 40), app.sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, 120, 40),
+        app.sidebar_width,
+        crate::app::alerts(&app).len(),
+    );
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     app.set_graph_viewport(layout.main);
     let mut log = Vec::new();

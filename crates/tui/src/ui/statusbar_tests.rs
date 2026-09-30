@@ -200,6 +200,7 @@ fn window(id: u32, worktree: Option<PathBuf>) -> WindowInfo {
         exit: None,
         kind: proto::WindowKind::Pty,
         run: None,
+        signals_seen: false,
     }
 }
 
@@ -365,7 +366,9 @@ fn statusbar_shows_the_run_view_hints() {
     let gate = open(gate_fixture());
     let text = row_text(&render_row(&gate, 160));
     assert!(
-        text.contains("a approve  x reject  e edit  d remove  ⏎ open  f filter: all  esc back"),
+        text.contains(
+            "a approve  x reject  e edit  d remove  p review  ⏎ open  f filter: all  esc back"
+        ),
         "{text:?}"
     );
     assert!(!text.contains("j/k move"), "{text:?}");

@@ -322,7 +322,7 @@ fn selection_stays_visible_while_moving() {
 #[test]
 fn tree_mode_wheel_stays_local_in_main_and_scrolls_sidebar() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 14);
-    let layout = crate::ui::layout(area, 34);
+    let layout = crate::ui::layout(area, 34, 0);
 
     for filter in [false, true] {
         let mut app = app_with((1..=20).map(|id| project_win(id, "/r/shop")).collect());
@@ -371,7 +371,11 @@ fn tree_mode_wheel_stays_local_in_main_and_scrolls_sidebar() {
 #[test]
 fn clicks_select_in_tree_mode_and_keep_the_mode_active() {
     let mut app = example();
-    let layout = crate::ui::layout(ratatui::layout::Rect::new(0, 0, 120, 30), 34);
+    let layout = crate::ui::layout(
+        ratatui::layout::Rect::new(0, 0, 120, 30),
+        34,
+        crate::app::alerts(&app).len(),
+    );
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     assert_eq!(app.on_click(2, 6, &layout), subscription(2));
     assert_eq!(app.tree.selected, Some(NodeKey::Window(2)));
@@ -411,4 +415,128 @@ fn the_select_helper_reaches_a_run_row() {
     app.enter_tree();
     select(&mut app, NodeKey::Run(RUN_ID.into()));
     assert_eq!(app.tree.selected, Some(NodeKey::Run(RUN_ID.into())));
+}
+
+/// Milestone 9.0.5 review: the Alerts box's height follows the alert count, so the
+/// sidebar list's height changes with no resize. That keeps the user's wheel-scrolled
+/// `top` (clamped), instead of snapping back to the focused window; a real resize
+/// still reveals it.
+#[test]
+fn alert_churn_keeps_a_wheel_scrolled_sidebar() {
+    use crate::tree::run_fixtures::{run, snapshot};
+    use proto::RunState;
+    let runs = |halted: usize| {
+        let runs = (0..3)
+            .map(|n| {
+                let state = if n < halted {
+                    RunState::Halted
+                } else {
+                    RunState::Running
+                };
+                let mut info = run(&format!("r{n}"), "/tmp", state);
+                info.created_at = n as u64;
+                info
+            })
+            .collect();
+        proto::DaemonMsg::Run(proto::RunReply::Snapshot(snapshot(1, runs)))
+    };
+    let shells = (1..=20)
+        .map(|id| win(id, &format!("shell-{id}"), Status::Idle))
+        .collect();
+    let mut app = app_with(shells);
+    app.on_daemon(runs(1));
+    let frame = |app: &mut App, width: u16, height: u16| {
+        let l = crate::ui::layout_for(app, ratatui::layout::Rect::new(0, 0, width, height));
+        app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
+        l
+    };
+    frame(&mut app, 120, 20);
+    app.focus(20);
+    let l = frame(&mut app, 120, 20);
+    assert!(app.tree.sidebar.top > 0, "the focused window is revealed");
+    for _ in 0..20 {
+        app.on_scroll(true, l.sidebar_list.x, l.sidebar_list.y, &l);
+    }
+    assert_eq!(app.tree.sidebar.top, 0);
+    frame(&mut app, 120, 20);
+    assert_eq!(app.tree.sidebar.top, 0);
+
+    // Two more halted runs: three alerts, a taller box, a shorter list.
+    app.on_daemon(runs(3));
+    let after = frame(&mut app, 120, 20);
+    assert!(
+        after.sidebar_list.height < l.sidebar_list.height,
+        "the box grew"
+    );
+    assert_eq!(app.tree.sidebar.top, 0, "the user's scroll is kept");
+
+    // A real resize still reveals the focused window.
+    let resized = frame(&mut app, 120, 24);
+    let rows = app.rows();
+    let focused = tree::row_index(&rows, &NodeKey::Window(20)).unwrap();
+    let top = app.tree.sidebar.top;
+    assert!(
+        (top..top + usize::from(resized.sidebar_list.height)).contains(&focused),
+        "row {focused} in view from {top}"
+    );
+}
+
+/// Review of 5903754: alert churn keeps a revealed anchor revealed. With no wheel,
+/// the focused window stays in view when the Alerts box grows and the list shrinks;
+/// the same holds for a tree-mode selection.
+#[test]
+fn alert_churn_keeps_a_revealed_anchor_in_view() {
+    use crate::tree::run_fixtures::{run, snapshot};
+    use proto::RunState;
+    let runs = |halted: usize| {
+        let runs = (0..3)
+            .map(|n| {
+                let state = if n < halted {
+                    RunState::Halted
+                } else {
+                    RunState::Running
+                };
+                let mut info = run(&format!("r{n}"), "/tmp", state);
+                info.created_at = n as u64;
+                info
+            })
+            .collect();
+        proto::DaemonMsg::Run(proto::RunReply::Snapshot(snapshot(1, runs)))
+    };
+    let frame = |app: &mut App| {
+        let l = crate::ui::layout_for(app, ratatui::layout::Rect::new(0, 0, 120, 20));
+        app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
+        l
+    };
+    let in_view = |app: &App, key: &NodeKey, height: u16| {
+        let rows = app.rows();
+        let index = tree::row_index(&rows, key).unwrap();
+        let top = app.tree.sidebar.top;
+        (top..top + usize::from(height)).contains(&index)
+    };
+    for tree_mode in [false, true] {
+        let shells = (1..=20)
+            .map(|id| win(id, &format!("shell-{id}"), Status::Idle))
+            .collect();
+        let mut app = app_with(shells);
+        app.on_daemon(runs(1));
+        frame(&mut app);
+        app.focus(20);
+        let before = frame(&mut app);
+        let key = NodeKey::Window(20);
+        if tree_mode {
+            prefix(&mut app);
+            let _ = press(&mut app, KeyCode::Char('t'), KeyModifiers::NONE);
+            assert_eq!(app.tree.selected, Some(key.clone()), "starts on the focus");
+        }
+        assert!(in_view(&app, &key, before.sidebar_list.height), "revealed");
+        app.on_daemon(runs(3));
+        let after = frame(&mut app);
+        assert!(after.sidebar_list.height < before.sidebar_list.height);
+        assert!(
+            in_view(&app, &key, after.sidebar_list.height),
+            "tree mode {tree_mode}: still in view from top {}",
+            app.tree.sidebar.top
+        );
+    }
 }
