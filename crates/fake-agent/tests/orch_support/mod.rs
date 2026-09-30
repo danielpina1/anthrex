@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -91,12 +91,30 @@ pub fn orch_argv(runtime: Runtime, exe: &Path, socket: &Path, cwd: &Path) -> Vec
 /// Stands in for the `anthrex` executable the daemon names: `hook` appends its argv
 /// and payload as one line to `$FA_HOOK_LOG`; anything else is the real `anthrex`
 /// (`anthrex mcp`).
-pub fn wrapper(dir: &Path) -> PathBuf {
-    let path = dir.join("anthrex-wrap");
-    let script = "#!/bin/sh\nif [ \"$1\" = hook ]; then\n  { printf '%s\\t' \"$*\"; cat; printf '\\n'; } >> \"$FA_HOOK_LOG\"\n  exit 0\nfi\nexec \"$FA_ANTHREX\" \"$@\"\n";
-    fs::write(&path, script).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    path
+///
+/// One file for every test, never one per test. macOS assesses a newly written
+/// executable on its first exec (about 0.5 s) and serialises those assessments, so
+/// twelve fresh stand-ins execed at once took up to about 5 s at their first hook:
+/// fake-agent's whole `STEP_TIMEOUT` for a hook (M9.0.5's whole-branch review). A
+/// shared file is assessed once. It lives in Cargo's per-target scratch directory, is
+/// rewritten only when its text changes (so an assessed file is reused across runs),
+/// and is replaced by a rename, so a concurrent test binary never runs half a file.
+/// Its per-test values come from the environment each spawn sets.
+pub fn wrapper() -> &'static Path {
+    static WRAPPER: OnceLock<PathBuf> = OnceLock::new();
+    WRAPPER.get_or_init(|| {
+        let script = "#!/bin/sh\nif [ \"$1\" = hook ]; then\n  { printf '%s\\t' \"$*\"; cat; printf '\\n'; } >> \"$FA_HOOK_LOG\"\n  exit 0\nfi\nexec \"$FA_ANTHREX\" \"$@\"\n";
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fake-agent-orch");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("anthrex-wrap");
+        if fs::read_to_string(&path).ok().as_deref() != Some(script) {
+            let staged = dir.join(format!("anthrex-wrap.{}", std::process::id()));
+            fs::write(&staged, script).unwrap();
+            fs::set_permissions(&staged, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::rename(&staged, &path).unwrap();
+        }
+        path
+    })
 }
 
 /// The hook log's events: (the event or notify type, its payload).
@@ -246,7 +264,7 @@ impl Orch {
         let dir = tempdir();
         let repo = repo(dir.path());
         role_script(&repo, "orchestrator-run-1", steps);
-        let exe = wrapper(dir.path());
+        let exe = wrapper().to_path_buf();
         Self {
             stub: StubDaemon::replies(replies),
             dir,

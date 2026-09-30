@@ -1682,14 +1682,22 @@ scope.
 
 ## From milestone 9.0.5 (2026-09-30), for M9.1 (tiered testing and flake handling)
 
-- **`fake-agent/tests/orch_modes.rs` flakes when the `*_BIN` variables name fake-agent.**
-  `pty_read_message_takes_a_bracketed_paste_and_typed_input` and
-  `crlf_is_one_enter_and_the_text_normalises_line_ends` time out on "the first Stop within 20s"
-  (`orch_support/mod.rs:122`).
-  - Main at 566a653 does the same: 3 of 5 runs fail with `ANTHREX_CLAUDE_BIN`/`ANTHREX_CODEX_BIN`
-    pointed at `target/debug/fake-agent`, and 5 of 5 pass with them at `/nonexistent`.
-  - On the 9.0.5 branch with `/nonexistent`, 1 of 5 runs failed.
-  - The tests seem to pick up the environment's binary; the cause is not diagnosed.
+- **Fixed in M9.0.5: `fake-agent/tests/orch_modes.rs` timed out at its first hook** ("the first
+  Stop within 20s").
+  - Root cause: every test wrote its own fresh `anthrex-wrap` script and execed it at its first
+    hook. macOS assesses a newly written executable on its first exec (about 470 ms) and
+    serialises those assessments. Measured: 4, 12 and 24 fresh files execed at once took up to
+    1.6, 5.1 and 10.4 s, against 0.6 s for 12 or 24 execs of one file.
+  - With twelve tests the worst case passed fake-agent's 5 s `STEP_TIMEOUT` for a hook, so
+    fake-agent printed "step timed out after 5 seconds" and exited 1, and the test waited out
+    its 20 s.
+  - The `*_BIN` variables were not the cause; the earlier comparison was noise.
+  - Fix, test support only: `orch_support::wrapper()` writes one shared stand-in per test
+    process under `CARGO_TARGET_TMPDIR`, rewritten only when its text changes. Pinned by
+    `every_orch_shares_one_wrapper`.
+  - Repro: two copies of the test binary at once failed in 5 of 5 pairs before the fix and
+    passed in 5 of 5 after, cold cache included. The binary now runs in about 1.5 s instead of
+    6.5 s.
 - **`run::driver::orch_ops::tests::resolve_target_op_runs_git_off_the_worker_threads` is load
   sensitive.** Its first, real `git rev-parse` has an 8 s timeout that expired once, under the
   full `cargo test --workspace` on a loaded machine (load average about 5 to 6). It then passed

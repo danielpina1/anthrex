@@ -491,3 +491,17 @@ fn stdin_file_records_when_a_message_started() {
     let typing = millis(&read["at"]) - millis(&read["first_at"]);
     assert!((100..5000).contains(&typing), "{read}");
 }
+
+/// Every orchestrator in this binary runs the same `anthrex` stand-in. macOS assesses a
+/// newly written executable on its first exec (about 0.5 s) and serialises those
+/// assessments: twelve tests each writing their own stand-in cost up to about 5 s at
+/// their first hook, which is fake-agent's whole `STEP_TIMEOUT`, so it exited with
+/// "step timed out after 5 seconds" and the test waited out `RUN`. One shared file is
+/// assessed once. Its per-test values come from the environment each spawn sets.
+#[test]
+fn every_orch_shares_one_wrapper() {
+    let first = Orch::new(&[json!({"exit": 0})], &[(true, "{}")]);
+    let second = Orch::new(&[json!({"exit": 0})], &[(true, "{}")]);
+    assert_eq!(first.exe, second.exe);
+    assert!(!first.exe.starts_with(first.dir.path()), "{:?}", first.exe);
+}
