@@ -1698,3 +1698,9 @@ scope.
 ## From M9.1.18's review (2026-09-30), for M9.5
 
 - **`run stats` still proposes a test that is already quarantined.** `stats::flaky_proposals` (decision 34) counts the `flaky` lines of `history.jsonl` and nothing else. `history_io::summarise` has no profile input, so a test the user has already added to `slow_tests` with `anthrex profile edit` keeps being proposed until its flaky lines age out of `flaky_window_days`, which is 14 days by default. Ruling C-23 accepted this as a limitation for 9.1. The fix is to give `summarise` the repository's stored profile (`slow_tests`) and drop the tests it already filters out. Matching a test name against a filter expression needs the runner's filter semantics (nextest `-E`, `--skip` patterns), which is why it was not done in 9.1.
+
+## From M9.1.22 (2026-09-30), for M9.5
+
+- **Stray step directories.** Every tier step gets a fresh `TMPDIR` (`<base>/s<op>-<step>`, M9.1 decision 28), which is removed after the step on the step's blocking thread. A step whose command started a daemon that escaped the process group (a test that daemonises, as `anthrex daemon start` does) can hold files in it past the removal, and a daemon killed mid-step never removes it. Nothing sweeps these directories. Fix: at daemon start, remove step directories under each repository's tmp base that are older than a day.
+- **An `--ignored` job.** No tier runs ignored tests: tier 3's `check` is the profile's full suite as written, and no profile key names an ignored-tests command. A tier (or a tier-3 step) that runs them, from a new key such as `ignored_tests`, would give anthrex's own `#[ignore]`d tests a home (see the ignored-test note above, `:193-200`).
+
