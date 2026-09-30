@@ -564,10 +564,15 @@ pub(super) fn resume(
             "run {run_id} is halted: {reason}; check the refs, then resume with --rebaseline"
         )));
     };
-    let text = format!("resumed{}", stages::rebaseline(run, &read));
+    let mut effects = Vec::new();
+    let text = format!(
+        "resumed{}",
+        stages::rebaseline(run, &read, now, &mut effects)
+    );
     run.halted_reason = None;
     run.halt_retryable = false;
     run.state = RunState::Running;
     log(run, now, text.clone());
     answer(Ok(format!("run {run_id} {text}")));
+    fx.extend(effects);
 }

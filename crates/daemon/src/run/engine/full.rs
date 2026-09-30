@@ -43,20 +43,25 @@ const INFRA_MAX: u8 = 3;
 /// A "could not run" line keeps at most this many characters of its message.
 const LINE_MAX: usize = 200;
 
+// Ruling C-27 (4): a bisect fix task that ended without merging.
+#[path = "full_ended.rs"]
+mod ended;
+pub(super) use ended::fix_ended_pass;
+
 /// Tier 3 runs at all: a tiered profile with a `check` (decision 20: without one the
 /// run is unverified and tier 3 runs nothing).
-fn active(run: &Run) -> bool {
+pub(super) fn active(run: &Run) -> bool {
     tiers::tiered(run) && run.profile.check.is_some()
 }
 
 /// Stage `s`'s head still needs a green tier 3: it is not the base (nothing merged,
 /// as M8a's final check skips it) and has none.
-fn lacks_green(run: &Run, s: &StageRecord) -> bool {
+pub(super) fn lacks_green(run: &Run, s: &StageRecord) -> bool {
     s.head != run.base_sha && s.full.green_at.as_deref() != Some(s.head.as_str())
 }
 
 /// Stage `s`'s head is the commit its last tier 3 found red.
-fn red_at_head(s: &StageRecord) -> bool {
+pub(super) fn red_at_head(s: &StageRecord) -> bool {
     s.full.red_at.as_deref() == Some(s.head.as_str())
 }
 
@@ -214,15 +219,22 @@ pub(super) fn waits(run: &Run) -> bool {
                 .any(|s| lacks_green(run, s) && (red_at_head(s) || infra_at_head(s).is_some())))
 }
 
-/// `run resume` (ruling C-18): every stage's executor failures are forgotten, so the
-/// next pass retries tier 3. `true` when a stage was held.
+/// A stage of the run is held after the executor's failures (ruling C-18).
+pub(super) fn held(run: &Run) -> bool {
+    run.stages.iter().any(infra_held)
+}
+
+/// `run resume` (ruling C-18): a held stage's executor failures are forgotten, so the
+/// next pass retries its tier 3. `true` when a stage was held. Ruling C-27 (6): a stage
+/// still in its backoff keeps its count (and `run.json` keeps it across a restart), so
+/// a restart and its resume never reset it.
 pub(super) fn retry(run: &mut Run, now: u64) -> bool {
     let mut held = Vec::new();
     for s in run.stages.iter_mut() {
         if infra_held(s) {
             held.push(s.n);
+            s.full.infra = None;
         }
-        s.full.infra = None;
     }
     for n in &held {
         log(run, now, format!("stage {n}: tier 3 retries (run resume)"));

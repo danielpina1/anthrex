@@ -301,10 +301,12 @@ pub(super) fn resume(
     fx: &mut Vec<Effect>,
 ) {
     // Milestone 9.1 ruling C-18: a resume retries tier 3 after the executor's failures;
-    // a running run whose stage was held needs nothing more.
+    // a running run whose stage was held needs nothing more. Ruling C-27 (5): a running
+    // run with no held stage is refused below, and a refused resume changes nothing.
     if let Some(run) = state.runs.get_mut(run_id)
-        && super::full::retry(run, now)
         && run.state == RunState::Running
+        && super::full::held(run)
+        && super::full::retry(run, now)
     {
         let text = format!("run {run_id}: tier 3 retries");
         return fx.push(Effect::Reply {
@@ -338,6 +340,7 @@ pub(super) fn resume(
             && halted
             && run.state == RunState::Running
         {
+            super::full::retry(run, now);
             resumed(run, now, fx);
         }
         return;
@@ -348,8 +351,9 @@ pub(super) fn resume(
     let mut text = format!("run {run_id} resumed");
     // `--rebaseline` records the refs the driver read, as for a halted run.
     if let Some(read) = rebaseline {
-        text.push_str(&super::stages::rebaseline(run, &read));
+        text.push_str(&super::stages::rebaseline(run, &read, now, fx));
     }
+    super::full::retry(run, now);
     unpause(run, now, fx);
     fx.push(Effect::Reply {
         reply,

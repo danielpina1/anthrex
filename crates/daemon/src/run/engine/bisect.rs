@@ -522,6 +522,27 @@ fn add_fix(
     }
 }
 
+/// Ruling C-27 (3): a rebaseline moved stage `n`'s head, so its bisect (if any) ends
+/// `rebaselined`: its history line is written as any ended bisect's is, its pending
+/// probe is dropped (a late result finds no bisect and no pending op, and is ignored),
+/// and nothing is marked red and nobody is woken: tier 3 is due for the new head.
+pub(super) fn rebaselined(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
+    let Some(b) = stage_mut(run, n).and_then(|s| s.bisect.take()) else {
+        return;
+    };
+    if let Some((op, _)) = b.probe {
+        run.pending_ops.remove(&op);
+        if run.full_op == Some(op) {
+            run.full_op = None;
+        }
+    }
+    record(run, n, &b, BisectResult::None(REBASELINED), now, fx);
+    log(run, now, format!("stage {n}: bisect ended: {REBASELINED}"));
+}
+
+/// Ruling C-27 (3): the reason of a bisect a rebaseline ended.
+pub(crate) const REBASELINED: &str = "rebaselined";
+
 /// Decision 38: the bisect of stage `n` ends without a culprit, for `reason`.
 fn end(run: &mut Run, n: u16, reason: String, now: u64, fx: &mut Vec<Effect>) {
     let Some(b) = stage_mut(run, n).and_then(|s| s.bisect.take()) else {

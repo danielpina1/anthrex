@@ -274,8 +274,21 @@ pub(super) fn created(run: &mut Run, kind: &OpKind, result: OpResult, now: u64) 
 /// (decision 47); the `integration` head it read is for a `Single` run. Returns the log
 /// text, which names the `run_head` it set (controller ruling C-15) and, when the
 /// driver moved `integration` back, both commits and the salvage ref.
-pub(super) fn rebaseline(run: &mut Run, read: &Rebaseline) -> String {
+pub(super) fn rebaseline(
+    run: &mut Run,
+    read: &Rebaseline,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> String {
+    let before: Vec<(u16, String)> = run.stages.iter().map(|s| (s.n, s.head.clone())).collect();
     rebaseline_heads(run, read);
+    // Ruling C-27 (3): a stage whose head the rebaseline moved forgets what it knew of
+    // its old line.
+    for (n, was) in before {
+        if run.stage(n).is_some_and(|s| s.head != was) {
+            moved_line(run, n, now, fx);
+        }
+    }
     let mut text = format!(
         " with --rebaseline: base {} at {}, run head {}",
         run.base_branch,
@@ -292,6 +305,57 @@ pub(super) fn rebaseline(run: &mut Run, read: &Rebaseline) -> String {
         ));
     }
     text
+}
+
+/// Ruling C-27 (3), for stage `n` whose head the rebaseline moved: its first-parent
+/// record ends at the new head (up to and including the merge that is the new head;
+/// empty when the head is the stage's creation point, or a commit the engine never
+/// wrote there), a bisect in flight ends `rebaselined` (its pending probe dropped, so a
+/// late result is ignored, and no fix task is ever made from it), and a green or red
+/// tier 3 on a commit no longer on the line is forgotten, so tier 3 is due for the new
+/// head by the ordinary rules.
+fn moved_line(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
+    super::bisect::rebaselined(run, n, now, fx);
+    let Some(record) = run.stages.iter_mut().find(|s| s.n == n) else {
+        return;
+    };
+    let commit = |m: &StageMerge| match m {
+        StageMerge::Task { commit, .. } | StageMerge::Propagate { commit, .. } => commit.clone(),
+    };
+    match record.merges.iter().position(|m| commit(m) == record.head) {
+        Some(k) => record.merges.truncate(k + 1),
+        None => record.merges.clear(),
+    }
+    let on_line = |c: &String, record: &StageRecord| {
+        *c == record.created_from
+            || *c == record.head
+            || record.merges.iter().any(|m| commit(m) == *c)
+    };
+    if record
+        .full
+        .green_at
+        .as_ref()
+        .is_some_and(|c| !on_line(c, record))
+    {
+        record.full.green_at = None;
+    }
+    if record
+        .full
+        .red_at
+        .as_ref()
+        .is_some_and(|c| !on_line(c, record))
+    {
+        record.full.red_at = None;
+        record.full.note = None;
+    }
+    log(
+        run,
+        now,
+        format!(
+            "stage {n}: rebaselined to {}",
+            sha7(&run.stage(n).map(|s| s.head.clone()).unwrap_or_default())
+        ),
+    );
 }
 
 fn rebaseline_heads(run: &mut Run, read: &Rebaseline) {

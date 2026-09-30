@@ -58,6 +58,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 super::full::idle_pass(run, now, fx);
                 // Decision 36: a lost or backed-off bisect probe (task M9.1.15).
                 super::bisect::pass(run, now, fx);
+                // Ruling C-27 (4): a bisect fix task that ended without merging.
+                super::full::fix_ended_pass(run);
                 review::watch(run, now, fx);
                 launch_ready(run, now, fx);
                 dispatch_writers(run, now, fx);
