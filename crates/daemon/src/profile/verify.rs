@@ -152,10 +152,13 @@ pub fn run_commands(
         record(command, outcome, ok)
     };
     let setup = profile.setup.as_ref().map(plain);
-    // Milestone 9.1: a tiered `check`'s placeholders are filled in to run it whole.
+    // Milestone 9.1: a tiered `check`'s placeholders are filled in to run it whole,
+    // timing tests and all, so it runs alone when there are any (decision 25, ruling
+    // C-28 (3)).
     let check = profile.check.as_ref().map(|command| {
         let whole = super::proposal_tiers::check_command(profile, command);
-        let (outcome, _) = steps.run(dir, &whole, &env, timeout, None, confine);
+        let exclusive = profile.timing_tests.is_some();
+        let (outcome, _) = steps.run_as(dir, &whole, (&env, timeout), None, confine, exclusive);
         let ok = outcome.ok;
         record(command, outcome, ok)
     });
@@ -385,6 +388,9 @@ pub struct VerifyJob {
     pub git_timeout: Duration,
     /// The daemon's scheduler, which every command waits on (decision 23).
     pub sched: std::sync::Arc<TestScheduler>,
+    /// The proposal's token: `profile reject` cancels it, and no command then waits
+    /// for a slot or runs (ruling C-28 (2)).
+    pub token: tokio_util::sync::CancellationToken,
 }
 
 /// What a verification ran, and every salvage ref it wrote.
@@ -467,6 +473,7 @@ pub async fn verify(queue: &GitQueue, job: VerifyJob) -> Result<Verified, String
                 tokio::runtime::Handle::current(),
                 job.pre.git_common_dir.clone(),
                 job.repo_dir.clone(),
+                job.token.clone(),
             );
             tokio::task::spawn_blocking(move || {
                 run_commands(

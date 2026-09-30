@@ -6,6 +6,10 @@
 //! verified command never sees the daemon's own socket or data directory, confined or
 //! not.
 //!
+//! Ruling C-28 (2): the grant is awaited against the job's cancel token, so a rejected
+//! verification stops waiting at once (dropping its request gives up its place), and
+//! every command after it is refused unrun.
+//!
 //! Blocking: called from `verify::run_commands`, which runs on `spawn_blocking`. The
 //! grant is awaited with the runtime's `Handle::block_on` on that blocking thread,
 //! never on a worker thread, and under no lock (AGENTS.md rule 2).
@@ -19,6 +23,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use regex::Regex;
+use tokio_util::sync::CancellationToken;
 
 use crate::launch::shell_quote;
 use crate::run::confine::ConfineSpec;
@@ -40,6 +45,8 @@ pub struct Steps {
     /// The repository's data directory; the checkout's step base is
     /// `step_base(repo_dir, checkout)`, the confinement's own `TMPDIR`.
     pub repo_dir: PathBuf,
+    /// The verification's own token: cancelled, no command waits or runs.
+    pub cancel: CancellationToken,
     /// Numbers each command's directory, `v<n>`.
     next: AtomicU32,
 }
@@ -50,12 +57,14 @@ impl Steps {
         handle: tokio::runtime::Handle,
         common: PathBuf,
         repo_dir: PathBuf,
+        cancel: CancellationToken,
     ) -> Steps {
         Steps {
             sched,
             handle,
             common,
             repo_dir,
+            cancel,
             next: AtomicU32::new(0),
         }
     }
@@ -72,14 +81,39 @@ impl Steps {
         pattern: Option<&Regex>,
         confine: Option<&ConfineSpec>,
     ) -> (ShellOutcome, bool) {
+        self.run_as(dir, command, (env, timeout), pattern, confine, false)
+    }
+
+    /// [`Self::run`] under an exclusive grant when `exclusive` (decision 25: a command
+    /// that runs the timing tests with no slot to leave them out, ruling C-28 (3)).
+    pub fn run_as(
+        &self,
+        dir: &Path,
+        command: &str,
+        (env, timeout): (&[(String, String)], Duration),
+        pattern: Option<&Regex>,
+        confine: Option<&ConfineSpec>,
+        exclusive: bool,
+    ) -> (ShellOutcome, bool) {
         let n = self.next.fetch_add(1, Ordering::Relaxed);
-        let grant = self.handle.block_on(self.sched.acquire(SlotRequest {
+        let request = SlotRequest {
             priority: Priority::Verify,
             critical: false,
             want: Want::Half,
-            exclusive: false,
+            exclusive,
             label: format!("profile verification {n}"),
-        }));
+        };
+        let grant = self.handle.block_on(async {
+            tokio::select! {
+                biased;
+                () = self.cancel.cancelled() => None,
+                grant = self.sched.acquire(request) => Some(grant),
+            }
+        });
+        let Some(grant) = grant else {
+            let reason = "the verification was cancelled".to_string();
+            return (ShellOutcome::refused(reason), false);
+        };
         let step = StepCommand {
             dir: dir.to_path_buf(),
             command: command.to_string(),

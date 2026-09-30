@@ -112,3 +112,111 @@ fn a_verified_command_waits_for_a_scheduler_grant() {
     assert!(v.check.as_ref().is_some_and(|c| c.ok), "{v:?}");
     assert!(ran.exists());
 }
+
+/// Ruling C-28 (2): a cancelled verification waiting for a slot stops waiting, gives
+/// up its place, and runs none of its commands.
+#[test]
+fn a_cancelled_verification_stops_waiting_for_a_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let ran = dir.path().join("ran");
+    let sched = TestScheduler::new(1);
+    let steps = steps_on(sched.clone(), dir.path());
+    let cancel = steps.cancel.clone();
+    let held = steps.handle.block_on(sched.acquire(SlotRequest {
+        priority: Priority::Candidate,
+        critical: false,
+        want: Want::All,
+        exclusive: false,
+        label: "candidate".into(),
+    }));
+    let profile = RepoProfile {
+        setup: Some(format!("touch '{}'", ran.display())),
+        check: Some(format!("touch '{}'", ran.display())),
+        ..RepoProfile::default()
+    };
+    let path = dir.path().to_path_buf();
+    let verifier = std::thread::spawn(move || {
+        run_commands(&path, &profile, None, Duration::from_secs(30), 1, &steps)
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while sched.waiting() == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "verification never asked for a slot"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    cancel.cancel();
+    // The slot is still held: only the cancel can end the wait.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !verifier.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "a cancelled verification still waits for a slot"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let v = verifier.join().unwrap();
+    assert_eq!(sched.waiting(), 0, "its request was not withdrawn");
+    assert!(!ran.exists(), "a command ran after the cancel");
+    assert!(v.setup.as_ref().is_some_and(|c| !c.ok), "{v:?}");
+    assert!(v.check.as_ref().is_some_and(|c| !c.ok), "{v:?}");
+    drop(held);
+}
+
+/// Runs `profile` on a thread while one of the scheduler's two slots is held; whether
+/// its `check` ran before the slot was let go.
+fn check_ran_beside_a_held_slot(profile: RepoProfile, ran: &Path) -> bool {
+    let dir = ran.parent().unwrap().to_path_buf();
+    let sched = TestScheduler::new(2);
+    let steps = steps_on(sched.clone(), &dir);
+    let held = steps.handle.block_on(sched.acquire(SlotRequest {
+        priority: Priority::Candidate,
+        critical: false,
+        want: Want::One,
+        exclusive: false,
+        label: "candidate".into(),
+    }));
+    let verifier = std::thread::spawn(move || {
+        run_commands(&dir, &profile, None, Duration::from_secs(30), 1, &steps)
+    });
+    // It either runs (one slot is free for a shared `Half`) or waits for all of them.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ran.exists() && sched.waiting() == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "verification neither ran nor waited"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let ran_beside = ran.exists();
+    drop(held);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !verifier.is_finished() {
+        assert!(Instant::now() < deadline, "verification did not finish");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let v = verifier.join().unwrap();
+    assert!(v.check.as_ref().is_some_and(|c| c.ok), "{v:?}");
+    ran_beside
+}
+
+/// Ruling C-28 (3), decision 25: with `timing_tests` set, verification's whole `check`
+/// (which runs them) waits for every slot; without them it shares.
+#[test]
+fn a_whole_check_with_timing_tests_is_exclusive() {
+    let dir = tempfile::tempdir().unwrap();
+    let ran = dir.path().join("ran");
+    let check = format!("touch '{}'", ran.display());
+    let timed = RepoProfile {
+        check: Some(check.clone()),
+        timing_tests: Some("timing_".into()),
+        ..RepoProfile::default()
+    };
+    assert!(
+        !check_ran_beside_a_held_slot(timed, &ran),
+        "the whole check ran beside another test command"
+    );
+    std::fs::remove_file(&ran).unwrap();
+    assert!(check_ran_beside_a_held_slot(checking(&check), &ran));
+}

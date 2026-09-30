@@ -358,6 +358,7 @@ impl ProfileService {
             timeout: std::time::Duration::from_secs(config.onboarding.verify_timeout_secs),
             git_timeout: self.git_timeout(),
             sched: self.ctx.scheduler.clone(),
+            token: job.token.clone(),
         };
         let verified = verify::verify(&self.ctx.git_queue, verify_job)
             .await

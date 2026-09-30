@@ -36,6 +36,7 @@ pub(super) fn steps_on(
         runtime.handle().clone(),
         dir.join(".git"),
         dir.join(".anthrex-data"),
+        tokio_util::sync::CancellationToken::new(),
     )
 }
 

@@ -85,9 +85,9 @@ impl TestScheduler {
         crate::lock(&self.shared.inner).book.slots()
     }
 
-    /// How many requests wait for a grant (tests of the callers' waits).
-    #[cfg(test)]
-    pub(crate) fn waiting(&self) -> usize {
+    /// How many requests wait for a grant (tests of the callers' waits, in this crate
+    /// and in the end-to-end tests, ruling C-28 (2)).
+    pub fn waiting(&self) -> usize {
         crate::lock(&self.shared.inner).book.waiting()
     }
 
