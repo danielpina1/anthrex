@@ -258,9 +258,10 @@ mod tests {
             "the first claim must still be holding the lock"
         );
         drop(claimed);
-        // Once actually dropped, the lock is free again with no wait at all.
-        let _lock = DaemonLock::acquire(dir.path(), Duration::ZERO)
-            .expect("dropping the claimed lock must release it");
+        // That the drop releases the lock at once is asserted in
+        // `crates/daemon/tests/lockfile.rs` (`instant_reacquire_after_a_claim_is_dropped`),
+        // not here: in this `--lib` binary a sibling test's `fork()` can briefly hold a
+        // duplicate of the just-closed fd (see `second_acquire_fails_while_held`).
     }
 
     #[test]
