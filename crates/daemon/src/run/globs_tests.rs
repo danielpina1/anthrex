@@ -113,6 +113,50 @@ fn names_literally_cases() {
     assert!(!names_literally(&s(&["docs/AGENTS.md"]), "AGENTS.md"));
 }
 
+/// Ruling C-28 (4): an entry whose only glob syntax is one-character escape classes
+/// (`escape_path`'s) names its unescaped path exactly; a real class never does.
+#[test]
+fn an_escaped_entry_names_its_path_literally() {
+    for path in [
+        "docs/café[1].md",
+        ".claude/[x].json",
+        "a*b?.md",
+        "x{y}.md",
+        "]odd[.md",
+    ] {
+        assert!(
+            names_literally(&[escape_path(path)], path),
+            "{} does not name {path}",
+            escape_path(path)
+        );
+        assert!(!names_literally(&[escape_path(path)], "docs/other.md"));
+    }
+    assert!(names_literally(&s(&["./docs/[[]1[]].md"]), "docs/[1].md"));
+    // Real classes and wildcards are still wildcards.
+    assert!(!names_literally(&s(&["[ab].md"]), "a.md"));
+    assert!(!names_literally(&s(&["[ab].md"]), "[ab].md"));
+    assert!(!names_literally(&s(&["[a-z].md"]), "a.md"));
+    assert!(!names_literally(&s(&["[a-z].md"]), "[a-z].md"));
+    assert!(!names_literally(&s(&["[!x].md"]), "y.md"));
+    assert!(!names_literally(&s(&["[a].md"]), "a.md"));
+    assert!(!names_literally(&s(&["[*]*.md"]), "*x.md"));
+    assert!(
+        !names_literally(&s(&["[*]*.md"]), "**.md"),
+        "a bare * after a class"
+    );
+    assert!(
+        !names_literally(&s(&["a?[?].md"]), "a??.md"),
+        "a bare ? before a class"
+    );
+    assert!(names_literally(&s(&["[[]x"]), "[x"));
+    assert!(
+        !names_literally(&s(&["[[x"]), "[x"),
+        "an unterminated class"
+    );
+    assert!(!names_literally(&s(&["x["]), "x["), "an unterminated class");
+    assert!(!names_literally(&s(&["x[*"]), "x*"));
+}
+
 #[test]
 fn builtin_protected_matches_nested_instruction_files() {
     let matcher = OwnsMatcher::new(&s(&["**/AGENTS.md"])).unwrap();
