@@ -496,6 +496,12 @@ pub struct Run {
     /// from before it gets stage 1 at restore (`engine::stages::ensure_first`).
     #[serde(default)]
     pub stages: Vec<StageRecord>,
+    /// Milestone 9.1 decision 17: the one tier-3 job in flight (`engine::full`).
+    #[serde(default)]
+    pub full_op: Option<OpId>,
+    /// Decision 17(b): since when the merge queue has been idle (tiered profiles only).
+    #[serde(default)]
+    pub queue_idle_since: Option<u64>,
 }
 
 impl Run {

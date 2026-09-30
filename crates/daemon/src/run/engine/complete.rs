@@ -138,6 +138,11 @@ pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if !finished || ending || !run.merge_queue.is_empty() || !run.pending_ops.is_empty() {
         return;
     }
+    // Milestone 9.1 decision 19: a stage red on its head waits for the head to move or
+    // for the `finish` edit.
+    if super::full::holds_completion(run) {
+        return;
+    }
     let kind = OpKind::VerifyRefs {
         root: run.root.clone(),
         base_branch: run.base_branch.clone(),
@@ -166,6 +171,12 @@ pub(super) fn refs_verified(run: &mut Run, result: OpResult, now: u64, fx: &mut 
         // M9.9 second review, C-1: every task is still finished (none came since the
         // guard started), else the next pass verifies again.
         OpResult::RefsOk if run.state == RunState::Running && !all_finished(run) => {}
+        // Milestone 9.1 decision 19: a tiered profile runs tier 3 per stage instead.
+        OpResult::RefsOk if run.state == RunState::Running && super::tiers::tiered(run) => {
+            if super::full::completion(run, now, fx) {
+                complete(run, now, fx);
+            }
+        }
         OpResult::RefsOk if run.state == RunState::Running => {
             let green = run.last_green_candidate.as_deref() == Some(run.run_head.as_str());
             match run.profile.check.clone() {

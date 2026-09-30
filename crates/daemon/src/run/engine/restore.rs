@@ -215,6 +215,9 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         ) if run.tasks[i].gate_op == Some(op) => {
             run.tasks[i].gate_op = None;
         }
+        // Milestone 9.1 decision 29: a lost tier-3 job is started again by the next
+        // idle or completion pass.
+        (OpKind::Tier(_), None) if run.full_op == Some(op) => run.full_op = None,
         // M8b decision 18: a dropped decider is queued again under its own id, so the
         // task waiting for it still names it.
         (

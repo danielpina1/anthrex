@@ -485,6 +485,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         test_slots: 0,
         stage_layout: Default::default(),
         stages: vec![first],
+        full_op: None,
+        queue_idle_since: None,
     })
 }
 

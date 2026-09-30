@@ -54,6 +54,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 gates::start_gates(run, now, fx);
                 merge::start_due_hand_backs(run, now, fx);
                 merge::start_merge(run, now, fx);
+                // Milestone 9.1 decision 17(b): tier 3 when the queue is idle.
+                super::full::idle_pass(run, now, fx);
                 review::watch(run, now, fx);
                 launch_ready(run, now, fx);
                 dispatch_writers(run, now, fx);

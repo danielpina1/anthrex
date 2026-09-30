@@ -51,7 +51,7 @@ fn cache_ctx(run: &Run) -> Option<CacheCtx> {
 }
 
 /// What every tier job of the run carries, for tier `tier` on stage `stage` in `dir`.
-fn spec(run: &Run, tier: u8, stage: u16, dir: std::path::PathBuf) -> TierSpec {
+pub(super) fn spec(run: &Run, tier: u8, stage: u16, dir: std::path::PathBuf) -> TierSpec {
     let p = &run.profile;
     TierSpec {
         tier,
@@ -156,7 +156,7 @@ pub(crate) fn affected_text(affected: &Affected) -> String {
 }
 
 /// Decision 21's log lines for one job, in order.
-fn lines(outcome: &TierOutcome) -> Vec<String> {
+pub(super) fn lines(outcome: &TierOutcome) -> Vec<String> {
     let n = outcome.tier;
     let mut lines = vec![format!("tier {n}: {}", affected_text(&outcome.affected))];
     let cached = outcome.steps.iter().filter(|s| s.cached).count();

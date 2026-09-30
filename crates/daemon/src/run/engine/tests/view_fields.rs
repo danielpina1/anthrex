@@ -387,6 +387,12 @@ fn old_run_json_loads() {
         Some(serde_json::json!("single"))
     );
     assert_eq!(map.remove("stages"), Some(serde_json::json!([])));
+    // Milestone 9.1 decision 17: no tier-3 job, no idle clock.
+    assert_eq!(map.remove("full_op"), Some(serde_json::Value::Null));
+    assert_eq!(
+        map.remove("queue_idle_since"),
+        Some(serde_json::Value::Null)
+    );
     // Milestone 9.1 ruling C-12a: no stored profile's `manifests`.
     let manifests = map["profile"].as_object_mut().unwrap().remove("manifests");
     assert_eq!(manifests, Some(serde_json::json!([])));

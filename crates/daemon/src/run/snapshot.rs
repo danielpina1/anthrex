@@ -207,9 +207,12 @@ pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
             moved.commits
         ));
     }
-    if run.final_check_failed {
+    // Milestone 9.1 decision 19: a tiered run's red tier 3 names its stage instead.
+    let full = crate::run::engine::full_attention(run);
+    if run.final_check_failed && full.is_empty() {
         lines.push("final check failed on the run head".to_string());
     }
+    lines.extend(full);
     lines.extend(run.stale_profile_line());
     lines.extend(crate::run::engine::integration_attention(run));
     // Milestone 9 decision 13: the orchestrator could not start, or its window exited.

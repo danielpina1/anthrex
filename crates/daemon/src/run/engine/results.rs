@@ -3,8 +3,8 @@
 
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, complete, deciders, dispatch, done, early,
-    fallback, gates, history, holds, kinds, ladder, merge, orch_window, outbox, planners, requests,
-    review, run_scouts, stages, tiers, worker_messages,
+    fallback, full, gates, history, holds, kinds, ladder, merge, orch_window, outbox, planners,
+    requests, review, run_scouts, stages, tiers, worker_messages,
 };
 
 /// Routes an op's result by the kind of the op it answers. A result for an op the run
@@ -36,10 +36,14 @@ pub(super) fn op_done(
             gates::check_done(run, i, op, &kind, result, now, fx)
         }
         (OpKind::Check { .. }, None) => complete::final_checked(run, result, now, fx),
-        // Milestone 9.1 decision 14: tier 1 is the task's check gate. Tier 3 (task
-        // M9.1.14) and `TestAt` (M9.1.15) are routed by their own tasks.
+        // Milestone 9.1 decision 14: tier 1 is the task's check gate. `TestAt` (task
+        // M9.1.15) is routed by its own task.
         (OpKind::Tier(spec), Some(i)) if spec.tier == 1 => {
             tiers::tier1_done(run, i, op, result, now, fx)
+        }
+        // Decisions 17-19: tier 3, a run-level job.
+        (OpKind::Tier(spec), None) if spec.tier == 3 => {
+            full::full_done(run, op, &spec, result, now, fx)
         }
         (OpKind::VerifyRefs { .. }, _) => complete::refs_verified(run, result, now, fx),
         (OpKind::MergeCandidate { run_branch, .. }, i) => {

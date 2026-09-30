@@ -539,3 +539,7 @@ mod retry;
 // Decisions 30 and 31: the result cache.
 #[path = "tier_tests_cache.rs"]
 mod cache;
+
+// Decision 18: tier 3's checkout and shards (task M9.1.14).
+#[path = "tier_tests_full.rs"]
+mod full;
