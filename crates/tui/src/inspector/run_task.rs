@@ -27,6 +27,7 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
         field("stages", stages_text(run, task)),
         field("route", route_text(task)),
     ];
+    fields.extend(super::run_stage::task_fields(run, task));
     if let Some(deps) = deps_text(run, task, app) {
         fields.push(field("deps", deps));
     }

@@ -103,6 +103,22 @@ pub struct StageFull {
     /// line numbered by it (`<run>/bisect/<stage>/<n>`).
     #[serde(default)]
     pub bisects: u32,
+    /// Task M9.1.20: every ended bisect of the stage, for the report's "Testing".
+    #[serde(default)]
+    pub ended: Vec<BisectEnd>,
+}
+
+/// One ended bisect (decisions 36–38), as its `bisect` history line records it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BisectEnd {
+    pub head: String,
+    /// The candidate merges.
+    pub range: u32,
+    pub probes: u32,
+    pub culprit: Option<String>,
+    pub fix_task: Option<String>,
+    pub reason: Option<String>,
+    pub at: u64,
 }
 
 /// Ruling C-18: consecutive `Failed` results of tier 3 on `commit`, the last at `at`,

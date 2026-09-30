@@ -7,8 +7,8 @@ mod runs;
 pub use forest::{SubagentNode, subagent_forest};
 pub use names::display_names;
 use proto::{
-    AgentRole, AgentRoundInfo, PlannerInfo, RunInfo, Runtime, ScoutInfo, Status, SubagentInfo,
-    TaskInfo, WindowInfo,
+    AgentRole, AgentRoundInfo, PlannerInfo, RunInfo, Runtime, ScoutInfo, StageInfo, Status,
+    SubagentInfo, TaskInfo, WindowInfo,
 };
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
 pub use run_rows::{RunFilter, display_rounds, round_label, run_rows};
@@ -42,6 +42,11 @@ pub enum NodeKey {
     Task {
         run: String,
         id: String,
+    },
+    /// Milestone 9.1 decision 55: a stage of a `Multi` run, between the run and its tasks.
+    Stage {
+        run: String,
+        n: u16,
     },
     /// `round` is the display round (milestone 8c decision 14), not `AgentRoundInfo.round`.
     AgentRound {
@@ -105,6 +110,11 @@ pub enum RowKind<'a> {
     Task {
         run: &'a RunInfo,
         task: &'a TaskInfo,
+    },
+    /// Milestone 9.1 decision 55: a stage node of a `Multi` run.
+    Stage {
+        run: &'a RunInfo,
+        stage: &'a StageInfo,
     },
     AgentRound {
         run: &'a RunInfo,
@@ -222,6 +232,7 @@ impl TreeState {
             | NodeKey::Planner { .. }
             | NodeKey::Scout { .. }
             | NodeKey::Task { .. }
+            | NodeKey::Stage { .. }
             | NodeKey::AgentRound { .. } => {
                 if !self.collapsed.remove(key) {
                     self.collapsed.insert(key.clone());
@@ -291,6 +302,7 @@ impl TreeState {
             | NodeKey::Planner { .. }
             | NodeKey::Scout { .. }
             | NodeKey::Task { .. }
+            | NodeKey::Stage { .. }
             | NodeKey::AgentRound { .. } => true,
         });
     }
@@ -462,6 +474,7 @@ pub fn agent_order(rows: &[Row<'_>]) -> Vec<u32> {
             | RowKind::Planner { .. }
             | RowKind::Scout { .. }
             | RowKind::Task { .. }
+            | RowKind::Stage { .. }
             | RowKind::AgentRound { .. } => None,
         })
         .collect()
@@ -553,4 +566,4 @@ pub(crate) fn example_windows() -> Vec<WindowInfo> {
 }
 
 #[cfg(test)]
-pub(crate) use tests::{orch_fixtures, run_fixtures};
+pub(crate) use tests::{orch_fixtures, run_fixtures, stage_fixtures};

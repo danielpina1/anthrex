@@ -222,6 +222,7 @@ impl TreeState {
             | NodeKey::Planner { run, .. }
             | NodeKey::Scout { run, .. }
             | NodeKey::Task { run, .. }
+            | NodeKey::Stage { run, .. }
             | NodeKey::AgentRound { run, .. } => is_shown(run),
             NodeKey::Project(_) | NodeKey::Window(_) | NodeKey::Subagent { .. } => true,
         });

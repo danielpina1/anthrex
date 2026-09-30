@@ -180,6 +180,7 @@ impl App {
             key @ (NodeKey::Planner { .. }
             | NodeKey::Scout { .. }
             | NodeKey::Task { .. }
+            | NodeKey::Stage { .. }
             | NodeKey::AgentRound { .. }) => self.activate_tree_node(key),
         };
         self.reveal_tree_anchor();

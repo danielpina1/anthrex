@@ -566,3 +566,4 @@ pub(crate) mod run_fixtures;
 mod run_rows;
 mod run_status;
 mod runs;
+pub(crate) mod stage_fixtures;

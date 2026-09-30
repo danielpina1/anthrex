@@ -18,6 +18,8 @@ use super::runs::{app_with_runs, deliver, open_run_view};
 mod filter;
 #[path = "gate/replies.rs"]
 mod replies;
+#[path = "gate/stage.rs"]
+mod stage;
 #[path = "gate/stale.rs"]
 mod stale;
 #[path = "gate/unsent.rs"]

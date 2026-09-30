@@ -33,6 +33,11 @@ impl App {
                     return vec![];
                 }
             },
+            // Milestone 9.1 decision 55: a stage has no agent; Enter folds it.
+            key @ NodeKey::Stage { .. } => {
+                self.toggle_tree_node(&key);
+                return vec![];
+            }
             NodeKey::Planner { run, epic } => {
                 let planner = self
                     .run_info(&run)

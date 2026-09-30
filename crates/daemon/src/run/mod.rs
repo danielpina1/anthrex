@@ -52,6 +52,7 @@ pub mod report;
 mod report_escape;
 mod report_orch;
 mod report_task;
+mod report_tiers;
 pub mod role_launch;
 pub mod roster;
 pub mod routing;

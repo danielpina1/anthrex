@@ -91,6 +91,7 @@ pub(crate) use clock::epoch_spend;
 pub use clock::{BudgetEpoch, TaskClock};
 pub use early::{HOLD_CAP, HOLD_LIMIT_SECS, HOLD_WINDOWS_CAP, HeldEvent, HeldWindow};
 pub use effect::Effect;
+pub(crate) use fixes::fix_text;
 pub(crate) use full::attention as full_attention;
 pub use history::HISTORY_FILE;
 pub(crate) use integration::attention as integration_attention;

@@ -240,6 +240,7 @@ impl App {
             | NodeKey::Planner { .. }
             | NodeKey::Scout { .. }
             | NodeKey::Task { .. }
+            | NodeKey::Stage { .. }
             | NodeKey::AgentRound { .. }) => self.activate_run_node(key),
         }
     }

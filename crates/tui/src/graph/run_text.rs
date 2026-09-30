@@ -5,7 +5,9 @@
 use super::MAX_NODE_WIDTH;
 use crate::tree::{DisplayRound, round_label, run_progress};
 use crate::ui::tree_view::truncate;
-use proto::{PlannerInfo, RunInfo, RunState, Size, TaskInfo, TaskState};
+use proto::{
+    FullState, PlannerInfo, RunInfo, RunState, Size, StageInfo, TaskInfo, TaskOrigin, TaskState,
+};
 use unicode_width::UnicodeWidthStr;
 
 /// The widest task text: the widest box less its borders and padding (4), then the
@@ -61,7 +63,7 @@ pub(crate) fn planner_text(run: &RunInfo, planner: &PlannerInfo) -> String {
 /// deps survive the title's truncation (decision 18). A blank title is left out
 /// rather than drawn as a double space.
 pub(crate) fn task_text(task: &TaskInfo) -> String {
-    let mut tail = format!(" {}", size_letter(task.size));
+    let mut tail = format!(" {}{}", size_letter(task.size), origin_tag(task.origin));
     if task.hub {
         tail.push_str(" ◆");
     }
@@ -86,6 +88,29 @@ fn size_letter(size: Size) -> &'static str {
         Size::S => "S",
         Size::M => "M",
         Size::L => "L",
+    }
+}
+
+/// Milestone 9.1 decision 55: `stage <n>/<N>  tier 3 <✓|✗|…|·>`, `N` the run's
+/// stage count.
+pub(crate) fn stage_text(run: &RunInfo, stage: &StageInfo) -> String {
+    let mark = match stage.full.state {
+        FullState::Green => "✓",
+        FullState::Red => "✗",
+        FullState::Running | FullState::Bisecting => "…",
+        FullState::None => "·",
+    };
+    format!("stage {}/{}  tier 3 {mark}", stage.n, run.stages.len())
+}
+
+/// The tag after a task made by the engine rather than the plan: ` (bisect)`, ` (sync)`.
+fn origin_tag(origin: TaskOrigin) -> &'static str {
+    match origin {
+        TaskOrigin::Plan => "",
+        TaskOrigin::Bisect => " (bisect)",
+        TaskOrigin::Sync => " (sync)",
+        TaskOrigin::Ci => " (ci)",
+        TaskOrigin::Review => " (review)",
     }
 }
 

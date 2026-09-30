@@ -31,6 +31,8 @@ pub fn render(run: &Run, now: u64) -> String {
         out.push('\n');
         render_task(task, now, &mut out);
     }
+    // Milestone 9.1 decision 59.
+    super::report_tiers::section(run, &mut out);
     // Milestone 9 decisions 35 and 36.
     super::report_orch::sections(run, &mut out);
     out.push_str("\n## Log\n\n");
@@ -312,3 +314,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 #[path = "report_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "report_tests_tiers.rs"]
+mod tests_tiers;

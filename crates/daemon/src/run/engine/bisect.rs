@@ -560,5 +560,15 @@ fn record(
     };
     s.full.bisects = s.full.bisects.saturating_add(1);
     let seq = s.full.bisects;
+    let (culprit, fix_task, reason) = result.parts();
+    s.full.ended.push(crate::run::model::BisectEnd {
+        head: b.head.clone(),
+        range: u32::try_from(b.candidates.len()).unwrap_or(u32::MAX),
+        probes: b.probes,
+        culprit: culprit.map(str::to_string),
+        fix_task: fix_task.map(str::to_string),
+        reason: reason.map(str::to_string),
+        at: now,
+    });
     super::history::bisect_ended(run, (n, seq), b, result, now, fx);
 }

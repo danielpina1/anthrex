@@ -5,7 +5,7 @@
 //! the task, numbered `W1…` in the reviewer prompt, and a review must answer each
 //! (decision 42). Pure (design decision 2).
 
-use proto::{Finding, Severity, Verdict};
+use proto::{Finding, Severity, SignalInfo, Verdict};
 
 use crate::run::contract::{
     deleted_test_file_message, shown, signal_unjustified, signals_block, signals_unanswered,
@@ -160,6 +160,64 @@ pub(super) fn check_review(
     }
     *verdict = Verdict::Changes;
     Ok(())
+}
+
+/// Decision 55: task `task`'s signals as a client sees them, each with how the review
+/// of the claimed head answered it: `accepted: <reason>` (the finding's text after its
+/// id), `critical`, or `engine finding` for the engine's own finding after a second
+/// incomplete review; `None` while no review of that head has a verdict.
+pub(crate) fn signal_infos(task: &Task) -> Vec<SignalInfo> {
+    let review = task
+        .reviews
+        .iter()
+        .rev()
+        .find(|r| r.verdict.is_some() && task.head.as_deref() == Some(r.head.as_str()));
+    task.signals
+        .iter()
+        .enumerate()
+        .map(|(n, signal)| {
+            let id = id(n);
+            let (path, line) = place(signal);
+            let text = self::line(n, signal)
+                .strip_prefix(&format!("- {id} "))
+                .map(str::to_string)
+                .unwrap_or_default();
+            let answered = review
+                .and_then(|r| r.findings.iter().find(|f| answers(&f.text, &id)))
+                .map(|f| answer_text(f, &id, path, line));
+            SignalInfo {
+                kind: kind(signal).to_string(),
+                path: path.to_string(),
+                line,
+                text,
+                answered,
+                id,
+            }
+        })
+        .collect()
+}
+
+/// A signal's kind on the wire (decision 55; the last two are ruling C-20's).
+fn kind(signal: &Signal) -> &'static str {
+    match signal {
+        Signal::DeletedTestFile { .. } => "deleted_test_file",
+        Signal::SkipMarker { .. } => "skip_marker",
+        Signal::AssertionLoss { .. } => "assertion_loss",
+        Signal::TestCodeRemoved { .. } => "test_code_removed",
+        Signal::DiffTooLarge => "diff_too_large",
+    }
+}
+
+/// How finding `f` answered signal `id`.
+fn answer_text(f: &Finding, id: &str, path: &str, line: Option<u32>) -> String {
+    if f.text == signal_unjustified(id, path, line) {
+        return "engine finding".to_string();
+    }
+    if f.severity == Severity::Critical {
+        return "critical".to_string();
+    }
+    let rest = f.text.trim_start().strip_prefix(id).unwrap_or(&f.text);
+    rest.trim_start_matches([' ', ':', '-']).to_string()
 }
 
 /// A new reviewer round must be refused afresh.

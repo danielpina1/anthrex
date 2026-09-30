@@ -7,7 +7,10 @@
 
 use crate::dialog::{TextInput, apply_text_key};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{Effort, PlanEdit, Route, RouteSpec, Runtime, Size, Strength, TaskInfo, TestMode};
+use proto::{
+    Effort, PlanEdit, Route, RouteSpec, RunInfo, Runtime, Size, Strength, TaskInfo, TaskState,
+    TestMode,
+};
 
 /// Where a newline in the one-line brief is drawn, and restored from on submit.
 pub const NEWLINE_MARK: char = '↵';
@@ -29,6 +32,8 @@ pub enum EditField {
     TestMode,
     Reason,
     Brief,
+    /// Milestone 9.1 decision 55: the task's stage, while it has not started.
+    Stage,
 }
 
 /// The values the form opened with, as the fields show them, so "changed" means the
@@ -44,6 +49,7 @@ struct TaskInfoValues {
     /// The snapshot's own reason and brief, uncleaned, for `opened_from`.
     raw_reason: Option<String>,
     raw_brief: String,
+    stage: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +65,10 @@ pub struct TaskEditForm {
     pub test_mode: TestMode,
     pub reason: TextInput,
     pub brief: TextInput,
+    /// Milestone 9.1 decision 55: the stage, and the highest it may cycle to; `None`
+    /// hides the field (a task that started, or a form opened without its run).
+    pub stage: u16,
+    stage_max: Option<u16>,
     pub focus: EditField,
     pub error: Option<String>,
     pub submitting: bool,
@@ -192,6 +202,7 @@ pub fn field_label(field: EditField) -> &'static str {
         EditField::TestMode => "test mode",
         EditField::Reason => "reason",
         EditField::Brief => "brief",
+        EditField::Stage => "stage",
     }
 }
 
@@ -232,6 +243,8 @@ impl TaskEditForm {
             test_mode: task.test_mode,
             reason: TextInput::new(&reason),
             brief: TextInput::new(&brief),
+            stage: task.stage,
+            stage_max: None,
             focus: EditField::Runtime,
             error: None,
             submitting: false,
@@ -246,8 +259,28 @@ impl TaskEditForm {
                 brief,
                 raw_reason: task.test_mode_reason.clone(),
                 raw_brief: task.brief.clone(),
+                stage: task.stage,
             },
         }
+    }
+
+    /// The form on `task` of `run`: as [`TaskEditForm::new`], with the stage field
+    /// while the task has not started, cycling from 1 to the run's highest stage plus
+    /// one (decision 55). The daemon's validation answers an invalid move inline.
+    pub fn in_run(run: &RunInfo, task: &TaskInfo) -> Self {
+        let mut form = Self::new(&run.run_id, task);
+        let not_started =
+            matches!(task.state, TaskState::Pending | TaskState::Queued) && task.rounds.is_empty();
+        if not_started {
+            let highest = (run.tasks.iter().map(|t| t.stage))
+                .chain(u16::try_from(run.stages.len()))
+                .max()
+                .unwrap_or(1)
+                .max(task.stage)
+                .max(1);
+            form.stage_max = Some(highest.saturating_add(1));
+        }
+        form
     }
 
     /// Review M6: `task` still holds every value the form opened from. An amend sends
@@ -259,6 +292,7 @@ impl TaskEditForm {
             && task.test_mode == original.test_mode
             && task.test_mode_reason == original.raw_reason
             && task.brief == original.raw_brief
+            && task.stage == original.stage
     }
 
     /// Every field in order; `Reason` only while the test mode is not `tdd`.
@@ -275,6 +309,9 @@ impl TaskEditForm {
             fields.push(EditField::Reason);
         }
         fields.push(EditField::Brief);
+        if self.stage_max.is_some() {
+            fields.push(EditField::Stage);
+        }
         fields
     }
 
@@ -305,6 +342,15 @@ impl TaskEditForm {
             EditField::Effort => self.effort = next_effort(self.effort, forward),
             EditField::Size => self.size = next_size(self.size, forward),
             EditField::TestMode => self.test_mode = next_test_mode(self.test_mode, forward),
+            EditField::Stage => {
+                let max = self.stage_max.unwrap_or(self.stage).max(1);
+                self.stage = match (self.stage.clamp(1, max), forward) {
+                    (at, true) if at >= max => 1,
+                    (at, true) => at + 1,
+                    (1, false) => max,
+                    (at, false) => at - 1,
+                };
+            }
             EditField::Model | EditField::Reason | EditField::Brief => {}
         }
     }
@@ -429,13 +475,14 @@ impl TaskEditForm {
             priority: None,
             size: (self.size != original.size).then_some(self.size),
             deps: None,
-            stage: None,
+            stage: (self.stage != original.stage).then_some(self.stage),
         };
         let changed = route_changed
             || mode_changed
             || reason_changed
             || brief_changed
-            || self.size != original.size;
+            || self.size != original.size
+            || self.stage != original.stage;
         Ok(if changed { vec![edit] } else { vec![] })
     }
 
@@ -468,6 +515,7 @@ impl TaskEditForm {
             EditField::TestMode => (choice(test_mode_word(self.test_mode)), None),
             EditField::Reason => (self.reason.text().to_string(), None),
             EditField::Brief => (self.brief.text().to_string(), None),
+            EditField::Stage => (choice(&self.stage.to_string()), None),
         }
     }
 }

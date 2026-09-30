@@ -86,11 +86,27 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
         );
     }
     out.push_str(&orchestrator_lines(run));
+    // Milestone 9.1 (Interfaces "CLI"): a `Multi` run's stages, before its tasks.
+    let multi = run.stages.len() > 1;
+    if multi {
+        for stage in &run.stages {
+            out.push_str(&stage_line(stage, run.stages.len()));
+        }
+    }
     out.push_str(&row(
         "ID", "SIZE", "MODE", "STATE", "RUNG", "BOUNCES", "ROUTE", "WINDOWS",
     ));
     for task in &run.tasks {
-        out.push_str(&task_row(run, task));
+        let line = task_row(run, task);
+        let mut line = line.trim_end_matches('\n').to_string();
+        if multi {
+            line.push_str(&format!(" [stage {}]", task.stage));
+        }
+        if let Some(fixes) = &task.fixes {
+            line.push_str(&format!(" (fix: {})", one_line(fixes)));
+        }
+        out.push_str(&line);
+        out.push('\n');
     }
     // Review I1 (M8c.1): the snapshot's promotion line carries no time; this is it, local.
     if let Some(at) = run.promote_requested_at {
@@ -101,6 +117,51 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
         out.push_str(&format!("  attention: {line}\n"));
     }
     out
+}
+
+/// `stage <n>/<of>  <branch>  <merged>/<tasks> merged  tier 3 <state>`, with the last
+/// job's duration and the stage's fix tasks in parentheses; `not created` for a stage
+/// with no branch yet.
+fn stage_line(stage: &proto::StageInfo, of: usize) -> String {
+    let n = stage.n;
+    if stage.head.is_none() {
+        return format!("stage {n}/{of}  not created\n");
+    }
+    let full = &stage.full;
+    let state = match full.state {
+        proto::FullState::None => "none",
+        proto::FullState::Running => "running",
+        proto::FullState::Green => "green",
+        proto::FullState::Red => "red",
+        proto::FullState::Bisecting => "bisecting",
+    };
+    let mut parts: Vec<String> = Vec::new();
+    if matches!(full.state, proto::FullState::Green | proto::FullState::Red)
+        && let Some(secs) = full.secs
+    {
+        parts.push(duration(secs));
+    }
+    parts.extend(stage.fix_tasks.iter().cloned());
+    let detail = if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", parts.join(", "))
+    };
+    format!(
+        "stage {n}/{of}  {}  {}/{} merged  tier 3 {state}{detail}\n",
+        one_line(&stage.branch),
+        stage.merged,
+        stage.tasks
+    )
+}
+
+/// `42s`, `41m 12s` or `3h 2m`.
+fn duration(secs: u64) -> String {
+    match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m {}s", secs / 60, secs % 60),
+        _ => format!("{}h {}m", secs / 3600, secs % 3600 / 60),
+    }
 }
 
 /// `at` (unix seconds) as local `hh:mm`, given the zone's offset from UTC.
@@ -278,3 +339,7 @@ pub fn printable(text: &str) -> String {
         .map(|c| if c.is_control() && c != '\n' { ' ' } else { c })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "status_tests_stages.rs"]
+mod tests_stages;

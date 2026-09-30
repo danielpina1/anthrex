@@ -216,11 +216,7 @@ pub(super) fn bisect_ended(
     if !enabled(run) {
         return;
     }
-    let (culprit, fix_task, reason) = match result {
-        BisectResult::Culprit { task, fix } => (Some(task), Some(fix), None),
-        BisectResult::Refused { task, reason } => (Some(task), None, Some(reason)),
-        BisectResult::None(reason) => (None, None, Some(reason)),
-    };
+    let (culprit, fix_task, reason) = result.parts();
     let run_id = run.id.clone();
     let line = HistoryLine::Bisect(BisectLine {
         v: HISTORY_VERSION,
@@ -240,6 +236,7 @@ pub(super) fn bisect_ended(
 }
 
 /// How a bisect ended (decisions 36–38).
+#[derive(Clone, Copy)]
 pub(super) enum BisectResult<'a> {
     /// The culprit task, and the fix task added for it.
     Culprit { task: &'a str, fix: &'a str },
@@ -256,5 +253,16 @@ pub(super) fn appended(run: &mut Run, kind: &OpKind, result: OpResult, now: u64)
     {
         let text = format!("history record {record_id} was not written: {message}");
         super::requests::log(run, now, text);
+    }
+}
+
+impl<'a> BisectResult<'a> {
+    /// The culprit, its fix task, and the reason there was no single culprit.
+    pub(super) fn parts(self) -> (Option<&'a str>, Option<&'a str>, Option<&'a str>) {
+        match self {
+            BisectResult::Culprit { task, fix } => (Some(task), Some(fix), None),
+            BisectResult::Refused { task, reason } => (Some(task), None, Some(reason)),
+            BisectResult::None(reason) => (None, None, Some(reason)),
+        }
     }
 }

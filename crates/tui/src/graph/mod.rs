@@ -231,6 +231,7 @@ fn raw_content_text(row: &Row<'_>) -> String {
         RowKind::Planner { run, planner } => run_text::planner_text(run, planner),
         RowKind::Scout { scout, .. } => scout.question.clone(),
         RowKind::Task { task, .. } => run_text::task_text(task),
+        RowKind::Stage { run, stage } => run_text::stage_text(run, stage),
         RowKind::AgentRound { round, .. } => run_text::round_text(round),
     }
 }
