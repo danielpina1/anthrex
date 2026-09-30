@@ -80,6 +80,30 @@ fn a_red_older_than_the_floor_blames_nobody() {
     invariants(&fx, "after the bisect");
 }
 
+/// Tier 3 red at the floor itself: the stage head is the floor and no merge follows it,
+/// so there is nothing to bisect. The note says so in C-28's words, not as a commit
+/// missing from the stage's line.
+#[test]
+fn a_red_at_the_floor_itself_is_not_bisected() {
+    let (mut fx, _windows) = floored();
+    assert_eq!(fx.run().stage_head(1), Some(commit(99).as_str()));
+    red_tier3(&mut fx, 1);
+    assert!(
+        super::merge::pending(&fx, "TestAt", None).is_empty(),
+        "a probe was issued"
+    );
+    let s = fx.run().stage(1).unwrap();
+    assert!(s.bisect.is_none());
+    let note = s.full.note.as_deref().expect("the red's note");
+    let reason = format!(
+        "red before the rebaselined head {}; not bisected",
+        sha7(&commit(99))
+    );
+    assert!(note.contains(&reason), "{note}");
+    assert!(fx.run().task("fix1").is_none(), "an innocent task blamed");
+    invariants(&fx, "after the red");
+}
+
 /// A red first introduced by t3 above the floor: probed floor, then c3, and t3 blamed.
 #[test]
 fn a_red_above_the_floor_is_bisected_from_the_floor() {

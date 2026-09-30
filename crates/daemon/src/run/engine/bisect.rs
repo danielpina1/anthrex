@@ -108,6 +108,14 @@ pub(super) fn start(
         return Err(format!("stage {stage} is not created"));
     };
     let Some((base, candidates)) = range(s, head) else {
+        // Ruling C-28 (1): red at the floor itself, with no merge after it; the line
+        // below the floor is not the engine's.
+        if s.floor.as_deref() == Some(head) {
+            return Err(format!(
+                "red before the rebaselined head {}; not bisected",
+                sha7(head)
+            ));
+        }
         return Err(format!(
             "{} is not a merge recorded on the stage's line",
             sha7(head)
