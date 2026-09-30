@@ -129,14 +129,23 @@ fn build(run: &Run, now: u64, for_fingerprint: bool) -> Value {
             "note": cut_opt(e.note.as_deref(), LINE_MAX),
         })).collect::<Vec<_>>(),
         "integration": integration(run),
-        // Milestone 9.1 decision 58: the snapshot's stages.
-        "stages": crate::run::snapshot_stages::stage_infos(run),
+        // Milestone 9.1 decision 58: the snapshot's stages, every string cut as the
+        // other engine lines are (ruling C-24).
+        "stages": stages(run),
         "attention": crate::run::snapshot::attention(run, now).iter().map(|l| cut(l, LINE_MAX)).collect::<Vec<_>>(),
         "notes": orch.map(|o| o.notes.iter().map(|n| cut(n, LINE_MAX)).collect::<Vec<_>>()).unwrap_or_default(),
         "task_notes": task_notes(run),
         "edits": run.plan_edits.iter().rev().take(EDITS_SHOWN).map(edit_entry).collect::<Vec<_>>(),
         "spend": spend(run),
     })
+}
+
+/// The snapshot's `StageInfo`s with every string (branches, heads, test names, the
+/// note) cut to [`LINE_MAX`] characters; each list already holds at most 20 names.
+fn stages(run: &Run) -> Value {
+    let mut stages = json!(crate::run::snapshot_stages::stage_infos(run));
+    super::json::shrink_strings(&mut stages, LINE_MAX);
+    stages
 }
 
 /// An edit-log entry, its `recipients` cut to [`RECIPIENTS_SHOWN`] with the rest

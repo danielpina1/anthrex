@@ -198,3 +198,132 @@ fn edit_recipients_are_capped_with_an_omitted_count() {
     let d = digest(&run, NOW);
     assert!(d["edits"][0].get("recipients_omitted").is_none());
 }
+
+/// Ruling C-24: stages with long failing and flaky lists and a long note never push
+/// the digest past its cap, and are cut before any unfinished task is dropped (the
+/// review's reproduction: 32 stages, 50 failing and 40 flaky names of about 320
+/// characters each, a 5000-character note).
+#[test]
+fn stages_are_cut_before_an_unfinished_task_and_the_cap_holds() {
+    use crate::run::model::{StageLayout, StageRecord, TierRecord};
+    let mut run = run_of(50);
+    run.stage_layout = StageLayout::Multi;
+    let name = |kind: &str, s: u16, i: usize| format!("{kind}::s{s}::t{i}::{}", "x".repeat(300));
+    run.stages = (1..=32u16)
+        .map(|n| {
+            let mut s = StageRecord::new(
+                n,
+                format!("anthrex/{}/stage-{n}", run.id),
+                &"a".repeat(40),
+                Default::default(),
+                0,
+            );
+            s.full.note = Some("n".repeat(5_000));
+            s.full.last = Some(TierRecord {
+                tier: 3,
+                affected: "full suite (full suite)".into(),
+                steps: 1,
+                cached: 0,
+                ok: false,
+                secs: 60,
+                flaky: (0..40).map(|i| name("flaky", n, i)).collect(),
+                failing: (0..50).map(|i| name("failing", n, i)).collect(),
+                at: 1,
+                commit: "a".repeat(40),
+            });
+            s
+        })
+        .collect();
+    let d = digest(&run, NOW);
+    assert!(size(&d) <= DIGEST_MAX_BYTES, "{} bytes", size(&d));
+    assert_eq!(shown(&d).len(), 50, "every unfinished task is kept");
+    assert_eq!(d["omitted_tasks"], 0);
+    // What is left of the stages is cut, never absent.
+    let stages = d["stages"].as_array().unwrap();
+    assert!(!stages.is_empty());
+    for s in stages {
+        assert!(s["full"]["failing"].as_array().unwrap().len() <= 20);
+        assert!(s["full"]["flaky"].as_array().unwrap().len() <= 20);
+    }
+}
+
+/// Ruling C-24 at build time: before any trim, a stage's lists hold at most 20 names
+/// and every string is cut like the digest's other engine lines.
+#[test]
+fn stage_strings_and_lists_are_capped_when_built() {
+    use crate::run::model::{StageLayout, StageRecord, TierRecord};
+    let mut run = run_of(1);
+    run.stage_layout = StageLayout::Multi;
+    let mut s = StageRecord::new(1, "b".into(), &"a".repeat(40), Default::default(), 0);
+    s.full.note = Some("n".repeat(5_000));
+    s.full.last = Some(TierRecord {
+        tier: 3,
+        affected: String::new(),
+        steps: 1,
+        cached: 0,
+        ok: false,
+        secs: 1,
+        flaky: (0..40)
+            .map(|i| format!("f{i}{}", "x".repeat(400)))
+            .collect(),
+        failing: (0..50)
+            .map(|i| format!("t{i}{}", "x".repeat(400)))
+            .collect(),
+        at: 1,
+        commit: "a".repeat(40),
+    });
+    run.stages = vec![s];
+    let d = digest(&run, NOW);
+    let full = &d["stages"][0]["full"];
+    assert_eq!(full["flaky"].as_array().unwrap().len(), 20);
+    assert_eq!(full["failing"].as_array().unwrap().len(), 20);
+    let longest = full["flaky"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(full["failing"].as_array().unwrap())
+        .chain([&full["note"]])
+        .map(|v| v.as_str().unwrap().chars().count())
+        .max()
+        .unwrap();
+    // 300 characters and the cut marker `…`, as `cut` writes every digest line.
+    assert_eq!(longest, 301);
+}
+
+/// Ruling C-24's order: a stage's lists are cut before any stage is dropped, so ten
+/// stages whose names alone overflow the cap are all kept, each with its first three.
+#[test]
+fn a_stages_lists_are_cut_before_the_stages_themselves() {
+    use crate::run::model::{StageLayout, StageRecord, TierRecord};
+    let mut run = run_of(10);
+    run.stage_layout = StageLayout::Multi;
+    let name = |kind: &str, s: u16, i: usize| format!("{kind}::s{s}::t{i}::{}", "x".repeat(300));
+    run.stages = (1..=10u16)
+        .map(|n| {
+            let mut s =
+                StageRecord::new(n, format!("b{n}"), &"a".repeat(40), Default::default(), 0);
+            s.full.last = Some(TierRecord {
+                tier: 3,
+                affected: String::new(),
+                steps: 1,
+                cached: 0,
+                ok: false,
+                secs: 1,
+                flaky: (0..20).map(|i| name("flaky", n, i)).collect(),
+                failing: (0..20).map(|i| name("failing", n, i)).collect(),
+                at: 1,
+                commit: "a".repeat(40),
+            });
+            s
+        })
+        .collect();
+    let d = digest(&run, NOW);
+    assert!(size(&d) <= DIGEST_MAX_BYTES, "{} bytes", size(&d));
+    assert_eq!(shown(&d).len(), 10);
+    let stages = d["stages"].as_array().unwrap();
+    assert_eq!(stages.len(), 10, "no stage dropped");
+    for s in stages {
+        assert_eq!(s["full"]["failing"].as_array().unwrap().len(), 3);
+        assert_eq!(s["full"]["flaky"].as_array().unwrap().len(), 3);
+    }
+}

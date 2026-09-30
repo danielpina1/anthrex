@@ -269,3 +269,21 @@ fn the_fix_command_quotes_a_name_the_shell_would_read() {
         "  fix: anthrex run start --goal \"Make the test tests::a_b-c/d.e[1] deterministic; it failed and then passed on retry in 3 runs\""
     );
 }
+
+/// Ruling C-24: a name with a raw newline cannot break the `proposal:` line in two.
+#[test]
+fn a_proposal_line_is_one_line_whatever_the_name() {
+    let mut stats = with_proposal();
+    stats.flaky_proposals[0].test = "a\nb\rc".into();
+    let text = render(&stats);
+    let proposal = text.lines().find(|l| l.starts_with("proposal: ")).unwrap();
+    assert_eq!(
+        proposal,
+        "proposal: add a b c to slow_tests (flaky in 3 runs in the last 14 days)"
+    );
+    // The fix command keeps its single quotes around the name as it is.
+    assert!(
+        text.contains("--goal 'Make the test a\nb\rc deterministic;"),
+        "{text}"
+    );
+}

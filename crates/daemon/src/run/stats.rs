@@ -303,8 +303,10 @@ fn flaky_block(stats: &HistoryStats, out: &mut String) {
     ));
     for p in &stats.flaky_proposals {
         let (test, runs) = (&p.test, p.runs);
+        // Ruling C-24: a name with a line break stays on its one line here.
+        let shown = crate::run::messages::one_line(test);
         out.push_str(&format!(
-            "proposal: add {test} to slow_tests (flaky in {runs} runs in the last {days} days)\n"
+            "proposal: add {shown} to slow_tests (flaky in {runs} runs in the last {days} days)\n"
         ));
         let goal = format!(
             "Make the test {test} deterministic; it failed and then passed on retry in {runs} runs"

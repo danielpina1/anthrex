@@ -76,6 +76,7 @@ mod refresh;
 mod role_history;
 mod role_history_ends;
 mod run_scouts;
+mod stage_infos;
 mod stages;
 mod tiers;
 mod tiers_untiered;

@@ -5,28 +5,45 @@
 use proto::{FullInfo, FullState, StageInfo, TaskOrigin, TaskState};
 
 use super::engine::OpKind;
-use super::model::{Run, StageRecord};
+use super::model::{Run, StageLayout, StageRecord, task_branch};
 
-/// A stage's failing tests shown, the first ones.
-const FAILING_SHOWN: usize = 20;
+/// A stage's failing and flaky tests shown, the first ones (ruling C-24 caps both).
+const NAMES_SHOWN: usize = 20;
 
 /// One entry per stage from 1 to the highest the plan names or the run created, in
-/// order. A stage not created yet has no `head` and no tier 3.
+/// order. A stage not created yet has no `head` and no tier 3, and shows the branch it
+/// will be created on (ruling C-24).
 pub(crate) fn stage_infos(run: &Run) -> Vec<StageInfo> {
     let planned = run.tasks.iter().map(|t| t.stage()).max().unwrap_or(1);
     let created = run.stages.iter().map(|s| s.n).max().unwrap_or(0);
     (1..=planned.max(created).max(1))
-        .map(|n| stage_info(run, n))
+        .map(|n| stage_info(run, n, planned))
         .collect()
 }
 
-fn stage_info(run: &Run, n: u16) -> StageInfo {
+/// Stage `n`'s record, when the stage exists. Before approval a plan with more than
+/// one stage has only the placeholder stage 1 on `integration` that every built run
+/// gets (decision 47); its approval clears it and creates `stage-<n>` branches
+/// (decision 46), so it is not the stage's.
+fn created(run: &Run, n: u16, planned: u16) -> Option<&StageRecord> {
+    let placeholder = run.stage_layout == StageLayout::Single && planned > 1;
+    run.stage(n).filter(|_| !placeholder)
+}
+
+fn stage_info(run: &Run, n: u16, planned: u16) -> StageInfo {
     let of_stage = || run.tasks.iter().filter(move |t| t.stage() == n);
-    let record = run.stage(n);
-    let head = run.stage_head(n).map(str::to_string);
+    let record = created(run, n, planned);
+    let head = record.and_then(|_| run.stage_head(n)).map(str::to_string);
+    let branch = match record {
+        Some(_) => run.stage_branch(n),
+        None if run.stage_layout == StageLayout::Multi || planned > 1 => {
+            task_branch(&run.id, &format!("stage-{n}"))
+        }
+        None => run.run_branch(),
+    };
     StageInfo {
         n,
-        branch: run.stage_branch(n),
+        branch,
         tasks: count(of_stage().count()),
         merged: count(of_stage().filter(|t| t.state == TaskState::Merged).count()),
         full: record.map_or_else(FullInfo::default, |s| {
@@ -72,11 +89,17 @@ fn full(run: &Run, s: &StageRecord, head: &str) -> FullInfo {
         secs: last.map(|l| l.secs),
         commit: last.map(|l| l.commit.clone()).filter(|c| !c.is_empty()),
         shards: last.map_or(0, |_| run.profile.tiers.full_shards.max(1)),
-        flaky: last.map(|l| l.flaky.clone()).unwrap_or_default(),
+        flaky: last
+            .map(|l| l.flaky.iter().take(NAMES_SHOWN).cloned().collect())
+            .unwrap_or_default(),
         failing: last
-            .map(|l| l.failing.iter().take(FAILING_SHOWN).cloned().collect())
+            .map(|l| l.failing.iter().take(NAMES_SHOWN).cloned().collect())
             .unwrap_or_default(),
         bisect_fixes: s.full.bisect_fixes,
         note: s.full.note.clone(),
     }
 }
+
+#[cfg(test)]
+#[path = "snapshot_stages_tests.rs"]
+mod tests;
