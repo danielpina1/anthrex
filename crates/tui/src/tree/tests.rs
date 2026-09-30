@@ -562,6 +562,7 @@ fn node_keys_are_hashable_path_owners() {
 }
 mod state;
 
+pub(crate) mod alert_fixtures;
 pub(crate) mod orch_fixtures;
 pub(crate) mod run_fixtures;
 mod run_rows;

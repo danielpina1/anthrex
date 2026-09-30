@@ -52,7 +52,9 @@ async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
     let windows = shells();
     let (_dir, conn, mut peer) = connection(&windows).await;
     let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
-    let mut terminal = Terminal::new(TestBackend::new(120, 14)).unwrap();
+    // Three rows taller than before milestone 9.0.5: the Alerts box takes them from
+    // the sidebar column, so the list keeps its nine rows (and five after the resize).
+    let mut terminal = Terminal::new(TestBackend::new(120, 17)).unwrap();
     draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert_eq!(
         tokio::time::timeout(
@@ -65,14 +67,14 @@ async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
         Some(ClientMsg::Subscribe {
             window_id: 1,
             cols: 84,
-            rows: 11
+            rows: 14
         })
     );
     app.focus(20);
     draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert_eq!(app.tree.sidebar.top, 12);
 
-    terminal.backend_mut().resize(120, 10);
+    terminal.backend_mut().resize(120, 13);
     let layout = draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert_eq!(layout.sidebar_list.height, 5);
     assert_eq!(app.tree.sidebar.top, 16);
@@ -94,7 +96,7 @@ async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
         vec![Effect::Send(ClientMsg::Subscribe {
             window_id: displayed_id,
             cols: 84,
-            rows: 7
+            rows: 10
         })],
         "the first visible row {first_row:?} must be the row clicked after the resize"
     );

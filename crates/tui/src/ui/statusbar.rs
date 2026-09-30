@@ -56,6 +56,16 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" "));
+    } else if app.alerts_focus.is_some() {
+        // Milestone 9.0.5 decision 21: the Alerts box has the keys.
+        spans.push(Span::styled(
+            " ALERTS ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
     } else if let Some(input) = app.tree_input {
         spans.push(Span::styled(
             match input {
@@ -93,6 +103,21 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
+    // Decision 20: with the sidebar hidden, the alerts' count in the top priority's
+    // colour, right after the mode badge.
+    if !app.sidebar_visible {
+        let all = crate::app::alerts(app);
+        if let Some(top) = all.first() {
+            spans.push(Span::styled(
+                format!("⚑ {}", all.len()),
+                Style::default()
+                    .fg(theme::alert_color(top.priority))
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::raw(" "));
+        }
+    }
+
     let toast_width = app
         .toast_text()
         .map(|text| toast_columns(text, area.width))
@@ -101,6 +126,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     match app.tree_input {
         _ if app.plan_review.is_some() => {
             spans.push(Span::styled(review_hint(app), theme::muted()));
+        }
+        _ if app.alerts_focus.is_some() => {
+            spans.push(Span::styled("j/k move  ⏎ go  esc back", theme::muted()));
         }
         Some(TreeInput::Navigate) => spans.push(Span::styled(navigate_hint(app), theme::muted())),
         Some(TreeInput::Filter) => spans.push(Span::styled(

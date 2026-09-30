@@ -216,7 +216,7 @@ fn overview_clicks_ignore_modals_borders_and_the_sidebar_stays_live() {
 fn the_overview_click_works_with_a_filter_and_a_hidden_sidebar() {
     let (mut app, _) = opened_at(200, 50);
     app.sidebar_visible = false;
-    let layout = crate::ui::layout(Rect::new(0, 0, 200, 50), 0);
+    let layout = crate::ui::layout(Rect::new(0, 0, 200, 50), 0, crate::app::alerts(&app).len());
     app.set_graph_viewport(layout.main);
     press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
     assert!(app.on_paste("billing".into()).is_empty());
@@ -254,7 +254,11 @@ fn the_graph_stays_inside_tiny_main_areas() {
                 } else {
                     0
                 };
-                let layout = crate::ui::layout(Rect::new(0, 0, width, height), sidebar_width);
+                let layout = crate::ui::layout(
+                    Rect::new(0, 0, width, height),
+                    sidebar_width,
+                    crate::app::alerts(&app).len(),
+                );
                 app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
                 app.set_graph_viewport(layout.main);
                 for pan in [Pan::default(), Pan { x: 60000, y: 60000 }] {

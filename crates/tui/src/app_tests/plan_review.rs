@@ -459,7 +459,11 @@ fn review_keys_send_nothing_else() {
 fn the_mouse_does_nothing_under_the_review() {
     let mut app = gate_app();
     tap(&mut app, KeyCode::Char('p'));
-    let layout = crate::ui::layout(Rect::new(0, 0, 120, 40), app.sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, 120, 40),
+        app.sidebar_width,
+        crate::app::alerts(&app).len(),
+    );
     let before_tree = app.tree.selected.clone();
     let before_pan = app.graph_pan;
     let before = app.plan_review.clone();

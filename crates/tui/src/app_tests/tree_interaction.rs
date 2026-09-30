@@ -322,7 +322,7 @@ fn selection_stays_visible_while_moving() {
 #[test]
 fn tree_mode_wheel_stays_local_in_main_and_scrolls_sidebar() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 14);
-    let layout = crate::ui::layout(area, 34);
+    let layout = crate::ui::layout(area, 34, 0);
 
     for filter in [false, true] {
         let mut app = app_with((1..=20).map(|id| project_win(id, "/r/shop")).collect());
@@ -371,7 +371,11 @@ fn tree_mode_wheel_stays_local_in_main_and_scrolls_sidebar() {
 #[test]
 fn clicks_select_in_tree_mode_and_keep_the_mode_active() {
     let mut app = example();
-    let layout = crate::ui::layout(ratatui::layout::Rect::new(0, 0, 120, 30), 34);
+    let layout = crate::ui::layout(
+        ratatui::layout::Rect::new(0, 0, 120, 30),
+        34,
+        crate::app::alerts(&app).len(),
+    );
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     assert_eq!(app.on_click(2, 6, &layout), subscription(2));
     assert_eq!(app.tree.selected, Some(NodeKey::Window(2)));

@@ -32,7 +32,11 @@ fn worker_round(task: &str) -> NodeKey {
 
 /// Sets both viewports for a `width` x `height` terminal, as `lib::draw` does.
 fn laid_out(app: &mut App, width: u16, height: u16) -> crate::ui::Layout {
-    let layout = crate::ui::layout(Rect::new(0, 0, width, height), app.sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, width, height),
+        app.sidebar_width,
+        crate::app::alerts(app).len(),
+    );
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     app.set_graph_viewport(layout.main);
     layout

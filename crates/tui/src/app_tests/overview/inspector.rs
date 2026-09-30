@@ -24,7 +24,11 @@ fn below_the_canvas(app: &App, width: u16, height: u16) -> String {
     } else {
         0
     };
-    let layout = crate::ui::layout(Rect::new(0, 0, width, height), sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, width, height),
+        sidebar_width,
+        crate::app::alerts(app).len(),
+    );
     let view = overview::view(app, layout.main);
     text_in(&drawn(app, width, height), view.footer)
 }
@@ -159,7 +163,11 @@ fn i_toggles_the_inspector_and_the_single_line_returns() {
 #[test]
 fn a_short_terminal_collapses_to_one_line() {
     let (app, _) = opened_at(200, SHORT);
-    let layout = crate::ui::layout(Rect::new(0, 0, 200, SHORT), app.sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, 200, SHORT),
+        app.sidebar_width,
+        crate::app::alerts(&app).len(),
+    );
     let view = overview::view(&app, layout.main);
     assert_eq!(layout.main_inner.height, MIN_INTERIOR_FOR_PANEL - 1);
     assert_eq!(view.footer.height, 1);
@@ -174,7 +182,11 @@ fn a_short_terminal_collapses_to_one_line() {
 
     // One row taller and the panel is back.
     let (app, _) = opened_at(200, TALL);
-    let layout = crate::ui::layout(Rect::new(0, 0, 200, TALL), app.sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, 200, TALL),
+        app.sidebar_width,
+        crate::app::alerts(&app).len(),
+    );
     assert_eq!(layout.main_inner.height, MIN_INTERIOR_FOR_PANEL);
     let view = overview::view(&app, layout.main);
     assert_eq!(view.footer.height, INSPECTOR_HEIGHT);
@@ -248,7 +260,11 @@ fn no_panic_at_degenerate_sizes() {
         app.inspector_visible = inspector_visible;
         for width in [1, 2, 3, 4, 12, 40, 61] {
             for height in 0..=(MIN_INTERIOR_FOR_PANEL + 4) {
-                let layout = crate::ui::layout(Rect::new(0, 0, width, height), app.sidebar_width);
+                let layout = crate::ui::layout(
+                    Rect::new(0, 0, width, height),
+                    app.sidebar_width,
+                    crate::app::alerts(&app).len(),
+                );
                 app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
                 app.set_graph_viewport(layout.main);
                 let view = overview::view(&app, layout.main);
