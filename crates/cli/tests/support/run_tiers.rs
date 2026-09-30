@@ -7,7 +7,10 @@
 //! directory outside the checkout a confined command may write. A test makes a module
 //! fail with `mods/<m>/FAIL`, or flake once with `mods/<m>/FLAKY` (its first run fails,
 //! every later one passes: a counter file beside the log remembers), both committed by
-//! a scripted worker, so no test depends on timing.
+//! a scripted worker, so no test depends on timing. M9.1.22 adds two markers only the
+//! whole suite (`check.sh`) reads: `mods/<m>/FULL_FAIL` (the test `<m>::full`, which
+//! also fails alone) and `PAIR` in two modules (the test `pair::both`, which passes
+//! alone). Each log line also carries the checkout's `head`.
 //!
 //! The scripts are POSIX `sh` (dash on Linux) and run as `sh <script>`, never executed
 //! directly, so a freshly written file cannot fail with ETXTBSY. Times come from `perl`,
@@ -70,8 +73,9 @@ ax_log() {
     eval "val=\${$v-}"
     env="$env${env:+,}\"$v\":\"$(ax_json "$val")\""
   done
-  printf '{"script":"%s","args":[%s],"cwd":"%s","start":%s,"end":%s,"env":{%s}}\n' \
-    "$script" "$args" "$(ax_json "$PWD")" "$start" "$end" "$env" >> "$TIER_LOG"
+  head=$(git rev-parse HEAD 2>/dev/null || true)
+  printf '{"script":"%s","args":[%s],"cwd":"%s","head":"%s","start":%s,"end":%s,"env":{%s}}\n' \
+    "$script" "$args" "$(ax_json "$PWD")" "$head" "$start" "$end" "$env" >> "$TIER_LOG"
 }
 "#;
 
@@ -87,7 +91,9 @@ echo "build ok"
 ax_log build.sh "$start" "$@"
 "#;
 
-/// `test.sh <module> [--filter <expr>]`, or `test.sh --one <module>::<test>`.
+/// `test.sh <module> [--filter <expr>]`, or `test.sh --one <module>::<test>`. A module's
+/// tests never read `FULL_FAIL`; the single test `<module>::full` does, as the bisect's
+/// probes run it.
 const TEST_SH: &str = r#". ./lib.sh
 start=$(ax_now)
 if [ "$1" = "--one" ]; then
@@ -96,8 +102,12 @@ else
   module=$1
 fi
 sleep 0.2
-ax_module "$module"
-status=$?
+if [ "$1" = "--one" ] && [ "$2" = "$module::full" ] && [ -f "mods/$module/FULL_FAIL" ]; then
+  ax_failed "$2"; status=1
+else
+  ax_module "$module"
+  status=$?
+fi
 if [ "$1" = "--one" ] && [ $status -eq 0 ]; then echo "PASS $2"; fi
 ax_log test.sh "$start" "$@"
 exit $status
@@ -111,7 +121,12 @@ status=0
 for dir in mods/*/; do
   m=$(basename "$dir")
   ax_module "$m" || status=1
+  # Only the whole suite, and a single test by that name, see FULL_FAIL.
+  if [ -f "mods/$m/FULL_FAIL" ]; then ax_failed "$m::full"; status=1; fi
 done
+# Two PAIR markers together fail the whole suite; no single test fails alone.
+pairs=$(ls mods/*/PAIR 2>/dev/null | wc -l)
+if [ "$pairs" -ge 2 ]; then ax_failed "pair::both"; status=1; fi
 ax_log check.sh "$start" "$@"
 exit $status
 "#;
