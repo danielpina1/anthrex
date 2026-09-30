@@ -13,7 +13,7 @@ The design is layered, newest first:
 6. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
 7. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
-The protocol version is **10** once milestone 9 merges, raised from 9 (milestone 8c's) by milestone 9, and **11** once milestone 9.0.5 merges, raised from 10 by milestone 9.0.5 (`crates/proto/src/lib.rs`). Protocol numbers written in the milestone 9.1 to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 9.1's brief says 11, and becomes 12.
+The protocol version is **10** once milestone 9 merges, raised from 9 (milestone 8c's) by milestone 9, **11** once milestone 9.0.5 merges, raised from 10 by milestone 9.0.5, and **12** once milestone 9.1 merges, raised from 11 by milestone 9.1 (`crates/proto/src/lib.rs`). Protocol numbers written in the milestone 9.2 to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 9.2's brief says 12, and becomes 13.
 
 ## What anthrex does when all milestones are done
 

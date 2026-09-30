@@ -56,13 +56,14 @@
 /// `PROTO_VERSION` was 10 at `crates/proto/src/lib.rs:50` before this change (set by M9
 /// task 2); 10 + 1 = 11.
 ///
-/// Milestone 9.1 task 3 bumps this to 11: it adds the stage fields of `PlanTask` and
+/// Milestone 9.1 task 3 bumps this to 12: it adds the stage fields of `PlanTask` and
 /// `PlanEdit::AmendTask`, the tier keys of `ProfileSpec` and `RepoProfile`, the
 /// snapshot's stage, tier, origin and signal types (`proto::tiers`) and the history
 /// lines `tier`, `flaky` and `bisect`. Every new field is `#[serde(default)]`, so a
-/// milestone-9 `run.json`, plan, profile and snapshot still load. Derivation:
-/// `PROTO_VERSION` was 10 at `crates/proto/src/lib.rs:50` (set by M9 task 2); 10 + 1 = 11.
-pub const PROTO_VERSION: u32 = 11;
+/// milestone-9 or 9.0.5 `run.json`, plan, profile and snapshot still load. Derivation:
+/// milestone 9.0.5 merged first and took 11 (above); `PROTO_VERSION` was 11 on `main`
+/// at the merge (`fb77ae2`); 11 + 1 = 12.
+pub const PROTO_VERSION: u32 = 12;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -148,8 +149,8 @@ mod orch_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_eleven() {
-        assert_eq!(super::PROTO_VERSION, 11);
+    fn proto_version_is_twelve() {
+        assert_eq!(super::PROTO_VERSION, 12);
     }
 
     #[test]
