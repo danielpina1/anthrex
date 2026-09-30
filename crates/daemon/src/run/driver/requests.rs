@@ -117,14 +117,31 @@ impl RunService {
             // Milestone 9 decision 28's approval holds: only the user's requests decide.
             RunRequest::ApproveHold { run_id, hold } => self.hold_verdict(run_id, hold, true).await,
             RunRequest::RejectHold { run_id, hold } => self.hold_verdict(run_id, hold, false).await,
-            // Milestone 9.0.5 decision 7; answered from memory by task M9.0.5.3.
-            RunRequest::TaskDetail { run_id, task_id } => RunReply::refused(
-                request::TASK_DETAIL,
-                format!("run {run_id} has no task {task_id}"),
-            ),
+            // Milestone 9.0.5 decision 7: answered from memory.
+            RunRequest::TaskDetail { run_id, task_id } => self.task_detail(&run_id, &task_id),
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }
+        }
+    }
+
+    /// Milestone 9.0.5 decision 7: a task's brief, acceptance and worker summary, built
+    /// by the pure `snapshot_detail::task_detail` under the engine lock, which is dropped
+    /// before the reply is made. No file, git or process access, and no `.await`.
+    pub(super) fn task_detail(&self, run_id: &str, task_id: &str) -> RunReply {
+        let detail = crate::lock(&self.state)
+            .runs
+            .get(run_id)
+            .and_then(|run| crate::run::snapshot_detail::task_detail(run, task_id));
+        match detail {
+            Some(detail) => RunReply::TaskDetail {
+                detail: Box::new(detail),
+                request_id: None,
+            },
+            None => RunReply::refused(
+                request::TASK_DETAIL,
+                format!("run {run_id} has no task {task_id}"),
+            ),
         }
     }
 

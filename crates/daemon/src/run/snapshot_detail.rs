@@ -1,8 +1,51 @@
 //! Milestone 9.0.5: what the snapshot and the task detail request derive from a task's
-//! rounds: the live round's activity line (decision 3). Pure, like `snapshot.rs`:
+//! rounds: the live round's activity line (decision 3) and a task's detail, its plan
+//! text and its worker's own summary (decisions 4 and 7). Pure, like `snapshot.rs`:
 //! everything here reads memory the caller already holds.
 
-use crate::run::model::Task;
+use proto::safe_text::multi_line;
+use proto::{AgentRole, SummarySource, TaskDetailInfo, WORKER_SUMMARY_MAX};
+
+use crate::run::model::{Run, Task};
+
+/// Decision 7: `task_id`'s brief, acceptance and worker summary, whatever the run's
+/// state (decision 16a keeps them out of the snapshot, not out of this reply); `None`
+/// when the run has no such task.
+pub fn task_detail(run: &Run, task_id: &str) -> Option<TaskDetailInfo> {
+    let task = run.task(task_id)?;
+    let (worker_summary, summary_source) = match worker_summary(task) {
+        Some((text, source)) => (Some(text), Some(source)),
+        None => (None, None),
+    };
+    Some(TaskDetailInfo {
+        run_id: run.id.clone(),
+        task_id: task_id.to_string(),
+        brief: task.spec.brief.clone(),
+        acceptance: task.spec.acceptance.clone(),
+        worker_summary,
+        summary_source,
+    })
+}
+
+/// Decision 4: the accepted `task_done` summary when it is not blank, else the last
+/// message of the latest worker round whose turn is closed, sanitised (line breaks
+/// kept) and capped at [`WORKER_SUMMARY_MAX`] characters with `…`.
+fn worker_summary(task: &Task) -> Option<(String, SummarySource)> {
+    let clean = |text: &str| {
+        let text = multi_line(text);
+        (!text.trim().is_empty()).then(|| cut(&text, WORKER_SUMMARY_MAX))
+    };
+    if let Some(summary) = task.done.as_ref().and_then(|d| clean(&d.summary)) {
+        return Some((summary, SummarySource::TaskDone));
+    }
+    task.rounds
+        .iter()
+        .rev()
+        .find(|r| r.role == AgentRole::Worker && (!r.turn_open || r.ended))
+        .and_then(|r| r.last_text.as_deref())
+        .and_then(clean)
+        .map(|text| (text, SummarySource::LastMessage))
+}
 
 /// The activity of the task's live round (the latest one not ended), `None` otherwise,
 /// so a terminal run's tasks carry nothing new (decision 2).
@@ -22,3 +65,7 @@ pub(crate) fn cut(text: &str, max: usize) -> String {
         Some((end, _)) => format!("{}…", &text[..end]),
     }
 }
+
+#[cfg(test)]
+#[path = "snapshot_detail_tests.rs"]
+mod tests;
