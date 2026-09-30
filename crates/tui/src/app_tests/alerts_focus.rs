@@ -294,3 +294,67 @@ fn selected(app: &App) -> Option<AlertKey> {
 fn tap(app: &mut App, code: KeyCode) -> Vec<Effect> {
     press(app, code, KeyModifiers::NONE)
 }
+
+/// Review: a paste while the box has the keys reaches nothing under it, over the
+/// terminal or over the conversation's search.
+#[test]
+fn a_paste_while_the_alerts_are_focused_sends_nothing() {
+    let mut app = every_app();
+    focus(&mut app);
+    assert_eq!(app.on_paste("rm -rf x\n".into()), vec![]);
+    assert!(app.alerts_focus.is_some());
+    tap(&mut app, KeyCode::Esc);
+    assert_eq!(
+        app.on_paste("ls\n".into()),
+        vec![Effect::Send(ClientMsg::Input {
+            window_id: 1,
+            bytes: b"ls\r".to_vec()
+        })]
+    );
+}
+
+#[test]
+fn a_paste_while_the_alerts_are_focused_over_the_conversation_changes_nothing() {
+    let mut app = every_app();
+    let _ = app.open_conversation(1);
+    assert!(app.conversation.is_open());
+    tap(&mut app, KeyCode::Char('/'));
+    let search = |app: &App| {
+        app.conversation
+            .search()
+            .map(|s| (s.query.clone(), s.typing))
+    };
+    assert_eq!(search(&app), Some((String::new(), true)));
+    focus(&mut app);
+    assert_eq!(app.on_paste("secret".into()), vec![]);
+    assert_eq!(
+        search(&app),
+        Some((String::new(), true)),
+        "the hidden search"
+    );
+}
+
+/// Review: every alerts key repairs the selection first, so a window list that has
+/// not been through `replace_windows` (the repair's other caller) cannot leave `j`
+/// stepping from a resolved alert's stale position.
+#[test]
+fn an_alerts_key_repairs_the_selection_first() {
+    let mut app = every_app();
+    focus(&mut app);
+    for _ in 0..3 {
+        tap(&mut app, KeyCode::Char('j'));
+    }
+    assert_eq!(selected(&app), Some(AlertKey::Gate("b-gate".into())));
+    // `a-attn`'s window stops asking, behind the repair's back: every alert moves up
+    // one, so `b-gate`'s plan is now at position 2, not 3.
+    app.windows[1].status = Status::Working;
+    assert!(tap(&mut app, KeyCode::Char('j')).is_empty());
+    assert_eq!(
+        selected(&app),
+        Some(AlertKey::Hold {
+            run: "c-held".into(),
+            hold: "epic:ui".into()
+        }),
+        "`j` stepped from the repaired position"
+    );
+}

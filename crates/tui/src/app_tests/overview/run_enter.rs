@@ -321,9 +321,18 @@ fn reopen(app: &mut App, log: &mut Vec<Effect>) {
     if app.modal.is_some() {
         log.extend(tap(app, KeyCode::Esc));
     }
-    while app.conversation.is_open() {
+    // Bounded: a keymap that sent `q` elsewhere would otherwise loop for ever (a
+    // precedence mutant hung the whole test binary here, milestone 9.0.5 review).
+    for _ in 0..16 {
+        if !app.conversation.is_open() {
+            break;
+        }
         log.extend(tap(app, KeyCode::Char('q')));
     }
+    assert!(
+        !app.conversation.is_open(),
+        "`q` did not close the conversation"
+    );
     if app.tree_input == Some(TreeInput::Filter) {
         log.extend(tap(app, KeyCode::Esc));
     }

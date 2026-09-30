@@ -192,6 +192,17 @@ fn each_priority_rule() {
     assert_eq!(p1(Working, false, Runtime::Claude), vec![]);
     assert_eq!(p1(Idle, false, Runtime::Shell), vec![]);
     assert_eq!(p1(Attention, true, Runtime::Shell), asks);
+    // First match wins: a held wake-up over a window asking for permission.
+    let mut both = with_orch(at("r", RunState::Running, 1), 11);
+    if let Some(orch) = &mut both.orchestrator {
+        orch.wake_held = true;
+    }
+    let window = orch_window(11, "r", Attention, true);
+    let app = app_with_runs(vec![window], snapshot(1, vec![both]));
+    assert_eq!(
+        listed(&app),
+        vec![line(1, "r", "orchestrator wake-up held")]
+    );
     // P1: not live, or its window not listed.
     let mut info = with_orch(at("r", RunState::Running, 1), 11);
     if let Some(orch) = &mut info.orchestrator {

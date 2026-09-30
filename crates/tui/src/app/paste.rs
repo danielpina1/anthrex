@@ -54,6 +54,10 @@ impl App {
         if self.plan_review.is_some() {
             return vec![];
         }
+        // Review of task 8: nor while the Alerts box has the keys.
+        if self.alerts_focus.is_some() {
+            return vec![];
+        }
         // Decision 11: the conversation view is read-only, so a paste while it is open
         // goes to its search query or nowhere — never to the PTY underneath.
         if self.conversation.is_open() {
