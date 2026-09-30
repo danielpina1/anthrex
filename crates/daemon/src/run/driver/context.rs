@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::DONE_CHECK_GIT_TIMEOUT;
 use crate::headless::argv::CliCaps;
 use crate::manager::{GitRoots, ManagerConfig};
 
@@ -23,6 +24,31 @@ pub struct RunContext {
     /// Milestone 9.1 decision 3: the daemon's `[testing]` table, read once at start;
     /// each run freezes its run rules from it (`RunLimits.testing`).
     pub testing: config::Testing,
+    /// The git budget of `task_result`'s reads and of `ResolveTarget`: always
+    /// [`GitBudget::DONE_CHECK`] in the daemon. A test seam only (M9.1 flake fix).
+    pub read_git: GitBudget,
+}
+
+/// One git read's budget: a deadline for all its calls, and a cap on each call's own
+/// bound (the run's `git_timeout_secs`, capped by `each_cap`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GitBudget {
+    pub deadline: Duration,
+    pub each_cap: Duration,
+}
+
+impl GitBudget {
+    /// The daemon's budget: one [`DONE_CHECK_GIT_TIMEOUT`] deadline, each call capped by
+    /// the same value.
+    pub const DONE_CHECK: GitBudget = GitBudget {
+        deadline: DONE_CHECK_GIT_TIMEOUT,
+        each_cap: DONE_CHECK_GIT_TIMEOUT,
+    };
+
+    /// The bound of each call of a run whose `git_timeout_secs` is `git_timeout`.
+    pub fn each(&self, git_timeout: Duration) -> Duration {
+        git_timeout.min(self.each_cap)
+    }
 }
 
 impl RunContext {
@@ -41,6 +67,7 @@ impl RunContext {
             git: OsString::from("git"),
             cli_caps: manager.cli_caps,
             testing: config::Testing::default(),
+            read_git: GitBudget::DONE_CHECK,
         }
     }
 

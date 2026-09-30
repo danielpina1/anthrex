@@ -9,6 +9,7 @@ use proto::AgentRole;
 use serde_json::{Value, json};
 
 use super::read_rig::{ORCH, PLANNER, Rig, WORKER};
+use crate::run::driver::gated_git::GatedGit;
 use crate::run::driver::*;
 use crate::run::orch::test_support::{scout, task_mut};
 use crate::run::orch::{EpicRecord, PlannerPhase, PlannerSession, RunScoutState};
@@ -231,40 +232,55 @@ async fn writes_go_to_the_engine() {
     assert_eq!(answer, json!("Note recorded. Keep working."));
 }
 
-/// How long the stand-in `git` of the deadline test sleeps on each call: under the
-/// per-command bound (`git_timeout_secs` 9), so each call alone succeeds, and twice
-/// past `DONE_CHECK_GIT_TIMEOUT` (10 s), so only the call's one deadline can end it.
-const SLOW_GIT_SECS: u64 = 8;
+/// The held case's deadline for `task_result`'s git reads. Nothing else can end them
+/// (each call's own bound is an hour, and the stand-in holds the second until the test
+/// releases it), so this length is only the test's running time.
+const DEADLINE: Duration = Duration::from_secs(1);
 
-/// M9.6 review M-4: `task_result`'s two git reads share one `DONE_CHECK_GIT_TIMEOUT`
-/// deadline; past it the answer carries the git error, whatever the commands had left.
-/// Separate per-command bounds alone would answer after both calls (16 s), with no
-/// error.
+/// M9.6 review M-4: `task_result`'s two git reads share one deadline; past it the
+/// answer carries the git error, whatever the commands had left. Separate per-command
+/// bounds alone would answer only once the held call ended, with no error.
 #[tokio::test(flavor = "multi_thread")]
 async fn task_result_answers_a_git_error_at_its_one_deadline() {
-    use std::os::unix::fs::PermissionsExt;
+    let never = Duration::from_secs(3600);
+    let wait = Duration::from_secs(30);
+    let gate_dir = tempfile::tempdir().unwrap();
+    // The first read (`git log`) answers an empty line; the second (`git diff`) is held.
+    let gate = GatedGit::new(gate_dir.path(), "");
+    let program = gate.program();
     let rig = Rig::with(
         |run, _| {
-            run.limits.git_timeout_secs = 9;
+            run.limits.git_timeout_secs = never.as_secs();
             task_mut(run, "t0").start_commit = Some("a1b2c3d".into());
         },
-        |dir, ctx| {
-            let program = dir.join("slow-git.sh");
-            let body = format!("#!/bin/sh\nsleep {SLOW_GIT_SECS}\n");
-            std::fs::write(&program, body).unwrap();
-            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-            ctx.git = program.into_os_string();
+        |_, ctx| {
+            ctx.git = program;
+            ctx.read_git = GitBudget {
+                deadline: DEADLINE,
+                each_cap: never,
+            };
         },
     )
     .await;
     let started = Instant::now();
-    let (ok, result) = rig.orch("task_result", json!({"task_id": "t0"})).await;
+    let (ok, result) =
+        tokio::time::timeout(wait, rig.orch("task_result", json!({"task_id": "t0"})))
+            .await
+            .expect("only the reads' deadline can end them");
     let took = started.elapsed();
     assert!(ok, "{result}");
-    assert_eq!(result["git"], "git did not answer within 10 s", "{result}");
+    let text = format!("git did not answer within {} s", DEADLINE.as_secs());
+    assert_eq!(result["git"], text, "{result}");
     assert!(result.get("commits").is_none(), "{result}");
-    assert!(
-        took >= DONE_CHECK_GIT_TIMEOUT && took < Duration::from_secs(2 * SLOW_GIT_SECS - 2),
-        "{took:?}"
-    );
+    assert!(took >= DEADLINE, "{took:?}");
+    // The read the deadline abandoned goes on: its first call answers and its second
+    // is held until the release. (When the deadline strikes relative to the calls is
+    // not asserted: under load the first spawn alone can outlast it.)
+    gate.wait_held(wait).await;
+    let calls = gate.calls();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert!(calls[0].contains(" log "), "{calls:?}");
+    assert!(calls[1].contains(" diff "), "{calls:?}");
+    gate.release();
+    gate.wait_exited(wait).await;
 }

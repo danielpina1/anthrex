@@ -1,17 +1,22 @@
 //! Task M9.13: `ResolveTarget` runs git on `spawn_blocking` under one deadline, never
 //! on the runtime's own threads; and the OTLP token's shape.
 
-use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use super::*;
+use crate::run::driver::gated_git::GatedGit;
+use crate::run::driver::{DONE_CHECK_GIT_TIMEOUT, RunContext};
 
-/// Each call of the stand-in `git` sleeps this long: under the run's per-command bound
-/// (9 s), so a call alone succeeds, while a range's two calls pass the one 10 s
-/// deadline.
-const SLOW_GIT_SECS: u64 = 8;
+/// The held case's deadline for the op's git calls. Nothing else can end the op (each
+/// call's own bound is [`NEVER`], and the stand-in holds its second call until the
+/// test releases it), so this length is only the test's running time.
+const DEADLINE: Duration = Duration::from_secs(1);
+/// A per-call bound no test reaches.
+const NEVER: Duration = Duration::from_secs(3600);
+/// A hang guard on each wait; nothing asserts it.
+const WAIT: Duration = Duration::from_secs(30);
 
 fn git(dir: &std::path::Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -31,9 +36,33 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// On a current-thread runtime, a ticker task keeps running while the target is
-/// resolved: a git call on that one thread would stop it. The slow range ends at the
-/// one deadline with its text.
+/// The daemon reads with `DONE_CHECK_GIT_TIMEOUT` as both the deadline and each call's
+/// cap: the seam the held tests use changes nothing outside them.
+#[tokio::test]
+async fn the_daemon_reads_git_with_the_done_check_budget() {
+    let budget = GitBudget::DONE_CHECK;
+    assert_eq!(budget.deadline, DONE_CHECK_GIT_TIMEOUT);
+    assert_eq!(budget.each_cap, DONE_CHECK_GIT_TIMEOUT);
+    assert_eq!(budget.each(Duration::from_secs(60)), DONE_CHECK_GIT_TIMEOUT);
+    assert_eq!(budget.each(Duration::from_secs(5)), Duration::from_secs(5));
+    let config =
+        crate::manager::ManagerConfig::for_tests("/tmp/unused.sock".into(), "/bin/sh".into());
+    let git = crate::server::GitWiring::new(config::Git {
+        enabled: false,
+        ..config::Git::default()
+    });
+    let ctx = RunContext::new(
+        "/tmp/unused".into(),
+        &config,
+        config::Orchestrator::default(),
+        git.registry.clone(),
+    );
+    assert_eq!(ctx.read_git, GitBudget::DONE_CHECK);
+}
+
+/// On a current-thread runtime, a ticker task keeps running while git is held: a git
+/// call on that one thread would stop it. The held range ends at the one deadline,
+/// with its text: per-call bounds alone would never end it.
 #[tokio::test(flavor = "current_thread")]
 async fn resolve_target_op_runs_git_off_the_worker_threads() {
     let dir = tempfile::tempdir().unwrap();
@@ -52,12 +81,15 @@ async fn resolve_target_op_runs_git_off_the_worker_threads() {
     git(&repo, &["commit", "-q", "-m", "two"]);
     let second = git(&repo, &["rev-parse", "HEAD"]);
 
-    // A real git: a single revision is `merge-base(main, r)..r`.
+    // A real git, under the daemon's budget: a single revision is
+    // `merge-base(main, r)..r`.
     let real = std::ffi::OsString::from("git");
     let t = Duration::from_secs(5);
+    let budget = GitBudget::DONE_CHECK;
     let got = resolve_target(
         real.clone(),
         t,
+        budget,
         repo.clone(),
         "feature".into(),
         "main".into(),
@@ -70,49 +102,71 @@ async fn resolve_target_op_runs_git_off_the_worker_threads() {
             head: second.clone()
         }
     );
-    let got = resolve_target(real, t, repo.clone(), "nope".into(), "main".into()).await;
+    let got = resolve_target(real, t, budget, repo.clone(), "nope".into(), "main".into()).await;
     let OpResult::Failed { message } = got else {
         panic!("{got:?}");
     };
     assert!(message.starts_with("nope: "), "{message}");
 
-    // A slow git, with a ticker on the same (only) runtime thread.
-    let slow = dir.path().join("slow-git.sh");
-    std::fs::write(&slow, format!("#!/bin/sh\nsleep {SLOW_GIT_SECS}\n")).unwrap();
-    std::fs::set_permissions(&slow, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // A held git: its first call (the range's base) answers, its second is held until
+    // the test releases it. A ticker shares the (only) runtime thread.
+    let gate = GatedGit::new(&dir.path().join("gate"), &first);
     let ticks = Arc::new(AtomicU64::new(0));
     let counter = ticks.clone();
     let ticker = tokio::spawn(async move {
         loop {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
             counter.fetch_add(1, Ordering::SeqCst);
         }
     });
+    let held = GitBudget {
+        deadline: DEADLINE,
+        each_cap: NEVER,
+    };
     let started = Instant::now();
-    let got = resolve_target(
-        slow.into_os_string(),
-        Duration::from_secs(9),
+    let op = tokio::spawn(resolve_target(
+        gate.program(),
+        NEVER,
+        held,
         repo,
         format!("{first}..{second}"),
         "main".into(),
-    )
-    .await;
+    ));
+    // Git off the runtime thread, by observation: while the second call is held, the
+    // ticker and this task both keep running on the one thread. Git on that thread
+    // would stop both until the stand-in gave up (its own 60 s cap), and the call
+    // would no longer be held.
+    gate.wait_held(WAIT).await;
+    let seen = ticks.load(Ordering::SeqCst);
+    let deadline = Instant::now() + WAIT;
+    while ticks.load(Ordering::SeqCst) < seen + 5 {
+        assert!(Instant::now() < deadline, "the ticker stopped");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        gate.held(),
+        "the runtime thread was blocked while git was held"
+    );
+
+    // The one deadline ends the op while its second call is still held.
+    let got = tokio::time::timeout(WAIT, op)
+        .await
+        .expect("only the op's deadline can end it")
+        .unwrap();
     let took = started.elapsed();
     ticker.abort();
     assert_eq!(
         got,
         OpResult::Failed {
-            message: "git did not answer within 10 s".into()
+            message: format!("git did not answer within {} s", DEADLINE.as_secs())
         }
     );
-    assert!(
-        took >= DONE_CHECK_GIT_TIMEOUT && took < Duration::from_secs(2 * SLOW_GIT_SECS - 2),
-        "{took:?}"
-    );
-    assert!(
-        ticks.load(Ordering::SeqCst) >= 50,
-        "the runtime thread was blocked"
-    );
+    assert!(took >= DEADLINE, "{took:?}");
+    // The abandoned read is still held: nothing but the deadline answered the op.
+    assert!(gate.held(), "the held call ended before its release");
+    assert_eq!(gate.calls().len(), 2, "{:?}", gate.calls());
+    gate.release();
+    gate.wait_exited(WAIT).await;
 }
 
 #[test]

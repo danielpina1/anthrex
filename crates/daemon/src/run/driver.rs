@@ -63,7 +63,7 @@ use book::{Book, Retiring};
 
 pub use adapt::Adaptation;
 pub(crate) use context::OpCtx;
-pub use context::RunContext;
+pub use context::{GitBudget, RunContext};
 pub use observe::{ACTIVITY_EVERY, translate};
 
 /// Decision 52: a retired window stays listed, `Exited`, this long.
@@ -574,3 +574,6 @@ impl RunService {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod gated_git;
