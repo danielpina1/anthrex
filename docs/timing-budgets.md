@@ -307,6 +307,12 @@ The driver's read path (`crates/daemon/src/run/driver/orch_read_tests.rs` and `o
 |---|---|---|---|---|
 | `resolve_target_op_runs_git_off_the_worker_threads`, `task_result_answers_a_git_error_at_its_one_deadline` | `crates/daemon/src/run/driver/orch_ops_tests.rs`, `orch_read_tests_tools.rs` | A stand-in `git` that slept `SLOW_GIT_SECS` (8 s) per call under a per-command bound of 9 s, so that each call alone succeeded and two calls passed the one 10 s deadline; `< 14 s` above | Each call: a `/bin/sh` spawn, a `sleep` spawn and 8 s. Under a parallel `cargo test -p anthrex-daemon --lib` a call passed 9 s and ended on its per-command bound with a different error, or the answer passed 14 s: about 1 run in 3. | **Fixed** by a seam, not a wider margin: the sleep made the test depend on two timers (8 s against 9 s) racing on a loaded host. `RunContext::read_git` (a `GitBudget`: the deadline, and the cap on each call's bound) is `GitBudget::DONE_CHECK` (10 s, 10 s) in the daemon, which `the_daemon_reads_git_with_the_done_check_budget` pins; `resolve_target` takes the same budget. The tests pass a 1 s deadline and an hour per call, and a stand-in (`driver/gated_git.rs`) that answers its first call and holds every later one until the test releases it. Only the deadline can end the read, so nothing races: the answer is the deadline's text, and the only elapsed-time assertion is the lower bound `>= DEADLINE`. When the deadline strikes relative to the calls is deliberately not asserted: a first draft asserted the second call was already held at the answer, and under a full parallel run the first `/bin/sh` spawn alone outlasted the 1 s deadline (1 run in 5, the stand-in's call log empty) — the same race in a new place. The tests instead wait, after the answer, for the abandoned read's second call to be held, then release it. "Git off the runtime thread" is an observation: the ticker advances while the call is held. Mutants: without the deadline both tests fail on their 30 s hang guard; with git on the runtime thread the ticker test fails once the stand-in gives up on its own 60 s cap. |
 
+### Fixed, from the codex-probe ordering flake (2026-09-30)
+
+| Test | Site | Bound (as found) | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `a_window_launch_waits_for_the_codex_probe_to_finish` | `crates/cli/tests/codex_version.rs` (`ordering_codex`'s stub holds `--version` for `PROBE_STALL`, 3 s) | `PROBE_STALL` (3 s) under `CODEX_PROBE_TIMEOUT` (5 s, less the probe's 100 ms cleanup reserve) | The probe's budget starts at `codex_version::start`, before the stub is exec'd. The stub was written moments earlier, so its first exec paid macOS's first-exec assessment: 0.46–2.2 s from `spawn()` returning to the script's first line, with this file's tests running in parallel (0.44 s alone). Past ~1.9 s the probe was killed at its budget and never wrote `version-end`. The gate then opened on schedule, so the product was correct and the test reported a defect. Failed 4/6, 2/6 and 3/6 whole-file runs (branch, branch, `main`). | **Fixed**: `ordering_codex` execs the stub once with a no-record warm-up argument before any daemon starts, so the assessment is paid outside the probe's budget. 20/20 whole-file runs after. A mutant without the create-path gate wait still fails the test. |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |
@@ -356,6 +362,12 @@ of the fresh-copy batches measured, never in about 800 re-runs of an already-run
 and the same in `/private/tmp` as under `~/Desktop`. A fresh build is exactly what
 `cargo test` runs first, so treat this step as unbounded and never let a budget wait
 behind it.
+
+**First exec of a freshly written executable** (macOS, measured 2026-09-30): ~0.44 s
+before the script's first line runs; a second exec of the same file takes ~0.02 s.
+Concurrent first execs are serialised: eight at once finished at 0.44, 0.89, 1.34, 1.77,
+2.19, 2.59, 3.00 and 3.50 s. A test that writes a stub and then lets a daemon budget
+time its first exec pays this inside the budget. Exec the stub once in the test first.
 
 A finding worth flagging for whoever next touches `crates/daemon/src/worktree/ops.rs`:
 `worktree::remove` (called from `remove_with_worktree` step 4) re-runs `dirty_reason` —
