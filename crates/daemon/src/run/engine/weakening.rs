@@ -187,7 +187,7 @@ pub(crate) fn signal_infos(task: &Task) -> Vec<SignalInfo> {
                 (r.findings.iter())
                     .filter(|f| answers(&f.text, &id))
                     .map(|f| answer_text(f, &id, path, line))
-                    .find(|answer| !answer.trim().is_empty())
+                    .find(|answer| !answer.is_empty())
             });
             SignalInfo {
                 kind: kind(signal).to_string(),
@@ -221,9 +221,24 @@ fn answer_text(f: &Finding, id: &str, path: &str, line: Option<u32>) -> String {
         return "critical".to_string();
     }
     let rest = f.text.trim_start().strip_prefix(id).unwrap_or(&f.text);
-    rest.trim_start_matches([' ', ':', '-'])
-        .trim_end()
-        .to_string()
+    let reason = rest.trim_matches(separator);
+    // Ruling C-25: a reason has at least one letter or digit, or it answers nothing.
+    if reason.chars().any(char::is_alphanumeric) {
+        reason.to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// What may surround a reviewer's reason: whitespace, control and zero-width format
+/// characters, and the `:` or `-` after the id (ruling C-25).
+fn separator(c: char) -> bool {
+    c.is_whitespace()
+        || c.is_control()
+        || matches!(
+            c,
+            ':' | '-' | '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}'
+        )
 }
 
 /// A new reviewer round must be refused afresh.

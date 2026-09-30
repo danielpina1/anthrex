@@ -285,3 +285,39 @@ fn an_empty_reason_leaves_the_signal_unanswered() {
         assert_eq!(signals[1].answered.as_deref(), Some("critical"));
     }
 }
+
+/// Ruling C-25 (M3/M4): a reason made only of separators, whitespace, control or
+/// zero-width characters answers nothing; a real reason keeps its text, trimmed.
+#[test]
+fn a_reason_needs_a_letter_or_digit() {
+    for text in [
+        "W1\u{2003}:",
+        "W1 \u{200B}",
+        "W1 \u{7}",
+        "W1 \u{7F}",
+        "W1 \u{FEFF}",
+        "W1 \u{2060}",
+        "W1 : \u{0}",
+        "W1 \u{200C}-\u{200D}",
+        // Punctuation alone is no reason either.
+        "W1 ...",
+        "W1 \u{2014} ?",
+    ] {
+        let mut run = staged_run();
+        task_mut(&mut run, "t1").reviews[0].findings[0] = finding(Severity::Minor, text);
+        assert_eq!(t1_signals(run)[0].answered, None, "{text:?}");
+    }
+    for (text, want) in [
+        ("W1 accepted: x  ", "accepted: x"),
+        ("W1\u{FEFF} accepted: x\u{200B}\u{7}", "accepted: x"),
+        ("W1 : 42", "42"),
+    ] {
+        let mut run = staged_run();
+        task_mut(&mut run, "t1").reviews[0].findings[0] = finding(Severity::Minor, text);
+        assert_eq!(
+            t1_signals(run)[0].answered.as_deref(),
+            Some(want),
+            "{text:?}"
+        );
+    }
+}

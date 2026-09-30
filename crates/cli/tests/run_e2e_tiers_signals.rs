@@ -112,6 +112,26 @@ fn e2e_deleted_test_file_bounces() {
         &tier_plan(&h, SIGNAL_KEYS, &[task("t1", &["mods/b/**"], "")]),
         true,
     );
+    // Ruling C-25 (fail fast): stop at completion, a block, or the claim passing the
+    // done gate without a bounce, which is what a missing bounce looks like.
+    let run = h.wait_run(
+        &id,
+        |r| {
+            let t1 = t(r, "t1");
+            let past_done = matches!(
+                t1.state,
+                TaskState::Check | TaskState::Review | TaskState::MergeQueue | TaskState::Merged
+            );
+            complete(r) || t1.state == TaskState::Blocked || (past_done && t1.bounces.done == 0)
+        },
+        TIER_WAIT,
+    );
+    let t1 = t(&run, "t1");
+    assert_eq!(
+        (t1.bounces.done, t1.rung),
+        (1, 1),
+        "the claim was bounced once"
+    );
     let run = h.wait_run(&id, complete, TIER_WAIT);
     let t1 = t(&run, "t1");
     assert_eq!(t1.state, TaskState::Merged);
@@ -182,7 +202,9 @@ fn e2e_skip_marker_must_be_justified_by_the_reviewer() {
 
 #[test]
 fn e2e_message_to_a_stage() {
-    let h = harness();
+    // Ruling C-25 (fail fast): a worker whose turn ends with no message waiting is
+    // nudged after 5 s, so a stage-2 worker's next input is the message or the nudge.
+    let h = RunHarness::with_config("stall_after_secs = 5", "", &tier_repo_files());
     let go = h.dir.path().join("go");
     let wait = sh(&format!(
         "for i in $(seq 1 1500); do [ -e '{}' ] && exit 0; sleep 0.2; done; exit 1",
@@ -196,7 +218,12 @@ fn e2e_message_to_a_stage() {
     for (task, file) in [("t2", "mods/b/src.txt"), ("t3", "mods/c/src.txt")] {
         h.script(
             &format!("worker-{task}-1"),
-            &[wait.clone(), read(text), commit(file, "2\n"), done(task)],
+            &[
+                wait.clone(),
+                json!({"read_message": {}}),
+                commit(file, "2\n"),
+                done(task),
+            ],
         );
     }
     for task in ["t1", "t2", "t3"] {
@@ -228,12 +255,13 @@ fn e2e_message_to_a_stage() {
         "applied 1 edit; message for t2, t3\n"
     );
     std::fs::write(&go, "").unwrap();
-    until("both stage-2 workers read the message", TIER_WAIT, || {
-        ["worker-t2-1", "worker-t3-1"]
-            .iter()
-            .all(|name| h.io_lines(name, "stdin").iter().any(|l| l.contains(text)))
-            .then_some(())
-    });
+    // Each stage-2 worker's next input after its first turn is the message.
+    for name in ["worker-t2-1", "worker-t3-1"] {
+        let next = until("the stage-2 worker's next input", TIER_WAIT, || {
+            user_texts(&h.io_lines(name, "stdin")).get(1).cloned()
+        });
+        assert!(next.contains(text), "{name}'s next input: {next}");
+    }
     let run = h.wait_run(&id, complete, TIER_WAIT);
     assert!(run.tasks.iter().all(|t| t.state == TaskState::Merged));
     assert!(

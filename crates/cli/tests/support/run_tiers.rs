@@ -20,13 +20,16 @@ use serde_json::Value;
 
 use super::run_harness::{RUN_WAIT, RunHarness};
 
-/// One tiered task path (`docs/timing-budgets.md`): M8a's (`RUN_WAIT`), plus every tier
-/// command these scripts can run on it at the harness's `check_timeout_secs = 10`
-/// (tier 1 and tier 2: `build`, three module tests and a timing step, each test step
-/// retried by name and then whole, 13 commands each; tier 3: `check` and its timing
-/// step with the same retries, 6), 32 commands, 320 s; plus the tier jobs' own git
-/// calls (diffs, materialising, the cache's tree reads: at most 10 at the harness's
-/// 5 s `git_timeout_secs`), 50 s.
+/// A tiered test's wait (`docs/timing-budgets.md`, ruling C-25): M8a's (`RUN_WAIT`),
+/// plus the tier commands the test can run at the harness's `check_timeout_secs = 10`.
+/// A green script never retries, so a task runs at most 10: tier 1 and tier 2 each a
+/// `build`, three module tests and a timing step. The largest test here has three
+/// tasks, whose tier-2 jobs run one at a time through the width-1 merge queue, plus one
+/// tier-3 job (`check` and its timing step): 32 commands, 320 s. A test with a flake
+/// runs one task and adds two retries. The idle tier 3 waits `full_idle_secs` (120 s)
+/// of an idle stage, which none of these runs reach before completion starts its own.
+/// Plus the tier jobs' own git calls (diffs, materialising, cache reads): at most 10
+/// at the harness's 5 s `git_timeout_secs`, 50 s.
 pub const TIER_WAIT: Duration = Duration::from_secs(RUN_WAIT.as_secs() + 320 + 50);
 
 /// Shared by every script: the clock, JSON quoting, one module's verdict, the log line.
