@@ -284,3 +284,47 @@ async fn restore_seeds_ready_proposals() {
     assert_eq!(listed, vec![(ready, 1_790_000_000)]);
     assert_ne!(generation, 0);
 }
+
+/// `save_if_current`, the path every write of a proposal's own work takes: a `Ready`
+/// write is listed, a `Failed` one over it leaves the list, and a write from a stale
+/// generation is neither written nor listed.
+#[tokio::test(flavor = "multi_thread")]
+async fn save_if_current_lists_only_a_current_ready_write() {
+    let rig = Rig::new();
+    let project = repo(rig.dir.path(), "app");
+    rig.store_profile(&project);
+    let (generation, _token) = rig.profiles.register(&project).expect("nothing runs yet");
+
+    let ready = record(&project, ProposalState::Ready, 1_790_000_000);
+    assert!(rig.profiles.save_if_current(generation, &ready).await);
+    assert_eq!(
+        rig.on_disk(&project).map(|r| r.state),
+        Some(ProposalState::Ready)
+    );
+    let (listed_at, listed) = rig.ready();
+    assert_eq!(listed, vec![(project.clone(), ready.updated_at)]);
+
+    let failed_state = ProposalState::Failed {
+        reason: "the check failed".into(),
+    };
+    let failed = record(&project, failed_state.clone(), ready.updated_at + 1);
+    assert!(rig.profiles.save_if_current(generation, &failed).await);
+    assert_eq!(
+        rig.on_disk(&project).map(|r| r.state),
+        Some(failed_state.clone())
+    );
+    let (failed_at, listed) = rig.ready();
+    assert!(listed.is_empty(), "{listed:?}");
+    assert_ne!(failed_at, listed_at);
+
+    rig.profiles.unregister(&project, generation);
+    let (newer, _token) = rig.profiles.register(&project).expect("the old work ended");
+    assert_ne!(newer, generation);
+    let stale = record(&project, ProposalState::Ready, failed.updated_at + 1);
+    assert!(!rig.profiles.save_if_current(generation, &stale).await);
+    assert_eq!(
+        rig.on_disk(&project).map(|r| r.state),
+        Some(failed_state.clone())
+    );
+    assert_eq!(rig.ready(), (failed_at, Vec::new()));
+}
