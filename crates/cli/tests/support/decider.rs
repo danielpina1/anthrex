@@ -16,7 +16,7 @@ use proto::{DeciderMode, DeciderSource};
 use serde_json::Value;
 use serde_json::json;
 
-use super::{fake_agent_bin, tempdir};
+use super::{RunningCommand, fake_agent_bin, tempdir};
 
 /// `deciders.timeout_secs` in every test.
 pub const TIMEOUT_SECS: u64 = 5;
@@ -40,6 +40,9 @@ impl Fixture {
         let bin = fx.dir.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::os::unix::fs::symlink(fake_agent_bin(), bin.join("fake-agent")).unwrap();
+        // `fake-agent` is one file per build, not per fixture, but a fresh build is a
+        // freshly written executable too; see `write_executable`.
+        warm_up(Command::new(fake_agent_bin()).arg("--version"));
         let script = format!(
             "#!/bin/sh\nexport FAKE_AGENT_DECIDER_DIR='{}'\nexport FAKE_AGENT_ENV_FILE='{}'\nexec '{}' \"$@\"\n",
             fx.deciders().display(),
@@ -127,9 +130,40 @@ pub fn context_with(
     DeciderContext::new(&cfg, &manager, &root.join("data"))
 }
 
+/// Set only on [`write_executable`]'s warm-up run: the script exits before its own first
+/// line.
+const WARM_UP_VAR: &str = "ANTHREX_TEST_WARM_UP";
+
+/// A harness deadline for one warm-up exec, not a product budget. Concurrent first execs
+/// are serialised at ~0.44 s each (`docs/timing-budgets.md`, "First exec of a freshly
+/// written executable"), so a warm-up queued behind a full parallel run's stubs can take
+/// seconds; this only turns a wedged exec into a named failure.
+const WARM_UP_BOUND: Duration = Duration::from_secs(60);
+
+/// Writes a `#!/bin/sh` script and executes it once before returning, so its first exec is
+/// not the decider call's.
+///
+/// On macOS the first exec of a freshly written executable waits for a security
+/// assessment before its first line runs: ~0.44 s alone, serialised across processes. The
+/// decider call's budget ([`TIMEOUT_SECS`]) starts before its spawn, so in a full parallel
+/// run a fixture's decider could spend the whole 5 s waiting to start and fall back with
+/// "the decider timed out after 5 s". The warm-up pays that cost here, outside the budget.
+/// A guard after the shebang makes the warm-up run exit before the script body, so a
+/// script with side effects (`mode_off_never_spawns`'s marker) records nothing.
 pub fn write_executable(path: &Path, text: &str) {
-    std::fs::write(path, text).unwrap();
+    let body = text
+        .strip_prefix("#!/bin/sh\n")
+        .expect("write_executable writes #!/bin/sh scripts only");
+    let guarded = format!("#!/bin/sh\n[ -n \"${WARM_UP_VAR}\" ] && exit 0\n{body}");
+    std::fs::write(path, guarded).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    warm_up(Command::new(path).env(WARM_UP_VAR, "1"));
+}
+
+/// Executes `command` once and requires it to exit 0 within [`WARM_UP_BOUND`].
+fn warm_up(command: &mut Command) {
+    let output = RunningCommand::start(command).finish(WARM_UP_BOUND);
+    assert!(output.status.success(), "warm-up exec failed: {output:?}");
 }
 
 pub fn blocked(reason: &str) -> DeciderRequest {

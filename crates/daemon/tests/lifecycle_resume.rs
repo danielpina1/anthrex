@@ -87,6 +87,32 @@ async fn restart_resumes_claude_and_codex_sessions() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+    // Run the fixture once, through its side-effect-free `--version` branch, before the
+    // daemon starts. On macOS the first exec of a freshly written executable waits for a
+    // security assessment (`docs/timing-budgets.md`, "First exec of a freshly written
+    // executable"); paid by the startup probe instead, it would sit inside the probe's
+    // budget that every restart below waits on, against a bound of half that budget.
+    // Before the environment changes below, and waited for, so no spawn overlaps them.
+    {
+        let mut warm = std::process::Command::new(&script)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        // A harness deadline, not a budget: it only turns a wedged exec into a failure.
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let status = loop {
+            if let Some(status) = warm.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "warming the fixture did not finish"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(status.success(), "warming the fixture failed: {status}");
+    }
 
     // M8b.17 review: `ANTHREX_CLAUDE_BIN`/`ANTHREX_CODEX_BIN` win over `config.toml`
     // (config decision 6), so an inherited value (the safety policy points both at a
