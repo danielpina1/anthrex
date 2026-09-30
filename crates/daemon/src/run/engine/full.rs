@@ -13,7 +13,7 @@ use proto::RunState;
 use super::requests::log;
 use super::{Effect, OpId, OpKind, OpResult, ScratchAt, emit_op, next_op, tiers, wake};
 use crate::run::contract::sha7;
-use crate::run::model::{Run, StageRecord};
+use crate::run::model::{InfraFailures, Run, StageRecord};
 use crate::run::slots::Priority;
 use crate::run::tiers::TierSpec;
 
@@ -36,6 +36,14 @@ const WAKE_TESTS: usize = 3;
 /// `bisect::start`.
 const NO_BISECT_YET: &str = "bisecting arrives with task M9.1.15";
 
+/// Ruling C-18: after the executor's own failure number `k` on one commit, the next
+/// pass may start tier 3 again after `INFRA_BACKOFF[k - 1]` seconds; at [`INFRA_MAX`]
+/// failures the stage is held until `run resume`, so the last step is not reached.
+const INFRA_BACKOFF: [u64; 3] = [30, 120, 600];
+const INFRA_MAX: u8 = 3;
+/// A "could not run" line keeps at most this many characters of its message.
+const LINE_MAX: usize = 200;
+
 /// Tier 3 runs at all: a tiered profile with a `check` (decision 20: without one the
 /// run is unverified and tier 3 runs nothing).
 fn active(run: &Run) -> bool {
@@ -51,6 +59,30 @@ fn lacks_green(run: &Run, s: &StageRecord) -> bool {
 /// Stage `s`'s head is the commit its last tier 3 found red.
 fn red_at_head(s: &StageRecord) -> bool {
     s.full.red_at.as_deref() == Some(s.head.as_str())
+}
+
+/// Stage `s`'s executor failures, when they are on its head (ruling C-18).
+fn infra_at_head(s: &StageRecord) -> Option<&InfraFailures> {
+    s.full.infra.as_ref().filter(|i| i.commit == s.head)
+}
+
+/// Stage `s`'s head failed [`INFRA_MAX`] times in a row: held until `run resume`.
+fn infra_held(s: &StageRecord) -> bool {
+    infra_at_head(s).is_some_and(|i| i.count >= INFRA_MAX)
+}
+
+/// Stage `s`'s head may not start tier 3 yet at `now`: held, or within its backoff.
+fn infra_waiting(s: &StageRecord, now: u64) -> bool {
+    infra_at_head(s).is_some_and(|i| {
+        let k = usize::from(i.count.max(1) - 1).min(INFRA_BACKOFF.len() - 1);
+        i.count >= INFRA_MAX || now < i.at.saturating_add(INFRA_BACKOFF[k])
+    })
+}
+
+/// The first non-empty line of `text`, trimmed, at most [`LINE_MAX`] characters.
+fn first_line(text: &str) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty());
+    line.unwrap_or_default().chars().take(LINE_MAX).collect()
 }
 
 /// A tier-3 job or a bisect is in flight: at most one per run (decision 17).
@@ -93,7 +125,7 @@ pub(super) fn idle_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let lowest = run
         .stages
         .iter()
-        .filter(|s| lacks_green(run, s) && !red_at_head(s))
+        .filter(|s| lacks_green(run, s) && !red_at_head(s) && !infra_waiting(s, now))
         .map(|s| s.n)
         .min();
     if let Some(n) = lowest {
@@ -120,6 +152,14 @@ pub(super) fn completion(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
         if !lacks_green(run, s) {
             continue;
         }
+        // Ruling C-18: a held stage is passed over only by a run ending anyway.
+        if infra_waiting(s, now) {
+            if ending(run) && infra_held(s) {
+                red.push(n);
+                continue;
+            }
+            return false;
+        }
         if !red_at_head(s) {
             start(run, n, FullWhy::Completion, now, fx);
             return false;
@@ -135,21 +175,53 @@ pub(super) fn completion(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
         log(
             run,
             now,
-            format!("completing with tier 3 red on stage {}", stages.join(", ")),
+            format!(
+                "completing without a green tier 3 on stage {}",
+                stages.join(", ")
+            ),
         );
     }
     true
 }
 
 /// Decision 19: completion waits while a created stage's head is red, until the head
-/// moves or the run ends anyway. Tiered profiles only.
-pub(super) fn holds_completion(run: &Run) -> bool {
+/// moves or the run ends anyway; ruling C-18: and while its head waits out an executor
+/// failure's backoff, or is held after the last one (unless the run ends anyway).
+/// Tiered profiles only.
+pub(super) fn holds_completion(run: &Run, now: u64) -> bool {
     active(run)
-        && !ending(run)
+        && run.stages.iter().any(|s| {
+            lacks_green(run, s)
+                && ((!ending(run) && red_at_head(s))
+                    || (infra_waiting(s, now) && !(ending(run) && infra_held(s))))
+        })
+}
+
+/// Whether a stage waits red or on an executor failure, whatever the time (the tests'
+/// liveness check: such a run is not stuck).
+#[cfg(test)]
+pub(super) fn waits(run: &Run) -> bool {
+    active(run)
         && run
             .stages
             .iter()
-            .any(|s| lacks_green(run, s) && red_at_head(s))
+            .any(|s| lacks_green(run, s) && (red_at_head(s) || infra_at_head(s).is_some()))
+}
+
+/// `run resume` (ruling C-18): every stage's executor failures are forgotten, so the
+/// next pass retries tier 3. `true` when a stage was held.
+pub(super) fn retry(run: &mut Run, now: u64) -> bool {
+    let mut held = Vec::new();
+    for s in run.stages.iter_mut() {
+        if infra_held(s) {
+            held.push(s.n);
+        }
+        s.full.infra = None;
+    }
+    for n in &held {
+        log(run, now, format!("stage {n}: tier 3 retries (run resume)"));
+    }
+    !held.is_empty()
 }
 
 /// Decision 17(a), 9.2's entry: tier 3 on stage `stage` at `FullStage` priority unless
@@ -170,7 +242,7 @@ pub(crate) fn request(
     let Some(s) = run.stage(stage) else {
         return false;
     };
-    if s.full.green_at.as_deref() == Some(s.head.as_str()) {
+    if s.full.green_at.as_deref() == Some(s.head.as_str()) || infra_waiting(s, now) {
         return false;
     }
     start(run, stage, why, now, fx);
@@ -241,10 +313,13 @@ pub(super) fn full_done(
             for line in tiers::lines(&outcome).into_iter().skip(1) {
                 log(run, now, line);
             }
-            let record = tiers::record(&outcome, now);
+            let mut record = tiers::record(&outcome, now);
+            // Ruling C-18: the commit the record is about.
+            record.commit = commit.clone();
             let failing = record.failing.clone();
             if let Some(s) = stage_mut(run, n) {
                 s.full.last = Some(record);
+                s.full.infra = None;
             }
             if outcome.ok {
                 green(run, n, &commit, outcome.secs, now);
@@ -252,11 +327,8 @@ pub(super) fn full_done(
                 red(run, n, &commit, &failing, now);
             }
         }
-        OpResult::SetupFailed { output } => {
-            let text = format!("setup failed in the tier-3 checkout:\n{output}");
-            could_not(run, n, &commit, &text, now);
-        }
-        OpResult::Failed { message } => could_not(run, n, &commit, &message, now),
+        OpResult::SetupFailed { output } => setup_failed(run, n, &commit, &output, now),
+        OpResult::Failed { message } => infra_failed(run, n, &commit, &message, now),
         _ => {}
     }
 }
@@ -312,22 +384,63 @@ fn red(run: &mut Run, n: u16, commit: &str, failing: &[String], now: u64) {
         )
     };
     mark_red(run, n, commit, attention);
-    wake::note(run, wake_text);
+    wake_on_head(run, n, commit, wake_text);
 }
 
-/// A job that could not run (its setup, or the executor, failed): the commit is red
-/// with the reason, and the run waits as for a red suite (invented, decision 19 names
+/// Ruling C-18: a result on a commit that is no longer the stage head is recorded, but
+/// wakes nobody: the next pass judges the new head.
+fn wake_on_head(run: &mut Run, n: u16, commit: &str, text: String) {
+    if run.stage_head(n) == Some(commit) {
+        wake::note(run, text);
+    }
+}
+
+/// The job's setup failed in `.full`: the commit is red with the reason, it leaves no
+/// record of tests, and the run waits as for a red suite (invented, decision 19 names
 /// no such case; M8a's final check completes anyway).
-fn could_not(run: &mut Run, n: u16, commit: &str, message: &str, now: u64) {
+fn setup_failed(run: &mut Run, n: u16, commit: &str, output: &str, now: u64) {
+    log(
+        run,
+        now,
+        format!("stage {n}: could not run tier 3: setup failed:\n{output}"),
+    );
+    let text = format!(
+        "stage {n}: could not run tier 3: setup failed: {}",
+        first_line(output)
+    );
+    if let Some(s) = stage_mut(run, n) {
+        s.full.last = None;
+        s.full.infra = None;
+    }
+    mark_red(run, n, commit, text.clone());
+    wake_on_head(run, n, commit, text);
+}
+
+/// Ruling C-18: the executor itself failed (not the suite, not its setup). Nothing is
+/// red and nobody is woken: the next pass retries after a backoff, and after
+/// [`INFRA_MAX`] failures in a row on one commit the stage is held for `run resume`.
+fn infra_failed(run: &mut Run, n: u16, commit: &str, message: &str, now: u64) {
     log(
         run,
         now,
         format!("stage {n}: could not run tier 3: {message}"),
     );
-    let line = message.lines().next().unwrap_or_default();
-    let text = format!("stage {n}: could not run tier 3: {line}");
-    mark_red(run, n, commit, text.clone());
-    wake::note(run, text);
+    let line = first_line(message);
+    let Some(s) = stage_mut(run, n) else { return };
+    let count = match &s.full.infra {
+        Some(i) if i.commit == commit => i.count.saturating_add(1),
+        _ => 1,
+    };
+    s.full.infra = Some(InfraFailures {
+        commit: commit.to_string(),
+        count,
+        at: now,
+        line,
+    });
+    if count >= INFRA_MAX {
+        let text = format!("stage {n}: tier 3 held after {count} failures; run resume retries");
+        log(run, now, text);
+    }
 }
 
 fn mark_red(run: &mut Run, n: u16, commit: &str, note: String) {
@@ -341,6 +454,26 @@ fn mark_red(run: &mut Run, n: u16, commit: &str, note: String) {
 /// note (decision 38's line); once it completed red (`final_check_failed`), decision
 /// 19's `tier 3 red on stage <n>: <tests>` in place of M8a's final-check line.
 pub(crate) fn attention(run: &Run) -> Vec<String> {
+    let mut lines = red_lines(run);
+    if run.final_check_failed || !run.state.is_terminal() {
+        // Ruling C-18: a stage held after the executor's failures.
+        for s in run
+            .stages
+            .iter()
+            .filter(|s| lacks_green(run, s) && infra_held(s))
+        {
+            if let Some(i) = infra_at_head(s) {
+                lines.push(format!(
+                    "stage {}: could not run tier 3 ({}); anthrex run resume retries",
+                    s.n, i.line
+                ));
+            }
+        }
+    }
+    lines
+}
+
+fn red_lines(run: &Run) -> Vec<String> {
     let red = run
         .stages
         .iter()
@@ -348,11 +481,12 @@ pub(crate) fn attention(run: &Run) -> Vec<String> {
     if run.final_check_failed {
         return red
             .map(|s| {
+                // Ruling C-18: only a record of the red commit itself names tests.
                 let failing = s
                     .full
                     .last
                     .as_ref()
-                    .filter(|t| !t.ok)
+                    .filter(|t| !t.ok && s.full.red_at.as_deref() == Some(t.commit.as_str()))
                     .map(|t| t.failing.clone())
                     .unwrap_or_default();
                 match (&s.full.note, failing.is_empty()) {

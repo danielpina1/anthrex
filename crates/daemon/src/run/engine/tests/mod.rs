@@ -27,6 +27,7 @@ mod exit_duplicates;
 mod fast_path;
 mod fixture;
 mod full;
+mod full_fixes;
 mod gate_holds;
 mod gate_holds_epics;
 mod gates;

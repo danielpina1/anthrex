@@ -91,6 +91,19 @@ pub struct StageFull {
     pub last: Option<TierRecord>,
     #[serde(default)]
     pub note: Option<String>,
+    /// Ruling C-18: the executor's own failures on one commit, retried with backoff.
+    #[serde(default)]
+    pub infra: Option<InfraFailures>,
+}
+
+/// Ruling C-18: consecutive `Failed` results of tier 3 on `commit`, the last at `at`,
+/// with the first non-empty line of its message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InfraFailures {
+    pub commit: String,
+    pub count: u8,
+    pub at: u64,
+    pub line: String,
 }
 
 /// Decision 36's bisect of a red tier 3 (task M9.1.15).
@@ -158,4 +171,7 @@ pub struct TierRecord {
     #[serde(default)]
     pub failing: Vec<String>,
     pub at: u64,
+    /// Ruling C-18: the commit the job ran on (tier 3; empty for tiers 1 and 2).
+    #[serde(default)]
+    pub commit: String,
 }

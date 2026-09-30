@@ -287,6 +287,18 @@ pub(super) fn resume(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    // Milestone 9.1 ruling C-18: a resume retries tier 3 after the executor's failures;
+    // a running run whose stage was held needs nothing more.
+    if let Some(run) = state.runs.get_mut(run_id)
+        && super::full::retry(run, now)
+        && run.state == RunState::Running
+    {
+        let text = format!("run {run_id}: tier 3 retries");
+        return fx.push(Effect::Reply {
+            reply,
+            result: Ok(text),
+        });
+    }
     let paused = state
         .runs
         .get(run_id)

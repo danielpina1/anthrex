@@ -140,7 +140,7 @@ pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
     // Milestone 9.1 decision 19: a stage red on its head waits for the head to move or
     // for the `finish` edit.
-    if super::full::holds_completion(run) {
+    if super::full::holds_completion(run, now) {
         return;
     }
     let kind = OpKind::VerifyRefs {

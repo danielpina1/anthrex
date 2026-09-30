@@ -25,12 +25,12 @@ use crate::run::snapshot::snapshot;
 use crate::run::tiers::{Affected, Scope, StepKind, StepOutcome, TierOutcome, TierSpec};
 
 /// The tiered profile with room for three writers.
-fn profile() -> String {
+pub(super) fn profile() -> String {
     tiered().replacen("\n[profile]", "\nmax_writers = 3\n[profile]", 1)
 }
 
 /// A tier outcome: tier 3's one `check` step (scope `full`), or a gate job's.
-fn outcome(tier: u8, failing: &[&str]) -> TierOutcome {
+pub(super) fn outcome(tier: u8, failing: &[&str]) -> TierOutcome {
     let ok = failing.is_empty();
     let (scope, affected) = if tier == 3 {
         (Scope::Full, Affected::Full("full suite".into()))
@@ -63,13 +63,13 @@ fn outcome(tier: u8, failing: &[&str]) -> TierOutcome {
     }
 }
 
-fn tier(result: TierOutcome) -> OpResult {
+pub(super) fn tier(result: TierOutcome) -> OpResult {
     OpResult::Tier(Box::new(result))
 }
 
 /// `id` claims done, passes tier 1, and its candidate merges at `at` with a green tier
 /// 2; its worktree removals complete.
-fn merge_tiered(fx: &mut Fixture, id: &str, window: u32, at: &str) -> Vec<Effect> {
+pub(super) fn merge_tiered(fx: &mut Fixture, id: &str, window: u32, at: &str) -> Vec<Effect> {
     claim(fx, id, window, &head_of(id));
     let (op, _) = pending_one(fx, "Tier", Some(id));
     fx.done(op, tier(outcome(1, &[])));
@@ -88,7 +88,7 @@ fn merge_tiered(fx: &mut Fixture, id: &str, window: u32, at: &str) -> Vec<Effect
 }
 
 /// The run-level tier jobs among `effects`.
-fn full_jobs(effects: &[Effect]) -> Vec<(OpId, TierSpec)> {
+pub(super) fn full_jobs(effects: &[Effect]) -> Vec<(OpId, TierSpec)> {
     ops_in(effects, "Tier")
         .into_iter()
         .filter_map(|(op, kind)| match kind {
@@ -99,7 +99,7 @@ fn full_jobs(effects: &[Effect]) -> Vec<(OpId, TierSpec)> {
 }
 
 /// The one pending tier-3 job.
-fn full_job(fx: &Fixture) -> (OpId, TierSpec) {
+pub(super) fn full_job(fx: &Fixture) -> (OpId, TierSpec) {
     match pending_one(fx, "Tier", None) {
         (op, OpKind::Tier(spec)) => (op, *spec),
         _ => unreachable!(),
@@ -107,21 +107,21 @@ fn full_job(fx: &Fixture) -> (OpId, TierSpec) {
 }
 
 /// The step at `now + secs`.
-fn later(fx: &mut Fixture, secs: u64) -> Vec<Effect> {
+pub(super) fn later(fx: &mut Fixture, secs: u64) -> Vec<Effect> {
     fx.send(fx.now + secs, EventKind::Tick)
 }
 
-fn block(fx: &mut Fixture, id: &str, window: u32) {
+pub(super) fn block(fx: &mut Fixture, id: &str, window: u32) {
     let args = json!({"kind": "question", "reason": "which table?"});
     fx.tool_as(proto::AgentRole::Worker, window, id, "task_blocked", args);
     assert_eq!(fx.task(id).state, TaskState::Blocked);
 }
 
-fn attention(fx: &Fixture) -> Vec<String> {
+pub(super) fn attention(fx: &Fixture) -> Vec<String> {
     snapshot(&fx.state, fx.now).runs[0].attention.clone()
 }
 
-fn verify_ok(fx: &mut Fixture) -> Vec<Effect> {
+pub(super) fn verify_ok(fx: &mut Fixture) -> Vec<Effect> {
     let (op, _) = pending_one(fx, "VerifyRefs", None);
     fx.done(op, OpResult::RefsOk)
 }
@@ -281,7 +281,7 @@ fn completion_runs_tier3_per_stage_bottom_up() {
 
 /// A tiered run without `single_test` whose one task merged at `commit(1)`, and whose
 /// completion's tier 3 came back red on `a::works`.
-fn red_at_completion() -> Fixture {
+pub(super) fn red_at_completion() -> Fixture {
     let profile = profile().replace("single_test = \"cargo test -- --exact {test}\"\n", "");
     let (mut fx, windows) = start_on(&profile, &[doc_task("t1", "")]);
     merge_tiered(&mut fx, "t1", window_of(&windows, "t1"), &commit(1));

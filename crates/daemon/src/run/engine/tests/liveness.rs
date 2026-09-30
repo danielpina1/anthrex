@@ -137,7 +137,7 @@ fn assert_run_alive(run: &Run) {
                 .any(|t| t.state == TaskState::Cancelled && t.rounds.iter().any(|r| !r.ended));
             // Milestone 9.1 decision 19: a stage red on its head waits, with attention,
             // for the head to move or the `finish` edit.
-            let red = crate::run::engine::full::holds_completion(run);
+            let red = crate::run::engine::full::waits(run);
             assert!(
                 !done || !run.pending_ops.is_empty() || ending || red,
                 "every task is finished and nothing is pending: {:#?}",

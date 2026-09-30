@@ -135,6 +135,7 @@ pub(super) fn record(outcome: &TierOutcome, now: u64) -> TierRecord {
         flaky: outcome.steps.iter().flat_map(|s| s.flaky.clone()).collect(),
         failing,
         at: now,
+        commit: String::new(),
     }
 }
 
