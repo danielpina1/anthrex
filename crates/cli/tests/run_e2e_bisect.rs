@@ -5,12 +5,12 @@
 
 mod support;
 
-use proto::{AgentRole, RunState, TaskOrigin, TaskState};
+use proto::{AgentRole, FullState, ModelEntry, RunInfo, RunState, TaskOrigin, TaskState};
 use serde_json::{Value, json};
 use support::orch_script::{
     add, edit_plan, marker, passed, plan_task, prompt, until as status_until,
 };
-use support::run_harness::RunHarness;
+use support::run_harness::{REQUEST_WAIT, RunHarness};
 use support::run_orch::{ORCH_LINES, triage_plan};
 use support::run_plans::*;
 use support::run_tiers::*;
@@ -29,6 +29,26 @@ fn bisect_lines(h: &RunHarness) -> Vec<Value> {
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
         .filter(|l| l["type"] == "bisect")
         .collect()
+}
+
+/// The run completed, or cannot: it stopped running (halted, for one), or a task
+/// blocked.
+fn settled(r: &RunInfo) -> bool {
+    !matches!(
+        r.state,
+        RunState::Running | RunState::AwaitingApproval | RunState::Planning
+    ) || r.tasks.iter().any(|t| t.state == TaskState::Blocked)
+}
+
+/// Waits, at most `REQUEST_WAIT`, for the bisect's history line (its effect is an
+/// append the engine emits with the end of the bisect).
+fn the_bisect_line(h: &RunHarness) -> Value {
+    let lines = until("the bisect history line", REQUEST_WAIT, || {
+        let lines = bisect_lines(h);
+        (!lines.is_empty()).then_some(lines)
+    });
+    assert_eq!(lines.len(), 1, "{lines:#?}");
+    lines[0].clone()
 }
 
 /// Whether a logged line ran in the run's tier-3 checkout, `.full`.
@@ -62,7 +82,7 @@ fn e2e_red_tier3_is_bisected_to_the_culprit_and_fixed() {
     // task paths come first: t1, t2, t3.
     let run = h.wait_run(
         &id,
-        |r| r.tasks.iter().any(|t| t.id == "fix1") || !r.attention.is_empty() || complete(r),
+        |r| r.tasks.iter().any(|t| t.id == "fix1") || !r.attention.is_empty() || settled(r),
         3 * TIER_WAIT,
     );
     assert!(
@@ -70,16 +90,55 @@ fn e2e_red_tier3_is_bisected_to_the_culprit_and_fixed() {
         "no fix task: {:?}",
         run.attention
     );
+    // Checked at once (ruling C-26, 2): a bisect that blamed the wrong merge fails
+    // here, not a `TIER_WAIT` later.
+    let line = the_bisect_line(&h);
+    assert_eq!(
+        (&line["stage"], &line["culprit"], &line["fix_task"]),
+        (&json!(1), &json!("t2"), &json!("fix1")),
+        "{line}"
+    );
+    assert_eq!(line["tests"], json!(["b::full"]), "{line}");
+    // Decision 36's probes, in order: the base, the head, then the halving of the
+    // three merges (t1's green, t2's red). The head is t3's merge, so t2's is `~1` and
+    // t1's `~2` on the first-parent line. Decision 33 retries a red run once by name,
+    // so the tier-3 check's red retry comes first, and each red probe runs twice.
+    let head = line["head"].as_str().expect("the bisected head");
+    let base = run_json(&run)["base_sha"].as_str().unwrap().to_string();
+    let at = |rev: &str| h.git(&["rev-parse", &format!("{head}{rev}")]);
+    let probed: Vec<String> = tier_log(&h)
+        .iter()
+        .filter(|l| in_full(l) && args(l) == ["--one", "b::full"])
+        .map(|l| l["head"].as_str().unwrap_or_default().to_string())
+        .collect();
+    let (head, t1, t2) = (head.to_string(), at("~2"), at("~1"));
+    assert_eq!(
+        probed,
+        [&head, &base, &head, &head, &t1, &t2, &t2].map(String::clone),
+        "the single-test runs in .full"
+    );
+    assert_eq!(line["probes"], json!(4), "{line}");
+    let (fix, t2) = (t(&run, "fix1"), t(&run, "t2"));
+    assert_eq!(fix.owns, t2.owns, "the culprit's owns, copied exactly");
+    // Decision 37: the culprit's route one rung up (`roster::escalate`), from the
+    // run's own roster.
+    let roster: Vec<ModelEntry> =
+        serde_json::from_value(run_json(&run)["roster"].clone()).expect("run.json's roster");
+    let up = daemon::run::roster::escalate(&roster, &t2.route);
+    assert_ne!(up, t2.route, "the harness's route has a rung above it");
+    assert_eq!(fix.route, up, "the culprit's route, one rung up");
     // Then fix1's own path.
-    let run = h.wait_run(&id, complete, TIER_WAIT);
+    let run = h.wait_run(&id, settled, TIER_WAIT);
+    assert_eq!(run.state, RunState::Complete, "{}", report(&run));
 
     let fix = t(&run, "fix1");
     assert_eq!(fix.state, TaskState::Merged);
     assert_eq!(fix.origin, TaskOrigin::Bisect);
     assert_eq!(fix.fixes.as_deref(), Some("bisect of t2"));
-    let t2 = t(&run, "t2");
-    assert_eq!(fix.owns, t2.owns, "the culprit's owns, copied exactly");
-    assert_ne!(fix.route, t2.route, "the culprit's route, one rung up");
+    for stage in &run.stages {
+        assert_eq!(stage.full.state, FullState::Green, "{stage:?}");
+        assert_eq!(stage.full.commit, stage.head, "{stage:?}");
+    }
     assert!(
         fix.rounds.iter().any(|r| r.role == AgentRole::Worker),
         "fix1's worker ran"
@@ -87,11 +146,6 @@ fn e2e_red_tier3_is_bisected_to_the_culprit_and_fixed() {
 
     let log = tier_log(&h);
     let full: Vec<_> = log.iter().filter(|l| in_full(l)).collect();
-    let probes: Vec<_> = full
-        .iter()
-        .filter(|l| args(l) == ["--one", "b::full"])
-        .collect();
-    assert!(!probes.is_empty(), "the bisect probed b::full: {full:#?}");
     assert!(
         runs_of(&log, "check.sh")
             .iter()
@@ -100,19 +154,7 @@ fn e2e_red_tier3_is_bisected_to_the_culprit_and_fixed() {
             >= 2,
         "tier 3 ran red, then green after the fix: {full:#?}"
     );
-
-    let bisects = until("the bisect history line", TIER_WAIT, || {
-        let lines = bisect_lines(&h);
-        (!lines.is_empty()).then_some(lines)
-    });
-    assert_eq!(bisects.len(), 1, "{bisects:#?}");
-    let line = &bisects[0];
-    assert_eq!(
-        (&line["stage"], &line["culprit"], &line["fix_task"]),
-        (&json!(1), &json!("t2"), &json!("fix1")),
-        "{line}"
-    );
-    assert_eq!(line["tests"], json!(["b::full"]), "{line}");
+    assert_eq!(bisect_lines(&h).len(), 1, "one bisect only");
 }
 
 /// A tiered stored profile for the orchestrated run, logging to `log`.
@@ -154,7 +196,10 @@ fn e2e_red_tier3_without_a_culprit_wakes_the_orchestrator() {
         ],
     );
     let note = "stage 1 tier 3 red, no single culprit: pair::both; plan a fix";
+    // The plan gate, and the note: t1's and t2's paths one after the other, then
+    // tier 3 and the bisect's probes inside a third `TIER_WAIT` (ruling C-26, 1).
     let long = 3 * TIER_WAIT;
+    let long_ms = u64::try_from(long.as_millis()).unwrap();
     let steps = [
         prompt(),
         edit_plan(
@@ -167,7 +212,8 @@ fn e2e_red_tier3_without_a_culprit_wakes_the_orchestrator() {
         status_until("/gate/state", json!("approved"), long),
         // Idle, it is woken with the note (a `run_status` call would have shown the
         // same attention line and taken the note as seen).
-        json!({"read_message": {"expect": note}}),
+        // Bounded (ruling C-26, 2): a note that never comes fails the script.
+        json!({"read_message": {"expect": note, "timeout_ms": long_ms}}),
         // The orchestrator plans the fix with an ordinary edit.
         edit_plan(
             vec![add(plan_task("t3", &["mods/c/PAIR"], json!({})))],
@@ -187,11 +233,27 @@ fn e2e_red_tier3_without_a_culprit_wakes_the_orchestrator() {
 
     // Fail fast: an orchestrator whose script missed the note exits (its
     // `read_message` expectation fails), and the run would wait for a fix forever.
+    let gone = |r: &RunInfo| r.orchestrator.as_ref().is_some_and(|o| !o.live);
     let run = h.wait_run(
         &id,
-        |r| complete(r) || r.orchestrator.as_ref().is_some_and(|o| !o.live),
-        4 * TIER_WAIT,
+        |r| settled(r) || gone(r) || !bisect_lines(&h).is_empty(),
+        long,
     );
+    assert!(
+        !bisect_lines(&h).is_empty(),
+        "no bisect ended: {}",
+        report(&run)
+    );
+    // The bisect has ended without a culprit: the idle orchestrator is woken within
+    // one engine step, the driver's tick and `wake_quiet_secs` (1 s).
+    until("the wake note", REQUEST_WAIT, || {
+        h.read_messages(ORCH)
+            .iter()
+            .any(|m| m["text"].as_str().is_some_and(|t| t.contains(note)))
+            .then_some(())
+    });
+    // Then t3's path and tier 3 again.
+    let run = h.wait_run(&id, |r| settled(r) || gone(r), TIER_WAIT);
     assert_eq!(run.state, RunState::Complete, "{:?}", run.attention);
     assert_eq!(t(&run, "t3").state, TaskState::Merged);
     assert!(
@@ -218,6 +280,21 @@ fn e2e_red_tier3_without_a_culprit_wakes_the_orchestrator() {
     );
     let bisects = bisect_lines(&h);
     assert_eq!(bisects.len(), 1, "{bisects:#?}");
-    assert_eq!(bisects[0]["culprit"], Value::Null);
-    assert_eq!(bisects[0]["fix_task"], Value::Null);
+    let line = &bisects[0];
+    assert_eq!(line["culprit"], Value::Null);
+    assert_eq!(line["fix_task"], Value::Null);
+    // The no-culprit branch this scenario is built for (ruling C-26, 4): the failing
+    // test passes alone at the head, which holds both markers.
+    let head = line["head"].as_str().expect("the bisected head");
+    for marker in ["mods/a/PAIR", "mods/c/PAIR"] {
+        h.git(&["cat-file", "-e", &format!("{head}:{marker}")]);
+    }
+    assert_eq!(
+        line["reason"],
+        json!(format!(
+            "the failing tests pass alone at {}; they fail only with the whole suite",
+            &head[..7]
+        )),
+        "{line}"
+    );
 }

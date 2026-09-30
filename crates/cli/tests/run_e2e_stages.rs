@@ -5,9 +5,11 @@
 
 mod support;
 
-use proto::{TaskOrigin, TaskState};
-use serde_json::Value;
-use support::run_harness::RunHarness;
+use std::time::Duration;
+
+use proto::{RunState, TaskOrigin, TaskState};
+use serde_json::{Value, json};
+use support::run_harness::{REQUEST_WAIT, RunHarness};
 use support::run_plans::*;
 use support::run_tiers::*;
 
@@ -20,13 +22,48 @@ fn green(h: &RunHarness, id: &str, steps: &[Value]) {
     h.script(&format!("reviewer-{id}-1"), &[approve()]);
 }
 
-/// A worker step that waits, at most one `RUN_WAIT` (1500 × 0.2 s), for `path`, with
-/// its turn open.
-fn wait_for(path: &std::path::Path) -> Value {
-    sh(&format!(
-        "for i in $(seq 1 1500); do [ -e '{}' ] && exit 0; sleep 0.2; done; exit 1",
-        path.display()
-    ))
+/// One `sh` step's share of a wait: 1500 polls of 0.2 s, inside `fake-agent`'s
+/// `SH_TIMEOUT` (330 s).
+const SH_SHARE: Duration = Duration::from_secs(300);
+
+/// Worker steps that wait for `path`, with the turn open, for at least `within`: the
+/// test's own bound on everything before it writes `path` (ruling C-26, 1). The wait is
+/// as many `sh` steps as `within` needs. A wait that runs out leaves [`missed`]'s
+/// marker, which the test asserts is absent, and an `expect` fails the worker (exit 3).
+/// The exit alone is not loud enough: the engine resumes a dead worker's session, and
+/// the resumed script waits again.
+fn wait_for(path: &std::path::Path, within: Duration) -> Vec<Value> {
+    let steps = within.as_secs().div_ceil(SH_SHARE.as_secs());
+    let (p, m) = (path.display(), missed(path).display().to_string());
+    let mut out: Vec<Value> = (0..steps)
+        .map(|_| {
+            sh(&format!(
+                "for i in $(seq 1 1500); do [ -e '{p}' ] && break; sleep 0.2; done; \
+                 if [ -e '{p}' ]; then echo '{{\"go\":true}}'; else touch '{m}'; echo '{{\"go\":false}}'; fi"
+            ))
+        })
+        .collect();
+    out.push(json!({"expect": {"pointer": "/go", "equals": true}}));
+    out
+}
+
+/// The marker a [`wait_for`] that ran out leaves beside `path`.
+fn missed(path: &std::path::Path) -> std::path::PathBuf {
+    path.with_extension("missed")
+}
+
+/// The run completed, or cannot: it stopped running (halted, for one), or a task
+/// blocked (a worker whose wait failed, for one).
+fn settled(r: &proto::RunInfo) -> bool {
+    !matches!(
+        r.state,
+        RunState::Running | RunState::AwaitingApproval | RunState::Planning
+    ) || r.tasks.iter().any(|t| t.state == TaskState::Blocked)
+}
+
+/// Whether task `id` has finished, merged or otherwise.
+fn finished(r: &proto::RunInfo, id: &str) -> bool {
+    t(r, id).state.is_finished()
 }
 
 fn head(h: &RunHarness, id: &str, branch: &str) -> String {
@@ -37,10 +74,7 @@ fn head(h: &RunHarness, id: &str, branch: &str) -> String {
 fn wait_merged(h: &RunHarness, id: &str, task: &str) {
     let run = h.wait_run(
         id,
-        |r| {
-            let state = t(r, task).state;
-            state == TaskState::Merged || state == TaskState::Blocked || complete(r)
-        },
+        |r| t(r, task).state == TaskState::Merged || settled(r),
         TIER_WAIT,
     );
     assert_eq!(t(&run, task).state, TaskState::Merged, "{task}");
@@ -52,11 +86,11 @@ fn e2e_two_stages_build_their_branches_and_propagate() {
     let go = h.dir.path().join("go");
     green(&h, "t1", &[commit("mods/a/src.txt", "a2\n"), done("a")]);
     // t2 merges into stage 1 late: after stage 2's own task.
-    green(
-        &h,
-        "t2",
-        &[wait_for(&go), commit("mods/b/src.txt", "b2\n"), done("b")],
-    );
+    // Everything before the test writes `go` is `wait_merged(t3)`: one `TIER_WAIT`,
+    // plus a `REQUEST_WAIT` of slack for the write.
+    let mut steps = wait_for(&go, TIER_WAIT + REQUEST_WAIT);
+    steps.extend([commit("mods/b/src.txt", "b2\n"), done("b")]);
+    green(&h, "t2", &steps);
     green(&h, "t3", &[commit("mods/c/src.txt", "c2\n"), done("c")]);
     let tasks = [
         task("t1", &["mods/a/src.txt"], ""),
@@ -65,10 +99,18 @@ fn e2e_two_stages_build_their_branches_and_propagate() {
     ];
     let id = h.start(&tier_plan(&h, "", &tasks), true);
     wait_merged(&h, &id, "t3");
+    // The premise: t2 merges into stage 1 only after stage 2 exists and holds t3.
+    let run = h.run(&id).expect("the run");
+    assert!(!finished(&run, "t2"), "t2 finished early: {}", report(&run));
+    assert!(!missed(&go).exists(), "t2's wait ran out before `go`");
     std::fs::write(&go, "").unwrap();
     // t1 and t3 side by side, then t2 (`k = 2`).
-    let run = h.wait_run(&id, complete, 2 * TIER_WAIT);
-    assert!(run.tasks.iter().all(|t| t.state == TaskState::Merged));
+    let run = h.wait_run(&id, settled, 2 * TIER_WAIT);
+    assert!(
+        run.tasks.iter().all(|t| t.state == TaskState::Merged),
+        "{}",
+        report(&run)
+    );
 
     let (one, two) = (head(&h, &id, "stage-1"), head(&h, &id, "stage-2"));
     assert_eq!(
@@ -104,15 +146,11 @@ fn e2e_propagate_conflict_is_resolved_by_a_sync_task() {
     // C-14 (b)). A task added to stage 1 once stage 2's has started is not, so t3,
     // added after t2 merged, changes the line t2 changed, and its merge into stage 1
     // conflicts when it is propagated. t1 holds the run open until then.
-    green(
-        &h,
-        "t1",
-        &[
-            wait_for(&go),
-            commit("docs/guide.md", "guide 2\n"),
-            done("docs"),
-        ],
-    );
+    // Everything before the test writes `go`: `wait_merged(t2)`, the edit request,
+    // `wait_merged(t3)`, and the wait for fix1, plus a `REQUEST_WAIT` of slack.
+    let mut steps = wait_for(&go, 3 * TIER_WAIT + 2 * REQUEST_WAIT);
+    steps.extend([commit("docs/guide.md", "guide 2\n"), done("docs")]);
+    green(&h, "t1", &steps);
     green(&h, "t2", &[commit("mods/a/src.txt", "a2\n"), done("a2")]);
     green(&h, "t3", &[commit("mods/a/src.txt", "a1\n"), done("a1")]);
     green(
@@ -146,7 +184,7 @@ fn e2e_propagate_conflict_is_resolved_by_a_sync_task() {
     // Fail fast: the conflict either adds the sync task or leaves an attention line.
     let run = h.wait_run(
         &id,
-        |r| r.tasks.iter().any(|t| t.id == "fix1") || !r.attention.is_empty(),
+        |r| r.tasks.iter().any(|t| t.id == "fix1") || !r.attention.is_empty() || settled(r),
         TIER_WAIT,
     );
     assert!(
@@ -154,9 +192,13 @@ fn e2e_propagate_conflict_is_resolved_by_a_sync_task() {
         "no sync task: {:?}",
         run.attention
     );
+    // The premise: t1 still holds the run open.
+    assert!(!finished(&run, "t1"), "t1 finished early: {}", report(&run));
+    assert!(!missed(&go).exists(), "t1's wait ran out before `go`");
     std::fs::write(&go, "").unwrap();
     // The sync task, then t1 (`k = 2` after t3's merge).
-    let run = h.wait_run(&id, complete, 2 * TIER_WAIT);
+    let run = h.wait_run(&id, settled, 2 * TIER_WAIT);
+    assert_eq!(run.state, RunState::Complete, "{}", report(&run));
 
     let fix = run
         .tasks
@@ -181,15 +223,43 @@ fn e2e_propagate_conflict_is_resolved_by_a_sync_task() {
 fn e2e_completion_waits_for_every_stage_green() {
     let h = harness();
     green(&h, "t1", &[commit("mods/a/src.txt", "a2\n"), done("a")]);
-    green(&h, "t2", &[commit("mods/c/src.txt", "c2\n"), done("c")]);
+    // t2 depends on t1, so stage 2 is created once t1 has merged into stage 1: from
+    // stage 1's head, not the run's base (ruling C-26, 5). t2's worker records what
+    // its worktree holds of t1's file before it changes anything.
+    let seen = h.dir.path().join("seen");
+    green(
+        &h,
+        "t2",
+        &[
+            sh(&format!("cat mods/a/src.txt > '{}'", seen.display())),
+            commit("mods/c/src.txt", "c2\n"),
+            done("c"),
+        ],
+    );
     let tasks = [
         task("t1", &["mods/a/src.txt"], ""),
-        task("t2", &["mods/c/src.txt"], "stage = 2"),
+        task("t2", &["mods/c/src.txt"], "stage = 2\ndeps = [\"t1\"]"),
     ];
     let id = h.start(&tier_plan(&h, "", &tasks), true);
-    let run = h.wait_run(&id, complete, 2 * TIER_WAIT);
+    // t1, then t2 (`k = 2`).
+    let run = h.wait_run(&id, settled, 2 * TIER_WAIT);
+    assert_eq!(run.state, RunState::Complete, "{}", report(&run));
     let (one, two) = (head(&h, &id, "stage-1"), head(&h, &id, "stage-2"));
     assert_ne!(one, two);
+
+    // Stage 2 started from stage 1's head (t1's merge, stage 1's only one), so t2's
+    // worktree held t1's work and no propagate was needed.
+    assert_eq!(std::fs::read_to_string(&seen).unwrap(), "a2\n");
+    let json = run_json(&run);
+    let created: Vec<_> = json["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["created_from"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(created[1], one, "stage 2's base: {created:?}");
+    let log = h.git(&["log", "--format=%s", &format!("anthrex/{id}/stage-2")]);
+    assert!(!log.contains("anthrex: propagate"), "{log}");
 
     // Tier 3 ran on stage 1's head, then on stage 2's, in `.full`.
     let full: Vec<String> = runs_of(&tier_log(&h), "check.sh")
