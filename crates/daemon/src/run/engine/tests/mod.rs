@@ -80,6 +80,7 @@ mod role_history_ends;
 mod run_scouts;
 mod scenarios;
 mod scenarios_c27;
+mod scenarios_c28;
 mod scenarios_restart;
 mod stage_infos;
 mod stages;

@@ -31,6 +31,13 @@ const PROBE_FAILURES_MAX: u8 = 3;
 /// Decision 38's wake notes name at most this many tests.
 const WAKE_TESTS: usize = 3;
 
+#[path = "bisect_end.rs"]
+mod ended;
+#[cfg(test)]
+pub(crate) use ended::REBASELINED;
+pub(super) use ended::rebaselined;
+use ended::{end, end_with, record};
+
 fn commit_of(m: &StageMerge) -> &str {
     match m {
         StageMerge::Task { commit, .. } | StageMerge::Propagate { commit, .. } => commit,
@@ -43,8 +50,8 @@ fn first(tests: &[String], k: usize) -> String {
 }
 
 /// Decision 36's range: `G`, the stage's last green tier 3 when it is on the stage's
-/// line (else its creation point), and the merges after it up to `head`, in order.
-/// `None` when `head` is not one of those merges.
+/// line (else its floor, ruling C-28 (1), else its creation point), and the merges
+/// after it up to `head`, in order. `None` when `head` is not one of those merges.
 fn range(s: &StageRecord, head: &str) -> Option<(String, Vec<StageMerge>)> {
     let green = s.full.green_at.as_deref().and_then(|g| {
         s.merges
@@ -52,7 +59,8 @@ fn range(s: &StageRecord, head: &str) -> Option<(String, Vec<StageMerge>)> {
             .position(|m| commit_of(m) == g)
             .map(|k| (g, k + 1))
     });
-    let (base, from) = green.unwrap_or((s.created_from.as_str(), 0));
+    let floor = s.floor.as_deref().unwrap_or(s.created_from.as_str());
+    let (base, from) = green.unwrap_or((floor, 0));
     let to = s.merges.iter().rposition(|m| commit_of(m) == head)?;
     (to >= from).then(|| (base.to_string(), s.merges[from..=to].to_vec()))
 }
@@ -377,12 +385,22 @@ fn probed(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    let floor = run.stage(n).and_then(|s| s.floor.clone());
     let Some(b) = stage_mut(run, n).and_then(|s| s.bisect.as_mut()) else {
         return;
     };
     match (probe, red) {
         (Probe::Base, true) => {
-            let reason = format!("the failing tests already fail at {}", sha7(&b.base));
+            let floored = floor.as_ref() == Some(&b.base);
+            let reason = if floored {
+                // Ruling C-28 (1): the line below the floor is not the engine's.
+                format!(
+                    "red before the rebaselined head {}; not bisected",
+                    sha7(&b.base)
+                )
+            } else {
+                format!("the failing tests already fail at {}", sha7(&b.base))
+            };
             return end(run, n, reason, now, fx);
         }
         (Probe::Head, false) => {
@@ -520,76 +538,4 @@ fn add_fix(
         Err(_) if up != task.route => fixes::add_fix(run, spec(&task.route), now, fx),
         Err(message) => Err(message),
     }
-}
-
-/// Ruling C-27 (3): a rebaseline moved stage `n`'s head, so its bisect (if any) ends
-/// `rebaselined`: its history line is written as any ended bisect's is, its pending
-/// probe is dropped (a late result finds no bisect and no pending op, and is ignored),
-/// and nothing is marked red and nobody is woken: tier 3 is due for the new head.
-pub(super) fn rebaselined(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
-    let Some(b) = stage_mut(run, n).and_then(|s| s.bisect.take()) else {
-        return;
-    };
-    if let Some((op, _)) = b.probe {
-        run.pending_ops.remove(&op);
-        if run.full_op == Some(op) {
-            run.full_op = None;
-        }
-    }
-    record(run, n, &b, BisectResult::None(REBASELINED), now, fx);
-    log(run, now, format!("stage {n}: bisect ended: {REBASELINED}"));
-}
-
-/// Ruling C-27 (3): the reason of a bisect a rebaseline ended.
-pub(crate) const REBASELINED: &str = "rebaselined";
-
-/// Decision 38: the bisect of stage `n` ends without a culprit, for `reason`.
-fn end(run: &mut Run, n: u16, reason: String, now: u64, fx: &mut Vec<Effect>) {
-    let Some(b) = stage_mut(run, n).and_then(|s| s.bisect.take()) else {
-        return;
-    };
-    if run
-        .full_op
-        .is_some_and(|op| b.probe.is_some_and(|(p, _)| p == op))
-    {
-        run.full_op = None;
-    }
-    record(run, n, &b, BisectResult::None(&reason), now, fx);
-    end_with(run, n, &b, reason, now);
-}
-
-fn end_with(run: &mut Run, n: u16, b: &BisectRecord, reason: String, now: u64) {
-    log(
-        run,
-        now,
-        format!("stage {n}: bisect ended without a culprit: {reason}"),
-    );
-    full::no_culprit(run, n, &b.head, &b.tests, &reason);
-}
-
-/// Decision 57: the ended bisect's `bisect` history line, numbered in its stage.
-fn record(
-    run: &mut Run,
-    n: u16,
-    b: &BisectRecord,
-    result: BisectResult<'_>,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let Some(s) = stage_mut(run, n) else {
-        return;
-    };
-    s.full.bisects = s.full.bisects.saturating_add(1);
-    let seq = s.full.bisects;
-    let (culprit, fix_task, reason) = result.parts();
-    s.full.ended.push(crate::run::model::BisectEnd {
-        head: b.head.clone(),
-        range: u32::try_from(b.candidates.len()).unwrap_or(u32::MAX),
-        probes: b.probes,
-        culprit: culprit.map(str::to_string),
-        fix_task: fix_task.map(str::to_string),
-        reason: reason.map(str::to_string),
-        at: now,
-    });
-    super::history::bisect_ended(run, (n, seq), b, result, now, fx);
 }

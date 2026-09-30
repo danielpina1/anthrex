@@ -35,6 +35,11 @@ pub struct StageRecord {
     /// The first-parent line the engine wrote, in order.
     #[serde(default)]
     pub merges: Vec<StageMerge>,
+    /// Ruling C-28 (1): the commit a rebaseline set the stage's head to when the engine
+    /// never recorded it on the stage's line; `merges` start after it, and a bisect's
+    /// `G` is at least this far up. `None` for a line the engine wrote from creation.
+    #[serde(default)]
+    pub floor: Option<String>,
     /// Decision 48: the task ids whose merges the stage head contains.
     #[serde(default)]
     pub tasks_in: BTreeSet<String>,
@@ -64,6 +69,7 @@ impl StageRecord {
             created_from: from.to_string(),
             created_at: now,
             merges: Vec::new(),
+            floor: None,
             tasks_in,
             synced_from: None,
             last_green_candidate: None,

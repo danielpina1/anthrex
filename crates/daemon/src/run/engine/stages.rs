@@ -310,7 +310,7 @@ pub(super) fn rebaseline(
 /// Ruling C-27 (3), for stage `n` whose head the rebaseline moved: its first-parent
 /// record ends at the new head (up to and including the merge that is the new head;
 /// empty when the head is the stage's creation point, or a commit the engine never
-/// wrote there), a bisect in flight ends `rebaselined` (its pending probe dropped, so a
+/// wrote there, which becomes the stage's `floor`, ruling C-28 (1)), a bisect in flight ends `rebaselined` (its pending probe dropped, so a
 /// late result is ignored, and no fix task is ever made from it), and a green or red
 /// tier 3 on a commit no longer on the line is forgotten, so tier 3 is due for the new
 /// head by the ordinary rules.
@@ -323,11 +323,18 @@ fn moved_line(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
         StageMerge::Task { commit, .. } | StageMerge::Propagate { commit, .. } => commit.clone(),
     };
     match record.merges.iter().position(|m| commit(m) == record.head) {
+        // Ruling C-28 (1): a truncation to a recorded merge keeps the floor.
         Some(k) => record.merges.truncate(k + 1),
-        None => record.merges.clear(),
+        None => {
+            record.merges.clear();
+            // Ruling C-28 (1): a head the engine never wrote on the line is its new
+            // floor; the creation point needs none.
+            record.floor = (record.head != record.created_from).then(|| record.head.clone());
+        }
     }
     let on_line = |c: &String, record: &StageRecord| {
         *c == record.created_from
+            || record.floor.as_ref() == Some(c)
             || *c == record.head
             || record.merges.iter().any(|m| commit(m) == *c)
     };
