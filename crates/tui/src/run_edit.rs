@@ -269,8 +269,12 @@ impl TaskEditForm {
     /// one (decision 55). The daemon's validation answers an invalid move inline.
     pub fn in_run(run: &RunInfo, task: &TaskInfo) -> Self {
         let mut form = Self::new(&run.run_id, task);
-        let not_started =
-            matches!(task.state, TaskState::Pending | TaskState::Queued) && task.rounds.is_empty();
+        // The daemon's `not_started` (a message pause has started), and no round yet.
+        let not_started = matches!(
+            task.state,
+            TaskState::Pending | TaskState::Queued | TaskState::Blocked
+        ) && !crate::tree::is_paused(task)
+            && task.rounds.is_empty();
         if not_started {
             let highest = (run.tasks.iter().map(|t| t.stage))
                 .chain(u16::try_from(run.stages.len()))

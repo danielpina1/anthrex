@@ -239,3 +239,49 @@ fn a_tier_check_carries_its_tier() {
     assert_eq!((tier.tier, tier.ok), (2, false));
     assert_eq!(t1.tier, Some(tier));
 }
+
+fn t1_signals(run: Run) -> Vec<SignalInfo> {
+    let info = published(run);
+    info.tasks
+        .iter()
+        .find(|t| t.id == "t1")
+        .unwrap()
+        .weakening
+        .clone()
+}
+
+/// A later review of the same head still in flight (no verdict) does not hide the
+/// answer of the last one that has a verdict, and an earlier verdict on that head does
+/// not win over it.
+#[test]
+fn an_in_flight_review_of_the_head_keeps_the_last_answer() {
+    let mut run = staged_run();
+    let t1 = task_mut(&mut run, "t1");
+    let mut earlier = t1.reviews[0].clone();
+    earlier.round = 0;
+    earlier.findings = vec![finding(Severity::Minor, "W1 an older reason")];
+    t1.reviews.insert(0, earlier);
+    let mut round2 = t1.reviews[1].clone();
+    round2.round = 2;
+    round2.verdict = None;
+    round2.findings = vec![finding(Severity::Minor, "W1 draft answer")];
+    t1.reviews.push(round2);
+    let signals = t1_signals(run);
+    assert_eq!(
+        signals[0].answered.as_deref(),
+        Some("accepted: the tests moved to tests/new.rs")
+    );
+}
+
+/// A finding that is only the id, with no reason, does not answer it.
+#[test]
+fn an_empty_reason_leaves_the_signal_unanswered() {
+    for text in ["W1", "W1:", "W1 -  ", "  W1 : "] {
+        let mut run = staged_run();
+        task_mut(&mut run, "t1").reviews[0].findings[0] = finding(Severity::Minor, text);
+        let signals = t1_signals(run);
+        assert_eq!(signals[0].answered, None, "{text:?}");
+        // The other answers are untouched.
+        assert_eq!(signals[1].answered.as_deref(), Some("critical"));
+    }
+}

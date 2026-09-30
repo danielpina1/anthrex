@@ -83,3 +83,49 @@ fn a_started_task_has_no_stage_field() {
             .contains(&EditField::Stage)
     );
 }
+
+fn has_stage_field(run: &proto::RunInfo, task: &proto::TaskInfo) -> bool {
+    TaskEditForm::in_run(run, task)
+        .visible_fields()
+        .contains(&EditField::Stage)
+}
+
+/// The daemon's `not_started` (pending, queued or blocked, not paused by a message),
+/// and no agent round yet.
+#[test]
+fn the_stage_field_follows_the_daemons_not_started() {
+    use proto::{BlockInfo, BlockReason};
+    let (mut snap, _) = staged_gate_fixture();
+    let run = snap.runs.remove(0);
+    let mut task = run.tasks[0].clone();
+    task.state = TaskState::Blocked;
+    task.block = Some(BlockInfo {
+        reason: BlockReason::MisSized,
+        text: "check failed 3 times".into(),
+    });
+    assert!(has_stage_field(&run, &task), "blocked, not started");
+    task.block = Some(BlockInfo {
+        reason: BlockReason::MessagePause,
+        text: String::new(),
+    });
+    assert!(!has_stage_field(&run, &task), "paused by a message");
+
+    // A task with a round has started, whatever its state says.
+    let (three, _) = crate::tree::run_fixtures::three_task_fixture();
+    let mut worked = three.runs[0].tasks[0].clone();
+    assert!(!worked.rounds.is_empty());
+    worked.state = TaskState::Pending;
+    assert!(!has_stage_field(&run, &worked), "a task with a round");
+}
+
+/// The form is stale once the task's stage moved elsewhere, as for its other fields.
+#[test]
+fn a_moved_stage_makes_the_form_stale() {
+    let (mut snap, _) = staged_gate_fixture();
+    let run = snap.runs.remove(0);
+    let mut task = run.tasks[1].clone();
+    let form = TaskEditForm::in_run(&run, &task);
+    assert!(form.opened_from(&task));
+    task.stage = 1;
+    assert!(!form.opened_from(&task));
+}

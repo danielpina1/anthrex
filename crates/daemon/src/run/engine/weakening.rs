@@ -182,9 +182,13 @@ pub(crate) fn signal_infos(task: &Task) -> Vec<SignalInfo> {
                 .strip_prefix(&format!("- {id} "))
                 .map(str::to_string)
                 .unwrap_or_default();
-            let answered = review
-                .and_then(|r| r.findings.iter().find(|f| answers(&f.text, &id)))
-                .map(|f| answer_text(f, &id, path, line));
+            // A finding that is only the id, with no reason, answers nothing.
+            let answered = review.and_then(|r| {
+                (r.findings.iter())
+                    .filter(|f| answers(&f.text, &id))
+                    .map(|f| answer_text(f, &id, path, line))
+                    .find(|answer| !answer.trim().is_empty())
+            });
             SignalInfo {
                 kind: kind(signal).to_string(),
                 path: path.to_string(),
@@ -217,7 +221,9 @@ fn answer_text(f: &Finding, id: &str, path: &str, line: Option<u32>) -> String {
         return "critical".to_string();
     }
     let rest = f.text.trim_start().strip_prefix(id).unwrap_or(&f.text);
-    rest.trim_start_matches([' ', ':', '-']).to_string()
+    rest.trim_start_matches([' ', ':', '-'])
+        .trim_end()
+        .to_string()
 }
 
 /// A new reviewer round must be refused afresh.

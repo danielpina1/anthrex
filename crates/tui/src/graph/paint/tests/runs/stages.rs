@@ -123,3 +123,30 @@ fn fix_task_row_shows_its_origin() {
     assert_eq!(text("fix1"), "fix1 fix t2 S (bisect)");
     assert_eq!(text("t1"), "t1 reset model S");
 }
+
+/// A stage is dimmed as finished only when every task merged and tier 3 is green on
+/// its head (decision 16's dimming, extended to stages).
+#[test]
+fn a_stage_is_dim_only_when_merged_and_green() {
+    use proto::FullState;
+    for (merged, state, dim) in [
+        (3, FullState::Green, true),
+        (2, FullState::Green, false),
+        (3, FullState::Red, false),
+        (3, FullState::None, false),
+    ] {
+        let (mut snap, windows) = staged_fixture();
+        snap.runs[0].stages[0].merged = merged;
+        snap.runs[0].stages[0].full.state = state;
+        let app = app_of((snap, windows));
+        let (layout, lines) = paint_view(&app);
+        let rect = rect_of(&layout, &stage_key(1));
+        for (x, y) in all_cells(rect) {
+            assert_eq!(
+                style_at(&lines, x, y).add_modifier.contains(Modifier::DIM),
+                dim,
+                "{merged} merged, {state:?}: cell ({x}, {y})"
+            );
+        }
+    }
+}
