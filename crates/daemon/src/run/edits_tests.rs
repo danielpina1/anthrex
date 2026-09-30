@@ -484,3 +484,6 @@ mod state;
 
 #[path = "edits_tests_orch.rs"]
 mod orch;
+
+#[path = "edits_tests_stages.rs"]
+mod stages;

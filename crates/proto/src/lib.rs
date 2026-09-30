@@ -111,7 +111,7 @@ pub use profile::{
 pub use run::{
     AgentRole, BlockReason, Budget, DoneSignal, EditFile, Effort, Finding, FinishAction,
     GateCounts, GateKind, ModelEntry, Plan, PlanEdit, PlanTask, ProfileSpec, Route, RouteSpec,
-    RunRef, RunState, Severity, Size, Strength, TaskKind, TaskState, TestMode, Verdict,
+    RunRef, RunState, STAGES_MAX, Severity, Size, Strength, TaskKind, TaskState, TestMode, Verdict,
 };
 pub use run_info::{
     AgentRoundInfo, BaseMovedInfo, BlockInfo, CheckInfo, PlanEditInfo, ProofInfo, ReviewInfo,

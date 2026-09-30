@@ -472,3 +472,6 @@ mod fields;
 
 #[path = "validate_tests_kinds.rs"]
 mod kinds;
+
+#[path = "validate_tests_stages.rs"]
+mod stages;

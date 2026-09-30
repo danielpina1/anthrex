@@ -239,6 +239,9 @@ fn first_stage() -> u16 {
     1
 }
 
+/// Milestone 9.1 decision 44: the highest stage a task may name.
+pub const STAGES_MAX: u16 = 32;
+
 /// A whole plan file, parsed with `toml::from_str`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

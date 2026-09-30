@@ -74,18 +74,27 @@ fn reserved_id_running() {
 }
 
 /// M9.2 review ruling 5, pinning: a task id cannot contain `:`, so no task id can be
-/// read as a `stage:<n>` message target.
+/// read as a `stage:<n>` message target. Since milestone 9.1 (decision 45) `stage-3`
+/// is refused too, as the name of a stage branch.
 #[test]
 fn a_task_id_cannot_look_like_a_stage_target() {
     let text = plan_with(PROFILE, &[one("stage:3", ""), one("stage-3", "")]);
     assert_eq!(
         errors_of(&text),
-        vec![err(
-            Some("stage:3"),
-            "id",
-            "id",
-            "must match ^[a-z0-9][a-z0-9-]{0,15}$"
-        )]
+        vec![
+            err(
+                Some("stage:3"),
+                "id",
+                "id",
+                "must match ^[a-z0-9][a-z0-9-]{0,15}$"
+            ),
+            err(
+                Some("stage-3"),
+                "id",
+                "id",
+                "stage-3 is reserved for stage branches"
+            ),
+        ]
     );
 }
 

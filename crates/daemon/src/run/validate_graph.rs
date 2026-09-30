@@ -1,8 +1,9 @@
 //! The cross-task rules, split out of `validate.rs` by rule family: task count, ids,
 //! the dependency graph (decision 12), the L rule for touched tasks (decisions 9 and
 //! 13), runtime overlap (decision 11) and the edit area (decision 12), plus implicit
-//! dependencies (decision 41). Pure — no `std::fs`, `std::process`, `std::thread`,
-//! `tokio` or `std::time::SystemTime` (design decision 2).
+//! dependencies (decision 41); milestone 9.1's stage rules are `validate_stages.rs`.
+//! Pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or
+//! `std::time::SystemTime` (design decision 2).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,6 +12,7 @@ use proto::{Runtime, Size, TaskState};
 use super::globs::{any_intersect, inside_area, intersects, literal_prefix};
 use super::model::Task;
 use super::plan::PlanError;
+use super::validate_stages::stage_rules;
 
 /// Where an edit batch may reach: the whole run, or (for M9's sub-planners) only an
 /// area of the tree.
@@ -172,6 +174,7 @@ pub fn validate_tasks_with(
             }
         }
     }
+    errors.extend(stage_rules(tasks, &by_id));
     errors.extend(cycles(tasks));
     errors
 }

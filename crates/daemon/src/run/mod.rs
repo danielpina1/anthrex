@@ -9,7 +9,7 @@
 //!   and rounds), `plan.rs`
 //!   (parsing, profile and limit resolution, `build_run`, the run-id slug), `validate.rs`
 //!   with `validate_graph.rs` (task resolution and the cross-task rules, decisions
-//!   8–13), `edits.rs` (plan edits, decision 13) with `edit_log.rs` (M8c's log of
+//!   8–13) and `validate_stages.rs` (M9.1's stages and reserved ids), `edits.rs` (plan edits, decision 13) with `edit_log.rs` (M8c's log of
 //!   them), `globs.rs` (`owns` globs, decisions 11
 //!   and 56), `roster.rs` (reviewer and escalation policy, decisions 23, 35 and 39),
 //!   `contract.rs` and `messages.rs` (contracts, prompts and message texts), `env.rs`
@@ -66,6 +66,7 @@ pub mod triage;
 pub mod validate;
 mod validate_graph;
 mod validate_kinds;
+mod validate_stages;
 
 #[cfg(test)]
 mod test_support;
