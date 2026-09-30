@@ -2,7 +2,7 @@
 //! size limit milestone 9 would otherwise pass). Pure (design decision 2).
 
 use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, complete, deciders, dispatch, done, early,
+    Effect, EngineState, OpId, OpKind, OpResult, bisect, complete, deciders, dispatch, done, early,
     fallback, full, gates, history, holds, kinds, ladder, merge, orch_window, outbox, planners,
     requests, review, run_scouts, stages, tiers, worker_messages,
 };
@@ -36,8 +36,7 @@ pub(super) fn op_done(
             gates::check_done(run, i, op, &kind, result, now, fx)
         }
         (OpKind::Check { .. }, None) => complete::final_checked(run, result, now, fx),
-        // Milestone 9.1 decision 14: tier 1 is the task's check gate. `TestAt` (task
-        // M9.1.15) is routed by its own task.
+        // Milestone 9.1 decision 14: tier 1 is the task's check gate.
         (OpKind::Tier(spec), Some(i)) if spec.tier == 1 => {
             tiers::tier1_done(run, i, op, result, now, fx)
         }
@@ -45,6 +44,8 @@ pub(super) fn op_done(
         (OpKind::Tier(spec), None) if spec.tier == 3 => {
             full::full_done(run, op, &spec, result, now, fx)
         }
+        // Decision 36: a bisect probe (task M9.1.15).
+        (OpKind::TestAt(_), None) => bisect::probe_done(run, op, result, now, fx),
         (OpKind::VerifyRefs { .. }, _) => complete::refs_verified(run, result, now, fx),
         (OpKind::MergeCandidate { run_branch, .. }, i) => {
             merge::candidate_done(run, (i, op), &run_branch, result, now, fx)

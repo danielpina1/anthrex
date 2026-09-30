@@ -332,6 +332,9 @@ pub struct Run {
     /// Decision 17(b): since when the merge queue has been idle (tiered profiles only).
     #[serde(default)]
     pub queue_idle_since: Option<u64>,
+    /// Milestone 9.1 decision 39: the next fix task's number (`engine::fixes`).
+    #[serde(default)]
+    pub fix_seq: u32,
 }
 
 impl Run {

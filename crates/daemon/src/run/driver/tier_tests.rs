@@ -543,3 +543,7 @@ mod cache;
 // Decision 18: tier 3's checkout and shards (task M9.1.14).
 #[path = "tier_tests_full.rs"]
 mod full;
+
+// Decision 36: a bisect probe (task M9.1.15).
+#[path = "tier_tests_probe.rs"]
+mod probe;

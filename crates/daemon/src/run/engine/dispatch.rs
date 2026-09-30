@@ -56,6 +56,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 merge::start_merge(run, now, fx);
                 // Milestone 9.1 decision 17(b): tier 3 when the queue is idle.
                 super::full::idle_pass(run, now, fx);
+                // Decision 36: a lost or backed-off bisect probe (task M9.1.15).
+                super::bisect::pass(run, now, fx);
                 review::watch(run, now, fx);
                 launch_ready(run, now, fx);
                 dispatch_writers(run, now, fx);

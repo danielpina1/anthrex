@@ -68,3 +68,43 @@ pub fn checkout_tree(git: &OsStr, dir: &Path, timeout: Duration) -> Result<Optio
     }
     tree_of(git, dir, "HEAD", timeout).map(Some)
 }
+
+/// Decision 37: `git show --stat --format=%h%x20%s <commit>` of a merge the engine
+/// wrote, for a bisect fix task's brief (task M9.1.15); `None` when `commit` is not a
+/// merge. The stat is against the first parent (`--diff-merges=first-parent`), the
+/// stage's own line, so it lists what the merged task changed.
+pub fn show_stat(
+    git: &OsStr,
+    dir: &Path,
+    commit: &str,
+    timeout: Duration,
+) -> Result<Option<String>, String> {
+    if commit.starts_with('-') {
+        return Err(format!("not a commit: {commit:?}"));
+    }
+    let g = Git::new(git, timeout);
+    let parents = g.ok(
+        dir,
+        &[
+            os("rev-list"),
+            os("--parents"),
+            os("-n"),
+            os("1"),
+            os(commit),
+        ],
+    )?;
+    if parents.split_whitespace().count() < 3 {
+        return Ok(None);
+    }
+    let mut args = vec![os("show")];
+    args.extend(DIFF_FLAGS.map(os));
+    args.extend([
+        os("--stat"),
+        os("--diff-merges=first-parent"),
+        os("--format=%h%x20%s"),
+        os(commit),
+        os("--"),
+    ]);
+    let out = g.ok(dir, &args)?;
+    Ok(Some(out.trim_end().to_string()))
+}

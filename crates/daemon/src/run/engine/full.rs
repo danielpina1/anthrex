@@ -11,11 +11,11 @@
 use proto::RunState;
 
 use super::requests::log;
-use super::{Effect, OpId, OpKind, OpResult, ScratchAt, emit_op, next_op, tiers, wake};
+use super::{Effect, OpId, OpKind, OpResult, ScratchAt, bisect, emit_op, next_op, tiers, wake};
 use crate::run::contract::sha7;
 use crate::run::model::{InfraFailures, Run, StageRecord};
 use crate::run::slots::Priority;
-use crate::run::tiers::TierSpec;
+use crate::run::tiers::{TierOutcome, TierSpec};
 
 /// Why a tier-3 job starts (decision 17): (b) the queue is idle, (c) completion, (a)
 /// before a stage PR opens (9.2).
@@ -31,10 +31,9 @@ pub enum FullWhy {
 const ATTENTION_TESTS: usize = 5;
 const WAKE_TESTS: usize = 3;
 
-/// Until task M9.1.15 brings the bisect (decision 35), a red that could be bisected
-/// ends as decision 38's "no culprit" with this reason. M9.1.15 replaces it with
-/// `bisect::start`.
-const NO_BISECT_YET: &str = "bisecting arrives with task M9.1.15";
+/// A red on a commit that is no longer its stage's head is not bisected: the next pass
+/// runs tier 3 on the new head (task M9.1.15, invented).
+const STALE_RED: &str = "the stage head moved on before a bisect could start";
 
 /// Ruling C-18: after the executor's own failure number `k` on one commit, the next
 /// pass may start tier 3 again after `INFRA_BACKOFF[k - 1]` seconds; at [`INFRA_MAX`]
@@ -80,19 +79,19 @@ fn infra_waiting(s: &StageRecord, now: u64) -> bool {
 }
 
 /// The first non-empty line of `text`, trimmed, at most [`LINE_MAX`] characters.
-fn first_line(text: &str) -> String {
+pub(super) fn first_line(text: &str) -> String {
     let line = text.lines().map(str::trim).find(|l| !l.is_empty());
     line.unwrap_or_default().chars().take(LINE_MAX).collect()
 }
 
 /// A tier-3 job or a bisect is in flight: at most one per run (decision 17).
 fn in_flight(run: &Run) -> bool {
-    run.full_op.is_some() || run.stages.iter().any(|s| s.bisect.is_some())
+    run.full_op.is_some() || bisect::bisecting(run)
 }
 
 /// A red stage no longer holds completion once the run is ending anyway: the `finish`
 /// edit (decision 19), or `run cancel`, which must complete.
-fn ending(run: &Run) -> bool {
+pub(super) fn ending(run: &Run) -> bool {
     run.finish_edit || run.cancelled
 }
 
@@ -189,12 +188,14 @@ pub(super) fn completion(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
 /// failure's backoff, or is held after the last one (unless the run ends anyway).
 /// Tiered profiles only.
 pub(super) fn holds_completion(run: &Run, now: u64) -> bool {
+    // Task M9.1.15: and while a stage is bisected (its end is red, or a fix task).
     active(run)
-        && run.stages.iter().any(|s| {
-            lacks_green(run, s)
-                && ((!ending(run) && red_at_head(s))
-                    || (infra_waiting(s, now) && !(ending(run) && infra_held(s))))
-        })
+        && (bisect::bisecting(run)
+            || run.stages.iter().any(|s| {
+                lacks_green(run, s)
+                    && ((!ending(run) && red_at_head(s))
+                        || (infra_waiting(s, now) && !(ending(run) && infra_held(s))))
+            }))
 }
 
 /// Whether a stage waits red or on an executor failure, whatever the time (the tests'
@@ -202,10 +203,11 @@ pub(super) fn holds_completion(run: &Run, now: u64) -> bool {
 #[cfg(test)]
 pub(super) fn waits(run: &Run) -> bool {
     active(run)
-        && run
-            .stages
-            .iter()
-            .any(|s| lacks_green(run, s) && (red_at_head(s) || infra_at_head(s).is_some()))
+        && (bisect::bisecting(run)
+            || run
+                .stages
+                .iter()
+                .any(|s| lacks_green(run, s) && (red_at_head(s) || infra_at_head(s).is_some())))
 }
 
 /// `run resume` (ruling C-18): every stage's executor failures are forgotten, so the
@@ -295,7 +297,7 @@ pub(super) fn full_done(
     spec: &TierSpec,
     result: OpResult,
     now: u64,
-    _fx: &mut Vec<Effect>,
+    fx: &mut Vec<Effect>,
 ) {
     if run.full_op == Some(op) {
         run.full_op = None;
@@ -324,7 +326,7 @@ pub(super) fn full_done(
             if outcome.ok {
                 green(run, n, &commit, outcome.secs, now);
             } else {
-                red(run, n, &commit, &failing, now);
+                red(run, n, (&commit, &outcome), &failing, now, fx);
             }
         }
         OpResult::SetupFailed { output } => setup_failed(run, n, &commit, &output, now),
@@ -350,39 +352,76 @@ fn green(run: &mut Run, n: u16, commit: &str, secs: u64, now: u64) {
 
 /// Decision 35's checks, made here so 9.2 can bisect a CI failure without them: the
 /// cap first, then a bisect's needs; each failing check is decision 38's end, with its
-/// attention line and wake note, and the stage waits red.
-fn red(run: &mut Run, n: u16, commit: &str, failing: &[String], now: u64) {
+/// attention line and wake note, and the stage waits red. Otherwise the stage is
+/// bisected (task M9.1.15): it waits red, with no note, until the bisect ends.
+fn red(
+    run: &mut Run,
+    n: u16,
+    (commit, outcome): (&str, &TierOutcome),
+    failing: &[String],
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let fixes = run.stage(n).map_or(0, |s| s.full.bisect_fixes);
+    if fixes >= run.limits.testing.bisect_fix_max {
+        log(
+            run,
+            now,
+            format!("stage {n}: tier 3 red ({})", first(failing, WAKE_TESTS)),
+        );
+        let text = format!(
+            "stage {n}: tier 3 still red after {fixes} fix tasks: {}; fix it with a task, or end the run with the finish edit",
+            first(failing, ATTENTION_TESTS)
+        );
+        mark_red(run, n, commit, text.clone());
+        return wake_on_head(run, n, commit, text);
+    }
+    let reason = if failing.is_empty() {
+        "no failing test names to bisect with".to_string()
+    } else if run.profile.single_test.is_none() {
+        "the profile has no single_test to bisect with".to_string()
+    } else if run.stage_head(n) != Some(commit) {
+        STALE_RED.to_string()
+    } else {
+        match bisect::start(run, n, commit, failing.to_vec(), now, fx) {
+            Ok(m) => {
+                log(
+                    run,
+                    now,
+                    format!(
+                        "stage {n}: tier 3 red ({}); bisecting {m} merges",
+                        first(failing, WAKE_TESTS)
+                    ),
+                );
+                if let Some(s) = stage_mut(run, n) {
+                    s.full.red_at = Some(commit.to_string());
+                    s.full.note = None;
+                }
+                fx.extend(bisect::summarise(run, n, outcome, now));
+                return;
+            }
+            Err(reason) => reason,
+        }
+    };
     log(
         run,
         now,
         format!("stage {n}: tier 3 red ({})", first(failing, WAKE_TESTS)),
     );
-    let fixes = run.stage(n).map_or(0, |s| s.full.bisect_fixes);
-    let (attention, wake_text) = if fixes >= run.limits.testing.bisect_fix_max {
-        let text = format!(
-            "stage {n}: tier 3 still red after {fixes} fix tasks: {}; fix it with a task, or end the run with the finish edit",
-            first(failing, ATTENTION_TESTS)
-        );
-        (text.clone(), text)
-    } else {
-        let reason = if failing.is_empty() {
-            "no failing test names to bisect with"
-        } else if run.profile.single_test.is_none() {
-            "the profile has no single_test to bisect with"
-        } else {
-            NO_BISECT_YET
-        };
-        (
-            format!(
-                "tier 3 red, no single culprit: {} (stage {n}: {reason})",
-                first(failing, ATTENTION_TESTS)
-            ),
-            format!(
-                "stage {n} tier 3 red, no single culprit: {}; plan a fix",
-                first(failing, WAKE_TESTS)
-            ),
-        )
-    };
+    no_culprit(run, n, commit, failing, &reason);
+}
+
+/// Decision 38's "no single culprit" for stage `n`'s red `commit`: its attention line
+/// and, while `commit` is still the stage head, its wake note; the stage waits red.
+pub(super) fn no_culprit(run: &mut Run, n: u16, commit: &str, failing: &[String], reason: &str) {
+    let attention = format!(
+        "tier 3 red, no single culprit: {} (stage {n}: {reason})",
+        first(failing, ATTENTION_TESTS)
+    );
+    let wake_text = format!(
+        "stage {n} tier 3 red, no single culprit: {}; plan a fix",
+        first(failing, WAKE_TESTS)
+    );
     mark_red(run, n, commit, attention);
     wake_on_head(run, n, commit, wake_text);
 }

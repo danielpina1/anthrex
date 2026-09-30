@@ -1,5 +1,6 @@
 //! The engine unit tests (M8a.11 onwards).
 
+mod bisect;
 mod budgets;
 mod cancel_work;
 mod control;
@@ -25,6 +26,7 @@ mod driver_carries;
 mod early_events;
 mod exit_duplicates;
 mod fast_path;
+mod fixes;
 mod fixture;
 mod full;
 mod full_fixes;

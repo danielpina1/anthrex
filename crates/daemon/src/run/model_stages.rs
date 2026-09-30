@@ -119,8 +119,21 @@ pub struct BisectRecord {
     pub probe: Option<(OpId, Probe)>,
     #[serde(default)]
     pub probes: u32,
+    /// The ≤ 40-line summary of the red step: its fallback at once, the check-summary
+    /// decider's answer when it comes ([`summary_decider`](Self::summary_decider)).
     #[serde(default)]
     pub summary: Option<String>,
+    #[serde(default)]
+    pub summary_decider: Option<u64>,
+    /// `git show --stat` of the lowest red merge probed so far (the culprit's, at the end).
+    #[serde(default)]
+    pub show: Option<String>,
+    /// Ruling C-18 for probes: the executor's own failures of the probe due now, and
+    /// when it may be issued again.
+    #[serde(default)]
+    pub infra: u8,
+    #[serde(default)]
+    pub retry_at: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

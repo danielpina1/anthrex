@@ -393,6 +393,8 @@ fn old_run_json_loads() {
         map.remove("queue_idle_since"),
         Some(serde_json::Value::Null)
     );
+    // Milestone 9.1 decision 39: no fix task yet.
+    assert_eq!(map.remove("fix_seq"), Some(serde_json::json!(0)));
     // Milestone 9.1 ruling C-12a: no stored profile's `manifests`.
     let manifests = map["profile"].as_object_mut().unwrap().remove("manifests");
     assert_eq!(manifests, Some(serde_json::json!([])));
@@ -410,6 +412,9 @@ fn old_run_json_loads() {
             orch,
             serde_json::to_value(crate::run::orch::TaskOrch::default()).unwrap()
         );
+        // Milestone 9.1 decision 39: a planned task, fixing nothing.
+        assert_eq!(task.remove("origin"), Some(serde_json::json!("plan")));
+        assert_eq!(task.remove("fixes"), Some(serde_json::Value::Null));
         let spec = task["spec"].as_object_mut().unwrap();
         assert!(spec.remove("review_target").is_some(), "review_target");
         // Milestone 9.1 decisions 43 and 54: stage 1, not atomic.

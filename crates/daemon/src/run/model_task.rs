@@ -173,6 +173,12 @@ pub struct Task {
     /// Milestone 9's task state (`run::orch::TaskOrch`).
     #[serde(default)]
     pub orch: crate::run::orch::TaskOrch,
+    /// Milestone 9.1 decision 39: who made the task; `plan` for every planned one.
+    #[serde(default)]
+    pub origin: proto::TaskOrigin,
+    /// Decision 39: what an engine-made fix task fixes.
+    #[serde(default)]
+    pub fixes: Option<super::FixOf>,
 }
 
 impl Task {

@@ -482,6 +482,8 @@ fn new_task(
         routing_decisions: Vec::new(),
         escalated_from: None,
         orch: Default::default(),
+        origin: proto::TaskOrigin::Plan,
+        fixes: None,
     }
 }
 

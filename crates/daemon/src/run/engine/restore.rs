@@ -218,6 +218,11 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         // Milestone 9.1 decision 29: a lost tier-3 job is started again by the next
         // idle or completion pass.
         (OpKind::Tier(_), None) if run.full_op == Some(op) => run.full_op = None,
+        // Decision 29 (task M9.1.15): a lost bisect probe is issued again by the next
+        // running pass (`bisect::pass`).
+        (OpKind::TestAt(_), None) => {
+            super::bisect::lost(run, op);
+        }
         // M8b decision 18: a dropped decider is queued again under its own id, so the
         // task waiting for it still names it.
         (

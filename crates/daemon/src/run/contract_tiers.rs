@@ -78,3 +78,72 @@ pub(super) fn tier_line(c: &CheckRecord) -> String {
         .map(|t| format!("\ntier {}: {}", t.tier, t.affected))
         .unwrap_or_default()
 }
+
+/// A bisect fix task's title may be at most this long (decision 37).
+const FIX_TITLE_MAX: usize = 120;
+/// With more failing tests than this, the acceptance names none of them (decision 37).
+const FIX_ACCEPTANCE_TESTS: usize = 10;
+
+/// What a bisect fix task's texts name (decision 37, Interfaces "Prompts (exact)").
+pub(crate) struct BisectFix<'a> {
+    pub id: &'a str,
+    pub stage: u16,
+    pub culprit: &'a str,
+    pub culprit_title: &'a str,
+    pub culprit_brief: &'a str,
+    pub tests: &'a [String],
+    pub summary: &'a str,
+    pub show: &'a str,
+}
+
+/// `Fix <first failing test> after <culprit>`, with ` and <k> more` after the test when
+/// there are more, cut to 120 characters.
+pub(crate) fn bisect_fix_title(tests: &[String], culprit: &str) -> String {
+    let first = tests.first().map_or("the failing tests", String::as_str);
+    let more = match tests.len() {
+        0 | 1 => String::new(),
+        n => format!(" and {} more", n - 1),
+    };
+    format!("Fix {first}{more} after {culprit}")
+        .chars()
+        .take(FIX_TITLE_MAX)
+        .collect()
+}
+
+/// One `<test> passes` per failing test (at most 10; with more, one item for all of
+/// them), then `no test is weakened, skipped or deleted`.
+pub(crate) fn bisect_fix_acceptance(tests: &[String]) -> Vec<String> {
+    let mut items: Vec<String> = if tests.len() > FIX_ACCEPTANCE_TESTS {
+        vec!["every failing test listed in the brief passes".to_string()]
+    } else {
+        tests.iter().map(|t| format!("{t} passes")).collect()
+    };
+    items.push("no test is weakened, skipped or deleted".to_string());
+    items
+}
+
+/// A bisect fix task's brief (exact).
+pub(crate) fn bisect_fix_brief(f: &BisectFix<'_>) -> String {
+    format!(
+        "[anthrex] Fix task {id}: the full test suite of stage {n} fails, and bisecting the stage's merges found that it started failing with the merge of task {c} (\"{title}\").\n\
+         Failing tests: {tests}\n\
+         Make these tests pass without weakening them. {c}'s work stays merged; fix it here.\n\
+         \n\
+         Summary of the failure:\n\
+         {summary}\n\
+         \n\
+         The merge that introduced it:\n\
+         {show}\n\
+         \n\
+         The brief of {c}:\n\
+         {brief}",
+        id = f.id,
+        n = f.stage,
+        c = f.culprit,
+        title = f.culprit_title,
+        tests = f.tests.join(", "),
+        summary = f.summary,
+        show = f.show,
+        brief = f.culprit_brief,
+    )
+}

@@ -426,7 +426,8 @@ async fn run_toolchain(job: &Job<'_>, command: String) -> String {
 
 /// Executes `OpKind::TestAt` (decision 36): the probe's checkout at its commit, then
 /// each command at `FullStage` priority on half the slots, a failure retried once
-/// (decision 33) unless it timed out. Red when any command failed twice.
+/// (decision 33) unless it timed out. Red when any command failed twice. `show` is the
+/// probed commit's `show --stat` when it is a merge (task M9.1.15).
 pub(crate) async fn run_test_at(
     ctx: &OpCtx,
     sched: &TestScheduler,
@@ -482,11 +483,20 @@ pub(crate) async fn run_test_at(
             tail = last.tail;
         }
     }
+    drop(grant);
+    // Decision 37 (task M9.1.15): a merge's `show --stat`, which names the culprit's
+    // change in a bisect fix task's brief. A failed read leaves it out.
+    let (root, commit) = (spec.root.clone(), spec.commit.clone());
+    let show = job
+        .read(move |g, t| git::show_stat(g, &root, &commit, t))
+        .await
+        .ok()
+        .flatten();
     OpResult::TestAt {
         red: !failing.is_empty(),
         failing,
         tail,
-        show: None,
+        show,
     }
 }
 

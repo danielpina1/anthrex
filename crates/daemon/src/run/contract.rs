@@ -17,6 +17,7 @@ use super::model::{CheckRecord, ProofRecord, ReviewLevel, ReviewRecord, Run, Tas
 // Milestone 9.1's tier texts (decision 13 and the tier line of a bounce).
 #[path = "contract_tiers.rs"]
 mod tiers;
+pub(crate) use tiers::{BisectFix, bisect_fix_acceptance, bisect_fix_brief, bisect_fix_title};
 
 /// The worker's system prompt (decision 30, exact). It never varies, so the cached
 /// prefix is stable (spec §14.2).
