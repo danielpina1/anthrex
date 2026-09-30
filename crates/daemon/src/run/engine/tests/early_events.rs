@@ -56,6 +56,7 @@ fn a_signal_before_the_window_is_replayed_once_the_round_has_it() {
         EARLY,
         AgentSignal::ToolUse {
             name: "Edit".into(),
+            target: None,
         },
     );
     let ended_at = fx.now + 1;

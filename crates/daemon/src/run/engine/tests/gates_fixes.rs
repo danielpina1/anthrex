@@ -196,6 +196,7 @@ fn worker_mail_is_held_while_the_task_is_in_a_gate() {
             window,
             AgentSignal::ToolUse {
                 name: "Bash".into(),
+                target: None,
             },
         );
     }
@@ -433,6 +434,7 @@ fn worker_mail_is_held_in_the_merge_queue() {
             window,
             AgentSignal::ToolUse {
                 name: "Bash".into(),
+                target: None,
             },
         );
     }

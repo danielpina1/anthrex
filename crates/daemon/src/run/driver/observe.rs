@@ -8,9 +8,13 @@
 //! - A real `SubagentStart` or `SubagentStop` hook with an agent id maps one to one.
 //! - An `Unprompted` event (ruling T7-N1) is never the delivered turn's end: its
 //!   `TurnEnded` is `Spend` (its usage still counts), anything else activity.
-//! - Text, tool results, compaction and the other recognised lines are `Activity`, at
-//!   most one per window per [`ACTIVITY_EVERY`]: activity only resets the stall clock,
-//!   and a session can print many lines a second.
+//! - A top-level `ToolUse` carries its one-line summary as `target` (milestone 9.0.5
+//!   decision 5; a sub-agent's is `None`), and top-level text is `Said`, cut at
+//!   `WORKER_SUMMARY_MAX` and never throttled: a worker's last message usually lands
+//!   within a second of its previous event.
+//! - A sub-agent's text, tool results, compaction and the other recognised lines are
+//!   `Activity`, at most one per window per [`ACTIVITY_EVERY`]: activity only resets the
+//!   stall clock, and a session can print many lines a second.
 //! - Stderr lines, unparsed lines and diagnostics are not activity (the M8a.17 carry's
 //!   open question): Claude writes hook-progress lines constantly, and a session that
 //!   only complains on stderr is not making progress. Nor is a failed API turn's own
@@ -20,10 +24,13 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use proto::WORKER_SUMMARY_MAX;
+
 use crate::headless::SessionEvent;
 use crate::hooks::HookKind;
 use crate::manager::{WindowSignal, WindowSignalKind};
 use crate::run::engine::AgentSignal;
+use crate::run::snapshot_detail::cut;
 
 /// At most one `Activity` per window this often.
 pub const ACTIVITY_EVERY: Duration = Duration::from_secs(1);
@@ -56,7 +63,22 @@ pub fn translate(
             session_id: session_id.clone(),
         },
         SessionEvent::TurnStarted => AgentSignal::TurnStarted,
-        SessionEvent::ToolUse { name, .. } => AgentSignal::ToolUse { name: name.clone() },
+        SessionEvent::ToolUse {
+            name,
+            input,
+            parent,
+            ..
+        } => AgentSignal::ToolUse {
+            name: name.clone(),
+            // Milestone 9.0.5 decision 5: a sub-agent's call changes no activity.
+            target: parent
+                .is_none()
+                .then(|| crate::conversation::for_tool(name, Some(input))),
+        },
+        // Decision 5: never throttled, so a worker's last message is never lost.
+        SessionEvent::AssistantText { text, parent: None } => AgentSignal::Said {
+            text: cut(text, WORKER_SUMMARY_MAX),
+        },
         SessionEvent::TurnEnded {
             outcome,
             usage,
@@ -215,7 +237,8 @@ mod tests {
                 }
             )),
             Some(AgentSignal::ToolUse {
-                name: "Bash".into()
+                name: "Bash".into(),
+                target: Some(String::new()),
             })
         );
     }
@@ -281,7 +304,7 @@ mod tests {
                 7,
                 SessionEvent::AssistantText {
                     text: "hi".into(),
-                    parent: None,
+                    parent: Some("toolu_1".into()),
                 },
             )
         };
@@ -313,5 +336,149 @@ mod tests {
         ] {
             assert_eq!(translate(&session(5, 7, event), &mut last, t0), None);
         }
+    }
+
+    /// One top-level line in the shape `fake-agent`'s headless Claude writes it
+    /// (`crates/fake-agent/src/stream_claude.rs`, `assistant`), with `parent` as its
+    /// `parent_tool_use_id`.
+    fn fake_claude_line(block: serde_json::Value, parent: Option<&str>) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "model": "claude-sonnet-5", "id": "msg_fake0001", "type": "message",
+                "role": "assistant", "content": [block], "container": null,
+                "stop_reason": null, "stop_sequence": null, "stop_details": null,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "diagnostics": null, "context_management": null,
+            },
+            "parent_tool_use_id": parent,
+            "timestamp": "2026-09-30T00:00:00.000Z",
+            "session_id": "s", "uuid": "u",
+        })
+        .to_string()
+    }
+
+    fn tool_line(name: &str, input: serde_json::Value, parent: Option<&str>) -> String {
+        let block = serde_json::json!({
+            "type": "tool_use", "id": "toolu_fake0002", "name": name, "input": input,
+            "caller": {"type": "direct"},
+        });
+        fake_claude_line(block, parent)
+    }
+
+    fn text_line(text: &str, parent: Option<&str>) -> String {
+        fake_claude_line(serde_json::json!({"type": "text", "text": text}), parent)
+    }
+
+    /// The signals of `lines`, parsed by `claude_stream` and translated in order at `at`.
+    fn through(
+        lines: &[String],
+        last: &mut HashMap<u32, Instant>,
+        at: Instant,
+    ) -> Vec<AgentSignal> {
+        let mut parser = crate::headless::claude_stream::ClaudeStream::default();
+        lines
+            .iter()
+            .flat_map(|line| parser.parse_line(line))
+            .filter_map(|event| translate(&session(3, 7, event), last, at))
+            .collect()
+    }
+
+    #[test]
+    fn top_level_tool_use_carries_its_target() {
+        let lines = [
+            tool_line(
+                "Bash",
+                serde_json::json!({"command": "cargo test\necho"}),
+                None,
+            ),
+            tool_line(
+                "Edit",
+                serde_json::json!({"file_path": "/w/src/stats.rs", "old_string": "a", "new_string": "b"}),
+                None,
+            ),
+        ];
+        let signals = through(&lines, &mut HashMap::new(), Instant::now());
+        assert_eq!(
+            signals,
+            [
+                AgentSignal::ToolUse {
+                    name: "Bash".into(),
+                    target: Some("cargo test".into()),
+                },
+                // `conversation::summary::for_tool`'s Edit line: the basename, then the hunks.
+                AgentSignal::ToolUse {
+                    name: "Edit".into(),
+                    target: Some("stats.rs — 1 hunk".into()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_sub_agents_tool_use_has_no_target() {
+        let lines = [tool_line(
+            "Bash",
+            serde_json::json!({"command": "cargo test"}),
+            Some("toolu_parent"),
+        )];
+        let signals = through(&lines, &mut HashMap::new(), Instant::now());
+        assert_eq!(
+            signals,
+            [AgentSignal::ToolUse {
+                name: "Bash".into(),
+                target: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn top_level_text_is_said_and_never_throttled() {
+        let mut last = HashMap::new();
+        let t0 = Instant::now();
+        let first = through(&[text_line("Looking at the tests", None)], &mut last, t0);
+        let second = through(
+            &[text_line("Added the stats command.", None)],
+            &mut last,
+            t0 + Duration::from_millis(10),
+        );
+        assert_eq!(
+            first,
+            [AgentSignal::Said {
+                text: "Looking at the tests".into()
+            }]
+        );
+        assert_eq!(
+            second,
+            [AgentSignal::Said {
+                text: "Added the stats command.".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn sub_agent_text_stays_activity() {
+        let signals = through(
+            &[text_line("inside a sub-agent", Some("toolu_parent"))],
+            &mut HashMap::new(),
+            Instant::now(),
+        );
+        assert_eq!(signals, [AgentSignal::Activity]);
+    }
+
+    #[test]
+    fn said_is_cut_to_the_summary_cap() {
+        let long = "é".repeat(5000);
+        let signals = through(
+            &[text_line(&long, None)],
+            &mut HashMap::new(),
+            Instant::now(),
+        );
+        let [AgentSignal::Said { text }] = signals.as_slice() else {
+            panic!("{signals:?}");
+        };
+        assert_eq!(text.chars().count(), proto::WORKER_SUMMARY_MAX + 1);
+        assert!(text.starts_with(&"é".repeat(proto::WORKER_SUMMARY_MAX)));
+        assert!(text.ends_with('…'), "{text}");
     }
 }

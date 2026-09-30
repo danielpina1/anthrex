@@ -244,6 +244,7 @@ fn rung_2_during_a_resolution_ends_the_straight_to_queue_pass() {
             window,
             AgentSignal::ToolUse {
                 name: "Bash".into(),
+                target: None,
             },
         );
         if effects.contains(&Effect::KillWindow { window_id: window }) {

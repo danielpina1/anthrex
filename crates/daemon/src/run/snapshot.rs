@@ -379,7 +379,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         last_message_kind: t.orch.messages.last().map(|m| m.kind),
         last_message_line: message_line(t),
         task_notes: task_notes(t),
-        activity: None,
+        // Milestone 9.0.5 decision 2: the live round's only.
+        activity: super::snapshot_detail::live_activity(t),
     }
 }
 

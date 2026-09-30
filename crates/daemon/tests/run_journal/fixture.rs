@@ -138,6 +138,8 @@ pub fn round(
         relaunch: None,
         closed_pid: None,
         exited_pid: None,
+        activity: None,
+        last_text: None,
     }
 }
 

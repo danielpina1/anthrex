@@ -1,5 +1,6 @@
 //! The engine unit tests (M8a.11 onwards).
 
+mod activity;
 mod budgets;
 mod cancel_work;
 mod control;

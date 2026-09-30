@@ -23,8 +23,9 @@
 //! - **The cap.** At most [`HOLD_WINDOWS_CAP`] windows hold events; a new window's
 //!   events past it are dropped or answered at once, as before the hold. A window
 //!   holds at most [`HOLD_CAP`] events. Past it, the oldest held
-//!   `Activity` or `ToolUse` makes room: losing one costs a counter and a `last_event`
-//!   that a later event refreshes. With none to evict, a new signal is dropped, as it
+//!   `Activity`, `ToolUse` or `Said` makes room: losing one costs a counter and a
+//!   `last_event` that a later event refreshes. Milestone 9.0.5's unthrottled `Said`
+//!   is counter-only too, so a burst of text never crowds out a `TurnEnded`. With none to evict, a new signal is dropped, as it
 //!   was before the hold, and a new call is answered at once, unheld.
 //! - **Bounds on a held reply.** A held call is answered by the replay, by the discard
 //!   of its entry (its launch failed or ended, or [`HOLD_LIMIT_SECS`] passed; the
@@ -159,7 +160,9 @@ fn bound(state: &EngineState, window: u32) -> bool {
 fn evictable(event: &HeldEvent) -> bool {
     matches!(
         event,
-        HeldEvent::Signal(AgentSignal::Activity | AgentSignal::ToolUse { .. })
+        HeldEvent::Signal(
+            AgentSignal::Activity | AgentSignal::ToolUse { .. } | AgentSignal::Said { .. }
+        )
     )
 }
 

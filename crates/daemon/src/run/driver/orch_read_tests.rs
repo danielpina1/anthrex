@@ -126,6 +126,7 @@ async fn a_counter_change_does_not_end_the_wait() {
         window_id: WORKER,
         signal: AgentSignal::ToolUse {
             name: "Read".into(),
+            target: None,
         },
     });
     let deadline = Instant::now() + ANSWER;

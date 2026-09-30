@@ -11,7 +11,7 @@ use super::dispatch::{block, history};
 use super::ladder::{self, check_budget, kill_worker, live, worker_round};
 use super::{
     AgentSignal, Effect, EngineState, OpKind, TurnOutcome, early, emit_op, fallback, next_op,
-    outbox, review,
+    outbox, review, rounds,
 };
 use crate::headless::FailureKind;
 use crate::run::contract::{
@@ -135,8 +135,9 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             }
             round.turn_open = true;
         }
-        AgentSignal::ToolUse { .. } => {
+        AgentSignal::ToolUse { name, target } => {
             round.tool_calls += 1;
+            rounds::note_tool(round, &name, target.as_deref());
             // Ruling T12-m5: the task's total counts its worker rounds only.
             if worker {
                 let task = &mut run.tasks[i];
@@ -185,6 +186,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
                 check_budget(run, i, now, fx);
             }
         }
+        AgentSignal::Said { text } => rounds::note_said(round, &text),
         AgentSignal::Activity
         | AgentSignal::ProcessStarted { .. }
         | AgentSignal::ProcessExited { .. } => {}
