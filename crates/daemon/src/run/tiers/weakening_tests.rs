@@ -1,6 +1,6 @@
 //! Milestone 9.1 task M9.1.6: decision 40's test-weakening signals from a `-U0` diff.
 
-use super::weakening::{signals, signals_and_rest, signals_of_cut_diff};
+use super::weakening::{self, signals, signals_and_rest, signals_of_cut_diff};
 use super::*;
 
 fn s(items: &[&str]) -> Vec<String> {
@@ -260,6 +260,8 @@ fn a_cut_diff_takes_its_deleted_files_from_the_name_list() {
             Signal::DeletedTestFile { path } => ("deleted", path.as_str()),
             Signal::SkipMarker { path, .. } => ("skip", path.as_str()),
             Signal::AssertionLoss { path, .. } => ("loss", path.as_str()),
+            Signal::TestCodeRemoved { path, .. } => ("removed", path.as_str()),
+            Signal::DiffTooLarge => ("too large", ""),
         })
         .collect();
     assert_eq!(
@@ -267,6 +269,7 @@ fn a_cut_diff_takes_its_deleted_files_from_the_name_list() {
         vec![
             ("deleted", "crates/x/tests/old.rs"),
             ("deleted", "web/gone.test.ts"),
+            ("too large", ""),
             ("skip", "crates/x/tests/t.rs"),
             ("loss", "crates/x/tests/t.rs"),
             ("skip", "py/test_calc.py"),
@@ -277,5 +280,75 @@ fn a_cut_diff_takes_its_deleted_files_from_the_name_list() {
     assert_eq!(rest, 0);
     // A cut inside the first file keeps only the named deletions.
     let (got, _) = signals_of_cut_diff(&DIFF[..40], &deleted, &s(&[]), &tests, &s(MARKERS));
-    assert_eq!(got.len(), 2, "{got:?}");
+    assert_eq!(got.len(), 3, "{got:?}");
+}
+
+/// Ruling C-20 (3): a `.rs` file that held `#[cfg(test)]` at the diff base and does
+/// not at the head, or was deleted, is `TestCodeRemoved`, counting its removed
+/// assertion lines, in place of an assertion loss; past a cut, from the lists alone.
+#[test]
+fn removed_test_code_is_a_signal() {
+    const REMOVED: &str = "\
+diff --git a/src/a.rs b/src/a.rs
+index 1111111..2222222 100644
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -3,4 +2,0 @@ pub fn a() {}
+-#[cfg(test)]
+-mod tests {
+-    #[test] fn t() { assert!(a()); assert_eq!(1, 1); }
+-}
+diff --git a/src/b.rs b/src/b.rs
+deleted file mode 100644
+index 3333333..0000000
+--- a/src/b.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-#[cfg(test)]
+-fn t() { assert!(true); }
+diff --git a/src/c.rs b/src/c.rs
+index 4444444..5555555 100644
+--- a/src/c.rs
++++ b/src/c.rs
+@@ -9 +9 @@
+-    assert!(x);
++    let _ = x;
+";
+    let base = s(&["src/a.rs", "src/b.rs", "src/c.rs", "src/d.rs"]);
+    let head = s(&["src/c.rs"]);
+    let input = weakening::SignalInput {
+        diff: REMOVED,
+        cfg_base: &base,
+        cfg_head: &head,
+        test_paths: &s(TEST_PATHS),
+        skip_markers: &s(MARKERS),
+        ..Default::default()
+    };
+    let (got, rest) = weakening::read(&input);
+    assert_eq!(
+        got,
+        vec![
+            Signal::TestCodeRemoved {
+                path: "src/a.rs".into(),
+                asserts_removed: 1
+            },
+            Signal::TestCodeRemoved {
+                path: "src/b.rs".into(),
+                asserts_removed: 1
+            },
+            // Still holds `#[cfg(test)]`: an ordinary assertion loss.
+            Signal::AssertionLoss {
+                path: "src/c.rs".into(),
+                line: 9,
+                removed: 1,
+                added: 0
+            },
+            // Not in the diff at all: listed at the base, gone at the head.
+            Signal::TestCodeRemoved {
+                path: "src/d.rs".into(),
+                asserts_removed: 0
+            },
+        ]
+    );
+    assert_eq!(rest, 0);
 }

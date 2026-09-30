@@ -114,6 +114,10 @@ pub struct TierOutcome {
 pub struct ClaimSignals {
     pub list: Vec<super::Signal>,
     pub more: u32,
+    /// The commit the diff was read from (the merge base of the op's `run_head` and
+    /// the head): what decision 41's restore command checks out (ruling C-20).
+    #[serde(default)]
+    pub base: String,
 }
 
 /// What `OpKind::VerifyDone` needs to read decision 40's test-weakening signals: the

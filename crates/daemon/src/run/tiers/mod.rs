@@ -304,6 +304,15 @@ pub enum Signal {
         removed: u32,
         added: u32,
     },
+    /// Ruling C-20: a `.rs` file that held `#[cfg(test)]` at the diff base and no longer
+    /// does at the head, or was deleted; `asserts_removed` counts its removed lines with
+    /// an assertion marker (0 when they were past a cut diff).
+    TestCodeRemoved {
+        path: String,
+        asserts_removed: u32,
+    },
+    /// Ruling C-20: the `-U0` diff was cut or timed out, so signals past it are unknown.
+    DiffTooLarge,
 }
 
 /// Which placeholders a command key may hold (decision 7's "Allowed in").

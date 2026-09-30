@@ -413,7 +413,7 @@ pub(super) fn checked(
             return bounce(run, i, &pending, text, told, now, fx);
         }
         // Milestone 9.1 decision 41: a deleted test file `owns` does not name exactly.
-        if let Some(text) = super::weakening::bounce(run, i, &signals.list) {
+        if let Some(text) = super::weakening::bounce(run, i, &signals) {
             return bounce(run, i, &pending, text, told, now, fx);
         }
         // Decision 55: any non-generated path outside `owns` is rung 3.

@@ -152,41 +152,80 @@ pub(crate) fn bisect_fix_brief(f: &BisectFix<'_>) -> String {
 /// shown (task M9.1.16).
 const SHOWN_CHARS_MAX: usize = 200;
 
+/// Whether `c` could hide or reorder what is shown (task M9.1.16, ruling C-20):
+/// control characters, the line and paragraph separators, the bidi overrides,
+/// isolates and marks, and the zero-width characters.
+fn unsafe_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{061C}'
+                | '\u{200B}'..='\u{200D}'
+                | '\u{2060}'
+                | '\u{FEFF}'
+        )
+}
+
+/// FNV-1a, 32-bit, over `text`'s bytes.
+fn fnv1a32(text: &str) -> u32 {
+    text.bytes().fold(0x811c_9dc5, |h: u32, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    })
+}
+
 /// A path or marker from a worker's diff, made safe to show a reviewer or the user
-/// (task M9.1.16): every control character, line or paragraph separator and bidi
-/// override becomes `?`, so the text can neither start a line of its own (a forged
-/// `W<n>` line) nor reorder what is shown; and it is cut to [`SHOWN_CHARS_MAX`].
+/// (task M9.1.16, ruling C-20): every [`unsafe_char`] becomes `?`, so the text can
+/// neither start a line of its own (a forged `W<n>` line) nor hide or reorder what is
+/// shown; and a text past [`SHOWN_CHARS_MAX`] is cut, then ends `…#<8 hex>`, the FNV-1a
+/// of the whole text, so two long paths never look the same.
 pub(crate) fn shown(text: &str) -> String {
-    let safe = |c: char| {
-        if c.is_control()
-            || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
-        {
-            '?'
-        } else {
-            c
-        }
-    };
+    let safe = |c: char| if unsafe_char(c) { '?' } else { c };
     let mut out: String = text.chars().take(SHOWN_CHARS_MAX).map(safe).collect();
     if text.chars().count() > SHOWN_CHARS_MAX {
-        out.push('…');
+        out.push_str(&format!("…#{:08x}", fnv1a32(text)));
     }
     out
 }
 
-/// Decision 41's rung-1 message (exact): one `deleted test file` line per path. With
-/// several paths the restore command names them all.
-pub(crate) fn deleted_test_file_message(paths: &[String], start: &str) -> String {
-    let paths: Vec<String> = paths.iter().map(|p| shown(p)).collect();
+/// A restore command longer than this is left out (ruling C-20).
+const RESTORE_COMMAND_MAX: usize = 1000;
+
+/// `text` single-quoted for a POSIX shell.
+fn sh_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+/// Decision 41's rung-1 message (exact): one `deleted test file` line per path, then
+/// the restore command from `base` (the commit the diff was read from), each raw path
+/// single-quoted. With a path holding a control character, or a command longer than
+/// [`RESTORE_COMMAND_MAX`], the command is left out (ruling C-20).
+pub(crate) fn deleted_test_file_message(paths: &[String], base: &str) -> String {
     let mut lines = vec!["[anthrex] task_done rejected:".to_string()];
-    lines.extend(
-        paths
-            .iter()
-            .map(|p| format!("deleted test file {p}; restore it or own it exactly")),
-    );
+    lines.extend(paths.iter().map(|p| {
+        format!(
+            "deleted test file {}; restore it or own it exactly",
+            shown(p)
+        )
+    }));
+    let quoted: Vec<String> = paths.iter().map(|p| sh_quote(p)).collect();
+    let command = format!("git checkout {} -- {}", super::sha7(base), quoted.join(" "));
+    let plain = !paths.iter().any(|p| p.chars().any(char::is_control));
+    let how = if plain && command.chars().count() <= RESTORE_COMMAND_MAX {
+        format!("Restore it ({command}, then commit)")
+    } else {
+        format!(
+            "Restore the deleted test files from {}, then commit,",
+            super::sha7(base)
+        )
+    };
     lines.push(format!(
-        "Restore it (git checkout {} -- {}, then commit) and call task_done again. If this task must delete it, call task_blocked with kind question and ask for the plan to be amended.",
-        super::sha7(start),
-        paths.join(" ")
+        "{how} and call task_done again. If this task must delete it, call task_blocked with kind question and ask for the plan to be amended."
     ));
     lines.join("\n")
 }
@@ -218,8 +257,12 @@ pub(crate) fn signals_unanswered(ids: &[String]) -> String {
 }
 
 /// Decision 42: the engine's finding for a signal a second review still left out
-/// (exact); `(<path>)` alone for a deleted file, which has no line.
+/// (exact); `(<path>)` alone for a signal with no line, `(the diff)` for one with no
+/// path (ruling C-20's `DiffTooLarge`).
 pub(crate) fn signal_unjustified(id: &str, path: &str, line: Option<u32>) -> String {
+    if path.is_empty() {
+        return format!("{id} (the diff) was not justified by the review");
+    }
     match line {
         Some(line) => format!(
             "{id} ({}:{line}) was not justified by the review",

@@ -29,9 +29,10 @@ pub(super) fn spec(run: &Run) -> Option<SignalsSpec> {
 /// Decision 41: the rung-1 bounce text when a deleted test file is not named exactly
 /// by task `i`'s `owns` (M8a's `names_literally`, the protected-file rule); `None`
 /// when there is none. The caller bounces through `ladder::gate_failure(.., Done, ..)`.
-pub(super) fn bounce(run: &Run, i: usize, signals: &[Signal]) -> Option<String> {
+pub(super) fn bounce(run: &Run, i: usize, signals: &ClaimSignals) -> Option<String> {
     let task = &run.tasks[i];
     let caught: Vec<String> = signals
+        .list
         .iter()
         .filter_map(|s| match s {
             Signal::DeletedTestFile { path } if !names_literally(&task.spec.owns, path) => {
@@ -43,11 +44,12 @@ pub(super) fn bounce(run: &Run, i: usize, signals: &[Signal]) -> Option<String> 
     if caught.is_empty() {
         return None;
     }
-    let start = task
-        .start_commit
-        .clone()
-        .unwrap_or_else(|| run.head_for(task).to_string());
-    Some(deleted_test_file_message(&caught, &start))
+    // Ruling C-20: restore from the commit the diff was read from.
+    let base = match signals.base.is_empty() {
+        true => run.head_for(task),
+        false => signals.base.as_str(),
+    };
+    Some(deleted_test_file_message(&caught, base))
 }
 
 /// Decision 42: an accepted claim's signals replace the task's.
@@ -62,10 +64,11 @@ fn id(n: usize) -> String {
     format!("W{}", n + 1)
 }
 
-/// A signal's path and line (none for a deleted file).
+/// A signal's path and line (none for a deleted file; no path for `DiffTooLarge`).
 fn place(signal: &Signal) -> (&str, Option<u32>) {
     match signal {
-        Signal::DeletedTestFile { path } => (path, None),
+        Signal::DeletedTestFile { path } | Signal::TestCodeRemoved { path, .. } => (path, None),
+        Signal::DiffTooLarge => ("", None),
         Signal::SkipMarker { path, line, .. } | Signal::AssertionLoss { path, line, .. } => {
             (path, Some(*line))
         }
@@ -91,6 +94,17 @@ fn line(n: usize, signal: &Signal) -> String {
         } => format!(
             "- {id} {}:{line}: {removed} assertion lines removed, {added} added",
             shown(path)
+        ),
+        // Ruling C-20 (invented texts).
+        Signal::TestCodeRemoved {
+            path,
+            asserts_removed,
+        } => format!(
+            "- {id} {}: #[cfg(test)] code removed, with {asserts_removed} assertion lines",
+            shown(path)
+        ),
+        Signal::DiffTooLarge => format!(
+            "- {id} the diff is too large to read for test changes; check the test files yourself"
         ),
     }
 }
@@ -138,7 +152,7 @@ pub(super) fn check_review(
         let (path, line) = place(&task.signals[n]);
         findings.push(Finding {
             severity: Severity::Important,
-            file: Some(shown(path)),
+            file: (!path.is_empty()).then(|| shown(path)),
             line,
             input: None,
             text: signal_unjustified(&id(n), path, line),

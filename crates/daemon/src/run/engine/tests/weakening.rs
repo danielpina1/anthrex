@@ -10,7 +10,8 @@ use super::fixture::*;
 use super::gates::{CHECK_MODE, no_check, only_op, working_on};
 use super::gates_review::{reviewer, submit, verdict};
 use crate::run::contract::{
-    DONE_ACCEPTED, REVIEW_RECORDED, deleted_test_file_message, reviewer_prompt, signals_unanswered,
+    DONE_ACCEPTED, REVIEW_RECORDED, deleted_test_file_message, reviewer_prompt, shown,
+    signals_unanswered,
 };
 use crate::run::engine::{Effect, OpKind, OpResult};
 use crate::run::model::{CheckRecord, OpId};
@@ -51,6 +52,10 @@ fn claim(fx: &mut Fixture, window: u32) -> (OpId, OpKind) {
     only_op(&effects, "VerifyDone")
 }
 
+/// The commit the diff was read from: a run head the task merged by a refresh, so not
+/// its start commit (ruling C-20).
+const DIFF_BASE: &str = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e";
+
 /// A clean `DoneChecked` for `t1` carrying `signals` (and `more` past the cap), with
 /// `outside` as its paths outside `owns`.
 fn checked(fx: &Fixture, signals: Vec<Signal>, more: u32, outside: &[&str]) -> OpResult {
@@ -64,6 +69,7 @@ fn checked(fx: &Fixture, signals: Vec<Signal>, more: u32, outside: &[&str]) -> O
         *s = Some(Box::new(ClaimSignals {
             list: signals,
             more,
+            base: DIFF_BASE.into(),
         }));
         *outside_owns = outside.iter().map(|p| p.to_string()).collect();
     }
@@ -95,7 +101,6 @@ fn deleted_test_file_bounces_at_rung_1_unless_owned_exactly() {
             unreachable!()
         };
         assert_eq!(signals, Some(spec()), "{owns}");
-        let start = fx.task("t1").start_commit.clone().unwrap_or(BASE.into());
         // Real git lists the deleted file outside `src/**` too: the bounce comes first.
         let outside: &[&str] = if owns.contains("tests") {
             &[]
@@ -104,16 +109,13 @@ fn deleted_test_file_bounces_at_rung_1_unless_owned_exactly() {
         };
         let result = checked(&fx, vec![deleted("tests/foo.rs")], 0, outside);
         let effects = fx.done(op, result);
-        let text = deleted_test_file_message(&["tests/foo.rs".to_string()], &start);
+        let text = deleted_test_file_message(&["tests/foo.rs".to_string()], DIFF_BASE);
         assert_eq!(one_reply(&effects), Err(text.clone()), "{owns}");
         assert_eq!(
             text,
-            format!(
-                "[anthrex] task_done rejected:\n\
-                 deleted test file tests/foo.rs; restore it or own it exactly\n\
-                 Restore it (git checkout {} -- tests/foo.rs, then commit) and call task_done again. If this task must delete it, call task_blocked with kind question and ask for the plan to be amended.",
-                &start[..7]
-            )
+            "[anthrex] task_done rejected:\n\
+             deleted test file tests/foo.rs; restore it or own it exactly\n\
+             Restore it (git checkout 5e5e5e5 -- 'tests/foo.rs', then commit) and call task_done again. If this task must delete it, call task_blocked with kind question and ask for the plan to be amended."
         );
         let t1 = fx.task("t1");
         assert_eq!(t1.state, TaskState::Working, "{owns}");
@@ -300,4 +302,146 @@ fn untiered_profile_computes_no_signals() {
         };
         assert_eq!(signals, None, "{profile}");
     }
+}
+
+/// Ruling C-20 (5): the restore command checks out the commit the diff was read from,
+/// quotes each raw path for a POSIX shell, and is left out for a path with a control
+/// character or a command over 1000 characters.
+#[test]
+fn the_restore_command_uses_the_diff_base_and_quotes_each_path() {
+    let tail = "and call task_done again. If this task must delete it, call task_blocked with kind question and ask for the plan to be amended.";
+    let paths = ["tests/a b.rs".to_string(), "tests/it's.rs".to_string()];
+    let text = deleted_test_file_message(&paths, DIFF_BASE);
+    assert_eq!(
+        text,
+        format!(
+            "[anthrex] task_done rejected:\n\
+             deleted test file tests/a b.rs; restore it or own it exactly\n\
+             deleted test file tests/it's.rs; restore it or own it exactly\n\
+             Restore it (git checkout 5e5e5e5 -- 'tests/a b.rs' 'tests/it'\\''s.rs', then commit) {tail}"
+        )
+    );
+    let fallback = format!("Restore the deleted test files from 5e5e5e5, then commit, {tail}");
+    let control = ["tests/a\nb.rs".to_string()];
+    let text = deleted_test_file_message(&control, DIFF_BASE);
+    assert!(text.ends_with(&fallback), "{text}");
+    assert!(text.contains("deleted test file tests/a?b.rs;"), "{text}");
+    let long: Vec<String> = (0..40).map(|n| format!("tests/{n:0>24}.rs")).collect();
+    let text = deleted_test_file_message(&long, DIFF_BASE);
+    assert!(text.ends_with(&fallback), "{text}");
+
+    // Through the engine: a refreshed task's claim restores from the diff base.
+    let (mut fx, window) = working_owning("[\"src/**\"]");
+    let start = fx.task("t1").start_commit.clone().unwrap_or(BASE.into());
+    assert_ne!(start, DIFF_BASE);
+    let (op, _) = claim(&mut fx, window);
+    let effects = fx.done(op, checked(&fx, vec![deleted("tests/a b.rs")], 0, &[]));
+    let text = one_reply(&effects).unwrap_err();
+    assert!(
+        text.contains("git checkout 5e5e5e5 -- 'tests/a b.rs'"),
+        "{text}"
+    );
+}
+
+/// Ruling C-20 (7): the invisible and direction marks become `?`, and a path cut at
+/// 200 characters ends with a hash of the whole, so two long paths differ.
+#[test]
+fn shown_hides_invisible_marks_and_tells_long_paths_apart() {
+    for c in [
+        '\u{200E}', '\u{200F}', '\u{061C}', '\u{200B}', '\u{200C}', '\u{200D}', '\u{2060}',
+        '\u{FEFF}',
+    ] {
+        assert_eq!(shown(&format!("tests/a{c}b.rs")), "tests/a?b.rs", "{:?}", c);
+    }
+    let stem = "d/".repeat(100);
+    let (one, two) = (format!("{stem}x.rs"), format!("{stem}y.rs"));
+    let (a, b) = (shown(&one), shown(&two));
+    assert_ne!(a, b);
+    for (shown, whole) in [(&a, &one), (&b, &two)] {
+        let (kept, hash) = shown.split_once("…#").expect(shown);
+        assert_eq!(kept, &whole[..200]);
+        assert_eq!(hash.len(), 8, "{hash}");
+        assert!(hash.bytes().all(|b| b.is_ascii_hexdigit()), "{hash}");
+    }
+    // The FNV-1a (32-bit) of the whole text, worked out apart.
+    let a201 = format!("{}a", "b".repeat(200));
+    assert_eq!(shown(&a201), format!("{}…#2c3c162c", "b".repeat(200)));
+    assert_eq!(
+        shown(&"a".repeat(200)),
+        "a".repeat(200),
+        "200 characters are not cut"
+    );
+}
+
+/// Ruling C-20 (3, 8): removed test code and a diff too large to read reach the
+/// reviewer, and a review that leaves them out gets the engine's findings.
+#[test]
+fn removed_test_code_and_a_too_large_diff_reach_the_reviewer() {
+    let signals = vec![
+        Signal::DiffTooLarge,
+        Signal::TestCodeRemoved {
+            path: "crates/a/src/lib.rs".into(),
+            asserts_removed: 3,
+        },
+    ];
+    let (mut fx, op) = accepted_with(signals, 0);
+    let (rwindow, kind) = reviewer(&mut fx, op, "diff --git a/x b/x");
+    let OpKind::CreateWindow { first_turn, .. } = kind else {
+        unreachable!()
+    };
+    let lines = "Test changes to justify:\n\
+                 - W1 the diff is too large to read for test changes; check the test files yourself\n\
+                 - W2 crates/a/src/lib.rs: #[cfg(test)] code removed, with 3 assertion lines\n";
+    assert!(first_turn.contains(lines), "{first_turn}");
+    let partial = verdict("approve", vec![]);
+    submit(&mut fx, rwindow, partial.clone());
+    submit(&mut fx, rwindow, partial);
+    let review = fx.task("t1").reviews.last().unwrap().clone();
+    let texts: Vec<(Option<String>, String)> = review
+        .findings
+        .iter()
+        .map(|f| (f.file.clone(), f.text.clone()))
+        .collect();
+    assert_eq!(
+        texts,
+        vec![
+            (
+                None,
+                "W1 (the diff) was not justified by the review".to_string()
+            ),
+            (
+                Some("crates/a/src/lib.rs".to_string()),
+                "W2 (crates/a/src/lib.rs) was not justified by the review".to_string()
+            ),
+        ]
+    );
+}
+
+/// Ruling C-20 (6): a replacement reviewer session gets its own refusal.
+#[test]
+fn a_replacement_reviewer_is_refused_afresh() {
+    let (mut fx, op) = accepted_with(vec![skip("crates/a/tests/t.rs", 19)], 0);
+    let (rwindow, _) = reviewer(&mut fx, op, "diff --git a/x b/x");
+    let empty = verdict("approve", vec![]);
+    let refused = vec![Err(signals_unanswered(&["W1".to_string()]))];
+    assert_eq!(replies(&submit(&mut fx, rwindow, empty.clone())), refused);
+    // Two turns without a verdict: the round ends and a fresh reviewer starts.
+    fx.turn_completed(rwindow);
+    let ids: Vec<u64> = fx.run().outbox.iter().map(|m| m.id).collect();
+    fx.next(crate::run::engine::EventKind::Delivered {
+        run_id: RUN_ID.into(),
+        message_ids: ids,
+        ok: true,
+        error: None,
+    });
+    let effects = fx.turn_completed(rwindow);
+    // A Claude reviewer's process is stopped first; its exit starts the next one.
+    let effects = match ops_in(&effects, "PrepareReview").is_empty() {
+        true => super::turns::exited(&mut fx, rwindow),
+        false => effects,
+    };
+    let (op, _) = only_op(&effects, "PrepareReview");
+    let (rwindow2, _) = reviewer(&mut fx, op, "diff --git a/x b/x");
+    assert_ne!(rwindow2, rwindow);
+    assert_eq!(replies(&submit(&mut fx, rwindow2, empty)), refused);
 }

@@ -1,6 +1,6 @@
 //! Decision 40: test-weakening signals (TT §3.8) from the claim's
 //! `git diff -U0 --no-renames --no-color` and the changed `.rs` files that hold
-//! `#[cfg(test)]` at the head. Pure.
+//! `#[cfg(test)]` at the diff base and at the head (ruling C-20). Pure.
 
 use super::{SIGNALS_MAX, Signal};
 use crate::run::globs::OwnsMatcher;
@@ -44,12 +44,18 @@ pub fn signals_and_rest(
     test_paths: &[String],
     skip_markers: &[String],
 ) -> (Vec<Signal>, usize) {
-    collect(parse(diff), None, cfg_test_files, test_paths, skip_markers)
+    read(&SignalInput {
+        diff,
+        cfg_head: cfg_test_files,
+        test_paths,
+        skip_markers,
+        ..SignalInput::default()
+    })
 }
 
 /// [`signals_and_rest`] of a `-U0` diff cut after its first bytes (task M9.1.16):
 /// the file the cut ends in is left out, and the deleted files are `deleted`, read
-/// apart (`git diff --diff-filter=D --name-only`), so no deleted test file is missed.
+/// apart (`git diff --diff-filter=DT --name-only`), so no deleted test file is missed.
 pub fn signals_of_cut_diff(
     head: &str,
     deleted: &[String],
@@ -57,50 +63,105 @@ pub fn signals_of_cut_diff(
     test_paths: &[String],
     skip_markers: &[String],
 ) -> (Vec<Signal>, usize) {
-    let whole = head
-        .rfind("\ndiff --git ")
-        .map_or("", |end| &head[..end + 1]);
-    let files = parse(whole);
-    collect(
-        files,
-        Some(deleted),
-        cfg_test_files,
+    read(&SignalInput {
+        diff: head,
+        cut: Some(deleted),
+        cfg_head: cfg_test_files,
         test_paths,
         skip_markers,
-    )
+        ..SignalInput::default()
+    })
 }
 
-fn collect(
-    files: Vec<FileDiff>,
-    deleted_files: Option<&[String]>,
-    cfg_test_files: &[String],
-    test_paths: &[String],
-    skip_markers: &[String],
-) -> (Vec<Signal>, usize) {
-    let tests = (!test_paths.is_empty())
-        .then(|| OwnsMatcher::new(test_paths).ok())
-        .flatten();
-    let is_test = |path: &str| {
-        tests.as_ref().is_some_and(|m| m.matches(path)) || cfg_test_files.iter().any(|f| f == path)
+/// Everything decision 40's signals are read from (ruling C-20).
+#[derive(Default)]
+pub struct SignalInput<'a> {
+    /// The `-U0` diff, or its first bytes when it was cut.
+    pub diff: &'a str,
+    /// `Some` when the diff was cut or not read at all (it timed out): the file the cut
+    /// ends in is left out, the deleted files are these (`--diff-filter=DT`), and a
+    /// [`Signal::DiffTooLarge`] is added.
+    pub cut: Option<&'a [String]>,
+    /// The changed `.rs` files that hold `#[cfg(test)]` at the diff base and at the head.
+    pub cfg_base: &'a [String],
+    pub cfg_head: &'a [String],
+    pub test_paths: &'a [String],
+    pub skip_markers: &'a [String],
+}
+
+/// The signals of `input`, at most [`SIGNALS_MAX`], and how many more there were.
+/// Deleted test files come first, then [`Signal::DiffTooLarge`], then per file in diff
+/// order its removed test code, its skip markers and its assertion loss; last, test
+/// code removed from a file past a cut.
+pub fn read(input: &SignalInput<'_>) -> (Vec<Signal>, usize) {
+    let files = match input.cut {
+        Some(_) => {
+            let diff = input.diff;
+            parse(
+                diff.rfind("\ndiff --git ")
+                    .map_or("", |end| &diff[..end + 1]),
+            )
+        }
+        None => parse(input.diff),
     };
+    let tests = (!input.test_paths.is_empty())
+        .then(|| OwnsMatcher::new(input.test_paths).ok())
+        .flatten();
+    let listed = |list: &[String], path: &str| list.iter().any(|f| f == path);
     let deleted_test = |path: &str| tests.as_ref().is_some_and(|m| m.matches(path));
-    let mut deleted: Vec<Signal> = deleted_files
+    let removed_code = |path: &str| listed(input.cfg_base, path) && !listed(input.cfg_head, path);
+    let is_test = |path: &str| {
+        deleted_test(path) || listed(input.cfg_head, path) || listed(input.cfg_base, path)
+    };
+    let mut deleted: Vec<Signal> = input
+        .cut
         .unwrap_or_default()
         .iter()
         .filter(|path| deleted_test(path))
         .map(|path| Signal::DeletedTestFile { path: path.clone() })
         .collect();
+    if input.cut.is_some() {
+        deleted.push(Signal::DiffTooLarge);
+    }
+    let mut seen: Vec<String> = Vec::new();
     let mut other = Vec::new();
     for file in files {
+        let path = if file.deleted { &file.old } else { &file.new };
+        let markers = assertion_markers(path);
+        let asserts = |text: &String| markers.iter().any(|m| text.contains(m));
+        let removed: Vec<u32> = file
+            .removed
+            .iter()
+            .filter(|(_, text)| asserts(text))
+            .map(|(line, _)| *line)
+            .collect();
+        seen.push(path.clone());
         if file.deleted {
-            if deleted_files.is_none() && deleted_test(&file.old) {
-                deleted.push(Signal::DeletedTestFile { path: file.old });
+            if deleted_test(path) {
+                if input.cut.is_none() {
+                    deleted.push(Signal::DeletedTestFile { path: path.clone() });
+                }
+            } else if removed_code(path) {
+                other.push(Signal::TestCodeRemoved {
+                    path: path.clone(),
+                    asserts_removed: removed.len() as u32,
+                });
             }
             continue;
         }
-        let path = file.new.clone();
+        let code_gone = removed_code(path);
+        if code_gone {
+            other.push(Signal::TestCodeRemoved {
+                path: path.clone(),
+                asserts_removed: removed.len() as u32,
+            });
+        }
         for (line, text) in &file.added {
-            if let Some(marker) = skip_markers.iter().find(|m| text.contains(m.as_str())) {
+            let found = input
+                .skip_markers
+                .iter()
+                .find(|m| text.contains(m.as_str()));
+            if let Some(marker) = found {
                 other.push(Signal::SkipMarker {
                     path: path.clone(),
                     line: *line,
@@ -108,24 +169,25 @@ fn collect(
                 });
             }
         }
-        if is_test(&path) {
-            let markers = assertion_markers(&path);
-            let asserts = |text: &String| markers.iter().any(|m| text.contains(m));
-            let removed: Vec<u32> = file
-                .removed
-                .iter()
-                .filter(|(_, text)| asserts(text))
-                .map(|(line, _)| *line)
-                .collect();
-            let added = file.added.iter().filter(|(_, text)| asserts(text)).count() as u32;
-            if removed.len() as u32 > added {
-                other.push(Signal::AssertionLoss {
-                    path,
-                    line: removed[0],
-                    removed: removed.len() as u32,
-                    added,
-                });
-            }
+        let added = file.added.iter().filter(|(_, text)| asserts(text)).count() as u32;
+        if !code_gone && is_test(path) && removed.len() as u32 > added {
+            other.push(Signal::AssertionLoss {
+                path: path.clone(),
+                line: removed[0],
+                removed: removed.len() as u32,
+                added,
+            });
+        }
+    }
+    // Past a cut: the lists alone say the test code went.
+    let deleted_listed = |path: &str| input.cut.is_some_and(|d| listed(d, path));
+    for path in input.cfg_base {
+        let gone = removed_code(path) && !listed(&seen, path);
+        if gone && !(deleted_listed(path) && deleted_test(path)) {
+            other.push(Signal::TestCodeRemoved {
+                path: path.clone(),
+                asserts_removed: 0,
+            });
         }
     }
     deleted.extend(other);

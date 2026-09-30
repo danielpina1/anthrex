@@ -58,6 +58,7 @@ fn real_git() -> String {
 struct Rig {
     _tmp: tempfile::TempDir,
     log: PathBuf,
+    root: PathBuf,
     worktree: PathBuf,
     start: String,
     service: Arc<RunService>,
@@ -65,7 +66,22 @@ struct Rig {
 }
 
 impl Rig {
+    /// A rig on the real git: most tests need no log, and a wrapper doubles every
+    /// process start, which loads the machine under the other tests' wall-clock bounds.
     fn new(base: &[(&str, &str)]) -> Rig {
+        Rig::with_wrapper(base, None)
+    }
+
+    /// A rig whose git logs every invocation.
+    fn logging(base: &[(&str, &str)]) -> Rig {
+        Rig::with_wrapper(base, Some(""))
+    }
+
+    /// As [`Rig::new`], through the logging wrapper when `extra` is given, with those
+    /// shell lines in it before it runs git.
+    fn with_wrapper(base: &[(&str, &str)], extra: Option<&str>) -> Rig {
+        let logs = extra.is_some();
+        let extra = extra.unwrap_or_default();
         let tmp = tempfile::tempdir().unwrap();
         let top = tmp.path().canonicalize().unwrap();
         let log = top.join("git.log");
@@ -73,7 +89,7 @@ impl Rig {
         std::fs::write(
             &wrapper,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n{extra}\nexec '{}' \"$@\"\n",
                 log.display(),
                 real_git()
             ),
@@ -120,11 +136,13 @@ impl Rig {
             config::Orchestrator::default(),
             Arc::new(NoRoots),
         );
-        run_ctx.git = wrapper.into_os_string();
+        if !extra.is_empty() || logs {
+            run_ctx.git = wrapper.into_os_string();
+        }
         let service = RunService::new(manager, run_ctx);
         let ctx = OpCtx {
             run_id: "r1".into(),
-            project: root,
+            project: root.clone(),
             data_dir: top.join("data/runs/r1"),
             git_timeout: Duration::from_secs(30),
             check_timeout: Duration::from_secs(30),
@@ -133,6 +151,7 @@ impl Rig {
         Rig {
             _tmp: tmp,
             log,
+            root,
             worktree,
             start,
             service,
@@ -218,7 +237,7 @@ fn signals_of(result: &OpResult) -> Option<(Vec<Signal>, u32)> {
 /// and no `git grep` runs, and the result carries no signal; with one, both run.
 #[tokio::test(flavor = "multi_thread")]
 async fn untiered_profile_computes_no_signals() {
-    let rig = Rig::new(&[
+    let rig = Rig::logging(&[
         ("tests/gone.rs", "#[test]\nfn a() { assert!(true); }\n"),
         ("src/lib.rs", "pub fn f() {}\n#[cfg(test)]\nmod t {}\n"),
     ]);
@@ -255,7 +274,7 @@ async fn untiered_profile_computes_no_signals() {
     );
     let u0 = log.iter().find(|l| l.contains("-U0")).unwrap();
     assert!(u0.contains("--no-optional-locks"), "{u0}");
-    assert!(u0.contains(&format!("{}...", rig.start)), "{u0}");
+    assert!(u0.contains(&format!("{}..", rig.start)), "{u0}");
     assert!(log.iter().any(|l| l.contains(" grep ")), "{log:#?}");
 }
 
@@ -314,3 +333,7 @@ async fn signals_are_capped_and_ordered() {
     assert_eq!(signals, want);
     assert_eq!(rest, 3, "tests/z.rs's three markers are counted");
 }
+
+// Ruling C-20's cases, against the same rig.
+#[path = "ops_signals_tests_c20.rs"]
+mod c20;

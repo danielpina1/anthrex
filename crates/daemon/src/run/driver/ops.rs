@@ -18,7 +18,7 @@ use crate::run::model::OpId;
 use crate::run::proof::ProofOp;
 use crate::run::role_launch::worker_git_roots;
 use crate::run::slots::{Priority, Want};
-use crate::run::tiers::{ClaimSignals, SignalsSpec};
+use crate::run::tiers::SignalsSpec;
 use proto::AgentRole;
 
 // Decision 33's proof and decision 34's check (split out to keep this file under the
@@ -476,11 +476,9 @@ fn verify_done(
     });
     // Milestone 9.1 decision 40: only when the op asks (never for an untiered profile).
     let signals = match signals {
-        Some(spec) => {
-            let (list, more) = git::done_signals(git, worktree, run_head, &d.head, spec, t)?;
-            let found = ClaimSignals { list, more };
-            (found != ClaimSignals::default()).then(|| Box::new(found))
-        }
+        Some(spec) => Some(Box::new(git::done_signals(
+            git, worktree, run_head, &d.head, spec, t,
+        )?)),
         None => None,
     };
     Ok(OpResult::DoneChecked {
