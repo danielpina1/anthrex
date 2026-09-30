@@ -51,7 +51,8 @@ impl App {
     /// The run view's selected task while the panel is showing, with its key.
     fn inspected_task(&self) -> Option<(String, String, DetailKey)> {
         let view = self.run_view.as_ref()?;
-        if !self.overview || !self.inspector_visible {
+        // Decision 23: only while the panel shows; the plan review covers it.
+        if !self.overview || !self.inspector_visible || self.plan_review.is_some() {
             return None;
         }
         let Some(NodeKey::Task { run, id }) = &self.tree.selected else {

@@ -1694,3 +1694,10 @@ scope.
   sensitive.** Its first, real `git rev-parse` has an 8 s timeout that expired once, under the
   full `cargo test --workspace` on a loaded machine (load average about 5 to 6). It then passed
   8 of 8 runs alone. It needs a measured budget per `docs/timing-budgets.md`.
+
+## From milestone 9.0.5's whole-branch review (2026-09-30), for M9.5
+
+- **The plan review has no indicator for new alerts.** While the review covers the screen, an alert
+  that arrives shows nowhere: the status bar's `⚑ n` is drawn only when the sidebar is hidden, and
+  the Alerts box sits under the review. Give the review's header or the status bar a count
+  while it is open.

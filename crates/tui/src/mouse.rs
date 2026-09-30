@@ -77,7 +77,12 @@ impl App {
             self.scroll_graph(up, column, row, layout.main);
             return vec![];
         }
-        if self.tree_input.is_some() || !main_inner.contains((column, row).into()) {
+        // Milestone 9.0.5: while the Alerts box has the keys, the wheel reaches the
+        // terminal no more than a key or a paste does.
+        if self.tree_input.is_some()
+            || self.alerts_focus.is_some()
+            || !main_inner.contains((column, row).into())
+        {
             return vec![];
         }
         if self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None {

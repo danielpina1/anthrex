@@ -406,3 +406,19 @@ fn page_up_after_the_brief_collapsed_moves_from_the_drawn_end() {
         max.saturating_sub(height - 1)
     );
 }
+
+/// Whole-branch review: the plan review covers the panel, so under it a key change
+/// asks for nothing; closing the review asks once.
+#[test]
+fn no_request_under_the_plan_review() {
+    let mut app = gemini_view();
+    let (id, _) = ticks(&mut app, 1)[0].clone();
+    let _ = reply(&mut app, "t2", "the brief", id);
+    let _ = app.open_plan_review("r1".into(), crate::app::ReviewTarget::Gate);
+    assert!(app.plan_review.is_some());
+    change_t2(&mut app, |task| task.rounds[0].turns += 1);
+    assert!(ticks(&mut app, 3).is_empty(), "the panel is covered");
+    let _ = press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(app.plan_review.is_none(), "Esc closed the review");
+    assert_eq!(ticks(&mut app, 3).len(), 1);
+}

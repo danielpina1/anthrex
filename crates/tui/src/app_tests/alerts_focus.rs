@@ -358,3 +358,26 @@ fn an_alerts_key_repairs_the_selection_first() {
         "`j` stepped from the repaired position"
     );
 }
+
+/// Whole-branch review: while the box has the keys the wheel over the terminal
+/// reaches nothing, like a key or a paste; once it lets go the wheel reaches the
+/// program again.
+#[test]
+fn the_wheel_while_the_alerts_are_focused_sends_nothing() {
+    let mut app = every_app();
+    app.parser.process(b"\x1b[?1000h\x1b[?1006h");
+    let area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    let mut layout = crate::ui::layout(area, 0, crate::app::alerts(&app).len());
+    layout.main_inner = area;
+    focus(&mut app);
+    assert_eq!(app.on_scroll(false, 5, 5, &layout), vec![]);
+    assert_eq!(app.scroll_offset, 0, "nor the scrollback");
+    tap(&mut app, KeyCode::Esc);
+    assert_eq!(
+        app.on_scroll(false, 5, 5, &layout),
+        vec![Effect::Send(ClientMsg::Input {
+            window_id: 1,
+            bytes: b"\x1b[<65;6;6M".to_vec()
+        })]
+    );
+}
