@@ -11,7 +11,7 @@ use proto::{BlockReason, RouteSpec, RunState, Size, TaskOrigin, TaskState, TestM
 use super::dispatch::{block, history};
 use super::fixes::{FixSpec, add_fix, next_fix_id};
 use super::requests::log;
-use super::{Effect, OpKind, OpResult, emit_op, merge, next_op, stages};
+use super::{Effect, OpId, OpKind, OpResult, emit_op, merge, next_op, stages};
 use crate::run::contract::{sha7, sync_fix_acceptance, sync_fix_brief, sync_fix_title};
 use crate::run::env::profile_env;
 use crate::run::model::{
@@ -245,7 +245,7 @@ fn emit(run: &mut Run, n: u16, fx: &mut Vec<Effect>) {
 /// handler 9.2 adds here.
 pub(super) fn done(
     run: &mut Run,
-    spec: &PropagateSpec,
+    (op, spec): (OpId, &PropagateSpec),
     result: OpResult,
     now: u64,
     fx: &mut Vec<Effect>,
@@ -263,6 +263,8 @@ pub(super) fn done(
     } = &result
     {
         super::tiers::run_facts(run, outcome, now);
+        // Ruling C-23: a propagate's tier 2 is a tier job (decisions 50 and 57).
+        super::history::tier_job(run, (op, None, spec.to), outcome, now, fx);
     }
     let (k, n) = (spec.from, spec.to);
     match result {

@@ -212,3 +212,60 @@ fn v2_history_still_aggregates() {
 
 const TIER_LINE: &str = r#"{"type":"tier","v":3,"record_id":"run-new/tier/9","at":1800000000,"run_id":"run-new","task_id":"t1","stage":1,"tier":2,"secs":4,"affected":1,"full_reason":null,"cache_hit":false,"cached_steps":0,"steps":2,"ok":true,"flaky":["a::flaky"]}"#;
 const BISECT_LINE: &str = r#"{"type":"bisect","v":3,"record_id":"run-new/bisect/1/1","at":1800000000,"run_id":"run-new","stage":1,"head":"cccc","tests":["a::works"],"range":3,"probes":3,"culprit":"t2","reason":null,"fix_task":"fix1"}"#;
+
+/// Review S2 and S5: `last_at` is the latest time whatever the lines' order, and `runs`
+/// is the count itself, not the threshold.
+#[test]
+fn a_proposal_counts_every_run_and_keeps_the_latest_time() {
+    let lines = vec![
+        flaky("r3", 1, "a::flaky", NOW - DAY),
+        flaky("r1", 1, "a::flaky", NOW - 2 * DAY),
+        flaky("r4", 1, "a::flaky", NOW - 5 * DAY),
+        flaky("r2", 1, "a::flaky", NOW - 3 * DAY),
+    ];
+    assert_eq!(
+        flaky_proposals(&lines, NOW, 14, 3),
+        [FlakyProposal {
+            test: "a::flaky".into(),
+            runs: 4,
+            last_at: NOW - DAY,
+        }]
+    );
+}
+
+/// Ruling C-23: a line more than 300 s in the future is ignored; 300 s is kept.
+#[test]
+fn a_flaky_line_from_the_future_is_ignored() {
+    let at = |ahead: u64| {
+        vec![
+            flaky("r1", 1, "a::flaky", NOW - DAY),
+            flaky("r2", 1, "a::flaky", NOW - DAY),
+            flaky("r3", 1, "a::flaky", NOW + ahead),
+        ]
+    };
+    let kept = flaky_proposals(&at(300), NOW, 14, 3);
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(kept[0].last_at, NOW + 300);
+    assert!(flaky_proposals(&at(301), NOW, 14, 3).is_empty());
+}
+
+/// Ruling C-23: a name a shell would read inside `"…"` is single-quoted instead; a
+/// plain name keeps the brief's text.
+#[test]
+fn the_fix_command_quotes_a_name_the_shell_would_read() {
+    let mut stats = with_proposal();
+    stats.flaky_proposals[0].test = "a\"b$c'd".into();
+    let text = render(&stats);
+    let fix = text.lines().last().unwrap();
+    assert_eq!(
+        fix,
+        "  fix: anthrex run start --goal 'Make the test a\"b$c'\\''d deterministic; it failed and then passed on retry in 3 runs'"
+    );
+    let mut stats = with_proposal();
+    stats.flaky_proposals[0].test = "tests::a_b-c/d.e[1]".into();
+    let fix = render(&stats).lines().last().unwrap().to_string();
+    assert_eq!(
+        fix,
+        "  fix: anthrex run start --goal \"Make the test tests::a_b-c/d.e[1] deterministic; it failed and then passed on retry in 3 runs\""
+    );
+}

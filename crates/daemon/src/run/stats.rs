@@ -155,11 +155,15 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
 
 /// Seconds in a day, for `flaky_window_days`.
 const DAY_SECS: u64 = 86_400;
+/// Ruling C-23 (as C-13 item 3 for the cache): a `flaky` line dated more than this
+/// ahead of now is ignored.
+const FUTURE_SECS: u64 = 300;
 
 /// Milestone 9.1 decision 34: every test recorded flaky in at least `after` distinct
 /// runs within the last `window_days` before `now` (a line exactly `window_days` old is
 /// inside), with its run count and its last time; the most runs first, then by name.
-/// Nothing is applied: `run stats` only prints them.
+/// A line more than [`FUTURE_SECS`] in the future is ignored (ruling C-23). Nothing is
+/// applied: `run stats` only prints them.
 pub fn flaky_proposals(
     lines: &[HistoryLine],
     now: u64,
@@ -172,7 +176,7 @@ pub fn flaky_proposals(
         let HistoryLine::Flaky(f) = line else {
             continue;
         };
-        if now.saturating_sub(f.at) > window {
+        if f.at > now.saturating_add(FUTURE_SECS) || now.saturating_sub(f.at) > window {
             continue;
         }
         let (runs, last) = tests.entry(f.test.as_str()).or_default();
@@ -302,10 +306,26 @@ fn flaky_block(stats: &HistoryStats, out: &mut String) {
         out.push_str(&format!(
             "proposal: add {test} to slow_tests (flaky in {runs} runs in the last {days} days)\n"
         ));
-        out.push_str(&format!(
-            "  fix: anthrex run start --goal \"Make the test {test} deterministic; it failed and then passed on retry in {runs} runs\"\n"
-        ));
+        let goal = format!(
+            "Make the test {test} deterministic; it failed and then passed on retry in {runs} runs"
+        );
+        let goal = if test.chars().all(plain) {
+            format!("\"{goal}\"")
+        } else {
+            shell_quote(&goal)
+        };
+        out.push_str(&format!("  fix: anthrex run start --goal {goal}\n"));
     }
+}
+
+/// Ruling C-23: a test-name character the brief's `"…"` quoting leaves harmless.
+fn plain(c: char) -> bool {
+    c.is_ascii_alphanumeric() || "_:./-[]".contains(c)
+}
+
+/// `text` single-quoted for a POSIX shell, each `'` written `'\''` (ruling C-23).
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]

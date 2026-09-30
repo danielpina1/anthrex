@@ -15,7 +15,7 @@ use crate::run::contract::sha7;
 use crate::run::engine::{Effect, OpKind, OpResult};
 
 /// Every history line the effects append, with its `record_id`.
-fn lines(effects: &[Effect]) -> Vec<(String, HistoryLine)> {
+pub(super) fn lines(effects: &[Effect]) -> Vec<(String, HistoryLine)> {
     ops_in(effects, "AppendHistory")
         .into_iter()
         .map(|(_, kind)| match kind {
@@ -27,7 +27,7 @@ fn lines(effects: &[Effect]) -> Vec<(String, HistoryLine)> {
         .collect()
 }
 
-fn tier_lines(all: &[(String, HistoryLine)]) -> Vec<TierRunRecord> {
+pub(super) fn tier_lines(all: &[(String, HistoryLine)]) -> Vec<TierRunRecord> {
     all.iter()
         .filter_map(|(_, l)| match l {
             HistoryLine::Tier(r) => Some(r.clone()),
@@ -36,7 +36,7 @@ fn tier_lines(all: &[(String, HistoryLine)]) -> Vec<TierRunRecord> {
         .collect()
 }
 
-fn flaky_lines(all: &[(String, HistoryLine)]) -> Vec<FlakyRecord> {
+pub(super) fn flaky_lines(all: &[(String, HistoryLine)]) -> Vec<FlakyRecord> {
     all.iter()
         .filter_map(|(_, l)| match l {
             HistoryLine::Flaky(r) => Some(r.clone()),
@@ -45,7 +45,7 @@ fn flaky_lines(all: &[(String, HistoryLine)]) -> Vec<FlakyRecord> {
         .collect()
 }
 
-fn bisect_lines(all: &[(String, HistoryLine)]) -> Vec<BisectLine> {
+pub(super) fn bisect_lines(all: &[(String, HistoryLine)]) -> Vec<BisectLine> {
     all.iter()
         .filter_map(|(_, l)| match l {
             HistoryLine::Bisect(r) => Some(r.clone()),
@@ -200,7 +200,11 @@ fn pending_one_candidate(fx: &Fixture) -> (crate::run::model::OpId, OpKind) {
 }
 
 /// [`answer`], keeping every line the probes' results append.
-fn answer_collecting(fx: &mut Fixture, red_from: u32, all: &mut Vec<(String, HistoryLine)>) {
+pub(super) fn answer_collecting(
+    fx: &mut Fixture,
+    red_from: u32,
+    all: &mut Vec<(String, HistoryLine)>,
+) {
     let mut n = 0;
     while !super::merge::pending(fx, "TestAt", None).is_empty() {
         let (op, spec) = super::bisect::probe(fx);

@@ -57,7 +57,7 @@ pub(super) fn op_done(
         // Milestone 9.1 decision 48.
         (kind @ OpKind::CreateStageBranch { .. }, _) => stages::created(run, &kind, result, now),
         // Decisions 50-52.
-        (OpKind::Propagate(spec), _) => propagate::done(run, &spec, result, now, fx),
+        (OpKind::Propagate(spec), _) => propagate::done(run, (op, &spec), result, now, fx),
         // Decision 51: a sync task's merge, before its first session.
         (OpKind::HandBack { task_head, .. }, Some(i)) if propagate::sync_due(&run.tasks[i]) => {
             propagate::handed_back(run, i, task_head, result, now, fx)
