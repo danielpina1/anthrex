@@ -416,3 +416,67 @@ fn the_select_helper_reaches_a_run_row() {
     select(&mut app, NodeKey::Run(RUN_ID.into()));
     assert_eq!(app.tree.selected, Some(NodeKey::Run(RUN_ID.into())));
 }
+
+/// Milestone 9.0.5 review: the Alerts box's height follows the alert count, so the
+/// sidebar list's height changes with no resize. That keeps the user's wheel-scrolled
+/// `top` (clamped), instead of snapping back to the focused window; a real resize
+/// still reveals it.
+#[test]
+fn alert_churn_keeps_a_wheel_scrolled_sidebar() {
+    use crate::tree::run_fixtures::{run, snapshot};
+    use proto::RunState;
+    let runs = |halted: usize| {
+        let runs = (0..3)
+            .map(|n| {
+                let state = if n < halted {
+                    RunState::Halted
+                } else {
+                    RunState::Running
+                };
+                let mut info = run(&format!("r{n}"), "/tmp", state);
+                info.created_at = n as u64;
+                info
+            })
+            .collect();
+        proto::DaemonMsg::Run(proto::RunReply::Snapshot(snapshot(1, runs)))
+    };
+    let shells = (1..=20)
+        .map(|id| win(id, &format!("shell-{id}"), Status::Idle))
+        .collect();
+    let mut app = app_with(shells);
+    app.on_daemon(runs(1));
+    let frame = |app: &mut App, width: u16, height: u16| {
+        let l = crate::ui::layout_for(app, ratatui::layout::Rect::new(0, 0, width, height));
+        app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
+        l
+    };
+    frame(&mut app, 120, 20);
+    app.focus(20);
+    let l = frame(&mut app, 120, 20);
+    assert!(app.tree.sidebar.top > 0, "the focused window is revealed");
+    for _ in 0..20 {
+        app.on_scroll(true, l.sidebar_list.x, l.sidebar_list.y, &l);
+    }
+    assert_eq!(app.tree.sidebar.top, 0);
+    frame(&mut app, 120, 20);
+    assert_eq!(app.tree.sidebar.top, 0);
+
+    // Two more halted runs: three alerts, a taller box, a shorter list.
+    app.on_daemon(runs(3));
+    let after = frame(&mut app, 120, 20);
+    assert!(
+        after.sidebar_list.height < l.sidebar_list.height,
+        "the box grew"
+    );
+    assert_eq!(app.tree.sidebar.top, 0, "the user's scroll is kept");
+
+    // A real resize still reveals the focused window.
+    let resized = frame(&mut app, 120, 24);
+    let rows = app.rows();
+    let focused = tree::row_index(&rows, &NodeKey::Window(20)).unwrap();
+    let top = app.tree.sidebar.top;
+    assert!(
+        (top..top + usize::from(resized.sidebar_list.height)).contains(&focused),
+        "row {focused} in view from {top}"
+    );
+}

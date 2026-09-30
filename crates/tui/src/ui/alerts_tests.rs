@@ -399,3 +399,68 @@ fn a_raw_alert_line_is_sanitised_by_the_box_itself() {
         }
     }
 }
+
+/// Review: the status bar's badge and hint precedence, PREFIX > REVIEW > ALERTS >
+/// TREE. `C-b a` from tree mode (the overview, the run view) keeps `tree_input` set.
+#[test]
+fn the_status_bar_precedence_is_prefix_review_alerts_tree() {
+    let mut app = every_app();
+    key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+    key(&mut app, KeyCode::Char('t'), KeyModifiers::NONE);
+    assert!(app.tree_input.is_some());
+    focus(&mut app);
+    assert!(app.tree_input.is_some(), "tree mode stays under the box");
+    let (buffer, _) = draw_at(&app, 120, 24);
+    assert_eq!(row(&buffer, 23), " ALERTS  j/k move  ⏎ go  esc back");
+    // The prefix pending wins over the box.
+    key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+    let (buffer, _) = draw_at(&app, 120, 24);
+    assert!(
+        row(&buffer, 23).starts_with(" PREFIX "),
+        "{:?}",
+        row(&buffer, 23)
+    );
+    key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    // The review wins over the box (both set only by a constructed state: the box
+    // refuses `C-b a` under the review, and its Enter leaves before opening one).
+    app.open_plan_review("b-gate".into(), crate::app::ReviewTarget::Gate);
+    assert!(app.alerts_focus.is_some());
+    let (buffer, _) = draw_at(&app, 120, 24);
+    assert!(
+        row(&buffer, 23).starts_with(" REVIEW  a approve  x reject"),
+        "{:?}",
+        row(&buffer, 23)
+    );
+}
+
+/// Review: exactly as many alerts as rows show them all, with no `+<k> more`.
+#[test]
+fn as_many_alerts_as_rows_show_them_all() {
+    let runs = (0..6)
+        .map(|n| at(&format!("h{n}"), RunState::Halted, n))
+        .collect();
+    let app = app_with(
+        snapshot(1, runs),
+        vec![pty(1, "shell", "/r/demo", Status::Idle)],
+    );
+    let (buffer, layout) = draw_at(&app, 120, 40);
+    let rows = box_rows(&buffer, &layout);
+    assert_eq!(rows.len(), 8, "{rows:#?}");
+    assert!(
+        rows[1..7].iter().all(|r| r.starts_with("│● h")),
+        "{rows:#?}"
+    );
+    assert!(rows.iter().all(|r| !r.contains("more")), "{rows:#?}");
+}
+
+/// Review: a short terminal still shows one alert row (the formula's `max(1, …)`).
+#[test]
+fn a_short_terminal_still_shows_one_alert() {
+    for height in 5..=9 {
+        let app = every_app();
+        let (buffer, layout) = draw_at(&app, 80, height);
+        let rows = box_rows(&buffer, &layout);
+        assert_eq!(rows.len(), 3, "{height}: {rows:#?}");
+        assert!(rows[1].starts_with("│● a-attn"), "{height}: {rows:#?}");
+    }
+}

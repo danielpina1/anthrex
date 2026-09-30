@@ -92,17 +92,21 @@ pub(crate) fn lines(app: &App, width: u16, rows: u16) -> Vec<Line<'static>> {
             .map(|alert| alert_line(alert, width, false))
             .collect();
     }
-    let shown = rows - 1;
+    // One row: the most urgent alert, not a `+<k> more` alone (the title has the
+    // count).
+    let shown = (rows - 1).max(1);
     let mut out: Vec<Line<'static>> = all
         .iter()
         .take(shown)
         .map(|alert| alert_line(alert, width, false))
         .collect();
-    let more = format!("+{} more", all.len() - shown);
-    out.push(Line::from(Span::styled(
-        truncate(&more, width),
-        theme::muted(),
-    )));
+    if shown < rows {
+        let more = format!("+{} more", all.len() - shown);
+        out.push(Line::from(Span::styled(
+            truncate(&more, width),
+            theme::muted(),
+        )));
+    }
     out
 }
 

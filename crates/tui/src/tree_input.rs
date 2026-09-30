@@ -12,13 +12,22 @@ impl App {
         tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree)
     }
 
+    /// A new height reveals the anchor, except (milestone 9.0.5) when only the
+    /// sidebar list's height changed between two shown heights: the Alerts box under
+    /// it grows and shrinks with the alerts, with no resize, and that keeps the user's
+    /// scroll, clamped to the new bounds. A resize changes the overview's height, and
+    /// hiding or showing the sidebar passes through 0, so both still reveal.
     pub fn set_tree_viewports(&mut self, sidebar_rows: u16, overview_rows: u16) {
-        let changed =
-            self.tree.sidebar.height != sidebar_rows || self.tree.overview.height != overview_rows;
+        let sidebar_changed = self.tree.sidebar.height != sidebar_rows;
+        let overview_changed = self.tree.overview.height != overview_rows;
+        let shown_both = self.tree.sidebar.height > 0 && sidebar_rows > 0;
         self.tree.sidebar.height = sidebar_rows;
         self.tree.overview.height = overview_rows;
-        if changed {
+        if overview_changed || (sidebar_changed && !shown_both) {
             self.reveal_tree_anchor();
+        } else if sidebar_changed {
+            let len = self.rows().len();
+            self.tree.sidebar.scroll(0, len);
         }
     }
 
