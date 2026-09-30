@@ -154,8 +154,11 @@ pub fn fresh_dir(common: &Path, base: &Path, name: &str) -> Result<PathBuf, Stri
     Ok(dir)
 }
 
-/// Removes `path` without following a link there; a failure is logged.
-pub fn remove_dir(path: &Path) {
+/// Removes the step directory `path` without following a link there. When it cannot
+/// be removed (a daemon a step started still holds it, the "Risks" section's case),
+/// it is left: `step <k>: its directory is still in use; left for cleanup` is logged at
+/// warn and returned (ruling C-27, M-2), `<k>` the step of its name `s<op>-<k>`.
+pub fn remove_dir(path: &Path) -> Option<String> {
     let result = match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() => {
             if let Err(error) = git::restore_owner_access(path) {
@@ -167,9 +170,15 @@ pub fn remove_dir(path: &Path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
     };
-    if let Err(error) = result {
-        tracing::debug!(%error, path = %path.display(), "could not remove a step directory");
-    }
+    let error = result.err()?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let step = name.rsplit_once('-').map_or(name.as_str(), |(_, k)| k);
+    let text = format!("step {step}: its directory is still in use; left for cleanup");
+    tracing::warn!(%error, path = %path.display(), "{text}");
+    Some(text)
 }
 
 /// Added to a blocking call's own bound before the executor stops waiting for it.
@@ -485,3 +494,7 @@ pub(super) async fn run_step(
     };
     Ok((ran, whole.tail))
 }
+
+#[cfg(test)]
+#[path = "tier_step_tests.rs"]
+mod tests;

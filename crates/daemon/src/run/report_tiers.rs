@@ -42,6 +42,10 @@ pub(super) fn section(run: &Run, out: &mut String) {
     if let Some(note) = &run.graph_note {
         out.push_str(&format!("{}\n\n", plain_text_line(note)));
     }
+    // Ruling C-27 (M-2), the "Risks" section's cache staleness.
+    if super::engine::cache_enabled(run) {
+        out.push_str("Cached results assume tests read only the checkout.\n\n");
+    }
     let stages = super::snapshot_stages::stage_infos(run);
     for (i, s) in stages.iter().enumerate() {
         if i > 0 {

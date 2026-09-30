@@ -100,6 +100,7 @@ pub use orch::{OrchEvent, ScoutEnd};
 pub(crate) use propagate::{attention as propagate_attention, undelivered, undelivered_lines};
 pub use signals::INTERRUPT_GRACE_SECS;
 pub use stages::Rebaseline;
+pub(crate) use tiers::cache_enabled;
 pub use wake::notes_seq;
 
 /// Identifies a client request waiting for its [`Effect::Reply`].

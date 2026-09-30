@@ -50,6 +50,12 @@ fn cache_ctx(run: &Run) -> Option<CacheCtx> {
     })
 }
 
+/// Whether the run's tier steps read and write the result cache (decision 30), for the
+/// report's line on what a cached result assumes (ruling C-27, M-2).
+pub(crate) fn cache_enabled(run: &Run) -> bool {
+    cache_ctx(run).is_some()
+}
+
 /// What every tier job of the run carries, for tier `tier` on stage `stage` in `dir`.
 pub(super) fn spec(run: &Run, tier: u8, stage: u16, dir: std::path::PathBuf) -> TierSpec {
     let p = &run.profile;

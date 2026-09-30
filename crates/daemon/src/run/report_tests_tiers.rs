@@ -208,3 +208,23 @@ fn a_red_propagate_has_its_line() {
         "{text}"
     );
 }
+
+/// Ruling C-27 (M-2): with the result cache on, the section says what a cached result
+/// assumes; with it off (an `"unknown"` toolchain) it does not.
+#[test]
+fn a_cached_run_says_what_its_cache_assumes() {
+    const LINE: &str = "Cached results assume tests read only the checkout.\n";
+    let mut run = staged_run();
+    run.repo_dir = "/tmp/data/repos/r-1".into();
+    run.toolchain = Some("rustc 1.90.0".into());
+    let text = render(&run, 10);
+    let testing = between(&text, "## Testing\n", "\n## Log\n");
+    assert!(
+        testing.starts_with(&format!(
+            "## Testing\n\nmodule graph unknown: graph.sh exited 1; every tier runs check\n\n{LINE}\n### Stage 1\n"
+        )),
+        "{testing}"
+    );
+    run.toolchain = Some("unknown".into());
+    assert!(!render(&run, 10).contains(LINE));
+}
