@@ -252,6 +252,7 @@ impl App {
         self.close_run_view_if_gone(run_row);
         self.close_gate_modal_if_stale();
         self.follow_review(review_at);
+        self.repair_alerts_focus();
         self.open_pending_run();
         let rows = nav_rows_of(
             &self.windows,

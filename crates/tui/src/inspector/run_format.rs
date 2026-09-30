@@ -161,7 +161,7 @@ pub(super) fn progress_text<'a>(tasks: impl Iterator<Item = &'a TaskInfo>, width
 }
 
 /// Words for a block reason (Interfaces "Run", `attention`; "Task", the stage).
-pub(super) fn reason_text(reason: BlockReason) -> &'static str {
+pub(crate) fn reason_text(reason: BlockReason) -> &'static str {
     match reason {
         BlockReason::MisSized => "mis-sized",
         BlockReason::Human => "human",

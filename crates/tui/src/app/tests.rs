@@ -59,6 +59,12 @@ mod plan_review;
 #[path = "../app_tests/plan_review_edges.rs"]
 mod plan_review_edges;
 
+#[path = "../app_tests/alerts.rs"]
+mod alerts;
+
+#[path = "../app_tests/alerts_focus.rs"]
+mod alerts_focus;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

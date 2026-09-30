@@ -4,6 +4,7 @@ use crate::dialog::{FormDefaults, NewAgentForm, RemoveConfirm};
 use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
+pub use alerts::{Alert, AlertKey, AlertsFocus, alerts};
 use crossterm::event::KeyEvent;
 pub use link::Link;
 pub use plan_review::{PlanReview, ReviewTarget};
@@ -187,6 +188,9 @@ pub struct App {
     pub plan_review: Option<plan_review::PlanReview>,
     /// The body the review draws in (sidebar column included), as the last frame gave it.
     pub(crate) body_area: ratatui::layout::Rect,
+    /// Decision 21: the Alerts box's focus; `app/alerts.rs` keeps the keymap's alerts
+    /// mode in step with it.
+    pub alerts_focus: Option<alerts::AlertsFocus>,
 }
 
 impl App {
@@ -239,6 +243,7 @@ impl App {
             pending_open: None,
             plan_review: None,
             body_area: ratatui::layout::Rect::default(),
+            alerts_focus: None,
             settings,
         }
     }
@@ -411,6 +416,7 @@ impl App {
             KeyAction::Tree(key) => self.on_tree_key(key),
             KeyAction::Conversation(key) => self.on_conversation_key(key),
             KeyAction::Review(key) => self.on_review_key(key),
+            KeyAction::Alerts(key) => self.on_alerts_key(key),
             KeyAction::AwaitPrefix | KeyAction::Cancel | KeyAction::Nothing => vec![],
         }
     }
@@ -460,13 +466,7 @@ impl App {
             Command::Reconnect => self.reconnect_command(),
             Command::ToggleConversation => self.toggle_conversation(),
             Command::StartGoal => self.open_goal_form(),
-            // Milestone 9.0.5 decision 13; the Alerts box itself is task M9.0.5.8's.
-            Command::FocusAlerts => {
-                if self.plan_review.is_some() {
-                    self.toast(plan_review::LEAVE_REVIEW_FIRST);
-                }
-                vec![]
-            }
+            Command::FocusAlerts => self.focus_alerts(),
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -517,6 +517,7 @@ impl App {
     }
 }
 
+pub(crate) mod alerts;
 mod conversation;
 mod daemon;
 mod goal;

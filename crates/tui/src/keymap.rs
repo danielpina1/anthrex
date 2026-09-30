@@ -48,6 +48,8 @@ pub enum KeyAction {
     Conversation(KeyEvent),
     /// A bare key pressed while the plan review is open (milestone 9.0.5 decision 13).
     Review(KeyEvent),
+    /// A bare key pressed while the Alerts box has the focus (decision 21).
+    Alerts(KeyEvent),
     Nothing,
 }
 
@@ -58,6 +60,7 @@ pub struct Keymap {
     tree_mode: bool,
     conversation_mode: bool,
     review_mode: bool,
+    alerts_mode: bool,
 }
 
 impl Keymap {
@@ -72,6 +75,7 @@ impl Keymap {
             tree_mode: false,
             conversation_mode: false,
             review_mode: false,
+            alerts_mode: false,
         }
     }
 
@@ -107,6 +111,16 @@ impl Keymap {
         self.review_mode
     }
 
+    /// Decision 21: while set, bare keys go to the Alerts box. The review wins over
+    /// it, and it over the conversation view and the tree (Risks 1).
+    pub fn set_alerts_mode(&mut self, on: bool) {
+        self.alerts_mode = on;
+    }
+
+    pub fn alerts_mode(&self) -> bool {
+        self.alerts_mode
+    }
+
     fn is_prefix(&self, key: &KeyEvent) -> bool {
         key.code == self.prefix.0 && key.modifiers == self.prefix.1
     }
@@ -124,7 +138,7 @@ impl Keymap {
                 // Decision 11 (review N3): the conversation view is read-only, so the
                 // literal prefix byte reaches no PTY while it is open; nor while the
                 // plan review is (milestone 9.0.5).
-                if self.conversation_mode || self.review_mode {
+                if self.conversation_mode || self.review_mode || self.alerts_mode {
                     return KeyAction::Nothing;
                 }
                 return encode_key(KeyEvent::new(self.prefix.0, self.prefix.1), app_cursor)
@@ -164,6 +178,9 @@ impl Keymap {
         }
         if self.review_mode {
             return KeyAction::Review(key);
+        }
+        if self.alerts_mode {
+            return KeyAction::Alerts(key);
         }
         if self.conversation_mode {
             return KeyAction::Conversation(key);
