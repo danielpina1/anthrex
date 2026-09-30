@@ -59,13 +59,17 @@ fn sync_open(run: &Run, n: u16) -> bool {
 /// Stage `n` does not hold the lower stage's head (`synced_from`): it needs a
 /// propagate. Controller ruling C-21 (1a): this, not only a recorded due entry, is what
 /// makes a stage due, so a sync task that finishes without merging leaves it due again.
-/// A record without `synced_from` holds what it was created from.
+/// A record without `synced_from` (one built by hand, or cleared by a rebaseline, ruling
+/// C-22) holds the lower head only when it is still at what it was created from, and
+/// that is the lower head.
 fn needs(run: &Run, n: u16) -> bool {
     let (Some(to), Some(from)) = (run.stage(n), n.checked_sub(1).and_then(|k| run.stage(k))) else {
         return false;
     };
-    let held = to.synced_from.as_deref().unwrap_or(&to.created_from);
-    held != from.head
+    match to.synced_from.as_deref() {
+        Some(synced) => synced != from.head,
+        None => to.head != to.created_from || to.created_from != from.head,
+    }
 }
 
 /// Whether the propagate into stage `n` may start now: it needs one, it is not red on
@@ -263,6 +267,7 @@ pub(super) fn done(
     let (k, n) = (spec.from, spec.to);
     match result {
         OpResult::Merged { commit, .. } => landed(run, spec, &commit, now),
+        OpResult::AlreadyHeld => held(run, spec, now),
         OpResult::Conflict { files, tree } => conflicted(run, spec, files, tree, now, fx),
         OpResult::CandidateRed { tier, .. } => {
             let tests = tier.map(|o| super::tiers::record(&o, now).failing);
@@ -308,6 +313,24 @@ fn landed(run: &mut Run, spec: &PropagateSpec, commit: &str, now: u64) {
         "stage {n}: propagated stage {k} at {} ({})",
         sha7(&spec.from_head),
         sha7(commit)
+    );
+    log(run, now, text);
+}
+
+/// Controller ruling C-22 (2): stage `n` already holds stage `k`'s head. No commit was
+/// made: its head and line stay, and it records that it holds that head and its work.
+fn held(run: &mut Run, spec: &PropagateSpec, now: u64) {
+    let (k, n) = (spec.from, spec.to);
+    let Some(record) = stage_mut(run, n) else {
+        return;
+    };
+    record.propagate_red = None;
+    record.propagate_note = None;
+    record.tasks_in.extend(spec.tasks.iter().cloned());
+    record.synced_from = Some(spec.from_head.clone());
+    let text = format!(
+        "stage {n}: already holds stage {k} at {}",
+        sha7(&spec.from_head)
     );
     log(run, now, text);
 }

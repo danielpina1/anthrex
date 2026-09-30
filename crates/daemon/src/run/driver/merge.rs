@@ -62,6 +62,7 @@ pub(super) async fn candidate(
         guarded,
         also_integration,
         tier,
+        held_if_contained: false,
     };
     merge_into(service, ctx, op, merge).await
 }
@@ -86,6 +87,9 @@ pub(super) struct Merge {
     pub guarded: Vec<(String, String)>,
     pub also_integration: bool,
     pub tier: Option<Box<TierSpec>>,
+    /// Controller ruling C-22 (2), a propagate's: `other` already in the branch is
+    /// `AlreadyHeld`, with nothing written.
+    pub held_if_contained: bool,
 }
 
 /// [`Merge`]'s steps: the guard, `merge-tree`, the commit with parents `[expected_head,
@@ -112,6 +116,7 @@ pub(super) async fn merge_into(
         guarded,
         also_integration,
         tier: tier_spec,
+        held_if_contained,
     } = merge;
     // Milestone 9.1 decision 53: every run ref is guarded, and the integration worktree
     // stays on `integration`, the alias a stage branch's merge leaves it on.
@@ -154,6 +159,15 @@ pub(super) async fn merge_into(
         Some(Ok(to)) => Some(to),
         None => None,
     };
+    if held_if_contained {
+        let (git, t) = (service.git(), ctx.git_timeout);
+        let (r, rh, th) = (root.clone(), expected_run_head.clone(), task_head.clone());
+        let contained =
+            blocking(move || git::is_ancestor(git::Git::new(&git, t), &r, &th, &rh)).await?;
+        if contained {
+            return Ok(OpResult::AlreadyHeld);
+        }
+    }
     let (git, t) = (service.git(), ctx.git_timeout);
     let (r, rh, th) = (root.clone(), expected_run_head.clone(), task_head.clone());
     let tree = match blocking(move || git::merge_tree(&git, &r, &rh, &th, t)).await? {

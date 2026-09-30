@@ -498,6 +498,9 @@ pub enum OpResult {
         #[serde(default)]
         tier: Option<Box<crate::run::tiers::TierOutcome>>,
     },
+    /// Controller ruling C-22 (2): a `Propagate` whose lower head the upper stage
+    /// already holds. Nothing was written.
+    AlreadyHeld,
     Conflict {
         files: Vec<String>,
         /// Milestone 9.1 decision 51: the conflicted tree `merge-tree` wrote.

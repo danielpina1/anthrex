@@ -117,7 +117,8 @@ pub fn show_stat(
 /// Controller ruling C-21 (3, 5): what a sync task's claim is checked against. `kept`:
 /// its head still contains `onto`, the lower stage's head it merged. `upper`: the paths
 /// the upper stage changed between `to_head` (where the task's worktree started) and
-/// the latest head a later hand-back brought in, which are not the task's changes.
+/// the latest head a later hand-back brought in, and that the head still holds as
+/// `upper` does (ruling C-22): those are not the task's changes.
 pub fn sync_read(
     git: &OsStr,
     worktree: &Path,
@@ -127,8 +128,14 @@ pub fn sync_read(
 ) -> Result<(bool, Vec<String>), String> {
     let g = Git::new(git, timeout);
     let kept = super::worktrees::is_ancestor(g, worktree, onto, head)?;
+    // Ruling C-22 (3): only a path the head still holds exactly as `upper` has it is the
+    // upper stage's; one the task changed since is its own.
     let paths = match upper {
-        Some(upper) => changed_paths(git, worktree, &format!("{to_head} {upper}"), timeout)?,
+        Some(upper) => {
+            let brought = changed_paths(git, worktree, &format!("{to_head} {upper}"), timeout)?;
+            let since = changed_paths(git, worktree, &format!("{upper} {head}"), timeout)?;
+            brought.into_iter().filter(|p| !since.contains(p)).collect()
+        }
         None => Vec::new(),
     };
     Ok((kept, paths))

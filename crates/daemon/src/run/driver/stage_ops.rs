@@ -112,6 +112,7 @@ pub(super) async fn propagate(
         guarded,
         also_integration,
         tier,
+        held_if_contained: true,
     };
     merge_into(service, ctx, op, merge).await
 }

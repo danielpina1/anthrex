@@ -300,8 +300,31 @@ fn rebaseline_heads(run: &mut Run, read: &Rebaseline) {
     match run.stage_layout {
         StageLayout::Single => set_stage_head(run, 1, &read.head),
         StageLayout::Multi => {
+            let before: Vec<(u16, String)> =
+                run.stages.iter().map(|s| (s.n, s.head.clone())).collect();
             for (n, head) in &read.stages {
                 set_stage_head(run, *n, head);
+            }
+            // Controller ruling C-22 (2): a stage whose head, or whose lower stage's
+            // head, the user moved may no longer hold the lower head: its propagate
+            // runs again (and is recorded as held when nothing is missing).
+            let moved = |run: &Run, n: u16| {
+                let was = before
+                    .iter()
+                    .find(|(m, _)| *m == n)
+                    .map(|(_, h)| h.as_str());
+                run.stage(n).is_some_and(|s| Some(s.head.as_str()) != was)
+            };
+            let cleared: Vec<u16> = run
+                .stages
+                .iter()
+                .map(|s| s.n)
+                .filter(|&n| n > 1 && (moved(run, n) || moved(run, n - 1)))
+                .collect();
+            for n in cleared {
+                if let Some(record) = run.stages.iter_mut().find(|s| s.n == n) {
+                    record.synced_from = None;
+                }
             }
         }
     }

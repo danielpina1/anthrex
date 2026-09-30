@@ -184,6 +184,35 @@ async fn a_conflicted_propagate_gives_the_tree_its_sync_worktree_holds() {
     assert_eq!(done(None).outside_owns, ["b.txt"]);
 }
 
+/// Controller ruling C-22 (2): a propagate whose lower head stage 2 already holds (here
+/// after a rebaseline) writes nothing: no `commit-tree -p X -p X`, no object, no ref.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_propagate_stage_2_already_holds_writes_nothing() {
+    let rig = Rig::new();
+    let one = rig.commit_on(STAGE_1, "s1.txt", "one\n");
+    let refname = format!("refs/heads/{STAGE_2}");
+    // Equal heads first, then stage 2 ahead of stage 1.
+    git(&rig.root, &["update-ref", &refname, &one]);
+    for ahead in [false, true] {
+        if ahead {
+            rig.commit_on(STAGE_2, "s2.txt", "two\n");
+        }
+        // `integration` is the alias of stage 2, the highest stage.
+        let alias = format!("refs/heads/{INTEGRATION}");
+        git(&rig.root, &["update-ref", &alias, &rig.head(STAGE_2)]);
+        git(
+            &rig.integration,
+            &["checkout", "-q", "--force", INTEGRATION],
+        );
+        let before = (rig.head(STAGE_2), rig.head(INTEGRATION));
+        let objects = git(&rig.root, &["count-objects", "-v"]);
+        let result = rig.run_propagate(rig.propagate(Some("true"))).await;
+        assert_eq!(result, OpResult::AlreadyHeld, "ahead: {ahead}");
+        assert_eq!((rig.head(STAGE_2), rig.head(INTEGRATION)), before);
+        assert_eq!(git(&rig.root, &["count-objects", "-v"]), objects);
+    }
+}
+
 // Controller ruling C-21: a sync task's claim and review, in a file of its own.
 #[path = "stage_ops_sync_tests.rs"]
 mod sync_tests;

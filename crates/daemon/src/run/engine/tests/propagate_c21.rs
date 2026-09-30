@@ -21,7 +21,7 @@ const UNDELIVERED: &str = "stage 1's merged work is not in stage 2 yet: t1; it c
 
 /// `t2` merged into stage 2 at `commit(2)`, then `t1` into stage 1 at `commit(1)`, whose
 /// propagate into stage 2 comes back with `result`.
-fn t1_propagated(result: OpResult) -> Fixture {
+pub(super) fn t1_propagated(result: OpResult) -> Fixture {
     let (mut fx, windows) = stages(false);
     to_queue(&mut fx, "t2", window_of(&windows, "t2"));
     merge(&mut fx, "t2", &commit(2));

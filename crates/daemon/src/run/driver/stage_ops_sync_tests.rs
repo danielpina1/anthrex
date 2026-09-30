@@ -173,6 +173,39 @@ async fn a_later_hand_back_of_stage_2_is_not_the_sync_tasks_spill() {
     assert_eq!(checked(&result).0, ["c.txt"]);
 }
 
+/// Ruling C-22 (3), the reviewer's `tests/keep_test.rs` scenario: stage 2 changes a
+/// test file after the sync task resolved, the hand-back brings it in, and the worker
+/// then deletes it. Its content at the head is not stage 2's, so the deletion is the
+/// task's: spill, and a `DeletedTestFile`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_path_the_task_changed_after_a_hand_back_is_still_its_own() {
+    let rig = Rig::new();
+    let sync = rig
+        .sync(|rig| {
+            rig.commit_on(STAGE_2, "tests/keep_test.rs", "fn t() {}\n");
+        })
+        .await;
+    sync.resolve();
+    let h2 = rig.commit_on(STAGE_2, "tests/keep_test.rs", "fn t() { assert!(true) }\n");
+    hand_back(&rig.service.git(), &sync.path, &h2, T).unwrap();
+    git(&sync.path, &["rm", "-q", "tests/keep_test.rs"]);
+    commit(&sync.path, &["-m", "drop the test"]);
+    let spec = SignalsSpec {
+        test_paths: vec!["tests/**".into()],
+        skip_markers: Vec::new(),
+    };
+    let result = rig.op(sync.verify(&h2, Some(&h2), Some(spec))).await;
+    let (outside, _, signals) = checked(&result);
+    assert_eq!(outside, ["tests/keep_test.rs"]);
+    assert!(
+        signals.iter().any(|s| matches!(
+            s,
+            Signal::DeletedTestFile { path } if path == "tests/keep_test.rs"
+        )),
+        "{signals:?}"
+    );
+}
+
 /// Item 5: a worker that ran `git merge --abort` and committed by hand dropped stage
 /// 1's merge; the claim says so.
 #[tokio::test(flavor = "multi_thread")]
