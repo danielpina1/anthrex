@@ -23,6 +23,9 @@ pub struct ChosenProfile {
     /// Decision 28's filter settings: a stored profile's only, else the defaults.
     pub output_filter: OutputFilter,
     pub filter_prefixes: Vec<String>,
+    /// A stored profile's `manifests`, else none: they key a command graph's cache
+    /// (milestone 9.1 ruling C-12a), and no plan or config key carries them.
+    pub manifests: Vec<String>,
     /// Run-log lines: each plan key a stored profile made the run ignore.
     pub notes: Vec<String>,
 }
@@ -77,6 +80,7 @@ pub fn run_profile(
             },
             output_filter: OutputFilter::default(),
             filter_prefixes: Vec::new(),
+            manifests: Vec::new(),
             notes: Vec::new(),
         };
     };
@@ -117,6 +121,7 @@ pub fn run_profile(
         source: ProfileSource::Stored,
         output_filter: stored.output_filter,
         filter_prefixes,
+        manifests: stored.manifests.clone(),
         notes,
     }
 }

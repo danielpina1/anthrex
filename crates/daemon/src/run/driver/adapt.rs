@@ -57,6 +57,8 @@ pub(super) struct ProfileChoice {
     source: ProfileSource,
     output_filter: OutputFilter,
     filter_prefixes: Vec<String>,
+    /// Milestone 9.1 ruling C-12a: the stored profile's `manifests`.
+    manifests: Vec<String>,
     repo_dir: PathBuf,
     stale: Vec<String>,
     notes: Vec<String>,
@@ -335,6 +337,7 @@ impl RunService {
             source: chosen.source,
             output_filter: chosen.output_filter,
             filter_prefixes: chosen.filter_prefixes,
+            manifests: chosen.manifests,
             repo_dir,
             stale,
             notes: chosen.notes,
@@ -350,6 +353,12 @@ pub(super) fn apply_choice(run: &mut Run, choice: ProfileChoice, now: u64) {
     run.profile_source = Some(choice.source);
     run.output_filter = choice.output_filter;
     run.filter_prefixes = choice.filter_prefixes;
+    // Milestone 9.1 ruling C-12a: the profile's `manifests` join the frozen profile,
+    // whose hash (decision 11, computed by `build_run`) then covers them too.
+    if run.profile.manifests != choice.manifests {
+        run.profile.manifests = choice.manifests;
+        run.profile_hash = crate::run::tiers::profile_hash(&run.profile);
+    }
     run.repo_dir = choice.repo_dir;
     run.profile_languages = choice.languages;
     run.stale_profile = choice.stale;
@@ -482,10 +491,12 @@ mod tests {
         let mut run = run();
         assert_eq!(run.profile_source, None);
         assert_eq!(run.repo_dir, PathBuf::new());
+        let before_hash = run.profile_hash.clone();
         let choice = ProfileChoice {
             source: ProfileSource::Stored,
             output_filter: OutputFilter::Tail,
             filter_prefixes: vec!["cargo test".into()],
+            manifests: vec!["deps/*.txt".into()],
             repo_dir: PathBuf::from("/data/repos/r-00000000"),
             stale: vec!["Cargo.toml".into()],
             notes: vec!["note one".into(), "note two".into()],
@@ -496,6 +507,13 @@ mod tests {
         assert_eq!(run.profile_source, Some(ProfileSource::Stored));
         assert_eq!(run.output_filter, OutputFilter::Tail);
         assert_eq!(run.filter_prefixes, vec!["cargo test".to_string()]);
+        // Milestone 9.1 ruling C-12a.
+        assert_eq!(run.profile.manifests, vec!["deps/*.txt".to_string()]);
+        assert_eq!(
+            run.profile_hash,
+            crate::run::tiers::profile_hash(&run.profile)
+        );
+        assert_ne!(run.profile_hash, before_hash);
         assert_eq!(run.repo_dir, PathBuf::from("/data/repos/r-00000000"));
         assert_eq!(run.stale_profile, vec!["Cargo.toml".to_string()]);
         assert_eq!(run.onboarding_report.as_deref(), Some("onboarding-7"));

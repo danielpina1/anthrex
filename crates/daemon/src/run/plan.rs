@@ -155,6 +155,7 @@ pub fn resolve_profile(plan: &ProfileSpec, config: &ProfileSpec) -> Profile {
         confined_unix_sockets: Vec::new(),
         confined_localhost_ports: Vec::new(),
         tiers: TierProfile::resolve(plan, config),
+        manifests: Vec::new(),
     }
 }
 

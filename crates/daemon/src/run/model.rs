@@ -102,6 +102,10 @@ pub struct Profile {
     /// Milestone 9.1 decision 5: the tier keys, all off in a run recorded before them.
     #[serde(default)]
     pub tiers: super::tiers::TierProfile,
+    /// A stored profile's `manifests` (M8b), which key a command graph's cache
+    /// (milestone 9.1 ruling C-12a); none for a plan's or config's profile.
+    #[serde(default)]
+    pub manifests: Vec<String>,
 }
 
 /// A resolved task: the planner's spec plus everything decisions 8–10 and 35 derive

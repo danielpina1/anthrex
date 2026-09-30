@@ -387,6 +387,9 @@ fn old_run_json_loads() {
         Some(serde_json::json!("single"))
     );
     assert_eq!(map.remove("stages"), Some(serde_json::json!([])));
+    // Milestone 9.1 ruling C-12a: no stored profile's `manifests`.
+    let manifests = map["profile"].as_object_mut().unwrap().remove("manifests");
+    assert_eq!(manifests, Some(serde_json::json!([])));
     let tiers = map["profile"].as_object_mut().unwrap().remove("tiers");
     assert_eq!(
         serde_json::from_value::<crate::run::tiers::TierProfile>(tiers.expect("profile.tiers"))
