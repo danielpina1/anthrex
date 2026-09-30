@@ -194,6 +194,54 @@ fn a_run_json_without_the_new_fields_loads() {
             }
         }
     }
+    strip_m91_defaults(&mut back);
     let stored: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(back, stored);
+}
+
+/// The merge with milestone 9.1: its `#[serde(default)]` fields are written back too,
+/// each at its default for a milestone-9 run. Each is removed here with its value
+/// checked, so every value the M9 file stored must still come back unchanged.
+fn strip_m91_defaults(back: &mut serde_json::Value) {
+    use serde_json::{Value, json};
+    let take = |map: &mut serde_json::Map<String, Value>, key: &str, want: Value| {
+        assert_eq!(map.remove(key), Some(want), "{key}");
+    };
+    let run = back.as_object_mut().unwrap();
+    take(run, "fix_seq", json!(0));
+    take(run, "full_op", Value::Null);
+    take(run, "graph_note", Value::Null);
+    take(run, "profile_hash", json!(""));
+    take(run, "propagate_due", json!([]));
+    take(run, "queue_idle_since", Value::Null);
+    take(run, "stage_layout", json!("single"));
+    take(run, "stages", json!([]));
+    take(run, "test_slots", json!(0));
+    take(run, "toolchain", Value::Null);
+    let testing = run["limits"].as_object_mut().unwrap().remove("testing");
+    assert_eq!(
+        serde_json::from_value::<crate::run::model::TestingLimits>(testing.expect("testing"))
+            .unwrap(),
+        crate::run::model::TestingLimits::default()
+    );
+    let profile = run["profile"].as_object_mut().unwrap();
+    take(profile, "manifests", json!([]));
+    let tiers = profile.remove("tiers").expect("tiers");
+    assert_eq!(
+        serde_json::from_value::<crate::run::tiers::TierProfile>(tiers).unwrap(),
+        crate::run::tiers::TierProfile::default()
+    );
+    for task in run["tasks"].as_array_mut().unwrap() {
+        let task = task.as_object_mut().unwrap();
+        take(task, "fixes", Value::Null);
+        take(task, "origin", json!("plan"));
+        take(task, "signal_refusals", json!(0));
+        take(task, "signals", json!([]));
+        take(task, "signals_more", json!(0));
+        take(task, "sync", Value::Null);
+        let spec = task["spec"].as_object_mut().unwrap();
+        take(spec, "atomic", json!(false));
+        take(spec, "atomic_reason", Value::Null);
+        take(spec, "stage", json!(1));
+    }
 }
