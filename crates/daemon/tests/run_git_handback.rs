@@ -1,22 +1,21 @@
-//! M8a.9: the conflict hand-back into a task worktree (decision 36 step 6, rulings
-//! T11-N1 and T14-C1). Moved from `run_git_merge.rs` to keep both under AGENTS.md rule
-//! 8's ~600 lines.
+//! M8a.14 fix round 2 (ruling T14-R2): the hand-back reports the tip it actually merged
+//! onto (N4), and `resolution_only` tells a pure conflict resolution from a claim that
+//! carries more (the reviewer's rule for decision 36's straight-to-the-queue pass).
 
 mod support;
 
-use daemon::run::git::{HandBack, abort_merge, hand_back, prepare_worktree};
+use daemon::run::git::{hand_back, prepare_worktree, resolution_only};
 use std::path::{Path, PathBuf};
 use support::TempRepo;
-use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, write, wt_dir};
+use support::run_git::{T, commit_file, head, out, real_git, repo, wrapper_git, write, wt_dir};
 
-/// Commits `path` on `branch` (created from the current `HEAD` if missing) and returns
-/// to the branch `root` was on. Returns the new commit.
+/// Commits `path` on `branch` (created from `HEAD` if missing) and goes back.
 fn commit_on(root: &Path, branch: &str, path: &str, content: &str) -> String {
     let back = out(root, &["symbolic-ref", "--short", "HEAD"]);
-    if try_git(root, &["rev-parse", "-q", "--verify", branch])
+    let exists = support::run_git::try_git(root, &["rev-parse", "-q", "--verify", branch])
         .status
-        .success()
-    {
+        .success();
+    if exists {
         out(root, &["checkout", "-q", branch]);
     } else {
         out(root, &["checkout", "-q", "-b", branch]);
@@ -26,165 +25,315 @@ fn commit_on(root: &Path, branch: &str, path: &str, content: &str) -> String {
     sha
 }
 
-fn parents(dir: &Path, commit: &str) -> Vec<String> {
-    out(dir, &["rev-list", "--parents", "-n", "1", commit])
-        .split_whitespace()
-        .skip(1)
-        .map(str::to_string)
-        .collect()
-}
-
-/// A task worktree at `base` with `shared.txt`, and a task commit on it.
-fn task_worktree(
-    repo: &TempRepo,
-    run: &str,
-    file: &str,
-    content: &str,
-) -> (tempfile::TempDir, PathBuf) {
+/// A task worktree for run `run` at the repository's head.
+fn task_worktree(repo: &TempRepo, run: &str) -> (tempfile::TempDir, PathBuf) {
     let base = head(&repo.root);
     let (keep, wt) = wt_dir();
     let path = wt.join(format!("runs/{run}/t1"));
-    prepare_worktree(
-        real_git(),
-        &repo.root,
-        &format!("anthrex/{run}/t1"),
-        &base,
-        &path,
-        T,
-    )
-    .unwrap();
-    commit_file(&path, file, content, "task work");
+    let branch = format!("anthrex/{run}/t1");
+    prepare_worktree(real_git(), &repo.root, &branch, &base, &path, T).unwrap();
     (keep, path)
 }
 
+/// Review N4, as final fix batch F1b recasts it: the hand-back reads the worker's
+/// `HEAD` once (the file, before any git call) and merges onto, and compares-and-swaps
+/// from, that value. A commit that lands in the worktree after that read (here, at
+/// `merge-tree`) makes the engine's move of `HEAD` fail: the hand-back is refused, the
+/// task's branch goes back to what it recorded, and the late commit is left as it is.
 #[test]
-fn hand_back_leaves_markers_and_merge_head() {
+fn hand_back_reports_the_tip_it_actually_merged_onto() {
     let repo = repo();
-    commit_file(&repo.root, "shared.txt", "base\n", "shared");
-    let (_keep, task) = task_worktree(&repo, "hb1", "shared.txt", "task\n");
-    let run_head = commit_on(&repo.root, "anthrex/hb1/integration", "shared.txt", "run\n");
-
-    let task_head = head(&task);
-    let back = hand_back(real_git(), &task, &run_head, T).unwrap();
-    assert_eq!(
-        back,
-        HandBack {
-            onto: task_head.clone(),
-            head: task_head,
-            files: vec!["shared.txt".to_string()],
-        }
+    let (_keep, task) = task_worktree(&repo, "hb7");
+    let claimed = commit_file(&task, "b.txt", "task\n", "task work");
+    let run_head = commit_on(&repo.root, "anthrex/hb7/integration", "a.txt", "run\n");
+    let tools = tempfile::tempdir().unwrap();
+    let once = tools.path().join("once");
+    let git = wrapper_git(
+        tools.path(),
+        &format!(
+            r#"case " $* " in *" merge-tree "*)
+  if [ ! -e '{once}' ]; then
+    : > '{once}'
+    "$REAL" -C '{task}' -c user.name=t -c user.email=t@t -c commit.gpgsign=false \
+      -c core.hooksPath=/dev/null commit -q --allow-empty -m sneak || exit 99
+  fi;;
+esac"#,
+            once = once.display(),
+            task = task.display()
+        ),
     );
-    assert_eq!(out(&task, &["rev-parse", "MERGE_HEAD"]), run_head);
-    let text = std::fs::read_to_string(task.join("shared.txt")).unwrap();
-    assert!(text.contains("<<<<<<<"), "{text}");
-    assert!(text.contains(">>>>>>>"), "{text}");
-}
 
-#[test]
-fn hand_back_that_is_clean_commits_the_merge() {
-    let repo = repo();
-    let (_keep, task) = task_worktree(&repo, "hb2", "b.txt", "task\n");
-    let task_head = head(&task);
-    let run_head = commit_on(&repo.root, "anthrex/hb2/integration", "a.txt", "run\n");
+    let err = hand_back(git.as_os_str(), &task, &run_head, T).unwrap_err();
+    assert!(err.contains("HEAD moved"), "{err}");
+    let sneak = head(&task);
+    assert_ne!(sneak, claimed);
+    assert_eq!(out(&task, &["rev-parse", "HEAD^"]), claimed);
+    assert_eq!(out(&repo.root, &["rev-parse", "anthrex/hb7/t1"]), claimed);
 
+    // The next hand-back is made onto the late commit, and says so.
     let back = hand_back(real_git(), &task, &run_head, T).unwrap();
     assert!(back.files.is_empty(), "{back:?}");
-    assert_eq!(back.onto, task_head);
+    assert_eq!(back.onto, sneak);
     assert_eq!(back.head, head(&task));
-    assert_eq!(parents(&task, "HEAD"), vec![task_head, run_head]);
-    assert!(
-        !try_git(&task, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
-            .status
-            .success()
-    );
-    assert_eq!(out(&task, &["status", "--porcelain"]), "");
-    // Final fix batch F1b: the worktree stays detached; the engine moved its `HEAD`
-    // and the task's branch to the merge.
-    support::run_git::assert_detached(&task);
-    assert_eq!(out(&repo.root, &["rev-parse", "anthrex/hb2/t1"]), back.head);
+    assert_eq!(out(&repo.root, &["rev-parse", "anthrex/hb7/t1"]), back.head);
 }
 
-#[test]
-fn hand_back_blocked_by_an_untracked_file_is_an_error() {
-    let repo = repo();
-    let (_keep, task) = task_worktree(&repo, "hb3", "b.txt", "task\n");
-    let task_head = head(&task);
-    write(&task, "a.txt", "the worker's own, untracked\n");
-    let run_head = commit_on(&repo.root, "anthrex/hb3/integration", "a.txt", "run\n");
-
-    let result = hand_back(real_git(), &task, &run_head, T);
-    assert!(result.is_err(), "not a clean hand-back: {result:?}");
-    assert_eq!(head(&task), task_head);
-    assert_eq!(
-        std::fs::read_to_string(task.join("a.txt")).unwrap(),
-        "the worker's own, untracked\n"
-    );
-}
-
-/// Ruling T11-N1(a), probe q1: a hand-back into a worktree still mid-merge from an
-/// earlier conflicted hand-back is an error, not that earlier merge's files dressed up
-/// as a new conflict; nothing in the worktree changes.
-#[test]
-fn hand_back_while_a_merge_is_in_progress_is_an_error() {
-    let repo = repo();
+/// A task and a run branch that both change `shared.txt` (and one other file each);
+/// the conflicted hand-back is in the worktree. Returns the worktree, `onto` and the
+/// run head.
+fn conflicted(repo: &TempRepo, run: &str) -> (tempfile::TempDir, PathBuf, String, String) {
     commit_file(&repo.root, "shared.txt", "base\n", "shared");
-    let (_keep, task) = task_worktree(&repo, "hb4", "shared.txt", "task\n");
-    let first = commit_on(&repo.root, "anthrex/hb4/integration", "shared.txt", "run\n");
-    assert_eq!(
-        hand_back(real_git(), &task, &first, T).unwrap().files,
-        vec!["shared.txt"]
-    );
-    let newer = commit_on(&repo.root, "anthrex/hb4/integration", "other.txt", "more\n");
-
-    let result = hand_back(real_git(), &task, &newer, T);
-    let err = result.expect_err("a merge is already in progress");
-    assert!(err.contains("already in progress"), "{err}");
-    assert_eq!(out(&task, &["rev-parse", "MERGE_HEAD"]), first);
+    let (keep, task) = task_worktree(repo, run);
+    commit_file(&task, "b.txt", "task side\n", "task b");
+    commit_file(&task, "shared.txt", "task\n", "task shared");
+    let integration = format!("anthrex/{run}/integration");
+    commit_on(&repo.root, &integration, "a.txt", "run side\n");
+    let run_head = commit_on(&repo.root, &integration, "shared.txt", "run\n");
+    let back = hand_back(real_git(), &task, &run_head, T).unwrap();
+    assert_eq!(back.files, vec!["shared.txt".to_string()]);
+    (keep, task, back.onto, run_head)
 }
 
-/// Ruling T11-N1(b): `abort_merge` undoes a conflicted hand-back (markers, index and
-/// `MERGE_HEAD` all go back to the task's own commit) and is a no-op without one.
-#[test]
-fn abort_merge_undoes_a_conflicted_hand_back() {
-    let repo = repo();
-    commit_file(&repo.root, "shared.txt", "base\n", "shared");
-    let (_keep, task) = task_worktree(&repo, "hb5", "shared.txt", "task\n");
-    let task_head = head(&task);
-    let run_head = commit_on(&repo.root, "anthrex/hb5/integration", "shared.txt", "run\n");
-    hand_back(real_git(), &task, &run_head, T).unwrap();
-
-    abort_merge(real_git(), &task, T).unwrap();
-    assert_eq!(head(&task), task_head);
-    assert!(
-        !try_git(&task, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
-            .status
-            .success()
+/// Resolves `shared.txt` and commits the merge, with `extra` files changed in it.
+fn resolve(task: &Path, extra: &[(&str, &str)]) -> String {
+    write(task, "shared.txt", "resolved\n");
+    for (path, content) in extra {
+        write(task, path, content);
+    }
+    out(task, &["add", "-A"]);
+    out(
+        task,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--no-edit",
+        ],
     );
-    assert_eq!(out(&task, &["status", "--porcelain"]), "");
-    assert_eq!(
-        std::fs::read_to_string(task.join("shared.txt")).unwrap(),
-        "task\n"
-    );
-
-    abort_merge(real_git(), &task, T).unwrap();
-    assert_eq!(head(&task), task_head);
+    head(task)
 }
 
-/// Ruling T14-C1: the hand-back reports the branch tip it merged onto. A commit the
-/// worker made after its claim is that tip, so the engine can tell the merge was not
-/// made onto the claimed head.
+fn only(task: &Path, head: &str, onto: &str, run_head: &str) -> bool {
+    // As the done check does first (final fix batch F1b): the claimed commit imported,
+    // with the worktree's `HEAD` at it for the import, then put back.
+    let was = out(task, &["rev-parse", "HEAD"]);
+    out(task, &["update-ref", "--no-deref", "HEAD", head]);
+    assert_eq!(daemon::run::git::sync(real_git(), task, T).unwrap(), head);
+    out(task, &["update-ref", "--no-deref", "HEAD", &was]);
+    let files = vec!["shared.txt".to_string()];
+    resolution_only(real_git(), task, head, onto, run_head, &files, T).unwrap()
+}
+
 #[test]
-fn hand_back_reports_the_tip_it_merged_onto() {
+fn resolution_only_accepts_a_pure_conflict_resolution() {
     let repo = repo();
-    let (_keep, task) = task_worktree(&repo, "hb6", "b.txt", "task\n");
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro1");
+    let resolved = resolve(&task, &[]);
+    assert!(only(&task, &resolved, &onto, &run_head));
+}
+
+#[test]
+fn resolution_only_refuses_a_claim_that_carries_more() {
+    let fresh = repo;
+    // An extra feature commit after the resolution.
+    let repo = fresh();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro2");
+    resolve(&task, &[]);
+    let extra = commit_file(&task, "c.txt", "a feature\n", "feature");
+    assert!(!only(&task, &extra, &onto, &run_head));
+
+    // A merge commit that also changes a file of the task's that did not conflict.
+    let repo = fresh();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro3");
+    let evil = resolve(&task, &[("b.txt", "changed in the merge\n")]);
+    assert!(!only(&task, &evil, &onto, &run_head));
+
+    // A merge commit that undoes the run side's auto-merged file.
+    let repo = fresh();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro4");
+    let evil = resolve(&task, &[("a.txt", "not the run's\n")]);
+    assert!(!only(&task, &evil, &onto, &run_head));
+
+    // Not a merge at all: an ordinary commit on the claimed tip.
+    let repo = fresh();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro5");
+    out(&task, &["merge", "--abort"]);
+    let plain = commit_file(&task, "shared.txt", "resolved\n", "not a merge");
+    assert!(!only(&task, &plain, &onto, &run_head));
+
+    // The resolution squashed into an ordinary commit: its tree is the resolution's,
+    // but the run head is not a parent.
+    let repo = fresh();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro6");
+    write(&task, "shared.txt", "resolved\n");
+    out(&task, &["add", "-A"]);
+    out(&task, &["merge", "--quit"]);
+    let squash = commit_file(&task, "shared.txt", "resolved\n", "squashed");
+    assert_eq!(out(&task, &["rev-parse", "HEAD^1"]), onto);
+    assert!(!only(&task, &squash, &onto, &run_head));
+
+    // The resolution's tree on the parents in the other order.
+    let repo = fresh();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro7");
+    let resolved = resolve(&task, &[]);
+    let tree = format!("{resolved}^{{tree}}");
+    let swapped = out(
+        &task,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit-tree",
+            &tree,
+            "-p",
+            &run_head,
+            "-p",
+            &onto,
+            "-m",
+            "swapped",
+        ],
+    );
+    assert!(only(&task, &resolved, &onto, &run_head));
+    assert!(!only(&task, &swapped, &onto, &run_head));
+}
+
+/// Commits the merge in progress in `task` (a resolution already staged).
+fn commit_merge(task: &Path) -> String {
+    out(
+        task,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--no-edit",
+        ],
+    );
+    head(task)
+}
+
+/// Stages a gitlink at `path` pointing at `sha`.
+fn gitlink(dir: &Path, sha: &str, path: &str) {
+    let info = format!("160000,{sha},{path}");
+    out(dir, &["update-index", "--add", "--cacheinfo", &info]);
+}
+
+/// Ruling T14-R3 (R2-1): a gitlink the resolution adds or moves is not the resolution,
+/// whatever the configuration says about submodules.
+#[test]
+fn resolution_only_sees_gitlinks_that_config_ignores() {
+    // `diff.ignoreSubmodules=all` in the repository's config.
+    let repo = repo();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro8");
+    write(&task, "shared.txt", "resolved\n");
+    out(&task, &["add", "shared.txt"]);
+    gitlink(&task, &onto, "sub");
+    let added = commit_merge(&task);
+    out(&repo.root, &["config", "diff.ignoreSubmodules", "all"]);
+    assert!(!only(&task, &added, &onto, &run_head));
+
+    // A submodule of the base marked `ignore = all` in `.gitmodules`.
+    let repo = super_repo();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro9");
+    write(&task, "shared.txt", "resolved\n");
+    out(&task, &["add", "shared.txt"]);
+    gitlink(&task, &run_head, "sub");
+    let moved = commit_merge(&task);
+    assert!(!only(&task, &moved, &onto, &run_head));
+}
+
+/// A repository whose base has a submodule `sub` that `.gitmodules` ignores.
+fn super_repo() -> TempRepo {
+    let repo = repo();
+    let base = head(&repo.root);
+    write(
+        &repo.root,
+        ".gitmodules",
+        "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n\tignore = all\n",
+    );
+    out(&repo.root, &["add", ".gitmodules"]);
+    gitlink(&repo.root, &base, "sub");
+    out(&repo.root, &["commit", "-q", "-m", "a submodule"]);
+    repo
+}
+
+/// Ruling T14-R3: engine git reads no replacement objects. A merge that carries more
+/// than the resolution stays refused behind a `refs/replace` to the pure one.
+#[test]
+fn resolution_only_ignores_replace_refs() {
+    let repo = repo();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro10");
+    let pure = resolve(&task, &[]);
+    write(&task, "evil.txt", "evil\n");
+    out(&task, &["add", "-A"]);
+    let tree = out(&task, &["write-tree"]);
+    let evil = out(
+        &task,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit-tree",
+            &tree,
+            "-p",
+            &onto,
+            "-p",
+            &run_head,
+            "-m",
+            "evil",
+        ],
+    );
+    assert!(!only(&task, &evil, &onto, &run_head));
+    out(&task, &["replace", &evil, &pure]);
+    assert_eq!(
+        out(&task, &["rev-parse", &format!("{evil}^{{tree}}")]),
+        out(&task, &["rev-parse", &format!("{pure}^{{tree}}")]),
+        "plain git reads the replacement"
+    );
+    assert!(!only(&task, &evil, &onto, &run_head));
+}
+
+/// Ruling T14-R3 (R2-2): a run head already in the task's history makes no merge
+/// commit ("Already up to date"), so the tip merged onto is `HEAD` itself.
+#[test]
+fn hand_back_of_a_run_head_already_merged_reports_head() {
+    let repo = repo();
+    commit_file(&repo.root, "a.txt", "a\n", "a");
+    let run_head = head(&repo.root);
+    let (_keep, task) = task_worktree(&repo, "hb8");
+    let claimed = commit_file(&task, "b.txt", "b\n", "task");
+    let back = hand_back(real_git(), &task, &run_head, T).unwrap();
+    assert!(back.files.is_empty(), "{back:?}");
+    assert_eq!(head(&task), claimed);
+    assert_eq!(back.onto, claimed);
+    assert_eq!(back.head, claimed);
+
+    // The claim is itself a merge (a resolution, say): its second parent is not the
+    // run head, so it is still no merge the hand-back made.
+    let side = commit_on(&repo.root, "side-hb8", "c.txt", "side\n");
+    out(
+        &task,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "merge",
+            "-q",
+            "--no-ff",
+            "--no-edit",
+            &side,
+        ],
+    );
     let claimed = head(&task);
-    let later = commit_file(&task, "c.txt", "after the claim\n", "post-claim work");
-    let run_head = commit_on(&repo.root, "anthrex/hb6/integration", "a.txt", "run\n");
-
     let back = hand_back(real_git(), &task, &run_head, T).unwrap();
-    assert!(back.files.is_empty(), "{back:?}");
-    assert_eq!(back.onto, later);
-    assert_ne!(back.onto, claimed);
-    assert_eq!(back.head, head(&task));
-    assert_eq!(parents(&task, &back.head), vec![later, run_head]);
+    assert_eq!(head(&task), claimed);
+    assert_eq!(back.onto, claimed);
 }
