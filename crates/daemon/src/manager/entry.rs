@@ -173,7 +173,7 @@ impl Entry {
                 Some(role) => Some(role.run_ref.clone()),
                 None => self.headless().and_then(|spec| spec.run_ref.clone()),
             },
-            signals_seen: false,
+            signals_seen: self.state.signals_seen,
         }
     }
 

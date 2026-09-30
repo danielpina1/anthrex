@@ -231,3 +231,23 @@ fn the_digest_revision_is_published() {
     let info = snap.runs.iter().find(|r| r.run_id == id).unwrap();
     assert_eq!(info.digest_revision, 17);
 }
+
+#[test]
+fn wake_held_reaches_the_snapshot() {
+    let mut held = run_of(1);
+    held.id = "held-0001".into();
+    held.state = RunState::Running;
+    held.orch.orchestrator = Some(orchestrator());
+    held.orch.wake_held = true;
+    let mut free = run_of(1);
+    free.id = "free-0001".into();
+    free.state = RunState::Running;
+    free.orch.orchestrator = Some(orchestrator());
+    let snap = snapshot(&state_of(vec![held, free]), 5_000);
+    let wake_held = |id: &str| {
+        let run = snap.runs.iter().find(|r| r.run_id == id).unwrap();
+        run.orchestrator.as_ref().unwrap().wake_held
+    };
+    assert!(wake_held("held-0001"));
+    assert!(!wake_held("free-0001"));
+}

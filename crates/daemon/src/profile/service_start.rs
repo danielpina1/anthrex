@@ -179,10 +179,11 @@ impl ProfileService {
             return;
         }
         let dir = self.repo_dir(&pre.project);
-        if let Err(error) =
-            blocking(move || store::save_proposal(&dir, &record).map_err(|e| e.to_string())).await
+        let written = record.clone();
+        match blocking(move || store::save_proposal(&dir, &record).map_err(|e| e.to_string())).await
         {
-            tracing::warn!(%error, "could not record a refused automatic detection");
+            Ok(()) => self.note_proposal(&pre.project, Some(&written)),
+            Err(error) => tracing::warn!(%error, "could not record a refused automatic detection"),
         }
     }
 }

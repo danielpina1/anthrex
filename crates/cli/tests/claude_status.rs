@@ -156,6 +156,28 @@ fn fallback_until_the_first_hook() {
     client.remains(id, Duration::from_millis(500), |w| w.status == Status::Idle);
 }
 
+/// Milestone 9.0.5 decision 9: a Claude window that has sent no hook yet says so,
+/// whatever its fallback status; its first hook sets `signals_seen`.
+#[test]
+fn signals_seen_is_false_until_the_first_hook() {
+    let daemon = TestDaemon::start(&[
+        json!({"print":"Do you trust the files in this folder?"}),
+        json!({"read_line":true}),
+        json!({"hook":"SessionStart", "payload":{}}),
+        json!({"read_line":true}),
+    ]);
+    let mut client = daemon.client();
+    let id = client.create(Runtime::Claude, "trust");
+    client.wait_window(id, "quiet before any hook", |w| {
+        w.status == Status::Idle && w.session_id.is_none()
+    });
+    client.remains(id, Duration::from_millis(500), |w| !w.signals_seen);
+    client.input(id, b"1\r");
+    client.wait_window(id, "the first hook", |w| {
+        w.signals_seen && w.session_id.is_some()
+    });
+}
+
 #[test]
 fn launch_arguments_reach_the_agent() {
     let daemon = TestDaemon::start(&[json!({"hook":"SessionStart", "payload":{}})]);

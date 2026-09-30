@@ -179,6 +179,7 @@ impl RunService {
                 reports_written: HashMap::new(),
                 reports_due: BTreeSet::new(),
                 publish_due: false,
+                proposals_published: 0,
                 intents: HashMap::new(),
             }),
             journal: Arc::new(Mutex::new(())),
@@ -435,7 +436,7 @@ impl RunService {
         self.retire_deadlines();
         self.check_orchestrators();
         let publish = std::mem::take(&mut crate::lock(&self.book).publish_due);
-        if publish {
+        if publish || self.proposals_moved() {
             // Bound first, so the engine guard drops before `publish` takes the scout
             // table (AGENTS.md rule 2; M9.6 second review). `publish` lays the scouts
             // over it (review fix M-5: once per tick).
@@ -522,7 +523,9 @@ impl RunService {
 
     fn publish(&self, snap: RunsSnapshot) {
         self.clear_ended_orchestrators(&snap);
-        let _ = self.pushes.send(Arc::new(self.with_scouts(snap)));
+        let (snap, generation) = self.overlaid(snap);
+        crate::lock(&self.book).proposals_published = generation;
+        let _ = self.pushes.send(Arc::new(snap));
     }
 
     fn watch_root(&self, root: &Path) {

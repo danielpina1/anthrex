@@ -105,7 +105,7 @@ pub(super) fn orchestrator(run: &Run) -> Option<OrchestratorInfo> {
         summary: o.summary.clone(),
         notes: o.notes.clone(),
         wakes: o.wakes,
-        wake_held: false,
+        wake_held: run.orch.wake_held,
     })
 }
 
