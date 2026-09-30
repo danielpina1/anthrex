@@ -53,6 +53,9 @@ mod orch;
 #[path = "../app_tests/run_goal.rs"]
 mod run_goal;
 
+#[path = "../app_tests/plan_review.rs"]
+mod plan_review;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

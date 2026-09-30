@@ -6,6 +6,7 @@ use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
 use crossterm::event::KeyEvent;
 pub use link::Link;
+pub use plan_review::{PlanReview, ReviewTarget};
 use prompt::RenamePrompt;
 use proto::{ClientMsg, GitState, WindowInfo};
 pub(crate) use runs::state_text;
@@ -181,6 +182,11 @@ pub struct App {
     /// started, opened once a snapshot names it (decision 44).
     next_request_id: u64,
     pending_open: Option<String>,
+    /// Milestone 9.0.5 decision 11: the open plan review; `app/plan_review.rs` keeps
+    /// the keymap's review mode in step with it.
+    pub plan_review: Option<plan_review::PlanReview>,
+    /// The body the review draws in (sidebar column included), as the last frame gave it.
+    pub(crate) body_area: ratatui::layout::Rect,
 }
 
 impl App {
@@ -231,6 +237,8 @@ impl App {
             run_subscribed: true,
             next_request_id: 0,
             pending_open: None,
+            plan_review: None,
+            body_area: ratatui::layout::Rect::default(),
             settings,
         }
     }
@@ -402,6 +410,7 @@ impl App {
             KeyAction::Run(cmd) => self.run(cmd),
             KeyAction::Tree(key) => self.on_tree_key(key),
             KeyAction::Conversation(key) => self.on_conversation_key(key),
+            KeyAction::Review(key) => self.on_review_key(key),
             KeyAction::AwaitPrefix | KeyAction::Cancel | KeyAction::Nothing => vec![],
         }
     }
@@ -451,6 +460,13 @@ impl App {
             Command::Reconnect => self.reconnect_command(),
             Command::ToggleConversation => self.toggle_conversation(),
             Command::StartGoal => self.open_goal_form(),
+            // Milestone 9.0.5 decision 13; the Alerts box itself is task M9.0.5.8's.
+            Command::FocusAlerts => {
+                if self.plan_review.is_some() {
+                    self.toast(plan_review::LEAVE_REVIEW_FIRST);
+                }
+                vec![]
+            }
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -509,6 +525,7 @@ mod lifecycle;
 mod link;
 mod modal_keys;
 mod paste;
+pub(crate) mod plan_review;
 pub(crate) mod prompt;
 mod run_enter;
 mod run_gate;

@@ -516,3 +516,57 @@ fn conversation_mode_wins_over_tree_mode() {
     let j = key(KeyCode::Char('j'), KeyModifiers::NONE);
     assert_eq!(km.handle(j, false), KeyAction::Conversation(j));
 }
+
+/// Milestone 9.0.5 decision 13: in review mode bare keys go to the review, never to a
+/// PTY, and the prefix (and `C-b a`) still works.
+#[test]
+fn review_mode_routes_bare_keys_to_the_review() {
+    let mut km = Keymap::new(Keymap::default_prefix());
+    km.set_review_mode(true);
+    assert!(km.review_mode());
+    for code in [
+        KeyCode::Char('j'),
+        KeyCode::Char('a'),
+        KeyCode::Esc,
+        KeyCode::PageDown,
+        KeyCode::Enter,
+    ] {
+        let k = key(code, KeyModifiers::NONE);
+        assert_eq!(km.handle(k, false), KeyAction::Review(k));
+    }
+    let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
+    assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+    assert_eq!(
+        km.handle(key(KeyCode::Char('a'), KeyModifiers::NONE), false),
+        KeyAction::Run(Command::FocusAlerts)
+    );
+    // The prefix twice sends no literal byte: the review is not a PTY.
+    assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+    assert_eq!(km.handle(prefix, false), KeyAction::Nothing);
+    km.set_review_mode(false);
+    let j = key(KeyCode::Char('j'), KeyModifiers::NONE);
+    assert_eq!(km.handle(j, false), KeyAction::Send(b"j".to_vec()));
+}
+
+/// Risks 1: the review wins over the conversation view and the tree.
+#[test]
+fn review_mode_wins_over_conversation_and_tree_modes() {
+    let mut km = Keymap::new(Keymap::default_prefix());
+    km.set_tree_mode(true);
+    km.set_conversation_mode(true);
+    km.set_review_mode(true);
+    let j = key(KeyCode::Char('j'), KeyModifiers::NONE);
+    assert_eq!(km.handle(j, false), KeyAction::Review(j));
+}
+
+/// `C-b a` is `FocusAlerts` in every mode.
+#[test]
+fn prefix_a_focuses_the_alerts() {
+    let mut km = Keymap::new(Keymap::default_prefix());
+    let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
+    assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+    assert_eq!(
+        km.handle(key(KeyCode::Char('a'), KeyModifiers::NONE), false),
+        KeyAction::Run(Command::FocusAlerts)
+    );
+}
