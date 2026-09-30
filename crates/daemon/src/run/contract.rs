@@ -197,7 +197,8 @@ pub fn reviewer_prompt(
         format!("Head: {}", sha7(head)),
         format!("Test mode: {}", mode_label(task.test_mode)),
     ];
-    let _ = run;
+    // Decision 54 (ruling C-27, I-1): never for a `Single` untiered run (decision 6).
+    lines.extend(tiers::interface_review_line(run, task));
     // Controller ruling C-21 (6).
     lines.extend(tiers::sync_review_line(task));
     if task.test_mode == TestMode::Tdd {

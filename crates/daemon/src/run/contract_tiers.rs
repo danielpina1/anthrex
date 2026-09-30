@@ -148,6 +148,16 @@ pub(crate) fn bisect_fix_brief(f: &BisectFix<'_>) -> String {
     )
 }
 
+/// Decision 54's reviewer line, for a task with `interface_change` in a `Multi` run or
+/// under a tiered profile.
+pub(super) fn interface_review_line(run: &Run, task: &Task) -> Option<String> {
+    let staged = run.stage_layout == crate::run::model::StageLayout::Multi;
+    (task.spec.interface_change && (staged || run.profile.tiers.is_tiered())).then(|| {
+        "Check that the old interface still works: callers outside this task must still build."
+            .to_string()
+    })
+}
+
 /// Controller ruling C-21 (6): a sync task's reviewer judges only the resolution.
 pub(super) fn sync_review_line(task: &Task) -> Option<String> {
     task.sync.as_ref()?;
