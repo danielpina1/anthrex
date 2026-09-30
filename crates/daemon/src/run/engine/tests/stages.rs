@@ -309,6 +309,7 @@ fn a_multi_run_rebaselines_every_stage_head() {
             base: BASE.into(),
             head: commit(2),
             stages: vec![(1, commit(1)), (2, commit(2))],
+            salvaged: None,
         }),
     });
     let run = fx.run();
@@ -406,4 +407,108 @@ fn stage_ops_round_trip_through_the_journal() {
         unreachable!()
     };
     assert!(guarded.is_empty() && !also_integration);
+}
+
+/// Controller ruling C-15 (I-1): after a rebaseline of a `Multi` run, `run_head` is the
+/// highest stage's head, the guard expects every adopted head, and the log names the
+/// run head it set, the commit `integration` was moved back from and its salvage ref.
+#[test]
+fn a_multi_rebaseline_guards_the_adopted_heads_and_logs_them() {
+    let mut fx = multi(&[doc_task("t1", ""), doc_task("t2", "stage = 2")]);
+    create(&mut fx, &stage_branch(2), BASE);
+    let run = fx.run_mut();
+    run.state = RunState::Halted;
+    run.halted_reason = Some("moved".into());
+    let x = commit(9);
+    let salvage = format!("refs/anthrex/salvage/{RUN_ID}/_integration-7");
+    let reply = fx.reply();
+    fx.next(EventKind::Resume {
+        reply,
+        run_id: RUN_ID.into(),
+        rebaseline: Some(Rebaseline {
+            base: BASE.into(),
+            head: commit(2),
+            stages: vec![(1, commit(1)), (2, commit(2))],
+            salvaged: Some((x.clone(), salvage.clone())),
+        }),
+    });
+    let run = fx.run();
+    assert_eq!(run.run_head, commit(2));
+    assert_eq!(
+        crate::run::engine::stages::guard_list(run),
+        vec![
+            (stage_branch(1), commit(1)),
+            (stage_branch(2), commit(2)),
+            (integration(), commit(2))
+        ]
+    );
+    let line = &run.log.last().unwrap().text;
+    assert!(
+        line.contains(&format!("run head {}", &commit(2)[..7])),
+        "{line}"
+    );
+    assert!(
+        line.contains(&format!(
+            "{} moved back from {} to {} ({} kept at {salvage})",
+            integration(),
+            &x[..7],
+            &commit(2)[..7],
+            &x[..7]
+        )),
+        "{line}"
+    );
+}
+
+/// The review's log finding: the text names the `run_head` the rebaseline set, never
+/// the `integration` head the driver read.
+#[test]
+fn a_multi_rebaseline_logs_the_run_head_it_set() {
+    let mut fx = multi(&[doc_task("t1", ""), doc_task("t2", "stage = 2")]);
+    create(&mut fx, &stage_branch(2), BASE);
+    fx.run_mut().state = RunState::Halted;
+    let reply = fx.reply();
+    fx.next(EventKind::Resume {
+        reply,
+        run_id: RUN_ID.into(),
+        rebaseline: Some(Rebaseline {
+            base: BASE.into(),
+            head: commit(8),
+            stages: vec![(1, commit(1)), (2, commit(2))],
+            salvaged: None,
+        }),
+    });
+    let line = &fx.run().log.last().unwrap().text;
+    assert!(
+        line.contains(&format!("run head {}", &commit(2)[..7])),
+        "{line}"
+    );
+    assert!(!line.contains(&commit(8)[..7]), "{line}");
+}
+
+/// Controller ruling C-15 (M-5): an epic task that finished without merging (here a
+/// cancelled stage-2 task) does not pull the integration review into its stage.
+#[test]
+fn an_epic_review_ignores_a_cancelled_tasks_stage() {
+    let mut fx = launched(true);
+    let mut t2 = add("t2", "docs");
+    t2["task"]["stage"] = json!(2);
+    edit_plan(
+        &mut fx,
+        json!({"edits": [add("t1", "auth"), t2], "submit": true}),
+    );
+    spawn(&mut fx, "mail");
+    planner_started(&mut fx, PLANNER);
+    let mut m2 = task_in("m2", "mail");
+    m2["task"]["stage"] = json!(2);
+    let effects = submit_epic(&mut fx, json!([task_in("m1", "mail"), m2]));
+    assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
+    create(&mut fx, &stage_branch(1), BASE);
+    create(&mut fx, &stage_branch(2), BASE);
+    fx.task_mut("m2").state = TaskState::Cancelled;
+    merge_real(&mut fx, "t1", &commit(1));
+    merge_real(&mut fx, "m1", &commit(2));
+    let review = fx.run().task("mail-int1").expect("the review").clone();
+    assert_eq!(review.stage(), 1);
+    let target = review.spec.review_target.unwrap();
+    assert!(target.ends_with(&format!("..{}", commit(2))), "{target}");
 }

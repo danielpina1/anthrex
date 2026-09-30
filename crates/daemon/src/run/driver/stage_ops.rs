@@ -3,11 +3,13 @@
 //! stage list would otherwise push past its budget). Writes go through the run's
 //! `GitQueue`; reads run on `spawn_blocking`. No lock is held here.
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::ops::{blocking, failed};
 use super::{OpCtx, RunService};
-use crate::run::engine::{EventKind, OpKind, OpResult};
+use crate::run::engine::{EventKind, OpKind, OpResult, Rebaseline};
 use crate::run::git::{self, RefCheck};
 
 /// `OpKind::CreateStageBranch`: `refs_tx::create_branch`, a write through the queue. A
@@ -17,6 +19,23 @@ pub(super) async fn create(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind)
     let OpKind::CreateStageBranch { root, branch, from } = kind else {
         unreachable!("create takes a CreateStageBranch");
     };
+    // Controller ruling C-15 (M-4): a symbolic ref where the branch should be is moved.
+    let refname = format!("refs/heads/{branch}");
+    let (git, t, r, rn) = (
+        service.git(),
+        ctx.git_timeout,
+        root.clone(),
+        refname.clone(),
+    );
+    match blocking(move || git::refs_tx::symbolic(&git, &r, &rn, t)).await {
+        Ok(None) => {}
+        Ok(Some(target)) => {
+            return OpResult::RefMoved {
+                reason: format!("{refname} is a symbolic ref to {target}"),
+            };
+        }
+        Err(error) => return failed(error),
+    }
     let (r, b, f) = (root.clone(), branch.clone(), from.clone());
     let made = service
         .write(ctx, move |g, t| {
@@ -77,6 +96,90 @@ pub(super) async fn verify_refs(service: &Arc<RunService>, ctx: &OpCtx, kind: Op
         }
         Ok(RefCheck::Halt { reason }) => OpResult::RefMoved { reason },
         Err(error) => failed(error),
+    }
+}
+
+/// The refs `run resume --rebaseline` reads (decision 21; milestone 9.1 decision 47).
+pub(super) struct RunRefs {
+    pub run_id: String,
+    pub root: PathBuf,
+    pub project: PathBuf,
+    pub base_branch: String,
+    pub run_branch: String,
+    /// A `Multi` run's created stages, `(n, branch)`; empty for a `Single` one.
+    pub stages: Vec<(u16, String)>,
+    pub timeout: Duration,
+}
+
+/// `run resume --rebaseline`'s reads: the base, `integration` and every created stage.
+/// Controller ruling C-15 (I-1): a `Multi` run adopts every stage ref, and when
+/// `integration` is not at the highest stage's head (a user moved either), the driver
+/// puts it back there, in one transaction that keeps the commit it was at under
+/// `refs/anthrex/salvage/<run>/_integration-<unix secs>` and moves it only from the
+/// value read (`--no-deref`). anthrex moves only its own ref: no force, never the base.
+pub(super) async fn rebaseline(service: &RunService, refs: RunRefs) -> Result<Rebaseline, String> {
+    let RunRefs {
+        run_id,
+        root,
+        project,
+        base_branch,
+        run_branch,
+        stages,
+        timeout,
+    } = refs;
+    let git = service.git();
+    let (r, b, rb) = (root.clone(), base_branch.clone(), run_branch.clone());
+    let mut read_all = blocking(move || {
+        let read = |branch: &str| {
+            let refname = format!("refs/heads/{branch}");
+            git::read_ref(&git, &r, &refname, timeout)?
+                .ok_or_else(|| format!("{refname} does not exist"))
+        };
+        let mut read_all = Rebaseline {
+            base: read(&b)?,
+            head: read(&rb)?,
+            ..Rebaseline::default()
+        };
+        for (n, branch) in stages {
+            read_all.stages.push((n, read(&branch)?));
+        }
+        Ok(read_all)
+    })
+    .await?;
+    let Some((_, top)) = read_all.stages.iter().max_by_key(|(n, _)| *n).cloned() else {
+        return Ok(read_all);
+    };
+    if top == read_all.head {
+        return Ok(read_all);
+    }
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let salvage = format!("refs/anthrex/salvage/{run_id}/_integration-{secs}");
+    let old = read_all.head.clone();
+    let (g, r, s, b, new, o) = (
+        service.git(),
+        root,
+        salvage.clone(),
+        run_branch.clone(),
+        top.clone(),
+        old.clone(),
+    );
+    let moved = service
+        .queue
+        .write(&project, move || {
+            git::refs_tx::salvage_and_move(&g, &r, &s, &b, (&new, &o), timeout)
+        })
+        .await?;
+    match moved {
+        git::refs_tx::Swap::Done => {
+            read_all.head = top;
+            read_all.salvaged = Some((old, salvage));
+            Ok(read_all)
+        }
+        git::refs_tx::Swap::Moved(refname) => Err(format!(
+            "{refname} moved while the refs were read; resume with --rebaseline again"
+        )),
     }
 }
 

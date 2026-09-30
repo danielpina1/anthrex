@@ -523,13 +523,7 @@ pub(super) fn resume(
             "run {run_id} is halted: {reason}; check the refs, then resume with --rebaseline"
         )));
     };
-    let text = format!(
-        "resumed with --rebaseline: base {} at {}, run head {}",
-        run.base_branch,
-        sha7(&read.base),
-        sha7(&read.head)
-    );
-    stages::rebaseline(run, &read);
+    let text = format!("resumed{}", stages::rebaseline(run, &read));
     run.halted_reason = None;
     run.halt_retryable = false;
     run.state = RunState::Running;

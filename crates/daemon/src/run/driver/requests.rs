@@ -13,7 +13,7 @@ use proto::{BaseMovedInfo, FinishAction, RunReply, RunRequest};
 use super::RunService;
 use super::adapt::BuildError;
 use super::build::Shape;
-use crate::run::engine::{EventKind, Rebaseline};
+use crate::run::engine::EventKind;
 use crate::run::git::{self, Git};
 use crate::run::model::Run;
 use crate::run::plan::parse_plan;
@@ -218,24 +218,21 @@ impl RunService {
                 .filter(|run| run.stage_layout == crate::run::model::StageLayout::Multi)
                 .map(|run| run.stages.iter().map(|s| (s.n, s.branch.clone())).collect())
                 .unwrap_or_default();
-            let git = self.ctx.git.clone();
-            let heads = blocking(move || {
-                let read = |branch: &str| {
-                    let refname = format!("refs/heads/{branch}");
-                    git::read_ref(&git, &root, &refname, timeout)?
-                        .ok_or_else(|| format!("{refname} does not exist"))
-                };
-                let mut read_all = Rebaseline {
-                    base: read(&base_branch)?,
-                    head: read(&run_branch)?,
-                    stages: Vec::new(),
-                };
-                for (n, branch) in stages {
-                    read_all.stages.push((n, read(&branch)?));
-                }
-                Ok(read_all)
-            })
-            .await?;
+            let project = crate::lock(&self.state)
+                .runs
+                .get(&run_id)
+                .map(|run| run.project.clone())
+                .unwrap_or_else(|| root.clone());
+            let refs = super::stage_ops::RunRefs {
+                run_id: run_id.clone(),
+                root,
+                project,
+                base_branch,
+                run_branch,
+                stages,
+                timeout,
+            };
+            let heads = super::stage_ops::rebaseline(self, refs).await?;
             Some(heads)
         } else {
             None

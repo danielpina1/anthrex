@@ -166,12 +166,13 @@ fn check(
             run_branch,
             expected_run_head,
             task_head,
+            also_integration,
             ..
         } => git::merge_candidate(
             g,
             root,
             integration,
-            run_branch,
+            (run_branch, *also_integration),
             expected_run_head,
             task_head,
             notes,
@@ -358,8 +359,15 @@ mod tests {
         let two = git(&["rev-parse", "HEAD"]);
         git(&["branch", "anthrex/r1/stage-2", &one]);
         git(&["branch", "anthrex/r1/stage-3", &two]);
+        // Controller ruling C-15 (M-4): a symbolic ref, though it resolves to `from`.
+        git(&["branch", "base-one", &one]);
+        git(&[
+            "symbolic-ref",
+            "refs/heads/anthrex/r1/stage-5",
+            "refs/heads/base-one",
+        ]);
         let mut run = run_ok(EXAMPLE_PLAN);
-        for (op, n) in [(1, 2), (2, 3), (3, 4)] {
+        for (op, n) in [(1, 2), (2, 3), (3, 4), (4, 5)] {
             let kind = OpKind::CreateStageBranch {
                 root: root.to_path_buf(),
                 branch: format!("anthrex/r1/stage-{n}"),
@@ -398,8 +406,20 @@ mod tests {
                 (1, Reconciled::Replay(OpResult::StageCreated)),
                 (2, Reconciled::Replay(OpResult::RefMoved { reason: moved })),
                 (3, Reconciled::NotStarted),
+                (
+                    4,
+                    Reconciled::Replay(OpResult::RefMoved {
+                        reason:
+                            "refs/heads/anthrex/r1/stage-5 is a symbolic ref to refs/heads/base-one"
+                                .into()
+                    })
+                ),
             ]
         );
         assert!(out.notes.is_empty(), "{:?}", out.notes);
     }
 }
+
+#[cfg(test)]
+#[path = "stage_tests.rs"]
+mod stage_tests;

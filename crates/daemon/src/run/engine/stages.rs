@@ -19,6 +19,9 @@ pub struct Rebaseline {
     pub base: String,
     pub head: String,
     pub stages: Vec<(u16, String)>,
+    /// Controller ruling C-15 (I-1): the commit `integration` was at when the driver
+    /// moved it back to the highest stage's head, and the salvage ref that keeps it.
+    pub salvaged: Option<(String, String)>,
 }
 
 impl From<(String, String)> for Rebaseline {
@@ -26,7 +29,7 @@ impl From<(String, String)> for Rebaseline {
         Rebaseline {
             base,
             head,
-            stages: Vec::new(),
+            ..Rebaseline::default()
         }
     }
 }
@@ -262,8 +265,30 @@ pub(super) fn created(run: &mut Run, kind: &OpKind, result: OpResult, now: u64) 
 
 /// `run resume --rebaseline` (decision 21): the refs the driver read become the run's.
 /// A `Multi` run takes every stage head from its ref, then `run_head` from the highest
-/// (decision 47); the `integration` head it read is for a `Single` run.
-pub(super) fn rebaseline(run: &mut Run, read: &Rebaseline) {
+/// (decision 47); the `integration` head it read is for a `Single` run. Returns the log
+/// text, which names the `run_head` it set (controller ruling C-15) and, when the
+/// driver moved `integration` back, both commits and the salvage ref.
+pub(super) fn rebaseline(run: &mut Run, read: &Rebaseline) -> String {
+    rebaseline_heads(run, read);
+    let mut text = format!(
+        " with --rebaseline: base {} at {}, run head {}",
+        run.base_branch,
+        sha7(&run.base_sha),
+        sha7(&run.run_head)
+    );
+    if let Some((old, salvage)) = &read.salvaged {
+        text.push_str(&format!(
+            "; {} moved back from {} to {} ({} kept at {salvage})",
+            run.run_branch(),
+            sha7(old),
+            sha7(&run.run_head),
+            sha7(old)
+        ));
+    }
+    text
+}
+
+fn rebaseline_heads(run: &mut Run, read: &Rebaseline) {
     run.base_sha = read.base.clone();
     run.base_moved = None;
     match run.stage_layout {

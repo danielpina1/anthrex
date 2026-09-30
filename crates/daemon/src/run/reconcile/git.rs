@@ -123,7 +123,7 @@ pub(super) fn merge_candidate(
     g: Git<'_>,
     root: &Path,
     integration: &Path,
-    run_branch: &str,
+    (run_branch, paired): (&str, bool),
     expected_run_head: &str,
     task_head: &str,
     notes: &mut Vec<String>,
@@ -138,7 +138,26 @@ pub(super) fn merge_candidate(
     // alias of a stage branch.
     let alias = crate::run::git::refs_tx::alias_of(run_branch);
     let (run_branch, alias_ref) = (alias.as_str(), format!("refs/heads/{alias}"));
+    // Controller ruling C-15 (M-1): a paired merge moved `integration` with the stage
+    // ref in one transaction, so it must be wherever the stage ref is.
+    let torn = |at: &str| -> Result<Option<Reconciled>, String> {
+        if !paired {
+            return Ok(None);
+        }
+        Ok(match read(g, root, &alias_ref)? {
+            Some(int) if int == at => None,
+            Some(int) => Some(Reconciled::Replay(OpResult::RefMoved {
+                reason: format!("{alias_ref} moved from {} to {}", short(at), short(&int)),
+            })),
+            None => Some(Reconciled::Replay(OpResult::RefMoved {
+                reason: format!("{alias_ref} was deleted"),
+            })),
+        })
+    };
     if head == expected_run_head {
+        if let Some(moved) = torn(expected_run_head)? {
+            return Ok(moved);
+        }
         reattach(g, integration, &alias_ref, run_branch, notes);
         return Ok(Reconciled::NotStarted);
     }
@@ -154,6 +173,9 @@ pub(super) fn merge_candidate(
     )?;
     let parents: Vec<&str> = line.split_whitespace().skip(1).collect();
     if parents == [expected_run_head, task_head] {
+        if let Some(moved) = torn(&head)? {
+            return Ok(moved);
+        }
         // The compare-and-swap landed; the daemon may have died before `reattach`.
         reattach(g, integration, &alias_ref, run_branch, notes);
         return Ok(Reconciled::Replay(OpResult::Merged { commit: head }));
@@ -176,6 +198,12 @@ pub(super) fn create_stage_branch(
     from: &str,
 ) -> Result<Reconciled, String> {
     let refname = format!("refs/heads/{branch}");
+    // Controller ruling C-15 (M-4): a symbolic ref there is not the op's branch.
+    if let Some(target) = crate::run::git::refs_tx::symbolic_in(g, root, &refname)? {
+        return Ok(Reconciled::Replay(OpResult::RefMoved {
+            reason: format!("{refname} is a symbolic ref to {target}"),
+        }));
+    }
     Ok(match read(g, root, &refname)? {
         None => Reconciled::NotStarted,
         Some(head) if head == from => Reconciled::Replay(OpResult::StageCreated),

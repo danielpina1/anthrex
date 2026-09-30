@@ -2,7 +2,7 @@
 //! completion with an orchestrator. Split from `kinds.rs`, which re-exports these.
 //! Pure (design decision 2).
 
-use proto::{IntegrationState, PlanEdit, PlanTask, RouteSpec, Size, TaskKind};
+use proto::{IntegrationState, PlanEdit, PlanTask, RouteSpec, Size, TaskKind, TaskState};
 
 use super::kinds::is_integration;
 use super::requests::log;
@@ -113,6 +113,9 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
         .tasks
         .iter()
         .filter(|t| t.spec.epic.as_deref() == Some(epic.as_str()) && !is_integration(t))
+        // Controller ruling C-15 (M-5): a task that finished without merging (cancelled,
+        // reported) put nothing in its stage.
+        .filter(|t| t.state == TaskState::Merged || !t.state.is_finished())
         .map(|t| t.stage())
         .max()
         .unwrap_or(1);

@@ -37,7 +37,7 @@ use super::{
     Effect, EngineState, OpId, OpKind, OpResult, ReplyId, clock, complete, emit_op, merge, next_op,
     outbox, results::op_done, review,
 };
-use crate::run::contract::{RESUME_REVIEWER, RESUME_WORKER, sha7};
+use crate::run::contract::{RESUME_REVIEWER, RESUME_WORKER};
 use crate::run::model::{FallbackState, PendingOp, Run, StallState};
 use crate::run::orch::RefreshState;
 use crate::run::role_launch::session_uuid_of;
@@ -315,13 +315,7 @@ pub(super) fn resume(
     let mut text = format!("run {run_id} resumed");
     // `--rebaseline` records the refs the driver read, as for a halted run.
     if let Some(read) = rebaseline {
-        text.push_str(&format!(
-            " with --rebaseline: base {} at {}, run head {}",
-            run.base_branch,
-            sha7(&read.base),
-            sha7(&read.head)
-        ));
-        super::stages::rebaseline(run, &read);
+        text.push_str(&super::stages::rebaseline(run, &read));
     }
     unpause(run, now, fx);
     fx.push(Effect::Reply {

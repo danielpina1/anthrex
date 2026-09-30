@@ -209,3 +209,112 @@ async fn create_stage_branch_is_created_once_and_refused_elsewhere() {
     );
     assert_eq!(rig.head("anthrex/r1/stage-3"), rig.base);
 }
+
+impl Rig {
+    fn refs(&self) -> super::RunRefs {
+        super::RunRefs {
+            run_id: "r1".into(),
+            root: self.root.clone(),
+            project: self.root.clone(),
+            base_branch: "main".into(),
+            run_branch: INTEGRATION.into(),
+            stages: vec![(1, STAGE_1.into()), (2, STAGE_2.into())],
+            timeout: Duration::from_secs(30),
+        }
+    }
+
+    fn salvage_refs(&self) -> Vec<(String, String)> {
+        let text = git(
+            &self.root,
+            &[
+                "for-each-ref",
+                "--format=%(refname) %(objectname)",
+                "refs/anthrex/salvage/r1/",
+            ],
+        );
+        text.lines()
+            .filter_map(|l| l.split_once(' '))
+            .map(|(r, o)| (r.to_string(), o.to_string()))
+            .collect()
+    }
+}
+
+/// Controller ruling C-15 (I-1), the review's scenario: `integration` moved by hand to
+/// X, then `run resume --rebaseline`. It goes back to the highest stage's head, X is
+/// salvaged, the guard expects that head, and the next merge proceeds.
+#[tokio::test(flavor = "multi_thread")]
+async fn rebaseline_puts_a_moved_integration_back_and_salvages_it() {
+    let rig = Rig::new();
+    let x = rig.task.clone();
+    git(
+        &rig.root,
+        &["update-ref", &format!("refs/heads/{INTEGRATION}"), &x],
+    );
+    let read = super::rebaseline(&rig.service, rig.refs()).await.unwrap();
+    assert_eq!(read.head, rig.base);
+    assert_eq!(
+        read.stages,
+        vec![(1, rig.base.clone()), (2, rig.base.clone())]
+    );
+    let (old, salvage) = read.salvaged.clone().expect("salvaged");
+    assert_eq!(old, x);
+    assert!(
+        salvage.starts_with("refs/anthrex/salvage/r1/_integration-"),
+        "{salvage}"
+    );
+    assert_eq!(rig.salvage_refs(), vec![(salvage, x.clone())]);
+    assert_eq!(rig.head(INTEGRATION), rig.base);
+    // The next merge, guarded at the rebaselined heads, lands.
+    let OpResult::Merged { commit } = rig.run(rig.candidate(STAGE_2, true)).await else {
+        panic!("not merged")
+    };
+    assert_eq!(rig.head(INTEGRATION), commit);
+}
+
+/// A user moved the highest `stage-<n>`: its head is adopted, and `integration` follows
+/// it, the commit it was at salvaged.
+#[tokio::test(flavor = "multi_thread")]
+async fn rebaseline_adopts_a_moved_highest_stage() {
+    let rig = Rig::new();
+    let y = rig.task.clone();
+    git(
+        &rig.root,
+        &["update-ref", &format!("refs/heads/{STAGE_2}"), &y],
+    );
+    let read = super::rebaseline(&rig.service, rig.refs()).await.unwrap();
+    assert_eq!(read.stages, vec![(1, rig.base.clone()), (2, y.clone())]);
+    assert_eq!(read.head, y);
+    assert_eq!(
+        read.salvaged.as_ref().map(|(o, _)| o.clone()),
+        Some(rig.base.clone())
+    );
+    assert_eq!(rig.head(INTEGRATION), y);
+    assert_eq!(rig.head(STAGE_2), y);
+    assert_eq!(rig.head("main"), rig.base, "the base never moves");
+    // Nothing to put back: no second salvage.
+    let again = super::rebaseline(&rig.service, rig.refs()).await.unwrap();
+    assert_eq!(again.salvaged, None);
+    assert_eq!(rig.salvage_refs().len(), 1);
+}
+
+/// Controller ruling C-15 (M-4): a symbolic ref where a stage branch should be is a
+/// moved ref, even when it resolves to `from`.
+#[tokio::test(flavor = "multi_thread")]
+async fn create_stage_branch_refuses_a_symbolic_ref() {
+    let rig = Rig::new();
+    let branch = "anthrex/r1/stage-3";
+    let refname = format!("refs/heads/{branch}");
+    git(&rig.root, &["symbolic-ref", &refname, "refs/heads/main"]);
+    let kind = OpKind::CreateStageBranch {
+        root: rig.root.clone(),
+        branch: branch.into(),
+        from: rig.base.clone(),
+    };
+    let result = super::create(&rig.service, &rig.ctx, kind).await;
+    assert_eq!(
+        result,
+        OpResult::RefMoved {
+            reason: format!("{refname} is a symbolic ref to refs/heads/main")
+        }
+    );
+}

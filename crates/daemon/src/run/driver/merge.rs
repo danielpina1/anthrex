@@ -127,29 +127,34 @@ pub(super) async fn candidate(
             reattach().await?;
             return Ok(OpResult::RefMoved { reason });
         }
-        let (r, b, c, old) = (
-            root.clone(),
-            run_branch.clone(),
-            commit.clone(),
-            expected_run_head.clone(),
-        );
         // Decision 53: into a `Multi` run's highest stage, its ref and `integration`
-        // move together or not at all; anywhere else, M8a's compare-and-swap.
-        let pair = also_integration.then(|| alias.clone());
+        // move together or not at all. Controller ruling C-15 (M-3): every other
+        // guarded ref is verified in the same transaction, so one that moved after the
+        // guard refuses the swap; (M-2) the refusal names the ref that differed.
+        let mut moving = vec![run_branch.clone()];
+        if also_integration {
+            moving.push(alias.clone());
+        }
+        let refs = |b: &str| format!("refs/heads/{b}");
+        let updates: Vec<(String, String, String)> = moving
+            .iter()
+            .map(|b| (refs(b), commit.clone(), expected_run_head.clone()))
+            .collect();
+        let verifies: Vec<(String, String)> = guarded
+            .iter()
+            .filter(|(b, _)| !moving.contains(b))
+            .map(|(b, head)| (refs(b), head.clone()))
+            .collect();
+        let r = root.clone();
         let swapped = service
-            .write(ctx, move |g, t| match &pair {
-                Some(alias) => {
-                    let updates = [(&b, &c, &old), (alias, &c, &old)]
-                        .map(|(b, c, o)| (format!("refs/heads/{b}"), c.clone(), o.clone()));
-                    git::refs_tx::cas(g, &r, &updates, t)
-                }
-                None => git::cas_update(g, &r, &b, &c, &old, t),
+            .write(ctx, move |g, t| {
+                git::refs_tx::cas(g, &r, &updates, &verifies, t)
             })
             .await?;
-        if !swapped {
+        if let git::refs_tx::Swap::Moved(refname) = swapped {
             reattach().await?;
             return Ok(OpResult::RefMoved {
-                reason: format!("refs/heads/{run_branch} moved during the merge"),
+                reason: format!("{refname} moved during the merge"),
             });
         }
         // Final fix batch F1, finding D-7: the run branch holds the candidate now, so
