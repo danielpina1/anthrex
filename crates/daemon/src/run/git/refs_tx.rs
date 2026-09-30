@@ -62,15 +62,23 @@ pub fn salvage_and_move(
     salvage: &str,
     branch: &str,
     (new, old): (&str, &str),
+    verifies: &[(String, String)],
     timeout: Duration,
 ) -> Result<Swap, String> {
     let refname = format!("refs/heads/{branch}");
-    let lines = [
-        format!("create {salvage} {old}"),
-        format!("update {refname} {new} {old}"),
-    ];
+    let mut lines: Vec<String> = verifies
+        .iter()
+        .map(|(r, o)| format!("verify {r} {o}"))
+        .collect();
+    lines.push(format!("create {salvage} {old}"));
+    lines.push(format!("update {refname} {new} {old}"));
+    let mut expected: Vec<(&str, &str)> = verifies
+        .iter()
+        .map(|(r, o)| (r.as_str(), o.as_str()))
+        .collect();
+    expected.push((refname.as_str(), old));
     let g = Git::new(git, timeout);
-    match transaction(g, root, &lines, &[(refname.as_str(), old)]) {
+    match transaction(g, root, &lines, &expected) {
         Ok(swap) => Ok(swap),
         // The branch is where it was read, so the salvage ref (never overwritten) was
         // the obstacle.
@@ -79,6 +87,20 @@ pub fn salvage_and_move(
             None => Err(error),
         },
     }
+}
+
+/// Controller ruling C-16: `base`, or the first `<base>-<n>` from 2 that no ref holds,
+/// so two salvages in one second never collide.
+pub fn free_ref(git: &OsStr, root: &Path, base: &str, timeout: Duration) -> Result<String, String> {
+    let g = Git::new(git, timeout);
+    let mut name = base.to_string();
+    for n in 2.. {
+        if read(g, root, &name)?.is_none() {
+            break;
+        }
+        name = format!("{base}-{n}");
+    }
+    Ok(name)
 }
 
 /// `lines` between `start` and `prepare`/`commit`, with `expected` the refs to read
@@ -108,9 +130,9 @@ fn transaction(
     // git's refusal names the mismatch in words that vary by version; the refs
     // themselves say which one was not where it was expected.
     for (refname, old) in expected {
-        if read(g, root, refname)?.as_deref() != Some(*old)
-            || symbolic_in(g, root, refname)?.is_some()
-        {
+        // A symbolic ref whose target is at `old` is never why git refused: `verify`
+        // and `update --no-deref` both take it (controller ruling C-16 (5)).
+        if read(g, root, refname)?.as_deref() != Some(*old) {
             return Ok(Swap::Moved(refname.to_string()));
         }
     }

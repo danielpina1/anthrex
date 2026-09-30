@@ -54,8 +54,20 @@ struct Rig {
 
 impl Rig {
     fn new() -> Rig {
+        Rig::with_wrapper(|_| None)
+    }
+
+    /// A rig whose service runs git through the script `wrapper(top)` returns, written
+    /// to `<top>/git-wrapper.sh` before the service exists.
+    fn with_wrapper(wrapper: impl FnOnce(&Path) -> Option<String>) -> Rig {
         let tmp = tempfile::tempdir().unwrap();
         let top = tmp.path().canonicalize().unwrap();
+        if let Some(script) = wrapper(&top) {
+            let path = top.join("git-wrapper.sh");
+            std::fs::write(&path, script).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         let root = top.join("repo");
         std::fs::create_dir_all(&root).unwrap();
         git(&root, &["init", "-q", "-b", "main"]);
@@ -80,7 +92,18 @@ impl Rig {
         git(&root, &["worktree", "add", "-q", &at, INTEGRATION]);
         let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
         let (manager, _events) = WindowManager::new(config);
-        let service = RunService::for_manager(&manager, top.join("data"), Arc::new(NoRoots));
+        let mut run_ctx = crate::run::driver::RunContext::new(
+            top.join("data"),
+            manager.config(),
+            config::Orchestrator::default(),
+            Arc::new(NoRoots),
+        );
+        // Controller ruling C-16 (2): a wrapper around git, when the test wrote one.
+        let wrapper = top.join("git-wrapper.sh");
+        if wrapper.exists() {
+            run_ctx.git = wrapper.into_os_string();
+        }
+        let service = RunService::new(manager, run_ctx);
         let ctx = OpCtx {
             run_id: "r1".into(),
             project: root.clone(),
@@ -220,6 +243,8 @@ impl Rig {
             run_branch: INTEGRATION.into(),
             stages: vec![(1, STAGE_1.into()), (2, STAGE_2.into())],
             timeout: Duration::from_secs(30),
+            may_move: true,
+            now: 1_700_000_000,
         }
     }
 
@@ -317,4 +342,123 @@ async fn create_stage_branch_refuses_a_symbolic_ref() {
             reason: format!("{refname} is a symbolic ref to refs/heads/main")
         }
     );
+}
+
+/// Controller ruling C-16 (2): the driver's swap verifies every guarded ref it does not
+/// move. A git wrapper (the test's own script, acting only on the test's own repository)
+/// moves `stage-2` just before the swap's `update-ref --stdin`, after both guards have
+/// passed: the merge into stage 1 is refused, naming stage 2, and stage 1 stays.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_swap_is_refused_when_a_guarded_ref_moves_after_the_guard() {
+    let real = which_git();
+    let rig = Rig::with_wrapper(|top| {
+        let root = top.join("repo");
+        let marker = top.join("moved");
+        Some(format!(
+            r#"#!/bin/sh
+case " $* " in
+  *" update-ref "*" --stdin "*)
+    if [ ! -e '{marker}' ]; then
+      : > '{marker}'
+      task=$('{real}' -C '{root}' rev-parse refs/heads/anthrex/r1/t1)
+      '{real}' -C '{root}' update-ref refs/heads/{STAGE_2} "$task"
+    fi
+    ;;
+esac
+exec '{real}' "$@"
+"#,
+            marker = marker.display(),
+            root = root.display(),
+        ))
+    });
+    let result = rig.run(rig.candidate(STAGE_1, false)).await;
+    assert_eq!(
+        result,
+        OpResult::RefMoved {
+            reason: format!("refs/heads/{STAGE_2} moved during the merge")
+        }
+    );
+    assert_eq!(rig.head(STAGE_1), rig.base);
+    assert_eq!(rig.head(STAGE_2), rig.task, "the wrapper did move it");
+    assert_eq!(rig.head(INTEGRATION), rig.base);
+}
+
+/// The absolute path of the real git, for a wrapper script.
+fn which_git() -> String {
+    let out = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let path = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    assert!(path.starts_with('/'), "{path}");
+    path
+}
+
+/// Controller ruling C-16 (4): two salvages in the same second take a free suffix.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_salvages_in_one_second_do_not_collide() {
+    let rig = Rig::new();
+    let int = format!("refs/heads/{INTEGRATION}");
+    git(&rig.root, &["update-ref", &int, &rig.task]);
+    let first = super::rebaseline(&rig.service, rig.refs()).await.unwrap();
+    git(&rig.root, &["update-ref", &int, &rig.task]);
+    let second = super::rebaseline(&rig.service, rig.refs()).await.unwrap();
+    let name = |r: &crate::run::engine::Rebaseline| r.salvaged.clone().unwrap().1;
+    let base = "refs/anthrex/salvage/r1/_integration-1700000000";
+    assert_eq!(name(&first), base);
+    assert_eq!(name(&second), format!("{base}-2"));
+    assert_eq!(rig.salvage_refs().len(), 2);
+    assert_eq!(rig.head(INTEGRATION), rig.base);
+}
+
+/// Controller ruling C-16 (1): `run resume --rebaseline` of a run the engine will not
+/// resume (here running) writes no ref: it is refused, `integration` stays where the
+/// user moved it, and nothing is salvaged.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rebaseline_the_engine_refuses_writes_no_ref() {
+    use crate::run::model::{StageLayout, StageRecord};
+    use crate::run::test_support::{EXAMPLE_PLAN, run_ok};
+    let rig = Rig::new();
+    let x = rig.task.clone();
+    git(
+        &rig.root,
+        &["update-ref", &format!("refs/heads/{INTEGRATION}"), &x],
+    );
+    let mut run = run_ok(EXAMPLE_PLAN);
+    run.id = "r1".into();
+    run.root = rig.root.clone();
+    run.project = rig.root.clone();
+    let top = rig.root.parent().unwrap().to_path_buf();
+    run.data_dir = top.join("data/runs/r1");
+    run.wt_dir = top.join("wt");
+    run.base_sha = rig.base.clone();
+    run.run_head = rig.base.clone();
+    run.stage_layout = StageLayout::Multi;
+    run.stages = [(1, STAGE_1), (2, STAGE_2)]
+        .map(|(n, b)| StageRecord::new(n, b.into(), &rig.base, Default::default(), 0))
+        .to_vec();
+    run.state = proto::RunState::Running;
+    // Nothing for the scheduler to start or complete: one task waits on the user, the
+    // rest are cancelled.
+    for task in &mut run.tasks {
+        task.state = proto::TaskState::Cancelled;
+    }
+    run.tasks[0].state = proto::TaskState::Blocked;
+    run.tasks[0].block = Some(proto::BlockInfo {
+        reason: proto::BlockReason::Human,
+        text: "waiting".into(),
+    });
+    crate::lock(&rig.service.state)
+        .runs
+        .insert("r1".into(), run);
+    let handle = rig
+        .service
+        .spawn(tokio_util::sync::CancellationToken::new());
+    let refused = rig.service.resume("r1".into(), true).await;
+    let text = refused.expect_err("a running run is not resumed");
+    assert!(text.contains("running"), "{text}");
+    assert_eq!(rig.head(INTEGRATION), x);
+    assert!(rig.salvage_refs().is_empty(), "{:?}", rig.salvage_refs());
+    rig.service.stop().await;
+    drop(handle);
 }

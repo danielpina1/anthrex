@@ -218,11 +218,17 @@ impl RunService {
                 .filter(|run| run.stage_layout == crate::run::model::StageLayout::Multi)
                 .map(|run| run.stages.iter().map(|s| (s.n, s.branch.clone())).collect())
                 .unwrap_or_default();
-            let project = crate::lock(&self.state)
+            // Controller ruling C-16: only a run the engine will resume (halted or
+            // paused) has its refs written; any other only has them read.
+            let (project, may_move) = crate::lock(&self.state)
                 .runs
                 .get(&run_id)
-                .map(|run| run.project.clone())
-                .unwrap_or_else(|| root.clone());
+                .map(|run| {
+                    let may_move =
+                        matches!(run.state, proto::RunState::Halted | proto::RunState::Paused);
+                    (run.project.clone(), may_move)
+                })
+                .unwrap_or_else(|| (root.clone(), false));
             let refs = super::stage_ops::RunRefs {
                 run_id: run_id.clone(),
                 root,
@@ -231,6 +237,8 @@ impl RunService {
                 run_branch,
                 stages,
                 timeout,
+                may_move,
+                now: super::unix_now(),
             };
             let heads = super::stage_ops::rebaseline(self, refs).await?;
             Some(heads)

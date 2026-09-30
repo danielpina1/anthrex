@@ -109,6 +109,11 @@ pub(super) struct RunRefs {
     /// A `Multi` run's created stages, `(n, branch)`; empty for a `Single` one.
     pub stages: Vec<(u16, String)>,
     pub timeout: Duration,
+    /// Controller ruling C-16: the run is `halted` or `paused`, so the engine will take
+    /// this resume; in any other state the refs are only read, never written.
+    pub may_move: bool,
+    /// Unix seconds, for the salvage ref's name.
+    pub now: u64,
 }
 
 /// `run resume --rebaseline`'s reads: the base, `integration` and every created stage.
@@ -126,8 +131,11 @@ pub(super) async fn rebaseline(service: &RunService, refs: RunRefs) -> Result<Re
         run_branch,
         stages,
         timeout,
+        may_move,
+        now,
     } = refs;
     let git = service.git();
+    let stage_branches: Vec<String> = stages.iter().map(|(_, b)| b.clone()).collect();
     let (r, b, rb) = (root.clone(), base_branch.clone(), run_branch.clone());
     let mut read_all = blocking(move || {
         let read = |branch: &str| {
@@ -149,30 +157,52 @@ pub(super) async fn rebaseline(service: &RunService, refs: RunRefs) -> Result<Re
     let Some((_, top)) = read_all.stages.iter().max_by_key(|(n, _)| *n).cloned() else {
         return Ok(read_all);
     };
-    if top == read_all.head {
+    // Controller ruling C-16: a run the engine will refuse gets no write.
+    if top == read_all.head || !may_move {
         return Ok(read_all);
     }
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    let salvage = format!("refs/anthrex/salvage/{run_id}/_integration-{secs}");
+    let base = format!("refs/anthrex/salvage/{run_id}/_integration-{now}");
     let old = read_all.head.clone();
-    let (g, r, s, b, new, o) = (
+    // Controller ruling C-16 (3): every stage ref read is verified in the transaction.
+    let verifies: Vec<(String, String)> = stage_branches
+        .iter()
+        .zip(&read_all.stages)
+        .map(|(branch, (_, head))| (format!("refs/heads/{branch}"), head.clone()))
+        .collect();
+    let (g, r, b, new, o) = (
         service.git(),
         root,
-        salvage.clone(),
         run_branch.clone(),
         top.clone(),
         old.clone(),
     );
-    let moved = service
+    let (salvage, moved) = service
         .queue
         .write(&project, move || {
-            git::refs_tx::salvage_and_move(&g, &r, &s, &b, (&new, &o), timeout)
+            // Controller ruling C-16 (4): a free name, inside the queue's turn.
+            let salvage = git::refs_tx::free_ref(&g, &r, &base, timeout)?;
+            let swap = git::refs_tx::salvage_and_move(
+                &g,
+                &r,
+                &salvage,
+                &b,
+                (&new, &o),
+                &verifies,
+                timeout,
+            )?;
+            Ok((salvage, swap))
         })
         .await?;
     match moved {
         git::refs_tx::Swap::Done => {
+            // Controller ruling C-16: recorded at once, before the engine hears of it.
+            tracing::info!(
+                run = %run_id,
+                salvage = %salvage,
+                old = %old,
+                new = %top,
+                "rebaseline: integration moved back to the highest stage; its commit salvaged"
+            );
             read_all.head = top;
             read_all.salvaged = Some((old, salvage));
             Ok(read_all)

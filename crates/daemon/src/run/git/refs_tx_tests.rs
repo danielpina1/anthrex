@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-use super::{Swap, alias_of, cas, create_branch, salvage_and_move, symbolic};
+use super::{Swap, alias_of, cas, create_branch, free_ref, salvage_and_move, symbolic};
 use crate::run::git::{RefCheck, guard_refs};
 
 const T: Duration = Duration::from_secs(20);
@@ -192,16 +192,16 @@ fn salvage_and_move_keeps_the_old_commit_and_moves_only_from_the_value_read() {
     let salvage = "refs/anthrex/salvage/r1/_integration-1700000000";
     git(dir, &["branch", int, &second]);
     // Read at `first`, but it is at `second`: nothing moves, nothing is salvaged.
-    let moved = salvage_and_move(prog(), dir, salvage, int, (&first, &first), T).unwrap();
+    let moved = salvage_and_move(prog(), dir, salvage, int, (&first, &first), &[], T).unwrap();
     assert_eq!(moved, Swap::Moved(format!("refs/heads/{int}")));
     assert!(git(dir, &["for-each-ref", "--format=%(refname)", salvage]).is_empty());
-    let done = salvage_and_move(prog(), dir, salvage, int, (&first, &second), T).unwrap();
+    let done = salvage_and_move(prog(), dir, salvage, int, (&first, &second), &[], T).unwrap();
     assert_eq!(done, Swap::Done);
     assert_eq!(head_of(dir, &format!("refs/heads/{int}")), first);
     assert_eq!(head_of(dir, salvage), second);
     // A salvage ref is never overwritten.
     git(dir, &["update-ref", &format!("refs/heads/{int}"), &second]);
-    let again = salvage_and_move(prog(), dir, salvage, int, (&first, &second), T).unwrap();
+    let again = salvage_and_move(prog(), dir, salvage, int, (&first, &second), &[], T).unwrap();
     assert_eq!(again, Swap::Moved(salvage.to_string()));
     assert_eq!(head_of(dir, &format!("refs/heads/{int}")), second);
 }
@@ -222,4 +222,74 @@ fn symbolic_names_a_symbolic_ref_only() {
         symbolic(prog(), dir, sym, T).unwrap(),
         Some("refs/heads/main".to_string())
     );
+}
+
+/// Controller ruling C-16 (3): every stage ref the rebaseline read is verified in the
+/// salvage's transaction. The top stage moving between the read and the move refuses
+/// the whole of it: `integration` stays, and nothing is salvaged.
+#[test]
+fn salvage_and_move_refuses_when_a_stage_moved_after_the_read() {
+    let (tmp, first, second) = repo();
+    let dir = tmp.path();
+    let (int, s2) = ("anthrex/r1/integration", "anthrex/r1/stage-2");
+    let salvage = "refs/anthrex/salvage/r1/_integration-5";
+    git(dir, &["branch", int, &second]);
+    git(dir, &["branch", s2, &first]);
+    // Read at `first`; it moves to `second` before the move.
+    git(dir, &["update-ref", &format!("refs/heads/{s2}"), &second]);
+    let verifies = [(format!("refs/heads/{s2}"), first.clone())];
+    let moved =
+        salvage_and_move(prog(), dir, salvage, int, (&first, &second), &verifies, T).unwrap();
+    assert_eq!(moved, Swap::Moved(format!("refs/heads/{s2}")));
+    assert_eq!(head_of(dir, &format!("refs/heads/{int}")), second);
+    assert!(git(dir, &["for-each-ref", "--format=%(refname)", salvage]).is_empty());
+}
+
+/// Controller ruling C-16 (4): two salvages in one second take `-2`, `-3`, ….
+#[test]
+fn free_ref_picks_the_first_free_suffix() {
+    let (tmp, first, _) = repo();
+    let dir = tmp.path();
+    let base = "refs/anthrex/salvage/r1/_integration-100";
+    assert_eq!(free_ref(prog(), dir, base, T).unwrap(), base);
+    git(dir, &["update-ref", base, &first]);
+    assert_eq!(free_ref(prog(), dir, base, T).unwrap(), format!("{base}-2"));
+    git(dir, &["update-ref", &format!("{base}-2"), &first]);
+    assert_eq!(free_ref(prog(), dir, base, T).unwrap(), format!("{base}-3"));
+}
+
+/// Controller ruling C-16 (5): git takes a symbolic ref whose target is at the value
+/// expected (`verify` and `update --no-deref` both succeed), so a symbolic ref is never
+/// why a transaction is refused. The read-back names the ref that really moved, even
+/// with a symbolic one listed before it.
+#[test]
+fn a_refusal_names_the_moved_ref_not_a_symbolic_one() {
+    let (tmp, first, second) = repo();
+    let dir = tmp.path();
+    let (sym, s2, s1) = (
+        "refs/heads/anthrex/r1/stage-3",
+        "refs/heads/anthrex/r1/stage-2",
+        "refs/heads/anthrex/r1/stage-1",
+    );
+    git(dir, &["update-ref", "refs/heads/main", &first]);
+    git(dir, &["symbolic-ref", sym, "refs/heads/main"]);
+    git(dir, &["update-ref", s2, &second]);
+    git(dir, &["update-ref", s1, &first]);
+    // Alone, the symbolic ref at the value expected passes.
+    let updates = [(s1.to_string(), second.clone(), first.clone())];
+    let only_sym = [(sym.to_string(), first.clone())];
+    assert_eq!(
+        cas(prog(), dir, &updates, &only_sym, T).unwrap(),
+        Swap::Done
+    );
+    git(dir, &["update-ref", s1, &first]);
+    let verifies = [
+        (sym.to_string(), first.clone()),
+        (s2.to_string(), first.clone()),
+    ];
+    assert_eq!(
+        cas(prog(), dir, &updates, &verifies, T).unwrap(),
+        Swap::Moved(s2.to_string())
+    );
+    assert_eq!(head_of(dir, s1), first);
 }
