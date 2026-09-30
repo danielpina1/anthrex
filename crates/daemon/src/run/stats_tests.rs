@@ -385,7 +385,9 @@ fn a_skipped_line_is_reported_once() {
 /// `summarise` in `dir` with a `git` that does not exist.
 fn summarise_at(dir: &Path, path: &Path) -> HistoryStats {
     let git = std::ffi::OsStr::new("/nonexistent/anthrex-test/git");
-    crate::run::history_io::summarise(git, dir, path, 1_000, std::time::Duration::from_secs(5))
+    let testing = config::Testing::default();
+    let timeout = std::time::Duration::from_secs(5);
+    crate::run::history_io::summarise(git, dir, path, 1_000, timeout, &testing)
 }
 
 /// M8b.17 review, m6: a history file that cannot be read is said as it is, never as

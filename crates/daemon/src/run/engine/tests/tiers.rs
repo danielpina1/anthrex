@@ -37,7 +37,7 @@ const MOVED: &str = "4444444444444444444444444444444444444444";
 
 /// A working tdd `t1` owning `crates/a/**` on the tiered profile, its run with a
 /// stored profile's `manifests` and a repository data directory; its window.
-fn working() -> (Fixture, u32) {
+pub(super) fn working() -> (Fixture, u32) {
     let plan = plan_with(&tiered(), &[task("t1", "S", "a", "")]);
     let mut fx = Fixture::with_config(&plan, config());
     fx.start_with(true, |run| {
@@ -52,7 +52,7 @@ fn working() -> (Fixture, u32) {
 }
 
 /// `t1`'s accepted tdd claim and passing proof: the effects of the proof's result.
-fn proved(fx: &mut Fixture, window: u32) -> Vec<Effect> {
+pub(super) fn proved(fx: &mut Fixture, window: u32) -> Vec<Effect> {
     let effects = accepted(fx, window, tdd_args());
     let (op, _) = only_op(&effects, "Proof");
     fx.done(
@@ -86,7 +86,7 @@ fn step(kind: StepKind, command: &str, ok: bool, cached: bool) -> StepOutcome {
 const TESTS: &str = "cargo test -p 'a' -E 'not (test(e2e))'";
 
 /// A tier outcome on module `a`: a build step and a tests step.
-fn outcome(tier: u8, ok: bool, cached: bool) -> TierOutcome {
+pub(super) fn outcome(tier: u8, ok: bool, cached: bool) -> TierOutcome {
     let steps = vec![
         step(StepKind::Build, "cargo build", true, cached),
         step(StepKind::Tests, TESTS, ok, cached),

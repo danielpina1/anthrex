@@ -131,6 +131,9 @@ pub(super) fn candidate_done(
     } = &result
     {
         super::tiers::run_facts(run, outcome, now);
+        // Decision 57: the job's `tier` and `flaky` lines.
+        let id = i.map(|i| run.tasks[i].id().to_string());
+        super::history::tier_job(run, (op, id.as_deref(), n), outcome, now, fx);
     }
     if let OpResult::Merged { commit, .. } = &result {
         let id = i.map(|i| run.tasks[i].id().to_string());

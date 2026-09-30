@@ -1,12 +1,16 @@
 //! M8b decision 35: `anthrex run stats`, the recorded aggregates of `history.jsonl`:
 //! one row per class (`S`, `M` non-hub, `hub`), and the deciders' and the size
-//! cross-check's totals. Recording only: nothing is proposed or refitted (M9.5).
+//! cross-check's totals. Recording only, and proposing flaky tests for quarantine
+//! (milestone 9.1 decision 34): nothing is applied or refitted (M9.5).
 //! Pure (M8b decision 1); `history_io::summarise` reads the file and finds reverts.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
-use proto::{DeciderSource, HistoryLine, HistoryStats, Size, StatsRow, TaskOutcome, TaskRecord};
+use proto::{
+    DeciderSource, FlakyProposal, HistoryLine, HistoryStats, Size, StatsRow, TaskOutcome,
+    TaskRecord,
+};
 
 /// The rows, in order.
 const CLASSES: [&str; 3] = ["S", "M", "hub"];
@@ -90,7 +94,8 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
             HistoryLine::Task(t) => tasks.push(t),
             HistoryLine::Run(r) => runs.push(r),
             // Decision 43: role-routing records never count toward the aggregates;
-            // neither do milestone 9.1's tier, flaky and bisect lines (until M9.1.18).
+            // neither do milestone 9.1's tier, flaky and bisect lines (decision 57);
+            // `flaky_proposals` reads the flaky ones.
             HistoryLine::RoleRoute(_)
             | HistoryLine::Tier(_)
             | HistoryLine::Flaky(_)
@@ -146,6 +151,46 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
         window_days: 0,
         quarantine_after: 0,
     }
+}
+
+/// Seconds in a day, for `flaky_window_days`.
+const DAY_SECS: u64 = 86_400;
+
+/// Milestone 9.1 decision 34: every test recorded flaky in at least `after` distinct
+/// runs within the last `window_days` before `now` (a line exactly `window_days` old is
+/// inside), with its run count and its last time; the most runs first, then by name.
+/// Nothing is applied: `run stats` only prints them.
+pub fn flaky_proposals(
+    lines: &[HistoryLine],
+    now: u64,
+    window_days: u32,
+    after: u32,
+) -> Vec<FlakyProposal> {
+    let window = u64::from(window_days).saturating_mul(DAY_SECS);
+    let mut tests: BTreeMap<&str, (HashSet<&str>, u64)> = BTreeMap::new();
+    for line in lines {
+        let HistoryLine::Flaky(f) = line else {
+            continue;
+        };
+        if now.saturating_sub(f.at) > window {
+            continue;
+        }
+        let (runs, last) = tests.entry(f.test.as_str()).or_default();
+        runs.insert(f.run_id.as_str());
+        *last = (*last).max(f.at);
+    }
+    let mut proposals: Vec<FlakyProposal> = tests
+        .into_iter()
+        .map(|(test, (runs, last_at))| FlakyProposal {
+            test: test.to_string(),
+            runs: u32::try_from(runs.len()).unwrap_or(u32::MAX),
+            last_at,
+        })
+        .filter(|p| p.runs >= after)
+        .collect();
+    // Stable: equal counts stay in the map's name order.
+    proposals.sort_by_key(|p| std::cmp::Reverse(p.runs));
+    proposals
 }
 
 /// `<n> <word>`, with an `s` unless `n` is 1.
@@ -238,9 +283,35 @@ pub fn render(stats: &HistoryStats) -> String {
         )),
         None => {}
     }
+    flaky_block(stats, &mut out);
     out
+}
+
+/// Decision 34's proposals (Interfaces, CLI), after M8b's lines; nothing without one.
+fn flaky_block(stats: &HistoryStats, out: &mut String) {
+    if stats.flaky_proposals.is_empty() {
+        return;
+    }
+    let days = stats.window_days;
+    out.push_str(&format!(
+        "Flaky tests (at least {} runs in the last {days} days):\n",
+        stats.quarantine_after
+    ));
+    for p in &stats.flaky_proposals {
+        let (test, runs) = (&p.test, p.runs);
+        out.push_str(&format!(
+            "proposal: add {test} to slow_tests (flaky in {runs} runs in the last {days} days)\n"
+        ));
+        out.push_str(&format!(
+            "  fix: anthrex run start --goal \"Make the test {test} deterministic; it failed and then passed on retry in {runs} runs\"\n"
+        ));
+    }
 }
 
 #[cfg(test)]
 #[path = "stats_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "stats_tests_flaky.rs"]
+mod flaky_tests;

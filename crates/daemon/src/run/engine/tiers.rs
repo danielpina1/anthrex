@@ -227,6 +227,9 @@ pub(super) fn tier1_done(
 ) {
     if let OpResult::Tier(outcome) = &result {
         run_facts(run, outcome, now);
+        // Decision 57: the job's `tier` and `flaky` lines, whoever awaits it.
+        let (id, stage) = (run.tasks[i].id().to_string(), run.tasks[i].stage());
+        super::history::tier_job(run, (op, Some(&id), stage), outcome, now, fx);
     }
     if !awaited(run, i, op, TaskState::Check) {
         return;

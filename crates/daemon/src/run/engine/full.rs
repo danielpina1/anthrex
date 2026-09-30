@@ -315,6 +315,8 @@ pub(super) fn full_done(
     }
     match result {
         OpResult::Tier(outcome) => {
+            // Decision 57: the job's `tier` and `flaky` lines.
+            super::history::tier_job(run, (op, None, n), &outcome, now, fx);
             // Decision 21's lines, less the affected set (always the full suite).
             for line in tiers::lines(&outcome).into_iter().skip(1) {
                 log(run, now, line);

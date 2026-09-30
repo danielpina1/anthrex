@@ -391,13 +391,15 @@ pub fn record_reverts(
 
 /// Decision 35's blocking core: reverts recorded first ([`record_reverts`], each
 /// warning logged), then the history read once more and aggregated, with that read's
-/// skipped lines as the problems (so each is reported once).
+/// skipped lines as the problems (so each is reported once), and milestone 9.1
+/// decision 34's quarantine proposals over `testing`'s window.
 pub fn summarise(
     git: &OsStr,
     root: &Path,
     path: &Path,
     now: u64,
     timeout: Duration,
+    testing: &config::Testing,
 ) -> HistoryStats {
     for warning in record_reverts(git, root, path, now, timeout) {
         tracing::warn!(path = %path.display(), %warning, "revert detection");
@@ -405,5 +407,9 @@ pub fn summarise(
     let (lines, problems) = read_history(path);
     let mut stats = super::stats::aggregate(&lines, path);
     stats.problems = problems;
+    let (days, after) = (testing.flaky_window_days, testing.flaky_quarantine_after);
+    stats.flaky_proposals = super::stats::flaky_proposals(&lines, now, days, after);
+    stats.window_days = days;
+    stats.quarantine_after = after;
     stats
 }

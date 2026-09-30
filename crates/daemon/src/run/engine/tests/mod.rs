@@ -38,6 +38,7 @@ mod gates_fixes;
 mod gates_review;
 mod gates_rounds;
 mod history;
+mod history_tiers;
 mod holds;
 mod holds_conflicts;
 mod kinds;

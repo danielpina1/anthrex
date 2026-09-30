@@ -99,6 +99,10 @@ pub struct StageFull {
     /// Ruling C-18: the executor's own failures on one commit, retried with backoff.
     #[serde(default)]
     pub infra: Option<InfraFailures>,
+    /// Decision 57: how many bisects of this stage ended, each one's `bisect` history
+    /// line numbered by it (`<run>/bisect/<stage>/<n>`).
+    #[serde(default)]
+    pub bisects: u32,
 }
 
 /// Ruling C-18: consecutive `Failed` results of tier 3 on `commit`, the last at `at`,

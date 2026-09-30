@@ -105,16 +105,16 @@ fn summarise_appends_each_revert_once_and_counts_it() {
         let row = stats.rows.iter().find(|r| r.class == "S").unwrap();
         (row.merged, row.reverted)
     };
-    let stats = summarise(real_git(), root, &path, NOW, T);
+    let stats = summarise(real_git(), root, &path, NOW, T, &config::Testing::default());
     assert_eq!(s_row(&stats), (2, 0));
     assert_eq!(file_lines(&path).len(), 3);
     out(root, &["revert", "-m", "1", "--no-edit", &accept]);
-    let stats = summarise(real_git(), root, &path, NOW, T);
+    let stats = summarise(real_git(), root, &path, NOW, T, &config::Testing::default());
     assert_eq!(s_row(&stats), (2, 2), "{stats:?}");
     assert!(stats.problems.is_empty(), "{:?}", stats.problems);
     assert_eq!(file_lines(&path).len(), 4);
     // A second `run stats` finds the same revert recorded and appends nothing.
-    let stats = summarise(real_git(), root, &path, NOW, T);
+    let stats = summarise(real_git(), root, &path, NOW, T, &config::Testing::default());
     assert_eq!(s_row(&stats), (2, 2));
     assert_eq!(file_lines(&path).len(), 4);
 }

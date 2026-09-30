@@ -3,13 +3,18 @@
 //! (`AppendHistory`). A merged or cancelled task gets its record at once, after its
 //! diff; when the run ends, every task without one gets one; then the run's own
 //! record, once every task line has come back. A run with no repository data
-//! directory (restored from milestone 8a) writes none. Pure (design decision 2).
+//! directory (restored from milestone 8a) writes none. Milestone 9.1 decision 57 adds
+//! a `tier` line per tier job, a `flaky` line per flake, and a `bisect` line per ended
+//! bisect. Pure (design decision 2).
 
-use proto::{HistoryLine, TaskOutcome, TaskState};
+use proto::{
+    BisectLine, FlakyRecord, HISTORY_VERSION, HistoryLine, TaskOutcome, TaskState, TierRunRecord,
+};
 
-use super::{Effect, OpKind, OpResult, emit_op, next_op};
+use super::{Effect, OpId, OpKind, OpResult, emit_op, next_op};
 use crate::run::history::{due, enabled, outcome, run_record, run_record_due, task_record};
-use crate::run::model::Run;
+use crate::run::model::{BisectRecord, Run};
+use crate::run::tiers::{Affected, TierOutcome};
 
 // Milestone 9 decision 43: the role-routing records of the orchestrator, sub-planners,
 // run scouts and run-bound deciders.
@@ -136,6 +141,112 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let line = HistoryLine::Run(run_record(run, outcome, now));
     run.run_record_written = true;
     append(run, None, line, fx);
+}
+
+/// Decision 57: tier job `op`'s `tier` line and one `flaky` line per test that passed
+/// on its retry, for task `task` (`None`: a run-level tier 3) on stage `stage`. Each is
+/// its own journaled `AppendHistory`, owned by no task, so a task's own record never
+/// waits for them; `record_id` `<run>/tier/<op>` and `<run>/flaky/<op>/<test>`.
+pub(super) fn tier_job(
+    run: &mut Run,
+    (op, task, stage): (OpId, Option<&str>, u16),
+    outcome: &TierOutcome,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    if !enabled(run) {
+        return;
+    }
+    let mut flaky: Vec<String> = Vec::new();
+    for name in outcome.steps.iter().flat_map(|s| s.flaky.iter()) {
+        if !flaky.contains(name) {
+            flaky.push(name.clone());
+        }
+    }
+    let (affected, full_reason) = match &outcome.affected {
+        Affected::Modules(names) => (u32::try_from(names.len()).unwrap_or(u32::MAX), None),
+        Affected::Full(reason) => (0, Some(reason.clone())),
+    };
+    let count = |n: usize| u8::try_from(n).unwrap_or(u8::MAX);
+    let cached_steps = count(outcome.steps.iter().filter(|s| s.cached).count());
+    let run_id = run.id.clone();
+    let line = HistoryLine::Tier(TierRunRecord {
+        v: HISTORY_VERSION,
+        record_id: format!("{run_id}/tier/{op}"),
+        at: now,
+        run_id: run_id.clone(),
+        task_id: task.map(str::to_string),
+        stage,
+        tier: outcome.tier,
+        secs: outcome.secs,
+        affected,
+        full_reason,
+        cache_hit: cached_steps > 0,
+        cached_steps,
+        steps: count(outcome.steps.len()),
+        ok: outcome.ok,
+        flaky: flaky.clone(),
+    });
+    append(run, None, line, fx);
+    for test in flaky {
+        let line = HistoryLine::Flaky(FlakyRecord {
+            v: HISTORY_VERSION,
+            record_id: format!("{run_id}/flaky/{op}/{test}"),
+            at: now,
+            run_id: run_id.clone(),
+            task_id: task.map(str::to_string),
+            tier: outcome.tier,
+            test,
+        });
+        append(run, None, line, fx);
+    }
+}
+
+/// Decision 57: the `bisect` line of stage `stage`'s ended bisect `b`, the stage's
+/// `seq`-th (`record_id` `<run>/bisect/<stage>/<seq>`): its range, probes and result,
+/// a culprit with its fix task, or the reason there was none.
+pub(super) fn bisect_ended(
+    run: &mut Run,
+    (stage, seq): (u16, u32),
+    b: &BisectRecord,
+    result: BisectResult<'_>,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    if !enabled(run) {
+        return;
+    }
+    let (culprit, fix_task, reason) = match result {
+        BisectResult::Culprit { task, fix } => (Some(task), Some(fix), None),
+        BisectResult::Refused { task, reason } => (Some(task), None, Some(reason)),
+        BisectResult::None(reason) => (None, None, Some(reason)),
+    };
+    let run_id = run.id.clone();
+    let line = HistoryLine::Bisect(BisectLine {
+        v: HISTORY_VERSION,
+        record_id: format!("{run_id}/bisect/{stage}/{seq}"),
+        at: now,
+        run_id,
+        stage,
+        head: b.head.clone(),
+        tests: b.tests.clone(),
+        range: u32::try_from(b.candidates.len()).unwrap_or(u32::MAX),
+        probes: b.probes,
+        culprit: culprit.map(str::to_string),
+        reason: reason.map(str::to_string),
+        fix_task: fix_task.map(str::to_string),
+    });
+    append(run, None, line, fx);
+}
+
+/// How a bisect ended (decisions 36–38).
+pub(super) enum BisectResult<'a> {
+    /// The culprit task, and the fix task added for it.
+    Culprit { task: &'a str, fix: &'a str },
+    /// A culprit whose fix task M8a's rules refused (decision 38's no single culprit).
+    Refused { task: &'a str, reason: &'a str },
+    /// No single culprit, for this reason.
+    None(&'a str),
 }
 
 /// `AppendHistory`'s result: a line that could not be written is lost, and said so in

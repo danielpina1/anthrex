@@ -8,6 +8,7 @@
 //! never red (ruling C-18): it is issued again after a backoff, and the bisect ends
 //! without a culprit after the third. Pure (design decision 2).
 
+use super::history::BisectResult;
 use super::requests::log;
 use super::{Effect, OpId, OpKind, OpResult, deciders, emit_op, fixes, full, next_op, wake};
 use crate::decider::{CheckSummaryInput, DeciderRequest};
@@ -255,6 +256,7 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 n,
                 "the run ended before the bisect did".to_string(),
                 now,
+                fx,
             );
         } else if now >= retry_at {
             issue(run, n, now, fx);
@@ -309,6 +311,7 @@ pub(super) fn probe_done(
             n,
             "the run ended before the bisect did".to_string(),
             now,
+            fx,
         );
     }
     match result {
@@ -333,6 +336,7 @@ pub(super) fn probe_done(
                 n,
                 format!("could not probe {}: setup failed: {line}", sha7(&at)),
                 now,
+                fx,
             );
         }
         OpResult::Failed { message } => {
@@ -352,6 +356,7 @@ pub(super) fn probe_done(
                     n,
                     format!("could not probe {}: {line}", sha7(&at)),
                     now,
+                    fx,
                 );
             }
             let wait = PROBE_BACKOFF[usize::from(b.infra - 1).min(PROBE_BACKOFF.len() - 1)];
@@ -378,14 +383,14 @@ fn probed(
     match (probe, red) {
         (Probe::Base, true) => {
             let reason = format!("the failing tests already fail at {}", sha7(&b.base));
-            return end(run, n, reason, now);
+            return end(run, n, reason, now, fx);
         }
         (Probe::Head, false) => {
             let reason = format!(
                 "the failing tests pass alone at {}; they fail only with the whole suite",
                 sha7(&b.head)
             );
-            return end(run, n, reason, now);
+            return end(run, n, reason, now, fx);
         }
         (Probe::Base, false) => {}
         (Probe::Head, true) => b.show = show,
@@ -416,9 +421,10 @@ fn culprit(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
                 n,
                 format!("the first red merge is the propagate of stage {from}"),
                 now,
+                fx,
             );
         }
-        None => return end(run, n, "no merge is left to blame".to_string(), now),
+        None => return end(run, n, "no merge is left to blame".to_string(), now, fx),
     };
     let added = add_fix(run, n, &b, &id, now, fx);
     if let Some(s) = stage_mut(run, n) {
@@ -426,8 +432,21 @@ fn culprit(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
     }
     let fix = match added {
         Ok(fix) => fix,
-        Err(message) => return end_with(run, n, &b, format!("fix task refused: {message}"), now),
+        Err(message) => {
+            let reason = format!("fix task refused: {message}");
+            let refused = BisectResult::Refused {
+                task: &id,
+                reason: &reason,
+            };
+            record(run, n, &b, refused, now, fx);
+            return end_with(run, n, &b, reason, now);
+        }
     };
+    let found = BisectResult::Culprit {
+        task: &id,
+        fix: &fix,
+    };
+    record(run, n, &b, found, now, fx);
     if let Some(s) = stage_mut(run, n) {
         s.full.bisect_fixes = s.full.bisect_fixes.saturating_add(1);
     }
@@ -504,7 +523,7 @@ fn add_fix(
 }
 
 /// Decision 38: the bisect of stage `n` ends without a culprit, for `reason`.
-fn end(run: &mut Run, n: u16, reason: String, now: u64) {
+fn end(run: &mut Run, n: u16, reason: String, now: u64, fx: &mut Vec<Effect>) {
     let Some(b) = stage_mut(run, n).and_then(|s| s.bisect.take()) else {
         return;
     };
@@ -514,6 +533,7 @@ fn end(run: &mut Run, n: u16, reason: String, now: u64) {
     {
         run.full_op = None;
     }
+    record(run, n, &b, BisectResult::None(&reason), now, fx);
     end_with(run, n, &b, reason, now);
 }
 
@@ -524,4 +544,21 @@ fn end_with(run: &mut Run, n: u16, b: &BisectRecord, reason: String, now: u64) {
         format!("stage {n}: bisect ended without a culprit: {reason}"),
     );
     full::no_culprit(run, n, &b.head, &b.tests, &reason);
+}
+
+/// Decision 57: the ended bisect's `bisect` history line, numbered in its stage.
+fn record(
+    run: &mut Run,
+    n: u16,
+    b: &BisectRecord,
+    result: BisectResult<'_>,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let Some(s) = stage_mut(run, n) else {
+        return;
+    };
+    s.full.bisects = s.full.bisects.saturating_add(1);
+    let seq = s.full.bisects;
+    super::history::bisect_ended(run, (n, seq), b, result, now, fx);
 }
