@@ -8,6 +8,7 @@ use super::{App, Effect};
 use crate::inspector::run_format::{effort_text, strength_text, test_mode_text};
 use crate::safe_text::{multi_line, one_line};
 use crate::tree::{NodeKey, awaiting_holds, task_held};
+use crate::ui::tree_view::truncate;
 use crossterm::event::{KeyCode, KeyEvent};
 use proto::{HoldState, Route, RunInfo, RunState, TaskInfo, TaskState};
 use ratatui::layout::Rect;
@@ -126,14 +127,19 @@ pub(crate) struct ReviewLine {
 const INDENT: usize = 2;
 
 /// `<runtime> · <model> · <strength> · <effort> effort` (decision 12).
+/// A blank model (the policy's default) is left out.
 fn route_line(route: &Route) -> String {
-    format!(
-        "{} · {} · {} · {} effort",
+    let effort = format!("{} effort", effort_text(route.effort));
+    [
         route.runtime.label(),
-        one_line(&route.model),
+        route.model.as_str(),
         strength_text(route.strength),
-        effort_text(route.effort)
-    )
+        effort.as_str(),
+    ]
+    .into_iter()
+    .filter(|part| !part.trim().is_empty())
+    .collect::<Vec<_>>()
+    .join(" · ")
 }
 
 /// A task's deps, explicit then implicit, without repeats.
@@ -147,14 +153,23 @@ pub(crate) fn all_deps(task: &TaskInfo) -> Vec<&str> {
     deps
 }
 
+/// An empty list reads `none`, so its label never stands alone.
+fn or_none(lines: Vec<String>) -> Vec<String> {
+    if lines.is_empty() {
+        vec!["none".to_owned()]
+    } else {
+        lines
+    }
+}
+
 /// The sections of decision 12, unwrapped: each label with its lines of text.
 fn sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> {
     let mut out = vec![
         ("brief", vec![task.brief.clone()]),
-        ("owns", task.owns.clone()),
+        ("owns", or_none(task.owns.clone())),
         (
             "done when",
-            task.acceptance.iter().map(|c| format!("☐ {c}")).collect(),
+            or_none(task.acceptance.iter().map(|c| format!("☐ {c}")).collect()),
         ),
     ];
     let mode = test_mode_text(task.test_mode);
@@ -233,11 +248,9 @@ pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
 pub(crate) fn detail_lines(run: &RunInfo, task: &TaskInfo, width: u16) -> Vec<ReviewLine> {
     let width = usize::from(width);
     let line = |kind, text: String| ReviewLine { kind, text };
+    // One row, spacing kept, cut with `…`: the list on the left carries the same title.
     let title = one_line(&format!("{}  {}", task.id, task.title));
-    let mut out: Vec<ReviewLine> = wrap(&title, width)
-        .into_iter()
-        .map(|text| line(LineKind::Title, text))
-        .collect();
+    let mut out = vec![line(LineKind::Title, truncate(&title, width))];
     for (label, texts) in sections(run, task) {
         out.push(line(LineKind::Blank, String::new()));
         out.push(line(LineKind::Label, label.to_owned()));

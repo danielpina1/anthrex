@@ -112,3 +112,17 @@ async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
     );
     assert_eq!(app.tree.sidebar.top, top);
 }
+
+/// M9.0.5.7: the production draw reports the body (everything above the status bar,
+/// the sidebar column included) to the review's reducer, after every resize.
+#[test]
+fn production_draw_reports_the_body_area() {
+    let mut app = App::new(shells(), "/tmp".into(), UiSettings::default());
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let layout = draw(&mut terminal, &mut app, None).unwrap();
+    assert_eq!(layout.body, ratatui::layout::Rect::new(0, 0, 120, 39));
+    assert_eq!(app.body_area, layout.body);
+    terminal.backend_mut().resize(80, 24);
+    draw(&mut terminal, &mut app, None).unwrap();
+    assert_eq!(app.body_area, ratatui::layout::Rect::new(0, 0, 80, 23));
+}

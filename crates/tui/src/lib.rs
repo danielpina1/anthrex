@@ -180,6 +180,7 @@ fn draw<B: ratatui::backend::Backend>(
         let effects = app.set_terminal_size(next.main_inner.width, next.main_inner.height);
         app.set_tree_viewports(next.sidebar_list.height, next.main_inner.height);
         app.set_graph_viewport(next.main);
+        app.set_body_area(next.body);
         apply(effects, conn, app);
         layout = Some(ui::draw(frame, app));
     })?;

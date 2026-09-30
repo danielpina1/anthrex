@@ -55,7 +55,8 @@ impl App {
         layout: &ui::Layout,
     ) -> Vec<Effect> {
         let main_inner = layout.main_inner;
-        if self.modal.is_some() {
+        // Milestone 9.0.5: the plan review covers the body; nothing under it scrolls.
+        if self.modal.is_some() || self.plan_review.is_some() {
             return vec![];
         }
         if self.sidebar_visible && layout.sidebar_list.contains((column, row).into()) {
@@ -118,7 +119,7 @@ impl App {
     }
 
     pub fn on_click(&mut self, column: u16, row: u16, layout: &ui::Layout) -> Vec<Effect> {
-        if self.modal.is_some() {
+        if self.modal.is_some() || self.plan_review.is_some() {
             return vec![];
         }
         // Every press ends the previous gesture. Without this, a press on the
@@ -230,7 +231,11 @@ impl App {
     /// (decision 16). The canvas follows the cursor, so the cell the drag
     /// started on stays under it.
     pub fn on_drag(&mut self, column: u16, row: u16, layout: &ui::Layout) -> Vec<Effect> {
-        if self.modal.is_some() || !self.overview || self.conversation.is_open() {
+        if self.modal.is_some()
+            || self.plan_review.is_some()
+            || !self.overview
+            || self.conversation.is_open()
+        {
             return vec![];
         }
         let Some((from_x, from_y)) = self.graph_mouse.drag_from else {

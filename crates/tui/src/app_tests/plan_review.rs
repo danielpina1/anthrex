@@ -452,3 +452,28 @@ fn review_keys_send_nothing_else() {
         }
     }
 }
+
+/// The review covers the body, so a click, drag or wheel there never reaches the
+/// sidebar, the canvas or the terminal drawn under it (M9.0.5.7).
+#[test]
+fn the_mouse_does_nothing_under_the_review() {
+    let mut app = gate_app();
+    tap(&mut app, KeyCode::Char('p'));
+    let layout = crate::ui::layout(Rect::new(0, 0, 120, 40), app.sidebar_width);
+    let before_tree = app.tree.selected.clone();
+    let before_pan = app.graph_pan;
+    let before = app.plan_review.clone();
+    let before_sidebar = app.tree.sidebar;
+    let before_overview = app.tree.overview;
+    for (x, y) in [(3, 2), (3, 4), (60, 10), (100, 30)] {
+        assert!(app.on_click(x, y, &layout).is_empty());
+        assert!(app.on_drag(x + 5, y + 3, &layout).is_empty());
+        assert!(app.on_scroll(true, x, y, &layout).is_empty());
+        assert!(app.on_scroll(false, x, y, &layout).is_empty());
+    }
+    assert_eq!(app.tree.selected, before_tree);
+    assert_eq!(app.graph_pan, before_pan);
+    assert_eq!(app.plan_review, before);
+    assert_eq!(app.tree.sidebar, before_sidebar);
+    assert_eq!(app.tree.overview, before_overview);
+}

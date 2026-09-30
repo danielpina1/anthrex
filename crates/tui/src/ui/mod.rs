@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod dialog;
 pub mod modal;
 pub mod overview;
+pub mod plan_review;
 pub mod run_edit;
 pub mod run_goal;
 pub mod sidebar;
@@ -29,6 +30,9 @@ pub struct Layout {
     pub sidebar_footer: Rect,
     pub main: Rect,
     pub main_inner: Rect,
+    /// Everything above the status bar, the sidebar column included: the plan
+    /// review's area (milestone 9.0.5 decision 12).
+    pub body: Rect,
     pub statusbar: Rect,
 }
 
@@ -66,6 +70,7 @@ pub fn layout(area: Rect, sidebar_width: u16) -> Layout {
         },
         main,
         main_inner: inset(main),
+        body,
         statusbar,
     }
 }
@@ -80,15 +85,20 @@ pub fn draw(frame: &mut Frame, app: &App) -> Layout {
             0
         },
     );
-    if app.sidebar_visible {
-        sidebar::render(frame, app, &l);
-    }
-    if app.conversation.is_open() {
-        conversation::render(frame, app, l.main);
-    } else if app.overview {
-        overview::render(frame, app, l.main);
+    if app.plan_review.is_some() {
+        // Milestone 9.0.5 decision 12: the review covers the body; the status bar stays.
+        plan_review::render(frame, app, l.body);
     } else {
-        terminal::render(frame, app, l.main);
+        if app.sidebar_visible {
+            sidebar::render(frame, app, &l);
+        }
+        if app.conversation.is_open() {
+            conversation::render(frame, app, l.main);
+        } else if app.overview {
+            overview::render(frame, app, l.main);
+        } else {
+            terminal::render(frame, app, l.main);
+        }
     }
     statusbar::render(frame, app, l.statusbar);
     if app.modal.is_some() {
