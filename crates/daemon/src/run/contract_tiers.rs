@@ -147,3 +147,84 @@ pub(crate) fn bisect_fix_brief(f: &BisectFix<'_>) -> String {
         brief = f.culprit_brief,
     )
 }
+
+/// At most this many characters of a path or marker taken from a worker's diff are
+/// shown (task M9.1.16).
+const SHOWN_CHARS_MAX: usize = 200;
+
+/// A path or marker from a worker's diff, made safe to show a reviewer or the user
+/// (task M9.1.16): every control character, line or paragraph separator and bidi
+/// override becomes `?`, so the text can neither start a line of its own (a forged
+/// `W<n>` line) nor reorder what is shown; and it is cut to [`SHOWN_CHARS_MAX`].
+pub(crate) fn shown(text: &str) -> String {
+    let safe = |c: char| {
+        if c.is_control()
+            || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+        {
+            '?'
+        } else {
+            c
+        }
+    };
+    let mut out: String = text.chars().take(SHOWN_CHARS_MAX).map(safe).collect();
+    if text.chars().count() > SHOWN_CHARS_MAX {
+        out.push('…');
+    }
+    out
+}
+
+/// Decision 41's rung-1 message (exact): one `deleted test file` line per path. With
+/// several paths the restore command names them all.
+pub(crate) fn deleted_test_file_message(paths: &[String], start: &str) -> String {
+    let paths: Vec<String> = paths.iter().map(|p| shown(p)).collect();
+    let mut lines = vec!["[anthrex] task_done rejected:".to_string()];
+    lines.extend(
+        paths
+            .iter()
+            .map(|p| format!("deleted test file {p}; restore it or own it exactly")),
+    );
+    lines.push(format!(
+        "Restore it (git checkout {} -- {}, then commit) and call task_done again. If this task must delete it, call task_blocked with kind question and ask for the plan to be amended.",
+        super::sha7(start),
+        paths.join(" ")
+    ));
+    lines.join("\n")
+}
+
+/// Decision 42's reviewer block (exact): `lines` are the `- W<n> …` lines, `more` the
+/// signals past the cap. Empty with no signal.
+pub(crate) fn signals_block(lines: &[String], more: u32) -> String {
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut out = vec!["Test changes to justify:".to_string()];
+    out.extend(lines.iter().cloned());
+    if more > 0 {
+        out.push(format!("- … and {more} more (see git diff)"));
+    }
+    out.push(
+        "Answer each with a finding whose text starts with its id: minor, as \"W1 accepted: <why the change is right>\", or critical when it weakens a test."
+            .to_string(),
+    );
+    out.join("\n")
+}
+
+/// Decision 42: the refusal of a `submit_review` that leaves signal ids out (exact).
+pub(crate) fn signals_unanswered(ids: &[String]) -> String {
+    format!(
+        "the review must address {}: add a finding whose text starts with each id",
+        ids.join(", ")
+    )
+}
+
+/// Decision 42: the engine's finding for a signal a second review still left out
+/// (exact); `(<path>)` alone for a deleted file, which has no line.
+pub(crate) fn signal_unjustified(id: &str, path: &str, line: Option<u32>) -> String {
+    match line {
+        Some(line) => format!(
+            "{id} ({}:{line}) was not justified by the review",
+            shown(path)
+        ),
+        None => format!("{id} ({}) was not justified by the review", shown(path)),
+    }
+}

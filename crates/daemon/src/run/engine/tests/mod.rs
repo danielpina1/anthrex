@@ -86,6 +86,7 @@ mod view_fields;
 mod wake_fixes;
 mod wake_held;
 mod wake_notes;
+mod weakening;
 mod worker_messages;
 mod worker_messages_pause;
 mod worker_messages_review;

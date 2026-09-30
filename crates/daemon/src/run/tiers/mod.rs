@@ -24,7 +24,7 @@ pub mod spec;
 pub mod steps;
 pub mod weakening;
 
-pub use spec::{StepOutcome, TestAtSpec, TierOutcome, TierSpec};
+pub use spec::{ClaimSignals, SignalsSpec, StepOutcome, TestAtSpec, TierOutcome, TierSpec};
 
 #[cfg(test)]
 mod affected_tests;

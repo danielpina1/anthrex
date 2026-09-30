@@ -320,3 +320,38 @@ pub fn diff_so_far(
     let patch = diff(g, worktree, &range)?;
     Ok((stat, patch))
 }
+
+/// Milestone 9.1 decision 40: the claim's test-weakening signals and how many more
+/// there were past `SIGNALS_MAX`. Reads `git diff -U0` of `<run_head>...<head>`
+/// (decision 15's range) and, for its changed `.rs` files, which hold `#[cfg(test)]` at
+/// `head`; a diff cut at [`super::SIGNALS_DIFF_BYTES`] takes its deleted files from a
+/// name-only read instead (task M9.1.16). Reads only; blocking.
+pub fn done_signals(
+    git: &OsStr,
+    worktree: &Path,
+    run_head: &str,
+    head: &str,
+    spec: &crate::run::tiers::SignalsSpec,
+    timeout: Duration,
+) -> Result<(Vec<crate::run::tiers::Signal>, u32), String> {
+    use crate::run::tiers::weakening;
+    let range = format!("{run_head}...{head}");
+    let (diff, cut) = super::unified_zero(git, worktree, &range, timeout)?;
+    let rs: Vec<String> = super::changed_paths(git, worktree, &range, timeout)?
+        .into_iter()
+        .filter(|p| p.ends_with(".rs"))
+        .collect();
+    let cfg = if rs.is_empty() {
+        Vec::new()
+    } else {
+        super::cfg_test_files(git, worktree, head, &rs, timeout)?
+    };
+    let (paths, markers) = (&spec.test_paths, &spec.skip_markers);
+    let (signals, more) = if cut {
+        let deleted = super::deleted_paths(git, worktree, &range, timeout)?;
+        weakening::signals_of_cut_diff(&diff, &deleted, &cfg, paths, markers)
+    } else {
+        weakening::signals_and_rest(&diff, &cfg, paths, markers)
+    };
+    Ok((signals, u32::try_from(more).unwrap_or(u32::MAX)))
+}

@@ -41,8 +41,8 @@ pub use accept::{ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout};
 pub(crate) use checkout::restore_owner_access;
 pub use checkout::{Repo, checkout_repo_dir, default_repo_dir};
 pub use done::{
-    DoneChecked, RefreshedIn, count_commits, count_commits_excluding, diff_so_far, verify_done,
-    verify_done_excluding,
+    DoneChecked, RefreshedIn, count_commits, count_commits_excluding, diff_so_far, done_signals,
+    verify_done, verify_done_excluding,
 };
 pub(crate) use handback::merged_log;
 pub use handback::{
@@ -58,7 +58,10 @@ pub use merge_state::abort_merge;
 pub use salvage::{delete_branches, remove_checkout, remove_worktree, salvage};
 pub use settings::{codex_config_tree, project_settings};
 pub use summary::{resolve_target, task_summary, task_summary_excluding};
-pub use tiers::{changed_paths, checkout_tree, show_stat, tree_of};
+pub use tiers::{
+    SIGNALS_DIFF_BYTES, cfg_test_files, changed_paths, checkout_tree, deleted_paths, show_stat,
+    tree_of, unified_zero,
+};
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
 pub(crate) use handback::{finish_clean, interrupted_conflict};

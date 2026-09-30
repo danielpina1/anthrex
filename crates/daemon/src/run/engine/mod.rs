@@ -82,6 +82,7 @@ pub(crate) mod stages;
 mod tiers;
 mod tools;
 mod wake;
+pub(crate) mod weakening;
 mod worker_messages;
 
 pub use crate::headless::TurnOutcome;

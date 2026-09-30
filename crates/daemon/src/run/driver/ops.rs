@@ -18,6 +18,7 @@ use crate::run::model::OpId;
 use crate::run::proof::ProofOp;
 use crate::run::role_launch::worker_git_roots;
 use crate::run::slots::{Priority, Want};
+use crate::run::tiers::{ClaimSignals, SignalsSpec};
 use proto::AgentRole;
 
 // Decision 33's proof and decision 34's check (split out to keep this file under the
@@ -30,6 +31,11 @@ use gate_ops::{check, proof};
 #[path = "scheduled.rs"]
 pub(super) mod scheduled;
 use scheduled::scheduled;
+
+// Task M9.1.16: `VerifyDone`'s signals against real git.
+#[cfg(test)]
+#[path = "ops_signals_tests.rs"]
+mod signals_tests;
 
 pub(super) fn failed(message: impl Into<String>) -> OpResult {
     OpResult::Failed {
@@ -271,6 +277,7 @@ pub(super) async fn run(
             resolution,
             not_own,
             not_run,
+            signals,
         } => {
             // Final fix batch F1b: through the queue, since each of these imports the
             // worker's commits and records them on the task's branch first.
@@ -283,7 +290,7 @@ pub(super) async fn run(
                             &start,
                             &run_head,
                             (&owns, &generated, &protected),
-                            (red.clone(), resolution.clone()),
+                            (red.clone(), resolution.clone(), signals.as_ref()),
                             RefreshedIn::of(&not_own, &not_run),
                             t,
                         )
@@ -445,7 +452,7 @@ fn verify_done(
     start: &str,
     run_head: &str,
     (owns, generated, protected): (&[String], &[String], &[String]),
-    (red, resolution): (Option<String>, Option<ResolutionAt>),
+    (red, resolution, signals): (Option<String>, Option<ResolutionAt>, Option<&SignalsSpec>),
     refreshed: RefreshedIn,
     git_timeout: Duration,
 ) -> Result<OpResult, String> {
@@ -467,6 +474,15 @@ fn verify_done(
         git::resolution_only(git, worktree, &d.head, &r.onto, &r.run_head, &r.files, t)
             .unwrap_or(false)
     });
+    // Milestone 9.1 decision 40: only when the op asks (never for an untiered profile).
+    let signals = match signals {
+        Some(spec) => {
+            let (list, more) = git::done_signals(git, worktree, run_head, &d.head, spec, t)?;
+            let found = ClaimSignals { list, more };
+            (found != ClaimSignals::default()).then(|| Box::new(found))
+        }
+        None => None,
+    };
     Ok(OpResult::DoneChecked {
         commits: d.commits,
         dirty_tracked: d.dirty_tracked,
@@ -479,5 +495,6 @@ fn verify_done(
         head: d.head,
         head_branch: d.head_branch,
         resolution_only,
+        signals,
     })
 }

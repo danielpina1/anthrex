@@ -1,6 +1,6 @@
 //! Milestone 9.1 task M9.1.6: decision 40's test-weakening signals from a `-U0` diff.
 
-use super::weakening::{signals, signals_and_rest};
+use super::weakening::{signals, signals_and_rest, signals_of_cut_diff};
 use super::*;
 
 fn s(items: &[&str]) -> Vec<String> {
@@ -241,4 +241,41 @@ index 1111111..2222222 100644
             marker("crates/x/tests/\u{7}\u{8}\u{c}\r\u{b}\\.rs"),
         ]
     );
+}
+
+/// Task M9.1.16: a `-U0` diff cut after its first bytes. The file the cut ends in is
+/// left out, and the deleted test files come from the name list, not the diff, so one
+/// past the cut is still found (and a deleted file in the kept part is not counted
+/// twice).
+#[test]
+fn a_cut_diff_takes_its_deleted_files_from_the_name_list() {
+    let cut = DIFF.find("@@ -3 +3 @@").unwrap();
+    let head = &DIFF[..cut];
+    let deleted = s(&["crates/x/tests/old.rs", "web/gone.test.ts", "docs/x.md"]);
+    let tests = s(&[TEST_PATHS, &["web/**"][..]].concat());
+    let (got, rest) = signals_of_cut_diff(head, &deleted, &s(&[]), &tests, &s(MARKERS));
+    let kinds: Vec<(&str, &str)> = got
+        .iter()
+        .map(|g| match g {
+            Signal::DeletedTestFile { path } => ("deleted", path.as_str()),
+            Signal::SkipMarker { path, .. } => ("skip", path.as_str()),
+            Signal::AssertionLoss { path, .. } => ("loss", path.as_str()),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ("deleted", "crates/x/tests/old.rs"),
+            ("deleted", "web/gone.test.ts"),
+            ("skip", "crates/x/tests/t.rs"),
+            ("loss", "crates/x/tests/t.rs"),
+            ("skip", "py/test_calc.py"),
+            ("loss", "py/test_calc.py"),
+        ],
+        "web/app.test.ts is where the cut ends: left out"
+    );
+    assert_eq!(rest, 0);
+    // A cut inside the first file keeps only the named deletions.
+    let (got, _) = signals_of_cut_diff(&DIFF[..40], &deleted, &s(&[]), &tests, &s(MARKERS));
+    assert_eq!(got.len(), 2, "{got:?}");
 }

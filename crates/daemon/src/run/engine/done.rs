@@ -198,6 +198,7 @@ pub(super) fn claim(
         resolution: task.resolution.clone(),
         not_own: super::worker_messages::not_own(task),
         not_run: super::worker_messages::not_run(task),
+        signals: super::weakening::spec(run),
     };
     let task_id = task.id().to_string();
     let window_id = session_window(run, i);
@@ -370,13 +371,14 @@ pub(super) fn checked(
     if pending.reply.is_none() && run.tasks[i].rounds[r].turns != pending.turn {
         return fallback::drop_stale(run, i, r, fx);
     }
-    let (outside, generated, protected, head, resolution_only) = match &result {
+    let (outside, generated, protected, head, resolution_only, signals) = match &result {
         OpResult::DoneChecked {
             outside_owns,
             generated_outside_owns,
             protected_changed,
             head,
             resolution_only,
+            signals,
             ..
         } => (
             outside_owns.clone(),
@@ -384,6 +386,7 @@ pub(super) fn checked(
             protected_changed.clone(),
             head.clone(),
             *resolution_only,
+            signals.as_deref().cloned().unwrap_or_default(),
         ),
         OpResult::Failed { message } => {
             let text = format!("task_done could not be checked: {message}; call task_done again");
@@ -409,6 +412,10 @@ pub(super) fn checked(
             let text = protected_file_message(&caught);
             return bounce(run, i, &pending, text, told, now, fx);
         }
+        // Milestone 9.1 decision 41: a deleted test file `owns` does not name exactly.
+        if let Some(text) = super::weakening::bounce(run, i, &signals.list) {
+            return bounce(run, i, &pending, text, told, now, fx);
+        }
         // Decision 55: any non-generated path outside `owns` is rung 3.
         if !outside.is_empty() {
             let text = format!("changed files outside owns: {}", outside.join(", "));
@@ -423,6 +430,7 @@ pub(super) fn checked(
         }
     }
     let id = pending.reply;
+    super::weakening::keep(&mut run.tasks[i], signals);
     accept(run, i, pending, head, resolution_only, now);
     if let Some(id) = id {
         reply(fx, id, Ok(DONE_ACCEPTED.to_string()));

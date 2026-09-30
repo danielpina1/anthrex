@@ -17,7 +17,10 @@ use super::model::{CheckRecord, ProofRecord, ReviewLevel, ReviewRecord, Run, Tas
 // Milestone 9.1's tier texts (decision 13 and the tier line of a bounce).
 #[path = "contract_tiers.rs"]
 mod tiers;
-pub(crate) use tiers::{BisectFix, bisect_fix_acceptance, bisect_fix_brief, bisect_fix_title};
+pub(crate) use tiers::{
+    BisectFix, bisect_fix_acceptance, bisect_fix_brief, bisect_fix_title,
+    deleted_test_file_message, shown, signal_unjustified, signals_block, signals_unanswered,
+};
 
 /// The worker's system prompt (decision 30, exact). It never varies, so the cached
 /// prefix is stable (spec §14.2).
@@ -217,6 +220,11 @@ pub fn reviewer_prompt(
     if let Some(check) = task.checks.last() {
         lines.push("Last check (40 lines):".into());
         lines.push(decider_summary(check).map_or_else(|| summary(&check.tail), str::to_string));
+    }
+    // Milestone 9.1 decision 42: the accepted claim's test-weakening signals.
+    let signals = crate::run::engine::weakening::reviewer_block(task);
+    if !signals.is_empty() {
+        lines.push(signals);
     }
     let earlier: Vec<String> = task
         .reviews

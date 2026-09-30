@@ -106,3 +106,21 @@ pub struct TierOutcome {
     /// Decision 9's unknown-graph reason, when this job met one.
     pub graph_note: Option<String>,
 }
+
+/// A claim's test-weakening signals (decision 40): at most `SIGNALS_MAX`, deleted test
+/// files first, and how many more there were. Boxed in `OpResult::DoneChecked`, which
+/// would otherwise make every engine event larger (clippy's `large_enum_variant`).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ClaimSignals {
+    pub list: Vec<super::Signal>,
+    pub more: u32,
+}
+
+/// What `OpKind::VerifyDone` needs to read decision 40's test-weakening signals: the
+/// profile's `test_paths` and `skip_markers`. `None` on the op for an untiered profile
+/// or one with neither key set (decision 6), and then no `-U0` diff is read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignalsSpec {
+    pub test_paths: Vec<String>,
+    pub skip_markers: Vec<String>,
+}

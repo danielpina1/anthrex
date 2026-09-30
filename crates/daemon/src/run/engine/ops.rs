@@ -81,6 +81,12 @@ pub enum OpKind {
         /// count leaves out all they reach (M9.13a re-review).
         #[serde(default)]
         not_run: Vec<String>,
+        /// Milestone 9.1 decision 40: set for a tiered profile with `test_paths` or
+        /// `skip_markers`. **Executor contract:** after `verify_done`, read
+        /// `git::done_signals` over `<run_head>...<head>` and return them as
+        /// `DoneChecked.{signals, signals_more}`. `None`: no `-U0` diff is read.
+        #[serde(default)]
+        signals: Option<crate::run::tiers::SignalsSpec>,
     },
     /// `run_head`: M8a.8's interface change (the task's own commits exclude a merged
     /// run head). `not_own` as `VerifyDone`'s.
@@ -436,6 +442,10 @@ pub enum OpResult {
         /// resolution; `None` otherwise.
         #[serde(default)]
         resolution_only: Option<bool>,
+        /// Milestone 9.1 decision 40: the claim's test-weakening signals; `None` when
+        /// none were asked for or found.
+        #[serde(default)]
+        signals: Option<Box<crate::run::tiers::ClaimSignals>>,
     },
     Commits {
         count: u32,

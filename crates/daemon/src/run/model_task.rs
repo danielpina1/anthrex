@@ -179,6 +179,17 @@ pub struct Task {
     /// Decision 39: what an engine-made fix task fixes.
     #[serde(default)]
     pub fixes: Option<super::FixOf>,
+    /// Decision 42: the accepted claim's test-weakening signals, numbered `W1…` in
+    /// the reviewer prompt; replaced by each accepted claim.
+    #[serde(default)]
+    pub signals: Vec<crate::run::tiers::Signal>,
+    /// How many signals past `SIGNALS_MAX` the claim had (the block's `… and <n> more`).
+    #[serde(default)]
+    pub signals_more: u32,
+    /// Decision 42: `submit_review`s of the current review round refused for leaving
+    /// a signal id out; the second is accepted with the engine's findings.
+    #[serde(default)]
+    pub signal_refusals: u8,
 }
 
 impl Task {

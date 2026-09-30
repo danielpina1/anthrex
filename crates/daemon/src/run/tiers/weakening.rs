@@ -44,17 +44,56 @@ pub fn signals_and_rest(
     test_paths: &[String],
     skip_markers: &[String],
 ) -> (Vec<Signal>, usize) {
+    collect(parse(diff), None, cfg_test_files, test_paths, skip_markers)
+}
+
+/// [`signals_and_rest`] of a `-U0` diff cut after its first bytes (task M9.1.16):
+/// the file the cut ends in is left out, and the deleted files are `deleted`, read
+/// apart (`git diff --diff-filter=D --name-only`), so no deleted test file is missed.
+pub fn signals_of_cut_diff(
+    head: &str,
+    deleted: &[String],
+    cfg_test_files: &[String],
+    test_paths: &[String],
+    skip_markers: &[String],
+) -> (Vec<Signal>, usize) {
+    let whole = head
+        .rfind("\ndiff --git ")
+        .map_or("", |end| &head[..end + 1]);
+    let files = parse(whole);
+    collect(
+        files,
+        Some(deleted),
+        cfg_test_files,
+        test_paths,
+        skip_markers,
+    )
+}
+
+fn collect(
+    files: Vec<FileDiff>,
+    deleted_files: Option<&[String]>,
+    cfg_test_files: &[String],
+    test_paths: &[String],
+    skip_markers: &[String],
+) -> (Vec<Signal>, usize) {
     let tests = (!test_paths.is_empty())
         .then(|| OwnsMatcher::new(test_paths).ok())
         .flatten();
     let is_test = |path: &str| {
         tests.as_ref().is_some_and(|m| m.matches(path)) || cfg_test_files.iter().any(|f| f == path)
     };
-    let mut deleted = Vec::new();
+    let deleted_test = |path: &str| tests.as_ref().is_some_and(|m| m.matches(path));
+    let mut deleted: Vec<Signal> = deleted_files
+        .unwrap_or_default()
+        .iter()
+        .filter(|path| deleted_test(path))
+        .map(|path| Signal::DeletedTestFile { path: path.clone() })
+        .collect();
     let mut other = Vec::new();
-    for file in parse(diff) {
+    for file in files {
         if file.deleted {
-            if tests.as_ref().is_some_and(|m| m.matches(&file.old)) {
+            if deleted_files.is_none() && deleted_test(&file.old) {
                 deleted.push(Signal::DeletedTestFile { path: file.old });
             }
             continue;

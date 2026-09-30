@@ -484,6 +484,9 @@ fn new_task(
         orch: Default::default(),
         origin: proto::TaskOrigin::Plan,
         fixes: None,
+        signals: Vec::new(),
+        signals_more: 0,
+        signal_refusals: 0,
     }
 }
 
