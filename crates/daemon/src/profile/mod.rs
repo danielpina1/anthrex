@@ -102,6 +102,8 @@ pub fn summary(profile: &RepoProfile) -> String {
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_ready;
+#[cfg(test)]
 mod tests_tiers;
 #[cfg(test)]
 mod tests_tiers_expansion;

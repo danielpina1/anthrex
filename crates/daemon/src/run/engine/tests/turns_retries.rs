@@ -208,6 +208,7 @@ fn activity_in_the_grace_cancels_the_kill() {
         w,
         AgentSignal::ToolUse {
             name: "Bash".into(),
+            target: None,
         },
     );
     let effects = fx.send(deadline, EventKind::Tick);

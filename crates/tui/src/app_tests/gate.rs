@@ -499,3 +499,37 @@ fn esc_closes_the_form_and_sends_nothing() {
     assert!(press(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL).is_empty());
     assert_eq!(app.modal, None);
 }
+
+/// Milestone 9.0.5 decision 16: the gate keys act on the node they are given, not on
+/// the tree's selection, so the plan review can pass its own.
+#[test]
+fn gate_key_uses_the_given_selection_not_the_tree() {
+    let mut app = gate();
+    select(&mut app, NodeKey::Run(RUN_ID.into()));
+    assert!(
+        app.on_gate_key(RUN_ID.into(), 'd', Some(task_key("t2")))
+            .is_empty()
+    );
+    assert_eq!(
+        confirm(&app),
+        (
+            "Remove t2 from run add-reset-3f9a's plan?",
+            &PendingAction::RemoveTask {
+                run_id: RUN_ID.into(),
+                task_id: "t2".into()
+            }
+        )
+    );
+    assert_eq!(
+        tap(&mut app, KeyCode::Char('y')),
+        edit(vec![PlanEdit::CancelTask {
+            task_id: "t2".into()
+        }])
+    );
+    assert_eq!(app.tree.selected, Some(NodeKey::Run(RUN_ID.into())));
+    // And the other way round: a task selected in the tree, none given.
+    select(&mut app, task_key("t2"));
+    assert!(app.on_gate_key(RUN_ID.into(), 'e', None).is_empty());
+    assert_eq!(app.modal, None);
+    assert_eq!(app.toast_text(), Some("select a task to edit or remove"));
+}

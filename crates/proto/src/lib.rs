@@ -48,6 +48,14 @@
 /// was 9 at `crates/proto/src/lib.rs:40` before this change (set by M8c task 1);
 /// 9 + 1 = 10.
 ///
+/// Milestone 9.0.5 task 1 bumps this to 11: it adds `RunRequest::TaskDetail` and
+/// `RunReply::TaskDetail` (with `proto::task_detail`), appended last, which a milestone-9
+/// peer cannot decode, plus the `#[serde(default)]` fields `TaskInfo.activity`,
+/// `RunsSnapshot.proposals`, `OrchestratorInfo.wake_held` and `WindowInfo.signals_seen`,
+/// so a milestone-9 `run.json`, window record and snapshot still load. Derivation:
+/// `PROTO_VERSION` was 10 at `crates/proto/src/lib.rs:50` before this change (set by M9
+/// task 2); 10 + 1 = 11.
+///
 /// Milestone 9.1 task 3 bumps this to 11: it adds the stage fields of `PlanTask` and
 /// `PlanEdit::AmendTask`, the tier keys of `ProfileSpec` and `RepoProfile`, the
 /// snapshot's stage, tier, origin and signal types (`proto::tiers`) and the history
@@ -75,7 +83,9 @@ pub mod profile;
 pub mod run;
 pub mod run_info;
 pub mod run_wire;
+pub mod safe_text;
 pub mod scout;
+pub mod task_detail;
 pub mod tiers;
 pub mod types;
 
@@ -106,7 +116,8 @@ pub use orch::{
 pub use planner::{PlannerInfo, PlannerState};
 pub use profile::{
     CommandCheck, DroppedCommand, ModuleNames, OutputFilter, ProfileMeta, ProfileSource,
-    ProfileStatus, ProfileVerification, ProposalOrigin, ProposalRecord, ProposalState, RepoProfile,
+    ProfileStatus, ProfileVerification, ProposalAlertInfo, ProposalOrigin, ProposalRecord,
+    ProposalState, RepoProfile,
 };
 pub use run::{
     AgentRole, BlockReason, Budget, DoneSignal, EditFile, Effort, Finding, FinishAction,
@@ -119,6 +130,7 @@ pub use run_info::{
 };
 pub use run_wire::{ProfileReply, ProfileRequest, RunReply, RunRequest, ToolCall};
 pub use scout::{ScoutFile, ScoutInfo, ScoutKind, ScoutReport, ScoutState};
+pub use task_detail::{ACTIVITY_MAX, SummarySource, TaskDetailInfo, WORKER_SUMMARY_MAX};
 pub use tiers::{FullInfo, FullState, SignalInfo, StageInfo, TaskOrigin, TierInfo};
 pub use types::{
     ClientKind, ExitInfo, GitOperation, GitState, Head, Runtime, Status, SubagentInfo,

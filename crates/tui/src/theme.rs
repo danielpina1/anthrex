@@ -157,3 +157,14 @@ pub fn title(accent: Color) -> Style {
 pub fn muted() -> Style {
     Style::default().fg(DIM)
 }
+
+/// Milestone 9.0.5 decision 19: an alert's `●` and label, by priority: 1 red, 2 yellow,
+/// 3 magenta, 4 green.
+pub fn alert_color(priority: u8) -> Color {
+    match priority {
+        1 => Color::Red,
+        2 => Color::Yellow,
+        3 => Color::Magenta,
+        _ => Color::Green,
+    }
+}

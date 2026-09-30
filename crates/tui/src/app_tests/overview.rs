@@ -38,7 +38,11 @@ fn toggle(app: &mut App) -> Vec<Effect> {
 fn opened_at(width: u16, height: u16) -> (App, crate::ui::Layout) {
     let mut app = app_with(tree::example_windows());
     assert!(toggle(&mut app).is_empty());
-    let layout = crate::ui::layout(Rect::new(0, 0, width, height), app.sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, width, height),
+        app.sidebar_width,
+        crate::app::alerts(&app).len(),
+    );
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     app.set_graph_viewport(layout.main);
     (app, layout)
@@ -56,7 +60,11 @@ fn opened_with_the_single_line(width: u16, height: u16) -> (App, crate::ui::Layo
     let mut app = app_with(tree::example_windows());
     assert!(toggle(&mut app).is_empty());
     app.inspector_visible = false;
-    let layout = crate::ui::layout(Rect::new(0, 0, width, height), app.sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, width, height),
+        app.sidebar_width,
+        crate::app::alerts(&app).len(),
+    );
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     app.set_graph_viewport(layout.main);
     (app, layout)
@@ -150,7 +158,7 @@ fn overview_keeps_a_hidden_sidebar_hidden_and_preserves_pty_size() {
     prefix(&mut app);
     assert!(press(&mut app, KeyCode::Char('s'), KeyModifiers::NONE).is_empty());
     let area = Rect::new(0, 0, 82, 27);
-    let before = crate::ui::layout(area, 0);
+    let before = crate::ui::layout(area, 0, crate::app::alerts(&app).len());
     assert_eq!(
         (before.main_inner.width, before.main_inner.height),
         (80, 24)
@@ -165,6 +173,7 @@ fn overview_keeps_a_hidden_sidebar_hidden_and_preserves_pty_size() {
             } else {
                 0
             },
+            crate::app::alerts(&app).len(),
         );
         assert_eq!(after.main_inner, before.main_inner);
         assert!(

@@ -88,6 +88,7 @@ pub(super) fn no_runs() -> RunsSnapshot {
         revision: 0,
         runs: vec![],
         now: 0,
+        proposals: Vec::new(),
     }
 }
 
@@ -194,6 +195,10 @@ impl App {
                 message,
                 request_id,
             } => {
+                // Decision 23: the task detail's refusal is the panel's, not a toast.
+                if self.on_task_detail_refused(&message, request_id) {
+                    return vec![];
+                }
                 let text =
                     first_line_and_more(&message).unwrap_or_else(|| format!("{request} refused"));
                 if let Some(form) = self.form_waiting_on(request_id) {
@@ -228,6 +233,7 @@ impl App {
             | RunReply::ToolResult { .. }
             | RunReply::Profile { .. }
             | RunReply::Stats { .. } => {}
+            RunReply::TaskDetail { detail, request_id } => self.on_task_detail(detail, request_id),
         }
         vec![]
     }
@@ -238,6 +244,7 @@ impl App {
     fn replace_runs(&mut self, snapshot: RunsSnapshot) {
         let previous_keys: Vec<_> = self.nav_rows().into_iter().map(|row| row.key).collect();
         let previous_selection = self.tree.selected.clone();
+        let review_at = self.review_position();
         let run_row = self
             .run_view
             .as_ref()
@@ -247,6 +254,8 @@ impl App {
         self.tree.prune(&self.windows);
         self.close_run_view_if_gone(run_row);
         self.close_gate_modal_if_stale();
+        self.follow_review(review_at);
+        self.repair_alerts_focus();
         self.open_pending_run();
         let rows = nav_rows_of(
             &self.windows,
@@ -371,7 +380,7 @@ impl App {
     /// at the root and `Esc` leave. `None`: not one of them, so the project tree's rule
     /// applies (`h` below the root selects the parent). `a`, `x`, `e` and `d` are the
     /// plan gate's (decision 32) and, past the gate, an approval hold's (milestone 9);
-    /// `s` submits a planning run.
+    /// `s` submits a planning run; `p` opens the plan review (milestone 9.0.5).
     pub(crate) fn on_run_view_key(&mut self, key: KeyEvent) -> Option<Vec<Effect>> {
         let view = self.run_view.as_mut()?;
         match key.code {
@@ -394,7 +403,19 @@ impl App {
             KeyCode::Esc => self.close_run_view(),
             KeyCode::Char(c @ ('a' | 'x' | 'e' | 'd')) => {
                 let run_id = view.run_id.clone();
-                return Some(self.on_gate_key(run_id, c));
+                let selected = self.tree.selected.clone();
+                return Some(self.on_gate_key(run_id, c, selected));
+            }
+            // Milestone 9.0.5 decision 25: the task panel's scroll and brief.
+            KeyCode::PageUp | KeyCode::PageDown | KeyCode::Char('b') => {
+                if !self.on_task_panel_key(key.code) {
+                    return None;
+                }
+            }
+            // Milestone 9.0.5 decision 14: the plan review of what awaits approval.
+            KeyCode::Char('p') => {
+                let run_id = view.run_id.clone();
+                return Some(self.review_from_run_view(&run_id));
             }
             // Milestone 9 decision 13: the user's submit, on a planning run's root only.
             KeyCode::Char('s') => {

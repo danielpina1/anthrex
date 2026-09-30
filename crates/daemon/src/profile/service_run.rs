@@ -374,9 +374,9 @@ impl ProfileService {
             if self.current(&pre.project, job.generation) {
                 let record = job.record.clone();
                 let (dir, project) = (self.repo_dir(&pre.project), pre.project.clone());
-                if let Err(error) = blocking(move || confirm_record(&dir, &project, &record)).await
-                {
-                    tracing::warn!(%error, "could not confirm an edited profile");
+                match blocking(move || confirm_record(&dir, &project, &record)).await {
+                    Ok(_) => self.note_proposal(&pre.project, None),
+                    Err(error) => tracing::warn!(%error, "could not confirm an edited profile"),
                 }
             }
         }

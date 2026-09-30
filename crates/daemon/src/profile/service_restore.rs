@@ -144,6 +144,9 @@ impl ProfileService {
         let mut project = stored.as_ref().map(|(project, _)| project.clone());
         if let Some(record) = proposal.filter(|record| ours(&record.project)) {
             project = Some(record.project.clone());
+            // Decision 10 (M9.0.5): the ready list is rebuilt from disk, loaded off the
+            // table's lock above; an interrupted proposal fails below, so is not ready.
+            self.note_proposal(&record.project, Some(&record));
             if in_progress(&record.state) {
                 let mut failed = record;
                 failed.state = ProposalState::Failed {

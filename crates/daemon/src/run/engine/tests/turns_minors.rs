@@ -201,6 +201,7 @@ fn reviewer_spend_is_not_the_tasks() {
         reviewer,
         AgentSignal::ToolUse {
             name: "Read".into(),
+            target: None,
         },
     );
     fx.signal(

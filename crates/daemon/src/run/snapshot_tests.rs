@@ -85,7 +85,9 @@ fn briefs_are_published_only_at_the_gate() {
 /// specs add nothing to the encoded snapshot, and a task stays under 1.25 KiB.
 #[test]
 fn a_snapshot_of_fifty_terminal_runs_stays_small() {
-    let runs = |brief: usize| -> Vec<Run> {
+    // `rounds`: `None` for no rounds (the bound's own runs), else one ended worker round
+    // a task, with (`Some(true)`) or without its activity and last message.
+    let runs = |brief: usize, rounds: Option<bool>| -> Vec<Run> {
         (0..50)
             .map(|i| {
                 let mut run = with_route(run_of(20));
@@ -96,6 +98,15 @@ fn a_snapshot_of_fifty_terminal_runs_stays_small() {
                     task.spec.acceptance = vec!["a".repeat(brief / 8)];
                     task.state = TaskState::Merged;
                     task.merge_commit = Some("c".repeat(40));
+                    let Some(text) = rounds else { continue };
+                    let mut ended = round(1, 3, Default::default());
+                    ended.ended = true;
+                    ended.ended_at = Some(1_400);
+                    if text {
+                        ended.activity = Some("a".repeat(proto::ACTIVITY_MAX));
+                        ended.last_text = Some("t".repeat(proto::WORKER_SUMMARY_MAX));
+                    }
+                    task.rounds = vec![ended];
                 }
                 run
             })
@@ -105,11 +116,45 @@ fn a_snapshot_of_fifty_terminal_runs_stays_small() {
         let snap = snapshot(&state_of(runs), 5_000);
         proto::encode(&snap).map_or(usize::MAX, |b| b.len())
     };
-    let with_briefs = bytes(runs(4096));
-    let without = bytes(runs(1));
+    let with_briefs = bytes(runs(4096, None));
+    let without = bytes(runs(1, None));
     // Without decision 16a, the briefs alone would be 50 × 20 × 4 KiB = 4 MiB.
     assert_eq!(with_briefs, without, "the plan text reached the snapshot");
     assert!(with_briefs < SNAPSHOT_BOUND, "{with_briefs} bytes");
+    // Milestone 9.0.5 decision 2: an ended round's activity and last message add
+    // nothing either.
+    assert_eq!(
+        bytes(runs(1, Some(true))),
+        bytes(runs(1, Some(false))),
+        "an ended round's text reached the snapshot"
+    );
+}
+
+/// Milestone 9.0.5 decision 2: `TaskInfo.activity` is the live round's, and `None`
+/// once every round has ended.
+#[test]
+fn activity_is_published_only_for_a_live_round() {
+    let mut run = run_of(1);
+    run.state = RunState::Running;
+    let t0 = task_mut(&mut run, "t0");
+    let mut old = round(1, 2, Default::default());
+    old.ended = true;
+    old.ended_at = Some(1_200);
+    old.activity = Some("Edit old.rs".into());
+    let mut live = round(2, 1, Default::default());
+    live.activity = Some("Bash cargo test".into());
+    t0.rounds = vec![old, live];
+    let id = run.id.clone();
+    let snap = snapshot(&state_of(vec![run.clone()]), 5_000);
+    assert_eq!(
+        info(&snap, &id, "t0").activity.as_deref(),
+        Some("Bash cargo test")
+    );
+    let live = task_mut(&mut run, "t0").rounds.last_mut().unwrap();
+    live.ended = true;
+    live.ended_at = Some(1_600);
+    let snap = snapshot(&state_of(vec![run]), 5_000);
+    assert_eq!(info(&snap, &id, "t0").activity, None);
 }
 
 #[test]
@@ -185,4 +230,24 @@ fn the_digest_revision_is_published() {
     let snap = snapshot(&state_of(vec![run]), 5_000);
     let info = snap.runs.iter().find(|r| r.run_id == id).unwrap();
     assert_eq!(info.digest_revision, 17);
+}
+
+#[test]
+fn wake_held_reaches_the_snapshot() {
+    let mut held = run_of(1);
+    held.id = "held-0001".into();
+    held.state = RunState::Running;
+    held.orch.orchestrator = Some(orchestrator());
+    held.orch.wake_held = true;
+    let mut free = run_of(1);
+    free.id = "free-0001".into();
+    free.state = RunState::Running;
+    free.orch.orchestrator = Some(orchestrator());
+    let snap = snapshot(&state_of(vec![held, free]), 5_000);
+    let wake_held = |id: &str| {
+        let run = snap.runs.iter().find(|r| r.run_id == id).unwrap();
+        run.orchestrator.as_ref().unwrap().wake_held
+    };
+    assert!(wake_held("held-0001"));
+    assert!(!wake_held("free-0001"));
 }

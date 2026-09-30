@@ -46,6 +46,26 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" "));
+    } else if app.plan_review.is_some() {
+        // Milestone 9.0.5 decision 13: the review is over whatever tree mode is on.
+        spans.push(Span::styled(
+            " REVIEW ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+    } else if app.alerts_focus.is_some() {
+        // Milestone 9.0.5 decision 21: the Alerts box has the keys.
+        spans.push(Span::styled(
+            " ALERTS ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
     } else if let Some(input) = app.tree_input {
         spans.push(Span::styled(
             match input {
@@ -83,12 +103,33 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
+    // Decision 20: with the sidebar hidden, the alerts' count in the top priority's
+    // colour, right after the mode badge.
+    if !app.sidebar_visible {
+        let all = crate::app::alerts(app);
+        if let Some(top) = all.first() {
+            spans.push(Span::styled(
+                format!("⚑ {}", all.len()),
+                Style::default()
+                    .fg(theme::alert_color(top.priority))
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::raw(" "));
+        }
+    }
+
     let toast_width = app
         .toast_text()
         .map(|text| toast_columns(text, area.width))
         .unwrap_or(0);
 
     match app.tree_input {
+        _ if app.plan_review.is_some() => {
+            spans.push(Span::styled(review_hint(app), theme::muted()));
+        }
+        _ if app.alerts_focus.is_some() => {
+            spans.push(Span::styled("j/k move  ⏎ go  esc back", theme::muted()));
+        }
         Some(TreeInput::Navigate) => spans.push(Span::styled(navigate_hint(app), theme::muted())),
         Some(TreeInput::Filter) => spans.push(Span::styled(
             format!("/{}", app.tree.filter),
@@ -146,13 +187,25 @@ fn navigate_hint(app: &App) -> String {
     // Milestone 9: a planning run's submit, and a run's awaiting holds.
     let holds = run.is_some_and(|run| crate::tree::awaiting_holds(run).next().is_some());
     if state == Some(proto::RunState::AwaitingApproval) {
-        format!("a approve  x reject  e edit  d remove  ⏎ open  f filter: {label}  esc back")
+        format!(
+            "a approve  x reject  e edit  d remove  p review  ⏎ open  f filter: {label}  esc back"
+        )
     } else if state == Some(proto::RunState::Planning) {
         format!("s submit  j/k move  ⏎ open  f filter: {label}  esc back")
     } else if holds {
-        format!("a approve hold  x reject hold  ⏎ open  f filter: {label}  esc back")
+        format!("a approve hold  x reject hold  p review  ⏎ open  f filter: {label}  esc back")
     } else {
         format!("j/k move  h/l tier  ⏎ open  space fold  f filter: {label}  / find  esc back")
+    }
+}
+
+/// Milestone 9.0.5 decision 13: the plan review's keys, at the gate or for a hold.
+fn review_hint(app: &App) -> &'static str {
+    match app.plan_review.as_ref().map(|review| &review.target) {
+        Some(crate::app::ReviewTarget::Hold(_)) => {
+            "a approve hold  x reject hold  j/k task  PgUp/PgDn scroll  esc back"
+        }
+        _ => "a approve  x reject  e edit  d drop  j/k task  PgUp/PgDn scroll  esc back",
     }
 }
 

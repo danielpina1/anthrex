@@ -27,6 +27,7 @@ pub(crate) fn orchestrator_info(window: Option<u32>) -> OrchestratorInfo {
         summary: None,
         notes: vec![],
         wakes: 0,
+        wake_held: false,
     }
 }
 

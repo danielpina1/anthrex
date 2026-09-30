@@ -25,6 +25,8 @@ pub(super) struct Book {
     pub(super) reports_written: HashMap<String, Instant>,
     pub(super) reports_due: BTreeSet<String>,
     pub(super) publish_due: bool,
+    /// The ready proposals' generation the last push carried (M9.0.5 decision 10).
+    pub(super) proposals_published: u64,
     /// Decision 48: the intents of each kind appended so far.
     pub(super) intents: HashMap<&'static str, u32>,
 }

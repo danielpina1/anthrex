@@ -142,6 +142,9 @@ pub struct WindowInfo {
     pub kind: WindowKind,
     #[serde(default)]
     pub run: Option<RunRef>,
+    /// Milestone 9.0.5 decision 9: the agent has sent a hook, notify or title signal.
+    #[serde(default)]
+    pub signals_seen: bool,
 }
 
 /// Where a window's `HEAD` points.
@@ -255,6 +258,7 @@ mod tests {
             exit: None,
             kind: WindowKind::Pty,
             run: None,
+            signals_seen: false,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"project\":\"/tmp/repo\""));
@@ -284,6 +288,7 @@ mod tests {
             exit: None,
             kind: WindowKind::Pty,
             run: None,
+            signals_seen: false,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"worktree\":\"/tmp/repo\""));

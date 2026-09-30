@@ -15,7 +15,7 @@ use crate::adapt::{
 };
 use crate::orch::{HoldInfo, IntegrationInfo, MessageKind, OrchestratorInfo, TaskNoteInfo};
 use crate::planner::PlannerInfo;
-use crate::profile::ProfileSource;
+use crate::profile::{ProfileSource, ProposalAlertInfo};
 use crate::run::{
     AgentRole, BlockReason, Budget, DoneSignal, GateCounts, Route, RouteSpec, RunState, Size,
     TaskKind, TaskState, TestMode, Verdict,
@@ -245,6 +245,11 @@ pub struct TaskInfo {
     pub tier: Option<TierInfo>,
     #[serde(default)]
     pub weakening: Vec<SignalInfo>,
+    // Milestone 9.0.5.
+    /// Decision 3: the live round's latest action, one line of at most
+    /// `task_detail::ACTIVITY_MAX` characters; `None` without a live round.
+    #[serde(default)]
+    pub activity: Option<String>,
 }
 
 fn first_stage() -> u16 {
@@ -394,4 +399,7 @@ pub struct RunsSnapshot {
     /// Milestone 8c: the daemon's unix seconds at publication, the clients' time base.
     #[serde(default)]
     pub now: u64,
+    /// Milestone 9.0.5 decision 10: the profile proposals ready to confirm.
+    #[serde(default)]
+    pub proposals: Vec<ProposalAlertInfo>,
 }

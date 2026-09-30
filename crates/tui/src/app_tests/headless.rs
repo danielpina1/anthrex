@@ -100,7 +100,7 @@ fn keys_are_not_forwarded_to_a_headless_window() {
 #[test]
 fn mouse_input_is_not_forwarded_to_a_headless_window() {
     let area = ratatui::layout::Rect::new(0, 0, 120, 30);
-    let layout = crate::ui::layout(area, 34);
+    let layout = crate::ui::layout(area, 34, 0);
     let mut app = app_with(vec![
         win(1, "pty", Status::Idle),
         headless(2, "worker", Status::Idle),

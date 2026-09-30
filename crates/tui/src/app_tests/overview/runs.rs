@@ -111,7 +111,11 @@ fn enter_on_a_run_node_opens_the_run_view() {
 
     // A double click on the node in the project overview opens it the same way.
     let mut app = gate();
-    let layout = crate::ui::layout(Rect::new(0, 0, 120, 30), app.sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, 120, 30),
+        app.sidebar_width,
+        crate::app::alerts(&app).len(),
+    );
     assert!(toggle(&mut app).is_empty());
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     app.set_graph_viewport(layout.main);
@@ -142,7 +146,11 @@ fn enter_on_a_run_row_in_the_sidebar_tree_opens_the_overview_on_it() {
     // A click on the run's sidebar row, outside tree mode, does the same, and turns
     // tree navigation on with it (the reversed box and the highlight need it).
     let mut app = gate();
-    let layout = crate::ui::layout(Rect::new(0, 0, 120, 30), app.sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, 120, 30),
+        app.sidebar_width,
+        crate::app::alerts(&app).len(),
+    );
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     assert_eq!(app.tree_input, None);
     let index = tree::row_index(&app.rows(), &run_key()).expect("the run has a sidebar row");
@@ -347,7 +355,11 @@ fn the_run_view_closes_when_its_run_leaves() {
 #[test]
 fn reveal_follows_the_selection_in_the_run_view() {
     let mut app = app_with_runs(vec![], snapshot(10_000, vec![two_hundred_task_run()]));
-    let layout = crate::ui::layout(Rect::new(0, 0, 120, 40), app.sidebar_width);
+    let layout = crate::ui::layout(
+        Rect::new(0, 0, 120, 40),
+        app.sidebar_width,
+        crate::app::alerts(&app).len(),
+    );
     assert!(toggle(&mut app).is_empty());
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     app.set_graph_viewport(layout.main);

@@ -1,6 +1,6 @@
 # anthrex roadmap
 
-anthrex is built in eighteen milestones. Milestones 1 to 6.5, 8a, 8b and 8c are merged, and milestone 9 is done. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
+anthrex is built in eighteen milestones. Milestones 1 to 6.5, 8a, 8b and 8c are merged, and milestones 9 and 9.0.5 are done. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
 
 The design is layered, newest first:
 
@@ -13,7 +13,7 @@ The design is layered, newest first:
 6. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
 7. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
-The protocol version is **11** once milestone 9.1 merges, raised from 10 (milestone 9's) by milestone 9.1 (`crates/proto/src/lib.rs`). Protocol numbers written in the milestone 9.1 to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented.
+The protocol version is **10** once milestone 9 merges, raised from 9 (milestone 8c's) by milestone 9, and **11** once milestone 9.0.5 merges, raised from 10 by milestone 9.0.5 (`crates/proto/src/lib.rs`). Protocol numbers written in the milestone 9.1 to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 9.1's brief says 11, and becomes 12.
 
 ## What anthrex does when all milestones are done
 
@@ -45,11 +45,12 @@ The protocol version is **11** once milestone 9.1 merges, raised from 10 (milest
 | 8c | The live run view in `C-b T` and the run inspector | `docs/milestones/M8c-live-run-view.md` | 8a | `done` |
 | 9 | ~~Orchestrator agent~~ — superseded by the new 9 brief below | `docs/milestones/M9-orchestrator-agent.md` | — | `superseded` |
 | 9 | Orchestrator and sub-planners: planning, steering, plan gate, worker messaging and refresh, role-routing history, TUI goal start | `docs/milestones/M9-orchestrator-and-subplanners.md` | 8a, 8b, 8c | `done` |
-| 9.1 | Tiered testing: affected-set tiers, test scheduler, result cache, flake handling, bisect, stages | `docs/milestones/M9.1-tiered-testing.md` | 9 | `done` |
+| 9.0.5 | Plan review screen, the Alerts box, and the task panel's goal, live status and result | `docs/milestones/M9.0.5-plan-review-and-alerts.md` | 9 | `done` |
+| 9.1 | Tiered testing: affected-set tiers, test scheduler, result cache, flake handling, bisect, stages | `docs/milestones/M9.1-tiered-testing.md` | 9, 9.0.5 | `done` |
 | 9.2 | Stacked-PR delivery: CI and review comments become fix tasks; anthrex never merges | `docs/milestones/M9.2-pr-delivery.md` | 9.1 | `ready` |
 | 9.5 | Tuning: adaptive concurrency, threshold and budget refit, race and test-writer patterns | `docs/milestones/M9.5-tuning.md` | 9.2 | `blocked` |
 
-Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.1 → 9.2 → 9.5**, then 7. Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
+Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.0.5 → 9.1 → 9.2 → 9.5**, then 7. Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
 
 Only one milestone should be in progress at a time: they all touch the protocol and the client state.
 
@@ -71,7 +72,8 @@ flowchart LR
   M8a --> M8c[8c Live run view]
   M8b --> M9[9 Orchestrator and sub-planners]
   M8c --> M9
-  M9 --> M91[9.1 Tiered testing]
+  M9 --> M905[9.0.5 Plan review and alerts]
+  M905 --> M91[9.1 Tiered testing]
   M91 --> M92[9.2 Stacked-PR delivery]
   M92 --> M95[9.5 Tuning]
 ```

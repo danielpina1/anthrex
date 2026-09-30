@@ -53,6 +53,21 @@ mod orch;
 #[path = "../app_tests/run_goal.rs"]
 mod run_goal;
 
+#[path = "../app_tests/plan_review.rs"]
+mod plan_review;
+
+#[path = "../app_tests/plan_review_edges.rs"]
+mod plan_review_edges;
+
+#[path = "../app_tests/alerts.rs"]
+mod alerts;
+
+#[path = "../app_tests/alerts_focus.rs"]
+mod alerts_focus;
+
+#[path = "../app_tests/task_detail.rs"]
+mod task_detail;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,
@@ -72,6 +87,7 @@ fn win(id: u32, name: &str, status: Status) -> WindowInfo {
         exit: None,
         kind: proto::WindowKind::Pty,
         run: None,
+        signals_seen: false,
     }
 }
 
@@ -522,7 +538,7 @@ fn wheel_scrolls_the_local_scrollback_and_any_key_snaps_back() {
         app.parser.process(format!("line {i}\r\n").as_bytes());
     }
     let area = ratatui::layout::Rect::new(0, 0, 80, 24);
-    let mut layout = crate::ui::layout(area, 0);
+    let mut layout = crate::ui::layout(area, 0, crate::app::alerts(&app).len());
     layout.main_inner = area;
     assert!(app.on_scroll(true, 5, 5, &layout).is_empty());
     assert_eq!(app.scroll_offset, 3);

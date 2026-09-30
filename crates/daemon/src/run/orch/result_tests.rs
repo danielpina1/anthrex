@@ -59,6 +59,7 @@ fn full_run() -> Run {
         test: Some("b::parses".into()),
         red: Some("a1b2c3d".into()),
         signal: DoneSignal::TaskDone,
+        session: None,
     });
     t.checks = vec![check(AT, true)];
     t.proofs = vec![ProofRecord {

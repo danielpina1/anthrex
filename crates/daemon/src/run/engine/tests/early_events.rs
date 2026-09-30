@@ -56,6 +56,7 @@ fn a_signal_before_the_window_is_replayed_once_the_round_has_it() {
         EARLY,
         AgentSignal::ToolUse {
             name: "Edit".into(),
+            target: None,
         },
     );
     let ended_at = fx.now + 1;
@@ -209,6 +210,46 @@ fn a_window_holds_at_most_the_cap_and_keeps_its_turn_end() {
     assert_eq!(round.pid, Some(42));
     assert!(!round.turn_open);
     assert_eq!(round.last_event, at);
+}
+
+/// Milestone 9.0.5 Risks 4: an unthrottled burst of `Said` is counter-only too, so it
+/// makes room past the cap and never crowds out a held `TurnEnded`.
+#[test]
+fn a_burst_of_said_keeps_the_turn_end_and_the_last_text() {
+    let cap = crate::run::engine::HOLD_CAP;
+    let (mut fx, op) = launching();
+    let at = fx.now + 1;
+    let burst = |fx: &mut Fixture, signal| {
+        fx.send(
+            at,
+            EventKind::Signal {
+                window_id: EARLY,
+                signal,
+            },
+        );
+    };
+    let said = |text: String| AgentSignal::Said { text };
+    for i in 0..cap + 40 {
+        burst(&mut fx, said(format!("burst {i}")));
+    }
+    burst(
+        &mut fx,
+        AgentSignal::TurnEnded {
+            outcome: TurnOutcome::Completed,
+            usage: None,
+            denials: vec![],
+        },
+    );
+    for i in 0..10 {
+        burst(&mut fx, said(format!("after {i}")));
+    }
+    burst(&mut fx, said("final words".into()));
+    assert_eq!(fx.state.pending[&EARLY].events.len(), cap);
+
+    bind(&mut fx, op, EARLY);
+    let round = &fx.task("t1").rounds[0];
+    assert!(!round.turn_open, "the held turn end survived the burst");
+    assert_eq!(round.last_text.as_deref(), Some("final words"));
 }
 
 #[test]

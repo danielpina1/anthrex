@@ -95,7 +95,7 @@ fn task_inspector_shows_stage_origin_and_tier() {
     });
     let app = app_of((snap, windows));
     let inspection = inspect_node(&app, &task_key("fix1"));
-    assert_eq!(value(&inspection, "stage"), Some("1 of 2"));
+    assert_eq!(value(&inspection, "stage no."), Some("1 of 2"));
     assert_eq!(
         value(&inspection, "origin"),
         Some("bisect · fixes: bisect of t2")
@@ -105,7 +105,7 @@ fn task_inspector_shows_stage_origin_and_tier() {
         Some("tier 1: 3 modules · 2m10s · 1 cached · flaky t_x")
     );
     let inspection = inspect_node(&app, &task_key("t3"));
-    assert_eq!(value(&inspection, "stage"), Some("2 of 2"));
+    assert_eq!(value(&inspection, "stage no."), Some("2 of 2"));
     assert_eq!(
         (value(&inspection, "origin"), value(&inspection, "tier")),
         (None, None)
@@ -134,7 +134,31 @@ fn a_plan_task_of_a_one_stage_run_has_no_stage_rows() {
         id: "t2".into(),
     };
     let inspection = inspect_node(&app, &key);
-    for label in ["stage", "origin", "tier"] {
+    for label in ["stage no.", "origin", "tier"] {
         assert_eq!(value(&inspection, label), None, "{label}");
+    }
+}
+
+/// The merge of milestones 9.0.5 and 9.1: the task panel's STATUS section has one
+/// `stage` row (9.0.5's lifecycle), and the task's stage number is its own `stage no.`
+/// row, never a second `stage`.
+#[test]
+fn the_status_section_has_one_stage_row_and_a_stage_number() {
+    let app = app_of(staged_fixture());
+    for (id, number) in [("fix1", "1 of 2"), ("t3", "2 of 2")] {
+        let inspection = inspect_node(&app, &task_key(id));
+        let status = inspection
+            .sections
+            .iter()
+            .find(|s| s.title == "STATUS")
+            .expect("a STATUS section");
+        let labels: Vec<&str> = status.fields.iter().map(|f| f.label).collect();
+        assert_eq!(
+            labels.iter().filter(|l| **l == "stage").count(),
+            1,
+            "{labels:?}"
+        );
+        let n = status.fields.iter().find(|f| f.label == "stage no.");
+        assert_eq!(n.map(|f| f.value.as_str()), Some(number), "{labels:?}");
     }
 }

@@ -14,6 +14,7 @@ fn tool_use(fx: &mut Fixture, window: u32) -> Vec<Effect> {
         window,
         AgentSignal::ToolUse {
             name: "Bash".into(),
+            target: None,
         },
     )
 }

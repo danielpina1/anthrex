@@ -228,6 +228,7 @@ impl ProfileService {
         let dir = self.repo_dir(&project);
         let p = project.clone();
         let message = blocking(move || confirm_record(&dir, &p, &record)).await?;
+        self.note_proposal(&project, None);
         Ok(ProfileReply::Done { message })
     }
 
@@ -254,6 +255,7 @@ impl ProfileService {
             Ok(existed)
         })
         .await?;
+        self.note_proposal(&project, None);
         if running.is_none() {
             for name in [super::ONBOARDING_CHECKOUT, super::VERIFY_CHECKOUT] {
                 self.discard_checkout(&project, name).await?;
@@ -348,14 +350,17 @@ impl ProfileService {
             return Err(stopping(&project));
         }
         let repo_dir = self.repo_dir(&project);
+        let (p, written) = (project.clone(), record.clone());
         blocking(move || {
             if yes {
-                confirm_record(&repo_dir, &project, &record).map(|_| ())
+                confirm_record(&repo_dir, &p, &record).map(|_| ())
             } else {
                 store::save_proposal(&repo_dir, &record).map_err(|e| e.to_string())
             }
         })
         .await?;
+        // `edit --yes` deleted the proposal; otherwise it is the ready one just written.
+        self.note_proposal(&project, (!yes).then_some(&written));
         Ok(ProfileReply::Done {
             message: if yes {
                 format!("{shown}; stored (it needed no verification)")

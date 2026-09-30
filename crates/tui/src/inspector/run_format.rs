@@ -95,6 +95,7 @@ pub(super) fn rows(
         right: Some(right),
         fields,
         layout: FieldLayout::Rows,
+        ..Default::default()
     }
 }
 
@@ -161,7 +162,7 @@ pub(super) fn progress_text<'a>(tasks: impl Iterator<Item = &'a TaskInfo>, width
 }
 
 /// Words for a block reason (Interfaces "Run", `attention`; "Task", the stage).
-pub(super) fn reason_text(reason: BlockReason) -> &'static str {
+pub(crate) fn reason_text(reason: BlockReason) -> &'static str {
     match reason {
         BlockReason::MisSized => "mis-sized",
         BlockReason::Human => "human",
@@ -191,7 +192,7 @@ pub(super) fn session_text(window_id: Option<u32>, place: &str, app: &App) -> St
     }
 }
 
-pub(super) fn size_letter(size: Size) -> &'static str {
+pub(crate) fn size_letter(size: Size) -> &'static str {
     match size {
         Size::S => "S",
         Size::M => "M",
@@ -199,7 +200,7 @@ pub(super) fn size_letter(size: Size) -> &'static str {
     }
 }
 
-pub(super) fn test_mode_text(mode: TestMode) -> &'static str {
+pub(crate) fn test_mode_text(mode: TestMode) -> &'static str {
     match mode {
         TestMode::Tdd => "tdd",
         TestMode::Check => "check",
@@ -207,7 +208,7 @@ pub(super) fn test_mode_text(mode: TestMode) -> &'static str {
     }
 }
 
-pub(super) fn strength_text(strength: Strength) -> &'static str {
+pub(crate) fn strength_text(strength: Strength) -> &'static str {
     match strength {
         Strength::Fast => "fast",
         Strength::Standard => "standard",
@@ -215,7 +216,7 @@ pub(super) fn strength_text(strength: Strength) -> &'static str {
     }
 }
 
-pub(super) fn effort_text(effort: Effort) -> &'static str {
+pub(crate) fn effort_text(effort: Effort) -> &'static str {
     match effort {
         Effort::Low => "low",
         Effort::Medium => "medium",

@@ -22,6 +22,7 @@ fn digest_revision_moves_only_on_fingerprint_change() {
         window,
         AgentSignal::ToolUse {
             name: "Read".into(),
+            target: None,
         },
     );
     fx.signal(window, AgentSignal::Activity);

@@ -136,9 +136,27 @@ pub struct AgentRound {
     /// M8c: when a failed gate sent this session back (rung 1), oldest first.
     #[serde(default)]
     pub sent_back_at: Vec<u64>,
+    /// Milestone 9.0.5 decision 3: the round's latest top-level action, one sanitised
+    /// line of at most `proto::ACTIVITY_MAX` characters. A counter (decision 6).
+    #[serde(default)]
+    pub activity: Option<String>,
+    /// Decision 4: a worker round's latest top-level assistant text, sanitised with
+    /// its line breaks kept, cut at `proto::WORKER_SUMMARY_MAX`. A counter (decision 6).
+    #[serde(default)]
+    pub last_text: Option<String>,
 }
 
 impl AgentRound {
+    /// Zeroes the fields a counter-only change touches (milestone 9.0.5 decision 6),
+    /// so `engine::without_counters` can tell such a change from a structural one.
+    pub fn clear_counters(&mut self) {
+        self.last_event = 0;
+        self.tool_calls = 0;
+        self.usage = Default::default();
+        self.activity = None;
+        self.last_text = None;
+    }
+
     /// Sets `rate_limited_until` and keeps `rate_limited_since` with it (M8c decision
     /// 4): `now` when a limit begins, unchanged while one lasts, `None` once cleared.
     /// Every assignment to `rate_limited_until` in the engine goes through here.
@@ -205,6 +223,11 @@ pub struct DoneClaim {
     pub test: Option<String>,
     pub red: Option<String>,
     pub signal: DoneSignal,
+    /// Milestone 9.0.5 ruling D-1: the claiming worker round's session, so a task's
+    /// detail shows the summary only while that session is the task's latest. `None`
+    /// in a `run.json` written before it, which counts as current.
+    #[serde(default)]
+    pub session: Option<u32>,
 }
 
 /// A `task_done` claim (or the turn-end fallback's) whose `VerifyDone` is in flight;

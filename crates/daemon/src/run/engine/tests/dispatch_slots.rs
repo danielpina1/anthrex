@@ -331,6 +331,7 @@ fn revision_bumps_on_every_change_and_only_then() {
         windows[0].1,
         AgentSignal::ToolUse {
             name: "Bash".into(),
+            target: None,
         },
     );
     expect_bump(&fx, &effects, "a counter");
@@ -355,6 +356,7 @@ fn counter_only_changes_are_neither_urgent_nor_structural() {
     for signal in [
         AgentSignal::ToolUse {
             name: "Bash".into(),
+            target: None,
         },
         AgentSignal::Activity,
     ] {

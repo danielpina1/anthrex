@@ -64,6 +64,9 @@ pub struct OrchestratorInfo {
     pub summary: Option<String>,
     pub notes: Vec<String>,
     pub wakes: u32,
+    /// Milestone 9.0.5 decision 8: a wake-up is held back (`RunOrch.wake_held`).
+    #[serde(default)]
+    pub wake_held: bool,
 }
 
 /// Decision 37: where an epic's integration review stands.

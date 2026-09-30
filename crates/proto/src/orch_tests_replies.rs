@@ -89,6 +89,7 @@ fn every_run_reply_round_trips_its_request_id() {
         revision: 3,
         runs: Vec::new(),
         now: 1_700_000_000,
+        proposals: Vec::new(),
     });
     assert_eq!(snapshot.clone().tagged(Some(7)), snapshot);
     assert_eq!(snapshot.request_id(), None);

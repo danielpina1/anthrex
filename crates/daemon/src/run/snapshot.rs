@@ -37,6 +37,7 @@ pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot {
         revision: state.revision,
         runs,
         now,
+        proposals: Vec::new(),
     }
 }
 
@@ -398,6 +399,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
             .find_map(|c| c.tier.as_ref())
             .map(tier_info),
         weakening: super::engine::weakening::signal_infos(t),
+        // Milestone 9.0.5 decision 2: the live round's only.
+        activity: super::snapshot_detail::live_activity(t),
     }
 }
 

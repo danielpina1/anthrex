@@ -182,6 +182,7 @@ pub(super) fn a_task_info() -> TaskInfo {
         fixes: None,
         tier: None,
         weakening: Vec::new(),
+        activity: None,
     }
 }
 

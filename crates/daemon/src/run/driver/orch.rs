@@ -94,15 +94,34 @@ fn answer(label: &str, result: Result<String, String>) -> RunReply {
 
 impl RunService {
     /// Decision 20: each run's `RunInfo.scouts` is M8b's `ScoutService::run_scouts`,
-    /// with its live counters, which the pure snapshot cannot call. Called with the
-    /// engine's lock released; `run_scouts` takes only the scout table's.
-    pub(super) fn with_scouts(&self, mut snap: RunsSnapshot) -> RunsSnapshot {
-        if let Some(adaptation) = self.adaptation.get() {
-            for run in snap.runs.iter_mut() {
-                run.scouts = adaptation.scouts.run_scouts(&run.run_id);
-            }
+    /// with its live counters, which the pure snapshot cannot call; and M9.0.5's
+    /// decision 10: `RunsSnapshot.proposals` is the profile service's ready list. Called
+    /// with the engine's lock released; each call takes only its own service's table.
+    pub(super) fn with_scouts(&self, snap: RunsSnapshot) -> RunsSnapshot {
+        self.overlaid(snap).0
+    }
+
+    /// [`with_scouts`](Self::with_scouts), and the ready list's generation it laid over
+    /// the snapshot (0 before the daemon's services are set).
+    pub(super) fn overlaid(&self, mut snap: RunsSnapshot) -> (RunsSnapshot, u64) {
+        let Some(adaptation) = self.adaptation.get() else {
+            return (snap, 0);
+        };
+        for run in snap.runs.iter_mut() {
+            run.scouts = adaptation.scouts.run_scouts(&run.run_id);
         }
-        snap
+        let (generation, proposals) = adaptation.profiles.ready_proposals();
+        snap.proposals = proposals;
+        (snap, generation)
+    }
+
+    /// Whether the ready proposals changed since the last push (decision 10).
+    pub(super) fn proposals_moved(&self) -> bool {
+        let Some(adaptation) = self.adaptation.get() else {
+            return false;
+        };
+        let generation = adaptation.profiles.ready_proposals().0;
+        generation != crate::lock(&self.book).proposals_published
     }
 
     /// Decision 28: `run approve|reject --hold`, the only way a hold is decided.

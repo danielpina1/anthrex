@@ -58,12 +58,24 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
         fields.push(field("history", history.join(" · ")));
     }
     let glyph = kind_glyph(RowKind::Task { run, task }, app);
-    rows(
-        glyph,
-        format!("{}  {}", task.id, clean(&task.title)),
-        right,
-        fields,
-    )
+    // Milestone 9.0.5 decision 22: drawn as GOAL, STATUS and RESULT. `fields` keeps
+    // milestone 8c's flat list, which STATUS carries on and the single line reads.
+    let sections = super::run_task_sections::sections(run, task, &fields, app);
+    let key = crate::tree::NodeKey::Task {
+        run: run.run_id.clone(),
+        id: task.id.clone(),
+    };
+    Inspection {
+        layout: super::FieldLayout::Sections,
+        sections,
+        scroll: app.inspector_scroll_for(&key),
+        ..rows(
+            glyph,
+            format!("{}  {}", task.id, clean(&task.title)),
+            right,
+            fields,
+        )
+    }
 }
 
 /// The stage, then ` · held` while the task waits in a hold (milestone 9 decision 28).

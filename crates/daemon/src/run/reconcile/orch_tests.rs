@@ -35,6 +35,7 @@ fn window(id: u32, kind: WindowKind, run: Option<RunRef>) -> WindowInfo {
         exit: None,
         kind,
         run,
+        signals_seen: false,
     }
 }
 

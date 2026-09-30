@@ -12,13 +12,34 @@ impl App {
         tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree)
     }
 
+    /// A new height reveals the anchor, except (milestone 9.0.5) when only the
+    /// sidebar list's height changed between two shown heights: the Alerts box under
+    /// it grows and shrinks with the alerts, with no resize. Then an anchor that was in
+    /// view stays in view (it is revealed again), and one the user had wheeled out of
+    /// view keeps the user's scroll; either way clamped to the new bounds. A resize
+    /// changes the overview's height, and hiding or showing the sidebar passes
+    /// through 0, so both still reveal.
     pub fn set_tree_viewports(&mut self, sidebar_rows: u16, overview_rows: u16) {
-        let changed =
-            self.tree.sidebar.height != sidebar_rows || self.tree.overview.height != overview_rows;
+        let old_sidebar = self.tree.sidebar.height;
+        let sidebar_changed = old_sidebar != sidebar_rows;
+        let overview_changed = self.tree.overview.height != overview_rows;
+        let shown_both = old_sidebar > 0 && sidebar_rows > 0;
         self.tree.sidebar.height = sidebar_rows;
         self.tree.overview.height = overview_rows;
-        if changed {
+        if overview_changed || (sidebar_changed && !shown_both) {
             self.reveal_tree_anchor();
+        } else if sidebar_changed {
+            let (anchor, len) = {
+                let rows = self.rows();
+                (self.tree_anchor_index(&rows), rows.len())
+            };
+            let top = self.tree.sidebar.top;
+            if let Some(index) = anchor
+                && (top..top + usize::from(old_sidebar)).contains(&index)
+            {
+                self.tree.sidebar.reveal(index);
+            }
+            self.tree.sidebar.scroll(0, len);
         }
     }
 
@@ -45,16 +66,22 @@ impl App {
         }
     }
 
-    pub(crate) fn reveal_tree_anchor(&mut self) {
-        let rows = self.rows();
-        let index = if self.tree_input.is_some() {
-            self.tree.selected_index(&rows)
+    /// The sidebar row the viewport follows: tree mode's selection, else the focused
+    /// window (or its project's row when the project is collapsed).
+    fn tree_anchor_index(&self, rows: &[tree::Row<'_>]) -> Option<usize> {
+        if self.tree_input.is_some() {
+            self.tree.selected_index(rows)
         } else {
             self.focused_window().and_then(|window| {
-                tree::row_index(&rows, &NodeKey::Window(window.id))
-                    .or_else(|| tree::row_index(&rows, &NodeKey::Project(window.project.clone())))
+                tree::row_index(rows, &NodeKey::Window(window.id))
+                    .or_else(|| tree::row_index(rows, &NodeKey::Project(window.project.clone())))
             })
-        };
+        }
+    }
+
+    pub(crate) fn reveal_tree_anchor(&mut self) {
+        let rows = self.rows();
+        let index = self.tree_anchor_index(&rows);
         let len = rows.len();
         if let Some(index) = index
             && self.tree.sidebar.height > 0

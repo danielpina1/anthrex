@@ -403,6 +403,7 @@ fn old_run_info_still_decodes() {
         revision: 9,
         runs: vec![run],
         now: 1_700_001_000,
+        proposals: Vec::new(),
     };
     let msg = DaemonMsg::Run(RunReply::Snapshot(snapshot));
     both_ways(&msg);

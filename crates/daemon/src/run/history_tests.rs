@@ -142,6 +142,7 @@ fn task_record_from_a_merged_task() {
         test: None,
         red: None,
         signal: DoneSignal::TurnEndFallback,
+        session: None,
     });
     task.merge_commit = Some("e".repeat(40));
     task.decider_usage = usage(1_000);

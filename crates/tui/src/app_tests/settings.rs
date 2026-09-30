@@ -57,7 +57,7 @@ fn scrollback_follows_settings() {
         app.parser.process(format!("line {i}\r\n").as_bytes());
     }
     let area = ratatui::layout::Rect::new(0, 0, 80, 24);
-    let mut layout = crate::ui::layout(area, 0);
+    let mut layout = crate::ui::layout(area, 0, crate::app::alerts(&app).len());
     layout.main_inner = area;
     // 34 wheel ticks of 3 lines each ask for 102 lines of scrollback; with
     // `scrollback_lines = 10` the parser can only ever retain 10.

@@ -289,10 +289,12 @@ impl WindowManager {
             WindowEvent::Bell => entry.apply(StatusEvent::Bell),
             WindowEvent::Title(title) => {
                 let ctx = entry.state.context(entry.viewers > 0);
-                entry
+                let status_changed = entry
                     .state
                     .on_title(entry.spec.runtime, &title)
-                    .is_some_and(|event| entry.apply_with_context(event, ctx))
+                    .is_some_and(|event| entry.apply_with_context(event, ctx));
+                // A first recognised title is published even when the status stays.
+                status_changed || entry.state.signals_seen != ctx.signals_seen
             }
             WindowEvent::ParserPanicked(reason) => {
                 entry.exit.get_or_insert_with(|| ExitInfo {

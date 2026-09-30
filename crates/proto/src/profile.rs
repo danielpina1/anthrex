@@ -234,6 +234,15 @@ pub struct ProposalRecord {
     pub auto_confirm: bool,
 }
 
+/// Milestone 9.0.5 decision 10: a profile proposal ready to confirm, as the Alerts box
+/// lists it (`RunsSnapshot.proposals`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposalAlertInfo {
+    pub project: PathBuf,
+    /// Unix seconds.
+    pub updated_at: u64,
+}
+
 /// `<repo_dir>/profile.meta.json`: when and from what the stored profile was confirmed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileMeta {

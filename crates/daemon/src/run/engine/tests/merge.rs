@@ -563,6 +563,7 @@ fn a_worker_commit_after_task_done_is_not_merged() {
         window,
         AgentSignal::ToolUse {
             name: "Bash".into(),
+            target: None,
         },
     );
     let effects = fx.turn_completed(window);

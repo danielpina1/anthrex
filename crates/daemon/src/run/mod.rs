@@ -59,6 +59,7 @@ pub mod routing;
 pub mod seatbelt;
 pub mod slots;
 pub mod snapshot;
+mod snapshot_detail;
 mod snapshot_orch;
 mod snapshot_stages;
 pub mod stats;

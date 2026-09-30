@@ -70,6 +70,12 @@ fn worker_fields(
     let info = round.info;
     let doing = if round.ended_at.is_some() {
         "finished".to_owned()
+    } else if let Some(activity) = task.activity.as_deref()
+        && super::run_task_sections::live_round(task).is_some_and(|live| std::ptr::eq(live, info))
+    {
+        // Milestone 9.0.5 decision 26: the live round's latest action, on that round
+        // only (a worker left open under a live review does not take the reviewer's).
+        format!("now: {}", clean(activity))
     } else {
         let tool = round.window.and_then(|window| window.tool.as_deref());
         let mut text = match tool {

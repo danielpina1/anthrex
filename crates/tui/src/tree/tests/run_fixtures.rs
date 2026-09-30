@@ -147,6 +147,7 @@ pub(crate) fn pty(id: u32, name: &str, project: &str, status: Status) -> WindowI
         exit: None,
         kind: WindowKind::Pty,
         run: None,
+        signals_seen: false,
     }
 }
 
@@ -174,6 +175,7 @@ pub(crate) fn snapshot(now: u64, runs: Vec<RunInfo>) -> RunsSnapshot {
         revision: 1,
         runs,
         now,
+        proposals: Vec::new(),
     }
 }
 
