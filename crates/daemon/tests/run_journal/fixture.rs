@@ -220,6 +220,7 @@ pub fn window(id: u32, run_ref: Option<RunRef>, kind: WindowKind) -> WindowInfo 
         exit: None,
         kind,
         run: run_ref,
+        signals_seen: false,
     }
 }
 

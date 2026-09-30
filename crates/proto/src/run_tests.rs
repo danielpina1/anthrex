@@ -298,6 +298,7 @@ fn every_run_request_and_reply_round_trips() {
         revision: 42,
         runs: vec![a_run_info()],
         now: 1_700_000_900,
+        proposals: Vec::new(),
     };
 
     let requests = vec![

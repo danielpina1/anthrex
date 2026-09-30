@@ -32,6 +32,7 @@ pub(super) fn snapshot(revision: u64, now: u64, runs: Vec<RunInfo>) -> RunsSnaps
         revision,
         runs,
         now,
+        proposals: Vec::new(),
     }
 }
 

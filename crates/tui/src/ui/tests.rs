@@ -37,6 +37,7 @@ fn win(id: u32, name: &str, runtime: Runtime, status: Status) -> WindowInfo {
         exit: None,
         kind: proto::WindowKind::Pty,
         run: None,
+        signals_seen: false,
     }
 }
 

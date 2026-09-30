@@ -117,6 +117,11 @@ impl RunService {
             // Milestone 9 decision 28's approval holds: only the user's requests decide.
             RunRequest::ApproveHold { run_id, hold } => self.hold_verdict(run_id, hold, true).await,
             RunRequest::RejectHold { run_id, hold } => self.hold_verdict(run_id, hold, false).await,
+            // Milestone 9.0.5 decision 7; answered from memory by task M9.0.5.3.
+            RunRequest::TaskDetail { run_id, task_id } => RunReply::refused(
+                request::TASK_DETAIL,
+                format!("run {run_id} has no task {task_id}"),
+            ),
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }

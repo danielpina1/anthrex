@@ -22,6 +22,10 @@ mod history;
 #[path = "orch_tests_replies.rs"]
 mod replies;
 
+/// Milestone 9.0.5: the task detail request and reply.
+#[path = "orch_tests_detail.rs"]
+mod detail;
+
 fn a_route(runtime: Runtime, model: &str) -> Route {
     Route {
         runtime,
@@ -113,6 +117,7 @@ fn orch_types_round_trip() {
         summary: Some("two epics, eleven tasks".into()),
         notes: vec!["t3 blocked: which table?".into()],
         wakes: 4,
+        wake_held: false,
     };
     both_ways(&orchestrator);
 

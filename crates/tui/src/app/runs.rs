@@ -88,6 +88,7 @@ pub(super) fn no_runs() -> RunsSnapshot {
         revision: 0,
         runs: vec![],
         now: 0,
+        proposals: Vec::new(),
     }
 }
 
@@ -227,7 +228,9 @@ impl App {
             | RunReply::ConfirmNeeded { .. }
             | RunReply::ToolResult { .. }
             | RunReply::Profile { .. }
-            | RunReply::Stats { .. } => {}
+            | RunReply::Stats { .. }
+            // Milestone 9.0.5: the task panel reads it from task M9.0.5.10.
+            | RunReply::TaskDetail { .. } => {}
         }
         vec![]
     }

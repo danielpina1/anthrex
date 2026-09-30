@@ -114,6 +114,7 @@ fn task(
         last_message_kind: None,
         last_message_line: None,
         task_notes: Vec::new(),
+        activity: None,
     }
 }
 
@@ -468,6 +469,7 @@ fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
         summary: None,
         notes: vec![],
         wakes: 0,
+        wake_held: false,
     });
     let planner = |epic: &str, state| PlannerInfo {
         epic: epic.into(),

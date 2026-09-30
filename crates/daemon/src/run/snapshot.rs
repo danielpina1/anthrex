@@ -37,6 +37,7 @@ pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot {
         revision: state.revision,
         runs,
         now,
+        proposals: Vec::new(),
     }
 }
 
@@ -378,6 +379,7 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         last_message_kind: t.orch.messages.last().map(|m| m.kind),
         last_message_line: message_line(t),
         task_notes: task_notes(t),
+        activity: None,
     }
 }
 

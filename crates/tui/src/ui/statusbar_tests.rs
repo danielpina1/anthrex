@@ -200,6 +200,7 @@ fn window(id: u32, worktree: Option<PathBuf>) -> WindowInfo {
         exit: None,
         kind: proto::WindowKind::Pty,
         run: None,
+        signals_seen: false,
     }
 }
 

@@ -258,7 +258,8 @@ mod tests {
             "cwd": "/tmp/repo/sub", "project": "/tmp/repo", "worktree": null, "branch": null,
             "status": "starting", "tool": null, "since_secs": 0,
             "last_output_secs": 0, "session_id": null, "model": null,
-            "subagents": [], "exit": null, "kind": "pty", "run": null
+            "subagents": [], "exit": null, "kind": "pty", "run": null,
+            "signals_seen": false
         }]}});
         let message: DaemonMsg = serde_json::from_value(value.clone()).unwrap();
         let packed = rmp_serde::to_vec_named(&message).unwrap();
@@ -356,6 +357,7 @@ mod tests {
             exit: None,
             kind: crate::types::WindowKind::Pty,
             run: None,
+            signals_seen: false,
         };
         let client_messages = vec![
             ClientMsg::Hello {
