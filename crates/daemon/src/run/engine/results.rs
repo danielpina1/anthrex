@@ -28,6 +28,10 @@ pub(super) fn op_done(
         .as_deref()
         .and_then(|id| run.tasks.iter().position(|t| t.id() == id));
     let mut bound = None;
+    // Controller ruling C-21 (3): a later hand-back into a sync task is recorded.
+    if let (OpKind::HandBack { run_head, .. }, Some(i)) = (&pending.kind, task) {
+        propagate::record_hand_back(run, i, run_head, &result);
+    }
     match (pending.kind, task) {
         (kind @ OpKind::Proof { .. }, Some(i)) => {
             gates::proof_done(run, i, op, &kind, result, now, fx)

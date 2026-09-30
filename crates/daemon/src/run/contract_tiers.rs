@@ -148,6 +148,18 @@ pub(crate) fn bisect_fix_brief(f: &BisectFix<'_>) -> String {
     )
 }
 
+/// Controller ruling C-21 (6): a sync task's reviewer judges only the resolution.
+pub(super) fn sync_review_line(task: &Task) -> Option<String> {
+    task.sync.as_ref()?;
+    let k = match &task.fixes {
+        Some(crate::run::model::FixOf::Propagate { from, .. }) => *from,
+        _ => task.stage().saturating_sub(1),
+    };
+    Some(format!(
+        "This is a sync task: judge only how the conflicts were resolved; stage {k}'s own changes were reviewed when they merged."
+    ))
+}
+
 /// A sync fix task's title (decision 51, exact): stage `k` merged into stage `n`.
 pub(crate) fn sync_fix_title(k: u16, n: u16) -> String {
     format!("Resolve the merge of stage {k} into stage {n}")

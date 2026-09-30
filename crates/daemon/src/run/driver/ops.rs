@@ -14,7 +14,7 @@ use crate::run::engine::{OpKind, OpResult, ResolutionAt};
 use crate::run::exec::ShellOutcome;
 use crate::run::git::{self, RefreshedIn};
 use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
-use crate::run::model::OpId;
+use crate::run::model::{OpId, SyncCheck};
 use crate::run::proof::ProofOp;
 use crate::run::role_launch::worker_git_roots;
 use crate::run::slots::{Priority, Want};
@@ -25,6 +25,8 @@ use proto::AgentRole;
 // 600-line rule).
 #[path = "gate_ops.rs"]
 mod gate_ops;
+#[path = "sync_done.rs"]
+mod sync_done;
 use gate_ops::{check, proof};
 
 // Controller ruling 1 and ruling C-12b: M8a's commands through the test scheduler.
@@ -279,6 +281,7 @@ pub(super) async fn run(
             not_run,
             signals,
             spill_base,
+            sync,
         } => {
             // Final fix batch F1b: through the queue, since each of these imports the
             // worker's commits and records them on the task's branch first.
@@ -291,8 +294,16 @@ pub(super) async fn run(
                             &start,
                             &run_head,
                             (&owns, &generated, &protected),
-                            (red.clone(), resolution.clone(), signals.as_ref()),
-                            (RefreshedIn::of(&not_own, &not_run), spill_base.clone()),
+                            (
+                                red.clone(),
+                                resolution.as_deref().cloned(),
+                                signals.as_ref(),
+                            ),
+                            (
+                                RefreshedIn::of(&not_own, &not_run),
+                                spill_base.clone(),
+                                sync.clone(),
+                            ),
                             t,
                         )
                     })
@@ -368,14 +379,25 @@ pub(super) async fn run(
             head_ref,
             base_ref,
             path,
+            base_tree,
         } => settle({
             let repo = git::checkout_repo_dir(&ctx.data_dir, &path);
             service
                 .write(ctx, move |g, t| {
-                    git::prepare_review_in(g, &root, &head_ref, &base_ref, &path, &repo, t)
+                    let (base, head, patch) =
+                        git::prepare_review_in(g, &root, &head_ref, &base_ref, &path, &repo, t)?;
+                    // Controller ruling C-21 (6): a sync task's resolution only.
+                    match &base_tree {
+                        Some(tree) => Ok((
+                            tree.clone(),
+                            git::tree_patch(g, &root, tree, &head, t)?,
+                            head,
+                        )),
+                        None => Ok((base, patch, head)),
+                    }
                 })
                 .await
-                .map(|(base, head, patch)| OpResult::Review { base, head, patch })
+                .map(|(base, patch, head)| OpResult::Review { base, head, patch })
         }),
         OpKind::MergeCandidate { .. } => settle(merge::candidate(service, ctx, op, kind).await),
         OpKind::HandBack {
@@ -456,13 +478,13 @@ fn verify_done(
     run_head: &str,
     (owns, generated, protected): (&[String], &[String], &[String]),
     (red, resolution, signals): (Option<String>, Option<ResolutionAt>, Option<&SignalsSpec>),
-    (refreshed, spill_base): (RefreshedIn, Option<String>),
+    (refreshed, spill_base, sync): (RefreshedIn, Option<String>, Option<Box<SyncCheck>>),
     git_timeout: Duration,
 ) -> Result<OpResult, String> {
     let t = git_timeout.min(DONE_CHECK_GIT_TIMEOUT);
     let generated = OwnsMatcher::new(generated)?;
     let protected = ProtectedMatcher::new(protected)?;
-    let d = git::verify_done_spilling(
+    let mut d = git::verify_done_spilling(
         git,
         worktree,
         start,
@@ -478,10 +500,25 @@ fn verify_done(
             .unwrap_or(false)
     });
     // Milestone 9.1 decision 40: only when the op asks (never for an untiered profile).
-    let signals = match signals {
-        Some(spec) => Some(Box::new(git::done_signals(
-            git, worktree, run_head, &d.head, spec, t,
-        )?)),
+    // Controller ruling C-21 (2): a sync task's from its conflicted tree.
+    let mut signals =
+        match (signals, spill_base.as_deref()) {
+            (Some(spec), Some(base)) if !d.head.is_empty() => Some(Box::new(
+                git::done_signals_from(git, worktree, (base, &d.head), spec, t)?,
+            )),
+            (Some(spec), _) => Some(Box::new(git::done_signals(
+                git, worktree, run_head, &d.head, spec, t,
+            )?)),
+            (None, _) => None,
+        };
+    let sync_kept = match sync.filter(|_| !d.head.is_empty()) {
+        Some(sync) => Some(sync_done::apply(
+            git,
+            worktree,
+            &sync,
+            (&mut d, &mut signals),
+            t,
+        )?),
         None => None,
     };
     Ok(OpResult::DoneChecked {
@@ -497,5 +534,6 @@ fn verify_done(
         head_branch: d.head_branch,
         resolution_only,
         signals,
+        sync_kept,
     })
 }

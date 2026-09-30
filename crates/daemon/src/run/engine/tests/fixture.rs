@@ -357,6 +357,7 @@ impl Fixture {
             head_branch: Some(self.task(id).branch.clone()),
             resolution_only: None,
             signals: None,
+            sync_kept: None,
         }
     }
 

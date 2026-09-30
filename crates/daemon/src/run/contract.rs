@@ -198,6 +198,8 @@ pub fn reviewer_prompt(
         format!("Test mode: {}", mode_label(task.test_mode)),
     ];
     let _ = run;
+    // Controller ruling C-21 (6).
+    lines.extend(tiers::sync_review_line(task));
     if task.test_mode == TestMode::Tdd {
         lines.push("Look first for tests that were weakened or made trivial to pass.".into());
     }

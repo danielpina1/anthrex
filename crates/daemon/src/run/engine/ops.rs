@@ -71,8 +71,9 @@ pub enum OpKind {
         /// return it as `DoneChecked.resolution_only`. An error from it (a timeout, a
         /// `merge-tree` failure) counts as `Some(false)`, so the gates run; it never
         /// fails the `DoneChecked` (ruling T14-R3).
+        /// Boxed, with `sync`: keeps the op under clippy's `large_enum_variant`.
         #[serde(default)]
-        resolution: Option<ResolutionAt>,
+        resolution: Option<Box<ResolutionAt>>,
         /// Milestone 9 decision 42e (M9.13a review, item 3): the refresh merge commits
         /// the count leaves out, each once (`worker_messages::not_own`).
         #[serde(default)]
@@ -91,6 +92,9 @@ pub enum OpKind {
         /// diff is `<spill_base> <head>`, not `<run_head>...<head>`.
         #[serde(default)]
         spill_base: Option<String>,
+        /// Ruling C-21 (3, 5): a sync task's merge, checked on its claim.
+        #[serde(default)]
+        sync: Option<Box<crate::run::model::SyncCheck>>,
     },
     /// `run_head`: M8a.8's interface change (the task's own commits exclude a merged
     /// run head). `not_own` as `VerifyDone`'s.
@@ -151,6 +155,9 @@ pub enum OpKind {
         head_ref: String,
         base_ref: String,
         path: PathBuf,
+        /// Ruling C-21 (6): a sync task's conflicted tree, the diff's base.
+        #[serde(default)]
+        base_tree: Option<String>,
     },
     /// Decision 36, one attempt of the merge queue (M8a.14): the ref guard (decision
     /// 21), `merge_tree(expected_run_head, task_head)`, then on a clean tree
@@ -454,6 +461,9 @@ pub enum OpResult {
         /// none were asked for or found.
         #[serde(default)]
         signals: Option<Box<crate::run::tiers::ClaimSignals>>,
+        /// Ruling C-21 (5): a sync claim's head contains its `onto`; `None` otherwise.
+        #[serde(default)]
+        sync_kept: Option<bool>,
     },
     Commits {
         count: u32,

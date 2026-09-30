@@ -195,12 +195,20 @@ pub(super) fn claim(
         spill_exempt: spill_exempt(run, i),
         red: args.red.clone(),
         // Set exactly while `handed_back` is (merge::handed_back, ladder::end_hand_back).
-        resolution: task.resolution.clone(),
+        resolution: task.resolution.clone().map(Box::new),
         not_own: super::worker_messages::not_own(task),
         not_run: super::worker_messages::not_run(task),
         signals: super::weakening::spec(run),
         // Milestone 9.1 decision 51: a sync task's spill is against its merge.
         spill_base: task.sync.as_ref().map(|s| s.base_tree.clone()),
+        // Controller ruling C-21 (3, 5).
+        sync: task.sync.as_ref().map(|s| {
+            Box::new(crate::run::model::SyncCheck {
+                onto: s.onto.clone(),
+                to_head: s.to_head.clone(),
+                upper: s.handed.last().cloned(),
+            })
+        }),
     };
     let task_id = task.id().to_string();
     let window_id = session_window(run, i);
@@ -273,6 +281,7 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
         untracked_in_owns,
         red_ok,
         head_branch,
+        sync_kept,
         ..
     } = result
     else {
@@ -305,6 +314,9 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
         && (claim.claim.test.is_none() || claim.claim.red.is_none())
     {
         "task_done rejected: this is a tdd task; name the test (test) and the commit where it was added and failed (red)".into()
+    } else if *sync_kept == Some(false) {
+        // Controller ruling C-21 (5).
+        super::propagate::lost_merge(task)
     } else if *red_ok == Some(false) {
         format!(
             "task_done rejected: red {} is not a commit on this task's branch after its start commit",

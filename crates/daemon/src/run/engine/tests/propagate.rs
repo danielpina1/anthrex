@@ -21,7 +21,7 @@ use crate::run::engine::{OpKind, OpResult};
 use crate::run::model::{FixOf, OpId, PropagateSpec, StageMerge, SyncState};
 
 /// The conflicted tree a propagate's `merge-tree` wrote.
-const TREE: &str = "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a";
+pub(super) const TREE: &str = "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a";
 
 fn stage_branch(n: u16) -> String {
     format!("anthrex/{RUN_ID}/stage-{n}")
@@ -29,7 +29,7 @@ fn stage_branch(n: u16) -> String {
 
 /// A running `Multi` run of `tasks` on `profile`, every stage created that can be, and
 /// every dispatched worker launched.
-fn stages_on(profile: &str, tasks: &[String]) -> (Fixture, Vec<(String, u32)>) {
+pub(super) fn stages_on(profile: &str, tasks: &[String]) -> (Fixture, Vec<(String, u32)>) {
     let (mut fx, mut windows) = start_on(profile, tasks);
     while let Some((op, _)) = pending(&fx, "CreateStageBranch", None).first().cloned() {
         fx.done(op, OpResult::StageCreated);
@@ -39,7 +39,7 @@ fn stages_on(profile: &str, tasks: &[String]) -> (Fixture, Vec<(String, u32)>) {
 }
 
 /// `t1` in stage 1, `t2` in stage 2 and, with `three`, `t3` in stage 3; all created.
-fn stages(three: bool) -> (Fixture, Vec<(String, u32)>) {
+pub(super) fn stages(three: bool) -> (Fixture, Vec<(String, u32)>) {
     let mut tasks = vec![doc_task("t1", ""), doc_task("t2", "stage = 2")];
     if three {
         tasks.push(doc_task("t3", "stage = 3"));
@@ -50,7 +50,7 @@ fn stages(three: bool) -> (Fixture, Vec<(String, u32)>) {
 }
 
 /// The pending propagates, as `(op, spec)`.
-fn propagates(fx: &Fixture) -> Vec<(OpId, PropagateSpec)> {
+pub(super) fn propagates(fx: &Fixture) -> Vec<(OpId, PropagateSpec)> {
     pending(fx, "Propagate", None)
         .into_iter()
         .map(|(op, kind)| match kind {
@@ -61,7 +61,7 @@ fn propagates(fx: &Fixture) -> Vec<(OpId, PropagateSpec)> {
 }
 
 /// The one pending propagate.
-fn propagate(fx: &Fixture) -> (OpId, PropagateSpec) {
+pub(super) fn propagate(fx: &Fixture) -> (OpId, PropagateSpec) {
     let all = propagates(fx);
     assert_eq!(all.len(), 1, "one pending propagate: {all:#?}");
     all[0].clone()
@@ -75,7 +75,7 @@ pub(super) fn land_propagates(fx: &mut Fixture) {
     }
 }
 
-fn merged_at(at: &str) -> OpResult {
+pub(super) fn merged_at(at: &str) -> OpResult {
     OpResult::Merged {
         commit: at.into(),
         tier: None,
@@ -83,7 +83,7 @@ fn merged_at(at: &str) -> OpResult {
 }
 
 /// `t1` merges into stage 1 at `commit(1)`.
-fn merge_t1(fx: &mut Fixture, windows: &[(String, u32)]) {
+pub(super) fn merge_t1(fx: &mut Fixture, windows: &[(String, u32)]) {
     to_queue(fx, "t1", window_of(windows, "t1"));
     merge(fx, "t1", &commit(1));
 }
@@ -205,7 +205,7 @@ fn a_tiered_propagate_carries_tier2_and_no_check() {
 }
 
 /// Conflicts `t1`'s propagate into stage 2 on `docs/shared.md`: the sync task `fix1`.
-fn conflicted() -> (Fixture, Vec<(String, u32)>) {
+pub(super) fn conflicted() -> (Fixture, Vec<(String, u32)>) {
     let (mut fx, windows) = stages(false);
     with_orchestrator(&mut fx);
     merge_t1(&mut fx, &windows);
@@ -268,6 +268,7 @@ fn propagate_conflict_adds_a_sync_task_with_the_conflicted_tree() {
             tasks: BTreeSet::from(["t1".to_string()]),
             handed_back: false,
             to_head: BASE.into(),
+            handed: Vec::new(),
         })
     );
     assert_eq!(
@@ -354,7 +355,7 @@ fn propagate_conflict_adds_a_sync_task_with_the_conflicted_tree() {
     assert_eq!(fx.run().stage(2).unwrap().synced_from, Some(commit(1)));
 }
 
-fn head_of_fix() -> String {
+pub(super) fn head_of_fix() -> String {
     format!("f1{}", "d".repeat(38))
 }
 

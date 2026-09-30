@@ -131,6 +131,7 @@ fn prepare(run: &mut Run, i: usize, (base, head): (String, String), fx: &mut Vec
         head_ref: head,
         base_ref: base,
         path: run.review_path(&id),
+        base_tree: None,
     };
     run.tasks[i].gate_op = Some(op);
     emit_op(run, op, Some(&id), kind, fx);

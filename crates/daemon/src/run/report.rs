@@ -53,6 +53,14 @@ fn header(run: &Run, out: &mut String) {
     }
     out.push_str(&format!("Goal: {}\n\n", plain_text_line(&run.goal)));
     out.push_str(&format!("State: {}\n", state_line(run)));
+    // Controller ruling C-21 (1d): merged work the delivered branch lacks.
+    let top = crate::run::engine::stages::highest(run);
+    for (k, ids) in crate::run::engine::undelivered(run) {
+        let ids = ids.join(", ");
+        let line =
+            format!("Not delivered: stage {k}'s merged work never reached stage {top}: {ids}\n");
+        out.push_str(&line);
+    }
     out.push_str(&format!("Approved by: {}\n", approved_by_line(run)));
     below_frontier(run, out);
     not_metered(run, out);

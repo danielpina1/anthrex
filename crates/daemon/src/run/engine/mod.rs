@@ -96,7 +96,7 @@ pub use history::HISTORY_FILE;
 pub(crate) use integration::attention as integration_attention;
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
 pub use orch::{OrchEvent, ScoutEnd};
-pub(crate) use propagate::attention as propagate_attention;
+pub(crate) use propagate::{attention as propagate_attention, undelivered, undelivered_lines};
 pub use signals::INTERRUPT_GRACE_SECS;
 pub use stages::Rebaseline;
 pub use wake::notes_seq;

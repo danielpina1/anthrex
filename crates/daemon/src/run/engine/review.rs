@@ -79,12 +79,15 @@ pub(super) fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
             (head, run.head_for(task).to_string())
         };
         let id = task.id().to_string();
+        // Controller ruling C-21 (6): a sync task's resolution only.
+        let base_tree = task.sync.as_ref().map(|s| s.base_tree.clone());
         let op = next_op(run);
         let kind = OpKind::PrepareReview {
             root: run.root.clone(),
             head_ref,
             base_ref,
             path: run.review_path(&id),
+            base_tree,
         };
         run.tasks[i].gate_op = Some(op);
         emit_op(run, op, Some(&id), kind, fx);

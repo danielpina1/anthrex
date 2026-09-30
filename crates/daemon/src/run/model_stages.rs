@@ -162,6 +162,21 @@ pub struct SyncState {
     /// starts there, so the hand-back's merge is exactly `base_tree`.
     #[serde(default)]
     pub to_head: String,
+    /// Ruling C-21 (3): the upper stage's heads handed back into the worktree after
+    /// the first hand-back, in order.
+    #[serde(default)]
+    pub handed: Vec<String>,
+}
+
+/// Ruling C-21 (3, 5): what a sync task's claim is checked against: its head must
+/// contain `onto`, and the paths `to_head..upper` changed (the upper stage's commits a
+/// later hand-back brought in) are not its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncCheck {
+    pub onto: String,
+    pub to_head: String,
+    #[serde(default)]
+    pub upper: Option<String>,
 }
 
 /// Decision 50's `OpKind::Propagate`: stage `from`'s head merged into stage `to`, as a

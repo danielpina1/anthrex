@@ -60,10 +60,10 @@ pub use salvage::{delete_branches, remove_checkout, remove_worktree, salvage};
 pub use settings::{codex_config_tree, project_settings};
 pub use signals::{
     DiffLimits, NoAttributes, SIGNALS_DIFF_BYTES, Zero, cfg_test_files, done_signals,
-    done_signals_with, signal_paths, unified_zero,
+    done_signals_from, done_signals_with, signal_paths, unified_zero,
 };
 pub use summary::{resolve_target, task_summary, task_summary_excluding};
-pub use tiers::{changed_paths, checkout_tree, show_stat, tree_of};
+pub use tiers::{changed_paths, checkout_tree, show_stat, sync_read, tree_of, tree_patch};
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
 pub(crate) use handback::{finish_clean, interrupted_conflict};
@@ -548,7 +548,8 @@ pub(crate) fn diff(g: Git<'_>, dir: &Path, range: &str) -> Result<String, String
     let mut args = vec![os("diff")];
     args.extend(DIFF_FLAGS.map(os));
     args.extend(PATCH_PREFIXES.map(os));
-    args.push(os(range));
+    // Controller ruling C-21 (6): `<tree> <head>` is two words.
+    args.extend(range.split_whitespace().map(os));
     let (output, kept) = g.head_tail(dir, &args)?;
     if !output.success {
         return Err(failure(&args, &output));

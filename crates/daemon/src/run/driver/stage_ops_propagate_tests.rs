@@ -23,6 +23,7 @@ impl Rig {
             &self.root,
             &["worktree", "add", "-q", "--detach", &at, branch],
         );
+        std::fs::create_dir_all(wt.join(file).parent().unwrap()).unwrap();
         std::fs::write(wt.join(file), content).unwrap();
         git(&wt, &["add", "-A"]);
         git(&wt, &["commit", "-q", "-m", &format!("{file} on {branch}")]);
@@ -182,3 +183,7 @@ async fn a_conflicted_propagate_gives_the_tree_its_sync_worktree_holds() {
     // Without it, the three-dot range counts stage 1's work as the task's.
     assert_eq!(done(None).outside_owns, ["b.txt"]);
 }
+
+// Controller ruling C-21: a sync task's claim and review, in a file of its own.
+#[path = "stage_ops_sync_tests.rs"]
+mod sync_tests;

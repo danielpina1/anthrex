@@ -56,15 +56,28 @@ fn sync_open(run: &Run, n: u16) -> bool {
         .any(|t| t.sync.is_some() && t.stage() == n && !t.state.is_finished())
 }
 
-/// Whether the propagate into stage `n` may start now: both stages exist, `n` does not
-/// already hold the lower head (`synced_from`), it is not red on that head, and no sync
-/// task of `n` is open.
-fn startable(run: &Run, n: u16) -> bool {
+/// Stage `n` does not hold the lower stage's head (`synced_from`): it needs a
+/// propagate. Controller ruling C-21 (1a): this, not only a recorded due entry, is what
+/// makes a stage due, so a sync task that finishes without merging leaves it due again.
+/// A record without `synced_from` holds what it was created from.
+fn needs(run: &Run, n: u16) -> bool {
     let (Some(to), Some(from)) = (run.stage(n), n.checked_sub(1).and_then(|k| run.stage(k))) else {
         return false;
     };
-    let head = Some(from.head.as_str());
-    to.synced_from.as_deref() != head && to.propagate_red.as_deref() != head && !sync_open(run, n)
+    let held = to.synced_from.as_deref().unwrap_or(&to.created_from);
+    held != from.head
+}
+
+/// Whether the propagate into stage `n` may start now: it needs one, it is not red on
+/// the lower head, and no sync task of `n` is open.
+fn startable(run: &Run, n: u16) -> bool {
+    let Some(from) = n.checked_sub(1).and_then(|k| run.stage(k)) else {
+        return false;
+    };
+    let red = run
+        .stage(n)
+        .is_some_and(|to| to.propagate_red.as_deref() == Some(from.head.as_str()));
+    needs(run, n) && !red && !sync_open(run, n)
 }
 
 /// A `Propagate` is in flight: the merge queue is busy (decision 49).
@@ -76,33 +89,119 @@ pub(super) fn in_flight(run: &Run) -> bool {
 
 /// A propagate is in flight or may start: the queue is not idle (decision 17(b)).
 pub(super) fn busy(run: &Run) -> bool {
-    in_flight(run) || run.propagate_due.iter().any(|&n| startable(run, n))
+    in_flight(run) || run.stages.iter().any(|s| startable(run, s.n))
 }
 
-/// Completion waits for every due propagate, so `integration` holds every stage's
-/// work, and for a red one until the `finish` edit or `run cancel` (invented, as a red
-/// tier 3 holds it: decision 19).
+/// Controller ruling C-21's invariant: the merged tasks the highest stage does not hold,
+/// by the stage they merged into, lowest first. Empty for a `Single` run, whose one
+/// stage holds every merge.
+pub(crate) fn undelivered(run: &Run) -> Vec<(u16, Vec<String>)> {
+    let top = stages::highest(run);
+    let Some(record) = run
+        .stage(top)
+        .filter(|_| run.stage_layout == StageLayout::Multi)
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<(u16, Vec<String>)> = Vec::new();
+    let missing = run
+        .tasks
+        .iter()
+        .filter(|t| t.state == TaskState::Merged && !record.tasks_in.contains(t.id()));
+    for task in missing {
+        match out.iter_mut().find(|(k, _)| *k == task.stage()) {
+            Some((_, ids)) => ids.push(task.id().to_string()),
+            None => out.push((task.stage(), vec![task.id().to_string()])),
+        }
+    }
+    out.sort_by_key(|(k, _)| *k);
+    out
+}
+
+/// Controller ruling C-21: a run completes delivered only when the highest stage holds
+/// every merged task. Completion waits for a propagate in flight, and, unless `run
+/// cancel` gives up, for every due one, a red one, and the invariant; the `finish` edit
+/// does not end the wait.
 pub(super) fn holds_completion(run: &Run) -> bool {
-    busy(run) || (!super::full::ending(run) && !attention(run).is_empty())
+    if in_flight(run) {
+        return true;
+    }
+    if run.cancelled {
+        return false;
+    }
+    busy(run) || !attention(run).is_empty() || !undelivered(run).is_empty()
+}
+
+/// Controller ruling C-21 (1c): the invariant's attention lines, while the run waits to
+/// complete on it (every task finished, or the `finish` edit).
+pub(crate) fn undelivered_lines(run: &Run) -> Vec<String> {
+    let waiting = run.finish_edit || run.tasks.iter().all(|t| t.state.is_finished());
+    if run.state.is_terminal() || run.cancelled || !waiting {
+        return Vec::new();
+    }
+    let top = stages::highest(run);
+    undelivered(run)
+        .into_iter()
+        .map(|(k, ids)| {
+            format!(
+                "stage {k}'s merged work is not in stage {top} yet: {}; it cannot be delivered until it is (anthrex run cancel gives up)",
+                ids.join(", ")
+            )
+        })
+        .collect()
 }
 
 /// Decision 49, called first by `merge::start_merge` when no merge is in flight: the
-/// lowest startable due stage gets its `Propagate`. A due stage that cannot start is
-/// dropped: a head move or its sync task's merge enters it again. `true` when an op
-/// was emitted.
+/// lowest stage that may start gets its `Propagate` (none once `run cancel` gives up).
+/// `propagate_due` keeps the stages that still need one. `true` when an op was emitted.
 pub(super) fn start(run: &mut Run, fx: &mut Vec<Effect>) -> bool {
     if run.stage_layout != StageLayout::Multi || run.state != RunState::Running {
         return false;
     }
     let due: Vec<u16> = run.propagate_due.iter().copied().collect();
     for n in due {
-        run.propagate_due.remove(&n);
-        if startable(run, n) {
-            emit(run, n, fx);
-            return true;
+        if !needs(run, n) {
+            run.propagate_due.remove(&n);
         }
     }
-    false
+    if run.cancelled {
+        return false;
+    }
+    let all: Vec<u16> = run.stages.iter().map(|s| s.n).collect();
+    let Some(n) = all.into_iter().find(|&n| startable(run, n)) else {
+        return false;
+    };
+    run.propagate_due.remove(&n);
+    emit(run, n, fx);
+    true
+}
+
+/// Controller ruling C-21 (5): a sync claim whose head dropped the lower stage's merge.
+pub(super) fn lost_merge(task: &Task) -> String {
+    let k = match &task.fixes {
+        Some(FixOf::Propagate { from, .. }) => *from,
+        _ => task.stage().saturating_sub(1),
+    };
+    let onto = task.sync.as_ref().map_or("", |s| s.onto.as_str());
+    format!(
+        "task_done rejected: sync task must keep stage {k}'s merge: its head does not contain {}",
+        sha7(onto)
+    )
+}
+
+/// Controller ruling C-21 (3): a hand-back into a sync task after its first (the merge
+/// queue's, a held task's or a refresh) brought the upper stage's head `run_head` in;
+/// its claims no longer count that head's changes as the task's.
+pub(super) fn record_hand_back(run: &mut Run, i: usize, run_head: &str, result: &OpResult) {
+    if !matches!(result, OpResult::HandedBack { .. }) {
+        return;
+    }
+    if let Some(sync) = run.tasks[i].sync.as_mut().filter(|s| s.handed_back)
+        && sync.handed.last().map(String::as_str) != Some(run_head)
+        && sync.to_head != run_head
+    {
+        sync.handed.push(run_head.to_string());
+    }
 }
 
 fn emit(run: &mut Run, n: u16, fx: &mut Vec<Effect>) {
@@ -258,6 +357,7 @@ fn conflicted(
             tasks: spec.tasks.clone(),
             handed_back: false,
             to_head: spec.expected_to_head.clone(),
+            handed: Vec::new(),
         }),
     };
     match add_fix(run, fix, now, fx) {

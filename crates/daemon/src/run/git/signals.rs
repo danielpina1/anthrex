@@ -221,6 +221,44 @@ pub fn done_signals_with(
         .ok(worktree, &[os("merge-base"), os(run_head), os(head)])?
         .trim()
         .to_string();
+    read_signals(git, worktree, (base, head), spec, limits, timeout)
+}
+
+/// Controller ruling C-21 (2): a sync task's signals, read from `base` (its conflicted
+/// tree) to `head`, so the lower stage's changes its merge carries are never its own.
+pub fn done_signals_from(
+    git: &OsStr,
+    worktree: &Path,
+    (base, head): (&str, &str),
+    spec: &SignalsSpec,
+    timeout: Duration,
+) -> Result<ClaimSignals, String> {
+    if base.starts_with('-') || head.starts_with('-') {
+        return Err(format!("not a diff range: {base:?} {head:?}"));
+    }
+    let limits = DiffLimits {
+        bytes: SIGNALS_DIFF_BYTES,
+        timeout,
+    };
+    read_signals(
+        git,
+        worktree,
+        (base.to_string(), head),
+        spec,
+        limits,
+        timeout,
+    )
+}
+
+/// The signals of `<base>..<head>` (`base` may be a tree).
+fn read_signals(
+    git: &OsStr,
+    worktree: &Path,
+    (base, head): (String, &str),
+    spec: &SignalsSpec,
+    limits: DiffLimits,
+    timeout: Duration,
+) -> Result<ClaimSignals, String> {
     let attrs = NoAttributes::probe(git, worktree, timeout)?;
     let range = format!("{base}..{head}");
     let zero = unified_zero(git, worktree, &range, &attrs, limits.bytes, limits.timeout)?;

@@ -113,3 +113,36 @@ pub fn show_stat(
     let out = g.ok(dir, &args)?;
     Ok(Some(out.trim_end().to_string()))
 }
+
+/// Controller ruling C-21 (3, 5): what a sync task's claim is checked against. `kept`:
+/// its head still contains `onto`, the lower stage's head it merged. `upper`: the paths
+/// the upper stage changed between `to_head` (where the task's worktree started) and
+/// the latest head a later hand-back brought in, which are not the task's changes.
+pub fn sync_read(
+    git: &OsStr,
+    worktree: &Path,
+    head: &str,
+    (onto, to_head, upper): (&str, &str, Option<&str>),
+    timeout: Duration,
+) -> Result<(bool, Vec<String>), String> {
+    let g = Git::new(git, timeout);
+    let kept = super::worktrees::is_ancestor(g, worktree, onto, head)?;
+    let paths = match upper {
+        Some(upper) => changed_paths(git, worktree, &format!("{to_head} {upper}"), timeout)?,
+        None => Vec::new(),
+    };
+    Ok((kept, paths))
+}
+
+/// Controller ruling C-21 (6): `git diff <tree> <head>`, clamped as a review diff is.
+pub fn tree_patch(
+    git: &OsStr,
+    dir: &Path,
+    tree: &str,
+    head: &str,
+    timeout: Duration,
+) -> Result<String, String> {
+    let words = format!("{tree} {head}");
+    range_words(&words)?;
+    super::diff(Git::new(git, timeout), dir, &words)
+}

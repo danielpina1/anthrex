@@ -13,7 +13,7 @@ use super::requests::log;
 use super::{Effect, EngineState, OpKind, OpResult, ReplyId, emit_op, ladder, next_op, review};
 use crate::run::contract::accept_conflict_message;
 use crate::run::env::profile_env;
-use crate::run::model::Run;
+use crate::run::model::{Run, Task};
 
 /// A task still moving toward `merged` or `blocked` on its own: the `finish` edit waits
 /// for these.
@@ -108,9 +108,13 @@ pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     } else {
         return;
     };
+    // Controller ruling C-21 (1b): the `finish` edit keeps sync tasks, which the run
+    // needs to deliver its merged work; `run cancel` gives them up.
+    let finishing = run.finish_edit && !run.cancelled;
+    let keep = move |t: &Task| finishing && t.sync.is_some();
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
-        if !task.state.is_finished() && task.start_commit.is_none() {
+        if !task.state.is_finished() && task.start_commit.is_none() && !keep(task) {
             cancel_task(run, i, why, now, fx);
         }
     }
@@ -118,7 +122,7 @@ pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         return;
     }
     for i in 0..run.tasks.len() {
-        if run.tasks[i].state == TaskState::Blocked {
+        if run.tasks[i].state == TaskState::Blocked && !keep(&run.tasks[i]) {
             cancel_task(run, i, "the finish edit (blocked)", now, fx);
         }
     }

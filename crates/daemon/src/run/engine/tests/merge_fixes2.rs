@@ -111,11 +111,11 @@ fn a_resolution_skips_the_gates_only_when_it_is_only_the_resolution() {
         };
         assert_eq!(
             resolution,
-            Some(ResolutionAt {
+            Some(Box::new(ResolutionAt {
                 onto: head_of("t1"),
                 run_head: BASE.into(),
                 files: files(),
-            })
+            }))
         );
         let (op, _) = pending_one(&fx, "VerifyDone", Some("t1"));
         let mut result = fx.clean_check("t1");
