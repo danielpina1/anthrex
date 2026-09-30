@@ -14,6 +14,7 @@ fn claim(summary: &str) -> DoneClaim {
         test: None,
         red: None,
         signal: DoneSignal::TaskDone,
+        session: None,
     }
 }
 

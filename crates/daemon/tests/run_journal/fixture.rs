@@ -316,6 +316,7 @@ pub fn full_run(data_dir: &Path) -> Run {
         test: Some("a_test".into()),
         red: Some("a".repeat(40)),
         signal: DoneSignal::TaskDone,
+        session: None,
     };
     task.done = Some(claim.clone());
     task.claim = Some(PendingClaim {

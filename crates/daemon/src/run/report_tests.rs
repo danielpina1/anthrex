@@ -143,6 +143,7 @@ fn report_has_every_section() {
             test: Some("token::expires_after_one_hour".to_string()),
             red: Some("a".repeat(40)),
             signal: DoneSignal::TaskDone,
+            session: None,
         });
     }
     run.log.push(LogEntry {
@@ -223,6 +224,7 @@ fn turn_end_fallback_is_named() {
         test: None,
         red: None,
         signal: DoneSignal::TurnEndFallback,
+        session: None,
     });
     let out = render(&run, 2_000);
     assert!(out.contains("| turn-end fallback |"));

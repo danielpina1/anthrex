@@ -27,21 +27,33 @@ pub fn task_detail(run: &Run, task_id: &str) -> Option<TaskDetailInfo> {
     })
 }
 
-/// Decision 4: the accepted `task_done` summary when it is not blank, else the last
-/// message of the latest worker round whose turn is closed, sanitised (line breaks
-/// kept) and capped at [`WORKER_SUMMARY_MAX`] characters with `…`.
+/// Decision 4: the accepted `task_done` summary when it is not blank and its session is
+/// the task's latest worker session (ruling D-1; a claim with no session counts as
+/// current), else the last message of the latest worker round whose turn is closed,
+/// sanitised (line breaks kept) and capped at [`WORKER_SUMMARY_MAX`] characters with `…`.
 fn worker_summary(task: &Task) -> Option<(String, SummarySource)> {
     let clean = |text: &str| {
         let text = multi_line(text);
         (!text.trim().is_empty()).then(|| cut(&text, WORKER_SUMMARY_MAX))
     };
-    if let Some(summary) = task.done.as_ref().and_then(|d| clean(&d.summary)) {
+    let workers = || {
+        task.rounds
+            .iter()
+            .rev()
+            .filter(|r| r.role == AgentRole::Worker)
+    };
+    let latest = workers().next().map(|r| r.session);
+    let current = |session: Option<u32>| session.is_none() || latest.is_none() || session == latest;
+    if let Some(summary) = task
+        .done
+        .as_ref()
+        .filter(|d| current(d.session))
+        .and_then(|d| clean(&d.summary))
+    {
         return Some((summary, SummarySource::TaskDone));
     }
-    task.rounds
-        .iter()
-        .rev()
-        .find(|r| r.role == AgentRole::Worker && (!r.turn_open || r.ended))
+    workers()
+        .find(|r| !r.turn_open || r.ended)
         .and_then(|r| r.last_text.as_deref())
         .and_then(clean)
         .map(|text| (text, SummarySource::LastMessage))

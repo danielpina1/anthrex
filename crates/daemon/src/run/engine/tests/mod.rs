@@ -16,6 +16,7 @@ mod deciders_block;
 mod deciders_edges;
 mod deciders_size;
 mod deciders_size_guards;
+mod detail_claims;
 mod digest;
 mod dispatch;
 mod dispatch_edits;

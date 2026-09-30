@@ -219,6 +219,11 @@ pub struct DoneClaim {
     pub test: Option<String>,
     pub red: Option<String>,
     pub signal: DoneSignal,
+    /// Milestone 9.0.5 ruling D-1: the claiming worker round's session, so a task's
+    /// detail shows the summary only while that session is the task's latest. `None`
+    /// in a `run.json` written before it, which counts as current.
+    #[serde(default)]
+    pub session: Option<u32>,
 }
 
 /// A `task_done` claim (or the turn-end fallback's) whose `VerifyDone` is in flight;
