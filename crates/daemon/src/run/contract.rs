@@ -91,7 +91,7 @@ pub fn worker_extract_at(run: &Run, task: &Task) -> usize {
 /// [`worker_prompt`] up to its acceptance criteria.
 fn worker_head(run: &Run, task: &Task) -> String {
     let spec = &task.spec;
-    let start = task.start_commit.as_deref().unwrap_or(&run.run_head);
+    let start = task.start_commit.as_deref().unwrap_or(run.head_for(task));
     let mut lines = vec![
         format!("[anthrex] Task {}: {}", spec.id, spec.title),
         format!("Run goal: {}", run.goal),
@@ -137,7 +137,7 @@ pub fn handover_prompt(
     extract: &str,
     notes: &str,
 ) -> String {
-    let start = task.start_commit.as_deref().unwrap_or(&run.run_head);
+    let start = task.start_commit.as_deref().unwrap_or(run.head_for(task));
     let mut out = worker_prompt(run, task, extract, notes);
     out.push_str(&format!(
         "\n\nThis is session {} of this task.\nWhy a new session: {reason}\n",

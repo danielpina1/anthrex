@@ -74,7 +74,8 @@ pub(super) fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
             // head (`run_head...head`), the task's net change, as the spill check
             // does. `start_commit` would bring in every hand-back's merged work.
             let head = task.head.clone().unwrap_or_else(|| task.branch.clone());
-            (head, run.run_head.clone())
+            // Milestone 9.1 decision 47: the task's stage head.
+            (head, run.head_for(task).to_string())
         };
         let id = task.id().to_string();
         let op = next_op(run);

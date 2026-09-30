@@ -36,6 +36,11 @@ pub use limits::{ClaudeAuth, RunLimits, TestingLimits};
 mod adapt;
 pub use adapt::*;
 
+// Milestone 9.1's stage types (decisions 46–53), kept out of this file's budget.
+#[path = "model_stages.rs"]
+mod stages;
+pub use stages::*;
+
 /// How thoroughly a task is reviewed, decision 35: `S` tasks get `Small`, `M` tasks
 /// `Medium`, hub tasks `Frontier`, each possibly raised by the level rule (no `check` in
 /// the profile, or a non-`tdd` task whose `owns` touch `source`).
@@ -264,6 +269,11 @@ impl Task {
     pub fn id(&self) -> &str {
         &self.spec.id
     }
+
+    /// Milestone 9.1 decision 43: the task's stage.
+    pub fn stage(&self) -> u16 {
+        self.spec.stage
+    }
 }
 
 /// An engine operation that has been emitted and whose result has not come back
@@ -475,6 +485,13 @@ pub struct Run {
     /// restore (ruling C-11); 0 before that.
     #[serde(default)]
     pub test_slots: u32,
+    /// Milestone 9.1 decision 46: fixed when the plan is first approved.
+    #[serde(default)]
+    pub stage_layout: StageLayout,
+    /// Milestone 9.1 decision 47: one record per created stage, lowest first. A run
+    /// from before it gets stage 1 at restore (`engine::stages::ensure_first`).
+    #[serde(default)]
+    pub stages: Vec<StageRecord>,
 }
 
 impl Run {
@@ -525,6 +542,39 @@ impl Run {
 
     pub fn task(&self, id: &str) -> Option<&Task> {
         self.tasks.iter().find(|t| t.spec.id == id)
+    }
+
+    /// Milestone 9.1 decision 47: stage `n`'s record, when it has been created.
+    pub fn stage(&self, n: u16) -> Option<&StageRecord> {
+        self.stages.iter().find(|s| s.n == n)
+    }
+
+    /// Stage `n`'s head: a `Single` run's one branch is `integration`, so every stage
+    /// of it is `run_head`; a `Multi` run's is its record's, `None` until it is created.
+    pub fn stage_head(&self, n: u16) -> Option<&str> {
+        match self.stage_layout {
+            StageLayout::Single => Some(&self.run_head),
+            StageLayout::Multi => self.stage(n).map(|s| s.head.as_str()),
+        }
+    }
+
+    /// The head task-context work starts from, merges into and is measured against:
+    /// its stage's head (decision 47), `run_head` while that stage is not created.
+    pub fn head_for(&self, task: &Task) -> &str {
+        self.stage_head(task.stage()).unwrap_or(&self.run_head)
+    }
+
+    /// `integration` for a `Single` run, `anthrex/<run>/stage-<n>` for a `Multi` one.
+    pub fn stage_branch(&self, n: u16) -> String {
+        match self.stage_layout {
+            StageLayout::Single => self.run_branch(),
+            StageLayout::Multi => task_branch(&self.id, &format!("stage-{n}")),
+        }
+    }
+
+    /// `<wt_dir>/runs/<id>/.full`, the tier-3 checkout (decision 17).
+    pub fn full_path(&self) -> PathBuf {
+        self.task_path(".full")
     }
 }
 

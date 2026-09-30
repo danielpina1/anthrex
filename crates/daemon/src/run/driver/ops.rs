@@ -8,12 +8,12 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, cleanup, merge, tier};
+use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, cleanup, merge, stage_ops, tier};
 use crate::headless::{HeadlessSpec, SessionArg};
 use crate::run::confine::confined;
-use crate::run::engine::{EventKind, OpKind, OpResult, ResolutionAt};
+use crate::run::engine::{OpKind, OpResult, ResolutionAt};
 use crate::run::exec::ShellOutcome;
-use crate::run::git::{self, RefCheck, RefreshedIn};
+use crate::run::git::{self, RefreshedIn};
 use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
 use crate::run::model::OpId;
 use crate::run::proof::ProofOp;
@@ -173,7 +173,6 @@ pub(super) async fn run(
     kind: OpKind,
 ) -> OpResult {
     let git = service.git();
-    let t = ctx.git_timeout;
     match kind {
         OpKind::CreateRunBranch {
             root,
@@ -404,39 +403,9 @@ pub(super) async fn run(
                 .await
                 .map(|salvage_ref| OpResult::Removed { salvage_ref }),
         ),
-        OpKind::VerifyRefs {
-            root,
-            base_branch,
-            expected_base,
-            run_branch,
-            expected_run_head,
-        } => {
-            let checked = blocking(move || {
-                git::guard_refs(
-                    &git,
-                    &root,
-                    &base_branch,
-                    &expected_base,
-                    &run_branch,
-                    &expected_run_head,
-                    t,
-                )
-            })
-            .await;
-            match checked {
-                Ok(RefCheck::Ok) => OpResult::RefsOk,
-                Ok(RefCheck::BaseAdvanced { to, commits }) => {
-                    service.send(EventKind::BaseAdvanced {
-                        run_id: ctx.run_id.clone(),
-                        to,
-                        commits,
-                    });
-                    OpResult::RefsOk
-                }
-                Ok(RefCheck::Halt { reason }) => OpResult::RefMoved { reason },
-                Err(error) => failed(error),
-            }
-        }
+        OpKind::VerifyRefs { .. } => stage_ops::verify_refs(service, ctx, kind).await,
+        // Milestone 9.1 decision 48.
+        OpKind::CreateStageBranch { .. } => stage_ops::create(service, ctx, kind).await,
         OpKind::Accept { .. } => cleanup::accept(service, ctx, kind).await,
         OpKind::Discard {
             root,

@@ -369,7 +369,7 @@ impl Fixture {
             round.ended = true;
             round.turn_open = false;
         }
-        self.run_mut().run_head = commit.to_string();
+        crate::run::engine::stages::set_stage_head(self.run_mut(), 1, commit);
         self.tick()
     }
 
@@ -422,6 +422,7 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::StartPlanner { .. } => "StartPlanner",
         OpKind::Tier(_) => "Tier",
         OpKind::TestAt(_) => "TestAt",
+        OpKind::CreateStageBranch { .. } => "CreateStageBranch",
     }
 }
 

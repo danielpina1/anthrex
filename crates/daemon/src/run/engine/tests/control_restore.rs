@@ -317,7 +317,7 @@ fn a_restored_halted_run_resumes_its_sessions_on_rebaseline() {
     let effects = fx.next(EventKind::Resume {
         reply,
         run_id: RUN_ID.into(),
-        rebaseline: Some((BASE.into(), BASE.into())),
+        rebaseline: Some((BASE.to_string(), BASE.to_string()).into()),
     });
     let session = fx.task("t1").rounds[0].session_id.clone().unwrap();
     assert_eq!(

@@ -97,6 +97,8 @@ pub(super) fn restore(
 fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>) {
     // M8a.14: an accept's or discard's reply belonged to the old daemon.
     run.finish_reply = None;
+    // Milestone 9.1 decision 47: a run from before stages has its one.
+    super::stages::ensure_first(run);
     if run.state.is_terminal() {
         // M8b decision 33: an ended run still owes the history lines it had in flight.
         let history: Vec<PendingOp> = run
@@ -273,7 +275,7 @@ pub(super) fn resume(
     state: &mut EngineState,
     reply: ReplyId,
     run_id: &str,
-    rebaseline: Option<(String, String)>,
+    rebaseline: Option<super::Rebaseline>,
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
@@ -312,16 +314,14 @@ pub(super) fn resume(
     };
     let mut text = format!("run {run_id} resumed");
     // `--rebaseline` records the refs the driver read, as for a halted run.
-    if let Some((base, head)) = rebaseline {
+    if let Some(read) = rebaseline {
         text.push_str(&format!(
             " with --rebaseline: base {} at {}, run head {}",
             run.base_branch,
-            sha7(&base),
-            sha7(&head)
+            sha7(&read.base),
+            sha7(&read.head)
         ));
-        run.base_sha = base;
-        run.run_head = head;
-        run.base_moved = None;
+        super::stages::rebaseline(run, &read);
     }
     unpause(run, now, fx);
     fx.push(Effect::Reply {

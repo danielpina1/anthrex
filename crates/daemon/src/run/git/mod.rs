@@ -27,6 +27,7 @@ mod import;
 mod merge;
 mod merge_state;
 mod queue;
+pub mod refs_tx;
 mod resolution;
 mod salvage;
 mod sandbox;
@@ -232,17 +233,28 @@ impl<'a> Git<'a> {
         args: &[&OsStr],
         input: &[u8],
     ) -> Result<String, String> {
+        let output = self.write_input_raw(dir, args, input)?;
+        succeeded(args, output)
+    }
+
+    /// [`Git::write_input`] whose failure the caller interprets (milestone 9.1's
+    /// `update-ref --stdin` transaction, `refs_tx::cas`).
+    pub(crate) fn write_input_raw(
+        &self,
+        dir: &Path,
+        args: &[&OsStr],
+        input: &[u8],
+    ) -> Result<GitOutput, String> {
         let mut full: Vec<&OsStr> = WRITE_FLAGS.iter().map(|flag| os(flag)).collect();
         full.extend_from_slice(args);
-        let output = run_git_with_input(
+        run_git_with_input(
             self.program,
             dir,
             &full,
             Instant::now() + self.timeout,
             input,
         )
-        .map_err(|err| err.to_string())?;
-        succeeded(args, output)
+        .map_err(|err| err.to_string())
     }
 
     /// A read fed `input` on stdin, that must succeed; its stdout (`cat-file

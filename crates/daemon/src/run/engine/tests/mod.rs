@@ -67,6 +67,7 @@ mod refresh;
 mod role_history;
 mod role_history_ends;
 mod run_scouts;
+mod stages;
 mod turns;
 mod turns_fixes;
 mod turns_holds;

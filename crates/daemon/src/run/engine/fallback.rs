@@ -73,8 +73,8 @@ fn count(run: &mut Run, i: usize, r: usize, fx: &mut Vec<Effect>) {
         start: task
             .start_commit
             .clone()
-            .unwrap_or_else(|| run.run_head.clone()),
-        run_head: run.run_head.clone(),
+            .unwrap_or_else(|| run.head_for(task).to_string()),
+        run_head: run.head_for(task).to_string(),
         not_own: super::worker_messages::not_own(task),
         not_run: super::worker_messages::not_run(task),
     };

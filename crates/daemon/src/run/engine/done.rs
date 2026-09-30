@@ -187,8 +187,8 @@ pub(super) fn claim(
         start: task
             .start_commit
             .clone()
-            .unwrap_or_else(|| run.run_head.clone()),
-        run_head: run.run_head.clone(),
+            .unwrap_or_else(|| run.head_for(task).to_string()),
+        run_head: run.head_for(task).to_string(),
         owns: task.spec.owns.clone(),
         generated: run.profile.generated.clone(),
         protected: run.profile.protected.clone(),

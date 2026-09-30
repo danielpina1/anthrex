@@ -134,8 +134,12 @@ pub(super) fn merge_candidate(
             reason: format!("{run_ref} was deleted"),
         }));
     };
+    // Milestone 9.1 decision 53: the integration worktree stays on `integration`, the
+    // alias of a stage branch.
+    let alias = crate::run::git::refs_tx::alias_of(run_branch);
+    let (run_branch, alias_ref) = (alias.as_str(), format!("refs/heads/{alias}"));
     if head == expected_run_head {
-        reattach(g, integration, &run_ref, run_branch, notes);
+        reattach(g, integration, &alias_ref, run_branch, notes);
         return Ok(Reconciled::NotStarted);
     }
     let line = g.ok(
@@ -151,7 +155,7 @@ pub(super) fn merge_candidate(
     let parents: Vec<&str> = line.split_whitespace().skip(1).collect();
     if parents == [expected_run_head, task_head] {
         // The compare-and-swap landed; the daemon may have died before `reattach`.
-        reattach(g, integration, &run_ref, run_branch, notes);
+        reattach(g, integration, &alias_ref, run_branch, notes);
         return Ok(Reconciled::Replay(OpResult::Merged { commit: head }));
     }
     Ok(Reconciled::Replay(OpResult::RefMoved {
@@ -161,6 +165,24 @@ pub(super) fn merge_candidate(
             short(&head)
         ),
     }))
+}
+
+/// `CreateStageBranch` (milestone 9.1 decision 53): the branch at `from` is the op's
+/// result, an absent one is not started, and one anywhere else is a moved ref.
+pub(super) fn create_stage_branch(
+    g: Git<'_>,
+    root: &Path,
+    branch: &str,
+    from: &str,
+) -> Result<Reconciled, String> {
+    let refname = format!("refs/heads/{branch}");
+    Ok(match read(g, root, &refname)? {
+        None => Reconciled::NotStarted,
+        Some(head) if head == from => Reconciled::Replay(OpResult::StageCreated),
+        Some(head) => Reconciled::Replay(OpResult::RefMoved {
+            reason: format!("{refname} exists at {}, not {}", short(&head), short(from)),
+        }),
+    })
 }
 
 /// `git::reattach` unless the integration worktree is already on the run branch. A

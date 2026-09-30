@@ -464,8 +464,7 @@ fn guard(g: &Guarded) -> RefCheck {
         &g.repo.root,
         "main",
         &g.base_sha,
-        RUN,
-        &g.run_head,
+        &[(RUN.to_string(), g.run_head.clone())],
         T,
     )
     .unwrap()

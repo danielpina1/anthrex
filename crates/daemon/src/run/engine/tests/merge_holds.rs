@@ -237,7 +237,7 @@ fn a_fresh_session_waits_for_the_run_to_run() {
     let effects = fx.next(EventKind::Resume {
         reply,
         run_id: RUN_ID.into(),
-        rebaseline: Some((BASE.into(), BASE.into())),
+        rebaseline: Some((BASE.to_string(), BASE.to_string()).into()),
     });
     assert_eq!(ops_in(&effects, "DiffSoFar").len(), 1, "{effects:#?}");
     let (diff, _) = pending_one(&fx, "DiffSoFar", Some("t1"));

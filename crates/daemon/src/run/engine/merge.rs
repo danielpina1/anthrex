@@ -15,18 +15,23 @@ use super::ResolutionAt;
 use super::dispatch::{block, history, salvage_ref};
 use super::requests::log;
 use super::signals::end_round;
+use super::stages::{self, Rebaseline};
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, ReplyId, complete, emit_op, gates, ladder, next_op,
 };
 use crate::run::contract::{UNCLAIMED_COMMITS, conflict_message, sha7};
 use crate::run::env::profile_env;
-use crate::run::model::{BaseMoved, CheckRecord, Run, Task};
+use crate::run::model::{BaseMoved, CheckRecord, Run, StageLayout, Task};
 
-/// A `MergeCandidate` is in flight (decision 36: width 1).
+/// A `MergeCandidate` is in flight (decision 36: width 1), or since milestone 9.1 a
+/// `CreateStageBranch`, whose `from` a merge must not move meanwhile (decision 48).
 pub(super) fn merging(run: &Run) -> bool {
-    run.pending_ops
-        .values()
-        .any(|p| matches!(p.kind, OpKind::MergeCandidate { .. }))
+    run.pending_ops.values().any(|p| {
+        matches!(
+            p.kind,
+            OpKind::MergeCandidate { .. } | OpKind::CreateStageBranch { .. }
+        )
+    })
 }
 
 /// Every scheduler pass of a running run: the queue drops tasks no longer in the merge
@@ -63,11 +68,15 @@ pub(super) fn start_merge(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         return block(run, i, BlockReason::Environment, text, now);
     };
     let integration = run.integration_path();
+    // Milestone 9.1 decisions 47, 53: into the task's stage; `integration` moves with
+    // it when that is a `Multi` run's highest stage.
+    let n = run.tasks[i].stage();
+    let multi = run.stage_layout == StageLayout::Multi;
     let kind = OpKind::MergeCandidate {
         root: run.root.clone(),
         integration: integration.clone(),
-        run_branch: run.run_branch(),
-        expected_run_head: run.run_head.clone(),
+        run_branch: run.stage_branch(n),
+        expected_run_head: run.head_for(&run.tasks[i]).to_string(),
         base_branch: run.base_branch.clone(),
         expected_base: run.base_sha.clone(),
         task_head,
@@ -75,6 +84,8 @@ pub(super) fn start_merge(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         check: run.profile.check.clone(),
         timeout_secs: run.profile.check_timeout_secs,
         env: profile_env(&run.profile, &integration),
+        guarded: stages::guard_list(run),
+        also_integration: multi && n >= stages::highest(run),
     };
     let op = next_op(run);
     run.tasks[i].merge_op = Some(op);
@@ -93,18 +104,19 @@ pub(super) fn awaits(run: &Run, i: usize, op: OpId) -> bool {
 /// only for the task that awaits it.
 pub(super) fn candidate_done(
     run: &mut Run,
-    i: Option<usize>,
-    op: OpId,
+    (i, op): (Option<usize>, OpId),
+    branch: &str,
     result: OpResult,
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
-    // M8b decision 32: the run head before the merge, what a merged task is measured
-    // from.
-    let before = run.run_head.clone();
+    // M8b decision 32: the stage head before the merge, what a merged task is measured
+    // from. Milestone 9.1 decision 47: the merge landed on the stage of `branch`.
+    let n = stages::stage_of_branch(run, branch);
+    let before = run.stage_head(n).unwrap_or(&run.run_head).to_string();
     if let OpResult::Merged { commit } = &result {
-        run.run_head = commit.clone();
-        run.last_green_candidate = Some(commit.clone());
+        let id = i.map(|i| run.tasks[i].id().to_string());
+        stages::task_merged(run, n, id.as_deref(), commit);
     }
     // The refs are the run's, whoever's merge found them moved. A task that awaits
     // this result stays at the head of the queue and merges again after a rebaseline.
@@ -263,9 +275,10 @@ fn conflict(run: &mut Run, i: usize, files: Vec<String>, now: u64, fx: &mut Vec<
         return block(run, i, BlockReason::Conflict, text, now);
     }
     let id = task.id().to_string();
+    let task = &run.tasks[i];
     let kind = OpKind::HandBack {
         worktree: task.worktree.clone(),
-        run_head: run.run_head.clone(),
+        run_head: run.head_for(task).to_string(),
         task_head: task.head.clone(),
         list_merged: false,
     };
@@ -391,9 +404,10 @@ fn send_due(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
     let task = &mut run.tasks[i];
     task.handback_due = false;
     let id = task.id().to_string();
+    let task = &run.tasks[i];
     let kind = OpKind::HandBack {
         worktree: task.worktree.clone(),
-        run_head: run.run_head.clone(),
+        run_head: run.head_for(task).to_string(),
         task_head: task.head.clone(),
         list_merged: false,
     };
@@ -483,7 +497,7 @@ pub(super) fn resume(
     state: &mut EngineState,
     reply: ReplyId,
     run_id: &str,
-    rebaseline: Option<(String, String)>,
+    rebaseline: Option<Rebaseline>,
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
@@ -503,7 +517,7 @@ pub(super) fn resume(
         log(run, now, "resumed; reading the refs again");
         return answer(Ok(format!("run {run_id} resumed")));
     }
-    let Some((base, head)) = rebaseline else {
+    let Some(read) = rebaseline else {
         let reason = run.halted_reason.clone().unwrap_or_default();
         return answer(Err(format!(
             "run {run_id} is halted: {reason}; check the refs, then resume with --rebaseline"
@@ -512,12 +526,10 @@ pub(super) fn resume(
     let text = format!(
         "resumed with --rebaseline: base {} at {}, run head {}",
         run.base_branch,
-        sha7(&base),
-        sha7(&head)
+        sha7(&read.base),
+        sha7(&read.head)
     );
-    run.base_sha = base;
-    run.run_head = head;
-    run.base_moved = None;
+    stages::rebaseline(run, &read);
     run.halted_reason = None;
     run.halt_retryable = false;
     run.state = RunState::Running;

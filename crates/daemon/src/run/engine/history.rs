@@ -120,7 +120,7 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             .filter(|_| task.state != TaskState::Merged);
         match head {
             Some(head) if task.diff.is_none() => {
-                let from = run.run_head.clone();
+                let from = run.head_for(task).to_string();
                 measure(run, i, (from, head), true, fx);
             }
             _ => record(run, i, outcome, now, fx),

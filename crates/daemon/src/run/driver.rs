@@ -35,6 +35,7 @@ mod orch_ops;
 mod refresh;
 mod requests;
 mod restore;
+mod stage_ops;
 mod tier;
 pub mod tier_step;
 mod usage;

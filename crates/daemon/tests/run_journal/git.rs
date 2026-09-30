@@ -97,6 +97,8 @@ impl World {
             check: None,
             timeout_secs: 60,
             env: Vec::new(),
+            guarded: Vec::new(),
+            also_integration: false,
         }
     }
 

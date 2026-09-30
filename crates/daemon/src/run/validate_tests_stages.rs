@@ -5,7 +5,7 @@
 
 use proto::{Size, TaskKind, TestMode};
 
-use crate::run::model::{ReviewLevel, Run};
+use crate::run::model::{ReviewLevel, Run, StageLayout};
 use crate::run::test_support::*;
 
 /// One S task owning `crates/<id>/src/lib.rs`, with `extra` appended.
@@ -213,6 +213,13 @@ fn plans_without_stages_are_one_stage() {
             assert_eq!(t.spec.atomic_reason, None);
         }
     }
+    // Milestone 9.1 decision 46 (task M9.1.12): and they are one stage when approved.
+    let mut run = run_ok(&plan_with(PROFILE, &[one("t1", ""), one("t2", "")]));
+    assert_eq!(run.stage_layout, StageLayout::Single);
+    assert_eq!(run.stages.len(), 1);
+    assert_eq!(run.stage_branch(1), run.run_branch());
+    run.state = proto::RunState::Running;
+    assert!(crate::run::validate_stages::single_layout_rule(&run).is_empty());
     // M8b's stored run, written before stages existed.
     let run: Run =
         serde_json::from_str(include_str!("engine/tests/m8b_run.json")).expect("m8b run.json");
@@ -222,4 +229,51 @@ fn plans_without_stages_are_one_stage() {
             .iter()
             .all(|t| t.spec.stage == 1 && !t.spec.atomic)
     );
+}
+
+/// Controller ruling C-14 (b): decision 41's implicit dependencies are stage-aware. A
+/// later-stage task waits for an overlapping earlier-stage one whatever the plan order,
+/// an earlier stage never waits for a later one, and within a stage the plan order
+/// decides as before.
+#[test]
+fn implicit_deps_point_only_to_the_same_or_an_earlier_stage() {
+    let shared = |id: &str, extra: &str| task_toml(id, "S", "[\"crates/x/**\"]", extra);
+    let implicit = |run: &Run, id: &str| run.task(id).unwrap().implicit_deps.clone();
+    // The stage-2 task comes first in plan order, yet it waits for the stage-1 one.
+    let run = run_ok(&plan_with(
+        PROFILE,
+        &[shared("t1", "stage = 2"), shared("t2", "")],
+    ));
+    assert_eq!(implicit(&run, "t1"), vec!["t2".to_string()]);
+    assert!(implicit(&run, "t2").is_empty());
+    // In plan order, the same.
+    let run = run_ok(&plan_with(
+        PROFILE,
+        &[shared("t1", ""), shared("t2", "stage = 2")],
+    ));
+    assert!(implicit(&run, "t1").is_empty());
+    assert_eq!(implicit(&run, "t2"), vec!["t1".to_string()]);
+    // Within one stage, the later in plan order waits, as decision 41 says.
+    let run = run_ok(&plan_with(
+        PROFILE,
+        &[
+            shared("t1", "stage = 2"),
+            shared("t2", ""),
+            shared("t3", "stage = 2"),
+        ],
+    ));
+    assert_eq!(implicit(&run, "t1"), vec!["t2".to_string()]);
+    assert_eq!(
+        implicit(&run, "t3"),
+        vec!["t1".to_string(), "t2".to_string()]
+    );
+    // A started stage-2 task never makes a stage-1 task wait for it.
+    let mut run = run_ok(&plan_with(
+        PROFILE,
+        &[shared("t1", "stage = 2"), shared("t2", "")],
+    ));
+    run.tasks[0].state = proto::TaskState::Working;
+    run.tasks[0].start_commit = Some(run.base_sha.clone());
+    let deps = crate::run::validate_graph::implicit_deps(&run.tasks);
+    assert_eq!(deps, vec![Vec::<String>::new(), Vec::new()]);
 }

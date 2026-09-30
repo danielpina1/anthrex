@@ -144,6 +144,8 @@ pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         expected_base: run.base_sha.clone(),
         run_branch: run.run_branch(),
         expected_run_head: run.run_head.clone(),
+        // Milestone 9.1 decision 53: every created stage ref too.
+        guarded: super::stages::guard_list(run),
     };
     let op = next_op(run);
     emit_op(run, op, None, kind, fx);
@@ -317,6 +319,8 @@ fn run_worktrees(run: &Run) -> Vec<(std::path::PathBuf, String)> {
         }
     }
     out.push((run.integration_path(), salvage_ref(run, "integration", 1)));
+    // Milestone 9.1 decision 47: the tier-3 checkout, under a name no task id takes.
+    out.push((run.full_path(), salvage_ref(run, "_full", 1)));
     out
 }
 

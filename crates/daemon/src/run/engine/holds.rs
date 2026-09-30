@@ -111,6 +111,7 @@ pub(super) fn resume_held(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             || !task.awaiting_deps
             || !(retried || (question && waiting))
             || !deps_done(run, task)
+            || !super::stages::ready_in_stage(run, i)
             || op_in_flight(run, task.id(), |k| {
                 matches!(k, OpKind::HandBack { .. } | OpKind::AbortMerge { .. })
             })
@@ -126,7 +127,7 @@ pub(super) fn resume_held(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         let op = next_op(run);
         let kind = OpKind::HandBack {
             worktree,
-            run_head: run.run_head.clone(),
+            run_head: run.head_for(&run.tasks[i]).to_string(),
             task_head,
             list_merged: false,
         };

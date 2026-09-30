@@ -6,9 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use proto::{PlanTask, STAGES_MAX, TaskState};
+use proto::{PlanTask, RunState, STAGES_MAX, TaskState};
 
-use super::model::Task;
+use super::model::{Run, StageLayout, Task};
 use super::plan::PlanError;
 use super::validate::is_valid_id;
 
@@ -134,6 +134,22 @@ pub(super) fn stage_rules(tasks: &[Task], by_id: &BTreeMap<&str, &Task>) -> Vec<
         }
     }
     errors
+}
+
+/// Decision 46: once a `Single` run is approved, its tasks stay in stage 1.
+pub(super) fn single_layout_rule(run: &Run) -> Vec<PlanError> {
+    let approved = !matches!(run.state, RunState::Planning | RunState::AwaitingApproval);
+    if run.stage_layout != StageLayout::Single || !approved {
+        return Vec::new();
+    }
+    run.tasks
+        .iter()
+        .filter(|t| is_active(t) && t.spec.stage > 1)
+        .map(|t| {
+            let message = "this run was approved with one stage; its tasks stay in stage 1";
+            PlanError::new(Some(t.id()), "stage", "4.1", message.to_string())
+        })
+        .collect()
 }
 
 fn is_active(task: &Task) -> bool {

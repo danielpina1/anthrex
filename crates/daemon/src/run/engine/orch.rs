@@ -450,6 +450,7 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
                 run.state = RunState::Running;
                 run.approved_by = Some("--yes".into());
                 run.approved_at = Some(now);
+                super::stages::fix_layout(run, now);
                 for q in &mut run.decider_queue {
                     q.queued_at = now;
                 }

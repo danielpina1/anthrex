@@ -381,6 +381,12 @@ fn old_run_json_loads() {
     assert_eq!(map.remove("graph_note"), Some(serde_json::Value::Null));
     // Milestone 9.1 decision 27: not stamped with a daemon's slots.
     assert_eq!(map.remove("test_slots"), Some(serde_json::json!(0)));
+    // Milestone 9.1 decisions 46 and 47: one stage, no stage record until the restore.
+    assert_eq!(
+        map.remove("stage_layout"),
+        Some(serde_json::json!("single"))
+    );
+    assert_eq!(map.remove("stages"), Some(serde_json::json!([])));
     let tiers = map["profile"].as_object_mut().unwrap().remove("tiers");
     assert_eq!(
         serde_json::from_value::<crate::run::tiers::TierProfile>(tiers.expect("profile.tiers"))

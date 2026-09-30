@@ -323,7 +323,7 @@ fn a_due_hand_back_waits_for_the_run_to_run() {
     let effects = fx.next(EventKind::Resume {
         reply,
         run_id: RUN_ID.into(),
-        rebaseline: Some((BASE.into(), commit(9))),
+        rebaseline: Some((BASE.to_string(), commit(9)).into()),
     });
     let hand_backs = ops_in(&effects, "HandBack");
     assert_eq!(hand_backs.len(), 1, "{effects:#?}");

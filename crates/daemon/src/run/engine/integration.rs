@@ -107,6 +107,16 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
         .last()
         .and_then(|(t, _)| run.task(t))
         .map(|t| t.route.clone());
+    // Milestone 9.1 decision 47 (controller ruling C-14 (c)): the review goes into the
+    // highest stage holding one of the epic's tasks, and reviews up to its head.
+    let stage = run
+        .tasks
+        .iter()
+        .filter(|t| t.spec.epic.as_deref() == Some(epic.as_str()) && !is_integration(t))
+        .map(|t| t.stage())
+        .max()
+        .unwrap_or(1);
+    let head = run.stage_head(stage).unwrap_or(&run.run_head).to_string();
     let spec = PlanTask {
         id: id.clone(),
         title: format!("integration review of epic {epic}, round {n}"),
@@ -125,8 +135,8 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
         scout_refs: Vec::new(),
         route: RouteSpec::default(),
         budget: None,
-        review_target: Some(format!("{base}..{}", run.run_head)),
-        stage: 1,
+        review_target: Some(format!("{base}..{head}")),
+        stage,
         atomic: false,
         atomic_reason: None,
     };

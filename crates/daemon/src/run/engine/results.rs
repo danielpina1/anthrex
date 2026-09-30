@@ -4,7 +4,7 @@
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, complete, deciders, dispatch, done, early,
     fallback, gates, history, holds, kinds, ladder, merge, orch_window, outbox, planners, requests,
-    review, run_scouts, worker_messages,
+    review, run_scouts, stages, worker_messages,
 };
 
 /// Routes an op's result by the kind of the op it answers. A result for an op the run
@@ -37,7 +37,11 @@ pub(super) fn op_done(
         }
         (OpKind::Check { .. }, None) => complete::final_checked(run, result, now, fx),
         (OpKind::VerifyRefs { .. }, _) => complete::refs_verified(run, result, now, fx),
-        (OpKind::MergeCandidate { .. }, i) => merge::candidate_done(run, i, op, result, now, fx),
+        (OpKind::MergeCandidate { run_branch, .. }, i) => {
+            merge::candidate_done(run, (i, op), &run_branch, result, now, fx)
+        }
+        // Milestone 9.1 decision 48.
+        (kind @ OpKind::CreateStageBranch { .. }, _) => stages::created(run, &kind, result, now),
         (OpKind::CreateRunBranch { .. }, _) => requests::run_branch_done(run, result, now, fx),
         (kind @ (OpKind::Discard { .. } | OpKind::Accept { .. }), _) => {
             complete::finished(run, &kind, result, now, fx)

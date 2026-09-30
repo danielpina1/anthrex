@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::ops::blocking;
+use super::stage_ops::guard_list;
 use super::{OpCtx, RunService};
 use crate::run::engine::{EventKind, OpKind, OpResult};
 use crate::run::git::{self, CandidateStep, RefCheck};
@@ -29,22 +30,27 @@ pub(super) async fn candidate(
         check,
         timeout_secs,
         env,
+        guarded,
+        also_integration,
     } = kind
     else {
         unreachable!("candidate takes a MergeCandidate");
     };
+    // Milestone 9.1 decision 53: every run ref is guarded, and the integration worktree
+    // stays on `integration`, the alias a stage branch's merge leaves it on.
+    let guarded = guard_list(guarded, run_branch.clone(), expected_run_head.clone());
+    let alias = git::refs_tx::alias_of(&run_branch);
     let guard = |advanced: Option<String>| {
         let (git, t) = (service.git(), ctx.git_timeout);
-        let (root, base, eb, rb, erh) = (
+        let (root, base, eb, list) = (
             root.clone(),
             base_branch.clone(),
             expected_base.clone(),
-            run_branch.clone(),
-            expected_run_head.clone(),
+            guarded.clone(),
         );
         async move {
             let checked =
-                blocking(move || git::guard_refs(&git, &root, &base, &eb, &rb, &erh, t)).await?;
+                blocking(move || git::guard_refs(&git, &root, &base, &eb, &list, t)).await?;
             Ok::<_, String>(match checked {
                 RefCheck::Ok => None,
                 RefCheck::BaseAdvanced { to, commits } => {
@@ -63,7 +69,7 @@ pub(super) async fn candidate(
         }
     };
     let reattach = || {
-        let (at, branch) = (integration.clone(), run_branch.clone());
+        let (at, branch) = (integration.clone(), alias.clone());
         service.write(ctx, move |g, t| git::reattach(g, &at, &branch, t))
     };
     let advanced = match guard(None).await? {
@@ -127,8 +133,18 @@ pub(super) async fn candidate(
             commit.clone(),
             expected_run_head.clone(),
         );
+        // Decision 53: into a `Multi` run's highest stage, its ref and `integration`
+        // move together or not at all; anywhere else, M8a's compare-and-swap.
+        let pair = also_integration.then(|| alias.clone());
         let swapped = service
-            .write(ctx, move |g, t| git::cas_update(g, &r, &b, &c, &old, t))
+            .write(ctx, move |g, t| match &pair {
+                Some(alias) => {
+                    let updates = [(&b, &c, &old), (alias, &c, &old)]
+                        .map(|(b, c, o)| (format!("refs/heads/{b}"), c.clone(), o.clone()));
+                    git::refs_tx::cas(g, &r, &updates, t)
+                }
+                None => git::cas_update(g, &r, &b, &c, &old, t),
+            })
             .await?;
         if !swapped {
             reattach().await?;

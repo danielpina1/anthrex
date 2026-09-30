@@ -90,6 +90,7 @@ pub fn apply_edits(
         edited.limits.max_tasks,
         edited.limits.default_runtime,
     ));
+    errors.extend(super::validate_stages::single_layout_rule(&edited));
     errors.extend(super::orch::rules::apply(&mut edited, run, source));
     // Decision 41's implicit dependencies follow the edited graph; the combined check
     // is the same backstop `build_run` runs (M8a.6 fix round 1, F2).

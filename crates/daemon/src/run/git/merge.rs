@@ -217,37 +217,45 @@ pub(crate) fn read(g: Git<'_>, root: &Path, refname: &str) -> Result<Option<Stri
     }
 }
 
-/// Decision 21: the run ref first (only the engine writes it, so any difference halts),
-/// then the base ref: equal is fine, a descendant of `base_sha` is an advance (with
-/// its commit count) unless the run's own refs reach any of its new commits (final
-/// fix batch F1, finding D-2: [`run_work_on_base`]), anything else (rewritten or
-/// deleted, or run work) halts.
+/// Decision 21: the run refs first (only the engine writes them, so any difference
+/// halts), then the base ref: equal is fine, a descendant of `base_sha` is an advance
+/// (with its commit count) unless the run's own refs reach any of its new commits
+/// (final fix batch F1, finding D-2: [`run_work_on_base`]), anything else (rewritten or
+/// deleted, or run work) halts. Milestone 9.1 decision 53: `guarded` lists every run
+/// ref with the head it must be at, `integration` alone for a one-stage run (M8a's
+/// guard), every created stage branch and `integration` for a multi-stage one; each has
+/// M8a's halt texts.
 pub fn guard_refs(
     git: &OsStr,
     root: &Path,
     base_branch: &str,
     base_sha: &str,
-    run_branch: &str,
-    run_head: &str,
+    guarded: &[(String, String)],
     timeout: Duration,
 ) -> Result<RefCheck, String> {
     let g = Git::new(git, timeout);
-    let run_ref = format!("refs/heads/{run_branch}");
-    match read(g, root, &run_ref)? {
-        Some(head) if head == run_head => {}
-        Some(head) => {
-            return Ok(RefCheck::Halt {
-                reason: format!(
-                    "{run_ref} moved from {} to {}",
-                    short(run_head),
-                    short(&head)
-                ),
-            });
-        }
-        None => {
-            return Ok(RefCheck::Halt {
-                reason: format!("{run_ref} was deleted"),
-            });
+    // The run's id comes from its refs; with none, every run's work would count.
+    if guarded.is_empty() {
+        return Err("no run ref to guard".to_string());
+    }
+    for (branch, expected) in guarded {
+        let run_ref = format!("refs/heads/{branch}");
+        match read(g, root, &run_ref)? {
+            Some(head) if head == *expected => {}
+            Some(head) => {
+                return Ok(RefCheck::Halt {
+                    reason: format!(
+                        "{run_ref} moved from {} to {}",
+                        short(expected),
+                        short(&head)
+                    ),
+                });
+            }
+            None => {
+                return Ok(RefCheck::Halt {
+                    reason: format!("{run_ref} was deleted"),
+                });
+            }
         }
     }
     let base_ref = format!("refs/heads/{base_branch}");
@@ -271,7 +279,7 @@ pub fn guard_refs(
     // Final fix batch F1, finding D-2: a base that "advanced" onto the run's own work
     // was moved by something inside the run (a worker's `update-ref`, a check), not by
     // someone committing on it.
-    let run_id = run_id_of(run_branch);
+    let run_id = run_id_of(guarded.first().map_or("", |(branch, _)| branch.as_str()));
     let from_run = work_on_base(g, root, run_id, base_sha, &to, None)?;
     if from_run > 0 {
         return Ok(RefCheck::Halt {

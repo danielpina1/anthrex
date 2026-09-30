@@ -467,11 +467,11 @@ pub(super) fn start_fresh_sessions(run: &mut Run, fx: &mut Vec<Effect>) {
         let start = task
             .start_commit
             .clone()
-            .unwrap_or_else(|| run.run_head.clone());
+            .unwrap_or_else(|| run.head_for(task).to_string());
         let kind = OpKind::DiffSoFar {
             worktree,
             start,
-            run_head: run.run_head.clone(),
+            run_head: run.head_for(task).to_string(),
         };
         let op = next_op(run);
         emit_op(run, op, Some(&id), kind, fx);

@@ -17,7 +17,7 @@ use super::schedule::{
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
 use super::{
     clock, complete, deciders, done, gate_holds, gates, holds, kinds, ladder, merge, outbox,
-    restore, review, signals,
+    restore, review, signals, stages,
 };
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
@@ -46,6 +46,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 ladder::recover_sessionless(run, now);
                 ladder::start_fresh_sessions(run, fx);
                 complete::finish_pass(run, now, fx);
+                // Milestone 9.1 decision 48: stage branches before what runs in them.
+                stages::create_pass(run, fx);
                 // Milestone 9 decision 37: an epic merged gets its integration review.
                 kinds::integration_pass(run, now);
                 kinds::watch(run, now, fx);
@@ -107,7 +109,8 @@ fn requeue(run: &mut Run, now: u64) {
         if !matches!(state, TaskState::Pending | TaskState::Queued) {
             continue;
         }
-        let next = if deps_done(run, &run.tasks[i]) {
+        // Milestone 9.1 decision 48: and its stage holds what it needs.
+        let next = if deps_done(run, &run.tasks[i]) && stages::ready_in_stage(run, i) {
             TaskState::Queued
         } else {
             TaskState::Pending
@@ -243,13 +246,13 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         }
         let task = &run.tasks[i];
-        if task.prewarmed && task.start_commit.is_none() && run.base_sha == run.run_head {
-            let start = run.run_head.clone();
-            launch_worker(run, i, start, now, fx);
+        // Milestone 9.1 decision 47: the task's stage head.
+        let head = run.head_for(task).to_string();
+        if task.prewarmed && task.start_commit.is_none() && run.base_sha == head {
+            launch_worker(run, i, head, now, fx);
         } else {
             // Decision 19: from the run head. A pre-warmed branch that is now stale is
             // re-pointed by the git layer, and its setup runs again (ruling T8-I4).
-            let head = run.run_head.clone();
             prepare(run, i, head, fx);
         }
     }
@@ -265,10 +268,10 @@ fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         let Some(from) = run.tasks[i].ready_from.take() else {
             continue;
         };
-        if from == run.run_head {
+        let head = run.head_for(&run.tasks[i]).to_string();
+        if from == head {
             launch_worker(run, i, from, now, fx);
         } else {
-            let head = run.run_head.clone();
             prepare(run, i, head, fx);
         }
     }
@@ -454,10 +457,10 @@ pub(super) fn worktree_done(
             );
         }
         OpResult::Worktree { .. } if state == TaskState::Preparing => {
-            if from == run.run_head {
+            let head = run.head_for(&run.tasks[i]).to_string();
+            if from == head {
                 launch_worker(run, i, from, now, fx);
             } else {
-                let head = run.run_head.clone();
                 prepare(run, i, head, fx);
             }
         }

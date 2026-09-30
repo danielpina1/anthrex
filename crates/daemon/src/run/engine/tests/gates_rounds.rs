@@ -287,7 +287,7 @@ fn a_verdict_drops_the_reviewers_mail() {
 fn the_review_is_prepared_against_the_run_head() {
     let (mut fx, window) = working_on(PROFILE, CHECK_MODE);
     let moved = "c7".repeat(20);
-    fx.run_mut().run_head = moved.clone();
+    crate::run::engine::stages::set_stage_head(fx.run_mut(), 1, &moved);
     let (_, kind) = in_review(&mut fx, window);
     let crate::run::engine::OpKind::PrepareReview { base_ref, .. } = kind else {
         unreachable!()

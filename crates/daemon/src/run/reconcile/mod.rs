@@ -182,6 +182,10 @@ fn check(
             list_merged,
             ..
         } => git::hand_back(g, worktree, (run_head, *list_merged), notes),
+        // Milestone 9.1 decision 53.
+        OpKind::CreateStageBranch { root, branch, from } => {
+            git::create_stage_branch(g, root, branch, from)
+        }
         OpKind::AbortMerge { worktree } => git::abort_merge(g, worktree),
         OpKind::RemoveWorktree {
             root,
@@ -316,6 +320,84 @@ mod tests {
             vec![
                 (4, Reconciled::NotStarted),
                 (5, Reconciled::Replay(decided))
+            ]
+        );
+        assert!(out.notes.is_empty(), "{:?}", out.notes);
+    }
+
+    /// Milestone 9.1 decision 53: a `CreateStageBranch` with an intent only is done when
+    /// its branch is at `from`, not started when it is absent, and a moved ref when it
+    /// is anywhere else (a real repository of the test's own).
+    #[test]
+    fn reconcile_create_stage_branch_is_done_when_the_ref_exists_at_from() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_INDEX_FILE")
+                .env_remove("GIT_COMMON_DIR")
+                .env_remove("GIT_PREFIX")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.name", "Stage Test"]);
+        git(&["config", "user.email", "stage@test"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "one"]);
+        let one = git(&["rev-parse", "HEAD"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "two"]);
+        let two = git(&["rev-parse", "HEAD"]);
+        git(&["branch", "anthrex/r1/stage-2", &one]);
+        git(&["branch", "anthrex/r1/stage-3", &two]);
+        let mut run = run_ok(EXAMPLE_PLAN);
+        for (op, n) in [(1, 2), (2, 3), (3, 4)] {
+            let kind = OpKind::CreateStageBranch {
+                root: root.to_path_buf(),
+                branch: format!("anthrex/r1/stage-{n}"),
+                from: one.clone(),
+            };
+            let pending = PendingOp {
+                op,
+                task_id: None,
+                kind,
+            };
+            run.pending_ops.insert(op, pending);
+        }
+        let journal: Vec<JournalLine> = run
+            .pending_ops
+            .values()
+            .map(|p| JournalLine::Intent {
+                op: p.op,
+                kind: p.kind.clone(),
+            })
+            .collect();
+        let out = reconcile(
+            OsStr::new("git"),
+            &run,
+            &journal,
+            &[],
+            Duration::from_secs(20),
+        );
+        let moved = format!(
+            "refs/heads/anthrex/r1/stage-3 exists at {}, not {}",
+            &two[..7],
+            &one[..7]
+        );
+        assert_eq!(
+            out.ops,
+            vec![
+                (1, Reconciled::Replay(OpResult::StageCreated)),
+                (2, Reconciled::Replay(OpResult::RefMoved { reason: moved })),
+                (3, Reconciled::NotStarted),
             ]
         );
         assert!(out.notes.is_empty(), "{:?}", out.notes);

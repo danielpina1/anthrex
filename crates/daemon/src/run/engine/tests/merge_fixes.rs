@@ -34,7 +34,7 @@ fn resume(fx: &mut Fixture, rebaseline: Option<(&str, &str)>) -> Vec<Effect> {
     fx.next(EventKind::Resume {
         reply,
         run_id: RUN_ID.into(),
-        rebaseline: rebaseline.map(|(b, h)| (b.to_string(), h.to_string())),
+        rebaseline: rebaseline.map(|(b, h)| (b.to_string(), h.to_string()).into()),
     })
 }
 

@@ -185,6 +185,9 @@ fn merges_are_one_at_a_time_in_arrival_order() {
             check: Some("cargo test".into()),
             timeout_secs: 1800,
             env: vec![("TARGET".into(), format!("{}/target", int.display()))],
+            // Milestone 9.1 decision 53: a one-stage run guards `integration` alone.
+            guarded: vec![(format!("anthrex/{RUN_ID}/integration"), BASE.into())],
+            also_integration: false,
         }
     );
     // Width 1: the others wait, in the order they arrived.

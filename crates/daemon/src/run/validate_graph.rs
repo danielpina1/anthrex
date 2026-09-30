@@ -5,6 +5,7 @@
 //! Pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or
 //! `std::time::SystemTime` (design decision 2).
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use proto::{Runtime, Size, TaskState};
@@ -351,7 +352,10 @@ fn has_started(task: &Task) -> bool {
 /// when the other task can already reach the waiter through declared deps **and the
 /// implicit deps given so far** (M8a.5 review finding 1): that edge would close a cycle
 /// and deadlock both. At plan time no task has started, so only the plan-order rule
-/// applies; plan edits (M8a.6) recompute these after every batch.
+/// applies; plan edits (M8a.6) recompute these after every batch. Milestone 9.1
+/// (controller ruling C-14 (b)): across stages, the later-stage task waits for the
+/// earlier-stage one whatever the plan order, unless it has started; an earlier stage
+/// never waits for a later one.
 pub fn implicit_deps(tasks: &[Task]) -> Vec<Vec<String>> {
     let index: BTreeMap<&str, usize> = tasks
         .iter()
@@ -396,11 +400,17 @@ pub fn implicit_deps(tasks: &[Task]) -> Vec<Vec<String>> {
             {
                 continue;
             }
-            // (waiter, waited for)
-            let (w, on) = match (has_started(earlier), has_started(task)) {
-                (true, true) => continue,
-                (false, true) => (j, i),
-                _ => (i, j),
+            // (waiter, waited for). Milestone 9.1 (controller ruling C-14 (b)): across
+            // stages the later stage waits for the earlier, whatever the plan order,
+            // unless it has started; an earlier stage never waits for a later one.
+            let stages = earlier.spec.stage.cmp(&task.spec.stage);
+            let (w, on) = match (stages, has_started(earlier), has_started(task)) {
+                (Ordering::Less, _, true) | (Ordering::Greater, true, _) => continue,
+                (Ordering::Less, _, false) => (i, j),
+                (Ordering::Greater, false, _) => (j, i),
+                (Ordering::Equal, true, true) => continue,
+                (Ordering::Equal, false, true) => (j, i),
+                (Ordering::Equal, _, _) => (i, j),
             };
             let on_id = tasks[on].id();
             if tasks[w].spec.deps.iter().any(|d| d == on_id) || reaches(&edges, on, w) {

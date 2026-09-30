@@ -377,7 +377,7 @@ pub(super) fn override_task(
     let kind = OpKind::CountCommits {
         worktree: task.worktree.clone(),
         start,
-        run_head: run.run_head.clone(),
+        run_head: run.head_for(task).to_string(),
         not_own: super::worker_messages::not_own(task),
         not_run: super::worker_messages::not_run(task),
     };

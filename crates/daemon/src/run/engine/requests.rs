@@ -14,6 +14,7 @@ use super::batch::{Refused, apply_batch};
 use super::dispatch::{finishing_as, history, salvage_ref};
 use super::schedule::deps_done;
 use super::signals::end_round;
+use super::stages;
 use super::{
     Effect, EngineState, OpKind, OpResult, ReplyId, deciders, emit_op, ladder, next_op, review,
 };
@@ -71,6 +72,7 @@ pub(super) fn start(
         // M8b decision 24: a fast-path run has no plan gate.
         run.state = RunState::Running;
         run.approved_at = Some(now);
+        stages::fix_layout(&mut run, now);
         log(&mut run, now, "started on the fast path; no plan gate");
     } else if run.state == RunState::Planning {
         // Milestone 9 decision 26: no task and no gate yet; the orchestrator plans.
@@ -78,6 +80,7 @@ pub(super) fn start(
     } else if run.approved_by.as_deref() == Some("--yes") {
         run.state = RunState::Running;
         run.approved_at = Some(now);
+        stages::fix_layout(&mut run, now);
         log(&mut run, now, "started; approved by --yes");
     } else {
         log(&mut run, now, "started; awaiting approval");
@@ -169,6 +172,8 @@ pub(super) fn approve(
     run.state = RunState::Running;
     run.approved_by = Some("user".to_string());
     run.approved_at = Some(now);
+    // Milestone 9.1 decision 46.
+    stages::fix_layout(run, now);
     // Task 12 review m7: a decider queued at the gate (a size check) could not start
     // there; its slot wait counts from now.
     for q in &mut run.decider_queue {

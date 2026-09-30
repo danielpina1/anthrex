@@ -167,6 +167,14 @@ pub enum OpKind {
         check: Option<String>,
         timeout_secs: u64,
         env: Vec<(String, String)>,
+        /// Milestone 9.1 decision 53: every `(branch, expected head)` the guard reads;
+        /// empty (an intent from before it) is `[(run_branch, expected_run_head)]`.
+        #[serde(default)]
+        guarded: Vec<(String, String)>,
+        /// Decision 53: `run_branch` is a `Multi` run's highest stage, so `integration`
+        /// moves with it, in one `refs_tx::cas` transaction.
+        #[serde(default)]
+        also_integration: bool,
     },
     /// Decision 36 step 6 (the merge queue's, M8a.14) and M8a.6 ruling N5's (M8a.11):
     /// `git::hand_back(worktree, run_head)`, a write through `GitQueue::write`. The
@@ -208,6 +216,9 @@ pub enum OpKind {
         expected_base: String,
         run_branch: String,
         expected_run_head: String,
+        /// Milestone 9.1 decision 53: as `MergeCandidate.guarded`.
+        #[serde(default)]
+        guarded: Vec<(String, String)>,
     },
     /// Decision 20's accept (M8a.14 emits it for `run accept` on a complete run):
     /// `git::accept`, then `salvage` and `remove_worktree` for every one of
@@ -309,6 +320,14 @@ pub enum OpKind {
     /// Decision 36: one bisect probe (`driver/tier.rs::run_test_at`), a read,
     /// reconciled `NotStarted`. The result is `TestAt`, `SetupFailed` or `Failed`.
     TestAt(Box<crate::run::tiers::TestAtSpec>),
+    /// Decision 48: `refs_tx::create_branch(root, branch, from)`, create-only, a write
+    /// through `GitQueue::write`. The result is `StageCreated`, `RefMoved` (the branch
+    /// exists elsewhere) or `Failed`.
+    CreateStageBranch {
+        root: PathBuf,
+        branch: String,
+        from: String,
+    },
 }
 
 impl OpKind {
@@ -343,6 +362,7 @@ impl OpKind {
             OpKind::StartPlanner { .. } => "StartPlanner",
             OpKind::Tier(_) => "Tier",
             OpKind::TestAt(_) => "TestAt",
+            OpKind::CreateStageBranch { .. } => "CreateStageBranch",
         }
     }
 }
@@ -527,4 +547,6 @@ pub enum OpResult {
         tail: String,
         show: Option<String>,
     },
+    /// Decision 48: `CreateStageBranch` made the branch at its `from`.
+    StageCreated,
 }

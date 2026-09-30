@@ -219,7 +219,7 @@ fn a_paused_rebaseline_clears_the_recorded_advance() {
     let effects = fx.next(EventKind::Resume {
         reply,
         run_id: RUN_ID.into(),
-        rebaseline: Some((base.clone(), head.clone())),
+        rebaseline: Some((base.clone(), head.clone()).into()),
     });
     assert!(one_reply(&effects).is_ok(), "{effects:#?}");
     let run = fx.run();

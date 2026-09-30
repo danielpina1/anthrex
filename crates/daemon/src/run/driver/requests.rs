@@ -13,7 +13,7 @@ use proto::{BaseMovedInfo, FinishAction, RunReply, RunRequest};
 use super::RunService;
 use super::adapt::BuildError;
 use super::build::Shape;
-use crate::run::engine::EventKind;
+use crate::run::engine::{EventKind, Rebaseline};
 use crate::run::git::{self, Git};
 use crate::run::model::Run;
 use crate::run::plan::parse_plan;
@@ -211,15 +211,29 @@ impl RunService {
     pub(super) async fn resume(&self, run_id: String, rebaseline: bool) -> Result<String, String> {
         let rebaseline = if rebaseline {
             let (root, base_branch, run_branch, timeout) = self.run_refs_of(&run_id)?;
+            // Milestone 9.1 decision 47: a `Multi` run's every created stage too.
+            let stages: Vec<(u16, String)> = crate::lock(&self.state)
+                .runs
+                .get(&run_id)
+                .filter(|run| run.stage_layout == crate::run::model::StageLayout::Multi)
+                .map(|run| run.stages.iter().map(|s| (s.n, s.branch.clone())).collect())
+                .unwrap_or_default();
             let git = self.ctx.git.clone();
             let heads = blocking(move || {
-                let base_ref = format!("refs/heads/{base_branch}");
-                let run_ref = format!("refs/heads/{run_branch}");
-                let base = git::read_ref(&git, &root, &base_ref, timeout)?
-                    .ok_or_else(|| format!("{base_ref} does not exist"))?;
-                let head = git::read_ref(&git, &root, &run_ref, timeout)?
-                    .ok_or_else(|| format!("{run_ref} does not exist"))?;
-                Ok((base, head))
+                let read = |branch: &str| {
+                    let refname = format!("refs/heads/{branch}");
+                    git::read_ref(&git, &root, &refname, timeout)?
+                        .ok_or_else(|| format!("{refname} does not exist"))
+                };
+                let mut read_all = Rebaseline {
+                    base: read(&base_branch)?,
+                    head: read(&run_branch)?,
+                    stages: Vec::new(),
+                };
+                for (n, branch) in stages {
+                    read_all.stages.push((n, read(&branch)?));
+                }
+                Ok(read_all)
             })
             .await?;
             Some(heads)

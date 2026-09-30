@@ -394,6 +394,14 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
 
     let unverified = profile.check.is_none();
     let profile_hash = tiers::profile_hash(&profile);
+    // Milestone 9.1 decision 47: stage 1, on `integration` until the layout is fixed.
+    let first = super::model::StageRecord::new(
+        1,
+        super::model::task_branch(&ctx.id, "integration"),
+        &pre.base_sha,
+        Default::default(),
+        ctx.now,
+    );
     Ok(Run {
         id: ctx.id,
         goal: plan.goal,
@@ -474,6 +482,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         toolchain: None,
         graph_note: None,
         test_slots: 0,
+        stage_layout: Default::default(),
+        stages: vec![first],
     })
 }
 

@@ -74,6 +74,7 @@ mod rounds;
 mod run_scouts;
 pub(crate) mod schedule;
 mod signals;
+pub(crate) mod stages;
 mod tools;
 mod wake;
 mod worker_messages;
@@ -88,6 +89,7 @@ pub(crate) use integration::attention as integration_attention;
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
 pub use orch::{OrchEvent, ScoutEnd};
 pub use signals::INTERRUPT_GRACE_SECS;
+pub use stages::Rebaseline;
 pub use wake::notes_seq;
 
 /// Identifies a client request waiting for its [`Effect::Reply`].
@@ -158,11 +160,11 @@ pub enum EventKind {
         reply: ReplyId,
         run_id: String,
     },
-    /// `rebaseline`: the (base sha, run head) the driver read.
+    /// `rebaseline`: the refs the driver read (milestone 9.1: every stage head too).
     Resume {
         reply: ReplyId,
         run_id: String,
-        rebaseline: Option<(String, String)>,
+        rebaseline: Option<Rebaseline>,
     },
     /// Decision 21: a guard saw the base branch advance.
     BaseAdvanced {
