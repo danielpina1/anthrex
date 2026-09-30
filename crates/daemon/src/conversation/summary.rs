@@ -170,7 +170,8 @@ pub(super) fn response_text(value: &Value) -> Option<&str> {
 /// `tool_response` text the same way and by the same cap, so it reuses this rather than
 /// duplicating the grapheme-cluster-safe truncation logic.
 pub(super) fn truncate_graphemes(s: &str) -> String {
-    let graphemes: Vec<&str> = s.graphemes(true).collect();
+    // One past the cap tells whether anything was cut, without reading the rest.
+    let graphemes: Vec<&str> = s.graphemes(true).take(SUMMARY_MAX_GRAPHEMES + 1).collect();
     if graphemes.len() <= SUMMARY_MAX_GRAPHEMES {
         return s.to_string();
     }

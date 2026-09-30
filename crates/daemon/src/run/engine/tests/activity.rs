@@ -84,6 +84,43 @@ fn said_sets_activity_to_its_first_line_and_last_text_for_workers() {
     assert_eq!(round.last_text, None);
 }
 
+/// A Codex `agent_message` whose text is blank (or only breaks and spaces) after a real
+/// one keeps the real one as the worker's last message (M9.0.5.2 review finding 2).
+#[test]
+fn a_blank_codex_message_keeps_the_last_text() {
+    let said_from = |line: &str| -> AgentSignal {
+        let events = crate::headless::codex_stream::parse_line(line);
+        let [crate::headless::SessionEvent::AssistantText { text, parent: None }] =
+            events.as_slice()
+        else {
+            panic!("{events:?}");
+        };
+        said(text)
+    };
+    let message = |text: &str| {
+        serde_json::json!({
+            "type": "item.completed",
+            "item": {"id": "item_1", "type": "agent_message", "text": text},
+        })
+        .to_string()
+    };
+    let (mut fx, window) = working();
+    fx.signal(window, said_from(&message("Added the stats command.")));
+    for blank in ["", "  \n \t\n", "\u{200b}\u{202e}"] {
+        fx.signal(window, said_from(&message(blank)));
+        let round = latest(&fx, AgentRole::Worker);
+        assert_eq!(
+            round.last_text.as_deref(),
+            Some("Added the stats command."),
+            "{blank:?}"
+        );
+        assert_eq!(
+            round.activity.as_deref(),
+            Some("says: Added the stats command.")
+        );
+    }
+}
+
 #[test]
 fn activity_is_one_line_and_capped() {
     let hostile = format!("\u{1b}[2J\u{202e}{}\u{7}\r\nnext", "x".repeat(400));

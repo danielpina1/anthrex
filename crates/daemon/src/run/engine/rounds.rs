@@ -86,14 +86,16 @@ pub(super) fn note_tool(round: &mut AgentRound, name: &str, target: Option<&str>
 }
 
 /// Decisions 3 and 4: top-level text is the round's latest action (`says: ` and its
-/// first non-blank line) and, for a worker, its last message, line breaks kept.
+/// first non-blank line) and, for a worker, its last message, line breaks kept. A text
+/// that is blank once sanitised (a Codex `agent_message` with no text) changes neither.
 pub(super) fn note_said(round: &mut AgentRound, text: &str) {
     let first = text.lines().map(one_line).find(|l| !l.trim().is_empty());
     if let Some(first) = first {
         set_activity(round, &format!("says: {}", first.trim()));
     }
-    if round.role == AgentRole::Worker {
-        round.last_text = Some(cut(&multi_line(text), WORKER_SUMMARY_MAX));
+    let text = multi_line(text);
+    if round.role == AgentRole::Worker && !text.trim().is_empty() {
+        round.last_text = Some(cut(&text, WORKER_SUMMARY_MAX));
     }
 }
 
