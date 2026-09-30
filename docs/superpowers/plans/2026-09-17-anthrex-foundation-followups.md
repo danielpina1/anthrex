@@ -1607,7 +1607,10 @@ scope.
 
 ## From milestone 8c (2026-09-27), recorded by M8c.10
 
-- **The run inspector's `doing` field has no tool target** (brief Risks 6, for M9 or a
+- **Handled in milestone 9.0.5.** `TaskInfo.activity` now publishes the live round's
+  latest action with its target, and the round panel's `doing` reads `now: <activity>`
+  for that round (M9.0.5 decisions 2, 3 and 26).
+  **The run inspector's `doing` field has no tool target** (brief Risks 6, for M9 or a
   later snapshot change). The spec's mockup shows `editing crates/daemon/src/status.rs
   (last tool: apply_patch)`; neither `AgentRoundInfo` nor `WindowInfo` carries a tool's
   target, only its name. The view does not read M6.5's conversation state for it, which
@@ -1676,3 +1679,18 @@ scope.
 - **Decision 16a's snapshot is bounded, not slimmed (controller ruling, M9's whole-branch review; for M9.5).** The brief's 256 KiB bound was accepted as measured: the snapshot pins what 16a removes, under 1.25 KiB a task (`SNAPSHOT_BOUND`). A terminal run still carries its tasks in full; slimming them is left to M9.5.
 - **`OPENAI_BASE_URL` is not scrubbed from the environment a Codex session gets (M9's whole-branch review; resolved: user ruling 2026-09-29: scrub).** It is now in `config::reserved_env::OPENAI_CREDENTIALS`, so it is removed wherever the OpenAI and Codex keys are: every headless session, the orchestrator's PTY window and the engine's commands (M9 brief, "User rulings 2026-09-29", item 3). The original finding: the user's 2026-09-29 ruling named only `ANTHROPIC_BASE_URL`, which M9 scrubs. Whether Codex's base URL should be scrubbed the same way is the user's call.
 - **Onboarding scouts and deciders have no installed check (M9.17 fix round 3; for M9.5).** Run scouts and sub-planners route over the runtimes the run's start found installed; the repository-level onboarding scout (`profile/service_run.rs`, `profile/service_start.rs`) and the deciders still route by the daemon-wide config. A Codex-only user with the default config gets a Claude onboarding scout and Claude deciders, which fail at launch (the deciders then fall back).
+
+## From milestone 9.0.5 (2026-09-30), for M9.1 (tiered testing and flake handling)
+
+- **`fake-agent/tests/orch_modes.rs` flakes when the `*_BIN` variables name fake-agent.**
+  `pty_read_message_takes_a_bracketed_paste_and_typed_input` and
+  `crlf_is_one_enter_and_the_text_normalises_line_ends` time out on "the first Stop within 20s"
+  (`orch_support/mod.rs:122`).
+  - Main at 566a653 does the same: 3 of 5 runs fail with `ANTHREX_CLAUDE_BIN`/`ANTHREX_CODEX_BIN`
+    pointed at `target/debug/fake-agent`, and 5 of 5 pass with them at `/nonexistent`.
+  - On the 9.0.5 branch with `/nonexistent`, 1 of 5 runs failed.
+  - The tests seem to pick up the environment's binary; the cause is not diagnosed.
+- **`run::driver::orch_ops::tests::resolve_target_op_runs_git_off_the_worker_threads` is load
+  sensitive.** Its first, real `git rev-parse` has an 8 s timeout that expired once, under the
+  full `cargo test --workspace` on a loaded machine (load average about 5 to 6). It then passed
+  8 of 8 runs alone. It needs a measured budget per `docs/timing-budgets.md`.
