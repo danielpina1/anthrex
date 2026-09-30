@@ -375,6 +375,9 @@ fn old_run_info_still_decodes() {
     assert_eq!(task.fixes, None);
     assert_eq!(task.tier, None);
     assert!(task.weakening.is_empty());
+    // Ruling C-28 (5): the plan review's stage facts default off.
+    assert_eq!((task.atomic, task.interface_change), (false, false));
+    assert_eq!(task.atomic_reason, None);
     // An M9 `CheckInfo`, with no `tier` key.
     let m9_check = r#"{"at":1700000050,"ok":false,"code":101,"timed_out":false,"secs":30,
         "summary":"test a ... FAILED","on_candidate":true,"decider_summary":null,
@@ -392,6 +395,9 @@ fn old_run_info_still_decodes() {
     task.fixes = Some("bisect of t4".into());
     task.tier = Some(a_tier_info());
     task.weakening = vec![a_signal()];
+    task.atomic = true;
+    task.atomic_reason = Some("a protocol bump updates every client".into());
+    task.interface_change = true;
     task.last_check = Some(CheckInfo {
         tier: Some(TierInfo {
             tier: 2,
@@ -430,6 +436,11 @@ fn old_run_info_still_decodes() {
         2
     );
     assert_eq!(task.weakening[0].id, "W1");
+    assert!(task.atomic && task.interface_change);
+    assert_eq!(
+        task.atomic_reason.as_deref(),
+        Some("a protocol bump updates every client")
+    );
 }
 
 fn a_tier_record() -> TierRunRecord {

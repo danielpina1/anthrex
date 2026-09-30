@@ -120,6 +120,9 @@ fn task(
         tier: None,
         weakening: Vec::new(),
         activity: None,
+        atomic: false,
+        atomic_reason: None,
+        interface_change: false,
     }
 }
 

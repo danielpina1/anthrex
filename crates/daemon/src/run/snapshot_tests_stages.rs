@@ -321,3 +321,22 @@ fn a_reason_needs_a_letter_or_digit() {
         );
     }
 }
+
+/// Ruling C-28 (5): the plan review's stage facts reach each task's `TaskInfo`.
+#[test]
+fn a_tasks_atomic_hub_and_interface_change_are_published() {
+    let mut run = staged_run();
+    let t2 = task_mut(&mut run, "t2");
+    t2.spec.atomic = true;
+    t2.spec.atomic_reason = Some("the wire type changes for every client".into());
+    t2.spec.interface_change = true;
+    let info = published(run);
+    let t = |id: &str| info.tasks.iter().find(|t| t.id == id).unwrap();
+    assert_eq!((t("t2").atomic, t("t2").interface_change), (true, true));
+    assert_eq!(
+        t("t2").atomic_reason.as_deref(),
+        Some("the wire type changes for every client")
+    );
+    assert_eq!((t("t1").atomic, t("t1").interface_change), (false, false));
+    assert_eq!(t("t1").atomic_reason, None);
+}

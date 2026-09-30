@@ -401,6 +401,9 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         weakening: super::engine::weakening::signal_infos(t),
         // Milestone 9.0.5 decision 2: the live round's only.
         activity: super::snapshot_detail::live_activity(t),
+        atomic: t.spec.atomic,
+        atomic_reason: t.spec.atomic_reason.clone(),
+        interface_change: t.spec.interface_change,
     }
 }
 

@@ -183,6 +183,9 @@ pub(super) fn a_task_info() -> TaskInfo {
         tier: None,
         weakening: Vec::new(),
         activity: None,
+        atomic: false,
+        atomic_reason: None,
+        interface_change: false,
     }
 }
 

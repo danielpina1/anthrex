@@ -250,6 +250,14 @@ pub struct TaskInfo {
     /// `task_detail::ACTIVITY_MAX` characters; `None` without a live round.
     #[serde(default)]
     pub activity: Option<String>,
+    /// Milestone 9.1 decision 54, for the plan review (ruling C-28 (5)): the task is its
+    /// stage's one atomic hub, with the plan's reason, and it changes an interface.
+    #[serde(default)]
+    pub atomic: bool,
+    #[serde(default)]
+    pub atomic_reason: Option<String>,
+    #[serde(default)]
+    pub interface_change: bool,
 }
 
 fn first_stage() -> u16 {
