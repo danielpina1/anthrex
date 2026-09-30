@@ -397,7 +397,8 @@ impl App {
             KeyCode::Esc => self.close_run_view(),
             KeyCode::Char(c @ ('a' | 'x' | 'e' | 'd')) => {
                 let run_id = view.run_id.clone();
-                return Some(self.on_gate_key(run_id, c));
+                let selected = self.tree.selected.clone();
+                return Some(self.on_gate_key(run_id, c, selected));
             }
             // Milestone 9 decision 13: the user's submit, on a planning run's root only.
             KeyCode::Char('s') => {

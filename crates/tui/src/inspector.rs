@@ -327,7 +327,7 @@ fn git_text(state: &GitState) -> String {
 
 mod panel;
 mod run;
-mod run_format;
+pub(crate) mod run_format;
 mod run_orch;
 mod run_round;
 mod run_task;
