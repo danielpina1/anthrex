@@ -42,6 +42,7 @@ pub fn render(frame: &mut Frame, inspection: &Inspection, area: Rect) {
     let lines = match inspection.layout {
         FieldLayout::Columns => lines(inspection, width, height),
         FieldLayout::Rows => rows::lines(inspection, width, height),
+        FieldLayout::Sections => sections::lines(inspection, width, height),
     };
     frame.render_widget(Paragraph::new(lines), inner);
 }
@@ -343,6 +344,7 @@ fn pad(text: &str, width: usize) -> String {
 }
 
 mod rows;
+pub(super) mod sections;
 
 #[cfg(test)]
 mod tests;

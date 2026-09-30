@@ -6,6 +6,7 @@ use super::run_view::{select_nav, three};
 use super::*;
 use crate::inspector::{
     INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL, MIN_INTERIOR_FOR_RUN_PANEL, RUN_INSPECTOR_HEIGHT,
+    RUN_INSPECTOR_TALL_HEIGHT,
 };
 use crate::tree::RunFilter;
 use crate::tree::run_fixtures::{RUN_ID, gemini_fixture};
@@ -81,11 +82,13 @@ fn the_run_view_gets_the_tall_panel() {
                 .ends_with("M · tdd · review round 2"),
         "{panel}"
     );
-    // The ninth field row: the tall panel has room for the task's `history`.
+    // Milestone 9.0.5: the task is GOAL, STATUS and RESULT; the ninth body row of
+    // the twelve-row panel is STATUS's `route` (was M8c's flat `history`).
     assert!(
-        lines[9].contains("history   12:31 review r1 changes"),
+        lines[2].contains("GOAL") && lines[4].contains("STATUS"),
         "{panel}"
     );
+    assert!(lines[10].contains("route     codex · standard"), "{panel}");
     assert!(lines[11].starts_with('╰'), "{panel}");
 
     // The project overview at the same size keeps milestone 4.7's eight rows, even with
@@ -120,7 +123,8 @@ fn a_short_terminal_steps_down() {
         "{panel}"
     );
     assert!(lines[1].contains("◐ t2  map Gemini hook events"), "{panel}");
-    assert!(lines[6].contains("tries     review 1/2 bounces"), "{panel}");
+    // Milestone 9.0.5: STATUS's `worker` (was M8c's flat `tries`).
+    assert!(lines[6].contains("worker    worker #1 · codex"), "{panel}");
 
     assert_eq!(
         footer_at(&mut app, MIN_INTERIOR_FOR_PANEL),
@@ -268,4 +272,94 @@ fn no_panic_at_degenerate_sizes_in_the_run_view() {
         steps.iter().all(|count| *count > 0),
         "every step was reached: {steps:?}"
     );
+}
+
+/// `t2`'s detail, landed: a five-line brief and two criteria.
+fn with_t2_detail(app: &mut App) {
+    use crate::app::task_detail::{DetailState, TaskDetailCache, detail_key};
+    let task = app.runs.runs[0]
+        .tasks
+        .iter()
+        .find(|t| t.id == "t2")
+        .unwrap();
+    app.task_detail = Some(TaskDetailCache {
+        run_id: "r1".into(),
+        task_id: "t2".into(),
+        key: detail_key(task),
+        state: DetailState::Ready(Box::new(proto::TaskDetailInfo {
+            run_id: "r1".into(),
+            task_id: "t2".into(),
+            brief: "Map each Gemini hook event to a status.\nSubagentStop pairs with its start.\nStop marks the agent idle.\nNotification asks for input.\nKeep the table in one place.".into(),
+            acceptance: vec!["every event maps".into(), "stop marks idle".into()],
+            worker_summary: None,
+            summary_source: None,
+        })),
+    });
+}
+
+/// The task panel's rows in a `width` x `height` terminal.
+fn task_panel(width: u16, height: u16) -> Vec<String> {
+    let mut app = gemini_view();
+    with_t2_detail(&mut app);
+    let layout = laid_out(&mut app, width, height);
+    let view = overview::view(&app, layout.main);
+    text_in(&drawn(&app, width, height), view.footer)
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Milestone 9.0.5 decision 22 at M8c's twelve rows: GOAL first, the brief collapsed.
+#[test]
+fn task_panel_renders_at_80x24() {
+    assert_eq!(
+        task_panel(80, 24),
+        [
+            "╭──────────────────────────────────────────╮",
+            "│ ◐ t2  map Gemini hook events to status   │",
+            "│ GOAL                                     │",
+            "│ brief     Map each Gemini hook event to  │",
+            "│           a status.                      │",
+            "│           SubagentStop pairs with its    │",
+            "│           … (b: more)                    │",
+            "│ done when ☐ every event maps             │",
+            "│           ☐ stop marks idle              │",
+            "│ STATUS                                   │",
+            "│ stage     in review                      │",
+            "╰──────────────────────────────────────────╯",
+        ]
+    );
+}
+
+/// Decision 25's tall step: eighteen rows at 40.
+#[test]
+fn task_panel_renders_at_120x40() {
+    let rows = task_panel(120, 40);
+    assert_eq!(rows.len(), usize::from(RUN_INSPECTOR_TALL_HEIGHT));
+    let inner: Vec<&str> = rows[1..rows.len() - 1]
+        .iter()
+        .map(|row| row.trim_start_matches("│ ").trim_end_matches(['│', ' ']))
+        .collect();
+    assert_eq!(
+        inner,
+        [
+            "◐ t2  map Gemini hook events to status                  M · tdd · review round 2",
+            "GOAL",
+            "brief     Map each Gemini hook event to a status.",
+            "          SubagentStop pairs with its start.",
+            "          Stop marks the agent idle.",
+            "          … (b: more)",
+            "done when ☐ every event maps",
+            "          ☐ stop marks idle",
+            "STATUS",
+            "stage     in review",
+            "worker    worker #1 · codex · 26m · 41 tool calls",
+            "check     ✓ passed · test result: ok",
+            "review    in review · round 2",
+            "stages    done ✓ → proof ✓ → check ✓ → review ● → merge ·",
+            "route     codex · standard · high effort → reviewer claude · frontier",
+            "deps      waits on t0 ✓ t6 ✓ · unblocks t3, t7 · on critical path",
+        ]
+    );
+    assert!(rows[0].starts_with('╭') && rows[17].starts_with('╰'));
 }

@@ -54,7 +54,7 @@ pub(super) fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec
 /// The glyph and the bold name, then the muted right-hand text flush with the right
 /// edge. When the name, two spaces and the right text do not fit, the right text is
 /// dropped and the name truncated as milestone 4.7's title is.
-fn title(inspection: &Inspection, width: usize) -> Line<'static> {
+pub(super) fn title(inspection: &Inspection, width: usize) -> Line<'static> {
     let glyph_width = UnicodeWidthStr::width(inspection.glyph.content.as_ref());
     let name_width = UnicodeWidthStr::width(inspection.name.as_str());
     if let Some(right) = inspection.right.as_deref() {

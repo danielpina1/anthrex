@@ -95,6 +95,7 @@ pub(super) fn rows(
         right: Some(right),
         fields,
         layout: FieldLayout::Rows,
+        ..Default::default()
     }
 }
 

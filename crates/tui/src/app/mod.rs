@@ -191,6 +191,11 @@ pub struct App {
     /// Decision 21: the Alerts box's focus; `app/alerts.rs` keeps the keymap's alerts
     /// mode in step with it.
     pub alerts_focus: Option<alerts::AlertsFocus>,
+    /// Decisions 23 and 25: the inspected task's detail, and the task panel's scroll
+    /// and brief expansion, each honoured only while its node is the selection.
+    pub task_detail: Option<task_detail::TaskDetailCache>,
+    pub inspector_scroll: Option<(tree::NodeKey, u16)>,
+    pub brief_expanded: Option<tree::NodeKey>,
 }
 
 impl App {
@@ -244,6 +249,9 @@ impl App {
             plan_review: None,
             body_area: ratatui::layout::Rect::default(),
             alerts_focus: None,
+            task_detail: None,
+            inspector_scroll: None,
+            brief_expanded: None,
             settings,
         }
     }
@@ -397,6 +405,7 @@ impl App {
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        self.forget_stale_panel_state();
         if self.modal.is_some() {
             return self.on_modal_key(key);
         }
@@ -485,6 +494,7 @@ impl App {
     /// `Subscribe`, flushes a debounced resize.
     pub fn on_tick(&mut self) -> Vec<Effect> {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
+        self.forget_stale_panel_state();
         if self
             .toast
             .as_ref()
@@ -513,7 +523,8 @@ impl App {
                 })];
             }
         }
-        vec![]
+        // Decision 23: the inspected task's detail, once per task and key.
+        self.check_task_detail().into_iter().collect()
     }
 }
 
@@ -532,6 +543,7 @@ mod run_enter;
 mod run_gate;
 mod run_holds;
 mod runs;
+pub(crate) mod task_detail;
 mod windows;
 
 #[cfg(test)]

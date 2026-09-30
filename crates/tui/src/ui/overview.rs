@@ -12,7 +12,7 @@ use super::tree_view;
 use crate::graph::{self, Pan, paint::paint, viewport::GraphGeometry};
 use crate::inspector::{
     self, INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL, MIN_INTERIOR_FOR_RUN_PANEL,
-    RUN_INSPECTOR_HEIGHT,
+    MIN_INTERIOR_FOR_TALL_RUN_PANEL, RUN_INSPECTOR_HEIGHT, RUN_INSPECTOR_TALL_HEIGHT,
 };
 use crate::tree::{self, Row, RowKind};
 use crate::{app::App, theme};
@@ -39,6 +39,8 @@ pub fn areas(main: Rect, inspector_visible: bool, run_view: bool) -> (Rect, Rect
     let inner = super::inset(main);
     let footer_height = if !inspector_visible {
         inner.height.min(1)
+    } else if run_view && inner.height >= MIN_INTERIOR_FOR_TALL_RUN_PANEL {
+        RUN_INSPECTOR_TALL_HEIGHT
     } else if run_view && inner.height >= MIN_INTERIOR_FOR_RUN_PANEL {
         RUN_INSPECTOR_HEIGHT
     } else if inner.height >= MIN_INTERIOR_FOR_PANEL {
@@ -84,7 +86,10 @@ impl View {
     /// run view's tall one — so what is drawn there can never disagree with the
     /// height it was drawn into.
     fn shows_panel(&self) -> bool {
-        matches!(self.footer.height, INSPECTOR_HEIGHT | RUN_INSPECTOR_HEIGHT)
+        matches!(
+            self.footer.height,
+            INSPECTOR_HEIGHT | RUN_INSPECTOR_HEIGHT | RUN_INSPECTOR_TALL_HEIGHT
+        )
     }
 }
 

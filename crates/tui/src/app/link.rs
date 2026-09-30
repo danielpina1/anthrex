@@ -160,6 +160,7 @@ impl App {
         // Whole-branch review M2: a submitting edit form's reply went with the link.
         self.edit_not_sent(None);
         self.goal_not_sent(None);
+        self.forget_task_detail_in_flight();
         self.toast("connection to the daemon lost");
         vec![]
     }
@@ -250,6 +251,12 @@ impl App {
             ClientMsg::Run(RunRequest::Subscribe) => self.run_subscribed = false,
             // A dropped keystroke is not worth a toast; the next one will try again.
             ClientMsg::Input { .. } => {}
+            // Milestone 9.0.5 decision 23: quiet; the panel says the detail was not
+            // sent, and the task's next key asks again (never a retry per tick).
+            ClientMsg::RunTagged {
+                id,
+                request: RunRequest::TaskDetail { .. },
+            } => self.task_detail_not_sent(*id),
             _ => {
                 // Whole-branch review M2: a refused `Edit` frees its submitting form;
                 // milestone 9: the form's own tagged request, and the goal form's.

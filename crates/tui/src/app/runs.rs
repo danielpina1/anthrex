@@ -195,6 +195,10 @@ impl App {
                 message,
                 request_id,
             } => {
+                // Decision 23: the task detail's refusal is the panel's, not a toast.
+                if self.on_task_detail_refused(&message, request_id) {
+                    return vec![];
+                }
                 let text =
                     first_line_and_more(&message).unwrap_or_else(|| format!("{request} refused"));
                 if let Some(form) = self.form_waiting_on(request_id) {
@@ -228,9 +232,8 @@ impl App {
             | RunReply::ConfirmNeeded { .. }
             | RunReply::ToolResult { .. }
             | RunReply::Profile { .. }
-            | RunReply::Stats { .. }
-            // Milestone 9.0.5: the task panel reads it from task M9.0.5.10.
-            | RunReply::TaskDetail { .. } => {}
+            | RunReply::Stats { .. } => {}
+            RunReply::TaskDetail { detail, request_id } => self.on_task_detail(detail, request_id),
         }
         vec![]
     }
@@ -402,6 +405,12 @@ impl App {
                 let run_id = view.run_id.clone();
                 let selected = self.tree.selected.clone();
                 return Some(self.on_gate_key(run_id, c, selected));
+            }
+            // Milestone 9.0.5 decision 25: the task panel's scroll and brief.
+            KeyCode::PageUp | KeyCode::PageDown | KeyCode::Char('b') => {
+                if !self.on_task_panel_key(key.code) {
+                    return None;
+                }
             }
             // Milestone 9.0.5 decision 14: the plan review of what awaits approval.
             KeyCode::Char('p') => {

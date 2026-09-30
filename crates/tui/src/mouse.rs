@@ -119,6 +119,7 @@ impl App {
     }
 
     pub fn on_click(&mut self, column: u16, row: u16, layout: &ui::Layout) -> Vec<Effect> {
+        self.forget_stale_panel_state();
         if self.modal.is_some() || self.plan_review.is_some() {
             return vec![];
         }
