@@ -185,6 +185,25 @@ pub fn validate_glob(glob: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Ruling C-27 (M-3): `path` as an `owns` entry that names exactly that file. Every
+/// glob metacharacter (`*`, `?`, `[`, `]`, `{`, `}`) becomes a one-character class
+/// (`[*]`), which `globset` matches literally; `\` is not allowed in `owns`
+/// ([`validate_glob`]), so it cannot be the escape. A path free of them is unchanged.
+pub fn escape_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        match c {
+            '*' | '?' | '[' | ']' | '{' | '}' => {
+                out.push('[');
+                out.push(c);
+                out.push(']');
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Decision 56's literal-name check: does `owns` contain `path`, named exactly, with no
 /// glob metacharacter? A literal entry is compared after dropping a leading `./` and a
 /// trailing `/`. A wildcard never counts, and neither does a plain directory entry that

@@ -120,3 +120,65 @@ fn a_rebaseline_that_moves_only_the_upper_stage_checks_it_again() {
     assert!(propagates(&fx).is_empty());
     assert_eq!(fx.run().stage_head(2), Some(commit(7).as_str()));
 }
+
+/// Ruling C-27 (M-3): a conflicted path with glob metacharacters is owned exactly: the
+/// sync task's `owns` names that path and no other, while its brief shows the path as
+/// it is.
+#[test]
+fn a_sync_task_owns_its_conflicted_paths_exactly() {
+    let (mut fx, windows) = super::propagate::stages(false);
+    super::bisect::with_orchestrator(&mut fx);
+    super::propagate::merge_t1(&mut fx, &windows);
+    let (op, _) = super::propagate::propagate(&fx);
+    let files = vec!["src/[id].rs".to_string(), "a*b.txt".to_string()];
+    fx.done(
+        op,
+        OpResult::Conflict {
+            files,
+            tree: Some("7".repeat(40)),
+        },
+    );
+    let fix = fx.task("fix1").clone();
+    assert_eq!(fix.spec.owns, ["src/[[]id[]].rs", "a[*]b.txt"]);
+    let owns = crate::run::globs::OwnsMatcher::new(&fix.spec.owns).unwrap();
+    for (path, owned) in [
+        ("src/[id].rs", true),
+        ("a*b.txt", true),
+        ("src/i.rs", false),
+        ("src/d.rs", false),
+        ("aXb.txt", false),
+        ("ab.txt", false),
+    ] {
+        assert_eq!(owns.matches(path), owned, "{path}");
+    }
+    assert!(
+        fix.spec.brief.contains("\n- src/[id].rs\n- a*b.txt\n"),
+        "{}",
+        fix.spec.brief
+    );
+}
+
+/// Ruling C-27 (M-3): a conflicted path no `owns` entry can name (a `\`) adds no sync
+/// task: the propagate is held red, its attention line naming the path.
+#[test]
+fn a_conflicted_path_that_cannot_be_owned_holds_the_propagate_red() {
+    let (mut fx, windows) = super::propagate::stages(false);
+    super::bisect::with_orchestrator(&mut fx);
+    super::propagate::merge_t1(&mut fx, &windows);
+    let (op, _) = super::propagate::propagate(&fx);
+    fx.done(
+        op,
+        OpResult::Conflict {
+            files: vec!["docs/a.md".to_string(), "back\\slash.md".to_string()],
+            tree: Some("7".repeat(40)),
+        },
+    );
+    assert!(fx.run().task("fix1").is_none());
+    let line = "propagate of stage 1 into stage 2 conflicted: the conflicted path back\\slash.md cannot be owned exactly (must not contain \\)";
+    assert!(
+        super::full::attention(&fx).iter().any(|l| l == line),
+        "{:?}",
+        super::full::attention(&fx)
+    );
+    assert!(fx.run().stage(2).unwrap().propagate_red.is_some());
+}

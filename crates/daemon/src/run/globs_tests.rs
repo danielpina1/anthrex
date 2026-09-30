@@ -258,3 +258,34 @@ fn path_module_agrees_with_glob_module() {
     assert_eq!(path_module("docs/x.md", &modules), None);
     assert_eq!(path_module("crates/proto/src/a.rs", &[]), None);
 }
+
+/// Ruling C-27 (M-3): a path escaped as a glob names that path and no other.
+#[test]
+fn an_escaped_path_names_only_itself() {
+    for (path, escaped, others) in [
+        (
+            "src/[id].rs",
+            "src/[[]id[]].rs",
+            &["src/i.rs", "src/d.rs"][..],
+        ),
+        (
+            "a*b.txt",
+            "a[*]b.txt",
+            &["aXb.txt", "ab.txt", "a/b.txt"][..],
+        ),
+        (
+            "q?{x,y}.md",
+            "q[?][{]x,y[}].md",
+            &["qa{x,y}.md", "q?x.md"][..],
+        ),
+        ("plain/file.rs", "plain/file.rs", &["plain/other.rs"][..]),
+    ] {
+        assert_eq!(escape_path(path), escaped);
+        validate_glob(escaped).unwrap();
+        let owns = OwnsMatcher::new(&[escaped.to_string()]).unwrap();
+        assert!(owns.matches(path), "{escaped} does not match {path}");
+        for other in others {
+            assert!(!owns.matches(other), "{escaped} matches {other}");
+        }
+    }
+}

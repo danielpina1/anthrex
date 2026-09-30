@@ -358,6 +358,18 @@ fn conflicted(
             now,
         );
     };
+    // Ruling C-27 (M-3): each conflicted path is owned exactly, never as a glob that
+    // could name other files; a path no `owns` entry can name holds the propagate red.
+    let mut owns = Vec::with_capacity(files.len());
+    for file in &files {
+        let entry = crate::run::globs::escape_path(file);
+        if let Err(why) = crate::run::globs::validate_glob(&entry) {
+            let line =
+                format!("{what}: the conflicted path {file} cannot be owned exactly ({why})");
+            return refused(run, spec, line, now);
+        }
+        owns.push(entry);
+    }
     let id = next_fix_id(run);
     let fix = FixSpec {
         origin: TaskOrigin::Sync,
@@ -370,7 +382,7 @@ fn conflicted(
         title: sync_fix_title(k, n),
         brief: sync_fix_brief(&id, k, n, &files),
         acceptance: sync_fix_acceptance(),
-        owns: files,
+        owns,
         size: Size::M,
         epic: None,
         route: RouteSpec::default(),
