@@ -23,7 +23,7 @@ use super::plan::PlanError;
 use super::roster::pick_reviewer;
 use super::validate::{
     EditScope, combined_cycles, implicit_deps, protected_notes, reserved_new_id,
-    resolve_task_lenient, validate_tasks_with,
+    resolve_task_lenient, split_child_stage, validate_tasks_with,
 };
 
 /// What the engine must do after a batch is applied; the model change itself is already
@@ -311,9 +311,13 @@ impl Batch {
             ));
             return;
         }
-        self.errors
-            .extend(into.iter().filter_map(|s| reserved_new_id(&s.id)));
-        let children: Vec<Task> = into.iter().map(|s| self.resolve(s.clone())).collect();
+        let parent = self.run.tasks[i].spec.stage;
+        let mut specs = into.to_vec();
+        for s in &mut specs {
+            self.errors.extend(reserved_new_id(&s.id));
+            self.errors.extend(split_child_stage(parent, s));
+        }
+        let children: Vec<Task> = specs.into_iter().map(|s| self.resolve(s)).collect();
         for child in &children {
             self.add_deps_of(child);
         }
@@ -412,6 +416,13 @@ impl Batch {
                 );
             }
             return;
+        }
+        // Ruling C-14 (d): a blocked task with a worktree has started too.
+        if stage.is_some() && self.run.tasks[i].start_commit.is_some() {
+            let text = format!("task {task_id} has started: its stage cannot change");
+            return self
+                .errors
+                .push(PlanError::new(Some(task_id), "", "13", text));
         }
 
         let mut spec = self.run.tasks[i].spec.clone();

@@ -21,28 +21,40 @@ fn numbered(id: &str, prefix: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// Decision 39: a **new** task of any source may not take a `fix<n>` id. An existing
-/// one (the engine's own fix task, or one an older `run.json` holds) stays amendable,
-/// so this is checked where tasks are added (`build_run`, `add_task`, `split_task`),
-/// not in `check_fields`, which an amend re-runs.
+/// Decisions 39 and 45: a **new** task of any source may not take a `fix<n>` or a
+/// `stage-<n>` id. An existing one (the engine's own fix task, or one an older
+/// `run.json` holds) stays amendable (controller ruling C-14 (e)), so this is checked
+/// where tasks are added (`build_run`, `add_task`, `split_task`), not in
+/// `check_fields`, which an amend re-runs.
 pub(crate) fn reserved_new_id(id: &str) -> Option<PlanError> {
-    numbered(id, "fix").then(|| PlanError::new(Some(id), "id", "id", FIX_ID_MESSAGE))
+    let e = |message: String| PlanError::new(Some(id), "id", "id", message);
+    if numbered(id, "fix") {
+        Some(e(FIX_ID_MESSAGE.to_string()))
+    } else if is_valid_id(id) && numbered(id, "stage-") {
+        Some(e(format!("{id} is reserved for stage branches")))
+    } else {
+        None
+    }
 }
 
-/// One task's own fields: a `stage-<n>` id names a stage branch (decision 45), the
-/// stage is 1 to `STAGES_MAX` (decision 44), and an atomic task gives its reason
-/// (decision 54).
+/// Controller ruling C-14 (a): a split cannot change stages, so a child takes its
+/// parent's stage. `stage` defaults to 1 in serde, so a child naming 1 cannot be told
+/// from one naming none, and takes the parent's too; any other stage is refused.
+pub(super) fn split_child_stage(parent: u16, child: &mut PlanTask) -> Option<PlanError> {
+    let named = child.stage;
+    child.stage = parent;
+    (named != parent && named != 1).then(|| {
+        let message = "children stay in their parent's stage";
+        PlanError::new(Some(&child.id), "split_task", "4.1", message)
+    })
+}
+
+/// One task's own fields: the stage is 1 to `STAGES_MAX` (decision 44), and an atomic
+/// task gives its reason (decision 54).
 pub(super) fn check_stage_fields(spec: &PlanTask, errors: &mut Vec<PlanError>) {
     let id = spec.id.as_str();
     let e =
         |field: &str, rule: &str, message: String| PlanError::new(Some(id), field, rule, message);
-    if is_valid_id(id) && numbered(id, "stage-") {
-        errors.push(e(
-            "id",
-            "id",
-            format!("{id} is reserved for stage branches"),
-        ));
-    }
     if !(1..=STAGES_MAX).contains(&spec.stage) {
         errors.push(e(
             "stage",

@@ -18,7 +18,7 @@ use super::plan::PlanError;
 use super::roster;
 use super::validate_kinds::{READER_TEST_MODE_NOTE, check_reader_fields, is_reader};
 use super::validate_stages::check_stage_fields;
-pub(super) use super::validate_stages::reserved_new_id;
+pub(super) use super::validate_stages::{reserved_new_id, split_child_stage};
 
 pub use super::validate_graph::{
     EditScope, combined_cycles, implicit_deps, validate_tasks, validate_tasks_with,

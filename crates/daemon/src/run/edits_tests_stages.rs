@@ -42,14 +42,27 @@ fn amend_stage_only_before_start() {
         rejected(&working, vec![amend_stage("t4", 2, None)]),
         [refusal]
     );
-    // Review of M9.1.3: a stage with another field is refused as a whole; the
-    // priority is not applied without it.
-    let before = working.clone();
-    assert_eq!(
-        rejected(&working, vec![amend_stage("t4", 2, Some(5))]),
-        [refusal]
+    // Review of M9.1.3: a stage with another field is refused as a whole, so the
+    // priority it carries is not applied (ruling C-14 (f): the batch itself is
+    // rejected), while the priority alone is.
+    let combined = apply(&working, vec![amend_stage("t4", 2, Some(5))]);
+    let errors: Vec<String> = combined
+        .expect_err("the combined amend is rejected")
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(errors, [refusal]);
+    let (edited, _) = applied(
+        &working,
+        vec![amend(
+            "t4",
+            Amend {
+                priority: Some(5),
+                ..Amend::default()
+            },
+        )],
     );
-    assert_eq!(working, before);
+    assert_eq!(edited.task("t4").unwrap().spec.priority, 5);
     // A paused task has started (milestone 9 decision 42c).
     let mut paused = chain();
     set_state(
@@ -132,5 +145,62 @@ fn an_existing_fix_task_can_still_be_amended() {
     assert_eq!(
         rejected(&run, vec![add(&one("fix2", ""))]),
         ["task fix2: id: fix<n> ids are reserved for fix tasks the engine adds"]
+    );
+}
+
+/// Ruling C-14 (d): a blocked task with a worktree has started, so its stage stays; the
+/// per-state text of `not_started` does not fit a blocked task, so it gets its own.
+#[test]
+fn a_blocked_task_with_a_start_commit_keeps_its_stage() {
+    for reason in [BlockReason::Human, BlockReason::Conflict] {
+        let mut run = chain();
+        set_state(&mut run, "t4", TaskState::Blocked, Some(reason));
+        run.tasks[3].start_commit = Some("c".repeat(40));
+        assert_eq!(
+            rejected(&run, vec![amend_stage("t4", 2, Some(5))]),
+            ["task t4 has started: its stage cannot change"],
+            "{reason:?}"
+        );
+        // Without a start commit it has not started, and moves.
+        run.tasks[3].start_commit = None;
+        let (edited, _) = applied(&run, vec![amend_stage("t4", 2, None)]);
+        assert_eq!(stage_of(&edited, "t4"), 2, "{reason:?}");
+    }
+}
+
+/// Ruling C-14 (a): split children take their parent's stage; a child naming another
+/// stage is refused. `stage` defaults to 1 in serde, so a child naming 1 cannot be told
+/// from one naming none, and takes the parent's stage too.
+#[test]
+fn split_children_take_their_parents_stage() {
+    // t4 in stage 2 (t1..t3 stay in stage 1).
+    let (run, _) = applied(&chain(), vec![amend_stage("t4", 2, None)]);
+    let split = |children: Vec<String>| PlanEdit::SplitTask {
+        task_id: "t4".into(),
+        into: children.iter().map(|c| spec(c)).collect(),
+    };
+    let (edited, _) = applied(
+        &run,
+        vec![split(vec![one("t5", ""), one("t6", "stage = 1")])],
+    );
+    assert_eq!(stage_of(&edited, "t5"), 2);
+    assert_eq!(stage_of(&edited, "t6"), 2);
+    assert_eq!(
+        rejected(&run, vec![split(vec![one("t5", "stage = 3")])]),
+        ["task t5: split_task: children stay in their parent's stage"]
+    );
+}
+
+/// Ruling C-14 (e): `stage-<n>` is reserved for new tasks only, as `fix<n>` is, so a
+/// task an M9 run already holds under that name can still be amended.
+#[test]
+fn an_existing_stage_named_task_can_still_be_amended() {
+    let mut run = flat();
+    run.tasks[3].spec.id = "stage-3".into();
+    let (edited, _) = applied(&run, vec![amend_stage("stage-3", 1, Some(9))]);
+    assert_eq!(edited.task("stage-3").unwrap().spec.priority, 9);
+    assert_eq!(
+        rejected(&run, vec![add(&one("stage-4", ""))]),
+        ["task stage-4: id: stage-4 is reserved for stage branches"]
     );
 }
