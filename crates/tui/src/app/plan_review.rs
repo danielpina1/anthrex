@@ -332,6 +332,15 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.move_review_selection(-1),
             KeyCode::PageDown => self.scroll_review(true),
             KeyCode::PageUp => self.scroll_review(false),
+            // Review finding 6: a hold review's `a` and `x` decide the hold under
+            // review, whatever hold its selected task names.
+            KeyCode::Char(c @ ('a' | 'x')) if matches!(review.target, ReviewTarget::Hold(_)) => {
+                let ReviewTarget::Hold(hold) = review.target.clone() else {
+                    return vec![];
+                };
+                let run_id = review.run_id.clone();
+                return self.decide_hold(&run_id, c, &hold);
+            }
             KeyCode::Char(c @ ('a' | 'x' | 'e' | 'd')) => {
                 let run_id = review.run_id.clone();
                 let selected = review.selected.clone().map(|id| NodeKey::Task {
@@ -375,25 +384,38 @@ impl App {
 
     /// The page keys: by the right pane's height minus one, clamped to its content, by
     /// the same row count the renderer draws (`detail_lines`).
+    ///
+    /// The scroll is clamped first (review finding 3): content that shrank, or a body
+    /// that grew, since the last step leaves it past the end, and a page up must step
+    /// from the end the user sees.
     fn scroll_review(&mut self, down: bool) {
         let right = panes(self.body_area).right;
-        let rows = self.reviewed().and_then(|(run, tasks)| {
-            let selected = self.plan_review.as_ref()?.selected.as_ref()?;
-            let task = tasks.into_iter().find(|task| task.id == *selected)?;
-            Some(detail_lines(run, task, right.width).len())
-        });
-        let (Some(rows), Some(review)) = (rows, self.plan_review.as_mut()) else {
+        let (Some(max), Some(review)) = (self.review_max_scroll(), self.plan_review.as_mut())
+        else {
             return;
         };
-        let max = u16::try_from(rows)
-            .unwrap_or(u16::MAX)
-            .saturating_sub(right.height);
         let page = right.height.saturating_sub(1).max(1);
+        let from = review.scroll.min(max);
         review.scroll = if down {
-            review.scroll.saturating_add(page).min(max)
+            from.saturating_add(page).min(max)
         } else {
-            review.scroll.saturating_sub(page).min(max)
+            from.saturating_sub(page)
         };
+    }
+
+    /// The last first row of the selected task's detail at `body_area`: its rows, by
+    /// the renderer's own count, less the pane's height.
+    fn review_max_scroll(&self) -> Option<u16> {
+        let right = panes(self.body_area).right;
+        let (run, tasks) = self.reviewed()?;
+        let selected = self.plan_review.as_ref()?.selected.as_ref()?;
+        let task = tasks.into_iter().find(|task| task.id == *selected)?;
+        let rows = detail_lines(run, task, right.width).len();
+        Some(
+            u16::try_from(rows)
+                .unwrap_or(u16::MAX)
+                .saturating_sub(right.height),
+        )
     }
 
     /// Decision 14's `p` in the run view on `run_id`: the gate while the run awaits
@@ -461,6 +483,12 @@ impl App {
             return;
         };
         if review.selected.as_ref().is_some_and(|id| ids.contains(id)) {
+            // Review finding 3: the same task, perhaps shorter now.
+            if let Some(max) = self.review_max_scroll()
+                && let Some(review) = self.plan_review.as_mut()
+            {
+                review.scroll = review.scroll.min(max);
+            }
             return;
         }
         let at = position.unwrap_or(0).min(ids.len().saturating_sub(1));

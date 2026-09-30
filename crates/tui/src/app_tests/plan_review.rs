@@ -13,7 +13,7 @@ use proto::{HoldState, PlanEdit, RunRequest, RunState, RunsSnapshot, Size, TaskS
 use ratatui::layout::Rect;
 
 /// The gate fixture with a third task `t3` after `t1`, and a 40-line brief on `t1`.
-fn gate_snapshot() -> (RunsSnapshot, Vec<WindowInfo>) {
+pub(super) fn gate_snapshot() -> (RunsSnapshot, Vec<WindowInfo>) {
     let (mut snap, windows) = gate_fixture();
     let run = &mut snap.runs[0];
     run.tasks[0].brief = (1..=40)
@@ -27,7 +27,7 @@ fn gate_snapshot() -> (RunsSnapshot, Vec<WindowInfo>) {
 }
 
 /// The run view open on the gate snapshot, its root selected.
-fn gate_app() -> App {
+pub(super) fn gate_app() -> App {
     let (snap, windows) = gate_snapshot();
     let mut app = app_with_runs(windows, snap);
     open_run_view(&mut app, RUN_ID);
@@ -36,7 +36,7 @@ fn gate_app() -> App {
 
 /// The held fixture (hold `epic:ui` over `t2`) and a second, older awaiting hold
 /// `epic:api` over a new held task `t4`.
-fn two_holds() -> (RunsSnapshot, Vec<WindowInfo>) {
+pub(super) fn two_holds() -> (RunsSnapshot, Vec<WindowInfo>) {
     let (mut snap, windows) = held_fixture();
     let run = &mut snap.runs[0];
     let mut t4 = task("t4", "api", Size::S, TaskState::Pending);
@@ -48,14 +48,14 @@ fn two_holds() -> (RunsSnapshot, Vec<WindowInfo>) {
     (snap, windows)
 }
 
-fn held_app(snap: (RunsSnapshot, Vec<WindowInfo>)) -> App {
+pub(super) fn held_app(snap: (RunsSnapshot, Vec<WindowInfo>)) -> App {
     let (snap, windows) = snap;
     let mut app = app_with_runs(windows, snap);
     open_run_view(&mut app, RUN_ID);
     app
 }
 
-fn review(app: &App) -> &PlanReview {
+pub(super) fn review(app: &App) -> &PlanReview {
     app.plan_review.as_ref().expect("the review is open")
 }
 
@@ -73,7 +73,7 @@ fn review_ids(app: &App) -> Vec<String> {
         .collect()
 }
 
-fn confirm(app: &App) -> (&str, &PendingAction) {
+pub(super) fn confirm(app: &App) -> (&str, &PendingAction) {
     match &app.modal {
         Some(Modal::Confirm { message, action }) => (message, action),
         other => panic!("no confirm: {other:?}"),

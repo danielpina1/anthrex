@@ -315,8 +315,21 @@ fn hostile_plan() -> RunsSnapshot {
         task.notes.push(bad.clone());
         task.test_mode_reason = Some(bad.clone());
         task.route.model = format!("m{bad}");
+        if let Some(review) = &mut task.review_route {
+            review.model = format!("r{bad}");
+        }
+        // Review finding 2: ids and deps are agent-written too; short, so a row shows
+        // them before it is cut.
+        task.id = hostile_id(&task.id);
+        task.deps = task.deps.iter().map(|d| hostile_id(d)).collect();
+        task.implicit_deps = task.implicit_deps.iter().map(|d| hostile_id(d)).collect();
     }
     snap
+}
+
+/// `id` with a CSI sequence, a bidi override, a CR and a NUL in it.
+fn hostile_id(id: &str) -> String {
+    format!("{id}\x1b[2J\u{202E}\r\0x")
 }
 
 /// Every span the review builds, before ratatui sees it (ratatui itself skips some
@@ -377,7 +390,8 @@ fn review_text_is_sanitised() {
     run.state = RunState::Running;
     let id = format!("epic:{}", hostile_text());
     run.tasks[2].hold = Some(id.clone());
-    run.holds = vec![hold(&id, HoldState::Awaiting, &["t3"])];
+    let t3 = run.tasks[2].id.clone();
+    run.holds = vec![hold(&id, HoldState::Awaiting, &[t3.as_str()])];
     let mut app = app_with(snap, ReviewTarget::Hold(id));
     let buffer = draw(&mut app, 120, 40);
     assert!(
@@ -464,4 +478,63 @@ fn no_panic_at_tiny_sizes() {
             draw(&mut app, width, height);
         }
     }
+}
+
+/// Review finding 3: a detail whose scroll is past its end at draw time (the body grew
+/// since the last key) still shows its last rows at the bottom, not blank rows.
+#[test]
+fn a_scroll_past_the_end_draws_the_end() {
+    let mut app = app_with(plan(), ReviewTarget::Gate);
+    draw(&mut app, 80, 24);
+    for _ in 0..10 {
+        press(&mut app, KeyCode::PageDown);
+    }
+    // The 80×24 end, drawn at 120×40 with no key or snapshot in between.
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|f| {
+            crate::ui::draw(f, &app);
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    assert_eq!(
+        right_of(&buffer, 38),
+        "  codex · gpt-5 · frontier · high effort"
+    );
+    assert_eq!(right_of(&buffer, 37), "review");
+}
+
+/// Review finding 3: the brief shrinks while it is scrolled to its end; the next frame
+/// shows the new end.
+#[test]
+fn a_shrunk_detail_draws_its_new_end() {
+    let mut app = app_with(plan(), ReviewTarget::Gate);
+    draw(&mut app, 80, 24);
+    for _ in 0..10 {
+        press(&mut app, KeyCode::PageDown);
+    }
+    let mut snap = plan();
+    snap.runs[0].tasks[0].brief = "one short line".into();
+    app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot(snap)));
+    let buffer = draw(&mut app, 80, 24);
+    assert_eq!(
+        right_of(&buffer, 22),
+        "  codex · gpt-5 · frontier · high effort"
+    );
+    assert_eq!(right_of(&buffer, 21), "review");
+    // Three rows past the pane now, so the brief's one line is just above the top.
+    press(&mut app, KeyCode::PageUp);
+    let buffer = draw(&mut app, 80, 24);
+    assert_eq!(right_of(&buffer, 4), "  one short line");
+}
+
+/// Review finding 4: one task reads `1 task`.
+#[test]
+fn a_one_task_review_says_one_task() {
+    let mut snap = hold_plan();
+    snap.runs[0].holds = vec![hold("epic:mail", HoldState::Awaiting, &["t3"])];
+    let mut app = app_with(snap, ReviewTarget::Hold("epic:mail".into()));
+    let got = rows(&draw(&mut app, 120, 40));
+    let title = "Hold epic:mail review · add-reset-3f9a · Add password reset";
+    assert_eq!(got[0], format!("{title:<94}1 task · awaiting approval"));
 }

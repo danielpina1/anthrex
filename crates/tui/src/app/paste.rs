@@ -49,6 +49,11 @@ impl App {
             }
             return vec![];
         }
+        // Milestone 9.0.5 review finding 1: the plan review covers the body, so a
+        // paste reaches neither the PTY nor the conversation's search under it.
+        if self.plan_review.is_some() {
+            return vec![];
+        }
         // Decision 11: the conversation view is read-only, so a paste while it is open
         // goes to its search query or nowhere — never to the PTY underneath.
         if self.conversation.is_open() {

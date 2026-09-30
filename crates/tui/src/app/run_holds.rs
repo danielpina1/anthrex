@@ -89,34 +89,49 @@ impl App {
         if run.state == RunState::AwaitingApproval || !matches!(key, 'a' | 'x') {
             return None;
         }
-        let (verb, done) = if key == 'a' {
-            ("approve", "approved")
-        } else {
-            ("reject", "rejected")
-        };
-        let (hold, message) = match hold_target(run, selected)? {
-            HoldTarget::Hold(hold) => (hold.id.clone(), reject_message(run_id, hold)),
-            HoldTarget::NotAwaiting(hold) => {
-                let text = format!(
-                    "hold {} is {}; it can be {done} once it awaits approval",
-                    hold.id,
-                    hold_state_text(hold.state)
-                );
-                self.toast(text);
-                return Some(vec![]);
-            }
+        let verb = if key == 'a' { "approve" } else { "reject" };
+        let hold = match hold_target(run, selected)? {
+            HoldTarget::Hold(hold) | HoldTarget::NotAwaiting(hold) => hold.id.clone(),
             HoldTarget::Several => {
                 self.toast(format!("select a held task to {verb} its hold"));
                 return Some(vec![]);
             }
         };
-        let run_id = run_id.to_owned();
+        Some(self.decide_hold(run_id, key, &hold))
+    }
+
+    /// `a` (sends `ApproveHold` at once) or `x` (asks, then `RejectHold`) on the hold
+    /// `hold` of `run_id`, named by the caller: the run view's selection, or the plan
+    /// review's own hold (milestone 9.0.5 review finding 6). A hold not awaiting
+    /// approval, or not listed, toasts why.
+    pub(super) fn decide_hold(&mut self, run_id: &str, key: char, hold: &str) -> Vec<Effect> {
+        let done = if key == 'a' { "approved" } else { "rejected" };
+        let found = self
+            .shown_run(run_id)
+            .and_then(|run| run.holds.iter().find(|h| h.id == hold));
+        let message = match found {
+            Some(h) if h.state == HoldState::Awaiting => reject_message(run_id, h),
+            Some(h) => {
+                let text = format!(
+                    "hold {} is {}; it can be {done} once it awaits approval",
+                    h.id,
+                    hold_state_text(h.state)
+                );
+                self.toast(text);
+                return vec![];
+            }
+            None => {
+                self.toast(format!("run {run_id} has no hold {hold}"));
+                return vec![];
+            }
+        };
+        let (run_id, hold) = (run_id.to_owned(), hold.to_owned());
         if key == 'a' {
             let request = RunRequest::ApproveHold { run_id, hold };
-            return Some(vec![Effect::Send(ClientMsg::Run(request))]);
+            return vec![Effect::Send(ClientMsg::Run(request))];
         }
         self.modal = Some(confirm(message, PendingAction::RejectHold { run_id, hold }));
-        Some(vec![])
+        vec![]
     }
 
     /// Decision 13's `s`: on a planning run's root, the confirm that sends the user's

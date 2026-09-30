@@ -394,3 +394,21 @@ fn a_drag_begun_before_the_view_opened_does_not_pan_the_hidden_graph() {
     assert!(app.on_drag(x - 8, y - 5, &layout).is_empty());
     assert_eq!(app.graph_pan, pan, "the drag panned the hidden graph");
 }
+
+/// M9.0.5 review: the same for the plan review, which covers the body. The press is
+/// made before the review opens, so `drag_from` holds a real anchor and only
+/// `on_drag`'s review guard keeps the hidden graph from panning.
+#[test]
+fn a_drag_begun_before_the_review_opened_does_not_pan_the_hidden_graph() {
+    let (mut app, layout) = opened();
+    let (x, y) = box_middle(&app, layout.main, &NodeKey::Window(4));
+    assert!(app.on_click(x, y, &layout).is_empty());
+    // The review of a run the snapshot does not list yet: open, with nothing selected.
+    assert!(
+        app.open_plan_review("r".into(), crate::app::ReviewTarget::Gate)
+            .is_empty()
+    );
+    let pan = app.graph_pan;
+    assert!(app.on_drag(x - 8, y - 5, &layout).is_empty());
+    assert_eq!(app.graph_pan, pan, "the drag panned the hidden graph");
+}
