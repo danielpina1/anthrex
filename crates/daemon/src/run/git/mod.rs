@@ -43,7 +43,7 @@ pub(crate) use checkout::restore_owner_access;
 pub use checkout::{Repo, checkout_repo_dir, default_repo_dir};
 pub use done::{
     DoneChecked, RefreshedIn, count_commits, count_commits_excluding, diff_so_far, verify_done,
-    verify_done_excluding,
+    verify_done_excluding, verify_done_spilling,
 };
 pub(crate) use handback::merged_log;
 pub use handback::{

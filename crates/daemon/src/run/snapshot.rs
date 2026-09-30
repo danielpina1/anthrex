@@ -213,6 +213,7 @@ pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
         lines.push("final check failed on the run head".to_string());
     }
     lines.extend(full);
+    lines.extend(crate::run::engine::propagate_attention(run));
     lines.extend(run.stale_profile_line());
     lines.extend(crate::run::engine::integration_attention(run));
     // Milestone 9 decision 13: the orchestrator could not start, or its window exited.

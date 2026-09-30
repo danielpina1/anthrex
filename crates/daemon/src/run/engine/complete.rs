@@ -143,6 +143,10 @@ pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if super::full::holds_completion(run, now) {
         return;
     }
+    // Decisions 50 and 52: every stage's work reaches `integration` first.
+    if super::propagate::holds_completion(run) {
+        return;
+    }
     let kind = OpKind::VerifyRefs {
         root: run.root.clone(),
         base_branch: run.base_branch.clone(),

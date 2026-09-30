@@ -199,6 +199,7 @@ impl Rig {
             not_own: Vec::new(),
             not_run: Vec::new(),
             signals,
+            spill_base: None,
         };
         std::fs::write(&self.log, "").unwrap();
         super::run(&self.service, &self.ctx, 7, kind).await

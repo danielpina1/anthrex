@@ -199,6 +199,8 @@ pub(super) fn claim(
         not_own: super::worker_messages::not_own(task),
         not_run: super::worker_messages::not_run(task),
         signals: super::weakening::spec(run),
+        // Milestone 9.1 decision 51: a sync task's spill is against its merge.
+        spill_base: task.sync.as_ref().map(|s| s.base_tree.clone()),
     };
     let task_id = task.id().to_string();
     let window_id = session_window(run, i);

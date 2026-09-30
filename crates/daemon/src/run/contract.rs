@@ -20,6 +20,7 @@ mod tiers;
 pub(crate) use tiers::{
     BisectFix, bisect_fix_acceptance, bisect_fix_brief, bisect_fix_title,
     deleted_test_file_message, shown, signal_unjustified, signals_block, signals_unanswered,
+    sync_fix_acceptance, sync_fix_brief, sync_fix_title,
 };
 
 /// The worker's system prompt (decision 30, exact). It never varies, so the cached

@@ -1,4 +1,5 @@
-//! Milestone 9.1's stage ops (decisions 48 and 53): the create-only stage branch, and
+//! Milestone 9.1's stage ops (decisions 48, 50 and 53): the create-only stage branch,
+//! the propagate of one stage into the next (merged as a merge candidate is), and
 //! decision 37's ref guard over every run ref (moved here from `ops.rs`, which the
 //! stage list would otherwise push past its budget). Writes go through the run's
 //! `GitQueue`; reads run on `spawn_blocking`. No lock is held here.
@@ -7,10 +8,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::merge::{Merge, merge_into};
 use super::ops::{blocking, failed};
 use super::{OpCtx, RunService};
 use crate::run::engine::{EventKind, OpKind, OpResult, Rebaseline};
 use crate::run::git::{self, RefCheck};
+use crate::run::model::{OpId, PropagateSpec};
 
 /// `OpKind::CreateStageBranch`: `refs_tx::create_branch`, a write through the queue. A
 /// branch that already exists at `from` (a replay) is created; anywhere else it is a
@@ -63,6 +66,54 @@ pub(super) async fn create(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind)
         }
         Err(error) => failed(error),
     }
+}
+
+/// `OpKind::Propagate` (milestone 9.1 decision 50): the lower stage's head merged into
+/// the upper stage exactly as a merge candidate is merged (`merge::merge_into`), with
+/// parents `[to head, from head]`; a conflict gives the conflicted tree too.
+pub(super) async fn propagate(
+    service: &Arc<RunService>,
+    ctx: &OpCtx,
+    op: OpId,
+    kind: OpKind,
+) -> Result<OpResult, String> {
+    let OpKind::Propagate(spec) = kind else {
+        unreachable!("propagate takes a Propagate");
+    };
+    let PropagateSpec {
+        root,
+        integration,
+        from_head,
+        to_branch,
+        expected_to_head,
+        also_integration,
+        base_branch,
+        expected_base,
+        guarded,
+        message,
+        tier,
+        check,
+        timeout_secs,
+        env,
+        ..
+    } = *spec;
+    let merge = Merge {
+        root,
+        integration,
+        branch: to_branch,
+        expected_head: expected_to_head,
+        base_branch,
+        expected_base,
+        other: from_head,
+        message,
+        check,
+        timeout_secs,
+        env,
+        guarded,
+        also_integration,
+        tier,
+    };
+    merge_into(service, ctx, op, merge).await
 }
 
 /// `OpKind::VerifyRefs`: `guard_refs` over `guarded` (the run branch alone in an intent

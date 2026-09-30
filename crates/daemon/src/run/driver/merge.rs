@@ -8,6 +8,7 @@
 //! and when every step hits the candidate is not materialized at all. M8a's check waits
 //! for its slots in the test scheduler (controller ruling 1).
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,6 +19,7 @@ use crate::run::engine::{EventKind, OpKind, OpResult};
 use crate::run::git::{self, CandidateStep, RefCheck};
 use crate::run::model::OpId;
 use crate::run::slots::{Priority, Want};
+use crate::run::tiers::TierSpec;
 
 /// Decision 36, one attempt of the merge queue (see `OpKind::MergeCandidate`).
 pub(super) async fn candidate(
@@ -40,11 +42,77 @@ pub(super) async fn candidate(
         env,
         guarded,
         also_integration,
-        tier: tier_spec,
+        tier,
     } = kind
     else {
         unreachable!("candidate takes a MergeCandidate");
     };
+    let merge = Merge {
+        root,
+        integration,
+        branch: run_branch,
+        expected_head: expected_run_head,
+        base_branch,
+        expected_base,
+        other: task_head,
+        message,
+        check,
+        timeout_secs,
+        env,
+        guarded,
+        also_integration,
+        tier,
+    };
+    merge_into(service, ctx, op, merge).await
+}
+
+/// One merge into a run branch: a task's candidate (decision 36), or since milestone
+/// 9.1 a propagate of one stage into the next (decision 50), which runs exactly the
+/// same steps with the lower stage's head as `other`.
+pub(super) struct Merge {
+    pub root: PathBuf,
+    pub integration: PathBuf,
+    /// The branch the merge lands on, and the head it must be at.
+    pub branch: String,
+    pub expected_head: String,
+    pub base_branch: String,
+    pub expected_base: String,
+    /// The second parent: the task's claimed commit, or the lower stage's head.
+    pub other: String,
+    pub message: String,
+    pub check: Option<String>,
+    pub timeout_secs: u64,
+    pub env: Vec<(String, String)>,
+    pub guarded: Vec<(String, String)>,
+    pub also_integration: bool,
+    pub tier: Option<Box<TierSpec>>,
+}
+
+/// [`Merge`]'s steps: the guard, `merge-tree`, the commit with parents `[expected_head,
+/// other]`, tier 2 or `check` on it, the guard again, the compare-and-swap, the
+/// reattach.
+pub(super) async fn merge_into(
+    service: &Arc<RunService>,
+    ctx: &OpCtx,
+    op: OpId,
+    merge: Merge,
+) -> Result<OpResult, String> {
+    let Merge {
+        root,
+        integration,
+        branch: run_branch,
+        expected_head: expected_run_head,
+        base_branch,
+        expected_base,
+        other: task_head,
+        message,
+        check,
+        timeout_secs,
+        env,
+        guarded,
+        also_integration,
+        tier: tier_spec,
+    } = merge;
     // Milestone 9.1 decision 53: every run ref is guarded, and the integration worktree
     // stays on `integration`, the alias a stage branch's merge leaves it on.
     let guarded = guard_list(guarded, run_branch.clone(), expected_run_head.clone());
@@ -89,7 +157,10 @@ pub(super) async fn candidate(
     let (git, t) = (service.git(), ctx.git_timeout);
     let (r, rh, th) = (root.clone(), expected_run_head.clone(), task_head.clone());
     let tree = match blocking(move || git::merge_tree(&git, &r, &rh, &th, t)).await? {
-        CandidateStep::Conflict(files) => return Ok(OpResult::Conflict { files }),
+        CandidateStep::Conflict { files, tree } => {
+            let tree = Some(tree);
+            return Ok(OpResult::Conflict { files, tree });
+        }
         CandidateStep::Tree(tree) => tree,
     };
     let (r, rh, th) = (root.clone(), expected_run_head.clone(), task_head.clone());

@@ -339,8 +339,11 @@ fn an_epic_integration_review_goes_into_its_highest_stage() {
     assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
     create(&mut fx, &stage_branch(1), BASE);
     create(&mut fx, &stage_branch(2), BASE);
+    // Task M9.1.17: each stage-1 head propagates into stage 2 before the next merge.
     merge_real(&mut fx, "t1", &commit(1));
+    super::propagate::land_propagates(&mut fx);
     merge_real(&mut fx, "m1", &commit(2));
+    super::propagate::land_propagates(&mut fx);
     merge_real(&mut fx, "t2", &commit(3));
     merge_real(&mut fx, "m2", &commit(4));
     let review = fx
@@ -506,6 +509,8 @@ fn an_epic_review_ignores_a_cancelled_tasks_stage() {
     create(&mut fx, &stage_branch(2), BASE);
     fx.task_mut("m2").state = TaskState::Cancelled;
     merge_real(&mut fx, "t1", &commit(1));
+    // Task M9.1.17: stage 1's head propagates into stage 2 first.
+    super::propagate::land_propagates(&mut fx);
     merge_real(&mut fx, "m1", &commit(2));
     let review = fx.run().task("mail-int1").expect("the review").clone();
     assert_eq!(review.stage(), 1);

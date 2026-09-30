@@ -67,6 +67,7 @@ mod planners_review;
 mod planners_rounds;
 mod promote;
 mod promote_installed;
+mod propagate;
 mod refresh;
 mod role_history;
 mod role_history_ends;

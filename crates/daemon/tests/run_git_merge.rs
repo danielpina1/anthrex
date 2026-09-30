@@ -78,9 +78,21 @@ fn merge_tree_returns_a_tree_or_the_conflicted_files() {
     commit_on(&repo.root, "task2", "c.txt", "clean\n");
     let task2 = commit_on(&repo.root, "task2", "ü both.txt", "task\n");
     let step = merge_tree(real_git(), &repo.root, &run2, &task2, T).unwrap();
+    let CandidateStep::Conflict { files, tree } = step else {
+        panic!("not a conflict: {step:?}")
+    };
     assert_eq!(
-        step,
-        CandidateStep::Conflict(vec!["shared.txt".to_string(), "ü both.txt".to_string()])
+        files,
+        vec!["shared.txt".to_string(), "ü both.txt".to_string()]
+    );
+    // Milestone 9.1 decision 51: the conflicted tree, with its markers.
+    let text = out(
+        &repo.root,
+        &["cat-file", "-p", &format!("{tree}:shared.txt")],
+    );
+    assert!(
+        text.contains("<<<<<<<") && text.contains(">>>>>>>"),
+        "{text}"
     );
 
     // Not a commit: an error, not a conflict.

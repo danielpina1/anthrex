@@ -27,6 +27,7 @@ fn a_conflict_blocked_task_that_gains_a_dependency_keeps_its_block() {
         op,
         OpResult::Conflict {
             files: vec!["docs/t1/a.md".into()],
+            tree: None,
         },
     );
     let (hand_back, _) = pending_one(&fx, "HandBack", Some("t1"));
@@ -45,6 +46,7 @@ fn a_conflict_blocked_task_that_gains_a_dependency_keeps_its_block() {
         op,
         OpResult::Conflict {
             files: vec!["docs/t1/a.md".into()],
+            tree: None,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Blocked);
@@ -111,6 +113,7 @@ fn handed_back_with_conflicts(fx: &mut Fixture) -> Vec<Effect> {
         op,
         OpResult::Conflict {
             files: files.clone(),
+            tree: None,
         },
     );
     let (hand_back, _) = pending_one(fx, "HandBack", Some("t1"));

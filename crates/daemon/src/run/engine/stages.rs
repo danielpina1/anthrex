@@ -49,6 +49,8 @@ pub(crate) fn set_stage_head(run: &mut Run, n: u16, commit: &str) {
     if run.stage_layout == StageLayout::Single || n >= top {
         run.run_head = commit.to_string();
     }
+    // Decision 50: the stage above is due a propagate.
+    super::propagate::head_moved(run, n);
 }
 
 /// Decision 47: a merge of task `id` landed on stage `n` at `commit`. The stage's head
@@ -70,6 +72,10 @@ pub(crate) fn task_merged(run: &mut Run, n: u16, id: Option<&str>, commit: &str)
     }
     if top {
         run.last_green_candidate = Some(commit.to_string());
+    }
+    // Decision 51: a sync task's merge brings the lower stage's work with it.
+    if let Some(id) = id {
+        super::propagate::sync_merged(run, n, id);
     }
 }
 

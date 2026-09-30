@@ -89,6 +89,28 @@ fn due(run: &Run, k: usize) -> bool {
         && !reviewing
         && rounds_left
         && record.merges.len() > record.integration_reviewed as usize
+        && stage_holds_epic(run, epic)
+}
+
+/// Milestone 9.1 decisions 47 and 50: the highest stage holding one of the epic's
+/// merged tasks holds all of them (each propagated up to it), so its head, which the
+/// review reads, contains the whole epic.
+fn stage_holds_epic(run: &Run, epic: Option<&str>) -> bool {
+    let merged: Vec<&crate::run::model::Task> = run
+        .tasks
+        .iter()
+        .filter(|t| t.spec.epic.as_deref() == epic && !is_integration(t))
+        .filter(|t| t.state == TaskState::Merged)
+        .collect();
+    let Some(top) = merged.iter().map(|t| t.stage()).max() else {
+        return true;
+    };
+    match run.stage(top) {
+        Some(stage) if run.stage_layout == crate::run::model::StageLayout::Multi => {
+            merged.iter().all(|t| stage.tasks_in.contains(t.id()))
+        }
+        _ => true,
+    }
 }
 
 /// Round `n + 1` of epic `k`'s integration review: a review task added directly, its

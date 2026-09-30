@@ -278,6 +278,7 @@ pub(super) async fn run(
             not_own,
             not_run,
             signals,
+            spill_base,
         } => {
             // Final fix batch F1b: through the queue, since each of these imports the
             // worker's commits and records them on the task's branch first.
@@ -291,7 +292,7 @@ pub(super) async fn run(
                             &run_head,
                             (&owns, &generated, &protected),
                             (red.clone(), resolution.clone(), signals.as_ref()),
-                            RefreshedIn::of(&not_own, &not_run),
+                            (RefreshedIn::of(&not_own, &not_run), spill_base.clone()),
                             t,
                         )
                     })
@@ -414,6 +415,8 @@ pub(super) async fn run(
         OpKind::VerifyRefs { .. } => stage_ops::verify_refs(service, ctx, kind).await,
         // Milestone 9.1 decision 48.
         OpKind::CreateStageBranch { .. } => stage_ops::create(service, ctx, kind).await,
+        // Decision 50.
+        OpKind::Propagate(_) => settle(stage_ops::propagate(service, ctx, op, kind).await),
         OpKind::Accept { .. } => cleanup::accept(service, ctx, kind).await,
         OpKind::Discard {
             root,
@@ -453,13 +456,13 @@ fn verify_done(
     run_head: &str,
     (owns, generated, protected): (&[String], &[String], &[String]),
     (red, resolution, signals): (Option<String>, Option<ResolutionAt>, Option<&SignalsSpec>),
-    refreshed: RefreshedIn,
+    (refreshed, spill_base): (RefreshedIn, Option<String>),
     git_timeout: Duration,
 ) -> Result<OpResult, String> {
     let t = git_timeout.min(DONE_CHECK_GIT_TIMEOUT);
     let generated = OwnsMatcher::new(generated)?;
     let protected = ProtectedMatcher::new(protected)?;
-    let d = git::verify_done_excluding(
+    let d = git::verify_done_spilling(
         git,
         worktree,
         start,
@@ -467,7 +470,7 @@ fn verify_done(
         owns,
         (&generated, &protected),
         red.as_deref(),
-        &refreshed,
+        (&refreshed, spill_base.as_deref()),
         t,
     )?;
     let resolution_only = resolution.map(|r| {

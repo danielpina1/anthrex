@@ -190,6 +190,10 @@ pub struct Task {
     /// a signal id out; the second is accepted with the engine's findings.
     #[serde(default)]
     pub signal_refusals: u8,
+    /// Milestone 9.1 decision 51: a `sync` fix task's merge, handed back into its
+    /// worktree before its first session.
+    #[serde(default)]
+    pub sync: Option<super::SyncState>,
 }
 
 impl Task {

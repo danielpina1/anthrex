@@ -161,8 +161,13 @@ fn prepare_in_flight(run: &Run, i: usize) -> bool {
     })
 }
 
-/// A `PrepareWorktree` for task `i` from `from`, with the profile's `setup`.
+/// A `PrepareWorktree` for task `i` from `from`, with the profile's `setup`. A sync
+/// task not yet started needs its merge handed back again after it.
 fn prepare(run: &mut Run, i: usize, from: String, fx: &mut Vec<Effect>) {
+    let started = run.tasks[i].start_commit.is_some();
+    if let Some(sync) = run.tasks[i].sync.as_mut() {
+        sync.handed_back &= started;
+    }
     let op = next_op(run);
     let task = &run.tasks[i];
     let kind = OpKind::PrepareWorktree {
@@ -250,8 +255,9 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         }
         let task = &run.tasks[i];
-        // Milestone 9.1 decision 47: the task's stage head.
-        let head = run.head_for(task).to_string();
+        // Milestone 9.1 decision 47: the task's stage head (decision 51: a sync task's
+        // conflict head).
+        let head = super::propagate::start_of(run, task);
         if task.prewarmed && task.start_commit.is_none() && run.base_sha == head {
             launch_worker(run, i, head, now, fx);
         } else {
@@ -272,7 +278,7 @@ fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         let Some(from) = run.tasks[i].ready_from.take() else {
             continue;
         };
-        let head = run.head_for(&run.tasks[i]).to_string();
+        let head = super::propagate::start_of(run, &run.tasks[i]);
         if from == head {
             launch_worker(run, i, from, now, fx);
         } else {
@@ -281,8 +287,18 @@ fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
 }
 
-/// A new worker session for task `i`, starting at `start` (decisions 24–26, 30).
-fn launch_worker(run: &mut Run, i: usize, start: String, now: u64, fx: &mut Vec<Effect>) {
+/// A new worker session for task `i`, starting at `start` (decisions 24–26, 30); a
+/// sync task's merge is handed back into its worktree first (milestone 9.1 decision 51).
+pub(super) fn launch_worker(
+    run: &mut Run,
+    i: usize,
+    start: String,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    if super::propagate::hand_back_first(run, i, &start, now, fx) {
+        return;
+    }
     let prompt =
         |run: &Run, task: &Task| worker_prompt(run, task, "", &notes_section(&task.orch.messages));
     launch(run, i, Some(start), prompt, now, fx);
@@ -461,7 +477,7 @@ pub(super) fn worktree_done(
             );
         }
         OpResult::Worktree { .. } if state == TaskState::Preparing => {
-            let head = run.head_for(&run.tasks[i]).to_string();
+            let head = super::propagate::start_of(run, &run.tasks[i]);
             if from == head {
                 launch_worker(run, i, from, now, fx);
             } else {

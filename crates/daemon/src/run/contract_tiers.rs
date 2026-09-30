@@ -148,6 +148,31 @@ pub(crate) fn bisect_fix_brief(f: &BisectFix<'_>) -> String {
     )
 }
 
+/// A sync fix task's title (decision 51, exact): stage `k` merged into stage `n`.
+pub(crate) fn sync_fix_title(k: u16, n: u16) -> String {
+    format!("Resolve the merge of stage {k} into stage {n}")
+}
+
+/// A sync fix task's acceptance (decision 51, exact).
+pub(crate) fn sync_fix_acceptance() -> Vec<String> {
+    vec![
+        "no conflict markers remain".to_string(),
+        "both stages' changes are kept".to_string(),
+    ]
+}
+
+/// A sync fix task's brief (decision 51, exact), one `- <file>` line per conflicted
+/// file, each made safe to show ([`shown`]): the names come from the repository.
+pub(crate) fn sync_fix_brief(id: &str, k: u16, n: u16, files: &[String]) -> String {
+    let files: Vec<String> = files.iter().map(|f| format!("- {}", shown(f))).collect();
+    format!(
+        "[anthrex] Fix task {id}: merging stage {k} into stage {n} conflicted. Your worktree already holds that merge, with conflict markers in:\n\
+         {files}\n\
+         Resolve every conflict so that both stages' work is kept, commit, and call task_done. Change nothing else.",
+        files = files.join("\n"),
+    )
+}
+
 /// At most this many characters of a path or marker taken from a worker's diff are
 /// shown (task M9.1.16).
 const SHOWN_CHARS_MAX: usize = 200;

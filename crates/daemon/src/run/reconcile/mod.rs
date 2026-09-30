@@ -187,6 +187,17 @@ fn check(
         OpKind::CreateStageBranch { root, branch, from } => {
             git::create_stage_branch(g, root, branch, from)
         }
+        // Decision 53: a propagate is reconciled as a merge candidate, its second
+        // parent the lower stage's head.
+        OpKind::Propagate(spec) => git::merge_candidate(
+            g,
+            &spec.root,
+            &spec.integration,
+            (&spec.to_branch, spec.also_integration),
+            &spec.expected_to_head,
+            &spec.from_head,
+            notes,
+        ),
         OpKind::AbortMerge { worktree } => git::abort_merge(g, worktree),
         OpKind::RemoveWorktree {
             root,

@@ -34,8 +34,7 @@ pub(crate) struct FixSpec {
     pub route: RouteSpec,
     pub test_mode: TestMode,
     pub test_mode_reason: Option<String>,
-    /// Decision 51's sync state: `Task.sync` arrives with task M9.1.17, which reads it.
-    #[allow(dead_code)]
+    /// Decision 51's sync state, kept as `Task.sync`.
     pub sync: Option<SyncState>,
 }
 
@@ -100,6 +99,7 @@ pub(crate) fn add_fix(
     task.notes
         .extend(protected_notes(&task.spec.owns, &run.protected_files));
     task.origin = spec.origin;
+    task.sync = spec.sync;
     let what = fix_text(&spec.fixes);
     task.fixes = Some(spec.fixes);
     task.history.push(TaskEvent {

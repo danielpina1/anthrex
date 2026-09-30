@@ -210,6 +210,8 @@ fn idle_queue_starts_tier3_on_the_lowest_stage_without_green() {
     let (mut fx, windows) = multi(&tasks);
     block(&mut fx, "t3", window_of(&windows, "t3"));
     merge_tiered(&mut fx, "t1", window_of(&windows, "t1"), &commit(1));
+    // Task M9.1.17: stage 1's head propagates into stage 2 first.
+    super::propagate::land_propagates(&mut fx);
     merge_tiered(&mut fx, "t2", window_of(&windows, "t2"), &commit(2));
     assert_eq!(fx.run().stage_head(1), Some(commit(1).as_str()));
     assert_eq!(fx.run().stage_head(2), Some(commit(2).as_str()));
@@ -236,6 +238,8 @@ fn idle_queue_starts_tier3_on_the_lowest_stage_without_green() {
 fn completion_runs_tier3_per_stage_bottom_up() {
     let (mut fx, windows) = multi(&[doc_task("t1", ""), doc_task("t2", "stage = 2")]);
     merge_tiered(&mut fx, "t1", window_of(&windows, "t1"), &commit(1));
+    // Task M9.1.17: stage 1's head propagates into stage 2 first.
+    super::propagate::land_propagates(&mut fx);
     merge_tiered(&mut fx, "t2", window_of(&windows, "t2"), &commit(2));
     assert_eq!(fx.run().run_head, commit(2));
     let effects = verify_ok(&mut fx);

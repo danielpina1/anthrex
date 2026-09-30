@@ -125,9 +125,33 @@ pub fn verify_done_excluding(
     start: &str,
     run_head: &str,
     owns: &[String],
-    (generated, protected): (&OwnsMatcher, &ProtectedMatcher),
+    matchers: (&OwnsMatcher, &ProtectedMatcher),
     red: Option<&str>,
     refreshed: &RefreshedIn,
+    timeout: Duration,
+) -> Result<DoneChecked, String> {
+    let excluded = (refreshed, None);
+    verify_done_spilling(
+        git, worktree, start, run_head, owns, matchers, red, excluded, timeout,
+    )
+}
+
+/// [`verify_done_excluding`], and with `spill_base` (milestone 9.1 decision 51, a sync
+/// task's conflicted tree) the spill diff is `<spill_base> <head>`: what the worker
+/// changed relative to the engine's merge, not the lower stage's work it merged.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "verify_done's arguments, the refreshed commits and the spill base"
+)]
+pub fn verify_done_spilling(
+    git: &OsStr,
+    worktree: &Path,
+    start: &str,
+    run_head: &str,
+    owns: &[String],
+    (generated, protected): (&OwnsMatcher, &ProtectedMatcher),
+    red: Option<&str>,
+    (refreshed, spill_base): (&RefreshedIn, Option<&str>),
     timeout: Duration,
 ) -> Result<DoneChecked, String> {
     let owns_matcher = OwnsMatcher::new(owns)?;
@@ -178,12 +202,11 @@ pub fn verify_done_excluding(
     let spill_range = format!("{run_head}...{head}");
     let mut spill_args = vec![os("diff")];
     spill_args.extend(DIFF_FLAGS.map(os));
-    spill_args.extend([
-        os("--name-only"),
-        os("-z"),
-        os("--no-renames"),
-        os(&spill_range),
-    ]);
+    spill_args.extend([os("--name-only"), os("-z"), os("--no-renames")]);
+    match spill_base {
+        Some(base) => spill_args.extend([os("--end-of-options"), os(base), os(&head)]),
+        None => spill_args.push(os(&spill_range)),
+    }
     let changed = g.ok(worktree, &spill_args)?;
     let refreshed_count = if *refreshed == RefreshedIn::default() {
         own.len()

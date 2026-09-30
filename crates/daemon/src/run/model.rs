@@ -335,6 +335,10 @@ pub struct Run {
     /// Milestone 9.1 decision 39: the next fix task's number (`engine::fixes`).
     #[serde(default)]
     pub fix_seq: u32,
+    /// Milestone 9.1 decision 49: the stages due a propagate from the stage below
+    /// (`engine::propagate`).
+    #[serde(default)]
+    pub propagate_due: BTreeSet<u16>,
 }
 
 impl Run {

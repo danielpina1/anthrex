@@ -77,7 +77,13 @@ fn conflicted_onto_the_claim() -> OpResult {
 fn told_queue_conflict(fx: &mut Fixture, window: u32) {
     to_queue(fx, "t1", window);
     let (op, _) = candidate(fx, "t1");
-    fx.done(op, OpResult::Conflict { files: files() });
+    fx.done(
+        op,
+        OpResult::Conflict {
+            files: files(),
+            tree: None,
+        },
+    );
     let (hand_back, _) = pending_one(fx, "HandBack", Some("t1"));
     fx.done(hand_back, conflicted_onto_the_claim());
     acknowledge(fx);
@@ -192,7 +198,13 @@ fn an_undone_conflict_ends_the_straight_to_queue_pass() {
     let window = window_of(&windows, "t1");
     to_queue(&mut fx, "t1", window);
     let (op, _) = candidate(&fx, "t1");
-    fx.done(op, OpResult::Conflict { files: files() });
+    fx.done(
+        op,
+        OpResult::Conflict {
+            files: files(),
+            tree: None,
+        },
+    );
     let (hand_back, _) = pending_one(&fx, "HandBack", Some("t1"));
     fx.signal(window, AgentSignal::TurnStarted);
     let effects = fx.done(hand_back, conflicted_onto_the_claim());

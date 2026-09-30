@@ -39,6 +39,7 @@ fn handed_back_after_rung_3(exit_first: bool) -> (Fixture, Vec<Effect>) {
         op,
         OpResult::Conflict {
             files: vec!["b/shared.txt".into()],
+            tree: None,
         },
     );
     let (op, _) = only_op(&effects, "HandBack");

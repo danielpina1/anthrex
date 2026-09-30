@@ -24,12 +24,13 @@ use crate::run::env::profile_env;
 use crate::run::model::{BaseMoved, CheckRecord, Run, StageLayout, Task};
 
 /// A `MergeCandidate` is in flight (decision 36: width 1), or since milestone 9.1 a
-/// `CreateStageBranch`, whose `from` a merge must not move meanwhile (decision 48).
+/// `CreateStageBranch`, whose `from` a merge must not move meanwhile (decision 48), or a
+/// `Propagate` (decision 49).
 pub(super) fn merging(run: &Run) -> bool {
     run.pending_ops.values().any(|p| {
         matches!(
             p.kind,
-            OpKind::MergeCandidate { .. } | OpKind::CreateStageBranch { .. }
+            OpKind::MergeCandidate { .. } | OpKind::CreateStageBranch { .. } | OpKind::Propagate(_)
         )
     })
 }
@@ -47,7 +48,8 @@ pub(super) fn start_merge(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         .cloned()
         .collect();
     run.merge_queue = queued;
-    if merging(run) {
+    // Milestone 9.1 decision 49: the lowest due propagate goes first.
+    if merging(run) || super::propagate::start(run, fx) {
         return;
     }
     let Some(id) = run.merge_queue.first().cloned() else {
@@ -185,7 +187,7 @@ pub(super) fn candidate_done(
             }
             merged(run, i, (before, commit), now, fx)
         }
-        OpResult::Conflict { files } => conflict(run, i, files, now, fx),
+        OpResult::Conflict { files, .. } => conflict(run, i, files, now, fx),
         // Milestone 9.1 decision 16: a red tier 2 is M8a's red candidate, naming the
         // red step's command.
         OpResult::CandidateRed {

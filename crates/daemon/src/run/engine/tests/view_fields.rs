@@ -395,6 +395,8 @@ fn old_run_json_loads() {
     );
     // Milestone 9.1 decision 39: no fix task yet.
     assert_eq!(map.remove("fix_seq"), Some(serde_json::json!(0)));
+    // Task M9.1.17.
+    assert_eq!(map.remove("propagate_due"), Some(serde_json::json!([])));
     // Milestone 9.1 ruling C-12a: no stored profile's `manifests`.
     let manifests = map["profile"].as_object_mut().unwrap().remove("manifests");
     assert_eq!(manifests, Some(serde_json::json!([])));
@@ -419,6 +421,7 @@ fn old_run_json_loads() {
         assert_eq!(task.remove("signals"), Some(serde_json::json!([])));
         assert_eq!(task.remove("signals_more"), Some(serde_json::json!(0)));
         assert_eq!(task.remove("signal_refusals"), Some(serde_json::json!(0)));
+        assert_eq!(task.remove("sync"), Some(serde_json::Value::Null));
         let spec = task["spec"].as_object_mut().unwrap();
         assert!(spec.remove("review_target").is_some(), "review_target");
         // Milestone 9.1 decisions 43 and 54: stage 1, not atomic.

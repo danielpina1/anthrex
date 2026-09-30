@@ -4,6 +4,7 @@
 //! run from milestone 9 lacks is `#[serde(default)]`.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -48,6 +49,9 @@ pub struct StageRecord {
     pub bisect: Option<BisectRecord>,
     #[serde(default)]
     pub propagate_red: Option<String>,
+    /// Decision 52's attention line of that red propagate (task M9.1.17).
+    #[serde(default)]
+    pub propagate_note: Option<String>,
 }
 
 impl StageRecord {
@@ -66,6 +70,7 @@ impl StageRecord {
             full: StageFull::default(),
             bisect: None,
             propagate_red: None,
+            propagate_note: None,
         }
     }
 }
@@ -144,7 +149,8 @@ pub enum Probe {
     Mid(usize),
 }
 
-/// Decision 51: a sync task's merge (task M9.1.17).
+/// Decision 51: a sync task's merge (task M9.1.17): `onto` the lower stage's head it
+/// merges, `base_tree` the conflicted tree, `tasks` what that head holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncState {
     pub onto: String,
@@ -152,6 +158,36 @@ pub struct SyncState {
     pub tasks: BTreeSet<String>,
     #[serde(default)]
     pub handed_back: bool,
+    /// The upper stage's head the conflict was found on: the sync task's worktree
+    /// starts there, so the hand-back's merge is exactly `base_tree`.
+    #[serde(default)]
+    pub to_head: String,
+}
+
+/// Decision 50's `OpKind::Propagate`: stage `from`'s head merged into stage `to`, as a
+/// merge candidate is (guard, `merge-tree`, `commit-tree` with parents `[to head, from
+/// head]`, tier 2 or `check`, guard, compare-and-swap, reattach). `from: 0` is reserved
+/// for 9.2's base sync and never emitted by 9.1.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PropagateSpec {
+    pub root: PathBuf,
+    pub integration: PathBuf,
+    pub from: u16,
+    pub to: u16,
+    pub from_head: String,
+    pub to_branch: String,
+    pub expected_to_head: String,
+    pub also_integration: bool,
+    pub base_branch: String,
+    pub expected_base: String,
+    pub guarded: Vec<(String, String)>,
+    pub message: String,
+    pub tier: Option<Box<crate::run::tiers::TierSpec>>,
+    pub check: Option<String>,
+    pub timeout_secs: u64,
+    pub env: Vec<(String, String)>,
+    /// The task ids stage `from` held at `from_head`, captured when the op is emitted.
+    pub tasks: BTreeSet<String>,
 }
 
 /// What a fix task fixes (decisions 37, 51). 9.2 appends `Ci`, `Review` and `Base`.

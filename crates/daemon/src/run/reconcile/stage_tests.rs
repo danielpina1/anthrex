@@ -107,3 +107,84 @@ fn a_torn_paired_merge_is_a_moved_integration() {
         })
     );
 }
+
+/// Milestone 9.1 task M9.1.17 (decision 53): a `Propagate` is reconciled as a merge
+/// candidate whose second parent is the lower stage's head. One whose commit reached
+/// both refs is `Merged`; one that reached neither is not started, and issued again.
+#[test]
+fn propagate_is_journaled_and_reconciled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["config", "user.name", "Stage Test"]);
+    git(root, &["config", "user.email", "stage@test"]);
+    git(root, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    let base = git(root, &["rev-parse", "HEAD"]);
+    git(root, &["commit", "-q", "--allow-empty", "-m", "stage 1"]);
+    let lower = git(root, &["rev-parse", "HEAD"]);
+    git(root, &["branch", STAGE, &base]);
+    git(root, &["update-ref", INTEGRATION, &base]);
+    let spec = crate::run::model::PropagateSpec {
+        root: root.to_path_buf(),
+        integration: root.join("no-integration-worktree"),
+        from: 1,
+        to: 2,
+        from_head: lower.clone(),
+        to_branch: STAGE.into(),
+        expected_to_head: base.clone(),
+        also_integration: true,
+        base_branch: "main".into(),
+        expected_base: base.clone(),
+        guarded: Vec::new(),
+        message: "anthrex: propagate stage-1 into stage-2".into(),
+        tier: None,
+        check: None,
+        timeout_secs: 1,
+        env: Vec::new(),
+        tasks: Default::default(),
+    };
+    let kind = OpKind::Propagate(Box::new(spec));
+    let reconcile_one = || {
+        let mut run = run_ok(EXAMPLE_PLAN);
+        run.pending_ops.insert(
+            1,
+            PendingOp {
+                op: 1,
+                task_id: None,
+                kind: kind.clone(),
+            },
+        );
+        let journal = [JournalLine::Intent {
+            op: 1,
+            kind: kind.clone(),
+        }];
+        let out = reconcile(
+            OsStr::new("git"),
+            &run,
+            &journal,
+            &[],
+            Duration::from_secs(20),
+        );
+        out.ops[0].1.clone()
+    };
+    // Neither ref moved: not started.
+    assert_eq!(reconcile_one(), Reconciled::NotStarted);
+    // Both refs hold the propagate, parents `[to head, from head]`: it landed.
+    let tree = git(root, &["rev-parse", &format!("{lower}^{{tree}}")]);
+    let merged = git(
+        root,
+        &["commit-tree", &tree, "-p", &base, "-p", &lower, "-m", "m"],
+    );
+    git(
+        root,
+        &["update-ref", &format!("refs/heads/{STAGE}"), &merged],
+    );
+    git(root, &["update-ref", INTEGRATION, &merged]);
+    assert_eq!(
+        reconcile_one(),
+        Reconciled::Replay(OpResult::Merged {
+            commit: merged,
+            tier: None
+        })
+    );
+}

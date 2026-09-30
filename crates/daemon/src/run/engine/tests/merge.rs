@@ -370,6 +370,7 @@ fn first_conflict_hands_back_then_requeues_after_task_done() {
         op,
         OpResult::Conflict {
             files: files.clone(),
+            tree: None,
         },
     );
     let hand_backs = ops_in(&effects, "HandBack");
@@ -427,6 +428,7 @@ fn a_clean_hand_back_requeues_without_the_worker() {
         op,
         OpResult::Conflict {
             files: vec!["docs/t1/a.md".into()],
+            tree: None,
         },
     );
     let (hand_back, _) = pending_one(&fx, "HandBack", Some("t1"));
@@ -462,6 +464,7 @@ fn second_conflict_blocks_the_task_as_conflict() {
         op,
         OpResult::Conflict {
             files: vec!["docs/t1/a.md".into()],
+            tree: None,
         },
     );
     let (hand_back, _) = pending_one(&fx, "HandBack", Some("t1"));
@@ -480,6 +483,7 @@ fn second_conflict_blocks_the_task_as_conflict() {
         op,
         OpResult::Conflict {
             files: vec!["docs/t1/a.md".into(), "docs/t1/b.md".into()],
+            tree: None,
         },
     );
     assert!(ops_in(&effects, "HandBack").is_empty(), "{effects:#?}");

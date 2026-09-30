@@ -87,6 +87,10 @@ pub enum OpKind {
         /// `DoneChecked.{signals, signals_more}`. `None`: no `-U0` diff is read.
         #[serde(default)]
         signals: Option<crate::run::tiers::SignalsSpec>,
+        /// Decision 51: a sync task's conflicted tree. **Executor contract:** the spill
+        /// diff is `<spill_base> <head>`, not `<run_head>...<head>`.
+        #[serde(default)]
+        spill_base: Option<String>,
     },
     /// `run_head`: M8a.8's interface change (the task's own commits exclude a merged
     /// run head). `not_own` as `VerifyDone`'s.
@@ -338,6 +342,9 @@ pub enum OpKind {
         branch: String,
         from: String,
     },
+    /// Decision 50: a stage's head merged into the stage above, executed as a merge
+    /// candidate (`driver/stage_ops.rs`). Results as `MergeCandidate`'s.
+    Propagate(Box<crate::run::model::PropagateSpec>),
 }
 
 impl OpKind {
@@ -373,6 +380,7 @@ impl OpKind {
             OpKind::Tier(_) => "Tier",
             OpKind::TestAt(_) => "TestAt",
             OpKind::CreateStageBranch { .. } => "CreateStageBranch",
+            OpKind::Propagate(_) => "Propagate",
         }
     }
 }
@@ -482,6 +490,9 @@ pub enum OpResult {
     },
     Conflict {
         files: Vec<String>,
+        /// Milestone 9.1 decision 51: the conflicted tree `merge-tree` wrote.
+        #[serde(default)]
+        tree: Option<String>,
     },
     CandidateRed {
         code: Option<i32>,

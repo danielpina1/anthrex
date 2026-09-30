@@ -463,3 +463,7 @@ async fn a_rebaseline_the_engine_refuses_writes_no_ref() {
     rig.service.stop().await;
     drop(handle);
 }
+
+// Task M9.1.17: the propagate, in a file of its own for AGENTS.md rule 8.
+#[path = "stage_ops_propagate_tests.rs"]
+mod propagate_tests;

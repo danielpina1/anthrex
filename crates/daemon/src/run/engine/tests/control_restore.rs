@@ -379,6 +379,7 @@ fn restore_honours_deferred_cancels_and_lost_hand_backs() {
         op,
         OpResult::Conflict {
             files: vec!["docs/t1/a.md".into()],
+            tree: None,
         },
     );
     let (lost, _) = pending_one(&fx, "HandBack", Some("t1"));
@@ -541,6 +542,7 @@ fn a_hand_back_result_after_a_cancel_is_dropped() {
         op,
         OpResult::Conflict {
             files: files.clone(),
+            tree: None,
         },
     );
     let (op, _) = pending_one(&fx, "HandBack", Some("t1"));

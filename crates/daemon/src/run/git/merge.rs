@@ -22,11 +22,12 @@ use super::{Git, LARGE_OUTPUT_BYTES, failure, nul_fields, os};
 pub const ACCEPT_LIST_MAX: usize = 50;
 
 /// Decision 36 step 2: a clean `merge-tree` gives the merged tree; a conflicted one the
-/// files it could not merge.
+/// files it could not merge and (milestone 9.1 decision 51) the tree it wrote with their
+/// conflict markers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CandidateStep {
     Tree(String),
-    Conflict(Vec<String>),
+    Conflict { files: Vec<String>, tree: String },
 }
 
 /// Decision 21's classification of the run and base refs.
@@ -85,9 +86,10 @@ pub fn merge_tree(
         // A failure with a tree on stdout is the conflict (exit 1); one without (a bad
         // name prints only to stderr) is an error.
         Some(tree) if !output.success && is_tree(tree) => {
+            let tree = tree.to_string();
             let mut files: Vec<String> = fields.map(str::to_string).collect();
             files.dedup();
-            Ok(CandidateStep::Conflict(files))
+            Ok(CandidateStep::Conflict { files, tree })
         }
         _ => Err(failure(&args, &output)),
     }

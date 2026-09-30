@@ -192,6 +192,14 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         (OpKind::MergeCandidate { .. }, Some(i)) if run.tasks[i].merge_op == Some(op) => {
             run.tasks[i].merge_op = None;
         }
+        // Milestone 9.1 decisions 50 and 51: a propagate is due again; a sync task's
+        // hand-back is sent again when the run runs.
+        (OpKind::Propagate(spec), _) => super::propagate::lost(run, spec),
+        (OpKind::HandBack { task_head, .. }, Some(i))
+            if super::propagate::sync_due(&run.tasks[i]) =>
+        {
+            super::propagate::hand_back_lost(run, i, task_head.clone());
+        }
         // Milestone 9 decision 42e: a lost refresh is due again at the next boundary.
         (OpKind::HandBack { .. }, Some(i))
             if run.tasks[i].orch.refresh == Some(RefreshState::InFlight(op)) =>

@@ -54,6 +54,7 @@ fn conflicted(fx: &mut Fixture) -> u64 {
         op,
         OpResult::Conflict {
             files: vec!["docs/t1/a.md".into()],
+            tree: None,
         },
     );
     pending_one(fx, "HandBack", Some("t1")).0
@@ -178,6 +179,7 @@ fn a_cancel_edit_during_a_merge_applies_only_if_it_does_not_land() {
             },
             "conflict" => OpResult::Conflict {
                 files: vec!["docs/t1/a.md".into()],
+                tree: None,
             },
             _ => OpResult::RefMoved {
                 reason: "moved".into(),

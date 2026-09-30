@@ -487,6 +487,7 @@ fn new_task(
         signals: Vec::new(),
         signals_more: 0,
         signal_refusals: 0,
+        sync: None,
     }
 }
 

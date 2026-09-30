@@ -95,9 +95,11 @@ pub(super) fn ending(run: &Run) -> bool {
     run.finish_edit || run.cancelled
 }
 
-/// Decision 17(b): no queued task and no candidate in flight.
+/// Decision 17(b): no queued task, no pending propagate, and no candidate or
+/// propagate in flight.
 fn queue_idle(run: &Run) -> bool {
     run.merge_queue.is_empty()
+        && !super::propagate::busy(run)
         && !run
             .pending_ops
             .values()

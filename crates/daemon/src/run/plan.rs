@@ -488,6 +488,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         full_op: None,
         queue_idle_since: None,
         fix_seq: 0,
+        propagate_due: BTreeSet::new(),
     })
 }
 
