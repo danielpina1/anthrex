@@ -125,6 +125,8 @@ pub(super) fn idle_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         .stages
         .iter()
         .filter(|s| lacks_green(run, s) && !red_at_head(s) && !infra_waiting(s, now))
+        // Ruling C-19: an open bisect fix task's stage waits for it.
+        .filter(|s| bisect::fix_open(run, s.n).is_none())
         .map(|s| s.n)
         .min();
     if let Some(n) = lowest {
@@ -382,6 +384,22 @@ fn red(
         "the profile has no single_test to bisect with".to_string()
     } else if run.stage_head(n) != Some(commit) {
         STALE_RED.to_string()
+    } else if let Some(fix) = bisect::fix_open(run, n) {
+        // Ruling C-19: the open fix task is the stage's answer; no second bisect.
+        let fix = fix.to_string();
+        log(
+            run,
+            now,
+            format!(
+                "stage {n}: tier 3 red ({}); fix task {fix} is still open",
+                first(failing, WAKE_TESTS)
+            ),
+        );
+        if let Some(s) = stage_mut(run, n) {
+            s.full.red_at = Some(commit.to_string());
+            s.full.note = None;
+        }
+        return;
     } else {
         match bisect::start(run, n, commit, failing.to_vec(), now, fx) {
             Ok(m) => {

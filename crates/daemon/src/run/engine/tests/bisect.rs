@@ -385,3 +385,7 @@ fn bisect_survives_a_restart() {
 // Ruling C-18 for probes, and the run ending during a bisect.
 #[path = "bisect_ends.rs"]
 mod ends;
+
+// Controller ruling C-19 and the review's other findings on c21b745.
+#[path = "bisect_review.rs"]
+mod review;

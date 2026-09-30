@@ -56,6 +56,18 @@ fn range(s: &StageRecord, head: &str) -> Option<(String, Vec<StageMerge>)> {
     (to >= from).then(|| (base.to_string(), s.merges[from..=to].to_vec()))
 }
 
+/// Ruling C-19: stage `n` has a bisect fix task that has not finished (not merged,
+/// cancelled or reported); its stage then starts no idle tier 3 and no bisect.
+pub(super) fn fix_open(run: &Run, n: u16) -> Option<&str> {
+    run.tasks
+        .iter()
+        .find(|t| {
+            matches!(&t.fixes, Some(FixOf::Bisect { stage, .. }) if *stage == n)
+                && !t.state.is_finished()
+        })
+        .map(|t| t.id())
+}
+
 /// Whether a stage of the run is being bisected.
 pub(super) fn bisecting(run: &Run) -> bool {
     run.stages.iter().any(|s| s.bisect.is_some())
@@ -181,8 +193,13 @@ fn probe_commit(b: &BisectRecord, probe: Probe) -> String {
 
 /// Decision 36: the due probe of stage `n` as `TestAt` in `.full`, at `FullStage` on
 /// half the slots (the executor's), running `single_test` once per failing name (the
-/// first ten). It holds `Run.full_op`.
+/// first ten). It holds `Run.full_op`. Only while the run runs.
 fn issue(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
+    // Review of c21b745: a paused or halted run keeps its result; the next running
+    // pass (`pass`) issues the probe.
+    if run.state != proto::RunState::Running {
+        return;
+    }
     let Some(b) = run.stage(n).and_then(|s| s.bisect.as_ref()) else {
         return;
     };
