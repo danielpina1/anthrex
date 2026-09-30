@@ -24,7 +24,8 @@ const ENTRY_STRINGS_TRIMMED: usize = 40;
 /// Interfaces, so the cap always holds, texts and lists are cut before an unfinished
 /// task goes: `attention` cut to 10 lines (those of tasks already dropped first, and
 /// the run-wide lines kept ahead of the blocked tasks' ones), every string cut to 120
-/// characters, `scouts`, `planners`, `integration` and `notes` cut to 10, then the
+/// characters, `scouts`, `planners`, `integration`, `notes` and milestone 9.1's
+/// `stages` cut to 10, then the
 /// scouts' and planners' strings cut to 40 characters and both lists to 3; only then
 /// unfinished tasks dropped from the end of the plan (counted too), and the attention
 /// lines of the tasks dropped last removed with them.
@@ -88,7 +89,7 @@ pub(super) fn trim(digest: &mut Value, run: &Run) {
         return;
     }
     shrink_strings(digest, STRINGS_TRIMMED);
-    for key in ["scouts", "planners", "integration", "notes"] {
+    for key in ["scouts", "planners", "integration", "notes", "stages"] {
         if fits(digest) {
             return;
         }

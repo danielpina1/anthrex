@@ -440,3 +440,136 @@ fn untrusted_text_stays_inside_its_json_string() {
 
 #[path = "digest_tests_trim.rs"]
 mod trim;
+
+/// Milestone 9.1 decision 58: `stages` is the snapshot's `StageInfo` per stage, and
+/// every task carries its `stage` and `origin`.
+#[test]
+fn digest_lists_stages_with_heads_and_tier3_state() {
+    use crate::run::model::{FixOf, StageLayout, StageRecord, TierRecord};
+    let mut run = run_with(&[
+        task_toml("t1", "S", "[\"crates/a/**\"]", ""),
+        task_toml("t2", "S", "[\"crates/b/**\"]", "stage = 2"),
+        task_toml("t3", "S", "[\"crates/c/**\"]", "stage = 3"),
+    ]);
+    run.state = RunState::Running;
+    run.stage_layout = StageLayout::Multi;
+    let (h1, h2) = ("1".repeat(40), "2".repeat(40));
+    let mut s1 = StageRecord::new(1, run.stage_branch(1), &run.base_sha, Default::default(), 0);
+    s1.head = h1.clone();
+    s1.full.green_at = Some(h1.clone());
+    s1.full.last = Some(TierRecord {
+        tier: 3,
+        affected: "full suite (full suite)".into(),
+        steps: 1,
+        cached: 0,
+        ok: true,
+        secs: 2472,
+        flaky: vec!["a::flaky".into()],
+        failing: vec![],
+        at: at(12, 0),
+        commit: h1.clone(),
+    });
+    let mut s2 = StageRecord::new(2, run.stage_branch(2), &h1, Default::default(), 0);
+    s2.head = h2.clone();
+    s2.full.red_at = Some(h2.clone());
+    s2.full.bisect_fixes = 1;
+    s2.full.last = Some(TierRecord {
+        tier: 3,
+        affected: "full suite (full suite)".into(),
+        steps: 1,
+        cached: 0,
+        ok: false,
+        secs: 60,
+        flaky: vec![],
+        failing: vec!["b::works".into()],
+        at: at(12, 10),
+        commit: h2.clone(),
+    });
+    s2.bisect = Some(
+        serde_json::from_value(json!({
+            "head": h2, "tests": ["b::works"], "base": h1, "candidates": [],
+            "lo": 0, "hi": 1, "probes": 1
+        }))
+        .unwrap(),
+    );
+    s2.propagate_red = None;
+    run.stages = vec![s1, s2];
+    // An engine-made fix task in stage 2.
+    let mut fix = run.tasks[1].clone();
+    fix.spec.id = "fix1".into();
+    fix.origin = proto::TaskOrigin::Bisect;
+    fix.fixes = Some(FixOf::Bisect {
+        culprit: "t2".into(),
+        stage: 2,
+        tests: vec!["b::works".into()],
+    });
+    run.tasks.push(fix);
+    task_mut(&mut run, "t1").state = TaskState::Merged;
+    task_mut(&mut run, "t2").state = TaskState::Merged;
+
+    let got = digest(&run, NOW);
+    let full = |state: &str, last: Value| {
+        let mut full = json!({
+            "state": state, "at": null, "secs": null, "commit": null, "shards": 0,
+            "flaky": [], "failing": [], "bisect_fixes": 0, "note": null,
+        });
+        if let (Value::Object(full), Value::Object(last)) = (&mut full, last) {
+            full.extend(last);
+        }
+        full
+    };
+    let run_id = run.id.clone();
+    assert_eq!(
+        got["stages"],
+        json!([
+            {
+                "n": 1, "branch": format!("anthrex/{run_id}/stage-1"), "head": h1,
+                "tasks": 1, "merged": 1,
+                "full": full("green", json!({
+                    "at": at(12, 0), "secs": 2472, "commit": h1, "shards": 1,
+                    "flaky": ["a::flaky"],
+                })),
+                "fix_tasks": [], "propagate_red": null,
+            },
+            {
+                "n": 2, "branch": format!("anthrex/{run_id}/stage-2"), "head": h2,
+                "tasks": 2, "merged": 1,
+                "full": full("bisecting", json!({
+                    "at": at(12, 10), "secs": 60, "commit": h2, "shards": 1,
+                    "failing": ["b::works"], "bisect_fixes": 1,
+                })),
+                "fix_tasks": ["fix1"], "propagate_red": null,
+            },
+            {
+                "n": 3, "branch": format!("anthrex/{run_id}/stage-3"), "head": null,
+                "tasks": 1, "merged": 0, "full": full("none", json!({})),
+                "fix_tasks": [], "propagate_red": null,
+            },
+        ]),
+        "{}",
+        serde_json::to_string_pretty(&got["stages"]).unwrap()
+    );
+    let tasks = got["tasks"].as_array().unwrap();
+    let of = |id: &str| tasks.iter().find(|t| t["id"] == id).unwrap().clone();
+    assert_eq!(
+        (of("t2")["stage"].clone(), of("t2")["origin"].clone()),
+        (json!(2), json!("plan"))
+    );
+    assert_eq!(
+        (of("fix1")["stage"].clone(), of("fix1")["origin"].clone()),
+        (json!(2), json!("bisect"))
+    );
+
+    // Stage 1 red on its head, stage 2 green but moved on since: `red`, then `none`.
+    let mut moved = run.clone();
+    moved.stages[0].full.green_at = None;
+    moved.stages[0].full.red_at = Some(h1.clone());
+    moved.stages[1].bisect = None;
+    moved.stages[1].full.red_at = None;
+    moved.stages[1].full.green_at = Some("9".repeat(40));
+    let d = digest(&moved, NOW);
+    assert_eq!(d["stages"][0]["full"]["state"], "red");
+    assert_eq!(d["stages"][1]["full"]["state"], "none");
+    // The fingerprint moves with a stage's tier-3 state.
+    assert_ne!(fingerprint(&moved), fingerprint(&run));
+}

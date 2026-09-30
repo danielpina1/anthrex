@@ -59,6 +59,7 @@ pub mod seatbelt;
 pub mod slots;
 pub mod snapshot;
 mod snapshot_orch;
+mod snapshot_stages;
 pub mod stats;
 pub mod test_cache;
 pub mod tiers;

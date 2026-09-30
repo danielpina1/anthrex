@@ -97,6 +97,28 @@
     "tokens": 0,
     "tool_calls": 0
   },
+  "stages": [
+    {
+      "branch": "anthrex/add-password-reset-3f9a/integration",
+      "fix_tasks": [],
+      "full": {
+        "at": null,
+        "bisect_fixes": 0,
+        "commit": null,
+        "failing": [],
+        "flaky": [],
+        "note": null,
+        "secs": null,
+        "shards": 0,
+        "state": "none"
+      },
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "merged": 1,
+      "n": 1,
+      "propagate_red": null,
+      "tasks": 4
+    }
+  ],
   "task_notes": [
     {
       "at": "12:29",
@@ -120,10 +142,12 @@
         "refresh": null,
         "undelivered": 0
       },
+      "origin": "plan",
       "review": null,
       "route": "claude claude-opus-5-5 high",
       "rung": 0,
       "size": "M",
+      "stage": 1,
       "state": "merged",
       "title": "Title t0"
     },
@@ -141,10 +165,12 @@
         "refresh": "due",
         "undelivered": 1
       },
+      "origin": "plan",
       "review": null,
       "route": "codex (default) high",
       "rung": 0,
       "size": "S",
+      "stage": 1,
       "state": "working",
       "title": "Title t1"
     },
@@ -167,10 +193,12 @@
         "refresh": null,
         "undelivered": 0
       },
+      "origin": "plan",
       "review": "r1 changes (1 critical)",
       "route": "claude claude-sonnet-5 medium",
       "rung": 1,
       "size": "M",
+      "stage": 1,
       "state": "blocked",
       "title": "Title t2"
     },
@@ -188,10 +216,12 @@
         "refresh": null,
         "undelivered": 0
       },
+      "origin": "plan",
       "review": null,
       "route": "claude claude-sonnet-5 low",
       "rung": 0,
       "size": "S",
+      "stage": 1,
       "state": "pending",
       "title": "Title t3"
     }

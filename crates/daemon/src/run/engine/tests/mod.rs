@@ -95,3 +95,4 @@ mod weakening;
 mod worker_messages;
 mod worker_messages_pause;
 mod worker_messages_review;
+mod worker_messages_stage;
