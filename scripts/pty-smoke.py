@@ -46,6 +46,7 @@ from pty_smoke_adapt import DECIDER_DIR, adapt_stage
 from pty_smoke_orch import orch_stage
 from pty_smoke_tiers import tiers_stage
 from pty_smoke_run_view import run_view_stage
+from pty_smoke_tui import tui_stage
 
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -88,9 +89,10 @@ ENV["ANTHREX_GIT"] = "off"
 # `ANTHREX_CONFIG` is unset. Pointing it here instead means this script's daemon and
 # every client it drives never consult whatever a developer running this locally has
 # actually configured (a different prefix key would break every `\x02`-prefixed send
-# below in a way that has nothing to do with the product). Every stage but one (the
-# resume stage below) never creates it — the suite's own correctness depends on it
-# staying absent for those stages, and `ensure_config_path_absent` below is what makes
+# below in a way that has nothing to do with the product). Every stage but two (the
+# resume stage below, and stage 11t's Settings save, `scripts/pty_smoke_tui.py`, which
+# removes it again on every exit) never creates it — the suite's own correctness
+# depends on it staying absent for those stages, and `ensure_config_path_absent` below is what makes
 # that an enforced invariant instead of a hope. See the M6.12/fix-wave-11 reviews for
 # why a fixed, silently-poisonable path was a Major finding: a stray file here used to
 # fail stage 2 with "timed out waiting for 'new-agent form'", an error that named the
@@ -1723,6 +1725,7 @@ def main():
     run_view_stage(PtyProc, BIN, run_cmd, fail)
     orch_stage(PtyProc, BIN, run_cmd, fail)
     tiers_stage(PtyProc, BIN, run_cmd, fail)
+    tui_stage(PtyProc, BIN, run_cmd, fail, ANTHREX_CONFIG_PATH)
 
     print("== stage 12: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)

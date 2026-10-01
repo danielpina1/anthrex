@@ -1762,3 +1762,7 @@ scope.
 
 - **The Profile screen keeps its accented frame under a modal.** `ui/profile.rs::render` mutes the screen's border only while one of its own pages is open (`s.page.is_none()`), so a modal over it (the action menu a late `ConfirmNeeded` opens, `C-b ?`, `C-b g`) shows two accented frames, against decision 5 / principle 2. The Settings screen uses `s.page.is_none() && app.modal.is_none()`; the Profile screen should do the same, with its `a_page_mutes_the_screens_border` extended to a modal.
 - **The Profile screen's destructive pages draw their action word plain.** Decision 5 puts a destructive dialog's action word in `Failed` as well as its title (`ui/action_menu.rs::verb_hints` does; the Settings discard page does since M9.0.6.14's fix round 1). `ui/profile_pages.rs`'s Reject page (`y reject`) and the Confirm page's `y store` (y-only) build their hints with plain `kit::hints_joined`; colour the key and word in `Failed` for Reject, with a render test.
+
+## From M9.0.6.16 (2026-10-01), for M9.0.7
+
+- **The status bar shows the tree's hints under the ` MENU ` badge.** With the action menu open over the sidebar tree, smoke stage 11t renders ` MENU  j/k move  ⏎ focus  space fold  / filter  esc back`: the badge is the menu's (`ui/statusbar_modes.rs::badge`), but the hints are the tree mode's, and `⏎ focus`, `space fold` and `/ filter` do nothing while the menu is open (it draws its own `⏎ choose · j/k move · esc close`). 9.0.7's status-bar pass should show the menu's hints, or none, while `Modal::Action` is open, with a render test.
