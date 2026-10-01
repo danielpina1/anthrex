@@ -359,7 +359,8 @@ fn check_private(objects: &Path, common_dir: &Path) -> Result<(), String> {
             ));
         }
     }
-    for name in ["info/http-alternates"] {
+    {
+        let name = "info/http-alternates";
         if std::fs::symlink_metadata(objects.join(name)).is_ok() {
             return Err(format!(
                 "{} has {name}, which the worker's git never writes; the task's object \

@@ -291,6 +291,9 @@ impl Window {
             "input too large ({} bytes, max 1 MiB)",
             bytes.len()
         );
+        // `fetch_update` is deprecated (renamed `try_update`) from Rust 1.99; `try_update`
+        // does not exist before it, so keep the old name until the toolchain floor moves.
+        #[allow(deprecated)]
         self.input_bytes
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |queued| {
                 queued
