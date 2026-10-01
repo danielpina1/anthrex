@@ -169,7 +169,8 @@ pub(crate) fn shows(name: &str) -> Shows {
         // Milestone 9.0.7 decision 29: the pane's title, ` sh shell · /r/demo `.
         "pane" | "sidebar tree, then hidden" => row("sh shell", None, &["C-b ? help"]),
         "sidebar tree" | "sidebar tree overflowing" => row("TREE", Some("esc back"), &["j/k move"]),
-        "project overview" => row("TREE", Some("esc back"), &["j/k move"]),
+        // Milestone 9.0.7 decision 31: the overview wears its own badge.
+        "project overview" => row("OVERVIEW", Some("esc back"), &["j/k move"]),
         "run view at the gate" => row("RUN", Some("esc back"), &["a approve", "x reject"]),
         "run view running" | "run view on a task" => row("RUN", Some("esc back"), &["j/k move"]),
         "conversation" => row("CHAT", None, &["C-b ? help"]),

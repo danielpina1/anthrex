@@ -66,20 +66,30 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
-    // Decision 20: with the sidebar hidden, the alerts' count in the top priority's
-    // colour, right after the mode badge.
+    // Decision 20, and milestone 9.0.7 decision 32: with the sidebar hidden,
+    // `⚑ <n> <prefix> a` right after the mode badge, the mark and count in the top
+    // alert's role, the key in the accent. It is measured before the hints, so no
+    // hint drop reaches it.
     if !app.sidebar_visible {
         let all = crate::app::alerts(app);
         if let Some(top) = all.first() {
             spans.push(Span::styled(
                 format!(
                     "{} {}",
-                    theme::glyph(Glyph::NeedsYou, palette.ascii),
+                    theme::alert_glyph(top.priority, palette.ascii),
                     all.len()
                 ),
                 theme::alert_style(top.priority, palette),
             ));
             spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                format!(
+                    "{} a",
+                    crate::safe_text::one_line(&app.settings.prefix_label)
+                ),
+                accent,
+            ));
+            spans.push(Span::raw("  "));
         }
     }
 
@@ -357,6 +367,9 @@ pub fn git_spans_in(state: &GitState, budget: usize, p: theme::Palette) -> Vec<S
 #[cfg(test)]
 #[path = "statusbar_kit_tests.rs"]
 mod kit_tests;
+#[cfg(test)]
+#[path = "statusbar_polish_tests.rs"]
+mod polish_tests;
 #[cfg(test)]
 #[path = "statusbar_tests.rs"]
 mod tests;

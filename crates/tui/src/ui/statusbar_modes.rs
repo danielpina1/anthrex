@@ -1,5 +1,9 @@
 //! Which badge the status bar wears and which hints it lists (milestone 9.0.6
 //! decision 6). Pure: both are read off `&App`; `statusbar.rs` only draws them.
+//!
+//! Milestone 9.0.7 decision 33: every hint carries its priority from the brief's
+//! Interfaces "Hint priorities" table (higher survives longer), and `esc` is never
+//! dropped (`kit::hints`).
 
 use crate::app::screens::Screen;
 use crate::app::{App, ReviewTarget, TreeInput};
@@ -24,12 +28,24 @@ fn hint(key: &str, word: &str, priority: u8) -> Hint {
     }
 }
 
+/// `esc back`: `kit::hints` never drops it, so its priority is never compared.
+fn esc_back() -> Hint {
+    hint("esc", "back", u8::MAX)
+}
+
+/// `true` while the action menu is open: it draws its own key line.
+fn menu_open(app: &App) -> bool {
+    matches!(app.modal, Some(crate::app::Modal::Action(_)))
+}
+
 /// The mode badge, in decision 6's precedence: ` PREFIX ` first, then ` MENU `, then
-/// the screens' (` PROFILE `, ` SETTINGS `, ` STATS `), above ` PLAN `.
+/// the screens' (` PROFILE `, ` SETTINGS `, ` STATS `), above ` PLAN `. Milestone 9.0.7
+/// decision 31: the run view wears ` RUN `, the project overview ` OVERVIEW ` and the
+/// sidebar tree ` TREE `.
 pub(super) fn badge(app: &App) -> Option<&'static str> {
     if app.keymap.pending() {
         Some(" PREFIX ")
-    } else if matches!(app.modal, Some(crate::app::Modal::Action(_))) {
+    } else if menu_open(app) {
         Some(" MENU ")
     } else if matches!(app.screen, Some(Screen::Profile(_))) {
         Some(" PROFILE ")
@@ -46,6 +62,7 @@ pub(super) fn badge(app: &App) -> Option<&'static str> {
     } else {
         match app.tree_input {
             Some(TreeInput::Navigate) if app.run_view.is_some() => Some(" RUN "),
+            Some(TreeInput::Navigate) if app.overview => Some(" OVERVIEW "),
             Some(TreeInput::Navigate) => Some(" TREE "),
             Some(TreeInput::Filter) => Some(" FILTER "),
             None => None,
@@ -56,14 +73,16 @@ pub(super) fn badge(app: &App) -> Option<&'static str> {
 /// `true` while a filter is being typed: the bar shows `/text`, not hints.
 pub(super) fn filtering(app: &App) -> bool {
     !app.keymap.pending()
+        && !menu_open(app)
         && app.screen.is_none()
         && app.plan_review.is_none()
         && app.alerts_focus.is_none()
         && app.tree_input == Some(TreeInput::Filter)
 }
 
-/// The hints to list. The pending prefix wins, then the review, the Alerts view, tree
-/// navigation, then the default bar.
+/// The hints to list. The pending prefix wins, then the action menu's `esc back` alone
+/// (decision 31), the screens, the review, the Alerts view, tree navigation, then the
+/// default bar.
 pub(super) fn body(app: &App) -> Body {
     let (hints, git) = if app.keymap.pending() {
         let list = [
@@ -86,6 +105,8 @@ pub(super) fn body(app: &App) -> Body {
             separator: " · ",
             git: git && app.tree_input.is_none(),
         };
+    } else if menu_open(app) {
+        (vec![esc_back()], false)
     } else if let Some(Screen::Profile(screen)) = &app.screen {
         (crate::ui::profile::hints(screen), false)
     } else if let Some(Screen::Settings(screen)) = &app.screen {
@@ -107,11 +128,11 @@ pub(super) fn body(app: &App) -> Body {
         let p = &app.settings.prefix_label;
         (
             vec![
-                hint(&format!("{p} ?"), "help", 5),
-                hint(&format!("{p} c"), "new shell", 5),
-                hint(&format!("{p} t"), "tree", 5),
+                hint(&format!("{p} ?"), "help", 9),
+                hint(&format!("{p} c"), "new shell", 7),
+                hint(&format!("{p} t"), "tree", 6),
                 hint(&format!("{p} j/k"), "switch", 5),
-                hint(&format!("{p} d"), "detach", 5),
+                hint(&format!("{p} d"), "detach", 8),
             ],
             true,
         )
@@ -128,14 +149,14 @@ pub(super) fn body(app: &App) -> Body {
 /// Interfaces "Status bar and overview title"), the plan gate's while the run awaits
 /// approval.
 fn navigate_hints(app: &App) -> Vec<Hint> {
-    let h = |k: &str, w: &str| hint(k, w, 5);
     let Some(view) = &app.run_view else {
         return vec![
-            h("j/k", "move"),
-            h("⏎", "focus"),
-            h("space", "fold"),
-            h("/", "filter"),
-            h("esc", "back"),
+            hint("j/k", "move", 6),
+            hint("⏎", "focus", 8),
+            hint(".", "actions", 7),
+            hint("space", "fold", 4),
+            hint("/", "filter", 5),
+            esc_back(),
         ];
     };
     let filter = format!("filter: {}", crate::app::filter_label(view.filter));
@@ -145,41 +166,47 @@ fn navigate_hints(app: &App) -> Vec<Hint> {
     let holds = run.is_some_and(|run| crate::tree::awaiting_holds(run).next().is_some());
     if state == Some(proto::RunState::AwaitingApproval) {
         vec![
-            h("a", "approve"),
-            h("x", "reject"),
-            h("e", "edit"),
-            h("d", "remove"),
-            h("p", "review"),
-            h("⏎", "open"),
-            h("f", &filter),
-            h("esc", "back"),
+            hint("a", "approve", 9),
+            hint("x", "reject", 9),
+            hint("e", "edit", 6),
+            hint("d", "remove", 5),
+            hint("p", "review", 8),
+            hint("⏎", "open", 4),
+            hint(".", "actions", 7),
+            hint("f", &filter, 3),
+            esc_back(),
         ]
     } else if state == Some(proto::RunState::Planning) {
+        // Task 7 note: `j/k` keeps the run view's 6; `p` has nothing to review yet.
         vec![
-            h("s", "submit"),
-            h("j/k", "move"),
-            h("⏎", "open"),
-            h("f", &filter),
-            h("esc", "back"),
+            hint("s", "submit", 9),
+            hint("j/k", "move", 6),
+            hint("⏎", "open", 4),
+            hint(".", "actions", 7),
+            hint("f", &filter, 3),
+            esc_back(),
         ]
     } else if holds {
         vec![
-            h("a", "approve hold"),
-            h("x", "reject hold"),
-            h("p", "review"),
-            h("⏎", "open"),
-            h("f", &filter),
-            h("esc", "back"),
+            hint("a", "approve hold", 9),
+            hint("x", "reject hold", 9),
+            hint("p", "review", 8),
+            hint("⏎", "open", 4),
+            hint(".", "actions", 7),
+            hint("f", &filter, 3),
+            esc_back(),
         ]
     } else {
         vec![
-            h("j/k", "move"),
-            h("h/l", "tier"),
-            h("⏎", "open"),
-            h("space", "fold"),
-            h("f", &filter),
-            h("/", "find"),
-            h("esc", "back"),
+            hint("j/k", "move", 6),
+            hint("h/l", "tier", 4),
+            hint("⏎", "open", 8),
+            hint(".", "actions", 7),
+            hint("PgDn", "panel", 5),
+            hint("space", "fold", 3),
+            hint("f", &filter, 2),
+            hint("/", "find", 1),
+            esc_back(),
         ]
     }
 }
@@ -190,7 +217,7 @@ fn navigate_hints(app: &App) -> Vec<Hint> {
 fn alerts_view_hints(app: &App) -> Vec<Hint> {
     use crate::app::AlertKey;
     use crate::app::alerts_view::{alert_node, enter_label};
-    let back = hint("esc", "back", 5);
+    let back = esc_back();
     let Some(key) = app.alerts_focus.as_ref().and_then(|f| f.selected.as_ref()) else {
         return vec![back];
     };
@@ -207,15 +234,20 @@ fn alerts_view_hints(app: &App) -> Vec<Hint> {
 
 /// Milestone 9.0.5 decision 13: the plan review's keys, at the gate or for a hold.
 fn review_hints(app: &App) -> Vec<Hint> {
-    let h = |k: &str, w: &str| hint(k, w, 5);
-    let tail = [h("j/k", "task"), h("PgUp/PgDn", "scroll"), h("esc", "back")];
+    let tail = [
+        hint("j/k", "task", 4),
+        hint("PgUp/PgDn", "scroll", 3),
+        esc_back(),
+    ];
     let head = match app.plan_review.as_ref().map(|review| &review.target) {
-        Some(ReviewTarget::Hold(_)) => vec![h("a", "approve hold"), h("x", "reject hold")],
+        Some(ReviewTarget::Hold(_)) => {
+            vec![hint("a", "approve hold", 9), hint("x", "reject hold", 9)]
+        }
         _ => vec![
-            h("a", "approve"),
-            h("x", "reject"),
-            h("e", "edit"),
-            h("d", "drop"),
+            hint("a", "approve", 9),
+            hint("x", "reject", 9),
+            hint("e", "edit", 6),
+            hint("d", "drop", 5),
         ],
     };
     head.into_iter().chain(tail).collect()
