@@ -97,7 +97,8 @@ fn codex_stream_parses_exec_and_resume() {
             outcome: TurnOutcome::Failed {
                 error: "The 'no-such-model' model is not supported when using Codex with a ChatGPT account."
                     .into(),
-                kind: FailureKind::Other,
+                // Ruling F-1: a 400 `invalid_request_error` is a client error.
+                kind: FailureKind::ClientError,
             },
             usage: None,
             denials: vec![],

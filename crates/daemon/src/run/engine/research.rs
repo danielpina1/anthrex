@@ -267,7 +267,10 @@ pub(super) fn turn_ended(
         TurnOutcome::Failed {
             error,
             kind:
-                FailureKind::Authentication | FailureKind::Billing | FailureKind::SandboxUnavailable,
+                FailureKind::Authentication
+                | FailureKind::Billing
+                | FailureKind::SandboxUnavailable
+                | FailureKind::ClientError,
         } => {
             return give_up(run, i, error, now, fx);
         }

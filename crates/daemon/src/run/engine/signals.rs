@@ -334,7 +334,8 @@ fn failed_turn(
                 now,
             );
         }
-        FailureKind::Authentication | FailureKind::Billing => {
+        // Ruling F-1: a client error is as final as a failed login.
+        FailureKind::Authentication | FailureKind::Billing | FailureKind::ClientError => {
             block(run, i, BlockReason::Environment, error, now);
         }
         FailureKind::RateLimit => {

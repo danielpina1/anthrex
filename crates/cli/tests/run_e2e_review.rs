@@ -4,8 +4,6 @@
 
 mod support;
 
-use std::time::Duration;
-
 use proto::{AgentRole, BlockReason, RunState, Runtime, TaskState};
 use serde_json::{Value, json};
 use support::run_harness::{RUN_WAIT, RunHarness};
@@ -271,18 +269,17 @@ fn e2e_minor_findings_do_not_bounce() {
 }
 
 /// The trial's reviewer failure (2026-10-01): Codex prints its `error` line and
-/// `turn.failed` with a 400 `invalid_request_error`, then exits. Decision 32 (ruling
-/// T13-I1 for reviewers): one `rate_limit_continue` after `rate_limit_retry_secs`; the
-/// second such turn in a row blocks the task `blocked(environment)` with the error.
+/// `turn.failed` with a 400 `invalid_request_error`, then exits. Ruling F-1 (amending
+/// decision 32): a client error blocks the task `blocked(environment)` at once, with the
+/// API's message, and no `rate_limit_continue` is ever sent.
 #[test]
-fn e2e_a_reviewer_whose_model_is_refused_twice_blocks_on_the_error() {
-    const RETRY_SECS: u64 = 5;
+fn e2e_a_reviewer_whose_model_is_refused_blocks_at_once_on_the_error() {
     const UNSUPPORTED: &str =
         "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.";
     let api = json!({"type": "error", "status": 400,
         "error": {"type": "invalid_request_error", "message": UNSUPPORTED}})
     .to_string();
-    let h = RunHarness::new(&format!("rate_limit_retry_secs = {RETRY_SECS}"));
+    let h = RunHarness::new("");
     h.script("worker-t1-1", &[commit("a.txt", "a\n"), done("added a")]);
     h.script(
         "reviewer-t1-1",
@@ -293,10 +290,8 @@ fn e2e_a_reviewer_whose_model_is_refused_twice_blocks_on_the_error() {
         ],
     );
     let id = h.start(&plan("", &[task("t1", &["a.txt"], "")]), true);
-    // One task path, plus the one engine timer on its critical path: the first failed
-    // turn's `rate_limit_retry_secs` (docs/timing-budgets.md).
-    let wait = RUN_WAIT + Duration::from_secs(RETRY_SECS);
-    let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Blocked, wait);
+    // One task path; no engine timer is on it (docs/timing-budgets.md).
+    let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Blocked, RUN_WAIT);
     let t1 = t(&run, "t1");
     let block = t1.block.as_ref().expect("a blocked task has its block");
     assert_eq!(
@@ -309,6 +304,41 @@ fn e2e_a_reviewer_whose_model_is_refused_twice_blocks_on_the_error() {
         .find(|a| a.role == AgentRole::Reviewer)
         .expect("the reviewer's round");
     assert_eq!(reviewer.route.runtime, Runtime::Codex);
-    assert_eq!(reviewer.turns, 2, "one continue, then the block");
+    assert_eq!(reviewer.turns, 1, "blocked on the first failed turn");
     assert!(reviewer.ended_at.is_some(), "the reviewer's round is over");
+}
+
+/// Ruling F-1 for a Claude worker: a failed turn with `api_error_status` 400 (the
+/// fake's `invalid_request` category) blocks the task at once.
+#[test]
+fn e2e_a_claude_worker_client_error_blocks_at_once() {
+    let h = RunHarness::new("");
+    h.script(
+        "worker-t1-1",
+        &[
+            json!({"fail_turn": {"error": "invalid_request"}}),
+            read("stopped on an API error"),
+            commit("a.txt", "a\n"),
+            done("added a"),
+        ],
+    );
+    let plan = plan(
+        "",
+        &[task("t1", &["a.txt"], "route = { runtime = \"claude\" }")],
+    );
+    let id = h.start(&plan, true);
+    // One task path; no engine timer is on it.
+    let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Blocked, RUN_WAIT);
+    let t1 = t(&run, "t1");
+    let block = t1.block.as_ref().expect("a blocked task has its block");
+    assert_eq!(
+        (block.reason, block.text.as_str()),
+        (BlockReason::Environment, "API Error: invalid_request")
+    );
+    let worker = &t1.rounds[0];
+    assert_eq!(
+        (worker.role, worker.route.runtime),
+        (AgentRole::Worker, Runtime::Claude)
+    );
+    assert_eq!(worker.turns, 1, "blocked on the first failed turn");
 }

@@ -160,7 +160,8 @@ fn mcp_result_text(result: Option<&Value>) -> String {
 }
 
 /// M8a.1 item 7's rule: `RateLimit` when the message, or its JSON `status`, matches
-/// `429`, `rate limit`, `usage limit` or `too many requests`, ignoring case; else `Other`.
+/// `429`, `rate limit`, `usage limit` or `too many requests`, ignoring case; else
+/// `ClientError` for ruling F-1's client errors; else `Other`.
 /// The text is the JSON error's inner message when the message is one.
 fn classify(message: &str) -> (String, FailureKind) {
     let parsed: Option<Value> = serde_json::from_str(message).ok();
@@ -181,6 +182,8 @@ fn classify(message: &str) -> (String, FailureKind) {
             .any(|p| lower.contains(p));
     let kind = if rate_limited {
         FailureKind::RateLimit
+    } else if super::failure::is_client_error(status, message) {
+        FailureKind::ClientError
     } else {
         FailureKind::Other
     };
