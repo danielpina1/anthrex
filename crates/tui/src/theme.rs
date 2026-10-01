@@ -168,3 +168,105 @@ pub fn alert_color(priority: u8) -> Color {
         _ => Color::Green,
     }
 }
+
+/// Milestone 9.0.6 decision 1: the seven colour roles every new widget draws in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Accent,
+    Attention,
+    Working,
+    Done,
+    Failed,
+    Muted,
+    Paused,
+}
+
+/// What `role` needs from the settings: the configured accent and whether 24-bit
+/// colour may be used (built by `App::palette`).
+#[derive(Debug, Clone, Copy)]
+pub struct Palette {
+    pub accent: Color,
+    pub truecolor: bool,
+}
+
+/// A role's style. With truecolor off every role is one of the 16 ANSI colours,
+/// whatever the configured accent; `Working` is never `Attention` (principle 1).
+pub fn role(r: Role, p: Palette) -> Style {
+    let (ansi, rgb) = match r {
+        Role::Accent => (Color::LightBlue, p.accent),
+        Role::Attention => (Color::LightMagenta, Color::Rgb(0xfa, 0xb3, 0x87)),
+        Role::Working => (Color::Yellow, Color::Rgb(0xf9, 0xe2, 0xaf)),
+        Role::Done => (Color::Green, Color::Rgb(0xa6, 0xe3, 0xa1)),
+        Role::Failed => (Color::Red, Color::Rgb(0xf3, 0x8b, 0xa8)),
+        Role::Muted => (Color::DarkGray, Color::Rgb(0x6c, 0x70, 0x86)),
+        Role::Paused => (Color::Cyan, PAUSED_COLOR),
+    };
+    let style = Style::default().fg(if p.truecolor { rgb } else { ansi });
+    if r == Role::Attention {
+        style.add_modifier(Modifier::BOLD)
+    } else {
+        style
+    }
+}
+
+/// Decision 2: `on` forces truecolor, `off` forbids it, `auto` asks `COLORTERM`
+/// (`truecolor` or `24bit`, ASCII case-insensitive). The CLI reads the environment;
+/// this stays pure.
+pub fn truecolor(setting: config::Truecolor, colorterm: Option<&str>) -> bool {
+    match setting {
+        config::Truecolor::On => true,
+        config::Truecolor::Off => false,
+        config::Truecolor::Auto => colorterm.is_some_and(|v| {
+            v.eq_ignore_ascii_case("truecolor") || v.eq_ignore_ascii_case("24bit")
+        }),
+    }
+}
+
+/// Decision 3: the nine marks of §5.1 principle 4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Glyph {
+    Passed,
+    Failed,
+    NotStarted,
+    Idle,
+    NeedsYou,
+    Collapsed,
+    Selection,
+    Separator,
+    Warning,
+}
+
+/// A glyph, or its ASCII twin when `ascii` (`UiSettings.badges.ascii`).
+pub fn glyph(g: Glyph, ascii: bool) -> &'static str {
+    let (unicode, plain) = match g {
+        Glyph::Passed => ("✓", "+"),
+        Glyph::Failed => ("✗", "x"),
+        Glyph::NotStarted => ("◌", "."),
+        Glyph::Idle => ("○", "o"),
+        Glyph::NeedsYou => ("⚑", "!"),
+        Glyph::Collapsed => ("▸", ">"),
+        Glyph::Selection => ("▌", ">"),
+        Glyph::Separator => ("›", ">"),
+        Glyph::Warning => ("⚠", "!"),
+    };
+    if ascii { plain } else { unicode }
+}
+
+/// The spinner frame: [`SPINNER`], or `- \ | /` in ASCII.
+pub fn spinner(frame: usize, ascii: bool) -> &'static str {
+    const ASCII: [&str; 4] = ["-", "\\", "|", "/"];
+    if ascii {
+        ASCII[frame % ASCII.len()]
+    } else {
+        SPINNER[frame % SPINNER.len()]
+    }
+}
+
+/// New screens draw runtimes as text tags, not logos.
+pub fn runtime_tag(r: proto::Runtime) -> &'static str {
+    match r {
+        proto::Runtime::Claude => "cl",
+        proto::Runtime::Codex => "cx",
+        proto::Runtime::Shell => "sh",
+    }
+}

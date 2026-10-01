@@ -282,6 +282,14 @@ impl App {
         secs.saturating_add(self.windows_received_at.elapsed().as_secs())
     }
 
+    /// The colour palette the kit's roles resolve against (milestone 9.0.6 decision 1).
+    pub fn palette(&self) -> crate::theme::Palette {
+        crate::theme::Palette {
+            accent: self.settings.accent,
+            truecolor: self.settings.truecolor,
+        }
+    }
+
     pub fn toast_text(&self) -> Option<&str> {
         self.toast.as_ref().map(|(t, _)| t.as_str())
     }

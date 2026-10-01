@@ -443,3 +443,5 @@ pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_n
 
 #[cfg(test)]
 mod reconnect_tests;
+#[cfg(test)]
+mod theme_kit_tests;
