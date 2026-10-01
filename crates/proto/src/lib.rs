@@ -178,6 +178,10 @@ mod actions_tests;
 mod settings_tests;
 
 #[cfg(test)]
+#[path = "delivery_actions_tests.rs"]
+mod delivery_actions_tests;
+
+#[cfg(test)]
 #[path = "adapt_tests.rs"]
 mod adapt_tests;
 
