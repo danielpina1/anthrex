@@ -236,7 +236,7 @@ impl App {
             | RunReply::ToolResult { .. }
             | RunReply::Profile { .. }
             | RunReply::Stats { .. }
-            // Milestone 9.0.6 task 12 routes the settings cache; ignored until then.
+            // Settings replies are routed by id in `app/replies.rs` (decision 24).
             | RunReply::Settings { .. } => {}
             RunReply::TaskDetail { detail, request_id } => self.on_task_detail(detail, request_id),
         }

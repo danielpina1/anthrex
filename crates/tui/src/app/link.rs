@@ -222,8 +222,10 @@ impl App {
         // again. After `replace_windows`, so a view that followed focus to another window
         // (review M3) subscribes that window, once.
         effects.extend(self.conversation.relink());
-        // Decision 1: the new connection has no run subscription yet.
+        // Decision 1: the new connection has no run subscription yet; decision 24: and
+        // no settings.
         effects.push(self.run_subscription());
+        effects.push(self.settings_fetch());
         effects
     }
 
@@ -258,6 +260,13 @@ impl App {
                 id,
                 request: RunRequest::TaskDetail { .. },
             } => self.task_detail_not_sent(*id),
+            // Decision 24: quiet; the cache stays as it was until the next connection.
+            ClientMsg::RunTagged {
+                id,
+                request: RunRequest::Settings(proto::SettingsRequest::Get),
+            } => {
+                self.replies.take(Some(*id));
+            }
             _ => {
                 // Whole-branch review M2: a refused `Edit` frees its submitting form;
                 // milestone 9: the form's own tagged request, and the goal form's.
@@ -270,6 +279,13 @@ impl App {
                         id,
                         request: RunRequest::StartGoal { .. },
                     } => self.goal_not_sent(Some(*id)),
+                    // A refused save is not waited on any longer.
+                    ClientMsg::RunTagged {
+                        id,
+                        request: RunRequest::Settings(_),
+                    } => {
+                        self.replies.take(Some(*id));
+                    }
                     _ => {}
                 }
                 if self.connected() {

@@ -1,160 +1,208 @@
-//! Milestone 9 decision 44: rendering for the goal form (`crate::run_goal`, the pure
-//! model). A 72-column box titled ` start a goal in <project> `, one row per field,
-//! then a blank row, the error row when there is one, and the hint.
+//! Milestone 9 decision 44 and 9.0.6 decision 39: rendering for the goal form
+//! (`crate::run_goal`, the pure model), built on the kit's dialog grammar (decision 5):
+//! one accented frame titled `start a goal in <project>`, lower-case labels, `‹ value ›`
+//! choices, the goal in a four-row text area, hints `⏎ start · tab next · esc cancel`.
+//! Every glyph honours `Palette.ascii`. The project, the model names and what was typed
+//! pass `safe_text`.
 
-use crate::run_goal::{GoalField, GoalForm, field_label};
-use crate::theme;
-use crate::ui::dialog::{LABEL_WIDTH, MARKER_WIDTH, centered};
-use crate::ui::tree_view::truncate;
-use proto::Status;
+use crate::dialog::TextInput;
+use crate::run_goal::{GoalField, GoalForm, GoalModel, field_label};
+use crate::safe_text::one_line;
+use crate::theme::{Glyph, Palette, Role, glyph, role};
+use crate::ui::kit::{self, Hint};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
+use unicode_segmentation::UnicodeSegmentation;
 
-const FORM_WIDTH: u16 = 72;
-const FIELDS: [GoalField; 4] = [
-    GoalField::Goal,
-    GoalField::Runtime,
-    GoalField::Model,
-    GoalField::Trust,
-];
-const HINT: &str = "⏎ start  tab next  ←/→ change  ctrl-j newline  esc cancel";
-const SUBMITTING_HINT: &str = "starting… triage can take minutes  esc close";
+/// Rows of the goal's text area.
+pub const GOAL_ROWS: u16 = 4;
+/// The focus marker's columns, then the label's.
+const MARK_W: usize = 2;
+const LABEL_W: usize = 18;
 
-fn one_row(frame: &mut Frame, inner: Rect, y: u16, line: Line) {
-    if y < inner.y + inner.height {
-        let row = Rect {
-            y,
-            height: 1,
-            ..inner
-        };
-        frame.render_widget(Paragraph::new(line), row);
+fn hint(key: &str, word: &str, priority: u8) -> Hint {
+    Hint {
+        key: key.to_string(),
+        word: word.to_string(),
+        priority,
     }
 }
 
-pub fn render(frame: &mut Frame, form: &GoalForm, area: Rect, accent: Color) {
-    let error_rows = usize::from(form.error.is_some());
-    let height = (FIELDS.len() + 1 + error_rows + 1) as u16 + 2;
-    let rect = centered(area, FORM_WIDTH.min(area.width), height);
-    frame.render_widget(Clear, rect);
-    let project = crate::safe_text::one_line(&form.project.display().to_string());
-    let title = truncate(&format!(" start a goal in {project} "), rect.width as usize);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme::border_focused(accent))
-        .title(Line::from(Span::styled(title, theme::title(accent))));
-    let inner = block.inner(rect);
-    frame.render_widget(block, rect);
-    let width = inner.width as usize;
-    let value_width = width.saturating_sub(MARKER_WIDTH + LABEL_WIDTH);
+fn ellipsis(p: Palette) -> &'static str {
+    if p.ascii { "..." } else { "…" }
+}
 
-    for (row, field) in FIELDS.iter().enumerate() {
-        let y = inner.y + row as u16;
-        let focused = form.focus == *field;
-        let label_style = if focused {
-            Style::default().fg(accent)
-        } else {
-            Style::default()
-        };
-        let mut spans = vec![
-            Span::styled(if focused { "› " } else { "  " }, label_style),
-            Span::styled(
-                format!("{:<LABEL_WIDTH$}", field_label(*field)),
-                label_style,
-            ),
-        ];
-        let input = match field {
-            GoalField::Goal => Some(&form.goal),
-            GoalField::Model => Some(&form.model),
-            GoalField::Runtime | GoalField::Trust => None,
-        };
-        let mut cursor = None;
-        match input.filter(|input| !input.text().is_empty()) {
-            Some(input) => {
-                let (visible, column) = input.visible(value_width as u16);
-                spans.push(Span::raw(visible));
-                cursor = Some(column);
-            }
-            None => {
-                let value = form.value_text(*field);
-                let style = if input.is_some() {
-                    theme::muted()
-                } else {
-                    Style::default()
-                };
-                spans.push(Span::styled(truncate(&value, value_width), style));
-                if input.is_some() {
-                    cursor = Some(0);
-                }
-            }
-        }
-        if let Some(column) = cursor.filter(|_| focused && !form.submitting)
-            && y < inner.y + inner.height
-            && value_width > 0
-        {
-            let x = inner.x + (MARKER_WIDTH + LABEL_WIDTH) as u16 + column;
-            frame.set_cursor_position((x, y));
-        }
-        one_row(frame, inner, y, Line::from(spans));
-    }
+fn dot(p: Palette) -> &'static str {
+    if p.ascii { " - " } else { " · " }
+}
 
-    let mut y = inner.y + FIELDS.len() as u16 + 1;
-    if let Some(error) = &form.error {
-        let style = Style::default().fg(theme::status_color(Status::Attention));
-        let error = crate::safe_text::one_line(error);
-        one_row(
-            frame,
-            inner,
-            y,
-            Line::styled(truncate(&error, width), style),
-        );
-        y += 1;
-    }
-    let hint = if form.submitting {
-        SUBMITTING_HINT
+/// `marker label` for `field`: the focused field's label is accented and bold and led
+/// by the selection glyph (a cue that does not depend on colour).
+fn label(form: &GoalForm, field: GoalField, p: Palette) -> Vec<Span<'static>> {
+    let focused = form.focus == field && !form.submitting;
+    let (mark, style) = if focused {
+        (
+            glyph(Glyph::Selection, p.ascii),
+            role(Role::Accent, p).add_modifier(Modifier::BOLD),
+        )
     } else {
-        HINT
+        (" ", role(Role::Muted, p))
     };
-    one_row(frame, inner, y, Line::styled(hint, theme::muted()));
+    vec![
+        Span::styled(format!("{mark:<MARK_W$}"), style),
+        Span::styled(format!("{:<LABEL_W$}", field_label(field)), style),
+    ]
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::run_goal::GoalForm;
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
+fn indent() -> Span<'static> {
+    Span::raw(" ".repeat(MARK_W + LABEL_W))
+}
 
-    fn drawn(form: &GoalForm) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
-        terminal
-            .draw(|frame| render(frame, form, frame.area(), Color::Blue))
-            .unwrap();
-        let buffer = terminal.backend().buffer().clone();
-        (0..16)
-            .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
+fn choice_line(form: &GoalForm, field: GoalField, value: &str, p: Palette) -> Line<'static> {
+    let mut spans = label(form, field, p);
+    let style = if form.focus == field && !form.submitting {
+        role(Role::Accent, p).add_modifier(Modifier::BOLD)
+    } else {
+        ratatui::style::Style::default()
+    };
+    spans.push(Span::styled(kit::choice_in(value, p), style));
+    Line::from(spans)
+}
+
+fn on_off(on: bool) -> &'static str {
+    if on { "on" } else { "off" }
+}
+
+/// The custom model's text on one line, the cursor a reversed cell when `focused`.
+fn input_line(input: &TextInput, width: usize, focused: bool) -> Line<'static> {
+    let (visible, column) = input.visible(width as u16);
+    let graphemes: Vec<&str> = visible.graphemes(true).collect();
+    let at = usize::from(column).min(graphemes.len());
+    let before = graphemes[..at].concat();
+    let mut spans = vec![indent(), Span::raw(one_line(&before))];
+    if focused {
+        let under = graphemes.get(at).copied().unwrap_or(" ");
+        let after = graphemes.get(at + 1..).map(|g| g.concat());
+        spans.push(Span::styled(
+            one_line(under),
+            ratatui::style::Style::default().add_modifier(Modifier::REVERSED),
+        ));
+        spans.push(Span::raw(one_line(&after.unwrap_or_default())));
+    } else {
+        spans.push(Span::raw(one_line(&graphemes[at..].concat())));
+    }
+    Line::from(spans)
+}
+
+/// The form's title: `start a goal in <project>`, the project cut to fit `width`.
+pub fn title(form: &GoalForm, width: u16, p: Palette) -> String {
+    let project = one_line(&form.project.display().to_string());
+    kit::cut(
+        &format!("start a goal in {project}"),
+        usize::from(width),
+        ellipsis(p),
+    )
+}
+
+/// The dialog's rows for `width` interior columns: the fields, the error, a blank row
+/// and the hints.
+pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
+    let width = width.min(kit::WRAP);
+    let value_w = usize::from(width).saturating_sub(MARK_W + LABEL_W);
+    let mut body = Vec::new();
+
+    // The text area takes `rows + 2` lines, so the dialog keeps its height when a
+    // scroll mark appears.
+    let mut area = kit::text_area(&form.goal, GOAL_ROWS, value_w as u16, p);
+    area.resize(usize::from(GOAL_ROWS) + 2, Line::default());
+    for (i, line) in area.into_iter().enumerate() {
+        let mut spans = if i == 0 {
+            label(form, GoalField::Goal, p)
+        } else {
+            vec![indent()]
+        };
+        spans.extend(line.spans);
+        body.push(Line::from(spans));
     }
 
-    #[test]
-    fn the_form_shows_its_project_fields_error_and_hint() {
-        let mut form = GoalForm::new("/r/demo".into());
-        form.goal = crate::dialog::TextInput::new("add a↵b");
-        form.error = Some("run start --goal refused\u{1b}[2J".into());
-        let out = drawn(&form);
-        assert!(out.contains(" start a goal in /r/demo "), "{out}");
-        assert!(out.contains("goal       add a↵b"), "{out}");
-        assert!(out.contains("runtime    ‹ configured ›"), "{out}");
-        assert!(out.contains("model      default"), "{out}");
-        assert!(
-            out.contains("[ ] trust the project's own agent settings"),
-            "{out}"
-        );
-        assert!(out.contains("run start --goal refused [2J"), "{out}");
-        assert!(out.contains(HINT), "{out}");
+    let runtime = match form.runtime {
+        Some(runtime) => runtime.label(),
+        None => "configured",
+    };
+    body.push(choice_line(form, GoalField::Runtime, runtime, p));
+
+    let options = form.model_options();
+    let shown = options
+        .get(form.model_at())
+        .map_or("default", String::as_str);
+    let shown = if p.ascii && shown == "custom…" {
+        "custom..."
+    } else {
+        shown
+    };
+    body.push(choice_line(form, GoalField::Model, shown, p));
+    if let GoalModel::Custom(input) = &form.model {
+        let focused = form.focus == GoalField::Model && !form.submitting;
+        body.push(input_line(input, value_w, focused));
     }
+
+    body.push(choice_line(
+        form,
+        GoalField::Trust,
+        on_off(form.trust_project),
+        p,
+    ));
+    body.push(choice_line(form, GoalField::Yes, on_off(form.yes), p));
+    body.push(choice_line(
+        form,
+        GoalField::UnconfinedChecks,
+        on_off(form.unconfined_checks),
+        p,
+    ));
+
+    if let Some(error) = &form.error {
+        body.push(Line::styled(
+            kit::cut(&one_line(error), usize::from(width), ellipsis(p)),
+            role(Role::Failed, p),
+        ));
+    }
+    body.push(Line::raw(""));
+    if form.submitting {
+        body.push(Line::styled(
+            format!("starting{} triage can take minutes", ellipsis(p)),
+            role(Role::Muted, p),
+        ));
+        body.push(kit::hints_joined(
+            width,
+            &[hint("esc", "close", 1)],
+            dot(p),
+            p,
+        ));
+    } else {
+        let keys = [
+            hint("⏎", "start", 9),
+            hint("tab", "next", 6),
+            hint("esc", "cancel", 1),
+        ];
+        body.push(kit::hints_joined(width, &keys, dot(p), p));
+    }
+    body
+}
+
+pub fn render(frame: &mut Frame, form: &GoalForm, area: Rect, p: Palette) {
+    let width = area.width.min(kit::DIALOG_MAX).saturating_sub(4);
+    let body = body(form, width, p);
+    let rect = kit::dialog_area(area, body.len() as u16);
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+    frame.render_widget(Clear, rect);
+    let title = title(form, width.saturating_sub(2), p);
+    frame.render_widget(
+        Paragraph::new(body).block(kit::dialog_frame(&title, false, p)),
+        rect,
+    );
 }

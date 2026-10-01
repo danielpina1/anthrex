@@ -1,22 +1,24 @@
-//! Milestone 9 decision 44: the goal form `C-b g` opens, pure (`AGENTS.md` hard rule
-//! 5). It holds a goal (`Ctrl-J` inserts a newline), an optional orchestrator runtime
-//! and model, and a `trust_project` toggle that starts off, for one project the caller
-//! chose. `Enter` builds M8b's `RunRequest::StartGoal` exactly as `anthrex run start
-//! --goal` sends it: `yes` and `unconfined_checks` are false, so the plan gate stays on.
-//! Opening, sending and the replies are `app/goal.rs`; rendering is `ui/run_goal.rs`.
+//! Milestone 9 decision 44 and (9.0.6) decision 39: the goal form `C-b g` opens, pure
+//! (`AGENTS.md` hard rule 5). It holds a goal (a text area; `Ctrl-J` inserts a newline),
+//! an optional orchestrator runtime, a model picked from that runtime's enabled models
+//! (or typed after `custom…`), and three toggles that start off: `trust`,
+//! `approve at once` and `unconfined checks`, for one project the caller chose. `Enter`
+//! builds M8b's `RunRequest::StartGoal` exactly as `anthrex run start --goal` sends it:
+//! with the toggles off the plan gate stays on and checks stay confined. Opening,
+//! sending and the replies are `app/goal.rs`; rendering is `ui/run_goal.rs`.
 
+use crate::app::screens::models_of;
 use crate::dialog::{TextInput, apply_text_key};
-use crate::run_edit::{NEWLINE_MARK, TEXT_MAX_CHARS};
+use crate::run_edit::TEXT_MAX_CHARS;
+use crate::text_area::TextArea;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{OrchestratorChoice, RunRequest, Runtime};
+use proto::{ModelEntry, OrchestratorChoice, RunRequest, Runtime};
 use std::path::PathBuf;
 
 /// The toast `C-b g` shows when no project is selected and no window is focused.
 pub const NO_PROJECT: &str = "select a Git project to start a goal";
 /// The inline error of an `Enter` with a blank goal.
 pub const EMPTY_GOAL: &str = "type a goal first";
-/// The inline error of a model typed with the default runtime.
-pub const MODEL_NEEDS_RUNTIME: &str = "choose claude or codex for a model";
 /// The inline error after the connection refused the request or the link was lost.
 pub const NOT_SENT: &str = "the goal was not sent; press Enter to retry";
 
@@ -26,25 +28,44 @@ pub enum GoalField {
     Runtime,
     Model,
     Trust,
+    Yes,
+    UnconfinedChecks,
 }
 
-const FIELDS: [GoalField; 4] = [
+const FIELDS: [GoalField; 6] = [
     GoalField::Goal,
     GoalField::Runtime,
     GoalField::Model,
     GoalField::Trust,
+    GoalField::Yes,
+    GoalField::UnconfinedChecks,
 ];
+
+/// The model choice (decision 39): the runtime's own default, one of the roster's
+/// enabled models of the chosen runtime (an index into [`GoalForm::models`]), or text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GoalModel {
+    Default,
+    Pick(usize),
+    Custom(TextInput),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoalForm {
     /// The project the goal runs in, chosen when the form opened; never changed.
     pub project: PathBuf,
-    /// Newlines are drawn as [`NEWLINE_MARK`] and sent as `\n`.
-    pub goal: TextInput,
+    /// Newlines are typed with `Ctrl-J` and sent as they are.
+    pub goal: TextArea,
     /// `None` is the configured orchestrator (`[orchestrator.agent]`, then the default).
     pub runtime: Option<Runtime>,
-    pub model: TextInput,
+    pub model: GoalModel,
+    /// The settings cache's roster as of the last `set_roster` (decision 24); empty
+    /// while no cache has arrived.
+    pub roster: Vec<ModelEntry>,
     pub trust_project: bool,
+    /// `approve at once`: the plan gate is skipped.
+    pub yes: bool,
+    pub unconfined_checks: bool,
     pub focus: GoalField,
     pub error: Option<String>,
     pub submitting: bool,
@@ -65,16 +86,16 @@ pub fn field_label(field: GoalField) -> &'static str {
         GoalField::Runtime => "runtime",
         GoalField::Model => "model",
         GoalField::Trust => "trust",
+        GoalField::Yes => "approve at once",
+        GoalField::UnconfinedChecks => "unconfined checks",
     }
 }
 
-/// Newlines become `newline` (or go, when `None`), a tab a space, and every other
-/// control character is dropped.
-fn clean(text: &str, newline: Option<char>) -> String {
-    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+/// A tab becomes a space, and every control or hidden format character is dropped (a
+/// pasted line break too: the custom model is one line).
+fn clean_line(text: &str) -> String {
     text.chars()
         .filter_map(|c| match c {
-            '\n' => newline,
             '\t' => Some(' '),
             c if c.is_control() || crate::safe_text::is_hidden_format(c) => None,
             c => Some(c),
@@ -111,14 +132,62 @@ impl GoalForm {
     pub fn new(project: PathBuf) -> Self {
         Self {
             project,
-            goal: TextInput::default(),
+            goal: TextArea::new(),
             runtime: None,
-            model: TextInput::default(),
+            model: GoalModel::Default,
+            roster: Vec::new(),
             trust_project: false,
+            yes: false,
+            unconfined_checks: false,
             focus: GoalField::Goal,
             error: None,
             submitting: false,
             request_id: None,
+        }
+    }
+
+    /// The enabled models of the chosen runtime, in roster order; none with runtime
+    /// `configured`, which only offers `default`.
+    pub fn models(&self) -> Vec<String> {
+        self.runtime
+            .map(|runtime| models_of(&self.roster, runtime))
+            .unwrap_or_default()
+    }
+
+    /// The picker's entries, as drawn: `default`, the models, then `custom…` (only with a
+    /// runtime chosen).
+    pub fn model_options(&self) -> Vec<String> {
+        let models = self.models();
+        let mut options = vec!["default".to_string()];
+        if self.runtime.is_some() {
+            options.extend(models);
+            options.push("custom…".to_string());
+        }
+        options
+    }
+
+    /// The picker's current position in [`GoalForm::model_options`].
+    pub fn model_at(&self) -> usize {
+        match &self.model {
+            GoalModel::Default => 0,
+            GoalModel::Pick(i) => 1 + i,
+            GoalModel::Custom(_) => 1 + self.models().len(),
+        }
+    }
+
+    /// A new roster (the settings cache changed while the form is open): a picked model
+    /// stays picked by name, or falls back to `default` when it left the roster.
+    pub fn set_roster(&mut self, roster: Vec<ModelEntry>) {
+        let picked = match &self.model {
+            GoalModel::Pick(i) => self.models().get(*i).cloned(),
+            _ => None,
+        };
+        self.roster = roster;
+        if let Some(name) = picked {
+            self.model = match self.models().iter().position(|m| *m == name) {
+                Some(i) => GoalModel::Pick(i),
+                None => GoalModel::Default,
+            };
         }
     }
 
@@ -141,63 +210,87 @@ impl GoalForm {
             KeyCode::Tab | KeyCode::Down => self.move_focus(1),
             KeyCode::BackTab | KeyCode::Up => self.move_focus(-1),
             KeyCode::Enter => return self.submit(),
-            _ => match self.focus {
-                GoalField::Goal | GoalField::Model => self.on_text_key(key),
-                GoalField::Runtime => match key.code {
-                    KeyCode::Right | KeyCode::Char(' ') => self.cycle_runtime(true),
-                    KeyCode::Left => self.cycle_runtime(false),
-                    _ => {}
-                },
-                GoalField::Trust => {
-                    if matches!(
-                        key.code,
-                        KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
-                    ) {
-                        self.trust_project = !self.trust_project;
-                    }
-                }
-            },
+            _ => self.on_field_key(key),
         }
         GoalOutcome::Stay
+    }
+
+    fn on_field_key(&mut self, key: KeyEvent) {
+        let toggle = matches!(
+            key.code,
+            KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
+        );
+        match self.focus {
+            GoalField::Goal => {
+                self.goal.on_key(key);
+            }
+            GoalField::Runtime => match key.code {
+                KeyCode::Right | KeyCode::Char(' ') => self.cycle_runtime(true),
+                KeyCode::Left => self.cycle_runtime(false),
+                _ => {}
+            },
+            GoalField::Model => self.on_model_key(key),
+            GoalField::Trust if toggle => self.trust_project = !self.trust_project,
+            GoalField::Yes if toggle => self.yes = !self.yes,
+            GoalField::UnconfinedChecks if toggle => {
+                self.unconfined_checks = !self.unconfined_checks;
+            }
+            GoalField::Trust | GoalField::Yes | GoalField::UnconfinedChecks => {}
+        }
     }
 
     fn cycle_runtime(&mut self, forward: bool) {
         self.runtime = next_runtime(self.runtime, forward);
         // A model names one runtime's model.
-        self.model.clear();
+        self.model = GoalModel::Default;
     }
 
-    fn on_text_key(&mut self, key: KeyEvent) {
-        let goal = self.focus == GoalField::Goal;
-        let input = if goal {
-            &mut self.goal
-        } else {
-            &mut self.model
-        };
-        if is_ctrl(&key, 'j') {
-            if goal {
-                insert_bounded(input, &NEWLINE_MARK.to_string());
+    /// `←`/`→` always move the picker; `Space` does too, except while `custom…` is
+    /// chosen, where it and every other character edit the text.
+    fn on_model_key(&mut self, key: KeyEvent) {
+        match (&mut self.model, key.code) {
+            (_, KeyCode::Right) => self.cycle_model(true),
+            (_, KeyCode::Left) => self.cycle_model(false),
+            (GoalModel::Custom(input), _) => {
+                let full = input.text().chars().count() >= TEXT_MAX_CHARS;
+                let typing = matches!(key.code, KeyCode::Char(_))
+                    && !key.modifiers.contains(KeyModifiers::CONTROL);
+                if !(full && typing) {
+                    apply_text_key(input, key);
+                }
             }
-            return;
-        }
-        let full = input.text().chars().count() >= TEXT_MAX_CHARS;
-        let typing =
-            matches!(key.code, KeyCode::Char(_)) && !key.modifiers.contains(KeyModifiers::CONTROL);
-        if !(full && typing) {
-            apply_text_key(input, key);
+            (_, KeyCode::Char(' ')) => self.cycle_model(true),
+            _ => {}
         }
     }
 
-    /// A paste into the goal or the model: newlines become `↵` in the goal and go
-    /// elsewhere; control characters go; the field stays bounded.
+    fn cycle_model(&mut self, forward: bool) {
+        let len = self.model_options().len();
+        let at = self.model_at();
+        let to = if forward {
+            (at + 1) % len
+        } else {
+            (at + len - 1) % len
+        };
+        self.model = match to {
+            0 => GoalModel::Default,
+            n if n == len - 1 => GoalModel::Custom(TextInput::default()),
+            n => GoalModel::Pick(n - 1),
+        };
+    }
+
+    /// A paste into the goal or the custom model: control characters go; the field stays
+    /// bounded; the goal keeps its line breaks.
     pub fn on_paste(&mut self, text: &str) {
         if self.submitting {
             return;
         }
-        match self.focus {
-            GoalField::Goal => insert_bounded(&mut self.goal, &clean(text, Some(NEWLINE_MARK))),
-            GoalField::Model => insert_bounded(&mut self.model, &clean(text, None)),
-            GoalField::Runtime | GoalField::Trust => {}
+        match (self.focus, &mut self.model) {
+            (GoalField::Goal, _) => self.goal.on_paste(text),
+            (GoalField::Model, GoalModel::Custom(input)) => {
+                insert_bounded(input, &clean_line(text));
+            }
+            _ => {}
         }
     }
 
@@ -216,47 +309,37 @@ impl GoalForm {
         }
     }
 
+    /// The model the request names: none for `default` (or an empty custom text).
+    pub fn chosen_model(&self) -> Option<String> {
+        match &self.model {
+            GoalModel::Default => None,
+            GoalModel::Pick(i) => self.models().get(*i).cloned(),
+            GoalModel::Custom(input) => {
+                let text = input.text().trim();
+                (!text.is_empty()).then(|| text.to_string())
+            }
+        }
+    }
+
     /// Decision 44's request: what `anthrex run start --goal` sends, with the
-    /// orchestrator choice when a runtime is chosen.
+    /// orchestrator choice when a runtime is chosen, and decision 39's toggles.
     pub fn request(&self) -> Result<RunRequest, (GoalField, &'static str)> {
-        let goal = self.goal.text().replace(NEWLINE_MARK, "\n");
+        let goal = self.goal.text();
         if goal.trim().is_empty() {
             return Err((GoalField::Goal, EMPTY_GOAL));
         }
-        let model = self.model.text().trim();
-        let orchestrator = match self.runtime {
-            Some(runtime) => Some(OrchestratorChoice {
-                runtime,
-                model: (!model.is_empty()).then(|| model.to_string()),
-            }),
-            None if !model.is_empty() => return Err((GoalField::Runtime, MODEL_NEEDS_RUNTIME)),
-            None => None,
-        };
+        let orchestrator = self.runtime.map(|runtime| OrchestratorChoice {
+            runtime,
+            model: self.chosen_model(),
+        });
         Ok(RunRequest::StartGoal {
             goal: goal.trim().to_string(),
             dir: self.project.clone(),
-            yes: false,
+            yes: self.yes,
             trust_project: self.trust_project,
-            unconfined_checks: false,
+            unconfined_checks: self.unconfined_checks,
             orchestrator,
         })
-    }
-
-    /// A field's value as drawn.
-    pub fn value_text(&self, field: GoalField) -> String {
-        match field {
-            GoalField::Goal => self.goal.text().to_string(),
-            GoalField::Runtime => match self.runtime {
-                Some(runtime) => format!("‹ {} ›", runtime.label()),
-                None => "‹ configured ›".to_string(),
-            },
-            GoalField::Model if self.model.text().is_empty() => "default".to_string(),
-            GoalField::Model => self.model.text().to_string(),
-            GoalField::Trust => {
-                let mark = if self.trust_project { "x" } else { " " };
-                format!("[{mark}] trust the project's own agent settings")
-            }
-        }
     }
 }
 

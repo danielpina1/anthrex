@@ -82,7 +82,8 @@ pub async fn run(opts: TuiOptions) -> anyhow::Result<()> {
         opts.settings,
     );
     // Decision 1: the connection's one run subscription, first of all.
-    apply(vec![app.run_subscription()], Some(&conn), &mut app);
+    let first = vec![app.run_subscription(), app.settings_fetch()];
+    apply(first, Some(&conn), &mut app);
     app.home_dir = dirs::home_dir();
     app.utc_offset_secs = local_utc_offset_secs();
     // Decision 7: every config problem the CLI found, shown once at start.

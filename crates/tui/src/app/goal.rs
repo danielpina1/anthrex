@@ -35,7 +35,13 @@ impl App {
     /// `C-b g`: the form on the chosen project, or the toast saying there is none.
     pub(super) fn open_goal_form(&mut self) -> Vec<Effect> {
         match self.goal_project() {
-            Some(project) => self.modal = Some(Modal::StartGoal(GoalForm::new(project))),
+            Some(project) => {
+                let mut form = GoalForm::new(project);
+                if let Some(cache) = &self.settings_cache {
+                    form.set_roster(cache.doc.models.clone());
+                }
+                self.modal = Some(Modal::StartGoal(form));
+            }
             None => self.toast(NO_PROJECT),
         }
         vec![]

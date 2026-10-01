@@ -15,6 +15,7 @@ pub use runs::{RunView, filter_label, nav_rows_of};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+pub use toast::ToastLevel;
 
 pub const TOAST_TTL: Duration = Duration::from_secs(4);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(30);
@@ -27,20 +28,6 @@ pub enum Effect {
     /// Decision 32: `C-b r` while not connected. `lib.rs` starts an attempt at once
     /// (unless one is already in flight) and opens a fresh 30 s window.
     Reconnect,
-}
-
-/// A toast's severity (9.0.6 decision 6): info plain, a warning `Attention`, an error `Failed`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToastLevel {
-    Info,
-    Warn,
-    Error,
-}
-
-struct Toast {
-    text: String,
-    at: Instant,
-    level: ToastLevel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,7 +162,7 @@ pub struct App {
     /// those three clears it on any given run, so a second `C-b Q` is always possible
     /// once one of them has.
     stopping: Option<Instant>,
-    toast: Option<Toast>,
+    toast: Option<toast::Toast>,
     windows_received_at: Instant,
     /// (cols, rows) of the main inner area; (0, 0) until the first draw.
     term_size: (u16, u16),
@@ -212,6 +199,8 @@ pub struct App {
     pub inspector_scroll: Option<(tree::NodeKey, u16)>,
     pub brief_expanded: Option<tree::NodeKey>,
     pub replies: replies::PendingReplies, // Milestone 9.0.6 decision 16, by request id.
+    /// Decision 24: the daemon's settings, fetched once per connection (`app/screens.rs`).
+    pub settings_cache: Option<screens::SettingsCache>,
 }
 
 impl App {
@@ -269,6 +258,7 @@ impl App {
             inspector_scroll: None,
             brief_expanded: None,
             replies: Default::default(),
+            settings_cache: None,
             settings,
         }
     }
@@ -306,32 +296,6 @@ impl App {
             truecolor: self.settings.truecolor,
             ascii: self.settings.badges.ascii,
         }
-    }
-
-    pub fn toast_text(&self) -> Option<&str> {
-        self.toast.as_ref().map(|t| t.text.as_str())
-    }
-
-    /// The severity of the toast on screen, if any (decision 6): the status bar draws an
-    /// error in `Failed` and a warning in `Attention`.
-    pub fn toast_level(&self) -> Option<ToastLevel> {
-        self.toast.as_ref().map(|t| t.level)
-    }
-
-    /// Shows `text` in the status bar for [`TOAST_TTL`], on one line and with no control
-    /// or bidi character: a toast often quotes the daemon, or an id an agent chose.
-    pub fn toast(&mut self, text: impl Into<String>) {
-        self.toast_at(ToastLevel::Info, text);
-    }
-
-    /// [`App::toast`] with a severity.
-    pub fn toast_at(&mut self, level: ToastLevel, text: impl Into<String>) {
-        let text = crate::safe_text::one_line(&text.into());
-        self.toast = Some(Toast {
-            text,
-            at: Instant::now(),
-            level,
-        });
     }
 
     /// Decision 7: every config `Problem` `attach` found, already formatted, shown
@@ -588,7 +552,9 @@ mod run_enter;
 mod run_gate;
 mod run_holds;
 mod runs;
+pub(crate) mod screens;
 pub(crate) mod task_detail;
+mod toast;
 mod windows;
 
 #[cfg(test)]

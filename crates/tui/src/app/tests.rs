@@ -50,6 +50,12 @@ mod gate;
 #[path = "../app_tests/orch.rs"]
 mod orch;
 
+#[path = "../app_tests/goal_form.rs"]
+mod goal_form;
+
+#[path = "../app_tests/goal_form_render.rs"]
+mod goal_form_render;
+
 #[path = "../app_tests/run_goal.rs"]
 mod run_goal;
 

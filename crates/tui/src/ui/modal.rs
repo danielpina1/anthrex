@@ -180,7 +180,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             return dialog::render_force_remove(frame, name, message, area, accent);
         }
         Modal::EditTask(form) => return crate::ui::run_edit::render(frame, form, area, accent),
-        Modal::StartGoal(form) => return crate::ui::run_goal::render(frame, form, area, accent),
+        Modal::StartGoal(form) => {
+            return crate::ui::run_goal::render(frame, form, area, app.palette());
+        }
         Modal::Confirm { message, action } => {
             return render_confirm(frame, message, action, area, app.palette());
         }

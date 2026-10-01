@@ -49,6 +49,10 @@ pub enum PendingWhat {
     },
     /// The answer form's `TaskDetail` (decision 15): fills its brief rows.
     FormBrief { run_id: String, task_id: String },
+    /// The connection's `Settings(Get)` (decision 24, `app/screens.rs`).
+    SettingsGet,
+    /// A `Settings(Put)`; its `Saved` replaces the cache, any other reply re-syncs it.
+    SettingsPut,
 }
 
 /// One request waiting for its reply.
@@ -115,6 +119,9 @@ impl App {
     /// among them, which is still shown).
     pub(super) fn route_reply(&mut self, reply: &RunReply) -> Option<Vec<Effect>> {
         if let Some(effects) = self.route_form_reply(reply) {
+            return Some(effects);
+        }
+        if let Some(effects) = self.route_settings_reply(reply) {
             return Some(effects);
         }
         match reply {

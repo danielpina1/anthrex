@@ -5,6 +5,14 @@
 
 use super::*;
 
+/// The new connection's tagged `Settings(Get)` (9.0.6 decision 24), under request `id`.
+fn settings_get(id: u64) -> Effect {
+    Effect::Send(ClientMsg::RunTagged {
+        id,
+        request: proto::RunRequest::Settings(proto::SettingsRequest::Get),
+    })
+}
+
 #[test]
 fn link_lost_then_reconnected_resubscribes_the_focused_window() {
     let mut app = app_with(vec![win(1, "a", Status::Idle), win(2, "b", Status::Idle)]);
@@ -42,6 +50,8 @@ fn link_lost_then_reconnected_resubscribes_the_focused_window() {
             }),
             // M8c decision 1: the new connection's run subscription.
             Effect::Send(ClientMsg::Run(proto::RunRequest::Subscribe)),
+            // 9.0.6 decision 24: and its one settings fetch (the first request id).
+            settings_get(1),
         ]
     );
     assert!(matches!(app.link, Link::Connected));
@@ -76,8 +86,9 @@ fn reconnect_when_the_focused_window_is_gone_focuses_a_neighbour() {
             }),
             // M8c decision 1: the new connection's run subscription.
             Effect::Send(ClientMsg::Run(proto::RunRequest::Subscribe)),
+            settings_get(1),
         ],
-        "exactly one Subscribe, for the neighbour that took over focus, and the runs'"
+        "exactly one Subscribe, for the neighbour that took over focus, the runs', and the settings fetch"
     );
     assert_eq!(app.focused, Some(3));
 }
