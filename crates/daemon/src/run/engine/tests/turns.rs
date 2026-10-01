@@ -390,9 +390,11 @@ fn failed_turns() {
     assert_eq!(delivers(&effects), vec![rate_limit_continue("rate_limit")]);
     assert!(!snapshot(&fx.state, at + 301).runs[0].tasks[0].rounds[0].rate_limited);
 
+    // Ruling F-1: a client error blocks at once too, with no continue.
     for (kind, error) in [
         (FailureKind::Authentication, "authentication_failed: log in"),
         (FailureKind::Billing, "billing_error: add credits"),
+        (FailureKind::ClientError, "The model is not supported"),
     ] {
         let (mut fx, window) = working();
         fx.turn_ended(window, failed(kind, error));

@@ -222,8 +222,12 @@ pub fn reviewer_prompt(
         ));
     }
     if let Some(check) = task.checks.last() {
-        lines.push("Last check (40 lines):".into());
-        lines.push(decider_summary(check).map_or_else(|| summary(&check.tail), str::to_string));
+        let text = decider_summary(check).map_or_else(|| summary(&check.tail), str::to_string);
+        if text.trim().is_empty() {
+            lines.push(super::messages::check_without_output(check));
+        } else {
+            lines.extend(["Last check (40 lines):".to_string(), text]);
+        }
     }
     // Milestone 9.1 decision 42: the accepted claim's test-weakening signals.
     let signals = crate::run::engine::weakening::reviewer_block(task);

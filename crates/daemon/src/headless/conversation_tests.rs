@@ -427,6 +427,9 @@ fn synthesised_tool_responses_are_bounded_like_the_hooks() {
 #[path = "conversation_turn_end_tests.rs"]
 mod turn_end;
 
+#[path = "conversation_failed_turn_tests.rs"]
+mod failed_turn;
+
 #[path = "conversation_summary_tests.rs"]
 mod summary;
 
