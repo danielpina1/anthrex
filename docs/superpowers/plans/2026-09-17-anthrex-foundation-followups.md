@@ -1760,9 +1760,20 @@ scope.
 
 ## From M9.0.6.14 (2026-10-01), for M9.0.7
 
-- **The Profile screen keeps its accented frame under a modal.** `ui/profile.rs::render` mutes the screen's border only while one of its own pages is open (`s.page.is_none()`), so a modal over it (the action menu a late `ConfirmNeeded` opens, `C-b ?`, `C-b g`) shows two accented frames, against decision 5 / principle 2. The Settings screen uses `s.page.is_none() && app.modal.is_none()`; the Profile screen should do the same, with its `a_page_mutes_the_screens_border` extended to a modal.
 - **The Profile screen's destructive pages draw their action word plain.** Decision 5 puts a destructive dialog's action word in `Failed` as well as its title (`ui/action_menu.rs::verb_hints` does; the Settings discard page does since M9.0.6.14's fix round 1). `ui/profile_pages.rs`'s Reject page (`y reject`) and the Confirm page's `y store` (y-only) build their hints with plain `kit::hints_joined`; colour the key and word in `Failed` for Reject, with a render test.
 
 ## From M9.0.6.16 (2026-10-01), for M9.0.7
 
 - **The status bar shows the tree's hints under the ` MENU ` badge.** With the action menu open over the sidebar tree, smoke stage 11t renders ` MENU  j/k move  ⏎ focus  space fold  / filter  esc back`: the badge is the menu's (`ui/statusbar_modes.rs::badge`), but the hints are the tree mode's, and `⏎ focus`, `space fold` and `/ filter` do nothing while the menu is open (it draws its own `⏎ choose · j/k move · esc close`). 9.0.7's status-bar pass should show the menu's hints, or none, while `Modal::Action` is open, with a render test.
+
+## From M9.0.6's final review (2026-10-01), parked by the controller
+
+For M9.0.7 and M9.2:
+
+- **The refusal twin waits `FINISH_WAIT` for every kind.** `cli/tests/run_e2e_orch/tui_flow.rs:249` sends each listed refusal with `h.tagged(id, request, FINISH_WAIT)` (900 s), though only a `Finish` can legally take that long; today the only listed refusals on that run are `Accept` and `Discard`, so it is exact. If more states (and so more refused kinds) are added, wait `request_wait(&request)`: `FINISH_WAIT` for a `Finish`, `REQUEST_WAIT` otherwise.
+- **An accept can legally outlast `LONG_REPLY_TIMEOUT`.** `app/replies.rs::LONG_REPLY_TIMEOUT` is 660 s (decision 19: the largest `git_timeout_secs`, 600, plus 60 s), but an accept runs three git reads at `git_timeout_secs` before the merge under `ACCEPT_MERGE_TIMEOUT` (600 s, `daemon/src/run/git/accept.rs:21`), so at the largest settings the client can show `no reply from daemon` before the daemon's `Done`. Decision 19 is final; the late `Done` is still shown (decision 16). Recorded, not a fix.
+
+For M9.2 (the next milestone that touches the daemon and the config writer):
+
+- **A dangling `config.toml` symlink is replaced by a regular file.** `config/src/settings/save.rs:34` resolves the path with `std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())`; `canonicalize` fails on a link whose target does not exist, so the save renames a new regular file over the link instead of writing its target. Resolve with `std::fs::read_link` (relative to the link's directory) when `canonicalize` fails, with a test beside `save_tests.rs::a_symlinked_config_stays_a_link`.
+- **A stalled `spawn_blocking` save can delay the daemon's exit.** A Settings `Put` writes on `spawn_blocking` and the request gives up after `SETTINGS_WRITE_TIMEOUT` (5 s, `daemon/src/live_config.rs:19`), but the blocking task itself keeps running, and dropping the tokio runtime waits for every blocking task (`cli/src/main.rs:168`'s `#[tokio::main]`), so a write stuck on a hung filesystem holds `anthrex daemon stop` open. Build the runtime by hand at the daemon's entry and end it with `Runtime::shutdown_timeout`, which covers every blocking operation (git probes and spawns too), not only this save.

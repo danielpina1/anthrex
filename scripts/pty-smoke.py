@@ -92,18 +92,18 @@ ENV["ANTHREX_GIT"] = "off"
 # below in a way that has nothing to do with the product). Every stage but two (the
 # resume stage below, and stage 11t's Settings save, `scripts/pty_smoke_tui.py`, which
 # removes it again on every exit) never creates it — the suite's own correctness
-# depends on it staying absent for those stages, and `ensure_config_path_absent` below is what makes
-# that an enforced invariant instead of a hope. See the M6.12/fix-wave-11 reviews for
-# why a fixed, silently-poisonable path was a Major finding: a stray file here used to
-# fail stage 2 with "timed out waiting for 'new-agent form'", an error that named the
-# form, never this path.
+# depends on it staying absent for those stages, and `ensure_config_path_absent` below
+# is what makes that an enforced invariant instead of a hope. See the M6.12/fix-wave-11
+# reviews for why a fixed, silently-poisonable path was a Major finding: a stray file
+# here used to fail stage 2 with "timed out waiting for 'new-agent form'", an error that
+# named the form, never this path.
 #
 # Whole-branch-review m20: the path used to be `/tmp/anthrex-smoke-data/config.toml`
 # with no pid in it, the one piece of shared mutable state left after fix wave 11 —
 # `DATA_DIR` is a `mkdtemp` and `SMOKE_REPO` already carries the pid, but this path
 # did not, so two suites started a few seconds apart both passed the startup check
-# above, then the second one's stage 12b (the only stage that writes a real file here)
-# overwrote the first's config with a path inside a temp dir the first cannot use, and
+# above, then the second one's stage 12b (then the only stage that wrote a real file
+# here) overwrote the first's config with a path inside a temp dir the first cannot use, and
 # whichever finished first deleted the file out from under the other. Fixed the same
 # way `SMOKE_REPO` already is: the pid goes in the directory name, so two concurrent
 # runs on one host can no longer collide on this path by construction.
@@ -126,9 +126,10 @@ def ensure_config_path_absent():
     might not be this script's to delete — a developer's own accidental override they
     still care about, say — and the cost of being wrong there (silently destroying
     it) is worse than the cost of being right here (one failed run with a clear
-    message). The one stage that legitimately needs a real file at this path (the
-    resume stage below) creates it itself, after this check has already passed, and
-    owns removing it again itself, in its own `try`/`finally` — deliberately not the
+    message). The two stages that legitimately write a real file at this path (the
+    resume stage below, and stage 11t's Settings save in `scripts/pty_smoke_tui.py`)
+    each create it themselves, after this check has already passed, and each owns
+    removing it again itself, in its own `try`/`finally` — deliberately not the
     module-level `finally` below, which cannot tell "this run created the file" from
     "a file was already here and `ensure_config_path_absent` just refused to touch
     it", and must not delete the latter.
@@ -1803,7 +1804,7 @@ if __name__ == "__main__":
         # whatever is (or isn't) at that path — `ensure_config_path_absent` may have
         # failed before anything below ever ran, in which case a stray file there was
         # never this run's to begin with, and unconditionally `rmtree`-ing it here
-        # would silently delete it anyway, defeating that check's whole point. The one
-        # stage that does create a real file there (the resume stage below) owns its
-        # own cleanup instead, in its own try/finally, precisely so this block never
-        # has to guess whether a given run is the one that created it.
+        # would silently delete it anyway, defeating that check's whole point. The two
+        # stages that do create a real file there (the resume stage below, and stage
+        # 11t's Settings save) each own their cleanup instead, in their own try/finally,
+        # precisely so this block never has to guess whether a given run created it.
