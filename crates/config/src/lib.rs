@@ -7,6 +7,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 mod conversation;
+mod delivery;
 mod git;
 mod orchestrator;
 pub mod reserved_env;
@@ -19,6 +20,8 @@ pub use conversation::{
     CONVERSATION_MAX_RESULT_BYTES_RANGE, CONVERSATION_MAX_TURNS_RANGE, Conversation,
 };
 use conversation::{read_conversation, report_unknown_conversation};
+pub use delivery::{Delivery, SyncPolicy};
+use delivery::{read_delivery, report_unknown_delivery};
 pub use git::{
     GIT_DEBOUNCE_MS_RANGE, GIT_IGNORE_MAX_CHARS, GIT_IGNORE_MAX_ENTRIES, GIT_POLL_SECS_RANGE, Git,
 };
@@ -51,6 +54,7 @@ pub struct Config {
     pub conversation: Conversation,
     pub orchestrator: Orchestrator,
     pub testing: Testing,
+    pub delivery: Delivery,
 }
 
 /// `Ctrl` plus this lowercase letter. Never `h`, `i`, `j` or `m`: terminals
@@ -148,6 +152,7 @@ impl Default for Config {
             conversation: Conversation::default(),
             orchestrator: Orchestrator::default(),
             testing: Testing::default(),
+            delivery: Delivery::default(),
         }
     }
 }
@@ -195,6 +200,7 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
     read_conversation(&table, &mut config, &mut problems);
     config.orchestrator = orchestrator::read(&table, &mut problems);
     read_testing(&table, &mut config, &mut problems);
+    read_delivery(&table, &mut config, &mut problems);
 
     report_unknown_keys(&table, &mut problems);
 
@@ -497,6 +503,7 @@ fn report_unknown_keys(table: &toml::Table, problems: &mut Vec<Problem>) {
             "conversation" => report_unknown_conversation(value, problems),
             "orchestrator" => orchestrator::report_unknown(value, problems),
             "testing" => report_unknown_nested(value, "testing", KNOWN_TESTING_KEYS, problems),
+            "delivery" => report_unknown_delivery(value, problems),
             other => problems.push(unknown_key_problem(other)),
         }
     }

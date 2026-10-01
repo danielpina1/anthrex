@@ -24,6 +24,9 @@ pub struct RunContext {
     /// Milestone 9.1 decision 3: the daemon's `[testing]` table, read once at start;
     /// each run freezes its run rules from it (`RunLimits.testing`).
     pub testing: config::Testing,
+    /// Milestone 9.2 decision 16: the daemon's `[delivery]` table, read once at start;
+    /// each run freezes it (`RunDelivery.limits`).
+    pub delivery: config::Delivery,
     /// The git budget of `task_result`'s reads and of `ResolveTarget`: always
     /// [`GitBudget::DONE_CHECK`] in the daemon. A test seam only (M9.1 flake fix).
     pub read_git: GitBudget,
@@ -67,8 +70,15 @@ impl RunContext {
             git: OsString::from("git"),
             cli_caps: manager.cli_caps,
             testing: config::Testing::default(),
+            delivery: config::Delivery::default(),
             read_git: GitBudget::DONE_CHECK,
         }
+    }
+
+    /// This context with the daemon's `[delivery]` table (the defaults otherwise).
+    pub fn with_delivery(mut self, delivery: config::Delivery) -> Self {
+        self.delivery = delivery;
+        self
     }
 
     /// This context with the daemon's `[testing]` table (the defaults otherwise).

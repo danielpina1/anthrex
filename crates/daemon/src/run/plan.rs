@@ -94,6 +94,8 @@ pub struct BuildContext<'a> {
     pub config: &'a config::Orchestrator,
     /// Milestone 9.1 decision 3: the daemon's `[testing]` table.
     pub testing: &'a config::Testing,
+    /// Milestone 9.2 decision 16: the daemon's `[delivery]` table.
+    pub delivery: &'a config::Delivery,
     pub now: u64,
     pub yes: bool,
 }
@@ -489,6 +491,11 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         queue_idle_since: None,
         fix_seq: 0,
         propagate_due: BTreeSet::new(),
+        // Milestone 9.2 decision 16; the mode is resolved by the driver (M9.2.12).
+        delivery: super::delivery::RunDelivery {
+            limits: ctx.delivery.into(),
+            ..Default::default()
+        },
     })
 }
 

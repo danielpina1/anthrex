@@ -284,6 +284,7 @@ fn confinement_still_comes_from_the_users_config() {
         testing: &config::Testing::default(),
         now: 1,
         yes: false,
+        delivery: &config::Delivery::default(),
     };
     let run = build_run(plan, pre, ctx).unwrap_or_else(|e| panic!("{e:?}"));
     assert_eq!(run.profile.check.as_deref(), Some("stored check"));
@@ -546,6 +547,7 @@ fn a_stale_profile_gets_the_attention_line() {
         testing: &config::Testing::default(),
         now: 1,
         yes: false,
+        delivery: &config::Delivery::default(),
     };
     let mut run = build_run(plan, pre, ctx).unwrap_or_else(|e| panic!("{e:?}"));
     assert_eq!(run.stale_profile_line(), None);

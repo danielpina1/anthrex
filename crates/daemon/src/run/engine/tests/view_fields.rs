@@ -397,6 +397,12 @@ fn old_run_json_loads() {
     assert_eq!(map.remove("fix_seq"), Some(serde_json::json!(0)));
     // Task M9.1.17.
     assert_eq!(map.remove("propagate_due"), Some(serde_json::json!([])));
+    // Milestone 9.2 decision 16: `local`, with the default frozen limits.
+    let delivery = map.remove("delivery").expect("delivery");
+    assert_eq!(
+        serde_json::from_value::<crate::run::delivery::RunDelivery>(delivery).unwrap(),
+        crate::run::delivery::RunDelivery::default()
+    );
     // Milestone 9.1 ruling C-12a: no stored profile's `manifests`.
     let manifests = map["profile"].as_object_mut().unwrap().remove("manifests");
     assert_eq!(manifests, Some(serde_json::json!([])));

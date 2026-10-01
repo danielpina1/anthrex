@@ -116,6 +116,7 @@ pub fn build_full(
             testing: &config::Testing::default(),
             now: 1_000,
             yes: false,
+            delivery: &config::Delivery::default(),
         },
     )
 }

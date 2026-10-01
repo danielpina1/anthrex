@@ -240,6 +240,7 @@ fn build_fast(decision: &Decision) -> Result<crate::run::model::Run, Vec<PlanErr
             testing: &config::Testing::default(),
             now: 1_000,
             yes: true,
+            delivery: &config::Delivery::default(),
         },
     )
 }

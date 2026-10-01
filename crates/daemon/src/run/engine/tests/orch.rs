@@ -51,6 +51,7 @@ pub(super) fn planned(yes: bool) -> Fixture {
             testing: &config::Testing::default(),
             now: 1_000,
             yes: false,
+            delivery: &config::Delivery::default(),
         },
     )
     .unwrap_or_else(|e| panic!("an empty plan builds: {e:?}"));

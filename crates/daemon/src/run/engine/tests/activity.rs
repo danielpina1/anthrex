@@ -218,6 +218,12 @@ fn strip_m91_defaults(back: &mut serde_json::Value) {
     take(run, "stages", json!([]));
     take(run, "test_slots", json!(0));
     take(run, "toolchain", Value::Null);
+    // Milestone 9.2 decision 16: `local`, with the default frozen limits.
+    let delivery = run.remove("delivery").expect("delivery");
+    assert_eq!(
+        serde_json::from_value::<crate::run::delivery::RunDelivery>(delivery).unwrap(),
+        crate::run::delivery::RunDelivery::default()
+    );
     let testing = run["limits"].as_object_mut().unwrap().remove("testing");
     assert_eq!(
         serde_json::from_value::<crate::run::model::TestingLimits>(testing.expect("testing"))

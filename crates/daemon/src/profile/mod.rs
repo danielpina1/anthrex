@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use proto::RepoProfile;
 
 pub mod proposal;
+mod proposal_delivery;
 mod proposal_tiers;
 pub mod resolve;
 pub mod service;
@@ -101,6 +102,8 @@ pub fn summary(profile: &RepoProfile) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_delivery;
 #[cfg(test)]
 mod tests_ready;
 #[cfg(test)]

@@ -339,6 +339,9 @@ pub struct Run {
     /// (`engine::propagate`).
     #[serde(default)]
     pub propagate_due: BTreeSet<u16>,
+    /// Milestone 9.2 decisions 3 and 16: how the run is delivered, frozen at start.
+    #[serde(default)]
+    pub delivery: super::delivery::RunDelivery,
 }
 
 impl Run {

@@ -482,6 +482,7 @@ mod tests {
             testing: &config::Testing::default(),
             now: 1,
             yes: false,
+            delivery: &config::Delivery::default(),
         };
         build_run(plan, pre, ctx).unwrap_or_else(|e| panic!("{e:?}"))
     }
