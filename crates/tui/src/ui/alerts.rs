@@ -93,9 +93,12 @@ pub(crate) fn alert_lines(app: &App, alert: &Alert, width: u16) -> Vec<Line<'sta
     let text = fold(&one_line(&alert.text), p.ascii);
     let mut wrapped = kit::wrap_words(&text, text_width);
     if wrapped.len() > TEXT_LINES {
-        let rest = wrapped[TEXT_LINES - 1..].join(" ");
-        wrapped.truncate(TEXT_LINES - 1);
-        wrapped.push(truncate_in(&rest, text_width, p.ascii));
+        // More follows the last line shown: it ends in the mark, cut to make room.
+        // Its own text only — a word broken across lines never gains a space.
+        wrapped.truncate(TEXT_LINES);
+        let last = wrapped.pop().unwrap_or_default();
+        let mark = if p.ascii { "..." } else { "…" };
+        wrapped.push(truncate_in(&format!("{last}{mark}"), text_width, p.ascii));
     }
     lines.extend(
         wrapped
@@ -130,8 +133,9 @@ pub(crate) fn content_lines(app: &App, width: u16) -> usize {
 }
 
 /// Decision 10's rows for the box's interior, `width` × `rows`: whole alerts only.
-/// When they do not fit, the last row is `↓ <k> more` (muted) — unless no whole alert
-/// would then show and the first fits alone: it shows, the title has the count.
+/// When they do not fit, the interior's last row is `↓ <k> more` (muted), the rows a
+/// whole alert would not fill left blank above it — unless no whole alert would then
+/// show and the first fits alone: it shows, the title has the count.
 pub(crate) fn lines(app: &App, width: u16, rows: u16) -> Vec<Line<'static>> {
     let rows = usize::from(rows);
     if width == 0 || rows == 0 {
@@ -167,6 +171,7 @@ pub(crate) fn lines(app: &App, width: u16, rows: u16) -> Vec<Line<'static>> {
     let (_, more) = kit::scroll_marks(0, all.len() - shown, p.ascii);
     let more = truncate_in(&more.unwrap_or_default(), usize::from(width), p.ascii);
     let mut out: Vec<Line<'static>> = blocks.into_iter().take(shown).flatten().collect();
+    out.resize(rows - 1, Line::default());
     out.push(Line::from(Span::styled(more, muted)));
     out
 }
@@ -182,7 +187,8 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
     let keys_here = app.key_region() == KeyRegion::Alerts;
     let mut block = kit::pane_frame(title(n, p), keys_here, p);
     if n > 0 && app.alerts_focus.is_none() {
-        // ` <prefix> a open `: the key in the accent, the word muted.
+        // ` <prefix> a open `: the key in the accent, the word muted, and one border
+        // cell before the corner (§6.1's mockup).
         let key = fold(
             &one_line(&format!("{} a", app.settings.prefix_label)),
             p.ascii,
@@ -191,6 +197,10 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
             Span::raw(" "),
             Span::styled(key, theme::role(Role::Accent, p)),
             Span::styled(" open ", theme::role(Role::Muted, p)),
+            Span::styled(
+                theme::border_set(p.ascii).horizontal_bottom,
+                theme::role(Role::Muted, p),
+            ),
         ]);
         block = block.title_bottom(hint.right_aligned());
     }
@@ -205,4 +215,7 @@ mod tests;
 
 #[cfg(test)]
 #[path = "alerts_box_tests.rs"]
-pub(crate) mod box_tests;
+mod box_tests;
+#[cfg(test)]
+#[path = "alerts_fixture.rs"]
+pub(crate) mod fixture;

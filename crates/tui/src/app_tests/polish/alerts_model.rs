@@ -125,3 +125,25 @@ fn blocked_alerts_carry_the_task_and_the_full_detail() {
         proposal.age
     );
 }
+
+/// Fix round 1 ruling (Review focus 4): an orchestrator's alert is aged by its
+/// window's time in its status only where that status is the wait: asking for
+/// permission, or quiet at a start prompt. A held wake-up has no age: the window's
+/// status time is not when the wake was held.
+#[test]
+fn a_held_wake_up_has_no_age() {
+    let ages: Vec<(AlertKey, Option<u64>)> = alerts(&every_app())
+        .into_iter()
+        .filter(|alert| matches!(alert.key, AlertKey::Orchestrator(_)))
+        .map(|alert| (alert.key, alert.age))
+        .collect();
+    let key = |id: &str| AlertKey::Orchestrator(id.into());
+    assert_eq!(
+        ages,
+        [
+            (key("a-attn"), Some(0)),
+            (key("b-gate"), Some(0)),
+            (key("c-held"), None)
+        ]
+    );
+}

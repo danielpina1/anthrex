@@ -284,12 +284,10 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
         ),
         ("project overview", with(gate(), |a| chord(a, 'T'))),
         // Decisions 9 and 10: three alerts grow the box under the agents block.
-        ("alerts box", crate::ui::alerts::box_tests::three_runs()),
+        ("alerts box", crate::ui::alerts::fixture::three_runs()),
         (
             "sidebar tree over the alerts box",
-            with(crate::ui::alerts::box_tests::three_runs(), |a| {
-                chord(a, 't')
-            }),
+            with(crate::ui::alerts::fixture::three_runs(), |a| chord(a, 't')),
         ),
         ("run view at the gate", run_view(gate())),
         ("run view running", run_view(running())),

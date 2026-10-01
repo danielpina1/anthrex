@@ -72,9 +72,11 @@ fn first_line(text: &str) -> Option<String> {
         .find(|line| !line.is_empty())
 }
 
-/// Decision 18's priority 1 for `run`, first match wins, with the orchestrator
-/// window's time in its status (milestone 9.0.7 decision 8).
-fn orchestrator_text(app: &App, run: &RunInfo) -> Option<(&'static str, u64)> {
+/// Decision 18's priority 1 for `run`, first match wins, with its age (milestone
+/// 9.0.7 decision 8): the orchestrator window's time in its status where that status
+/// is the wait (asking for permission, quiet at a start prompt); none for a held
+/// wake-up, which the window's status time does not date (fix round 1 ruling).
+fn orchestrator_text(app: &App, run: &RunInfo) -> Option<(&'static str, Option<u64>)> {
     let orch = run.orchestrator.as_ref().filter(|orch| orch.live)?;
     let id = orch.window_id?;
     let window = app.windows.iter().find(|window| window.id == id)?;
@@ -83,16 +85,16 @@ fn orchestrator_text(app: &App, run: &RunInfo) -> Option<(&'static str, u64)> {
         window.status,
         Status::Idle | Status::Done | Status::Attention
     );
-    let text = if orch.wake_held {
-        "orchestrator wake-up held"
+    let age = Some(app.elapsed_secs(window));
+    if orch.wake_held {
+        Some(("orchestrator wake-up held", None))
     } else if window.status == Status::Attention && window.signals_seen {
-        "orchestrator asks for permission"
+        Some(("orchestrator asks for permission", age))
     } else if agent && !window.signals_seen && quiet {
-        "orchestrator waits at a start prompt"
+        Some(("orchestrator waits at a start prompt", age))
     } else {
-        return None;
-    };
-    Some((text, app.elapsed_secs(window)))
+        None
+    }
 }
 
 /// Decision 18's priority 3 for a blocked task: while the orchestrator lives, only
@@ -183,7 +185,7 @@ pub fn alerts(app: &App) -> Vec<Alert> {
         };
         if let Some((text, age)) = orchestrator_text(app, run) {
             let key = AlertKey::Orchestrator(id.clone());
-            push(1, key, text.to_owned(), None, None, Some(age));
+            push(1, key, text.to_owned(), None, None, age);
         }
         if run.state == RunState::AwaitingApproval {
             let n = run

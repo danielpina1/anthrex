@@ -1,92 +1,23 @@
 //! M9.0.7.5: the grown Alerts box (decisions 8–10), two lines an alert, rendered with
-//! `TestBackend`. `three_runs` is the milestone's shared alert fixture: task 6's
-//! Alerts view and the render audit draw it too.
+//! `TestBackend`, over `ui/alerts_fixture.rs`'s `three_runs`.
 
+use super::fixture::{
+    NOW, REPO, app_of, blocked_t2, event, named, three_runs, three_runs_snapshot,
+};
 use crate::app::{Alert, AlertKey, AlertWho, App, alerts};
 use crate::safe_text::tests::{first_hostile, hostile_text};
 use crate::settings::UiSettings;
 use crate::theme::{self, Role};
 use crate::tree::alert_fixtures::{at, blocked, orch_window, with_orch};
 use crate::tree::orch_fixtures::hold;
-use crate::tree::run_fixtures::{pty, run, snapshot, task};
+use crate::tree::run_fixtures::{pty, snapshot};
 use crate::ui::{Layout, SidebarSizing, alerts_box_rows, layout_for, layout_sized};
-use proto::{
-    BlockReason, HoldState, ProposalAlertInfo, RunInfo, RunState, Size, Status, TaskEventInfo,
-    TaskState, WindowInfo,
-};
+use proto::{BlockReason, HoldState, ProposalAlertInfo, RunState, Status, WindowInfo};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
-use std::time::Instant;
-
-pub(crate) const REPO: &str = "/tmp/repo";
-/// The snapshot's daemon clock.
-pub(crate) const NOW: u64 = 1_000_000;
-const QUESTION: &str = "which crate owns the formatting helper?";
-
-fn named(id: &str, goal: &str, state: RunState, created_at: u64) -> RunInfo {
-    let mut info = run(id, REPO, state);
-    info.goal = goal.into();
-    info.created_at = created_at;
-    info
-}
-
-/// `t2` of `add-mul-0723`: blocked on a question, blocked `ago` seconds before `NOW`.
-pub(crate) fn blocked_t2(ago: u64) -> proto::TaskInfo {
-    let mut t2 = blocked("t2", BlockReason::Question, QUESTION);
-    t2.title = "report_product in c".into();
-    // Newest first, as the daemon sends it; an older block and a later event around it.
-    t2.history = vec![
-        event(NOW - ago + 1, "worker round 2 started"),
-        event(NOW - ago, &format!("blocked (question): {QUESTION}")),
-        event(NOW - ago - 600, "blocked (question): an older question"),
-    ];
-    t2
-}
-
-fn event(at: u64, text: &str) -> TaskEventInfo {
-    TaskEventInfo {
-        at,
-        text: text.into(),
-    }
-}
-
-/// The three runs of §6.1's mockup, in project `/tmp/repo`.
-pub(crate) fn three_runs_snapshot() -> Vec<RunInfo> {
-    let mut docs = named("docs-77aa", "Docs", RunState::AwaitingApproval, 1);
-    docs.tasks = vec![
-        task("t1", "write", Size::S, TaskState::Pending),
-        task("t2", "proof", Size::S, TaskState::Pending),
-    ];
-    let mut mul = named("add-mul-0723", "Add mul()", RunState::Running, 2);
-    mul.tasks = vec![
-        task("t1", "add", Size::S, TaskState::Merged),
-        blocked_t2(41),
-    ];
-    let mut ci = named("fix-ci-9b1e", "Fix CI", RunState::Complete, 3);
-    ci.tasks = vec![task("t1", "fix", Size::S, TaskState::Merged)];
-    vec![docs, mul, ci]
-}
-
-pub(crate) fn app_of(windows: Vec<WindowInfo>, runs: Vec<RunInfo>) -> App {
-    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
-    let _ = app.set_terminal_size(80, 24);
-    app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot(snapshot(
-        NOW, runs,
-    ))));
-    app.set_runs_received_at(Instant::now());
-    app
-}
-
-/// The fixture: one shell and the three runs; three alerts (P2, P3, P4).
-pub(crate) fn three_runs() -> App {
-    app_of(
-        vec![pty(1, "shell", REPO, Status::Idle)],
-        three_runs_snapshot(),
-    )
-}
 
 fn draw_at(app: &App, w: u16, h: u16) -> (Buffer, Layout) {
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
@@ -147,9 +78,14 @@ fn the_box_title_and_hint() {
     let app = three_runs();
     let (buffer, layout) = draw_at(&app, 120, 40);
     let top = row(&buffer, layout.alerts.y);
-    let bottom = row(&buffer, layout.alerts.y + layout.alerts.height - 1);
+    let bottom = text_in(
+        &buffer,
+        layout.alerts,
+        layout.alerts.y + layout.alerts.height - 1,
+    );
     assert!(top.contains(" ⚑ Alerts 3 "), "{top}");
-    assert!(bottom.contains(" C-b a open "), "{bottom}");
+    // One `─` before the corner, as §6.1's mockup draws it.
+    assert!(bottom.ends_with(" C-b a open ─╯"), "{bottom}");
     let p = app.palette();
     // The title in `Attention`; the key in the accent, the word muted.
     let flag = top.find('⚑').unwrap();
@@ -231,34 +167,77 @@ fn agents_get_the_rest() {
     }
 }
 
-/// Review focus 3: the mouse reads the geometry the renderer drew with.
+/// Review focus 3: the mouse reads the geometry the renderer drew with. The tree
+/// overflows, so the list's last row is the row the box's height decides.
 #[test]
 fn a_click_hits_the_row_the_grown_box_left() {
-    let shells: Vec<WindowInfo> = (1..=20)
+    let shells: Vec<WindowInfo> = (1..=40)
         .map(|id| pty(id, &format!("shell-{id}"), REPO, Status::Idle))
         .collect();
     let mut app = app_of(shells, three_runs_snapshot());
     let area = Rect::new(0, 0, 120, 40);
+    // As `lib.rs` draws a frame: the viewports from `layout_for`, then the draw.
+    let next = layout_for(&app, area);
+    app.set_tree_viewports(next.sidebar_list.height, next.main_inner.height);
     let (buffer, layout) = draw_at(&app, 120, 40);
-    assert_eq!(layout, layout_for(&app, area));
-    assert_eq!(
-        layout.alerts_inner.height, 7,
-        "the box grew to its three alerts"
-    );
-    // Every tree row fits the list the grown box left; `shell-20` is on one of them.
-    let rows = app.rows().len();
+    assert_eq!(layout, next);
     let list = layout.sidebar_list;
-    assert!(rows <= usize::from(list.height), "{rows} rows in {list:?}");
-    let y = (list.y..list.y + list.height)
-        .find(|&y| text_in(&buffer, list, y).contains("shell-20"))
-        .expect("shell-20 is drawn in the list");
+    assert!(
+        app.rows().len() > usize::from(list.height),
+        "the tree overflows"
+    );
+    // Decision 9: an overflowing tree leaves the box its floor, three rows; the list
+    // is the column less the box and three rows.
+    assert_eq!(layout.alerts_inner.height, 3);
+    assert_eq!(list.height, 39 - 5 - 3);
+    // The list's last row, just above the footer.
+    let y = list.y + list.height - 1;
+    assert_eq!(y + 1, layout.sidebar_footer.y);
+    // A stale box (two lines for each of three alerts, or six) would put that row
+    // outside the list.
+    for n in [3, 6] {
+        let stale = crate::ui::layout(area, 34, n).sidebar_list;
+        assert!(!stale.contains((list.x + 4, y).into()), "{n}: {stale:?}");
+    }
+    let drawn = text_in(&buffer, list, y);
+    let id: u32 = drawn
+        .split("shell-")
+        .nth(1)
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|digits| digits.parse().ok())
+        .unwrap_or_else(|| panic!("a shell is drawn on the last row: {drawn:?}"));
+    assert_ne!(app.focused, Some(id));
     let _ = app.on_click(list.x + 4, y, &layout);
-    assert_eq!(app.focused, Some(20));
-    // The row below the list is the agents block's footer, then the box: no window.
-    let below = list.y + list.height;
-    let _ = app.on_click(list.x + 4, below, &layout);
-    let _ = app.on_click(list.x + 4, layout.alerts_inner.y, &layout);
-    assert_eq!(app.focused, Some(20));
+    assert_eq!(app.focused, Some(id), "{drawn:?}");
+    // A click on the box's first row reaches no window.
+    let before = (app.focused, app.tree.selected.clone(), app.tree.sidebar.top);
+    assert!(
+        app.on_click(list.x + 4, layout.alerts_inner.y, &layout)
+            .is_empty()
+    );
+    let after = (app.focused, app.tree.selected.clone(), app.tree.sidebar.top);
+    assert_eq!(before, after);
+}
+
+/// Decision 10: the `↓ <k> more` mark is the box's last row, with the rows a whole
+/// alert would not fill left blank above it.
+#[test]
+fn the_mark_is_the_last_row() {
+    let mut windows = vec![pty(1, "shell", REPO, Status::Idle)];
+    windows.extend((2..=10).map(|id| pty(id, &format!("s{id}"), REPO, Status::Idle)));
+    let app = app_of(windows, three_runs_snapshot());
+    assert_eq!(app.rows().len(), 14);
+    // 23 − 14 − 5 = 4 rows: the gate's two, a blank, the mark.
+    let (buffer, layout) = draw_at(&app, 80, 24);
+    assert_eq!(
+        trimmed(&box_rows(&buffer, &layout)),
+        [
+            "⚑ Docs · 77aa",
+            "  plan awaits approval · 2 tasks",
+            "",
+            "↓ 2 more"
+        ]
+    );
 }
 
 /// The glyph cell of each alert's first line, by priority.
@@ -576,6 +555,25 @@ fn a_long_text_wraps_to_two_lines_cut_with_a_mark() {
     assert!(lines[2].starts_with("  five six seven"), "{lines:#?}");
     assert!(lines[2].ends_with('…'), "{lines:#?}");
     assert!(unicode_width::UnicodeWidthStr::width(lines[2].as_str()) <= 32);
+}
+
+/// A word wider than the text column is broken, never re-joined with a space.
+#[test]
+fn a_long_word_is_broken_without_a_space() {
+    let word = "w".repeat(40);
+    let mut runs = three_runs_snapshot();
+    runs[1].tasks[1].block.as_mut().unwrap().text = format!("{word} {word}");
+    let app = app_of(vec![], runs);
+    let alert = alerts(&app).into_iter().find(|a| a.task.is_some()).unwrap();
+    let lines: Vec<String> = super::alert_lines(&app, &alert, 32)
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
+    assert_eq!(
+        lines[1..],
+        ["  blocked:".to_owned(), format!("  {}…", "w".repeat(29))],
+        "{lines:#?}"
+    );
 }
 
 #[test]

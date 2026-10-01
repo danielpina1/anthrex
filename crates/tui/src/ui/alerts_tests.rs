@@ -144,10 +144,10 @@ fn four_priorities_render_at_80x24() {
             "│⚑ Add password reset · gate  now│",
             "│  orchestrator waits at a start │",
             "│  prompt                        │",
-            "│⚑ Add password reset · held  now│",
+            "│⚑ Add password reset · held     │",
             "│  orchestrator wake-up held     │",
             "│↓ 7 more                        │",
-            "╰──────────────────── C-b a open ╯",
+            "╰─────────────────── C-b a open ─╯",
         ]
     );
     let attention = Some(Color::LightMagenta);
@@ -166,7 +166,7 @@ fn four_priorities_render_at_120x40() {
     let app = every_app();
     let (buffer, layout) = draw_at(&app, 120, 40);
     // 39 rows of column: min(C, 17, 39 − R − 5) = 17 rows. Whole alerts only: six fit
-    // above the `↓ 4 more` row, and the next would need two more.
+    // above the `↓ 4 more` row, the box's last, and the next would need two more.
     assert_eq!(
         box_rows(&buffer, &layout),
         [
@@ -177,7 +177,7 @@ fn four_priorities_render_at_120x40() {
             "│⚑ Add password reset · gate  now│",
             "│  orchestrator waits at a start │",
             "│  prompt                        │",
-            "│⚑ Add password reset · held  now│",
+            "│⚑ Add password reset · held     │",
             "│  orchestrator wake-up held     │",
             "│⚑ Add password reset · gate     │",
             "│  plan awaits approval · 1 task │",
@@ -186,9 +186,9 @@ fn four_priorities_render_at_120x40() {
             "│  1 task                        │",
             "│⚑ Add password reset · held › t1│",
             "│  blocked (human): needs a key  │",
-            "│↓ 4 more                        │",
             "│                                │",
-            "╰──────────────────── C-b a open ╯",
+            "│↓ 4 more                        │",
+            "╰─────────────────── C-b a open ─╯",
         ]
     );
     let attention = Some(Color::LightMagenta);
@@ -501,8 +501,8 @@ fn a_short_terminal_still_shows_one_alert() {
     }
     let (buffer, layout) = draw_at(&every_app(), 80, 5);
     assert_eq!(layout.sidebar.height, 0);
-    assert_eq!(
-        box_rows(&buffer, &layout)[1],
-        "│↓ 10 more                       │"
-    );
+    // The mark on the interior's last row.
+    let rows = box_rows(&buffer, &layout);
+    assert_eq!(rows[1], "│                                │");
+    assert_eq!(rows[2], "│↓ 10 more                       │");
 }
