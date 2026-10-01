@@ -90,6 +90,9 @@ fn single_code_goal_takes_the_fast_path() {
             route: RouteSpec::default(),
             budget: None,
             review_target: None,
+            stage: 1,
+            atomic: false,
+            atomic_reason: None,
         }
     );
     // A docs goal is fast too, with the kind carried.
@@ -233,6 +236,7 @@ fn build_fast(decision: &Decision) -> Result<crate::run::model::Run, Vec<PlanErr
             wt_dir: "/tmp/wt".into(),
             data_dir: "/tmp/data/runs/fix-the-reset-link-3f9a".into(),
             config: &config,
+            testing: &config::Testing::default(),
             now: 1_000,
             yes: true,
         },

@@ -92,15 +92,17 @@ impl ShellOutcome {
 }
 
 /// Runs `command` in `dir` under decision 34's rules: its own process group, stdin
-/// `/dev/null`, stderr merged into stdout, decision 26's environment plus `env`, and
-/// `SIGKILL` for the whole group on timeout or once it has finished.
+/// `/dev/null`, stderr merged into stdout, decision 26's environment plus `env`, then
+/// `extra` (milestone 9.1 decision 26: the slot and isolation variables, which win),
+/// and `SIGKILL` for the whole group on timeout or once it has finished.
 pub fn run_shell(
     dir: &Path,
     command: &str,
     env: &[(String, String)],
+    extra: &[(String, String)],
     timeout: Duration,
 ) -> ShellOutcome {
-    run_matching(dir, command, env, timeout, None, None).0
+    run_matching(dir, command, (env, extra), timeout, None, None).0
 }
 
 /// [`run_shell`] under `confine` when it is set (final fix batch F1c, I2; see
@@ -112,18 +114,21 @@ pub fn run_confined(
     dir: &Path,
     command: &str,
     env: &[(String, String)],
+    extra: &[(String, String)],
     timeout: Duration,
     confine: Option<&Confinement>,
 ) -> ShellOutcome {
-    run_matching(dir, command, env, timeout, None, confine).0
+    run_matching(dir, command, (env, extra), timeout, None, confine).0
 }
 
 /// Removes decision 26's agent variables and AGENTS.md rule 11's git variables from
 /// what `command` inherits, then sets `env`. When `confined`, every `ANTHREX_*`
 /// variable is removed too (F1c round 3, N1): a confined command runs code the workers
 /// wrote, so it must not be handed the daemon's own coordinates (`ANTHREX_SOCKET`,
-/// `ANTHREX_DATA_DIR`), even though the sandbox already denies the connection.
-fn engine_env(command: &mut Command, env: &[(String, String)], confined: bool) {
+/// `ANTHREX_DATA_DIR`), even though the sandbox already denies the connection. An
+/// isolated step ([`run_lines`], ruling C-27 M-6) is scrubbed the same way, confined or
+/// not: its caller sets decision 28's own socket and data directory in `extra`.
+fn engine_env(command: &mut Command, (env, extra): Env<'_>, confined: bool) {
     use config::reserved_env::{SCRUBBED_NAMES, SCRUBBED_PREFIXES};
     scrub_git_location_env(command);
     for (key, _) in std::env::vars_os() {
@@ -154,10 +159,16 @@ fn engine_env(command: &mut Command, env: &[(String, String)], confined: bool) {
             }
         }
     }
-    for (key, value) in env {
+    for (key, value) in env.iter().chain(extra) {
         command.env(key, value);
     }
 }
+
+/// What a run matches its output lines against, and whom it hands them to.
+type Observe<'a> = (Option<&'a Regex>, Option<&'a mut dyn FnMut(&str)>);
+
+/// A command's profile `env`, then its `extra` (set last, so it wins).
+pub(crate) type Env<'a> = (&'a [(String, String)], &'a [(String, String)]);
 
 /// [`run_shell`], also reporting whether any whole output line matched `pattern` (the
 /// proof's `test_passed`, decision 33). Every line is tested as it is read, so a match
@@ -165,12 +176,39 @@ fn engine_env(command: &mut Command, env: &[(String, String)], confined: bool) {
 pub(crate) fn run_matching(
     dir: &Path,
     command: &str,
-    env: &[(String, String)],
+    env: Env<'_>,
     timeout: Duration,
     pattern: Option<&Regex>,
     confine: Option<&Confinement>,
 ) -> (ShellOutcome, bool) {
+    run_observed(dir, command, env, timeout, (pattern, None), confine)
+}
+
+/// [`run_confined`] handing every whole output line (up to 64 KiB of it, one trailing
+/// `\r` removed) to `on_line` as it is read: milestone 9.1 decision 32 reads failing
+/// test names from a red step's whole output, not only its tail.
+pub(crate) fn run_lines(
+    dir: &Path,
+    command: &str,
+    env: Env<'_>,
+    timeout: Duration,
+    confine: Option<&Confinement>,
+    on_line: &mut dyn FnMut(&str),
+) -> ShellOutcome {
+    run_observed(dir, command, env, timeout, (None, Some(on_line)), confine).0
+}
+
+fn run_observed<'a>(
+    dir: &Path,
+    command: &str,
+    env: Env<'_>,
+    timeout: Duration,
+    (pattern, on_line): Observe<'a>,
+    confine: Option<&Confinement>,
+) -> (ShellOutcome, bool) {
     let started = Instant::now();
+    // Only `run_lines` observes lines: the isolated step runner.
+    let isolated = on_line.is_some();
     let not_started = |error: io::Error| ShellOutcome {
         ok: false,
         code: None,
@@ -210,7 +248,7 @@ pub(crate) fn run_matching(
             .stdout(writer)
             .stderr(stderr)
             .process_group(0);
-        engine_env(&mut shell, env, confine.is_some());
+        engine_env(&mut shell, env, confine.is_some() || isolated);
         shell.spawn()
         // `shell`, and with it this process's copies of the pipe's write end, drops
         // here, so the pipe reaches EOF once the command's own copies close.
@@ -222,6 +260,10 @@ pub(crate) fn run_matching(
     let pid = child.id() as libc::pid_t;
 
     let mut sink = LineTail::new(pattern);
+    if on_line.is_some() {
+        sink.keep = MATCH_LINE_BYTES;
+    }
+    sink.on_line = on_line;
     let mut eof = match set_nonblocking(&reader) {
         Ok(()) => false,
         Err(error) => {
@@ -409,6 +451,7 @@ struct LineTail<'a> {
     keep: usize,
     pattern: Option<&'a Regex>,
     matched: bool,
+    on_line: Option<&'a mut dyn FnMut(&str)>,
 }
 
 impl<'a> LineTail<'a> {
@@ -424,6 +467,7 @@ impl<'a> LineTail<'a> {
             },
             pattern,
             matched: false,
+            on_line: None,
         }
     }
 
@@ -459,6 +503,9 @@ impl<'a> LineTail<'a> {
         {
             self.matched = true;
         }
+        if let Some(on_line) = self.on_line.as_mut() {
+            on_line(&text);
+        }
         let cut: String = text.chars().take(LINE_MAX_CHARS).collect();
         self.lines.push_back(cut);
         if self.lines.len() > CHECK_TAIL_LINES {
@@ -478,78 +525,5 @@ impl<'a> LineTail<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::ffi::OsStr;
-
-    fn tail_of(chunks: &[&[u8]]) -> String {
-        let mut sink = LineTail::new(None);
-        for chunk in chunks {
-            sink.push(chunk);
-        }
-        sink.finish()
-    }
-
-    #[test]
-    fn lines_split_across_reads_are_joined() {
-        assert_eq!(tail_of(&[b"ab", b"c\nd", b"e\n"]), "abc\nde");
-        assert_eq!(tail_of(&[b"a\n\nb"]), "a\n\nb");
-        assert_eq!(tail_of(&[b""]), "");
-    }
-
-    #[test]
-    fn a_character_split_across_reads_is_kept_whole() {
-        let wide = "世".as_bytes();
-        assert_eq!(tail_of(&[&wide[..1], &wide[1..], b"\n"]), "世");
-    }
-
-    #[test]
-    fn a_match_beyond_the_cut_counts() {
-        let pattern = Regex::new("PASS t").unwrap();
-        let mut sink = LineTail::new(Some(&pattern));
-        let mut line = vec![b'x'; 1000];
-        line.extend_from_slice(b"PASS t\n");
-        sink.push(&line);
-        assert!(sink.matched);
-        assert_eq!(sink.finish().len(), LINE_MAX_CHARS);
-    }
-
-    #[test]
-    fn a_pid_that_is_not_our_child_is_gone() {
-        // pid 1 is never this process's child: `waitid` gives `ECHILD`.
-        assert_eq!(leader_state(1), Leader::Gone);
-    }
-
-    #[test]
-    fn summary_of_an_empty_tail_is_empty() {
-        assert_eq!(summary(""), "");
-    }
-
-    #[test]
-    fn engine_env_is_applied_to_the_command() {
-        let mut command = Command::new("env");
-        engine_env(&mut command, &[("A".into(), "1".into())], false);
-        let envs: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
-        assert!(envs.contains(&(OsStr::new("CLAUDECODE"), None)));
-        assert!(envs.contains(&(OsStr::new("ANTHREX_WINDOW_ID"), None)));
-        assert!(envs.contains(&(OsStr::new("GIT_DIR"), None)));
-        assert!(envs.contains(&(OsStr::new("A"), Some(OsStr::new("1")))));
-        // T14-P1 (F4): `GIT_NO_REPLACE_OBJECTS` is for the engine's own git calls; a
-        // check, proof or `setup` runs the project's commands with the user's git.
-        assert!(
-            !envs
-                .iter()
-                .any(|(name, _)| *name == OsStr::new("GIT_NO_REPLACE_OBJECTS")),
-            "{envs:?}"
-        );
-        // Unconfined, other `ANTHREX_*` variables are left alone.
-        assert!(!envs.contains(&(OsStr::new("ANTHREX_SOCKET"), None)));
-
-        // F1c round 3 (N1): a confined command loses `ANTHREX_SOCKET`/`ANTHREX_DATA_DIR`.
-        let mut confined = Command::new("env");
-        engine_env(&mut confined, &[], true);
-        let confined_envs: Vec<(&OsStr, Option<&OsStr>)> = confined.get_envs().collect();
-        assert!(confined_envs.contains(&(OsStr::new("ANTHREX_SOCKET"), None)));
-        assert!(confined_envs.contains(&(OsStr::new("ANTHREX_DATA_DIR"), None)));
-    }
-}
+#[path = "exec_tests.rs"]
+mod tests;

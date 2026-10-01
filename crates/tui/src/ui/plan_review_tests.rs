@@ -538,3 +538,6 @@ fn a_one_task_review_says_one_task() {
     let title = "Hold epic:mail review · add-reset-3f9a · Add password reset";
     assert_eq!(got[0], format!("{title:<94}1 task · awaiting approval"));
 }
+
+#[path = "plan_review_stages_tests.rs"]
+mod stages;

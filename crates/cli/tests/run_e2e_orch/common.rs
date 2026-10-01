@@ -91,3 +91,22 @@ pub fn wait_passed(h: &RunHarness, n: usize) -> Vec<Value> {
         RUN_WAIT,
     )
 }
+
+/// Waits until the orchestrator's `until("/gate/state", "approved")` step has ended: a
+/// `run_status` of its script answered `approved`, so it reads no digest again before
+/// its next `read_message`. A digest read drops the wake notes it held (decision 39, "a
+/// read clears too"), so a worker that blocks before this would have its note read
+/// away by the poll, and the wake-up a scenario waits for would never come.
+pub fn wait_saw_approval(h: &RunHarness) {
+    let approved = |l: &Value| {
+        l["script"] == ORCH
+            && l["tool"] == "run_status"
+            && serde_json::from_str::<Value>(l["result"].as_str().unwrap_or_default())
+                .is_ok_and(|r| r.pointer("/gate/state") == Some(&Value::from("approved")))
+    };
+    h.wait_log(
+        "the orchestrator's script to see the approval",
+        |log| log.iter().any(approved),
+        ORCH_WAIT,
+    );
+}

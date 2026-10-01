@@ -18,6 +18,8 @@ use super::runs::{app_with_runs, deliver, open_run_view};
 mod filter;
 #[path = "gate/replies.rs"]
 mod replies;
+#[path = "gate/stage.rs"]
+mod stage;
 #[path = "gate/stale.rs"]
 mod stale;
 #[path = "gate/unsent.rs"]
@@ -95,6 +97,7 @@ pub(super) fn amend(route: Option<RouteSpec>, size: Option<Size>) -> PlanEdit {
         test_mode_reason: None,
         priority: None,
         deps: None,
+        stage: None,
     }
 }
 
@@ -441,6 +444,7 @@ fn a_mode_other_than_tdd_needs_a_reason() {
             priority: None,
             size: None,
             deps: None,
+            stage: None,
         }])
     );
 }
@@ -465,6 +469,7 @@ fn the_brief_round_trips_its_newlines() {
             priority: None,
             size: None,
             deps: None,
+            stage: None,
         }])
     );
 }

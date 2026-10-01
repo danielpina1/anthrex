@@ -63,6 +63,11 @@ fn verification(
         setup,
         check,
         single_test,
+        build_check: None,
+        module_graph: None,
+        module_test: None,
+        module_tests: None,
+        toolchain_id: None,
     }
 }
 

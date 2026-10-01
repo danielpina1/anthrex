@@ -371,6 +371,7 @@ fn gemini_t2(now: u64) -> TaskInfo {
         on_candidate: false,
         decider_summary: None,
         summary_source: None,
+        tier: None,
     });
     let mut work = worker(1, Some(7), Runtime::Codex, now - 1560);
     work.route = t2.route.clone();

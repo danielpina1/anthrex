@@ -165,6 +165,7 @@ fn run_appending(data: &Path, history: &Path) -> (Run, OpKind) {
         wt_dir: PathBuf::from("/tmp/nowhere-wt"),
         data_dir: data.join("runs").join("history-5a1e"),
         config: &config,
+        testing: &config::Testing::default(),
         now: 1_000,
         yes: true,
     };

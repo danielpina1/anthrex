@@ -67,6 +67,29 @@ fn stored_profile_replaces_the_plan_profile_entirely() {
     );
 }
 
+/// Milestone 9.1 ruling C-12a: a stored profile's `manifests` travel with the choice
+/// (they key a command graph's cache); a plan's or config's profile has none.
+#[test]
+fn a_stored_profiles_manifests_travel_with_the_choice() {
+    let stored = RepoProfile {
+        check: Some("a".into()),
+        manifests: strings(&["deps/*.txt", "graph.sh"]),
+        ..Default::default()
+    };
+    let none = ProfileSpec::default();
+    let chosen = run_profile(Some(&stored), &stored_path(), &none, &none);
+    assert_eq!(chosen.manifests, strings(&["deps/*.txt", "graph.sh"]));
+    let plan = ProfileSpec {
+        check: Some("b".into()),
+        ..Default::default()
+    };
+    assert!(
+        run_profile(None, &stored_path(), &plan, &none)
+            .manifests
+            .is_empty()
+    );
+}
+
 /// M8b.14: the fast path's plan carries the stored profile's own spec
 /// (`triage::fast_plan`); it ignores nothing, so the run log gets no note.
 #[test]
@@ -258,6 +281,7 @@ fn confinement_still_comes_from_the_users_config() {
         wt_dir: PathBuf::from("/tmp/wt"),
         data_dir: PathBuf::from("/tmp/data/runs/confinement-0001"),
         config: &config,
+        testing: &config::Testing::default(),
         now: 1,
         yes: false,
     };
@@ -519,6 +543,7 @@ fn a_stale_profile_gets_the_attention_line() {
         wt_dir: PathBuf::from("/tmp/wt"),
         data_dir: PathBuf::from("/tmp/data/runs/stale-0001"),
         config: &config,
+        testing: &config::Testing::default(),
         now: 1,
         yes: false,
     };

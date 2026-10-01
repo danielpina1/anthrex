@@ -114,6 +114,7 @@ fn report_has_every_section() {
             on_candidate: false,
             summary: None,
             summary_source: None,
+            tier: None,
         });
         t.reviews.push(ReviewRecord {
             round: 1,
@@ -444,6 +445,7 @@ fn a_check_summary_names_its_source() {
         on_candidate: false,
         summary: summary.map(str::to_string),
         summary_source: source,
+        tier: None,
     };
     run.tasks[0].checks = vec![
         record(Some("error: a failed"), Some(proto::DeciderSource::Decider)),

@@ -2,7 +2,7 @@
 //! inside `plan_edit`, `plan_task` and `route`, and refuses their unknown fields, on a
 //! tool call's untrusted arguments (the MCP schema is only what the model sees). Pure.
 
-use proto::AgentRole;
+use proto::{AgentRole, PlanEdit};
 use serde_json::{Value, json};
 
 use super::*;
@@ -27,6 +27,7 @@ fn task(full: bool) -> Value {
         "owns": list(20, 300), "deps": list(20, 16), "priority": 3, "brief": s(8000, 'b'),
         "acceptance": list(20, 500), "test_to_write": s(300, 'w'),
         "scout_refs": list(20, 48), "review_target": s(200, 'v'),
+        "stage": 2, "atomic": true, "atomic_reason": s(300, 'a'),
         "route": {"runtime": "claude", "model": s(100, 'm'), "strength": "standard",
                   "effort": "high"},
     })
@@ -101,6 +102,10 @@ fn nested_strings_past_their_bound_are_refused() {
             "task: route: model: must be 0 to 100 characters",
         ),
         (with("title", json!(7)), "task: title: must be a string"),
+        (
+            with("atomic_reason", long(301)),
+            "task: atomic_reason: must be 1 to 300 characters",
+        ),
     ];
     for (edit, want) in cases {
         assert_eq!(
@@ -259,4 +264,53 @@ fn a_task_id_is_left_to_the_plan_rules() {
     let mut t = task(false);
     t["id"] = json!("x".repeat(17));
     assert!(edit_plan(json!({"op": "add_task", "task": t})).is_ok());
+}
+
+/// The M9.1.3 review's finding on decision 43: `stage`, `atomic` and `atomic_reason`
+/// reach `add_task`, `split_task`, `amend_task` and `submit_epic`. Their range is the
+/// plan rules' (`validate_tests_stages.rs`), like every other integer here.
+#[test]
+fn stage_and_atomic_fields_are_accepted() {
+    let edits = [
+        json!({"op": "add_task", "task": task(false)}),
+        json!({"op": "split_task", "task_id": "t1", "into": [task(false)]}),
+        json!({"op": "amend_task", "task_id": "t1", "stage": 3}),
+    ];
+    let Ok(OrchCall::EditPlan { edits: parsed, .. }) = parse_call(
+        AgentRole::Orchestrator,
+        "edit_plan",
+        &json!({ "edits": edits }),
+    ) else {
+        panic!("edit_plan must parse");
+    };
+    match &parsed[..] {
+        [
+            PlanEdit::AddTask { task },
+            PlanEdit::SplitTask { into, .. },
+            PlanEdit::AmendTask { stage, .. },
+        ] => {
+            assert_eq!(
+                (task.stage, task.atomic, task.atomic_reason.as_deref()),
+                (2, true, Some("a"))
+            );
+            assert_eq!(into[0].stage, 2);
+            assert_eq!(*stage, Some(3));
+        }
+        other => panic!("{other:?}"),
+    }
+    let args = json!({"edits": [{"op": "add_task", "task": task(true)}]});
+    let Ok(OrchCall::SubmitEpic { edits, .. }) =
+        parse_call(AgentRole::Planner, "submit_epic", &args)
+    else {
+        panic!("submit_epic must parse");
+    };
+    let [PlanEdit::AddTask { task }] = &edits[..] else {
+        panic!("{edits:?}");
+    };
+    assert_eq!((task.stage, task.atomic), (2, true));
+    // An amend's `atomic` is not a field: atomic is set when a task is added.
+    assert_eq!(
+        refusal(json!({"op": "amend_task", "task_id": "t1", "atomic": true})),
+        "invalid arguments: edits[0]: atomic: unknown field"
+    );
 }

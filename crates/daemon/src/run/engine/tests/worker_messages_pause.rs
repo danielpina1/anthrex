@@ -136,6 +136,7 @@ fn brief_amend_resumes_a_paused_task() {
         priority: None,
         size: None,
         deps: None,
+        stage: None,
     };
     let effects = edit(&mut fx, vec![amend]);
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");

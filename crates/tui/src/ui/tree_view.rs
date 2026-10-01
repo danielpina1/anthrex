@@ -199,6 +199,7 @@ pub fn narrow_line(
         RowKind::Planner { .. }
         | RowKind::Scout { .. }
         | RowKind::Task { .. }
+        | RowKind::Stage { .. }
         | RowKind::AgentRound { .. } => (
             vec![Span::raw(row.guides.clone())],
             Span::raw(crate::graph::content_text(row)),

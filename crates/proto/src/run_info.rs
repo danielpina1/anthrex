@@ -22,6 +22,7 @@ use crate::run::{
 };
 pub use crate::run::{Finding, Severity};
 use crate::scout::ScoutInfo;
+use crate::tiers::{SignalInfo, StageInfo, TaskOrigin, TierInfo};
 
 /// How much of a task's or agent round's budget has been used.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +84,9 @@ pub struct CheckInfo {
     pub decider_summary: Option<String>,
     #[serde(default)]
     pub summary_source: Option<DeciderSource>,
+    /// Milestone 9.1: the tier record, when the check was a tier job.
+    #[serde(default)]
+    pub tier: Option<TierInfo>,
 }
 
 /// The outcome of one proof (TDD red/green) run.
@@ -229,11 +233,35 @@ pub struct TaskInfo {
     /// The task's last 10 `task_note`s (decisions 16a, 42d).
     #[serde(default)]
     pub task_notes: Vec<TaskNoteInfo>,
+    // Milestone 9.1 decision 55.
+    #[serde(default = "first_stage")]
+    pub stage: u16,
+    #[serde(default)]
+    pub origin: TaskOrigin,
+    /// What a fix task fixes, for example `bisect of t4`.
+    #[serde(default)]
+    pub fixes: Option<String>,
+    #[serde(default)]
+    pub tier: Option<TierInfo>,
+    #[serde(default)]
+    pub weakening: Vec<SignalInfo>,
     // Milestone 9.0.5.
     /// Decision 3: the live round's latest action, one line of at most
     /// `task_detail::ACTIVITY_MAX` characters; `None` without a live round.
     #[serde(default)]
     pub activity: Option<String>,
+    /// Milestone 9.1 decision 54, for the plan review (ruling C-28 (5)): the task is its
+    /// stage's one atomic hub, with the plan's reason, and it changes an interface.
+    #[serde(default)]
+    pub atomic: bool,
+    #[serde(default)]
+    pub atomic_reason: Option<String>,
+    #[serde(default)]
+    pub interface_change: bool,
+}
+
+fn first_stage() -> u16 {
+    1
 }
 
 /// One task event (milestone 8c): its unix time and text.
@@ -364,6 +392,11 @@ pub struct RunInfo {
     pub digest_revision: u64,
     #[serde(default)]
     pub research_report: Option<PathBuf>,
+    // Milestone 9.1 decision 55.
+    #[serde(default)]
+    pub stages: Vec<StageInfo>,
+    #[serde(default)]
+    pub test_slots: u32,
 }
 
 /// Every run the daemon knows about, at one revision.

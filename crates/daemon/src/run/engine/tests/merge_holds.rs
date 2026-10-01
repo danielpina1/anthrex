@@ -27,6 +27,7 @@ fn a_conflict_blocked_task_that_gains_a_dependency_keeps_its_block() {
         op,
         OpResult::Conflict {
             files: vec!["docs/t1/a.md".into()],
+            tree: None,
         },
     );
     let (hand_back, _) = pending_one(&fx, "HandBack", Some("t1"));
@@ -45,6 +46,7 @@ fn a_conflict_blocked_task_that_gains_a_dependency_keeps_its_block() {
         op,
         OpResult::Conflict {
             files: vec!["docs/t1/a.md".into()],
+            tree: None,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Blocked);
@@ -84,6 +86,7 @@ fn a_merged_task_leaves_no_mail_behind() {
             priority: None,
             size: None,
             deps: None,
+            stage: None,
         }],
     );
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
@@ -110,6 +113,7 @@ fn handed_back_with_conflicts(fx: &mut Fixture) -> Vec<Effect> {
         op,
         OpResult::Conflict {
             files: files.clone(),
+            tree: None,
         },
     );
     let (hand_back, _) = pending_one(fx, "HandBack", Some("t1"));
@@ -169,6 +173,7 @@ fn a_resolved_conflict_does_not_skip_a_later_hand_back() {
             timed_out: false,
             tail: "red".into(),
             secs: 1,
+            tier: None,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);
@@ -236,7 +241,7 @@ fn a_fresh_session_waits_for_the_run_to_run() {
     let effects = fx.next(EventKind::Resume {
         reply,
         run_id: RUN_ID.into(),
-        rebaseline: Some((BASE.into(), BASE.into())),
+        rebaseline: Some((BASE.to_string(), BASE.to_string()).into()),
     });
     assert_eq!(ops_in(&effects, "DiffSoFar").len(), 1, "{effects:#?}");
     let (diff, _) = pending_one(&fx, "DiffSoFar", Some("t1"));

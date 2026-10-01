@@ -306,3 +306,57 @@ fn clamp_diff_below_the_marker_keeps_a_head_only() {
     let out = clamp_diff(&text, 10);
     assert_eq!(out, "世世世");
 }
+
+// Decision 54's reviewer line (whole-branch review, ruling C-27 item I-1).
+
+const INTERFACE_LINE: &str =
+    "Check that the old interface still works: callers outside this task must still build.";
+
+/// `t1`'s reviewer prompt with `interface_change`, in a run with `layout`, on the
+/// tiered profile or the untiered one.
+fn interface_prompt(interface: bool, multi: bool, tiered: bool) -> String {
+    let mut run = prompt_run(PROFILE, "");
+    run.tasks[0].spec.interface_change = interface;
+    if multi {
+        run.stage_layout = crate::run::model::StageLayout::Multi;
+    }
+    if tiered {
+        run.profile.tiers.build_check = Some("cargo build".into());
+    }
+    let (base, head) = ("c".repeat(40), "d".repeat(40));
+    reviewer_prompt(&run, &run.tasks[0], 1, &base, &head, "+x", "")
+}
+
+#[test]
+fn an_interface_change_reviewer_checks_the_old_interface() {
+    for (multi, tiered) in [(true, false), (false, true), (true, true)] {
+        let prompt = interface_prompt(true, multi, tiered);
+        let lines: Vec<&str> = prompt.lines().collect();
+        assert_eq!(
+            lines[4], INTERFACE_LINE,
+            "multi={multi} tiered={tiered}\n{prompt}"
+        );
+        assert_eq!(prompt.matches(INTERFACE_LINE).count(), 1, "{prompt}");
+    }
+}
+
+#[test]
+fn the_interface_line_needs_an_interface_change_and_a_staged_or_tiered_run() {
+    for (interface, multi, tiered) in [
+        (false, true, true),
+        (false, true, false),
+        (false, false, true),
+        (true, false, false),
+    ] {
+        let prompt = interface_prompt(interface, multi, tiered);
+        assert!(
+            !prompt.contains("old interface"),
+            "interface={interface} multi={multi} tiered={tiered}\n{prompt}"
+        );
+    }
+    // A Single untiered run's prompt is byte-identical with or without the flag.
+    assert_eq!(
+        interface_prompt(true, false, false),
+        interface_prompt(false, false, false)
+    );
+}

@@ -101,6 +101,17 @@ fn glob_module(glob: &str, modules: &[String]) -> GlobModule {
     GlobModule::Named(".".to_string())
 }
 
+/// The module directory a changed path belongs to (milestone 9.1 decision 10): the one
+/// [`modules_spanned`] gives the path as a one-entry `owns`, so sizing and the affected
+/// set never disagree. `None` where that answers `.` (no pattern matched), or where
+/// the path is shorter than a pattern it is a prefix of.
+pub fn path_module(path: &str, modules: &[String]) -> Option<String> {
+    match glob_module(path, modules) {
+        GlobModule::Named(name) if name != "." => Some(name),
+        GlobModule::Named(_) | GlobModule::Many => None,
+    }
+}
+
 /// Which module (or modules) `owns` spans, given `profile.modules`. With no modules
 /// configured, every glob's module is `.`. *(Decision 9.)*
 pub fn modules_spanned(owns: &[String], modules: &[String]) -> ModuleSpan {
@@ -174,14 +185,61 @@ pub fn validate_glob(glob: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Ruling C-27 (M-3): `path` as an `owns` entry that names exactly that file. Every
+/// glob metacharacter (`*`, `?`, `[`, `]`, `{`, `}`) becomes a one-character class
+/// (`[*]`), which `globset` matches literally; `\` is not allowed in `owns`
+/// ([`validate_glob`]), so it cannot be the escape. A path free of them is unchanged.
+pub fn escape_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        match c {
+            '*' | '?' | '[' | ']' | '{' | '}' => {
+                out.push('[');
+                out.push(c);
+                out.push(']');
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Decision 56's literal-name check: does `owns` contain `path`, named exactly, with no
 /// glob metacharacter? A literal entry is compared after dropping a leading `./` and a
 /// trailing `/`. A wildcard never counts, and neither does a plain directory entry that
 /// merely covers `path` (`.claude` in `owns` does not name `.claude/settings.json`).
+/// Ruling C-28 (4): an entry whose only glob syntax is [`escape_path`]'s one-character
+/// classes (`[*]`, `[[]`, …) names its unescaped path exactly; any other class is a
+/// wildcard.
 pub fn names_literally(owns: &[String], path: &str) -> bool {
     let target = normalize_literal(path);
     owns.iter()
-        .any(|entry| is_literal_glob(entry) && normalize_literal(entry) == target)
+        .any(|entry| unescaped(entry).is_some_and(|literal| normalize_literal(&literal) == target))
+}
+
+/// `entry` with [`escape_path`]'s classes turned back into their characters, when it
+/// has no other glob metacharacter; `None` for a wildcard.
+fn unescaped(entry: &str) -> Option<String> {
+    const ESCAPED: [char; 6] = ['*', '?', '[', ']', '{', '}'];
+    let chars: Vec<char> = entry.chars().collect();
+    let mut out = String::with_capacity(entry.len());
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '[' => match (chars.get(i + 1), chars.get(i + 2)) {
+                (Some(&c), Some(']')) if ESCAPED.contains(&c) => {
+                    out.push(c);
+                    i += 3;
+                    continue;
+                }
+                _ => return None,
+            },
+            c if WILDCARD_CHARS.contains(&c) => return None,
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    Some(out)
 }
 
 fn normalize_literal(s: &str) -> &str {

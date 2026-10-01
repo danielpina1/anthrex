@@ -145,7 +145,7 @@ pub(super) fn refresh_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         let task = &run.tasks[i];
         let kind = OpKind::HandBack {
             worktree: task.worktree.clone(),
-            run_head: run.run_head.clone(),
+            run_head: run.head_for(task).to_string(),
             task_head: None,
             list_merged: true,
         };

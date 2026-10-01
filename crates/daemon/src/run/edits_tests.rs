@@ -99,6 +99,7 @@ fn amend(task_id: &str, a: Amend) -> PlanEdit {
         priority: a.priority,
         size: a.size,
         deps: None,
+        stage: None,
     }
 }
 
@@ -485,3 +486,6 @@ mod state;
 
 #[path = "edits_tests_orch.rs"]
 mod orch;
+
+#[path = "edits_tests_stages.rs"]
+mod stages;

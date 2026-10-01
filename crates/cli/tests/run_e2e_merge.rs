@@ -132,6 +132,9 @@ fn half(id: &str, owns: &str) -> PlanTask {
         route: Default::default(),
         budget: None,
         review_target: None,
+        stage: 1,
+        atomic: false,
+        atomic_reason: None,
     }
 }
 

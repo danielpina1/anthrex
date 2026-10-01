@@ -17,7 +17,7 @@ use proto::{Runtime, ToolCall};
 use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 
-use super::{DONE_CHECK_GIT_TIMEOUT, RunService, unix_now};
+use super::{RunService, unix_now};
 use crate::run::engine::early::{awaits_launch, holds_planner_call};
 use crate::run::engine::{EventKind, HOLD_LIMIT_SECS, OrchEvent, notes_seq};
 use crate::run::model::{Run, task_branch};
@@ -392,16 +392,18 @@ impl RunService {
         let refreshed = run.task(task_id).map_or_else(Default::default, |t| {
             crate::run::git::RefreshedIn::of(&t.orch.refresh_merges, &t.orch.refresh_targets)
         });
-        let each = Duration::from_secs(run.limits.git_timeout_secs).min(DONE_CHECK_GIT_TIMEOUT);
+        // `read_git` is `GitBudget::DONE_CHECK` in the daemon; tests pass their own.
+        let budget = self.ctx.read_git;
+        let each = budget.each(Duration::from_secs(run.limits.git_timeout_secs));
         let read = tokio::task::spawn_blocking(move || {
             crate::run::git::task_summary_excluding(&git, &root, &start, &branch, &refreshed, each)
         });
-        match tokio::time::timeout(DONE_CHECK_GIT_TIMEOUT, read).await {
+        match tokio::time::timeout(budget.deadline, read).await {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => Err(format!("a blocking step did not finish: {error}")),
             Err(_) => Err(format!(
                 "git did not answer within {} s",
-                DONE_CHECK_GIT_TIMEOUT.as_secs()
+                budget.deadline.as_secs()
             )),
         }
     }

@@ -205,7 +205,7 @@ fn history_lines_are_tagged() {
         assert!(json.starts_with(&format!("{{\"type\":\"{tag}\"")), "{json}");
         assert_eq!(serde_json::from_str::<HistoryLine>(&json).unwrap(), line);
     }
-    assert_eq!(HISTORY_VERSION, 2);
+    assert_eq!(HISTORY_VERSION, 3);
 }
 
 #[test]
@@ -221,6 +221,7 @@ fn new_snapshot_fields_default_when_absent() {
         on_candidate: false,
         decider_summary: Some("one test failed".into()),
         summary_source: Some(DeciderSource::Decider),
+        tier: None,
     });
     let mut v = serde_json::to_value(&run).unwrap();
     let r = v.as_object_mut().unwrap();

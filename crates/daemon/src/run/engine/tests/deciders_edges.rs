@@ -261,6 +261,7 @@ fn a_deferred_rung_is_taken_only_by_its_own_answer() {
         timed_out: false,
         tail: "red".into(),
         secs: 1,
+        tier: None,
     };
     let effects = fx.done(candidate, red);
     assert_alive(&fx);

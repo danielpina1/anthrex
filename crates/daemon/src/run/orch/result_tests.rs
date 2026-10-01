@@ -25,6 +25,7 @@ fn check(at: u64, ok: bool) -> CheckRecord {
         on_candidate: false,
         summary: None,
         summary_source: None,
+        tier: None,
     }
 }
 

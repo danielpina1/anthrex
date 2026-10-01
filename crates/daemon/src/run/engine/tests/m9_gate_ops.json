@@ -1,0 +1,322 @@
+[
+  {
+    "op": "CreateRunBranch"
+  },
+  {
+    "op": "PrepareWorktree"
+  },
+  {
+    "op": "CreateWindow"
+  },
+  {
+    "op": "VerifyDone"
+  },
+  {
+    "kind": {
+      "Proof": {
+        "command": "cargo test -- --exact 'a::works'",
+        "env": [
+          [
+            "TARGET",
+            "/tmp/wt/runs/engine-test-3f9a/t1.proof/target"
+          ]
+        ],
+        "head": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+        "passed": "a::works",
+        "path": "/tmp/wt/runs/engine-test-3f9a/t1.proof",
+        "red": "abcdef1",
+        "root": "/tmp/x",
+        "setup": "make deps",
+        "timeout_secs": 1800
+      }
+    },
+    "op": "Proof"
+  },
+  {
+    "kind": {
+      "Check": {
+        "command": "cargo test",
+        "dir": "/tmp/wt/runs/engine-test-3f9a/t1.proof",
+        "env": [
+          [
+            "TARGET",
+            "/tmp/wt/runs/engine-test-3f9a/t1.proof/target"
+          ]
+        ],
+        "scratch": {
+          "commit": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+          "root": "/tmp/x",
+          "setup": "make deps"
+        },
+        "timeout_secs": 1800
+      }
+    },
+    "op": "Check"
+  },
+  {
+    "op": "CountCommits"
+  },
+  {
+    "op": "VerifyDone"
+  },
+  {
+    "kind": {
+      "Proof": {
+        "command": "cargo test -- --exact 'a::works'",
+        "env": [
+          [
+            "TARGET",
+            "/tmp/wt/runs/engine-test-3f9a/t1.proof/target"
+          ]
+        ],
+        "head": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+        "passed": "a::works",
+        "path": "/tmp/wt/runs/engine-test-3f9a/t1.proof",
+        "red": "abcdef1",
+        "root": "/tmp/x",
+        "setup": "make deps",
+        "timeout_secs": 1800
+      }
+    },
+    "op": "Proof"
+  },
+  {
+    "kind": {
+      "Check": {
+        "command": "cargo test",
+        "dir": "/tmp/wt/runs/engine-test-3f9a/t1.proof",
+        "env": [
+          [
+            "TARGET",
+            "/tmp/wt/runs/engine-test-3f9a/t1.proof/target"
+          ]
+        ],
+        "scratch": {
+          "commit": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+          "root": "/tmp/x",
+          "setup": "make deps"
+        },
+        "timeout_secs": 1800
+      }
+    },
+    "op": "Check"
+  },
+  {
+    "kind": {
+      "MergeCandidate": {
+        "also_integration": false,
+        "base_branch": "main",
+        "check": "cargo test",
+        "env": [
+          [
+            "TARGET",
+            "/tmp/wt/runs/engine-test-3f9a/integration/target"
+          ]
+        ],
+        "expected_base": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_run_head": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "guarded": [
+          [
+            "anthrex/engine-test-3f9a/integration",
+            "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+          ]
+        ],
+        "integration": "/tmp/wt/runs/engine-test-3f9a/integration",
+        "message": "anthrex: merge t1: Title t1",
+        "root": "/tmp/x",
+        "run_branch": "anthrex/engine-test-3f9a/integration",
+        "task_head": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+        "timeout_secs": 1800
+      }
+    },
+    "op": "MergeCandidate"
+  },
+  {
+    "op": "CreateRunBranch"
+  },
+  {
+    "op": "PrepareWorktree"
+  },
+  {
+    "op": "CreateWindow"
+  },
+  {
+    "op": "VerifyDone"
+  },
+  {
+    "kind": {
+      "Check": {
+        "command": "cargo test",
+        "dir": "/tmp/wt/runs/engine-test-3f9a/t1.proof",
+        "env": [
+          [
+            "TARGET",
+            "/tmp/wt/runs/engine-test-3f9a/t1.proof/target"
+          ]
+        ],
+        "scratch": {
+          "commit": "t1cccccccccccccccccccccccccccccccccccccc",
+          "root": "/tmp/x",
+          "setup": "make deps"
+        },
+        "timeout_secs": 1800
+      }
+    },
+    "op": "Check"
+  },
+  {
+    "kind": {
+      "MergeCandidate": {
+        "also_integration": false,
+        "base_branch": "main",
+        "check": "cargo test",
+        "env": [
+          [
+            "TARGET",
+            "/tmp/wt/runs/engine-test-3f9a/integration/target"
+          ]
+        ],
+        "expected_base": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_run_head": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "guarded": [
+          [
+            "anthrex/engine-test-3f9a/integration",
+            "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+          ]
+        ],
+        "integration": "/tmp/wt/runs/engine-test-3f9a/integration",
+        "message": "anthrex: merge t1: Title t1",
+        "root": "/tmp/x",
+        "run_branch": "anthrex/engine-test-3f9a/integration",
+        "task_head": "t1cccccccccccccccccccccccccccccccccccccc",
+        "timeout_secs": 1800
+      }
+    },
+    "op": "MergeCandidate"
+  },
+  {
+    "op": "CreateRunBranch"
+  },
+  {
+    "op": "PrepareWorktree"
+  },
+  {
+    "op": "CreateWindow"
+  },
+  {
+    "op": "VerifyDone"
+  },
+  {
+    "kind": {
+      "Check": {
+        "command": "cargo test",
+        "dir": "/tmp/wt/runs/engine-test-3f9a/t1.proof",
+        "env": [
+          [
+            "TARGET",
+            "/tmp/wt/runs/engine-test-3f9a/t1.proof/target"
+          ]
+        ],
+        "scratch": {
+          "commit": "t1cccccccccccccccccccccccccccccccccccccc",
+          "root": "/tmp/x",
+          "setup": "make deps"
+        },
+        "timeout_secs": 1800
+      }
+    },
+    "op": "Check"
+  },
+  {
+    "kind": {
+      "MergeCandidate": {
+        "also_integration": false,
+        "base_branch": "main",
+        "check": "cargo test",
+        "env": [
+          [
+            "TARGET",
+            "/tmp/wt/runs/engine-test-3f9a/integration/target"
+          ]
+        ],
+        "expected_base": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_run_head": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "guarded": [
+          [
+            "anthrex/engine-test-3f9a/integration",
+            "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+          ]
+        ],
+        "integration": "/tmp/wt/runs/engine-test-3f9a/integration",
+        "message": "anthrex: merge t1: Title t1",
+        "root": "/tmp/x",
+        "run_branch": "anthrex/engine-test-3f9a/integration",
+        "task_head": "t1cccccccccccccccccccccccccccccccccccccc",
+        "timeout_secs": 1800
+      }
+    },
+    "op": "MergeCandidate"
+  },
+  {
+    "op": "RemoveWorktree"
+  },
+  {
+    "op": "RemoveWorktree"
+  },
+  {
+    "op": "RemoveWorktree"
+  },
+  {
+    "kind": {
+      "VerifyRefs": {
+        "base_branch": "main",
+        "expected_base": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_run_head": "1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "guarded": [
+          [
+            "anthrex/engine-test-3f9a/integration",
+            "1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ],
+        "root": "/tmp/x",
+        "run_branch": "anthrex/engine-test-3f9a/integration"
+      }
+    },
+    "op": "VerifyRefs"
+  },
+  {
+    "kind": {
+      "VerifyRefs": {
+        "base_branch": "main",
+        "expected_base": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_run_head": "5555555555555555555555555555555555555555",
+        "guarded": [
+          [
+            "anthrex/engine-test-3f9a/integration",
+            "5555555555555555555555555555555555555555"
+          ]
+        ],
+        "root": "/tmp/x",
+        "run_branch": "anthrex/engine-test-3f9a/integration"
+      }
+    },
+    "op": "VerifyRefs"
+  },
+  {
+    "kind": {
+      "Check": {
+        "command": "cargo test",
+        "dir": "/tmp/wt/runs/engine-test-3f9a/integration",
+        "env": [
+          [
+            "TARGET",
+            "/tmp/wt/runs/engine-test-3f9a/integration/target"
+          ]
+        ],
+        "scratch": null,
+        "timeout_secs": 1800
+      }
+    },
+    "op": "Check"
+  }
+]

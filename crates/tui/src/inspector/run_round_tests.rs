@@ -68,6 +68,7 @@ fn failed_check(summary: &str, decider: Option<&str>) -> App {
             on_candidate: false,
             decider_summary: decider.map(str::to_owned),
             summary_source: None,
+            tier: None,
         });
     })
 }

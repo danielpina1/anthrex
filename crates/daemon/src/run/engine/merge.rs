@@ -15,18 +15,24 @@ use super::ResolutionAt;
 use super::dispatch::{block, history, salvage_ref};
 use super::requests::log;
 use super::signals::end_round;
+use super::stages::{self, Rebaseline};
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, ReplyId, complete, emit_op, gates, ladder, next_op,
 };
 use crate::run::contract::{UNCLAIMED_COMMITS, conflict_message, sha7};
 use crate::run::env::profile_env;
-use crate::run::model::{BaseMoved, CheckRecord, Run, Task};
+use crate::run::model::{BaseMoved, CheckRecord, Run, StageLayout, Task};
 
-/// A `MergeCandidate` is in flight (decision 36: width 1).
+/// A `MergeCandidate` is in flight (decision 36: width 1), or since milestone 9.1 a
+/// `CreateStageBranch`, whose `from` a merge must not move meanwhile (decision 48), or a
+/// `Propagate` (decision 49).
 pub(super) fn merging(run: &Run) -> bool {
-    run.pending_ops
-        .values()
-        .any(|p| matches!(p.kind, OpKind::MergeCandidate { .. }))
+    run.pending_ops.values().any(|p| {
+        matches!(
+            p.kind,
+            OpKind::MergeCandidate { .. } | OpKind::CreateStageBranch { .. } | OpKind::Propagate(_)
+        )
+    })
 }
 
 /// Every scheduler pass of a running run: the queue drops tasks no longer in the merge
@@ -42,7 +48,8 @@ pub(super) fn start_merge(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         .cloned()
         .collect();
     run.merge_queue = queued;
-    if merging(run) {
+    // Milestone 9.1 decision 49: the lowest due propagate goes first.
+    if merging(run) || super::propagate::start(run, fx) {
         return;
     }
     let Some(id) = run.merge_queue.first().cloned() else {
@@ -63,18 +70,28 @@ pub(super) fn start_merge(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         return block(run, i, BlockReason::Environment, text, now);
     };
     let integration = run.integration_path();
+    // Milestone 9.1 decisions 47, 53: into the task's stage; `integration` moves with
+    // it when that is a `Multi` run's highest stage.
+    let n = run.tasks[i].stage();
+    let multi = run.stage_layout == StageLayout::Multi;
+    let expected = run.head_for(&run.tasks[i]).to_string();
+    // Milestone 9.1 decision 16: a tiered profile's candidate runs tier 2, not `check`.
+    let tier = super::tiers::tier2_spec(run, n, &expected);
     let kind = OpKind::MergeCandidate {
         root: run.root.clone(),
         integration: integration.clone(),
-        run_branch: run.run_branch(),
-        expected_run_head: run.run_head.clone(),
+        run_branch: run.stage_branch(n),
+        expected_run_head: expected,
         base_branch: run.base_branch.clone(),
         expected_base: run.base_sha.clone(),
         task_head,
         message: format!("anthrex: merge {id}: {}", run.tasks[i].spec.title),
-        check: run.profile.check.clone(),
+        check: run.profile.check.clone().filter(|_| tier.is_none()),
         timeout_secs: run.profile.check_timeout_secs,
         env: profile_env(&run.profile, &integration),
+        guarded: stages::guard_list(run),
+        also_integration: multi && n >= stages::highest(run),
+        tier,
     };
     let op = next_op(run);
     run.tasks[i].merge_op = Some(op);
@@ -93,18 +110,34 @@ pub(super) fn awaits(run: &Run, i: usize, op: OpId) -> bool {
 /// only for the task that awaits it.
 pub(super) fn candidate_done(
     run: &mut Run,
-    i: Option<usize>,
-    op: OpId,
+    (i, op): (Option<usize>, OpId),
+    branch: &str,
     result: OpResult,
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
-    // M8b decision 32: the run head before the merge, what a merged task is measured
-    // from.
-    let before = run.run_head.clone();
-    if let OpResult::Merged { commit } = &result {
-        run.run_head = commit.clone();
-        run.last_green_candidate = Some(commit.clone());
+    // M8b decision 32: the stage head before the merge, what a merged task is measured
+    // from. Milestone 9.1 decision 47: the merge landed on the stage of `branch`.
+    let n = stages::stage_of_branch(run, branch);
+    let before = run.stage_head(n).unwrap_or(&run.run_head).to_string();
+    // Milestone 9.1: what a tier-2 job tells the run, whoever awaits it.
+    if let OpResult::Merged {
+        tier: Some(outcome),
+        ..
+    }
+    | OpResult::CandidateRed {
+        tier: Some(outcome),
+        ..
+    } = &result
+    {
+        super::tiers::run_facts(run, outcome, now);
+        // Decision 57: the job's `tier` and `flaky` lines.
+        let id = i.map(|i| run.tasks[i].id().to_string());
+        super::history::tier_job(run, (op, id.as_deref(), n), outcome, now, fx);
+    }
+    if let OpResult::Merged { commit, .. } = &result {
+        let id = i.map(|i| run.tasks[i].id().to_string());
+        stages::task_merged(run, n, id.as_deref(), commit);
     }
     // The refs are the run's, whoever's merge found them moved. A task that awaits
     // this result stays at the head of the queue and merges again after a rebaseline.
@@ -119,7 +152,7 @@ pub(super) fn candidate_done(
         return halt(run, reason.clone(), now);
     }
     let Some(i) = i.filter(|&i| awaits(run, i, op)) else {
-        if let OpResult::Merged { commit } = &result {
+        if let OpResult::Merged { commit, .. } = &result {
             log(run, now, format!("a merge landed at {}", sha7(commit)));
         }
         return;
@@ -127,7 +160,7 @@ pub(super) fn candidate_done(
     run.tasks[i].merge_op = None;
     let id = run.tasks[i].id().to_string();
     if run.tasks[i].state != TaskState::MergeQueue {
-        if let OpResult::Merged { commit } = &result {
+        if let OpResult::Merged { commit, .. } = &result {
             let text = format!("{id} merged at {} after it left the queue", sha7(commit));
             log(run, now, text);
         }
@@ -137,7 +170,10 @@ pub(super) fn candidate_done(
     // Ruling T14-I1: a cancel that arrived during the merge applies only if the merge
     // did not land; one that landed makes the task merged and the cancel too late.
     if std::mem::take(&mut run.tasks[i].cancel_deferred) {
-        if let OpResult::Merged { commit } = result {
+        if let OpResult::Merged { commit, tier } = result {
+            if let Some(outcome) = tier {
+                super::tiers::tier2_facts(run, i, &outcome, now);
+            }
             log(
                 run,
                 now,
@@ -148,13 +184,29 @@ pub(super) fn candidate_done(
         return complete::cancel_now(run, i, "its cancel, after its merge did not land", now, fx);
     }
     match result {
-        OpResult::Merged { commit } => merged(run, i, (before, commit), now, fx),
-        OpResult::Conflict { files } => conflict(run, i, files, now, fx),
+        OpResult::Merged { commit, tier } => {
+            if let Some(outcome) = tier {
+                super::tiers::tier2_facts(run, i, &outcome, now);
+            }
+            merged(run, i, (before, commit), now, fx)
+        }
+        OpResult::Conflict { files, .. } => conflict(run, i, files, now, fx),
+        // Milestone 9.1 decision 16: a red tier 2 is M8a's red candidate, naming the
+        // red step's command.
+        OpResult::CandidateRed {
+            tier: Some(outcome),
+            ..
+        } => {
+            let command = super::tiers::tier2_facts(run, i, &outcome, now);
+            history(run, i, now, "tier 2 failed on the merge candidate");
+            super::deciders::summarise(run, i, GateKind::Merge, &command, now, fx);
+        }
         OpResult::CandidateRed {
             code,
             timed_out,
             tail,
             secs,
+            tier: None,
         } => {
             let record = CheckRecord {
                 at: now,
@@ -166,6 +218,7 @@ pub(super) fn candidate_done(
                 on_candidate: true,
                 summary: None,
                 summary_source: None,
+                tier: None,
             };
             let command = run.profile.check.clone().unwrap_or_default();
             run.tasks[i].checks.push(record);
@@ -263,9 +316,10 @@ fn conflict(run: &mut Run, i: usize, files: Vec<String>, now: u64, fx: &mut Vec<
         return block(run, i, BlockReason::Conflict, text, now);
     }
     let id = task.id().to_string();
+    let task = &run.tasks[i];
     let kind = OpKind::HandBack {
         worktree: task.worktree.clone(),
-        run_head: run.run_head.clone(),
+        run_head: run.head_for(task).to_string(),
         task_head: task.head.clone(),
         list_merged: false,
     };
@@ -391,9 +445,10 @@ fn send_due(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
     let task = &mut run.tasks[i];
     task.handback_due = false;
     let id = task.id().to_string();
+    let task = &run.tasks[i];
     let kind = OpKind::HandBack {
         worktree: task.worktree.clone(),
-        run_head: run.run_head.clone(),
+        run_head: run.head_for(task).to_string(),
         task_head: task.head.clone(),
         list_merged: false,
     };
@@ -483,7 +538,7 @@ pub(super) fn resume(
     state: &mut EngineState,
     reply: ReplyId,
     run_id: &str,
-    rebaseline: Option<(String, String)>,
+    rebaseline: Option<Rebaseline>,
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
@@ -503,24 +558,21 @@ pub(super) fn resume(
         log(run, now, "resumed; reading the refs again");
         return answer(Ok(format!("run {run_id} resumed")));
     }
-    let Some((base, head)) = rebaseline else {
+    let Some(read) = rebaseline else {
         let reason = run.halted_reason.clone().unwrap_or_default();
         return answer(Err(format!(
             "run {run_id} is halted: {reason}; check the refs, then resume with --rebaseline"
         )));
     };
+    let mut effects = Vec::new();
     let text = format!(
-        "resumed with --rebaseline: base {} at {}, run head {}",
-        run.base_branch,
-        sha7(&base),
-        sha7(&head)
+        "resumed{}",
+        stages::rebaseline(run, &read, now, &mut effects)
     );
-    run.base_sha = base;
-    run.run_head = head;
-    run.base_moved = None;
     run.halted_reason = None;
     run.halt_retryable = false;
     run.state = RunState::Running;
     log(run, now, text.clone());
     answer(Ok(format!("run {run_id} {text}")));
+    fx.extend(effects);
 }

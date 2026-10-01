@@ -177,7 +177,15 @@ pub(super) fn a_task_info() -> TaskInfo {
         last_message_kind: None,
         last_message_line: None,
         task_notes: Vec::new(),
+        stage: 1,
+        origin: crate::tiers::TaskOrigin::Plan,
+        fixes: None,
+        tier: None,
+        weakening: Vec::new(),
         activity: None,
+        atomic: false,
+        atomic_reason: None,
+        interface_change: false,
     }
 }
 
@@ -240,6 +248,8 @@ pub(super) fn a_run_info() -> RunInfo {
         integration: Vec::new(),
         digest_revision: 0,
         research_report: None,
+        stages: Vec::new(),
+        test_slots: 0,
     }
 }
 

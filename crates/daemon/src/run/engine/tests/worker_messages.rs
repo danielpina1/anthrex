@@ -398,20 +398,6 @@ fn running_resolves_to_live_worker_rounds_and_skips_held_tasks() {
 }
 
 #[test]
-fn stage_recipient_is_refused_until_9_1() {
-    let (mut fx, _) = working();
-    let stage = PlanEdit::Message {
-        to: MessageTarget::Stage(2),
-        text: "hi".into(),
-        kind: MessageKind::Info,
-    };
-    assert_eq!(
-        replies(&edit(&mut fx, vec![stage])),
-        vec![Err("stage recipients arrive with milestone 9.1".to_string())]
-    );
-}
-
-#[test]
 fn messages_over_the_per_turn_limit_are_refused() {
     let (mut fx, _) = working();
     for n in 0..3 {

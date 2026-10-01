@@ -1,0 +1,10 @@
+# Hand-written from `go test ./...`'s documented output (go was not installed where the other fixtures were captured, ruling C-2); replace with captured output.
+=== RUN   TestAddsTwoAndTwo
+--- FAIL: TestAddsTwoAndTwo (0.00s)
+FAIL
+FAIL	example.com/sample	0.003s
+# example.com/broken [example.com/broken.test]
+broken/broken_test.go:5:2: undefined: nosuch
+FAIL	example.com/broken [build failed]
+?   	example.com/cmd	[no test files]
+FAIL

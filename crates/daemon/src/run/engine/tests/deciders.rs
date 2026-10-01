@@ -106,6 +106,7 @@ fn record(at: u64, on_candidate: bool, source: Option<DeciderSource>) -> CheckRe
         on_candidate,
         summary: None,
         summary_source: source,
+        tier: None,
     }
 }
 
@@ -205,6 +206,7 @@ fn candidate_red_uses_the_summary_and_the_queue_moves_on() {
             timed_out: false,
             tail: TAIL.into(),
             secs: 42,
+            tier: None,
         },
     );
     // The queue moves on before the summary comes; t1 waits outside it.
@@ -220,7 +222,13 @@ fn candidate_red_uses_the_summary_and_the_queue_moves_on() {
     let (op, _, _) = decide_op(&effects);
 
     // t2 merges meanwhile; t1's failure is unaffected.
-    fx.done(next, OpResult::Merged { commit: commit(2) });
+    fx.done(
+        next,
+        OpResult::Merged {
+            commit: commit(2),
+            tier: None,
+        },
+    );
     let effects = fx.decided(op, summary(&["merged result: a::works FAILED"]));
     let checks = &fx.task("t1").checks;
     assert_eq!(checks.len(), 2, "the passing check, then the candidate's");

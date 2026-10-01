@@ -13,7 +13,7 @@ use super::requests::log;
 use super::{Effect, EngineState, OpKind, OpResult, ReplyId, emit_op, ladder, next_op, review};
 use crate::run::contract::accept_conflict_message;
 use crate::run::env::profile_env;
-use crate::run::model::Run;
+use crate::run::model::{Run, Task};
 
 /// A task still moving toward `merged` or `blocked` on its own: the `finish` edit waits
 /// for these.
@@ -108,9 +108,13 @@ pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     } else {
         return;
     };
+    // Controller ruling C-21 (1b): the `finish` edit keeps sync tasks, which the run
+    // needs to deliver its merged work; `run cancel` gives them up.
+    let finishing = run.finish_edit && !run.cancelled;
+    let keep = move |t: &Task| finishing && t.sync.is_some();
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
-        if !task.state.is_finished() && task.start_commit.is_none() {
+        if !task.state.is_finished() && task.start_commit.is_none() && !keep(task) {
             cancel_task(run, i, why, now, fx);
         }
     }
@@ -118,7 +122,7 @@ pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         return;
     }
     for i in 0..run.tasks.len() {
-        if run.tasks[i].state == TaskState::Blocked {
+        if run.tasks[i].state == TaskState::Blocked && !keep(&run.tasks[i]) {
             cancel_task(run, i, "the finish edit (blocked)", now, fx);
         }
     }
@@ -138,12 +142,23 @@ pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if !finished || ending || !run.merge_queue.is_empty() || !run.pending_ops.is_empty() {
         return;
     }
+    // Milestone 9.1 decision 19: a stage red on its head waits for the head to move or
+    // for the `finish` edit.
+    if super::full::holds_completion(run, now) {
+        return;
+    }
+    // Decisions 50 and 52: every stage's work reaches `integration` first.
+    if super::propagate::holds_completion(run) {
+        return;
+    }
     let kind = OpKind::VerifyRefs {
         root: run.root.clone(),
         base_branch: run.base_branch.clone(),
         expected_base: run.base_sha.clone(),
         run_branch: run.run_branch(),
         expected_run_head: run.run_head.clone(),
+        // Milestone 9.1 decision 53: every created stage ref too.
+        guarded: super::stages::guard_list(run),
     };
     let op = next_op(run);
     emit_op(run, op, None, kind, fx);
@@ -164,6 +179,12 @@ pub(super) fn refs_verified(run: &mut Run, result: OpResult, now: u64, fx: &mut 
         // M9.9 second review, C-1: every task is still finished (none came since the
         // guard started), else the next pass verifies again.
         OpResult::RefsOk if run.state == RunState::Running && !all_finished(run) => {}
+        // Milestone 9.1 decision 19: a tiered profile runs tier 3 per stage instead.
+        OpResult::RefsOk if run.state == RunState::Running && super::tiers::tiered(run) => {
+            if super::full::completion(run, now, fx) {
+                complete(run, now, fx);
+            }
+        }
         OpResult::RefsOk if run.state == RunState::Running => {
             let green = run.last_green_candidate.as_deref() == Some(run.run_head.as_str());
             match run.profile.check.clone() {
@@ -317,6 +338,8 @@ fn run_worktrees(run: &Run) -> Vec<(std::path::PathBuf, String)> {
         }
     }
     out.push((run.integration_path(), salvage_ref(run, "integration", 1)));
+    // Milestone 9.1 decision 47: the tier-3 checkout, under a name no task id takes.
+    out.push((run.full_path(), salvage_ref(run, "_full", 1)));
     out
 }
 

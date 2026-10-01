@@ -60,10 +60,48 @@ fn set_executable(path: &Path) {
     fs::set_permissions(path, permissions).unwrap();
 }
 
+/// Set only on [`write_script`]'s warm-up run: the script exits before its own first line.
+const WARM_UP_VAR: &str = "ANTHREX_TEST_WARM_UP";
+
+/// Writes a `#!/bin/sh` stand-in for `git` and executes it once before returning.
+///
+/// On macOS the first exec of a freshly written executable waits for a security
+/// assessment before its first line runs: ~0.44 s alone, serialised across processes
+/// (`docs/timing-budgets.md`, "First exec of a freshly written executable"). The tests
+/// below exec these stand-ins under `PROBE_TIMEOUT` (5 s) or a 2 s timeout, which would
+/// otherwise pay that wait inside the budget. A guard after the shebang makes the warm-up
+/// run exit before the body, so a stand-in's pid file or argv log records nothing.
 fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let script = dir.join(name);
-    fs::write(&script, body).unwrap();
+    let body = body
+        .strip_prefix("#!/bin/sh\n")
+        .expect("write_script writes #!/bin/sh scripts only");
+    fs::write(
+        &script,
+        format!("#!/bin/sh\n[ -n \"${WARM_UP_VAR}\" ] && exit 0\n{body}"),
+    )
+    .unwrap();
     set_executable(&script);
+    let mut warm = Command::new(&script).env(WARM_UP_VAR, "1").spawn().unwrap();
+    // A harness deadline, not a budget: a warm-up queued behind other first execs can
+    // take seconds, and this only turns a wedged exec into a named failure.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let status = loop {
+        if let Some(status) = warm.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "warming {} did not finish",
+            script.display()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(
+        status.success(),
+        "warming {} failed: {status}",
+        script.display()
+    );
     script
 }
 

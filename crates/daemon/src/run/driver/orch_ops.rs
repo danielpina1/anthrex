@@ -17,7 +17,7 @@ use std::time::Duration;
 use proto::{RunsSnapshot, Runtime, TokenUsage};
 
 use super::ops::{blocking, failed};
-use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, unix_now};
+use super::{GitBudget, OpCtx, RunService, unix_now};
 use crate::launch::role::{RoleLaunch, otlp_env};
 use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent, ScoutEnd};
 use crate::run::model::ClaudeAuth;
@@ -74,7 +74,18 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             root,
             target,
             base_branch,
-        } => resolve_target(service.git(), ctx.git_timeout, root, target, base_branch).await,
+        } => {
+            let budget = service.ctx.read_git;
+            resolve_target(
+                service.git(),
+                ctx.git_timeout,
+                budget,
+                root,
+                target,
+                base_branch,
+            )
+            .await
+        }
         other => failed(format!("{} is not an orchestrator op", other.name())),
     }
 }
@@ -82,25 +93,27 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
 /// Decision 36's target, under one `DONE_CHECK_GIT_TIMEOUT` deadline for all its git
 /// calls (each bounded by the run's `git_timeout_secs`, at most 10 s), on
 /// `spawn_blocking`. Past the deadline the answer is the timeout; the abandoned read
-/// ends on its own bound.
+/// ends on its own bound. `budget` is [`GitBudget::DONE_CHECK`] in the daemon; tests
+/// pass their own.
 pub(super) async fn resolve_target(
     git: std::ffi::OsString,
     git_timeout: Duration,
+    budget: GitBudget,
     root: PathBuf,
     target: String,
     base_branch: String,
 ) -> OpResult {
-    let each = git_timeout.min(DONE_CHECK_GIT_TIMEOUT);
+    let each = budget.each(git_timeout);
     let read = tokio::task::spawn_blocking(move || {
         crate::run::git::resolve_target(&git, &root, &target, &base_branch, each)
     });
-    match tokio::time::timeout(DONE_CHECK_GIT_TIMEOUT, read).await {
+    match tokio::time::timeout(budget.deadline, read).await {
         Ok(Ok(Ok((base, head)))) => OpResult::Target { base, head },
         Ok(Ok(Err(error))) => failed(error),
         Ok(Err(error)) => failed(format!("a blocking step did not finish: {error}")),
         Err(_) => failed(format!(
             "git did not answer within {} s",
-            DONE_CHECK_GIT_TIMEOUT.as_secs()
+            budget.deadline.as_secs()
         )),
     }
 }

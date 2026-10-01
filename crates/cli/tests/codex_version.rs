@@ -201,6 +201,17 @@ fn wait_for_probe_to_finish(dir: &Path, bound: Duration) {
 /// below assert an *ordering* — "the client was answered before the probe finished", "the
 /// window launched only after it did" — instead of a wall-clock margin against a constant
 /// that a later change could move out from under them.
+///
+/// The stub is executed once, with [`WARM_UP_ARG`], before this returns. On macOS the
+/// first exec of a freshly written executable pays a security assessment before the
+/// script's first line runs: measured at ~0.44 s alone, and serialised across processes,
+/// so with this file's tests each writing their own stub at once it reached 2.2 s (eight
+/// concurrent first execs: 0.44 s, 0.89 s, ... 3.50 s). The daemon's probe budget starts
+/// at `codex_version::start`, *before* that exec, so `stall` plus that assessment could
+/// exceed `CODEX_PROBE_TIMEOUT`: the probe was killed at its budget, never wrote
+/// `version-end`, and the gate opened on schedule — the product behaving as designed,
+/// reported as "a window launched before the probe had finished". Paying the assessment
+/// here, outside any daemon budget, is what keeps `stall` the whole of the probe's cost.
 fn ordering_codex(dir: &Path, stall: Duration) -> std::path::PathBuf {
     let bin = dir.join("codex");
     let seconds = stall.as_secs();
@@ -208,6 +219,9 @@ fn ordering_codex(dir: &Path, stall: Duration) -> std::path::PathBuf {
         &bin,
         format!(
             "#!/bin/sh\n\
+             if [ \"$1\" = \"{WARM_UP_ARG}\" ]; then\n\
+             exit 0\n\
+             fi\n\
              if [ \"$1\" = \"--version\" ]; then\n\
              printf 'version-start\\n' >> \"$PROBE_DIR/order\"\n\
              sleep {seconds}\n\
@@ -221,8 +235,21 @@ fn ordering_codex(dir: &Path, stall: Duration) -> std::path::PathBuf {
     )
     .unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let warm = RunningCommand::start(Command::new(&bin).arg(WARM_UP_ARG)).finish(WALL_CLOCK_SLACK);
+    assert!(
+        warm.status.success(),
+        "warming the codex stub failed: {warm:?}"
+    );
+    assert!(
+        order(dir).is_empty(),
+        "warming the codex stub recorded {:?}",
+        order(dir)
+    );
     bin
 }
+
+/// The argument [`ordering_codex`]'s stub exits on without recording anything.
+const WARM_UP_ARG: &str = "--anthrex-test-warm-up";
 
 /// What [`ordering_codex`] has recorded so far. A missing file means nothing has run yet.
 fn order(dir: &Path) -> Vec<String> {

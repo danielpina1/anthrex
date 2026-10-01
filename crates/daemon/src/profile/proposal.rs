@@ -24,6 +24,16 @@ pub const REVERIFY_KEYS: &[&str] = &[
     "test_passed",
     "sample_test",
     "env",
+    // Milestone 9.1 decision 12: the tier commands and what they depend on.
+    "build_check",
+    "module_test",
+    "module_tests",
+    "module_graph",
+    "module_names",
+    "slow_tests",
+    "timing_tests",
+    "full_shards",
+    "toolchain_id",
 ];
 
 /// What `anthrex profile edit` accepts: every `RepoProfile` field, and `env.<NAME>` for
@@ -45,6 +55,18 @@ pub const EDIT_KEYS: &[&str] = &[
     "filter_prefixes",
     "conventions",
     "manifests",
+    "build_check",
+    "module_test",
+    "module_tests",
+    "module_graph",
+    "module_names",
+    "full_triggers",
+    "slow_tests",
+    "timing_tests",
+    "skip_markers",
+    "test_paths",
+    "full_shards",
+    "toolchain_id",
     "env",
     "env.<NAME>",
 ];
@@ -128,6 +150,7 @@ pub fn validate(profile: &RepoProfile) -> Vec<String> {
             problems.push(format!("env: {problem}"));
         }
     }
+    problems.extend(super::proposal_tiers::problems(profile));
     problems
 }
 
@@ -159,6 +182,9 @@ pub fn from_findings(proposed: &RepoProfile) -> RepoProfile {
     out.check_timeout_secs = proposed
         .check_timeout_secs
         .filter(|secs| CHECK_TIMEOUT_RANGE.contains(secs));
+    out.full_triggers = valid(&proposed.full_triggers);
+    out.test_paths = valid(&proposed.test_paths);
+    super::proposal_tiers::from_findings(&mut out);
     out
 }
 
@@ -236,10 +262,13 @@ pub fn apply_edit(
             "protected: {builtin} is built in and always applies; list only extra entries"
         ));
     }
+    // The edited key's problems, and any other the edit made (milestone 9.1: the tier
+    // keys' rules span keys, such as `slow_tests` needing `module_test`'s filter).
     let prefix = format!("{field}: ");
+    let before = validate(stored);
     let problems: Vec<String> = validate(&edited)
         .into_iter()
-        .filter(|p| p.starts_with(&prefix))
+        .filter(|p| p.starts_with(&prefix) || !before.contains(p))
         .collect();
     if !problems.is_empty() {
         return Err(problems.join("\n"));
@@ -256,7 +285,7 @@ const DROPPED_WITH_IT: &str = "; test_passed and sample_test are dropped with it
 
 /// Why a command the verification has no record of (or a record of another command)
 /// is not proposed.
-const NOT_VERIFIED: &str = "it was not verified";
+pub(super) const NOT_VERIFIED: &str = "it was not verified";
 
 /// Decision 5's `protected: built-in <5 globs> + <extras or "no extras">`.
 pub fn protected_line(profile: &RepoProfile) -> String {
@@ -272,7 +301,7 @@ pub fn protected_line(profile: &RepoProfile) -> String {
 }
 
 /// How a command failed: its timeout, its exit code, or neither.
-fn failure(check: &CommandCheck) -> String {
+pub(super) fn failure(check: &CommandCheck) -> String {
     match (check.timed_out, check.code) {
         (true, _) => format!("timed out after {}s", check.secs),
         (false, Some(code)) => format!("exit {code} after {}s", check.secs),
@@ -337,10 +366,15 @@ pub fn apply_verification(
             tail,
         });
     }
+    let tiers = |mut profile: RepoProfile, mut dropped: Vec<DroppedCommand>| {
+        let hint = hint.as_deref();
+        super::proposal_tiers::apply_verification(proposed, &mut profile, v, hint, &mut dropped);
+        (profile, dropped)
+    };
     let Some(single) = proposed.single_test.clone() else {
         profile.test_passed = None;
         profile.sample_test = None;
-        return (profile, dropped);
+        return tiers(profile, dropped);
     };
     let failed = match single_test_problem(proposed, &single) {
         Some(problem) => Some((problem, String::new())),
@@ -373,7 +407,7 @@ pub fn apply_verification(
             tail,
         });
     }
-    (profile, dropped)
+    tiers(profile, dropped)
 }
 
 /// The profile as TOML in its field order, empty lists left out, `env` last as its own
@@ -427,6 +461,11 @@ pub fn show_text(
             ("setup", &v.setup),
             ("check", &v.check),
             ("single_test", &v.single_test),
+            ("build_check", &v.build_check),
+            ("module_graph", &v.module_graph),
+            ("module_test", &v.module_test),
+            ("module_tests", &v.module_tests),
+            ("toolchain_id", &v.toolchain_id),
         ] {
             let Some(c) = check else {
                 continue;

@@ -29,6 +29,7 @@ fn amend(priority: i32) -> Vec<PlanEdit> {
         priority: Some(priority),
         size: None,
         deps: None,
+        stage: None,
     }]
 }
 
@@ -367,6 +368,44 @@ fn old_run_json_loads() {
         serde_json::from_value::<crate::run::orch::OrchLimits>(orch).unwrap(),
         crate::run::orch::OrchLimits::default()
     );
+    // Milestone 9.1 decision 3: the frozen `[testing]` rules, at the config defaults.
+    let testing = limits.remove("testing").expect("limits.testing");
+    assert_eq!(
+        serde_json::from_value::<crate::run::model::TestingLimits>(testing).unwrap(),
+        crate::run::model::TestingLimits::default()
+    );
+    // Milestone 9.1 decisions 5 and 11: no tier key, and no profile hash.
+    assert_eq!(map.remove("profile_hash"), Some(serde_json::json!("")));
+    // Milestone 9.1 decisions 9 and 11: no toolchain id and no graph note yet.
+    assert_eq!(map.remove("toolchain"), Some(serde_json::Value::Null));
+    assert_eq!(map.remove("graph_note"), Some(serde_json::Value::Null));
+    // Milestone 9.1 decision 27: not stamped with a daemon's slots.
+    assert_eq!(map.remove("test_slots"), Some(serde_json::json!(0)));
+    // Milestone 9.1 decisions 46 and 47: one stage, no stage record until the restore.
+    assert_eq!(
+        map.remove("stage_layout"),
+        Some(serde_json::json!("single"))
+    );
+    assert_eq!(map.remove("stages"), Some(serde_json::json!([])));
+    // Milestone 9.1 decision 17: no tier-3 job, no idle clock.
+    assert_eq!(map.remove("full_op"), Some(serde_json::Value::Null));
+    assert_eq!(
+        map.remove("queue_idle_since"),
+        Some(serde_json::Value::Null)
+    );
+    // Milestone 9.1 decision 39: no fix task yet.
+    assert_eq!(map.remove("fix_seq"), Some(serde_json::json!(0)));
+    // Task M9.1.17.
+    assert_eq!(map.remove("propagate_due"), Some(serde_json::json!([])));
+    // Milestone 9.1 ruling C-12a: no stored profile's `manifests`.
+    let manifests = map["profile"].as_object_mut().unwrap().remove("manifests");
+    assert_eq!(manifests, Some(serde_json::json!([])));
+    let tiers = map["profile"].as_object_mut().unwrap().remove("tiers");
+    assert_eq!(
+        serde_json::from_value::<crate::run::tiers::TierProfile>(tiers.expect("profile.tiers"))
+            .unwrap(),
+        crate::run::tiers::TierProfile::default()
+    );
     for task in back["tasks"].as_array_mut().unwrap() {
         // Milestone 9 decision 24's plan field, and task 4's empty task state.
         let task = task.as_object_mut().unwrap();
@@ -375,8 +414,20 @@ fn old_run_json_loads() {
             orch,
             serde_json::to_value(crate::run::orch::TaskOrch::default()).unwrap()
         );
+        // Milestone 9.1 decision 39: a planned task, fixing nothing.
+        assert_eq!(task.remove("origin"), Some(serde_json::json!("plan")));
+        assert_eq!(task.remove("fixes"), Some(serde_json::Value::Null));
+        // Milestone 9.1 decision 42: no signal, nothing refused.
+        assert_eq!(task.remove("signals"), Some(serde_json::json!([])));
+        assert_eq!(task.remove("signals_more"), Some(serde_json::json!(0)));
+        assert_eq!(task.remove("signal_refusals"), Some(serde_json::json!(0)));
+        assert_eq!(task.remove("sync"), Some(serde_json::Value::Null));
         let spec = task["spec"].as_object_mut().unwrap();
         assert!(spec.remove("review_target").is_some(), "review_target");
+        // Milestone 9.1 decisions 43 and 54: stage 1, not atomic.
+        assert_eq!(spec.remove("stage"), Some(serde_json::json!(1)));
+        assert_eq!(spec.remove("atomic"), Some(serde_json::json!(false)));
+        assert_eq!(spec.remove("atomic_reason"), Some(serde_json::Value::Null));
         for round in task["rounds"].as_array_mut().unwrap() {
             let round = round.as_object_mut().unwrap();
             // Milestone 9.0.5 decisions 3 and 4: `activity` and `last_text`, `None`.

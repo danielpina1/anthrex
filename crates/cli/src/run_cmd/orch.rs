@@ -65,8 +65,8 @@ impl From<KindArg> for MessageKind {
     }
 }
 
-/// `<task>[,<task>…]`, `stage:<n>` or `running`. A stage parses; the daemon refuses it
-/// until milestone 9.1 (decision 42b).
+/// `<task>[,<task>…]`, `stage:<n>` or `running`. The daemon resolves a stage to its
+/// unfinished tasks (milestone 9.1 decision 56).
 pub(super) fn parse_target(to: &str) -> anyhow::Result<MessageTarget> {
     if to == "running" {
         return Ok(MessageTarget::Running);

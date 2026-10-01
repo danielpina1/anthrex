@@ -30,13 +30,15 @@ use regex::Regex;
 
 use super::VERIFY_CHECKOUT;
 use super::proposal::env_problem;
+pub use super::verify_steps::Steps;
 use crate::run::confine::{self, ConfineSpec};
 use crate::run::env::profile_env;
-use crate::run::exec::{ShellOutcome, run_matching};
+use crate::run::exec::ShellOutcome;
 use crate::run::git::{self, GitQueue, Repo, checkout_repo_dir};
 use crate::run::messages::summary;
 use crate::run::plan::{Preflight, for_repo, resolve_profile};
 use crate::run::proof::{proof_command, proof_pattern};
+use crate::run::slots::TestScheduler;
 use crate::worktree::pinned;
 
 /// Where a dirty detection checkout's work is kept (decision 8): `<prefix><unix secs>`.
@@ -98,24 +100,7 @@ pub fn prepare(
     git::prepare_scratch_in(git, &pre.root, path, &pre.base_sha, repo, timeout).map(|_| ())
 }
 
-/// One command in `dir`, confined when `confine` is set (a checkout that cannot be
-/// confined fails it unrun, as `run::confine::confined` does), also reporting whether a
-/// line matched `pattern`.
-fn run_one(
-    dir: &Path,
-    command: &str,
-    env: &[(String, String)],
-    timeout: Duration,
-    pattern: Option<&Regex>,
-    confine: Option<&ConfineSpec>,
-) -> (ShellOutcome, bool) {
-    match confine.map(|spec| spec.for_checkout(dir)).transpose() {
-        Ok(confinement) => run_matching(dir, command, env, timeout, pattern, confinement.as_ref()),
-        Err(error) => (ShellOutcome::refused(error), false),
-    }
-}
-
-fn record(command: &str, outcome: ShellOutcome, ok: bool) -> CommandCheck {
+pub(super) fn record(command: &str, outcome: ShellOutcome, ok: bool) -> CommandCheck {
     CommandCheck {
         command: command.to_string(),
         ok,
@@ -133,12 +118,17 @@ fn record(command: &str, outcome: ShellOutcome, ok: bool) -> CommandCheck {
 /// proof command for `sample_test`, which passes only when it exits 0 and a line matches
 /// `test_passed`. A `single_test` that cannot be verified (no `{test}`, no companions,
 /// a pattern that does not compile) is not run; `proposal::apply_verification` says why.
+/// Then milestone 9.1's tier commands (`verify_tiers.rs`).
+///
+/// Every command runs as a run step does (ruling C-27, I-2): under a `Verify` grant of
+/// `steps`' scheduler, in a fresh directory of its own with decision 28's variables.
 pub fn run_commands(
     dir: &Path,
     profile: &RepoProfile,
     confine: Option<&ConfineSpec>,
     timeout: Duration,
     now: u64,
+    steps: &Steps,
 ) -> ProfileVerification {
     // M8b.10 review (M1), defence in depth: a reserved key (`TMPDIR`, `HOME`, `GIT_*`,
     // `ANTHREX_*`, credentials, …) never reaches a command, whoever built `profile`.
@@ -157,12 +147,21 @@ pub fn run_commands(
     );
     let env = profile_env(&resolved, dir);
     let plain = |command: &String| {
-        let (outcome, _) = run_one(dir, command, &env, timeout, None, confine);
+        let (outcome, _) = steps.run(dir, command, &env, timeout, None, confine);
         let ok = outcome.ok;
         record(command, outcome, ok)
     };
     let setup = profile.setup.as_ref().map(plain);
-    let check = profile.check.as_ref().map(plain);
+    // Milestone 9.1: a tiered `check`'s placeholders are filled in to run it whole,
+    // timing tests and all, so it runs alone when there are any (decision 25, ruling
+    // C-28 (3)).
+    let check = profile.check.as_ref().map(|command| {
+        let whole = super::proposal_tiers::check_command(profile, command);
+        let exclusive = profile.timing_tests.is_some();
+        let (outcome, _) = steps.run_as(dir, &whole, (&env, timeout), None, confine, exclusive);
+        let ok = outcome.ok;
+        record(command, outcome, ok)
+    });
     let single_test = match (
         &profile.single_test,
         &profile.sample_test,
@@ -175,20 +174,34 @@ pub fn run_commands(
                 .map(|pattern| {
                     let command = proof_command(single, sample);
                     let (outcome, matched) =
-                        run_one(dir, &command, &env, timeout, Some(&pattern), confine);
+                        steps.run(dir, &command, &env, timeout, Some(&pattern), confine);
                     let ok = outcome.ok && matched;
                     record(single, outcome, ok)
                 })
         }
         _ => None,
     };
-    ProfileVerification {
+    let mut verification = ProfileVerification {
         at: now,
         confined: confine.is_some(),
         setup,
         check,
         single_test,
-    }
+        build_check: None,
+        module_graph: None,
+        module_test: None,
+        module_tests: None,
+        toolchain_id: None,
+    };
+    // Milestone 9.1 decision 12: the tier commands, after M8b's three.
+    super::verify_tiers::run_commands(
+        dir,
+        profile,
+        (&env, timeout, confine),
+        steps,
+        &mut verification,
+    );
+    verification
 }
 
 /// Pins a checkout this daemon did not pin (one left by an earlier daemon) as the
@@ -373,6 +386,11 @@ pub struct VerifyJob {
     pub timeout: Duration,
     /// Each git step's bound.
     pub git_timeout: Duration,
+    /// The daemon's scheduler, which every command waits on (decision 23).
+    pub sched: std::sync::Arc<TestScheduler>,
+    /// The proposal's token: `profile reject` cancels it, and no command then waits
+    /// for a slot or runs (ruling C-28 (2)).
+    pub token: tokio_util::sync::CancellationToken,
 }
 
 /// What a verification ran, and every salvage ref it wrote.
@@ -450,8 +468,22 @@ pub async fn verify(queue: &GitQueue, job: VerifyJob) -> Result<Verified, String
                 job.confine.clone(),
                 job.timeout,
             );
+            let steps = Steps::new(
+                job.sched.clone(),
+                tokio::runtime::Handle::current(),
+                job.pre.git_common_dir.clone(),
+                job.repo_dir.clone(),
+                job.token.clone(),
+            );
             tokio::task::spawn_blocking(move || {
-                run_commands(&dir, &profile, confine.as_ref(), timeout, unix_now())
+                run_commands(
+                    &dir,
+                    &profile,
+                    confine.as_ref(),
+                    timeout,
+                    unix_now(),
+                    &steps,
+                )
             })
             .await
             .map_err(|error| format!("the verification did not finish: {error}"))

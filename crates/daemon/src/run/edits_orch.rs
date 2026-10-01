@@ -114,14 +114,35 @@ fn reader_refusal(task: &Task, why: &str) -> String {
     format!("task {} is a {kind} task; {why}", task.id())
 }
 
-/// Decision 42b's recipients, resolved at acceptance: named tasks once each, or, for
+/// Decision 42b's recipients, resolved at acceptance: named tasks once each; for
+/// `stage:<n>`, every unfinished task of the stage (milestone 9.1 decision 56); or, for
 /// `running`, every task with a live worker round and no approval hold still waiting,
 /// found by state and never by id (a run from before M9 may have a task named
 /// `running`, M9.2 re-review).
 fn recipients(run: &Run, to: &MessageTarget) -> Result<Vec<String>, PlanError> {
     let error = |text: &str| PlanError::new(None, "", "42", text);
     match to {
-        MessageTarget::Stage(_) => Err(error("stage recipients arrive with milestone 9.1")),
+        // Milestone 9.1 decision 56: every unfinished task of stage `n`, in plan
+        // order, each taking it by the per-state rule of `takes`.
+        MessageTarget::Stage(n) => {
+            let of_stage: Vec<&Task> = run
+                .tasks
+                .iter()
+                .filter(|t| u32::from(t.stage()) == *n)
+                .collect();
+            if of_stage.is_empty() {
+                return Err(error(&format!("stage {n} has no task")));
+            }
+            let open: Vec<String> = of_stage
+                .iter()
+                .filter(|t| !t.state.is_finished())
+                .map(|t| t.id().to_string())
+                .collect();
+            if open.is_empty() {
+                return Err(error(&format!("stage {n} has no unfinished task")));
+            }
+            Ok(open)
+        }
         MessageTarget::Tasks(ids) if ids.is_empty() || ids.len() > MESSAGE_TASKS_MAX => Err(error(
             &format!("message: to must name 1 to {MESSAGE_TASKS_MAX} tasks"),
         )),

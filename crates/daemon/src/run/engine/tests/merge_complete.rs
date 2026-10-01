@@ -28,7 +28,7 @@ fn resume(fx: &mut Fixture, rebaseline: Option<(&str, &str)>) -> Vec<Effect> {
     fx.next(EventKind::Resume {
         reply,
         run_id: RUN_ID.into(),
-        rebaseline: rebaseline.map(|(b, h)| (b.to_string(), h.to_string())),
+        rebaseline: rebaseline.map(|(b, h)| (b.to_string(), h.to_string()).into()),
     })
 }
 
@@ -226,6 +226,7 @@ fn completion_checks_refs_then_completes() {
             expected_base: BASE.into(),
             run_branch: format!("anthrex/{RUN_ID}/integration"),
             expected_run_head: commit(1),
+            guarded: vec![(format!("anthrex/{RUN_ID}/integration"), commit(1))],
         }
     );
     assert_eq!(fx.run().state, RunState::Running);
@@ -342,7 +343,13 @@ fn finish_cancels_unstarted_then_completes_when_live_ones_end() {
     assert_eq!(fx.task("t2").state, TaskState::Blocked);
     to_queue(&mut fx, "t1", window_of(&windows, "t1"));
     let (op, _) = candidate(&fx, "t1");
-    let effects = fx.done(op, OpResult::Merged { commit: commit(1) });
+    let effects = fx.done(
+        op,
+        OpResult::Merged {
+            commit: commit(1),
+            tier: None,
+        },
+    );
     assert_eq!(fx.task("t2").state, TaskState::Cancelled);
     assert!(effects.contains(&Effect::KillWindow { window_id: t2 }));
     assert_eq!(fx.task("t4").state, TaskState::Cancelled);

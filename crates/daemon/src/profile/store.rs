@@ -266,15 +266,16 @@ pub fn delete_proposal(repo_dir: &Path) -> io::Result<()> {
     }
 }
 
-/// 64-bit FNV-1a, plain (no separators), fed incrementally.
-struct Fnv1a64(u64);
+/// 64-bit FNV-1a, plain (no separators), fed incrementally. Milestone 9.1 hashes the
+/// run's profile (decision 11) and the graph cache's manifests (decision 9) with it.
+pub(crate) struct Fnv1a64(pub(crate) u64);
 
 impl Fnv1a64 {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Fnv1a64(0xcbf2_9ce4_8422_2325)
     }
 
-    fn update(&mut self, bytes: &[u8]) {
+    pub(crate) fn update(&mut self, bytes: &[u8]) {
         for byte in bytes {
             self.0 ^= u64::from(*byte);
             self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);

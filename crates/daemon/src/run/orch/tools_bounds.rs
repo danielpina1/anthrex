@@ -43,6 +43,9 @@ const EDIT: &[(&str, Rule)] = &[
     ("text", Rule::Text(1, 8000)),
     ("to", Rule::To),
     ("kind", Rule::Serde),
+    // Milestone 9.1 decision 43: `amend_task` moves a task that has not started; its
+    // range, 1 to `STAGES_MAX`, is the plan rules'.
+    ("stage", Rule::Serde),
 ];
 
 const TASK: &[(&str, Rule)] = &[
@@ -64,6 +67,10 @@ const TASK: &[(&str, Rule)] = &[
     ("scout_refs", Rule::List(0, 20, 48)),
     ("route", Rule::Route),
     ("review_target", Rule::Text(1, 200)),
+    // Milestone 9.1 decisions 43 and 54.
+    ("stage", Rule::Serde),
+    ("atomic", Rule::Serde),
+    ("atomic_reason", Rule::Text(1, 300)),
     // Not in the schema (decision 23.1), but M8a's `PlanTask` reads it and rule 7.1
     // refuses it with its own text, which tells the model what to do.
     ("budget", Rule::Serde),

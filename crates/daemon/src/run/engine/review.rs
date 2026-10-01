@@ -17,6 +17,7 @@ use super::signals::{count_rate_limit, end_round};
 use super::tools::parse_review;
 use super::{
     Effect, OpId, OpKind, OpResult, ReplyId, TurnOutcome, emit_op, gates, ladder, next_op, outbox,
+    weakening,
 };
 use crate::headless::FailureKind;
 use crate::run::contract::{
@@ -74,15 +75,19 @@ pub(super) fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
             // head (`run_head...head`), the task's net change, as the spill check
             // does. `start_commit` would bring in every hand-back's merged work.
             let head = task.head.clone().unwrap_or_else(|| task.branch.clone());
-            (head, run.run_head.clone())
+            // Milestone 9.1 decision 47: the task's stage head.
+            (head, run.head_for(task).to_string())
         };
         let id = task.id().to_string();
+        // Controller ruling C-21 (6): a sync task's resolution only.
+        let base_tree = task.sync.as_ref().map(|s| s.base_tree.clone());
         let op = next_op(run);
         let kind = OpKind::PrepareReview {
             root: run.root.clone(),
             head_ref,
             base_ref,
             path: run.review_path(&id),
+            base_tree,
         };
         run.tasks[i].gate_op = Some(op);
         emit_op(run, op, Some(&id), kind, fx);
@@ -187,6 +192,7 @@ pub(super) fn review_ready(
     crate::run::routing::record_reviewer(run, i, (&author, level), &route, round_no, now);
     let task = &mut run.tasks[i];
     task.review_route = Some(route.clone());
+    weakening::new_review(task);
     task.rounds.push(round);
     task.reviews.push(ReviewRecord {
         round: round_no,
@@ -295,14 +301,19 @@ pub(super) fn submit(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: 
         );
         return reply(fx, id, Err(text));
     }
-    let (verdict, summary, findings) = match parse_review(&call.args) {
+    let (mut verdict, summary, mut findings) = match parse_review(&call.args) {
         Ok(parsed) => parsed,
         Err(e) => return reply(fx, id, Err(format!("invalid arguments: {e}"))),
     };
-    let blocking = findings.iter().any(|f| f.severity != Severity::Minor);
-    if verdict == Verdict::Approve && blocking {
+    if verdict == Verdict::Approve && findings.iter().any(|f| f.severity != Severity::Minor) {
         return reply(fx, id, Err(APPROVE_WITH_BLOCKING.to_string()));
     }
+    // Milestone 9.1 decision 42: every signal answered, or the engine's findings.
+    let checked = weakening::check_review(&mut run.tasks[i], &mut verdict, &mut findings);
+    if let Err(text) = checked {
+        return reply(fx, id, Err(text));
+    }
+    let blocking = findings.iter().any(|f| f.severity != Severity::Minor);
     let task = &mut run.tasks[i];
     let route = task.rounds[r].route.clone();
     let k = match task.reviews.iter().position(|rv| rv.round == round_no) {

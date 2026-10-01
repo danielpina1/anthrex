@@ -153,7 +153,7 @@ fn submit_epic() -> Tool {
     )
 }
 
-/// M8a's `PlanEdit` as the model writes it. Which keys each `op` needs is the daemon's
+/// M8a's `PlanEdit` as the model writes it; `stage` is `amend_task`'s (M9.1 decision 43). Which keys each `op` needs is the daemon's
 /// serde shape; this schema only bounds them.
 fn plan_edit() -> JsonObject {
     closed(
@@ -180,13 +180,14 @@ fn plan_edit() -> JsonObject {
                 pattern("^(running|stage:[0-9]{1,4})$"),
             ]},
             "kind": one_of(&["info", "change", "stop_and_wait"]),
+            "stage": stage(),
         }),
         &["op"],
     )
 }
 
 /// A task as `add_task` and `split_task` take it. `budget` is deliberately absent
-/// (decision 23.1).
+/// (decision 23.1); `stage`, `atomic` and `atomic_reason` are M9.1 decision 43's.
 fn plan_task() -> JsonObject {
     closed(
         json!({
@@ -207,6 +208,9 @@ fn plan_task() -> JsonObject {
             "scout_refs": array(text(48), None, 20),
             "route": object(route()),
             "review_target": text(200),
+            "stage": stage(),
+            "atomic": boolean(),
+            "atomic_reason": text(300),
         }),
         &["id", "title", "size", "owns", "brief", "acceptance"],
     )
@@ -230,6 +234,12 @@ fn size() -> Value {
 
 fn test_mode() -> Value {
     one_of(&["tdd", "check", "none"])
+}
+
+/// Milestone 9.1 decision 43: a task's stage, a plain integer (M9.1.11 keeps the
+/// schemas free of `oneOf`, `anyOf` and `allOf`).
+fn stage() -> Value {
+    json!({"type": "integer", "minimum": 1, "maximum": proto::STAGES_MAX})
 }
 
 fn boolean() -> Value {

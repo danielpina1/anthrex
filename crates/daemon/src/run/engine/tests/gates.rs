@@ -331,6 +331,7 @@ fn check_failure_goes_up_the_ladder() {
         // M8b.12: the fixture's deciders are off, so the summary is the fallback.
         summary: None,
         summary_source: Some(DeciderSource::Fallback),
+        tier: None,
     };
     assert_eq!(t1.checks, vec![record.clone()]);
     let first = check_failed_message("cargo test", &record);
@@ -424,6 +425,7 @@ fn a_timed_out_check_says_so() {
         on_candidate: false,
         summary: None,
         summary_source: None,
+        tier: None,
     };
     assert_eq!(
         check_failed_message("make test", &record),

@@ -284,6 +284,12 @@ fn apply(
     {
         return super::deciders_size::sized(run, decider_id, input, verdicts, &decision, now);
     }
+    // Milestone 9.1 decision 37: a bisect's summary is for its stage, not a task.
+    if let DeciderAnswer::CheckSummary { lines } = &decision.answer
+        && super::bisect::summarised(run, decider_id, lines)
+    {
+        return;
+    }
     let Some(i) = task_ids
         .first()
         .and_then(|id| run.tasks.iter().position(|t| t.id() == id))

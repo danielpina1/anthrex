@@ -13,6 +13,7 @@ use proto::{EditFile, Plan, PlanEdit, ProfileSpec, RunState};
 
 use super::globs::validate_glob;
 use super::model::{Profile, Run, RunLimits, task_branch, task_path};
+use super::tiers::{self, TierProfile};
 use super::validate::{
     EditScope, combined_cycles, implicit_deps, resolve_task_lenient, validate_tasks,
 };
@@ -91,6 +92,8 @@ pub struct BuildContext<'a> {
     /// The run's own data directory, `<data_dir>/runs/<id>`.
     pub data_dir: PathBuf,
     pub config: &'a config::Orchestrator,
+    /// Milestone 9.1 decision 3: the daemon's `[testing]` table.
+    pub testing: &'a config::Testing,
     pub now: u64,
     pub yes: bool,
 }
@@ -151,13 +154,17 @@ pub fn resolve_profile(plan: &ProfileSpec, config: &ProfileSpec) -> Profile {
         confined_network: false,
         confined_unix_sockets: Vec::new(),
         confined_localhost_ports: Vec::new(),
+        tiers: TierProfile::resolve(plan, config),
+        manifests: Vec::new(),
     }
 }
 
 /// The limits a run is frozen with: the config, with the plan's three limits winning
-/// when set. Ranges are checked separately, by [`build_run`].
+/// when set, and `[testing]`'s run rules. Ranges are checked separately, by
+/// [`build_run`].
 pub fn run_limits(
     config: &config::Orchestrator,
+    testing: &config::Testing,
     max_writers: Option<u8>,
     max_readers: Option<u8>,
     max_bounces: Option<u8>,
@@ -187,6 +194,7 @@ pub fn run_limits(
         decider_mode: config.deciders.mode,
         decider_slot_wait_secs: config.deciders.slot_wait_secs,
         orch: super::orch::OrchLimits::from_config(config),
+        testing: testing.into(),
     }
 }
 
@@ -270,6 +278,16 @@ fn check_plan(plan: &Plan, profile: &Profile, errors: &mut Vec<PlanError>) {
             ));
         }
     }
+    // Milestone 9.1 decision 8.
+    let tier_problems = tiers::validate(&profile.tiers, profile.check.as_deref(), &profile.modules);
+    for (key, message) in tier_problems {
+        errors.push(PlanError::new(
+            None,
+            &format!("profile.{key}"),
+            "profile",
+            message,
+        ));
+    }
     for (field, globs) in [
         ("profile.generated", &profile.generated),
         ("profile.protected", &profile.protected),
@@ -324,7 +342,13 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
     profile.confined_localhost_ports = for_repo(&config.confined_localhost_ports, &pre.root)
         .cloned()
         .unwrap_or_default();
-    let limits = run_limits(config, plan.max_writers, plan.max_readers, plan.max_bounces);
+    let limits = run_limits(
+        config,
+        ctx.testing,
+        plan.max_writers,
+        plan.max_readers,
+        plan.max_bounces,
+    );
     let mut errors = Vec::new();
     check_plan(&plan, &profile, &mut errors);
 
@@ -338,6 +362,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
             limits.default_runtime,
         );
         errors.extend(task_errors);
+        errors.extend(super::validate::reserved_new_id(task.id()));
         task.branch = task_branch(&ctx.id, task.id());
         task.worktree = task_path(&ctx.wt_dir, &ctx.id, task.id());
         task.notes.extend(super::validate::protected_notes(
@@ -369,6 +394,15 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
     }
 
     let unverified = profile.check.is_none();
+    let profile_hash = tiers::profile_hash(&profile);
+    // Milestone 9.1 decision 47: stage 1, on `integration` until the layout is fixed.
+    let first = super::model::StageRecord::new(
+        1,
+        super::model::task_branch(&ctx.id, "integration"),
+        &pre.base_sha,
+        Default::default(),
+        ctx.now,
+    );
     Ok(Run {
         id: ctx.id,
         goal: plan.goal,
@@ -445,6 +479,16 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         plan_edits_since_approval: 0,
         orch: Default::default(),
         role_routing_decisions: Vec::new(),
+        profile_hash,
+        toolchain: None,
+        graph_note: None,
+        test_slots: 0,
+        stage_layout: Default::default(),
+        stages: vec![first],
+        full_op: None,
+        queue_idle_since: None,
+        fix_seq: 0,
+        propagate_due: BTreeSet::new(),
     })
 }
 

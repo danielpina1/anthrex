@@ -70,6 +70,7 @@ pub fn build(plan_toml: &str, config: &config::Orchestrator, yes: bool) -> Run {
             wt_dir: PathBuf::from(WT),
             data_dir: PathBuf::from(format!("/tmp/data/runs/{RUN_ID}")),
             config,
+            testing: &config::Testing::default(),
             now: 1_000,
             yes,
         },
@@ -355,6 +356,8 @@ impl Fixture {
             head: HEAD.into(),
             head_branch: Some(self.task(id).branch.clone()),
             resolution_only: None,
+            signals: None,
+            sync_kept: None,
         }
     }
 
@@ -368,7 +371,7 @@ impl Fixture {
             round.ended = true;
             round.turn_open = false;
         }
-        self.run_mut().run_head = commit.to_string();
+        crate::run::engine::stages::set_stage_head(self.run_mut(), 1, commit);
         self.tick()
     }
 
@@ -419,6 +422,10 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::StartScout { .. } => "StartScout",
         OpKind::ResolveTarget { .. } => "ResolveTarget",
         OpKind::StartPlanner { .. } => "StartPlanner",
+        OpKind::Tier(_) => "Tier",
+        OpKind::TestAt(_) => "TestAt",
+        OpKind::CreateStageBranch { .. } => "CreateStageBranch",
+        OpKind::Propagate(_) => "Propagate",
     }
 }
 

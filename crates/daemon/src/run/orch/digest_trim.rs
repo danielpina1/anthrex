@@ -25,8 +25,9 @@ const ENTRY_STRINGS_TRIMMED: usize = 40;
 /// task goes: `attention` cut to 10 lines (those of tasks already dropped first, and
 /// the run-wide lines kept ahead of the blocked tasks' ones), every string cut to 120
 /// characters, `scouts`, `planners`, `integration` and `notes` cut to 10, then the
-/// scouts' and planners' strings cut to 40 characters and both lists to 3; only then
-/// unfinished tasks dropped from the end of the plan (counted too), and the attention
+/// scouts' and planners' strings cut to 40 characters and both lists to 3, then each
+/// stage's failing and flaky names and fix tasks cut to 3 and the stages to 10, then 3
+/// (ruling C-24); only then unfinished tasks dropped from the end of the plan (counted too), and the attention
 /// lines of the tasks dropped last removed with them.
 pub(super) fn trim(digest: &mut Value, run: &Run) {
     let fits = |d: &Value| size(d) <= DIGEST_MAX_BYTES;
@@ -109,6 +110,18 @@ pub(super) fn trim(digest: &mut Value, run: &Run) {
         }
         truncate(digest, key, ENTRIES_TRIMMED_AGAIN);
     }
+    // Ruling C-24: each stage's lists, then the stages themselves, and only then an
+    // unfinished task.
+    if fits(digest) {
+        return;
+    }
+    shorten_stage_lists(digest, LISTS_TRIMMED);
+    for keep in [ENTRIES_TRIMMED, ENTRIES_TRIMMED_AGAIN] {
+        if fits(digest) {
+            return;
+        }
+        truncate(digest, "stages", keep);
+    }
     while !fits(digest) {
         let last = match digest.get("tasks") {
             Some(Value::Array(tasks)) => tasks.last().and_then(|t| t["id"].as_str()),
@@ -165,6 +178,20 @@ fn drop_task(digest: &mut Value, id: &str) {
     }
     if let Some(n) = digest.get_mut("omitted_tasks") {
         *n = json!(n.as_u64().unwrap_or(0) + 1);
+    }
+}
+
+/// Every stage's failing and flaky names and fix tasks cut to `keep` (ruling C-24).
+fn shorten_stage_lists(digest: &mut Value, keep: usize) {
+    let Some(Value::Array(stages)) = digest.get_mut("stages") else {
+        return;
+    };
+    for stage in stages.iter_mut() {
+        for pointer in ["/full/failing", "/full/flaky", "/fix_tasks"] {
+            if let Some(Value::Array(items)) = stage.pointer_mut(pointer) {
+                items.truncate(keep);
+            }
+        }
     }
 }
 

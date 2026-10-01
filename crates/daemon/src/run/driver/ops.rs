@@ -4,20 +4,40 @@
 //! through the manager's `headless_*` methods. No lock is held here.
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, cleanup, merge};
+use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, cleanup, merge, stage_ops, tier};
 use crate::headless::{HeadlessSpec, SessionArg};
-use crate::run::confine::confined;
-use crate::run::engine::{EventKind, OpKind, OpResult, ResolutionAt, ScratchAt};
+use crate::run::engine::{OpKind, OpResult, ResolutionAt};
 use crate::run::exec::ShellOutcome;
-use crate::run::git::{self, RefCheck, RefreshedIn};
+use crate::run::git::{self, RefreshedIn};
 use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
-use crate::run::proof::{ProofError, ProofOp, SETUP_MARKER, run_proof};
+use crate::run::model::{OpId, SyncCheck};
+use crate::run::proof::ProofOp;
 use crate::run::role_launch::worker_git_roots;
+use crate::run::slots::{Priority, Want};
+use crate::run::tiers::SignalsSpec;
 use proto::AgentRole;
+
+// Decision 33's proof and decision 34's check (split out to keep this file under the
+// 600-line rule).
+#[path = "gate_ops.rs"]
+mod gate_ops;
+#[path = "sync_done.rs"]
+mod sync_done;
+use gate_ops::{check, proof};
+
+// Controller ruling 1 and ruling C-12b: M8a's commands through the test scheduler.
+#[path = "scheduled.rs"]
+pub(super) mod scheduled;
+use scheduled::scheduled;
+
+// Task M9.1.16: `VerifyDone`'s signals against real git.
+#[cfg(test)]
+#[path = "ops_signals_tests.rs"]
+mod signals_tests;
 
 pub(super) fn failed(message: impl Into<String>) -> OpResult {
     OpResult::Failed {
@@ -69,20 +89,22 @@ impl RunService {
     }
 
     /// `setup` in `dir` after a worktree op (M8a.8's carry T8-I4): a failure is
-    /// `SetupFailed` with its tail.
+    /// `SetupFailed` with its tail. It waits for one slot (decision 24, ruling C-12b).
     async fn setup(
-        &self,
+        self: &Arc<Self>,
         ctx: &OpCtx,
+        op: OpId,
         dir: &Path,
-        setup: Option<String>,
-        env: Vec<(String, String)>,
+        (setup, env): (Option<String>, Vec<(String, String)>),
         head: String,
     ) -> OpResult {
         let Some(setup) = setup else {
             return OpResult::Worktree { head };
         };
-        let (dir, timeout, confine) = (dir.to_path_buf(), ctx.check_timeout, ctx.confine.clone());
-        match blocking(move || Ok(confined(&dir, &setup, &env, timeout, confine.as_deref()))).await
+        let class = (Priority::Gate, Want::One, "setup".to_string());
+        match scheduled(self, ctx, op, class)
+            .run(dir, &setup, &env, ctx.check_timeout)
+            .await
         {
             Ok(outcome) if outcome.ok => OpResult::Worktree { head },
             Ok(outcome) => OpResult::SetupFailed {
@@ -148,10 +170,14 @@ async fn worker_git_dirs(
     Ok(())
 }
 
-/// Executes `kind` for the run of `ctx`.
-pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) -> OpResult {
+/// Executes `kind`, op `op`, for the run of `ctx`.
+pub(super) async fn run(
+    service: &Arc<RunService>,
+    ctx: &OpCtx,
+    op: OpId,
+    kind: OpKind,
+) -> OpResult {
     let git = service.git();
-    let t = ctx.git_timeout;
     match kind {
         OpKind::CreateRunBranch {
             root,
@@ -168,7 +194,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 })
                 .await;
             match made {
-                Ok(head) => service.setup(ctx, &path, setup, env, head).await,
+                Ok(head) => service.setup(ctx, op, &path, (setup, env), head).await,
                 Err(error) => failed(error),
             }
         }
@@ -190,7 +216,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 })
                 .await;
             match made {
-                Ok(head) => service.setup(ctx, &path, setup, env, head).await,
+                Ok(head) => service.setup(ctx, op, &path, (setup, env), head).await,
                 Err(error) => failed(error),
             }
         }
@@ -253,6 +279,9 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             resolution,
             not_own,
             not_run,
+            signals,
+            spill_base,
+            sync,
         } => {
             // Final fix batch F1b: through the queue, since each of these imports the
             // worker's commits and records them on the task's branch first.
@@ -265,8 +294,16 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                             &start,
                             &run_head,
                             (&owns, &generated, &protected),
-                            (red.clone(), resolution.clone()),
-                            RefreshedIn::of(&not_own, &not_run),
+                            (
+                                red.clone(),
+                                resolution.as_deref().cloned(),
+                                signals.as_ref(),
+                            ),
+                            (
+                                RefreshedIn::of(&not_own, &not_run),
+                                spill_base.clone(),
+                                sync.clone(),
+                            ),
                             t,
                         )
                     })
@@ -311,6 +348,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             setup,
             env,
         } => {
+            let op_id = op;
             let op = ProofOp {
                 root,
                 repo: git::checkout_repo_dir(&ctx.data_dir, &path),
@@ -324,7 +362,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 env,
                 confine: ctx.confine.as_deref().cloned(),
             };
-            proof(service, ctx, op).await
+            proof(service, ctx, op_id, op).await
         }
         OpKind::Check {
             dir,
@@ -332,22 +370,36 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             timeout_secs,
             env,
             scratch,
-        } => check(service, ctx, dir, command, timeout_secs, env, scratch).await,
+        } => {
+            let at = (dir, scratch);
+            check(service, ctx, op, at, command, timeout_secs, env).await
+        }
         OpKind::PrepareReview {
             root,
             head_ref,
             base_ref,
             path,
+            base_tree,
         } => settle({
             let repo = git::checkout_repo_dir(&ctx.data_dir, &path);
             service
                 .write(ctx, move |g, t| {
-                    git::prepare_review_in(g, &root, &head_ref, &base_ref, &path, &repo, t)
+                    let (base, head, patch) =
+                        git::prepare_review_in(g, &root, &head_ref, &base_ref, &path, &repo, t)?;
+                    // Controller ruling C-21 (6): a sync task's resolution only.
+                    match &base_tree {
+                        Some(tree) => Ok((
+                            tree.clone(),
+                            git::tree_patch(g, &root, tree, &head, t)?,
+                            head,
+                        )),
+                        None => Ok((base, patch, head)),
+                    }
                 })
                 .await
-                .map(|(base, head, patch)| OpResult::Review { base, head, patch })
+                .map(|(base, patch, head)| OpResult::Review { base, head, patch })
         }),
-        OpKind::MergeCandidate { .. } => settle(merge::candidate(service, ctx, kind).await),
+        OpKind::MergeCandidate { .. } => settle(merge::candidate(service, ctx, op, kind).await),
         OpKind::HandBack {
             worktree,
             run_head,
@@ -382,39 +434,11 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 .await
                 .map(|salvage_ref| OpResult::Removed { salvage_ref }),
         ),
-        OpKind::VerifyRefs {
-            root,
-            base_branch,
-            expected_base,
-            run_branch,
-            expected_run_head,
-        } => {
-            let checked = blocking(move || {
-                git::guard_refs(
-                    &git,
-                    &root,
-                    &base_branch,
-                    &expected_base,
-                    &run_branch,
-                    &expected_run_head,
-                    t,
-                )
-            })
-            .await;
-            match checked {
-                Ok(RefCheck::Ok) => OpResult::RefsOk,
-                Ok(RefCheck::BaseAdvanced { to, commits }) => {
-                    service.send(EventKind::BaseAdvanced {
-                        run_id: ctx.run_id.clone(),
-                        to,
-                        commits,
-                    });
-                    OpResult::RefsOk
-                }
-                Ok(RefCheck::Halt { reason }) => OpResult::RefMoved { reason },
-                Err(error) => failed(error),
-            }
-        }
+        OpKind::VerifyRefs { .. } => stage_ops::verify_refs(service, ctx, kind).await,
+        // Milestone 9.1 decision 48.
+        OpKind::CreateStageBranch { .. } => stage_ops::create(service, ctx, kind).await,
+        // Decision 50.
+        OpKind::Propagate(_) => settle(stage_ops::propagate(service, ctx, op, kind).await),
         OpKind::Accept { .. } => cleanup::accept(service, ctx, kind).await,
         OpKind::Discard {
             root,
@@ -431,6 +455,16 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         | OpKind::StartScout { .. }
         | OpKind::StartPlanner { .. }
         | OpKind::ResolveTarget { .. }) => super::orch_ops::run(service, ctx, kind).await,
+        // Milestone 9.1 (task M9.1.9): a tier job and a bisect probe.
+        OpKind::Tier(spec) => {
+            let (sched, queue) = (service.scheduler(), &service.queue);
+            let cache = service.test_cache();
+            tier::run_tier(ctx, sched, cache, queue, &git, op, &spec).await
+        }
+        OpKind::TestAt(spec) => {
+            let (sched, queue) = (service.scheduler(), &service.queue);
+            tier::run_test_at(ctx, sched, queue, &git, op, &spec).await
+        }
     }
 }
 
@@ -443,14 +477,14 @@ fn verify_done(
     start: &str,
     run_head: &str,
     (owns, generated, protected): (&[String], &[String], &[String]),
-    (red, resolution): (Option<String>, Option<ResolutionAt>),
-    refreshed: RefreshedIn,
+    (red, resolution, signals): (Option<String>, Option<ResolutionAt>, Option<&SignalsSpec>),
+    (refreshed, spill_base, sync): (RefreshedIn, Option<String>, Option<Box<SyncCheck>>),
     git_timeout: Duration,
 ) -> Result<OpResult, String> {
     let t = git_timeout.min(DONE_CHECK_GIT_TIMEOUT);
     let generated = OwnsMatcher::new(generated)?;
     let protected = ProtectedMatcher::new(protected)?;
-    let d = git::verify_done_excluding(
+    let mut d = git::verify_done_spilling(
         git,
         worktree,
         start,
@@ -458,13 +492,35 @@ fn verify_done(
         owns,
         (&generated, &protected),
         red.as_deref(),
-        &refreshed,
+        (&refreshed, spill_base.as_deref()),
         t,
     )?;
     let resolution_only = resolution.map(|r| {
         git::resolution_only(git, worktree, &d.head, &r.onto, &r.run_head, &r.files, t)
             .unwrap_or(false)
     });
+    // Milestone 9.1 decision 40: only when the op asks (never for an untiered profile).
+    // Controller ruling C-21 (2): a sync task's from its conflicted tree.
+    let mut signals =
+        match (signals, spill_base.as_deref()) {
+            (Some(spec), Some(base)) if !d.head.is_empty() => Some(Box::new(
+                git::done_signals_from(git, worktree, (base, &d.head), spec, t)?,
+            )),
+            (Some(spec), _) => Some(Box::new(git::done_signals(
+                git, worktree, run_head, &d.head, spec, t,
+            )?)),
+            (None, _) => None,
+        };
+    let sync_kept = match sync.filter(|_| !d.head.is_empty()) {
+        Some(sync) => Some(sync_done::apply(
+            git,
+            worktree,
+            &sync,
+            (&mut d, &mut signals),
+            t,
+        )?),
+        None => None,
+    };
     Ok(OpResult::DoneChecked {
         commits: d.commits,
         dirty_tracked: d.dirty_tracked,
@@ -477,122 +533,7 @@ fn verify_done(
         head: d.head,
         head_branch: d.head_branch,
         resolution_only,
+        signals,
+        sync_kept,
     })
-}
-
-/// Decision 33's proof on a blocking thread, each git step through the queue by
-/// `Handle::block_on` (the daemon's multi-thread runtime; see `OpKind::Proof`).
-async fn proof(service: &Arc<RunService>, ctx: &OpCtx, op: ProofOp) -> OpResult {
-    let (git, t) = (service.git(), ctx.git_timeout);
-    let queue = service.queue.clone();
-    let project = ctx.project.clone();
-    let handle = tokio::runtime::Handle::current();
-    let ran = tokio::task::spawn_blocking(move || {
-        let hook = |step: crate::run::proof::GitStep| handle.block_on(queue.write(&project, step));
-        run_proof(&git, &op, t, &hook)
-    })
-    .await;
-    match ran {
-        Ok(Ok(runs)) => OpResult::Proof {
-            red_failed: runs.red_failed,
-            head_passed: runs.head_passed,
-            matched: runs.matched,
-            red_tail: runs.red_tail,
-            head_tail: runs.head_tail,
-        },
-        Ok(Err(ProofError::SetupFailed { output })) => OpResult::SetupFailed { output },
-        Ok(Err(ProofError::Failed(message))) => failed(message),
-        Err(error) => failed(format!("the proof did not finish: {error}")),
-    }
-}
-
-/// Decision 34's check (ruling T13-I3's scratch contract when `scratch` is set).
-async fn check(
-    service: &Arc<RunService>,
-    ctx: &OpCtx,
-    dir: PathBuf,
-    command: String,
-    timeout_secs: u64,
-    env: Vec<(String, String)>,
-    scratch: Option<ScratchAt>,
-) -> OpResult {
-    let timeout = Duration::from_secs(timeout_secs);
-    if let Some(ScratchAt {
-        root,
-        commit,
-        setup,
-    }) = scratch
-    {
-        let (at, c) = (dir.clone(), commit.clone());
-        let repo = git::checkout_repo_dir(&ctx.data_dir, &dir);
-        if let Err(error) = service
-            .write(ctx, move |g, t| {
-                git::prepare_scratch_in(g, &root, &at, &c, &repo, t)
-            })
-            .await
-        {
-            return failed(error);
-        }
-        let (git, t, at) = (service.git(), ctx.git_timeout, dir.clone());
-        let found = blocking(move || {
-            let marker = git::absolute_git_dir(&git, &at, t)?.join(SETUP_MARKER);
-            let exists = marker.exists();
-            Ok((marker, exists))
-        })
-        .await;
-        let (marker, exists) = match found {
-            Ok(found) => found,
-            Err(error) => return failed(error),
-        };
-        if !exists {
-            if let Some(setup) = setup {
-                let (at, c) = (dir.clone(), commit.clone());
-                if let Err(error) = service
-                    .write(ctx, move |g, t| git::materialize(g, &at, &c, t))
-                    .await
-                {
-                    return failed(error);
-                }
-                let (at, env, confine) = (dir.clone(), env.clone(), ctx.confine.clone());
-                let outcome =
-                    blocking(move || Ok(confined(&at, &setup, &env, timeout, confine.as_deref())))
-                        .await;
-                match outcome {
-                    Ok(outcome) if !outcome.ok => {
-                        return OpResult::SetupFailed {
-                            output: setup_output(&outcome),
-                        };
-                    }
-                    Ok(_) => {}
-                    Err(error) => return failed(error),
-                }
-            }
-            let written = blocking(move || {
-                std::fs::write(&marker, "")
-                    .map_err(|error| format!("could not write {}: {error}", marker.display()))
-            })
-            .await;
-            if let Err(error) = written {
-                return failed(error);
-            }
-        }
-        let at = dir.clone();
-        if let Err(error) = service
-            .write(ctx, move |g, t| git::materialize(g, &at, &commit, t))
-            .await
-        {
-            return failed(error);
-        }
-    }
-    let confine = ctx.confine.clone();
-    match blocking(move || Ok(confined(&dir, &command, &env, timeout, confine.as_deref()))).await {
-        Ok(outcome) => OpResult::Check {
-            ok: outcome.ok,
-            code: outcome.code,
-            timed_out: outcome.timed_out,
-            tail: outcome.tail,
-            secs: outcome.secs,
-        },
-        Err(error) => failed(error),
-    }
 }

@@ -224,6 +224,8 @@ fn task_record_from_a_merged_task() {
         sessions: 2,
         done_signal: Some(DoneSignal::TurnEndFallback),
         merge_commit: Some("e".repeat(40)),
+        stage: 1,
+        origin: proto::TaskOrigin::Plan,
     };
     assert_eq!(record, want);
     assert_eq!(task_record_id(&run.id, "t1"), want.record_id);

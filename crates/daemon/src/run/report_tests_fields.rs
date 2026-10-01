@@ -105,6 +105,7 @@ const FIELDS: &[Field] = &[
                 on_candidate: false,
                 summary: None,
                 summary_source: None,
+                tier: None,
             })
         },
         new_lists: 0,

@@ -57,6 +57,9 @@ pub struct ProfileContext {
     pub git_queue: Arc<GitQueue>,
     pub cli_caps: CliCaps,
     pub daemon_socket: PathBuf,
+    /// The daemon's test scheduler: verification's commands take its slots (decision
+    /// 23, ruling C-27 I-2).
+    pub scheduler: Arc<crate::run::slots::TestScheduler>,
 }
 
 /// A repository's profile as a run or milestone 9 sees it.
@@ -401,6 +404,7 @@ pub fn wire(
             git_queue: runs.git_queue(),
             cli_caps: manager.config().cli_caps,
             daemon_socket: daemon_socket.to_path_buf(),
+            scheduler: runs.scheduler().clone(),
         },
     );
     runs.set_adaptation(crate::run::driver::Adaptation {

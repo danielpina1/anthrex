@@ -2,7 +2,7 @@
 //! completion with an orchestrator. Split from `kinds.rs`, which re-exports these.
 //! Pure (design decision 2).
 
-use proto::{IntegrationState, PlanEdit, PlanTask, RouteSpec, Size, TaskKind};
+use proto::{IntegrationState, PlanEdit, PlanTask, RouteSpec, Size, TaskKind, TaskState};
 
 use super::kinds::is_integration;
 use super::requests::log;
@@ -89,6 +89,28 @@ fn due(run: &Run, k: usize) -> bool {
         && !reviewing
         && rounds_left
         && record.merges.len() > record.integration_reviewed as usize
+        && stage_holds_epic(run, epic)
+}
+
+/// Milestone 9.1 decisions 47 and 50: the highest stage holding one of the epic's
+/// merged tasks holds all of them (each propagated up to it), so its head, which the
+/// review reads, contains the whole epic.
+fn stage_holds_epic(run: &Run, epic: Option<&str>) -> bool {
+    let merged: Vec<&crate::run::model::Task> = run
+        .tasks
+        .iter()
+        .filter(|t| t.spec.epic.as_deref() == epic && !is_integration(t))
+        .filter(|t| t.state == TaskState::Merged)
+        .collect();
+    let Some(top) = merged.iter().map(|t| t.stage()).max() else {
+        return true;
+    };
+    match run.stage(top) {
+        Some(stage) if run.stage_layout == crate::run::model::StageLayout::Multi => {
+            merged.iter().all(|t| stage.tasks_in.contains(t.id()))
+        }
+        _ => true,
+    }
 }
 
 /// Round `n + 1` of epic `k`'s integration review: a review task added directly, its
@@ -107,6 +129,19 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
         .last()
         .and_then(|(t, _)| run.task(t))
         .map(|t| t.route.clone());
+    // Milestone 9.1 decision 47 (controller ruling C-14 (c)): the review goes into the
+    // highest stage holding one of the epic's tasks, and reviews up to its head.
+    let stage = run
+        .tasks
+        .iter()
+        .filter(|t| t.spec.epic.as_deref() == Some(epic.as_str()) && !is_integration(t))
+        // Controller ruling C-15 (M-5): a task that finished without merging (cancelled,
+        // reported) put nothing in its stage.
+        .filter(|t| t.state == TaskState::Merged || !t.state.is_finished())
+        .map(|t| t.stage())
+        .max()
+        .unwrap_or(1);
+    let head = run.stage_head(stage).unwrap_or(&run.run_head).to_string();
     let spec = PlanTask {
         id: id.clone(),
         title: format!("integration review of epic {epic}, round {n}"),
@@ -125,7 +160,10 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
         scout_refs: Vec::new(),
         route: RouteSpec::default(),
         budget: None,
-        review_target: Some(format!("{base}..{}", run.run_head)),
+        review_target: Some(format!("{base}..{head}")),
+        stage,
+        atomic: false,
+        atomic_reason: None,
     };
     let (mut task, _) = resolve_task_lenient(
         spec,

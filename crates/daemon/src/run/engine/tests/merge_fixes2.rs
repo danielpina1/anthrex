@@ -77,7 +77,13 @@ fn conflicted_onto_the_claim() -> OpResult {
 fn told_queue_conflict(fx: &mut Fixture, window: u32) {
     to_queue(fx, "t1", window);
     let (op, _) = candidate(fx, "t1");
-    fx.done(op, OpResult::Conflict { files: files() });
+    fx.done(
+        op,
+        OpResult::Conflict {
+            files: files(),
+            tree: None,
+        },
+    );
     let (hand_back, _) = pending_one(fx, "HandBack", Some("t1"));
     fx.done(hand_back, conflicted_onto_the_claim());
     acknowledge(fx);
@@ -105,11 +111,11 @@ fn a_resolution_skips_the_gates_only_when_it_is_only_the_resolution() {
         };
         assert_eq!(
             resolution,
-            Some(ResolutionAt {
+            Some(Box::new(ResolutionAt {
                 onto: head_of("t1"),
                 run_head: BASE.into(),
                 files: files(),
-            })
+            }))
         );
         let (op, _) = pending_one(&fx, "VerifyDone", Some("t1"));
         let mut result = fx.clean_check("t1");
@@ -192,7 +198,13 @@ fn an_undone_conflict_ends_the_straight_to_queue_pass() {
     let window = window_of(&windows, "t1");
     to_queue(&mut fx, "t1", window);
     let (op, _) = candidate(&fx, "t1");
-    fx.done(op, OpResult::Conflict { files: files() });
+    fx.done(
+        op,
+        OpResult::Conflict {
+            files: files(),
+            tree: None,
+        },
+    );
     let (hand_back, _) = pending_one(&fx, "HandBack", Some("t1"));
     fx.signal(window, AgentSignal::TurnStarted);
     let effects = fx.done(hand_back, conflicted_onto_the_claim());
@@ -324,7 +336,7 @@ fn a_due_hand_back_waits_for_the_run_to_run() {
     let effects = fx.next(EventKind::Resume {
         reply,
         run_id: RUN_ID.into(),
-        rebaseline: Some((BASE.into(), commit(9))),
+        rebaseline: Some((BASE.to_string(), commit(9)).into()),
     });
     let hand_backs = ops_in(&effects, "HandBack");
     assert_eq!(hand_backs.len(), 1, "{effects:#?}");

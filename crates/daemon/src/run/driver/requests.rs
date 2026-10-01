@@ -233,17 +233,36 @@ impl RunService {
     pub(super) async fn resume(&self, run_id: String, rebaseline: bool) -> Result<String, String> {
         let rebaseline = if rebaseline {
             let (root, base_branch, run_branch, timeout) = self.run_refs_of(&run_id)?;
-            let git = self.ctx.git.clone();
-            let heads = blocking(move || {
-                let base_ref = format!("refs/heads/{base_branch}");
-                let run_ref = format!("refs/heads/{run_branch}");
-                let base = git::read_ref(&git, &root, &base_ref, timeout)?
-                    .ok_or_else(|| format!("{base_ref} does not exist"))?;
-                let head = git::read_ref(&git, &root, &run_ref, timeout)?
-                    .ok_or_else(|| format!("{run_ref} does not exist"))?;
-                Ok((base, head))
-            })
-            .await?;
+            // Milestone 9.1 decision 47: a `Multi` run's every created stage too.
+            let stages: Vec<(u16, String)> = crate::lock(&self.state)
+                .runs
+                .get(&run_id)
+                .filter(|run| run.stage_layout == crate::run::model::StageLayout::Multi)
+                .map(|run| run.stages.iter().map(|s| (s.n, s.branch.clone())).collect())
+                .unwrap_or_default();
+            // Controller ruling C-16: only a run the engine will resume (halted or
+            // paused) has its refs written; any other only has them read.
+            let (project, may_move) = crate::lock(&self.state)
+                .runs
+                .get(&run_id)
+                .map(|run| {
+                    let may_move =
+                        matches!(run.state, proto::RunState::Halted | proto::RunState::Paused);
+                    (run.project.clone(), may_move)
+                })
+                .unwrap_or_else(|| (root.clone(), false));
+            let refs = super::stage_ops::RunRefs {
+                run_id: run_id.clone(),
+                root,
+                project,
+                base_branch,
+                run_branch,
+                stages,
+                timeout,
+                may_move,
+                now: super::unix_now(),
+            };
+            let heads = super::stage_ops::rebaseline(self, refs).await?;
             Some(heads)
         } else {
             None

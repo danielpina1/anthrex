@@ -178,15 +178,31 @@ fn the_engine_environment_applies() {
             "{line} reached a verification command"
         );
     }
-    // Confined, every `ANTHREX_*` goes (M8a F1c round 3, N1).
-    if confined == "confined" {
+    // Ruling C-27 (I-2, M-6), confined or not: every inherited `ANTHREX_*` goes (M8a
+    // F1c round 3, N1, now for every verification step), and the only ones left are
+    // the step's own: decision 28's socket and data directory under its `TMPDIR`, and
+    // decision 26's slot variables. Never the daemon's socket.
+    println!("verification ran {confined}");
+    let tmp = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("TMPDIR="))
+        .expect("TMPDIR");
+    for line in lines.iter().filter(|line| line.starts_with("ANTHREX_")) {
+        let own = [
+            format!("ANTHREX_SOCKET={tmp}/d.sock"),
+            format!("ANTHREX_DATA_DIR={tmp}/data"),
+        ];
+        let slot =
+            line.starts_with("ANTHREX_TEST_SLOTS=") || line.starts_with("ANTHREX_TEST_LOAD=");
         assert!(
-            !lines.iter().any(|line| line.starts_with("ANTHREX_")),
-            "{lines:?}"
+            own.iter().any(|o| o == line) || slot,
+            "{line} reached a verification command"
         );
-    } else {
-        println!("unconfined on this platform: ANTHREX_* is kept, as M8a keeps it");
     }
+    assert!(
+        lines.iter().any(|line| line.starts_with("ANTHREX_SOCKET=")),
+        "{lines:?}"
+    );
 }
 
 /// The child half of `the_engine_environment_applies`; does nothing unless that test
@@ -200,7 +216,7 @@ fn engine_environment_child() {
     let root = PathBuf::from(dir);
     let rig = Rig::in_dir(&root);
     let verified = rig.verify(check(
-        "env | grep -E '^(CLAUDE|ANTHROPIC|ANTHREX_|M8B10_)'; true",
+        "env | grep -E '^(CLAUDE|ANTHROPIC|ANTHREX_|M8B10_|TMPDIR=)'; true",
     ));
     let c = verified.verification.check.expect("the check ran");
     assert!(c.ok, "{c:?}");

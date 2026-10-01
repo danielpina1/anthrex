@@ -113,6 +113,50 @@ fn names_literally_cases() {
     assert!(!names_literally(&s(&["docs/AGENTS.md"]), "AGENTS.md"));
 }
 
+/// Ruling C-28 (4): an entry whose only glob syntax is one-character escape classes
+/// (`escape_path`'s) names its unescaped path exactly; a real class never does.
+#[test]
+fn an_escaped_entry_names_its_path_literally() {
+    for path in [
+        "docs/café[1].md",
+        ".claude/[x].json",
+        "a*b?.md",
+        "x{y}.md",
+        "]odd[.md",
+    ] {
+        assert!(
+            names_literally(&[escape_path(path)], path),
+            "{} does not name {path}",
+            escape_path(path)
+        );
+        assert!(!names_literally(&[escape_path(path)], "docs/other.md"));
+    }
+    assert!(names_literally(&s(&["./docs/[[]1[]].md"]), "docs/[1].md"));
+    // Real classes and wildcards are still wildcards.
+    assert!(!names_literally(&s(&["[ab].md"]), "a.md"));
+    assert!(!names_literally(&s(&["[ab].md"]), "[ab].md"));
+    assert!(!names_literally(&s(&["[a-z].md"]), "a.md"));
+    assert!(!names_literally(&s(&["[a-z].md"]), "[a-z].md"));
+    assert!(!names_literally(&s(&["[!x].md"]), "y.md"));
+    assert!(!names_literally(&s(&["[a].md"]), "a.md"));
+    assert!(!names_literally(&s(&["[*]*.md"]), "*x.md"));
+    assert!(
+        !names_literally(&s(&["[*]*.md"]), "**.md"),
+        "a bare * after a class"
+    );
+    assert!(
+        !names_literally(&s(&["a?[?].md"]), "a??.md"),
+        "a bare ? before a class"
+    );
+    assert!(names_literally(&s(&["[[]x"]), "[x"));
+    assert!(
+        !names_literally(&s(&["[[x"]), "[x"),
+        "an unterminated class"
+    );
+    assert!(!names_literally(&s(&["x["]), "x["), "an unterminated class");
+    assert!(!names_literally(&s(&["x[*"]), "x*"));
+}
+
 #[test]
 fn builtin_protected_matches_nested_instruction_files() {
     let matcher = OwnsMatcher::new(&s(&["**/AGENTS.md"])).unwrap();
@@ -210,5 +254,82 @@ fn non_ascii_paths_are_protected() {
         ("é", false),
     ] {
         assert_eq!(may_cover_protected(entry, "AGENTS.md"), covers, "{entry}");
+    }
+}
+
+/// Milestone 9.1 decision 10: a changed path's module is the one `modules_spanned`
+/// gives it as a one-entry `owns` (`.` is no module), for every path of the
+/// `modules_spanned` fixtures above and a few more shapes.
+#[test]
+fn path_module_agrees_with_glob_module() {
+    let fixtures = [
+        s(&["crates/*"]),
+        s(&["crates/*", "tools/cli"]),
+        s(&["mods/*", "crates/*/sub"]),
+        s(&[]),
+    ];
+    let paths = [
+        "crates/proto/src/a.rs",
+        "crates/proto/Cargo.toml",
+        "crates/tui/src/lib.rs",
+        "crates/tui",
+        "crates",
+        "docs/x.md",
+        "Cargo.lock",
+        "tools/cli/main.rs",
+        "mods/a/test.sh",
+        "crates/x/sub/y.rs",
+    ];
+    for modules in &fixtures {
+        for path in paths {
+            let expected = match modules_spanned(&s(&[path]), modules) {
+                ModuleSpan::One(name) if name == "." => None,
+                ModuleSpan::One(name) => Some(name),
+                ModuleSpan::Many => None,
+            };
+            assert_eq!(
+                path_module(path, modules),
+                expected,
+                "{path} in {modules:?}"
+            );
+        }
+    }
+    let modules = s(&["crates/*"]);
+    assert_eq!(
+        path_module("crates/proto/src/a.rs", &modules).as_deref(),
+        Some("crates/proto")
+    );
+    assert_eq!(path_module("docs/x.md", &modules), None);
+    assert_eq!(path_module("crates/proto/src/a.rs", &[]), None);
+}
+
+/// Ruling C-27 (M-3): a path escaped as a glob names that path and no other.
+#[test]
+fn an_escaped_path_names_only_itself() {
+    for (path, escaped, others) in [
+        (
+            "src/[id].rs",
+            "src/[[]id[]].rs",
+            &["src/i.rs", "src/d.rs"][..],
+        ),
+        (
+            "a*b.txt",
+            "a[*]b.txt",
+            &["aXb.txt", "ab.txt", "a/b.txt"][..],
+        ),
+        (
+            "q?{x,y}.md",
+            "q[?][{]x,y[}].md",
+            &["qa{x,y}.md", "q?x.md"][..],
+        ),
+        ("plain/file.rs", "plain/file.rs", &["plain/other.rs"][..]),
+    ] {
+        assert_eq!(escape_path(path), escaped);
+        validate_glob(escaped).unwrap();
+        let owns = OwnsMatcher::new(&[escaped.to_string()]).unwrap();
+        assert!(owns.matches(path), "{escaped} does not match {path}");
+        for other in others {
+            assert!(!owns.matches(other), "{escaped} matches {other}");
+        }
     }
 }

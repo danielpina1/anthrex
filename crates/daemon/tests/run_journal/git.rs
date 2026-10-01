@@ -97,6 +97,9 @@ impl World {
             check: None,
             timeout_secs: 60,
             env: Vec::new(),
+            guarded: Vec::new(),
+            also_integration: false,
+            tier: None,
         }
     }
 
@@ -223,7 +226,8 @@ fn reconcile_merge_candidate_already_advanced() {
         vec![(
             7,
             Reconciled::Replay(OpResult::Merged {
-                commit: candidate.clone()
+                commit: candidate.clone(),
+                tier: None,
             })
         )]
     );

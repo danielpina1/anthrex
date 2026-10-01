@@ -18,3 +18,5 @@ mod tests;
 mod tests_machine;
 #[cfg(test)]
 mod tests_planner;
+#[cfg(test)]
+mod tests_tiers;

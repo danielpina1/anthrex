@@ -146,6 +146,7 @@ pub fn inspect(row: &Row<'_>, app: &App) -> Inspection {
         RowKind::Planner { run, planner } => run::planner_inspection(run, planner, app),
         RowKind::Scout { run, scout, window } => run::scout_inspection(run, scout, *window, app),
         RowKind::Task { run, task } => run_task::task_inspection(run, task, app),
+        RowKind::Stage { run, stage } => run_stage::stage_inspection(run, stage, app),
         RowKind::AgentRound { run, task, round } => {
             run_round::round_inspection(run, task, round, app)
         }
@@ -364,6 +365,7 @@ mod run;
 pub(crate) mod run_format;
 mod run_orch;
 mod run_round;
+mod run_stage;
 mod run_task;
 mod run_task_sections;
 
@@ -407,6 +409,9 @@ mod run_round_tests;
 
 #[cfg(test)]
 mod run_orch_tests;
+
+#[cfg(test)]
+mod run_stage_tests;
 
 #[cfg(test)]
 mod run_task_sections_tests;

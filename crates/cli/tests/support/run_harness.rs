@@ -123,6 +123,19 @@ impl RunHarness {
         harness
     }
 
+    /// Milestone 9.1: with `extra_toml` (a `[testing]` table, say) written after the
+    /// harness's own tables, and `files` in the base commit.
+    pub fn with_config(orchestrator: &str, extra_toml: &str, files: &[(&str, &str)]) -> Self {
+        let harness = Self::unstarted(orchestrator, &[], true, files);
+        let config = harness.dir.path().join("config.toml");
+        let text = std::fs::read_to_string(&config).unwrap();
+        std::fs::write(&config, format!("{text}\n{extra_toml}\n")).unwrap();
+        if let Err(error) = harness.start_daemon(DAEMON_START_WAIT) {
+            panic!("the daemon did not start: {error}\n{}", harness.log_tail());
+        }
+        harness
+    }
+
     /// A harness whose daemon start waited only `start_wait` (a slow start, simulated),
     /// and what that start came to. The harness owns the daemon either way.
     pub fn try_started(orchestrator: &str, start_wait: Duration) -> (Self, Result<(), String>) {

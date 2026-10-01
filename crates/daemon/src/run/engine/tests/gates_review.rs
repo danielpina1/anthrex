@@ -94,6 +94,7 @@ fn review_round_uses_a_fresh_session_and_worktree() {
                 head_ref: HEAD.into(),
                 base_ref: BASE.into(),
                 path: task_path("t1.review"),
+                base_tree: None,
             }
         );
         assert_eq!(t1.gate_op, Some(op));

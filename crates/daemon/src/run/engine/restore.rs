@@ -37,7 +37,7 @@ use super::{
     Effect, EngineState, OpId, OpKind, OpResult, ReplyId, clock, complete, emit_op, merge, next_op,
     outbox, results::op_done, review,
 };
-use crate::run::contract::{RESUME_REVIEWER, RESUME_WORKER, sha7};
+use crate::run::contract::{RESUME_REVIEWER, RESUME_WORKER};
 use crate::run::model::{FallbackState, PendingOp, Run, StallState};
 use crate::run::orch::RefreshState;
 use crate::run::role_launch::session_uuid_of;
@@ -97,6 +97,8 @@ pub(super) fn restore(
 fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>) {
     // M8a.14: an accept's or discard's reply belonged to the old daemon.
     run.finish_reply = None;
+    // Milestone 9.1 decision 47: a run from before stages has its one.
+    super::stages::ensure_first(run);
     if run.state.is_terminal() {
         // M8b decision 33: an ended run still owes the history lines it had in flight.
         let history: Vec<PendingOp> = run
@@ -190,6 +192,14 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         (OpKind::MergeCandidate { .. }, Some(i)) if run.tasks[i].merge_op == Some(op) => {
             run.tasks[i].merge_op = None;
         }
+        // Milestone 9.1 decisions 50 and 51: a propagate is due again; a sync task's
+        // hand-back is sent again when the run runs.
+        (OpKind::Propagate(spec), _) => super::propagate::lost(run, spec),
+        (OpKind::HandBack { task_head, .. }, Some(i))
+            if super::propagate::sync_due(&run.tasks[i]) =>
+        {
+            super::propagate::hand_back_lost(run, i, task_head.clone());
+        }
         // Milestone 9 decision 42e: a lost refresh is due again at the next boundary.
         (OpKind::HandBack { .. }, Some(i))
             if run.tasks[i].orch.refresh == Some(RefreshState::InFlight(op)) =>
@@ -203,10 +213,23 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
             task.handback_due = task.state == TaskState::MergeQueue;
         }
         // Carry T13: `start_gates` and `dispatch_reviewers` re-issue a gate's op.
-        (OpKind::Proof { .. } | OpKind::Check { .. } | OpKind::PrepareReview { .. }, Some(i))
-            if run.tasks[i].gate_op == Some(op) =>
-        {
+        // Milestone 9.1 decision 29: tier 1 is a check gate's op too.
+        (
+            OpKind::Proof { .. }
+            | OpKind::Check { .. }
+            | OpKind::PrepareReview { .. }
+            | OpKind::Tier(_),
+            Some(i),
+        ) if run.tasks[i].gate_op == Some(op) => {
             run.tasks[i].gate_op = None;
+        }
+        // Milestone 9.1 decision 29: a lost tier-3 job is started again by the next
+        // idle or completion pass.
+        (OpKind::Tier(_), None) if run.full_op == Some(op) => run.full_op = None,
+        // Decision 29 (task M9.1.15): a lost bisect probe is issued again by the next
+        // running pass (`bisect::pass`).
+        (OpKind::TestAt(_), None) => {
+            super::bisect::lost(run, op);
         }
         // M8b decision 18: a dropped decider is queued again under its own id, so the
         // task waiting for it still names it.
@@ -273,10 +296,24 @@ pub(super) fn resume(
     state: &mut EngineState,
     reply: ReplyId,
     run_id: &str,
-    rebaseline: Option<(String, String)>,
+    rebaseline: Option<super::Rebaseline>,
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    // Milestone 9.1 ruling C-18: a resume retries tier 3 after the executor's failures;
+    // a running run whose stage was held needs nothing more. Ruling C-27 (5): a running
+    // run with no held stage is refused below, and a refused resume changes nothing.
+    if let Some(run) = state.runs.get_mut(run_id)
+        && run.state == RunState::Running
+        && super::full::held(run)
+        && super::full::retry(run, now)
+    {
+        let text = format!("run {run_id}: tier 3 retries");
+        return fx.push(Effect::Reply {
+            reply,
+            result: Ok(text),
+        });
+    }
     let paused = state
         .runs
         .get(run_id)
@@ -303,6 +340,7 @@ pub(super) fn resume(
             && halted
             && run.state == RunState::Running
         {
+            super::full::retry(run, now);
             resumed(run, now, fx);
         }
         return;
@@ -312,17 +350,10 @@ pub(super) fn resume(
     };
     let mut text = format!("run {run_id} resumed");
     // `--rebaseline` records the refs the driver read, as for a halted run.
-    if let Some((base, head)) = rebaseline {
-        text.push_str(&format!(
-            " with --rebaseline: base {} at {}, run head {}",
-            run.base_branch,
-            sha7(&base),
-            sha7(&head)
-        ));
-        run.base_sha = base;
-        run.run_head = head;
-        run.base_moved = None;
+    if let Some(read) = rebaseline {
+        text.push_str(&super::stages::rebaseline(run, &read, now, fx));
     }
+    super::full::retry(run, now);
     unpause(run, now, fx);
     fx.push(Effect::Reply {
         reply,

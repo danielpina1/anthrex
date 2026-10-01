@@ -198,7 +198,13 @@ fn merged_task_measures_then_appends_once() {
     let (mut fx, windows) = start_history(PROFILE, &[doc_task("t1", "")]);
     to_queue(&mut fx, "t1", window_of(&windows, "t1"));
     let (op, _) = candidate(&fx, "t1");
-    let effects = fx.done(op, OpResult::Merged { commit: commit(1) });
+    let effects = fx.done(
+        op,
+        OpResult::Merged {
+            commit: commit(1),
+            tier: None,
+        },
+    );
     let (measure, kind) = only_op(&effects, "MeasureDiff");
     assert_eq!(
         kind,

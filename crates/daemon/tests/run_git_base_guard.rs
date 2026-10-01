@@ -62,8 +62,7 @@ fn guard(r: &Run) -> RefCheck {
         &r.repo.root,
         "main",
         &r.base_sha,
-        RUN,
-        &r.run_head,
+        &[(RUN.to_string(), r.run_head.clone())],
         T,
     )
     .unwrap()

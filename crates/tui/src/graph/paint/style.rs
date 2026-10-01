@@ -10,8 +10,8 @@ use crate::app::App;
 use crate::theme;
 use crate::tree::{DisplayRound, NodeKey, Row, RowKind};
 use proto::{
-    AgentRole, PlannerInfo, PlannerState, RunState, ScoutInfo, ScoutState, Status, TaskInfo,
-    TaskState, WindowInfo,
+    AgentRole, FullState, PlannerInfo, PlannerState, RunState, ScoutInfo, ScoutState, StageInfo,
+    Status, TaskInfo, TaskState, WindowInfo,
 };
 use ratatui::style::{Color, Modifier, Style};
 use std::collections::HashSet;
@@ -120,6 +120,10 @@ fn finished(kind: &RowKind<'_>) -> bool {
             planner.ended_at.is_some()
                 || matches!(planner.state, PlannerState::Finished | PlannerState::Failed)
         }
+        // Milestone 9.1: a stage every task of which merged, green on its head.
+        RowKind::Stage { stage, .. } => {
+            stage.merged == stage.tasks && stage.full.state == FullState::Green
+        }
         RowKind::Project { .. }
         | RowKind::Window { .. }
         | RowKind::Subagent { .. }
@@ -150,6 +154,18 @@ pub(crate) fn node_glyph(row: &Row<'_>, app: &App) -> (&'static str, Color) {
             frame,
         ),
         RowKind::AgentRound { task, round, .. } => round_glyph(task, round, app),
+        RowKind::Stage { stage, .. } => stage_glyph(stage, frame),
+    }
+}
+
+/// Milestone 9.1 decision 55: a stage's tier 3, `◌` while its branch is not created.
+fn stage_glyph(stage: &StageInfo, frame: usize) -> (&'static str, Color) {
+    match stage.full.state {
+        _ if stage.head.is_none() => status_pair(Status::Starting, frame),
+        FullState::Green => check(),
+        FullState::Red => CROSS,
+        FullState::Running | FullState::Bisecting => status_pair(Status::Working, frame),
+        FullState::None => status_pair(Status::Idle, frame),
     }
 }
 

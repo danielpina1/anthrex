@@ -304,6 +304,7 @@ fn check_line() {
         on_candidate: false,
         decider_summary: None,
         summary_source: None,
+        tier: None,
     };
     task.last_check = None;
     assert_eq!(project::check_line(&run, &task), "not yet");

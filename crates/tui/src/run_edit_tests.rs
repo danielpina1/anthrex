@@ -250,6 +250,7 @@ fn only_the_reason_changing_sends_only_the_reason() {
             priority: None,
             size: None,
             deps: None,
+            stage: None,
         }
     );
 }

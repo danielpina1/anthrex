@@ -17,6 +17,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 mod glyphs;
+mod stages;
 
 fn app_of((snapshot, windows): (RunsSnapshot, Vec<WindowInfo>)) -> App {
     let mut app = app_with(windows);

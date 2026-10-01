@@ -22,8 +22,8 @@ use super::orch::EditSource;
 use super::plan::PlanError;
 use super::roster::pick_reviewer;
 use super::validate::{
-    EditScope, combined_cycles, implicit_deps, protected_notes, resolve_task_lenient,
-    validate_tasks_with,
+    EditScope, combined_cycles, implicit_deps, protected_notes, reserved_new_id,
+    resolve_task_lenient, split_child_stage, validate_tasks_with,
 };
 
 /// What the engine must do after a batch is applied; the model change itself is already
@@ -90,6 +90,7 @@ pub fn apply_edits(
         edited.limits.max_tasks,
         edited.limits.default_runtime,
     ));
+    errors.extend(super::validate_stages::single_layout_rule(&edited));
     errors.extend(super::orch::rules::apply(&mut edited, run, source));
     // Decision 41's implicit dependencies follow the edited graph; the combined check
     // is the same backstop `build_run` runs (M8a.6 fix round 1, F2).
@@ -221,6 +222,8 @@ impl Batch {
     }
 
     pub(super) fn add_task(&mut self, spec: PlanTask) {
+        // Milestone 9.1 decision 39: a new task may not take a `fix<n>` id.
+        self.errors.extend(reserved_new_id(&spec.id));
         let task = self.resolve(spec);
         self.add_deps_of(&task);
         self.run.tasks.push(task);
@@ -309,7 +312,13 @@ impl Batch {
             ));
             return;
         }
-        let children: Vec<Task> = into.iter().map(|s| self.resolve(s.clone())).collect();
+        let parent = self.run.tasks[i].spec.stage;
+        let mut specs = into.to_vec();
+        for s in &mut specs {
+            self.errors.extend(reserved_new_id(&s.id));
+            self.errors.extend(split_child_stage(parent, s));
+        }
+        let children: Vec<Task> = specs.into_iter().map(|s| self.resolve(s)).collect();
         for child in &children {
             self.add_deps_of(child);
         }
@@ -343,15 +352,15 @@ impl Batch {
     }
 
     /// `amend_task`: brief, acceptance and priority on any unfinished task; route, test
-    /// mode, its reason and size only on a task that has not started (one refusal per
-    /// such field). An amend naming no field is refused. When route, test mode, its
-    /// reason or size changed, the task's derived fields are re-resolved from the spec
-    /// (decisions 8–10), but never below the engine's own changes (fix round 1, F1): a
-    /// size the engine raised (rung 3) is a floor, even for an explicit smaller `size`;
-    /// an escalated route (rung 2) stays unless the amend names `route`; the engine's
-    /// notes stay. Otherwise only the spec changes. Either way the spec is validated as a
-    /// plan task's is. A new brief or new criteria reach a live worker as
-    /// `amend_message`.
+    /// mode, its reason, size, deps and stage only on a task that has not started (one
+    /// refusal per such field; nothing is applied). An amend naming no field is refused.
+    /// When route, test mode, its reason or size changed, the task's derived fields are
+    /// re-resolved from the spec (decisions 8–10), but never below the engine's own
+    /// changes (fix round 1, F1): a size the engine raised (rung 3) is a floor, even for
+    /// an explicit smaller `size`; an escalated route (rung 2) stays unless the amend
+    /// names `route`; the engine's notes stay. Otherwise only the spec changes. Either
+    /// way the spec is validated as a plan task's is. A new brief or new criteria reach
+    /// a live worker as `amend_message`.
     fn amend_task(&mut self, edit: &PlanEdit) {
         let PlanEdit::AmendTask {
             task_id,
@@ -363,6 +372,7 @@ impl Batch {
             priority,
             size,
             deps,
+            stage,
         } = edit
         else {
             return;
@@ -375,7 +385,8 @@ impl Batch {
             && test_mode_reason.is_none()
             && priority.is_none()
             && size.is_none()
-            && deps.is_none();
+            && deps.is_none()
+            && stage.is_none();
         if nothing {
             self.errors.push(PlanError::new(
                 Some(task_id),
@@ -395,6 +406,7 @@ impl Batch {
             ("test_mode_reason", test_mode_reason.is_some()),
             ("size", size.is_some()),
             ("deps", deps.is_some()),
+            ("stage", stage.is_some()),
         ];
         let reresolve = restricted[..4].iter().any(|(_, set)| *set);
         if restricted.iter().any(|(_, set)| *set) && !not_started(&self.run.tasks[i]) {
@@ -405,6 +417,13 @@ impl Batch {
                 );
             }
             return;
+        }
+        // Ruling C-14 (d): a blocked task with a worktree has started too.
+        if stage.is_some() && self.run.tasks[i].start_commit.is_some() {
+            let text = format!("task {task_id} has started: its stage cannot change");
+            return self
+                .errors
+                .push(PlanError::new(Some(task_id), "", "13", text));
         }
 
         let mut spec = self.run.tasks[i].spec.clone();
@@ -436,6 +455,10 @@ impl Batch {
         if let Some(v) = size {
             spec.size = *v;
             changed.push("size");
+        }
+        if let Some(v) = stage {
+            spec.stage = *v;
+            changed.push("stage");
         }
 
         if !reresolve {

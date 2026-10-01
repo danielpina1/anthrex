@@ -277,6 +277,19 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "stage": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 32
+                    },
+                    "atomic": {
+                      "type": "boolean"
+                    },
+                    "atomic_reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
                     }
                   },
                   "required": [
@@ -437,6 +450,19 @@
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 200
+                      },
+                      "stage": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 32
+                      },
+                      "atomic": {
+                        "type": "boolean"
+                      },
+                      "atomic_reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
                       }
                     },
                     "required": [
@@ -567,6 +593,11 @@
                     "change",
                     "stop_and_wait"
                   ]
+                },
+                "stage": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 32
                 }
               },
               "required": [
@@ -819,6 +850,19 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "stage": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 32
+                    },
+                    "atomic": {
+                      "type": "boolean"
+                    },
+                    "atomic_reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
                     }
                   },
                   "required": [
@@ -979,6 +1023,19 @@
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 200
+                      },
+                      "stage": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 32
+                      },
+                      "atomic": {
+                        "type": "boolean"
+                      },
+                      "atomic_reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
                       }
                     },
                     "required": [
@@ -1109,6 +1166,11 @@
                     "change",
                     "stop_and_wait"
                   ]
+                },
+                "stage": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 32
                 }
               },
               "required": [

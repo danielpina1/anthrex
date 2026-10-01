@@ -31,6 +31,8 @@ pub fn render(run: &Run, now: u64) -> String {
         out.push('\n');
         render_task(task, now, &mut out);
     }
+    // Milestone 9.1 decision 59.
+    super::report_tiers::section(run, &mut out);
     // Milestone 9 decisions 35 and 36.
     super::report_orch::sections(run, &mut out);
     out.push_str("\n## Log\n\n");
@@ -53,6 +55,14 @@ fn header(run: &Run, out: &mut String) {
     }
     out.push_str(&format!("Goal: {}\n\n", plain_text_line(&run.goal)));
     out.push_str(&format!("State: {}\n", state_line(run)));
+    // Controller ruling C-21 (1d): merged work the delivered branch lacks.
+    let top = crate::run::engine::stages::highest(run);
+    for (k, ids) in crate::run::engine::undelivered(run) {
+        let ids = ids.join(", ");
+        let line =
+            format!("Not delivered: stage {k}'s merged work never reached stage {top}: {ids}\n");
+        out.push_str(&line);
+    }
     out.push_str(&format!("Approved by: {}\n", approved_by_line(run)));
     below_frontier(run, out);
     not_metered(run, out);
@@ -304,3 +314,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 #[path = "report_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "report_tests_tiers.rs"]
+mod tests_tiers;

@@ -14,6 +14,15 @@ use proto::{Budget, DeciderSource, Finding, Severity, Size, Spend, TestMode};
 use super::messages::summary;
 use super::model::{CheckRecord, ProofRecord, ReviewLevel, ReviewRecord, Run, Task};
 
+// Milestone 9.1's tier texts (decision 13 and the tier line of a bounce).
+#[path = "contract_tiers.rs"]
+mod tiers;
+pub(crate) use tiers::{
+    BisectFix, bisect_fix_acceptance, bisect_fix_brief, bisect_fix_title,
+    deleted_test_file_message, shown, signal_unjustified, signals_block, signals_unanswered,
+    sync_fix_acceptance, sync_fix_brief, sync_fix_title,
+};
+
 /// The worker's system prompt (decision 30, exact). It never varies, so the cached
 /// prefix is stable (spec §14.2).
 pub const WORKER_CONTRACT: &str = "You are a worker in an anthrex orchestration run.
@@ -91,7 +100,7 @@ pub fn worker_extract_at(run: &Run, task: &Task) -> usize {
 /// [`worker_prompt`] up to its acceptance criteria.
 fn worker_head(run: &Run, task: &Task) -> String {
     let spec = &task.spec;
-    let start = task.start_commit.as_deref().unwrap_or(&run.run_head);
+    let start = task.start_commit.as_deref().unwrap_or(run.head_for(task));
     let mut lines = vec![
         format!("[anthrex] Task {}: {}", spec.id, spec.title),
         format!("Run goal: {}", run.goal),
@@ -116,6 +125,7 @@ fn worker_head(run: &Run, task: &Task) -> String {
     if let Some(check) = &run.profile.check {
         lines.push(format!("Check command: {check}"));
     }
+    lines.extend(tiers::tier0_lines(run, task));
     lines.push(String::new());
     lines.push("This task owns:".to_string());
     lines.extend(spec.owns.iter().map(|glob| format!("- {glob}")));
@@ -137,7 +147,7 @@ pub fn handover_prompt(
     extract: &str,
     notes: &str,
 ) -> String {
-    let start = task.start_commit.as_deref().unwrap_or(&run.run_head);
+    let start = task.start_commit.as_deref().unwrap_or(run.head_for(task));
     let mut out = worker_prompt(run, task, extract, notes);
     out.push_str(&format!(
         "\n\nThis is session {} of this task.\nWhy a new session: {reason}\n",
@@ -187,7 +197,10 @@ pub fn reviewer_prompt(
         format!("Head: {}", sha7(head)),
         format!("Test mode: {}", mode_label(task.test_mode)),
     ];
-    let _ = run;
+    // Decision 54 (ruling C-27, I-1): never for a `Single` untiered run (decision 6).
+    lines.extend(tiers::interface_review_line(run, task));
+    // Controller ruling C-21 (6).
+    lines.extend(tiers::sync_review_line(task));
     if task.test_mode == TestMode::Tdd {
         lines.push("Look first for tests that were weakened or made trivial to pass.".into());
     }
@@ -211,6 +224,11 @@ pub fn reviewer_prompt(
     if let Some(check) = task.checks.last() {
         lines.push("Last check (40 lines):".into());
         lines.push(decider_summary(check).map_or_else(|| summary(&check.tail), str::to_string));
+    }
+    // Milestone 9.1 decision 42: the accepted claim's test-weakening signals.
+    let signals = crate::run::engine::weakening::reviewer_block(task);
+    if !signals.is_empty() {
+        lines.push(signals);
     }
     let earlier: Vec<String> = task
         .reviews
@@ -398,8 +416,9 @@ fn ended_how(code: Option<i32>, timed_out: bool, secs: u64) -> String {
 /// how it ended, and the last `CHECK_SUMMARY_LINES` lines of its output.
 pub fn check_failed_message(command: &str, c: &CheckRecord) -> String {
     format!(
-        "[anthrex] The check failed ({}): {command}\n{}\n{FIX_IT}",
+        "[anthrex] The check failed ({}): {command}{}\n{}\n{FIX_IT}",
         ended_how(c.code, c.timed_out, c.secs),
+        tiers::tier_line(c),
         check_output(c)
     )
 }
@@ -425,8 +444,9 @@ fn check_output(c: &CheckRecord) -> String {
 /// lines. M8a.14.
 pub fn candidate_red_message(command: &str, c: &CheckRecord) -> String {
     format!(
-        "[anthrex] Your work merged cleanly into the run branch, but the check failed on the merged result ({}): {command}\n{}\nFix it in your worktree, commit, then call task_done again.",
+        "[anthrex] Your work merged cleanly into the run branch, but the check failed on the merged result ({}): {command}{}\n{}\nFix it in your worktree, commit, then call task_done again.",
         ended_how(c.code, c.timed_out, c.secs),
+        tiers::tier_line(c),
         check_output(c)
     )
 }

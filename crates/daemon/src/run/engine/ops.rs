@@ -71,8 +71,9 @@ pub enum OpKind {
         /// return it as `DoneChecked.resolution_only`. An error from it (a timeout, a
         /// `merge-tree` failure) counts as `Some(false)`, so the gates run; it never
         /// fails the `DoneChecked` (ruling T14-R3).
+        /// Boxed, with `sync`: keeps the op under clippy's `large_enum_variant`.
         #[serde(default)]
-        resolution: Option<ResolutionAt>,
+        resolution: Option<Box<ResolutionAt>>,
         /// Milestone 9 decision 42e (M9.13a review, item 3): the refresh merge commits
         /// the count leaves out, each once (`worker_messages::not_own`).
         #[serde(default)]
@@ -81,6 +82,19 @@ pub enum OpKind {
         /// count leaves out all they reach (M9.13a re-review).
         #[serde(default)]
         not_run: Vec<String>,
+        /// Milestone 9.1 decision 40: set for a tiered profile with `test_paths` or
+        /// `skip_markers`. **Executor contract:** after `verify_done`, read
+        /// `git::done_signals` over `<run_head>...<head>` and return them as
+        /// `DoneChecked.{signals, signals_more}`. `None`: no `-U0` diff is read.
+        #[serde(default)]
+        signals: Option<crate::run::tiers::SignalsSpec>,
+        /// Decision 51: a sync task's conflicted tree. **Executor contract:** the spill
+        /// diff is `<spill_base> <head>`, not `<run_head>...<head>`.
+        #[serde(default)]
+        spill_base: Option<String>,
+        /// Ruling C-21 (3, 5): a sync task's merge, checked on its claim.
+        #[serde(default)]
+        sync: Option<Box<crate::run::model::SyncCheck>>,
     },
     /// `run_head`: M8a.8's interface change (the task's own commits exclude a merged
     /// run head). `not_own` as `VerifyDone`'s.
@@ -141,6 +155,9 @@ pub enum OpKind {
         head_ref: String,
         base_ref: String,
         path: PathBuf,
+        /// Ruling C-21 (6): a sync task's conflicted tree, the diff's base.
+        #[serde(default)]
+        base_tree: Option<String>,
     },
     /// Decision 36, one attempt of the merge queue (M8a.14): the ref guard (decision
     /// 21), `merge_tree(expected_run_head, task_head)`, then on a clean tree
@@ -167,6 +184,18 @@ pub enum OpKind {
         check: Option<String>,
         timeout_secs: u64,
         env: Vec<(String, String)>,
+        /// Milestone 9.1 decision 53: every `(branch, expected head)` the guard reads;
+        /// empty (an intent from before it) is `[(run_branch, expected_run_head)]`.
+        #[serde(default)]
+        guarded: Vec<(String, String)>,
+        /// Decision 53: `run_branch` is a `Multi` run's highest stage, so `integration`
+        /// moves with it, in one `refs_tx::cas` transaction.
+        #[serde(default)]
+        also_integration: bool,
+        /// Milestone 9.1 decision 16: a tiered profile's tier-2 job, run on the
+        /// candidate where M8a runs `check` (then `None`); `None` for an untiered one.
+        #[serde(default)]
+        tier: Option<Box<crate::run::tiers::TierSpec>>,
     },
     /// Decision 36 step 6 (the merge queue's, M8a.14) and M8a.6 ruling N5's (M8a.11):
     /// `git::hand_back(worktree, run_head)`, a write through `GitQueue::write`. The
@@ -208,6 +237,9 @@ pub enum OpKind {
         expected_base: String,
         run_branch: String,
         expected_run_head: String,
+        /// Milestone 9.1 decision 53: as `MergeCandidate.guarded`.
+        #[serde(default)]
+        guarded: Vec<(String, String)>,
     },
     /// Decision 20's accept (M8a.14 emits it for `run accept` on a complete run):
     /// `git::accept`, then `salvage` and `remove_worktree` for every one of
@@ -303,6 +335,23 @@ pub enum OpKind {
     StartPlanner {
         spec: Box<crate::scout::planner::PlannerSpec>,
     },
+    /// Milestone 9.1 decisions 14 and 18: one tier job (`driver/tier.rs::run_tier`),
+    /// a read, reconciled `NotStarted`. The result is `Tier`, `SetupFailed` or `Failed`.
+    Tier(Box<crate::run::tiers::TierSpec>),
+    /// Decision 36: one bisect probe (`driver/tier.rs::run_test_at`), a read,
+    /// reconciled `NotStarted`. The result is `TestAt`, `SetupFailed` or `Failed`.
+    TestAt(Box<crate::run::tiers::TestAtSpec>),
+    /// Decision 48: `refs_tx::create_branch(root, branch, from)`, create-only, a write
+    /// through `GitQueue::write`. The result is `StageCreated`, `RefMoved` (the branch
+    /// exists elsewhere) or `Failed`.
+    CreateStageBranch {
+        root: PathBuf,
+        branch: String,
+        from: String,
+    },
+    /// Decision 50: a stage's head merged into the stage above, executed as a merge
+    /// candidate (`driver/stage_ops.rs`). Results as `MergeCandidate`'s.
+    Propagate(Box<crate::run::model::PropagateSpec>),
 }
 
 impl OpKind {
@@ -335,6 +384,10 @@ impl OpKind {
             OpKind::StartScout { .. } => "StartScout",
             OpKind::ResolveTarget { .. } => "ResolveTarget",
             OpKind::StartPlanner { .. } => "StartPlanner",
+            OpKind::Tier(_) => "Tier",
+            OpKind::TestAt(_) => "TestAt",
+            OpKind::CreateStageBranch { .. } => "CreateStageBranch",
+            OpKind::Propagate(_) => "Propagate",
         }
     }
 }
@@ -404,6 +457,13 @@ pub enum OpResult {
         /// resolution; `None` otherwise.
         #[serde(default)]
         resolution_only: Option<bool>,
+        /// Milestone 9.1 decision 40: the claim's test-weakening signals; `None` when
+        /// none were asked for or found.
+        #[serde(default)]
+        signals: Option<Box<crate::run::tiers::ClaimSignals>>,
+        /// Ruling C-21 (5): a sync claim's head contains its `onto`; `None` otherwise.
+        #[serde(default)]
+        sync_kept: Option<bool>,
     },
     Commits {
         count: u32,
@@ -434,15 +494,27 @@ pub enum OpResult {
     },
     Merged {
         commit: String,
+        /// Milestone 9.1 decision 16: the tier-2 job that passed (a tiered profile).
+        #[serde(default)]
+        tier: Option<Box<crate::run::tiers::TierOutcome>>,
     },
+    /// Controller ruling C-22 (2): a `Propagate` whose lower head the upper stage
+    /// already holds. Nothing was written.
+    AlreadyHeld,
     Conflict {
         files: Vec<String>,
+        /// Milestone 9.1 decision 51: the conflicted tree `merge-tree` wrote.
+        #[serde(default)]
+        tree: Option<String>,
     },
     CandidateRed {
         code: Option<i32>,
         timed_out: bool,
         tail: String,
         secs: u64,
+        /// Milestone 9.1 decision 16: the red tier-2 job (a tiered profile).
+        #[serde(default)]
+        tier: Option<Box<crate::run::tiers::TierOutcome>>,
     },
     RefMoved {
         reason: String,
@@ -508,4 +580,17 @@ pub enum OpResult {
     PlannerStarted {
         window_id: u32,
     },
+    /// Milestone 9.1: a tier job's outcome.
+    Tier(Box<crate::run::tiers::TierOutcome>),
+    /// Decision 36: a probe is `red` when a command failed twice; `failing` are those
+    /// commands, `tail` the last red run's output, `show` the probed merge's
+    /// `show --stat` (task M9.1.15).
+    TestAt {
+        red: bool,
+        failing: Vec<String>,
+        tail: String,
+        show: Option<String>,
+    },
+    /// Decision 48: `CreateStageBranch` made the branch at its `from`.
+    StageCreated,
 }

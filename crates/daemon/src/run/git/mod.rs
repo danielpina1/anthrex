@@ -27,11 +27,14 @@ mod import;
 mod merge;
 mod merge_state;
 mod queue;
+pub mod refs_tx;
 mod resolution;
 mod salvage;
 mod sandbox;
 mod settings;
+mod signals;
 mod summary;
+mod tiers;
 mod tmp;
 mod worktrees;
 
@@ -40,7 +43,7 @@ pub(crate) use checkout::restore_owner_access;
 pub use checkout::{Repo, checkout_repo_dir, default_repo_dir};
 pub use done::{
     DoneChecked, RefreshedIn, count_commits, count_commits_excluding, diff_so_far, verify_done,
-    verify_done_excluding,
+    verify_done_excluding, verify_done_spilling,
 };
 pub(crate) use handback::merged_log;
 pub use handback::{
@@ -55,7 +58,12 @@ pub use merge::{
 pub use merge_state::abort_merge;
 pub use salvage::{delete_branches, remove_checkout, remove_worktree, salvage};
 pub use settings::{codex_config_tree, project_settings};
+pub use signals::{
+    DiffLimits, NoAttributes, SIGNALS_DIFF_BYTES, Zero, cfg_test_files, done_signals,
+    done_signals_from, done_signals_with, signal_paths, unified_zero,
+};
 pub use summary::{resolve_target, task_summary, task_summary_excluding};
+pub use tiers::{changed_paths, checkout_tree, show_stat, sync_read, tree_of, tree_patch};
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
 pub(crate) use handback::{finish_clean, interrupted_conflict};
@@ -230,17 +238,28 @@ impl<'a> Git<'a> {
         args: &[&OsStr],
         input: &[u8],
     ) -> Result<String, String> {
+        let output = self.write_input_raw(dir, args, input)?;
+        succeeded(args, output)
+    }
+
+    /// [`Git::write_input`] whose failure the caller interprets (milestone 9.1's
+    /// `update-ref --stdin` transaction, `refs_tx::cas`).
+    pub(crate) fn write_input_raw(
+        &self,
+        dir: &Path,
+        args: &[&OsStr],
+        input: &[u8],
+    ) -> Result<GitOutput, String> {
         let mut full: Vec<&OsStr> = WRITE_FLAGS.iter().map(|flag| os(flag)).collect();
         full.extend_from_slice(args);
-        let output = run_git_with_input(
+        run_git_with_input(
             self.program,
             dir,
             &full,
             Instant::now() + self.timeout,
             input,
         )
-        .map_err(|err| err.to_string())?;
-        succeeded(args, output)
+        .map_err(|err| err.to_string())
     }
 
     /// A read fed `input` on stdin, that must succeed; its stdout (`cat-file
@@ -529,7 +548,8 @@ pub(crate) fn diff(g: Git<'_>, dir: &Path, range: &str) -> Result<String, String
     let mut args = vec![os("diff")];
     args.extend(DIFF_FLAGS.map(os));
     args.extend(PATCH_PREFIXES.map(os));
-    args.push(os(range));
+    // Controller ruling C-21 (6): `<tree> <head>` is two words.
+    args.extend(range.split_whitespace().map(os));
     let (output, kept) = g.head_tail(dir, &args)?;
     if !output.success {
         return Err(failure(&args, &output));

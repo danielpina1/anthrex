@@ -126,6 +126,9 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         integration: super::snapshot_orch::integration(run),
         digest_revision: run.orch.digest_rev,
         research_report: super::snapshot_orch::research_report(run),
+        // Milestone 9.1 decision 55.
+        stages: super::snapshot_stages::stage_infos(run),
+        test_slots: run.test_slots,
     }
 }
 
@@ -205,9 +208,14 @@ pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
             moved.commits
         ));
     }
-    if run.final_check_failed {
+    // Milestone 9.1 decision 19: a tiered run's red tier 3 names its stage instead.
+    let full = crate::run::engine::full_attention(run);
+    if run.final_check_failed && full.is_empty() {
         lines.push("final check failed on the run head".to_string());
     }
+    lines.extend(full);
+    lines.extend(crate::run::engine::propagate_attention(run));
+    lines.extend(crate::run::engine::undelivered_lines(run));
     lines.extend(run.stale_profile_line());
     lines.extend(crate::run::engine::integration_attention(run));
     // Milestone 9 decision 13: the orchestrator could not start, or its window exited.
@@ -321,6 +329,7 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
                 .clone()
                 .filter(|_| c.summary_source == Some(proto::DeciderSource::Decider)),
             summary_source: c.summary_source,
+            tier: c.tier.as_ref().map(tier_info),
         }),
         last_proof: t.proofs.last().map(|p| ProofInfo {
             at: p.at,
@@ -379,8 +388,35 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         last_message_kind: t.orch.messages.last().map(|m| m.kind),
         last_message_line: message_line(t),
         task_notes: task_notes(t),
+        // Milestone 9.1 decision 55: the last tier record of any check.
+        stage: t.spec.stage,
+        origin: t.origin,
+        fixes: t.fixes.as_ref().map(super::engine::fix_text),
+        tier: t
+            .checks
+            .iter()
+            .rev()
+            .find_map(|c| c.tier.as_ref())
+            .map(tier_info),
+        weakening: super::engine::weakening::signal_infos(t),
         // Milestone 9.0.5 decision 2: the live round's only.
         activity: super::snapshot_detail::live_activity(t),
+        atomic: t.spec.atomic,
+        atomic_reason: t.spec.atomic_reason.clone(),
+        interface_change: t.spec.interface_change,
+    }
+}
+
+/// A tier record as a client sees it (decision 55).
+fn tier_info(t: &super::model::TierRecord) -> proto::TierInfo {
+    proto::TierInfo {
+        tier: t.tier,
+        affected: t.affected.clone(),
+        steps: t.steps,
+        cached: t.cached,
+        ok: t.ok,
+        secs: t.secs,
+        flaky: t.flaky.clone(),
     }
 }
 
@@ -392,3 +428,7 @@ const SNAPSHOT_BOUND: usize = 50 * 20 * 1280;
 #[cfg(test)]
 #[path = "snapshot_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "snapshot_tests_stages.rs"]
+mod tests_stages;

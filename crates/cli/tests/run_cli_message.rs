@@ -97,12 +97,15 @@ fn raw_refusal(h: &RunHarness, request: RunRequest) -> String {
     }
 }
 
-/// Decision 42h and D-3: a task-id recipient gets the message as its next turn, and a
-/// `stage:<n>` recipient parses and is refused by the daemon until milestone 9.1.
+/// Decision 42h and D-3: a task-id recipient gets the message as its next turn; since
+/// milestone 9.1 (decision 56), a `stage:<n>` recipient reaches every unfinished task
+/// of the stage by its state: the working `t1` as its next turn, the pending `t2`
+/// recorded for its first prompt.
 #[test]
-fn run_message_reaches_the_selected_task_and_refuses_a_stage() {
+fn run_message_reaches_the_selected_task_and_a_stage() {
     let h = RunHarness::new("");
     let text = "[anthrex] Message from the user (info): look at the README first";
+    let staged = "[anthrex] Message from the user (info): the schema moved";
     let id = working(&h, &[], &[json!({"read_message": {"expect": text}})]);
     let out = run(
         &h,
@@ -116,34 +119,41 @@ fn run_message_reaches_the_selected_task_and_refuses_a_stage() {
         t(&info, "t1").last_message_line.as_deref(),
         Some("look at the README first")
     );
-    // Delivered as the worker's next turn, once its current one ends.
-    go(&h);
-    until("the worker read the message", RUN_WAIT, || {
-        h.io_lines("worker-t1-1", "stdin")
-            .iter()
-            .any(|l| l.contains(text))
-            .then_some(())
-    });
 
-    let stage = raw_refusal(
+    let out = run(&h, &["message", &id, "stage:1", "the", "schema", "moved"]);
+    ok(&out);
+    assert_eq!(out.stdout, "applied 1 edit; message for t1, t2\n");
+    let info = h.run(&id).unwrap();
+    assert_eq!(t(&info, "t1").message_count, 2);
+    assert_eq!(t(&info, "t2").message_count, 1);
+    assert_eq!(
+        t(&info, "t2").last_message_line.as_deref(),
+        Some("the schema moved")
+    );
+    // A stage with no task is refused by the daemon, as it says.
+    let none = raw_refusal(
         &h,
         RunRequest::Edit {
             run_id: id.clone(),
             edits: vec![
                 serde_json::from_value::<PlanEdit>(json!({
-                    "op": "message", "to": "stage:1", "text": "hi", "kind": "info"
+                    "op": "message", "to": "stage:2", "text": "hi", "kind": "info"
                 }))
                 .unwrap(),
             ],
             submit: false,
         },
     );
-    assert!(
-        stage.contains("stage recipients arrive with milestone 9.1"),
-        "{stage}"
-    );
-    refused_with(&run(&h, &["message", &id, "stage:1", "hi"]), &stage);
-    assert_eq!(t(&h.run(&id).unwrap(), "t1").message_count, 1);
+    assert!(none.contains("stage 2 has no task"), "{none}");
+    refused_with(&run(&h, &["message", &id, "stage:2", "hi"]), &none);
+
+    // Both reach t1's worker once its current turn ends.
+    go(&h);
+    until("the worker read both messages", RUN_WAIT, || {
+        let stdin = h.io_lines("worker-t1-1", "stdin");
+        (stdin.iter().any(|l| l.contains(text)) && stdin.iter().any(|l| l.contains(staged)))
+            .then_some(())
+    });
 }
 
 /// `running` names every task with a live worker, found by state: never the pending

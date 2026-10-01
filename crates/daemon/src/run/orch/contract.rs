@@ -8,15 +8,20 @@
 //! Claude id at its first mention, which is also correct for Codex (the tool-search
 //! fix's form).
 
-use crate::run::messages::one_line;
-use proto::{DeciderSource, MessageKind, RunPath, Scale, Severity, TaskKind, TriageInfo};
+use proto::{DeciderSource, RunPath, Scale, Severity, TaskKind, TriageInfo};
 
-use super::{EditSource, EpicRecord, TaskMessage};
+use super::EpicRecord;
 use crate::run::contract::{
     REVIEW_DIFF_MAX, clamp_diff, clamp_with, finding_line, sha7, size_label,
 };
 use crate::run::edits::state_label;
 use crate::run::model::{Run, Task};
+
+// The texts a worker receives: messages, notes and refreshes (split out to keep this
+// file under the 600-line rule); re-exported, so every `contract::` path stays.
+#[path = "contract_messages.rs"]
+mod messages;
+pub use messages::*;
 
 pub use super::extract::{
     EXTRACT_CUT_MARKER, EXTRACT_MAX_BYTES, EXTRACT_SUMMARY_CHARS, readable_reports, scout_extract,
@@ -43,7 +48,7 @@ How a run goes
 Sizing
 10. Every task is S or M. S: one file, no interface change, a mechanical check exists, about 20 changed lines. M: one to three files inside one module, a clear spec, a check exists, about 100 changed lines. Anything larger is L, and L is never executed: split it.
 11. Size from evidence, never from time. Name the scout reports a task's size rests on in its scout_refs. Never give minutes, hours or budgets; the engine sets budgets from the size.
-12. Split interfaces first: an interface or hub change is its own task, first, and every task that uses it depends on it. Split one level only; a piece that is still L goes back to whoever planned it, never deeper.
+12. Split interfaces first, and keep them additive: an interface or hub change is its own task, first, and every task that uses it depends on it. The interface task adds the new form beside the old one, dependent tasks migrate the callers, and a later task, usually in a later stage, removes the old form. Split one level only; a piece that is still L goes back to whoever planned it, never deeper.
 13. A chain of tasks where each depends only on the previous one, and whose combined size is still M, costs a cold start, a check, a review and a merge per link with nothing running beside it. Prefer one task; split only when a step must be reviewed or merged on its own. This is your judgement; the engine does not check it.
 14. Hub files are the profile's hub globs. A task that touches one is a hub task: it runs alone, is tdd, and is always reviewed. Keep hub tasks few and small.
 15. At most planner_task_cap tasks per planner: yours, and each sub-planner's.
@@ -80,7 +85,13 @@ Talking to the user
 32. After each run_status that changed something, write at most two lines here: what happened, and what you are waiting for.
 
 Finishing
-33. When run_status reports the run complete, call edit_plan with a summary for the user: what was done, what was not and why, every task that failed or is blocked, and what the user should check before accepting. The user accepts or discards the run; you never do."#;
+33. When run_status reports the run complete, call edit_plan with a summary for the user: what was done, what was not and why, every task that failed or is blocked, and what the user should check before accepting. The user accepts or discards the run; you never do.
+
+Stages and testing
+34. Most goals need one stage. When the work is large enough to review in parts, group tasks into stages with the stage field. A stage is a unit a person can review and the full test suite can judge on its own: it must leave the code building and its tests passing without any later stage. Aim for 300 to 800 changed lines per stage; on the large path, one epic is usually one stage. A task depends only on tasks in its own or an earlier stage. The stages are fixed when the plan is approved: a plan approved with one stage keeps one.
+35. When an interface change cannot be additive, such as a protocol version bump that must update every client together, make it one task with atomic set to true and a one-line atomic_reason. It is a hub task: it runs alone and is tdd. At most one atomic task per stage.
+36. The engine adds fix tasks itself, with ids fix1, fix2 and so on: when the full test suite of a stage fails and a bisect finds the merge that broke it, and when merging one stage into the next conflicts. They are ordinary tasks. Do not cancel one unless the plan no longer needs it.
+37. When the full test suite of a stage fails and no single merge is to blame, or merging one stage into the next fails its tests, you are woken: plan a fix task in that stage, or tell the user and end the run with a finish edit if it cannot be fixed."#;
 
 /// A sub-planner's system prompt (Interfaces "Contracts (exact)").
 pub const PLANNER_CONTRACT: &str = r#"You are a sub-planner in an anthrex run. The orchestrator gave you one epic: a goal for one area of the repository. You plan that epic as small tasks, submit them once, and stop. You never write code, and nobody can type to you.
@@ -93,7 +104,9 @@ pub const PLANNER_CONTRACT: &str = r#"You are a sub-planner in an anthrex run. T
 7. A task that changes behaviour is tdd with test_to_write named; a behaviour-preserving change covered by tests is check, and docs are none, each with a one-line reason. Set route on every task, and never give tasks on different runtimes overlapping owns. Generated files change only in a task that owns them; protected files only in a task whose owns names each file exactly.
 8. At most planner_task_cap tasks.
 9. Call submit_epic once with every edit. If it returns errors, fix every listed error and call it again. When it is accepted, end your turn: you are done.
-10. Messages that start with [anthrex] come from anthrex. Do what they say."#;
+10. Messages that start with [anthrex] come from anthrex. Do what they say.
+11. Set stage on every task: the stage of the interface tasks your epic depends on, or a later one. A task depends only on tasks in its own or an earlier stage, and each stage must build and pass its tests without the later ones.
+12. Keep interface changes additive: add the new form beside the old one and migrate callers in dependent tasks; never remove an old form that a task outside your epic still uses."#;
 
 /// A sub-planner's turn ended without an accepted `submit_epic` (the machine's nudge).
 pub const PLANNER_NUDGE: &str = "[anthrex] Your turn ended without an accepted epic. Call submit_epic now with every edit, then stop.";
@@ -155,27 +168,6 @@ fn path_label(path: RunPath) -> &'static str {
         RunPath::Plan => "plan",
         RunPath::Large => "large",
     }
-}
-
-fn message_kind_label(kind: MessageKind) -> &'static str {
-    match kind {
-        MessageKind::Info => "info",
-        MessageKind::Change => "change",
-        MessageKind::StopAndWait => "stop_and_wait",
-    }
-}
-
-/// Who a message is from: only the orchestrator and the user send them (decision 42a).
-fn sender(source: &EditSource) -> &'static str {
-    match source {
-        EditSource::User => "user",
-        EditSource::Orchestrator | EditSource::Planner { .. } => "orchestrator",
-    }
-}
-
-/// `hh:mm` of a Unix time, in UTC, as M8a's prompts write times.
-fn hh_mm(at: u64) -> String {
-    format!("{:02}:{:02}", at % 86_400 / 3600, at % 3600 / 60)
 }
 
 /// `code,docs/plan`: the triage's kinds and scale.
@@ -480,108 +472,6 @@ pub fn planned_message(info: &TriageInfo, id: &str, path: RunPath) -> String {
         format!("watch with: anthrex run status {id}"),
     ]
     .join("\n")
-}
-
-/// Decision 42b: a message as the worker receives it; the TUI's §12.6 label keys on the
-/// prefix.
-pub fn message_text(source: &EditSource, kind: MessageKind, text: &str) -> String {
-    format!(
-        "[anthrex] Message from the {} ({}): {text}",
-        sender(source),
-        message_kind_label(kind)
-    )
-}
-
-/// Decision 42d: a task's recorded messages for a fresh session's prompt, oldest first;
-/// empty when there are none.
-pub fn notes_section(messages: &[TaskMessage]) -> String {
-    if messages.is_empty() {
-        return String::new();
-    }
-    let mut sorted: Vec<&TaskMessage> = messages.iter().collect();
-    sorted.sort_by_key(|m| m.at);
-    let mut lines = vec!["Notes from the orchestrator:".to_string()];
-    lines.extend(sorted.iter().map(|m| {
-        format!(
-            "- {} ({}, from {}) {}",
-            hh_mm(m.at),
-            message_kind_label(m.kind),
-            sender(&m.source),
-            m.text
-        )
-    }));
-    lines.join("\n")
-}
-
-/// Decision 42d: the `change` messages a reviewer is shown; empty when there are none.
-pub fn worker_messages_for_review(messages: &[TaskMessage]) -> String {
-    let mut changes: Vec<&TaskMessage> = messages
-        .iter()
-        .filter(|m| m.kind == MessageKind::Change)
-        .collect();
-    if changes.is_empty() {
-        return String::new();
-    }
-    changes.sort_by_key(|m| m.at);
-    let mut lines = vec!["Messages the worker received:".to_string()];
-    lines.extend(
-        changes
-            .iter()
-            .map(|m| format!("- {} (change) {}", hh_mm(m.at), m.text)),
-    );
-    lines.join("\n")
-}
-
-// M9.13a re-review, item 4: in the refresh texts, a commit subject and a file name are
-// the repository's text, not the engine's, so each is one line (`one_line`) and cannot
-// start an `[anthrex]` line of its own.
-
-/// Decision 42e: a clean refresh merged `n` commits; `list` is `(sha, subject)`, newest
-/// first, of which at most 10 are named.
-pub fn refresh_clean(n: usize, list: &[(String, String)]) -> String {
-    format!("{} Rebuild before you continue.", refreshed_line(n, list))
-}
-
-/// M9.13a review, item 7: [`refresh_clean`] for a `paused(message)` task, whose worker
-/// must not continue until a message releases it.
-pub fn refresh_clean_paused(n: usize, list: &[(String, String)]) -> String {
-    format!("{} {REBUILD_AND_WAIT}", refreshed_line(n, list))
-}
-
-/// A paused task's refresh: what to do, and that it still waits.
-const REBUILD_AND_WAIT: &str =
-    "Rebuild, then wait for the next message: you were asked to stop and wait.";
-
-fn refreshed_line(n: usize, list: &[(String, String)]) -> String {
-    let mut named: Vec<String> = list
-        .iter()
-        .take(10)
-        .map(|(sha, subject)| format!("{} {}", sha7(sha), one_line(subject)))
-        .collect();
-    let more = n.saturating_sub(named.len());
-    if more > 0 {
-        named.push(format!("and {more} more"));
-    }
-    format!(
-        "[anthrex] Your branch now includes the latest merged work ({n} commits: {}).",
-        named.join(", ")
-    )
-}
-
-/// Decision 42e: a refresh that conflicted.
-pub fn refresh_conflict(files: &[String]) -> String {
-    format!(
-        "[anthrex] Merging the latest run branch into your worktree conflicted in: {}. Resolve them, commit, and continue.",
-        one_line(&files.join(", "))
-    )
-}
-
-/// M9.13a review, item 7: [`refresh_conflict`] for a `paused(message)` task.
-pub fn refresh_conflict_paused(files: &[String]) -> String {
-    format!(
-        "[anthrex] Merging the latest run branch into your worktree conflicted in: {}. Resolve them and commit, then wait for the next message: you were asked to stop and wait.",
-        one_line(&files.join(", "))
-    )
 }
 
 #[cfg(test)]

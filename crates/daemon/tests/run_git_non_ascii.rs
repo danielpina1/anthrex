@@ -8,7 +8,7 @@ mod support;
 use daemon::run::git::{
     create_run_branch, preflight, prepare_worktree, protected_files, verify_done,
 };
-use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
+use daemon::run::globs::{OwnsMatcher, ProtectedMatcher, escape_path};
 use daemon::run::plan::BUILTIN_PROTECTED;
 use daemon::run::triage::owned_protected;
 use daemon::run::validate::protected_notes;
@@ -96,4 +96,61 @@ fn non_ascii_paths_are_protected_at_the_done_gate_only() {
         named.protected_changed
     );
     assert!(named.outside_owns.is_empty(), "{:?}", named.outside_owns);
+}
+
+/// Ruling C-28 (4): a sync task resolving a conflict in `docs/café[1].md` owns it
+/// escaped (`escape_path`), and a non-ASCII path is protected at the done gate unless
+/// `owns` names it: the escaped entry names it, so the task passes. A protected
+/// `.claude/[x].json` is allowed only when `owns` names it exactly, escaped; a real
+/// class covering it never does.
+#[test]
+fn an_escaped_owns_entry_names_a_protected_path_at_the_done_gate() {
+    let repo = repo();
+    let pre = preflight(real_git(), &repo.root, T).unwrap();
+    let matcher = ProtectedMatcher::new(&builtin()).unwrap();
+    let (_keep, wt) = wt_dir();
+    let task = wt.join("runs/na02/t1");
+    prepare_worktree(
+        real_git(),
+        &repo.root,
+        "anthrex/na02/t1",
+        &pre.base_sha,
+        &task,
+        T,
+    )
+    .unwrap();
+    commit_file(&task, "docs/café[1].md", "café\n", "resolved");
+    commit_file(&task, ".claude/[x].json", "{}\n", "settings");
+    let none = OwnsMatcher::new(&[]).unwrap();
+    let done = |owns: &[String]| {
+        verify_done(
+            real_git(),
+            &task,
+            &pre.base_sha,
+            &pre.base_sha,
+            owns,
+            &none,
+            &matcher,
+            None,
+            T,
+        )
+        .unwrap()
+    };
+    let cafe = escape_path("docs/café[1].md");
+    let both = done(&[cafe.clone(), escape_path(".claude/[x].json")]);
+    assert!(
+        both.protected_changed.is_empty(),
+        "{:?}",
+        both.protected_changed
+    );
+    assert!(both.outside_owns.is_empty(), "{:?}", both.outside_owns);
+
+    let only_docs = done(std::slice::from_ref(&cafe));
+    assert_eq!(
+        only_docs.protected_changed,
+        [".claude/[x].json".to_string()]
+    );
+
+    let class = done(&[cafe, ".claude/[xy].json".to_string()]);
+    assert_eq!(class.protected_changed, [".claude/[x].json".to_string()]);
 }

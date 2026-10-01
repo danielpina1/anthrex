@@ -187,17 +187,28 @@ pub(super) fn claim(
         start: task
             .start_commit
             .clone()
-            .unwrap_or_else(|| run.run_head.clone()),
-        run_head: run.run_head.clone(),
+            .unwrap_or_else(|| run.head_for(task).to_string()),
+        run_head: run.head_for(task).to_string(),
         owns: task.spec.owns.clone(),
         generated: run.profile.generated.clone(),
         protected: run.profile.protected.clone(),
         spill_exempt: spill_exempt(run, i),
         red: args.red.clone(),
         // Set exactly while `handed_back` is (merge::handed_back, ladder::end_hand_back).
-        resolution: task.resolution.clone(),
+        resolution: task.resolution.clone().map(Box::new),
         not_own: super::worker_messages::not_own(task),
         not_run: super::worker_messages::not_run(task),
+        signals: super::weakening::spec(run),
+        // Milestone 9.1 decision 51: a sync task's spill is against its merge.
+        spill_base: task.sync.as_ref().map(|s| s.base_tree.clone()),
+        // Controller ruling C-21 (3, 5).
+        sync: task.sync.as_ref().map(|s| {
+            Box::new(crate::run::model::SyncCheck {
+                onto: s.onto.clone(),
+                to_head: s.to_head.clone(),
+                upper: s.handed.last().cloned(),
+            })
+        }),
     };
     let task_id = task.id().to_string();
     let window_id = session_window(run, i);
@@ -272,6 +283,7 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
         untracked_in_owns,
         red_ok,
         head_branch,
+        sync_kept,
         ..
     } = result
     else {
@@ -304,6 +316,9 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
         && (claim.claim.test.is_none() || claim.claim.red.is_none())
     {
         "task_done rejected: this is a tdd task; name the test (test) and the commit where it was added and failed (red)".into()
+    } else if *sync_kept == Some(false) {
+        // Controller ruling C-21 (5).
+        super::propagate::lost_merge(task)
     } else if *red_ok == Some(false) {
         format!(
             "task_done rejected: red {} is not a commit on this task's branch after its start commit",
@@ -372,13 +387,14 @@ pub(super) fn checked(
     if pending.reply.is_none() && run.tasks[i].rounds[r].turns != pending.turn {
         return fallback::drop_stale(run, i, r, fx);
     }
-    let (outside, generated, protected, head, resolution_only) = match &result {
+    let (outside, generated, protected, head, resolution_only, signals) = match &result {
         OpResult::DoneChecked {
             outside_owns,
             generated_outside_owns,
             protected_changed,
             head,
             resolution_only,
+            signals,
             ..
         } => (
             outside_owns.clone(),
@@ -386,6 +402,7 @@ pub(super) fn checked(
             protected_changed.clone(),
             head.clone(),
             *resolution_only,
+            signals.as_deref().cloned().unwrap_or_default(),
         ),
         OpResult::Failed { message } => {
             let text = format!("task_done could not be checked: {message}; call task_done again");
@@ -411,6 +428,10 @@ pub(super) fn checked(
             let text = protected_file_message(&caught);
             return bounce(run, i, &pending, text, told, now, fx);
         }
+        // Milestone 9.1 decision 41: a deleted test file `owns` does not name exactly.
+        if let Some(text) = super::weakening::bounce(run, i, &signals) {
+            return bounce(run, i, &pending, text, told, now, fx);
+        }
         // Decision 55: any non-generated path outside `owns` is rung 3.
         if !outside.is_empty() {
             let text = format!("changed files outside owns: {}", outside.join(", "));
@@ -425,6 +446,7 @@ pub(super) fn checked(
         }
     }
     let id = pending.reply;
+    super::weakening::keep(&mut run.tasks[i], signals);
     accept(run, i, pending, head, resolution_only, now);
     if let Some(id) = id {
         reply(fx, id, Ok(DONE_ACCEPTED.to_string()));

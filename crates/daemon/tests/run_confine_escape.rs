@@ -75,7 +75,7 @@ fn a_confined_check_cannot_open_an_app_it_built() {
     build_app(&app, &id, &marker);
     let command = format!("open -g -n '{}'; echo open=$?", app.display());
 
-    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, &command, &[], &[], LONG, Some(&confinement));
     let escaped = appears(&marker);
     // Whatever happened, forget the bundle by its exact path.
     let _ = std::process::Command::new(LSREGISTER)
@@ -102,7 +102,7 @@ fn a_confined_check_cannot_write_preferences() {
     let plist = home.join(format!("Library/Preferences/{domain}.plist"));
     let command = format!("defaults write {domain} probe yes; echo write=$?");
 
-    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, &command, &[], &[], LONG, Some(&confinement));
     let read = std::process::Command::new("defaults")
         .args(["read", &domain, "probe"])
         .output()
@@ -140,11 +140,11 @@ fn a_confined_check_cannot_reach_the_keychain_launchservices_or_appleevents() {
     let probe = lookup_probe(&names);
 
     // Unconfined, the probe finds them all: it is live.
-    let open = run_confined(&task, &probe, &[], LONG, None);
+    let open = run_confined(&task, &probe, &[], &[], LONG, None);
     for name in &names {
         assert!(open.tail.contains(&format!("{name} 0")), "{}", open.tail);
     }
-    let outcome = run_confined(&task, &probe, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, &probe, &[], &[], LONG, Some(&confinement));
     assert!(outcome.ok, "{outcome:?}");
     for name in denied {
         assert!(
@@ -189,7 +189,7 @@ fn a_confined_check_cannot_reach_localhost() {
         tcp = tcp.local_addr().unwrap().port(),
         udp = udp.local_addr().unwrap().port(),
     );
-    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, &command, &[], &[], LONG, Some(&confinement));
     assert!(outcome.tail.contains("tcp denied"), "{}", outcome.tail);
     assert!(outcome.tail.contains("udp denied"), "{}", outcome.tail);
     assert!(
@@ -211,7 +211,7 @@ fn a_confined_check_can_open_a_pty() {
     let task = w.task();
     let confinement = w.spec(&[]).for_checkout(&task).unwrap();
     let command = "python3 -c 'import os,pty; m,s=pty.openpty(); os.write(s,b\"hi\"); print(\"pty\", os.read(m,2).decode())' && script -q /dev/null echo script-ok";
-    let outcome = run_confined(&task, command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, command, &[], &[], LONG, Some(&confinement));
     assert!(outcome.ok, "{outcome:?}");
     assert!(outcome.tail.contains("pty hi"), "{}", outcome.tail);
     assert!(outcome.tail.contains("script-ok"), "{}", outcome.tail);
@@ -244,7 +244,7 @@ fn a_confined_check_cannot_open_another_terminal() {
          PY",
         tty = tty.display().to_string()
     );
-    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, &command, &[], &[], LONG, Some(&confinement));
     assert!(outcome.tail.contains("denied rb"), "{}", outcome.tail);
     assert!(outcome.tail.contains("denied ab"), "{}", outcome.tail);
 }
@@ -273,7 +273,7 @@ fn a_confined_checks_tmpdir_holds_a_unix_socket() {
          s.bind(p); s.listen(); c=socket.socket(socket.AF_UNIX); c.connect(p)\n\
          print('bound', len(p))\n\
          PY";
-    let outcome = run_confined(&task, command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, command, &[], &[], LONG, Some(&confinement));
     assert!(outcome.ok, "{outcome:?}");
     assert!(outcome.tail.contains("bound"), "{}", outcome.tail);
 }

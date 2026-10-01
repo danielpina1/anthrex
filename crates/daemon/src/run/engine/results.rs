@@ -2,9 +2,9 @@
 //! size limit milestone 9 would otherwise pass). Pure (design decision 2).
 
 use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, complete, deciders, dispatch, done, early,
-    fallback, gates, history, holds, kinds, ladder, merge, orch_window, outbox, planners, requests,
-    review, run_scouts, worker_messages,
+    Effect, EngineState, OpId, OpKind, OpResult, bisect, complete, deciders, dispatch, done, early,
+    fallback, full, gates, history, holds, kinds, ladder, merge, orch_window, outbox, planners,
+    propagate, requests, review, run_scouts, stages, tiers, worker_messages,
 };
 
 /// Routes an op's result by the kind of the op it answers. A result for an op the run
@@ -28,6 +28,10 @@ pub(super) fn op_done(
         .as_deref()
         .and_then(|id| run.tasks.iter().position(|t| t.id() == id));
     let mut bound = None;
+    // Controller ruling C-21 (3): a later hand-back into a sync task is recorded.
+    if let (OpKind::HandBack { run_head, .. }, Some(i)) = (&pending.kind, task) {
+        propagate::record_hand_back(run, i, run_head, &result);
+    }
     match (pending.kind, task) {
         (kind @ OpKind::Proof { .. }, Some(i)) => {
             gates::proof_done(run, i, op, &kind, result, now, fx)
@@ -36,8 +40,28 @@ pub(super) fn op_done(
             gates::check_done(run, i, op, &kind, result, now, fx)
         }
         (OpKind::Check { .. }, None) => complete::final_checked(run, result, now, fx),
+        // Milestone 9.1 decision 14: tier 1 is the task's check gate.
+        (OpKind::Tier(spec), Some(i)) if spec.tier == 1 => {
+            tiers::tier1_done(run, i, op, result, now, fx)
+        }
+        // Decisions 17-19: tier 3, a run-level job.
+        (OpKind::Tier(spec), None) if spec.tier == 3 => {
+            full::full_done(run, op, &spec, result, now, fx)
+        }
+        // Decision 36: a bisect probe (task M9.1.15).
+        (OpKind::TestAt(_), None) => bisect::probe_done(run, op, result, now, fx),
         (OpKind::VerifyRefs { .. }, _) => complete::refs_verified(run, result, now, fx),
-        (OpKind::MergeCandidate { .. }, i) => merge::candidate_done(run, i, op, result, now, fx),
+        (OpKind::MergeCandidate { run_branch, .. }, i) => {
+            merge::candidate_done(run, (i, op), &run_branch, result, now, fx)
+        }
+        // Milestone 9.1 decision 48.
+        (kind @ OpKind::CreateStageBranch { .. }, _) => stages::created(run, &kind, result, now),
+        // Decisions 50-52.
+        (OpKind::Propagate(spec), _) => propagate::done(run, (op, &spec), result, now, fx),
+        // Decision 51: a sync task's merge, before its first session.
+        (OpKind::HandBack { task_head, .. }, Some(i)) if propagate::sync_due(&run.tasks[i]) => {
+            propagate::handed_back(run, i, task_head, result, now, fx)
+        }
         (OpKind::CreateRunBranch { .. }, _) => requests::run_branch_done(run, result, now, fx),
         (kind @ (OpKind::Discard { .. } | OpKind::Accept { .. }), _) => {
             complete::finished(run, &kind, result, now, fx)

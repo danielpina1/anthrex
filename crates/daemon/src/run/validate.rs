@@ -17,6 +17,8 @@ use super::model::{Profile, ReviewLevel, RunLimits, Task};
 use super::plan::PlanError;
 use super::roster;
 use super::validate_kinds::{READER_TEST_MODE_NOTE, check_reader_fields, is_reader};
+use super::validate_stages::check_stage_fields;
+pub(super) use super::validate_stages::{reserved_new_id, split_child_stage};
 
 pub use super::validate_graph::{
     EditScope, combined_cycles, implicit_deps, validate_tasks, validate_tasks_with,
@@ -110,7 +112,8 @@ pub(super) fn resolve_task_lenient(
         None
     };
     if let Some(span) = &spans {
-        let (target, rule, why) = if spec.interface_change {
+        // Decision 54: an atomic task keeps its size; it is a hub task instead.
+        let (target, rule, why) = if spec.interface_change && !spec.atomic {
             (
                 Size::L,
                 "7.2.2",
@@ -128,12 +131,14 @@ pub(super) fn resolve_task_lenient(
             size = target;
         }
     }
-    let hub = any_intersect(&spec.owns, &profile.hub);
+    let hub = spec.atomic || any_intersect(&spec.owns, &profile.hub);
     if hub && size < Size::M {
-        notes.push(format!(
-            "size raised from {} to M: owns touch the hub globs (rule 7.2.3)",
-            size_label(size)
-        ));
+        let why = if spec.atomic {
+            "an atomic task is a hub task (rule 4.3)"
+        } else {
+            "owns touch the hub globs (rule 7.2.3)"
+        };
+        notes.push(format!("size raised from {} to M: {why}", size_label(size)));
         size = Size::M;
     }
 
@@ -275,6 +280,8 @@ fn check_fields(spec: &PlanTask, errors: &mut Vec<PlanError>) {
             "running is reserved for the message target of every running task".to_string(),
         ));
     }
+    // Milestone 9.1 decisions 44, 45 and 54.
+    check_stage_fields(spec, errors);
     if spec.title.trim().is_empty() {
         errors.push(e("title", "fields", "must not be blank".to_string()));
     }
@@ -475,6 +482,12 @@ fn new_task(
         routing_decisions: Vec::new(),
         escalated_from: None,
         orch: Default::default(),
+        origin: proto::TaskOrigin::Plan,
+        fixes: None,
+        signals: Vec::new(),
+        signals_more: 0,
+        signal_refusals: 0,
+        sync: None,
     }
 }
 

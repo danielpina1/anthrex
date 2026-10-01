@@ -248,7 +248,11 @@ fn history(path: &Path) -> (Vec<TaskRecord>, Vec<RunRecord>) {
         match line {
             HistoryLine::Task(record) => tasks.push(record),
             HistoryLine::Run(record) => runs.push(record),
-            HistoryLine::Revert(_) | HistoryLine::RoleRoute(_) => {}
+            HistoryLine::Revert(_)
+            | HistoryLine::RoleRoute(_)
+            | HistoryLine::Tier(_)
+            | HistoryLine::Flaky(_)
+            | HistoryLine::Bisect(_) => {}
         }
     }
     (tasks, runs)

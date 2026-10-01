@@ -34,7 +34,7 @@
 //! sibling test's `fork()` can ever run in this process — the assertion is deterministic
 //! here in a way it structurally cannot be inside `--lib`.
 
-use daemon::lockfile::DaemonLock;
+use daemon::lockfile::{DaemonLock, try_claim};
 use std::time::Duration;
 
 /// A released lock is available again with `Duration::ZERO` — no retry-loop wait needed.
@@ -48,4 +48,21 @@ fn instant_reacquire_after_release() {
     drop(first);
     let _second = DaemonLock::acquire(dir.path(), Duration::ZERO)
         .expect("a released lock must be reacquirable with no wait at all");
+}
+
+/// The same property for a lock taken by [`try_claim`]: dropping the claim releases the
+/// lock at once. It used to end `lockfile::tests::try_claim_holds_the_lock_until_dropped`
+/// inside `--lib`, where a sibling test's `fork()` could hold a duplicate of the
+/// just-closed fd and fail the zero-wait `acquire` (seen once in a full `--lib` run,
+/// 2026-09-30). The fd is already close-on-exec; the window is fork-to-exec, which only a
+/// separate process with no forking siblings removes.
+#[test]
+fn instant_reacquire_after_a_claim_is_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let claimed = try_claim(dir.path())
+        .unwrap()
+        .expect("nobody holds it yet, so this must claim it");
+    drop(claimed);
+    let _lock = DaemonLock::acquire(dir.path(), Duration::ZERO)
+        .expect("dropping the claimed lock must release it with no wait at all");
 }

@@ -438,6 +438,85 @@ async fn restoring_an_unchanged_finished_run_writes_nothing() {
         !journal.exists(),
         "the empty journal was compacted into being"
     );
+    // Controller ruling C-11: the restore stamps the daemon's slots in memory only.
+    assert_eq!(
+        crate::lock(&s.state).runs["done"].test_slots,
+        s.scheduler().slots()
+    );
+}
+
+/// Milestone 9.1 decision 23: a service whose scheduler has `slots` slots.
+fn service_with_slots(data: &Path, slots: u32) -> Arc<RunService> {
+    let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let (manager, _events) = WindowManager::new(config);
+    let testing = config::Testing {
+        test_slots: Some(slots),
+        ..config::Testing::default()
+    };
+    let ctx = RunContext::new(
+        data.to_path_buf(),
+        manager.config(),
+        config::Orchestrator::default(),
+        Arc::new(NoRoots),
+    )
+    .with_testing(testing);
+    RunService::new(manager, ctx)
+}
+
+/// Milestone 9.1 decision 27 (ruling C-11): a run started through the driver carries
+/// the daemon's slot count.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_started_run_carries_the_schedulers_slots() {
+    use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};
+    let data = tempfile::tempdir().unwrap();
+    let s = service_with_slots(data.path(), 5);
+    assert_eq!(s.scheduler().slots(), 5);
+    let mut run = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+    ));
+    run.data_dir = data.path().join("runs").join(&run.id);
+    assert_eq!(run.test_slots, 0);
+    let id = run.id.clone();
+    let _handle = s.spawn(CancellationToken::new());
+    s.send(EventKind::Start {
+        reply: 0,
+        run: Box::new(run),
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let slots = loop {
+        if let Some(run) = crate::lock(&s.state).runs.get(&id) {
+            break run.test_slots;
+        }
+        assert!(Instant::now() < deadline, "the run was never started");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    assert_eq!(slots, 5);
+    s.stop().await;
+}
+
+/// Ruling C-11: a run saved before milestone 9.1 (or by a daemon with another count)
+/// is restored with this daemon's slots, and its worker gets this daemon's caps.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restored_run_carries_the_schedulers_slots_and_its_workers_caps() {
+    let data = tempfile::tempdir().unwrap();
+    let s = service_with_slots(data.path(), 6);
+    let mut run = poisoned_run("paused", data.path());
+    run.revision = 3;
+    run.state = proto::RunState::Paused;
+    run.limits.max_writers = 2;
+    assert_eq!(run.test_slots, 0);
+    crate::run::journal::save_run(&run).unwrap();
+    tokio::time::timeout(Duration::from_secs(60), s.restore())
+        .await
+        .expect("the restore returns");
+    let restored = crate::lock(&s.state).runs["paused"].clone();
+    assert_eq!(restored.test_slots, 6);
+    let spec = crate::run::role_launch::worker_spec(&restored, &restored.tasks[0]);
+    let jobs = spec.env.iter().find(|(k, _)| k == "CARGO_BUILD_JOBS");
+    let caps = crate::run::slots::worker_caps(6, 2);
+    assert_eq!(jobs, caps.iter().find(|(k, _)| k == "CARGO_BUILD_JOBS"));
+    assert_eq!(jobs.map(|(_, v)| v.as_str()), Some("3"));
 }
 
 /// T22-P3 (F4): a clean-up replayed again after a crash replaces the earlier clause.

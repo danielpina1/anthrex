@@ -253,6 +253,7 @@ pub(super) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, 
         | RowKind::Planner { .. }
         | RowKind::Scout { .. }
         | RowKind::Task { .. }
+        | RowKind::Stage { .. }
         | RowKind::AgentRound { .. } => {
             let inspection = inspector::inspect(row, app);
             let right = inspection

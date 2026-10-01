@@ -126,6 +126,7 @@ fn check_tail_with_a_backtick_fence_uses_a_longer_fence() {
         on_candidate: false,
         summary: None,
         summary_source: None,
+        tier: None,
     });
     let out = render(&run, 2_000);
 

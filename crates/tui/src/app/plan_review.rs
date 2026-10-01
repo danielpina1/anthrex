@@ -187,6 +187,7 @@ fn sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> 
         _ => mode.to_owned(),
     };
     out.push(("test mode", vec![mode]));
+    out.extend(stage_sections(run, task));
     if !task.notes.is_empty() {
         out.push(("notes", task.notes.iter().map(|n| one_line(n)).collect()));
     }
@@ -213,6 +214,30 @@ fn sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> 
         .as_ref()
         .map_or_else(|| "none".to_owned(), route_line);
     out.push(("review", vec![review]));
+    out
+}
+
+/// Ruling C-28 (5): a Multi plan's stage facts for `task`: `stage  <n> of <m>`, then
+/// `atomic` (the plan's reason, else `yes`) and `interface change` when set. A Single
+/// plan has none, so its review is as it was.
+fn stage_sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> {
+    let planned = run.tasks.iter().map(|t| t.stage).max().unwrap_or(1);
+    let stages = planned.max(u16::try_from(run.stages.len()).unwrap_or(u16::MAX));
+    if stages <= 1 {
+        return Vec::new();
+    }
+    let mut out = vec![("stage", vec![format!("{} of {stages}", task.stage)])];
+    if task.atomic {
+        let reason = task
+            .atomic_reason
+            .as_deref()
+            .filter(|r| !r.trim().is_empty())
+            .unwrap_or("yes");
+        out.push(("atomic", vec![reason.to_owned()]));
+    }
+    if task.interface_change {
+        out.push(("interface change", vec!["yes".to_owned()]));
+    }
     out
 }
 

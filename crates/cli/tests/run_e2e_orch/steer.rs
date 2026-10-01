@@ -109,9 +109,13 @@ fn e2e_mis_sized_task_is_split_by_the_orchestrator() {
 #[test]
 fn e2e_blocked_question_is_answered_after_a_wake() {
     let h = harness("");
+    let go = h.dir.path().join("go");
+    // The worker blocks only once the orchestrator polls no more: a poll that answered
+    // after the block would read its note away, and no wake-up would follow.
     h.script(
         "worker-t1-1",
         &[
+            wait_file(&go),
             call(
                 "task_blocked",
                 json!({"kind": "question", "reason": "tabs or spaces?"}),
@@ -139,6 +143,8 @@ fn e2e_blocked_question_is_answered_after_a_wake() {
     ];
     let (run, _) = start(&h, &steps);
     approve_plan(&h, &run);
+    wait_saw_approval(&h);
+    std::fs::write(&go, "").unwrap();
     let info = h.wait_run(&run, |r| r.state == RunState::Complete, RUN_WAIT);
     wait_passed(&h, 1);
     assert_eq!(task(&info, "t1").state, TaskState::Merged);

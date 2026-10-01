@@ -92,6 +92,8 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
             out.push_str(&fenced(summary));
         }
     }
+    // Milestone 9.1 decision 59: the last tier-1 line and the signals.
+    super::report_tiers::task_lines(task, out);
     for r in &task.reviews {
         out.push_str(&format!(
             "Review round {} ({}): verdict={} {}..{}\n",

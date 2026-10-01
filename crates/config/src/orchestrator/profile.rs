@@ -10,6 +10,9 @@
 use super::Orchestrator;
 use crate::{Problem, not_a_table_problem, unknown_key_problem};
 
+#[path = "profile_tiers.rs"]
+mod tiers;
+
 const KNOWN_PROFILE_KEYS: &[&str] = &[
     "modules",
     "hub",
@@ -21,6 +24,19 @@ const KNOWN_PROFILE_KEYS: &[&str] = &[
     "setup",
     "generated",
     "protected",
+    // Milestone 9.1 decision 5: the tier keys.
+    "build_check",
+    "module_test",
+    "module_tests",
+    "module_graph",
+    "module_names",
+    "full_triggers",
+    "slow_tests",
+    "timing_tests",
+    "skip_markers",
+    "test_paths",
+    "full_shards",
+    "toolchain_id",
     "env",
 ];
 
@@ -61,6 +77,7 @@ pub(super) fn read_profile(table: &toml::Table, o: &mut Orchestrator, problems: 
         }
     }
 
+    tiers::read_tier_keys(profile, o, problems);
     read_profile_env(profile, o, problems);
 }
 

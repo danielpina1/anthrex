@@ -99,6 +99,12 @@ fn describe_one(edit: &PlanEdit) -> String {
         PlanEdit::AddTask { task } => format!("add {}", task.id),
         PlanEdit::SplitTask { task_id, .. } => format!("split {task_id}"),
         PlanEdit::CancelTask { task_id } => format!("cancel {task_id}"),
+        // Milestone 9.1 decision 43: a move names its stage.
+        PlanEdit::AmendTask {
+            task_id,
+            stage: Some(n),
+            ..
+        } => format!("amend {task_id} stage {n}"),
         PlanEdit::AmendTask { task_id, .. } => format!("amend {task_id}"),
         PlanEdit::AddDep { task_id, dep } => format!("dep {task_id} on {dep}"),
         PlanEdit::Answer { task_id, .. } => format!("answer {task_id}"),

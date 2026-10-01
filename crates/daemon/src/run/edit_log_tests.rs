@@ -33,6 +33,7 @@ fn describe_names_every_edit_op() {
             priority: None,
             size: None,
             deps: None,
+            stage: None,
         },
         PlanEdit::AddDep {
             task_id: "t4".into(),
@@ -60,6 +61,23 @@ fn describe_names_every_edit_op() {
          finish, message t6,t7 (change), refresh t8"
     );
     assert_eq!(describe(&[PlanEdit::Pause]), "pause");
+    // Milestone 9.1 decision 43: a move to another stage names the stage.
+    let PlanEdit::AmendTask { task_id, .. } = &edits[3] else {
+        panic!("an amend_task edit");
+    };
+    let moved = PlanEdit::AmendTask {
+        task_id: task_id.clone(),
+        brief: None,
+        acceptance: None,
+        route: None,
+        test_mode: None,
+        test_mode_reason: None,
+        priority: None,
+        size: None,
+        deps: None,
+        stage: Some(2),
+    };
+    assert_eq!(describe(&[moved]), "amend t4 stage 2");
 }
 
 #[test]
@@ -120,6 +138,7 @@ fn describe_is_capped() {
             priority: Some(1),
             size: None,
             deps: None,
+            stage: None,
         })
         .collect();
     let text = describe(&edits);

@@ -17,7 +17,7 @@ use super::schedule::{
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
 use super::{
     clock, complete, deciders, done, gate_holds, gates, holds, kinds, ladder, merge, outbox,
-    restore, review, signals,
+    restore, review, signals, stages,
 };
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
@@ -46,12 +46,20 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 ladder::recover_sessionless(run, now);
                 ladder::start_fresh_sessions(run, fx);
                 complete::finish_pass(run, now, fx);
+                // Milestone 9.1 decision 48: stage branches before what runs in them.
+                stages::create_pass(run, fx);
                 // Milestone 9 decision 37: an epic merged gets its integration review.
                 kinds::integration_pass(run, now);
                 kinds::watch(run, now, fx);
                 gates::start_gates(run, now, fx);
                 merge::start_due_hand_backs(run, now, fx);
                 merge::start_merge(run, now, fx);
+                // Milestone 9.1 decision 17(b): tier 3 when the queue is idle.
+                super::full::idle_pass(run, now, fx);
+                // Decision 36: a lost or backed-off bisect probe (task M9.1.15).
+                super::bisect::pass(run, now, fx);
+                // Ruling C-27 (4): a bisect fix task that ended without merging.
+                super::full::fix_ended_pass(run);
                 review::watch(run, now, fx);
                 launch_ready(run, now, fx);
                 dispatch_writers(run, now, fx);
@@ -107,7 +115,8 @@ fn requeue(run: &mut Run, now: u64) {
         if !matches!(state, TaskState::Pending | TaskState::Queued) {
             continue;
         }
-        let next = if deps_done(run, &run.tasks[i]) {
+        // Milestone 9.1 decision 48: and its stage holds what it needs.
+        let next = if deps_done(run, &run.tasks[i]) && stages::ready_in_stage(run, i) {
             TaskState::Queued
         } else {
             TaskState::Pending
@@ -154,8 +163,13 @@ fn prepare_in_flight(run: &Run, i: usize) -> bool {
     })
 }
 
-/// A `PrepareWorktree` for task `i` from `from`, with the profile's `setup`.
+/// A `PrepareWorktree` for task `i` from `from`, with the profile's `setup`. A sync
+/// task not yet started needs its merge handed back again after it.
 fn prepare(run: &mut Run, i: usize, from: String, fx: &mut Vec<Effect>) {
+    let started = run.tasks[i].start_commit.is_some();
+    if let Some(sync) = run.tasks[i].sync.as_mut() {
+        sync.handed_back &= started;
+    }
     let op = next_op(run);
     let task = &run.tasks[i];
     let kind = OpKind::PrepareWorktree {
@@ -243,13 +257,14 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         }
         let task = &run.tasks[i];
-        if task.prewarmed && task.start_commit.is_none() && run.base_sha == run.run_head {
-            let start = run.run_head.clone();
-            launch_worker(run, i, start, now, fx);
+        // Milestone 9.1 decision 47: the task's stage head (decision 51: a sync task's
+        // conflict head).
+        let head = super::propagate::start_of(run, task);
+        if task.prewarmed && task.start_commit.is_none() && run.base_sha == head {
+            launch_worker(run, i, head, now, fx);
         } else {
             // Decision 19: from the run head. A pre-warmed branch that is now stale is
             // re-pointed by the git layer, and its setup runs again (ruling T8-I4).
-            let head = run.run_head.clone();
             prepare(run, i, head, fx);
         }
     }
@@ -265,17 +280,27 @@ fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         let Some(from) = run.tasks[i].ready_from.take() else {
             continue;
         };
-        if from == run.run_head {
+        let head = super::propagate::start_of(run, &run.tasks[i]);
+        if from == head {
             launch_worker(run, i, from, now, fx);
         } else {
-            let head = run.run_head.clone();
             prepare(run, i, head, fx);
         }
     }
 }
 
-/// A new worker session for task `i`, starting at `start` (decisions 24–26, 30).
-fn launch_worker(run: &mut Run, i: usize, start: String, now: u64, fx: &mut Vec<Effect>) {
+/// A new worker session for task `i`, starting at `start` (decisions 24–26, 30); a
+/// sync task's merge is handed back into its worktree first (milestone 9.1 decision 51).
+pub(super) fn launch_worker(
+    run: &mut Run,
+    i: usize,
+    start: String,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    if super::propagate::hand_back_first(run, i, &start, now, fx) {
+        return;
+    }
     let prompt =
         |run: &Run, task: &Task| worker_prompt(run, task, "", &notes_section(&task.orch.messages));
     launch(run, i, Some(start), prompt, now, fx);
@@ -454,10 +479,10 @@ pub(super) fn worktree_done(
             );
         }
         OpResult::Worktree { .. } if state == TaskState::Preparing => {
-            if from == run.run_head {
+            let head = super::propagate::start_of(run, &run.tasks[i]);
+            if from == head {
                 launch_worker(run, i, from, now, fx);
             } else {
-                let head = run.run_head.clone();
                 prepare(run, i, head, fx);
             }
         }

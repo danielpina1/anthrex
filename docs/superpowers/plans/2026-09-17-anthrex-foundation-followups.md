@@ -1709,3 +1709,44 @@ scope.
   that arrives shows nowhere: the status bar's `⚑ n` is drawn only when the sidebar is hidden, and
   the Alerts box sits under the review. Give the review's header or the status bar a count
   while it is open.
+
+## From the user's first live orchestrator run (2026-09-29), for M9.1 and M9.5
+
+- `edit_plan` was invisible to the orchestrator's first turn (M9.5): the call was refused by Claude Code as `No such tool available: mcp__anthrex__edit_plan` before reaching anthrex, and the model passed `edits` as a JSON string, so it never saw the schema. `/mcp` then listed the tool, and after the user reconnected, the same turn's plan submitted fine (run reached `awaiting_approval`). Cause: the anthrex server finished connecting after the session's tool list was built, around the folder-trust prompt. Fix direction: the orchestrator's first prompt should not be sent until the MCP server is connected (or the contract tells the orchestrator to call `get_context` first and retry once on a missing tool); pair with the trust-prompt item below.
+- **The first orchestrator launch in a new folder stops at Claude's "Is this a project you trust?" prompt**, and the run view does not say so (M9.5). The run looks stuck until the user focuses the orchestrator window. Surface it as an attention line, the same way a held wake-up is surfaced.
+- The plan gate does not show what is being approved (M9.5): the TUI task inspector (`crates/tui/src/inspector/run_task.rs`) shows route, deps, budget and state, but not a task's `owns` or `acceptance`, and the edit form shows only the brief. Show `owns` and `acceptance` (and the brief's first lines) in the inspector at the gate.
+
+## From M9.1.6 (2026-09-29), for any later milestone with `cargo nextest` and `go`
+
+- **Replace the hand-written failing-test fixtures with captured output** (controller ruling C-2 on M9.1.1). `crates/daemon/src/run/tiers/fixtures/nextest.txt`, `go.txt`, `go-build-failed.txt`, `go-timeout.txt` and `go-testmain.txt` were written by hand from the tools' documented formats, because neither `cargo nextest` nor `go` was installed where the other fixtures were captured; each says so on its first line. On a machine with both, capture one passing, one failing and (for nextest) one timed-out test with stderr merged, as `libtest.txt` and `pytest.txt` were, and check `failing_names_from_libtest_nextest_pytest_and_go` still passes. The nextest filter syntax in M9.1's "Risks" stays unverified until then.
+
+## From M9.1.10 (2026-09-30), for M9.1.21 or M9.5
+
+- **A crashed rewrite of the tier caches leaves its temporary file behind.** `test-cache.jsonl` (M9.1.10) and `module-graph.json` (M9.1.7) are rewritten with `profile::store::write_atomic`, whose temporary file is `<file>.<pid>.<n>.tmp` in the repository's data directory. `profile::store::sweep_leftovers`, which `ProfileService::restore` runs at daemon start, removes only the profile store's own files' leftovers (`PROFILE_FILE`, `META_FILE`, `PROPOSAL_FILE`, `DETECTION_FILE`), so a daemon killed mid-rewrite leaves one stray file per crash. Harmless (nothing reads it), but it accumulates. Adding the two cache files to that list closes it.
+
+## From M9.1.13 (2026-09-30), for M9.1.21 or M9.5
+
+- **Two wall-clock tests have a 1 s margin against load.** `run/driver/orch_ops_tests.rs::resolve_target_op_runs_git_off_the_worker_threads` and `run/driver/orch_read_tests_tools.rs::task_result_answers_a_git_error_at_its_one_deadline` give a stand-in git that runs `sleep 8` a 9 s per-command bound (`SLOW_GIT_SECS = 8`, `git_timeout_secs = 9`) and expect `DONE_CHECK_GIT_TIMEOUT`'s 10 s deadline to answer first. When the rest of the daemon's library tests start many processes at the same moment, the shell and `sleep` start more than a second late, the 9 s bound fires first, and the answer is `… timed out after 8 s`. M9.1.11 saw the first one fail once; M9.1.13 saw both fail in every full run while a test of its own ran git through a shell wrapper (removed), and the first once after a rebuild. A bound derived per `docs/timing-budgets.md` (the per-command bound well above the stand-in's sleep, the deadline between them) would remove the race.
+
+## From M9.1.18's review (2026-09-30), for M9.5
+
+- **`run stats` still proposes a test that is already quarantined.** `stats::flaky_proposals` (decision 34) counts the `flaky` lines of `history.jsonl` and nothing else. `history_io::summarise` has no profile input, so a test the user has already added to `slow_tests` with `anthrex profile edit` keeps being proposed until its flaky lines age out of `flaky_window_days`, which is 14 days by default. Ruling C-23 accepted this as a limitation for 9.1. The fix is to give `summarise` the repository's stored profile (`slow_tests`) and drop the tests it already filters out. Matching a test name against a filter expression needs the runner's filter semantics (nextest `-E`, `--skip` patterns), which is why it was not done in 9.1.
+
+## From M9.1.22 (2026-09-30), for M9.5
+
+- **Stray step directories.** Every tier step gets a fresh `TMPDIR` (`<base>/s<op>-<step>`, M9.1 decision 28), which is removed after the step on the step's blocking thread. A step whose command started a daemon that escaped the process group (a test that daemonises, as `anthrex daemon start` does) can hold files in it past the removal, and a daemon killed mid-step never removes it. Nothing sweeps these directories. Fix: at daemon start, remove step directories under each repository's tmp base that are older than a day.
+- **An `--ignored` job.** No tier runs ignored tests: tier 3's `check` is the profile's full suite as written, and no profile key names an ignored-tests command. A tier (or a tier-3 step) that runs them, from a new key such as `ignored_tests`, would give anthrex's own `#[ignore]`d tests a home (see the ignored-test note above, `:193-200`).
+- **A hand-edited `run.json` with a gap in its stages** (stages 1 and 3 recorded, 2 missing) restores without complaint (ruling C-27, item 12; the whole-branch review's scenario s6c). What the run then does was only printed, never asserted. Decide whether a restore refuses such a run (halts it with a clear reason) or recreates the missing stage, and test that.
+
+## From M9.1's final review (2026-09-30, ruling C-28), for M9.5
+
+- **Three tier-3 states raise no alert.** Milestone 9.0.5's decision 18 lists what the Alerts box shows, and none of these three appears in it:
+  - A stage whose tier 3 is held after three executor failures (ruling C-18). It waits for `anthrex run resume`, and nothing but its attention line says so.
+  - A red propagate (`StageInfo.propagate_red`).
+  - A red tier 3 (`FullState::Red`), with or without a bisect fix task.
+  Decision 18's priorities should gain these. The held stage needs a human, so it belongs with the halted run. The two reds belong with the blocked tasks, unless an orchestrator is live and will be woken.
+- **The STATUS section's three stage labels read alike.** The inspector's STATUS shows `stage`, `stages` and `stage no.` (the last since the 9.0.5 merge renamed 9.1's duplicate row). Relabel them in M9.5 so each says what it counts, for example `stage state`, `stages in run` and `task's stage`, and update `run_stage_tests.rs`.
+- **Two intermittent tests seen during C-28's verification, neither touched by it. Fixed.**
+  - `crates/cli/tests/codex_version.rs::a_window_launch_waits_for_the_codex_probe_to_finish`: **fixed by `c44a805`.** The cause was macOS's first-exec assessment of the freshly written `codex` stub (~0.44 s, serialised across processes). The probe's budget started before the exec, so with the file's tests running together the 3 s stall sometimes ran out `CODEX_PROBE_TIMEOUT`. The probe was then killed before `version-end`, and the gate opened on schedule; the product was correct. The stub now runs once before the daemon starts. `a_window_launch…` also failed on `main`.
+  - `crates/daemon/src/lockfile.rs::tests::try_claim_holds_the_lock_until_dropped`: **fixed by `9a0e41f`.** Close-on-exec was not the cause: `std::fs::OpenOptions` already sets `O_CLOEXEC`. The cause was the fork-before-exec window: a sibling test's `fork()` briefly holds a duplicate of the just-closed fd, and the `flock` with it. The zero-wait reacquire now runs in `crates/daemon/tests/lockfile.rs`, a process with no forking siblings.
+  - The branch review found the same first-exec shape in `crates/cli/tests/decider_call.rs` ("the decider timed out after 5 s" in a full workspace run), `crates/daemon/tests/git_probe.rs` and `crates/daemon/tests/lifecycle_resume.rs`. All three were **fixed by `ac7b426`**; see `docs/timing-budgets.md`, "Fixed, from the decider-call flake".

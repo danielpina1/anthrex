@@ -129,7 +129,10 @@ pub fn with_worker_git_config(mut env: Vec<(String, String)>) -> Vec<(String, St
 /// reaches the worker.
 fn worker_env(run: &Run, task: &Task) -> Vec<(String, String)> {
     let mut env = with_worker_git_config(profile_env(&run.profile, &task.worktree));
-    env.retain(|(key, _)| key != TASK_TMPDIR);
+    // Milestone 9.1 decision 27: the test caps, in place of any profile value.
+    let caps = crate::run::slots::worker_caps(run.test_slots, run.limits.max_writers);
+    env.retain(|(key, _)| key != TASK_TMPDIR && !caps.iter().any(|(cap, _)| cap == key));
+    env.extend(caps);
     env.push((
         TASK_TMPDIR.to_string(),
         task_tmp_dir(&run.data_dir, task.id()).display().to_string(),

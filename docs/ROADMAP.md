@@ -13,7 +13,7 @@ The design is layered, newest first:
 6. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
 7. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
-The protocol version is **10** once milestone 9 merges, raised from 9 (milestone 8c's) by milestone 9, and **11** once milestone 9.0.5 merges, raised from 10 by milestone 9.0.5 (`crates/proto/src/lib.rs`). Protocol numbers written in the milestone 9.1 to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 9.1's brief says 11, and becomes 12.
+The protocol version is **10** once milestone 9 merges, raised from 9 (milestone 8c's) by milestone 9, **11** once milestone 9.0.5 merges, raised from 10 by milestone 9.0.5, and **12** once milestone 9.1 merges, raised from 11 by milestone 9.1 (`crates/proto/src/lib.rs`). Protocol numbers written in the milestone 9.2 to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 9.2's brief says 12, and becomes 13.
 
 ## What anthrex does when all milestones are done
 
@@ -46,8 +46,8 @@ The protocol version is **10** once milestone 9 merges, raised from 9 (milestone
 | 9 | ~~Orchestrator agent~~ — superseded by the new 9 brief below | `docs/milestones/M9-orchestrator-agent.md` | — | `superseded` |
 | 9 | Orchestrator and sub-planners: planning, steering, plan gate, worker messaging and refresh, role-routing history, TUI goal start | `docs/milestones/M9-orchestrator-and-subplanners.md` | 8a, 8b, 8c | `done` |
 | 9.0.5 | Plan review screen, the Alerts box, and the task panel's goal, live status and result | `docs/milestones/M9.0.5-plan-review-and-alerts.md` | 9 | `done` |
-| 9.1 | Tiered testing: affected-set tiers, test scheduler, result cache, flake handling, bisect, stages | `docs/milestones/M9.1-tiered-testing.md` | 9, 9.0.5 | `ready` |
-| 9.2 | Stacked-PR delivery: CI and review comments become fix tasks; anthrex never merges | `docs/milestones/M9.2-pr-delivery.md` | 9.1 | `blocked` |
+| 9.1 | Tiered testing: affected-set tiers, test scheduler, result cache, flake handling, bisect, stages | `docs/milestones/M9.1-tiered-testing.md` | 9, 9.0.5 | `done` |
+| 9.2 | Stacked-PR delivery: CI and review comments become fix tasks; anthrex never merges | `docs/milestones/M9.2-pr-delivery.md` | 9.1 | `ready` |
 | 9.5 | Tuning: adaptive concurrency, threshold and budget refit, race and test-writer patterns | `docs/milestones/M9.5-tuning.md` | 9.2 | `blocked` |
 
 Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.0.5 → 9.1 → 9.2 → 9.5**, then 7. Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.

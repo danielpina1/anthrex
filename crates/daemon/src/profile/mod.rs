@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use proto::RepoProfile;
 
 pub mod proposal;
+mod proposal_tiers;
 pub mod resolve;
 pub mod service;
 mod service_requests;
@@ -31,6 +32,8 @@ pub mod service_run;
 pub mod service_start;
 pub mod store;
 pub mod verify;
+mod verify_steps;
+pub(crate) mod verify_tiers;
 
 /// The onboarding scout's disposable checkout, under `<wt>/runs/` (decision 8).
 pub const ONBOARDING_CHECKOUT: &str = ".onboarding";
@@ -92,6 +95,7 @@ pub fn summary(profile: &RepoProfile) -> String {
             .as_deref()
             .unwrap_or("none (tdd is impossible; code tasks use check)")
     ));
+    lines.extend(proposal_tiers::summary_line(profile));
     lines.join("\n")
 }
 
@@ -100,4 +104,12 @@ mod tests;
 #[cfg(test)]
 mod tests_ready;
 #[cfg(test)]
+mod tests_tiers;
+#[cfg(test)]
+mod tests_tiers_expansion;
+#[cfg(test)]
+mod tests_tiers_review;
+#[cfg(test)]
 mod tests_verify;
+#[cfg(test)]
+mod tests_verify_steps;

@@ -23,6 +23,9 @@ mod build;
 mod cleanup;
 mod context;
 mod effects;
+// Milestone 9.1.7: read by the tier executor (M9.1.9); until then only its tests call it.
+#[cfg_attr(not(test), allow(dead_code))]
+mod graph;
 mod guard;
 mod merge;
 mod observe;
@@ -32,6 +35,9 @@ mod orch_ops;
 mod refresh;
 mod requests;
 mod restore;
+mod stage_ops;
+mod tier;
+pub mod tier_step;
 mod usage;
 mod wake;
 
@@ -47,7 +53,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::engine::{AgentSignal, EngineState, Event, EventKind, INTERRUPT_GRACE_SECS, ReplyId};
 use super::git::GitQueue;
+use super::slots::{self, TestScheduler};
 use super::snapshot::snapshot;
+use super::test_cache::TestCache;
 #[cfg(test)]
 use crate::manager::ManagerConfig;
 use crate::manager::{GitRoots, WindowManager, WindowSignal};
@@ -55,7 +63,7 @@ use book::{Book, Retiring};
 
 pub use adapt::Adaptation;
 pub(crate) use context::OpCtx;
-pub use context::RunContext;
+pub use context::{GitBudget, RunContext};
 pub use observe::{ACTIVITY_EVERY, translate};
 
 /// Decision 52: a retired window stays listed, `Exited`, this long.
@@ -116,6 +124,10 @@ pub struct RunService {
     metered: usage::Metered,
     /// Milestone 9 decision 39's wake-ups not yet pasted (`driver/wake.rs`).
     wakes: wake::Wakes,
+    /// Milestone 9.1 decision 23: the daemon's one test scheduler.
+    scheduler: Arc<TestScheduler>,
+    /// Milestone 9.1 decision 30: the daemon's one result cache.
+    test_cache: TestCache,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -159,6 +171,8 @@ impl RunService {
         let (tx, rx) = mpsc::unbounded_channel();
         let signals = manager.signals();
         let (pushes, _) = broadcast::channel(256);
+        let slots = ctx.testing.test_slots.unwrap_or_else(slots::default_slots);
+        let test_cache_days = ctx.testing.test_cache_days;
         Arc::new(RunService {
             manager,
             ctx,
@@ -196,7 +210,17 @@ impl RunService {
             adaptation: std::sync::OnceLock::new(),
             metered: Default::default(),
             wakes: Default::default(),
+            scheduler: TestScheduler::new(slots),
+            test_cache: TestCache::new(test_cache_days),
         })
+    }
+
+    pub fn scheduler(&self) -> &Arc<TestScheduler> {
+        &self.scheduler
+    }
+
+    pub fn test_cache(&self) -> &TestCache {
+        &self.test_cache
     }
 
     /// Starts the event loop, the session-feed forwarder and the 1-second ticker.
@@ -336,7 +360,7 @@ impl RunService {
     async fn handle(self: &Arc<Self>, kind: EventKind) {
         let now = unix_now();
         let tick = matches!(kind, EventKind::Tick);
-        let kind = self.mark_killed(kind);
+        let kind = slots::stamp(self.mark_killed(kind), self.scheduler.slots());
         let reply = guard::reply_of(&kind);
         let prepared = {
             let mut state = crate::lock(&self.state);
@@ -553,3 +577,6 @@ impl RunService {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod gated_git;

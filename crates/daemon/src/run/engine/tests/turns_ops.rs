@@ -408,7 +408,7 @@ fn a_halted_run_s_stall_clock_waits_for_a_task_done_check() {
     let effects = fx.next(EventKind::Resume {
         reply,
         run_id: RUN_ID.into(),
-        rebaseline: Some((BASE.to_string(), "5".repeat(40))),
+        rebaseline: Some((BASE.to_string(), "5".repeat(40)).into()),
     });
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
     assert!(!ops_in(&effects, "Proof").is_empty(), "{effects:#?}");

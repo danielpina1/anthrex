@@ -199,16 +199,18 @@ impl Confinement {
 }
 
 /// `command` in the checkout `dir`, confined as `confine` says when it is set; a
-/// checkout that cannot be confined fails the command unrun.
+/// checkout that cannot be confined fails the command unrun. `extra` is set after
+/// `env` (milestone 9.1 decision 26).
 pub fn confined(
     dir: &Path,
     command: &str,
     env: &[(String, String)],
+    extra: &[(String, String)],
     timeout: Duration,
     confine: Option<&ConfineSpec>,
 ) -> ShellOutcome {
     match confine.map(|spec| spec.for_checkout(dir)).transpose() {
-        Ok(confinement) => run_confined(dir, command, env, timeout, confinement.as_ref()),
+        Ok(confinement) => run_confined(dir, command, env, extra, timeout, confinement.as_ref()),
         Err(error) => ShellOutcome::refused(error),
     }
 }

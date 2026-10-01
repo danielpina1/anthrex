@@ -126,7 +126,8 @@ pub enum MessageKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageTarget {
     Tasks(Vec<String>),
-    /// Carried on the wire now and refused at acceptance until milestone 9.1.
+    /// Every unfinished task of stage `n`, resolved at acceptance (milestone 9.1
+    /// decision 56).
     Stage(u32),
     Running,
 }

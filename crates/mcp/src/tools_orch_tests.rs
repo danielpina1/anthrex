@@ -217,3 +217,76 @@ fn schemas_match_the_interface_table() {
         "six orchestrator tools, two planner tools, task_note"
     );
 }
+
+/// The orchestrator's and the sub-planner's schemas stay plain (task M9.1.11): no
+/// `oneOf`, `anyOf` or `allOf` at any depth, except `plan_edit.to`'s `oneOf` (a list
+/// of task ids, or `running` / `stage:<n>`), which milestone 9 shipped and which is
+/// recorded in M9.1's "Implementation notes" as the one exception.
+#[test]
+fn no_orchestrator_schema_combines_schemas_but_a_messages_to() {
+    fn walk(path: &str, v: &Value, found: &mut Vec<String>) {
+        match v {
+            Value::Object(map) => {
+                for (k, child) in map {
+                    if ["oneOf", "anyOf", "allOf"].contains(&k.as_str()) {
+                        found.push(format!("{path}.{k}"));
+                    }
+                    walk(&format!("{path}.{k}"), child, found);
+                }
+            }
+            Value::Array(items) => {
+                for (i, child) in items.iter().enumerate() {
+                    walk(&format!("{path}[{i}]"), child, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    for (role, exception) in [
+        (AgentRole::Orchestrator, "edit_plan"),
+        (AgentRole::Planner, "submit_epic"),
+    ] {
+        let mut found = Vec::new();
+        for t in tools_for(role) {
+            walk(
+                &t.name,
+                &Value::Object((*t.input_schema).clone()),
+                &mut found,
+            );
+        }
+        assert_eq!(
+            found,
+            [format!(
+                "{exception}.properties.edits.items.properties.to.oneOf"
+            )],
+            "{}",
+            role_name(role)
+        );
+    }
+}
+
+/// Decision 43: `plan_task` takes `stage`, `atomic` and `atomic_reason`, and
+/// `plan_edit` takes `stage` (for `amend_task`), as plain types.
+#[test]
+fn plan_task_and_plan_edit_take_stage_and_atomic() {
+    let tools = tools_for(AgentRole::Orchestrator);
+    let edit_plan = tools.iter().find(|t| t.name == "edit_plan").unwrap();
+    let schema = Value::Object((*edit_plan.input_schema).clone());
+    let edit = &schema["properties"]["edits"]["items"]["properties"];
+    let stage = json!({"type": "integer", "minimum": 1, "maximum": proto::STAGES_MAX});
+    assert_eq!(edit["stage"], stage);
+    assert_eq!(
+        edit["atomic"],
+        Value::Null,
+        "atomic is set when a task is added"
+    );
+    for task in [&edit["task"], &edit["into"]["items"]] {
+        let props = &task["properties"];
+        assert_eq!(props["stage"], stage);
+        assert_eq!(props["atomic"], json!({"type": "boolean"}));
+        assert_eq!(
+            props["atomic_reason"],
+            json!({"type": "string", "minLength": 1, "maxLength": 300})
+        );
+    }
+}

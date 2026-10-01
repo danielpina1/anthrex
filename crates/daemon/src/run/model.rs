@@ -10,10 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use proto::{
-    AgentRole, BlockInfo, Budget, DoneSignal, Finding, GateCounts, ModelEntry, PlanTask, Route,
-    RunState, Runtime, Size, Spend, TaskState, TestMode, TokenUsage, Verdict,
-};
+use proto::{AgentRole, DoneSignal, Finding, ModelEntry, Route, RunState, TokenUsage, Verdict};
 use serde::{Deserialize, Serialize};
 
 use super::engine::OpKind;
@@ -24,11 +21,27 @@ use super::engine::OpKind;
 mod rounds;
 pub use rounds::*;
 
+// The limits a run is frozen with and their Claude auth (split out to keep this file
+// under the 600-line rule); re-exported, so every `model::` path stays.
+#[path = "model_limits.rs"]
+mod limits;
+pub use limits::{ClaudeAuth, RunLimits, TestingLimits};
+
 // Milestone 8b's additions (M8b decision 1). M8b.4 adds only `impl Run` items; the
 // structs its later tasks add there are re-exported here with `pub use adapt::*`.
 #[path = "model_adapt.rs"]
 mod adapt;
 pub use adapt::*;
+
+// Milestone 9.1's stage types (decisions 46–53), kept out of this file's budget.
+#[path = "model_stages.rs"]
+mod stages;
+pub use stages::*;
+
+// The resolved task (split out to keep this file under the 600-line rule).
+#[path = "model_task.rs"]
+mod task;
+pub use task::*;
 
 /// How thoroughly a task is reviewed, decision 35: `S` tasks get `Small`, `M` tasks
 /// `Medium`, hub tasks `Frontier`, each possibly raised by the level rule (no `check` in
@@ -88,247 +101,13 @@ pub struct Profile {
     /// own `[orchestrator.confined_localhost_ports]` for the repository.
     #[serde(default)]
     pub confined_localhost_ports: Vec<u16>,
-}
-
-/// `[orchestrator.claude] auth`, mirrored here with serde because `config::ClaudeAuth`
-/// has no serde derive (the config crate does not depend on serde) and [`RunLimits`] is
-/// persisted with the run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClaudeAuth {
-    #[default]
-    Login,
-    ApiKey,
-}
-
-impl From<config::ClaudeAuth> for ClaudeAuth {
-    fn from(auth: config::ClaudeAuth) -> Self {
-        match auth {
-            config::ClaudeAuth::Login => ClaudeAuth::Login,
-            config::ClaudeAuth::ApiKey => ClaudeAuth::ApiKey,
-        }
-    }
-}
-
-impl From<ClaudeAuth> for config::ClaudeAuth {
-    fn from(auth: ClaudeAuth) -> Self {
-        match auth {
-            ClaudeAuth::Login => config::ClaudeAuth::Login,
-            ClaudeAuth::ApiKey => config::ClaudeAuth::ApiKey,
-        }
-    }
-}
-
-/// The limits a run is frozen with at start: `[orchestrator]`, with the plan's
-/// `max_writers`, `max_readers` and `max_bounces` winning when set.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunLimits {
-    pub max_writers: u8,
-    pub max_readers: u8,
-    pub max_bounces: u8,
-    pub max_tasks: u32,
-    pub max_windows: u32,
-    pub default_runtime: Runtime,
-    pub review_small: bool,
-    pub budget_s: Budget,
-    pub budget_m: Budget,
-    pub budget_l: Budget,
-    pub stall_after_secs: u64,
-    pub rate_limit_retry_secs: u64,
-    pub denials_before_block: u32,
-    pub git_timeout_secs: u64,
-    pub worker_permission_mode: String,
-    pub worker_allowed_tools: Vec<String>,
-    pub worker_codex_sandbox: String,
-    pub worker_sandbox: bool,
-    /// M8a final fix batch F1c round 2: checks, proofs and `setup` run unconfined
-    /// (the platform cannot confine them, and the user allowed it at `run start`).
-    /// Absent from a run recorded before: `false`.
+    /// Milestone 9.1 decision 5: the tier keys, all off in a run recorded before them.
     #[serde(default)]
-    pub unconfined_checks: bool,
-    pub claude_auth: ClaudeAuth,
-    /// `[orchestrator.claude] api_key_helper`, passed to Claude sessions under
-    /// `auth = "api_key"` (decision 50). Added by M8a.11: a session spec is built from
-    /// the run alone.
+    pub tiers: super::tiers::TierProfile,
+    /// A stored profile's `manifests` (M8b), which key a command graph's cache
+    /// (milestone 9.1 ruling C-12a); none for a plan's or config's profile.
     #[serde(default)]
-    pub api_key_helper: Option<String>,
-    /// M8b decision 18: `[orchestrator.deciders] mode`. Absent from a run recorded
-    /// before milestone 8b: `off`, so a restored run gains no decider.
-    #[serde(default = "adapt::decider_mode_absent")]
-    pub decider_mode: proto::DeciderMode,
-    /// M8b decision 18: `[orchestrator.deciders] slot_wait_secs`.
-    #[serde(default = "adapt::slot_wait_absent")]
-    pub decider_slot_wait_secs: u64,
-    /// Milestone 9 (ruling D-5): the orchestrator settings, frozen at run start.
-    #[serde(default)]
-    pub orch: super::orch::OrchLimits,
-}
-
-/// A resolved task: the planner's spec plus everything decisions 8–10 and 35 derive
-/// from it, and the engine's running state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Task {
-    pub spec: PlanTask,
-    pub size: Size,
-    pub hub: bool,
-    pub test_mode: TestMode,
-    pub notes: Vec<String>,
-    /// `None`: not reviewed (`review.small = "off"` on a non-hub `S` task).
-    pub review_level: Option<ReviewLevel>,
-    pub route: Route,
-    pub review_route: Option<Route>,
-    pub budget: Budget,
-    pub implicit_deps: Vec<String>,
-    pub state: TaskState,
-    pub block: Option<BlockInfo>,
-    pub rung: u8,
-    /// The size rung 3 raised the task to (decision 38), set by the engine when it
-    /// raises. An amend never leaves the task below it (M8a.6 fix round 2).
-    #[serde(default)]
-    pub raised_size: Option<Size>,
-    pub failures: u8,
-    pub bounces: GateCounts,
-    pub stalls: u8,
-    pub budget_exceeded: u8,
-    pub conflicts: u8,
-    pub session: u32,
-    pub spent_total: Spend,
-    pub branch: String,
-    pub worktree: PathBuf,
-    /// The worktree was created while the plan gate was open (decision 14), from
-    /// `base_sha`, and its `setup` succeeded.
-    pub prewarmed: bool,
-    /// The task's worktree exists: set when a `PrepareWorktree` succeeds or its setup
-    /// fails, cleared when it is removed (M8a.11; the cancel clean-up of M8a.6's F5).
-    #[serde(default)]
-    pub worktree_live: bool,
-    /// An answer or other message is held for this started task until every dependency
-    /// has finished (M8a.6 ruling N5); the task stays `blocked` meanwhile.
-    #[serde(default)]
-    pub awaiting_deps: bool,
-    /// The held task was answered: it resumes once handed back. Without an answer
-    /// (only an amendment waits, say) it goes back to its question instead (M8a.11 fix
-    /// round 2, ruling T11-N2).
-    #[serde(default)]
-    pub held_answered: bool,
-    /// M8a.13: the `Proof`, `Check` or `PrepareReview` op whose result the task awaits;
-    /// any other result of those kinds is dropped (ruling T12-N's correlation).
-    #[serde(default)]
-    pub gate_op: Option<OpId>,
-    /// M8a.13: review rounds in a row that ended without a verdict (decision 35); the
-    /// second blocks the task, and a verdict resets it.
-    #[serde(default)]
-    pub review_misses: u8,
-    /// M8a.14: the `MergeCandidate`, or the merge queue's `HandBack` (decision 36), the
-    /// task awaits; any other result of those kinds for it is dropped (ruling T12-N's
-    /// correlation). An N5 `HandBack` (`holds.rs`) never sets it.
-    #[serde(default)]
-    pub merge_op: Option<OpId>,
-    /// M8a.14 fix round 1 (ruling T14-I1): a cancel arrived while the task's
-    /// `MergeCandidate` ran. It applies when that merge does not land; a merge that
-    /// lands makes the task `merged` and the cancel too late.
-    #[serde(default)]
-    pub cancel_deferred: bool,
-    /// Ruling T14-I2: the worktree a dispatch prepared from this commit came back while
-    /// the run was not running; the worker is launched (or the worktree re-pointed) by
-    /// the first running pass.
-    #[serde(default)]
-    pub ready_from: Option<String>,
-    /// Ruling T14-I3: the worker was told of a conflict the merge queue handed back,
-    /// and resolves it in its worktree (a merge in progress) until its next accepted
-    /// `task_done`.
-    #[serde(default)]
-    pub resolving: bool,
-    /// Ruling T14-I3: its dependencies finished while it was resolving that conflict;
-    /// the run head is handed back at its next accepted `task_done`, before any gate.
-    #[serde(default)]
-    pub handback_due: bool,
-    /// Ruling T14-I3: the hand-back in flight is that due one: a clean result goes
-    /// through the gates, not straight to the merge queue.
-    #[serde(default)]
-    pub gates_after_handback: bool,
-    /// Ruling T14-R2: the conflicted hand-back `handed_back` refers to. A claim that is
-    /// only its resolution goes straight back to the merge queue.
-    #[serde(default)]
-    pub resolution: Option<super::engine::ResolutionAt>,
-    /// M8a.15: `run override` of a blocked task no claim recorded a head for, waiting
-    /// for its `CountCommits` (decision 35).
-    #[serde(default)]
-    pub override_count: Option<super::engine::OverrideCount>,
-    /// The task's clock (rulings T15-I2, T15-I3, T15-R2).
-    #[serde(default)]
-    pub clock: super::engine::TaskClock,
-    /// The spend before the last `run retry`; rung 4 counts from it (ruling T15-C1).
-    #[serde(default)]
-    pub epoch: Option<super::engine::BudgetEpoch>,
-    pub start_commit: Option<String>,
-    pub head: Option<String>,
-    pub done: Option<DoneClaim>,
-    /// The claim being verified (decision 32; M8a.12).
-    #[serde(default)]
-    pub claim: Option<PendingClaim>,
-    /// A fresh session waiting to start (M8a.12).
-    #[serde(default)]
-    pub fresh_session: Option<FreshSession>,
-    pub rounds: Vec<AgentRound>,
-    pub reviews: Vec<ReviewRecord>,
-    pub checks: Vec<CheckRecord>,
-    pub proofs: Vec<ProofRecord>,
-    pub handed_back: bool,
-    pub merge_commit: Option<String>,
-    pub merged_without_approval: Option<String>,
-    pub salvage_refs: Vec<String>,
-    pub failure_log: Vec<String>,
-    pub history: Vec<TaskEvent>,
-    /// M8b decision 20: a failed check's rung, deferred until its summary is decided.
-    #[serde(default)]
-    pub pending_failure: Option<PendingFailure>,
-    /// M8b decision 21: a free-text `task_blocked` waits for the classification of this
-    /// decider; any other decider's answer, or one after a retry, an override or a
-    /// typed block, is not applied.
-    #[serde(default)]
-    pub pending_classification: Option<u64>,
-    /// M8b decision 21: who classified the block (`None`: the worker typed its kind).
-    #[serde(default)]
-    pub block_source: Option<proto::DeciderSource>,
-    /// M8b decision 18: the usage of the deciders asked about this task alone.
-    #[serde(default)]
-    pub decider_usage: TokenUsage,
-    /// M8b decision 19: the size cross-check; a pending one keeps the task from
-    /// being dispatched.
-    #[serde(default)]
-    pub size_check: Option<SizeCheckState>,
-    /// M8b decision 31: seconds in each state, and when the current one began (0: a
-    /// task from before milestone 8b, whose open state counts nowhere).
-    #[serde(default)]
-    pub phases: proto::PhaseSecs,
-    #[serde(default)]
-    pub phase_since: u64,
-    /// M8b decision 31: the highest rung the task reached.
-    #[serde(default)]
-    pub max_rung: u8,
-    /// M8b decision 32: what the task changed, measured by diff.
-    #[serde(default)]
-    pub diff: Option<proto::DiffStats>,
-    /// M8b decision 33: its `history.jsonl` record was emitted.
-    #[serde(default)]
-    pub history_written: bool,
-    /// M8b decision 33a: every route chosen for a session of this task, in order.
-    #[serde(default)]
-    pub routing_decisions: Vec<proto::RoutingDecision>,
-    /// M8b decision 33a: the route rung 2 or `run retry` escalated from; the next
-    /// worker launch records that escalation and clears it.
-    #[serde(default)]
-    pub escalated_from: Option<Route>,
-    /// Milestone 9's task state (`run::orch::TaskOrch`).
-    #[serde(default)]
-    pub orch: super::orch::TaskOrch,
-}
-
-impl Task {
-    pub fn id(&self) -> &str {
-        &self.spec.id
-    }
+    pub manifests: Vec<String>,
 }
 
 /// An engine operation that has been emitted and whose result has not come back
@@ -524,6 +303,42 @@ pub struct Run {
     /// Milestone 9's run state (`run::orch::RunOrch`).
     #[serde(default)]
     pub orch: super::orch::RunOrch,
+    /// Milestone 9.1 decision 11: the frozen profile's hash, a result-cache key part.
+    #[serde(default)]
+    pub profile_hash: String,
+    /// Milestone 9.1 decision 11: the toolchain id the run's first tier job read, a
+    /// result-cache key part; `None` until then.
+    #[serde(default)]
+    pub toolchain: Option<String>,
+    /// Milestone 9.1 decision 9: the note of the first unknown module graph the run
+    /// met (`tiers::graph::note_once`), logged and reported once.
+    #[serde(default)]
+    pub graph_note: Option<String>,
+    /// Milestone 9.1 decision 27: the daemon's `test_slots` (the workers' caps), which
+    /// the driver stamps on a run it starts (`slots::stamp`) and on each run it loads at
+    /// restore (ruling C-11); 0 before that.
+    #[serde(default)]
+    pub test_slots: u32,
+    /// Milestone 9.1 decision 46: fixed when the plan is first approved.
+    #[serde(default)]
+    pub stage_layout: StageLayout,
+    /// Milestone 9.1 decision 47: one record per created stage, lowest first. A run
+    /// from before it gets stage 1 at restore (`engine::stages::ensure_first`).
+    #[serde(default)]
+    pub stages: Vec<StageRecord>,
+    /// Milestone 9.1 decision 17: the one tier-3 job in flight (`engine::full`).
+    #[serde(default)]
+    pub full_op: Option<OpId>,
+    /// Decision 17(b): since when the merge queue has been idle (tiered profiles only).
+    #[serde(default)]
+    pub queue_idle_since: Option<u64>,
+    /// Milestone 9.1 decision 39: the next fix task's number (`engine::fixes`).
+    #[serde(default)]
+    pub fix_seq: u32,
+    /// Milestone 9.1 decision 49: the stages due a propagate from the stage below
+    /// (`engine::propagate`).
+    #[serde(default)]
+    pub propagate_due: BTreeSet<u16>,
 }
 
 impl Run {
@@ -574,6 +389,39 @@ impl Run {
 
     pub fn task(&self, id: &str) -> Option<&Task> {
         self.tasks.iter().find(|t| t.spec.id == id)
+    }
+
+    /// Milestone 9.1 decision 47: stage `n`'s record, when it has been created.
+    pub fn stage(&self, n: u16) -> Option<&StageRecord> {
+        self.stages.iter().find(|s| s.n == n)
+    }
+
+    /// Stage `n`'s head: a `Single` run's one branch is `integration`, so every stage
+    /// of it is `run_head`; a `Multi` run's is its record's, `None` until it is created.
+    pub fn stage_head(&self, n: u16) -> Option<&str> {
+        match self.stage_layout {
+            StageLayout::Single => Some(&self.run_head),
+            StageLayout::Multi => self.stage(n).map(|s| s.head.as_str()),
+        }
+    }
+
+    /// The head task-context work starts from, merges into and is measured against:
+    /// its stage's head (decision 47), `run_head` while that stage is not created.
+    pub fn head_for(&self, task: &Task) -> &str {
+        self.stage_head(task.stage()).unwrap_or(&self.run_head)
+    }
+
+    /// `integration` for a `Single` run, `anthrex/<run>/stage-<n>` for a `Multi` one.
+    pub fn stage_branch(&self, n: u16) -> String {
+        match self.stage_layout {
+            StageLayout::Single => self.run_branch(),
+            StageLayout::Multi => task_branch(&self.id, &format!("stage-{n}")),
+        }
+    }
+
+    /// `<wt_dir>/runs/<id>/.full`, the tier-3 checkout (decision 17).
+    pub fn full_path(&self) -> PathBuf {
+        self.task_path(".full")
     }
 }
 

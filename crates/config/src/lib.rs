@@ -10,6 +10,8 @@ mod conversation;
 mod git;
 mod orchestrator;
 pub mod reserved_env;
+mod runtimes;
+mod testing;
 
 pub use conversation::{
     Badge, Badges, CONVERSATION_LINGER_SECS_RANGE, CONVERSATION_MAX_BYTES_HEADROOM,
@@ -25,6 +27,12 @@ pub use orchestrator::{
     AgentConfig, ClaudeAuth, ClaudeHeadless, Deciders, Metering, Onboarding, Orchestrator, Scouts,
     default_roster,
 };
+use runtimes::{read_runtimes, report_unknown_runtimes};
+pub use testing::{
+    BISECT_FIX_MAX_RANGE, FLAKY_QUARANTINE_AFTER_RANGE, FLAKY_WINDOW_DAYS_RANGE,
+    FULL_IDLE_SECS_RANGE, TEST_CACHE_DAYS_RANGE, TEST_SLOTS_RANGE, Testing,
+};
+use testing::{KNOWN_TESTING_KEYS, read_testing};
 
 /// The parsed, validated configuration. Always usable: any invalid or
 /// unknown key in the source file is reported as a [`Problem`] and the
@@ -42,6 +50,7 @@ pub struct Config {
     pub git: Git,
     pub conversation: Conversation,
     pub orchestrator: Orchestrator,
+    pub testing: Testing,
 }
 
 /// `Ctrl` plus this lowercase letter. Never `h`, `i`, `j` or `m`: terminals
@@ -138,6 +147,7 @@ impl Default for Config {
             git: Git::default(),
             conversation: Conversation::default(),
             orchestrator: Orchestrator::default(),
+            testing: Testing::default(),
         }
     }
 }
@@ -184,6 +194,7 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
     read_git(&table, &mut config, &mut problems);
     read_conversation(&table, &mut config, &mut problems);
     config.orchestrator = orchestrator::read(&table, &mut problems);
+    read_testing(&table, &mut config, &mut problems);
 
     report_unknown_keys(&table, &mut problems);
 
@@ -449,84 +460,6 @@ fn read_panes(table: &toml::Table, config: &mut Config, problems: &mut Vec<Probl
     }
 }
 
-/// A leading `~/` is expanded against `$HOME` when the config is read
-/// (decision 6). A bare name, or a value that is not `~/...`, is left as-is.
-fn expand_home(command: &str) -> String {
-    if let Some(rest) = command.strip_prefix("~/")
-        && let Ok(home) = std::env::var("HOME")
-    {
-        return format!("{home}/{rest}");
-    }
-    command.to_string()
-}
-
-fn read_runtime_command(
-    table: &toml::Table,
-    full_key: &str,
-    field: &mut String,
-    problems: &mut Vec<Problem>,
-) {
-    let Some(value) = table.get("command") else {
-        return;
-    };
-    match value.as_str() {
-        None => problems.push(Problem {
-            key: full_key.to_string(),
-            message: "expected a string".to_string(),
-            default: field.clone(),
-        }),
-        Some("") => problems.push(Problem {
-            key: full_key.to_string(),
-            message: "must not be empty".to_string(),
-            default: field.clone(),
-        }),
-        Some(s) => *field = expand_home(s),
-    }
-}
-
-fn read_runtimes(table: &toml::Table, config: &mut Config, problems: &mut Vec<Problem>) {
-    let Some(value) = table.get("runtimes") else {
-        return;
-    };
-    let Some(runtimes) = value.as_table() else {
-        problems.push(not_a_table_problem("runtimes"));
-        return;
-    };
-
-    if let Some(value) = runtimes.get("claude") {
-        match value.as_table() {
-            Some(claude) => read_runtime_command(
-                claude,
-                "runtimes.claude.command",
-                &mut config.runtimes.claude.command,
-                problems,
-            ),
-            None => problems.push(not_a_table_problem("runtimes.claude")),
-        }
-    }
-
-    if let Some(value) = runtimes.get("codex") {
-        match value.as_table() {
-            Some(codex) => {
-                read_runtime_command(
-                    codex,
-                    "runtimes.codex.command",
-                    &mut config.runtimes.codex.command,
-                    problems,
-                );
-                read_bool_key(
-                    codex,
-                    "bypass_hook_trust",
-                    "runtimes.codex.bypass_hook_trust",
-                    &mut config.runtimes.codex_bypass_hook_trust,
-                    problems,
-                );
-            }
-            None => problems.push(not_a_table_problem("runtimes.codex")),
-        }
-    }
-}
-
 fn read_u64_in_range(
     table: &toml::Table,
     local_key: &str,
@@ -563,6 +496,7 @@ fn report_unknown_keys(table: &toml::Table, problems: &mut Vec<Problem>) {
             "runtimes" => report_unknown_runtimes(value, problems),
             "conversation" => report_unknown_conversation(value, problems),
             "orchestrator" => orchestrator::report_unknown(value, problems),
+            "testing" => report_unknown_nested(value, "testing", KNOWN_TESTING_KEYS, problems),
             other => problems.push(unknown_key_problem(other)),
         }
     }
@@ -582,23 +516,6 @@ fn report_unknown_nested(
     for key in table.keys() {
         if !known.contains(&key.as_str()) {
             problems.push(unknown_key_problem(&format!("{prefix}.{key}")));
-        }
-    }
-}
-
-fn report_unknown_runtimes(value: &toml::Value, problems: &mut Vec<Problem>) {
-    let Some(table) = value.as_table() else {
-        return;
-    };
-    for (key, sub) in table {
-        match key.as_str() {
-            "claude" => {
-                report_unknown_nested(sub, "runtimes.claude", KNOWN_RUNTIME_COMMAND_KEYS, problems)
-            }
-            "codex" => {
-                report_unknown_nested(sub, "runtimes.codex", KNOWN_RUNTIME_CODEX_KEYS, problems)
-            }
-            other => problems.push(unknown_key_problem(&format!("runtimes.{other}"))),
         }
     }
 }

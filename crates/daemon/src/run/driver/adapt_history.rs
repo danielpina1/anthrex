@@ -95,10 +95,11 @@ impl RunService {
         let refused = |message: String| RunReply::refused(request::STATS, message);
         let (git, timeout) = (self.ctx.git.clone(), self.git_timeout_secs());
         let data_dir = self.ctx.data_dir.clone();
+        let testing = self.ctx.testing.clone();
         let result = tokio::task::spawn_blocking(move || {
             let (root, project) = checkout_of(&git, &dir, timeout)?;
             let path = crate::profile::repo_dir(&data_dir, &project).join(HISTORY_FILE);
-            Ok::<_, String>(summarise(&git, &root, &path, unix_now(), timeout))
+            Ok::<_, String>(summarise(&git, &root, &path, unix_now(), timeout, &testing))
         })
         .await;
         match result {

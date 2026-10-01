@@ -271,6 +271,14 @@ enum Entry<'a> {
 }
 
 impl Entry<'_> {
+    /// The stage an entry hangs under: a planner's first task's, else 1.
+    fn stage(&self) -> u16 {
+        match self {
+            Entry::Task(planned) => planned.task.stage,
+            Entry::Planner { tasks, .. } => tasks.first().map_or(1, |first| first.task.stage),
+        }
+    }
+
     /// A planner sorts as its earliest task; one with no task after every root task,
     /// in `RunInfo.planners` order.
     fn order(&self) -> (bool, (u32, usize), usize) {
@@ -343,12 +351,34 @@ fn build_tree<'a>(run: &'a RunInfo, windows: &'a [WindowInfo], keep: u64) -> Nod
         .into_iter()
         .map(|scout| builder.scout(scout))
         .collect();
+    // Milestone 9.1 decision 55: a staged run hangs each entry under its stage node,
+    // a planner under its first task's; a stage the snapshot does not list, never.
+    let mut stages: Vec<Node<'a>> = Vec::new();
+    if run.stages.len() > 1 {
+        let mut seen = HashSet::new();
+        for stage in run.stages.iter().filter(|stage| seen.insert(stage.n)) {
+            let key = NodeKey::Stage {
+                run: run.run_id.clone(),
+                n: stage.n,
+            };
+            stages.push(node(key, RowKind::Stage { run, stage }));
+        }
+    }
     for entry in entries {
-        root.children.push(match entry {
+        let stage = entry.stage();
+        let built = match entry {
             Entry::Task(planned) => builder.task(planned.task),
             Entry::Planner { planner, tasks, .. } => builder.planner(planner, &tasks),
-        });
+        };
+        let parent = stages.iter_mut().find(
+            |node| matches!(node.row.kind, RowKind::Stage { stage: info, .. } if info.n == stage),
+        );
+        match parent {
+            Some(parent) => parent.children.push(built),
+            None => root.children.push(built),
+        }
     }
+    root.children.extend(stages);
     root
 }
 

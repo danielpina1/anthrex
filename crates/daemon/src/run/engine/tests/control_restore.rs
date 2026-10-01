@@ -109,7 +109,13 @@ fn restore_replays_journaled_results() {
     let (check_op, _) = pending_one(&fx, "Check", Some("t2"));
     let effects = restart(
         &mut fx,
-        vec![(merge_op, OpResult::Merged { commit: commit(1) })],
+        vec![(
+            merge_op,
+            OpResult::Merged {
+                commit: commit(1),
+                tier: None,
+            },
+        )],
     );
     assert_eq!(fx.run().state, RunState::Paused);
     assert_eq!(fx.task("t1").state, TaskState::Merged);
@@ -317,7 +323,7 @@ fn a_restored_halted_run_resumes_its_sessions_on_rebaseline() {
     let effects = fx.next(EventKind::Resume {
         reply,
         run_id: RUN_ID.into(),
-        rebaseline: Some((BASE.into(), BASE.into())),
+        rebaseline: Some((BASE.to_string(), BASE.to_string()).into()),
     });
     let session = fx.task("t1").rounds[0].session_id.clone().unwrap();
     assert_eq!(
@@ -373,6 +379,7 @@ fn restore_honours_deferred_cancels_and_lost_hand_backs() {
         op,
         OpResult::Conflict {
             files: vec!["docs/t1/a.md".into()],
+            tree: None,
         },
     );
     let (lost, _) = pending_one(&fx, "HandBack", Some("t1"));
@@ -535,6 +542,7 @@ fn a_hand_back_result_after_a_cancel_is_dropped() {
         op,
         OpResult::Conflict {
             files: files.clone(),
+            tree: None,
         },
     );
     let (op, _) = pending_one(&fx, "HandBack", Some("t1"));

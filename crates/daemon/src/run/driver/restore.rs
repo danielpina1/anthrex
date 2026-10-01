@@ -70,6 +70,9 @@ impl RunService {
         let mut as_loaded = std::collections::HashMap::new();
         let mut quiet = BTreeSet::new();
         for (mut run, lines) in loaded {
+            // Milestone 9.1 decision 27 (ruling C-11): this daemon's slot count, in
+            // memory; stamped before `as_loaded`, so it alone causes no write.
+            run.test_slots = self.scheduler().slots();
             if lines.is_empty() && run.pending_ops.is_empty() {
                 quiet.insert(run.id.clone());
             }

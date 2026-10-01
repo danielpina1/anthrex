@@ -97,6 +97,8 @@ fn the_environment_is_scrubbed() {
             confined_network: false,
             confined_unix_sockets: Vec::new(),
             confined_localhost_ports: Vec::new(),
+            tiers: Default::default(),
+            manifests: Vec::new(),
         };
         let mut spec = spec(Runtime::Claude, &worktree);
         spec.env = profile_env(&profile, &worktree);
