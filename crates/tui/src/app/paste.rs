@@ -45,8 +45,20 @@ impl App {
                 Modal::NewAgent(form) => form.on_paste(&text),
                 Modal::EditTask(form) => form.on_paste(&text),
                 Modal::StartGoal(form) => form.on_paste(&text),
+                Modal::Action(flow) => {
+                    if let super::actions::ActionStep::Form(form) = &mut flow.step {
+                        form.on_paste(&text);
+                    }
+                }
                 _ => {}
             }
+            return vec![];
+        }
+        // Milestone 9.0.6 decision 33: a screen covers the body; a paste goes to its
+        // editor or nowhere.
+        if self.screen.is_some() {
+            self.on_profile_paste(&text);
+            self.on_settings_paste(&text);
             return vec![];
         }
         // Milestone 9.0.5 review finding 1: the plan review covers the body, so a

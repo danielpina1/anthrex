@@ -167,6 +167,9 @@ impl App {
     }
 
     pub(crate) fn on_run_reply(&mut self, reply: RunReply) -> Vec<Effect> {
+        if let Some(effects) = self.route_reply(&reply) {
+            return effects;
+        }
         match reply {
             // Decision 1: every snapshot replaces the last, whatever its revision — a
             // restarted daemon counts from the start again. A push also proves the
@@ -210,7 +213,7 @@ impl App {
                     form.submitting = false;
                     form.request_id = None;
                 } else {
-                    self.toast(text);
+                    self.toast_at(super::ToastLevel::Error, text);
                 }
             }
             RunReply::Triaged {
@@ -231,8 +234,12 @@ impl App {
             RunReply::Started { .. }
             | RunReply::ConfirmNeeded { .. }
             | RunReply::ToolResult { .. }
+            // Settings, profile and stats replies are routed by id in `app/replies.rs`
+            // (decisions 24, 34 and 38); one reaching here is no request of this
+            // client's.
+            | RunReply::Stats { .. }
             | RunReply::Profile { .. }
-            | RunReply::Stats { .. } => {}
+            | RunReply::Settings { .. } => {}
             RunReply::TaskDetail { detail, request_id } => self.on_task_detail(detail, request_id),
         }
         vec![]
@@ -256,6 +263,7 @@ impl App {
         self.close_gate_modal_if_stale();
         self.follow_review(review_at);
         self.repair_alerts_focus();
+        self.follow_action_flow();
         self.open_pending_run();
         let rows = nav_rows_of(
             &self.windows,

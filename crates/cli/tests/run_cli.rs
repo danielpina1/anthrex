@@ -206,6 +206,15 @@ fn reject_needs_the_id() {
     let snapshot: RunsSnapshot = serde_json::from_str(&out.stdout).unwrap();
     let ids: Vec<&str> = snapshot.runs.iter().map(|r| r.run_id.as_str()).collect();
     assert_eq!(ids, [other.as_str()]);
+    // Milestone 9.0.6 decision 7: a run at its gate carries its actions.
+    let json: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    let kinds: Vec<&str> = json["runs"][0]["actions"]
+        .as_array()
+        .expect("an actions key")
+        .iter()
+        .filter_map(|a| a["kind"]["kind"].as_str())
+        .collect();
+    assert_eq!(kinds, ["approve", "reject"], "{}", out.stdout);
 
     let out = run(&h, &["reject", &id], "not-the-id\n");
     assert_eq!(

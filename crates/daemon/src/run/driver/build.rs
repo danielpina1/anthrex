@@ -266,7 +266,7 @@ impl RunService {
         shape: Shape,
     ) -> Result<Run, BuildError> {
         let fast = matches!(shape, Shape::Fast);
-        let mut config = self.ctx.orchestrator.clone();
+        let mut config = self.ctx.settings.current().orchestrator.clone();
         // Final fix batch F1c round 2: never run worker-written code unconfined unless
         // the user said so, on the command line or in their own config.
         let available = confine::available();
@@ -360,7 +360,8 @@ impl RunService {
                 .into_iter()
                 .filter(|r| !reachable.contains(r))
                 .collect();
-            let timeout = Duration::from_secs(self.ctx.orchestrator.git_timeout_secs);
+            let timeout =
+                Duration::from_secs(self.ctx.settings.current().orchestrator.git_timeout_secs);
             let checks = self.check_runtimes(&run, &unreached, timeout).await?;
             refusals = checks.api_key;
             for (runtime, who, paths) in checks.settings {

@@ -35,6 +35,7 @@ mod orch_ops;
 mod refresh;
 mod requests;
 mod restore;
+mod settings;
 mod stage_ops;
 mod tier;
 pub mod tier_step;
@@ -128,6 +129,8 @@ pub struct RunService {
     scheduler: Arc<TestScheduler>,
     /// Milestone 9.1 decision 30: the daemon's one result cache.
     test_cache: TestCache,
+    /// Milestone 9.0.6 decision 28: held by one Settings save at a time (`settings.rs`).
+    settings_write: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -212,6 +215,7 @@ impl RunService {
             wakes: Default::default(),
             scheduler: TestScheduler::new(slots),
             test_cache: TestCache::new(test_cache_days),
+            settings_write: Arc::default(),
         })
     }
 
@@ -580,3 +584,6 @@ mod tests;
 
 #[cfg(test)]
 mod gated_git;
+
+#[cfg(test)]
+mod finish_tests;

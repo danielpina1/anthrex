@@ -4,7 +4,8 @@
 //! steering by typing, the orchestrator's reactions to blocked work, `run promote`,
 //! what the orchestrator may not do, wake-ups beside typing, worker messages, refresh
 //! and task notes, a restart, the user's messages, the goal form's request and the
-//! routing history. The scenarios live in `run_e2e_orch/`.
+//! routing history; and (milestone 9.0.6) a run driven through the TUI's own
+//! requests. The scenarios live in `run_e2e_orch/`.
 
 mod support;
 
@@ -20,3 +21,5 @@ mod promote;
 mod records;
 #[path = "run_e2e_orch/steer.rs"]
 mod steer;
+#[path = "run_e2e_orch/tui_flow.rs"]
+mod tui_flow;

@@ -33,6 +33,14 @@ fn no_stored(project: &Path) -> String {
     )
 }
 
+/// Milestone 9.0.6 decision 37: an edit waits for the runs live in its project.
+pub fn live_run(run: &str, project: &Path) -> String {
+    format!(
+        "run {run} is live in {}; edit the profile once it finishes (runs keep the profile they started with)",
+        project.display()
+    )
+}
+
 /// Refused while a rejected detection still cleans up.
 fn stopping(project: &Path) -> String {
     format!(
@@ -282,6 +290,9 @@ impl ProfileService {
         unconfined_checks: bool,
     ) -> Result<ProfileReply, String> {
         let project = self.project_of(dir.clone()).await?;
+        if let Some(run) = self.live_runs(&project).first() {
+            return Err(live_run(run, &project));
+        }
         self.refuse_if_running(&project).await?;
         let (stored, meta) = match self.load(&project).await?.0 {
             Stored::Found { profile, meta, .. } => (profile, meta),

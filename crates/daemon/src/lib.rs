@@ -22,6 +22,7 @@ pub mod headless;
 pub mod hooks;
 pub mod launch;
 pub mod lifecycle;
+pub mod live_config;
 pub mod lockfile;
 pub mod logfile;
 pub mod manager;

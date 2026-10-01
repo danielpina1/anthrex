@@ -41,6 +41,7 @@ use proto::{FinishAction, PlanEdit, TokenUsage, ToolCall};
 use super::model::{AgentRound, OpId, PendingOp, Run};
 use super::validate::EditScope;
 
+pub(crate) mod actions;
 mod batch;
 mod bisect;
 mod clock;

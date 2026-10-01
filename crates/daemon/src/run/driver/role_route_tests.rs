@@ -337,6 +337,42 @@ async fn a_decider_record_is_saved_before_its_call() {
     );
 }
 
+/// Milestone 9.0.6 decision 29: a run-bound decider's candidates come from the roster
+/// its run froze, not from the live settings a save swapped since.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_decider_record_lists_the_runs_frozen_roster() {
+    let rig = Rig::new(DeciderMode::Claude, None);
+    let swapped = config::Orchestrator {
+        models: vec![proto::ModelEntry {
+            runtime: proto::Runtime::Codex,
+            model: "gpt-6-sol".into(),
+            strength: proto::Strength::Fast,
+            note: String::new(),
+        }],
+        ..config::Orchestrator::default()
+    };
+    rig.runs
+        .live_settings()
+        .swap_owned(&swapped, Default::default());
+    let result = rig
+        .runs
+        .decide_as(&rig.ctx(), Some((5, vec!["t0".into()])), summary_request())
+        .await;
+    assert!(matches!(result, OpResult::Decided(_)), "{result:?}");
+    rig.settled().await;
+    let records = rig.records(AgentRole::Decider);
+    assert_eq!(records.len(), 1, "{records:#?}");
+    let models: Vec<&str> = records[0]
+        .candidates
+        .iter()
+        .map(|c| c.route.model.as_str())
+        .collect();
+    assert!(
+        models.len() > 1 && !models.contains(&"gpt-6-sol"),
+        "{models:?}"
+    );
+}
+
 /// Review M-3: with the daemon's deciders off no decider session starts, so no record
 /// is opened.
 #[tokio::test(flavor = "multi_thread")]

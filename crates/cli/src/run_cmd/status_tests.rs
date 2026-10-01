@@ -52,6 +52,7 @@ fn task(
     windows: &[u32],
 ) -> TaskInfo {
     TaskInfo {
+        actions: Vec::new(),
         id: id.to_string(),
         title: format!("Task {id}"),
         epic: None,
@@ -184,6 +185,7 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         ),
     ];
     RunInfo {
+        actions: Vec::new(),
         run_id: "add-reset-3f9a".into(),
         goal: "Add password reset".into(),
         project: PathBuf::from("/r/p"),

@@ -18,13 +18,13 @@ fn sent_edit() -> ClientMsg {
 }
 
 /// The form is free again, the error inline, and `Enter` sends the same edit under a
-/// new id.
-fn retryable(app: &mut App) {
+/// new id (`id`: a reconnect's settings fetch takes one before it, 9.0.6 decision 24).
+fn retryable(app: &mut App, id: u64) {
     assert!(!form(app).submitting);
     assert_eq!(form(app).error.as_deref(), Some(NOT_SENT));
     assert_eq!(
         tap(app, KeyCode::Enter),
-        form_edit_as(2, vec![amend(None, Some(Size::S))])
+        form_edit_as(id, vec![amend(None, Some(Size::S))])
     );
     assert!(form(app).submitting);
     assert_eq!(form(app).error, None);
@@ -36,7 +36,7 @@ fn a_refused_edit_send_frees_the_form_to_retry() {
     assert_eq!(submit_a_size_change(&mut app), the_edit());
     assert!(form(&app).submitting);
     assert!(app.on_send_failed(&sent_edit()).is_empty());
-    retryable(&mut app);
+    retryable(&mut app, 2);
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn a_lost_link_frees_a_submitting_form_to_retry() {
     submit_a_size_change(&mut app);
     assert!(app.on_link_lost("connection closed").is_empty());
     assert!(!app.connected());
-    retryable(&mut app);
+    retryable(&mut app, 2);
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn a_reconnect_frees_a_submitting_form_to_retry() {
     submit_a_size_change(&mut app);
     let windows = app.windows.clone();
     app.on_reconnected(windows);
-    retryable(&mut app);
+    retryable(&mut app, 3);
 }
 
 #[test]

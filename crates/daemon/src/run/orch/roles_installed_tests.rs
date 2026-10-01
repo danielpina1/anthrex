@@ -19,13 +19,13 @@ fn installed(claude: bool) -> BTreeMap<String, bool> {
 
 /// `scout::spec::run_scout_route` on the scout service's live keys.
 fn run_scout_route(ctx: &ScoutContext, installed: &BTreeMap<String, bool>) -> Route {
-    crate::scout::spec::run_scout_route(&ctx.roster, &ScoutRouting::of(ctx), installed)
+    crate::scout::spec::run_scout_route(&ctx.roster.current(), &ScoutRouting::of(ctx), installed)
 }
 
 fn ctx() -> ScoutContext {
     let orchestrator = config::Orchestrator::default();
     ScoutContext {
-        roster: config::default_roster(),
+        roster: config::default_roster().into(),
         default_runtime: Runtime::Claude,
         scouts: orchestrator.scouts.clone(),
         claude: orchestrator.claude.clone(),

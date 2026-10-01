@@ -368,18 +368,18 @@ async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow
     // attach just did, so it gets the same executable path `ensure_daemon` above
     // used.
     let daemon_exe = std::env::current_exe()?;
-    // Decision A5: ASCII badges are chosen by `conversation.badges.force_ascii`
-    // (already applied by `from_config`) or by the first set, non-empty value of
-    // `LC_ALL`, `LC_CTYPE`, `LANG` not naming UTF-8. Reading the environment happens
-    // only here, never in `crates/tui/src/ui/badge.rs` (`AGENTS.md` hard rule 5); the
-    // precedence itself is `resolve_locale`, tested below without touching the
-    // environment.
+    // Decision A5: `force_ascii` or a non-UTF-8 `LC_ALL`/`LC_CTYPE`/`LANG` picks the
+    // ASCII badges; decision 2 of 9.0.6: `COLORTERM` decides `[theme] truecolor = "auto"`.
+    // The environment is read only here (`AGENTS.md` hard rule 5); the precedence is
+    // `resolve_locale`, tested below without touching the environment.
     let lc_all = std::env::var("LC_ALL").ok();
     let lc_ctype = std::env::var("LC_CTYPE").ok();
     let lang = std::env::var("LANG").ok();
+    let colorterm = std::env::var("COLORTERM").ok();
     let locale = resolve_locale(lc_all.as_deref(), lc_ctype.as_deref(), lang.as_deref());
-    let settings =
-        tui::settings::UiSettings::from_config(&loaded_config).with_locale(locale.as_deref());
+    let settings = tui::settings::UiSettings::from_config(&loaded_config)
+        .with_locale(locale.as_deref())
+        .with_colorterm(colorterm.as_deref());
     tui::run(tui::TuiOptions {
         socket_path: socket,
         default_dir: dir,

@@ -161,6 +161,9 @@ impl App {
         self.edit_not_sent(None);
         self.goal_not_sent(None);
         self.forget_task_detail_in_flight();
+        // Final review I2: a brief that was loading lost its reply with the link.
+        self.form_brief_link_lost();
+        self.replies.clear();
         self.toast("connection to the daemon lost");
         vec![]
     }
@@ -221,8 +224,18 @@ impl App {
         // again. After `replace_windows`, so a view that followed focus to another window
         // (review M3) subscribes that window, once.
         effects.extend(self.conversation.relink());
-        // Decision 1: the new connection has no run subscription yet.
+        // Decision 1: the new connection has no run subscription yet; decision 24: and
+        // no settings.
         effects.push(self.run_subscription());
+        effects.push(self.settings_fetch());
+        // Decision 34: an open Profile screen asks its three things again, once.
+        if matches!(self.screen, Some(super::screens::Screen::Profile(_))) {
+            effects.extend(self.profile_fetch_all(std::time::Instant::now()));
+        }
+        // Decision 38: an open stats screen with no history yet asks again, once.
+        effects.extend(self.stats_reconnected());
+        // Final review I2: so does an open answer form whose brief did not come.
+        effects.extend(self.form_brief_reconnected());
         effects
     }
 
@@ -251,37 +264,28 @@ impl App {
             ClientMsg::Run(RunRequest::Subscribe) => self.run_subscribed = false,
             // A dropped keystroke is not worth a toast; the next one will try again.
             ClientMsg::Input { .. } => {}
-            // Milestone 9.0.5 decision 23: quiet; the panel says the detail was not
-            // sent, and the task's next key asks again (never a retry per tick).
-            ClientMsg::RunTagged {
-                id,
-                request: RunRequest::TaskDetail { .. },
-            } => self.task_detail_not_sent(*id),
-            _ => {
-                // Whole-branch review M2: a refused `Edit` frees its submitting form;
-                // milestone 9: the form's own tagged request, and the goal form's.
-                match msg {
-                    ClientMsg::RunTagged {
-                        id,
-                        request: RunRequest::Edit { .. },
-                    } => self.edit_not_sent(Some(*id)),
-                    ClientMsg::RunTagged {
-                        id,
-                        request: RunRequest::StartGoal { .. },
-                    } => self.goal_not_sent(Some(*id)),
-                    _ => {}
-                }
-                if self.connected() {
-                    self.toast("daemon is not responding");
-                } else {
-                    self.toast(format!(
-                        "not connected; {} r to reconnect",
-                        self.settings.prefix_label
-                    ));
+            // Final review I1: a tagged request never left, so nothing waits for it; a
+            // screen or form that owns it says so itself (`replies.rs::tagged_not_sent`).
+            ClientMsg::RunTagged { id, request } => {
+                if self.tagged_not_sent(*id, request) {
+                    self.not_sent_toast();
                 }
             }
+            _ => self.not_sent_toast(),
         }
         vec![]
+    }
+
+    /// The toast of a request the connection refused: decision 35's wording by the link.
+    fn not_sent_toast(&mut self) {
+        if self.connected() {
+            self.toast("daemon is not responding");
+        } else {
+            self.toast(format!(
+                "not connected; {} r to reconnect",
+                self.settings.prefix_label
+            ));
+        }
     }
 
     /// `on_tick`'s share of decision 36: the third of the three ways the wait can end —

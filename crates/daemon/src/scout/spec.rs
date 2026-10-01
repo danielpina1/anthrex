@@ -2,6 +2,7 @@
 //! launch spec. Pure.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use proto::{AgentRole, Effort, ModelEntry, Route, RunRef, Runtime, ScoutKind, Strength};
 
@@ -9,6 +10,7 @@ use super::contract::{ONBOARDING_CONTRACT, SCOUT_CONTRACT};
 use crate::headless::argv::{CliCaps, CodexProjectConfig};
 use crate::headless::codex_guard::{CodexConfigGuard, GuardEntry, ObjectFormat};
 use crate::headless::{ClaudeSandbox, HeadlessSpec, McpTarget};
+use crate::live_config::LiveSettings;
 use crate::run::role_launch::{
     REVIEWER_CODEX_SANDBOX, REVIEWER_DISALLOWED_TOOLS, REVIEWER_PERMISSION_MODE,
     protected_write_denials,
@@ -43,12 +45,36 @@ pub struct ScoutSpec {
 /// What every scout launch reads from the daemon.
 #[derive(Debug, Clone)]
 pub struct ScoutContext {
-    pub roster: Vec<ModelEntry>,
+    pub roster: Roster,
     pub default_runtime: Runtime,
     pub scouts: config::Scouts,
     pub claude: config::ClaudeHeadless,
     pub caps: CliCaps,
     pub data_dir: PathBuf,
+}
+
+/// Where a scout's roster comes from (milestone 9.0.6 decision 29): the daemon's live
+/// settings, read at each spawn, or a fixed list (tests).
+#[derive(Debug, Clone)]
+pub enum Roster {
+    Fixed(Vec<ModelEntry>),
+    Live(Arc<LiveSettings>),
+}
+
+impl Roster {
+    /// The roster now.
+    pub fn current(&self) -> Vec<ModelEntry> {
+        match self {
+            Roster::Fixed(models) => models.clone(),
+            Roster::Live(live) => live.current().orchestrator.models.clone(),
+        }
+    }
+}
+
+impl From<Vec<ModelEntry>> for Roster {
+    fn from(models: Vec<ModelEntry>) -> Self {
+        Roster::Fixed(models)
+    }
 }
 
 /// Decision 12's route: the first roster entry of `runtime` at the lowest strength at or
@@ -94,7 +120,12 @@ pub fn route_within(
 /// runtime, at `scouts.strength` and `scouts.effort`.
 pub fn scout_route(ctx: &ScoutContext) -> Route {
     let runtime = ctx.scouts.runtime.unwrap_or(ctx.default_runtime);
-    route(&ctx.roster, runtime, ctx.scouts.strength, ctx.scouts.effort)
+    route(
+        &ctx.roster.current(),
+        runtime,
+        ctx.scouts.strength,
+        ctx.scouts.effort,
+    )
 }
 
 /// `[orchestrator.scouts]`'s route keys and `orchestrator.default_runtime`, as a run

@@ -78,6 +78,7 @@ pub(super) fn a_review() -> ReviewInfo {
 
 pub(super) fn a_task_info() -> TaskInfo {
     TaskInfo {
+        actions: Vec::new(),
         id: "t1".into(),
         title: "Reset token model".into(),
         epic: Some("auth".into()),
@@ -194,6 +195,7 @@ pub(super) fn a_run_info() -> RunInfo {
     rate_limits.insert("claude".to_string(), 2u32);
     rate_limits.insert("codex".to_string(), 0u32);
     RunInfo {
+        actions: Vec::new(),
         run_id: "run-a1b2".into(),
         goal: "Add password reset".into(),
         project: PathBuf::from("/tmp/p"),

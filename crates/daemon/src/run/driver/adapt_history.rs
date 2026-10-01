@@ -85,7 +85,7 @@ fn checkout_of(
 
 impl RunService {
     fn git_timeout_secs(&self) -> Duration {
-        Duration::from_secs(self.ctx.orchestrator.git_timeout_secs)
+        Duration::from_secs(self.ctx.settings.current().orchestrator.git_timeout_secs)
     }
 
     /// `RunRequest::Stats` (decision 35): reverts recorded first (decision 34), then the

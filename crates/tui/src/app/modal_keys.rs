@@ -22,7 +22,8 @@ use proto::ClientMsg;
 
 impl App {
     /// Opens the generic yes/no `Confirm` modal for the focused window, naming it in
-    /// `message` and running `action` on `y`/`Enter` (`app.rs`'s `perform`). `Modal::Remove`
+    /// `message` and running `action` on `y`, or Enter unless `action` is destructive
+    /// (`PendingAction::destructive`; `lifecycle.rs`'s `perform`). `Modal::Remove`
     /// (decision 35) no longer goes through this — only `Command::KillWindow` still does.
     pub(super) fn confirm_focused(
         &mut self,
@@ -130,7 +131,17 @@ impl App {
             // Any key closes the help overlay or the config notice; nothing to restore.
             Modal::Help | Modal::Notice { .. } => vec![],
             Modal::Confirm { message, action } => match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => self.perform(action),
+                KeyCode::Char('y') | KeyCode::Char('Y') => self.perform(action),
+                KeyCode::Enter if !action.destructive() => self.perform(action),
+                // Decision 5: a destructive confirm takes only `y`.
+                KeyCode::Enter => {
+                    self.toast_at(
+                        super::ToastLevel::Warn,
+                        format!("press y to {}", action.verb()),
+                    );
+                    self.modal = Some(Modal::Confirm { message, action });
+                    vec![]
+                }
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => vec![],
                 _ => {
                     self.modal = Some(Modal::Confirm { message, action });
@@ -153,6 +164,7 @@ impl App {
                 self.modal = Some(Modal::StartGoal(form));
                 self.on_goal_key(key)
             }
+            Modal::Action(flow) => self.on_action_key(*flow, key),
         }
     }
 
@@ -201,7 +213,13 @@ impl App {
                 self.modal = Some(Modal::Remove(confirm));
                 vec![]
             }
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            // Decision 5 (ruling): removing an agent is destructive, so only `y` confirms.
+            KeyCode::Enter => {
+                self.toast_at(super::ToastLevel::Warn, "press y to remove");
+                self.modal = Some(Modal::Remove(confirm));
+                vec![]
+            }
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
                 let remove_worktree = confirm.remove_worktree;
                 if remove_worktree {
                     // One worktree removal at a time (see `App::pending_worktree_remove`),

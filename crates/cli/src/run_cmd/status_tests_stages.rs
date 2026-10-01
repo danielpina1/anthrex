@@ -8,6 +8,7 @@ use super::tests::example;
 
 fn stage(n: u16, head: Option<&str>, (merged, tasks): (u32, u32), full: FullInfo) -> StageInfo {
     StageInfo {
+        actions: Vec::new(),
         n,
         branch: format!("anthrex/add-reset-3f9a/stage-{n}"),
         head: head.map(str::to_string),

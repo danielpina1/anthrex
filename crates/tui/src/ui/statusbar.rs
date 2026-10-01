@@ -1,5 +1,7 @@
-use crate::app::{App, Link, TreeInput};
-use crate::theme;
+use crate::app::{App, Link, ToastLevel};
+use crate::theme::{self, Glyph, Role, role};
+use crate::ui::kit;
+use crate::ui::statusbar_modes::{self, Body};
 use proto::{GitOperation, GitState, Head};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -7,18 +9,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
-
-/// The status bar's key hints, keyed to `prefix_label` (decision 38: every hint takes
-/// the prefix from `app.settings.prefix_label`, never a hard-coded `C-b`).
-fn hints(prefix_label: &str) -> [(String, &'static str); 5] {
-    [
-        (format!("{prefix_label} ?"), "help"),
-        (format!("{prefix_label} c"), "new shell"),
-        (format!("{prefix_label} t"), "tree"),
-        (format!("{prefix_label} j/k"), "switch"),
-        (format!("{prefix_label} d"), "detach"),
-    ]
-}
 
 /// The red ` DISCONNECTED ` badge, common to both `Link::Reconnecting` and
 /// `Link::Lost` (decision 34); each pushes its own status text right after it.
@@ -33,45 +23,16 @@ fn push_disconnected(spans: &mut Vec<Span<'static>>) {
     spans.push(Span::raw(" "));
 }
 
+/// The columns the bar keeps between the hints and the git segment.
+const GAP: u16 = 2;
+
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let accent = app.settings.accent;
-    let hints = hints(&app.settings.prefix_label);
+    let palette = app.palette();
     let mut spans = Vec::new();
-    if app.keymap.pending() {
+    if let Some(badge) = statusbar_modes::badge(app) {
         spans.push(Span::styled(
-            " PREFIX ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(accent)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::raw(" "));
-    } else if app.plan_review.is_some() {
-        // Milestone 9.0.5 decision 13: the review is over whatever tree mode is on.
-        spans.push(Span::styled(
-            " REVIEW ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(accent)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::raw(" "));
-    } else if app.alerts_focus.is_some() {
-        // Milestone 9.0.5 decision 21: the Alerts box has the keys.
-        spans.push(Span::styled(
-            " ALERTS ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(accent)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::raw(" "));
-    } else if let Some(input) = app.tree_input {
-        spans.push(Span::styled(
-            match input {
-                TreeInput::Navigate => " TREE ",
-                TreeInput::Filter => " FILTER ",
-            },
+            badge,
             Style::default()
                 .fg(Color::Black)
                 .bg(accent)
@@ -109,7 +70,11 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         let all = crate::app::alerts(app);
         if let Some(top) = all.first() {
             spans.push(Span::styled(
-                format!("⚑ {}", all.len()),
+                format!(
+                    "{} {}",
+                    theme::glyph(Glyph::NeedsYou, palette.ascii),
+                    all.len()
+                ),
                 Style::default()
                     .fg(theme::alert_color(top.priority))
                     .add_modifier(Modifier::BOLD),
@@ -123,39 +88,16 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .map(|text| toast_columns(text, area.width))
         .unwrap_or(0);
 
-    match app.tree_input {
-        _ if app.plan_review.is_some() => {
-            spans.push(Span::styled(review_hint(app), theme::muted()));
-        }
-        _ if app.alerts_focus.is_some() => {
-            spans.push(Span::styled("j/k move  ⏎ go  esc back", theme::muted()));
-        }
-        Some(TreeInput::Navigate) => spans.push(Span::styled(navigate_hint(app), theme::muted())),
-        Some(TreeInput::Filter) => spans.push(Span::styled(
+    if statusbar_modes::filtering(app) {
+        spans.push(Span::styled(
             format!("/{}", app.tree.filter),
             theme::muted(),
-        )),
-        None => match app.focused_git() {
-            None => push_hints(&mut spans, &hints, hints.len(), accent),
-            Some(state) => {
-                let badge_width = spans_width(&spans);
-                let available = area
-                    .width
-                    .saturating_sub(badge_width)
-                    .saturating_sub(toast_width);
-                // Hints drop from the right, one at a time, before the git segment gives up
-                // any of its own parts (decision 20).
-                let full_git_width = spans_width(&git_spans(state, usize::MAX));
-                let mut hint_count = hints.len();
-                while hint_count > 0 && hints_width(&hints, hint_count) + full_git_width > available
-                {
-                    hint_count -= 1;
-                }
-                push_hints(&mut spans, &hints, hint_count, accent);
-                let git_budget = available.saturating_sub(hints_width(&hints, hint_count));
-                spans.extend(git_spans(state, usize::from(git_budget)));
-            }
-        },
+        ));
+    } else {
+        let body = statusbar_modes::body(app);
+        let used = spans_width(&spans);
+        let available = area.width.saturating_sub(used).saturating_sub(toast_width);
+        spans.extend(body_spans(app, &body, available, palette));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 
@@ -166,77 +108,64 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             width,
             ..area
         };
-        let toast = Span::styled(
-            text.to_string(),
-            Style::default().fg(accent).add_modifier(Modifier::BOLD),
-        );
+        let style = match app.toast_level() {
+            Some(ToastLevel::Error) => role(Role::Failed, palette).add_modifier(Modifier::BOLD),
+            Some(ToastLevel::Warn) => role(Role::Attention, palette),
+            _ => Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        };
+        let toast = Span::styled(text.to_string(), style);
         frame.render_widget(Paragraph::new(Line::from(toast)), right);
     }
 }
 
-/// Tree navigation's hint: the project tree's, or the run view's two (milestone 8c,
-/// Interfaces "Status bar and overview title"), the plan gate's while the run awaits
-/// approval.
-fn navigate_hint(app: &App) -> String {
-    let Some(view) = &app.run_view else {
-        return "j/k move  ⏎ focus  space fold  / filter  esc back".to_string();
-    };
-    let label = crate::app::filter_label(view.filter);
-    let run = app.runs.runs.iter().find(|run| run.run_id == view.run_id);
-    let state = run.map(|run| run.state);
-    // Milestone 9: a planning run's submit, and a run's awaiting holds.
-    let holds = run.is_some_and(|run| crate::tree::awaiting_holds(run).next().is_some());
-    if state == Some(proto::RunState::AwaitingApproval) {
-        format!(
-            "a approve  x reject  e edit  d remove  p review  ⏎ open  f filter: {label}  esc back"
-        )
-    } else if state == Some(proto::RunState::Planning) {
-        format!("s submit  j/k move  ⏎ open  f filter: {label}  esc back")
-    } else if holds {
-        format!("a approve hold  x reject hold  p review  ⏎ open  f filter: {label}  esc back")
+/// The hint line and, in the default and prefix bars, the focused worktree's git
+/// segment, in `available` columns. Hints drop whole through `kit::hints` before the git
+/// segment gives up any of its own parts (decision 20); `esc` never drops.
+fn body_spans(
+    app: &App,
+    body: &Body,
+    available: u16,
+    palette: theme::Palette,
+) -> Vec<Span<'static>> {
+    let mut out = Vec::new();
+    let mut remaining = available;
+    if let Some((label, glyph)) = &body.lead {
+        let lead = format!("{label} {glyph} ");
+        remaining = remaining.saturating_sub(UnicodeWidthStr::width(lead.as_str()) as u16);
+        out.push(Span::styled(label.clone(), role(Role::Accent, palette)));
+        out.push(Span::styled(format!(" {glyph} "), theme::muted()));
+    }
+    let git = body.git.then(|| app.focused_git()).flatten();
+    let full_git_width = git.map_or(0, |state| spans_width(&git_spans(state, usize::MAX)));
+    let reserved = if git.is_some() {
+        full_git_width + GAP
     } else {
-        format!("j/k move  h/l tier  ⏎ open  space fold  f filter: {label}  / find  esc back")
-    }
-}
-
-/// Milestone 9.0.5 decision 13: the plan review's keys, at the gate or for a hold.
-fn review_hint(app: &App) -> &'static str {
-    match app.plan_review.as_ref().map(|review| &review.target) {
-        Some(crate::app::ReviewTarget::Hold(_)) => {
-            "a approve hold  x reject hold  j/k task  PgUp/PgDn scroll  esc back"
+        0
+    };
+    let line = kit::hints_joined(
+        remaining.saturating_sub(reserved),
+        &body.hints,
+        body.separator,
+        palette,
+    );
+    let line_width = line.width() as u16;
+    out.extend(line.spans);
+    if let Some(state) = git {
+        let gap = if out.is_empty() { 0 } else { GAP };
+        let budget = remaining.saturating_sub(line_width).saturating_sub(gap);
+        let parts = git_spans(state, usize::from(budget));
+        if !parts.is_empty() {
+            out.push(Span::raw(" ".repeat(usize::from(gap))));
         }
-        _ => "a approve  x reject  e edit  d drop  j/k task  PgUp/PgDn scroll  esc back",
+        out.extend(parts);
     }
-}
-
-/// Pushes the first `count` key hints onto `spans`, in the styling shared by the
-/// git-present and git-absent render paths.
-fn push_hints(
-    spans: &mut Vec<Span<'static>>,
-    hints: &[(String, &'static str)],
-    count: usize,
-    accent: Color,
-) {
-    for (key, what) in hints.iter().take(count) {
-        spans.push(Span::styled(key.clone(), Style::default().fg(accent)));
-        spans.push(Span::styled(format!(" {what}  "), theme::muted()));
-    }
+    out
 }
 
 fn spans_width(spans: &[Span<'_>]) -> u16 {
     spans
         .iter()
         .map(|s| UnicodeWidthStr::width(s.content.as_ref()) as u16)
-        .sum()
-}
-
-fn hints_width(hints: &[(String, &'static str)], count: usize) -> u16 {
-    hints
-        .iter()
-        .take(count)
-        .map(|(key, what)| {
-            UnicodeWidthStr::width(key.as_str()) as u16 + UnicodeWidthStr::width(*what) as u16 + 3
-        })
         .sum()
 }
 
@@ -410,6 +339,9 @@ pub fn git_spans(state: &GitState, budget: usize) -> Vec<Span<'static>> {
     spans
 }
 
+#[cfg(test)]
+#[path = "statusbar_kit_tests.rs"]
+mod kit_tests;
 #[cfg(test)]
 #[path = "statusbar_tests.rs"]
 mod tests;

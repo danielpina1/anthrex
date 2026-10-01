@@ -8,8 +8,9 @@
 //! its environment and counts nothing. Pure (design decision 2).
 
 use crate::run::phases::set_state;
-use proto::{BlockReason, GateKind, RunState, TaskState, TestMode};
+use proto::{BlockReason, GateKind, TaskState, TestMode};
 
+use super::actions::rules;
 use super::dispatch::{block, history};
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, OverrideCount, ReplyId, ScratchAt, deciders,
@@ -318,7 +319,8 @@ pub(super) fn check_done(
 }
 
 /// The refusal's tail when a task can go to the merge queue by no override.
-const OVERRIDE_APPLIES: &str = "override applies only to a task in review, or blocked with commits";
+pub(super) const OVERRIDE_APPLIES: &str =
+    "override applies only to a task in review, or blocked with commits";
 
 /// M9.9 review fixes, M1: `run override` of a research or review task.
 pub const OVERRIDE_KINDS: &str = "override applies only to code and docs tasks";
@@ -345,29 +347,13 @@ pub(super) fn override_task(
     let Some(run) = state.runs.get_mut(run_id) else {
         return answer(fx, Err(format!("unknown run {run_id}")));
     };
-    if !matches!(run.state, RunState::Running | RunState::Paused) {
-        return answer(fx, Err(format!("run {run_id} is {}", run.state.label())));
+    if let Some(text) = rules::override_task(run, task_id) {
+        return answer(fx, Err(text));
     }
     let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) else {
-        return answer(fx, Err(format!("unknown task {task_id}")));
+        return answer(fx, Err(rules::refused(rules::override_task(run, task_id))));
     };
-    // M9.9 review fixes, M1: research and review tasks, integration reviews among
-    // them, merge nothing, so nothing is overridden into the merge queue.
-    if super::schedule::is_reader_task(&run.tasks[i]) {
-        return answer(fx, Err(OVERRIDE_KINDS.to_string()));
-    }
-    // Milestone 9 decision 42c.
-    let paused = super::worker_messages::paused_refusal(&run.tasks[i]);
-    if let Some(text) = paused.or_else(|| override_refusal(run, i)) {
-        return answer(fx, Err(text));
-    }
     let task = &run.tasks[i];
-    if task.override_count.is_some() {
-        let text = format!(
-            "task {task_id}'s commits are being counted for an override; wait for its reply"
-        );
-        return answer(fx, Err(text));
-    }
     // A blocked task's branch is counted even with an accepted claim: only a claim that
     // is still the branch's tip merges (T15-minors).
     if task.state == TaskState::Review {
@@ -375,10 +361,7 @@ pub(super) fn override_task(
         return answer(fx, Ok(text));
     }
     let Some(start) = task.start_commit.clone() else {
-        return answer(
-            fx,
-            Err(format!("task {task_id} has no commits; {OVERRIDE_APPLIES}")),
-        );
+        return answer(fx, Err(rules::refused(rules::override_task(run, task_id))));
     };
     let kind = OpKind::CountCommits {
         worktree: task.worktree.clone(),
@@ -395,29 +378,6 @@ pub(super) fn override_task(
     });
     emit_op(run, op, Some(task_id), kind, fx);
     history(run, i, now, "counting its commits for an override");
-}
-
-/// Why task `i` cannot be overridden now, if it cannot: a held or `dep_cancelled` task
-/// waits for its dependencies; any task but one in `review` or `blocked` is refused.
-fn override_refusal(run: &Run, i: usize) -> Option<String> {
-    let task = &run.tasks[i];
-    let id = task.id();
-    let dep_cancelled = task
-        .block
-        .as_ref()
-        .is_some_and(|b| b.reason == BlockReason::DepCancelled);
-    if task.awaiting_deps || dep_cancelled {
-        return Some(format!(
-            "task {id} waits for its dependencies; override it once they are merged"
-        ));
-    }
-    if !matches!(task.state, TaskState::Review | TaskState::Blocked) {
-        return Some(format!(
-            "task {id} is {}; {OVERRIDE_APPLIES}",
-            task.state.label()
-        ));
-    }
-    None
 }
 
 /// Task `i` goes to the merge queue without review; the reply's text.
@@ -462,8 +422,8 @@ pub(super) fn override_counted(
     };
     let id = run.tasks[i].id().to_string();
     let result = match result {
-        _ if override_refusal(run, i).is_some() => {
-            Err(override_refusal(run, i).unwrap_or_default())
+        _ if rules::override_refusal(run, i).is_some() => {
+            Err(rules::override_refusal(run, i).unwrap_or_default())
         }
         OpResult::Commits { count: 0, .. } => {
             Err(format!("task {id} has no commits; {OVERRIDE_APPLIES}"))

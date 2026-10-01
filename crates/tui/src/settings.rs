@@ -22,6 +22,11 @@ pub struct UiSettings {
     pub sidebar_width: u16,
     pub tree_keep_finished_secs: u64,
     pub badges: crate::ui::badge::BadgeSet,
+    /// Whether 24-bit colour may be used. `from_config` knows only `on`; `auto` waits
+    /// for `with_colorterm`, because reading `COLORTERM` is the CLI's job.
+    pub truecolor: bool,
+    /// The configured `[theme] truecolor`, kept so `with_colorterm` can apply it.
+    pub theme_truecolor: config::Truecolor,
     // Kept so `with_locale` can rebuild `badges` once the CLI has read the environment
     // (decision A5): `from_config` alone only has `force_ascii`, never the locale.
     // `pub(crate)` rather than private so the struct-update syntax (`..UiSettings::default()`)
@@ -66,6 +71,8 @@ impl UiSettings {
                 c.conversation.badges.force_ascii,
             ),
             badges_config: c.conversation.badges.clone(),
+            truecolor: c.theme.truecolor == config::Truecolor::On,
+            theme_truecolor: c.theme.truecolor,
         }
     }
 
@@ -77,6 +84,12 @@ impl UiSettings {
     pub fn with_locale(mut self, locale: Option<&str>) -> Self {
         let ascii = crate::ui::badge::prefers_ascii(self.badges_config.force_ascii, locale);
         self.badges = crate::ui::badge::BadgeSet::from_config(&self.badges_config, ascii);
+        self
+    }
+
+    /// Decision 2: applies `[theme] truecolor` to the `COLORTERM` the CLI read.
+    pub fn with_colorterm(mut self, colorterm: Option<&str>) -> Self {
+        self.truecolor = crate::theme::truecolor(self.theme_truecolor, colorterm);
         self
     }
 }
@@ -118,6 +131,15 @@ mod tests {
         assert_eq!(settings.scrollback_lines, 1234);
         assert_eq!(settings.sidebar_width, 40);
         assert_eq!(settings.tree_keep_finished_secs, 60);
+        // Pinning: no `[theme]` table means `auto`, and `auto` is not truecolor until
+        // `with_colorterm` has seen the environment.
+        assert_eq!(settings.theme_truecolor, config::Truecolor::Auto);
+        assert!(!settings.truecolor);
+
+        let (forced, _) = config::parse("[theme]\ntruecolor = \"on\"\n");
+        let forced = UiSettings::from_config(&forced);
+        assert_eq!(forced.theme_truecolor, config::Truecolor::On);
+        assert!(forced.truecolor);
     }
 
     /// Whole-branch-review m17: this used to be `assert_eq!(f(x), f(x))` —
@@ -126,6 +148,27 @@ mod tests {
     /// possible body `from_config` could have, including a wrong one. What decision
     /// 4's table actually promises is that the client's built-in defaults are these
     /// specific values; pin those instead.
+    #[test]
+    fn with_colorterm_sets_truecolor() {
+        let (config, problems) = config::parse("[theme]\ntruecolor = \"auto\"\n");
+        assert!(problems.is_empty(), "{problems:?}");
+        let base = UiSettings::from_config(&config);
+        assert!(!base.truecolor, "auto alone is not truecolor");
+        assert!(base.clone().with_colorterm(Some("truecolor")).truecolor);
+        assert!(base.clone().with_colorterm(Some("24bit")).truecolor);
+        assert!(!base.clone().with_colorterm(Some("256color")).truecolor);
+        assert!(!base.with_colorterm(None).truecolor);
+
+        let (on, _) = config::parse("[theme]\ntruecolor = \"on\"\n");
+        assert!(UiSettings::from_config(&on).with_colorterm(None).truecolor);
+        let (off, _) = config::parse("[theme]\ntruecolor = \"off\"\n");
+        assert!(
+            !UiSettings::from_config(&off)
+                .with_colorterm(Some("truecolor"))
+                .truecolor
+        );
+    }
+
     #[test]
     fn defaults_match_decision_4s_table() {
         let settings = UiSettings::from_config(&config::Config::default());

@@ -10,6 +10,7 @@ use proto::{
 
 use super::contract::sha7;
 use super::engine::EngineState;
+use super::engine::actions::{ActionNode, available};
 use super::engine::ladder::{round_spend, total_spend};
 use super::engine::schedule::{critical_path, readers_busy, waves, writers_busy};
 use super::messages::summary;
@@ -50,10 +51,14 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         .enumerate()
         .map(|(i, t)| {
             let text = plan_text_shown(run, t);
-            task_info(t, path.contains(&i), waves[i], now, text)
+            let mut info = task_info(t, path.contains(&i), waves[i], now, text);
+            // Milestone 9.0.6 decision 7: each node's actions, built by the daemon.
+            info.actions = available(run, &ActionNode::Task(t.id()));
+            info
         })
         .collect();
     RunInfo {
+        actions: available(run, &ActionNode::Run),
         run_id: run.id.clone(),
         goal: run.goal.clone(),
         project: run.project.clone(),
@@ -126,8 +131,15 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         integration: super::snapshot_orch::integration(run),
         digest_revision: run.orch.digest_rev,
         research_report: super::snapshot_orch::research_report(run),
-        // Milestone 9.1 decision 55.
-        stages: super::snapshot_stages::stage_infos(run),
+        // Milestone 9.1 decision 55; each stage's actions (milestone 9.0.6 decision 7)
+        // here, not in `stage_infos`, which the orchestrator's digest shares.
+        stages: super::snapshot_stages::stage_infos(run)
+            .into_iter()
+            .map(|mut s| {
+                s.actions = available(run, &ActionNode::Stage(s.n));
+                s
+            })
+            .collect(),
         test_slots: run.test_slots,
     }
 }
@@ -270,6 +282,7 @@ fn session_spend(task: &Task, now: u64) -> Spend {
 fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: bool) -> TaskInfo {
     let done = t.done.as_ref();
     TaskInfo {
+        actions: Vec::new(),
         id: t.spec.id.clone(),
         title: t.spec.title.clone(),
         epic: t.spec.epic.clone(),

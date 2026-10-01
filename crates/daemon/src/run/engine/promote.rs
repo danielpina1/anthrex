@@ -42,12 +42,8 @@ fn promote(
     if run.promote_requested_at.is_some() && run.orch.orchestrator.is_some() {
         return Ok(format!("run {run_id} was already marked for promotion"));
     }
-    if run.path != Some(RunPath::Fast) {
-        return Err(format!("run {run_id} is not a fast-path run"));
-    }
-    // M8b review m3: a `complete` run only waits for accept; nothing is left to promote.
-    if run.state.is_terminal() || run.state == RunState::Complete {
-        return Err(format!("run {run_id} is {}", run.state.label()));
+    if let Some(text) = super::actions::rules::promote(run) {
+        return Err(text);
     }
     perform(run, choice, now, fx)?;
     Ok(format!(

@@ -7,14 +7,13 @@
 //! until the user approves the promotion) or `epic:<e>` (a new epic of a running run). A task whose hold is
 //! not `Approved` is not runnable and is not pre-warmed (`dispatch.rs`).
 
-use proto::{HoldKind, HoldState, PlanEdit, RunState, TaskState};
+use proto::{HoldKind, HoldState, PlanEdit, TaskState};
 
 use super::complete::cancel_now;
 use super::requests::log;
 use super::{Effect, EngineState, ReplyId};
 use crate::run::model::{Run, Task};
 use crate::run::orch::GateHoldRecord;
-use crate::run::orch::json::label;
 
 /// Decision 29's hold id.
 pub(super) const PROMOTION: &str = "promotion";
@@ -479,15 +478,12 @@ fn decide(
     let Some(run) = state.runs.get_mut(run_id) else {
         return Err(format!("unknown run {run_id}"));
     };
-    if run.state.is_terminal() || run.state == RunState::Complete {
-        return Err(format!("run {run_id} is {}", run.state.label()));
-    }
+    super::actions::rules::hold(run, id).map_or(Ok(()), Err)?;
     let Some(hold) = run.orch.gate_holds.iter_mut().find(|h| h.id == id) else {
-        return Err(format!("run {run_id} has no hold {id}"));
+        return Err(super::actions::rules::refused(super::actions::rules::hold(
+            run, id,
+        )));
     };
-    if hold.state != HoldState::Awaiting {
-        return Err(format!("hold {id} is {}", label(&hold.state)));
-    }
     hold.decided_at = Some(now);
     hold.decided_by = Some("user".into());
     let tasks = hold.tasks.clone();

@@ -63,7 +63,16 @@
 /// milestone-9 or 9.0.5 `run.json`, plan, profile and snapshot still load. Derivation:
 /// milestone 9.0.5 merged first and took 11 (above); `PROTO_VERSION` was 11 on `main`
 /// at the merge (`fb77ae2`); 11 + 1 = 12.
-pub const PROTO_VERSION: u32 = 12;
+///
+/// Version 13 (milestone 9.0.6 task 5) adds `ActionInfo`, `ActionKind`, `ActionNeeds` and
+/// `InputKind` (`proto::actions`), the `actions` list on `RunInfo`, `TaskInfo` and
+/// `StageInfo`, and the settings messages `RunRequest::Settings` and `RunReply::Settings`
+/// with `SettingsDoc` and its parts (`proto::settings`). Every new field is
+/// `#[serde(default)]` (an empty `actions` is also skipped on the wire) and both new
+/// variants are appended last, so a milestone-9.1 `run.json` and snapshot still load.
+/// Derivation: `PROTO_VERSION` was 12 at `crates/proto/src/lib.rs:66` before this change
+/// (set by M9.1); 12 + 1 = 13.
+pub const PROTO_VERSION: u32 = 13;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -72,6 +81,7 @@ pub const PROTO_VERSION: u32 = 12;
 /// indefinitely either.
 pub const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+pub mod actions;
 pub mod adapt;
 pub mod codec;
 pub mod conversation;
@@ -86,10 +96,12 @@ pub mod run_info;
 pub mod run_wire;
 pub mod safe_text;
 pub mod scout;
+pub mod settings;
 pub mod task_detail;
 pub mod tiers;
 pub mod types;
 
+pub use actions::{ACTION_TEXT_MAX, ActionInfo, ActionKind, ActionNeeds, InputKind};
 pub use adapt::{
     DeciderMode, DeciderSource, DiffStats, PhaseSecs, RunPath, RunUsage, Scale, SizeCheckInfo,
     TriageInfo,
@@ -131,12 +143,24 @@ pub use run_info::{
 };
 pub use run_wire::{ProfileReply, ProfileRequest, RunReply, RunRequest, ToolCall};
 pub use scout::{ScoutFile, ScoutInfo, ScoutKind, ScoutReport, ScoutState};
+pub use settings::{
+    BudgetLimit, OrchestratorDefault, Origin, SETTINGS_KEYS, SettingsDoc, SettingsLimits,
+    SettingsReply, SettingsRequest,
+};
 pub use task_detail::{ACTIVITY_MAX, SummarySource, TaskDetailInfo, WORKER_SUMMARY_MAX};
 pub use tiers::{FullInfo, FullState, SignalInfo, StageInfo, TaskOrigin, TierInfo};
 pub use types::{
     ClientKind, ExitInfo, GitOperation, GitState, Head, Runtime, Status, SubagentInfo,
     SubagentState, WindowInfo, WindowKind, WindowSpec,
 };
+
+#[cfg(test)]
+#[path = "actions_tests.rs"]
+mod actions_tests;
+
+#[cfg(test)]
+#[path = "settings_tests.rs"]
+mod settings_tests;
 
 #[cfg(test)]
 #[path = "adapt_tests.rs"]
@@ -149,8 +173,8 @@ mod orch_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_twelve() {
-        assert_eq!(super::PROTO_VERSION, 12);
+    fn proto_version_is_thirteen() {
+        assert_eq!(super::PROTO_VERSION, 13);
     }
 
     #[test]

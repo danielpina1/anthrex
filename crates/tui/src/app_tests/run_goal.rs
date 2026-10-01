@@ -132,6 +132,8 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
     assert_eq!(goal_form(&app).focus, GoalField::Runtime);
     assert!(tap(&mut app, KeyCode::Right).is_empty());
     assert!(tap(&mut app, KeyCode::Tab).is_empty());
+    // No settings cache here: the picker is `default`, `custom…` (9.0.6 decision 39).
+    assert!(tap(&mut app, KeyCode::Right).is_empty());
     typed(&mut app, "claude-opus-5");
     assert!(tap(&mut app, KeyCode::Tab).is_empty());
     assert_eq!(goal_form(&app).focus, GoalField::Trust);

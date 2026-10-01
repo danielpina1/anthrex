@@ -29,8 +29,8 @@ pub use adapt::{Deciders, Metering, Onboarding, Scouts};
 pub use agent::AgentConfig;
 
 use profile::{read_profile, report_unknown_profile};
-pub use roster::default_roster;
 use roster::read_models;
+pub use roster::{MODEL_NOTE_MAX, default_roster};
 mod unknown;
 pub(crate) use unknown::report_unknown;
 
@@ -190,7 +190,7 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
         t,
         "max_writers",
         "orchestrator.max_writers",
-        &(1..=8),
+        &proto::settings::MAX_WRITERS_RANGE,
         &mut o.max_writers,
         problems,
     );
@@ -198,7 +198,7 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
         t,
         "max_readers",
         "orchestrator.max_readers",
-        &(1..=8),
+        &proto::settings::MAX_READERS_RANGE,
         &mut o.max_readers,
         problems,
     );
@@ -206,7 +206,7 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
         t,
         "max_bounces",
         "orchestrator.max_bounces",
-        &(1..=5),
+        &proto::settings::MAX_BOUNCES_RANGE,
         &mut o.max_bounces,
         problems,
     );
@@ -233,7 +233,7 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
         t,
         "stall_after_secs",
         "orchestrator.stall_after_secs",
-        &(5..=7200),
+        &proto::settings::STALL_AFTER_SECS_RANGE,
         &mut o.stall_after_secs,
         problems,
     );
@@ -422,7 +422,7 @@ fn read_one_budget(
         match v
             .as_integer()
             .and_then(|n| u32::try_from(n).ok())
-            .filter(|n| *n >= 1)
+            .filter(|n| *n >= proto::settings::BUDGET_MIN)
         {
             Some(n) => field.tool_calls = n,
             None => problems.push(Problem {
@@ -436,7 +436,7 @@ fn read_one_budget(
         match v
             .as_integer()
             .and_then(|n| u32::try_from(n).ok())
-            .filter(|n| *n >= 1)
+            .filter(|n| *n >= proto::settings::BUDGET_MIN)
         {
             Some(n) => field.minutes = n,
             None => problems.push(Problem {
