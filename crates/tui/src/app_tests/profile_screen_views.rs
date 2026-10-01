@@ -1,0 +1,200 @@
+//! Milestone 9.0.6 final review, minors 1, 2 and 4: the Profile screen's views never
+//! stay `loading…` (an expired or unsent `Status` or `Show` is the screen's to show and
+//! to ask again, once a second, one at a time), a detection that ends fetches the
+//! proposal again, and a page keeps its edit while the link is down.
+
+use super::profile_screen::{
+    dir, open, open_app, profile_requests, ready_app, reply, screen, select, shown, status,
+    stored_profile, tagged, tap, typed,
+};
+use super::*;
+use crate::app::profile_screen::{EditorField, ProfilePage, Side};
+use proto::{ProfileReply, ProfileRequest, ProposalState, RunRequest};
+use std::time::{Duration, Instant};
+
+fn show(proposed: bool) -> ProfileRequest {
+    ProfileRequest::Show {
+        dir: dir(),
+        proposed,
+    }
+}
+
+fn shows(effects: &[Effect], proposed: bool) -> usize {
+    profile_requests(effects)
+        .iter()
+        .filter(|r| **r == show(proposed))
+        .count()
+}
+
+fn expire(app: &mut App, id: u64) {
+    app.set_reply_sent_at(id, Instant::now() - Duration::from_secs(31));
+    app.on_tick();
+}
+
+/// Minor 1: a detection that leaves the running states for `Failed` fetches the
+/// proposal again, and the old proposal's rows are not shown meanwhile.
+#[test]
+fn a_failed_detection_fetches_the_proposal_again() {
+    let (mut app, _) = ready_app();
+    tap(&mut app, KeyCode::Char('d'));
+    let id = tagged(&tap(&mut app, KeyCode::Char('y')))[0].0;
+    let done = ProfileReply::Done {
+        message: "detection started".into(),
+    };
+    let status_id = tagged(&reply(&mut app, id, done))[0].0;
+    reply(&mut app, status_id, status(Some(ProposalState::Scouting)));
+    let effects = app.screens_tick(Instant::now() + Duration::from_secs(2));
+    let poll_id = tagged(&effects)[0].0;
+    let failed = ProposalState::Failed {
+        reason: "scout exited".into(),
+    };
+    let effects = reply(&mut app, poll_id, status(Some(failed)));
+    assert_eq!(shows(&effects, true), 1, "{effects:?}");
+    assert_eq!(screen(&app).proposal, Side::Loading);
+    tap(&mut app, KeyCode::Tab);
+    tap(&mut app, KeyCode::Char('p'));
+    assert!(screen(&app).rows().is_empty(), "not the old proposal");
+}
+
+/// Minor 2: an expired `Show` is the screen's: no toast, its side says so, and the
+/// 1 s tick asks again once (never a second while one is out); the reply fills it.
+#[test]
+fn an_expired_show_fails_its_side_and_is_asked_again() {
+    let mut app = open_app();
+    let ids = open(&mut app);
+    reply(&mut app, ids[0], status(Some(ProposalState::Ready)));
+    reply(&mut app, ids[1], shown(&stored_profile(), vec![]));
+    expire(&mut app, ids[2]);
+    assert_eq!(app.toast_text(), None, "the screen owns its views");
+    assert_eq!(
+        screen(&app).proposal,
+        Side::Failed("no reply from daemon".into())
+    );
+    let t0 = Instant::now();
+    let effects = app.screens_tick(t0 + Duration::from_secs(2));
+    assert_eq!(shows(&effects, true), 1, "{effects:?}");
+    assert_eq!(shows(&effects, false), 0, "the ready side is not asked");
+    let id = tagged(&effects)[0].0;
+    for s in 3..=10 {
+        let effects = app.screens_tick(t0 + Duration::from_secs(s));
+        assert_eq!(shows(&effects, true), 0, "one out at a time ({s} s)");
+    }
+    reply(&mut app, id, shown(&stored_profile(), vec![]));
+    assert!(matches!(screen(&app).proposal, Side::Ready(_)));
+    assert!(app.screens_tick(t0 + Duration::from_secs(20)).is_empty());
+}
+
+/// Minor 2: a `Show` whose send the connection refused fails its side with the reason,
+/// and the tick asks again a second later, not at once.
+#[test]
+fn an_unsent_show_fails_its_side_and_is_asked_again() {
+    let mut app = open_app();
+    let ids = open(&mut app);
+    app.on_send_failed(&ClientMsg::RunTagged {
+        id: ids[1],
+        request: RunRequest::Profile(show(false)),
+    });
+    assert_eq!(app.toast_text(), None);
+    assert_eq!(
+        screen(&app).stored,
+        Side::Failed("not sent: daemon is not responding".into())
+    );
+    tap(&mut app, KeyCode::Tab);
+    let text = render(&app);
+    assert!(
+        text.contains("not sent: daemon is not responding"),
+        "{text}"
+    );
+    assert_eq!(shows(&app.on_tick(), false), 0, "not within the second");
+    let effects = app.screens_tick(Instant::now() + Duration::from_secs(2));
+    assert_eq!(shows(&effects, false), 1, "{effects:?}");
+}
+
+/// Minor 2: an expired `Status` with nothing shown yet is the screen's too: it says so
+/// and is asked again; a refused one is not retried.
+#[test]
+fn an_expired_status_says_so_and_is_asked_again() {
+    let mut app = open_app();
+    let ids = open(&mut app);
+    expire(&mut app, ids[0]);
+    assert_eq!(app.toast_text(), None);
+    let text = render(&app);
+    assert!(text.contains("no reply from daemon"), "{text}");
+    let effects = app.screens_tick(Instant::now() + Duration::from_secs(2));
+    let asked = tagged(&effects);
+    assert_eq!(asked.len(), 1, "{effects:?}");
+    assert_eq!(
+        asked[0].1,
+        RunRequest::Profile(ProfileRequest::Status { dir: dir() })
+    );
+    let refused = ProfileReply::Refused {
+        message: "not a git project".into(),
+    };
+    reply(&mut app, asked[0].0, refused);
+    assert!(
+        app.screens_tick(Instant::now() + Duration::from_secs(5))
+            .is_empty()
+    );
+}
+
+/// Minor 2 with decision 16: a late view for the open screen still loading on it is
+/// applied; once the screen is closed, a late refusal is neither applied nor toasted.
+#[test]
+fn a_late_view_fills_the_loading_screen() {
+    let mut app = open_app();
+    let ids = open(&mut app);
+    expire(&mut app, ids[1]);
+    assert_eq!(
+        screen(&app).stored,
+        Side::Failed("no reply from daemon".into())
+    );
+    reply(&mut app, ids[1], shown(&stored_profile(), vec![]));
+    assert!(matches!(screen(&app).stored, Side::Ready(_)));
+    expire(&mut app, ids[2]);
+    tap(&mut app, KeyCode::Esc);
+    let refusal = ProfileReply::Refused {
+        message: "no proposal for /p/shop".into(),
+    };
+    assert!(reply(&mut app, ids[2], refusal).is_empty());
+    assert_eq!(app.toast_text(), None);
+    assert_eq!(app.screen, None);
+}
+
+/// Minor 4: a page's request while disconnected toasts `not connected` and keeps the
+/// page open with what was typed.
+#[test]
+fn a_disconnected_page_keeps_its_edit() {
+    let (mut app, _) = ready_app();
+    select(&mut app, "check");
+    tap(&mut app, KeyCode::Char('e'));
+    typed(&mut app, " --all");
+    app.on_link_lost("gone");
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
+    assert_eq!(app.toast_text(), Some("not connected"));
+    assert_eq!(app.toast_level(), Some(ToastLevel::Warn));
+    match &screen(&app).page {
+        Some(ProfilePage::Edit(e)) => match &e.field {
+            EditorField::Line(area) => assert_eq!(area.text(), "cargo test --all"),
+            other => panic!("{other:?}"),
+        },
+        other => panic!("the page closed: {other:?}"),
+    }
+    // A confirm page, too.
+    tap(&mut app, KeyCode::Esc);
+    tap(&mut app, KeyCode::Char('x'));
+    assert!(tap(&mut app, KeyCode::Char('y')).is_empty());
+    assert_eq!(screen(&app).page, Some(ProfilePage::Reject));
+}
+
+fn render(app: &App) -> String {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+    terminal
+        .draw(|f| {
+            crate::ui::draw(f, app);
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    (0..24)
+        .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>() + "\n")
+        .collect()
+}

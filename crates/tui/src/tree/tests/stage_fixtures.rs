@@ -8,6 +8,7 @@ use proto::{
 
 pub(crate) fn stage(n: u16, head: Option<&str>, tasks: u32, merged: u32) -> StageInfo {
     StageInfo {
+        actions: Vec::new(),
         n,
         branch: format!("anthrex/{RUN_ID}/stage-{n}"),
         head: head.map(str::to_owned),

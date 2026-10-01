@@ -16,7 +16,7 @@ const BASE: &str = "0123456789abcdef0123456789abcdef01234567";
 
 fn ctx(runtime: Runtime) -> ScoutContext {
     ScoutContext {
-        roster: config::default_roster(),
+        roster: config::default_roster().into(),
         default_runtime: runtime,
         scouts: config::Scouts::default(),
         claude: config::ClaudeHeadless::default(),
@@ -205,7 +205,7 @@ fn the_scout_sandbox_does_not_depend_on_worker_sandbox() {
         ..config::Orchestrator::default()
     };
     let context = ScoutContext {
-        roster: off.models.clone(),
+        roster: off.models.clone().into(),
         default_runtime: off.default_runtime,
         scouts: off.scouts.clone(),
         claude: off.claude.clone(),

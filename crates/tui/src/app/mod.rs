@@ -15,6 +15,7 @@ pub use runs::{RunView, filter_label, nav_rows_of};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+pub use toast::ToastLevel;
 
 pub const TOAST_TTL: Duration = Duration::from_secs(4);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(30);
@@ -85,6 +86,7 @@ pub enum Modal {
     EditTask(crate::run_edit::TaskEditForm),
     /// Milestone 9 decision 44: the goal form (`crate::run_goal`).
     StartGoal(crate::run_goal::GoalForm),
+    Action(Box<actions::ActionFlow>), // Milestone 9.0.6 decision 12: the action menu.
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,7 +162,7 @@ pub struct App {
     /// those three clears it on any given run, so a second `C-b Q` is always possible
     /// once one of them has.
     stopping: Option<Instant>,
-    toast: Option<(String, Instant)>,
+    toast: Option<toast::Toast>,
     windows_received_at: Instant,
     /// (cols, rows) of the main inner area; (0, 0) until the first draw.
     term_size: (u16, u16),
@@ -196,6 +198,10 @@ pub struct App {
     pub task_detail: Option<task_detail::TaskDetailCache>,
     pub inspector_scroll: Option<(tree::NodeKey, u16)>,
     pub brief_expanded: Option<tree::NodeKey>,
+    pub replies: replies::PendingReplies, // Milestone 9.0.6 decision 16, by request id.
+    /// Decision 24: the daemon's settings, fetched once per connection (`app/screens.rs`).
+    pub settings_cache: Option<screens::SettingsCache>,
+    pub screen: Option<screens::Screen>, // Decision 33: the open full-body screen.
 }
 
 impl App {
@@ -252,6 +258,9 @@ impl App {
             task_detail: None,
             inspector_scroll: None,
             brief_expanded: None,
+            replies: Default::default(),
+            settings_cache: None,
+            screen: None,
             settings,
         }
     }
@@ -282,15 +291,13 @@ impl App {
         secs.saturating_add(self.windows_received_at.elapsed().as_secs())
     }
 
-    pub fn toast_text(&self) -> Option<&str> {
-        self.toast.as_ref().map(|(t, _)| t.as_str())
-    }
-
-    /// Shows `text` in the status bar for [`TOAST_TTL`], on one line and with no control
-    /// or bidi character: a toast often quotes the daemon, or an id an agent chose.
-    pub fn toast(&mut self, text: impl Into<String>) {
-        let text = crate::safe_text::one_line(&text.into());
-        self.toast = Some((text, Instant::now()));
+    /// The colour palette the kit's roles resolve against (milestone 9.0.6 decision 1).
+    pub fn palette(&self) -> crate::theme::Palette {
+        crate::theme::Palette {
+            accent: self.settings.accent,
+            truecolor: self.settings.truecolor,
+            ascii: self.settings.badges.ascii,
+        }
     }
 
     /// Decision 7: every config `Problem` `attach` found, already formatted, shown
@@ -426,11 +433,15 @@ impl App {
             KeyAction::Conversation(key) => self.on_conversation_key(key),
             KeyAction::Review(key) => self.on_review_key(key),
             KeyAction::Alerts(key) => self.on_alerts_key(key),
+            KeyAction::Screen(key) => self.on_screen_key(key),
             KeyAction::AwaitPrefix | KeyAction::Cancel | KeyAction::Nothing => vec![],
         }
     }
 
     fn run(&mut self, cmd: Command) -> Vec<Effect> {
+        if self.screen_refuses(cmd) {
+            return vec![];
+        }
         match cmd {
             Command::NextWindow => self.focus_relative(1),
             Command::PrevWindow => self.focus_relative(-1),
@@ -476,6 +487,8 @@ impl App {
             Command::ToggleConversation => self.toggle_conversation(),
             Command::StartGoal => self.open_goal_form(),
             Command::FocusAlerts => self.focus_alerts(),
+            Command::OpenProfile => self.open_profile(),
+            Command::OpenSettings => self.open_settings(),
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -493,12 +506,19 @@ impl App {
     /// Called every 100 ms: advances the spinner, expires toasts, retries a dropped
     /// `Subscribe`, flushes a debounced resize.
     pub fn on_tick(&mut self) -> Vec<Effect> {
+        let mut effects = self.expire_replies();
+        effects.extend(self.screens_tick(Instant::now()));
+        effects.extend(self.tick());
+        effects
+    }
+
+    fn tick(&mut self) -> Vec<Effect> {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
         self.forget_stale_panel_state();
         if self
             .toast
             .as_ref()
-            .is_some_and(|(_, at)| at.elapsed() >= TOAST_TTL)
+            .is_some_and(|t| t.at.elapsed() >= TOAST_TTL)
         {
             self.toast = None;
         }
@@ -528,7 +548,9 @@ impl App {
     }
 }
 
+pub(crate) mod actions;
 pub(crate) mod alerts;
+mod confirm;
 mod conversation;
 mod daemon;
 mod goal;
@@ -538,12 +560,18 @@ mod link;
 mod modal_keys;
 mod paste;
 pub(crate) mod plan_review;
+pub(crate) mod profile_screen;
 pub(crate) mod prompt;
+pub(crate) mod replies;
 mod run_enter;
 mod run_gate;
 mod run_holds;
 mod runs;
+pub(crate) mod screens;
+pub(crate) mod settings_screen;
+pub(crate) mod stats;
 pub(crate) mod task_detail;
+mod toast;
 mod windows;
 
 #[cfg(test)]

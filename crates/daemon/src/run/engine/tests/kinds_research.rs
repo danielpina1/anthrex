@@ -129,6 +129,29 @@ fn a_third_research_failure_blocks_the_task() {
     assert_eq!(sessions(&fx), 1);
 }
 
+/// Ruling F-1: a client error ends a research task's session at once, as an
+/// authentication failure does, with no continue.
+#[test]
+fn a_research_client_error_blocks_at_once() {
+    let (mut fx, window) = researching();
+    let error = "The model is not supported".to_string();
+    let effects = fx.turn_ended(
+        window,
+        TurnOutcome::Failed {
+            error: error.clone(),
+            kind: FailureKind::ClientError,
+        },
+    );
+    assert!(!delivered(&effects, window, "API error"), "{effects:#?}");
+    let task = fx.task("r1");
+    assert_eq!(task.state, TaskState::Blocked);
+    let block = task.block.clone().unwrap();
+    assert_eq!(
+        (block.reason, block.text),
+        (BlockReason::Environment, error)
+    );
+}
+
 fn exit(fx: &mut Fixture, window: u32, pid: u32) -> Vec<Effect> {
     fx.signal(
         window,

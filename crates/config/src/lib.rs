@@ -12,7 +12,9 @@ mod git;
 mod orchestrator;
 pub mod reserved_env;
 mod runtimes;
+pub mod settings;
 mod testing;
+mod theme;
 
 pub use conversation::{
     Badge, Badges, CONVERSATION_LINGER_SECS_RANGE, CONVERSATION_MAX_BYTES_HEADROOM,
@@ -36,6 +38,8 @@ pub use testing::{
     FULL_IDLE_SECS_RANGE, TEST_CACHE_DAYS_RANGE, TEST_SLOTS_RANGE, Testing,
 };
 use testing::{KNOWN_TESTING_KEYS, read_testing};
+use theme::{KNOWN_THEME_KEYS, read_theme};
+pub use theme::{Theme, Truecolor};
 
 /// The parsed, validated configuration. Always usable: any invalid or
 /// unknown key in the source file is reported as a [`Problem`] and the
@@ -55,6 +59,7 @@ pub struct Config {
     pub orchestrator: Orchestrator,
     pub testing: Testing,
     pub delivery: Delivery,
+    pub theme: Theme,
 }
 
 /// `Ctrl` plus this lowercase letter. Never `h`, `i`, `j` or `m`: terminals
@@ -153,6 +158,7 @@ impl Default for Config {
             orchestrator: Orchestrator::default(),
             testing: Testing::default(),
             delivery: Delivery::default(),
+            theme: Theme::default(),
         }
     }
 }
@@ -201,6 +207,7 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
     config.orchestrator = orchestrator::read(&table, &mut problems);
     read_testing(&table, &mut config, &mut problems);
     read_delivery(&table, &mut config, &mut problems);
+    read_theme(&table, &mut config, &mut problems);
 
     report_unknown_keys(&table, &mut problems);
 
@@ -504,6 +511,7 @@ fn report_unknown_keys(table: &toml::Table, problems: &mut Vec<Problem>) {
             "orchestrator" => orchestrator::report_unknown(value, problems),
             "testing" => report_unknown_nested(value, "testing", KNOWN_TESTING_KEYS, problems),
             "delivery" => report_unknown_delivery(value, problems),
+            "theme" => report_unknown_nested(value, "theme", KNOWN_THEME_KEYS, problems),
             other => problems.push(unknown_key_problem(other)),
         }
     }

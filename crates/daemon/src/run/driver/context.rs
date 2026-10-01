@@ -9,13 +9,21 @@ use std::time::Duration;
 
 use super::DONE_CHECK_GIT_TIMEOUT;
 use crate::headless::argv::CliCaps;
+use crate::live_config::{LiveSettings, SettingsIo};
 use crate::manager::{GitRoots, ManagerConfig};
 
 /// What the service needs from the daemon.
 pub struct RunContext {
     pub data_dir: PathBuf,
     pub worktrees_root: PathBuf,
-    pub orchestrator: config::Orchestrator,
+    /// Milestone 9.0.6 decision 29: the live `[orchestrator]` settings. Every read takes
+    /// `settings.current()` once per request; a Settings save swaps the owned keys.
+    pub settings: Arc<LiveSettings>,
+    /// Decision 31: where a Settings save writes. `RunContext::new` puts it inside
+    /// `data_dir` (preflight F20), so only `with_settings` can name the user's file.
+    pub config_path: PathBuf,
+    /// How a Settings save writes and how long it may take (a test seam).
+    pub settings_io: SettingsIo,
     pub git_roots: Arc<dyn GitRoots>,
     pub git: OsString,
     /// The manager's `cli_caps` (decision 53's project-settings check reads the same
@@ -63,9 +71,11 @@ impl RunContext {
         git_roots: Arc<dyn GitRoots>,
     ) -> Self {
         RunContext {
+            config_path: data_dir.join("config.toml"),
             data_dir,
             worktrees_root: manager.worktrees_root.clone(),
-            orchestrator,
+            settings: LiveSettings::defaults_of(orchestrator),
+            settings_io: SettingsIo::default(),
             git_roots,
             git: OsString::from("git"),
             cli_caps: manager.cli_caps,
@@ -98,6 +108,13 @@ impl RunContext {
     /// This context with the daemon's `[testing]` table (the defaults otherwise).
     pub fn with_testing(mut self, testing: config::Testing) -> Self {
         self.testing = testing;
+        self
+    }
+
+    /// This context with the daemon's live settings and its `config.toml` (decision 31).
+    pub fn with_settings(mut self, settings: Arc<LiveSettings>, config_path: PathBuf) -> Self {
+        self.settings = settings;
+        self.config_path = config_path;
         self
     }
 }

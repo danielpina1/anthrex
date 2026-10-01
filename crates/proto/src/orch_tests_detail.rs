@@ -157,7 +157,8 @@ fn appended_variants_keep_their_indices() {
     ];
     let mut expected: Vec<&str> = requests.to_vec();
     expected.push("TaskDetail");
-    // Milestone 9.2 appends `Deliver` and `Watch` after it (`delivery_tests.rs`).
+    expected.push("Settings");
+    // Milestone 9.2 appends `Deliver` and `Watch` after 9.0.6's `Settings` (`delivery_tests.rs`).
     expected.extend(["Deliver", "Watch"]);
     assert_eq!(variant_names::<RunRequest>(), expected);
     assert_eq!(
@@ -184,6 +185,7 @@ fn appended_variants_keep_their_indices() {
     ];
     let mut expected: Vec<&str> = replies.to_vec();
     expected.push("TaskDetail");
+    expected.push("Settings");
     assert_eq!(variant_names::<RunReply>(), expected);
     let detail = a_detail(None);
     assert_eq!(

@@ -42,7 +42,7 @@ pub const REQUEST_WAIT: Duration = Duration::from_secs(60);
 /// git calls for a one-task run (at most 8 checks, salvage and removal of 4 worktrees
 /// at most 10 calls each, at most 4 for the branches: 52 calls at 5 s, 260 s) fit in
 /// `RUN_WAIT`. The harness's tests accept one-task runs only.
-const FINISH_WAIT: Duration = Duration::from_secs(600 + RUN_WAIT.as_secs());
+pub const FINISH_WAIT: Duration = Duration::from_secs(600 + RUN_WAIT.as_secs());
 
 /// The bound for `request`'s reply.
 fn request_wait(request: &RunRequest) -> Duration {

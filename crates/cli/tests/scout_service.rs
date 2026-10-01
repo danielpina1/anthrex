@@ -108,7 +108,7 @@ impl Rig {
         let scouts = ScoutService::new(
             manager.clone(),
             ScoutContext {
-                roster: orchestrator.models.clone(),
+                roster: orchestrator.models.clone().into(),
                 default_runtime: runtime,
                 scouts: limits,
                 claude: orchestrator.claude.clone(),

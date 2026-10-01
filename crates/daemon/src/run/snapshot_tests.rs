@@ -251,3 +251,27 @@ fn wake_held_reaches_the_snapshot() {
     assert!(wake_held("held-0001"));
     assert!(!wake_held("free-0001"));
 }
+
+/// Milestone 9.0.6 decision 7: a running run's snapshot carries the run's, each
+/// stage's and each task's actions, as `actions::available` lists them.
+#[test]
+fn the_snapshot_carries_each_nodes_actions() {
+    use crate::run::engine::actions::{ActionNode, available};
+    let mut run = run_of(2);
+    run.state = RunState::Running;
+    run.stage_layout = crate::run::model::StageLayout::Multi;
+    task_mut(&mut run, "t1").spec.stage = 2;
+    let snap = snapshot(&state_of(vec![run.clone()]), 5_000);
+    let info = &snap.runs[0];
+    assert_eq!(info.actions, available(&run, &ActionNode::Run));
+    assert!(!info.actions.is_empty());
+    assert_eq!(info.stages.len(), 2);
+    for stage in &info.stages {
+        assert_eq!(stage.actions, available(&run, &ActionNode::Stage(stage.n)));
+        assert!(!stage.actions.is_empty(), "stage {}", stage.n);
+    }
+    for task in &info.tasks {
+        assert_eq!(task.actions, available(&run, &ActionNode::Task(&task.id)));
+        assert!(!task.actions.is_empty(), "{}", task.id);
+    }
+}

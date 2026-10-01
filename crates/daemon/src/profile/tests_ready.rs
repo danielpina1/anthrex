@@ -21,10 +21,10 @@ use crate::manager::{ManagerConfig, WindowManager};
 use crate::run::driver::{RunContext, RunService};
 use crate::server::GitWiring;
 
-struct Rig {
-    dir: tempfile::TempDir,
+pub(super) struct Rig {
+    pub(super) dir: tempfile::TempDir,
     data: PathBuf,
-    profiles: Arc<ProfileService>,
+    pub(super) profiles: Arc<ProfileService>,
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -53,7 +53,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 /// A committed repository at `<dir>/<name>`; returns the project `project_of` sees.
-fn repo(dir: &Path, name: &str) -> PathBuf {
+pub(super) fn repo(dir: &Path, name: &str) -> PathBuf {
     let root = dir.join(name);
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("src/lib.rs"), "// lib\n").unwrap();
@@ -89,7 +89,7 @@ fn service(dir: &Path) -> Arc<ProfileService> {
 }
 
 impl Rig {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");
         let profiles = service(dir.path());
@@ -105,7 +105,7 @@ impl Rig {
     }
 
     /// A stored profile for `project`, so `profile edit` has one to change.
-    fn store_profile(&self, project: &Path) {
+    pub(super) fn store_profile(&self, project: &Path) {
         let dir = self.repo_dir(project);
         std::fs::create_dir_all(&dir).unwrap();
         let meta = ProfileMeta {
@@ -125,7 +125,7 @@ impl Rig {
 
     /// `profile edit modules ["src/*"]`: a key that needs no verification, so the
     /// proposal is written `Ready` at once.
-    async fn edit(&self, project: &Path) {
+    pub(super) async fn edit(&self, project: &Path) {
         let reply = self
             .profiles
             .request(ProfileRequest::Edit {
@@ -149,7 +149,7 @@ impl Rig {
         )
     }
 
-    fn on_disk(&self, project: &Path) -> Option<ProposalRecord> {
+    pub(super) fn on_disk(&self, project: &Path) -> Option<ProposalRecord> {
         store::load_proposal(&self.repo_dir(project)).unwrap()
     }
 }

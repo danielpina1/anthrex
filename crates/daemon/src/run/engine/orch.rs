@@ -435,16 +435,9 @@ fn write_summary(run: &mut Run, summary: String, now: u64, fx: &mut Vec<Effect>)
 /// ignored. `who` submits: the orchestrator, or the user's `run edit` (decision 13,
 /// `requests::edit`, which admits `planning` only).
 pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), String> {
-    // A discard or accept in flight takes no submit (M9.7 second review, ruling 4).
-    if let Some(how) = super::dispatch::finishing_as(run) {
-        return Err(format!("run {} is being {how}", run.id));
-    }
+    submit_refusal(run).map_or(Ok(()), Err)?;
     match run.state {
         RunState::Planning => {
-            if run.tasks.iter().all(|t| t.state.is_finished()) {
-                return Err("the plan has no tasks yet; add tasks before submitting".into());
-            }
-            planners_finished(run)?;
             set_submitted(run);
             if run.orch.yes {
                 run.state = RunState::Running;
@@ -469,12 +462,6 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
             }
         }
         RunState::Running if run.orch.orchestrator.is_some() => {
-            // While the promotion window is open, its submit waits for the
-            // sub-planners too, so the user sees the promotion's whole plan (M9.7
-            // second review, rulings 8 and 9).
-            if gate_holds::promotion_open(run) {
-                planners_finished(run)?;
-            }
             set_submitted(run);
             if gate_holds::submit_promotion(run, now) {
                 log(run, now, "the orchestrator submitted its additions");
@@ -486,6 +473,28 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
         _ => {}
     }
     Ok(())
+}
+
+/// Why [`submit_plan`] refuses `run` now, if it does (milestone 9.0.6 decision 42's pure
+/// twin, which `actions::check` asks).
+pub(super) fn submit_refusal(run: &Run) -> Option<String> {
+    // A discard or accept in flight takes no submit (M9.7 second review, ruling 4).
+    if let Some(how) = super::dispatch::finishing_as(run) {
+        return Some(format!("run {} is being {how}", run.id));
+    }
+    match run.state {
+        RunState::Planning if run.tasks.iter().all(|t| t.state.is_finished()) => {
+            Some("the plan has no tasks yet; add tasks before submitting".into())
+        }
+        RunState::Planning => planners_finished(run).err(),
+        // While the promotion window is open, its submit waits for the sub-planners
+        // too, so the user sees the promotion's whole plan (M9.7 second review, rulings
+        // 8 and 9).
+        RunState::Running if run.orch.orchestrator.is_some() && gate_holds::promotion_open(run) => {
+            planners_finished(run).err()
+        }
+        _ => None,
+    }
 }
 
 /// Decision 27: no sub-planner is queued or planning.

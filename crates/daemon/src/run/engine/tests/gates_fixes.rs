@@ -91,10 +91,14 @@ fn a_rate_limited_reviewer_waits_and_continues() {
 }
 
 /// Ruling T13-I1: an authentication or billing failure blocks at once with its own text,
-/// and the reviewer is stopped.
+/// and the reviewer is stopped. Ruling F-1: so does a client error.
 #[test]
 fn a_reviewer_auth_or_billing_failure_blocks_at_once() {
-    for kind in [FailureKind::Authentication, FailureKind::Billing] {
+    for kind in [
+        FailureKind::Authentication,
+        FailureKind::Billing,
+        FailureKind::ClientError,
+    ] {
         let (mut fx, _, rwindow) = reviewed(PROFILE, "");
         fx.turn_ended(rwindow, failed(kind, "please log in"));
         // The reviewer is stopped: a Codex one between turns has no process to kill.

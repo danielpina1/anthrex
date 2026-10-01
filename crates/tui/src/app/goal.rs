@@ -12,7 +12,7 @@ use std::path::PathBuf;
 impl App {
     /// The project a goal starts in: the selected project, or the project of the
     /// selected run (any node of it); else the focused window's. Never a guess.
-    fn goal_project(&self) -> Option<PathBuf> {
+    pub(super) fn goal_project(&self) -> Option<PathBuf> {
         let run_project = |id: &String| {
             (self.runs.runs.iter())
                 .find(|run| run.run_id == *id)
@@ -25,6 +25,7 @@ impl App {
                 | NodeKey::Planner { run: id, .. }
                 | NodeKey::Scout { run: id, .. }
                 | NodeKey::Task { run: id, .. }
+                | NodeKey::Stage { run: id, .. }
                 | NodeKey::AgentRound { run: id, .. },
             ) => run_project(id),
             _ => None,
@@ -35,7 +36,13 @@ impl App {
     /// `C-b g`: the form on the chosen project, or the toast saying there is none.
     pub(super) fn open_goal_form(&mut self) -> Vec<Effect> {
         match self.goal_project() {
-            Some(project) => self.modal = Some(Modal::StartGoal(GoalForm::new(project))),
+            Some(project) => {
+                let mut form = GoalForm::new(project);
+                if let Some(cache) = &self.settings_cache {
+                    form.set_roster(cache.doc.models.clone());
+                }
+                self.modal = Some(Modal::StartGoal(form));
+            }
             None => self.toast(NO_PROJECT),
         }
         vec![]

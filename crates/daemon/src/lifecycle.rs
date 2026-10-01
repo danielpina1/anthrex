@@ -246,9 +246,11 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // logged at `warn` (decision 7: "the daemon logs each problem at `warn` once, at
     // start"); unlike the state file's `Problem`, `config::Problem` carries no severity of
     // its own to preserve, so there is nothing to flatten here.
+    // Milestone 9.0.6 decision 26: the same read also gives each settings key's origin.
     let config_path = opts.config_path.clone();
-    let (loaded_config, config_problems) =
-        tokio::task::spawn_blocking(move || config::load(&config_path)).await?;
+    let (loaded_config, config_problems, origin) =
+        tokio::task::spawn_blocking(move || config::settings::load_with_origin(&config_path))
+            .await?;
     for problem in &config_problems {
         tracing::warn!(problem = %problem, "config problem");
     }
@@ -284,6 +286,10 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         manager.config(),
         &loaded_config,
         git_wiring.registry.clone(),
+    )
+    .with_settings(
+        crate::live_config::LiveSettings::new(loaded_config.orchestrator.clone(), origin),
+        opts.config_path.clone(),
     );
     // Decision 12/14: every restored window is listed, dormant and viewable before
     // anything can connect.

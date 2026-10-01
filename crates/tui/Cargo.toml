@@ -25,6 +25,7 @@ libc.workspace = true
 unicode-width.workspace = true
 unicode-segmentation.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 tokio-util.workspace = true

@@ -565,8 +565,8 @@ fn appended_variants_keep_their_indices() {
     );
     let names = variant_names::<RunRequest>();
     assert_eq!(
-        names[names.len() - 3..],
-        ["TaskDetail", "Deliver", "Watch"],
+        names[names.len() - 4..],
+        ["TaskDetail", "Settings", "Deliver", "Watch"],
         "{names:?}"
     );
     let n = names.len() as u8;

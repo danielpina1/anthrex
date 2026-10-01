@@ -300,6 +300,17 @@ pub(super) fn resume(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    // Milestone 9.0.6 decision 8: every refusal first, changing nothing.
+    let refusal = state.runs.get(run_id).and_then(|r| {
+        let rebaseline = rebaseline.is_some();
+        super::actions::rules::resume(r, rebaseline)
+    });
+    if let Some(text) = refusal {
+        return fx.push(Effect::Reply {
+            reply,
+            result: Err(text),
+        });
+    }
     // Milestone 9.1 ruling C-18: a resume retries tier 3 after the executor's failures;
     // a running run whose stage was held needs nothing more. Ruling C-27 (5): a running
     // run with no held stage is refused below, and a refused resume changes nothing.

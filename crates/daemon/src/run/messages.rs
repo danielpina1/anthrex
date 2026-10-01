@@ -2,7 +2,7 @@
 //! `std::thread`, `tokio` or `std::time::SystemTime` (design decision 2).
 
 use super::contract::clamp_with;
-use super::model::Outgoing;
+use super::model::{CheckRecord, Outgoing};
 
 /// The most one delivered turn may carry.
 pub const MESSAGE_MAX_BYTES: usize = 32 * 1024;
@@ -20,6 +20,22 @@ pub fn summary(tail: &str) -> String {
     let lines: Vec<&str> = tail.split('\n').collect();
     let start = lines.len().saturating_sub(CHECK_SUMMARY_LINES);
     lines[start..].join("\n")
+}
+
+/// Ruling F-4a: the reviewer prompt's line for a check whose kept output is empty (a
+/// passing tier job keeps none): how it ended, and that its output is omitted.
+pub fn check_without_output(check: &CheckRecord) -> String {
+    let secs = check.secs;
+    let ended = match (check.timed_out, check.ok, check.code) {
+        (true, _, _) => format!("timed out ({secs}s)"),
+        (false, ok, Some(code)) => {
+            let word = if ok { "passed" } else { "failed" };
+            format!("{word} (exit {code}, {secs}s)")
+        }
+        (false, true, None) => format!("passed ({secs}s)"),
+        (false, false, None) => format!("failed (no exit code, {secs}s)"),
+    };
+    format!("Last check: {ended}; output omitted.")
 }
 
 /// The line [`clamp`] puts where it cut the middle out of a message.

@@ -5,14 +5,11 @@
 //! `restore.rs` (M8a.15) answers restore and a paused run's resume.
 
 use crate::run::phases::set_state;
-use proto::{
-    BlockReason, DeciderSource, PlanEdit, RunPath, RunState, Runtime, Size, SizeCheckInfo,
-    TaskState,
-};
+use proto::{DeciderSource, PlanEdit, RunPath, RunState, Runtime, SizeCheckInfo, TaskState};
 
+use super::actions::rules;
 use super::batch::{Refused, apply_batch};
-use super::dispatch::{finishing_as, history, salvage_ref};
-use super::schedule::deps_done;
+use super::dispatch::{history, salvage_ref};
 use super::signals::end_round;
 use super::stages;
 use super::{
@@ -153,21 +150,8 @@ pub(super) fn approve(
     let Some(run) = state.runs.get_mut(run_id) else {
         return reply(fx, id, Err(unknown(run_id)));
     };
-    if let Some(how) = finishing_as(run) {
-        return reply(fx, id, Err(format!("run {run_id} is being {how}")));
-    }
-    if run.state == RunState::Planning {
-        let text = format!(
-            "run {run_id} is still being planned; approve it when the orchestrator has submitted the plan"
-        );
+    if let Some(text) = rules::approve(run) {
         return reply(fx, id, Err(text));
-    }
-    if run.state != RunState::AwaitingApproval {
-        return reply(
-            fx,
-            id,
-            Err(format!("run {run_id} is {}", run.state.label())),
-        );
     }
     run.state = RunState::Running;
     run.approved_by = Some("user".to_string());
@@ -198,17 +182,8 @@ pub(super) fn reject(
     let Some(run) = state.runs.get_mut(run_id) else {
         return reply(fx, id, Err(unknown(run_id)));
     };
-    if let Some(how) = finishing_as(run) {
-        return reply(fx, id, Err(format!("run {run_id} is being {how}")));
-    }
-    // Milestone 9 decision 26: a run still being planned is discarded too, also when a
-    // daemon restart paused it there (M9.7 review fixes, ruling 4).
-    let planning = run.state == RunState::Planning
-        || (run.state == RunState::Paused && run.paused_from == Some(RunState::Planning));
-    if !planning && run.state != RunState::AwaitingApproval {
-        let label = run.state.label();
-        let text =
-            format!("run {run_id} is {label}; reject applies only while its plan awaits approval");
+    // Milestone 9 decision 26: a run still being planned is discarded too.
+    if let Some(text) = rules::reject(run) {
         return reply(fx, id, Err(text));
     }
     let mut worktrees: Vec<_> = run
@@ -251,31 +226,10 @@ pub(super) fn edit(
     let Some(run) = state.runs.get_mut(run_id) else {
         return reply(fx, id, Err(unknown(run_id)));
     };
-    // Milestone 9 decision 42: a `message` or `refresh` is alone in its request.
-    if let Err(error) = crate::run::edits_orch::one_edit_rule(edits, submit, false) {
-        return reply(fx, id, Err(error.to_string()));
-    }
-    if run.state.is_terminal() || run.state == RunState::Complete {
-        return reply(
-            fx,
-            id,
-            Err(format!("run {run_id} is {}", run.state.label())),
-        );
-    }
-    // Whole-branch review m1: a fast-path run runs one task; milestone 9's promotion,
-    // not an edit, turns it into a planned run (`promote.rs`; a promoted run's path is
-    // `plan`, so this no longer applies to it).
-    let adds = |e: &PlanEdit| matches!(e, PlanEdit::AddTask { .. } | PlanEdit::SplitTask { .. });
-    if run.path == Some(RunPath::Fast) && edits.iter().any(adds) {
-        let text = format!(
-            "run {run_id} is on the fast path: it runs one task; start a planned run instead"
-        );
+    // Milestone 9 decision 42's one-edit rule; a fast-path run runs one task (milestone
+    // 9's promotion, not an edit, makes it a planned run); a cancelled run only loses work.
+    if let Some(text) = rules::edit_run(run, edits, submit) {
         return reply(fx, id, Err(text));
-    }
-    // M9.9 second review, C-1: a cancelled run only loses work.
-    let adds = |e: &PlanEdit| matches!(e, PlanEdit::AddTask { .. } | PlanEdit::SplitTask { .. });
-    if run.cancelled && (submit || edits.iter().any(adds)) {
-        return reply(fx, id, Err(format!("run {run_id} was cancelled")));
     }
     let batch = (edits, scope, refusals);
     if submit {
@@ -304,18 +258,9 @@ fn submit_edit(
 ) -> Result<String, String> {
     // M9.9 review fixes, C1: a promoted running run whose orchestrator has not
     // submitted is submitted by the user as the orchestrator's `submit` would.
-    let promoted = run.state == RunState::Running
-        && run
-            .orch
-            .orchestrator
-            .as_ref()
-            .is_some_and(|o| !o.plan_submitted);
-    if run.state != RunState::Planning && !promoted {
-        let label = run.state.label();
-        return Err(format!(
-            "run {} is {label}; only a run being planned can be submitted",
-            run.id
-        ));
+    let promoted = rules::promoted_unsubmitted(run);
+    if let Some(text) = rules::submit(run) {
+        return Err(text);
     }
     let mut edited = run.clone();
     let mut effects = Vec::new();
@@ -375,38 +320,13 @@ pub(super) fn retry(
     let Some(run) = state.runs.get_mut(run_id) else {
         return reply(fx, id, Err(unknown(run_id)));
     };
-    if let Some(how) = finishing_as(run) {
-        return reply(fx, id, Err(format!("run {run_id} is being {how}")));
-    }
-    if !matches!(run.state, RunState::Running | RunState::Paused) {
-        let text = format!("run {run_id} is {}", run.state.label());
+    if let Some(text) = rules::retry(run, task_id) {
         return reply(fx, id, Err(text));
     }
     let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) else {
-        return reply(fx, id, Err(format!("unknown task {task_id}")));
+        return reply(fx, id, Err(rules::refused(rules::retry(run, task_id))));
     };
     let task = &run.tasks[i];
-    let refusal = match &task.block {
-        // Milestone 9 decision 42c.
-        _ if super::worker_messages::paused_refusal(task).is_some() => {
-            super::worker_messages::paused_refusal(task)
-        }
-        _ if task.state != TaskState::Blocked => Some(format!(
-            "task {task_id} is {}; retry applies only to a blocked task",
-            task.state.label()
-        )),
-        Some(b) if b.reason == BlockReason::DepCancelled => Some(format!(
-            "task {task_id} is blocked(dep_cancelled); retry cannot bring back a cancelled dependency"
-        )),
-        _ if task.size == Size::L => Some(format!("task {task_id} is L; split it first")),
-        _ if task.awaiting_deps && !deps_done(run, task) => Some(format!(
-            "task {task_id} waits for its dependencies; retry it once they are merged"
-        )),
-        _ => None,
-    };
-    if let Some(text) = refusal {
-        return reply(fx, id, Err(text));
-    }
     let was = task.block.clone().map_or_else(String::new, |b| {
         let label = serde_json::to_value(b.reason)
             .ok()

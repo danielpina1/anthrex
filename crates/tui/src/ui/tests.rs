@@ -266,7 +266,7 @@ fn modals_render_on_top() {
     });
     let (out, _) = render(&app, 100, 20);
     assert!(out.contains("Kill 'a'?"));
-    assert!(out.contains("y / Enter = yes"));
+    assert!(out.contains("y kill · esc back"));
     app.modal = Some(Modal::Help);
     let (out, _) = render(&app, 100, 24);
     assert!(out.contains("send a literal C-b"));

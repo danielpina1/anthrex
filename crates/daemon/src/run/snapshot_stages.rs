@@ -42,6 +42,7 @@ fn stage_info(run: &Run, n: u16, planned: u16) -> StageInfo {
         None => run.run_branch(),
     };
     StageInfo {
+        actions: Vec::new(),
         n,
         branch,
         tasks: count(of_stage().count()),

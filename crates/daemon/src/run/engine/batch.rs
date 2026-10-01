@@ -5,6 +5,7 @@
 
 use proto::{BlockReason, PlanEdit, RunState, Runtime, TaskState};
 
+use super::actions::rules;
 use super::requests::log;
 use super::{Effect, deciders, outbox, restore, worker_messages};
 use crate::run::edit_log;
@@ -210,21 +211,13 @@ fn kill_sessions(run: &mut Run, task_id: &str, fx: &mut Vec<Effect>) {
 fn pause_or_resume_fits(run: &Run, edits: &[PlanEdit]) -> Result<(), String> {
     let mut state = run.state;
     for edit in edits {
-        let (from, to, verb) = match edit {
-            PlanEdit::Pause => (
-                RunState::Running,
-                RunState::Paused,
-                "only a running run can be paused",
-            ),
-            PlanEdit::Resume => (
-                RunState::Paused,
-                RunState::Running,
-                "only a paused run can be resumed",
-            ),
+        let (refusal, to) = match edit {
+            PlanEdit::Pause => (rules::pause_in(&run.id, state), RunState::Paused),
+            PlanEdit::Resume => (rules::unpause_in(&run.id, state), RunState::Running),
             _ => continue,
         };
-        if state != from {
-            return Err(format!("run {} is {}; {verb}", run.id, state.label()));
+        if let Some(text) = refusal {
+            return Err(text);
         }
         state = to;
     }

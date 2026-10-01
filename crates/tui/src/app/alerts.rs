@@ -3,13 +3,13 @@
 //! but the focus; an alert clears itself once what raised it is resolved. The box is
 //! drawn by `ui/alerts.rs`. Pure: no I/O.
 
-use super::plan_review::ReviewTarget;
 use super::{App, Effect};
+use crate::actions_request::ActionTarget;
 use crate::inspector::run_format::reason_text;
 use crate::safe_text::one_line;
-use crate::tree::{self, NodeKey, awaiting_holds, is_paused};
+use crate::tree::{self, awaiting_holds, is_paused};
 use crossterm::event::{KeyCode, KeyEvent};
-use proto::{BlockReason, RunInfo, RunState, Runtime, Status, TaskState, WindowKind};
+use proto::{ActionKind, BlockReason, RunInfo, RunState, Runtime, Status, TaskState, WindowKind};
 use std::path::PathBuf;
 
 /// What an alert is about: its identity, which the focus follows (decision 21).
@@ -40,14 +40,6 @@ pub struct Alert {
 pub struct AlertsFocus {
     pub selected: Option<AlertKey>,
     pub(crate) at: usize,
-}
-
-/// The toast of a proposal's Enter (Interfaces "Exact user-visible text").
-fn proposal_toast(project: &str) -> String {
-    format!(
-        "profile proposal for {project}: run anthrex profile show --proposed, then \
-         anthrex profile confirm or reject, in that project"
-    )
 }
 
 /// `1 task` or `<n> tasks`.
@@ -265,34 +257,37 @@ impl App {
     fn enter_alert(&mut self, key: AlertKey) -> Vec<Effect> {
         match key {
             AlertKey::Orchestrator(run_id) => self.enter_orchestrator(&run_id),
-            AlertKey::Gate(run_id) => self.open_plan_review(run_id, ReviewTarget::Gate),
-            AlertKey::Hold { run, hold } => self.open_plan_review(run, ReviewTarget::Hold(hold)),
+            AlertKey::Gate(run) => self.alert_menu(run, ActionTarget::Run, ActionKind::ReviewPlan),
+            AlertKey::Hold { run, hold } => {
+                self.alert_menu(run, ActionTarget::Run, ActionKind::ApproveHold { hold })
+            }
             AlertKey::Blocked { run, task } => {
-                self.open_run_view(run.clone());
-                self.select_in_run_view(NodeKey::Task { run, id: task });
-                vec![]
+                let question = self
+                    .runs
+                    .runs
+                    .iter()
+                    .find(|r| r.run_id == run)
+                    .and_then(|r| r.tasks.iter().find(|t| t.id == task))
+                    .and_then(|t| t.block.as_ref())
+                    .is_some_and(|b| b.reason == BlockReason::Question);
+                let kind = if question {
+                    ActionKind::Answer
+                } else {
+                    ActionKind::Retry
+                };
+                self.alert_menu(run, ActionTarget::Task(task), kind)
             }
-            AlertKey::Halted(run_id) | AlertKey::Accept(run_id) => {
-                self.open_run_view(run_id);
-                vec![]
-            }
-            AlertKey::Proposal(project) => {
-                self.toast(proposal_toast(&project_name(&project)));
-                vec![]
-            }
+            AlertKey::Halted(run) => self.alert_menu(run, ActionTarget::Run, ActionKind::Resume),
+            AlertKey::Accept(run) => self.alert_menu(run, ActionTarget::Run, ActionKind::Accept),
+            // Preflight F26: the Profile screen on that project's proposal.
+            AlertKey::Proposal(project) => self.open_profile_on(project, true),
         }
     }
 
-    /// Selects `key` in the run view's rows and reveals it.
-    fn select_in_run_view(&mut self, key: NodeKey) {
-        let rows = super::nav_rows_of(
-            &self.windows,
-            &self.runs.runs,
-            &self.tree,
-            self.run_view.as_ref(),
-        );
-        self.tree.select(&rows, key);
-        self.reveal_tree_anchor();
+    /// Decision 17: Enter on an alert opens the menu on its node with `kind` selected
+    /// (the first entry when the state moved and `kind` is no longer listed).
+    fn alert_menu(&mut self, run: String, target: ActionTarget, kind: ActionKind) -> Vec<Effect> {
+        self.open_actions((run, target), Some(kind))
     }
 
     /// Priority 1's Enter: focus the orchestrator's window and leave tree mode, as

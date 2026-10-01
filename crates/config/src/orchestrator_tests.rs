@@ -219,85 +219,6 @@ FOO = "bar"
 }
 
 #[test]
-fn out_of_range_values_fall_back_with_problems() {
-    let (config, problems) = parse(
-        r#"
-[orchestrator]
-max_writers = 0
-"#,
-    );
-    assert_eq!(
-        keys(&problems),
-        HashSet::from(["orchestrator.max_writers".to_string()])
-    );
-    assert_eq!(config.orchestrator.max_writers, 3);
-    assert_eq!(
-        problems[0].to_string(),
-        "orchestrator.max_writers: must be between 1 and 8 (using 3)"
-    );
-
-    let (config, problems) = parse(
-        r#"
-[orchestrator]
-max_writers = 9
-"#,
-    );
-    assert_eq!(
-        keys(&problems),
-        HashSet::from(["orchestrator.max_writers".to_string()])
-    );
-    assert_eq!(config.orchestrator.max_writers, 3);
-
-    let (config, problems) = parse(
-        r#"
-[orchestrator]
-stall_after_secs = 1
-"#,
-    );
-    assert_eq!(
-        keys(&problems),
-        HashSet::from(["orchestrator.stall_after_secs".to_string()])
-    );
-    assert_eq!(config.orchestrator.stall_after_secs, 600);
-
-    let (config, problems) = parse(
-        r#"
-[orchestrator]
-git_timeout_secs = 4
-"#,
-    );
-    assert_eq!(
-        keys(&problems),
-        HashSet::from(["orchestrator.git_timeout_secs".to_string()])
-    );
-    assert_eq!(config.orchestrator.git_timeout_secs, 60);
-
-    let (config, problems) = parse(
-        r#"
-[orchestrator]
-worker_codex_sandbox = "yolo"
-"#,
-    );
-    assert_eq!(
-        keys(&problems),
-        HashSet::from(["orchestrator.worker_codex_sandbox".to_string()])
-    );
-    assert_eq!(config.orchestrator.worker_codex_sandbox, "workspace-write");
-
-    let (config, problems) = parse(
-        r#"
-[orchestrator]
-default_runtime = "shell"
-"#,
-    );
-    assert_eq!(
-        keys(&problems),
-        HashSet::from(["orchestrator.default_runtime".to_string()])
-    );
-    assert_eq!(config.orchestrator.default_runtime, proto::Runtime::Claude);
-}
-
-#[test]
 fn unknown_orchestrator_keys_are_reported() {
     let (_, problems) = parse(
         r#"
@@ -538,6 +459,9 @@ mod adapt;
 
 #[path = "orchestrator_tests_agent.rs"]
 mod orch_agent;
+
+#[path = "orchestrator_tests_ranges.rs"]
+mod ranges;
 
 /// Final fix batch F2 (C-I3), decision 50's recorded ruling: whether `--settings` hooks
 /// and `--mcp-config` still apply under `--bare` is not verified, so `auth = "api_key"`
