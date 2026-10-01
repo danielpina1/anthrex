@@ -211,7 +211,7 @@ pub(crate) fn change_parts(state: &GitState, p: theme::Palette) -> Vec<Part> {
     }
     if state.dirty > 0 {
         parts.push(Part {
-            text: format!("{}{}", if p.ascii { "*" } else { "●" }, state.dirty),
+            text: format!("{}{}", theme::glyph(Glyph::Live, p.ascii), state.dirty),
             style: role(Role::Muted, p),
             priority: 4,
         });
@@ -315,12 +315,7 @@ fn build_parts(state: &GitState, p: theme::Palette) -> Vec<Part> {
 /// returned at all.
 #[cfg(test)]
 pub fn git_spans(state: &GitState, budget: usize) -> Vec<Span<'static>> {
-    let p = theme::Palette {
-        accent: theme::DEFAULT_ACCENT,
-        truecolor: false,
-        ascii: false,
-    };
-    git_spans_in(state, budget, p)
+    git_spans_in(state, budget, theme::Palette::PLAIN)
 }
 
 /// [`git_spans`] in the palette's roles, its marks in ASCII when `p.ascii`.

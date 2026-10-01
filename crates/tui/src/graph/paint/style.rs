@@ -177,13 +177,14 @@ fn ended(app: &App) -> (&'static str, Role) {
 }
 
 /// A live agent node: the spinner while its window is `Working`, `⚑` while the window
-/// asks for attention or the round is rate-limited, else `●` (decision 19).
+/// asks for attention, `⊘` in `Paused` while the round is rate-limited (waiting on
+/// someone else, never "needs you": no alert is raised for it), else `●` (decision 19).
 fn live(window: Option<&WindowInfo>, rate_limited: bool, app: &App) -> (&'static str, Role) {
     let (frame, ascii) = (app.spinner_frame, app.palette().ascii);
     match window.map(|window| window.status) {
         Some(Status::Working) => theme::status_look(Status::Working, frame, ascii),
         Some(Status::Attention) => theme::status_look(Status::Attention, frame, ascii),
-        _ if rate_limited => theme::status_look(Status::Attention, frame, ascii),
+        _ if rate_limited => (theme::glyph(Glyph::Blocked, ascii), Role::Paused),
         _ => (theme::glyph(Glyph::Live, ascii), Role::Working),
     }
 }

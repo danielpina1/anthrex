@@ -55,6 +55,9 @@ fn exactly_one_accented_frame_in_every_region() {
 fn ascii_mode_emits_only_ascii_everywhere() {
     for (name, mut app) in fixtures() {
         app.settings.badges.ascii = true;
+        // The badge set is built for one form: rebuild it, as `UiSettings` does.
+        app.settings.badges =
+            crate::ui::badge::BadgeSet::from_config(&app.settings.badges_config, true);
         for (w, h) in [(80, 24), (120, 40)] {
             let buffer = audit::draw(&app, w, h);
             assert_eq!(

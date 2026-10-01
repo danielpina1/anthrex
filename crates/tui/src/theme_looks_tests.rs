@@ -358,18 +358,29 @@ fn the_rest_of_decision_3s_table() {
 /// Review focus 4, decision 4: a blocked task wears `⚑` exactly when it is an
 /// alert. A `question` block under a live orchestrator is the orchestrator's to
 /// answer (`⊘`); with no orchestrator, or a `human` block, it needs the user (`⚑`).
+/// At the plan gate or under a hold awaiting approval the gate's or the hold's alert
+/// covers it: no blocked alert, and the task is drawn as planned (`○`).
 #[test]
 fn a_blocked_task_flags_only_when_it_needs_you() {
+    use crate::app::AlertKey;
     use crate::app::alerts::task_needs_you;
     use crate::tree::alert_fixtures::{at, blocked, with_orch};
-    use proto::BlockReason;
+    use crate::tree::orch_fixtures::hold;
+    use proto::{BlockReason, HoldState};
 
     let question = blocked("t1", BlockReason::Question, "which table?");
     let human = blocked("t2", BlockReason::Human, "please decide");
     let mut live = with_orch(at("r-live", RunState::Running, 1), 11);
     live.tasks = vec![question.clone(), human.clone()];
     let mut bare = at("r-bare", RunState::Running, 2);
-    bare.tasks = vec![question];
+    bare.tasks = vec![question.clone()];
+    let mut gate = at("r-gate", RunState::AwaitingApproval, 3);
+    gate.tasks = vec![human.clone()];
+    let mut held = at("r-held", RunState::Running, 4);
+    let mut held_task = human;
+    held_task.hold = Some("epic:ui".into());
+    held.tasks = vec![held_task];
+    held.holds = vec![hold("epic:ui", HoldState::Awaiting, &["t2"])];
 
     assert!(
         !task_needs_you(&live, &live.tasks[0]),
@@ -377,7 +388,10 @@ fn a_blocked_task_flags_only_when_it_needs_you() {
     );
     assert!(task_needs_you(&live, &live.tasks[1]), "a human block");
     assert!(task_needs_you(&bare, &bare.tasks[0]), "no orchestrator");
+    assert!(!task_needs_you(&gate, &gate.tasks[0]), "the gate covers it");
+    assert!(!task_needs_you(&held, &held.tasks[0]), "the hold covers it");
 
+    // The drawn glyph and role, and whether the alerts list the task.
     let drawn = |run: &proto::RunInfo, id: &str| {
         let mut app = crate::app::App::new(Vec::new(), "/tmp".into(), Default::default());
         let _ = app.run_subscription();
@@ -396,9 +410,17 @@ fn a_blocked_task_flags_only_when_it_needs_you() {
                 |row| matches!(&row.kind, crate::tree::RowKind::Task { task, .. } if task.id == id),
             )
             .expect("the task's row");
-        crate::graph::paint::style::node_glyph(row, &app)
+        let (glyph, role) = crate::graph::paint::style::node_glyph(row, &app);
+        let key = AlertKey::Blocked {
+            run: run.run_id.clone(),
+            task: id.into(),
+        };
+        let alerted = crate::app::alerts(&app).iter().any(|a| a.key == key);
+        (glyph, role, alerted)
     };
-    assert_eq!(drawn(&live, "t1"), ("⊘", Role::Paused));
-    assert_eq!(drawn(&live, "t2"), ("⚑", Role::Attention));
-    assert_eq!(drawn(&bare, "t1"), ("⚑", Role::Attention));
+    assert_eq!(drawn(&live, "t1"), ("⊘", Role::Paused, false));
+    assert_eq!(drawn(&live, "t2"), ("⚑", Role::Attention, true));
+    assert_eq!(drawn(&bare, "t1"), ("⚑", Role::Attention, true));
+    assert_eq!(drawn(&gate, "t2"), ("○", Role::Muted, false));
+    assert_eq!(drawn(&held, "t2"), ("○", Role::Muted, false));
 }

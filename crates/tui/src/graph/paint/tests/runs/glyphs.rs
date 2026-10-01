@@ -141,8 +141,8 @@ fn round_glyphs_follow_the_verdict() {
 
     assert_eq!(
         glyph(&app, &round_key("t2", AgentRole::Worker, 1, 1)),
-        ("⚑", attention),
-        "rate-limited until after run_now()"
+        ("⊘", theme::fg(theme::Role::Paused)),
+        "rate-limited until after run_now(): waiting, not needs-you"
     );
     assert_eq!(
         glyph(&app, &round_key("t3", AgentRole::Worker, 1, 1)),

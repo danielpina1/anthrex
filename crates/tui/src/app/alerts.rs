@@ -79,11 +79,17 @@ fn orchestrator_text(app: &App, run: &RunInfo) -> Option<&'static str> {
 }
 
 /// Decision 18's priority 3 for a blocked task: while the orchestrator lives, only
-/// what it cannot answer; with none, every reason. A paused task is never an alert.
-fn blocked_text(task: &proto::TaskInfo, orchestrator_lives: bool) -> Option<String> {
+/// what it cannot answer; with none, every reason. A paused task is never an alert,
+/// nor one at the plan gate or under a hold awaiting approval: the gate's or the
+/// hold's alert covers it, and it is drawn as planned (`○`, milestone 9.0.7 ruling).
+fn blocked_text(run: &RunInfo, task: &proto::TaskInfo) -> Option<String> {
     if task.state != TaskState::Blocked || is_paused(task) {
         return None;
     }
+    if run.state == RunState::AwaitingApproval || tree::task_held(run, task) {
+        return None;
+    }
+    let orchestrator_lives = orchestrator_lives(run);
     let reason = task.block.as_ref().map(|block| block.reason);
     let asks_the_user = matches!(
         reason,
@@ -106,7 +112,7 @@ fn blocked_text(task: &proto::TaskInfo, orchestrator_lives: bool) -> Option<Stri
 /// Milestone 9.0.7 decision 4: "needs you" is one rule. A task needs the user exactly
 /// when it is an alert, so its glyph (`theme::task_look`) and the alerts agree.
 pub fn task_needs_you(run: &RunInfo, task: &proto::TaskInfo) -> bool {
-    blocked_text(task, orchestrator_lives(run)).is_some()
+    blocked_text(run, task).is_some()
 }
 
 fn orchestrator_lives(run: &RunInfo) -> bool {
@@ -151,9 +157,8 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             };
             push(2, key, text);
         }
-        let lives = orchestrator_lives(run);
         for task in &run.tasks {
-            if let Some(text) = blocked_text(task, lives) {
+            if let Some(text) = blocked_text(run, task) {
                 let key = AlertKey::Blocked {
                     run: id.clone(),
                     task: task.id.clone(),

@@ -26,12 +26,7 @@ const GUTTER: usize = 2;
 /// own tests, which draw an `Inspection` without an `App`.
 #[cfg(test)]
 pub fn render(frame: &mut Frame, inspection: &Inspection, area: Rect) {
-    let p = Palette {
-        accent: theme::DEFAULT_ACCENT,
-        truecolor: false,
-        ascii: false,
-    };
-    render_in(frame, inspection, area, p);
+    render_in(frame, inspection, area, Palette::PLAIN);
 }
 
 /// Lays an `Inspection` into a rounded panel: the title row, then the fields in

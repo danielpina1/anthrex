@@ -205,7 +205,12 @@ fn t7_on_window(change: impl FnOnce(&mut proto::AgentRoundInfo)) -> App {
 fn a_rate_limited_round() {
     let app = t7_on_window(|_| {});
     let inspection = inspect_node(&app, &round_key("t7", AgentRole::Worker, 1, 1));
-    assert_eq!(inspection.glyph.content, "⚑");
+    // Milestone 9.0.7 ruling: rate-limited is waiting on someone else, not needs-you.
+    assert_eq!(inspection.glyph.content, "⊘");
+    assert_eq!(
+        inspection.glyph.style.fg,
+        Some(crate::theme::fg(crate::theme::Role::Paused))
+    );
     assert_eq!(inspection.right.as_deref(), Some("rate-limited · 15m · t7"));
     assert_eq!(
         pairs(&inspection),

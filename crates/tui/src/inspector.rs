@@ -420,7 +420,9 @@ pub fn task_panel_rows(app: &App, width: u16) -> usize {
 #[cfg(test)]
 pub use panel::render;
 pub use panel::render_in;
-pub use run_format::{format_duration, format_tokens, local_hhmm, progress_bar};
+#[cfg(test)]
+pub use run_format::progress_bar;
+pub use run_format::{format_duration, format_tokens, local_hhmm};
 
 #[cfg(test)]
 mod tests;

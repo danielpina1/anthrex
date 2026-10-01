@@ -47,6 +47,7 @@ pub fn local_hhmm(at: u64, utc_offset_secs: i64) -> String {
 
 /// Decision 30: `filled = (width × done + total / 2) / total` cells of `█`, then `░`.
 /// A done count above the total fills the bar; a zero total leaves it empty.
+#[cfg(test)]
 pub fn progress_bar(done: u64, total: u64, width: usize) -> String {
     progress_bar_in(done, total, width, false)
 }

@@ -109,7 +109,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .map(|w| w.runtime)
         .or(conversation.map(|c| c.runtime))
         .unwrap_or(proto::Runtime::Shell);
-    let badge = &shown_badge(app, runtime);
+    let badge = app.settings.badges.for_runtime(runtime);
 
     let mut place = window
         .map(|w| w.name.clone())
@@ -342,7 +342,8 @@ fn tool_spans(ctx: &Ctx, turn_id: u64, block: usize) -> (u16, Spans, Spans) {
         ToolState::Pending => (theme::spinner(ctx.app.spinner_frame, g.ascii), Working),
         ToolState::Ok => (g.ok, Done),
         ToolState::Failed => (g.failed, Failed),
-        ToolState::Denied => (g.denied, Attention),
+        // A denied call is history, not a request (milestone 9.0.7 ruling).
+        ToolState::Denied => (g.denied, Muted),
     };
     let mut right = vec![Span::styled(glyph, role(r, ctx.app.palette()))];
     if let Some(ms) = duration_ms {
@@ -373,23 +374,6 @@ fn detail_spans(ctx: &Ctx, text: &str, kind: DetailKind, number: Option<usize>) 
         DetailKind::Truncated => {
             vec![Span::styled(format!("{} {text}", ctx.glyphs.more), muted)]
         }
-    }
-}
-
-/// The runtime's badge, in its ASCII form whenever the view draws ASCII:
-/// `badges.ascii` is the one switch (milestone 9.0.7 decision 5).
-fn shown_badge(app: &App, runtime: proto::Runtime) -> Badge {
-    let badge = app.settings.badges.for_runtime(runtime).clone();
-    if app.settings.badges.ascii && !badge.text.is_ascii() {
-        let text = app
-            .settings
-            .badges_config
-            .for_runtime(runtime)
-            .ascii
-            .clone();
-        Badge { text, ..badge }
-    } else {
-        badge
     }
 }
 

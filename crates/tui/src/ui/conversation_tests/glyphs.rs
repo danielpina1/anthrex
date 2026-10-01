@@ -116,6 +116,23 @@ fn every_glyph(app: &mut App) {
     unfold(app, 50, 0);
 }
 
+/// Milestone 9.0.7 ruling: a denied tool call is history, not a request: `⊘` muted.
+#[test]
+fn a_denied_tool_is_muted_history() {
+    let mut app = app_showing(
+        UiSettings::default(),
+        Runtime::Claude,
+        80,
+        30,
+        main_conversation(),
+    );
+    every_glyph(&mut app);
+    let buf = draw(&app, 80, 30);
+    let (x, y) = find(&buf, "⊘").unwrap_or_else(|| panic!("{}", text_of(&buf)));
+    assert!(row_text(&buf, y).contains("Bash"), "{}", row_text(&buf, y));
+    assert_eq!(buf[(x, y)].fg, crate::theme::fg(crate::theme::Role::Muted));
+}
+
 #[test]
 fn ascii_mode_uses_no_box_drawing_glyphs() {
     let mut unicode = app_showing(
