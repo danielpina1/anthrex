@@ -173,10 +173,10 @@ fn tier_text(tier: &TierInfo) -> String {
 pub(super) fn task_fields(run: &RunInfo, task: &TaskInfo) -> Vec<Field> {
     let mut fields = Vec::new();
     if run.stages.len() > 1 {
-        // The merge with milestone 9.0.5: its STATUS section's `stage` is the
-        // lifecycle, so the stage number is `stage no.`.
+        // Milestone 9.0.7 decision 15: the lifecycle is DETAIL's `phase`, so the stage
+        // number is `stage`.
         fields.push(field(
-            "stage no.",
+            "stage",
             format!("{} of {}", task.stage, run.stages.len()),
         ));
     }

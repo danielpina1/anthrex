@@ -166,12 +166,7 @@ fn the_run_views_single_line_is_the_live_glyph_the_name_and_the_right_text() {
     };
     assert_eq!(
         line(task),
-        (
-            "●".into(),
-            live,
-            "t1  spawn".into(),
-            "  M · tdd · working".into()
-        )
+        ("●".into(), live, "t1  spawn".into(), "  working".into())
     );
     let round = NodeKey::AgentRound {
         run: RUN_ID.into(),

@@ -129,32 +129,32 @@ const PLANNER: [&str; 12] = [
 
 const TASK: [&str; 12] = [
     "╭────────────────────────────────────────────────────────────────────────────────────╮",
-    "│ ◐ t2  map Gemini hook events to status                    M · tdd · review round 2 │",
-    "│ stages    done ✓ → proof ✓ → check ✓ → review ● → merge ·                          │",
+    "│ ◐ t2  map Gemini hook events to status                              in review · r2 │",
+    "│ pipeline  done ✓ › proof ✓ › check ✓ › review › merge ◌                            │",
     "│ route     codex · standard · high effort  →  reviewer claude · frontier            │",
-    "│ deps      waits on t0 ✓ t6 ✓ · unblocks t3, t7 · on critical path                  │",
+    "│ deps      after t0 ✓, t6 ✓ · unblocks t3, t7 · on critical path                    │",
     "│ budget    ███████░░░ 104/150 tool calls · 38/60 min · 410k tokens                  │",
     "│ tries     review 1/2 bounces · check 0/2 · escalation step 1                       │",
-    "│ diff      4 files · +212 −31 · test `status::gemini_stop_marks_idle` red a1b2c3d ✓ │",
-    "│ review    r1 ✗ 1 critical, 2 minor: status.rs:118 \"SubagentStop not paired\"        │",
+    "│ diff      +212 −31 · 4 files · test `status::gemini_stop_marks_idle` red a1b2c3d ✓ │",
+    "│ review    in review · r2                                                           │",
     "│ history   12:31 review r1 changes · 12:20 check passed · 12:02 started             │",
     "│                                                                                    │",
     "╰────────────────────────────────────────────────────────────────────────────────────╯",
 ];
 
 const TASK_NARROW: [&str; 12] = [
-    "╭──────────────────────────────────────────────────────────╮",
-    "│ ◐ t2  map Gemini hook events to status                   │",
-    "│ stages    done ✓ → proof ✓ → check ✓ → review ● → merge… │",
-    "│ route     codex · standard · high effort  →  reviewer c… │",
-    "│ deps      waits on t0 ✓ t6 ✓ · unblocks t3, t7 · on cri… │",
-    "│ budget    ███████░░░ 104/150 tool calls · 38/60 min · 4… │",
-    "│ tries     review 1/2 bounces · check 0/2 · escalation s… │",
-    "│ diff      4 files · +212 −31 · test `status::gemini_sto… │",
-    "│ review    r1 ✗ 1 critical, 2 minor: status.rs:118 \"Suba… │",
-    "│ history   12:31 review r1 changes · 12:20 check passed … │",
-    "│                                                          │",
-    "╰──────────────────────────────────────────────────────────╯",
+    "╭──────────────────────────────────────────────────╮",
+    "│ ◐ t2  map Gemini hook events to status           │",
+    "│ pipeline  done ✓ › proof ✓ › check ✓ › review ›… │",
+    "│ route     codex · standard · high effort  →  re… │",
+    "│ deps      after t0 ✓, t6 ✓ · unblocks t3, t7 · … │",
+    "│ budget    ███████░░░ 104/150 tool calls · 38/60… │",
+    "│ tries     review 1/2 bounces · check 0/2 · esca… │",
+    "│ diff      +212 −31 · 4 files · test `status::ge… │",
+    "│ review    in review · r2                         │",
+    "│ history   12:31 review r1 changes · 12:20 check… │",
+    "│                                                  │",
+    "╰──────────────────────────────────────────────────╯",
 ];
 
 const WORKER: [&str; 12] = [
@@ -231,7 +231,8 @@ fn task_panel_matches_the_mockup() {
 fn task_panel_drops_the_right_text_and_elides_values() {
     let mut inspection = node(gemini_fixture(), task_key("t2"));
     inspection.layout = FieldLayout::Rows;
-    assert_eq!(panel(&inspection, 60, RUN_INSPECTOR_HEIGHT), TASK_NARROW);
+    // Milestone 9.0.7: the state word is shorter, so the drop shows at 52 columns.
+    assert_eq!(panel(&inspection, 52, RUN_INSPECTOR_HEIGHT), TASK_NARROW);
 }
 
 #[test]

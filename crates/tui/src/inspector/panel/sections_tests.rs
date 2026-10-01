@@ -62,16 +62,13 @@ fn the_collapsed_brief_ends_with_more_in_muted() {
     let inspection = inspect_node(&app, &t2_key());
     let body = body_lines(&inspection.sections, 76, Palette::PLAIN);
     let rows = text(&body);
+    // Milestone 9.0.7 decision 12: INTENT's brief is one line until `b`.
+    let at = rows.iter().position(|row| row == "INTENT").unwrap();
     assert_eq!(
-        rows[1..5],
-        [
-            "brief     brief 1",
-            "          brief 2",
-            "          brief 3",
-            "          … (b: more)",
-        ]
+        rows[at + 1..at + 3],
+        ["brief     brief 1", "          … (b: more)"]
     );
-    let more = body[4].spans.last().unwrap();
+    let more = body[at + 2].spans.last().unwrap();
     assert_eq!(more.content, MORE);
     assert_eq!(
         more.style,
@@ -79,7 +76,7 @@ fn the_collapsed_brief_ends_with_more_in_muted() {
     );
     assert!(
         body[0].spans[0].style.add_modifier.contains(Modifier::BOLD),
-        "GOAL is bold"
+        "OUTCOME is bold"
     );
 }
 
@@ -96,16 +93,20 @@ fn task_panel_scrolls() {
         top[0].starts_with("◐ t2  map Gemini"),
         "the title row stays: {top:?}"
     );
-    assert_eq!(top[1..], body[..height - 1]);
+    // Milestone 9.0.7 decision 12: the footer is pinned to the last row.
+    let footer = "cx default · M · tdd";
+    assert_eq!(top[1..height - 1], body[..height - 2]);
+    assert_eq!(top[height - 1], footer);
     inspection.scroll = 5;
     let scrolled = text(&lines(&inspection, 76, height, Palette::PLAIN));
     assert!(scrolled[0].starts_with("◐ t2"), "the title row stays");
-    assert_eq!(scrolled[1..], body[5..5 + height - 1]);
-    // Past the end: clamped so the last body row is the last panel row.
+    assert_eq!(scrolled[1..height - 1], body[5..5 + height - 2]);
+    assert_eq!(scrolled[height - 1], footer, "the footer stays");
+    // Past the end: clamped so the last body row is the row above the footer.
     inspection.scroll = u16::MAX;
     let end = text(&lines(&inspection, 76, height, Palette::PLAIN));
-    assert_eq!(end[1..], body[body.len() - (height - 1)..]);
-    assert_eq!(end.last(), body.last());
+    assert_eq!(end[1..height - 1], body[body.len() - (height - 2)..]);
+    assert_eq!(end.get(height - 2), body.last());
     // `task_panel_rows` counts exactly those body rows.
     assert_eq!(
         crate::inspector::task_panel_rows(&app, 76),
@@ -219,17 +220,22 @@ fn round_doing_reads_now() {
 fn a_lone_carriage_return_breaks_the_line() {
     let app = t2_with_brief(0);
     let mut inspection = inspect_node(&app, &t2_key());
-    inspection.sections[0].fields[0].value = "first\rsecond\r\nthird".into();
+    let intent = inspection.sections.iter_mut().find(|s| s.title == "INTENT");
+    let brief = &mut intent.unwrap().fields[0];
+    brief.value = "first\rsecond\r\nthird".into();
+    brief.collapse = false;
     let rows = text(&body_lines(&inspection.sections, 76, Palette::PLAIN));
+    let at = rows.iter().position(|row| row == "INTENT").unwrap();
     assert_eq!(
-        rows[1..4],
+        rows[at + 1..at + 4],
         ["brief     first", "          second", "          third"]
     );
 }
 
-/// Ruling D-2: the panel's borders say when there is more: ` ↓ PgDn ` right-aligned
-/// in the bottom border while rows lie below, ` ↑ PgUp ` in the top border once
-/// scrolled down, both muted, and neither when it does not fit.
+/// Ruling D-2, as milestone 9.0.7 decision 16 extends it: the panel's borders say when
+/// there is more: ` ↓ PgDn · . actions ` right-aligned in the bottom border while rows
+/// lie below, ` ↑ PgUp ` in the top border once scrolled down, the keys in the accent,
+/// ` . actions ` alone at the end, and none of them when they do not fit.
 #[test]
 fn the_borders_say_there_is_more() {
     use ratatui::{Terminal, backend::TestBackend};
@@ -248,10 +254,10 @@ fn the_borders_say_there_is_more() {
     let app = t2_with_brief(3);
     let mut inspection = inspect_node(&app, &t2_key());
     let rows = body_lines(&inspection.sections, 80, Palette::PLAIN).len();
-    // 84 x 18: an interior of 80 x 16, 15 body rows, more below.
+    // 84 x 18: an interior of 80 x 16, 14 body rows between title and footer.
     let buffer = draw(&inspection, 84, 18);
     assert!(
-        row(&buffer, 17).ends_with(" ↓ PgDn ╯"),
+        row(&buffer, 17).ends_with(" ↓ PgDn · . actions ╯"),
         "{}",
         row(&buffer, 17)
     );
@@ -260,8 +266,8 @@ fn the_borders_say_there_is_more() {
     let x = u16::try_from(row(&buffer, 17)[..mark].chars().count()).unwrap();
     assert_eq!(
         buffer[(x, 17)].style().fg,
-        theme::role(theme::Role::Muted, theme::Palette::PLAIN).fg,
-        "muted"
+        theme::role(theme::Role::Accent, theme::Palette::PLAIN).fg,
+        "the key in the accent"
     );
     // Scrolled into the middle: both.
     inspection.scroll = 3;
@@ -271,15 +277,20 @@ fn the_borders_say_there_is_more() {
         "{}",
         row(&buffer, 0)
     );
-    assert!(row(&buffer, 17).ends_with(" ↓ PgDn ╯"));
-    // At the end: only the top one.
+    assert!(row(&buffer, 17).ends_with(" ↓ PgDn · . actions ╯"));
+    // At the end: only the top one, and the actions.
     inspection.scroll = u16::try_from(rows).unwrap();
     let buffer = draw(&inspection, 84, 18);
     assert!(row(&buffer, 0).contains("↑ PgUp"));
     assert!(!row(&buffer, 17).contains("PgDn"), "{}", row(&buffer, 17));
-    // Everything fits: neither.
+    assert!(
+        row(&buffer, 17).ends_with("─ . actions ╯"),
+        "{}",
+        row(&buffer, 17)
+    );
+    // Everything fits: neither scroll mark.
     inspection.scroll = 0;
-    let buffer = draw(&inspection, 84, u16::try_from(rows).unwrap() + 3);
+    let buffer = draw(&inspection, 84, u16::try_from(rows).unwrap() + 4);
     let last = buffer.area.height - 1;
     assert!(!row(&buffer, 0).contains("PgUp") && !row(&buffer, last).contains("PgDn"));
     // Too narrow for the mark: dropped, the corners intact.

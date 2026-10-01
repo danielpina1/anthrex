@@ -1,4 +1,5 @@
-//! M9.0.5.10: the task inspection as GOAL, STATUS and RESULT (decisions 22–24).
+//! M9.0.5.10: the task inspection's sections (decisions 22–24), as milestone 9.0.7
+//! decision 12 orders them: OUTCOME, EVIDENCE, INTENT, DETAIL.
 
 use super::run_task_sections as project;
 use super::run_tests::{app_of, inspect_node};
@@ -91,66 +92,86 @@ fn body(sections: &[Section]) -> Vec<String> {
 }
 
 #[test]
-fn sections_are_goal_status_result_in_order() {
+fn sections_are_outcome_evidence_intent_detail_in_order() {
     let sections = sections(&app_of(gemini_fixture()));
     let titles: Vec<&str> = sections.iter().map(|section| section.title).collect();
-    assert_eq!(titles, ["GOAL", "STATUS", "RESULT"]);
+    assert_eq!(titles, ["OUTCOME", "EVIDENCE", "INTENT", "DETAIL"]);
     let labels = |n: usize| -> Vec<&str> { sections[n].fields.iter().map(|f| f.label).collect() };
-    assert_eq!(labels(0), ["brief"]);
+    assert_eq!(labels(0), ["pipeline", "check", "accept"]);
+    assert_eq!(labels(1), ["diff", "review"]);
+    assert_eq!(labels(2), ["brief"]);
     assert_eq!(
-        labels(1),
+        labels(3),
         [
-            "stage", "worker", "check", "review", "stages", "route", "deps", "budget", "tries",
-            "history"
+            "phase", "worker", "deps", "budget", "tries", "route", "history"
         ]
     );
-    assert_eq!(labels(2), ["verdict", "diff"]);
 }
 
 #[test]
 fn goal_says_loading_before_the_detail() {
     let mut app = app_of(gemini_fixture());
-    assert_eq!(value(&sections(&app), "GOAL", "brief"), "loading…");
+    assert_eq!(value(&sections(&app), "INTENT", "brief"), "loading…");
     app.task_detail = Some(TaskDetailCache {
         run_id: "r1".into(),
         task_id: "t2".into(),
         key: detail_key(&app.runs.runs[0].tasks[0]),
         state: DetailState::InFlight(3),
     });
-    assert_eq!(value(&sections(&app), "GOAL", "brief"), "loading…");
+    assert_eq!(value(&sections(&app), "INTENT", "brief"), "loading…");
     app.task_detail.as_mut().unwrap().state = DetailState::Failed("no such task".into());
-    assert_eq!(value(&sections(&app), "GOAL", "brief"), "no such task");
+    assert_eq!(value(&sections(&app), "INTENT", "brief"), "no such task");
     // Another task's detail is not t2's.
     with_detail(&mut app, "t2's brief", None);
     app.task_detail.as_mut().unwrap().task_id = "t3".into();
-    assert_eq!(value(&sections(&app), "GOAL", "brief"), "loading…");
+    assert_eq!(value(&sections(&app), "INTENT", "brief"), "loading…");
 }
 
+/// The rows from `title`'s on.
+fn from<'a>(rows: &'a [String], title: &str) -> &'a [String] {
+    let at = rows
+        .iter()
+        .position(|row| row == title)
+        .expect("the section");
+    &rows[at..]
+}
+
+/// Milestone 9.0.7 decision 12: INTENT's brief is one wrapped line until `b`.
 #[test]
-fn goal_shows_three_brief_lines_until_expanded() {
+fn intent_shows_one_brief_line_until_expanded() {
     let mut app = gemini_with(|run| t2(run).owns = vec!["src/a.rs".into(), "src/b.rs".into()]);
     with_detail(&mut app, "one\ntwo\nthree\nfour\nfive", None);
     let rows = body(&sections(&app));
     assert_eq!(
-        rows[..8],
+        from(&rows, "INTENT")[..4],
         [
-            "GOAL",
+            "INTENT",
             "brief     one",
-            "          two",
-            "          three",
             "          … (b: more)",
             "owns      src/a.rs, src/b.rs",
-            "done when ☐ hooks map",
-            "          ☐ stop marks idle",
         ]
+    );
+    let at = rows.iter().position(|row| row == "OUTCOME").unwrap();
+    assert_eq!(
+        rows[at + 3..at + 5],
+        ["accept    ◌ hooks map", "          ◌ stop marks idle"]
     );
     app.brief_expanded = Some(t2_key());
     let rows = body(&sections(&app));
-    assert_eq!(rows[4..6], ["          four", "          five"]);
+    assert_eq!(
+        from(&rows, "INTENT")[1..6],
+        [
+            "brief     one",
+            "          two",
+            "          three",
+            "          four",
+            "          five"
+        ]
+    );
     assert!(!rows.iter().any(|row| row.contains("b: more")));
-    // Exactly three lines: nothing to expand.
+    // Exactly one line: nothing to expand.
     app.brief_expanded = None;
-    with_detail(&mut app, "one\ntwo\nthree", None);
+    with_detail(&mut app, "one", None);
     assert!(
         !body(&sections(&app))
             .iter()
@@ -281,10 +302,10 @@ fn now_line_from_activity_and_reviewer_prefix() {
         project::now_line(&task).as_deref(),
         Some("Bash cargo test -p x")
     );
-    // Shown in STATUS as `now`.
+    // Shown in DETAIL as `now`.
     let app = gemini_with(|run| t2(run).activity = Some("Edit src/lib.rs".into()));
     assert_eq!(
-        value(&sections(&app), "STATUS", "now"),
+        value(&sections(&app), "DETAIL", "now"),
         "reviewer: Edit src/lib.rs"
     );
 }
@@ -342,7 +363,7 @@ fn check_line() {
 }
 
 #[test]
-fn result_shows_the_summary_verdict_diff_and_merge() {
+fn evidence_shows_the_diff_review_summary_and_merge() {
     let mut app = gemini_with(|run| {
         let task = t2(run);
         task.state = TaskState::Merged;
@@ -355,24 +376,28 @@ fn result_shows_the_summary_verdict_diff_and_merge() {
         Some(("Mapped the hooks.\nAdded a test.", SummarySource::TaskDone)),
     );
     let sections = sections(&app);
-    let result: Vec<(&str, Option<&str>, &str)> = sections[2]
+    let evidence: Vec<(&str, Option<&str>, &str)> = sections[1]
         .fields
         .iter()
         .map(|f| (f.label, f.note, f.value.as_str()))
         .collect();
     assert_eq!(
-        result,
+        evidence,
         [
+            (
+                "diff",
+                None,
+                "+212 −31 · 4 files · test `status::gemini_stop_marks_idle` red a1b2c3d ✓"
+            ),
+            (
+                "review",
+                None,
+                "r1 ✗ changes · 1 critical, 2 minor: status.rs:118 \"SubagentStop not paired\""
+            ),
             (
                 "summary",
                 Some("task_done"),
                 "Mapped the hooks.\nAdded a test."
-            ),
-            ("verdict", None, "changes · one pairing bug"),
-            (
-                "diff",
-                None,
-                "4 files · +212 −31 · test `status::gemini_stop_marks_idle` red a1b2c3d ✓"
             ),
             (
                 "merged",
@@ -382,14 +407,18 @@ fn result_shows_the_summary_verdict_diff_and_merge() {
         ]
     );
     let rows = body(&sections);
-    let at = rows.iter().position(|r| r == "RESULT").unwrap();
+    let at = rows
+        .iter()
+        .position(|r| r == "summary (task_done)")
+        .unwrap();
     assert_eq!(
-        rows[at + 1..at + 4],
-        [
-            "summary (task_done)",
-            "          Mapped the hooks.",
-            "          Added a test.",
-        ]
+        rows[at + 1..at + 3],
+        ["          Mapped the hooks.", "          Added a test."]
+    );
+    // Merged by override: nothing is ticked, though a criterion is listed.
+    assert_eq!(
+        value(&sections, "OUTCOME", "accept"),
+        "◌ hooks map\n◌ stop marks idle"
     );
     with_detail(
         &mut app,
@@ -397,31 +426,41 @@ fn result_shows_the_summary_verdict_diff_and_merge() {
         Some(("tail", SummarySource::LastMessage)),
     );
     assert_eq!(
-        field(&self::sections(&app), "RESULT", "summary")
+        field(&self::sections(&app), "EVIDENCE", "summary")
             .unwrap()
             .note,
         Some("last message")
     );
 }
 
+/// RESULT's `nothing yet` is gone: with no diff and no verdict EVIDENCE says where the
+/// review stands, and the pipeline's `◌` marks say what is not reached.
 #[test]
-fn result_reads_nothing_yet() {
+fn evidence_without_a_diff_or_verdict_reads_the_review_state() {
     let app = gemini_with(|run| {
         let task = t2(run);
+        task.state = TaskState::Working;
         task.reviews.clear();
         task.diff = None;
         task.test = None;
         task.red = None;
     });
     let sections = sections(&app);
-    let result: Vec<(&str, &str)> = sections[2]
+    let evidence: Vec<(&str, &str)> = sections[1]
         .fields
         .iter()
         .map(|f| (f.label, f.value.as_str()))
         .collect();
-    assert_eq!(result, [("", "nothing yet")]);
-    let rows = body(&sections);
-    assert_eq!(rows[rows.len() - 2..], ["RESULT", "nothing yet"]);
+    assert_eq!(evidence, [("review", "not yet")]);
+    assert_eq!(
+        value(&sections, "OUTCOME", "pipeline"),
+        "done › proof ✓ › check ✓ › review ◌ › merge ◌"
+    );
+    assert!(
+        !body(&sections)
+            .iter()
+            .any(|row| row.contains("nothing yet"))
+    );
 }
 
 /// Pinning in spirit: nothing M8c's flat list showed is dropped.
@@ -441,14 +480,23 @@ fn every_old_field_is_still_shown() {
     });
     let flat = inspect_node(&app, &t2_key()).fields;
     let sections = sections(&app);
-    for label in [
-        "stages", "route", "deps", "budget", "tries", "messages", "notes", "history",
+    for (title, label) in [
+        ("OUTCOME", "pipeline"),
+        ("EVIDENCE", "diff"),
+        ("EVIDENCE", "review"),
+        ("DETAIL", "route"),
+        ("DETAIL", "deps"),
+        ("DETAIL", "budget"),
+        ("DETAIL", "tries"),
+        ("DETAIL", "messages"),
+        ("DETAIL", "notes"),
+        ("DETAIL", "history"),
     ] {
         let old = flat
             .iter()
             .find(|f| f.label == label)
             .unwrap_or_else(|| panic!("{label} is in the flat list"));
-        assert_eq!(value(&sections, "STATUS", label), old.value, "{label}");
+        assert_eq!(value(&sections, title, label), old.value, "{label}");
     }
     for old in &flat {
         let shown = sections
@@ -485,19 +533,20 @@ fn worker_text_is_sanitised() {
     }
     // Each planted value reached the panel.
     for (title, label) in [
-        ("GOAL", "brief"),
-        ("GOAL", "done when"),
-        ("STATUS", "now"),
-        ("RESULT", "summary"),
-        ("RESULT", "verdict"),
-        ("RESULT", "merged"),
+        ("INTENT", "brief"),
+        ("OUTCOME", "accept"),
+        ("OUTCOME", "result"),
+        ("DETAIL", "now"),
+        ("EVIDENCE", "summary"),
+        ("EVIDENCE", "review"),
+        ("EVIDENCE", "merged"),
     ] {
         assert!(field(&sections, title, label).is_some(), "{title} {label}");
     }
 }
 
 /// Review of fd9dd25: one criterion or owns entry is one row, whatever line breaks
-/// it carries, so it cannot forge another `☐` criterion.
+/// it carries, so it cannot forge another criterion (`◌` since milestone 9.0.7).
 #[test]
 fn a_list_entry_with_a_line_break_stays_one_row() {
     let mut app = gemini_with(|run| t2(run).owns = vec!["src/a.rs\nsrc/forged.rs".into()]);
@@ -510,56 +559,12 @@ fn a_list_entry_with_a_line_break_stays_one_row() {
         .iter()
         .filter_map(|row| {
             row.split_once('☐')
-                .map(|_| row.trim_start_matches("done when").trim())
+                .map(|_| row.trim_start_matches("accept").trim())
         })
         .collect();
-    assert_eq!(criteria, ["☐ real ☐ FORGED", "☐ x ☐ FORGED2"], "{rows:?}");
+    assert_eq!(criteria, ["◌ real ☐ FORGED", "◌ x ☐ FORGED2"], "{rows:?}");
     assert!(
         rows.contains(&"owns      src/a.rs src/forged.rs".to_owned()),
         "{rows:?}"
     );
-}
-
-/// Ruling D-2: a merged or reported task's outcome heads STATUS, so it shows without
-/// scrolling; the sections keep decision 22's order.
-#[test]
-fn a_finished_task_leads_status_with_its_result() {
-    for state in [TaskState::Merged, TaskState::Reported] {
-        let mut app = gemini_with(|run| {
-            let task = t2(run);
-            task.state = state;
-            task.merge_commit = Some("0123456789".into());
-        });
-        with_detail(
-            &mut app,
-            "brief",
-            Some((
-                "\n  Mapped the hooks.  \nAdded a test.",
-                SummarySource::TaskDone,
-            )),
-        );
-        let sections = sections(&app);
-        let titles: Vec<&str> = sections.iter().map(|s| s.title).collect();
-        assert_eq!(titles, ["GOAL", "STATUS", "RESULT"]);
-        let first = &sections[1].fields[0];
-        assert_eq!(
-            (first.label, first.value.as_str()),
-            ("result", "Mapped the hooks."),
-            "{state:?}"
-        );
-        // Before the detail lands: RESULT's first line stands in.
-        let mut app = gemini_with(|run| {
-            let task = t2(run);
-            task.state = state;
-            task.merge_commit = Some("0123456789".into());
-        });
-        app.task_detail = None;
-        assert_eq!(
-            value(&self::sections(&app), "STATUS", "result"),
-            "changes · one pairing bug"
-        );
-    }
-    // A task still in review has no result line.
-    let app = app_of(gemini_fixture());
-    assert!(field(&sections(&app), "STATUS", "result").is_none());
 }

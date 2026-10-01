@@ -73,21 +73,17 @@ fn reported_held_and_paused_glyphs() {
     let paused = theme::fg(theme::Role::Paused);
     assert_eq!(
         look(&app, "t1"),
-        (
-            "‖".into(),
-            Some(paused),
-            "M · tdd · paused (message)".into()
-        )
+        ("‖".into(), Some(paused), "paused (message)".into())
     );
     let idle = theme::fg(theme::Role::Muted);
     assert_eq!(
         look(&app, "t2"),
-        ("○".into(), Some(idle), "S · tdd · queued · held".into())
+        ("○".into(), Some(idle), "queued · held".into())
     );
     let done = theme::fg(theme::Role::Done);
     assert_eq!(
         look(&app, "t3"),
-        ("✓".into(), Some(done), "S · tdd · reported".into())
+        ("✓".into(), Some(done), "reported".into())
     );
     // The paused colour is its own.
     for status in [
@@ -109,7 +105,7 @@ fn reported_held_and_paused_glyphs() {
         (
             "▫".into(),
             Some(theme::fg(theme::Role::Muted)),
-            "S · tdd · queued".into()
+            "queued".into()
         )
     );
 }
@@ -261,10 +257,7 @@ fn message_pause_and_notes_render_with_attribution() {
     ];
     let app = app_of((snapshot, windows));
     let inspection = inspect_node(&app, &task_key("t1"));
-    assert_eq!(
-        inspection.right.as_deref(),
-        Some("M · tdd · paused (message)")
-    );
+    assert_eq!(inspection.right.as_deref(), Some("paused (message)"));
     assert_eq!(
         value(&inspection, "messages"),
         Some("1 · latest stop and wait: \"hold on\"")

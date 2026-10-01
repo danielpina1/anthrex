@@ -79,16 +79,16 @@ fn the_run_view_gets_the_tall_panel() {
         lines[1].contains("◐ t2  map Gemini hook events to status")
             && lines[1]
                 .trim_end_matches(['│', ' '])
-                .ends_with("M · tdd · review round 2"),
+                .ends_with("in review · r2"),
         "{panel}"
     );
-    // Milestone 9.0.5: the task is GOAL, STATUS and RESULT; the ninth body row of
-    // the twelve-row panel is STATUS's `route` (was M8c's flat `history`).
+    // Milestone 9.0.7 decision 12: OUTCOME, then EVIDENCE; the footer on the last
+    // interior row of the twelve-row panel (was 9.0.5's STATUS `route`).
     assert!(
-        lines[2].contains("GOAL") && lines[4].contains("STATUS"),
+        lines[2].contains("OUTCOME") && lines[6].contains("EVIDENCE"),
         "{panel}"
     );
-    assert!(lines[10].contains("route     codex · standard"), "{panel}");
+    assert!(lines[10].contains("│ cx default · M · tdd "), "{panel}");
     assert!(lines[11].starts_with('╰'), "{panel}");
 
     // The project overview at the same size keeps milestone 4.7's eight rows, even with
@@ -123,8 +123,9 @@ fn a_short_terminal_steps_down() {
         "{panel}"
     );
     assert!(lines[1].contains("◐ t2  map Gemini hook events"), "{panel}");
-    // Milestone 9.0.5: STATUS's `worker` (was M8c's flat `tries`).
-    assert!(lines[6].contains("worker    worker #1 · codex"), "{panel}");
+    // Milestone 9.0.7: the footer (was 9.0.5's STATUS `worker`), OUTCOME above it.
+    assert!(lines[6].contains("│ cx default · M · tdd "), "{panel}");
+    assert!(lines[5].contains("accept    loading…"), "{panel}");
 
     assert_eq!(
         footer_at(&mut app, MIN_INTERIOR_FOR_PANEL),
@@ -188,7 +189,7 @@ fn the_single_line_for_a_task() {
     app.inspector_visible = false;
     assert_eq!(
         below_the_canvas(&mut app, 30).trim_end(),
-        "◐ t2  map Gemini hook events to status  M · tdd · review round 2"
+        "◐ t2  map Gemini hook events to status  in review · r2"
     );
 }
 
@@ -313,7 +314,8 @@ fn panel_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
         .collect()
 }
 
-/// Milestone 9.0.5 decision 22 at M8c's twelve rows: GOAL first, the brief collapsed.
+/// Milestone 9.0.7 decision 12 at M8c's twelve rows: the state word under the title,
+/// OUTCOME first, the footer on the last row.
 #[test]
 fn task_panel_renders_at_80x24() {
     assert_eq!(
@@ -321,16 +323,16 @@ fn task_panel_renders_at_80x24() {
         [
             "╭──────────────────────────────────────────╮",
             "│ ◐ t2  map Gemini hook events to status   │",
-            "│ GOAL                                     │",
-            "│ brief     Map each Gemini hook event to  │",
-            "│           a status.                      │",
-            "│           SubagentStop pairs with its    │",
-            "│           … (b: more)                    │",
-            "│ done when ☐ every event maps             │",
-            "│           ☐ stop marks idle              │",
-            "│ STATUS                                   │",
-            "│ stage     in review                      │",
-            "╰────────────────────────────────── ↓ PgDn ╯",
+            "│   in review · r2                         │",
+            "│ OUTCOME                                  │",
+            "│ pipeline  done ✓ › proof ✓ › check ✓ ›   │",
+            "│           review › merge ◌               │",
+            "│ check     ✓ passed · test result: ok     │",
+            "│ accept    ◌ every event maps             │",
+            "│           ◌ stop marks idle              │",
+            "│ EVIDENCE                                 │",
+            "│ cx default · M · tdd                     │",
+            "╰────────────────────── ↓ PgDn · . actions ╯",
         ]
     );
 }
@@ -347,27 +349,27 @@ fn task_panel_renders_at_120x40() {
     assert_eq!(
         inner,
         [
-            "◐ t2  map Gemini hook events to status                  M · tdd · review round 2",
-            "GOAL",
-            "brief     Map each Gemini hook event to a status.",
-            "          SubagentStop pairs with its start.",
-            "          Stop marks the agent idle.",
-            "          … (b: more)",
-            "done when ☐ every event maps",
-            "          ☐ stop marks idle",
-            "STATUS",
-            "stage     in review",
-            "worker    worker #1 · codex · 26m · 41 tool calls",
+            "◐ t2  map Gemini hook events to status                            in review · r2",
+            "OUTCOME",
+            "pipeline  done ✓ › proof ✓ › check ✓ › review › merge ◌",
             "check     ✓ passed · test result: ok",
-            "review    in review · round 2",
-            "stages    done ✓ → proof ✓ → check ✓ → review ● → merge ·",
-            "route     codex · standard · high effort → reviewer claude · frontier",
-            "deps      waits on t0 ✓ t6 ✓ · unblocks t3, t7 · on critical path",
+            "accept    ◌ every event maps",
+            "          ◌ stop marks idle",
+            "EVIDENCE",
+            "diff      +212 −31 · 4 files · test `status::gemini_stop_marks_idle` red a1b2c3d",
+            "          ✓",
+            "review    in review · r2",
+            "INTENT",
+            "brief     Map each Gemini hook event to a status.",
+            "          … (b: more)",
+            "DETAIL",
+            "phase     in review",
+            "cx default · M · tdd",
         ]
     );
     assert!(rows[0].starts_with('╭') && rows[17].starts_with('╰'));
-    // Ruling D-2: RESULT is below the fold, and the border says so.
-    assert!(rows[17].ends_with(" ↓ PgDn ╯"), "{}", rows[17]);
+    // Ruling D-2 and decision 16: DETAIL runs below the fold, and the border says so.
+    assert!(rows[17].ends_with(" ↓ PgDn · . actions ╯"), "{}", rows[17]);
     assert!(!rows[0].contains("PgUp"), "{}", rows[0]);
 }
 
@@ -396,10 +398,13 @@ fn the_page_size_is_the_drawn_panels_interior() {
     }
 }
 
-/// Ruling D-2: a merged task's outcome shows without scrolling, at both sizes.
+/// Ruling D-2: a merged task's outcome shows without scrolling at 120x40, at the end of
+/// OUTCOME (milestone 9.0.7 decision 12). At 80x24 M8c's twelve rows put it one page
+/// down (the state word's row and two wrapped rows above it) until task 9 sizes the
+/// panel to its content (decision 17); that case is pinned at its page here.
 #[test]
 fn a_merged_tasks_result_shows_without_scrolling() {
-    for (width, height, result_row) in [(80, 24, 10), (120, 40, 10)] {
+    for (width, height, pages, result_row) in [(80, 24, 1, 3), (120, 40, 0, 7)] {
         let (mut snapshot, windows) = crate::tree::run_fixtures::gemini_fixture();
         let t2 = snapshot.runs[0]
             .tasks
@@ -423,12 +428,21 @@ fn a_merged_tasks_result_shows_without_scrolling() {
             detail.worker_summary = Some("Mapped all nine hook events.\nAdded a test.".into());
             detail.summary_source = Some(proto::SummarySource::TaskDone);
         }
+        let _ = panel_rows(&mut app, width, height);
+        for _ in 0..pages {
+            press(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
+        }
         let panel = panel_rows(&mut app, width, height);
         assert!(
             panel[result_row].starts_with("│ result    Mapped all nine hook events."),
             "{width}x{height}: {panel:#?}"
         );
-        assert!(panel[result_row - 1].starts_with("│ STATUS"), "{panel:#?}");
-        assert!(panel.last().unwrap().ends_with(" ↓ PgDn ╯"), "{panel:#?}");
+        if pages == 0 {
+            let above = &panel[result_row - 1];
+            assert!(above.starts_with("│           ◌ stop"), "{panel:#?}");
+            assert!(panel[2].starts_with("│ OUTCOME"), "{panel:#?}");
+        }
+        let last = panel.last().unwrap();
+        assert!(last.ends_with(" ↓ PgDn · . actions ╯"), "{panel:#?}");
     }
 }

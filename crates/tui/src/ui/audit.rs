@@ -173,6 +173,8 @@ pub(crate) fn shows(name: &str) -> Shows {
         "project overview" => row("OVERVIEW", Some("esc back"), &["j/k move"]),
         "run view at the gate" => row("RUN", Some("esc back"), &["a approve", "x reject"]),
         "run view running" | "run view on a task" => row("RUN", Some("esc back"), &["j/k move"]),
+        // Milestone 9.0.7 decision 12: the task panel's state word, always shown.
+        "run view on a task in review" => row("in review · r2", Some("esc back"), &["j/k move"]),
         "conversation" => row("CHAT", None, &["C-b ? help"]),
         // Decision 11: the Alerts view on `t2`'s blocked alert. Its detail row's `o open
         // task` drops first at 80x24 (decision 34's priorities); the bar keeps `o open`.
@@ -254,6 +256,23 @@ fn on_task(mut app: App, id: &str) -> App {
     app
 }
 
+/// `t1` in review round 2, after round 1 asked for changes.
+fn in_review_r2(app: &mut App) {
+    let t1 = &mut app.runs.runs[0].tasks[1];
+    t1.state = proto::TaskState::Review;
+    let route = t1.rounds[0].route.clone();
+    let review = |round, verdict: Option<proto::Verdict>| proto::ReviewInfo {
+        round,
+        route: route.clone(),
+        verdict,
+        summary: "one bug".into(),
+        findings: Vec::new(),
+        blocking: verdict.is_some(),
+    };
+    t1.review_route = Some(route.clone());
+    t1.reviews = vec![review(1, Some(proto::Verdict::Changes)), review(2, None)];
+}
+
 fn with(mut app: App, change: impl FnOnce(&mut App)) -> App {
     change(&mut app);
     app
@@ -295,6 +314,10 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
         ("run view at the gate", run_view(gate())),
         ("run view running", run_view(running())),
         ("run view on a task", on_task(run_view(running()), "t1")),
+        (
+            "run view on a task in review",
+            on_task(run_view(with(running(), in_review_r2)), "t1"),
+        ),
         ("conversation", with(gate(), |a| chord(a, 'm'))),
         // Decision 11: `C-b a`, then `j`: the Alerts view on the blocked alert.
         (

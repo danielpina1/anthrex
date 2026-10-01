@@ -6,7 +6,7 @@
 //! strings the way the graph's painter is (decision 13).
 
 use super::{Field, FieldLayout, Inspection};
-use crate::theme::{self, Palette};
+use crate::theme::{self, Palette, Role};
 use crate::ui::kit::pane_frame;
 use crate::ui::tree_view::{cut, truncate_in};
 use ratatui::Frame;
@@ -57,9 +57,11 @@ pub fn render_in(frame: &mut Frame, inspection: &Inspection, area: Rect, p: Pale
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Ruling D-2: ` ↑ PgUp ` in the top border once scrolled down, ` ↓ PgDn ` in the
-/// bottom one while rows lie below, right-aligned and muted; dropped when a mark and
-/// the two corners do not fit.
+/// Milestone 9.0.7 decision 16 (after ruling D-2): ` ↑ PgUp ` right-aligned in the top
+/// border while body rows lie above; ` ↓ PgDn · . actions ` in the bottom one while rows
+/// lie below, ` . actions ` when none do and the node lists an action. Keys in the
+/// accent, words muted; a mark that does not fit beside the two corners is dropped
+/// (the bottom one first loses ` · . actions `).
 fn scroll_marks<'a>(
     block: Block<'a>,
     inspection: &Inspection,
@@ -67,16 +69,34 @@ fn scroll_marks<'a>(
     (width, height): (usize, usize),
     p: Palette,
 ) -> Block<'a> {
-    let fits = |mark: &str| usize::from(area.width) >= mark.chars().count() + 2;
     let (above, below) = sections::more(inspection, width, height, p);
-    let muted = theme::role(theme::Role::Muted, p);
-    let mark = |text: &str| Line::from(Span::styled(theme::fold(text, p.ascii), muted));
+    let (key, word) = (theme::role(Role::Accent, p), theme::role(Role::Muted, p));
+    let mark = |parts: &[(&str, Style)]| {
+        let spans: Vec<Span<'static>> = parts
+            .iter()
+            .map(|(text, style)| Span::styled(theme::fold(text, p.ascii), *style))
+            .collect();
+        let line = Line::from(spans);
+        (line.width() + 2 <= usize::from(area.width)).then(|| line.right_aligned())
+    };
+    let (up, down, dot) = (
+        [(" ", word), ("↑ PgUp", key), (" ", word)],
+        ("↓ PgDn", key),
+        (".", key),
+    );
     let mut block = block;
-    if above && fits(sections::MORE_ABOVE) {
-        block = block.title_top(mark(sections::MORE_ABOVE).right_aligned());
+    if let Some(line) = above.then(|| mark(&up)).flatten() {
+        block = block.title_top(line);
     }
-    if below && fits(sections::MORE_BELOW) {
-        block = block.title_bottom(mark(sections::MORE_BELOW).right_aligned());
+    let both = [(" ", word), down, (" · ", word), dot, (" actions ", word)];
+    let bottom = match (below, inspection.actions) {
+        (true, true) => mark(&both).or_else(|| mark(&[(" ", word), down, (" ", word)])),
+        (true, false) => mark(&[(" ", word), down, (" ", word)]),
+        (false, true) => mark(&[(" ", word), dot, (" actions ", word)]),
+        (false, false) => None,
+    };
+    if let Some(line) = bottom {
+        block = block.title_bottom(line);
     }
     block
 }
@@ -384,8 +404,12 @@ fn pad(text: &str, width: usize) -> String {
     format!("{text}{}", " ".repeat(width.saturating_sub(used)))
 }
 
+mod marks;
 mod rows;
 pub(super) mod sections;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod outcome_tests;

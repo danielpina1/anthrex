@@ -47,9 +47,9 @@ pub enum FieldLayout {
     #[default]
     Columns,
     Rows,
-    /// Milestone 9.0.5 decision 22: a task's GOAL, STATUS and RESULT, each a bold
-    /// title row and its fields, every value wrapping under itself, scrolled by
-    /// `Inspection.scroll`.
+    /// Milestone 9.0.7 decision 12: a task's OUTCOME, EVIDENCE, INTENT and DETAIL, each
+    /// a bold title row and its fields, every value wrapping under itself, scrolled by
+    /// `Inspection.scroll` between the title and the pinned `Inspection.footer`.
     Sections,
 }
 
@@ -63,18 +63,32 @@ pub struct Section {
 /// One labelled value of a section. `value` may hold several lines and any text an
 /// agent wrote: the panel sanitises and wraps it. `note` follows the label, muted
 /// (the summary's source); `collapse` cuts the value to its first `BRIEF_LINES`
-/// wrapped lines and `… (b: more)`. An empty label puts the value at the left edge
-/// (RESULT's `nothing yet`).
+/// wrapped lines and `… (b: more)`; `marks` says which of its glyphs the panel colours.
+/// An empty label puts the value at the left edge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionField {
     pub label: &'static str,
     pub note: Option<&'static str>,
     pub value: String,
     pub collapse: bool,
+    pub marks: Marks,
 }
 
-/// Decision 22: a collapsed brief's wrapped lines.
-pub const BRIEF_LINES: usize = 3;
+/// Milestone 9.0.7 decision 13: the marks a section value's glyphs carry (`✓` in
+/// `Done`, `✗` in `Failed`, `◌` in `Muted`), only where the client wrote them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Marks {
+    #[default]
+    None,
+    /// The first mark among the first two words of each line (`✓ passed`, `◌ <criterion>`,
+    /// `r2 ✓ approve`): what follows is agent text and never coloured.
+    Lead,
+    /// The pipeline: every step's mark, and the current step's word in `Working` bold.
+    Pipeline,
+}
+
+/// Milestone 9.0.7 decision 12: a collapsed brief's wrapped lines (INTENT's one line).
+pub const BRIEF_LINES: usize = 1;
 
 /// One labelled value. `wrap` marks the one field a column may not elide: the
 /// sub-agent's task, which the panel exists to show whole (decision 5).
@@ -98,6 +112,10 @@ pub struct Inspection {
     /// `Sections` only: the sections, and the first body row shown (decision 25).
     pub sections: Vec<Section>,
     pub scroll: u16,
+    /// `Sections` only: decision 12's footer, pinned to the last interior row.
+    pub footer: Option<String>,
+    /// `Sections` only: the node lists an action, so the border says ` . actions `.
+    pub actions: bool,
 }
 
 fn field(label: &'static str, value: impl Into<String>) -> Field {
@@ -125,6 +143,7 @@ fn fold_inspection(mut inspection: Inspection) -> Inspection {
     let fold = |text: &str| theme::ascii_twins(&theme::fold(text, true));
     inspection.name = fold(&inspection.name);
     inspection.right = inspection.right.as_deref().map(fold);
+    inspection.footer = inspection.footer.as_deref().map(fold);
     for field in &mut inspection.fields {
         field.value = fold(&field.value);
     }
@@ -395,27 +414,10 @@ mod run_orch;
 mod run_round;
 mod run_stage;
 mod run_task;
+mod run_task_outcome;
 mod run_task_sections;
 
-/// Decision 25: the rows the selected task's sections take at `width` columns of
-/// panel interior, the title row not counted; 0 when no task is selected. The
-/// reducer clamps the panel's scroll with it, as the renderer draws.
-pub fn task_panel_rows(app: &App, width: u16) -> usize {
-    let rows = app.nav_rows();
-    let Some(row) = app
-        .tree
-        .selected
-        .as_ref()
-        .and_then(|key| rows.iter().find(|row| &row.key == key))
-    else {
-        return 0;
-    };
-    if !matches!(row.kind, RowKind::Task { .. }) {
-        return 0;
-    }
-    let inspection = inspect(row, app);
-    panel::sections::body_lines(&inspection.sections, usize::from(width), app.palette()).len()
-}
+pub use run_task::{task_panel_room, task_panel_rows};
 
 #[cfg(test)]
 pub use panel::render;
@@ -447,3 +449,6 @@ mod run_stage_tests;
 
 #[cfg(test)]
 mod run_task_sections_tests;
+
+#[cfg(test)]
+mod run_task_outcome_tests;

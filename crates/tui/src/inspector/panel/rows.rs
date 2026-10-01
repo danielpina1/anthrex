@@ -61,11 +61,8 @@ pub(super) fn lines(
 /// edge. When the name, two spaces and the right text do not fit, the right text is
 /// dropped and the name truncated as milestone 4.7's title is.
 pub(super) fn title(inspection: &Inspection, width: usize, p: Palette) -> Line<'static> {
-    let glyph_width = UnicodeWidthStr::width(inspection.glyph.content.as_ref());
-    let name_width = UnicodeWidthStr::width(inspection.name.as_str());
     if let Some(right) = inspection.right.as_deref() {
-        let right_width = UnicodeWidthStr::width(right);
-        let used = glyph_width + 1 + name_width + RIGHT_GAP + right_width;
+        let used = name_width(inspection) + RIGHT_GAP + UnicodeWidthStr::width(right);
         if used <= width {
             let mut line = title_line(inspection, inspection.name.clone());
             line.spans
@@ -76,6 +73,33 @@ pub(super) fn title(inspection: &Inspection, width: usize, p: Palette) -> Line<'
         }
     }
     title_line(inspection, fitted_name(inspection, width, p.ascii))
+}
+
+/// Milestone 9.0.7 decision 12: a task's title, whose state word is never dropped:
+/// flush right when the name, two spaces and it fit, else on a row of its own under the
+/// title, indented two columns (cut only by the width itself).
+pub(super) fn title_lines(inspection: &Inspection, width: usize, p: Palette) -> Vec<Line<'static>> {
+    let first = title(inspection, width, p);
+    let right = inspection.right.as_deref().unwrap_or_default();
+    let used = name_width(inspection) + RIGHT_GAP + UnicodeWidthStr::width(right);
+    if right.is_empty() || used <= width {
+        return vec![first];
+    }
+    let state = Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            truncate_in(right, width.saturating_sub(2), p.ascii),
+            theme::role(Role::Muted, p),
+        ),
+    ]);
+    vec![first, state]
+}
+
+/// The glyph, a space and the whole name, in display columns.
+fn name_width(inspection: &Inspection) -> usize {
+    UnicodeWidthStr::width(inspection.glyph.content.as_ref())
+        + 1
+        + UnicodeWidthStr::width(inspection.name.as_str())
 }
 
 /// One field row: the muted label padded to the label column (cut with `…` when it

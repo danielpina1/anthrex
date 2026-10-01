@@ -1,13 +1,15 @@
-//! Milestone 9.0.5 decision 22: a task's GOAL, STATUS and RESULT. The title row stays;
-//! below it each section is a bold title row, then each field as a muted label in the
-//! label column and its value wrapped under itself in the value column. The body
-//! scrolls by `Inspection.scroll` (decision 25). Every value is agent- or daemon-
-//! written text (a brief and its acceptance arrive raw): it goes through
-//! `multi_line`, then `one_line` per line, before it is wrapped (decision 27).
+//! A task's sections (milestone 9.0.7 decision 12, after 9.0.5 decision 22). The title
+//! row (or rows, when the state word moves under it) stays on top and the footer on the
+//! last row; between them each section is a bold title row, then each field as a muted
+//! label in the label column and its value wrapped under itself in the value column,
+//! its client-written marks coloured (decision 13). The body scrolls by
+//! `Inspection.scroll` (9.0.5 decision 25). Every value is agent- or daemon-written text
+//! (a brief and its acceptance arrive raw): it goes through `multi_line`, then
+//! `one_line` per line, before it is wrapped (9.0.5 decision 27).
 //!
 //! Pure like the rest of the panel: it lays out what it was handed.
 
-use super::{Inspection, pad, rows, wrap_value};
+use super::{Inspection, marks::marked, pad, rows, wrap_value};
 use crate::inspector::{BRIEF_LINES, RUN_LABEL_WIDTH, Section, SectionField};
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{self, Palette, Role};
@@ -18,16 +20,17 @@ use ratatui::text::{Line, Span};
 /// The marker a collapsed brief ends with.
 pub(crate) const MORE: &str = "… (b: more)";
 
-/// A value's lines, sanitised, each wrapped to `width` (a blank line stays one row).
-fn value_lines(value: &str, width: usize, ascii: bool) -> Vec<String> {
+/// A value's lines, sanitised, each wrapped to `width` (a blank line stays one row),
+/// each marked when it begins one of the value's own lines.
+fn value_lines(value: &str, width: usize, ascii: bool) -> Vec<(String, bool)> {
     let mut out = Vec::new();
     for raw in multi_line(value).split('\n') {
         let line = one_line(raw);
         let wrapped = wrap_value(&line, width, usize::MAX, ascii);
         if wrapped.is_empty() {
-            out.push(String::new());
+            out.push((String::new(), true));
         } else {
-            out.extend(wrapped);
+            out.extend(wrapped.into_iter().enumerate().map(|(n, l)| (l, n == 0)));
         }
     }
     out
@@ -39,7 +42,7 @@ fn field_lines(field: &SectionField, width: usize, p: Palette) -> Vec<Line<'stat
     if field.label.is_empty() {
         return value_lines(&field.value, width, p.ascii)
             .into_iter()
-            .map(|line| Line::from(Span::styled(line, muted)))
+            .map(|(line, _)| Line::from(Span::styled(line, muted)))
             .collect();
     }
     let label_width = RUN_LABEL_WIDTH.min(width);
@@ -48,7 +51,7 @@ fn field_lines(field: &SectionField, width: usize, p: Palette) -> Vec<Line<'stat
     let more = theme::fold(MORE, p.ascii);
     if field.collapse && values.len() > BRIEF_LINES {
         values.truncate(BRIEF_LINES);
-        values.push(more.clone());
+        values.push((more.clone(), false));
     }
     let label = if field.label.len() >= label_width {
         truncate(field.label, label_width.saturating_sub(1))
@@ -60,7 +63,7 @@ fn field_lines(field: &SectionField, width: usize, p: Palette) -> Vec<Line<'stat
         // The label and its note on a row of their own, the value under it.
         let head = truncate(&format!("{} ({note})", field.label), width);
         out.push(Line::from(Span::styled(head, muted)));
-        for value in values {
+        for (value, _) in values {
             out.push(Line::from(vec![
                 Span::raw(" ".repeat(label_width)),
                 Span::raw(truncate(&value, value_width)),
@@ -68,17 +71,20 @@ fn field_lines(field: &SectionField, width: usize, p: Palette) -> Vec<Line<'stat
         }
         return out;
     }
-    for (n, value) in values.into_iter().enumerate() {
+    for (n, (value, starts)) in values.into_iter().enumerate() {
         let head = if n == 0 { label.as_str() } else { "" };
-        let style = if value == more {
-            muted
+        let mut spans = vec![Span::styled(pad(head, label_width), muted)];
+        if value == more {
+            spans.push(Span::styled(value, muted));
         } else {
-            Style::default()
-        };
-        out.push(Line::from(vec![
-            Span::styled(pad(head, label_width), muted),
-            Span::styled(truncate(&value, value_width), style),
-        ]));
+            spans.extend(marked(
+                truncate(&value, value_width),
+                field.marks,
+                starts,
+                p,
+            ));
+        }
+        out.push(Line::from(spans));
     }
     out
 }
@@ -109,25 +115,55 @@ fn first_row(len: usize, room: usize, scroll: u16) -> usize {
     usize::from(scroll).min(len.saturating_sub(room))
 }
 
-/// The panel's interior: the title row, then `height − 1` body rows from `scroll`,
-/// clamped to the end.
+/// The title rows and the footer an interior of `width` x `height` draws, and the body
+/// rows left between them: the title row first, then the state word's row, then the
+/// footer, each only while a row is left for it (decision 12).
+fn chrome(
+    inspection: &Inspection,
+    width: usize,
+    height: usize,
+    p: Palette,
+) -> (Vec<Line<'static>>, Option<Line<'static>>, usize) {
+    let mut title = rows::title_lines(inspection, width, p);
+    title.truncate(height);
+    let footer = inspection
+        .footer
+        .as_deref()
+        .filter(|_| height > title.len())
+        .map(|text| {
+            Line::from(Span::styled(
+                truncate_in(text, width, p.ascii),
+                theme::role(Role::Muted, p),
+            ))
+        });
+    let room = height - title.len() - usize::from(footer.is_some());
+    (title, footer, room)
+}
+
+/// The body rows an interior of `width` x `height` shows: what the title and the
+/// footer leave (`inspector::task_panel_room`).
+pub(crate) fn room(inspection: &Inspection, width: usize, height: usize, p: Palette) -> usize {
+    chrome(inspection, width, height, p).2
+}
+
+/// The panel's interior: the title row or rows, the body rows from `scroll` (clamped to
+/// the end), and the footer pinned to the last row, outside the scroll.
 pub(super) fn lines(
     inspection: &Inspection,
     width: usize,
     height: usize,
     p: Palette,
 ) -> Vec<Line<'static>> {
-    let mut out = vec![rows::title(inspection, width, p)];
-    let room = height.saturating_sub(1);
+    let (mut out, footer, room) = chrome(inspection, width, height, p);
     let body = body_lines(&inspection.sections, width, p);
     let first = first_row(body.len(), room, inspection.scroll);
+    let shown = body.len().saturating_sub(first).min(room);
     out.extend(body.into_iter().skip(first).take(room));
+    // The footer keeps the last row even when the body is short.
+    out.extend((shown..room).map(|_| Line::default()));
+    out.extend(footer);
     out
 }
-
-/// The marks ruling D-2 puts in the borders.
-pub(super) const MORE_ABOVE: &str = " ↑ PgUp ";
-pub(super) const MORE_BELOW: &str = " ↓ PgDn ";
 
 /// Ruling D-2: whether body rows lie above and below what an interior of `width` x
 /// `height` draws.
@@ -137,7 +173,7 @@ pub(super) fn more(
     height: usize,
     p: Palette,
 ) -> (bool, bool) {
-    let room = height.saturating_sub(1);
+    let room = room(inspection, width, height, p);
     let len = body_lines(&inspection.sections, width, p).len();
     let first = first_row(len, room, inspection.scroll);
     (first > 0, first + room < len)
