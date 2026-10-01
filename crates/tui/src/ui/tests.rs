@@ -148,7 +148,7 @@ fn main_title_of_a_worktree_window_names_project_and_branch() {
     let mut app = App::new(vec![plain], "/tmp".into(), UiSettings::default());
     let _ = app.set_terminal_size(80, 24);
     let (out, _) = render(&app, 100, 20);
-    assert!(out.contains(" plain · shell · "), "{out}");
+    assert!(out.contains(" sh plain · /tmp/repo "), "{out}");
     assert!(!out.contains("worktree"), "{out}");
 }
 
@@ -372,7 +372,7 @@ fn layout_uses_the_sidebar_width() {
     let l = layout(Rect::new(0, 0, 120, 40), 34, 0);
     assert_eq!(l.sidebar.width, 34);
     assert_eq!(l.main.x, 34);
-    assert_eq!(l.sidebar_list, Rect::new(1, 1, 32, 32));
+    assert_eq!(l.sidebar_list, Rect::new(1, 1, 32, 33));
     assert_eq!(l.sidebar_footer, Rect::new(1, 34, 32, 1));
     assert_eq!(l.statusbar, Rect::new(0, 39, 120, 1));
     let hidden = layout(Rect::new(0, 0, 120, 40), 0, 0);
@@ -399,7 +399,7 @@ fn hit_test_uses_the_render_geometry() {
     let mut l = None;
     terminal.draw(|f| l = Some(draw(f, &app))).unwrap();
     let l = l.unwrap();
-    assert_eq!(l.sidebar_list.height, 10);
+    assert_eq!(l.sidebar_list.height, 11);
     let g = tree_view::geometry(l.sidebar_list, app.rows().len(), app.tree.sidebar.top);
     for (offset, expected) in [
         "tests: run unit suite",
@@ -424,7 +424,7 @@ fn hit_test_uses_the_render_geometry() {
             "{text:?} should contain {expected:?}"
         );
     }
-    for (x, y) in [(0, 1), (33, 1), (1, 0), (1, 11), (1, 12), (1, 13)] {
+    for (x, y) in [(0, 1), (33, 1), (1, 0), (1, 12), (1, 13), (1, 14)] {
         assert_eq!(g.index_at(x, y), None, "outside list ({x},{y})");
     }
     let short = tree_view::geometry(Rect::new(2, 3, 10, 8), 2, 99);
@@ -466,22 +466,22 @@ fn sidebar_scrolls_to_keep_the_focused_window_visible() {
     let (out, _) = render(&app, 120, 17);
     assert!(out.contains("20 shell-20"), "{out}");
     assert!(!out.contains(" 1 shell-1 "), "{out}");
-    assert_eq!(app.tree.sidebar.top, 12);
+    assert_eq!(app.tree.sidebar.top, 11);
     // Same-size draws must preserve wheel scrolling, not snap back to the anchor.
     app.on_scroll(true, 2, 2, &l);
     app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
-    assert_eq!(app.tree.sidebar.top, 9);
+    assert_eq!(app.tree.sidebar.top, 8);
     // Nor may a window list that changes nothing the view depends on: the
     // daemon republishes one on every status flip and every output event.
     let windows = app.windows.clone();
     app.on_daemon(proto::DaemonMsg::WindowsChanged { windows });
-    assert_eq!(app.tree.sidebar.top, 9);
+    assert_eq!(app.tree.sidebar.top, 8);
     // A list that really changed reveals the anchor again: with window 1
-    // gone the focused window 20 is row 19 of 20, and nine rows of list
-    // put its top at 11.
+    // gone the focused window 20 is row 19 of 20, and ten rows of list
+    // put its top at 10.
     let windows = app.windows[1..].to_vec();
     app.on_daemon(proto::DaemonMsg::WindowsChanged { windows });
-    assert_eq!(app.tree.sidebar.top, 11);
+    assert_eq!(app.tree.sidebar.top, 10);
 }
 
 #[test]

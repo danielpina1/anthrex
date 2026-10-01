@@ -6,7 +6,7 @@
 
 use crate::app::{App, Modal};
 use crate::theme::{Palette, Role, role};
-use crate::tree::run_fixtures::{RUN_ID, gate_fixture, three_task_fixture};
+use crate::tree::run_fixtures::{PROJECT, RUN_ID, gate_fixture, pty, three_task_fixture};
 use crate::{settings::UiSettings, tree};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::{DaemonMsg, RunReply, RunsSnapshot, WindowInfo};
@@ -166,8 +166,9 @@ pub(crate) fn shows(name: &str) -> Shows {
         actionable,
     };
     match name {
-        "pane" | "sidebar tree, then hidden" => row("shell", None, &["C-b ? help"]),
-        "sidebar tree" => row("TREE", Some("esc back"), &["j/k move"]),
+        // Milestone 9.0.7 decision 29: the pane's title, ` sh shell · /r/demo `.
+        "pane" | "sidebar tree, then hidden" => row("sh shell", None, &["C-b ? help"]),
+        "sidebar tree" | "sidebar tree overflowing" => row("TREE", Some("esc back"), &["j/k move"]),
         "project overview" => row("TREE", Some("esc back"), &["j/k move"]),
         "run view at the gate" => row("RUN", Some("esc back"), &["a approve", "x reject"]),
         "run view running" | "run view on a task" => row("RUN", Some("esc back"), &["j/k move"]),
@@ -193,6 +194,16 @@ fn app_of(windows: Vec<WindowInfo>, snapshot: RunsSnapshot) -> App {
 
 fn gate() -> App {
     let (snap, windows) = gate_fixture();
+    app_of(windows, snap)
+}
+
+/// The gate fixture's run with 45 shells: more rows than the sidebar list holds at
+/// 80x24 or 120x40.
+fn crowded() -> App {
+    let (snap, _) = gate_fixture();
+    let windows = (1..=45)
+        .map(|id| pty(id, &format!("shell-{id}"), PROJECT, proto::Status::Idle))
+        .collect();
     app_of(windows, snap)
 }
 
@@ -251,6 +262,14 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
     vec![
         ("pane", gate()),
         ("sidebar tree", with(gate(), |a| chord(a, 't'))),
+        // Decision 27: rows cut above and below, marked in the accented border.
+        (
+            "sidebar tree overflowing",
+            with(crowded(), |a| {
+                chord(a, 't');
+                a.tree.sidebar.top = 6;
+            }),
+        ),
         (
             "sidebar tree, then hidden",
             with(gate(), |a| {

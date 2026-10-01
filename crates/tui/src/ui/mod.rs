@@ -105,8 +105,9 @@ pub fn layout(area: Rect, sidebar_width: u16, alert_count: usize) -> Layout {
     Layout {
         sidebar,
         sidebar_inner,
+        // Decision 27: the interior less the footer row; no spacer.
         sidebar_list: Rect {
-            height: sidebar_inner.height.saturating_sub(2),
+            height: sidebar_inner.height.saturating_sub(1),
             ..sidebar_inner
         },
         sidebar_footer: Rect {

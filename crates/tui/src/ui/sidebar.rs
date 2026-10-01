@@ -46,10 +46,21 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
     let keys_here = app.key_region() == KeyRegion::Sidebar;
     let p = app.palette();
     let muted = theme::role(theme::Role::Muted, p);
-    let block = kit::pane_frame(Line::from(title), keys_here, p);
-    frame.render_widget(block, layout.sidebar);
     let rows = app.rows();
     let geometry = tree_view::geometry(layout.sidebar_list, rows.len(), app.tree.sidebar.top);
+    // Decision 27: rows above and below the list are counted in the border, muted, so
+    // the list keeps every interior row and `TreeGeometry` keeps its meaning.
+    let below = rows.len() - geometry.first - geometry.count;
+    let (up, down) = kit::scroll_marks(geometry.first, below, p.ascii);
+    let mark = |text: String| Line::from(Span::styled(format!(" {text} "), muted)).right_aligned();
+    let mut block = kit::pane_frame(Line::from(title), keys_here, p);
+    if let Some(up) = up {
+        block = block.title_top(mark(up));
+    }
+    if let Some(down) = down {
+        block = block.title_bottom(mark(down));
+    }
+    frame.render_widget(block, layout.sidebar);
     let pos_width = tree::agent_order(&rows).len().max(1).to_string().len();
     let mut lines: Vec<_> = rows[geometry.first..geometry.first + geometry.count]
         .iter()
@@ -79,3 +90,7 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
         layout.sidebar_footer,
     );
 }
+
+#[cfg(test)]
+#[path = "sidebar_tests.rs"]
+mod tests;

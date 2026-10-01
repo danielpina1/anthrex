@@ -367,14 +367,15 @@ fn the_breadcrumb_shows_where_you_are() {
     );
     let title = row_text(&draw(&app, 80, 24), 0);
     assert!(title.contains("orchestrator · claude-opus-5"), "{title}");
-    assert!(title.contains("rev 214"), "{title}");
+    // Milestone 9.0.7 decision 30: no ` rev N `.
+    assert!(!title.contains("rev 214"), "{title}");
     assert!(!title.contains('›'), "{title}");
 
     descend_twice(&mut app);
     let buf = draw(&app, 80, 24);
     let title = row_text(&buf, 0);
     assert!(title.contains("orchestrator › Explore › Review"), "{title}");
-    assert!(title.contains("rev 52"), "{title}");
+    assert!(!title.contains("rev 52"), "{title}");
     assert!(text_of(&buf).contains("reviewing the split"));
 }
 
@@ -525,8 +526,9 @@ fn the_turn_header_shows_the_role_and_local_time() {
         assistant.trim_end_matches(['│', ' ']).ends_with("09:43"),
         "{assistant}"
     );
+    // Milestone 9.0.7 decision 30: a user turn leads with `›`, not the collapsed `▸`.
     assert!(
-        out.contains("▸ refactor the parser into its own module"),
+        out.contains("› refactor the parser into its own module"),
         "{out}"
     );
 
@@ -550,3 +552,6 @@ mod wrap;
 
 #[path = "conversation_tests/label.rs"]
 mod label;
+
+#[path = "conversation_tests/polish.rs"]
+mod polish;

@@ -378,15 +378,16 @@ fn the_sidebar_line_of_a_run_names_its_goal_and_progress() {
     assert!(text.starts_with("├─"), "{text:?}");
     // Milestone 9.0.7 decision 3: a run at its gate needs you.
     assert!(text.contains('⚑'), "{text:?}");
-    assert!(text.contains("Add password reset"), "{text:?}");
-    assert!(text.ends_with("0/2"), "{text:?}");
+    // Milestone 9.0.7 decision 28: the run's one name and `<m>/<n> ✓`.
+    assert!(text.contains("Add password reset · 3f9a"), "{text:?}");
+    assert!(text.ends_with("0/2 ✓"), "{text:?}");
     assert_eq!(UnicodeWidthStr::width(text.as_str()), 40, "{text:?}");
 
     let (snapshot, windows) = tree::run_fixtures::three_task_fixture();
     let app = app_with_runs(windows, snapshot);
     let text = run_line(&app, 40);
-    assert!(text.contains("◉ 1 Add password reset"), "{text:?}");
-    assert!(text.ends_with("1/3"), "{text:?}");
+    assert!(text.contains("◉ 1 Add password reset · 3f9a"), "{text:?}");
+    assert!(text.ends_with("1/3 ✓"), "{text:?}");
     // A narrow sidebar keeps the glyph and the position and cuts the goal.
     let text = run_line(&app, 14);
     assert!(text.contains("◉ 1 "), "{text:?}");

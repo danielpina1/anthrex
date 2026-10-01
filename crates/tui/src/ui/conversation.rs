@@ -127,10 +127,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         title.push(Span::raw(format!(" {} {}", glyphs.sep, clean(model))));
     }
     let keys_here = app.key_region() == KeyRegion::Conversation;
+    // Milestone 9.0.7 decision 30: no ` rev N `; the revision is the daemon's, not the user's.
     let mut block = super::kit::pane_frame(Line::from(title), keys_here, app.palette());
-    if let Some(rev) = view.rev() {
-        block = block.title(Line::from(format!(" rev {rev} ")).right_aligned());
-    }
     if let Some(search) = view.search().filter(|s| s.typing) {
         block = block.title_bottom(Line::from(format!(" /{} ", search.query)).centered());
     }
@@ -247,7 +245,9 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
         }
         Row::Text { line, text, .. } => {
             if user_turn && *line == 0 {
-                let spans = vec![Span::raw(format!("{} ", g.folded)), Span::raw(text.clone())];
+                // Decision 30: the sequence separator `›`; `▸` means collapsed only.
+                let lead = theme::glyph(theme::Glyph::Separator, g.ascii);
+                let spans = vec![Span::raw(format!("{lead} ")), Span::raw(text.clone())];
                 return (TEXT_INDENT as u16 - 2, spans, vec![]);
             }
             (TEXT_INDENT as u16, vec![Span::raw(text.clone())], vec![])
@@ -346,8 +346,9 @@ fn tool_spans(ctx: &Ctx, turn_id: u64, block: usize) -> (u16, Spans, Spans) {
         ToolState::Denied => (g.denied, Muted),
     };
     let mut right = vec![Span::styled(glyph, role(r, ctx.app.palette()))];
-    if let Some(ms) = duration_ms {
-        right.push(Span::raw(format!(" {:.1}s", *ms as f64 / 1000.0)));
+    // Decision 30: a duration that would read `0.0s` (under 50 ms) says nothing.
+    if let Some(ms) = duration_ms.filter(|ms| *ms >= 50) {
+        right.push(Span::raw(format!(" {:.1}s", f64::from(ms) / 1000.0)));
     }
     (TEXT_INDENT as u16, left, right)
 }

@@ -79,6 +79,7 @@ pub fn narrow_line(
             theme::role(Role::Accent, p),
         )
     };
+    let mut run_name = None;
     let (prefix, name, branch, rights) = match &row.kind {
         RowKind::Project {
             name,
@@ -170,6 +171,9 @@ pub fn narrow_line(
             let focused = orchestrator.is_some_and(|window| app.focused == Some(window.id));
             let (merged, total) = tree::run_progress(run);
             let position = position.map_or_else(String::new, |position| position.to_string());
+            // Decision 28: the run's one name, cut to the room `fit_line` leaves it; a
+            // blank goal names the run by its id, as `tree::run_title` does.
+            run_name = Some((tree::run_title(run).to_owned(), run.run_id.clone()));
             (
                 vec![
                     Span::raw(guides),
@@ -184,7 +188,10 @@ pub fn narrow_line(
                 ),
                 None,
                 vec![
-                    vec![Span::styled(format!("{merged}/{total}"), muted)],
+                    vec![
+                        Span::styled(format!("{merged}/{total} "), muted),
+                        Span::styled(glyph(Glyph::Passed, ascii), theme::role(Role::Done, p)),
+                    ],
                     vec![],
                 ],
             )
@@ -205,7 +212,8 @@ pub fn narrow_line(
         width: usize::from(width),
         selected,
         muted,
-        ascii,
+        p,
+        run_name,
     };
     fit_line(prefix, name, branch, rights, fit)
 }
@@ -241,12 +249,15 @@ const NAME_FLOOR: usize = 8;
 /// one character + `…` + `]`), while the name keeps only `NAME_FLOOR` columns for itself
 /// until the branch is gone, rather than taking everything it wants first.
 /// How `fit_line` fits a row: its width, whether it is selected, the branch marker's
-/// muted style, and whether its cut marks are ASCII.
+/// muted style, the palette (whose `ascii` picks the cut marks), and for a run row its
+/// goal and id, named by `kit::run_name_in` in the room left once the right field is
+/// placed.
 struct Fit {
     width: usize,
     selected: bool,
     muted: Style,
-    ascii: bool,
+    p: theme::Palette,
+    run_name: Option<(String, String)>,
 }
 
 fn fit_line(
@@ -260,8 +271,10 @@ fn fit_line(
         width,
         selected,
         muted,
-        ascii,
+        p,
+        run_name,
     } = fit;
+    let ascii = p.ascii;
     let prefix_width = spans_width(&prefix);
     let right = rights
         .into_iter()
@@ -276,6 +289,10 @@ fn fit_line(
         .unwrap_or_default();
     let right_width = spans_width(&right);
     let available = width.saturating_sub(prefix_width + right_width + usize::from(right_width > 0));
+    if let Some((goal, id)) = run_name {
+        let room = u16::try_from(available).unwrap_or(u16::MAX);
+        name.content = crate::ui::kit::run_name_in(&goal, &id, room, p).into();
+    }
 
     let name_full = UnicodeWidthStr::width(name.content.as_ref());
     let name_floor = available.min(name_full).min(NAME_FLOOR);

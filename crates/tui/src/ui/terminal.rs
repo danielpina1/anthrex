@@ -38,20 +38,18 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         // of `WindowInfo.branch` here — `None` is also how this tells a worktree
         // window from a plain one, since `branch_text` is `None` for exactly the
         // windows this daemon made no worktree for.
-        Some(w) => match super::tree_view::branch_text(w, app) {
-            Some(branch) => format!(
-                "{} · {} · {} ({branch}, worktree)",
-                w.name,
-                w.runtime.label(),
-                shorten_home(&w.project)
-            ),
-            None => format!(
-                "{} · {} · {}",
-                w.name,
-                w.runtime.label(),
-                shorten_home(&w.cwd)
-            ),
-        },
+        // Milestone 9.0.7 decision 29: ` <tag> <name> · <dir> `, the runtime once.
+        Some(w) => {
+            let tag = theme::runtime_tag(w.runtime);
+            match super::tree_view::branch_text(w, app) {
+                Some(branch) => format!(
+                    "{tag} {} · {} ({branch}, worktree)",
+                    w.name,
+                    shorten_home(&w.project)
+                ),
+                None => format!("{tag} {} · {}", w.name, shorten_home(&w.cwd)),
+            }
+        }
         None => "no window".to_string(),
     };
     let keys_here = app.key_region() == KeyRegion::Pane;
@@ -102,3 +100,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "terminal_tests.rs"]
+mod tests;
