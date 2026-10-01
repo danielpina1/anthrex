@@ -142,6 +142,9 @@ pub enum SaveOutcome {
     Refused(Vec<String>),
     /// The link went before any reply: `not saved: link lost`.
     LinkLost,
+    /// The connection refused the `Put`'s send while connected: `not sent: daemon is
+    /// not responding` (final review I1).
+    NotSent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -15,7 +15,7 @@ use proto::{
 };
 
 /// The running fixture with `t1` blocked on a question and every input kind listed.
-fn forms_app(base_moved: bool) -> App {
+pub(super) fn forms_app(base_moved: bool) -> App {
     let (mut snap, windows) = running_snapshot();
     let run = &mut snap.runs[0];
     run.actions
@@ -44,22 +44,22 @@ fn forms_app(base_moved: bool) -> App {
     app_with_runs(windows, snap)
 }
 
-fn open(app: &mut App, target: ActionTarget, kind: ActionKind) {
+pub(super) fn open(app: &mut App, target: ActionTarget, kind: ActionKind) {
     app.open_actions((RUN_ID.into(), target), Some(kind));
 }
 
-fn task_t1() -> ActionTarget {
+pub(super) fn task_t1() -> ActionTarget {
     ActionTarget::Task("t1".into())
 }
 
-fn form(app: &App) -> &ActionForm {
+pub(super) fn form(app: &App) -> &ActionForm {
     match &flow(app).step {
         ActionStep::Form(form) => form,
         other => panic!("no form: {other:?}"),
     }
 }
 
-fn type_text(app: &mut App, text: &str) {
+pub(super) fn type_text(app: &mut App, text: &str) {
     for c in text.chars() {
         tap(app, KeyCode::Char(c));
     }
@@ -83,7 +83,7 @@ fn the_request(effects: &[Effect]) -> RunRequest {
     }
 }
 
-fn detail(brief: &str, request_id: u64) -> RunReply {
+pub(super) fn detail(brief: &str, request_id: u64) -> RunReply {
     RunReply::TaskDetail {
         detail: Box::new(TaskDetailInfo {
             run_id: RUN_ID.into(),
@@ -97,7 +97,7 @@ fn detail(brief: &str, request_id: u64) -> RunReply {
     }
 }
 
-fn answer_form(app: &App) -> &crate::app::actions::forms::AnswerForm {
+pub(super) fn answer_form(app: &App) -> &crate::app::actions::forms::AnswerForm {
     match form(app) {
         ActionForm::Answer(f) => f,
         other => panic!("{other:?}"),

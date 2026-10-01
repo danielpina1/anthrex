@@ -7,6 +7,7 @@
 //! Pure: `&App` in.
 
 use crate::app::App;
+use crate::app::replies::NOT_SENT;
 use crate::app::settings_screen::{
     DISCARD_ASK, LINK_LOST, SAVED, SHIPPED_FIXED, SaveOutcome, SettingsPage, SettingsScreen,
     SettingsSection, hard_stop_calls, hard_stop_minutes, strength_name,
@@ -335,6 +336,9 @@ fn footer(app: &App, s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'st
             }
             Some(SaveOutcome::LinkLost) => {
                 out.push(Line::styled(LINK_LOST, role(Role::Failed, p)));
+            }
+            Some(SaveOutcome::NotSent) => {
+                out.push(Line::styled(NOT_SENT, role(Role::Failed, p)));
             }
             None => {}
         }

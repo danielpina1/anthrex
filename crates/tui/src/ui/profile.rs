@@ -80,6 +80,11 @@ pub(crate) fn hints(s: &ProfileScreen) -> Vec<Hint> {
 /// `stored`, `stale`, `unparseable` and `proposal` (Interfaces "Profile status rows").
 fn status_rows(app: &App, s: &ProfileScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
     let Some(status) = &s.status else {
+        // No reply will come for the last `Status` (minor 2): why, until one does.
+        if let Some(why) = &s.status_failed {
+            let text = cut(&one_line(why), usize::from(width), ellipsis(p));
+            return vec![Line::styled(text, role(Role::Failed, p))];
+        }
         return vec![Line::styled(
             format!("loading{}", ellipsis(p)),
             role(Role::Muted, p),
@@ -236,6 +241,11 @@ fn profile_rows(
             ));
             return (out, 0);
         }
+        Side::Failed(why) => {
+            let text = cut(&one_line(why), w, ellipsis(p));
+            out.push(Line::styled(text, role(Role::Failed, p)));
+            return (out, 0);
+        }
         Side::Absent(_) => {
             let text = if s.proposed {
                 "no proposal"
@@ -365,7 +375,8 @@ pub(crate) fn body_lines(app: &App, s: &ProfileScreen, width: u16) -> Vec<Line<'
 pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
     let p = app.palette();
     let title = format!("profile {} {}", dot(p), project_name(s));
-    let block = kit::screen_frame(&title, s.page.is_none(), p);
+    // Decision 5: a page or any modal over the screen has the one accented border.
+    let block = kit::screen_frame(&title, s.page.is_none() && app.modal.is_none(), p);
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);

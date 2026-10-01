@@ -128,6 +128,13 @@ fn plural(n: u32) -> String {
     format!("{n} {}", if n == 1 { "commit" } else { "commits" })
 }
 
+/// After Enter on a blank text: why the form did not go on (`type a reason first`,
+/// `type an answer first`, `type a message first`), in `Failed` under its area.
+fn why_not(form: &ActionForm, blank: bool, lw: usize, p: Palette) -> Option<Line<'static>> {
+    let why = form.input().err().filter(|_| blank)?;
+    Some(indent(lw, vec![Span::styled(why, role(Role::Failed, p))]))
+}
+
 /// The form's rows, then a blank row and its hints, for a dialog `width` columns wide.
 pub fn body(form: &ActionForm, width: u16, p: Palette) -> Vec<Line<'static>> {
     let width = width.min(kit::WRAP);
@@ -179,6 +186,7 @@ pub fn body(form: &ActionForm, width: u16, p: Palette) -> Vec<Line<'static>> {
                 }
             }
             body.extend(area_rows("answer", lw, &f.text, AREA_ROWS, vw, p));
+            body.extend(why_not(form, f.blank, lw, p));
             keys.push(hint("^J", "newline", 5));
         }
         ActionForm::Message(f) => {
@@ -192,6 +200,7 @@ pub fn body(form: &ActionForm, width: u16, p: Palette) -> Vec<Line<'static>> {
             ));
             body.push(choice_row("kind", lw, kind_word(f.kind), p));
             body.extend(area_rows("message", lw, &f.text, AREA_ROWS, vw, p));
+            body.extend(why_not(form, f.blank, lw, p));
             keys.push(hint("tab", "kind", 6));
             keys.push(hint("^J", "newline", 5));
         }
@@ -199,12 +208,7 @@ pub fn body(form: &ActionForm, width: u16, p: Palette) -> Vec<Line<'static>> {
             let lw = 8;
             let vw = usize::from(width).saturating_sub(lw);
             body.extend(area_rows("reason", lw, &f.reason, REASON_ROWS, vw, p));
-            if f.blank {
-                body.push(indent(
-                    lw,
-                    vec![Span::styled("type a reason first", role(Role::Failed, p))],
-                ));
-            }
+            body.extend(why_not(form, f.blank, lw, p));
         }
         ActionForm::Resume(f) => {
             let lw = 12;

@@ -197,6 +197,11 @@ impl App {
         let Some((ask, request)) = request else {
             return vec![];
         };
+        // Minor 4: nothing is sent while the link is down; the page keeps what was typed.
+        if !self.connected() {
+            self.toast_at(ToastLevel::Warn, "not connected");
+            return vec![];
+        }
         if let Some(s) = self.profile_screen_mut() {
             s.page = None;
         }

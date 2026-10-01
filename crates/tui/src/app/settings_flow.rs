@@ -157,6 +157,27 @@ impl App {
         }
     }
 
+    /// Whether `id` is the open screen's own `Put`, awaited or not.
+    pub(in crate::app) fn settings_put_was_screens(&self, id: u64) -> bool {
+        matches!(&self.screen, Some(Screen::Settings(s)) if s.put_id == Some(id))
+    }
+
+    /// `on_send_failed` (final review I1): the screen's `Put` never left. The screen
+    /// says so by the link: `not sent: daemon is not responding` while connected, `not
+    /// saved: link lost` otherwise.
+    pub(in crate::app) fn settings_put_not_sent(&mut self) {
+        let outcome = if self.connected() {
+            SaveOutcome::NotSent
+        } else {
+            SaveOutcome::LinkLost
+        };
+        if let Some(s) = self.settings_screen_mut() {
+            s.put_id = None;
+            s.sent = None;
+            s.outcome = Some(outcome);
+        }
+    }
+
     /// `screens_tick`: a `Put` that is no longer awaited and got no reply (the link was
     /// lost, or its send refused) shows `not saved: link lost` instead of `saving…`.
     pub(in crate::app) fn settings_tick(&mut self) -> Vec<Effect> {

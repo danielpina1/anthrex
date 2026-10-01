@@ -4,10 +4,11 @@
 //! Pure: the clock is read only to stamp and expire an entry, as the toasts do.
 
 use super::actions::{ActionStep, MovedBasePage};
+use super::profile_screen::ProfileAsk;
 use super::runs::{capped, first_line_and_more};
 use super::{App, Effect, Modal, ToastLevel};
 use crate::actions_request::ActionTarget;
-use proto::{ActionKind, BaseMovedInfo, PlanEdit, RunReply, RunRequest};
+use proto::{ActionKind, BaseMovedInfo, PlanEdit, ProfileRequest, RunReply, RunRequest};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -30,9 +31,9 @@ pub fn reply_timeout(request: &RunRequest) -> Duration {
             LONG_REPLY_TIMEOUT
         }
         RunRequest::Profile(
-            proto::ProfileRequest::Detect { .. }
-            | proto::ProfileRequest::Edit { .. }
-            | proto::ProfileRequest::Confirm { .. },
+            ProfileRequest::Detect { .. }
+            | ProfileRequest::Edit { .. }
+            | ProfileRequest::Confirm { .. },
         ) => LONG_REPLY_TIMEOUT,
         _ => REPLY_TIMEOUT,
     }
@@ -40,6 +41,10 @@ pub fn reply_timeout(request: &RunRequest) -> Duration {
 
 /// Decision 16: the error toast of a request that got no reply in time.
 pub const NO_REPLY: &str = "no reply from daemon";
+/// What a screen or form waiting on a request shows when the link went while it waited.
+pub const NOT_CONNECTED: &str = "not connected";
+/// What a screen or form shows when its request could not be sent while connected.
+pub const NOT_SENT: &str = "not sent: daemon is not responding";
 
 /// How many expired Profile and stats view ids `PendingReplies` remembers.
 const QUIET_KEPT: usize = 32;
@@ -62,7 +67,7 @@ pub enum PendingWhat {
     /// A Profile screen request on `dir` (decision 34, `app/profile_screen.rs`).
     Profile {
         dir: std::path::PathBuf,
-        ask: super::profile_screen::ProfileAsk,
+        ask: ProfileAsk,
     },
     /// The stats screen's `Stats { dir }` (decision 38, `app/stats.rs`).
     Stats { dir: std::path::PathBuf },
@@ -80,9 +85,10 @@ pub struct Pending {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PendingReplies {
     by_id: BTreeMap<u64, Pending>,
-    /// The last few expired views (a Profile `Status` or `Show`, a `Stats`): their
-    /// late reply is dropped, not toasted, since it only describes.
-    quiet: Vec<u64>,
+    /// The last few expired views (a Profile `Status` or `Show`, a `Stats`), with what
+    /// each was: a late reply is never toasted, since it only describes; the screen
+    /// still loading on it takes it (decision 16).
+    quiet: Vec<(u64, PendingWhat)>,
 }
 
 impl PendingReplies {
@@ -133,16 +139,14 @@ impl PendingReplies {
             let live = now.saturating_duration_since(p.sent_at) < p.timeout;
             if !live {
                 let view = match &p.what {
-                    PendingWhat::Profile { ask, .. } => matches!(
-                        ask,
-                        super::profile_screen::ProfileAsk::Status
-                            | super::profile_screen::ProfileAsk::Show { .. }
-                    ),
+                    PendingWhat::Profile { ask, .. } => {
+                        matches!(ask, ProfileAsk::Status | ProfileAsk::Show { .. })
+                    }
                     PendingWhat::Stats { .. } => true,
                     _ => false,
                 };
                 if view {
-                    quiet.push(*id);
+                    quiet.push((*id, p.what.clone()));
                 }
                 gone.push(p.what.clone());
             }
@@ -153,9 +157,17 @@ impl PendingReplies {
         gone
     }
 
-    /// Whether `id` was an expired view, whose late reply is not shown.
+    /// Whether `id` was an expired view, whose late reply is not toasted.
     pub fn expired_quietly(&self, id: u64) -> bool {
-        self.quiet.contains(&id)
+        self.expired_view(id).is_some()
+    }
+
+    /// What the expired view `id` asked, while it is remembered.
+    pub fn expired_view(&self, id: u64) -> Option<&PendingWhat> {
+        self.quiet
+            .iter()
+            .find(|(q, _)| *q == id)
+            .map(|(_, what)| what)
     }
 }
 
@@ -275,11 +287,15 @@ impl App {
         if gone.is_empty() {
             return vec![];
         }
-        // The open Settings screen shows its own save's expiry (`settings_flow.rs`), and
-        // the stats screen its request's (`stats.rs`): no toast for either.
-        let owned = usize::from(screens && !self.settings_saving())
+        // The open Settings screen shows its own save's expiry (`settings_flow.rs`), the
+        // stats screen its request's (`stats.rs`), the Profile screen its views' and the
+        // answer form its brief's (final review): no toast for any of them.
+        let mut owned = usize::from(screens && !self.settings_saving())
             + usize::from(stats.is_some() && self.stats_awaited().is_none());
         self.stats_tick();
+        for what in &gone {
+            owned += usize::from(self.view_failed(what, NO_REPLY));
+        }
         if gone.len() > owned {
             self.toast_at(ToastLevel::Error, NO_REPLY);
         }
@@ -290,6 +306,77 @@ impl App {
             return vec![self.settings_fetch()];
         }
         vec![]
+    }
+
+    /// A form or screen still waiting on `what` shows `why` instead; `true` when one did
+    /// (the request was theirs, so no toast).
+    fn view_failed(&mut self, what: &PendingWhat, why: &str) -> bool {
+        match what {
+            PendingWhat::FormBrief { run_id, task_id } => {
+                self.fail_form_brief(run_id, task_id, why)
+            }
+            PendingWhat::Profile { dir, ask } => self.profile_view_failed(dir, *ask, why),
+            _ => false,
+        }
+    }
+
+    /// `on_send_failed`'s tagged share (final review I1): the request never left, so its
+    /// entry goes at once and no `no reply from daemon` follows. A screen or form that
+    /// owns it says so itself; `true` when the usual not-sent toast is its only feedback.
+    pub(super) fn tagged_not_sent(&mut self, id: u64, request: &RunRequest) -> bool {
+        let stats_own = self.stats_awaited() == Some(id);
+        let put_own = self.settings_put_was_screens(id);
+        let pending = self.replies.take(Some(id)).map(|p| p.what);
+        let why = if self.connected() {
+            NOT_SENT
+        } else {
+            NOT_CONNECTED
+        };
+        match request {
+            // Milestone 9.0.5 decision 23: quiet; the panel says the detail was not
+            // sent, and the task's next key asks again (never a retry per tick).
+            RunRequest::TaskDetail { .. } => {
+                self.task_detail_not_sent(id);
+                if let Some(what) = &pending {
+                    self.view_failed(what, why);
+                }
+                false
+            }
+            // Decision 34: a Profile view is the screen's; it asks again on its tick.
+            RunRequest::Profile(ProfileRequest::Status { dir }) => {
+                self.profile_view_failed(dir, ProfileAsk::Status, why);
+                false
+            }
+            RunRequest::Profile(ProfileRequest::Show { dir, proposed }) => {
+                let ask = ProfileAsk::Show {
+                    proposed: *proposed,
+                };
+                self.profile_view_failed(dir, ask, why);
+                false
+            }
+            // Decision 24: quiet; the cache stays as it was until the next connection.
+            RunRequest::Settings(proto::SettingsRequest::Get) => false,
+            RunRequest::Settings(proto::SettingsRequest::Put { .. }) if put_own => {
+                self.settings_put_not_sent();
+                false
+            }
+            // Decision 38: its screen says so at once.
+            RunRequest::Stats { .. } => {
+                self.stats_not_sent(id);
+                !stats_own
+            }
+            // Whole-branch review M2: a refused `Edit` frees its submitting form;
+            // milestone 9: the form's own tagged request, and the goal form's.
+            RunRequest::Edit { .. } => {
+                self.edit_not_sent(Some(id));
+                true
+            }
+            RunRequest::StartGoal { .. } => {
+                self.goal_not_sent(Some(id));
+                true
+            }
+            _ => true,
+        }
     }
 
     /// Tests move a request's sending into the past instead of sleeping (Global

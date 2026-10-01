@@ -285,3 +285,42 @@ fn w_with_no_changes_sends_nothing() {
     assert_eq!(app.toast_text(), Some(NO_CHANGES));
     assert_eq!(NO_CHANGES, "no changes to save");
 }
+
+/// Final review I1: the open screen's own `Put` refused by the connection says so on
+/// the screen (not a toast), by the link: `not sent: daemon is not responding` while
+/// connected, `not saved: link lost` once the link went. A closed screen's still toasts.
+#[test]
+fn an_unsent_put_says_so_on_the_screen() {
+    let unsent = |id: u64, settings: proto::SettingsDoc| ClientMsg::RunTagged {
+        id,
+        request: proto::RunRequest::Settings(proto::SettingsRequest::Put { settings }),
+    };
+    let mut app = opened();
+    set_limit(&mut app, key::MAX_READERS, "4");
+    let (id, doc) = puts(&w(&mut app))[0].clone();
+    assert!(app.on_send_failed(&unsent(id, doc)).is_empty());
+    assert!(!app.replies.contains(id));
+    assert!(!app.settings_saving());
+    assert_eq!(app.toast_text(), None);
+    assert_eq!(screen(&app).outcome, Some(SaveOutcome::NotSent));
+    let text = crate::ui::settings::tests::screen_text(&app, 80, 24);
+    assert!(
+        text.contains("not sent: daemon is not responding"),
+        "{text}"
+    );
+    // Disconnected: the link's words.
+    let (id, doc) = puts(&w(&mut app))[0].clone();
+    app.on_link_lost("gone");
+    app.on_send_failed(&unsent(id, doc));
+    assert_eq!(screen(&app).outcome, Some(SaveOutcome::LinkLost));
+    assert_eq!(app.toast_text(), Some("connection to the daemon lost"));
+    // A save whose screen was discarded: the toast is its only feedback.
+    let windows = app.windows.clone();
+    app.on_reconnected(windows);
+    let (id, doc) = puts(&w(&mut app))[0].clone();
+    tap(&mut app, KeyCode::Esc);
+    tap(&mut app, KeyCode::Char('y'));
+    app.on_send_failed(&unsent(id, doc));
+    assert!(!app.replies.contains(id));
+    assert_eq!(app.toast_text(), Some("daemon is not responding"));
+}

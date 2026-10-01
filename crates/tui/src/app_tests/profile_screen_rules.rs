@@ -72,7 +72,9 @@ fn a_refused_view_send_is_quiet() {
     assert_eq!(app.toast_text(), None);
 }
 
-/// A late refused `Show` (its entry expired) is dropped, not toasted.
+/// A late refused `Show` (its entry expired) is not toasted: the open screen still
+/// loading on it shows it as that side's absence (final review, minor 2), and its
+/// expiry was the screen's, not a toast.
 #[test]
 fn a_late_refused_show_is_not_toasted() {
     let mut app = open_app();
@@ -80,12 +82,16 @@ fn a_late_refused_show_is_not_toasted() {
     let past = Instant::now() - Duration::from_secs(120);
     app.set_reply_sent_at(ids[2], past);
     app.on_tick();
-    assert_eq!(app.toast_text(), Some("no reply from daemon"));
+    assert_eq!(app.toast_text(), None);
     let refusal = ProfileReply::Refused {
         message: "no proposal for /p/shop".into(),
     };
     assert!(reply(&mut app, ids[2], refusal).is_empty());
-    assert_eq!(app.toast_text(), Some("no reply from daemon"));
+    assert_eq!(app.toast_text(), None);
+    assert_eq!(
+        screen(&app).proposal,
+        Side::Absent("no proposal for /p/shop".into())
+    );
 }
 
 /// Progress ruling: `C-b a`, `C-b m` and `C-b t` are refused over the screen.

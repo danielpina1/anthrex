@@ -110,6 +110,15 @@ mod paste_scroll;
 #[path = "../app_tests/stats.rs"]
 mod stats;
 
+#[path = "../app_tests/not_sent.rs"]
+mod not_sent;
+
+#[path = "../app_tests/form_brief.rs"]
+mod form_brief;
+
+#[path = "../app_tests/profile_screen_views.rs"]
+mod profile_screen_views;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

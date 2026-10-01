@@ -211,6 +211,11 @@ fn a_refused_send_fails_the_screen() {
         stats_screen(&app).state,
         StatsState::Failed("not sent: daemon is not responding".into())
     );
+    assert_eq!(
+        app.toast_text(),
+        None,
+        "the screen owns it (final review I1)"
+    );
     app.on_tick();
     assert_eq!(
         stats_screen(&app).state,
@@ -306,4 +311,30 @@ fn the_screen_refuses_what_would_act_under_it() {
     prefix(&mut app);
     press(&mut app, KeyCode::Char('S'), KeyModifiers::SHIFT);
     assert!(matches!(app.screen, Some(Screen::Settings(_))));
+}
+
+/// Ruling R-b's `own` guard, pinned past the quiet list's 32 ids: the screen's expired
+/// request is pushed off the list by 33 further quiet expiries, and its late reply still
+/// fills the screen.
+#[test]
+fn a_late_reply_fills_the_screen_after_the_quiet_list_forgot_it() {
+    let mut app = running_app();
+    let dir = project(&app);
+    let id = open(&mut app);
+    let past = Instant::now() - Duration::from_secs(31);
+    app.set_reply_sent_at(id, past);
+    app.on_tick();
+    assert!(app.replies.expired_quietly(id));
+    for n in 0..33 {
+        let other = 50_000 + n;
+        let what = crate::app::replies::PendingWhat::Stats { dir: dir.clone() };
+        app.replies
+            .insert(other, what, crate::app::replies::REPLY_TIMEOUT);
+        app.set_reply_sent_at(other, past);
+        app.on_tick();
+    }
+    assert!(!app.replies.expired_quietly(id), "evicted");
+    assert!(matches!(stats_screen(&app).state, StatsState::Failed(_)));
+    reply(&mut app, id, history());
+    assert!(matches!(stats_screen(&app).state, StatsState::Ready(_)));
 }

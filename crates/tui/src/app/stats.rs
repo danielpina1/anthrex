@@ -16,10 +16,9 @@ use std::path::PathBuf;
 
 /// The other screens' refusal of `C-b a`, `C-b m` and `C-b t`, with this one's name.
 pub const LEAVE_STATS_FIRST: &str = "leave the stats first (esc)";
-/// The screen's text when the link went while it waited.
-pub const NOT_CONNECTED: &str = "not connected";
-/// The screen's text when its request could not be sent while connected.
-pub const NOT_SENT: &str = "not sent: daemon is not responding";
+/// The screen's texts when the link went while it waited, and when its request could
+/// not be sent while connected (shared with the other screens and the answer form).
+pub use super::replies::{NOT_CONNECTED, NOT_SENT};
 /// PgUp/PgDn move this many lines, as on the Profile screen.
 const PAGE: usize = 10;
 
