@@ -100,7 +100,16 @@ fn status_rows(app: &App, s: &ProfileScreen, width: u16, p: Palette) -> Vec<Line
     if let Some(text) = &status.unparseable {
         rows.push(("unparseable".to_string(), text.clone()));
     }
-    let proposal = match status.proposal.as_ref().map(|r| (&r.state, r.started_at)) {
+    rows.push(("proposal".to_string(), proposal_text(app, status)));
+    let mut out = kit::labelled_rows(&rows, width, p);
+    out.push(Line::default());
+    out.push(store_line(s, p));
+    out
+}
+
+/// Interfaces "Profile status rows": the proposal's state.
+fn proposal_text(app: &App, status: &proto::ProfileStatus) -> String {
+    match status.proposal.as_ref().map(|r| (&r.state, r.started_at)) {
         None => "none".to_string(),
         Some((ProposalState::Preparing | ProposalState::Scouting, at)) => {
             format!("scout running {}", format_duration(app.run_age(at)))
@@ -108,12 +117,7 @@ fn status_rows(app: &App, s: &ProfileScreen, width: u16, p: Palette) -> Vec<Line
         Some((ProposalState::Verifying, _)) => "verifying".to_string(),
         Some((ProposalState::Ready, _)) => "ready".to_string(),
         Some((ProposalState::Failed { reason }, _)) => format!("failed: {reason}"),
-    };
-    rows.push(("proposal".to_string(), proposal));
-    let mut out = kit::labelled_rows(&rows, width, p);
-    out.push(Line::default());
-    out.push(store_line(s, p));
-    out
+    }
 }
 
 /// `s  store once verification passes  ‹ off ›`.
@@ -191,7 +195,12 @@ fn tail_lines(text: &str, indent: usize, width: usize, p: Palette) -> Vec<Line<'
 }
 
 /// The Profile tab's lines, and the index of the selected row's line.
-fn profile_rows(s: &ProfileScreen, width: u16, p: Palette) -> (Vec<Line<'static>>, usize) {
+fn profile_rows(
+    app: &App,
+    s: &ProfileScreen,
+    width: u16,
+    p: Palette,
+) -> (Vec<Line<'static>>, usize) {
     let w = usize::from(width);
     let bold = ratatui::style::Style::default().add_modifier(Modifier::BOLD);
     let mut out = vec![if s.proposed {
@@ -208,6 +217,17 @@ fn profile_rows(s: &ProfileScreen, width: u16, p: Palette) -> (Vec<Line<'static>
     } else {
         Line::styled("stored profile", bold)
     }];
+    // A detection under way: its state, not the proposal it replaces.
+    if s.proposed
+        && s.in_progress()
+        && let Some(status) = &s.status
+    {
+        out.push(Line::styled(
+            one_line(&proposal_text(app, status)),
+            role(Role::Working, p),
+        ));
+        return (out, 0);
+    }
     let shown: &Shown = match s.viewed() {
         Side::Loading => {
             out.push(Line::styled(
@@ -298,11 +318,16 @@ fn footer(s: &ProfileScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
         (None, Some(m)) => (m, Role::Muted),
         _ => return vec![],
     };
-    let lines = wrap_words(&one_line(text), usize::from(width).max(1));
-    let n = lines.len().min(3);
+    let w = usize::from(width).max(1);
+    let mut lines = wrap_words(&one_line(text), w);
+    if lines.len() > 3 {
+        lines.truncate(3);
+        // What is cut is marked (principle 6).
+        let last = format!("{} {}", lines[2], ellipsis(p));
+        lines[2] = cut(&last, w, ellipsis(p));
+    }
     lines
         .into_iter()
-        .take(n)
         .map(|l| Line::styled(l, role(r, p)))
         .collect()
 }
@@ -318,7 +343,7 @@ fn tab_lines(
     match s.tab {
         ProfileTab::Status => (vec![], status_rows(app, s, width, p), 0),
         ProfileTab::Profile => {
-            let (mut lines, at) = profile_rows(s, width, p);
+            let (mut lines, at) = profile_rows(app, s, width, p);
             let head = lines.remove(0);
             (vec![head], lines, at.saturating_sub(1))
         }

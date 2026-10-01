@@ -64,6 +64,59 @@ fn e_opens_an_editor_fitted_to_the_key() {
         }
         other => panic!("{other:?}"),
     }
+    // The add row starts empty, never from the whole environment table.
+    tap(&mut app, KeyCode::Esc);
+    select(&mut app, crate::profile_view::ENV_ADD);
+    tap(&mut app, KeyCode::Char('e'));
+    match &editor(&app).field {
+        EditorField::Env { name, value, .. } => {
+            assert_eq!((name.text(), value.text()), ("", ""));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(!editor(&app).from_proposal);
+}
+
+/// Progress ruling: an edit from the proposal view says it starts from the stored
+/// profile and replaces the proposal; from the stored view it does not.
+#[test]
+fn an_edit_from_the_proposal_view_says_what_it_replaces() {
+    // The dialog wraps at 60 columns: the note's two halves.
+    let note = "starts from the stored profile;";
+    let rest = "saving replaces the current";
+    let (mut app, _) = ready_app();
+    select(&mut app, "check");
+    tap(&mut app, KeyCode::Char('e'));
+    assert!(!render(&app).contains(note));
+    tap(&mut app, KeyCode::Esc);
+    tap(&mut app, KeyCode::Char('p'));
+    select(&mut app, "check");
+    tap(&mut app, KeyCode::Char('e'));
+    assert!(editor(&app).from_proposal);
+    match &editor(&app).field {
+        EditorField::Line(area) => assert_eq!(area.text(), "cargo test", "the stored value"),
+        other => panic!("{other:?}"),
+    }
+    let text = render(&app);
+    assert!(text.contains(note) && text.contains(rest), "{text}");
+}
+
+fn render(app: &App) -> String {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|f| {
+            crate::ui::draw(f, app);
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    (0..40)
+        .map(|y| {
+            (0..120)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Decision 35: Enter sends `Edit` with the literal and the store toggle.

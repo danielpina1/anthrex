@@ -174,6 +174,13 @@ fn page_parts(
                 }
             }
             body.push(Line::default());
+            if editor.from_proposal {
+                body.extend(
+                    wrap("starts from the stored profile; saving replaces the current proposal")
+                        .into_iter()
+                        .map(|l| l.style(role(Role::Attention, p))),
+                );
+            }
             body.push(store_line(s, p));
             if let Some(error) = &editor.error {
                 body.extend(

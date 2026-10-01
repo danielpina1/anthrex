@@ -241,6 +241,7 @@ fn profile_tab_renders_groups_checks_and_dropped() {
         }];
         let s = screen_mut(&mut app);
         s.proposal = shown(proposal, verification(), dropped);
+        s.status = Some(status(Some(ProposalState::Ready)));
         s.proposed = true;
         s.expanded = None;
         s.selected = s.rows().len() - 1;
@@ -437,4 +438,15 @@ fn a_page_mutes_the_screens_border() {
     assert_eq!(Some(corner(&app)), accent);
     screen_mut(&mut app).page = Some(ProfilePage::Reject);
     assert_ne!(Some(corner(&app)), accent);
+}
+
+/// Principle 6: a refusal longer than the footer's three lines is marked cut.
+#[test]
+fn a_cut_refusal_is_marked() {
+    let mut app = app_with_profile(|_, _| {});
+    screen_mut(&mut app).error = Some("word ".repeat(200));
+    let text = screen_text(&app, 80, 24);
+    assert!(text.contains("word …"), "{text}");
+    screen_mut(&mut app).error = Some("short refusal".into());
+    assert!(!screen_text(&app, 80, 24).contains('…'));
 }

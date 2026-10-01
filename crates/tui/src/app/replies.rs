@@ -38,6 +38,9 @@ pub fn reply_timeout(request: &RunRequest) -> Duration {
     }
 }
 
+/// How many expired Profile view ids `PendingReplies` remembers.
+const QUIET_KEPT: usize = 32;
+
 /// What a pending request was.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingWhat {
@@ -72,6 +75,9 @@ pub struct Pending {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PendingReplies {
     by_id: BTreeMap<u64, Pending>,
+    /// The last few expired Profile views (`Status`, `Show`): their late reply is
+    /// dropped, not toasted, since it only describes.
+    quiet: Vec<u64>,
 }
 
 impl PendingReplies {
@@ -112,14 +118,31 @@ impl PendingReplies {
     /// Drops every entry past its timeout at `now`; what each one was.
     pub fn expire(&mut self, now: Instant) -> Vec<PendingWhat> {
         let mut gone = Vec::new();
-        self.by_id.retain(|_, p| {
+        let quiet = &mut self.quiet;
+        self.by_id.retain(|id, p| {
             let live = now.saturating_duration_since(p.sent_at) < p.timeout;
             if !live {
+                if let PendingWhat::Profile { ask, .. } = &p.what
+                    && matches!(
+                        ask,
+                        super::profile_screen::ProfileAsk::Status
+                            | super::profile_screen::ProfileAsk::Show { .. }
+                    )
+                {
+                    quiet.push(*id);
+                }
                 gone.push(p.what.clone());
             }
             live
         });
+        let excess = self.quiet.len().saturating_sub(QUIET_KEPT);
+        self.quiet.drain(..excess);
         gone
+    }
+
+    /// Whether `id` was an expired Profile view, whose late reply is not shown.
+    pub fn expired_quietly(&self, id: u64) -> bool {
+        self.quiet.contains(&id)
     }
 }
 

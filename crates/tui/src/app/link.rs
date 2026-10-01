@@ -226,6 +226,10 @@ impl App {
         // no settings.
         effects.push(self.run_subscription());
         effects.push(self.settings_fetch());
+        // Decision 34: an open Profile screen asks its three things again, once.
+        if matches!(self.screen, Some(super::screens::Screen::Profile(_))) {
+            effects.extend(self.profile_fetch_all(std::time::Instant::now()));
+        }
         effects
     }
 
@@ -260,6 +264,18 @@ impl App {
                 id,
                 request: RunRequest::TaskDetail { .. },
             } => self.task_detail_not_sent(*id),
+            // Milestone 9.0.6 decision 34: a Profile screen's request is not waited on
+            // any longer; a view is quiet (the screen asks again on reconnect), an
+            // action toasts below.
+            ClientMsg::RunTagged {
+                id,
+                request:
+                    RunRequest::Profile(
+                        proto::ProfileRequest::Status { .. } | proto::ProfileRequest::Show { .. },
+                    ),
+            } => {
+                self.replies.take(Some(*id));
+            }
             // Decision 24: quiet; the cache stays as it was until the next connection.
             ClientMsg::RunTagged {
                 id,
@@ -279,10 +295,10 @@ impl App {
                         id,
                         request: RunRequest::StartGoal { .. },
                     } => self.goal_not_sent(Some(*id)),
-                    // A refused save is not waited on any longer.
+                    // A refused save, or profile action, is not waited on any longer.
                     ClientMsg::RunTagged {
                         id,
-                        request: RunRequest::Settings(_),
+                        request: RunRequest::Settings(_) | RunRequest::Profile(_),
                     } => {
                         self.replies.take(Some(*id));
                     }

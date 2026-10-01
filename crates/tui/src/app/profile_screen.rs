@@ -74,6 +74,9 @@ pub struct Editor {
     pub key: String,
     pub field: EditorField,
     pub error: Option<String>,
+    /// Opened from the proposal view: the page says the edit starts from the stored
+    /// profile and replaces the proposal (progress ruling).
+    pub from_proposal: bool,
 }
 
 /// A dialog over the screen.
@@ -129,6 +132,9 @@ pub struct ProfileScreen {
     pub(crate) status_sent_at: Option<Instant>,
 }
 
+/// Interfaces-style refusal of `C-b a`, `C-b m` and `C-b t` over a full screen.
+pub const LEAVE_SCREEN_FIRST: &str = "leave the profile first (esc)";
+
 impl ProfileScreen {
     fn new(dir: PathBuf, proposal: bool) -> Self {
         Self {
@@ -172,6 +178,10 @@ impl ProfileScreen {
     /// The Profile tab's rows; on the proposal view marked against the stored profile
     /// (an absent stored profile marks every set key added).
     pub fn rows(&self) -> Vec<Row> {
+        // A detection under way replaces the proposal: the old one is not shown.
+        if self.proposed && self.in_progress() {
+            return vec![];
+        }
         let Side::Ready(shown) = self.viewed() else {
             return vec![];
         };
@@ -223,7 +233,7 @@ impl App {
     pub(crate) fn open_profile_on(&mut self, dir: PathBuf, proposal: bool) -> Vec<Effect> {
         let screen = ProfileScreen::new(dir, proposal);
         self.set_screen(Some(Screen::Profile(Box::new(screen))));
-        self.profile_fetch_all()
+        self.profile_fetch_all(Instant::now())
     }
 
     fn profile_screen_mut(&mut self) -> Option<&mut ProfileScreen> {
@@ -277,8 +287,8 @@ impl App {
     }
 
     /// The status, the stored profile and the proposal, in that order.
-    fn profile_fetch_all(&mut self) -> Vec<Effect> {
-        let mut effects = self.profile_status(Instant::now());
+    pub(super) fn profile_fetch_all(&mut self, now: Instant) -> Vec<Effect> {
+        let mut effects = self.profile_status(now);
         effects.extend(self.profile_show(false));
         effects.extend(self.profile_show(true));
         effects
@@ -290,7 +300,10 @@ impl App {
         let Some(Screen::Profile(s)) = &self.screen else {
             return vec![];
         };
-        if !s.in_progress() || s.status_id.is_some_and(|id| self.replies.contains(id)) {
+        if !self.connected()
+            || !s.in_progress()
+            || s.status_id.is_some_and(|id| self.replies.contains(id))
+        {
             return vec![];
         }
         if s.status_sent_at
@@ -314,7 +327,8 @@ impl App {
             Some(PendingWhat::Profile { dir, ask }) => (dir, ask),
             Some(_) => return None,
             None => {
-                if request_id.is_some() {
+                // A late view (its entry expired) is dropped; a late outcome shown.
+                if request_id.is_some_and(|id| !self.replies.expired_quietly(id)) {
                     self.toast_profile_outcome(reply);
                 }
                 return Some(vec![]);
@@ -406,7 +420,7 @@ impl App {
                 if ask == ProfileAsk::Confirm {
                     s.proposed = false;
                 }
-                self.profile_fetch_all()
+                self.profile_fetch_all(Instant::now())
             }
             _ => vec![],
         }
@@ -438,7 +452,7 @@ impl App {
             }
             KeyCode::Char('x') => s.page = Some(ProfilePage::Reject),
             KeyCode::Char('c') => match &s.proposal {
-                Side::Ready(shown) => {
+                Side::Ready(shown) if s.proposal_state() == Some(&ProposalState::Ready) => {
                     s.page = Some(ProfilePage::Confirm {
                         toml: shown.toml.clone(),
                         scroll: 0,
@@ -480,11 +494,15 @@ impl App {
             }
             KeyCode::Char('e') => {
                 if let Some(row) = row {
-                    // An edit applies to the stored profile, so it starts from there.
+                    // An edit applies to the stored profile, so it starts from there;
+                    // the add row starts empty.
                     let text = ProfileScreen::profile_of(&s.stored)
+                        .filter(|_| row.key != ENV_ADD)
                         .map(|p| profile_view::edit_text(p, &row.key))
                         .unwrap_or_default();
-                    s.page = Some(ProfilePage::Edit(Box::new(editor_for(&row.key, &text))));
+                    let mut editor = editor_for(&row.key, &text);
+                    editor.from_proposal = s.proposed;
+                    s.page = Some(ProfilePage::Edit(Box::new(editor)));
                 }
             }
             KeyCode::Char('u') => {

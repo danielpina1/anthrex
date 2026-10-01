@@ -95,6 +95,9 @@ mod profile_screen;
 #[path = "../app_tests/profile_screen_edit.rs"]
 mod profile_screen_edit;
 
+#[path = "../app_tests/profile_screen_rules.rs"]
+mod profile_screen_rules;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

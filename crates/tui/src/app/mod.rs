@@ -439,6 +439,9 @@ impl App {
     }
 
     fn run(&mut self, cmd: Command) -> Vec<Effect> {
+        if self.screen_refuses(cmd) {
+            return vec![];
+        }
         match cmd {
             Command::NextWindow => self.focus_relative(1),
             Command::PrevWindow => self.focus_relative(-1),

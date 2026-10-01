@@ -30,6 +30,21 @@ impl App {
         self.keymap.set_screen_mode(self.screen.is_some());
     }
 
+    /// Progress ruling: `C-b a`, `C-b m` and `C-b t` would act under a full screen, so
+    /// they are refused with a toast while one is open.
+    pub(super) fn screen_refuses(&mut self, cmd: crate::keymap::Command) -> bool {
+        use crate::keymap::Command;
+        let refused = self.screen.is_some()
+            && matches!(
+                cmd,
+                Command::FocusAlerts | Command::ToggleConversation | Command::ToggleTree
+            );
+        if refused {
+            self.toast(super::profile_screen::LEAVE_SCREEN_FIRST);
+        }
+        refused
+    }
+
     /// A bare key while a screen is open (`KeyAction::Screen`).
     pub(super) fn on_screen_key(&mut self, key: crossterm::event::KeyEvent) -> Vec<Effect> {
         match &self.screen {

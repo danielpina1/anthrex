@@ -33,6 +33,7 @@ pub(super) fn editor_for(key: &str, text: &str) -> Editor {
         key: key.to_string(),
         field,
         error: None,
+        from_proposal: false,
     }
 }
 
@@ -104,7 +105,12 @@ impl App {
                     *flag = !*flag;
                     None
                 }
-                _ if y || enter => Some((
+                _ if enter => {
+                    // Progress ruling: it starts a real agent, so `y` only.
+                    warn = Some("press y to detect");
+                    None
+                }
+                _ if y => Some((
                     ProfileAsk::Detect,
                     ProfileRequest::Detect {
                         dir: dir.clone(),
@@ -134,20 +140,19 @@ impl App {
             )),
             Some(ProfilePage::Unset { .. }) => None,
             Some(ProfilePage::Confirm { toml, scroll }) => match key.code {
-                KeyCode::Char('j') | KeyCode::Down => {
-                    *scroll = scroll.saturating_add(1);
-                    None
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    *scroll = scroll.saturating_sub(1);
-                    None
-                }
-                KeyCode::PageDown => {
-                    *scroll = scroll.saturating_add(10);
-                    None
-                }
-                KeyCode::PageUp => {
-                    *scroll = scroll.saturating_sub(10);
+                KeyCode::Char('j' | 'k')
+                | KeyCode::Down
+                | KeyCode::Up
+                | KeyCode::PageDown
+                | KeyCode::PageUp => {
+                    let step: isize = match key.code {
+                        KeyCode::Char('j') | KeyCode::Down => 1,
+                        KeyCode::Char('k') | KeyCode::Up => -1,
+                        KeyCode::PageDown => 10,
+                        _ => -10,
+                    };
+                    let last = toml.lines().count().saturating_sub(1);
+                    *scroll = scroll.saturating_add_signed(step).min(last);
                     None
                 }
                 _ if y => Some((
