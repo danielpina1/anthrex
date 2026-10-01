@@ -1,7 +1,7 @@
 //! The hint line: `key word  key word`, keys in the accent, words muted.
 
 use crate::safe_text::one_line;
-use crate::theme::{Palette, Role, role};
+use crate::theme::{Palette, Role, fold, role};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
@@ -29,15 +29,13 @@ pub fn hints_joined(width: u16, hints: &[Hint], separator: &str, p: Palette) -> 
     let mut kept: Vec<(String, String, u8)> = hints
         .iter()
         .map(|h| {
-            // `⏎` has an ASCII twin: `enter`.
-            let key = if p.ascii && h.key == "⏎" {
-                "enter".to_string()
-            } else {
-                one_line(&h.key)
-            };
-            (key, one_line(&h.word), h.priority)
+            // `⏎` has an ASCII twin, `enter`, as every mark `theme::fold` knows.
+            let key = fold(&one_line(&h.key), p.ascii);
+            (key, fold(&one_line(&h.word), p.ascii), h.priority)
         })
         .collect();
+    let separator = fold(separator, p.ascii);
+    let separator = separator.as_str();
     let total = |kept: &[(String, String, u8)]| -> usize {
         let words: usize = kept.iter().map(|(k, w, _)| k.width() + 1 + w.width()).sum();
         words + separator.width() * kept.len().saturating_sub(1)

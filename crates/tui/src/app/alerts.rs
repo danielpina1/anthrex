@@ -103,6 +103,16 @@ fn blocked_text(task: &proto::TaskInfo, orchestrator_lives: bool) -> Option<Stri
     })
 }
 
+/// Milestone 9.0.7 decision 4: "needs you" is one rule. A task needs the user exactly
+/// when it is an alert, so its glyph (`theme::task_look`) and the alerts agree.
+pub fn task_needs_you(run: &RunInfo, task: &proto::TaskInfo) -> bool {
+    blocked_text(task, orchestrator_lives(run)).is_some()
+}
+
+fn orchestrator_lives(run: &RunInfo) -> bool {
+    run.orchestrator.as_ref().is_some_and(|orch| orch.live)
+}
+
 /// Decisions 17 and 18: every alert, most urgent first — by priority, then the run's
 /// `created_at` (the order `shown_runs` gives), then the order the rules list.
 pub fn alerts(app: &App) -> Vec<Alert> {
@@ -141,7 +151,7 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             };
             push(2, key, text);
         }
-        let lives = run.orchestrator.as_ref().is_some_and(|orch| orch.live);
+        let lives = orchestrator_lives(run);
         for task in &run.tasks {
             if let Some(text) = blocked_text(task, lives) {
                 let key = AlertKey::Blocked {

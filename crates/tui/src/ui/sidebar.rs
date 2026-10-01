@@ -28,12 +28,13 @@ fn summary(app: &App, width: u16) -> String {
             parts.push(format!("{count} {label}"));
         }
     }
+    let sep = theme::fold(" · ", app.palette().ascii);
     while !parts.is_empty()
-        && UnicodeWidthStr::width(parts.join(" · ").as_str()) > usize::from(width)
+        && UnicodeWidthStr::width(parts.join(&sep).as_str()) > usize::from(width)
     {
         parts.pop();
     }
-    parts.join(" · ")
+    parts.join(&sep)
 }
 
 pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
@@ -43,7 +44,9 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
         "agents"
     };
     let keys_here = app.key_region() == KeyRegion::Sidebar;
-    let block = kit::pane_frame(Line::from(title), keys_here, app.palette());
+    let p = app.palette();
+    let muted = theme::role(theme::Role::Muted, p);
+    let block = kit::pane_frame(Line::from(title), keys_here, p);
     frame.render_widget(block, layout.sidebar);
     let rows = app.rows();
     let geometry = tree_view::geometry(layout.sidebar_list, rows.len(), app.tree.sidebar.top);
@@ -61,17 +64,17 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
         })
         .collect();
     if app.windows.is_empty() {
-        lines.push(Line::from(Span::styled(" no agents yet", theme::muted())));
+        lines.push(Line::from(Span::styled(" no agents yet", muted)));
         lines.push(Line::from(Span::styled(
             format!(" {} c opens a shell", app.settings.prefix_label),
-            theme::muted(),
+            muted,
         )));
     }
     frame.render_widget(Paragraph::new(lines), geometry.list);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             summary(app, layout.sidebar_footer.width),
-            theme::muted(),
+            muted,
         ))),
         layout.sidebar_footer,
     );

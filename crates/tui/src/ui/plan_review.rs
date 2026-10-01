@@ -12,8 +12,8 @@ use crate::app::plan_review::{
 };
 use crate::inspector::run_format::{effort_text, size_letter, test_mode_text};
 use crate::safe_text::one_line;
-use crate::theme;
-use crate::ui::tree_view::truncate;
+use crate::theme::{self, Palette, Role, role};
+use crate::ui::tree_view::truncate_in;
 use proto::{RunInfo, TaskInfo};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -107,14 +107,21 @@ fn row(out: &mut Vec<Placed>, area: Rect, y: u16, line: Line<'static>) {
     out.push(Placed { area, line });
 }
 
-fn text(text: &str, width: u16, style: Style) -> Line<'static> {
-    Line::from(Span::styled(truncate(text, usize::from(width)), style))
+/// `text` cut to `width`, its punctuation folded in ASCII (milestone 9.0.7 decision 5).
+fn text(text: &str, width: u16, style: Style, ascii: bool) -> Line<'static> {
+    let text = theme::fold(text, ascii);
+    Line::from(Span::styled(
+        truncate_in(&text, usize::from(width), ascii),
+        style,
+    ))
 }
 
-fn render_title(out: &mut Vec<Placed>, area: Rect, left: &str, right: &str) {
+fn render_title(out: &mut Vec<Placed>, area: Rect, (left, right): (&str, &str), p: Palette) {
     if area.height == 0 {
         return;
     }
+    let (left, right) = (&theme::fold(left, p.ascii), &theme::fold(right, p.ascii));
+    let truncate = |text: &str, width| truncate_in(text, width, p.ascii);
     let width = usize::from(area.width);
     let right_width = right.width();
     let bold = Style::default().add_modifier(Modifier::BOLD);
@@ -125,7 +132,7 @@ fn render_title(out: &mut Vec<Placed>, area: Rect, left: &str, right: &str) {
         // Milestone 9.0.7 decision 2: titles use weight, not the accent.
         spans.push(Span::styled(left, bold));
         spans.push(Span::raw(" ".repeat(gap)));
-        spans.push(Span::styled(right.to_owned(), theme::muted()));
+        spans.push(Span::styled(right.to_owned(), role(Role::Muted, p)));
     } else {
         spans.push(Span::styled(truncate(left, width), bold));
     }
@@ -134,10 +141,17 @@ fn render_title(out: &mut Vec<Placed>, area: Rect, left: &str, right: &str) {
 
 /// The left pane: two rows a task, scrolled to keep the selection in view, and the
 /// waves summary on the last row.
-fn render_tasks(out: &mut Vec<Placed>, area: Rect, tasks: &[&TaskInfo], selected: Option<&str>) {
+fn render_tasks(
+    out: &mut Vec<Placed>,
+    area: Rect,
+    tasks: &[&TaskInfo],
+    selected: Option<&str>,
+    p: Palette,
+) {
     if area.height == 0 || area.width == 0 {
         return;
     }
+    let muted = role(Role::Muted, p);
     let list_rows = area.height - 1;
     let visible = usize::from(list_rows / 2);
     let at = selected
@@ -152,18 +166,21 @@ fn render_tasks(out: &mut Vec<Placed>, area: Rect, tasks: &[&TaskInfo], selected
         let y = area.y + 2 * n as u16;
         let chosen = selected == Some(task.id.as_str());
         let (mark, style) = if chosen {
-            ("▸ ", Style::default().add_modifier(Modifier::BOLD))
+            (
+                if p.ascii { "> " } else { "▸ " },
+                Style::default().add_modifier(Modifier::BOLD),
+            )
         } else {
             ("  ", Style::default())
         };
         let head = one_line(&format!("{mark}{}  {}", task.id, task.title));
-        row(out, area, y, text(&head, area.width, style));
+        row(out, area, y, text(&head, area.width, style, p.ascii));
         let route = format!("  {}", route_row(task));
-        row(out, area, y + 1, text(&route, area.width, theme::muted()));
+        row(out, area, y + 1, text(&route, area.width, muted, p.ascii));
     }
     let waves = waves_text(tasks);
     let y = area.y + area.height - 1;
-    row(out, area, y, text(&waves, area.width, theme::muted()));
+    row(out, area, y, text(&waves, area.width, muted, p.ascii));
 }
 
 /// The right pane: `detail_lines` from `scroll`, clamped to the content.
@@ -186,12 +203,17 @@ fn render_detail(out: &mut Vec<Placed>, app: &App, area: Rect, run: &RunInfo, ta
             LineKind::Text | LineKind::Blank => Style::default(),
         };
         let y = area.y + n as u16;
-        row(out, area, y, text(&line.text, area.width, style));
+        row(
+            out,
+            area,
+            y,
+            text(&line.text, area.width, style, app.palette().ascii),
+        );
     }
 }
 
 /// The one-column separator between the panes, when there is room for it.
-fn render_separator(out: &mut Vec<Placed>, left: Rect, right: Rect) {
+fn render_separator(out: &mut Vec<Placed>, left: Rect, right: Rect, p: Palette) {
     let x = left.x + left.width;
     if right.x <= x || left.height == 0 {
         return;
@@ -202,7 +224,13 @@ fn render_separator(out: &mut Vec<Placed>, left: Rect, right: Rect) {
         ..left
     };
     for y in area.y..area.y + area.height {
-        row(out, area, y, Line::from(Span::styled("│", theme::muted())));
+        let bar = if p.ascii { "|" } else { "│" };
+        row(
+            out,
+            area,
+            y,
+            Line::from(Span::styled(bar, role(Role::Muted, p))),
+        );
     }
 }
 
@@ -218,12 +246,13 @@ pub(crate) fn placed(app: &App, body: Rect) -> Vec<Placed> {
         .unwrap_or_default();
     let areas = panes(body);
     let title = title_text(review, run);
-    render_title(&mut out, areas.title, &title, &count_text(tasks.len()));
+    let p = app.palette();
+    render_title(&mut out, areas.title, (&title, &count_text(tasks.len())), p);
     let Some(run) = run else {
         return out;
     };
-    render_tasks(&mut out, areas.left, &tasks, review.selected.as_deref());
-    render_separator(&mut out, areas.left, areas.right);
+    render_tasks(&mut out, areas.left, &tasks, review.selected.as_deref(), p);
+    render_separator(&mut out, areas.left, areas.right, p);
     let task = review
         .selected
         .as_ref()

@@ -24,7 +24,7 @@ fn stage_node_is_drawn_between_run_and_tasks_for_a_multi_run() {
                 "                                                │ ╰──────────────────────────╯",
                 "                                                │",
                 "                      ╭───────────────────────╮ │ ╭──────────────────────────╮",
-                "                    ┌─┤ ⠋ stage 1/2  tier 3 … ├─┼─┤ ● t2 reset endpoint S    │",
+                "                    ┌─┤ ✗ stage 1/2  tier 3 … ├─┼─┤ ● t2 reset endpoint S    │",
                 "                    │ ╰───────────────────────╯ │ ╰──────────────────────────╯",
                 "                    │                           │",
                 "╭─────────────────╮ │                           │ ╭──────────────────────────╮",
@@ -41,10 +41,12 @@ fn stage_node_is_drawn_between_run_and_tasks_for_a_multi_run() {
     // A stage not created yet is `◌` in the starting colour, never a created stage's.
     let (glyph, style) = glyph_of(&lines, rect_of(&layout, &stage_key(2)));
     assert_eq!(glyph, "◌");
-    assert_eq!(style.fg, Some(theme::status_color(proto::Status::Starting)));
+    assert_eq!(style.fg, Some(theme::fg(theme::Role::Muted)));
 }
 
 /// Each tier-3 state's mark and glyph; a stage with no head is `◌` whatever it says.
+/// Milestone 9.0.7 decision 3: a bisecting stage is `✗` (it is red), never a spinner,
+/// and one not yet run `◌`.
 #[test]
 fn each_tier3_state_has_its_mark_and_glyph() {
     use proto::FullState;
@@ -52,7 +54,8 @@ fn each_tier3_state_has_its_mark_and_glyph() {
         (FullState::Green, "✓", "✓"),
         (FullState::Red, "✗", "✗"),
         (FullState::Running, "…", "⠋"),
-        (FullState::None, "·", "○"),
+        (FullState::Bisecting, "…", "✗"),
+        (FullState::None, "·", "◌"),
     ] {
         let (mut snap, windows) = staged_fixture();
         snap.runs[0].stages[0].full.state = state;
@@ -93,7 +96,7 @@ fn the_gate_groups_tasks_by_uncreated_stages() {
     for n in [1, 2] {
         let (glyph, style) = glyph_of(&lines, rect_of(&layout, &stage_key(n)));
         assert_eq!(glyph, "◌", "stage {n}");
-        assert_eq!(style.fg, Some(theme::status_color(proto::Status::Starting)));
+        assert_eq!(style.fg, Some(theme::fg(theme::Role::Muted)));
     }
 }
 

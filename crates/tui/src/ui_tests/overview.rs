@@ -28,7 +28,7 @@ fn overview_replaces_the_terminal_with_the_graph() {
         " tree overview ",
         // Boxes: a project, a window and a sub-agent, each with its
         // glyph, between the borders only the graph draws.
-        "│ ◆ shop   ├",
+        "│ ⚑ shop   ├",
         "┤ ⠋ 1 api-worker ├",
         "┤ ⠋ Explore: map routes      ├",
         // The inspector panel spells the selected window out below it.
@@ -154,12 +154,12 @@ fn the_run_views_single_line_is_the_live_glyph_the_name_and_the_right_text() {
         let canvas = crate::graph::paint::style::node_glyph(row, &app);
         assert_eq!(
             (glyph.content.as_ref(), glyph.style.fg),
-            (canvas.0, Some(canvas.1)),
+            (canvas.0, Some(crate::theme::fg(canvas.1))),
             "the canvas's own glyph and colour"
         );
         (glyph.content.into_owned(), glyph.style.fg, label, right)
     };
-    let live = Some(crate::theme::status_color(Status::Working));
+    let live = Some(crate::theme::fg(crate::theme::Role::Working));
     let task = NodeKey::Task {
         run: RUN_ID.into(),
         id: "t1".into(),

@@ -4,7 +4,7 @@
 
 use crate::safe_text::one_line;
 use crate::theme::{self, Palette, Role, role};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders};
 
@@ -12,7 +12,8 @@ use ratatui::widgets::{Block, Borders};
 /// (`keys_here`, from `App::key_region`), else muted (§5.1 principle 2). The title's
 /// spans as given, one space each side, bold in the default colour: titles use
 /// weight, not the accent. Each span passes `safe_text::one_line`, as every kit
-/// widget's text does. An empty title draws none. No padding.
+/// widget's text does, and `theme::fold` in ASCII. An empty title draws none. No
+/// padding.
 pub fn pane_frame(title: Line<'static>, keys_here: bool, p: Palette) -> Block<'static> {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -27,11 +28,14 @@ pub fn pane_frame(title: Line<'static>, keys_here: bool, p: Palette) -> Block<'s
         title
             .spans
             .into_iter()
-            .map(|span| Span::styled(one_line(&span.content), span.style)),
+            .map(|span| Span::styled(theme::fold(&one_line(&span.content), p.ascii), span.style)),
     );
     spans.push(Span::raw(" "));
-    let weight = Style::default()
-        .fg(Color::Reset)
-        .add_modifier(Modifier::BOLD);
+    // The default foreground, set, so the accented border under the title does not
+    // tint it.
+    let weight = Style {
+        fg: Style::reset().fg,
+        ..Style::default().add_modifier(Modifier::BOLD)
+    };
     block.title(Line::from(spans).style(weight.patch(title.style)))
 }

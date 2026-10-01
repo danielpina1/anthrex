@@ -50,6 +50,23 @@ fn exactly_one_accented_frame_in_every_region() {
     }
 }
 
+/// Review focus 2.
+#[test]
+fn ascii_mode_emits_only_ascii_everywhere() {
+    for (name, mut app) in fixtures() {
+        app.settings.badges.ascii = true;
+        for (w, h) in [(80, 24), (120, 40)] {
+            let buffer = audit::draw(&app, w, h);
+            assert_eq!(
+                audit::first_non_ascii(&buffer),
+                None,
+                "{name} at {w}x{h}:\n{}",
+                audit::rows(&buffer).join("\n")
+            );
+        }
+    }
+}
+
 /// §6.9: the state word and the `esc` hint visible where the mode has one, and the
 /// fixture's actionable keys never only muted.
 #[test]

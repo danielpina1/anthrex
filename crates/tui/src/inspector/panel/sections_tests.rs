@@ -60,7 +60,7 @@ fn t2_with_brief(brief_lines: usize) -> crate::app::App {
 fn the_collapsed_brief_ends_with_more_in_muted() {
     let app = t2_with_brief(5);
     let inspection = inspect_node(&app, &t2_key());
-    let body = body_lines(&inspection.sections, 76);
+    let body = body_lines(&inspection.sections, 76, Palette::PLAIN);
     let rows = text(&body);
     assert_eq!(
         rows[1..5],
@@ -73,7 +73,10 @@ fn the_collapsed_brief_ends_with_more_in_muted() {
     );
     let more = body[4].spans.last().unwrap();
     assert_eq!(more.content, MORE);
-    assert_eq!(more.style, theme::muted());
+    assert_eq!(
+        more.style,
+        theme::role(theme::Role::Muted, theme::Palette::PLAIN)
+    );
     assert!(
         body[0].spans[0].style.add_modifier.contains(Modifier::BOLD),
         "GOAL is bold"
@@ -85,9 +88,9 @@ fn task_panel_scrolls() {
     let mut app = t2_with_brief(12);
     app.brief_expanded = Some(t2_key());
     let mut inspection = inspect_node(&app, &t2_key());
-    let body = text(&body_lines(&inspection.sections, 76));
+    let body = text(&body_lines(&inspection.sections, 76, Palette::PLAIN));
     let height = 10;
-    let top = text(&lines(&inspection, 76, height));
+    let top = text(&lines(&inspection, 76, height, Palette::PLAIN));
     assert_eq!(top.len(), height);
     assert!(
         top[0].starts_with("◐ t2  map Gemini"),
@@ -95,12 +98,12 @@ fn task_panel_scrolls() {
     );
     assert_eq!(top[1..], body[..height - 1]);
     inspection.scroll = 5;
-    let scrolled = text(&lines(&inspection, 76, height));
+    let scrolled = text(&lines(&inspection, 76, height, Palette::PLAIN));
     assert!(scrolled[0].starts_with("◐ t2"), "the title row stays");
     assert_eq!(scrolled[1..], body[5..5 + height - 1]);
     // Past the end: clamped so the last body row is the last panel row.
     inspection.scroll = u16::MAX;
-    let end = text(&lines(&inspection, 76, height));
+    let end = text(&lines(&inspection, 76, height, Palette::PLAIN));
     assert_eq!(end[1..], body[body.len() - (height - 1)..]);
     assert_eq!(end.last(), body.last());
     // `task_panel_rows` counts exactly those body rows.
@@ -118,7 +121,7 @@ fn every_row_fits_the_width() {
     let inspection = inspect_node(&app, &t2_key());
     for width in [1, 9, 10, 11, 30, 76] {
         // The title row is M8c's (`rows::title`); the body is this renderer's.
-        for line in body_lines(&inspection.sections, width) {
+        for line in body_lines(&inspection.sections, width, Palette::PLAIN) {
             let row: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
             assert!(
                 unicode_width::UnicodeWidthStr::width(row.as_str()) <= width,
@@ -126,7 +129,7 @@ fn every_row_fits_the_width() {
             );
         }
     }
-    assert!(body_lines(&inspection.sections, 0).is_empty());
+    assert!(body_lines(&inspection.sections, 0, Palette::PLAIN).is_empty());
 }
 
 /// Pinning: M8c's 8 and 12 row steps are unchanged below 37 rows; the tall step
@@ -217,7 +220,7 @@ fn a_lone_carriage_return_breaks_the_line() {
     let app = t2_with_brief(0);
     let mut inspection = inspect_node(&app, &t2_key());
     inspection.sections[0].fields[0].value = "first\rsecond\r\nthird".into();
-    let rows = text(&body_lines(&inspection.sections, 76));
+    let rows = text(&body_lines(&inspection.sections, 76, Palette::PLAIN));
     assert_eq!(
         rows[1..4],
         ["brief     first", "          second", "          third"]
@@ -244,7 +247,7 @@ fn the_borders_say_there_is_more() {
     };
     let app = t2_with_brief(3);
     let mut inspection = inspect_node(&app, &t2_key());
-    let rows = body_lines(&inspection.sections, 80).len();
+    let rows = body_lines(&inspection.sections, 80, Palette::PLAIN).len();
     // 84 x 18: an interior of 80 x 16, 15 body rows, more below.
     let buffer = draw(&inspection, 84, 18);
     assert!(
@@ -255,7 +258,11 @@ fn the_borders_say_there_is_more() {
     assert!(!row(&buffer, 0).contains("PgUp"), "{}", row(&buffer, 0));
     let mark = row(&buffer, 17).find("↓").unwrap();
     let x = u16::try_from(row(&buffer, 17)[..mark].chars().count()).unwrap();
-    assert_eq!(buffer[(x, 17)].style().fg, theme::muted().fg, "muted");
+    assert_eq!(
+        buffer[(x, 17)].style().fg,
+        theme::role(theme::Role::Muted, theme::Palette::PLAIN).fg,
+        "muted"
+    );
     // Scrolled into the middle: both.
     inspection.scroll = 3;
     let buffer = draw(&inspection, 84, 18);

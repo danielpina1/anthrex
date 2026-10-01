@@ -524,8 +524,11 @@ fn a_blank_wrapped_field_still_costs_its_row() {
         ],
     );
     for height in 0..=6 {
-        let lines = super::lines(&inspection, 40, height);
+        let lines = super::lines(&inspection, 40, height, crate::theme::Palette::PLAIN);
         assert!(lines.len() <= height.max(1), "{height}: {}", lines.len());
     }
-    assert_eq!(super::lines(&inspection, 40, 3).len(), 3);
+    assert_eq!(
+        super::lines(&inspection, 40, 3, crate::theme::Palette::PLAIN).len(),
+        3
+    );
 }

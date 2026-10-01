@@ -11,9 +11,9 @@ use super::{Edge, Layout, Pan};
 use crate::app::App;
 use crate::theme;
 use crate::tree::{NodeKey, Row};
-use crate::ui::tree_view::truncate;
+use crate::ui::tree_view::truncate_in;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::collections::HashMap;
 use style::Highlight;
@@ -44,7 +44,7 @@ pub fn paint(
     rows: &[Row<'_>],
     app: &App,
 ) -> Vec<Line<'static>> {
-    let mut grid = Grid::new(area, pan);
+    let mut grid = Grid::new(area, pan, app.palette());
     let highlight = Highlight::of(rows, app);
     // One pass over the nodes instead of one scan per edge endpoint: an edge
     // names its parent and children by key, and there are as many edges as
@@ -86,16 +86,22 @@ impl Default for Cell {
 /// `height`.
 struct Grid {
     pan: Pan,
+    /// The muted border style the gap columns' edges are drawn in.
+    edge: Style,
+    /// Edges in `-`, `|` and `+` (milestone 9.0.7 decision 5).
+    ascii: bool,
     width: u16,
     height: u16,
     cells: Vec<Cell>,
 }
 
 impl Grid {
-    fn new(area: Rect, pan: Pan) -> Self {
+    fn new(area: Rect, pan: Pan, p: theme::Palette) -> Self {
         let cells = vec![Cell::default(); usize::from(area.width) * usize::from(area.height)];
         Self {
             pan,
+            edge: theme::role(theme::Role::Muted, p),
+            ascii: p.ascii,
             width: area.width,
             height: area.height,
             cells,
@@ -126,7 +132,8 @@ impl Grid {
     /// Writes one cell of an edge, in the plain border style the gap columns
     /// belong to.
     fn place_edge_cell(&mut self, canvas_x: u16, canvas_y: u16, text: &str) {
-        self.place(canvas_x, canvas_y, text.to_owned(), theme::border());
+        let text = line_glyph(text, self.ascii).to_owned();
+        self.place(canvas_x, canvas_y, text, self.edge);
     }
 
     /// Replaces a cell's text but keeps the style already under it, so a
@@ -134,7 +141,7 @@ impl Grid {
     /// selected styling instead of reverting it to the plain border style.
     fn overwrite_text(&mut self, canvas_x: u16, canvas_y: u16, text: &str) {
         if let Some(index) = self.index(canvas_x, canvas_y) {
-            self.cells[index].text = text.to_owned();
+            self.cells[index].text = line_glyph(text, self.ascii).to_owned();
         }
     }
 
@@ -228,20 +235,24 @@ fn node_rows(
     let width = usize::from(width);
     let node = style::node_style(row, app, highlight);
     let border = node.border;
-    let (glyph, glyph_color) = style::node_glyph(row, app);
-    let text = super::content_text(row);
+    let p = app.palette();
+    let set = theme::border_set(p.ascii);
+    let (glyph, glyph_role) = style::node_glyph(row, app);
+    let text = super::content_text_in(row, p.ascii);
+    let cell = |symbol: &str| (symbol.to_owned(), border);
 
-    let mut top = vec![(String::from("─"), border); width];
-    top[0] = (String::from("╭"), border);
-    top[width - 1] = (String::from("╮"), border);
+    let mut top = vec![cell(set.horizontal_top); width];
+    top[0] = cell(set.top_left);
+    top[width - 1] = cell(set.top_right);
 
-    let mut bottom = vec![(String::from("─"), border); width];
-    bottom[0] = (String::from("╰"), border);
-    bottom[width - 1] = (String::from("╯"), border);
+    let mut bottom = vec![cell(set.horizontal_bottom); width];
+    bottom[0] = cell(set.bottom_left);
+    bottom[width - 1] = cell(set.bottom_right);
 
-    let mut content = interior_slots(width - 2, glyph, glyph_color, &text);
-    content.insert(0, (String::from("│"), border));
-    content.push((String::from("│"), border));
+    let glyph_style = theme::role(glyph_role, p);
+    let mut content = interior_slots(width - 2, glyph, glyph_style, &text, p.ascii);
+    content.insert(0, cell(set.vertical_left));
+    content.push(cell(set.vertical_right));
 
     let mut rows = [top, content, bottom];
     if node.dim {
@@ -261,19 +272,20 @@ fn node_rows(
 fn interior_slots(
     inner: usize,
     glyph: &'static str,
-    glyph_color: Color,
+    glyph_style: Style,
     text: &str,
+    ascii: bool,
 ) -> Vec<(String, Style)> {
     let plain = Style::default();
     let mut slots = vec![
         (" ".to_owned(), plain),
-        (glyph.to_owned(), plain.fg(glyph_color)),
+        (glyph.to_owned(), glyph_style),
         (" ".to_owned(), plain),
     ];
     // The pad, glyph and space above, plus one more space of padding held in
     // reserve on the right (decision 3), are never available to the text.
     let text_max = inner.saturating_sub(slots.len() + 1);
-    for grapheme in truncate(text, text_max).graphemes(true) {
+    for grapheme in truncate_in(text, text_max, ascii).graphemes(true) {
         slots.push((grapheme.to_owned(), plain));
         if UnicodeWidthStr::width(grapheme) == 2 {
             slots.push((String::new(), plain));
@@ -452,6 +464,18 @@ fn bus_cell(row: u16, top: u16, bottom: u16, child_rows: &[u16]) -> BusCell {
 ///
 /// The corners are sharp, not rounded like the boxes': `└` is already what the
 /// sidebar's guides mean by "last child", and that idiom wins.
+/// An edge glyph in ASCII when `ascii` (decision 5): `─` as `-`, `│` as `|`, and every
+/// corner and junction as `+`.
+fn line_glyph(text: &str, ascii: bool) -> &str {
+    match text {
+        _ if !ascii => text,
+        "─" => "-",
+        "│" => "|",
+        "┌" | "┬" | "├" | "┼" | "└" | "┴" | "┤" | "┐" | "┘" => "+",
+        other => other,
+    }
+}
+
 fn bus_glyph(cell: BusCell, parent_arrives: bool) -> &'static str {
     match (cell, parent_arrives) {
         (BusCell::Top, false) => "┌",

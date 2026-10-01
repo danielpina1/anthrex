@@ -62,7 +62,7 @@ fn planning_run_header() {
     assert_eq!(node_text(&app, &run_key()), "orchestrator  planning");
     assert_eq!(
         inspection.glyph.style.fg,
-        Some(theme::status_color(Status::Working))
+        Some(theme::fg(theme::Role::Working))
     );
 }
 
@@ -70,7 +70,7 @@ fn planning_run_header() {
 fn reported_held_and_paused_glyphs() {
     let (snapshot, windows) = held_fixture();
     let app = app_of((snapshot.clone(), windows.clone()));
-    let paused = theme::PAUSED_COLOR;
+    let paused = theme::fg(theme::Role::Paused);
     assert_eq!(
         look(&app, "t1"),
         (
@@ -79,12 +79,12 @@ fn reported_held_and_paused_glyphs() {
             "M · tdd · paused (message)".into()
         )
     );
-    let idle = theme::status_color(Status::Idle);
+    let idle = theme::fg(theme::Role::Muted);
     assert_eq!(
         look(&app, "t2"),
         ("○".into(), Some(idle), "S · tdd · queued · held".into())
     );
-    let done = theme::status_color(Status::Done);
+    let done = theme::fg(theme::Role::Done);
     assert_eq!(
         look(&app, "t3"),
         ("✓".into(), Some(done), "S · tdd · reported".into())
@@ -97,7 +97,7 @@ fn reported_held_and_paused_glyphs() {
         Status::Attention,
         Status::Done,
     ] {
-        assert_ne!(paused, theme::status_color(status));
+        assert_ne!(paused, theme::fg(theme::status_look(status, 0, false).1));
     }
 
     // Once the hold is approved, `t2` is an ordinary queued task again.
@@ -108,7 +108,7 @@ fn reported_held_and_paused_glyphs() {
         look(&app, "t2"),
         (
             "▫".into(),
-            Some(theme::task_color(TaskState::Queued)),
+            Some(theme::fg(theme::Role::Muted)),
             "S · tdd · queued".into()
         )
     );
@@ -167,7 +167,10 @@ fn planner_nodes_from_planner_info() {
     assert_eq!(node_text(&app, &key("A")), "planner A daemon side  1/2");
     assert_eq!(node_text(&app, &key("B")), "planner B  0/0");
     let a = inspect_node(&app, &key("A"));
-    assert_eq!(a.glyph.content, theme::status_glyph(Status::Working, 0));
+    assert_eq!(
+        a.glyph.content,
+        theme::status_look(Status::Working, 0, false).0
+    );
     assert_eq!(
         pairs(&a),
         [

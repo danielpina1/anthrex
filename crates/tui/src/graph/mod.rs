@@ -216,11 +216,18 @@ fn place(index: usize, children: &[Vec<usize>], tops: &mut [u16], next_row: &mut
 /// The painter draws exactly this, so the width a tier is sized to and the
 /// text that has to fit in it cannot drift apart.
 pub(crate) fn content_text(row: &Row<'_>) -> String {
-    // Milestone 9 (M9.6 review M-6): planner, epic, scout and task texts are agents'.
-    crate::safe_text::one_line(&raw_content_text(row))
+    content_text_in(row, false)
 }
 
-fn raw_content_text(row: &Row<'_>) -> String {
+/// [`content_text`] with the client's own marks in ASCII when `ascii` (milestone
+/// 9.0.7 decisions 5 and 6). The layout measures the wider of the two forms, so a box
+/// is the same size in either mode.
+pub(crate) fn content_text_in(row: &Row<'_>, ascii: bool) -> String {
+    // Milestone 9 (M9.6 review M-6): planner, epic, scout and task texts are agents'.
+    crate::safe_text::one_line(&raw_content_text(row, ascii))
+}
+
+fn raw_content_text(row: &Row<'_>, ascii: bool) -> String {
     match &row.kind {
         RowKind::Project { name, .. } => name.clone(),
         RowKind::Window { info, position, .. } => format!("{position} {}", info.name),
@@ -230,8 +237,8 @@ fn raw_content_text(row: &Row<'_>) -> String {
         } => run_text::run_text(run, orchestrator.is_some()),
         RowKind::Planner { run, planner } => run_text::planner_text(run, planner),
         RowKind::Scout { scout, .. } => scout.question.clone(),
-        RowKind::Task { task, .. } => run_text::task_text(task),
-        RowKind::Stage { run, stage } => run_text::stage_text(run, stage),
+        RowKind::Task { task, .. } => run_text::task_text_in(task, ascii),
+        RowKind::Stage { run, stage } => run_text::stage_text_in(run, stage, ascii),
         RowKind::AgentRound { round, .. } => run_text::round_text(round),
     }
 }
@@ -241,7 +248,8 @@ fn raw_content_text(row: &Row<'_>) -> String {
 /// Display width, not byte length and not a character count: one CJK label
 /// measured wrongly pushes every border in its tier out of line (decision 10).
 fn content_width(row: &Row<'_>) -> usize {
-    GLYPH_COLUMNS.saturating_add(UnicodeWidthStr::width(content_text(row).as_str()))
+    let width = |ascii| UnicodeWidthStr::width(content_text_in(row, ascii).as_str());
+    GLYPH_COLUMNS.saturating_add(width(false).max(width(true)))
 }
 
 #[cfg(test)]

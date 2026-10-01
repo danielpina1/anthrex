@@ -64,7 +64,7 @@ fn sidebar_renders_the_example_tree_at_the_default_width() {
     let (out, _) = render(&app, 120, 30);
     assert!(out.contains(" agents "), "{out}");
     for golden in [
-        "▾ shop            ◆  cl 4 · cx 3",
+        "▾ shop            ⚑  cl 4 · cx 3",
         "├─▎ ⠋ 1 api-worker   cl opus  2m",
         "│ ├─⠋ Explore: map routes   Read",
         "▾ blog                   ○  cl 1",
@@ -72,7 +72,7 @@ fn sidebar_renders_the_example_tree_at_the_default_width() {
         assert!(out.contains(golden), "{golden:?}\n{out}");
     }
     assert!(out.contains("│ └─✓ tests: run unit suite"), "{out}");
-    assert!(out.contains(" ◆ 2 billing"), "{out}");
+    assert!(out.contains(" ⚑ 2 billing"), "{out}");
     assert!(out.contains("8 agents · 2 working"), "{out}");
 }
 
@@ -87,11 +87,11 @@ fn a_sub_agent_asking_for_permission_shows_a_diamond() {
         })
         .unwrap();
     let out = terminal.backend().to_string();
-    assert!(out.contains("│ ├─◆ Explore: map routes"), "{out}");
+    assert!(out.contains("│ ├─⚑ Explore: map routes"), "{out}");
     assert!(out.contains("│ └─✓ tests: run unit suite"), "{out}");
     assert_eq!(
         terminal.backend().buffer()[(5, 3)].fg,
-        crate::theme::status_color(Status::Attention)
+        crate::theme::fg(crate::theme::Role::Attention)
     );
     app.windows[0].subagents[0].needs_permission = false;
     let (out, _) = render(&app, 120, 30);

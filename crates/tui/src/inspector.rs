@@ -10,11 +10,10 @@
 use crate::app::App;
 use crate::theme;
 use crate::tree::{self, NodeKey, Row, RowKind, RuntimeCounts};
-use crate::ui::statusbar::{change_parts, git_spans, head_text};
+use crate::ui::statusbar::{change_parts, git_spans_in, head_text};
 use crate::ui::terminal::shorten_home;
 use crate::ui::tree_view::counts_text;
 use proto::{GitState, Status, SubagentInfo, SubagentState, WindowInfo};
-use ratatui::style::Style;
 use ratatui::text::Span;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -110,8 +109,32 @@ fn field(label: &'static str, value: impl Into<String>) -> Field {
 }
 
 /// Everything anthrex knows about one node. Pure: it reads `app`, and computes
-/// strings (decision 13).
+/// strings (decision 13). In ASCII mode every string is folded here (milestone 9.0.7
+/// decision 5), so the panel lays out, and `task_panel_rows` counts, what is drawn.
 pub fn inspect(row: &Row<'_>, app: &App) -> Inspection {
+    let inspection = inspect_raw(row, app);
+    if app.palette().ascii {
+        fold_inspection(inspection)
+    } else {
+        inspection
+    }
+}
+
+/// `inspection` with every string `theme::fold`ed to ASCII, its glyphs their twins.
+fn fold_inspection(mut inspection: Inspection) -> Inspection {
+    let fold = |text: &str| theme::ascii_twins(&theme::fold(text, true));
+    inspection.name = fold(&inspection.name);
+    inspection.right = inspection.right.as_deref().map(fold);
+    for field in &mut inspection.fields {
+        field.value = fold(&field.value);
+    }
+    for field in inspection.sections.iter_mut().flat_map(|s| &mut s.fields) {
+        field.value = fold(&field.value);
+    }
+    inspection
+}
+
+fn inspect_raw(row: &Row<'_>, app: &App) -> Inspection {
     match &row.kind {
         RowKind::Project {
             root,
@@ -132,9 +155,9 @@ pub fn inspect(row: &Row<'_>, app: &App) -> Inspection {
             ..Default::default()
         },
         RowKind::Subagent { info } => Inspection {
-            glyph: Span::styled(
-                theme::subagent_glyph(info, app.spinner_frame),
-                Style::default().fg(theme::subagent_color(info)),
+            glyph: look(
+                theme::subagent_look(info, app.spinner_frame, app.palette().ascii),
+                app,
             ),
             name: subagent_name(info),
             fields: subagent_fields(row, info, app),
@@ -154,10 +177,15 @@ pub fn inspect(row: &Row<'_>, app: &App) -> Inspection {
 }
 
 fn status_span(status: Status, app: &App) -> Span<'static> {
-    Span::styled(
-        theme::status_glyph(status, app.spinner_frame),
-        Style::default().fg(theme::status_color(status)),
+    look(
+        theme::status_look(status, app.spinner_frame, app.palette().ascii),
+        app,
     )
+}
+
+/// A look's glyph styled in its role (milestone 9.0.7 decision 3).
+pub(crate) fn look((glyph, role): (&'static str, theme::Role), app: &App) -> Span<'static> {
+    Span::styled(glyph, theme::role(role, app.palette()))
 }
 
 /// A project's path, status and runtime counts, and its git state only when
@@ -183,7 +211,7 @@ fn project_fields(root: &Path, status: Status, counts: RuntimeCounts, app: &App)
         1 if all_on_a_worktree => {
             if let Some(state) = worktrees.iter().next().and_then(|root| app.git.get(*root)) {
                 fields.push(field("branch", head_text(&state.head)));
-                fields.push(field("changes", changes_text(state)));
+                fields.push(field("changes", changes_text(state, app.palette())));
             }
         }
         // A count of the worktrees a project spans is true whether or not every
@@ -212,7 +240,7 @@ fn window_fields(info: &WindowInfo, app: &App) -> Vec<Field> {
     // Keyed by the worktree root, and absent state omits the field rather than
     // showing it empty (decision 12).
     if let Some(state) = info.worktree.as_deref().and_then(|root| app.git.get(root)) {
-        fields.push(field("branch", git_text(state)));
+        fields.push(field("branch", git_text(state, app.palette())));
     }
     if !info.subagents.is_empty() {
         let running = info
@@ -339,8 +367,8 @@ fn display_path(path: &Path) -> String {
 /// glyphs are the status bar's, joined rather than ranked — the panel has room
 /// for all three (spec §3 names dirty and untracked; a conflict outweighs
 /// either and is shown with them).
-fn changes_text(state: &GitState) -> String {
-    let parts = change_parts(state);
+fn changes_text(state: &GitState, p: theme::Palette) -> String {
+    let parts = change_parts(state, p);
     if parts.is_empty() {
         return "clean".to_owned();
     }
@@ -353,8 +381,8 @@ fn changes_text(state: &GitState) -> String {
 
 /// A window's branch with its dirty and ahead/behind counts, built by the one
 /// function that already decides what a worktree's git state reads as.
-fn git_text(state: &GitState) -> String {
-    git_spans(state, usize::MAX)
+fn git_text(state: &GitState, p: theme::Palette) -> String {
+    git_spans_in(state, usize::MAX, p)
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
@@ -386,7 +414,7 @@ pub fn task_panel_rows(app: &App, width: u16) -> usize {
         return 0;
     }
     let inspection = inspect(row, app);
-    panel::sections::body_lines(&inspection.sections, usize::from(width)).len()
+    panel::sections::body_lines(&inspection.sections, usize::from(width), app.palette()).len()
 }
 
 #[cfg(test)]

@@ -59,7 +59,7 @@ fn the_focus_marker_follows_the_guides() {
     assert_eq!(line.spans[2].content.as_ref(), " ", "not collapsed");
     assert_eq!(
         line.spans[3].content.as_ref(),
-        theme::status_glyph(Status::Working, app.spinner_frame),
+        theme::status_look(Status::Working, app.spinner_frame, false).0,
         "status glyph"
     );
 }
@@ -79,7 +79,7 @@ fn the_collapsed_marker_follows_the_guides() {
     assert_eq!(line.spans[2].content.as_ref(), "▸", "collapsed marker");
     assert_eq!(
         line.spans[3].content.as_ref(),
-        theme::status_glyph(Status::Working, app.spinner_frame),
+        theme::status_look(Status::Working, app.spinner_frame, false).0,
         "status glyph follows both markers"
     );
 }
@@ -376,7 +376,8 @@ fn the_sidebar_line_of_a_run_names_its_goal_and_progress() {
     let app = app_with_runs(windows, snapshot);
     let text = run_line(&app, 40);
     assert!(text.starts_with("├─"), "{text:?}");
-    assert!(text.contains('◉'), "{text:?}");
+    // Milestone 9.0.7 decision 3: a run at its gate needs you.
+    assert!(text.contains('⚑'), "{text:?}");
     assert!(text.contains("Add password reset"), "{text:?}");
     assert!(text.ends_with("0/2"), "{text:?}");
     assert_eq!(UnicodeWidthStr::width(text.as_str()), 40, "{text:?}");

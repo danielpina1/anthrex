@@ -238,10 +238,10 @@ fn a_warning_in_attention() {
     app.toast_at(ToastLevel::Warn, "careful");
     let attention = role(Role::Attention, app.palette());
     assert_eq!(toast_style(&app).fg, attention.fg);
-    // An info toast keeps the accent, and `toast()` means Info.
+    // An info toast keeps the `Accent` role, and `toast()` means Info.
     app.toast("fine");
     assert_eq!(app.toast_level(), Some(ToastLevel::Info));
-    assert_eq!(toast_style(&app).fg, Some(app.settings.accent));
+    assert_eq!(toast_style(&app).fg, role(Role::Accent, app.palette()).fg);
 }
 
 #[test]

@@ -10,8 +10,8 @@
 use super::{Inspection, pad, rows, wrap_value};
 use crate::inspector::{BRIEF_LINES, RUN_LABEL_WIDTH, Section, SectionField};
 use crate::safe_text::{multi_line, one_line};
-use crate::theme;
-use crate::ui::tree_view::truncate;
+use crate::theme::{self, Palette, Role};
+use crate::ui::tree_view::truncate_in;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -19,11 +19,11 @@ use ratatui::text::{Line, Span};
 pub(crate) const MORE: &str = "… (b: more)";
 
 /// A value's lines, sanitised, each wrapped to `width` (a blank line stays one row).
-fn value_lines(value: &str, width: usize) -> Vec<String> {
+fn value_lines(value: &str, width: usize, ascii: bool) -> Vec<String> {
     let mut out = Vec::new();
     for raw in multi_line(value).split('\n') {
         let line = one_line(raw);
-        let wrapped = wrap_value(&line, width, usize::MAX);
+        let wrapped = wrap_value(&line, width, usize::MAX, ascii);
         if wrapped.is_empty() {
             out.push(String::new());
         } else {
@@ -33,19 +33,22 @@ fn value_lines(value: &str, width: usize) -> Vec<String> {
     out
 }
 
-fn field_lines(field: &SectionField, width: usize) -> Vec<Line<'static>> {
+fn field_lines(field: &SectionField, width: usize, p: Palette) -> Vec<Line<'static>> {
+    let muted = theme::role(Role::Muted, p);
+    let truncate = |text: &str, width| truncate_in(text, width, p.ascii);
     if field.label.is_empty() {
-        return value_lines(&field.value, width)
+        return value_lines(&field.value, width, p.ascii)
             .into_iter()
-            .map(|line| Line::from(Span::styled(line, theme::muted())))
+            .map(|line| Line::from(Span::styled(line, muted)))
             .collect();
     }
     let label_width = RUN_LABEL_WIDTH.min(width);
     let value_width = width - label_width;
-    let mut values = value_lines(&field.value, value_width.max(1));
+    let mut values = value_lines(&field.value, value_width.max(1), p.ascii);
+    let more = theme::fold(MORE, p.ascii);
     if field.collapse && values.len() > BRIEF_LINES {
         values.truncate(BRIEF_LINES);
-        values.push(MORE.to_owned());
+        values.push(more.clone());
     }
     let label = if field.label.len() >= label_width {
         truncate(field.label, label_width.saturating_sub(1))
@@ -56,7 +59,7 @@ fn field_lines(field: &SectionField, width: usize) -> Vec<Line<'static>> {
     if let Some(note) = field.note {
         // The label and its note on a row of their own, the value under it.
         let head = truncate(&format!("{} ({note})", field.label), width);
-        out.push(Line::from(Span::styled(head, theme::muted())));
+        out.push(Line::from(Span::styled(head, muted)));
         for value in values {
             out.push(Line::from(vec![
                 Span::raw(" ".repeat(label_width)),
@@ -67,13 +70,13 @@ fn field_lines(field: &SectionField, width: usize) -> Vec<Line<'static>> {
     }
     for (n, value) in values.into_iter().enumerate() {
         let head = if n == 0 { label.as_str() } else { "" };
-        let style = if value == MORE {
-            theme::muted()
+        let style = if value == more {
+            muted
         } else {
             Style::default()
         };
         out.push(Line::from(vec![
-            Span::styled(pad(head, label_width), theme::muted()),
+            Span::styled(pad(head, label_width), muted),
             Span::styled(truncate(&value, value_width), style),
         ]));
     }
@@ -82,7 +85,7 @@ fn field_lines(field: &SectionField, width: usize) -> Vec<Line<'static>> {
 
 /// Every body row of `sections` at `width` columns: the scrollable part of the panel.
 /// Its length is what `inspector::task_panel_rows` counts.
-pub(crate) fn body_lines(sections: &[Section], width: usize) -> Vec<Line<'static>> {
+pub(crate) fn body_lines(sections: &[Section], width: usize, p: Palette) -> Vec<Line<'static>> {
     if width == 0 {
         return Vec::new();
     }
@@ -90,11 +93,11 @@ pub(crate) fn body_lines(sections: &[Section], width: usize) -> Vec<Line<'static
     let mut out = Vec::new();
     for section in sections {
         out.push(Line::from(Span::styled(
-            truncate(section.title, width),
+            truncate_in(section.title, width, p.ascii),
             bold,
         )));
         for field in &section.fields {
-            out.extend(field_lines(field, width));
+            out.extend(field_lines(field, width, p));
         }
     }
     out
@@ -108,10 +111,15 @@ fn first_row(len: usize, room: usize, scroll: u16) -> usize {
 
 /// The panel's interior: the title row, then `height − 1` body rows from `scroll`,
 /// clamped to the end.
-pub(super) fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec<Line<'static>> {
-    let mut out = vec![rows::title(inspection, width)];
+pub(super) fn lines(
+    inspection: &Inspection,
+    width: usize,
+    height: usize,
+    p: Palette,
+) -> Vec<Line<'static>> {
+    let mut out = vec![rows::title(inspection, width, p)];
     let room = height.saturating_sub(1);
-    let body = body_lines(&inspection.sections, width);
+    let body = body_lines(&inspection.sections, width, p);
     let first = first_row(body.len(), room, inspection.scroll);
     out.extend(body.into_iter().skip(first).take(room));
     out
@@ -123,9 +131,14 @@ pub(super) const MORE_BELOW: &str = " ↓ PgDn ";
 
 /// Ruling D-2: whether body rows lie above and below what an interior of `width` x
 /// `height` draws.
-pub(super) fn more(inspection: &Inspection, width: usize, height: usize) -> (bool, bool) {
+pub(super) fn more(
+    inspection: &Inspection,
+    width: usize,
+    height: usize,
+    p: Palette,
+) -> (bool, bool) {
     let room = height.saturating_sub(1);
-    let len = body_lines(&inspection.sections, width).len();
+    let len = body_lines(&inspection.sections, width, p).len();
     let first = first_row(len, room, inspection.scroll);
     (first > 0, first + room < len)
 }

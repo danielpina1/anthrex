@@ -166,17 +166,23 @@ fn selected_row<'a, 'b>(app: &App, rows: &'a [Row<'b>]) -> Option<&'a Row<'b>> {
 fn footer_line(row: &Row<'_>, app: &App) -> Line<'static> {
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let (glyph, label, fields) = footer_parts(row, app);
+    let p = app.palette();
     Line::from(vec![
         glyph,
         Span::raw(" "),
-        Span::styled(label, bold),
-        Span::styled(fields, theme::muted()),
+        Span::styled(theme::fold(&label, p.ascii), bold),
+        Span::styled(
+            theme::fold(&fields, p.ascii),
+            theme::role(theme::Role::Muted, p),
+        ),
     ])
 }
 
 /// One node's footer: its status glyph in its status colour, the text it is
 /// known by, and the fields that follow it.
 pub(super) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, String) {
+    let (frame, ascii) = (app.spinner_frame, app.palette().ascii);
+    let look = |look| crate::inspector::look(look, app);
     match &row.kind {
         RowKind::Project {
             root,
@@ -188,10 +194,7 @@ pub(super) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, 
             let root = super::terminal::shorten_home(root);
             let root = if root == "~/" { "~" } else { &root };
             (
-                Span::styled(
-                    theme::status_glyph(*status, app.spinner_frame),
-                    Style::default().fg(theme::status_color(*status)),
-                ),
+                look(theme::status_look(*status, frame, ascii)),
                 name.clone(),
                 format!(
                     "  {root}  {}  {}",
@@ -201,10 +204,7 @@ pub(super) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, 
             )
         }
         RowKind::Window { info, position, .. } => (
-            Span::styled(
-                theme::status_glyph(info.status, app.spinner_frame),
-                Style::default().fg(theme::status_color(info.status)),
-            ),
+            look(theme::status_look(info.status, frame, ascii)),
             format!("{position} {}", info.name),
             format!(
                 "  {}  {}  {}  {}{}",
@@ -225,10 +225,7 @@ pub(super) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, 
                 proto::SubagentState::Failed => ("failed", finished_secs(info)),
             };
             (
-                Span::styled(
-                    theme::subagent_glyph(info, app.spinner_frame),
-                    Style::default().fg(theme::subagent_color(info)),
-                ),
+                look(theme::subagent_look(info, frame, ascii)),
                 tree::subagent_label(info),
                 format!(
                     "  {}  {state}  {}{}",

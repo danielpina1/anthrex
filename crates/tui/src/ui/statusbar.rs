@@ -27,17 +27,19 @@ fn push_disconnected(spans: &mut Vec<Span<'static>>) {
 const GAP: u16 = 2;
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
-    let accent = app.settings.accent;
     let palette = app.palette();
+    // Milestone 9.0.7 (task 2 note 12): the `Accent` role, never the raw setting.
+    let accent = role(Role::Accent, palette);
+    let muted = role(Role::Muted, palette);
     let mut spans = Vec::new();
     if let Some(badge) = statusbar_modes::badge(app) {
-        spans.push(Span::styled(
-            badge,
-            Style::default()
+        let style = Style {
+            bg: accent.fg,
+            ..Style::default()
                 .fg(Color::Black)
-                .bg(accent)
-                .add_modifier(Modifier::BOLD),
-        ));
+                .add_modifier(Modifier::BOLD)
+        };
+        spans.push(Span::styled(badge, style));
         spans.push(Span::raw(" "));
     } else {
         match &app.link {
@@ -48,7 +50,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 push_disconnected(&mut spans);
                 spans.push(Span::styled(
                     format!("reconnecting (attempt {attempts})"),
-                    theme::muted(),
+                    muted,
                 ));
                 spans.push(Span::raw(" "));
             }
@@ -57,7 +59,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 push_disconnected(&mut spans);
                 spans.push(Span::styled(
                     format!("{} r to reconnect", app.settings.prefix_label),
-                    theme::muted(),
+                    muted,
                 ));
                 spans.push(Span::raw(" "));
             }
@@ -75,9 +77,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                     theme::glyph(Glyph::NeedsYou, palette.ascii),
                     all.len()
                 ),
-                Style::default()
-                    .fg(theme::alert_color(top.priority))
-                    .add_modifier(Modifier::BOLD),
+                theme::alert_style(top.priority, palette),
             ));
             spans.push(Span::raw(" "));
         }
@@ -89,10 +89,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .unwrap_or(0);
 
     if statusbar_modes::filtering(app) {
-        spans.push(Span::styled(
-            format!("/{}", app.tree.filter),
-            theme::muted(),
-        ));
+        spans.push(Span::styled(format!("/{}", app.tree.filter), muted));
     } else {
         let body = statusbar_modes::body(app);
         let used = spans_width(&spans);
@@ -111,7 +108,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         let style = match app.toast_level() {
             Some(ToastLevel::Error) => role(Role::Failed, palette).add_modifier(Modifier::BOLD),
             Some(ToastLevel::Warn) => role(Role::Attention, palette),
-            _ => Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            _ => accent.add_modifier(Modifier::BOLD),
         };
         let toast = Span::styled(text.to_string(), style);
         frame.render_widget(Paragraph::new(Line::from(toast)), right);
@@ -130,13 +127,19 @@ fn body_spans(
     let mut out = Vec::new();
     let mut remaining = available;
     if let Some((label, glyph)) = &body.lead {
+        let glyph = theme::fold(glyph, palette.ascii);
         let lead = format!("{label} {glyph} ");
         remaining = remaining.saturating_sub(UnicodeWidthStr::width(lead.as_str()) as u16);
         out.push(Span::styled(label.clone(), role(Role::Accent, palette)));
-        out.push(Span::styled(format!(" {glyph} "), theme::muted()));
+        out.push(Span::styled(
+            format!(" {glyph} "),
+            role(Role::Muted, palette),
+        ));
     }
     let git = body.git.then(|| app.focused_git()).flatten();
-    let full_git_width = git.map_or(0, |state| spans_width(&git_spans(state, usize::MAX)));
+    let full_git_width = git.map_or(0, |state| {
+        spans_width(&git_spans_in(state, usize::MAX, palette))
+    });
     let reserved = if git.is_some() {
         full_git_width + GAP
     } else {
@@ -153,7 +156,7 @@ fn body_spans(
     if let Some(state) = git {
         let gap = if out.is_empty() { 0 } else { GAP };
         let budget = remaining.saturating_sub(line_width).saturating_sub(gap);
-        let parts = git_spans(state, usize::from(budget));
+        let parts = git_spans_in(state, usize::from(budget), palette);
         if !parts.is_empty() {
             out.push(Span::raw(" ".repeat(usize::from(gap))));
         }
@@ -193,26 +196,30 @@ pub(crate) fn head_text(head: &Head) -> String {
 /// The bar below ranks these by priority and drops them as its budget shrinks;
 /// the inspector's `changes` field joins their texts and has room for all
 /// three. Two renderings, one set of glyphs.
-pub(crate) fn change_parts(state: &GitState) -> Vec<Part> {
+pub(crate) fn change_parts(state: &GitState, p: theme::Palette) -> Vec<Part> {
     let mut parts = Vec::new();
     if state.conflicts > 0 {
         parts.push(Part {
-            text: format!("⚠{}", state.conflicts),
-            style: Style::default().fg(Color::Red),
+            text: format!(
+                "{}{}",
+                theme::glyph(Glyph::Warning, p.ascii),
+                state.conflicts
+            ),
+            style: role(Role::Failed, p),
             priority: 5,
         });
     }
     if state.dirty > 0 {
         parts.push(Part {
-            text: format!("●{}", state.dirty),
-            style: theme::muted(),
+            text: format!("{}{}", if p.ascii { "*" } else { "●" }, state.dirty),
+            style: role(Role::Muted, p),
             priority: 4,
         });
     }
     if state.untracked > 0 {
         parts.push(Part {
             text: format!("?{}", state.untracked),
-            style: theme::muted(),
+            style: role(Role::Muted, p),
             priority: 2,
         });
     }
@@ -248,35 +255,37 @@ fn operation_name(op: GitOperation) -> &'static str {
 /// against any other — the earlier early-return could only ever render `main (unborn)`,
 /// silently dropping both. Being the highest priority makes it the last thing dropped,
 /// since it qualifies the head itself.
-fn build_parts(state: &GitState) -> Vec<Part> {
+fn build_parts(state: &GitState, p: theme::Palette) -> Vec<Part> {
     let mut parts = Vec::new();
+    let muted = role(Role::Muted, p);
     let unborn = matches!(state.head, Head::Unborn(_));
     if unborn {
         parts.push(Part {
             text: "(unborn)".to_string(),
-            style: theme::muted(),
+            style: muted,
             priority: 7,
         });
     }
-    parts.extend(change_parts(state));
+    parts.extend(change_parts(state, p));
     if state.ahead > 0 || state.behind > 0 {
+        let (up, down) = if p.ascii { ("^", "v") } else { ("⇡", "⇣") };
         let mut text = String::new();
         if state.ahead > 0 {
-            text.push_str(&format!("⇡{}", state.ahead));
+            text.push_str(&format!("{up}{}", state.ahead));
         }
         if state.behind > 0 {
-            text.push_str(&format!("⇣{}", state.behind));
+            text.push_str(&format!("{down}{}", state.behind));
         }
         parts.push(Part {
             text,
-            style: theme::muted(),
+            style: muted,
             priority: 3,
         });
     }
     if let Some(op) = state.operation {
         parts.push(Part {
             text: operation_name(op).to_string(),
-            style: Style::default().fg(Color::Red),
+            style: role(Role::Failed, p),
             priority: 1,
         });
     }
@@ -286,15 +295,15 @@ fn build_parts(state: &GitState) -> Vec<Part> {
     // `(unborn)` stands in place of the tick and says more than it would.
     if state.is_clean() && !unborn {
         parts.push(Part {
-            text: "✓".to_string(),
-            style: Style::default().fg(Color::Green),
+            text: theme::glyph(Glyph::Passed, p.ascii).to_string(),
+            style: role(Role::Done, p),
             priority: 6,
         });
     }
     if state.stale {
         parts.push(Part {
             text: "(stale)".to_string(),
-            style: theme::muted(),
+            style: muted,
             priority: 5, // matches conflicts — see the controller ruling above.
         });
     }
@@ -304,7 +313,18 @@ fn build_parts(state: &GitState) -> Vec<Part> {
 /// The spans for a worktree's git state that fit in `budget` columns. Parts drop right to
 /// left per decision 20 as the budget shrinks; below the head's own width, nothing is
 /// returned at all.
+#[cfg(test)]
 pub fn git_spans(state: &GitState, budget: usize) -> Vec<Span<'static>> {
+    let p = theme::Palette {
+        accent: theme::DEFAULT_ACCENT,
+        truecolor: false,
+        ascii: false,
+    };
+    git_spans_in(state, budget, p)
+}
+
+/// [`git_spans`] in the palette's roles, its marks in ASCII when `p.ascii`.
+pub fn git_spans_in(state: &GitState, budget: usize, p: theme::Palette) -> Vec<Span<'static>> {
     let head = head_text(&state.head);
     let head_width = UnicodeWidthStr::width(head.as_str());
     if head_width > budget {
@@ -312,7 +332,7 @@ pub fn git_spans(state: &GitState, budget: usize) -> Vec<Span<'static>> {
     }
     let head_span = Span::styled(head, Style::default().add_modifier(Modifier::BOLD));
 
-    let mut parts = build_parts(state);
+    let mut parts = build_parts(state, p);
     loop {
         let used: usize = parts
             .iter()

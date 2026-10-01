@@ -293,7 +293,10 @@ fn the_focused_windows_box_uses_the_focused_border_style() {
 
     let unfocused = paint(&layout, area, pan, &app.rows(), &app);
     assert_eq!(unfocused[0].spans.len(), 1, "one uniform border run");
-    assert_eq!(unfocused[0].spans[0].style, crate::theme::border());
+    assert_eq!(
+        unfocused[0].spans[0].style,
+        crate::theme::role(crate::theme::Role::Muted, crate::theme::Palette::PLAIN)
+    );
 
     app.focused = Some(1);
     let focused = paint(&layout, area, pan, &app.rows(), &app);

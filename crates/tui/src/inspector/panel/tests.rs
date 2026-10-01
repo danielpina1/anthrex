@@ -13,8 +13,8 @@ use ratatui::{Terminal, layout::Rect};
 
 fn idle_glyph() -> Span<'static> {
     Span::styled(
-        theme::status_glyph(Status::Idle, 0),
-        Style::default().fg(theme::status_color(Status::Idle)),
+        theme::status_look(Status::Idle, 0, false).0,
+        Style::default().fg(theme::fg(theme::Role::Muted)),
     )
 }
 
@@ -297,7 +297,7 @@ fn a_row_held_for_an_unwritable_wrapping_field_is_handed_back() {
 #[test]
 fn a_flow_labels_span_is_muted_and_its_value_is_not() {
     // Every other test in this file reads `symbol()` alone, so `flow_line`
-    // dropping `theme::muted()` from the label — or applying it to the value
+    // dropping the `Muted` role from the label — or applying it to the value
     // instead — changes nothing any of them can see. The panel's readability
     // rests entirely on the label reading dimmer than the value beside it.
     let inspection = inspection(
@@ -306,7 +306,7 @@ fn a_flow_labels_span_is_muted_and_its_value_is_not() {
     );
     let buffer = draw(&inspection, 24, INSPECTOR_HEIGHT);
     let row_y = 2; // the first field row, right under the title.
-    let muted = theme::muted().fg.expect("muted always carries a colour");
+    let muted = theme::fg(theme::Role::Muted);
 
     // "path" starts at column 2: one in from the border, one more from the
     // panel's own padding — the same offset the title test uses for the name.
@@ -338,8 +338,8 @@ fn the_title_is_the_glyph_then_the_name_in_bold() {
     let title_y = 1;
 
     let glyph = &buffer[(2, title_y)];
-    assert_eq!(glyph.symbol(), theme::status_glyph(Status::Idle, 0));
-    assert_eq!(glyph.fg, theme::status_color(Status::Idle));
+    assert_eq!(glyph.symbol(), theme::status_look(Status::Idle, 0, false).0);
+    assert_eq!(glyph.fg, theme::fg(theme::Role::Muted));
     assert!(
         !glyph.modifier.contains(Modifier::BOLD),
         "the glyph carries the status colour, not the name's weight"
@@ -444,7 +444,7 @@ fn more_fields_than_fit_are_dropped_from_the_end() {
     // buffer above would look the same either way. The layout itself has to
     // stop: six rows of interior are one title row and five field rows, and
     // nothing it produces may exceed that.
-    assert_eq!(lines(&inspection, 12, 6).len(), 6);
+    assert_eq!(lines(&inspection, 12, 6, Palette::PLAIN).len(), 6);
 }
 
 #[test]
@@ -482,7 +482,8 @@ fn no_panic_at_any_size() {
                     lines(
                         &inspection,
                         usize::from(interior.0),
-                        usize::from(interior.1)
+                        usize::from(interior.1),
+                        Palette::PLAIN
                     )
                     .len()
                         <= usize::from(interior.1),
@@ -502,7 +503,10 @@ fn a_grapheme_wider_than_its_column_still_advances() {
     // An eleven-column panel reaches it: `task` and its two-space gap leave the
     // value a single column, and decision 6 collapses the inspector on height,
     // never on width, so that panel renders.
-    assert_eq!(wrap_value("日本語のタスク", 1, 3), vec!["日", "本", "…"]);
+    assert_eq!(
+        wrap_value("日本語のタスク", 1, 3, false),
+        vec!["日", "本", "…"]
+    );
 }
 
 #[test]

@@ -7,8 +7,8 @@
 use super::{Layout, kit};
 use crate::app::{Alert, App, alerts, region::KeyRegion};
 use crate::safe_text::one_line;
-use crate::theme;
-use crate::ui::tree_view::truncate;
+use crate::theme::{self, Glyph, Palette, Role, fold, glyph};
+use crate::ui::tree_view::truncate_in;
 use ratatui::Frame;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -25,8 +25,8 @@ pub(crate) fn title(n: usize) -> String {
 
 /// One alert's row, cut to `width` columns: the `●` and the label in the priority's
 /// colour, then two spaces and the text in the default colour; reversed when selected.
-fn alert_line(alert: &Alert, width: usize, selected: bool) -> Line<'static> {
-    let colour = Style::default().fg(theme::alert_color(alert.priority));
+fn alert_line(alert: &Alert, width: usize, selected: bool, p: Palette) -> Line<'static> {
+    let colour = theme::alert_style(alert.priority, p);
     let reversed = |style: Style| {
         if selected {
             style.add_modifier(Modifier::REVERSED)
@@ -40,16 +40,22 @@ fn alert_line(alert: &Alert, width: usize, selected: bool) -> Line<'static> {
         if *left == 0 || text.is_empty() {
             return;
         }
-        let text = truncate(&text, *left);
+        let text = truncate_in(&text, *left, p.ascii);
         *left -= text.width();
         spans.push(Span::styled(text, reversed(style)));
     };
-    push("● ".to_owned(), colour, &mut left);
+    // Task 5's two-line alert draws `theme::alert_glyph`; until then the dot stays,
+    // with its ASCII twin.
+    push(
+        format!("{} ", glyph(Glyph::Live, p.ascii)),
+        colour,
+        &mut left,
+    );
     push(one_line(&alert.label), colour, &mut left);
     // The text only when some of it shows after its two-space gap.
     if left > 2 {
         push(
-            format!("  {}", one_line(&alert.text)),
+            format!("  {}", fold(&one_line(&alert.text), p.ascii)),
             Style::default(),
             &mut left,
         );
@@ -63,11 +69,13 @@ pub(crate) fn lines(app: &App, width: u16, rows: u16) -> Vec<Line<'static>> {
     if width == 0 || rows == 0 {
         return Vec::new();
     }
+    let p = app.palette();
+    let muted = theme::role(Role::Muted, p);
     let all = alerts(app);
     if all.is_empty() {
         return vec![Line::from(Span::styled(
-            truncate("no alerts", width),
-            theme::muted(),
+            truncate_in("no alerts", width, p.ascii),
+            muted,
         ))];
     }
     let focus = app.alerts_focus.as_ref();
@@ -83,13 +91,13 @@ pub(crate) fn lines(app: &App, width: u16, rows: u16) -> Vec<Line<'static>> {
             .enumerate()
             .skip(first)
             .take(rows)
-            .map(|(n, alert)| alert_line(alert, width, Some(n) == selected))
+            .map(|(n, alert)| alert_line(alert, width, Some(n) == selected, p))
             .collect();
     }
     if all.len() <= rows {
         return all
             .iter()
-            .map(|alert| alert_line(alert, width, false))
+            .map(|alert| alert_line(alert, width, false, p))
             .collect();
     }
     // One row: the most urgent alert, not a `+<k> more` alone (the title has the
@@ -98,13 +106,13 @@ pub(crate) fn lines(app: &App, width: u16, rows: u16) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = all
         .iter()
         .take(shown)
-        .map(|alert| alert_line(alert, width, false))
+        .map(|alert| alert_line(alert, width, false, p))
         .collect();
     if shown < rows {
         let more = format!("+{} more", all.len() - shown);
         out.push(Line::from(Span::styled(
-            truncate(&more, width),
-            theme::muted(),
+            truncate_in(&more, width, p.ascii),
+            muted,
         )));
     }
     out

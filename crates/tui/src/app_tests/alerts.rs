@@ -259,10 +259,24 @@ fn alerts_clear_when_resolved() {
 
 #[test]
 fn alert_colours_by_priority() {
-    use ratatui::style::Color;
-    let colours: Vec<Color> = (1..=4).map(crate::theme::alert_color).collect();
+    use crate::theme::{Palette, alert_style};
+    use ratatui::style::{Color, Modifier};
+    let styles: Vec<_> = (1..=4).map(|n| alert_style(n, Palette::PLAIN)).collect();
+    let colours: Vec<_> = styles.iter().map(|style| style.fg).collect();
+    // Milestone 9.0.7 decision 3: P1–P3 in `Attention`, P4 in `Done`; P1 alone bold.
     assert_eq!(
         colours,
-        [Color::Red, Color::Yellow, Color::Magenta, Color::Green]
+        [
+            Color::LightMagenta,
+            Color::LightMagenta,
+            Color::LightMagenta,
+            Color::Green
+        ]
+        .map(Some)
     );
+    let bold: Vec<_> = styles
+        .iter()
+        .map(|style| style.add_modifier.contains(Modifier::BOLD))
+        .collect();
+    assert_eq!(bold, [true, false, false, false]);
 }

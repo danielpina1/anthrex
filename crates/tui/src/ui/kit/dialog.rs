@@ -39,7 +39,7 @@ pub fn dialog_frame(title: &str, destructive: bool, p: Palette) -> Block<'static
         .border_style(role(Role::Accent, p))
         .padding(Padding::horizontal(1))
         .title(Span::styled(
-            format!(" {} ", one_line(title).trim()),
+            format!(" {} ", crate::theme::fold(one_line(title).trim(), p.ascii)),
             role(title_role, p),
         ))
 }

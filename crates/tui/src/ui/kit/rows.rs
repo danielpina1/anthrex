@@ -2,16 +2,17 @@
 
 use super::text::{cut, wrap_words};
 use crate::safe_text::one_line;
-use crate::theme::{Palette, Role, role};
+use crate::theme::{Palette, Role, fold, role};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
 /// `label  value` rows: labels muted and padded to the longest label plus two spaces;
-/// a value wraps at `width` under itself. Every string is sanitised.
+/// a value wraps at `width` under itself. Every string is sanitised, and folded to
+/// ASCII in ASCII mode (milestone 9.0.7 decision 5).
 pub fn labelled_rows(rows: &[(String, String)], width: u16, p: Palette) -> Vec<Line<'static>> {
     let clean: Vec<(String, String)> = rows
         .iter()
-        .map(|(l, v)| (one_line(l), one_line(v)))
+        .map(|(l, v)| (fold(&one_line(l), p.ascii), fold(&one_line(v), p.ascii)))
         .collect();
     let label_w = clean.iter().map(|(l, _)| l.width()).max().unwrap_or(0) + 2;
     let value_w = usize::from(width).saturating_sub(label_w).max(1);

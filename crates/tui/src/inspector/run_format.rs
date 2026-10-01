@@ -10,7 +10,6 @@ use proto::{
     BlockReason, Effort, Finding, Severity, Size, Strength, TaskInfo, TaskState, TestMode,
     TokenUsage, WindowKind,
 };
-use ratatui::style::Style;
 use ratatui::text::Span;
 use std::path::Path;
 
@@ -49,6 +48,12 @@ pub fn local_hhmm(at: u64, utc_offset_secs: i64) -> String {
 /// Decision 30: `filled = (width × done + total / 2) / total` cells of `█`, then `░`.
 /// A done count above the total fills the bar; a zero total leaves it empty.
 pub fn progress_bar(done: u64, total: u64, width: usize) -> String {
+    progress_bar_in(done, total, width, false)
+}
+
+/// [`progress_bar`] through `theme::bar`: `#` and `.` in ASCII (milestone 9.0.7
+/// decision 5).
+pub fn progress_bar_in(done: u64, total: u64, width: usize, ascii: bool) -> String {
     let filled = if total == 0 {
         0
     } else {
@@ -56,7 +61,7 @@ pub fn progress_bar(done: u64, total: u64, width: usize) -> String {
         let filled = (width as u128 * done + total / 2) / total;
         usize::try_from(filled).unwrap_or(width).min(width)
     };
-    format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
+    crate::theme::bar(filled, width - filled, ascii)
 }
 
 /// `text` with every control character and line separator a space and every bidi
@@ -79,8 +84,7 @@ pub(super) fn kind_glyph(kind: RowKind<'_>, app: &App) -> Span<'static> {
         depth: 0,
         kind,
     };
-    let (glyph, color) = node_glyph(&row, app);
-    Span::styled(glyph, Style::default().fg(color))
+    super::look(node_glyph(&row, app), app)
 }
 
 pub(super) fn rows(
@@ -129,7 +133,11 @@ const CATEGORIES: [&str; 6] = [
 /// Decision 30's progress line over `tasks`: the bar, `{merged}/{total} merged`, each
 /// non-zero category, then the cancelled; `no tasks yet` when nothing counts. A
 /// `Reported` task is not counted at all.
-pub(super) fn progress_text<'a>(tasks: impl Iterator<Item = &'a TaskInfo>, width: usize) -> String {
+pub(super) fn progress_text<'a>(
+    tasks: impl Iterator<Item = &'a TaskInfo>,
+    width: usize,
+    ascii: bool,
+) -> String {
     let (mut merged, mut total, mut cancelled) = (0u64, 0u64, 0u64);
     let mut counts = [0u64; 6];
     for task in tasks {
@@ -148,7 +156,7 @@ pub(super) fn progress_text<'a>(tasks: impl Iterator<Item = &'a TaskInfo>, width
     }
     let mut text = format!(
         "{}  {merged}/{total} merged",
-        progress_bar(merged, total, width)
+        progress_bar_in(merged, total, width, ascii)
     );
     for (count, name) in counts.iter().zip(CATEGORIES) {
         if *count > 0 {

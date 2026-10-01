@@ -3,8 +3,9 @@
 //! before it is painted.
 
 use super::MAX_NODE_WIDTH;
+use crate::theme::{Glyph, fold, glyph};
 use crate::tree::{DisplayRound, round_label, run_progress};
-use crate::ui::tree_view::truncate;
+use crate::ui::tree_view::truncate_in;
 use proto::{
     FullState, PlannerInfo, RunInfo, RunState, Size, StageInfo, TaskInfo, TaskOrigin, TaskState,
 };
@@ -62,13 +63,21 @@ pub(crate) fn planner_text(run: &RunInfo, planner: &PlannerInfo) -> String {
 /// A task's text, pre-fitted to [`TASK_TEXT_MAX`] so its size, hub mark and declared
 /// deps survive the title's truncation (decision 18). A blank title is left out
 /// rather than drawn as a double space.
+#[cfg(test)]
 pub(crate) fn task_text(task: &TaskInfo) -> String {
+    task_text_in(task, false)
+}
+
+/// [`task_text`], its hub mark `◆` as `Glyph::Hub` and its deps mark `⇠` as `<` in
+/// ASCII (milestone 9.0.7 decision 6), cut with `...`.
+pub(crate) fn task_text_in(task: &TaskInfo, ascii: bool) -> String {
     let mut tail = format!(" {}{}", size_letter(task.size), origin_tag(task.origin));
     if task.hub {
-        tail.push_str(" ◆");
+        tail.push(' ');
+        tail.push_str(glyph(Glyph::Hub, ascii));
     }
     if !task.deps.is_empty() {
-        tail.push_str("  ⇠");
+        tail.push_str(if ascii { "  <" } else { "  ⇠" });
         tail.extend(task.deps.iter().map(String::as_str));
     }
     let id_width = UnicodeWidthStr::width(task.id.as_str());
@@ -76,10 +85,10 @@ pub(crate) fn task_text(task: &TaskInfo) -> String {
     let fixed = id_width + 1 + tail_width;
     let title = task.title.trim();
     if !title.is_empty() && fixed + 2 <= TASK_TEXT_MAX {
-        let title = truncate(title, TASK_TEXT_MAX - fixed);
+        let title = truncate_in(title, TASK_TEXT_MAX - fixed, ascii);
         format!("{} {title}{tail}", task.id)
     } else {
-        truncate(&format!("{}{tail}", task.id), TASK_TEXT_MAX)
+        truncate_in(&format!("{}{tail}", task.id), TASK_TEXT_MAX, ascii)
     }
 }
 
@@ -92,14 +101,17 @@ fn size_letter(size: Size) -> &'static str {
 }
 
 /// Milestone 9.1 decision 55: `stage <n>/<N>  tier 3 <✓|✗|…|·>`, `N` the run's
-/// stage count.
-pub(crate) fn stage_text(run: &RunInfo, stage: &StageInfo) -> String {
+/// stage count; in ASCII `+`, `x`, `~` (a check under way, `Glyph::Checking`'s twin)
+/// and `-`, each one column so a stage box is as wide in either mode.
+pub(crate) fn stage_text_in(run: &RunInfo, stage: &StageInfo, ascii: bool) -> String {
     let mark = match stage.full.state {
-        FullState::Green => "✓",
-        FullState::Red => "✗",
+        FullState::Green => glyph(Glyph::Passed, ascii),
+        FullState::Red => glyph(Glyph::Failed, ascii),
+        FullState::Running | FullState::Bisecting if ascii => "~",
         FullState::Running | FullState::Bisecting => "…",
         FullState::None => "·",
     };
+    let mark = fold(mark, ascii);
     format!("stage {}/{}  tier 3 {mark}", stage.n, run.stages.len())
 }
 

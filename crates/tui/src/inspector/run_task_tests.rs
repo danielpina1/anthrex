@@ -192,7 +192,7 @@ fn task_fields_when_blocked() {
         });
     });
     let inspection = inspect_node(&app, &task_key("t5"));
-    assert_eq!(inspection.glyph.content, "⊘");
+    assert_eq!(inspection.glyph.content, "⚑");
     assert_eq!(
         inspection.right.as_deref(),
         Some("S · tdd · blocked: mis-sized")

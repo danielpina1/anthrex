@@ -34,7 +34,11 @@ pub(crate) fn run_inspection(
     let right = format!("{state} · {}", format_duration(app.run_age(run.created_at)));
     let mut fields = vec![field(
         "progress",
-        progress_text(run.tasks.iter(), super::RUN_PROGRESS_WIDTH),
+        progress_text(
+            run.tasks.iter(),
+            super::RUN_PROGRESS_WIDTH,
+            app.palette().ascii,
+        ),
     )];
     if !run.critical_path.is_empty() {
         fields.push(field("path", path_text(run)));
@@ -267,7 +271,7 @@ pub(crate) fn planner_inspection(run: &RunInfo, planner: &PlannerInfo, app: &App
     };
     let mut fields = vec![field(
         "progress",
-        progress_text(tasks(), super::PROGRESS_WIDTH),
+        progress_text(tasks(), super::PROGRESS_WIDTH, app.palette().ascii),
     )];
     if !planner.area.is_empty() {
         fields.push(field("area", clean(&planner.area.join(" · "))));

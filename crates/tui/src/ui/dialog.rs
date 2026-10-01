@@ -19,11 +19,11 @@
 //! which is true on every path.
 
 use crate::dialog::{FormField, NewAgentForm, RemoveConfirm, TextInput};
-use crate::theme;
-use proto::{Runtime, Status};
+use crate::theme::{Palette, Role, role};
+use proto::Runtime;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
@@ -151,7 +151,7 @@ fn runtime_span(current: Runtime, candidate: Runtime, label: &'static str) -> Sp
 /// numbered design decision. Width `min(66, area.width - 2)`; the hardware cursor goes
 /// to the focused text field's cursor, and nothing else places it (`ui/terminal.rs`
 /// already suppresses the PTY cursor while a modal is open).
-pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, accent: Color) {
+pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, p: Palette) {
     let fields = form.visible_fields();
     let width = 66u16.min(area.width.saturating_sub(2)).max(4);
     let content_width = width.saturating_sub(2) as usize;
@@ -179,11 +179,8 @@ pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, acce
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(accent))
-        .title(Line::from(Span::styled(
-            " new agent ",
-            dialog_title(accent),
-        )));
+        .border_style(role(Role::Accent, p))
+        .title(Line::from(Span::styled(" new agent ", dialog_title(p))));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
 
@@ -197,7 +194,7 @@ pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, acce
         let focused = form.focus == *field;
         let marker = if focused { "› " } else { "  " };
         let label_style = if focused {
-            Style::default().fg(accent)
+            role(Role::Accent, p)
         } else {
             Style::default()
         };
@@ -228,7 +225,7 @@ pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, acce
                 if *field == FormField::Name && input.text().is_empty() {
                     spans.push(Span::styled(
                         format!("automatic ({}-N)", form.runtime.label()),
-                        theme::muted(),
+                        role(Role::Muted, p),
                     ));
                 } else {
                     spans.push(Span::raw(visible));
@@ -254,10 +251,7 @@ pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, acce
             break;
         }
         frame.render_widget(
-            Paragraph::new(Line::styled(
-                line.clone(),
-                Style::default().fg(theme::status_color(Status::Attention)),
-            )),
+            Paragraph::new(Line::styled(line.clone(), role(Role::Failed, p))),
             Rect {
                 y,
                 height: 1,
@@ -268,7 +262,7 @@ pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, acce
     }
     if y < inner.y + inner.height {
         frame.render_widget(
-            Paragraph::new(Line::styled(hint, theme::muted())),
+            Paragraph::new(Line::styled(hint, role(Role::Muted, p))),
             Rect {
                 y,
                 height: 1,
@@ -282,7 +276,7 @@ pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, acce
     }
 }
 
-fn render_box(frame: &mut Frame, title: &str, body: Vec<Line<'static>>, area: Rect, accent: Color) {
+fn render_box(frame: &mut Frame, title: &str, body: Vec<Line<'static>>, area: Rect, p: Palette) {
     let width = body.iter().map(Line::width).max().unwrap_or(0).max(30) as u16 + 4;
     let height = body.len() as u16 + 2;
     let rect = centered(area, width, height);
@@ -290,26 +284,21 @@ fn render_box(frame: &mut Frame, title: &str, body: Vec<Line<'static>>, area: Re
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(accent))
-        .title(Line::from(Span::styled(title, dialog_title(accent))));
+        .border_style(role(Role::Accent, p))
+        .title(Line::from(Span::styled(title, dialog_title(p))));
     frame.render_widget(Paragraph::new(body).block(block), rect);
 }
 
 /// A dialog's title, bold in the accent, as `kit::dialog_frame` draws it (milestone
 /// 9.0.7 task 13 moves these dialogs onto the kit).
-pub(crate) fn dialog_title(accent: Color) -> Style {
-    Style::default().fg(accent).add_modifier(Modifier::BOLD)
+pub(crate) fn dialog_title(p: Palette) -> Style {
+    role(Role::Accent, p).add_modifier(Modifier::BOLD)
 }
 
 /// Decision 35's remove-confirm rendering. `confirm.branch` is `None` for a window this
 /// daemon made no worktree for, which drops the checkbox line and its hint entirely
 /// (the wireframe's "for a window without a worktree" case).
-pub fn render_remove_confirm(
-    frame: &mut Frame,
-    confirm: &RemoveConfirm,
-    area: Rect,
-    accent: Color,
-) {
+pub fn render_remove_confirm(frame: &mut Frame, confirm: &RemoveConfirm, area: Rect, p: Palette) {
     let mut lines = vec![Line::raw(format!("Remove '{}'?", confirm.name))];
     if let Some(branch) = &confirm.branch {
         lines.push(Line::raw(""));
@@ -322,7 +311,7 @@ pub fn render_remove_confirm(
         // about the agent's process (see the module doc comment).
         lines.push(Line::styled(
             "    the branch is kept; ignored files go too",
-            theme::muted(),
+            role(Role::Muted, p),
         ));
     }
     lines.push(Line::raw(""));
@@ -331,8 +320,8 @@ pub fn render_remove_confirm(
     } else {
         "y remove · n / Esc"
     };
-    lines.push(Line::styled(hint, theme::muted()));
-    render_box(frame, " remove ", lines, area, accent);
+    lines.push(Line::styled(hint, role(Role::Muted, p)));
+    render_box(frame, " remove ", lines, area, p);
 }
 
 const FORCE_WRAP_WIDTH: usize = 50;
@@ -360,13 +349,7 @@ const FORCE_MAX_LINES: usize = 6;
 /// prompt that named one window in its message while its `f` key targeted another; the
 /// wiring that made that possible is fixed in `app/modal_keys.rs`, and this line is what
 /// would have made it visible on screen rather than only in a test.
-pub fn render_force_remove(
-    frame: &mut Frame,
-    name: &str,
-    message: &str,
-    area: Rect,
-    accent: Color,
-) {
+pub fn render_force_remove(frame: &mut Frame, name: &str, message: &str, area: Rect, p: Palette) {
     let mut lines: Vec<Line<'static>> = vec![Line::from(vec![
         Span::raw("agent "),
         Span::styled(
@@ -384,16 +367,16 @@ pub fn render_force_remove(
     }
     lines.push(Line::raw(""));
     lines.push(Line::from(vec![
-        Span::styled("f  ", Style::default().fg(accent)),
+        Span::styled("f  ", role(Role::Accent, p)),
         Span::raw("force: delete the worktree and everything in it"),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("k  ", Style::default().fg(accent)),
+        Span::styled("k  ", role(Role::Accent, p)),
         Span::raw("keep the worktree, remove the window"),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("n  ", Style::default().fg(accent)),
+        Span::styled("n  ", role(Role::Accent, p)),
         Span::raw("cancel"),
     ]));
-    render_box(frame, " worktree holds work ", lines, area, accent);
+    render_box(frame, " worktree holds work ", lines, area, p);
 }

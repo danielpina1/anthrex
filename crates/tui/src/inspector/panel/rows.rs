@@ -9,8 +9,8 @@
 
 use super::{Inspection, fitted_name, pad, title_line, wrap_value};
 use crate::inspector::RUN_LABEL_WIDTH;
-use crate::theme;
-use crate::ui::tree_view::truncate;
+use crate::theme::{self, Palette, Role};
+use crate::ui::tree_view::truncate_in;
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
@@ -18,8 +18,13 @@ use unicode_width::UnicodeWidthStr;
 const RIGHT_GAP: usize = 2;
 
 /// The panel's interior, row by row, never more than `height` lines.
-pub(super) fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec<Line<'static>> {
-    let mut out = vec![title(inspection, width)];
+pub(super) fn lines(
+    inspection: &Inspection,
+    width: usize,
+    height: usize,
+    p: Palette,
+) -> Vec<Line<'static>> {
+    let mut out = vec![title(inspection, width, p)];
     let mut left = height.saturating_sub(1);
     let label_width = RUN_LABEL_WIDTH.min(width);
     let value_width = width - label_width;
@@ -32,18 +37,19 @@ pub(super) fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec
             // that the later fields are dropped from the end like any others.
             let later = inspection.fields.len() - index - 1;
             let rows = left.saturating_sub(later).max(1);
-            let chunks = wrap_value(&field.value, value_width, rows);
+            let chunks = wrap_value(&field.value, value_width, rows, p.ascii);
             let taken = chunks.len().max(1);
-            out.push(row(field.label, label_width, chunks.first().cloned()));
+            out.push(row(field.label, label_width, chunks.first().cloned(), p));
             for chunk in chunks.into_iter().skip(1) {
-                out.push(row("", label_width, Some(chunk)));
+                out.push(row("", label_width, Some(chunk), p));
             }
             left -= taken;
         } else {
             out.push(row(
                 field.label,
                 label_width,
-                Some(truncate(&field.value, value_width)),
+                Some(truncate_in(&field.value, value_width, p.ascii)),
+                p,
             ));
             left -= 1;
         }
@@ -54,7 +60,7 @@ pub(super) fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec
 /// The glyph and the bold name, then the muted right-hand text flush with the right
 /// edge. When the name, two spaces and the right text do not fit, the right text is
 /// dropped and the name truncated as milestone 4.7's title is.
-pub(super) fn title(inspection: &Inspection, width: usize) -> Line<'static> {
+pub(super) fn title(inspection: &Inspection, width: usize, p: Palette) -> Line<'static> {
     let glyph_width = UnicodeWidthStr::width(inspection.glyph.content.as_ref());
     let name_width = UnicodeWidthStr::width(inspection.name.as_str());
     if let Some(right) = inspection.right.as_deref() {
@@ -65,22 +71,23 @@ pub(super) fn title(inspection: &Inspection, width: usize) -> Line<'static> {
             line.spans
                 .push(Span::raw(" ".repeat(width - used + RIGHT_GAP)));
             line.spans
-                .push(Span::styled(right.to_owned(), theme::muted()));
+                .push(Span::styled(right.to_owned(), theme::role(Role::Muted, p)));
             return line;
         }
     }
-    title_line(inspection, fitted_name(inspection, width))
+    title_line(inspection, fitted_name(inspection, width, p.ascii))
 }
 
 /// One field row: the muted label padded to the label column (cut with `…` when it
 /// would reach the value), then the value.
-fn row(label: &str, label_width: usize, value: Option<String>) -> Line<'static> {
+fn row(label: &str, label_width: usize, value: Option<String>, p: Palette) -> Line<'static> {
     let label = if UnicodeWidthStr::width(label) >= label_width {
-        truncate(label, label_width.saturating_sub(1))
+        truncate_in(label, label_width.saturating_sub(1), p.ascii)
     } else {
         label.to_owned()
     };
-    let mut spans = vec![Span::styled(pad(&label, label_width), theme::muted())];
+    let muted = theme::role(Role::Muted, p);
+    let mut spans = vec![Span::styled(pad(&label, label_width), muted)];
     if let Some(value) = value {
         spans.push(Span::raw(value));
     }

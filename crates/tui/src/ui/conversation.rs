@@ -8,13 +8,13 @@ pub mod diff;
 use crate::app::{App, region::KeyRegion};
 use crate::conversation::{DetailKind, Row, SUBAGENT_FOOTER, TEXT_INDENT, clean};
 use crate::conversation_label::user_turn_label;
-use crate::theme;
+use crate::theme::{self, Role::*, role};
 use crate::ui::badge::Badge;
-use proto::{Block as ConvBlock, DropCause, Role, Status, ToolState, Turn};
+use proto::{Block as ConvBlock, DropCause, Role, ToolState, Turn};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::collections::HashMap;
 
@@ -52,7 +52,7 @@ const UNICODE: Glyphs = Glyphs {
     more: "⋯",
     crumb: " › ",
     ok: "✓",
-    failed: "✕",
+    failed: "✗",
     denied: "⊘",
 };
 
@@ -102,13 +102,14 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     };
     let window = app.windows.iter().find(|w| w.id == window_id);
     let conversation = view.conversation();
+    let p = app.palette();
     // A sub-agent runs inside its parent's window, so the window's runtime is the badge
     // for every level of the trail.
     let runtime = window
         .map(|w| w.runtime)
         .or(conversation.map(|c| c.runtime))
         .unwrap_or(proto::Runtime::Shell);
-    let badge = app.settings.badges.for_runtime(runtime);
+    let badge = &shown_badge(app, runtime);
 
     let mut place = window
         .map(|w| w.name.clone())
@@ -140,7 +141,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     }
     let buf = frame.buffer_mut();
     let Some(conversation) = conversation else {
-        let waiting = Line::styled("  waiting for the conversation", theme::muted());
+        let waiting = Line::styled("  waiting for the conversation", role(Muted, p));
         buf.set_line(inner.x, inner.y, &waiting, inner.width);
         return;
     };
@@ -215,7 +216,8 @@ type Spans = Vec<Span<'static>>;
 /// A row's indent, left spans and right spans.
 fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
     let g = ctx.glyphs;
-    let attention = Style::default().fg(theme::status_color(Status::Attention));
+    let p = ctx.app.palette();
+    let (attention, muted) = (role(Attention, p), role(Muted, p));
     match row {
         Row::Dropped { count, cause } => {
             let key = match cause {
@@ -223,7 +225,7 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
                 DropCause::Bytes => "conversation.max_bytes",
             };
             let text = format!("{} {count} earlier turns dropped ({key})", g.more);
-            (ROW_INDENT, vec![Span::styled(text, theme::muted())], vec![])
+            (ROW_INDENT, vec![Span::styled(text, muted)], vec![])
         }
         Row::TurnHeader {
             role,
@@ -241,7 +243,7 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
                 Role::System => vec![Span::styled("system", bold)],
             };
             let time = clock(*at_unix_secs, ctx.app.utc_offset_secs);
-            (ROW_INDENT, left, vec![Span::styled(time, theme::muted())])
+            (ROW_INDENT, left, vec![Span::styled(time, muted)])
         }
         Row::Text { line, text, .. } => {
             if user_turn && *line == 0 {
@@ -253,7 +255,11 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
         Row::Tool { turn_id, block } => tool_spans(ctx, *turn_id, *block),
         Row::ToolDetail {
             text, kind, number, ..
-        } => (DETAIL_INDENT, detail_spans(g, text, *kind, *number), vec![]),
+        } => (
+            DETAIL_INDENT,
+            detail_spans(ctx, text, *kind, *number),
+            vec![],
+        ),
         Row::Spawn { turn_id, block, .. } => {
             let Some(ConvBlock::SubagentSpawn {
                 kind, label, model, ..
@@ -332,16 +338,13 @@ fn tool_spans(ctx: &Ctx, turn_id: u64, block: usize) -> (u16, Spans, Spans) {
         Span::styled(clean(name), Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(format!("  {}", g.punct(&clean(summary)))),
     ];
-    let (glyph, color) = match state {
-        ToolState::Pending => (
-            theme::SPINNER[ctx.app.spinner_frame % theme::SPINNER.len()],
-            theme::status_color(Status::Working),
-        ),
-        ToolState::Ok => (g.ok, theme::status_color(Status::Done)),
-        ToolState::Failed => (g.failed, Color::Red),
-        ToolState::Denied => (g.denied, theme::status_color(Status::Attention)),
+    let (glyph, r) = match state {
+        ToolState::Pending => (theme::spinner(ctx.app.spinner_frame, g.ascii), Working),
+        ToolState::Ok => (g.ok, Done),
+        ToolState::Failed => (g.failed, Failed),
+        ToolState::Denied => (g.denied, Attention),
     };
-    let mut right = vec![Span::styled(glyph, Style::default().fg(color))];
+    let mut right = vec![Span::styled(glyph, role(r, ctx.app.palette()))];
     if let Some(ms) = duration_ms {
         right.push(Span::raw(format!(" {:.1}s", *ms as f64 / 1000.0)));
     }
@@ -349,23 +352,44 @@ fn tool_spans(ctx: &Ctx, turn_id: u64, block: usize) -> (u16, Spans, Spans) {
 }
 
 /// A diff line under a dimmed number column, tinted by its sign; anything else muted.
-fn detail_spans(g: &Glyphs, text: &str, kind: DetailKind, number: Option<usize>) -> Spans {
-    let tinted = |sign: &str, color: Color| {
+fn detail_spans(ctx: &Ctx, text: &str, kind: DetailKind, number: Option<usize>) -> Spans {
+    let p = ctx.app.palette();
+    let muted = role(Muted, p);
+    let tinted = |sign: &str, style: Style| {
         let number = number
             .map(|n| format!("{n:>3}"))
             .unwrap_or_else(|| "   ".into());
         vec![
-            Span::styled(number, theme::muted()),
+            Span::styled(number, muted),
             Span::raw("  "),
-            Span::styled(format!("{sign}{text}"), Style::default().fg(color)),
+            Span::styled(format!("{sign}{text}"), style),
         ]
     };
     match kind {
-        DetailKind::Removed => tinted("-", Color::Red),
-        DetailKind::Added => tinted("+", Color::Green),
-        DetailKind::Context => tinted(" ", Color::Reset),
-        DetailKind::Plain => vec![Span::styled(text.to_owned(), theme::muted())],
-        DetailKind::Truncated => vec![Span::styled(format!("{} {text}", g.more), theme::muted())],
+        DetailKind::Removed => tinted("-", role(Failed, p)),
+        DetailKind::Added => tinted("+", role(Done, p)),
+        DetailKind::Context => tinted(" ", Style::default()),
+        DetailKind::Plain => vec![Span::styled(text.to_owned(), muted)],
+        DetailKind::Truncated => {
+            vec![Span::styled(format!("{} {text}", ctx.glyphs.more), muted)]
+        }
+    }
+}
+
+/// The runtime's badge, in its ASCII form whenever the view draws ASCII:
+/// `badges.ascii` is the one switch (milestone 9.0.7 decision 5).
+fn shown_badge(app: &App, runtime: proto::Runtime) -> Badge {
+    let badge = app.settings.badges.for_runtime(runtime).clone();
+    if app.settings.badges.ascii && !badge.text.is_ascii() {
+        let text = app
+            .settings
+            .badges_config
+            .for_runtime(runtime)
+            .ascii
+            .clone();
+        Badge { text, ..badge }
+    } else {
+        badge
     }
 }
 

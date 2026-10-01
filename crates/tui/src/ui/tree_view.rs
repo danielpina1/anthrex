@@ -1,6 +1,6 @@
 use crate::{
     app::App,
-    theme,
+    theme::{self, Glyph, Role, glyph},
     tree::{self, Row, RowKind, RuntimeCounts},
 };
 use proto::WindowInfo;
@@ -64,6 +64,21 @@ pub fn narrow_line(
     selected: bool,
 ) -> Line<'static> {
     let bold = Style::default().add_modifier(Modifier::BOLD);
+    let p = app.palette();
+    let (frame, ascii) = (app.spinner_frame, p.ascii);
+    let muted = theme::role(Role::Muted, p);
+    let look = |(glyph, role): (&'static str, Role)| Span::styled(glyph, theme::role(role, p));
+    let guides = theme::guides(&row.guides, ascii);
+    let focus_mark = |focused: bool| {
+        Span::styled(
+            if focused {
+                glyph(Glyph::Focus, ascii)
+            } else {
+                " "
+            },
+            theme::role(Role::Accent, p),
+        )
+    };
     let (prefix, name, branch, rights) = match &row.kind {
         RowKind::Project {
             name,
@@ -72,23 +87,23 @@ pub fn narrow_line(
             collapsed,
             ..
         } => {
-            let glyph = Span::styled(
-                theme::status_glyph(*status, app.spinner_frame),
-                Style::default().fg(theme::status_color(*status)),
-            );
+            let mark = look(theme::status_look(*status, frame, ascii));
+            let fold = if *collapsed {
+                Glyph::Collapsed
+            } else {
+                Glyph::Expanded
+            };
+            let counts = theme::fold(&counts_text(*counts), ascii);
             (
                 vec![Span::styled(
-                    format!("{}{} ", row.guides, if *collapsed { "▸" } else { "▾" }),
+                    format!("{guides}{} ", glyph(fold, ascii)),
                     bold,
                 )],
                 Span::styled(name.clone(), bold),
                 None,
                 vec![
-                    vec![
-                        glyph.clone(),
-                        Span::styled(format!("  {}", counts_text(*counts)), theme::muted()),
-                    ],
-                    vec![glyph],
+                    vec![mark.clone(), Span::styled(format!("  {counts}"), muted)],
+                    vec![mark],
                 ],
             )
         }
@@ -109,30 +124,21 @@ pub fn narrow_line(
             if let Some(model) = model {
                 rights.push(vec![Span::styled(
                     format!("{tag} {model} {elapsed:>3}"),
-                    theme::muted(),
+                    muted,
                 )]);
             }
-            rights.push(vec![Span::styled(
-                format!("{tag} {elapsed:>3}"),
-                theme::muted(),
-            )]);
-            rights.push(vec![Span::styled(tag, theme::muted())]);
+            rights.push(vec![Span::styled(format!("{tag} {elapsed:>3}"), muted)]);
+            rights.push(vec![Span::styled(tag, muted)]);
             (
                 vec![
-                    Span::raw(row.guides.clone()),
-                    Span::styled(
-                        if focused { "▎" } else { " " },
-                        Style::default().fg(app.settings.accent),
-                    ),
+                    Span::raw(guides),
+                    focus_mark(focused),
                     Span::raw(if *collapsed && *has_subagents {
-                        "▸"
+                        glyph(Glyph::Collapsed, ascii)
                     } else {
                         " "
                     }),
-                    Span::styled(
-                        theme::status_glyph(info.status, app.spinner_frame),
-                        Style::default().fg(theme::status_color(info.status)),
-                    ),
+                    look(theme::status_look(info.status, frame, ascii)),
                     Span::raw(format!(" {position:>pos_width$} ")),
                 ],
                 Span::styled(
@@ -145,20 +151,14 @@ pub fn narrow_line(
         }
         RowKind::Subagent { info, .. } => (
             vec![
-                Span::raw(row.guides.clone()),
-                Span::styled(
-                    theme::subagent_glyph(info, app.spinner_frame),
-                    Style::default().fg(theme::subagent_color(info)),
-                ),
+                Span::raw(guides),
+                look(theme::subagent_look(info, frame, ascii)),
                 Span::raw(" "),
             ],
             Span::raw(tree::subagent_label(info)),
             None,
             vec![
-                vec![Span::styled(
-                    info.tool.clone().unwrap_or_default(),
-                    theme::muted(),
-                )],
+                vec![Span::styled(info.tool.clone().unwrap_or_default(), muted)],
                 vec![],
             ],
         ),
@@ -172,16 +172,10 @@ pub fn narrow_line(
             let position = position.map_or_else(String::new, |position| position.to_string());
             (
                 vec![
-                    Span::raw(row.guides.clone()),
-                    Span::styled(
-                        if focused { "▎" } else { " " },
-                        Style::default().fg(app.settings.accent),
-                    ),
+                    Span::raw(guides),
+                    focus_mark(focused),
                     Span::raw(" "),
-                    Span::styled(
-                        theme::RUN_GLYPH,
-                        Style::default().fg(theme::run_color(run.state)),
-                    ),
+                    look(theme::run_look(run.state, ascii)),
                     Span::raw(format!(" {position:>pos_width$} ")),
                 ],
                 Span::styled(
@@ -190,7 +184,7 @@ pub fn narrow_line(
                 ),
                 None,
                 vec![
-                    vec![Span::styled(format!("{merged}/{total}"), theme::muted())],
+                    vec![Span::styled(format!("{merged}/{total}"), muted)],
                     vec![],
                 ],
             )
@@ -201,13 +195,19 @@ pub fn narrow_line(
         | RowKind::Task { .. }
         | RowKind::Stage { .. }
         | RowKind::AgentRound { .. } => (
-            vec![Span::raw(row.guides.clone())],
-            Span::raw(crate::graph::content_text(row)),
+            vec![Span::raw(guides)],
+            Span::raw(crate::graph::content_text_in(row, ascii)),
             None,
             vec![vec![]],
         ),
     };
-    fit_line(prefix, name, branch, rights, usize::from(width), selected)
+    let fit = Fit {
+        width: usize::from(width),
+        selected,
+        muted,
+        ascii,
+    };
+    fit_line(prefix, name, branch, rights, fit)
 }
 
 pub fn counts_text(counts: RuntimeCounts) -> String {
@@ -240,14 +240,28 @@ const NAME_FLOOR: usize = 8;
 /// ellipsis and finally dropped once fewer than 4 columns remain for it (`[` + at least
 /// one character + `…` + `]`), while the name keeps only `NAME_FLOOR` columns for itself
 /// until the branch is gone, rather than taking everything it wants first.
+/// How `fit_line` fits a row: its width, whether it is selected, the branch marker's
+/// muted style, and whether its cut marks are ASCII.
+struct Fit {
+    width: usize,
+    selected: bool,
+    muted: Style,
+    ascii: bool,
+}
+
 fn fit_line(
     mut prefix: Vec<Span<'static>>,
     mut name: Span<'static>,
     branch: Option<String>,
     rights: Vec<Vec<Span<'static>>>,
-    width: usize,
-    selected: bool,
+    fit: Fit,
 ) -> Line<'static> {
+    let Fit {
+        width,
+        selected,
+        muted,
+        ascii,
+    } = fit;
     let prefix_width = spans_width(&prefix);
     let right = rights
         .into_iter()
@@ -268,8 +282,8 @@ fn fit_line(
     let branch_span = branch.as_deref().and_then(|branch| {
         let budget = available.saturating_sub(name_floor);
         (budget >= 4).then(|| {
-            let text = truncate(branch, budget - 3);
-            Span::styled(format!(" [{text}]"), theme::muted())
+            let text = truncate_in(branch, budget - 3, ascii);
+            Span::styled(format!(" [{text}]"), muted)
         })
     });
     let branch_width = branch_span
@@ -278,7 +292,7 @@ fn fit_line(
         .unwrap_or(0);
 
     let name_width = available.saturating_sub(branch_width);
-    name.content = truncate(&name.content, name_width).into();
+    name.content = truncate_in(&name.content, name_width, ascii).into();
     prefix.push(name);
     if let Some(branch_span) = branch_span {
         prefix.push(branch_span);
@@ -286,7 +300,7 @@ fn fit_line(
     // Extremely narrow terminals and deep nesting can truncate even the guides.
     let mut remaining = width.saturating_sub(right_width);
     for span in &mut prefix {
-        span.content = truncate(&span.content, remaining).into();
+        span.content = truncate_in(&span.content, remaining, ascii).into();
         remaining = remaining.saturating_sub(UnicodeWidthStr::width(span.content.as_ref()));
     }
     prefix.push(Span::raw(" ".repeat(remaining)));
@@ -303,7 +317,17 @@ fn fit_line(
 /// it does not fit. Shared with the graph painter, which truncates box
 /// content the same way (decision 11).
 pub(crate) fn truncate(text: &str, width: usize) -> String {
-    fit(text, width, true)
+    fit(text, width, Some("…"))
+}
+
+/// [`truncate`], with the ASCII mark `...` when `ascii` (milestone 9.0.7 decision 5),
+/// or `.` below four columns.
+pub(crate) fn truncate_in(text: &str, width: usize, ascii: bool) -> String {
+    match (ascii, width >= 4) {
+        (false, _) => truncate(text, width),
+        (true, true) => fit(text, width, Some("...")),
+        (true, false) => fit(text, width, Some(".")),
+    }
 }
 
 /// `truncate` without the ellipsis: the longest prefix of `text` that fits
@@ -316,18 +340,19 @@ pub(crate) fn truncate(text: &str, width: usize) -> String {
 /// progress; returning nothing leaves it exactly where it was, which is an
 /// infinite loop rather than a narrow column.
 pub(crate) fn cut(text: &str, width: usize) -> String {
-    fit(text, width, false)
+    fit(text, width, None)
 }
 
-fn fit(text: &str, width: usize, ellipsis: bool) -> String {
+fn fit(text: &str, width: usize, ellipsis: Option<&str>) -> String {
     if UnicodeWidthStr::width(text) <= width {
         return text.to_owned();
     }
     if width == 0 {
         return String::new();
     }
-    // The ellipsis needs a column of its own; a cut with no mark keeps them all.
-    let budget = if ellipsis { width - 1 } else { width };
+    // The ellipsis needs columns of its own; a cut with no mark keeps them all.
+    let mark = ellipsis.map_or(0, UnicodeWidthStr::width).min(width);
+    let budget = width - mark;
     let mut result = String::new();
     for grapheme in text.graphemes(true) {
         if UnicodeWidthStr::width(result.as_str()) + UnicodeWidthStr::width(grapheme) > budget {
@@ -335,8 +360,8 @@ fn fit(text: &str, width: usize, ellipsis: bool) -> String {
         }
         result.push_str(grapheme);
     }
-    if ellipsis {
-        result.push('…');
+    if let Some(mark) = ellipsis {
+        result.push_str(mark);
     } else if result.is_empty() {
         // A first grapheme wider than the whole width: take it anyway, so the
         // caller advances. Overflowing a column by one cell is clipped; not

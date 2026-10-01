@@ -6,10 +6,9 @@ use crate::run_edit::{EditField, TaskEditForm, field_label};
 use crate::theme;
 use crate::ui::dialog::{LABEL_WIDTH, MARKER_WIDTH, centered};
 use crate::ui::tree_view::truncate;
-use proto::Status;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
@@ -41,7 +40,7 @@ fn one_row(frame: &mut Frame, inner: Rect, y: u16, line: Line) {
     }
 }
 
-pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, accent: Color) {
+pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, p: theme::Palette) {
     let fields = form.visible_fields();
     let error_rows = usize::from(form.error.is_some());
     let height = (fields.len() + 1 + error_rows + 1) as u16 + 2;
@@ -50,10 +49,10 @@ pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, accent: Color)
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(accent))
+        .border_style(theme::role(theme::Role::Accent, p))
         .title(Line::from(Span::styled(
             format!(" edit {} ", form.task_id),
-            crate::ui::dialog::dialog_title(accent),
+            crate::ui::dialog::dialog_title(p),
         )));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
@@ -65,7 +64,7 @@ pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, accent: Color)
         let y = inner.y + row as u16;
         let focused = form.focus == *field;
         let label_style = if focused {
-            Style::default().fg(accent)
+            theme::role(theme::Role::Accent, p)
         } else {
             Style::default()
         };
@@ -97,7 +96,10 @@ pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, accent: Color)
                     let room = value_width.saturating_sub(value.chars().count() + 2);
                     if room > 0 {
                         spans.push(Span::raw("  "));
-                        spans.push(Span::styled(truncate(&resolved, room), theme::muted()));
+                        spans.push(Span::styled(
+                            truncate(&resolved, room),
+                            theme::role(theme::Role::Muted, p),
+                        ));
                     }
                 }
                 if focused && is_text(*field) {
@@ -117,7 +119,7 @@ pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, accent: Color)
 
     let mut y = inner.y + fields.len() as u16 + 1;
     if let Some(error) = &form.error {
-        let style = Style::default().fg(theme::status_color(Status::Attention));
+        let style = theme::role(theme::Role::Failed, p);
         one_row(frame, inner, y, Line::styled(truncate(error, width), style));
         y += 1;
     }
@@ -126,5 +128,10 @@ pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, accent: Color)
     } else {
         HINT
     };
-    one_row(frame, inner, y, Line::styled(hint, theme::muted()));
+    one_row(
+        frame,
+        inner,
+        y,
+        Line::styled(hint, theme::role(theme::Role::Muted, p)),
+    );
 }

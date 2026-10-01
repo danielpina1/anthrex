@@ -3,7 +3,7 @@
 
 use super::run_format::{
     clean, counts_text, effort_text, format_tokens, kind_glyph, local_hhmm, location, most_severe,
-    progress_bar, reason_text, rows, size_letter, strength_text, test_mode_text,
+    progress_bar_in, reason_text, rows, size_letter, strength_text, test_mode_text,
 };
 use super::run_orch::{messages_text, notes_text};
 use super::{Inspection, field};
@@ -31,7 +31,7 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
     if let Some(deps) = deps_text(run, task, app) {
         fields.push(field("deps", deps));
     }
-    fields.push(field("budget", budget_text(task)));
+    fields.push(field("budget", budget_text(task, app.palette().ascii)));
     fields.push(field("tries", tries_text(run, task)));
     if let Some(diff) = diff_text(task) {
         fields.push(field("diff", diff));
@@ -198,22 +198,24 @@ fn deps_text(run: &RunInfo, task: &TaskInfo, app: &App) -> Option<String> {
         }
     }
     let gate_open = run.state == RunState::AwaitingApproval;
+    let ascii = app.palette().ascii;
     let waits: Vec<String> = deps
         .iter()
         .map(
             |dep| match run.tasks.iter().find(|other| other.id == **dep) {
-                Some(other) if other.state == TaskState::Merged => format!("{dep} ✓"),
+                Some(other) if other.state == TaskState::Merged => {
+                    format!("{dep} {}", theme::glyph(theme::Glyph::Passed, ascii))
+                }
                 Some(other) => {
-                    let held = crate::tree::task_held(run, other);
-                    let paused = crate::tree::is_paused(other);
-                    let (glyph, _) = theme::task_look(
-                        other.state,
+                    let look = theme::TaskLook {
+                        state: other.state,
                         gate_open,
-                        held,
-                        paused,
-                        false,
-                        app.spinner_frame,
-                    );
+                        held: crate::tree::task_held(run, other),
+                        paused: crate::tree::is_paused(other),
+                        animating: false,
+                        needs_you: crate::app::alerts::task_needs_you(run, other),
+                    };
+                    let (glyph, _) = theme::task_look(look, app.spinner_frame, ascii);
                     format!("{dep} {glyph}")
                 }
                 None => (*dep).clone(),
@@ -246,7 +248,7 @@ fn deps_text(run: &RunInfo, task: &TaskInfo, app: &App) -> Option<String> {
     (!parts.is_empty()).then(|| clean(&parts.join(" · ")))
 }
 
-fn budget_text(task: &TaskInfo) -> String {
+fn budget_text(task: &TaskInfo, ascii: bool) -> String {
     let (budget, spent) = (&task.budget, &task.spent_session);
     let calls = (u64::from(spent.tool_calls), u64::from(budget.tool_calls));
     let secs = (spent.secs, u64::from(budget.minutes) * 60);
@@ -270,7 +272,7 @@ fn budget_text(task: &TaskInfo) -> String {
     }
     format!(
         "{} {}/{} tool calls · {}/{} min · {tokens} tokens",
-        progress_bar(done, total, super::PROGRESS_WIDTH),
+        progress_bar_in(done, total, super::PROGRESS_WIDTH, ascii),
         spent.tool_calls,
         budget.tool_calls,
         spent.secs / 60,

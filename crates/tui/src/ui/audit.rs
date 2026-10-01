@@ -170,7 +170,7 @@ pub(crate) fn shows(name: &str) -> Shows {
         "sidebar tree" => row("TREE", Some("esc back"), &["j/k move"]),
         "project overview" => row("TREE", Some("esc back"), &["j/k move"]),
         "run view at the gate" => row("RUN", Some("esc back"), &["a approve", "x reject"]),
-        "run view running" => row("RUN", Some("esc back"), &["j/k move"]),
+        "run view running" | "run view on a task" => row("RUN", Some("esc back"), &["j/k move"]),
         "conversation" => row("CHAT", None, &["C-b ? help"]),
         "alerts" => row("ALERTS", Some("esc back"), &["j/k move"]),
         "help over the sidebar tree" | "profile under the help" => row("keys", None, &["any key"]),
@@ -221,6 +221,20 @@ fn run_view(mut app: App) -> App {
     app
 }
 
+/// The run view with task `id` selected: its task panel below the canvas.
+fn on_task(mut app: App, id: &str) -> App {
+    let run = app.runs.runs[0].clone();
+    let rows = tree::run_rows(&run, &app.windows, &app.tree, tree::RunFilter::All);
+    let key = tree::NodeKey::Task {
+        run: RUN_ID.into(),
+        id: id.into(),
+    };
+    let rows: Vec<_> = rows.into_iter().map(|row| row.key).collect();
+    assert!(rows.contains(&key), "{id} is on the canvas");
+    app.tree.selected = Some(key);
+    app
+}
+
 fn with(mut app: App, change: impl FnOnce(&mut App)) -> App {
     change(&mut app);
     app
@@ -247,6 +261,7 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
         ("project overview", with(gate(), |a| chord(a, 'T'))),
         ("run view at the gate", run_view(gate())),
         ("run view running", run_view(running())),
+        ("run view on a task", on_task(run_view(running()), "t1")),
         ("conversation", with(gate(), |a| chord(a, 'm'))),
         // The Alerts box with the keys, until task 6's Alerts view replaces it.
         ("alerts", with(gate(), |a| chord(a, 'a'))),

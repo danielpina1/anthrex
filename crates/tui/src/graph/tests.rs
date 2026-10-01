@@ -364,8 +364,8 @@ fn wide_characters_count_as_two_columns() {
 fn every_status_glyph_is_one_column() {
     // `GLYPH_COLUMNS` budgets one column for the glyph and one for the space
     // after it. A two-column glyph would leave every box in the tree one
-    // column short of its content. Sub-agent boxes draw `subagent_glyph`,
-    // not `status_glyph` directly, so it is pinned too (deferred from the
+    // column short of its content. Sub-agent boxes draw `subagent_look`,
+    // not `status_look` directly, so it is pinned too (deferred from the
     // previous task's review): the assumption held unguarded until now.
     for status in [
         Status::Starting,
@@ -376,7 +376,7 @@ fn every_status_glyph_is_one_column() {
         Status::Exited,
     ] {
         for frame in 0..crate::theme::SPINNER.len() {
-            let glyph = crate::theme::status_glyph(status, frame);
+            let glyph = crate::theme::status_look(status, frame, false).0;
             assert_eq!(
                 unicode_width::UnicodeWidthStr::width(glyph),
                 1,
@@ -404,7 +404,7 @@ fn every_status_glyph_is_one_column() {
                 needs_permission,
             };
             for frame in 0..crate::theme::SPINNER.len() {
-                let glyph = crate::theme::subagent_glyph(&info, frame);
+                let glyph = crate::theme::subagent_look(&info, frame, false).0;
                 assert_eq!(
                     unicode_width::UnicodeWidthStr::width(glyph),
                     1,

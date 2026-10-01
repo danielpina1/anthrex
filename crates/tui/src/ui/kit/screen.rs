@@ -39,7 +39,7 @@ pub fn screen_frame(title: &str, accent: bool, p: Palette) -> Block<'static> {
         .borders(Borders::ALL)
         .border_style(role(if accent { Role::Accent } else { Role::Muted }, p))
         .title(Span::styled(
-            format!(" {} ", one_line(title)),
+            format!(" {} ", crate::theme::fold(&one_line(title), p.ascii)),
             ratatui::style::Style::default().add_modifier(Modifier::BOLD),
         ));
     if p.ascii {

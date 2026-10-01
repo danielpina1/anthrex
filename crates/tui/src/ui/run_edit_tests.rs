@@ -11,7 +11,7 @@ use ratatui::buffer::Buffer;
 fn draw(form: &TaskEditForm, width: u16, height: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
-        .draw(|frame| render(frame, form, frame.area(), theme::DEFAULT_ACCENT))
+        .draw(|frame| render(frame, form, frame.area(), theme::Palette::PLAIN))
         .unwrap();
     terminal.backend().buffer().clone()
 }
@@ -78,7 +78,7 @@ fn the_form_renders_its_fields() {
     let top_line = line(&buffer, position(&buffer, "╭").1);
     assert_eq!(top_line.trim().chars().count(), 72);
     // The resolved values are muted; the chosen ones are not.
-    let muted = theme::muted().fg;
+    let muted = theme::role(theme::Role::Muted, theme::Palette::PLAIN).fg;
     let (x, y) = position(&buffer, "standard");
     assert_eq!(buffer[(x, y)].fg, muted.expect("muted has a colour"));
     let (x, y) = position(&buffer, "claude-sonnet-5");
@@ -127,7 +127,7 @@ fn the_cursor_sits_in_the_focused_text_field() {
     form.focus = EditField::Brief;
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal
-        .draw(|frame| render(frame, &form, frame.area(), theme::DEFAULT_ACCENT))
+        .draw(|frame| render(frame, &form, frame.area(), theme::Palette::PLAIN))
         .unwrap();
     let buffer = terminal.backend().buffer().clone();
     let (x, y) = position(&buffer, "Line one↵");

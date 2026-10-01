@@ -1,12 +1,10 @@
 use crate::app::{App, Modal, PendingAction, region::KeyRegion};
 use crate::dialog::TextInput;
-use crate::theme::{self, Palette, Role, role};
+use crate::theme::{Palette, Role, role};
 use crate::ui::dialog;
 use crate::ui::kit::{self, Hint};
-use proto::Status;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
@@ -180,16 +178,16 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         return;
     };
     let p = app.palette();
-    let accent = role(Role::Accent, p).fg.unwrap_or(p.accent);
+    let accent = role(Role::Accent, p);
     match modal {
-        Modal::NewAgent(form) => return dialog::render_new_agent(frame, form, area, accent),
+        Modal::NewAgent(form) => return dialog::render_new_agent(frame, form, area, p),
         Modal::Remove(confirm) => {
-            return dialog::render_remove_confirm(frame, confirm, area, accent);
+            return dialog::render_remove_confirm(frame, confirm, area, p);
         }
         Modal::ForceRemove { name, message, .. } => {
-            return dialog::render_force_remove(frame, name, message, area, accent);
+            return dialog::render_force_remove(frame, name, message, area, p);
         }
-        Modal::EditTask(form) => return crate::ui::run_edit::render(frame, form, area, accent),
+        Modal::EditTask(form) => return crate::ui::run_edit::render(frame, form, area, p),
         Modal::StartGoal(form) => {
             return crate::ui::run_goal::render(frame, form, area, app.palette());
         }
@@ -206,7 +204,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 .into_iter()
                 .map(|(key, what)| {
                     Line::from(vec![
-                        Span::styled(format!("{key:<11}"), Style::default().fg(accent)),
+                        Span::styled(format!("{key:<11}"), accent),
                         Span::raw(what),
                     ])
                 })
@@ -224,13 +222,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             vec![
                 Line::raw(text_with_cursor_block(&prompt.input)),
                 match &prompt.error {
-                    Some(message) => Line::styled(
-                        message.clone(),
-                        Style::default().fg(theme::status_color(Status::Attention)),
-                    ),
+                    Some(message) => Line::styled(message.clone(), role(Role::Failed, p)),
                     None => Line::raw(""),
                 },
-                Line::styled("Enter = rename    Esc = cancel", theme::muted()),
+                Line::styled("Enter = rename    Esc = cancel", role(Role::Muted, p)),
             ],
         ),
         Modal::Confirm { .. }
@@ -251,7 +246,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let block = kit::pane_frame(Line::from(title.trim().to_owned()), keys_here, p);
     let block = if matches!(modal, Modal::Help) {
         block.title_bottom(Line::from(vec![
-            Span::styled(format!(" {}", HELP_CLOSE.0), Style::default().fg(accent)),
+            Span::styled(format!(" {}", HELP_CLOSE.0), accent),
             Span::raw(format!("  {} ", HELP_CLOSE.1)),
         ]))
     } else {

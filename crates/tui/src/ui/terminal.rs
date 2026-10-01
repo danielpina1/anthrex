@@ -67,7 +67,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                     "  No agents. Press {} c to create one, or run `anthrex new`.",
                     app.settings.prefix_label
                 ),
-                theme::muted(),
+                theme::role(theme::Role::Muted, app.palette()),
             ),
         ];
         frame.render_widget(Paragraph::new(hint), inner);
@@ -79,8 +79,11 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         let hint = vec![
             Line::raw(""),
             Line::styled(
-                headless_placeholder(w, &app.settings.prefix_label),
-                theme::muted(),
+                theme::fold(
+                    &headless_placeholder(w, &app.settings.prefix_label),
+                    app.palette().ascii,
+                ),
+                theme::role(theme::Role::Muted, app.palette()),
             ),
         ];
         frame.render_widget(Paragraph::new(hint), inner);

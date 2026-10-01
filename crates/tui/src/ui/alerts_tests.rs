@@ -88,7 +88,10 @@ fn empty_alerts_collapse_to_one_line_at_80x24() {
             "╰────────────────────────────────╯",
         ]
     );
-    assert_eq!(buffer[(1, 21)].style().fg, Some(theme::DIM));
+    assert_eq!(
+        buffer[(1, 21)].style().fg,
+        Some(theme::fg(theme::Role::Muted))
+    );
 }
 
 #[test]
@@ -106,7 +109,8 @@ fn empty_alerts_collapse_to_one_line_at_120x40() {
     );
 }
 
-/// Each alert row's `●` colour, top to bottom.
+/// Each alert row's `●` colour, top to bottom. Milestone 9.0.7 decision 3: P1–P3 in
+/// `Attention` (P1 alone bold), P4 in `Done`.
 fn dot_colours(buffer: &Buffer, layout: &crate::ui::Layout) -> Vec<Option<Color>> {
     let inner = layout.alerts_inner;
     (inner.y..inner.y + inner.height)
@@ -132,14 +136,18 @@ fn four_priorities_render_at_80x24() {
             "╰────────────────────────────────╯",
         ]
     );
-    let red = Some(Color::Red);
-    assert_eq!(
-        dot_colours(&buffer, &layout),
-        [red, red, red, Some(Color::Yellow)]
-    );
+    let attention = Some(Color::LightMagenta);
+    assert_eq!(dot_colours(&buffer, &layout), [attention; 4]);
+    let bold = |y: u16| {
+        let cell = &buffer[(layout.alerts_inner.x, layout.alerts_inner.y + y)];
+        cell.style()
+            .add_modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    };
+    assert_eq!([0, 1, 2, 3].map(bold), [true, true, true, false], "P1 bold");
     // The label shares the dot's colour; the text is the default colour.
     let y = layout.alerts_inner.y;
-    assert_eq!(buffer[(layout.alerts_inner.x + 2, y)].style().fg, red);
+    assert_eq!(buffer[(layout.alerts_inner.x + 2, y)].style().fg, attention);
     assert_eq!(
         buffer[(layout.alerts_inner.x + 10, y)].style().fg,
         Some(Color::Reset)
@@ -164,11 +172,8 @@ fn four_priorities_render_at_120x40() {
             "╰────────────────────────────────╯",
         ]
     );
-    let (red, yellow) = (Some(Color::Red), Some(Color::Yellow));
-    assert_eq!(
-        dot_colours(&buffer, &layout),
-        [red, red, red, yellow, yellow]
-    );
+    let attention = Some(Color::LightMagenta);
+    assert_eq!(dot_colours(&buffer, &layout), [attention; 5]);
     // Focused at the last alert, the window shows the last six: P2, P3 ×3, P4 ×2.
     let mut app = every_app();
     focus(&mut app);
@@ -176,10 +181,10 @@ fn four_priorities_render_at_120x40() {
         key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
     }
     let (buffer, layout) = draw_at(&app, 120, 40);
-    let (magenta, green) = (Some(Color::Magenta), Some(Color::Green));
+    let green = Some(Color::Green);
     assert_eq!(
         dot_colours(&buffer, &layout),
-        [yellow, magenta, magenta, magenta, green, green]
+        [attention, attention, attention, attention, green, green]
     );
 }
 
@@ -227,7 +232,10 @@ fn the_focused_box_has_the_focused_border_and_reversed_selection() {
     let mut app = every_app();
     let (buffer, layout) = draw_at(&app, 80, 24);
     let corner = (layout.alerts.x, layout.alerts.y);
-    assert_eq!(buffer[corner].style().fg, theme::border().fg);
+    assert_eq!(
+        buffer[corner].style().fg,
+        theme::role(theme::Role::Muted, theme::Palette::PLAIN).fg
+    );
     focus(&mut app);
     key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
     let (buffer, layout) = draw_at(&app, 80, 24);
@@ -263,7 +271,7 @@ fn hidden_sidebar_shows_the_flag() {
         "{:?}",
         row(&buffer, 23)
     );
-    assert_eq!(buffer[(1, 23)].style().fg, Some(Color::Red));
+    assert_eq!(buffer[(1, 23)].style().fg, Some(Color::LightMagenta));
     // A lower top priority takes its colour.
     let mut snap = snapshot(1, vec![at("r", RunState::Halted, 1)]);
     snap.proposals = vec![];
@@ -275,7 +283,14 @@ fn hidden_sidebar_shows_the_flag() {
         "{:?}",
         row(&buffer, 23)
     );
-    assert_eq!(buffer[(1, 23)].style().fg, Some(Color::Magenta));
+    assert_eq!(buffer[(1, 23)].style().fg, Some(Color::LightMagenta));
+    assert!(
+        !buffer[(1, 23)]
+            .style()
+            .add_modifier
+            .contains(ratatui::style::Modifier::BOLD),
+        "a P3 top alert is not bold"
+    );
     // No flag at zero, nor while the sidebar shows.
     let mut app = empty_app();
     app.sidebar_visible = false;
@@ -394,7 +409,7 @@ fn a_raw_alert_line_is_sanitised_by_the_box_itself() {
     };
     for width in [4, 20, 400] {
         for selected in [false, true] {
-            let line = super::alert_line(&alert, width, selected);
+            let line = super::alert_line(&alert, width, selected, crate::theme::Palette::PLAIN);
             let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
             assert_eq!(first_hostile(&text), None, "{width}: {text:?}");
         }

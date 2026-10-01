@@ -79,7 +79,7 @@ fn value<'a>(sections: &'a [Section], title: &str, label: &str) -> &'a str {
 
 /// The panel's body rows at 76 columns, as text.
 fn body(sections: &[Section]) -> Vec<String> {
-    crate::inspector::panel::sections::body_lines(sections, 76)
+    crate::inspector::panel::sections::body_lines(sections, 76, crate::theme::Palette::PLAIN)
         .iter()
         .map(|line| {
             line.spans

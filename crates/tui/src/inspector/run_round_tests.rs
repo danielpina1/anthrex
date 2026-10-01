@@ -205,7 +205,7 @@ fn t7_on_window(change: impl FnOnce(&mut proto::AgentRoundInfo)) -> App {
 fn a_rate_limited_round() {
     let app = t7_on_window(|_| {});
     let inspection = inspect_node(&app, &round_key("t7", AgentRole::Worker, 1, 1));
-    assert_eq!(inspection.glyph.content, "◆");
+    assert_eq!(inspection.glyph.content, "⚑");
     assert_eq!(inspection.right.as_deref(), Some("rate-limited · 15m · t7"));
     assert_eq!(
         pairs(&inspection),
