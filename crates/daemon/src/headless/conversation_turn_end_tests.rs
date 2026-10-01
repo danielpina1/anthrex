@@ -23,7 +23,7 @@ const INTERRUPTED: &str = r#"{"type":"result","subtype":"error_during_execution"
 /// A window's conversation and cursor, fed as the manager feeds them: real hooks through
 /// `on_hook` and, for Claude with hooks firing, `observe_hook`; session events through
 /// `map`. Every hook `map` synthesises is kept in `synthesised`.
-struct Window {
+pub(super) struct Window {
     runtime: Runtime,
     hooks_fire: bool,
     set: ConversationSet,
@@ -34,7 +34,12 @@ struct Window {
 }
 
 impl Window {
-    fn new(runtime: Runtime, hooks_fire: bool, cursor: StreamCursor, feed: bool) -> Self {
+    pub(super) fn new(
+        runtime: Runtime,
+        hooks_fire: bool,
+        cursor: StreamCursor,
+        feed: bool,
+    ) -> Self {
         Window {
             runtime,
             hooks_fire,
@@ -67,13 +72,13 @@ impl Window {
         }
     }
 
-    fn sent(&mut self, text: &str) {
+    pub(super) fn sent(&mut self, text: &str) {
         let input = sent_turn(self.runtime, self.hooks_fire, text, &mut self.cursor);
         self.apply(input);
     }
 
     /// The hooks `map` synthesised for `event`, after applying them.
-    fn event(&mut self, event: &SessionEvent) -> Vec<ParsedHook> {
+    pub(super) fn event(&mut self, event: &SessionEvent) -> Vec<ParsedHook> {
         let input = map(self.runtime, self.hooks_fire, event, &mut self.cursor);
         let hooks = input.hooks.clone();
         self.synthesised.extend(hooks.iter().cloned());
@@ -89,7 +94,7 @@ impl Window {
         hooks
     }
 
-    fn conversation(&self) -> proto::Conversation {
+    pub(super) fn conversation(&self) -> proto::Conversation {
         self.set.snapshot_or_empty(None)
     }
 }

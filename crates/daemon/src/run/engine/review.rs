@@ -413,8 +413,8 @@ pub(super) fn turn_ended(
 
 /// Ruling T13-I1: decision 32's failed turns for a reviewer. A rate limit is counted
 /// and waited out (`rate_limit_retry_secs`, then `rate_limit_continue` as its next
-/// turn); authentication and billing failures block the task on its environment at
-/// once, with the error; any other failure gets one continue after the same wait, and
+/// turn); authentication and billing failures, and ruling F-1's client errors, block the
+/// task on its environment at once, with the error; any other failure gets one continue after the same wait, and
 /// the second in a row blocks. A reviewer has no sandbox, so an unavailable one is
 /// treated as an environment failure too. The reviewer of a blocked task is stopped.
 #[allow(clippy::too_many_arguments)]
@@ -452,7 +452,8 @@ fn failed_turn(
     if rate_limit {
         round.set_rate_limited(Some(not_before(now, wait)), now);
     }
-    round.failed_error = Some(error);
+    super::rounds::note_failed_turn(run, i, r, &error, not_before(now, wait), now);
+    run.tasks[i].rounds[r].failed_error = Some(error);
     // One event, unless a retry streak ran straight into this failure (decision 32).
     if rate_limit && !streak {
         count_rate_limit(run, i, r);

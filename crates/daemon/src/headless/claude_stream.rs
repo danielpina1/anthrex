@@ -144,10 +144,18 @@ impl ClaudeStream {
             TurnOutcome::Completed
         } else {
             let error = failure_text(object, subtype);
+            let status = object.get("api_error_status").and_then(Value::as_u64);
             let kind = if error.contains(SANDBOX_UNAVAILABLE) {
                 FailureKind::SandboxUnavailable
             } else {
-                pending.unwrap_or(FailureKind::Other)
+                match pending {
+                    Some(kind) if kind != FailureKind::Other => kind,
+                    // Ruling F-1: a client error, by `api_error_status` or the text.
+                    _ if super::failure::is_client_error(status, &error) => {
+                        FailureKind::ClientError
+                    }
+                    _ => FailureKind::Other,
+                }
             };
             TurnOutcome::Failed { error, kind }
         };

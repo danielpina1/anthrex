@@ -333,6 +333,7 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
       - A turn that **ends** failed with a rate-limit error (Claude's `result` with `is_error` and a rate-limit error, Codex's `turn.failed` whose message M8a.1 records) waits `rate_limit_retry_secs` (default 300), with the round's `rate_limited_until` set to the end of that wait, so the round reads as rate-limited (`AgentRoundInfo.rate_limited`) while it waits. Then `rate_limit_continue` is queued as a new turn. It is not a failure.
       - A turn that fails with `authentication_failed` or `billing_error` blocks the task as `blocked(environment)`, with the error.
       - Any other failed turn gets one `rate_limit_continue` after the same wait. A second non-rate-limit failed turn in a row blocks the task as `blocked(environment)`.
+      - *Amended 2026-10-01 by ruling F-1 (Implementation notes):* a failed turn whose error is a deterministic client error (HTTP 400, 401, 403, 404 or 422, or an error type `invalid_request_error`, `not_found_error` or `permission_error`) blocks the task as `blocked(environment)` at once, with the error and no continue, for workers and reviewers on both runtimes. Rate limits, 5xx, `overloaded` and unknown errors keep the rules above.
     - **Permission denials.** A worker never waits on a prompt, because none can be shown. `denials_before_block` (default 3) denials in one session block the task as `blocked(environment)` with `the agent was denied <n> times; last: <tool>: <reason>`, and the session is killed. Codex reports denials only if M8a.1 finds a structured marker in `exec --json`; otherwise its sandbox refusals surface as failed commands, and the stall and budget rules cover them.
     - **A process that dies.** A session process that exits without the engine killing it:
       - During an open turn, or for Codex before its turn's `turn.completed` / `turn.failed`: the first time in a round, the engine resumes the session (`ResumeSession` with `RESUME_AFTER_EXIT`). The second time in the same round, it is a stall.
@@ -10075,3 +10076,32 @@ touched test targets only (named in the F4 report).
   in `protected_changed`; a case-sensitive matcher would report none of them.
 - **Status.** Milestone 8a is `done` in `docs/ROADMAP.md`, with manual check 4e
   outstanding (above).
+
+### Ruling F-1: client errors block at once (2026-10-01)
+
+- **The trial.** A Codex reviewer on the roster's `codex`/`""` entry failed with `{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."}}`. Decision 32 classed it `Other`: one `rate_limit_continue` after `rate_limit_retry_secs` (300 s), a second identical failure from a new `codex exec resume` process, then `blocked(environment)`. The round sat in `FailedTurn::WaitingContinue` for five minutes, with nothing in the task log, the run view or the conversation to say so.
+- **The ruling.** Decision 32 is amended (see its bullet): a deterministic client error blocks at once. It is a new `FailureKind::ClientError`, set only by each runtime's classifier through `headless::failure::is_client_error`, never by text matching in the engine:
+  - Codex (`codex_stream::classify`): after the rate-limit rule, the `turn.failed` message's JSON `status` or `error.type`.
+  - Claude (`ClaudeStream::result`): a pending category of `rate_limit`, `authentication_failed` or `billing_error` keeps its kind (billing is a 400, authentication a 401); otherwise the `result`'s `api_error_status`, or the failure text (`API Error: <status>`, a JSON error's `status` or `error.type`, or a client error type as a word of its own).
+  - The engine blocks on `ClientError` where it blocks on authentication: a worker (`signals::failed_turn`), a reviewer (`review::failed_turn`, whose catch-all already blocked any kind it did not continue) and a research session (`research::turn_ended`, which gives up).
+- **Changed expectation.** `codex_stream_parses_exec_and_resume` recorded Codex 0.155's own unsupported-model failure as `Other`; it is `ClientError` now.
+- **Tests.** `failure_tests.rs`: `the_statuses_and_types_of_a_client_error`, `codex_classifies_the_trials_unsupported_model_as_a_client_error`, `claude_classifies_a_client_error_by_status_or_type`; the engine's `failed_turns`, `a_reviewer_auth_or_billing_failure_blocks_at_once` and `a_research_client_error_blocks_at_once`; end to end, `e2e_a_reviewer_whose_model_is_refused_blocks_at_once_on_the_error` (the trial's line) and `e2e_a_claude_worker_client_error_blocks_at_once`. All failed first except the reviewer's engine test (the catch-all), which pins it; with `is_client_error` stubbed to `false` both end-to-end tests time out at `RUN_WAIT`, because the 300 s continue is on their path.
+
+
+### Ruling F-2: a continued failed turn is noted in the task's history (2026-10-01)
+
+- **Why.** In the trial, the five minutes between the reviewer's failed turn and its continue left no trace: the task log said `review round 1 starting`, then `blocked (environment): …`.
+- **What.** Every failed turn the engine will continue (decision 32's rate-limit and other failures; not a block) adds `<role> round <n>: turn failed (<error>); continuing at <YYYY-MM-DD HH:MM:SSZ>` to the task's history, which the run view's task log and `REPORT.md` show. `<role>` is `worker`, `reviewer` or `research`; the error is one line through `proto::safe_text::one_line` (control and bidi-format characters removed), trimmed, cut to 200 characters with `…`. One helper, `engine/rounds.rs::note_failed_turn`, called from the worker's, the reviewer's and the research session's continue sites. No protocol change: the line is an ordinary `TaskEvent`.
+- **Tests.** `engine/tests/turns_failed_notes.rs` (5 tests: a worker's for both kinds with the snapshot and report, a reviewer's, a research session's, the safe capped error, and no line for a blocking failure); all five failed first.
+
+### Ruling F-3: a failed Codex turn shows its error in the conversation (2026-10-01)
+
+- **Why.** The trial's conversation view showed the reviewer's prompt, then an empty assistant turn: Codex's `turn.failed` became only a `TurnEnded`, while Claude's failed API turn already carries its synthetic message as `ApiErrorText` (M8a.24).
+- **What.** `codex_stream::parse_line` gives `turn.failed` as `ApiErrorText { "Turn failed: <error>" }` then `TurnEnded`, the error being the classified failure text through `proto::safe_text::one_line`, trimmed and bounded like every stream text. `ApiErrorText` was already shown by `conversation::map` and ignored by the engine (`driver/observe.rs`), so the engine and the window status are unchanged.
+- **Tests.** `conversation_failed_turn_tests.rs`: `a_failed_codex_turn_shows_its_error` (the trial's lines) and `a_failed_codex_turns_error_is_one_safe_line`; both failed first (no text block). The three parser tests that matched a lone `TurnEnded` now expect the pair.
+
+### Ruling F-4: the trial's report items (2026-10-01)
+
+- **(a) A check with no kept output.** A passing tier job keeps no output (`tail` is `""`), so decision 35's reviewer prompt showed `Last check (40 lines):` over an empty line, and two trial reviewers said they could not confirm the tests passed. Such a check is now one line, `Last check: passed (exit 0, 1s); output omitted.` (`failed (exit <n>, …)`, `timed out (…)` and `failed (no exit code, …)` likewise; `messages::check_without_output`). A check with output, or a decider summary, keeps the 40-line block. Test: `contract_tests.rs::reviewer_prompt_states_a_check_with_no_output`, red first.
+- **(b) Salvage refs after a fully merged run.** Not a defect: every salvage commit added only `Cargo.lock`, which the toy repository does not track and `setup = "cargo build"` writes. Decision 20 counts untracked files as dirty and keeps salvage refs at accept. Recorded for M9.5 in the followups plan.
+- **The orchestrator wake.** Investigated read-only, not changed; the evidence and a logging followup are in the followups plan.

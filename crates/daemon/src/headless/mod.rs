@@ -14,6 +14,7 @@ pub mod claude_stream;
 pub mod codex_guard;
 pub mod codex_stream;
 pub mod conversation;
+pub mod failure;
 pub mod session;
 pub mod status;
 
@@ -203,6 +204,10 @@ pub enum FailureKind {
     Authentication,
     Billing,
     SandboxUnavailable,
+    /// Ruling F-1: a deterministic client error (HTTP 400, 401, 403, 404 or 422, or an
+    /// `invalid_request_error`, `not_found_error` or `permission_error`), which a
+    /// continue cannot fix.
+    ClientError,
     Other,
 }
 

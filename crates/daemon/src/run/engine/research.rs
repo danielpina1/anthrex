@@ -267,7 +267,10 @@ pub(super) fn turn_ended(
         TurnOutcome::Failed {
             error,
             kind:
-                FailureKind::Authentication | FailureKind::Billing | FailureKind::SandboxUnavailable,
+                FailureKind::Authentication
+                | FailureKind::Billing
+                | FailureKind::SandboxUnavailable
+                | FailureKind::ClientError,
         } => {
             return give_up(run, i, error, now, fx);
         }
@@ -284,7 +287,8 @@ pub(super) fn turn_ended(
                 rate_limit: true,
             };
             round.set_rate_limited(Some(not_before(now, wait)), now);
-            round.failed_error = Some(error);
+            super::rounds::note_failed_turn(run, i, r, &error, not_before(now, wait), now);
+            run.tasks[i].rounds[r].failed_error = Some(error);
             return;
         }
         TurnOutcome::Failed {
@@ -302,7 +306,8 @@ pub(super) fn turn_ended(
                 at: not_before(now, wait),
                 rate_limit: false,
             };
-            round.failed_error = Some(error);
+            super::rounds::note_failed_turn(run, i, r, &error, not_before(now, wait), now);
+            run.tasks[i].rounds[r].failed_error = Some(error);
             return;
         }
         TurnOutcome::Completed => {
