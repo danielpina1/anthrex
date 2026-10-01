@@ -128,3 +128,31 @@ fn load_with_origin_reads_the_same_config_as_load() {
         proto::Origin::File
     );
 }
+
+/// Review fix round 1: a symlinked config stays a link; its target gets the new text.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_config_stays_a_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let real_dir = dir.path().join("dotfiles");
+    std::fs::create_dir(&real_dir).unwrap();
+    let target = real_dir.join("anthrex.toml");
+    std::fs::write(&target, "[orchestrator]\nmax_writers = 2\n").unwrap();
+    let link = dir.path().join("config.toml");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let mut doc = doc_of(&crate::load(&link).0.orchestrator);
+    doc.limits.max_writers = 6;
+    save(&link, &doc, &AtomicBool::new(false)).unwrap();
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "[orchestrator]\nmax_writers = 6\n"
+    );
+    assert_eq!(entries(dir.path()), ["config.toml", "dotfiles"]);
+    assert_eq!(entries(&real_dir), ["anthrex.toml"]);
+}

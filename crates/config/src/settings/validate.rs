@@ -76,6 +76,17 @@ fn roster(doc: &SettingsDoc, problems: &mut Vec<String>) {
             ));
         }
     }
+    for (n, m) in doc.models.iter().enumerate() {
+        for (field, text) in [("name", &m.model), ("note", &m.note)] {
+            if text.chars().any(unsafe_char) {
+                problems.push(format!(
+                    "model {} ({}): its {field} holds a control character",
+                    n + 1,
+                    m.runtime
+                ));
+            }
+        }
+    }
     for m in &doc.models {
         if m.note.chars().count() > MODEL_NOTE_MAX {
             problems.push(format!(
@@ -175,6 +186,12 @@ fn in_range<T: PartialOrd + std::fmt::Display>(
             range.end()
         ));
     }
+}
+
+/// A character a config line or a screen row must not hold: a control character
+/// (newline, tab, ESC), a line or paragraph separator, or a hidden format character.
+fn unsafe_char(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') || proto::safe_text::is_hidden_format(c)
 }
 
 /// How a model is named in a message: Codex's empty model is its configured default.

@@ -49,6 +49,10 @@ const CONTAINERS: [&str; 7] = [
     "orchestrator.models",
 ];
 const MODELS: &str = "orchestrator.models";
+/// The keys a `[[orchestrator.models]]` block the writer rewrites may hold.
+const MODEL_KEYS: [&str; 4] = ["runtime", "model", "strength", "note"];
+/// A roster rewrite's refusal of a block key it would drop; `{key}` as written.
+const FOREIGN_MODEL_KEY: &str = "orchestrator.models.{key} is a key the settings screen does not edit; edit config.toml by hand, or remove it from [[orchestrator.models]]";
 
 /// Pure: `text` with every owned key set as `doc` says (decision 30). Refuses with
 /// problems on an unsupported form, on invalid TOML, or on an output that does not read
@@ -60,6 +64,9 @@ pub fn edit_text(text: &str, doc: &SettingsDoc) -> Result<String, Vec<String>> {
     let scan = Scan::new(text);
     scan.check(&table)?;
     let current = crate::parse(text).0.orchestrator;
+    if doc.models != current.models {
+        scan.check_roster_keys()?;
+    }
     let out = scan.edit(&table, doc, &current);
     super::save::read_back(&table, &out, doc)?;
     Ok(out)
@@ -329,6 +336,31 @@ impl Scan {
             }
         }
         self.emit(&e, appended)
+    }
+
+    /// A rewritten roster drops whole blocks, so a block may hold only the keys the writer
+    /// writes back (controller ruling): anything else refuses instead of being lost.
+    fn check_roster_keys(&self) -> Result<(), Vec<String>> {
+        let mut problems: Vec<String> = Vec::new();
+        for s in self
+            .sections
+            .iter()
+            .filter(|s| s.array && is(&s.path, MODELS))
+        {
+            for &i in &s.keys {
+                let (key, _, _) = self.key_of(i);
+                let known = key.len() == 1 && MODEL_KEYS.contains(&key[0].as_str());
+                let text = FOREIGN_MODEL_KEY.replace("{key}", &key.join("."));
+                if !known && !problems.contains(&text) {
+                    problems.push(text);
+                }
+            }
+        }
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(problems)
+        }
     }
 
     /// Removes every `[[orchestrator.models]]` block (header through its last key line,

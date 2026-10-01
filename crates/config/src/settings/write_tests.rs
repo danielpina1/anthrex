@@ -294,3 +294,107 @@ fn a_changed_roster_replaces_every_block_in_place() {
     );
     assert_eq!(doc_of(&crate::parse(&out).0.orchestrator), doc);
 }
+
+/// Controller ruling (fix round 1): a roster rewrite never drops a key it does not write.
+#[test]
+fn a_roster_rewrite_refuses_a_block_key_it_would_drop() {
+    let text = "[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-6-sol\"\nstrength = \"standard\"\neffort = \"high\"\n";
+    let mut doc = doc_of(&crate::parse(text).0.orchestrator);
+    doc.limits.max_writers = 4;
+    let kept = edit_text(text, &doc).unwrap();
+    assert!(
+        kept.starts_with(text),
+        "an unchanged roster keeps the block: {kept}"
+    );
+    doc.models
+        .push(model(Runtime::Codex, "gpt-6-luna", Strength::Fast));
+    assert_eq!(
+        edit_text(text, &doc),
+        Err(vec![
+            "orchestrator.models.effort is a key the settings screen does not edit; edit config.toml by hand, or remove it from [[orchestrator.models]]".to_string()
+        ])
+    );
+}
+
+/// Review probe: header- and key-like lines inside a multi-line basic string are value.
+#[test]
+fn a_multi_line_string_holding_a_header_and_a_key_is_left_alone() {
+    let text = "notes = \"\"\"\n[orchestrator]\nmax_writers = 9\n\"\"\"\n[orchestrator]\nmax_writers = 2\n";
+    let mut doc = doc_of(&crate::parse(text).0.orchestrator);
+    doc.limits.max_writers = 4;
+    let out = edit_text(text, &doc).unwrap();
+    assert_eq!(out, text.replace("max_writers = 2", "max_writers = 4"));
+    let table: toml::Table = out.parse().unwrap();
+    assert_eq!(
+        table["notes"].as_str(),
+        Some("[orchestrator]\nmax_writers = 9\n")
+    );
+}
+
+/// Review probe: a literal multi-line string holding a models header survives a roster
+/// change; only the real block is replaced.
+#[test]
+fn a_literal_string_holding_a_models_header_survives_a_roster_change() {
+    let text = "notes = '''\n[[orchestrator.models]]\nruntime = \"codex\"\n'''\n\n[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-6-sol\"\nstrength = \"standard\"\n";
+    let mut doc = doc_of(&crate::parse(text).0.orchestrator);
+    doc.models = vec![model(
+        Runtime::Claude,
+        "claude-opus-5-5",
+        Strength::Frontier,
+    )];
+    let out = edit_text(text, &doc).unwrap();
+    assert!(
+        out.starts_with("notes = '''\n[[orchestrator.models]]\nruntime = \"codex\"\n'''\n"),
+        "{out}"
+    );
+    assert!(!out.contains("gpt-6-sol"), "{out}");
+    assert_eq!(doc_of(&crate::parse(&out).0.orchestrator), doc);
+}
+
+/// Review probe: a `#` inside a quoted owned value is not its comment.
+#[test]
+fn a_hash_inside_a_quoted_value_is_not_a_comment() {
+    let text = "[orchestrator.agent]\nruntime = \"claude\"\nmodel = \"a#b\" # c\n";
+    let mut doc = doc_of(&crate::parse(text).0.orchestrator);
+    assert_eq!(doc.orchestrator.model, "a#b");
+    doc.orchestrator.model = "x#y".into();
+    let out = edit_text(text, &doc).unwrap();
+    assert_eq!(
+        out,
+        "[orchestrator.agent]\nruntime = \"claude\"\nmodel = \"x#y\" # c\n"
+    );
+}
+
+/// Review probe: an owned key's name in another table is not the owned key.
+#[test]
+fn a_same_named_key_in_another_table_is_untouched() {
+    let text = "[[profiles]]\nmax_writers = 9\n";
+    let mut doc = doc_of(&crate::parse(text).0.orchestrator);
+    doc.limits.max_writers = 4;
+    let out = edit_text(text, &doc).unwrap();
+    assert_eq!(
+        out,
+        "[[profiles]]\nmax_writers = 9\n\n[orchestrator]\nmax_writers = 4\n"
+    );
+}
+
+/// Review probe: a multi-line inline table (TOML 1.1) is one value; an owned one refuses.
+#[test]
+fn a_multi_line_inline_table_is_one_value() {
+    let text = "extra = {\n  a = 1,\n  max_writers = 9,\n}\n[orchestrator]\nmax_writers = 2\n";
+    assert!(text.parse::<toml::Table>().is_ok());
+    let mut doc = doc_of(&crate::parse(text).0.orchestrator);
+    doc.limits.max_writers = 4;
+    let out = edit_text(text, &doc).unwrap();
+    assert_eq!(out, text.replace("max_writers = 2", "max_writers = 4"));
+
+    let owned = "[orchestrator]\nagent = {\n  runtime = \"claude\",\n}\n";
+    assert!(owned.parse::<toml::Table>().is_ok());
+    assert_eq!(
+        edit_text(owned, &doc),
+        Err(vec![unsupported(
+            "orchestrator.agent",
+            "orchestrator.agent"
+        )])
+    );
+}

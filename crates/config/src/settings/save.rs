@@ -28,6 +28,9 @@ pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved
     if !problems.is_empty() {
         return Err(problems);
     }
+    // A symlinked config.toml stays a link: the target is what gets replaced.
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = resolved.as_path();
     let (text, mode) = match std::fs::read_to_string(path) {
         Ok(text) => (text, file_mode(path)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (String::new(), None),

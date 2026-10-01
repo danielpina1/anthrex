@@ -349,3 +349,32 @@ fn load_with_origin_of_a_missing_or_broken_file_is_all_default() {
     assert_eq!(problems.len(), 1);
     assert!(origin.values().all(|o| *o == proto::Origin::Default));
 }
+
+/// Controller ruling (fix round 1): a control character in a model name or note refuses,
+/// naming the row; a newline would otherwise break the file the screen writes.
+#[test]
+fn validate_refuses_control_characters_in_names_and_notes() {
+    for bad in [
+        "a\nb",
+        "a\tb",
+        "a\x1b[31mb",
+        "a\u{2028}b",
+        "a\u{2029}b",
+        "a\u{202E}b",
+    ] {
+        let mut doc = default_doc();
+        doc.models[1].model = bad.into();
+        assert_eq!(
+            validate(&doc),
+            ["model 2 (claude): its name holds a control character"],
+            "{bad:?}"
+        );
+        let mut doc = default_doc();
+        doc.models[3].note = bad.into();
+        assert_eq!(
+            validate(&doc),
+            ["model 4 (codex): its note holds a control character"],
+            "{bad:?}"
+        );
+    }
+}
