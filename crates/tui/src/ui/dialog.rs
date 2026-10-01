@@ -321,9 +321,9 @@ pub fn render_remove_confirm(
     }
     lines.push(Line::raw(""));
     let hint = if confirm.branch.is_some() {
-        "Space toggle · y / Enter remove · n / Esc"
+        "Space toggle · y remove · n / Esc"
     } else {
-        "y / Enter remove · n / Esc"
+        "y remove · n / Esc"
     };
     lines.push(Line::styled(hint, theme::muted()));
     render_box(frame, " remove ", lines, area, accent);

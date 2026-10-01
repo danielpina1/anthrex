@@ -25,7 +25,7 @@ fn open_force_remove(app: &mut App, message: &str) {
     let window_id = app.focused.expect("a focused window to remove");
     open_remove_confirm(app);
     assert!(press(app, KeyCode::Char('w'), KeyModifiers::NONE).is_empty());
-    assert!(press(app, KeyCode::Enter, KeyModifiers::NONE).len() == 1);
+    assert!(press(app, KeyCode::Char('y'), KeyModifiers::NONE).len() == 1);
     assert!(
         app.on_daemon(DaemonMsg::RemoveDirty {
             window_id,
@@ -91,13 +91,13 @@ fn remove_checkbox_is_offered_and_starts_unticked() {
         other => panic!("expected Modal::Remove, got {other:?}"),
     }
     assert_eq!(
-        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
         vec![Effect::Send(ClientMsg::Remove {
             window_id: 1,
             remove_worktree: false,
             force: false,
         })],
-        "Enter with the box unticked removes only the window"
+        "y with the box unticked removes only the window"
     );
 
     open_remove_confirm(&mut app);
@@ -115,7 +115,7 @@ fn remove_checkbox_is_offered_and_starts_unticked() {
     assert!(press(&mut app, KeyCode::Char(' '), KeyModifiers::NONE).is_empty());
 
     assert_eq!(
-        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
         vec![Effect::Send(ClientMsg::Remove {
             window_id: 1,
             remove_worktree: true,
@@ -148,7 +148,7 @@ fn a_dirty_refusal_opens_the_force_prompt() {
     );
 
     // Enter is deliberately not a synonym for either destructive choice.
-    assert!(press(&mut app, KeyCode::Enter, KeyModifiers::NONE).is_empty());
+    assert!(press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE).is_empty());
     assert!(
         matches!(app.modal, Some(Modal::ForceRemove { .. })),
         "Enter must leave the force prompt open"
@@ -212,7 +212,7 @@ fn ack_clears_the_pending_removal() {
     let mut app = app_with(vec![wt_win(1, "api", "feat/api")]);
     open_remove_confirm(&mut app);
     press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE);
-    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE);
 
     assert!(
         app.on_daemon(DaemonMsg::Ack {
@@ -245,7 +245,7 @@ fn a_remove_error_also_clears_the_pending_removal() {
     let mut app = app_with(vec![wt_win(1, "api", "feat/api")]);
     open_remove_confirm(&mut app);
     press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE);
-    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE);
 
     assert!(
         app.on_daemon(DaemonMsg::Error {
@@ -293,7 +293,7 @@ fn a_second_worktree_removal_is_refused_while_one_is_in_flight() {
     open_remove_confirm(&mut app);
     assert!(press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE).is_empty());
     assert_eq!(
-        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
         vec![Effect::Send(ClientMsg::Remove {
             window_id: 1,
             remove_worktree: true,
@@ -305,7 +305,7 @@ fn a_second_worktree_removal_is_refused_while_one_is_in_flight() {
     open_remove_confirm(&mut app);
     assert!(press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE).is_empty());
     assert_eq!(
-        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
         vec![],
         "a second worktree removal must not be sent while alpha's is outstanding"
     );
@@ -361,7 +361,7 @@ fn a_same_window_removal_is_refused_while_one_is_in_flight() {
     open_remove_confirm(&mut app);
     assert!(press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE).is_empty());
     assert_eq!(
-        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
         vec![Effect::Send(ClientMsg::Remove {
             window_id: 1,
             remove_worktree: true,
@@ -374,7 +374,7 @@ fn a_same_window_removal_is_refused_while_one_is_in_flight() {
     open_remove_confirm(&mut app);
     assert!(press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE).is_empty());
     assert_eq!(
-        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
         vec![],
         "a second removal of the same window must not be sent while the first is \
          outstanding"
@@ -415,7 +415,10 @@ fn a_refusal_for_another_window_is_a_toast_not_a_force_prompt() {
     app.focus(1);
     open_remove_confirm(&mut app);
     assert!(press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE).is_empty());
-    assert_eq!(press(&mut app, KeyCode::Enter, KeyModifiers::NONE).len(), 1);
+    assert_eq!(
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE).len(),
+        1
+    );
 
     assert!(
         app.on_daemon(DaemonMsg::RemoveDirty {
@@ -464,7 +467,7 @@ fn cancelling_the_force_prompt_frees_the_next_worktree_removal() {
     open_remove_confirm(&mut app);
     assert!(press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE).is_empty());
     assert_eq!(
-        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
         vec![Effect::Send(ClientMsg::Remove {
             window_id: 2,
             remove_worktree: true,
@@ -485,7 +488,10 @@ fn a_disconnect_frees_the_pending_worktree_removal() {
     app.focus(1);
     open_remove_confirm(&mut app);
     assert!(press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE).is_empty());
-    assert_eq!(press(&mut app, KeyCode::Enter, KeyModifiers::NONE).len(), 1);
+    assert_eq!(
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE).len(),
+        1
+    );
 
     assert!(
         app.on_daemon(DaemonMsg::Bye {
@@ -498,7 +504,7 @@ fn a_disconnect_frees_the_pending_worktree_removal() {
     open_remove_confirm(&mut app);
     assert!(press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE).is_empty());
     assert_eq!(
-        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
         vec![Effect::Send(ClientMsg::Remove {
             window_id: 2,
             remove_worktree: true,

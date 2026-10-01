@@ -321,3 +321,85 @@ fn a_disconnected_bar_keeps_its_badge() {
     app.link = Link::Lost { reason: "x".into() };
     assert!(bar(&app, 80, 24).contains("DISCONNECTED"));
 }
+
+fn confirm_app(action: PendingAction) -> App {
+    let mut app = gate_app(80, 24);
+    app.modal = Some(Modal::Confirm {
+        message: "sure?".into(),
+        action,
+    });
+    app
+}
+
+/// Decision 5, every destructive confirm: Enter keeps the modal and toasts
+/// `press y to <verb>`; the non-destructive confirms take Enter.
+#[test]
+fn enter_is_ignored_by_every_destructive_confirm_and_taken_by_the_rest() {
+    let run = || "r".to_string();
+    let destructive = [
+        (PendingAction::RejectRun(run()), "reject"),
+        (
+            PendingAction::RemoveTask {
+                run_id: run(),
+                task_id: "t1".into(),
+            },
+            "remove",
+        ),
+        (
+            PendingAction::RejectHold {
+                run_id: run(),
+                hold: "h".into(),
+            },
+            "reject hold",
+        ),
+        (PendingAction::StopDaemon, "stop the daemon"),
+        (PendingAction::Kill(1), "kill"),
+    ];
+    for (action, verb) in destructive {
+        let mut app = confirm_app(action);
+        let effects = press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(effects.is_empty(), "{verb}: {effects:?}");
+        assert!(app.modal.is_some(), "{verb}");
+        assert_eq!(
+            app.toast_text(),
+            Some(format!("press y to {verb}").as_str())
+        );
+        assert_eq!(app.toast_level(), Some(ToastLevel::Warn));
+    }
+    for action in [
+        PendingAction::Restart(1),
+        PendingAction::SubmitPlan("r".into()),
+    ] {
+        let mut app = confirm_app(action);
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(app.modal.is_none());
+    }
+
+    // The remove-agent dialog is destructive too.
+    let mut app = gate_app(80, 24);
+    app.modal = Some(Modal::Remove(crate::dialog::RemoveConfirm {
+        window_id: 1,
+        name: "w".into(),
+        branch: None,
+        remove_worktree: false,
+    }));
+    assert!(press(&mut app, KeyCode::Enter, KeyModifiers::NONE).is_empty());
+    assert!(matches!(app.modal, Some(Modal::Remove(_))));
+    assert_eq!(app.toast_text(), Some("press y to remove"));
+    assert_eq!(
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE).len(),
+        1
+    );
+}
+
+#[test]
+fn the_enter_hint_has_an_ascii_twin() {
+    let mut app = confirm_app(PendingAction::SubmitPlan("r".into()));
+    app.settings.badges.ascii = true;
+    let buffer = draw(&app, 80, 24);
+    let screen: String = (0..24)
+        .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>() + "\n")
+        .collect();
+    assert!(screen.contains("enter submit"), "{screen}");
+    assert!(!screen.contains('⏎'), "{screen}");
+}

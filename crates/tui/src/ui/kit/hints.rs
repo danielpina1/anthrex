@@ -28,7 +28,15 @@ pub fn hints(width: u16, hints: &[Hint], p: Palette) -> Line<'static> {
 pub fn hints_joined(width: u16, hints: &[Hint], separator: &str, p: Palette) -> Line<'static> {
     let mut kept: Vec<(String, String, u8)> = hints
         .iter()
-        .map(|h| (one_line(&h.key), one_line(&h.word), h.priority))
+        .map(|h| {
+            // `⏎` has an ASCII twin: `enter`.
+            let key = if p.ascii && h.key == "⏎" {
+                "enter".to_string()
+            } else {
+                one_line(&h.key)
+            };
+            (key, one_line(&h.word), h.priority)
+        })
         .collect();
     let total = |kept: &[(String, String, u8)]| -> usize {
         let words: usize = kept.iter().map(|(k, w, _)| k.width() + 1 + w.width()).sum();

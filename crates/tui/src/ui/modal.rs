@@ -132,11 +132,14 @@ fn render_confirm(
         priority: 1,
     };
     let mut hints = kit::hints_joined(width as u16, &[verb, esc], " · ", p);
-    if destructive && let Some(first) = hints.spans.get_mut(0) {
-        first.style = role(Role::Failed, p);
-    }
-    if destructive && let Some(word) = hints.spans.get_mut(2) {
-        word.style = role(Role::Failed, p);
+    if destructive {
+        // Style the key and the verb by what they are, not where they sit.
+        let failed = role(Role::Failed, p);
+        for span in hints.spans.iter_mut() {
+            if span.content == "y" || span.content == action.verb() {
+                span.style = failed;
+            }
+        }
     }
     body.push(hints);
     let title = if destructive {
@@ -246,11 +249,15 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    fn confirm_lines(message: &str, width: u16, height: u16) -> Vec<String> {
+    fn reject() -> PendingAction {
+        PendingAction::RejectRun("add-reset-3f9a".into())
+    }
+
+    fn confirm_lines(message: &str, action: PendingAction, width: u16, height: u16) -> Vec<String> {
         let mut app = App::new(vec![], "/tmp".into(), UiSettings::default());
         app.modal = Some(Modal::Confirm {
             message: message.into(),
-            action: PendingAction::RejectRun("add-reset-3f9a".into()),
+            action,
         });
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
@@ -275,7 +282,7 @@ mod tests {
     fn a_long_confirm_wraps_inside_its_box_at_80_columns() {
         let message = "Reject run add-reset-3f9a? Its branches and worktrees are removed; \
                        salvage refs are kept.";
-        let lines = confirm_lines(message, 80, 24);
+        let lines = confirm_lines(message, reject(), 80, 24);
         let inner = inner(&lines);
         let text = inner.iter().filter(|l| !l.is_empty()).cloned();
         let joined = text.collect::<Vec<_>>().join(" ");
@@ -294,7 +301,7 @@ mod tests {
     fn a_confirm_quoting_a_hold_id_is_sanitised() {
         let bad = crate::safe_text::tests::hostile_text();
         let message = format!("Reject hold epic:{bad} of run r? Its 1 task is cancelled.");
-        let text = confirm_lines(&message, 200, 24).join("");
+        let text = confirm_lines(&message, reject(), 200, 24).join("");
         assert!(text.contains("Reject hold epic:a b"), "{text:?}");
         assert_eq!(
             crate::safe_text::tests::first_hostile(&text),
@@ -305,8 +312,8 @@ mod tests {
 
     #[test]
     fn a_short_confirm_stays_on_one_line() {
-        let lines = confirm_lines("Kill 'a'?", 80, 24);
-        assert_eq!(inner(&lines), vec!["Kill 'a'?", "", "y reject · esc back"]);
+        let lines = confirm_lines("Kill 'a'?", PendingAction::Kill(1), 80, 24);
+        assert_eq!(inner(&lines), vec!["Kill 'a'?", "", "y kill · esc back"]);
     }
 
     /// Milestone 9.0.5: the help lists `C-b a`, with the configured prefix.

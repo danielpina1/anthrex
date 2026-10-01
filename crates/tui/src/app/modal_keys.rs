@@ -22,7 +22,8 @@ use proto::ClientMsg;
 
 impl App {
     /// Opens the generic yes/no `Confirm` modal for the focused window, naming it in
-    /// `message` and running `action` on `y`/`Enter` (`app.rs`'s `perform`). `Modal::Remove`
+    /// `message` and running `action` on `y`, or Enter unless `action` is destructive
+    /// (`PendingAction::destructive`; `lifecycle.rs`'s `perform`). `Modal::Remove`
     /// (decision 35) no longer goes through this — only `Command::KillWindow` still does.
     pub(super) fn confirm_focused(
         &mut self,
@@ -211,7 +212,13 @@ impl App {
                 self.modal = Some(Modal::Remove(confirm));
                 vec![]
             }
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            // Decision 5 (ruling): removing an agent is destructive, so only `y` confirms.
+            KeyCode::Enter => {
+                self.toast_at(super::ToastLevel::Warn, "press y to remove");
+                self.modal = Some(Modal::Remove(confirm));
+                vec![]
+            }
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
                 let remove_worktree = confirm.remove_worktree;
                 if remove_worktree {
                     // One worktree removal at a time (see `App::pending_worktree_remove`),

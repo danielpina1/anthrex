@@ -298,7 +298,7 @@ fn review_hints() {
     // Esc: the status bar is the terminal's again.
     press(&mut held, KeyCode::Esc);
     let rows_after = rows(&draw(&mut held, 160, 30));
-    assert!(!rows_after[29].contains("REVIEW"), "{:?}", rows_after[29]);
+    assert!(!rows_after[29].contains("PLAN"), "{:?}", rows_after[29]);
 }
 
 /// Every hostile character in every agent-written field the review shows.
