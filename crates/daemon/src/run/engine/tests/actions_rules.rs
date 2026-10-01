@@ -5,11 +5,11 @@
 
 use proto::{FinishAction, MessageKind, MessageTarget, PlanEdit, RunPath, RunState, TaskState};
 
+use super::actions_twins::hold_stage;
 use super::dispatch::{edit, replies};
 use super::fixture::*;
 use crate::run::engine::actions::rules;
-use crate::run::engine::{Effect, EventKind, OrchEvent, full, orch_window};
-use crate::run::model::{InfraFailures, Run};
+use crate::run::engine::{Effect, EventKind, OrchEvent, orch_window};
 use crate::run::orch::contract::ONE_EDIT_RULE;
 use crate::run::validate::EditScope;
 
@@ -28,7 +28,7 @@ fn gate() -> Fixture {
 }
 
 /// The same run approved by `--yes`, its integration worktree made.
-fn running() -> Fixture {
+pub(super) fn running() -> Fixture {
     let plan = plan_with(
         PROFILE,
         &[
@@ -110,6 +110,37 @@ fn reject_reads_as_before() {
             "run {RUN_ID} is running; reject applies only while its plan awaits approval"
         ))
     );
+}
+
+#[test]
+fn ordering_cases_read_as_before() {
+    // `requests::reject` asks `finishing_as` first: a rejected run's `Discard` in flight.
+    let mut fx = gate();
+    reply_of(&mut fx, |reply| EventKind::Reject {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    assert_eq!(
+        rules::reject(fx.run()),
+        some(format!("run {RUN_ID} is being discarded"))
+    );
+    // `restore::resume`: a run at its gate (or planning) whose orchestrator is dormant
+    // restarts it (milestone 9 decision 11).
+    let mut fx = super::orch::launched(false);
+    orch_window::restored(fx.run_mut());
+    assert_eq!(rules::resume(fx.run(), false), None, "planning");
+    fx.run_mut().state = RunState::AwaitingApproval;
+    assert_eq!(rules::resume(fx.run(), false), None, "at the gate");
+    // A running run with a held stage retries tier 3 (ruling C-18).
+    let mut fx = running();
+    hold_stage(fx.run_mut());
+    assert_eq!(rules::resume(fx.run(), false), None);
+    let effects = reply_of(&mut fx, |reply| EventKind::Resume {
+        reply,
+        run_id: RUN_ID.into(),
+        rebaseline: None,
+    });
+    assert_eq!(effects, vec![Ok(format!("run {RUN_ID}: tier 3 retries"))]);
 }
 
 #[test]
@@ -515,70 +546,4 @@ fn handlers_refuse_through_the_rules() {
         replies(&edit(&mut fx, vec![PlanEdit::Pause])),
         vec![Err(expected)]
     );
-}
-
-/// Stage 1 of `run` held by three executor failures on its head (ruling C-18), as
-/// `full_fixes.rs::three_failures_hold_the_run_and_resume_retries` reaches it through
-/// the executor; built in place here because only the record matters.
-fn hold_stage(run: &mut Run) {
-    let stage = &mut run.stages[0];
-    stage.full.infra = Some(InfraFailures {
-        commit: stage.head.clone(),
-        count: 3,
-        at: 0,
-        line: String::new(),
-    });
-}
-
-#[test]
-fn retryable_matches_retry() {
-    let fx = running();
-    let now = fx.now;
-    let mut free = fx.run().clone();
-    assert!(!full::retryable(&free));
-    assert!(!full::retry(&mut free, now));
-    assert_eq!(&free, fx.run(), "nothing to retry changes nothing");
-    let mut held = fx.run().clone();
-    hold_stage(&mut held);
-    assert!(full::retryable(&held));
-    assert!(full::retry(&mut held, now));
-    assert_eq!(
-        held.stages[0].full.infra, None,
-        "retry forgets the failures"
-    );
-    assert!(!full::retryable(&held));
-}
-
-#[test]
-fn relaunchable_matches_relaunch() {
-    let now = 0;
-    // No orchestrator.
-    let mut plain = running().run().clone();
-    assert!(!orch_window::relaunchable(&plain));
-    assert!(!orch_window::relaunch(&mut plain, now, &mut Vec::new()));
-    // A live orchestrator, then a dormant one (a daemon restart).
-    let fx = super::orch::launched(false);
-    let mut live = fx.run().clone();
-    assert!(!orch_window::relaunchable(&live));
-    assert!(!orch_window::relaunch(&mut live, now, &mut Vec::new()));
-    assert_eq!(&live, fx.run(), "a refused relaunch changes nothing");
-    let mut dormant = fx.run().clone();
-    orch_window::restored(&mut dormant);
-    assert!(orch_window::relaunchable(&dormant));
-    let mut effects = Vec::new();
-    assert!(orch_window::relaunch(&mut dormant, now, &mut effects));
-    assert!(
-        !orch_window::relaunchable(&dormant),
-        "its restart is in flight"
-    );
-    // A launch still in flight.
-    let mut launching = super::orch::planned(false).run().clone();
-    assert!(!orch_window::relaunchable(&launching));
-    assert!(!orch_window::relaunch(&mut launching, now, &mut Vec::new()));
-    // A run that ended.
-    let mut ended = fx.run().clone();
-    orch_window::restored(&mut ended);
-    ended.state = RunState::Failed;
-    assert!(!orch_window::relaunchable(&ended));
-    assert!(!orch_window::relaunch(&mut ended, now, &mut Vec::new()));
 }

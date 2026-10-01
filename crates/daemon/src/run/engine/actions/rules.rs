@@ -19,6 +19,15 @@ use crate::run::engine::{full, orch_window, schedule, worker_messages};
 use crate::run::model::Run;
 use crate::run::plan::PlanError;
 
+/// The refusal of a handler whose rule, asked again, no longer refuses: a rule and its
+/// handler drifted apart. The engine answers instead of panicking.
+pub(crate) const DRIFT: &str = "internal: request precondition changed";
+
+/// A handler's refusal from its rule's answer (`rule`), [`DRIFT`] if it has none.
+pub(crate) fn refused(rule: Option<String>) -> String {
+    rule.unwrap_or_else(|| DRIFT.to_string())
+}
+
 /// A run with an `Accept` or `Discard` op in flight refuses every request that would
 /// change it.
 fn being_finished(run: &Run) -> Option<String> {
@@ -238,7 +247,9 @@ pub(crate) fn hold(run: &Run, id: &str) -> Option<String> {
 }
 
 /// An `info` message to task `task_id` (`edits_orch::apply_message`), past its text
-/// check: the run's own per-turn limit.
+/// check: the run's own per-turn limit. It models `info` and `change` only: a
+/// `stop_and_wait` refuses more (a task already paused, or not working), so task 7
+/// must not use it for one.
 #[cfg_attr(not(test), allow(dead_code))] // task 7's `check` calls it
 pub(crate) fn message(run: &Run, task_id: &str) -> Option<String> {
     let to = MessageTarget::Tasks(vec![task_id.to_string()]);
@@ -246,7 +257,7 @@ pub(crate) fn message(run: &Run, task_id: &str) -> Option<String> {
 }
 
 /// An `info` message to every unfinished task of stage `stage` (milestone 9.1 decision
-/// 56).
+/// 56). Like [`message`], it models `info` and `change` only, never `stop_and_wait`.
 #[cfg_attr(not(test), allow(dead_code))] // task 7's `check` calls it
 pub(crate) fn message_stage(run: &Run, stage: u16) -> Option<String> {
     message_to(run, &MessageTarget::Stage(u32::from(stage)))

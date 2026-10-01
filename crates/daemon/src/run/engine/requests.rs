@@ -324,7 +324,7 @@ pub(super) fn retry(
         return reply(fx, id, Err(text));
     }
     let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) else {
-        unreachable!("rules::retry refuses an unknown task");
+        return reply(fx, id, Err(rules::refused(rules::retry(run, task_id))));
     };
     let task = &run.tasks[i];
     let was = task.block.clone().map_or_else(String::new, |b| {

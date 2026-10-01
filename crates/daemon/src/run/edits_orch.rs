@@ -321,7 +321,8 @@ pub(crate) fn apply_refresh(
         return Err(error);
     }
     let Some(task) = run.tasks.iter_mut().find(|t| t.id() == task_id) else {
-        unreachable!("refresh_refusal refuses an unknown task");
+        let text = super::engine::actions::rules::DRIFT;
+        return Err(PlanError::new(Some(task_id), "", "42", text));
     };
     task.orch.refresh = Some(RefreshState::Due);
     task.history.push(TaskEvent {

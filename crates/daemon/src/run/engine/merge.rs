@@ -12,6 +12,7 @@ use crate::run::phases::set_state;
 use proto::{AgentRole, BlockReason, GateKind, RunState, Runtime, TaskState};
 
 use super::ResolutionAt;
+use super::actions::rules;
 use super::dispatch::{block, history, salvage_ref};
 use super::requests::log;
 use super::signals::end_round;
@@ -546,9 +547,10 @@ pub(super) fn resume(
     let Some(run) = state.runs.get_mut(run_id) else {
         return answer(Err(format!("unknown run {run_id}")));
     };
-    match run.state {
-        RunState::Halted => {}
-        other => return answer(Err(format!("run {run_id} is {}", other.label()))),
+    // Milestone 9.0.6 decision 8: the refusals are `rules::resume`'s.
+    let refusal = |run: &Run| rules::refused(rules::resume(run, false));
+    if run.state != RunState::Halted {
+        return answer(Err(refusal(run)));
     }
     // Review m1: a halt on refs that could not be read is retried as it is.
     if rebaseline.is_none() && run.halt_retryable {
@@ -559,10 +561,7 @@ pub(super) fn resume(
         return answer(Ok(format!("run {run_id} resumed")));
     }
     let Some(read) = rebaseline else {
-        let reason = run.halted_reason.clone().unwrap_or_default();
-        return answer(Err(format!(
-            "run {run_id} is halted: {reason}; check the refs, then resume with --rebaseline"
-        )));
+        return answer(Err(refusal(run)));
     };
     let mut effects = Vec::new();
     let text = format!(

@@ -480,7 +480,9 @@ fn decide(
     };
     super::actions::rules::hold(run, id).map_or(Ok(()), Err)?;
     let Some(hold) = run.orch.gate_holds.iter_mut().find(|h| h.id == id) else {
-        unreachable!("rules::hold refuses an unknown hold");
+        return Err(super::actions::rules::refused(super::actions::rules::hold(
+            run, id,
+        )));
     };
     hold.decided_at = Some(now);
     hold.decided_by = Some("user".into());

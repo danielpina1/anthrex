@@ -351,7 +351,7 @@ pub(super) fn override_task(
         return answer(fx, Err(text));
     }
     let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) else {
-        unreachable!("rules::override_task refuses an unknown task");
+        return answer(fx, Err(rules::refused(rules::override_task(run, task_id))));
     };
     let task = &run.tasks[i];
     // A blocked task's branch is counted even with an accepted claim: only a claim that
@@ -361,7 +361,7 @@ pub(super) fn override_task(
         return answer(fx, Ok(text));
     }
     let Some(start) = task.start_commit.clone() else {
-        unreachable!("rules::override_task refuses a blocked task with no start commit");
+        return answer(fx, Err(rules::refused(rules::override_task(run, task_id))));
     };
     let kind = OpKind::CountCommits {
         worktree: task.worktree.clone(),
