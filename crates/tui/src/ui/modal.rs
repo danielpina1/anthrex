@@ -184,6 +184,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Modal::Confirm { message, action } => {
             return render_confirm(frame, message, action, area, app.palette());
         }
+        Modal::Action(flow) => return crate::ui::action_menu::render(frame, app, flow, area),
         Modal::Help | Modal::Notice { .. } | Modal::Rename(_) => {}
     }
     let (title, body): (String, Vec<Line>) = match modal {
@@ -225,7 +226,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         | Modal::Remove(_)
         | Modal::ForceRemove { .. }
         | Modal::EditTask(_)
-        | Modal::StartGoal(_) => {
+        | Modal::StartGoal(_)
+        | Modal::Action(_) => {
             unreachable!("handled and returned from above")
         }
     };

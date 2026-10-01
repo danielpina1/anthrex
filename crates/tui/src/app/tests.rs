@@ -68,6 +68,12 @@ mod alerts_focus;
 #[path = "../app_tests/task_detail.rs"]
 mod task_detail;
 
+#[path = "../app_tests/actions.rs"]
+mod actions;
+
+#[path = "../app_tests/actions_accept.rs"]
+mod actions_accept;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

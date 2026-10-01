@@ -237,6 +237,8 @@ impl App {
                 self.inspector_visible = !self.inspector_visible;
             }
             KeyCode::Char('/') => self.tree_input = Some(TreeInput::Filter),
+            // Milestone 9.0.6 decision 12: the action menu on a run, stage or task.
+            KeyCode::Char('.') => return self.open_selected_actions(),
             KeyCode::Esc => self.exit_tree(),
             _ => {}
         }

@@ -1,5 +1,6 @@
 //! The anthrex terminal client: connects to the daemon and runs the ratatui event loop.
 
+pub mod actions_request;
 pub mod app;
 pub mod connection;
 pub mod conversation;

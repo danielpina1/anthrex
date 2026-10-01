@@ -9,7 +9,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// `text` cut to `max` columns, ending in `ellipsis` when it was cut.
-pub(super) fn cut(text: &str, max: usize, ellipsis: &str) -> String {
+pub(crate) fn cut(text: &str, max: usize, ellipsis: &str) -> String {
     if text.width() <= max {
         return text.to_string();
     }
@@ -31,7 +31,7 @@ pub(super) fn cut(text: &str, max: usize, ellipsis: &str) -> String {
 
 /// Word-wraps one line of `text` at `width` columns; a word longer than the width is
 /// broken. Always returns at least one (possibly empty) line.
-pub(super) fn wrap_words(text: &str, width: usize) -> Vec<String> {
+pub(crate) fn wrap_words(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut lines = Vec::new();
     let mut line = String::new();

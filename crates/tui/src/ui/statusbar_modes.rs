@@ -23,11 +23,13 @@ fn hint(key: &str, word: &str, priority: u8) -> Hint {
     }
 }
 
-/// The mode badge, in decision 6's precedence: ` PREFIX ` first; the badges of the menu
-/// and the three screens slot in above ` PLAN ` as their tasks add them.
+/// The mode badge, in decision 6's precedence: ` PREFIX ` first, then ` MENU `; the
+/// badges of the three screens slot in above ` PLAN ` as their tasks add them.
 pub(super) fn badge(app: &App) -> Option<&'static str> {
     if app.keymap.pending() {
         Some(" PREFIX ")
+    } else if matches!(app.modal, Some(crate::app::Modal::Action(_))) {
+        Some(" MENU ")
     } else if app.plan_review.is_some() {
         Some(" PLAN ")
     } else if app.alerts_focus.is_some() {

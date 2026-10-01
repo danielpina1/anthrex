@@ -161,6 +161,7 @@ impl App {
         self.edit_not_sent(None);
         self.goal_not_sent(None);
         self.forget_task_detail_in_flight();
+        self.replies.clear();
         self.toast("connection to the daemon lost");
         vec![]
     }

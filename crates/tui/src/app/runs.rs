@@ -167,6 +167,9 @@ impl App {
     }
 
     pub(crate) fn on_run_reply(&mut self, reply: RunReply) -> Vec<Effect> {
+        if let Some(effects) = self.route_reply(&reply) {
+            return effects;
+        }
         match reply {
             // Decision 1: every snapshot replaces the last, whatever its revision — a
             // restarted daemon counts from the start again. A push also proves the
@@ -258,6 +261,7 @@ impl App {
         self.close_gate_modal_if_stale();
         self.follow_review(review_at);
         self.repair_alerts_focus();
+        self.follow_action_flow();
         self.open_pending_run();
         let rows = nav_rows_of(
             &self.windows,

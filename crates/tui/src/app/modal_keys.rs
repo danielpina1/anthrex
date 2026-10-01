@@ -164,6 +164,7 @@ impl App {
                 self.modal = Some(Modal::StartGoal(form));
                 self.on_goal_key(key)
             }
+            Modal::Action(flow) => self.on_action_key(*flow, key),
         }
     }
 

@@ -29,8 +29,7 @@ pub enum Effect {
     Reconnect,
 }
 
-/// How a toast is drawn (milestone 9.0.6 decision 6): info in the default colour, a
-/// warning in `Attention`, an error in `Failed`.
+/// A toast's severity (9.0.6 decision 6): info plain, a warning `Attention`, an error `Failed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastLevel {
     Info,
@@ -100,6 +99,7 @@ pub enum Modal {
     EditTask(crate::run_edit::TaskEditForm),
     /// Milestone 9 decision 44: the goal form (`crate::run_goal`).
     StartGoal(crate::run_goal::GoalForm),
+    Action(Box<actions::ActionFlow>), // Milestone 9.0.6 decision 12: the action menu.
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +211,7 @@ pub struct App {
     pub task_detail: Option<task_detail::TaskDetailCache>,
     pub inspector_scroll: Option<(tree::NodeKey, u16)>,
     pub brief_expanded: Option<tree::NodeKey>,
+    pub replies: replies::PendingReplies, // Milestone 9.0.6 decision 16, by request id.
 }
 
 impl App {
@@ -267,6 +268,7 @@ impl App {
             task_detail: None,
             inspector_scroll: None,
             brief_expanded: None,
+            replies: Default::default(),
             settings,
         }
     }
@@ -544,6 +546,7 @@ impl App {
         // Decision 36: the third of the three ways `C-b Q`'s wait can end — nothing
         // arrived at all within `link::STOPPING_TIMEOUT`.
         self.check_stopping_timeout();
+        self.expire_replies();
         let retries = self.retry_dropped_subscribes();
         if !retries.is_empty() {
             return retries;
@@ -567,6 +570,7 @@ impl App {
     }
 }
 
+pub(crate) mod actions;
 pub(crate) mod alerts;
 mod confirm;
 mod conversation;
@@ -579,6 +583,7 @@ mod modal_keys;
 mod paste;
 pub(crate) mod plan_review;
 pub(crate) mod prompt;
+pub(crate) mod replies;
 mod run_enter;
 mod run_gate;
 mod run_holds;

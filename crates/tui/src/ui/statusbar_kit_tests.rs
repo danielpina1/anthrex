@@ -403,3 +403,25 @@ fn the_enter_hint_has_an_ascii_twin() {
     assert!(screen.contains("enter submit"), "{screen}");
     assert!(!screen.contains('⏎'), "{screen}");
 }
+
+/// Preflight F10, task 10: ` MENU ` while the action menu is open, above ` PLAN `.
+#[test]
+fn the_menu_badge_sits_above_plan() {
+    for (w, h) in [(80, 24), (120, 40)] {
+        let mut app = gate_app(w, h);
+        app.open_plan_review(RUN_ID.into(), ReviewTarget::Gate);
+        assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
+        app.open_actions(
+            (RUN_ID.into(), crate::actions_request::ActionTarget::Run),
+            None,
+        );
+        assert!(matches!(app.modal, Some(Modal::Action(_))));
+        assert!(
+            bar(&app, w, h).starts_with(" MENU "),
+            "{w}: {}",
+            bar(&app, w, h)
+        );
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
+    }
+}
