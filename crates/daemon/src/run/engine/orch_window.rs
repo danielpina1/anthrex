@@ -158,17 +158,10 @@ fn launching(run: &Run) -> bool {
 /// or exited) restarts in its window with its role and a new session; one whose window
 /// was never made is launched again. Returns whether anything was issued.
 pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
-    let Some(o) = run.orch.orchestrator.as_mut() else {
-        return false;
-    };
-    if o.live || run.state.is_terminal() {
+    if !relaunchable(run) {
         return false;
     }
-    let window = o.window_id;
-    if launching(run) {
-        return false;
-    }
-    match window {
+    match run.orch.orchestrator.as_ref().and_then(|o| o.window_id) {
         Some(window_id) => {
             if let Some(o) = run.orch.orchestrator.as_mut() {
                 o.session += 1;
@@ -188,6 +181,15 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
         None => launch(run, now, fx),
     }
     true
+}
+
+/// Milestone 9.0.6 decision 42: whether [`relaunch`] would issue anything, changing
+/// nothing: an orchestrator that is not live, of a run that has not ended, with no
+/// launch in flight.
+pub(super) fn relaunchable(run: &Run) -> bool {
+    run.orch.orchestrator.as_ref().is_some_and(|o| !o.live)
+        && !run.state.is_terminal()
+        && !launching(run)
 }
 
 /// After a daemon restart the orchestrator's window is dormant (decision 11).

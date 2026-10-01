@@ -229,6 +229,9 @@ pub(super) fn held(run: &Run) -> bool {
 /// still in its backoff keeps its count (and `run.json` keeps it across a restart), so
 /// a restart and its resume never reset it.
 pub(super) fn retry(run: &mut Run, now: u64) -> bool {
+    if !retryable(run) {
+        return false;
+    }
     let mut held = Vec::new();
     for s in run.stages.iter_mut() {
         if infra_held(s) {
@@ -239,7 +242,13 @@ pub(super) fn retry(run: &mut Run, now: u64) -> bool {
     for n in &held {
         log(run, now, format!("stage {n}: tier 3 retries (run resume)"));
     }
-    !held.is_empty()
+    true
+}
+
+/// Milestone 9.0.6 decision 42: whether [`retry`] would retry anything, changing
+/// nothing: a stage is held.
+pub(super) fn retryable(run: &Run) -> bool {
+    held(run)
 }
 
 /// Decision 17(a), 9.2's entry: tier 3 on stage `stage` at `FullStage` priority unless

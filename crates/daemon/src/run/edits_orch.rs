@@ -49,7 +49,7 @@ pub(crate) fn one_edit_rule(
 }
 
 /// How one recipient takes a message (decision 42b).
-enum Takes {
+pub(crate) enum Takes {
     /// Queued in the outbox: a live worker, or one whose mail waits for an answer or
     /// a bouncing gate.
     Queue,
@@ -60,7 +60,7 @@ enum Takes {
 }
 
 /// Decision 42c: the next accepted `message` to a paused task, `info` or `change`.
-fn takes(task: &Task, kind: MessageKind, limit: u32) -> Result<Takes, String> {
+pub(crate) fn takes(task: &Task, kind: MessageKind, limit: u32) -> Result<Takes, String> {
     let id = task.id();
     if limit == 0 {
         return Err(
@@ -200,34 +200,54 @@ pub(crate) fn apply_message(
         )));
     }
     let limit = run.limits.orch.message_max_per_turn;
+    let (takers, refused) = plan(run, to, kind, limit)?;
     let mut outcome = MessageOutcome {
         text: text.clone(),
+        refused,
         ..MessageOutcome::default()
     };
+    for (i, how) in takers {
+        record(run, i, (&text, kind, source), how, now, &mut outcome);
+    }
+    Ok(outcome)
+}
+
+/// Milestone 9.0.6 decision 42: [`apply_message`]'s recipients and how each takes the
+/// message, recording nothing; refused whole when none takes it.
+pub(crate) fn plan_message(
+    run: &Run,
+    to: &MessageTarget,
+    kind: MessageKind,
+    limit: u32,
+) -> Result<Vec<(usize, Takes)>, PlanError> {
+    plan(run, to, kind, limit).map(|(takers, _)| takers)
+}
+
+/// [`plan_message`] with every refused recipient and its reason, for the reply.
+type Plan = (Vec<(usize, Takes)>, Vec<(String, String)>);
+fn plan(run: &Run, to: &MessageTarget, kind: MessageKind, limit: u32) -> Result<Plan, PlanError> {
+    let (mut takers, mut refused) = (Vec::new(), Vec::new());
     for id in recipients(run, to)? {
         let Some(i) = run.tasks.iter().position(|t| t.id() == id) else {
-            outcome
-                .refused
-                .push((id.clone(), format!("no such task {id}")));
+            refused.push((id.clone(), format!("no such task {id}")));
             continue;
         };
         match takes(&run.tasks[i], kind, limit) {
-            Ok(how) => record(run, i, (&text, kind, source), how, now, &mut outcome),
-            Err(reason) => outcome.refused.push((id, reason)),
+            Ok(how) => takers.push((i, how)),
+            Err(reason) => refused.push((id, reason)),
         }
     }
-    if outcome.delivered.is_empty() {
-        let reasons: Vec<&str> = outcome.refused.iter().map(|(_, r)| r.as_str()).collect();
+    if takers.is_empty() {
+        let reasons: Vec<&str> = refused.iter().map(|(_, r)| r.as_str()).collect();
         let reasons = if reasons.is_empty() {
             "no task has a live worker".to_string()
         } else {
             reasons.join("; ")
         };
-        return Err(error(format!(
-            "message: no recipient can take it: {reasons}"
-        )));
+        let text = format!("message: no recipient can take it: {reasons}");
+        return Err(PlanError::new(None, "", "42", text));
     }
-    Ok(outcome)
+    Ok((takers, refused))
 }
 
 fn record(
@@ -297,8 +317,25 @@ pub(crate) fn apply_refresh(
         let text = "a sub-planner cannot refresh a task";
         return Err(PlanError::new(Some(task_id), "", "42", text));
     }
+    if let Some(error) = refresh_refusal(run, task_id) {
+        return Err(error);
+    }
+    let Some(task) = run.tasks.iter_mut().find(|t| t.id() == task_id) else {
+        unreachable!("refresh_refusal refuses an unknown task");
+    };
+    task.orch.refresh = Some(RefreshState::Due);
+    task.history.push(TaskEvent {
+        at: now,
+        text: "refresh requested".into(),
+    });
+    Ok(())
+}
+
+/// Why task `task_id` cannot be refreshed now, if it cannot ([`apply_refresh`]'s guard,
+/// past its source check).
+pub(crate) fn refresh_refusal(run: &Run, task_id: &str) -> Option<PlanError> {
     let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) else {
-        return Err(PlanError::new(
+        return Some(PlanError::new(
             Some(task_id),
             "task_id",
             "13",
@@ -312,7 +349,7 @@ pub(crate) fn apply_refresh(
     let task = &run.tasks[i];
     if is_reader(task) {
         let text = reader_refusal(task, "refresh needs a code or docs task");
-        return Err(PlanError::new(Some(task_id), "", "42", text));
+        return Some(PlanError::new(Some(task_id), "", "42", text));
     }
     let fits = (task.state == TaskState::Working || is_paused(task))
         && !task.awaiting_deps
@@ -321,20 +358,13 @@ pub(crate) fn apply_refresh(
         && task.merge_op.is_none()
         && task.orch.refresh.is_none()
         && !hand_back;
-    if !fits {
+    (!fits).then(|| {
         let text = format!(
             "task {task_id} is {}; refresh needs a working or paused task",
             state_label(task)
         );
-        return Err(PlanError::new(Some(task_id), "", "42", text));
-    }
-    let task = &mut run.tasks[i];
-    task.orch.refresh = Some(RefreshState::Due);
-    task.history.push(TaskEvent {
-        at: now,
-        text: "refresh requested".into(),
-    });
-    Ok(())
+        PlanError::new(Some(task_id), "", "42", text)
+    })
 }
 
 /// Decision 25: replaces task `task_id`'s whole dependency list with `deps` (each once,

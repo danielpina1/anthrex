@@ -7,7 +7,8 @@
 use crate::run::phases::set_state;
 use proto::{BlockInfo, BlockReason, FinishAction, RunState, TaskState};
 
-use super::dispatch::{finishing_as, history, salvage_ref};
+use super::actions::rules;
+use super::dispatch::{history, salvage_ref};
 use super::merge::{candidate_in_flight, halt, next_salvage_seq};
 use super::requests::log;
 use super::{Effect, EngineState, OpKind, OpResult, ReplyId, emit_op, ladder, next_op, review};
@@ -291,16 +292,12 @@ pub(super) fn cancel(
     let Some(run) = state.runs.get_mut(run_id) else {
         return answer(fx, Err(format!("unknown run {run_id}")));
     };
-    if let Some(how) = finishing_as(run) {
-        return answer(fx, Err(format!("run {run_id} is being {how}")));
+    if let Some(text) = rules::cancel(run) {
+        return answer(fx, Err(text));
     }
-    match run.state {
-        RunState::Running | RunState::Halted => {}
-        RunState::Paused => {
-            run.state = RunState::Running;
-            run.paused_from = None;
-        }
-        other => return answer(fx, Err(format!("run {run_id} is {}", other.label()))),
+    if run.state == RunState::Paused {
+        run.state = RunState::Running;
+        run.paused_from = None;
     }
     // T15-minors (M-4): nothing resumes a cancelled run.
     run.restored = None;
@@ -356,26 +353,11 @@ pub(super) fn finish(
     fx: &mut Vec<Effect>,
 ) {
     let answer = |fx: &mut Vec<Effect>, result| fx.push(Effect::Reply { reply, result });
-    let verb = match action {
-        FinishAction::Accept => "accept",
-        FinishAction::Discard => "discard",
-    };
     let Some(run) = state.runs.get_mut(run_id) else {
         return answer(fx, Err(format!("unknown run {run_id}")));
     };
-    if let Some(how) = finishing_as(run) {
-        return answer(fx, Err(format!("run {run_id} is being {how}")));
-    }
-    // Review m2: a cancelled run that is halted has nothing left to verify for a
-    // discard, so it needs no rebaseline first.
-    let discardable = action == FinishAction::Discard
-        && run.state == RunState::Halted
-        && run.cancelled
-        && run.tasks.iter().all(|t| t.state.is_finished())
-        && run.pending_ops.is_empty();
-    if run.state != RunState::Complete && !discardable {
-        let label = run.state.label();
-        let text = format!("run {run_id} is {label}; {verb} applies only to a complete run");
+    // Review m2: a cancelled, halted run with nothing left is discarded as it is.
+    if let Some(text) = rules::finish(run, action) {
         return answer(fx, Err(text));
     }
     let (root, worktrees) = (run.root.clone(), run_worktrees(run));
@@ -403,6 +385,7 @@ pub(super) fn finish(
     let op = next_op(run);
     emit_op(run, op, None, kind, fx);
     run.finish_reply = Some(reply);
+    let verb = rules::finish_verb(action);
     log(run, now, format!("{verb} requested by the user"));
 }
 

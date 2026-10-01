@@ -17,6 +17,7 @@ use proto::{BlockInfo, BlockReason, PlanEdit, PlanTask, Size, TaskState};
 use super::contract::{amend_message, answer_message};
 use super::edits_state::{has_live_worker, is_live, is_paused};
 pub(super) use super::edits_state::{not_started, state_label};
+use super::engine::actions::rules;
 use super::model::{Run, Task, TaskEvent, task_branch, task_path};
 use super::orch::EditSource;
 use super::plan::PlanError;
@@ -233,8 +234,8 @@ impl Batch {
 
     fn cancel(&mut self, id: &str) {
         let Some(i) = self.find(id) else { return };
-        if self.run.tasks[i].state.is_finished() {
-            return self.refuse(i, "only unfinished tasks can be cancelled");
+        if let Some(text) = rules::cancel_task(&self.run, id) {
+            return self.errors.push(PlanError::new(Some(id), "", "13", text));
         }
         self.cancel_at(i);
     }
@@ -556,15 +557,10 @@ impl Batch {
     /// `working` in the same session.
     fn answer(&mut self, id: &str, text: &str) {
         let Some(i) = self.find(id) else { return };
-        let task = &mut self.run.tasks[i];
-        let question = task.state == TaskState::Blocked
-            && task
-                .block
-                .as_ref()
-                .is_some_and(|b| b.reason == BlockReason::Question);
-        if !question && task.state != TaskState::Working {
-            return self.refuse(i, "only blocked(question) or working tasks can be answered");
+        if let Some(text) = rules::answer(&self.run, id) {
+            return self.errors.push(PlanError::new(Some(id), "", "13", text));
         }
+        let task = &mut self.run.tasks[i];
         set_state(task, TaskState::Working, self.now);
         task.block = None;
         // M8b decision 21: an answer before the classification wins.
