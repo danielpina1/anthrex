@@ -180,19 +180,14 @@ pub fn confirm_details(run: &RunInfo, kind: &ActionKind, ascii: bool) -> Vec<(St
             rows
         }
         ActionKind::Discard | ActionKind::Reject => {
-            let started = run
-                .tasks
-                .iter()
-                .filter(|t| t.start_commit.is_some())
-                .count();
+            // No count: the snapshot cannot tell which worktrees still exist (merged
+            // and cancelled tasks' are already gone), and a destructive page never
+            // states a false number (controller ruling, fix round 1).
             let sep = if ascii { "-" } else { "·" };
             vec![
                 row(
                     "removes",
-                    format!(
-                        "{}, the integration worktree and anthrex/{id}/* branches",
-                        plural(started, "task worktree", "task worktrees")
-                    ),
+                    format!("the run's remaining worktrees and its anthrex/{id}/* branches"),
                 ),
                 row(
                     "keeps",

@@ -247,7 +247,7 @@ fn confirm_page_renders_destructive_in_failed() {
                 "anthrex/add-mul-0723/* branches (uncommitted work is kept",
                 "under refs/anthrex/salvage/add-mul-0723/); main is unchanged",
                 "",
-                "removes  1 task worktree, the integration worktree and",
+                "removes  the run's remaining worktrees and its",
                 "         anthrex/add-mul-0723/* branches",
                 "keeps    main unchanged · uncommitted work under",
                 "         refs/anthrex/salvage/add-mul-0723/",
@@ -354,6 +354,34 @@ fn moved_base_page_renders() {
         .collect();
     assert_eq!(dialog.len(), 10, "{text}");
     assert!(dialog.iter().all(|row| row.is_ascii()), "{dialog:#?}");
+}
+
+/// Decision 13 on the moved-base page: a snapshot that refuses the accept shows the
+/// reason in `Failed`.
+#[test]
+fn moved_base_page_shows_a_new_refusal() {
+    let mut app = moved_base_app(1, 1, "", false);
+    let Some(Modal::Action(flow)) = app.modal.as_mut() else {
+        panic!("no menu");
+    };
+    let ActionStep::MovedBase(page) = &mut flow.step else {
+        panic!("no page");
+    };
+    page.info.refused_why = Some("run add-mul-0723 is accepted".into());
+    let buffer = draw(&app, 80, 24);
+    let rows = inner(&dialog_rows(&buffer, 80, 24));
+    assert_eq!(rows[4], "› _".replace('_', "█"), "{rows:#?}");
+    assert_eq!(rows[5], "run add-mul-0723 is accepted", "{rows:#?}");
+    let failed = role(Role::Failed, app.palette()).fg.unwrap();
+    let y = (0..24)
+        .find(|&y| {
+            (8..72)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .contains("is accepted")
+        })
+        .unwrap();
+    assert_eq!(buffer[(10, y)].fg, failed);
 }
 
 /// Preflight F23: the menu's frame is drawn in `Accent` (the menu-over-Settings case is

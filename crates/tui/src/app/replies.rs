@@ -80,16 +80,8 @@ impl PendingReplies {
         self.by_id.contains_key(&id)
     }
 
-    pub fn get(&self, id: u64) -> Option<&Pending> {
-        self.by_id.get(&id)
-    }
-
     pub fn is_empty(&self) -> bool {
         self.by_id.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.by_id.len()
     }
 
     /// The entry for `id`, removed: its reply came.

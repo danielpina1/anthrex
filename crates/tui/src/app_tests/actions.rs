@@ -90,7 +90,7 @@ pub(super) fn kinds(app: &App) -> Vec<ActionKind> {
     flow(app).items.iter().map(|a| a.kind.clone()).collect()
 }
 
-fn tap(app: &mut App, code: KeyCode) -> Vec<Effect> {
+pub(super) fn tap(app: &mut App, code: KeyCode) -> Vec<Effect> {
     press(app, code, KeyModifiers::NONE)
 }
 
@@ -127,7 +127,7 @@ fn task_key(id: &str) -> NodeKey {
 }
 
 /// Opens the run menu on the gate and moves to `kind`.
-fn gate_menu_at(app: &mut App, kind: ActionKind) {
+pub(super) fn gate_menu_at(app: &mut App, kind: ActionKind) {
     app.open_actions((RUN_ID.into(), ActionTarget::Run), Some(kind.clone()));
     let at = flow(app).items.iter().position(|a| a.kind == kind).unwrap();
     assert_eq!(flow(app).selected, at);
@@ -479,6 +479,13 @@ fn a_confirm_page_shows_a_new_refusal() {
         page.info.refused_why.as_deref(),
         Some("run add-reset-3f9a is paused")
     );
+    assert_eq!(
+        super::actions_replies::cell_fg(&app, "run add-reset-3f9a is paused"),
+        {
+            let failed = crate::theme::role(crate::theme::Role::Failed, app.palette());
+            failed.fg
+        }
+    );
     assert!(tap(&mut app, KeyCode::Char('y')).is_empty());
     assert_eq!(app.toast_text(), Some("run add-reset-3f9a is paused"));
     assert_eq!(app.toast_level(), Some(ToastLevel::Warn));
@@ -564,35 +571,4 @@ fn no_menu_key_sends_input() {
             );
         }
     }
-}
-
-#[test]
-fn a_page_whose_action_left_goes_back_to_the_menu() {
-    let (snap, windows) = gate_snapshot();
-    let mut app = app_with_runs(windows, snap.clone());
-    gate_menu_at(&mut app, ActionKind::Approve);
-    tap(&mut app, KeyCode::Enter);
-    let mut approved = snap;
-    approved.runs[0].actions.clear();
-    deliver(&mut app, approved);
-    assert_eq!(flow(&app).step, ActionStep::Menu);
-    assert_eq!(app.toast_text(), Some("approve is no longer available"));
-    assert_eq!(app.toast_level(), Some(ToastLevel::Warn));
-    assert!(tap(&mut app, KeyCode::Char('y')).is_empty());
-}
-
-#[test]
-fn a_stage_that_left_closes_its_menu() {
-    let (snap, windows) = staged_fixture();
-    let mut app = app_with_runs(windows, snap.clone());
-    app.open_actions((RUN_ID.into(), ActionTarget::Stage(2)), None);
-    assert!(
-        flow(&app).items.is_empty(),
-        "the fixture's stages list nothing"
-    );
-    let mut one = snap;
-    one.runs[0].stages.truncate(1);
-    deliver(&mut app, one);
-    assert!(app.modal.is_none());
-    assert_eq!(app.toast_text(), Some("stage 2 is gone"));
 }

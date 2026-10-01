@@ -159,8 +159,7 @@ fn discard_and_cancel_pages_say_what_goes() {
         vec![
             (
                 "removes".to_string(),
-                "2 task worktrees, the integration worktree and anthrex/add-mul-0723/* branches"
-                    .to_string()
+                "the run's remaining worktrees and its anthrex/add-mul-0723/* branches".to_string()
             ),
             (
                 "keeps".to_string(),
@@ -186,4 +185,46 @@ fn discard_and_cancel_pages_say_what_goes() {
             ("cancels".to_string(), "2 unmerged tasks".to_string()),
         ]
     );
+}
+
+/// The base moved again under the resend: the page reopens on the newer `to`, and the
+/// next resend carries it in full.
+#[test]
+fn a_second_moved_base_reopens_the_page_on_the_new_head() {
+    let mut app = app_with_complete_run("add-mul-0723");
+    app.open_actions(
+        ("add-mul-0723".into(), ActionTarget::Run),
+        Some(ActionKind::Accept),
+    );
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    let mut id = sent_tagged_id(
+        &press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
+        |_| true,
+    );
+    for to in ["a".repeat(40), "c".repeat(40)] {
+        app.on_run_reply(RunReply::ConfirmNeeded {
+            run_id: "add-mul-0723".into(),
+            prompt: "merge?".into(),
+            base_moved: Some(BaseMovedInfo {
+                from: "b".repeat(40),
+                to: to.clone(),
+                commits: vec![],
+                total: 1,
+            }),
+            request_id: Some(id),
+        });
+        let ActionStep::MovedBase(page) = &flow(&app).step else {
+            panic!("no moved-base page");
+        };
+        assert_eq!(page.moved.to, to);
+        assert_eq!(page.typed, "", "a fresh box");
+        for c in "0723".chars() {
+            press(&mut app, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        let resent = press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        id = sent_tagged_id(&resent, |r| {
+            matches!(r, RunRequest::Finish { confirm: Some(c), .. }
+                if *c == format!("add-mul-0723@{to}"))
+        });
+    }
 }

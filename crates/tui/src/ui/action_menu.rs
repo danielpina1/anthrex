@@ -187,7 +187,7 @@ fn moved_base_body(
     let arrow = if p.ascii { "->" } else { "→" };
     let total = page.moved.total as usize;
     let unit = if total == 1 { "commit" } else { "commits" };
-    let to7 = seven(&page.moved.to);
+    let to7 = one_line(&seven(&page.moved.to));
     let head = format!(
         "{} moved {} {arrow} {to7} ({total} {unit})",
         one_line(base),
@@ -207,6 +207,10 @@ fn moved_base_body(
             Span::styled(if p.ascii { "_" } else { "█" }, role(Role::Accent, p)),
         ]),
     ];
+    // A snapshot refused the accept meanwhile (decision 13): Enter only toasts it.
+    if let Some(why) = &page.info.refused_why {
+        tail.extend(wrapped(why, width, role(Role::Failed, p)));
+    }
     if page.wrong {
         tail.push(Line::styled(
             format!("type {short} exactly"),
