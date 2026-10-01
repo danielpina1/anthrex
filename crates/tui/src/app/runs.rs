@@ -232,7 +232,9 @@ impl App {
             | RunReply::ConfirmNeeded { .. }
             | RunReply::ToolResult { .. }
             | RunReply::Profile { .. }
-            | RunReply::Stats { .. } => {}
+            | RunReply::Stats { .. }
+            // Milestone 9.0.6 task 12 routes the settings cache; ignored until then.
+            | RunReply::Settings { .. } => {}
             RunReply::TaskDetail { detail, request_id } => self.on_task_detail(detail, request_id),
         }
         vec![]

@@ -119,6 +119,13 @@ impl RunService {
             RunRequest::RejectHold { run_id, hold } => self.hold_verdict(run_id, hold, false).await,
             // Milestone 9.0.5 decision 7: answered from memory.
             RunRequest::TaskDetail { run_id, task_id } => self.task_detail(&run_id, &task_id),
+            // Milestone 9.0.6 decision 40: refused until task 9 serves it.
+            RunRequest::Settings(_) => RunReply::Settings {
+                reply: Box::new(proto::SettingsReply::Refused {
+                    problems: vec!["settings arrive with milestone 9.0.6 task 9".into()],
+                }),
+                request_id: None,
+            },
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }

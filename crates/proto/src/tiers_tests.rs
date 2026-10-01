@@ -56,6 +56,7 @@ fn a_full_info() -> FullInfo {
 
 fn a_stage(head: Option<&str>) -> StageInfo {
     StageInfo {
+        actions: Vec::new(),
         n: 2,
         branch: "anthrex/run-a1b2/stage-2".into(),
         head: head.map(str::to_string),

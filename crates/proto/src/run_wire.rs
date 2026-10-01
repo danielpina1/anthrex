@@ -12,6 +12,7 @@ use crate::profile::{
 };
 use crate::run::{AgentRole, FinishAction, PlanEdit, RunState};
 use crate::run_info::{BaseMovedInfo, RunsSnapshot};
+use crate::settings::{SettingsReply, SettingsRequest};
 use crate::task_detail::TaskDetailInfo;
 
 /// One MCP tool call an agent round makes into the run engine, such as `task_done`.
@@ -120,6 +121,9 @@ pub enum RunRequest {
         run_id: String,
         task_id: String,
     },
+    /// Milestone 9.0.6 decision 25: configuration, not run control. Answered with
+    /// `RunReply::Settings`.
+    Settings(SettingsRequest),
 }
 
 /// `anthrex profile …`, carried inside `RunRequest::Profile` (milestone 8b decision 10).
@@ -229,6 +233,13 @@ pub enum RunReply {
         #[serde(default)]
         request_id: Option<u64>,
     },
+    /// Milestone 9.0.6 decision 25. Refusals travel inside `reply`, so a problem list
+    /// survives intact. Boxed for the same reason as `Profile`.
+    Settings {
+        reply: Box<SettingsReply>,
+        #[serde(default)]
+        request_id: Option<u64>,
+    },
 }
 
 impl RunReply {
@@ -287,7 +298,8 @@ impl RunReply {
             | RunReply::Triaged { request_id, .. }
             | RunReply::Profile { request_id, .. }
             | RunReply::Stats { request_id, .. }
-            | RunReply::TaskDetail { request_id, .. } => *request_id = id,
+            | RunReply::TaskDetail { request_id, .. }
+            | RunReply::Settings { request_id, .. } => *request_id = id,
             RunReply::Snapshot(_) => {}
         }
         self
@@ -304,7 +316,8 @@ impl RunReply {
             | RunReply::Triaged { request_id, .. }
             | RunReply::Profile { request_id, .. }
             | RunReply::Stats { request_id, .. }
-            | RunReply::TaskDetail { request_id, .. } => *request_id,
+            | RunReply::TaskDetail { request_id, .. }
+            | RunReply::Settings { request_id, .. } => *request_id,
             RunReply::Snapshot(_) => None,
         }
     }
@@ -354,4 +367,6 @@ pub mod request {
     pub const PROFILE: &str = "profile";
     /// Milestone 9.0.5 decision 7.
     pub const TASK_DETAIL: &str = "run task-detail";
+    /// Milestone 9.0.6 decision 25.
+    pub const SETTINGS: &str = "settings";
 }

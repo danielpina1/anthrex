@@ -54,6 +54,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         })
         .collect();
     RunInfo {
+        actions: Vec::new(),
         run_id: run.id.clone(),
         goal: run.goal.clone(),
         project: run.project.clone(),
@@ -270,6 +271,7 @@ fn session_spend(task: &Task, now: u64) -> Spend {
 fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: bool) -> TaskInfo {
     let done = t.done.as_ref();
     TaskInfo {
+        actions: Vec::new(),
         id: t.spec.id.clone(),
         title: t.spec.title.clone(),
         epic: t.spec.epic.clone(),

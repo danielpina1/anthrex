@@ -157,6 +157,7 @@ fn appended_variants_keep_their_indices() {
     ];
     let mut expected: Vec<&str> = requests.to_vec();
     expected.push("TaskDetail");
+    expected.push("Settings");
     assert_eq!(variant_names::<RunRequest>(), expected);
     assert_eq!(
         variant_at::<RunRequest>(
@@ -182,6 +183,7 @@ fn appended_variants_keep_their_indices() {
     ];
     let mut expected: Vec<&str> = replies.to_vec();
     expected.push("TaskDetail");
+    expected.push("Settings");
     assert_eq!(variant_names::<RunReply>(), expected);
     let detail = a_detail(None);
     assert_eq!(

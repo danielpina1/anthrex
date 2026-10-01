@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::actions::ActionInfo;
 use crate::adapt::{
     DeciderSource, DiffStats, PhaseSecs, RunPath, RunUsage, SizeCheckInfo, TriageInfo,
 };
@@ -258,6 +259,9 @@ pub struct TaskInfo {
     pub atomic_reason: Option<String>,
     #[serde(default)]
     pub interface_change: bool,
+    /// Milestone 9.0.6 decision 7: what this node can be asked to do now.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionInfo>,
 }
 
 fn first_stage() -> u16 {
@@ -397,6 +401,9 @@ pub struct RunInfo {
     pub stages: Vec<StageInfo>,
     #[serde(default)]
     pub test_slots: u32,
+    /// Milestone 9.0.6 decision 7: what this node can be asked to do now.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionInfo>,
 }
 
 /// Every run the daemon knows about, at one revision.
