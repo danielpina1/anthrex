@@ -3,10 +3,7 @@
 use super::*;
 use crate::app::task_detail::{DetailState, TaskDetailCache, detail_key};
 use crate::inspector::run_tests::{app_of, inspect_node, value};
-use crate::inspector::{
-    INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_TALL_RUN_PANEL, RUN_INSPECTOR_HEIGHT,
-    RUN_INSPECTOR_TALL_HEIGHT,
-};
+use crate::inspector::{INSPECTOR_HEIGHT, RUN_CANVAS_MIN, panel_rows};
 use crate::tree::NodeKey;
 use crate::tree::run_fixtures::gemini_fixture;
 use proto::{AgentRole, TaskDetailInfo};
@@ -133,26 +130,36 @@ fn every_row_fits_the_width() {
     assert!(body_lines(&inspection.sections, 0, Palette::PLAIN).is_empty());
 }
 
-/// Pinning: M8c's 8 and 12 row steps are unchanged below 37 rows; the tall step
-/// starts at an interior of 34 (a 37-row terminal), and only in the run view.
+/// Milestone 9.0.7 decision 17, replacing M8c's fixed 8/12/18-row steps: a task's
+/// panel needs its title row or rows, every body row and the footer, and draws exactly
+/// that with nothing cut; the run view gives it those rows and its borders, at least
+/// milestone 4.7's eight and at most the interior less `RUN_CANVAS_MIN`.
 #[test]
-fn m8c_panel_heights_are_unchanged_below_37_rows() {
-    let footer = |interior: u16, run_view: bool| {
-        let main = Rect::new(0, 0, 120, interior + 2);
-        crate::ui::overview::areas(main, true, run_view).1.height
+fn run_panel_heights_follow_their_content() {
+    let app = t2_with_brief(5);
+    let inspection = inspect_node(&app, &t2_key());
+    let p = Palette::PLAIN;
+    for width in [24, 40, 76] {
+        let title = rows::title_lines(&inspection, width, p).len();
+        let body = body_lines(&inspection.sections, width, p).len();
+        let need = usize::from(panel_rows(&inspection, u16::try_from(width).unwrap()));
+        assert_eq!(need, title + body + 1, "{width}: title, body, footer");
+        assert_eq!(more(&inspection, width, need, p), (false, false), "{width}");
+        assert_eq!(
+            more(&inspection, width, need - 1, p),
+            (false, true),
+            "{width}"
+        );
+    }
+    let need = panel_rows(&inspection, 40);
+    let footer = |interior: u16, rows| {
+        let main = Rect::new(0, 0, 44 + 2, interior + 2);
+        crate::ui::overview::areas(main, true, Some(rows)).1.height
     };
-    assert_eq!(MIN_INTERIOR_FOR_TALL_RUN_PANEL, 34);
-    assert_eq!(RUN_INSPECTOR_TALL_HEIGHT, 18);
-    assert_eq!(footer(17, true), INSPECTOR_HEIGHT);
-    assert_eq!(footer(18, true), RUN_INSPECTOR_HEIGHT);
-    assert_eq!(footer(33, true), RUN_INSPECTOR_HEIGHT);
-    assert_eq!(footer(34, true), RUN_INSPECTOR_TALL_HEIGHT);
-    assert_eq!(footer(60, true), RUN_INSPECTOR_TALL_HEIGHT);
-    assert_eq!(
-        footer(34, false),
-        INSPECTOR_HEIGHT,
-        "the tree keeps its panel"
-    );
+    assert_eq!(footer(60, need), need + 2, "the rows it needs");
+    assert_eq!(footer(17, need), 17 - RUN_CANVAS_MIN, "cut");
+    assert_eq!(footer(17, 0), INSPECTOR_HEIGHT, "never below eight");
+    assert_eq!(footer(13, need), 1, "the single line");
 }
 
 /// Decision 26: the live round's `doing` reads `now: <activity>`.

@@ -3,13 +3,17 @@
 
 use super::super::render;
 use crate::inspector::run_tests::{app_of, inspect_node};
-use crate::inspector::{Field, FieldLayout, Inspection, RUN_INSPECTOR_HEIGHT};
+use crate::inspector::{Field, FieldLayout, Inspection};
 use crate::tree::NodeKey;
 use crate::tree::run_fixtures::{gemini_fixture, planner_fixture};
 use proto::AgentRole;
 use ratatui::backend::TestBackend;
 use ratatui::text::Span;
 use ratatui::{Terminal, layout::Rect};
+
+/// M8c decision 28's twelve-row panel, the height these mockups are drawn at (milestone
+/// 9.0.7 decision 17 sizes the run view's panel to its node; the layout is the same).
+const M8C_PANEL_HEIGHT: u16 = 12;
 use unicode_width::UnicodeWidthStr;
 
 /// One string per row of the buffer, as a reader sees it: the cell a wide character
@@ -205,7 +209,7 @@ const SCOUT: [&str; 12] = [
 #[test]
 fn run_panel_matches_the_mockup() {
     let inspection = node(gemini_fixture(), run_key("r1"));
-    assert_eq!(panel(&inspection, 86, RUN_INSPECTOR_HEIGHT), RUN);
+    assert_eq!(panel(&inspection, 86, M8C_PANEL_HEIGHT), RUN);
 }
 
 #[test]
@@ -215,7 +219,7 @@ fn planner_panel_matches_the_mockup() {
         epic: "A".into(),
     };
     let inspection = node(planner_fixture(), key);
-    assert_eq!(panel(&inspection, 86, RUN_INSPECTOR_HEIGHT), PLANNER);
+    assert_eq!(panel(&inspection, 86, M8C_PANEL_HEIGHT), PLANNER);
 }
 
 #[test]
@@ -224,7 +228,7 @@ fn task_panel_matches_the_mockup() {
     // still pin this layout on the task's flat field list.
     let mut inspection = node(gemini_fixture(), task_key("t2"));
     inspection.layout = FieldLayout::Rows;
-    assert_eq!(panel(&inspection, 86, RUN_INSPECTOR_HEIGHT), TASK);
+    assert_eq!(panel(&inspection, 86, M8C_PANEL_HEIGHT), TASK);
 }
 
 #[test]
@@ -232,25 +236,25 @@ fn task_panel_drops_the_right_text_and_elides_values() {
     let mut inspection = node(gemini_fixture(), task_key("t2"));
     inspection.layout = FieldLayout::Rows;
     // Milestone 9.0.7: the state word is shorter, so the drop shows at 52 columns.
-    assert_eq!(panel(&inspection, 52, RUN_INSPECTOR_HEIGHT), TASK_NARROW);
+    assert_eq!(panel(&inspection, 52, M8C_PANEL_HEIGHT), TASK_NARROW);
 }
 
 #[test]
 fn worker_round_panel_matches_the_mockup() {
     let inspection = node(gemini_fixture(), round_key(AgentRole::Worker, 1, 2));
-    assert_eq!(panel(&inspection, 86, RUN_INSPECTOR_HEIGHT), WORKER);
+    assert_eq!(panel(&inspection, 86, M8C_PANEL_HEIGHT), WORKER);
 }
 
 #[test]
 fn reviewer_round_panel_matches() {
     let inspection = node(gemini_fixture(), round_key(AgentRole::Reviewer, 1, 1));
-    assert_eq!(panel(&inspection, 86, RUN_INSPECTOR_HEIGHT), REVIEWER);
+    assert_eq!(panel(&inspection, 86, M8C_PANEL_HEIGHT), REVIEWER);
 }
 
 #[test]
 fn scout_panel_wraps_the_question() {
     let inspection = node(gemini_fixture(), scout_key());
-    assert_eq!(panel(&inspection, 60, RUN_INSPECTOR_HEIGHT), SCOUT);
+    assert_eq!(panel(&inspection, 60, M8C_PANEL_HEIGHT), SCOUT);
 }
 
 /// Milestone 4.7's eight rows: the title and five fields, `attention` dropped from the
@@ -273,7 +277,7 @@ fn the_wrapped_field_leaves_a_row_for_each_later_field() {
     let inspection = node((snapshot, windows), scout_key());
     let four = "abcdefghi abcdefghi abcdefghi abcdefghi";
     assert_eq!(
-        panel(&inspection, 60, RUN_INSPECTOR_HEIGHT),
+        panel(&inspection, 60, M8C_PANEL_HEIGHT),
         [
             SCOUT[0].to_owned(),
             SCOUT[1].to_owned(),

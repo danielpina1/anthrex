@@ -396,6 +396,11 @@ fn statusbar_shows_the_run_view_hints() {
         })
         .unwrap();
     let screen = terminal.backend().to_string();
-    assert!(screen.contains(" run add-reset-3f9a "), "{screen}");
+    // Milestone 9.0.7 decision 21: the run's name, and its progress on the right.
+    assert!(
+        screen.contains(" run · Add password reset · 3f9a "),
+        "{screen}"
+    );
+    assert!(screen.contains(" 1/3 merged · 10m "), "{screen}");
     assert!(!screen.contains(" tree overview "), "{screen}");
 }

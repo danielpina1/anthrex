@@ -11,10 +11,7 @@
 use super::tree_view;
 use crate::app::{App, region::KeyRegion};
 use crate::graph::{self, Pan, paint::paint, viewport::GraphGeometry};
-use crate::inspector::{
-    self, INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL, MIN_INTERIOR_FOR_RUN_PANEL,
-    MIN_INTERIOR_FOR_TALL_RUN_PANEL, RUN_INSPECTOR_HEIGHT, RUN_INSPECTOR_TALL_HEIGHT,
-};
+use crate::inspector::{self, INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL, RUN_CANVAS_MIN};
 use crate::theme;
 use crate::tree::{self, Row, RowKind};
 use ratatui::{
@@ -32,22 +29,22 @@ use ratatui::{
 /// A short terminal loses the panel, never the canvas: the panel is only ever
 /// carved out of an interior with six rows of canvas left above it.
 ///
-/// While the run view is open the panel is milestone 8c's tall one when the interior
-/// has room for it, and steps down to milestone 4.7's eight rows, then to the single
-/// line (milestone 8c decision 28). The height follows the view, never the node, so
-/// the canvas does not jump as the selection moves.
-pub fn areas(main: Rect, inspector_visible: bool, run_view: bool) -> (Rect, Rect) {
+/// `panel` is the run view's: the selected node's content rows (`inspector::panel_rows`),
+/// and the panel takes them and its borders, at least milestone 4.7's eight rows and at
+/// most what leaves the canvas `RUN_CANVAS_MIN` (milestone 9.0.7 decision 17), so the
+/// canvas changes height as the selection moves. `None` is the project overview's
+/// eight.
+pub fn areas(main: Rect, inspector_visible: bool, panel: Option<u16>) -> (Rect, Rect) {
     let inner = super::inset(main);
-    let footer_height = if !inspector_visible {
+    let footer_height = if !inspector_visible || inner.height < MIN_INTERIOR_FOR_PANEL {
         inner.height.min(1)
-    } else if run_view && inner.height >= MIN_INTERIOR_FOR_TALL_RUN_PANEL {
-        RUN_INSPECTOR_TALL_HEIGHT
-    } else if run_view && inner.height >= MIN_INTERIOR_FOR_RUN_PANEL {
-        RUN_INSPECTOR_HEIGHT
-    } else if inner.height >= MIN_INTERIOR_FOR_PANEL {
-        INSPECTOR_HEIGHT
     } else {
-        inner.height.min(1)
+        match panel {
+            Some(rows) => rows
+                .saturating_add(2)
+                .clamp(INSPECTOR_HEIGHT, inner.height - RUN_CANVAS_MIN),
+            None => INSPECTOR_HEIGHT,
+        }
     };
     let canvas = Rect {
         height: inner.height - footer_height,
@@ -61,6 +58,25 @@ pub fn areas(main: Rect, inspector_visible: bool, run_view: bool) -> (Rect, Rect
     (canvas, footer)
 }
 
+/// The run view's `panel` for [`areas`]: the selected node's content rows at the
+/// panel's interior width (the overview's less the panel's borders and padding); `None`
+/// outside the run view. With nothing selected the panel keeps its least height.
+fn panel_of(app: &App, main: Rect, rows: &[Row<'_>]) -> Option<u16> {
+    app.run_view.as_ref()?;
+    let width = super::inset(main).width.saturating_sub(4);
+    Some(selected_row(app, rows).map_or(0, |row| {
+        inspector::panel_rows(&inspector::inspect(row, app), width)
+    }))
+}
+
+/// [`areas`] as the frame splits it: the run view's panel sized by its selected node.
+/// The reducer's viewport and the task panel's page read this, so they agree with
+/// what is drawn (Review focus 3).
+pub(crate) fn areas_of(app: &App, main: Rect) -> (Rect, Rect) {
+    let rows = app.nav_rows();
+    areas(main, app.inspector_visible, panel_of(app, main, &rows))
+}
+
 /// One frame of the overview: where it sits on screen, the graph laid out on
 /// the canvas, and the pan to draw it at.
 ///
@@ -70,6 +86,9 @@ pub struct View {
     pub canvas: Rect,
     /// The rect below the canvas: the inspector panel, or the single line.
     pub footer: Rect,
+    /// Whether `footer` is the panel (`areas` gave it a panel's height), so what is
+    /// drawn there can never disagree with the height it was drawn into.
+    pub panel: bool,
     pub layout: graph::Layout,
     pub pan: Pan,
 }
@@ -81,17 +100,6 @@ impl View {
             pan: self.pan,
         }
     }
-
-    /// Whether the rect below the canvas is the panel. It is the panel exactly
-    /// when `areas` gave it one of the panel's heights — milestone 4.7's, or the
-    /// run view's tall one — so what is drawn there can never disagree with the
-    /// height it was drawn into.
-    fn shows_panel(&self) -> bool {
-        matches!(
-            self.footer.height,
-            INSPECTOR_HEIGHT | RUN_INSPECTOR_HEIGHT | RUN_INSPECTOR_TALL_HEIGHT
-        )
-    }
 }
 
 pub fn view(app: &App, main: Rect) -> View {
@@ -101,7 +109,7 @@ pub fn view(app: &App, main: Rect) -> View {
 /// `view` for a caller that has the visible rows in hand already, so one frame
 /// or one gesture builds that list once instead of once per reader.
 pub fn view_of(app: &App, main: Rect, rows: &[Row<'_>]) -> View {
-    let (canvas, footer) = areas(main, app.inspector_visible, app.run_view.is_some());
+    let (canvas, footer) = areas(main, app.inspector_visible, panel_of(app, main, rows));
     let layout = graph::layout(rows);
     // The stored pan can outlive the canvas it was clamped against — a
     // narrowed terminal, or rows that vanished — so it is clamped on the way
@@ -110,18 +118,24 @@ pub fn view_of(app: &App, main: Rect, rows: &[Row<'_>]) -> View {
     View {
         canvas,
         footer,
+        panel: footer.height >= INSPECTOR_HEIGHT,
         layout,
         pan,
     }
 }
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
-    let title = match &app.run_view {
-        Some(view) => format!("run {}", view.run_id),
-        None => "tree overview".to_string(),
+    let p = app.palette();
+    let (title, right) = match &app.run_view {
+        Some(view) => run_title(app, &view.run_id, area.width),
+        None => ("tree overview".to_string(), None),
     };
     let keys_here = app.key_region() == KeyRegion::Overview;
-    let block = super::kit::pane_frame(Line::from(title), keys_here, app.palette());
+    let mut block = super::kit::pane_frame(Line::from(title), keys_here, p);
+    if let Some(right) = right {
+        let right = format!(" {} ", theme::fold(&right, p.ascii));
+        block = block.title_top(Line::from(right).right_aligned());
+    }
     frame.render_widget(block, area);
 
     // One row build for the whole frame: the layout, the painter and the
@@ -135,7 +149,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     // What stands below the canvas is whatever `areas` made room for: the
     // panel when it gave the rect the panel's height, and the single line
     // otherwise (decisions 1, 6 and 7).
-    match (view.shows_panel(), selected_row(app, &rows)) {
+    match (view.panel, selected_row(app, &rows)) {
         (true, Some(row)) => {
             let inspection = inspector::inspect(row, app);
             inspector::render_in(frame, &inspection, view.footer, app.palette());
@@ -149,6 +163,38 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 }
+
+/// Milestone 9.0.7 decision 21: ` run · <run name> `, and right-aligned in the top border
+/// ` <m>/<n> merged · <age> ` (`<age>` since approval, else creation, on the daemon's
+/// clock) or ` planning · <age> `. The name is cut to what the right text leaves; the
+/// right text goes first when even a short name would not fit beside it.
+fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
+    let Some(run) = app.runs.runs.iter().find(|run| run.run_id == run_id) else {
+        return (format!("run {}", crate::safe_text::one_line(run_id)), None);
+    };
+    let since = |at: u64| tree::format_elapsed(app.run_age(at));
+    let right = if run.state == proto::RunState::Planning {
+        format!("planning · {}", since(run.created_at))
+    } else {
+        let (merged, total) = tree::run_progress(run);
+        let at = run.approved_at.unwrap_or(run.created_at);
+        format!("{merged}/{total} merged · {}", since(at))
+    };
+    // The corners, the title's own spaces and `run · `, the right text's two spaces,
+    // and a column between the two.
+    let chrome = 2 + 2 + 6 + 1;
+    let right_width = u16::try_from(right.chars().count() + 2).unwrap_or(u16::MAX);
+    let (room, right) = match width.checked_sub(chrome + right_width) {
+        Some(room) if room >= MIN_NAME_ROOM => (room, Some(right)),
+        _ => (width.saturating_sub(chrome), None),
+    };
+    let name = super::kit::run_name_in(&run.goal, &run.run_id, room, app.palette());
+    (format!("run · {name}"), right)
+}
+
+/// The columns a run's name keeps before the title drops its right-hand text: the
+/// short id and its separator, and a few of the goal's.
+const MIN_NAME_ROOM: u16 = 16;
 
 /// The row the overview's selection names, if it is still on screen.
 fn selected_row<'a, 'b>(app: &App, rows: &'a [Row<'b>]) -> Option<&'a Row<'b>> {
@@ -263,3 +309,7 @@ fn finished_secs(info: &proto::SubagentInfo) -> u64 {
     info.ended_secs
         .map_or(0, |ended| info.started_secs.saturating_sub(ended))
 }
+
+#[cfg(test)]
+#[path = "overview_polish_tests.rs"]
+mod polish_tests;

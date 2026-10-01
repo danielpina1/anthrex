@@ -93,11 +93,20 @@ fn the_task_panel_renders_outcome_first_at_120x40() {
             "DETAIL",
             "phase     in review",
             "worker    worker #1 · codex · 26m · 41 tool calls",
+            "deps      after t0 ✓, t6 ✓ · unblocks t3, t7 · on critical path",
+            "budget    ███████░░░ 104/150 tool calls · 38/60 min · 410k tokens",
+            "tries     review 1/2 bounces · check 0/2 · escalation step 1",
+            "stage     1 of 2",
+            "route     codex · standard · high effort → reviewer claude · frontier",
+            "history   12:31 review r1 changes · 12:20 check passed · 12:02 started",
             "stage 1 of 2 · cx gpt-6-sol · M · tdd",
         ]
     );
+    // Milestone 9.0.7 decision 17: the panel takes all 22 rows it needs, so nothing
+    // lies below and the border names only the actions.
+    assert_eq!(rows.len(), 24);
     assert!(rows[0].starts_with('╭'), "{}", rows[0]);
-    assert!(rows[17].ends_with(" ↓ PgDn · . actions ╯"), "{}", rows[17]);
+    assert!(rows[23].ends_with("─ . actions ╯"), "{}", rows[23]);
 }
 
 /// Decision 13: each step's mark in its role, the current step's word bold `Working`.
@@ -143,26 +152,29 @@ fn at_80_columns_the_state_word_moves_under_the_title() {
     assert_eq!(drawn[2], "│   in review · r2         │");
 }
 
+/// At 80x24, where decision 17's panel is cut at 15 rows (the title on two rows).
 #[test]
 fn the_footer_stays_while_the_body_scrolls() {
-    let mut app = run_view(in_review(), 120, 40);
-    let before = panel(&mut app, 120, 40);
+    let mut app = run_view(in_review(), 80, 24);
+    let before = panel(&mut app, 80, 24);
+    assert_eq!(before.len(), 15);
+    let last = before.len() - 2;
     for _ in 0..2 {
         key(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
     }
     assert!(app.inspector_scroll_for(&t2_key()) > 0, "PgDn scrolled");
-    let after = panel(&mut app, 120, 40);
-    assert_eq!(after[16], before[16], "the footer row is unchanged");
-    assert!(after[16].contains("stage 1 of 2 · cx gpt-6-sol · M · tdd"));
-    assert_eq!(after[1], before[1], "the title row stays");
-    assert_ne!(after[2], before[2], "the body moved");
+    let after = panel(&mut app, 80, 24);
+    assert_eq!(after[last], before[last], "the footer row is unchanged");
+    assert!(after[last].contains("stage 1 of 2 · cx gpt-6-sol · M · tdd"));
+    assert_eq!(after[1..3], before[1..3], "the title rows stay");
+    assert_ne!(after[3], before[3], "the body moved");
     assert!(after[0].ends_with(" ↑ PgUp ╮"), "{}", after[0]);
-    // A page is the body's rows: the title and the footer are not scrolled past.
-    let footer = lay_out(&mut app, 120, 40);
+    // A page is the body's rows: the title rows and the footer are not scrolled past.
+    let footer = lay_out(&mut app, 80, 24);
     let (width, height) = (footer.width - 4, footer.height - 2);
     assert_eq!(
         crate::inspector::task_panel_room(&app, width, height),
-        height - 2
+        height - 3
     );
 }
 

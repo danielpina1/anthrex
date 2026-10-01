@@ -4,10 +4,7 @@
 
 use super::run_view::{select_nav, three};
 use super::*;
-use crate::inspector::{
-    INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL, MIN_INTERIOR_FOR_RUN_PANEL, RUN_INSPECTOR_HEIGHT,
-    RUN_INSPECTOR_TALL_HEIGHT,
-};
+use crate::inspector::{INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL, RUN_CANVAS_MIN};
 use crate::tree::RunFilter;
 use crate::tree::run_fixtures::{RUN_ID, gemini_fixture};
 
@@ -67,14 +64,20 @@ fn below_the_canvas(app: &mut App, interior: u16) -> String {
     text_in(&drawn(app, WIDTH, interior + CHROME), view.footer)
 }
 
+/// Milestone 9.0.7 decision 17: the run view's panel takes the rows its node needs,
+/// here all of `t2`'s (its title, nineteen body rows before the detail lands, and the
+/// footer) and its borders: 21 of an interior of 30, nothing cut.
 #[test]
 fn the_run_view_gets_the_tall_panel() {
     let mut app = gemini_view();
-    assert_eq!(footer_at(&mut app, 30), RUN_INSPECTOR_HEIGHT);
+    assert_eq!(footer_at(&mut app, 30), 21);
     let panel = below_the_canvas(&mut app, 30);
     let lines: Vec<&str> = panel.lines().collect();
-    assert_eq!(lines.len(), usize::from(RUN_INSPECTOR_HEIGHT));
-    assert!(lines[0].starts_with('╭'), "{panel}");
+    assert_eq!(lines.len(), 21);
+    assert!(
+        lines[0].starts_with('╭') && !lines[0].contains("PgUp"),
+        "{panel}"
+    );
     assert!(
         lines[1].contains("◐ t2  map Gemini hook events to status")
             && lines[1]
@@ -82,14 +85,19 @@ fn the_run_view_gets_the_tall_panel() {
                 .ends_with("in review · r2"),
         "{panel}"
     );
-    // Milestone 9.0.7 decision 12: OUTCOME, then EVIDENCE; the footer on the last
-    // interior row of the twelve-row panel (was 9.0.5's STATUS `route`).
     assert!(
         lines[2].contains("OUTCOME") && lines[6].contains("EVIDENCE"),
         "{panel}"
     );
-    assert!(lines[10].contains("│ cx default · M · tdd "), "{panel}");
-    assert!(lines[11].starts_with('╰'), "{panel}");
+    assert!(
+        lines[18].contains("│ history   12:31 review r1 changes"),
+        "{panel}"
+    );
+    assert!(lines[19].contains("│ cx default · M · tdd "), "{panel}");
+    assert!(
+        lines[20].starts_with('╰') && lines[20].ends_with(" . actions ╯"),
+        "{panel}"
+    );
 
     // The project overview at the same size keeps milestone 4.7's eight rows, even with
     // the run's own node selected.
@@ -109,13 +117,14 @@ fn the_run_view_gets_the_tall_panel() {
 #[test]
 fn a_short_terminal_steps_down() {
     let mut app = gemini_view();
+    assert_eq!(footer_at(&mut app, 18), 18 - RUN_CANVAS_MIN);
+    assert_eq!(footer_at(&mut app, 17), 17 - RUN_CANVAS_MIN);
     assert_eq!(
-        footer_at(&mut app, MIN_INTERIOR_FOR_RUN_PANEL),
-        RUN_INSPECTOR_HEIGHT
+        footer_at(&mut app, MIN_INTERIOR_FOR_PANEL),
+        INSPECTOR_HEIGHT
     );
-    assert_eq!(footer_at(&mut app, 17), INSPECTOR_HEIGHT);
-    // The eight-row step is still the panel, not the single line.
-    let panel = below_the_canvas(&mut app, 17);
+    // The eight-row panel is still the panel, not the single line.
+    let panel = below_the_canvas(&mut app, MIN_INTERIOR_FOR_PANEL);
     let lines: Vec<&str> = panel.lines().collect();
     assert_eq!(lines.len(), usize::from(INSPECTOR_HEIGHT));
     assert!(
@@ -143,21 +152,19 @@ fn i_toggles_the_tall_panel_too() {
     let mut app = gemini_view();
     let layout = laid_out(&mut app, WIDTH, 30 + CHROME);
     let tall = overview::view(&app, layout.main);
-    assert_eq!(tall.footer.height, RUN_INSPECTOR_HEIGHT);
+    let sized = tall.footer.height;
+    assert!(sized > INSPECTOR_HEIGHT, "{sized}");
 
     press(&mut app, KeyCode::Char('i'), KeyModifiers::NONE);
     assert!(!app.inspector_visible);
     assert!(app.run_view.is_some(), "`i` leaves the run view open");
     assert_eq!(footer_at(&mut app, 30), 1);
     let line = overview::view(&app, layout.main);
-    assert_eq!(
-        line.canvas.height,
-        tall.canvas.height + RUN_INSPECTOR_HEIGHT - 1
-    );
+    assert_eq!(line.canvas.height, tall.canvas.height + sized - 1);
 
     press(&mut app, KeyCode::Char('i'), KeyModifiers::NONE);
     assert!(app.inspector_visible);
-    assert_eq!(footer_at(&mut app, 30), RUN_INSPECTOR_HEIGHT);
+    assert_eq!(footer_at(&mut app, 30), sized);
 }
 
 /// Opening and leaving the run view re-split the last frame's area at once, so keys
@@ -166,21 +173,28 @@ fn i_toggles_the_tall_panel_too() {
 fn opening_and_leaving_the_run_view_resplit_the_viewport_at_once() {
     let mut app = gemini_view();
     let layout = laid_out(&mut app, WIDTH, 30 + CHROME);
-    let tall = overview::view(&app, layout.main).canvas;
+    let view = overview::view(&app, layout.main);
+    let (tall, sized) = (view.canvas, view.footer.height);
+    assert!(sized > INSPECTOR_HEIGHT, "{sized}");
     assert_eq!(app.graph_area, tall);
 
     press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     assert!(app.run_view.is_none());
     let project = overview::view(&app, layout.main).canvas;
-    assert_eq!(
-        project.height,
-        tall.height + RUN_INSPECTOR_HEIGHT - INSPECTOR_HEIGHT
-    );
+    assert_eq!(project.height, tall.height + sized - INSPECTOR_HEIGHT);
     assert_eq!(app.graph_area, project, "no frame drawn in between");
 
+    // Milestone 9.0.7 decision 17: the run view reopens on the run's own node, whose
+    // panel is sized to it, not to `t2`'s.
     press(&mut app, KeyCode::Char('l'), KeyModifiers::NONE);
     assert!(app.run_view.is_some());
-    assert_eq!(app.graph_area, tall, "no frame drawn in between");
+    assert_eq!(app.tree.selected, Some(NodeKey::Run("r1".into())));
+    let reopened = overview::view(&app, layout.main);
+    assert_eq!(app.graph_area, reopened.canvas, "no frame drawn in between");
+    assert_ne!(
+        reopened.footer.height, sized,
+        "the run's node has its own rows"
+    );
 }
 
 #[test]
@@ -218,7 +232,7 @@ fn no_panic_at_degenerate_sizes_in_the_run_view() {
         select_nav(&mut app, t1.clone());
         app.inspector_visible = inspector_visible;
         for width in [1, 2, 3, 4, 12, 40, 61] {
-            for height in 0..=(MIN_INTERIOR_FOR_RUN_PANEL + 4) {
+            for height in 0..=(MIN_INTERIOR_FOR_PANEL + 8) {
                 let layout = laid_out(&mut app, width, height);
                 assert!(app.run_view.is_some(), "{width}x{height}");
                 let view = overview::view(&app, layout.main);
@@ -229,16 +243,17 @@ fn no_panic_at_degenerate_sizes_in_the_run_view() {
                     "{width}x{height}: the split lost a row"
                 );
                 assert_eq!(app.graph_area, view.canvas, "{width}x{height}");
+                // Milestone 9.0.7 decision 17: the panel takes its node's rows, from
+                // the eight-row least to the interior less six canvas rows.
                 match view.footer.height {
-                    RUN_INSPECTOR_HEIGHT => {
+                    sized if sized > INSPECTOR_HEIGHT => {
                         assert!(inspector_visible);
-                        assert!(view.canvas.height >= 6, "{width}x{height}");
+                        assert!(view.canvas.height >= RUN_CANVAS_MIN, "{width}x{height}");
                         steps[0] += 1;
                     }
                     INSPECTOR_HEIGHT => {
                         assert!(inspector_visible);
-                        assert!(interior < MIN_INTERIOR_FOR_RUN_PANEL, "{width}x{height}");
-                        assert!(view.canvas.height >= 6, "{width}x{height}");
+                        assert!(view.canvas.height >= RUN_CANVAS_MIN, "{width}x{height}");
                         steps[1] += 1;
                     }
                     other => {
@@ -314,8 +329,9 @@ fn panel_rows(app: &mut App, width: u16, height: u16) -> Vec<String> {
         .collect()
 }
 
-/// Milestone 9.0.7 decision 12 at M8c's twelve rows: the state word under the title,
-/// OUTCOME first, the footer on the last row.
+/// Milestone 9.0.7 decision 12 in decision 17's panel at 80x24: the state word under the
+/// title, OUTCOME first, the footer on the last row; the panel is cut at 15 rows (an
+/// interior of 21 less six canvas rows).
 #[test]
 fn task_panel_renders_at_80x24() {
     assert_eq!(
@@ -331,17 +347,20 @@ fn task_panel_renders_at_80x24() {
             "│ accept    ◌ every event maps             │",
             "│           ◌ stop marks idle              │",
             "│ EVIDENCE                                 │",
+            "│ diff      +212 −31 · 4 files · test      │",
+            "│           `status::gemini_stop_marks_idl │",
+            "│           e` red a1b2c3d ✓               │",
             "│ cx default · M · tdd                     │",
             "╰────────────────────── ↓ PgDn · . actions ╯",
         ]
     );
 }
 
-/// Decision 25's tall step: eighteen rows at 40.
+/// Decision 17 at 120x40: the whole panel, 24 rows, nothing below it.
 #[test]
 fn task_panel_renders_at_120x40() {
     let rows = task_panel(120, 40);
-    assert_eq!(rows.len(), usize::from(RUN_INSPECTOR_TALL_HEIGHT));
+    assert_eq!(rows.len(), 24, "{rows:#?}");
     let inner: Vec<&str> = rows[1..rows.len() - 1]
         .iter()
         .map(|row| row.trim_start_matches("│ ").trim_end_matches(['│', ' ']))
@@ -364,12 +383,18 @@ fn task_panel_renders_at_120x40() {
             "          … (b: more)",
             "DETAIL",
             "phase     in review",
+            "worker    worker #1 · codex · 26m · 41 tool calls",
+            "deps      after t0 ✓, t6 ✓ · unblocks t3, t7 · on critical path",
+            "budget    ███████░░░ 104/150 tool calls · 38/60 min · 410k tokens",
+            "tries     review 1/2 bounces · check 0/2 · escalation step 1",
+            "route     codex · standard · high effort → reviewer claude · frontier",
+            "history   12:31 review r1 changes · 12:20 check passed · 12:02 started",
             "cx default · M · tdd",
         ]
     );
-    assert!(rows[0].starts_with('╭') && rows[17].starts_with('╰'));
-    // Ruling D-2 and decision 16: DETAIL runs below the fold, and the border says so.
-    assert!(rows[17].ends_with(" ↓ PgDn · . actions ╯"), "{}", rows[17]);
+    assert!(rows[0].starts_with('╭') && rows[23].starts_with('╰'));
+    // Decision 16: nothing lies below, so the border names only the actions.
+    assert!(rows[23].ends_with("─ . actions ╯"), "{}", rows[23]);
     assert!(!rows[0].contains("PgUp"), "{}", rows[0]);
 }
 
@@ -398,13 +423,14 @@ fn the_page_size_is_the_drawn_panels_interior() {
     }
 }
 
-/// Ruling D-2: a merged task's outcome shows without scrolling at 120x40, at the end of
-/// OUTCOME (milestone 9.0.7 decision 12). At 80x24 M8c's twelve rows put it one page
-/// down (the state word's row and two wrapped rows above it) until task 9 sizes the
-/// panel to its content (decision 17); that case is pinned at its page here.
+/// Ruling D-2: a merged task's outcome shows without scrolling, at the end of OUTCOME
+/// (milestone 9.0.7 decision 12), at 120x40 and, with the panel sized to its content
+/// (decision 17), at 80x24 too: the panel there takes 15 rows (an interior of 21 less
+/// six canvas rows), so its body is 10 rows under the two title rows and the result is
+/// the eighth of them.
 #[test]
 fn a_merged_tasks_result_shows_without_scrolling() {
-    for (width, height, pages, result_row) in [(80, 24, 1, 3), (120, 40, 0, 7)] {
+    for (width, height, result_row) in [(80, 24, 10), (120, 40, 7)] {
         let (mut snapshot, windows) = crate::tree::run_fixtures::gemini_fixture();
         let t2 = snapshot.runs[0]
             .tasks
@@ -428,21 +454,18 @@ fn a_merged_tasks_result_shows_without_scrolling() {
             detail.worker_summary = Some("Mapped all nine hook events.\nAdded a test.".into());
             detail.summary_source = Some(proto::SummarySource::TaskDone);
         }
-        let _ = panel_rows(&mut app, width, height);
-        for _ in 0..pages {
-            press(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
-        }
         let panel = panel_rows(&mut app, width, height);
         assert!(
             panel[result_row].starts_with("│ result    Mapped all nine hook events."),
             "{width}x{height}: {panel:#?}"
         );
-        if pages == 0 {
-            let above = &panel[result_row - 1];
-            assert!(above.starts_with("│           ◌ stop"), "{panel:#?}");
-            assert!(panel[2].starts_with("│ OUTCOME"), "{panel:#?}");
-        }
+        let above = &panel[result_row - 1];
+        assert!(above.starts_with("│           ◌ stop"), "{panel:#?}");
+        assert!(
+            panel[0].starts_with('╭') && !panel[0].contains("PgUp"),
+            "{panel:#?}"
+        );
         let last = panel.last().unwrap();
-        assert!(last.ends_with(" ↓ PgDn · . actions ╯"), "{panel:#?}");
+        assert!(last.ends_with(" . actions ╯"), "{panel:#?}");
     }
 }

@@ -20,6 +20,15 @@ pub(crate) fn stage_inspection(run: &RunInfo, stage: &StageInfo, app: &App) -> I
         None => format!("{} (not created)", clean(&stage.branch)),
     };
     let mut fields = vec![field("branch", branch), field("tier 3", tier3_text(stage))];
+    // Milestone 9.0.7 decision 18: every failing name the daemon sends, wrapping.
+    if !stage.full.failing.is_empty() {
+        let names: Vec<String> = stage.full.failing.iter().map(|n| clean(n)).collect();
+        fields.push(Field {
+            label: "failing",
+            value: names.join(", "),
+            wrap: true,
+        });
+    }
     if let Some(bisect) = bisect_text(stage) {
         fields.push(field("bisect", bisect));
     }
@@ -47,7 +56,7 @@ fn short(sha: &str) -> String {
 }
 
 /// `42s`, `2m10s`, `1h02m`.
-pub(super) fn tier_duration(secs: u64) -> String {
+pub(crate) fn tier_duration(secs: u64) -> String {
     if secs < 60 {
         format!("{secs}s")
     } else if secs < 3600 {
@@ -67,7 +76,8 @@ fn names(list: &[String]) -> String {
     text
 }
 
-/// `green at abc1234 · 41m12s · 2 shards · flaky a::x`; `not run` before any job.
+/// `green at abc1234 · 41m12s · 2 shards · flaky a::x`; `not run` before any job. The
+/// failing names are a row of their own (milestone 9.0.7 decision 18).
 fn tier3_text(stage: &StageInfo) -> String {
     let full = &stage.full;
     let mut parts = vec![
@@ -94,9 +104,6 @@ fn tier3_text(stage: &StageInfo) -> String {
     }
     if !full.flaky.is_empty() {
         parts.push(format!("flaky {}", names(&full.flaky)));
-    }
-    if !full.failing.is_empty() {
-        parts.push(format!("failing {}", names(&full.failing)));
     }
     parts.join(" · ")
 }

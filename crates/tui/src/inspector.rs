@@ -27,14 +27,9 @@ pub const INSPECTOR_HEIGHT: u16 = 8;
 /// canvas (decision 6).
 pub const MIN_INTERIOR_FOR_PANEL: u16 = INSPECTOR_HEIGHT + 6;
 
-/// Milestone 8c decision 28: the run view's panel — a border, the title, nine rows, a
-/// border — and the interior it needs before the panel takes that height.
-pub const RUN_INSPECTOR_HEIGHT: u16 = 12;
-pub const MIN_INTERIOR_FOR_RUN_PANEL: u16 = RUN_INSPECTOR_HEIGHT + 6;
-/// Milestone 9.0.5 decision 25: the run view's tall panel, and the overview interior
-/// it needs (a terminal of 37 rows or more).
-pub const RUN_INSPECTOR_TALL_HEIGHT: u16 = 18;
-pub const MIN_INTERIOR_FOR_TALL_RUN_PANEL: u16 = 34;
+/// Milestone 9.0.7 decision 17: the canvas rows the run view's content-sized panel
+/// always leaves above it (milestone 4.7 decision 6's six).
+pub const RUN_CANVAS_MIN: u16 = 6;
 /// Decision 29: a run inspection's label column.
 pub const RUN_LABEL_WIDTH: usize = 10;
 /// Decision 30: the run's progress bar, and a planner's and a task budget's.
@@ -417,6 +412,8 @@ mod run_task;
 mod run_task_outcome;
 mod run_task_sections;
 
+pub use panel::panel_rows;
+pub(crate) use run_stage::tier_duration;
 pub use run_task::{task_panel_room, task_panel_rows};
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 //! before it is painted.
 
 use super::MAX_NODE_WIDTH;
-use crate::theme::{Glyph, fold, glyph};
+use crate::theme::{Glyph, glyph};
 use crate::tree::{DisplayRound, round_label, run_progress};
 use crate::ui::tree_view::truncate_in;
 use proto::{
@@ -68,8 +68,8 @@ pub(crate) fn task_text(task: &TaskInfo) -> String {
     task_text_in(task, false)
 }
 
-/// [`task_text`], its hub mark `◆` as `Glyph::Hub` and its deps mark `⇠` as `<` in
-/// ASCII (milestone 9.0.7 decision 6), cut with `...`.
+/// [`task_text`], its hub mark `◆` as `Glyph::Hub` in ASCII (milestone 9.0.7 decision
+/// 6), cut with `...`. Its declared deps read `  after t0, t6` (decision 19).
 pub(crate) fn task_text_in(task: &TaskInfo, ascii: bool) -> String {
     let mut tail = format!(" {}{}", size_letter(task.size), origin_tag(task.origin));
     if task.hub {
@@ -77,8 +77,8 @@ pub(crate) fn task_text_in(task: &TaskInfo, ascii: bool) -> String {
         tail.push_str(glyph(Glyph::Hub, ascii));
     }
     if !task.deps.is_empty() {
-        tail.push_str(if ascii { "  <" } else { "  ⇠" });
-        tail.extend(task.deps.iter().map(String::as_str));
+        tail.push_str("  after ");
+        tail.push_str(&task.deps.join(", "));
     }
     let id_width = UnicodeWidthStr::width(task.id.as_str());
     let tail_width = UnicodeWidthStr::width(tail.as_str());
@@ -100,19 +100,26 @@ fn size_letter(size: Size) -> &'static str {
     }
 }
 
-/// Milestone 9.1 decision 55: `stage <n>/<N>  tier 3 <✓|✗|…|·>`, `N` the run's
-/// stage count; in ASCII `+`, `x`, `~` (a check under way, `Glyph::Checking`'s twin)
-/// and `-`, each one column so a stage box is as wide in either mode.
+/// Milestone 9.0.7 decision 18 (after 9.1 decision 55): `stage <n>/<N>  tier 3 ` then
+/// `✓[ <secs>]` (green), `✗[ <secs>]` (red), `✗ bisecting`, `running`, or `◌` (not run,
+/// or no head yet: as `theme::stage_look` reads it), `N` the run's stage count and the
+/// time `run_stage::tier_duration`'s. The marks are their ASCII twins in ASCII.
 pub(crate) fn stage_text_in(run: &RunInfo, stage: &StageInfo, ascii: bool) -> String {
-    let mark = match stage.full.state {
-        FullState::Green => glyph(Glyph::Passed, ascii),
-        FullState::Red => glyph(Glyph::Failed, ascii),
-        FullState::Running | FullState::Bisecting if ascii => "~",
-        FullState::Running | FullState::Bisecting => "…",
-        FullState::None => "·",
+    let g = |mark| glyph(mark, ascii);
+    let secs = stage
+        .full
+        .secs
+        .map(|secs| format!(" {}", crate::inspector::tier_duration(secs)))
+        .unwrap_or_default();
+    let tier = match stage.full.state {
+        _ if stage.head.is_none() => g(Glyph::NotStarted).to_owned(),
+        FullState::None => g(Glyph::NotStarted).to_owned(),
+        FullState::Running => "running".to_owned(),
+        FullState::Green => format!("{}{secs}", g(Glyph::Passed)),
+        FullState::Red => format!("{}{secs}", g(Glyph::Failed)),
+        FullState::Bisecting => format!("{} bisecting", g(Glyph::Failed)),
     };
-    let mark = fold(mark, ascii);
-    format!("stage {}/{}  tier 3 {mark}", stage.n, run.stages.len())
+    format!("stage {}/{}  tier 3 {tier}", stage.n, run.stages.len())
 }
 
 /// The tag after a task made by the engine rather than the plan: ` (bisect)`, ` (sync)`.

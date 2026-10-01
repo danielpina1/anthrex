@@ -229,13 +229,13 @@ impl App {
     }
 
     /// The run view's panel interior (width, height), from the last frame's overview
-    /// area: the footer `ui::overview::areas` gives, less its border and padding.
-    pub(super) fn task_panel_interior(&self) -> (u16, u16) {
+    /// area: the footer `ui::overview::areas_of` gives (the panel sized by the selected
+    /// node, milestone 9.0.7 decision 17), less its border and padding.
+    pub(crate) fn task_panel_interior(&self) -> (u16, u16) {
         let Some(main) = self.graph_main else {
             return (0, 0);
         };
-        let (_, footer) =
-            crate::ui::overview::areas(main, self.inspector_visible, self.run_view.is_some());
+        let (_, footer) = crate::ui::overview::areas_of(self, main);
         (
             footer.width.saturating_sub(4),
             footer.height.saturating_sub(2),

@@ -143,7 +143,7 @@ fn run_view_draws_tiers_rounds_and_glyphs() {
     let layout = layout(&rows);
     let lines = paint(
         &layout,
-        Rect::new(0, 0, 73, 15),
+        Rect::new(0, 0, 78, 15),
         Pan::default(),
         &rows,
         &app,
@@ -152,23 +152,23 @@ fn run_view_draws_tiers_rounds_and_glyphs() {
         lines_text(&lines),
         padded(
             &[
-                "                                                   ╭────────────────────╮",
-                "                                                 ┌─┤ ✓ worker #1 claude │",
-                "                          ╭────────────────────╮ │ ╰────────────────────╯",
-                "                        ┌─┤ ✓ t0 proto M ◆     ├─┤",
-                "                        │ ╰────────────────────╯ │ ╭────────────────────╮",
-                "                        │                        └─┤ ✓ review #1 codex  │",
-                "                        │                          ╰────────────────────╯",
+                "                                                        ╭────────────────────╮",
+                "                                                      ┌─┤ ✓ worker #1 claude │",
+                "                          ╭─────────────────────────╮ │ ╰────────────────────╯",
+                "                        ┌─┤ ✓ t0 proto M ◆          ├─┤",
+                "                        │ ╰─────────────────────────╯ │ ╭────────────────────╮",
+                "                        │                             └─┤ ✓ review #1 codex  │",
+                "                        │                               ╰────────────────────╯",
                 "╭─────────────────────╮ │",
-                "│ ◉ orchestrator  1/3 ├─┤ ╭────────────────────╮   ╭────────────────────╮",
-                "╰─────────────────────╯ ├─┤ ● t1 spawn M  ⇠t0  ├───┤ ● worker #1 claude │",
-                "                        │ ╰────────────────────╯   ╰────────────────────╯",
+                "│ ◉ orchestrator  1/3 ├─┤ ╭─────────────────────────╮   ╭────────────────────╮",
+                "╰─────────────────────╯ ├─┤ ● t1 spawn M  after t0  ├───┤ ● worker #1 claude │",
+                "                        │ ╰─────────────────────────╯   ╰────────────────────╯",
                 "                        │",
-                "                        │ ╭────────────────────╮",
-                "                        └─┤ ▫ t2 status S  ⇠t0 │",
-                "                          ╰────────────────────╯",
+                "                        │ ╭─────────────────────────╮",
+                "                        └─┤ ▫ t2 status S  after t0 │",
+                "                          ╰─────────────────────────╯",
             ],
-            73
+            78
         )
     );
 }
@@ -281,7 +281,16 @@ fn selecting_a_task_lights_its_dependencies_and_dims_the_rest() {
             .add_modifier
             .contains(Modifier::DIM)
     );
-    for (x, y) in all_cells(rect_of(&layout, &task_key("t1"))) {
+    // Milestone 9.0.7 decision 20: the selection is reversed, but for the bar that
+    // takes its left border cell on the content row, in the accent.
+    let selected = rect_of(&layout, &task_key("t1"));
+    let bar = (selected.x, selected.y + 1);
+    assert_eq!(cell_at(&lines, bar.0, bar.1).0, "▌");
+    assert_eq!(
+        style_at(&lines, bar.0, bar.1),
+        theme::role(theme::Role::Accent, app.palette())
+    );
+    for (x, y) in all_cells(selected).into_iter().filter(|cell| *cell != bar) {
         let style = style_at(&lines, x, y);
         assert!(style.add_modifier.contains(Modifier::REVERSED));
         assert!(!style.add_modifier.contains(Modifier::DIM));
@@ -385,7 +394,7 @@ fn a_row_that_disagrees_with_its_node_is_skipped() {
     // Every other node is still painted.
     let text = lines_text(&lines).join("\n");
     assert!(text.contains("orchestrator  1/3"), "{text}");
-    assert!(text.contains("t1 spawn M  ⇠t0"), "{text}");
+    assert!(text.contains("t1 spawn M  after t0"), "{text}");
 
     // Skip two of the root's three children: the edge is not drawn at all, so no
     // junction lands on the root's border (the M8c.5 review's M1).

@@ -35,8 +35,10 @@ fn stage_inspector_shows_branch_head_tier3_and_bisect() {
             ("branch", "anthrex/add-reset-3f9a/stage-1 at 1111111"),
             (
                 "tier 3",
-                "bisecting at 2222222 · 41m12s · 2 shards · flaky a::flaky · failing a::works"
+                "bisecting at 2222222 · 41m12s · 2 shards · flaky a::flaky"
             ),
+            // Milestone 9.0.7 decision 18: the failing names are a row of their own.
+            ("failing", "a::works"),
             ("bisect", "running · 1 fix task"),
             ("fix tasks", "fix1 (bisect of t2)"),
         ]

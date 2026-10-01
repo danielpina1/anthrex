@@ -406,6 +406,7 @@ fn pad(text: &str, width: usize) -> String {
 
 mod marks;
 mod rows;
+pub use rows::panel_rows;
 pub(super) mod sections;
 
 #[cfg(test)]

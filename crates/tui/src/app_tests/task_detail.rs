@@ -259,7 +259,9 @@ fn a_refused_send_does_not_retry_every_tick() {
 fn page_keys_and_b_apply_only_to_the_selected_task() {
     let mut app = gemini_view();
     let id = ticks(&mut app, 1)[0].0;
-    let long = (1..=60).map(|n| format!("line {n}")).collect::<Vec<_>>();
+    // Milestone 9.0.7 decision 17: the panel takes up to the interior less six canvas
+    // rows, so the brief is long enough for three of its pages.
+    let long = (1..=120).map(|n| format!("line {n}")).collect::<Vec<_>>();
     let _ = reply(&mut app, "t2", &long.join("\n"), id);
     let none = KeyModifiers::NONE;
     assert!(!app.brief_expanded_for(&t("t2")));

@@ -50,15 +50,31 @@ pub fn paint(
     // names its parent and children by key, and there are as many edges as
     // there are nodes with children.
     let mut placed: HashMap<&NodeKey, Rect> = HashMap::with_capacity(layout.nodes.len());
+    let mut selected = None;
     for (node, row) in layout.nodes.iter().zip(rows) {
         if node.key != row.key {
             continue;
         }
         paint_node(&mut grid, node.rect, row, app, &highlight);
         placed.insert(&node.key, node.rect);
+        if is_selected(row, app) {
+            selected = Some(node.rect);
+        }
     }
     for edge in &layout.edges {
         paint_edge(&mut grid, &placed, edge);
+    }
+    // Milestone 9.0.7 decision 20: the selection bar takes the selected box's left
+    // border cell on its content row, after the edges so a junction cannot cover it.
+    if let Some(rect) = selected {
+        let p = app.palette();
+        let bar = theme::glyph(theme::Glyph::Selection, p.ascii).to_owned();
+        grid.place(
+            rect.x,
+            rect.y.saturating_add(1),
+            bar,
+            theme::role(theme::Role::Accent, p),
+        );
     }
     grid.into_lines()
 }

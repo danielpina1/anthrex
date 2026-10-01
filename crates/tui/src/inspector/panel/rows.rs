@@ -7,8 +7,8 @@
 //!
 //! Pure like the rest of the panel: it lays out what it was handed.
 
-use super::{Inspection, fitted_name, pad, title_line, wrap_value};
-use crate::inspector::RUN_LABEL_WIDTH;
+use super::{Inspection, fitted_name, pad, sections, title_line, wrap_value};
+use crate::inspector::{FieldLayout, INSPECTOR_HEIGHT, RUN_LABEL_WIDTH};
 use crate::theme::{self, Palette, Role};
 use crate::ui::tree_view::truncate_in;
 use ratatui::text::{Line, Span};
@@ -55,6 +55,38 @@ pub(super) fn lines(
         }
     }
     out
+}
+
+/// Milestone 9.0.7 decision 17: the interior rows `inspection` takes at `width` columns,
+/// laid out as the panel lays it out. `Sections`: the title row or rows, every body row
+/// and the footer; `Rows`: the title and each field row, the wrapping field's rows
+/// counted; `Columns` (milestone 4.7's, never in the run view): its fixed six. The
+/// strings are already folded for ASCII by `inspect`, and no count here depends on the
+/// palette, so the plain one measures them.
+pub fn panel_rows(inspection: &Inspection, width: u16) -> u16 {
+    let (width, p) = (usize::from(width), Palette::PLAIN);
+    let rows = match inspection.layout {
+        FieldLayout::Columns => usize::from(INSPECTOR_HEIGHT - 2),
+        FieldLayout::Rows => {
+            let value_width = width - RUN_LABEL_WIDTH.min(width);
+            let field_rows = |field: &crate::inspector::Field| {
+                if field.wrap {
+                    wrap_value(&field.value, value_width, usize::MAX, false)
+                        .len()
+                        .max(1)
+                } else {
+                    1
+                }
+            };
+            1 + inspection.fields.iter().map(field_rows).sum::<usize>()
+        }
+        FieldLayout::Sections => {
+            title_lines(inspection, width, p).len()
+                + sections::body_lines(&inspection.sections, width, p).len()
+                + usize::from(inspection.footer.is_some())
+        }
+    };
+    u16::try_from(rows).unwrap_or(u16::MAX)
 }
 
 /// The glyph and the bold name, then the muted right-hand text flush with the right

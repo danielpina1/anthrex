@@ -29,7 +29,9 @@ fn overview_replaces_the_terminal_with_the_graph() {
         // Boxes: a project, a window and a sub-agent, each with its
         // glyph, between the borders only the graph draws.
         "│ ⚑ shop   ├",
-        "┤ ⠋ 1 api-worker ├",
+        // The selected window: its left border on the content row is the bar
+        // (milestone 9.0.7 decision 20).
+        "▌ ⠋ 1 api-worker ├",
         "┤ ⠋ Explore: map routes      ├",
         // The inspector panel spells the selected window out below it.
         "│ model    claude-opus-5  sub-agents  3, 2 running",
@@ -93,11 +95,13 @@ fn hits_every_visible_box(app: &App, width: u16, height: u16) -> Pan {
             node.key
         );
         // The box's left border stands exactly where the layout put it,
-        // as a plain border or as the junction an edge turned it into.
+        // as a plain border or as the junction an edge turned it into, or as the
+        // selection bar (milestone 9.0.7 decision 20).
         let border = view.canvas.x + node.rect.x - view.pan.x;
         let symbol = terminal.backend().buffer()[(border, y)].symbol().to_owned();
+        let selected = app.tree.selected.as_ref() == Some(&node.key);
         assert!(
-            symbol == "│" || symbol == "┤",
+            symbol == "│" || symbol == "┤" || (selected && symbol == "▌"),
             "{:?}'s left border at ({border}, {y}) was {symbol:?}",
             node.key
         );
