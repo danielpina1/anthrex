@@ -98,6 +98,27 @@ mod profile_screen_edit;
 #[path = "../app_tests/profile_screen_rules.rs"]
 mod profile_screen_rules;
 
+#[path = "../app_tests/settings_screen.rs"]
+mod settings_screen;
+
+#[path = "../app_tests/settings_screen_save.rs"]
+mod settings_screen_save;
+
+#[path = "../app_tests/paste_scroll.rs"]
+mod paste_scroll;
+
+#[path = "../app_tests/stats.rs"]
+mod stats;
+
+#[path = "../app_tests/not_sent.rs"]
+mod not_sent;
+
+#[path = "../app_tests/form_brief.rs"]
+mod form_brief;
+
+#[path = "../app_tests/profile_screen_views.rs"]
+mod profile_screen_views;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,
@@ -503,86 +524,6 @@ fn background_status_changes_raise_toasts() {
         message: "no window with id 7".into(),
     });
     assert_eq!(app.toast_text(), Some("no window with id 7"));
-}
-
-#[test]
-fn paste_uses_bracketed_mode_when_the_program_asked_for_it() {
-    let mut app = app_with(vec![win(1, "a", Status::Idle)]);
-    assert_eq!(
-        app.on_paste("ab\ncd".into()),
-        vec![Effect::Send(ClientMsg::Input {
-            window_id: 1,
-            bytes: b"ab\rcd".to_vec()
-        })]
-    );
-    app.parser.process(b"\x1b[?2004h");
-    assert_eq!(
-        app.on_paste("x".into()),
-        vec![Effect::Send(ClientMsg::Input {
-            window_id: 1,
-            bytes: b"\x1b[200~x\x1b[201~".to_vec()
-        })]
-    );
-}
-
-#[test]
-fn paste_strips_bracketed_paste_markers() {
-    let mut app = app_with(vec![win(1, "a", Status::Idle)]);
-    assert_eq!(
-        app.on_paste("a\x1b[201~b\x1b[200~c".into()),
-        vec![Effect::Send(ClientMsg::Input {
-            window_id: 1,
-            bytes: b"abc".to_vec()
-        })]
-    );
-    assert_eq!(
-        app.on_paste("a\x1b[20\x1b[201~1~b".into()),
-        vec![Effect::Send(ClientMsg::Input {
-            window_id: 1,
-            bytes: b"ab".to_vec()
-        })],
-        "removing an embedded marker must not manufacture a new end marker"
-    );
-
-    app.parser.process(b"\x1b[?2004h");
-    assert_eq!(
-        app.on_paste("a\x1b[201~b\x1b[200~c".into()),
-        vec![Effect::Send(ClientMsg::Input {
-            window_id: 1,
-            bytes: b"\x1b[200~abc\x1b[201~".to_vec()
-        })]
-    );
-    assert_eq!(
-        app.on_paste("a\x1b[20\x1b[201~1~b".into()),
-        vec![Effect::Send(ClientMsg::Input {
-            window_id: 1,
-            bytes: b"\x1b[200~ab\x1b[201~".to_vec()
-        })]
-    );
-}
-
-#[test]
-fn wheel_scrolls_the_local_scrollback_and_any_key_snaps_back() {
-    let mut app = app_with(vec![win(1, "a", Status::Idle)]);
-    for i in 0..40 {
-        app.parser.process(format!("line {i}\r\n").as_bytes());
-    }
-    let area = ratatui::layout::Rect::new(0, 0, 80, 24);
-    let mut layout = crate::ui::layout(area, 0, crate::app::alerts(&app).len());
-    layout.main_inner = area;
-    assert!(app.on_scroll(true, 5, 5, &layout).is_empty());
-    assert_eq!(app.scroll_offset, 3);
-    press(&mut app, KeyCode::Char('q'), KeyModifiers::NONE);
-    assert_eq!(app.scroll_offset, 0);
-    app.parser.process(b"\x1b[?1000h\x1b[?1006h");
-    let effects = app.on_scroll(false, 5, 5, &layout);
-    assert_eq!(
-        effects,
-        vec![Effect::Send(ClientMsg::Input {
-            window_id: 1,
-            bytes: b"\x1b[<65;6;6M".to_vec()
-        })]
-    );
 }
 
 // Task M6.9's settings tests (custom prefix, scrollback, bells, default runtime, the

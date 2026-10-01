@@ -32,7 +32,7 @@ pub(super) fn apply(
     d.generated_outside_owns.retain(|p| !theirs(p));
     d.protected_changed.retain(|p| !theirs(p));
     if let Some(signals) = signals.as_mut() {
-        signals.list.retain(|s| !path_of(s).is_some_and(&theirs));
+        signals.list.retain(|s| !path_of(s).is_some_and(theirs));
     }
     Ok(kept)
 }

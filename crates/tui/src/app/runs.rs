@@ -234,9 +234,10 @@ impl App {
             RunReply::Started { .. }
             | RunReply::ConfirmNeeded { .. }
             | RunReply::ToolResult { .. }
+            // Settings, profile and stats replies are routed by id in `app/replies.rs`
+            // (decisions 24, 34 and 38); one reaching here is no request of this
+            // client's.
             | RunReply::Stats { .. }
-            // Settings and profile replies are routed by id in `app/replies.rs`
-            // (decisions 24 and 34); one reaching here is no request of this client's.
             | RunReply::Profile { .. }
             | RunReply::Settings { .. } => {}
             RunReply::TaskDetail { detail, request_id } => self.on_task_detail(detail, request_id),

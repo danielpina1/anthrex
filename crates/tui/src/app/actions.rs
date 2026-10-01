@@ -431,7 +431,11 @@ impl App {
                 };
                 self.activate_run_node(key)
             }
-            // Preflight F24: the stats screen is task 15's.
+            // Decision 38: the stats screen on the run's project; the menu closes.
+            (ActionKind::Stats, _) => match self.run_of(&flow).map(|r| r.project.clone()) {
+                Some(dir) => self.open_stats(dir),
+                None => vec![],
+            },
             _ => {
                 self.toast("not yet");
                 self.modal = Some(Modal::Action(Box::new(flow)));

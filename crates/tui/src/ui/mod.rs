@@ -13,7 +13,9 @@ pub mod plan_review;
 pub mod profile;
 pub mod run_edit;
 pub mod run_goal;
+pub mod settings;
 pub mod sidebar;
+pub mod stats;
 pub mod statusbar;
 mod statusbar_modes;
 pub mod terminal;
@@ -131,9 +133,14 @@ pub fn layout_for(app: &App, area: Rect) -> Layout {
 /// Draws everything and returns the layout so the caller can size the PTY and hit-test the mouse.
 pub fn draw(frame: &mut Frame, app: &App) -> Layout {
     let l = layout_for(app, frame.area());
-    if let Some(crate::app::screens::Screen::Profile(screen)) = &app.screen {
+    use crate::app::screens::Screen;
+    if let Some(Screen::Profile(screen)) = &app.screen {
         // Milestone 9.0.6 decision 33: a screen covers the body; the status bar stays.
         profile::render(frame, app, screen, l.body);
+    } else if let Some(Screen::Settings(screen)) = &app.screen {
+        settings::render(frame, app, screen, l.body);
+    } else if let Some(Screen::Stats(screen)) = &app.screen {
+        stats::render(frame, app, screen, l.body);
     } else if app.plan_review.is_some() {
         // Milestone 9.0.5 decision 12: the review covers the body; the status bar stays.
         plan_review::render(frame, app, l.body);

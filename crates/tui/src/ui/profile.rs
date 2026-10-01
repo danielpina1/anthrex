@@ -17,7 +17,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 /// The key column's width: the longest key (`check_timeout_secs`) and a space.
@@ -80,6 +80,11 @@ pub(crate) fn hints(s: &ProfileScreen) -> Vec<Hint> {
 /// `stored`, `stale`, `unparseable` and `proposal` (Interfaces "Profile status rows").
 fn status_rows(app: &App, s: &ProfileScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
     let Some(status) = &s.status else {
+        // No reply will come for the last `Status` (minor 2): why, until one does.
+        if let Some(why) = &s.status_failed {
+            let text = cut(&one_line(why), usize::from(width), ellipsis(p));
+            return vec![Line::styled(text, role(Role::Failed, p))];
+        }
         return vec![Line::styled(
             format!("loading{}", ellipsis(p)),
             role(Role::Muted, p),
@@ -236,6 +241,11 @@ fn profile_rows(
             ));
             return (out, 0);
         }
+        Side::Failed(why) => {
+            let text = cut(&one_line(why), w, ellipsis(p));
+            out.push(Line::styled(text, role(Role::Failed, p)));
+            return (out, 0);
+        }
         Side::Absent(_) => {
             let text = if s.proposed {
                 "no proposal"
@@ -361,58 +371,12 @@ pub(crate) fn body_lines(app: &App, s: &ProfileScreen, width: u16) -> Vec<Line<'
     out
 }
 
-/// `lines` cut to `rows`, keeping line `at` in view; what is cut is marked.
-fn window(lines: Vec<Line<'static>>, at: usize, rows: usize, p: Palette) -> Vec<Line<'static>> {
-    if lines.len() <= rows {
-        return lines;
-    }
-    if rows < 3 {
-        return lines.into_iter().skip(at).take(rows).collect();
-    }
-    // From the top while `at` fits above the one `↓` mark; else both marks.
-    let (top, room) = if at + 1 < rows {
-        (0, rows - 1)
-    } else {
-        let room = rows - 2;
-        ((at + 1).saturating_sub(room).min(lines.len() - room), room)
-    };
-    let below = lines.len() - top - room;
-    let (up, down) = kit::scroll_marks(top, below, p.ascii);
-    let muted = role(Role::Muted, p);
-    let mut out: Vec<Line<'static>> = up.map(|m| Line::styled(m, muted)).into_iter().collect();
-    out.extend(lines.into_iter().skip(top).take(room));
-    out.extend(down.map(|m| Line::styled(m, muted)));
-    out
-}
-
-fn frame_block(title: String, accent: bool, p: Palette) -> Block<'static> {
-    let mut block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(role(if accent { Role::Accent } else { Role::Muted }, p))
-        .title(Span::styled(
-            format!(" {} ", one_line(&title)),
-            ratatui::style::Style::default().add_modifier(Modifier::BOLD),
-        ));
-    if p.ascii {
-        block = block.border_set(ratatui::symbols::border::Set {
-            top_left: "+",
-            top_right: "+",
-            bottom_left: "+",
-            bottom_right: "+",
-            vertical_left: "|",
-            vertical_right: "|",
-            horizontal_top: "-",
-            horizontal_bottom: "-",
-        });
-    }
-    block
-}
-
 /// Draws the screen over `area` (the body), and its page over that.
 pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
     let p = app.palette();
     let title = format!("profile {} {}", dot(p), project_name(s));
-    let block = frame_block(title, s.page.is_none(), p);
+    // Decision 5: a page or any modal over the screen has the one accented border.
+    let block = kit::screen_frame(&title, s.page.is_none() && app.modal.is_none(), p);
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -426,7 +390,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
         .saturating_sub(foot.len());
     let mut all = vec![tab_row(s, p)];
     all.extend(head);
-    all.extend(window(lines, at, rows, p));
+    all.extend(kit::window(lines, at, rows, p));
     all.extend(foot);
     frame.render_widget(Paragraph::new(all), inner);
     if let Some(page) = &s.page {

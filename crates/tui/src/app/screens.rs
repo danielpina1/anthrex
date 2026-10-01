@@ -21,6 +21,8 @@ use std::time::Instant;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
     Profile(Box<super::profile_screen::ProfileScreen>),
+    Settings(Box<super::settings_screen::SettingsScreen>),
+    Stats(Box<super::stats::StatsScreen>),
 }
 
 impl App {
@@ -31,33 +33,44 @@ impl App {
     }
 
     /// Progress ruling: `C-b a`, `C-b m` and `C-b t` would act under a full screen, so
-    /// they are refused with a toast while one is open.
+    /// they are refused with a toast while one is open; and the Settings screen's
+    /// unsaved changes are not dropped by opening another screen over them.
     pub(super) fn screen_refuses(&mut self, cmd: crate::keymap::Command) -> bool {
+        use super::settings_screen::{LEAVE_SETTINGS_FIRST, UNSAVED_FIRST};
         use crate::keymap::Command;
-        let refused = self.screen.is_some()
-            && matches!(
-                cmd,
-                Command::FocusAlerts | Command::ToggleConversation | Command::ToggleTree
-            );
-        if refused {
-            self.toast(super::profile_screen::LEAVE_SCREEN_FIRST);
-        }
-        refused
+        let leave = match &self.screen {
+            Some(Screen::Profile(_)) => super::profile_screen::LEAVE_SCREEN_FIRST,
+            Some(Screen::Settings(_)) => LEAVE_SETTINGS_FIRST,
+            Some(Screen::Stats(_)) => super::stats::LEAVE_STATS_FIRST,
+            None => return false,
+        };
+        let text = match (&self.screen, cmd) {
+            (_, Command::FocusAlerts | Command::ToggleConversation | Command::ToggleTree) => leave,
+            (Some(Screen::Settings(s)), Command::OpenProfile) if s.dirty() => UNSAVED_FIRST,
+            _ => return false,
+        };
+        self.toast(text);
+        true
     }
 
     /// A bare key while a screen is open (`KeyAction::Screen`).
     pub(super) fn on_screen_key(&mut self, key: crossterm::event::KeyEvent) -> Vec<Effect> {
         match &self.screen {
             Some(Screen::Profile(_)) => self.on_profile_key(key),
+            Some(Screen::Settings(_)) => self.on_settings_key(key),
+            Some(Screen::Stats(_)) => self.on_stats_key(key),
             None => vec![],
         }
     }
 
-    /// `on_tick`: the open screen's timed work at `now` (the Profile screen's poll).
+    /// `on_tick`: the open screen's timed work at `now` (the Profile screen's poll; the
+    /// Settings and stats screens settle a request no longer awaited).
     /// Tests call it with a moved clock instead of sleeping.
     pub(crate) fn screens_tick(&mut self, now: Instant) -> Vec<Effect> {
         match &self.screen {
             Some(Screen::Profile(_)) => self.profile_tick(now),
+            Some(Screen::Settings(_)) => self.settings_tick(),
+            Some(Screen::Stats(_)) => self.stats_tick(),
             None => vec![],
         }
     }
@@ -134,6 +147,8 @@ impl App {
             Some(PendingWhat::SettingsPut) => true,
             Some(_) => return None,
         };
+        // The open Settings screen shows its own save's outcome; no toast for it.
+        let screens = put && self.settings_put_is_screens(id);
         self.replies.take(Some(id));
         let newer = self.settings_cache.as_ref().is_none_or(|c| id > c.id);
         let mut effects = Vec::new();
@@ -162,7 +177,9 @@ impl App {
                 }
             }
             other => {
-                if let SettingsReply::Refused { problems } = other {
+                if let SettingsReply::Refused { problems } = other
+                    && !screens
+                {
                     let text = first_line_and_more(&problems.join("\n"))
                         .unwrap_or_else(|| "settings refused".into());
                     self.toast_at(ToastLevel::Error, text);
@@ -174,6 +191,8 @@ impl App {
                 }
             }
         }
+        // Decision 36: the Settings screen shows its own save's outcome.
+        self.settings_screen_reply(id, reply);
         Some(effects)
     }
 
@@ -183,5 +202,6 @@ impl App {
             form.set_roster(cache.doc.models.clone());
         }
         self.settings_cache = Some(cache);
+        self.sync_settings_screen();
     }
 }

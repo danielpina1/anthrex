@@ -31,6 +31,8 @@ fn help_lines(prefix_label: &str) -> Vec<(String, String)> {
         (format!("{prefix_label} m"), "conversation".to_string()),
         (format!("{prefix_label} g"), "start a goal".to_string()),
         (format!("{prefix_label} a"), "alerts".to_string()),
+        (format!("{prefix_label} P"), "profile".to_string()),
+        (format!("{prefix_label} S"), "settings".to_string()),
         (
             format!("{prefix_label} t"),
             "tree mode (j/k, h/l, Enter, Space, /)".to_string(),
@@ -42,6 +44,10 @@ fn help_lines(prefix_label: &str) -> Vec<(String, String)> {
         (
             "i".to_string(),
             "in the overview: show / hide the inspector".to_string(),
+        ),
+        (
+            ".".to_string(),
+            "actions on the selected run, stage or task".to_string(),
         ),
         (format!("{prefix_label} < / >"), "sidebar width".to_string()),
         (format!("{prefix_label} x"), "kill agent".to_string()),
@@ -62,9 +68,12 @@ fn help_lines(prefix_label: &str) -> Vec<(String, String)> {
             format!("{prefix_label} {prefix_label}"),
             format!("send a literal {prefix_label}"),
         ),
-        ("any key".to_string(), "close this help".to_string()),
     ]
 }
+
+/// The help's close hint, drawn as the box's bottom title so the key lines keep every
+/// row of a 24-row terminal (milestone 9.0.6 task 15).
+const HELP_CLOSE: (&str, &str) = ("any key", "close this help");
 
 /// `input`'s text with a solid block drawn at the cursor's grapheme position — the
 /// rename box's own way of showing a cursor (task M6.10 brief's mock), rather than the
@@ -242,6 +251,14 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(theme::border_focused(accent))
         .title(Line::from(Span::styled(title, theme::title(accent))));
+    let block = if matches!(modal, Modal::Help) {
+        block.title_bottom(Line::from(vec![
+            Span::styled(format!(" {}", HELP_CLOSE.0), Style::default().fg(accent)),
+            Span::raw(format!("  {} ", HELP_CLOSE.1)),
+        ]))
+    } else {
+        block
+    };
     frame.render_widget(Paragraph::new(body).block(block), rect);
 }
 
@@ -328,5 +345,45 @@ mod tests {
             lines.contains(&("C-a a".to_owned(), "alerts".to_owned())),
             "{lines:?}"
         );
+    }
+
+    /// Milestone 9.0.6 decision 43: the three new keys, with the configured prefix; and
+    /// at 80×24 every help line and the close hint are drawn (fix round 1: the hint is
+    /// the box's bottom title, so 22 key lines and the frame fill the 24 rows).
+    #[test]
+    fn help_lists_the_new_keys() {
+        let want = [
+            (".", "actions on the selected run, stage or task"),
+            ("C-a P", "profile"),
+            ("C-a S", "settings"),
+        ];
+        let lines = help_lines("C-a");
+        for (key, what) in want {
+            assert!(
+                lines.contains(&(key.to_owned(), what.to_owned())),
+                "{key}: {lines:?}"
+            );
+        }
+        let settings = UiSettings {
+            prefix_label: "C-a".into(),
+            ..UiSettings::default()
+        };
+        let mut app = App::new(vec![], "/tmp".into(), settings);
+        app.modal = Some(Modal::Help);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| render(frame, &app, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let text: Vec<String> = (0..24)
+            .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect();
+        assert_eq!(lines.len(), 22, "{lines:?}");
+        for (key, what) in &lines {
+            let row = format!("{key:<11}{what}");
+            assert!(text.iter().any(|l| l.contains(&row)), "{row}: {text:#?}");
+        }
+        assert!(text[23].contains("any key  close this help"), "{text:#?}");
+        assert!(!text.concat().contains("C-b"), "{text:#?}");
     }
 }

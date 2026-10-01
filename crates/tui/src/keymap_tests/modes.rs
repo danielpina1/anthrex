@@ -101,6 +101,12 @@ fn screen_mode_routes_bare_keys_to_the_screen() {
         km.handle(key(KeyCode::Char('P'), KeyModifiers::SHIFT), false),
         KeyAction::Run(Command::OpenProfile)
     );
+    // Decision 36: `C-b S` opens the Settings screen.
+    assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+    assert_eq!(
+        km.handle(key(KeyCode::Char('S'), KeyModifiers::SHIFT), false),
+        KeyAction::Run(Command::OpenSettings)
+    );
     km.set_tree_mode(true);
     km.set_conversation_mode(true);
     km.set_alerts_mode(true);

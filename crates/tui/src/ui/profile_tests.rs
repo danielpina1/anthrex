@@ -419,8 +419,8 @@ fn no_panic_at_tiny_sizes() {
     }
 }
 
-/// Decision 5: while a page is open, the screen's border is muted; the page's is the
-/// one accented border.
+/// Decision 5: while a page or a modal is open, the screen's border is muted; the
+/// page's (or the modal's) is the one accented border.
 #[test]
 fn a_page_mutes_the_screens_border() {
     use crate::theme::{Role, role};
@@ -437,6 +437,14 @@ fn a_page_mutes_the_screens_border() {
     };
     assert_eq!(Some(corner(&app)), accent);
     screen_mut(&mut app).page = Some(ProfilePage::Reject);
+    assert_ne!(Some(corner(&app)), accent);
+    // Final review minor 3: a modal over the screen (a late `ConfirmNeeded`'s menu can
+    // open over any screen) mutes it too.
+    screen_mut(&mut app).page = None;
+    app.modal = Some(crate::app::Modal::Confirm {
+        message: "Stop the daemon and kill every agent?".into(),
+        action: crate::app::PendingAction::StopDaemon,
+    });
     assert_ne!(Some(corner(&app)), accent);
 }
 

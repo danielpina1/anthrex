@@ -48,8 +48,8 @@ The protocol version is **10** once milestone 9 merges, raised from 9 (milestone
 | 9 | Orchestrator and sub-planners: planning, steering, plan gate, worker messaging and refresh, role-routing history, TUI goal start | `docs/milestones/M9-orchestrator-and-subplanners.md` | 8a, 8b, 8c | `done` |
 | 9.0.5 | Plan review screen, the Alerts box, and the task panel's goal, live status and result | `docs/milestones/M9.0.5-plan-review-and-alerts.md` | 9 | `done` |
 | 9.1 | Tiered testing: affected-set tiers, test scheduler, result cache, flake handling, bisect, stages | `docs/milestones/M9.1-tiered-testing.md` | 9, 9.0.5 | `done` |
-| 9.0.6 | TUI end to end: design kit, daemon-computed action menu with forms and confirmation pages, Profile and Settings screens, run stats, settings protocol and live reload | `docs/milestones/M9.0.6-tui-end-to-end.md` | 9.1 | `ready` |
-| 9.0.7 | TUI polish: every existing screen moved to the 9.0.6 design kit (alerts, task panel, run view, plan review, sidebar, status bar, help, dialogs) | `docs/milestones/M9.0.7-tui-polish.md` (written 2026-10-01 on the 9.0.6 branch; refreshed against `main` by its task 1 when 9.0.6 merges) | 9.0.6 | `blocked` |
+| 9.0.6 | TUI end to end: design kit, daemon-computed action menu with forms and confirmation pages, Profile and Settings screens, run stats, settings protocol and live reload | `docs/milestones/M9.0.6-tui-end-to-end.md` | 9.1 | `done` |
+| 9.0.7 | TUI polish: every existing screen moved to the 9.0.6 design kit (alerts, task panel, run view, plan review, sidebar, status bar, help, dialogs) | `docs/milestones/M9.0.7-tui-polish.md` (written 2026-10-01; refreshed by its task 1) | 9.0.6 | `ready` |
 | 9.2 | Stacked-PR delivery: CI and review comments become fix tasks; anthrex never merges | `docs/milestones/M9.2-pr-delivery.md` | 9.0.7 | `blocked` |
 | 9.5 | Tuning: adaptive concurrency, threshold and budget refit, race and test-writer patterns | `docs/milestones/M9.5-tuning.md` | 9.2 | `blocked` |
 

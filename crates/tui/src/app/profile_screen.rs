@@ -49,6 +49,9 @@ pub enum Side {
     Loading,
     /// A refused `Show` (decision 34): that side's absence, with the daemon's text.
     Absent(String),
+    /// No reply will come for the last `Show` (it expired, or was not sent): why. The
+    /// 1 s tick asks again (final review, minor 2).
+    Failed(String),
     Ready(Box<Shown>),
 }
 
@@ -130,6 +133,10 @@ pub struct ProfileScreen {
     pub message: Option<String>,
     pub(crate) status_id: Option<u64>,
     pub(crate) status_sent_at: Option<Instant>,
+    /// No status yet and no reply will come for the last `Status`: why (minor 2).
+    pub status_failed: Option<String>,
+    /// When the last `Show` of each side (stored, proposal) left.
+    pub(crate) show_sent_at: [Option<Instant>; 2],
 }
 
 /// Interfaces-style refusal of `C-b a`, `C-b m` and `C-b t` over a full screen.
@@ -156,6 +163,16 @@ impl ProfileScreen {
             message: None,
             status_id: None,
             status_sent_at: None,
+            status_failed: None,
+            show_sent_at: [None; 2],
+        }
+    }
+
+    fn side_mut(&mut self, proposed: bool) -> &mut Side {
+        if proposed {
+            &mut self.proposal
+        } else {
+            &mut self.stored
         }
     }
 
@@ -275,7 +292,7 @@ impl App {
         vec![effect]
     }
 
-    fn profile_show(&mut self, proposed: bool) -> Vec<Effect> {
+    fn profile_show(&mut self, proposed: bool, now: Instant) -> Vec<Effect> {
         let Some(dir) = self.profile_dir() else {
             return vec![];
         };
@@ -283,35 +300,18 @@ impl App {
             dir: dir.clone(),
             proposed,
         };
+        if let Some(s) = self.profile_screen_mut() {
+            s.show_sent_at[usize::from(proposed)] = Some(now);
+        }
         vec![self.profile_send(dir, ProfileAsk::Show { proposed }, request)]
     }
 
     /// The status, the stored profile and the proposal, in that order.
     pub(super) fn profile_fetch_all(&mut self, now: Instant) -> Vec<Effect> {
         let mut effects = self.profile_status(now);
-        effects.extend(self.profile_show(false));
-        effects.extend(self.profile_show(true));
+        effects.extend(self.profile_show(false, now));
+        effects.extend(self.profile_show(true, now));
         effects
-    }
-
-    /// Decision 34's poll: while a detection runs, one `Status` a second, never two in
-    /// flight. Nothing once the screen is closed or the proposal is past verifying.
-    pub(super) fn profile_tick(&mut self, now: Instant) -> Vec<Effect> {
-        let Some(Screen::Profile(s)) = &self.screen else {
-            return vec![];
-        };
-        if !self.connected()
-            || !s.in_progress()
-            || s.status_id.is_some_and(|id| self.replies.contains(id))
-        {
-            return vec![];
-        }
-        if s.status_sent_at
-            .is_some_and(|at| now.saturating_duration_since(at) < POLL_EVERY)
-        {
-            return vec![];
-        }
-        self.profile_status(now)
     }
 
     /// `route_reply`'s profile arm. A reply to a profile request of ours applies to the
@@ -327,9 +327,16 @@ impl App {
             Some(PendingWhat::Profile { dir, ask }) => (dir, ask),
             Some(_) => return None,
             None => {
-                // A late view (its entry expired) is dropped; a late outcome shown.
-                if request_id.is_some_and(|id| !self.replies.expired_quietly(id)) {
-                    self.toast_profile_outcome(reply);
+                // A late view (its entry expired) fills the open screen still loading
+                // on it, else is dropped (decision 16, minor 2); a late outcome shown.
+                let late = request_id.and_then(|id| self.replies.expired_view(id).cloned());
+                match late {
+                    Some(PendingWhat::Profile { dir, ask }) if self.profile_awaits(&dir, ask) => {
+                        return Some(self.apply_profile_reply(ask, reply));
+                    }
+                    Some(_) => {}
+                    None if request_id.is_some() => self.toast_profile_outcome(reply),
+                    None => {}
                 }
                 return Some(vec![]);
             }
@@ -363,12 +370,15 @@ impl App {
             (ProfileAsk::Status, ProfileReply::Status(status)) => {
                 let was_running = s.in_progress();
                 s.status = Some(status.clone());
+                s.status_failed = None;
                 if status.proposal.is_none() {
                     s.proposal = Side::Absent("no proposal".into());
                 }
-                // Decision 34: reaching `Ready` fetches the proposal once.
-                if was_running && s.proposal_state() == Some(&ProposalState::Ready) {
-                    return self.profile_show(true);
+                // Decision 34: leaving the running states (for `Ready`, or `Failed`:
+                // minor 1) fetches the proposal once; the old one is not shown meanwhile.
+                if was_running && !s.in_progress() && status.proposal.is_some() {
+                    s.proposal = Side::Loading;
+                    return self.profile_show(true, Instant::now());
                 }
                 vec![]
             }
@@ -387,24 +397,16 @@ impl App {
                     verification: verification.clone(),
                     dropped: dropped.clone(),
                 };
-                let side = Side::Ready(Box::new(shown));
-                if proposed {
-                    s.proposal = side;
-                } else {
-                    s.stored = side;
-                }
+                *s.side_mut(proposed) = Side::Ready(Box::new(shown));
                 vec![]
             }
             (ProfileAsk::Show { proposed }, ProfileReply::Refused { message }) => {
-                let side = Side::Absent(message.clone());
-                if proposed {
-                    s.proposal = side;
-                } else {
-                    s.stored = side;
-                }
+                *s.side_mut(proposed) = Side::Absent(message.clone());
                 vec![]
             }
             (_, ProfileReply::Refused { message }) => {
+                // A refused `Status` is not asked again (minor 2's retry is for silence).
+                s.status_failed = None;
                 s.error = Some(message.clone());
                 s.message = None;
                 vec![]
@@ -518,3 +520,5 @@ impl App {
 
 #[path = "profile_pages.rs"]
 mod pages;
+#[path = "profile_views.rs"]
+mod views;

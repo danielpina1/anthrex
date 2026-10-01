@@ -6,7 +6,7 @@
 
 use super::{ActionFlow, ActionStep, ConfirmPage};
 use crate::actions_request::{ActionInput, ActionTarget};
-use crate::app::replies::{PendingWhat, REPLY_TIMEOUT};
+use crate::app::replies::{NOT_CONNECTED, PendingWhat, REPLY_TIMEOUT};
 use crate::app::screens::SettingsCache;
 use crate::app::{App, Effect, Modal};
 use crate::safe_text::one_line;
@@ -46,7 +46,11 @@ pub struct AnswerForm {
     pub task: String,
     pub question: String,
     pub brief: Brief,
+    /// The brief's last `TaskDetail`: its reply fills a brief not yet `Ready`, even late.
+    pub brief_id: Option<u64>,
     pub text: TextArea,
+    /// Enter was pressed on a blank answer: `type an answer first` shows.
+    pub blank: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +60,8 @@ pub struct MessageForm {
     pub to: String,
     pub kind: MessageKind,
     pub text: TextArea,
+    /// Enter was pressed on a blank message: `type a message first` shows.
+    pub blank: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,10 +178,16 @@ impl ActionForm {
         match key.code {
             KeyCode::Esc => return FormOutcome::Back,
             KeyCode::Enter => {
-                if let ActionForm::Override(f) = self {
-                    f.blank = sent(&f.reason).is_empty();
+                // A blank text says why on the form (final review I2), as a blank
+                // reason always did.
+                let ready = self.input().is_ok();
+                match self {
+                    ActionForm::Answer(f) => f.blank = !ready,
+                    ActionForm::Message(f) => f.blank = !ready,
+                    ActionForm::Override(f) => f.blank = !ready,
+                    ActionForm::Resume(_) | ActionForm::Promote(_) => {}
                 }
-                return if self.input().is_ok() {
+                return if ready {
                     FormOutcome::Page
                 } else {
                     FormOutcome::Stay
@@ -188,13 +200,15 @@ impl ActionForm {
         let forward = key.code == KeyCode::Tab && !back;
         match self {
             ActionForm::Answer(f) => {
-                f.text.on_key(key);
+                if f.text.on_key(key) {
+                    f.blank = false;
+                }
             }
             ActionForm::Message(f) => {
                 if forward || back {
                     f.kind = cycle_kind(f.kind, back);
-                } else {
-                    f.text.on_key(key);
+                } else if f.text.on_key(key) {
+                    f.blank = false;
                 }
             }
             ActionForm::Override(f) => {
@@ -229,8 +243,14 @@ impl ActionForm {
 
     pub fn on_paste(&mut self, text: &str) {
         match self {
-            ActionForm::Answer(f) => f.text.on_paste(text),
-            ActionForm::Message(f) => f.text.on_paste(text),
+            ActionForm::Answer(f) => {
+                f.text.on_paste(text);
+                f.blank = false;
+            }
+            ActionForm::Message(f) => {
+                f.text.on_paste(text);
+                f.blank = false;
+            }
             ActionForm::Override(f) => {
                 // A reason is one line: a paste's breaks become spaces.
                 f.reason.on_paste(&text.replace(['\r', '\n'], " "));
@@ -326,7 +346,9 @@ fn build_form(
                 task: format!("{id} {}", task.title),
                 question,
                 brief: Brief::Loading,
+                brief_id: None,
                 text: TextArea::new(),
+                blank: false,
             })
         }
         (InputKind::Message, ActionTarget::Task(id)) => ActionForm::Message(MessageForm {
@@ -334,12 +356,14 @@ fn build_form(
             to: id.clone(),
             kind: MessageKind::Info,
             text: TextArea::new(),
+            blank: false,
         }),
         (InputKind::Message, ActionTarget::Stage(n)) => ActionForm::Message(MessageForm {
             info,
             to: format!("stage {n}"),
             kind: MessageKind::Info,
             text: TextArea::new(),
+            blank: false,
         }),
         (InputKind::Reason, ActionTarget::Task(_)) => ActionForm::Override(OverrideForm {
             info,
@@ -377,25 +401,95 @@ impl App {
             .iter()
             .find(|r| r.run_id == flow.run_id)
             .and_then(|run| build_form(run, &flow.target, &info, kind, cache));
-        let Some(form) = form else {
+        let Some(mut form) = form else {
             return vec![];
         };
         let mut effects = vec![];
-        if let (ActionForm::Answer(f), true) = (&form, self.connected()) {
-            let request = RunRequest::TaskDetail {
-                run_id: flow.run_id.clone(),
-                task_id: f.task_id.clone(),
-            };
-            let (id, effect) = self.tagged_request(request);
-            let what = PendingWhat::FormBrief {
-                run_id: flow.run_id.clone(),
-                task_id: f.task_id.clone(),
-            };
-            self.replies.insert(id, what, REPLY_TIMEOUT);
+        if let (ActionForm::Answer(f), true) = (&mut form, self.connected()) {
+            let (id, effect) = self.brief_request(&flow.run_id, &f.task_id);
+            f.brief_id = Some(id);
             effects.push(effect);
         }
         flow.step = ActionStep::Form(Box::new(form));
         effects
+    }
+
+    /// The answer form's one tagged `TaskDetail` for `task_id` of `run_id`, recorded.
+    fn brief_request(&mut self, run_id: &str, task_id: &str) -> (u64, Effect) {
+        let request = RunRequest::TaskDetail {
+            run_id: run_id.into(),
+            task_id: task_id.into(),
+        };
+        let (id, effect) = self.tagged_request(request);
+        let what = PendingWhat::FormBrief {
+            run_id: run_id.into(),
+            task_id: task_id.into(),
+        };
+        self.replies.insert(id, what, REPLY_TIMEOUT);
+        (id, effect)
+    }
+
+    /// The open answer form, whether it is being edited or its page shows.
+    fn open_answer_mut(&mut self) -> Option<&mut AnswerForm> {
+        let Some(Modal::Action(flow)) = self.modal.as_mut() else {
+            return None;
+        };
+        let form = match &mut flow.step {
+            ActionStep::Form(form) => &mut **form,
+            ActionStep::Confirm(ConfirmPage {
+                form: Some(form), ..
+            }) => &mut **form,
+            _ => return None,
+        };
+        match form {
+            ActionForm::Answer(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// No reply will come for the brief of `task_id` of `run_id` (final review I2): an
+    /// open form still loading it says `why`. `true` when the form was open on it.
+    pub(in crate::app) fn fail_form_brief(
+        &mut self,
+        run_id: &str,
+        task_id: &str,
+        why: &str,
+    ) -> bool {
+        let Some(f) = self.open_form_mut(run_id, task_id) else {
+            return false;
+        };
+        if f.brief == Brief::Loading {
+            f.brief = Brief::Failed(why.into());
+        }
+        true
+    }
+
+    /// A lost link took a loading brief's reply with it.
+    pub(in crate::app) fn form_brief_link_lost(&mut self) {
+        if let Some(f) = self.open_answer_mut().filter(|f| f.brief == Brief::Loading) {
+            f.brief = Brief::Failed(NOT_CONNECTED.into());
+        }
+    }
+
+    /// A new connection: an open answer form whose brief did not come asks again, once.
+    pub(in crate::app) fn form_brief_reconnected(&mut self) -> Vec<Effect> {
+        let run_id = match &self.modal {
+            Some(Modal::Action(flow)) => flow.run_id.clone(),
+            _ => return vec![],
+        };
+        let Some(task_id) = self
+            .open_answer_mut()
+            .filter(|f| !matches!(f.brief, Brief::Ready(_)))
+            .map(|f| f.task_id.clone())
+        else {
+            return vec![];
+        };
+        let (id, effect) = self.brief_request(&run_id, &task_id);
+        if let Some(f) = self.open_answer_mut() {
+            f.brief = Brief::Loading;
+            f.brief_id = Some(id);
+        }
+        vec![effect]
     }
 
     /// `Modal::Action`'s form step: Esc goes back to the menu, Enter to the page.
@@ -421,23 +515,11 @@ impl App {
 
     /// The form of the open menu, whether it is being edited or its page shows.
     fn open_form_mut(&mut self, run_id: &str, task_id: &str) -> Option<&mut AnswerForm> {
-        let Some(Modal::Action(flow)) = self.modal.as_mut() else {
-            return None;
-        };
-        if flow.run_id != run_id {
-            return None;
-        }
-        let form = match &mut flow.step {
-            ActionStep::Form(form) => &mut **form,
-            ActionStep::Confirm(ConfirmPage {
-                form: Some(form), ..
-            }) => &mut **form,
+        match &self.modal {
+            Some(Modal::Action(flow)) if flow.run_id == run_id => {}
             _ => return None,
-        };
-        match form {
-            ActionForm::Answer(f) if f.task_id == task_id => Some(f),
-            _ => None,
         }
+        self.open_answer_mut().filter(|f| f.task_id == task_id)
     }
 
     /// Decision 15's `TaskDetail` reply (or its refusal) to the answer form, by
@@ -470,7 +552,13 @@ impl App {
         };
         let id = request_id?;
         if !matches!(self.replies.peek(id), Some(PendingWhat::FormBrief { .. })) {
-            return None;
+            // Decision 16: a late reply to the open form's last request still fills a
+            // brief that is not ready.
+            let f = self
+                .open_answer_mut()
+                .filter(|f| f.brief_id == Some(id) && !matches!(f.brief, Brief::Ready(_)))?;
+            f.brief = brief;
+            return Some(vec![]);
         }
         let Some(PendingWhat::FormBrief { run_id, task_id }) =
             self.replies.take(Some(id)).map(|p| p.what)
