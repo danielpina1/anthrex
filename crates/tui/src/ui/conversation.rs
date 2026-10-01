@@ -65,9 +65,10 @@ const ASCII: Glyphs = Glyphs {
     warn: "!",
     more: "...",
     crumb: " > ",
-    ok: "ok",
+    // Milestone 9.0.7 decision 6: the glyph table's twins.
+    ok: "+",
     failed: "x",
-    denied: "-",
+    denied: "#",
 };
 
 impl Glyphs {

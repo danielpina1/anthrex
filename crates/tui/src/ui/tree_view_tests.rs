@@ -362,12 +362,26 @@ fn app_with_runs(windows: Vec<WindowInfo>, snapshot: proto::RunsSnapshot) -> App
 }
 
 fn run_line(app: &App, width: u16) -> String {
+    spans_text(&run_spans(app, width))
+}
+
+fn run_spans(app: &App, width: u16) -> ratatui::text::Line<'static> {
     let rows = app.rows();
     let row = rows
         .iter()
         .find(|row| matches!(row.kind, tree::RowKind::Run { .. }))
         .expect("a run row");
-    spans_text(&ui::tree_view::narrow_line(app, row, width, 1, false))
+    ui::tree_view::narrow_line(app, row, width, 1, false)
+}
+
+/// The style of the run row's `✓` (review ruling: `Done` only once a task merged).
+fn tick_role(app: &App) -> ratatui::style::Style {
+    let line = run_spans(app, 40);
+    line.spans
+        .iter()
+        .find(|s| s.content == "✓")
+        .expect("a tick")
+        .style
 }
 
 #[test]
@@ -381,6 +395,8 @@ fn the_sidebar_line_of_a_run_names_its_goal_and_progress() {
     // Milestone 9.0.7 decision 28: the run's one name and `<m>/<n> ✓`.
     assert!(text.contains("Add password reset · 3f9a"), "{text:?}");
     assert!(text.ends_with("0/2 ✓"), "{text:?}");
+    let muted = theme::role(theme::Role::Muted, app.palette());
+    assert_eq!(tick_role(&app), muted, "nothing merged, nothing ticked");
     assert_eq!(UnicodeWidthStr::width(text.as_str()), 40, "{text:?}");
 
     let (snapshot, windows) = tree::run_fixtures::three_task_fixture();
@@ -388,6 +404,10 @@ fn the_sidebar_line_of_a_run_names_its_goal_and_progress() {
     let text = run_line(&app, 40);
     assert!(text.contains("◉ 1 Add password reset · 3f9a"), "{text:?}");
     assert!(text.ends_with("1/3 ✓"), "{text:?}");
+    assert_eq!(
+        tick_role(&app),
+        theme::role(theme::Role::Done, app.palette())
+    );
     // A narrow sidebar keeps the glyph and the position and cuts the goal.
     let text = run_line(&app, 14);
     assert!(text.contains("◉ 1 "), "{text:?}");

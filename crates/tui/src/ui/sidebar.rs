@@ -37,12 +37,24 @@ fn summary(app: &App, width: u16) -> String {
     parts.join(&sep)
 }
 
-pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
-    let title = if app.tree_input.is_some() {
-        "agents · tree"
+/// The agents block's title beside a top mark of `mark` columns (0 for none) in an
+/// interior `interior` wide, each with its own space either side. The mark is kept
+/// whole (principle 6); ` · tree` goes first (the ` TREE ` badge names the mode), then
+/// `agents` is cut with `…`.
+fn title_beside(tree: bool, mark: usize, interior: u16, ascii: bool) -> String {
+    let marked = if mark > 0 { mark + 2 } else { 0 };
+    let room = usize::from(interior).saturating_sub(marked + 2);
+    let full = if tree { "agents · tree" } else { "agents" };
+    if full.width() <= room {
+        full.to_owned()
+    } else if "agents".width() <= room {
+        "agents".to_owned()
     } else {
-        "agents"
-    };
+        tree_view::truncate_in("agents", room, ascii)
+    }
+}
+
+pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
     let keys_here = app.key_region() == KeyRegion::Sidebar;
     let p = app.palette();
     let muted = theme::role(theme::Role::Muted, p);
@@ -53,6 +65,12 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
     let below = rows.len() - geometry.first - geometry.count;
     let (up, down) = kit::scroll_marks(geometry.first, below, p.ascii);
     let mark = |text: String| Line::from(Span::styled(format!(" {text} "), muted)).right_aligned();
+    let title = title_beside(
+        app.tree_input.is_some(),
+        up.as_deref().map_or(0, UnicodeWidthStr::width),
+        layout.sidebar.width.saturating_sub(2),
+        p.ascii,
+    );
     let mut block = kit::pane_frame(Line::from(title), keys_here, p);
     if let Some(up) = up {
         block = block.title_top(mark(up));

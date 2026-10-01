@@ -76,6 +76,7 @@ fn zero_durations_are_hidden() {
     let fast = read_row(20);
     assert!(!fast.contains("0.0s"), "{fast}");
     assert!(fast.trim_end_matches(['│', ' ']).ends_with('✓'), "{fast}");
+    assert!(!read_row(0).contains("0.0s"));
     assert!(!read_row(49).contains("0.0s"));
     assert!(read_row(50).contains("✓ 0.1s"));
     let slow = read_row(1200);

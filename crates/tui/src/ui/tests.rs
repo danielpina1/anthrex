@@ -412,6 +412,7 @@ fn hit_test_uses_the_render_geometry() {
         "5 docs",
         "6 infra",
         "7 perf",
+        "▾ blog",
     ]
     .iter()
     .enumerate()
@@ -471,14 +472,12 @@ fn sidebar_scrolls_to_keep_the_focused_window_visible() {
     app.on_scroll(true, 2, 2, &l);
     app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
     assert_eq!(app.tree.sidebar.top, 8);
-    // Nor may a window list that changes nothing the view depends on: the
-    // daemon republishes one on every status flip and every output event.
+    // Nor may an unchanged window list (the daemon republishes one on every event).
     let windows = app.windows.clone();
     app.on_daemon(proto::DaemonMsg::WindowsChanged { windows });
     assert_eq!(app.tree.sidebar.top, 8);
-    // A list that really changed reveals the anchor again: with window 1
-    // gone the focused window 20 is row 19 of 20, and ten rows of list
-    // put its top at 10.
+    // A list that really changed reveals the anchor again: without window 1, window
+    // 20 is row 19 of 20, and ten rows of list put its top at 10.
     let windows = app.windows[1..].to_vec();
     app.on_daemon(proto::DaemonMsg::WindowsChanged { windows });
     assert_eq!(app.tree.sidebar.top, 10);
@@ -500,8 +499,9 @@ fn wheel_over_the_sidebar_scrolls_the_tree() {
             bytes: b"\x1b[<65;1;1M".to_vec()
         })]
     );
+    assert!(app.on_scroll(false, 2, 7, &l).is_empty()); // the former spacer row: the list's
     assert!(app.on_scroll(false, 2, l.sidebar_footer.y, &l).is_empty());
-    assert_eq!(app.tree.sidebar.top, 3);
+    assert_eq!(app.tree.sidebar.top, 6);
 }
 
 #[test]

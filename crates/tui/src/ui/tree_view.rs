@@ -79,7 +79,6 @@ pub fn narrow_line(
             theme::role(Role::Accent, p),
         )
     };
-    let mut run_name = None;
     let (prefix, name, branch, rights) = match &row.kind {
         RowKind::Project {
             name,
@@ -100,7 +99,7 @@ pub fn narrow_line(
                     format!("{guides}{} ", glyph(fold, ascii)),
                     bold,
                 )],
-                Span::styled(name.clone(), bold),
+                Name::Text(Span::styled(name.clone(), bold)),
                 None,
                 vec![
                     vec![mark.clone(), Span::styled(format!("  {counts}"), muted)],
@@ -142,10 +141,10 @@ pub fn narrow_line(
                     look(theme::status_look(info.status, frame, ascii)),
                     Span::raw(format!(" {position:>pos_width$} ")),
                 ],
-                Span::styled(
+                Name::Text(Span::styled(
                     info.name.clone(),
                     if focused { bold } else { Style::default() },
-                ),
+                )),
                 branch_text(info, app),
                 rights,
             )
@@ -156,7 +155,7 @@ pub fn narrow_line(
                 look(theme::subagent_look(info, frame, ascii)),
                 Span::raw(" "),
             ],
-            Span::raw(tree::subagent_label(info)),
+            Name::Text(Span::raw(tree::subagent_label(info))),
             None,
             vec![
                 vec![Span::styled(info.tool.clone().unwrap_or_default(), muted)],
@@ -171,9 +170,8 @@ pub fn narrow_line(
             let focused = orchestrator.is_some_and(|window| app.focused == Some(window.id));
             let (merged, total) = tree::run_progress(run);
             let position = position.map_or_else(String::new, |position| position.to_string());
-            // Decision 28: the run's one name, cut to the room `fit_line` leaves it; a
-            // blank goal names the run by its id, as `tree::run_title` does.
-            run_name = Some((tree::run_title(run).to_owned(), run.run_id.clone()));
+            // Milestone 9.0.7 review ruling: a tick only for progress the data proves.
+            let tick = if merged > 0 { Role::Done } else { Role::Muted };
             (
                 vec![
                     Span::raw(guides),
@@ -182,15 +180,18 @@ pub fn narrow_line(
                     look(theme::run_look(run.state, ascii)),
                     Span::raw(format!(" {position:>pos_width$} ")),
                 ],
-                Span::styled(
-                    crate::safe_text::one_line(tree::run_title(run)),
-                    if focused { bold } else { Style::default() },
-                ),
+                // Decision 28: the run's one name; a blank goal names the run by its
+                // id, as `tree::run_title` does.
+                Name::Run {
+                    goal: tree::run_title(run).to_owned(),
+                    id: run.run_id.clone(),
+                    style: if focused { bold } else { Style::default() },
+                },
                 None,
                 vec![
                     vec![
                         Span::styled(format!("{merged}/{total} "), muted),
-                        Span::styled(glyph(Glyph::Passed, ascii), theme::role(Role::Done, p)),
+                        Span::styled(glyph(Glyph::Passed, ascii), theme::role(tick, p)),
                     ],
                     vec![],
                 ],
@@ -203,7 +204,7 @@ pub fn narrow_line(
         | RowKind::Stage { .. }
         | RowKind::AgentRound { .. } => (
             vec![Span::raw(guides)],
-            Span::raw(crate::graph::content_text_in(row, ascii)),
+            Name::Text(Span::raw(crate::graph::content_text_in(row, ascii))),
             None,
             vec![vec![]],
         ),
@@ -213,7 +214,6 @@ pub fn narrow_line(
         selected,
         muted,
         p,
-        run_name,
     };
     fit_line(prefix, name, branch, rights, fit)
 }
@@ -249,20 +249,29 @@ const NAME_FLOOR: usize = 8;
 /// one character + `…` + `]`), while the name keeps only `NAME_FLOOR` columns for itself
 /// until the branch is gone, rather than taking everything it wants first.
 /// How `fit_line` fits a row: its width, whether it is selected, the branch marker's
-/// muted style, the palette (whose `ascii` picks the cut marks), and for a run row its
-/// goal and id, named by `kit::run_name_in` in the room left once the right field is
-/// placed.
+/// muted style, and the palette (whose `ascii` picks the cut marks).
 struct Fit {
     width: usize,
     selected: bool,
     muted: Style,
     p: theme::Palette,
-    run_name: Option<(String, String)>,
+}
+
+/// A row's name: drawn as given, or a run's goal and id, named once by
+/// `kit::run_name_in` in the room `fit_line` leaves it (decision 28), so the short id is
+/// never the part cut.
+enum Name {
+    Text(Span<'static>),
+    Run {
+        goal: String,
+        id: String,
+        style: Style,
+    },
 }
 
 fn fit_line(
     mut prefix: Vec<Span<'static>>,
-    mut name: Span<'static>,
+    name: Name,
     branch: Option<String>,
     rights: Vec<Vec<Span<'static>>>,
     fit: Fit,
@@ -272,27 +281,29 @@ fn fit_line(
         selected,
         muted,
         p,
-        run_name,
     } = fit;
     let ascii = p.ascii;
+    let named = match &name {
+        Name::Text(span) => !span.content.is_empty(),
+        Name::Run { .. } => true,
+    };
     let prefix_width = spans_width(&prefix);
     let right = rights
         .into_iter()
         .find(|right| {
             let right_width = spans_width(right);
-            prefix_width
-                + usize::from(!name.content.is_empty())
-                + right_width
-                + usize::from(right_width > 0)
-                <= width
+            prefix_width + usize::from(named) + right_width + usize::from(right_width > 0) <= width
         })
         .unwrap_or_default();
     let right_width = spans_width(&right);
     let available = width.saturating_sub(prefix_width + right_width + usize::from(right_width > 0));
-    if let Some((goal, id)) = run_name {
-        let room = u16::try_from(available).unwrap_or(u16::MAX);
-        name.content = crate::ui::kit::run_name_in(&goal, &id, room, p).into();
-    }
+    let mut name = match name {
+        Name::Text(span) => span,
+        Name::Run { goal, id, style } => {
+            let room = u16::try_from(available).unwrap_or(u16::MAX);
+            Span::styled(crate::ui::kit::run_name_in(&goal, &id, room, p), style)
+        }
+    };
 
     let name_full = UnicodeWidthStr::width(name.content.as_ref());
     let name_floor = available.min(name_full).min(NAME_FLOOR);

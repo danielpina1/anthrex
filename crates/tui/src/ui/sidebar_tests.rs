@@ -6,6 +6,7 @@ use crate::theme::{self, Role};
 use crate::tree::run_fixtures::{PROJECT, pty, run, snapshot, task};
 use crate::ui::{self, audit, tree_view};
 use crate::{tree, ui::badge::BadgeSet};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::{RunState, Size, Status, TaskState};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -264,6 +265,46 @@ fn the_audit_fixtures_carry_the_new_texts() {
             let shown = audit::rows(&audit::draw(&app, w, h)).join("\n");
             for text in plain {
                 assert!(shown.contains(text), "{name} at {w}x{h}: {text:?}\n{shown}");
+            }
+        }
+    }
+}
+
+/// Review fix round 1 (principle 6): at the narrow sidebar widths the top mark is kept
+/// whole; ` · tree` goes first, then `agents` is cut with `…`, never mid-word unmarked.
+#[test]
+fn the_mark_never_cuts_the_title_mid_word() {
+    for ascii_mode in [false, true] {
+        let (up, corner, ellipsis, tree) = if ascii_mode {
+            ("^", "+", ".", "agents - tree")
+        } else {
+            ("↑", "╮", "…", "agents · tree")
+        };
+        for width in [24, 26] {
+            for above in [5, 50, 100, 1000] {
+                let mut app = shells(above + 20, 80, 24);
+                if ascii_mode {
+                    ascii(&mut app);
+                }
+                app.sidebar_width = width;
+                app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+                app.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+                assert!(app.tree_input.is_some());
+                app.tree.sidebar.top = above as usize;
+                let buffer = audit::draw(&app, 80, 24);
+                let top: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
+                let mark = format!(" {up} {above} more {corner}");
+                assert!(top.ends_with(&mark), "{width} {above}: {top:?}");
+                let title = top[..top.len() - mark.len()]
+                    .chars()
+                    .skip(1)
+                    .collect::<String>();
+                let title = title.trim_matches([' ', '─', '-']);
+                let whole = title == tree || title == "agents";
+                let cut = title
+                    .strip_suffix(ellipsis)
+                    .is_some_and(|head| "agents".starts_with(head.trim_end_matches('.')));
+                assert!(whole || cut, "{width} {above}: {top:?}");
             }
         }
     }

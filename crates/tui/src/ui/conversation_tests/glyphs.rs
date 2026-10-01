@@ -173,11 +173,11 @@ fn ascii_mode_uses_no_box_drawing_glyphs() {
         "{out}"
     );
     assert!(out.contains("v Read  read lib.rs"), "{out}");
-    assert!(out.contains("ok 0.1s"), "{out}");
+    assert!(out.contains("+ 0.1s"), "{out}");
     assert!(out.contains("> Write  wrote out.rs"), "{out}");
     assert!(out.contains("x 0.2s"), "{out}");
     let bash = out.lines().find(|l| l.contains("rm -rf target")).unwrap();
-    assert!(bash.trim_end_matches(['|', ' ']).ends_with(" -"), "{bash}");
+    assert!(bash.trim_end_matches(['|', ' ']).ends_with(" #"), "{bash}");
     assert!(out.contains("! needs approval for Bash"), "{out}");
     assert!(out.contains("* spawned  Explore - Deeper"), "{out}");
     assert!(

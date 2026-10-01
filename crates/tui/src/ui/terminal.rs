@@ -6,6 +6,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use std::path::Path;
 use tui_term::widget::{Cursor, PseudoTerminal};
+use unicode_width::UnicodeWidthStr;
 
 /// Pure variant of [`shorten_home`]: takes the home directory as a parameter instead of
 /// reading it from the environment, so callers with no filesystem access — the new-agent
@@ -32,7 +33,30 @@ pub fn headless_placeholder(w: &proto::WindowInfo, prefix: &str) -> String {
     )
 }
 
+/// Milestone 9.0.7 decision 29's ` <head> · <dir><suffix> ` in `room` columns
+/// (principle 6): `<tag> <name>` is kept; `<dir>` is cut with `…` first, then the
+/// worktree suffix with it.
+fn fit_title(head: &str, dir: &str, suffix: &str, room: usize, ascii: bool) -> String {
+    use super::tree_view::truncate_in;
+    use crate::safe_text::one_line;
+    // Measured as drawn: `pane_frame` would sanitise them anyway.
+    let (head, dir, suffix) = (one_line(head), one_line(dir), one_line(suffix));
+    let full = format!("{head} · {dir}{suffix}");
+    let fixed = UnicodeWidthStr::width(format!("{head} · {suffix}").as_str());
+    if UnicodeWidthStr::width(full.as_str()) <= room {
+        full
+    } else if room >= fixed + 2 {
+        let dir = truncate_in(&dir, room - fixed, ascii);
+        format!("{head} · {dir}{suffix}")
+    } else {
+        truncate_in(&full, room, ascii)
+    }
+}
+
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+    // The title and its two spaces inside the corners.
+    let room = usize::from(area.width.saturating_sub(4));
+    let ascii = app.palette().ascii;
     let title = match app.focused_window() {
         // Decision 37: the branch comes from `branch_text` alone, never a direct read
         // of `WindowInfo.branch` here — `None` is also how this tells a worktree
@@ -40,14 +64,13 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         // windows this daemon made no worktree for.
         // Milestone 9.0.7 decision 29: ` <tag> <name> · <dir> `, the runtime once.
         Some(w) => {
-            let tag = theme::runtime_tag(w.runtime);
+            let head = format!("{} {}", theme::runtime_tag(w.runtime), w.name);
             match super::tree_view::branch_text(w, app) {
-                Some(branch) => format!(
-                    "{tag} {} · {} ({branch}, worktree)",
-                    w.name,
-                    shorten_home(&w.project)
-                ),
-                None => format!("{tag} {} · {}", w.name, shorten_home(&w.cwd)),
+                Some(branch) => {
+                    let suffix = format!(" ({branch}, worktree)");
+                    fit_title(&head, &shorten_home(&w.project), &suffix, room, ascii)
+                }
+                None => fit_title(&head, &shorten_home(&w.cwd), "", room, ascii),
             }
         }
         None => "no window".to_string(),

@@ -8,15 +8,20 @@ use proto::{Runtime, Status, WindowInfo};
 use ratatui::{Terminal, backend::TestBackend};
 
 fn title_of(windows: Vec<WindowInfo>, ascii: bool) -> String {
+    title_at(windows, ascii, 80)
+}
+
+/// The top row of the pane drawn `width` columns wide.
+fn title_at(windows: Vec<WindowInfo>, ascii: bool, width: u16) -> String {
     let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
     if ascii {
         app.settings.badges = BadgeSet::from_config(&app.settings.badges_config, true);
     }
     let _ = app.set_terminal_size(78, 10);
-    let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
     terminal.draw(|f| super::render(f, &app, f.area())).unwrap();
     let buffer = terminal.backend().buffer();
-    (0..80).map(|x| buffer[(x, 0)].symbol()).collect()
+    (0..width).map(|x| buffer[(x, 0)].symbol()).collect()
 }
 
 /// `~/<rest>`: `shorten_home` reads the real home directory, so the fixture lives
@@ -48,4 +53,31 @@ fn the_pane_title_is_tag_name_dir() {
 
     let title = title_of(vec![], false);
     assert!(title.starts_with("╭ no window ─"), "{title:?}");
+}
+
+/// Review fix round 1 (principle 6): at the 80×24 main pane's width (46) the title
+/// keeps `<tag> <name>` and cuts the directory, then the worktree suffix, with `…`.
+#[test]
+fn a_long_pane_title_is_cut_with_a_mark() {
+    let deep = home("repo/a/rather/long/path/to/the/package/inside");
+    let shell = pty(1, "shell-1", deep.to_str().unwrap(), Status::Idle);
+    let title = title_at(vec![shell.clone()], false, 46);
+    assert!(title.starts_with("╭ sh shell-1 · ~/repo/a/"), "{title:?}");
+    assert!(title.ends_with("… ╮"), "{title:?}");
+    assert_eq!(title.chars().count(), 46, "{title:?}");
+    let title = title_at(vec![shell], true, 46);
+    assert!(title.ends_with("... +"), "{title:?}");
+    assert!(title.is_ascii(), "{title:?}");
+
+    let mut worktree = pty(2, "wt-form", deep.to_str().unwrap(), Status::Idle);
+    worktree.runtime = Runtime::Codex;
+    worktree.branch = Some("ax/wt".into());
+    let title = title_at(vec![worktree.clone()], false, 46);
+    assert!(title.starts_with("╭ cx wt-form · ~/"), "{title:?}");
+    assert!(title.ends_with("… (ax/wt, worktree) ╮"), "{title:?}");
+    // Too narrow for the suffix: it is cut too, the head kept.
+    let title = title_at(vec![worktree], false, 30);
+    assert!(title.starts_with("╭ cx wt-form · "), "{title:?}");
+    assert!(title.ends_with("… ╮"), "{title:?}");
+    assert!(!title.contains("worktree)"), "{title:?}");
 }
