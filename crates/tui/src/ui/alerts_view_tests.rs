@@ -2,14 +2,16 @@
 //! `TestBackend` over `ui/alerts_fixture.rs`'s `three_runs`, the view open on `t2`'s
 //! blocked alert.
 
-use super::super::alerts::fixture::{NOW, app_of, three_runs, three_runs_snapshot};
+use super::super::alerts::fixture::{NOW, app_of, named, three_runs, three_runs_snapshot};
 use crate::app::App;
 use crate::safe_text::tests::{first_hostile, hostile_text};
 use crate::theme::{self, Role};
-use crate::tree::run_fixtures::{pty, snapshot};
+use crate::tree::alert_fixtures::{orch_window, with_orch};
+use crate::tree::orch_fixtures::hold;
+use crate::tree::run_fixtures::{pty, snapshot, task};
 use crate::ui::{Layout, audit};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{ProposalAlertInfo, RunState, Status};
+use proto::{HoldState, ProposalAlertInfo, RunState, Size, Status, TaskState};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -100,6 +102,11 @@ fn the_view_shows_the_whole_alert_at_120x40() {
             .any(|l| l.starts_with("actions  answer · message")),
         "{detail:#?}"
     );
+    // Fix round 1 ruling: the row wraps under its label, so every entry shows.
+    assert!(
+        detail.contains(&"cancel task · open conversation"),
+        "{detail:#?}"
+    );
     assert!(
         detail
             .iter()
@@ -109,7 +116,7 @@ fn the_view_shows_the_whole_alert_at_120x40() {
     // The rows in order, then a blank, the actions and the hints; the title and the
     // position in the top border.
     assert_eq!(
-        &detail[..9],
+        &detail[..10],
         [
             "t2  report_product in c",
             "phase   blocked · question",
@@ -118,7 +125,8 @@ fn the_view_shows_the_whole_alert_at_120x40() {
             "worker  cx gpt-6-sol · 12 calls · 4m",
             "age     41s",
             "",
-            "actions  answer · message · retry · override · c…",
+            "actions  answer · message · retry · override ·",
+            "cancel task · open conversation",
             "⏎ answer  . all actions  m message  o open task",
         ]
     );
@@ -147,7 +155,7 @@ fn the_view_stacks_below_60_columns() {
     let selected = format!("▌P3 ⚑ Add mul() · 0723 › t2{}41s", " ".repeat(13));
     let rule = "─".repeat(44);
     assert_eq!(
-        rows[..15],
+        rows[..17],
         [
             " P2 ⚑ Docs · 77aa",
             selected.as_str(),
@@ -161,7 +169,9 @@ fn the_view_stacks_below_60_columns() {
             " worker  cx gpt-6-sol · 12 calls · 4m",
             " age     41s",
             "",
-            " actions  answer · message · retry · overri…",
+            " actions  answer · message · retry ·",
+            "          override · cancel task · open",
+            "          conversation",
             " ⏎ answer  . all actions  m message",
             "",
         ]
@@ -289,7 +299,17 @@ fn alerts_view_text_is_sanitised() {
     let mut halted = crate::tree::alert_fixtures::at("halt-1", RunState::Halted, 9);
     halted.halted_reason = Some(format!("why{bad}\n{bad}"));
     runs.push(halted);
-    let mut app = app_of(vec![pty(1, "shell", "/tmp/repo", Status::Idle)], runs);
+    // Fix round 1: an orchestrator alert (its model) and a hold alert (its id).
+    let mut held = with_orch(named("orch-1", &bad, RunState::Running, 10), 7);
+    held.orchestrator.as_mut().unwrap().route.model = format!("m{bad}");
+    held.tasks = vec![task("t1", &bad, Size::S, TaskState::Pending)];
+    held.holds = vec![hold(&format!("epic:{bad}"), HoldState::Awaiting, &["t1"])];
+    runs.push(held);
+    let windows = vec![
+        pty(1, "shell", "/tmp/repo", Status::Idle),
+        orch_window(7, "orch-1", Status::Attention, true),
+    ];
+    let mut app = app_of(windows, runs);
     app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot({
         let mut snap = snapshot(NOW, app.runs.runs.clone());
         snap.proposals = vec![ProposalAlertInfo {
@@ -300,7 +320,7 @@ fn alerts_view_text_is_sanitised() {
     })));
     chord(&mut app, 'a');
     let n = crate::app::alerts(&app).len();
-    assert_eq!(n, 5);
+    assert_eq!(n, 7);
     for at in 0..n {
         for (w, h) in [(80, 24), (120, 40)] {
             let (buffer, layout) = draw_at(&app, w, h);
@@ -357,4 +377,59 @@ fn no_panic_at_tiny_sizes() {
             }
         }
     }
+}
+
+/// Fix round 1 (Review focus 4): a hold's `plan` counts the stages of its own tasks,
+/// never the run's; the gate's counts the plan's.
+#[test]
+fn a_holds_plan_counts_its_own_stages() {
+    let staged = |id: &str, stage: u16| {
+        let mut t = task(id, "work", Size::S, TaskState::Pending);
+        t.stage = stage;
+        t
+    };
+    let mut held = named("held-5a5a", "Held", RunState::Running, 4);
+    held.tasks = vec![staged("t1", 1), staged("t2", 1), staged("t3", 2)];
+    held.holds = vec![hold("epic:ui", HoldState::Awaiting, &["t1", "t2"])];
+    let mut gate = named("gate-6b6b", "Gate", RunState::AwaitingApproval, 5);
+    gate.tasks = vec![staged("t1", 1), staged("t2", 2)];
+    let mut app = app_of(
+        vec![pty(1, "shell", "/tmp/repo", Status::Idle)],
+        vec![held, gate],
+    );
+    chord(&mut app, 'a');
+    let detail = |app: &App| right_pane(&rows_of(app, 120, 40)).join("\n");
+    // The hold's run is the older: its alert comes first.
+    let hold_rows = detail(&app);
+    assert!(
+        hold_rows.contains("phase  hold epic:ui awaiting approval"),
+        "{hold_rows}"
+    );
+    assert!(hold_rows.contains("plan   2 tasks\n"), "{hold_rows}");
+    assert!(!hold_rows.contains("stages"), "{hold_rows}");
+    press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+    let gate_rows = detail(&app);
+    assert!(
+        gate_rows.contains("plan   2 tasks · 2 stages"),
+        "{gate_rows}"
+    );
+}
+
+/// Decision 11: a refused entry is listed, muted; the others are not.
+#[test]
+fn a_refused_action_is_muted() {
+    let mut runs = three_runs_snapshot();
+    runs[1].tasks[1].actions[2].refused_why = Some("not now".into());
+    let mut app = app_of(vec![pty(1, "shell", "/tmp/repo", Status::Idle)], runs);
+    chord(&mut app, 'a');
+    press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+    let (buffer, _) = draw_at(&app, 120, 40);
+    let muted = theme::role(Role::Muted, app.palette()).fg;
+    let fg = |text: &str| {
+        let (x, y) = audit::find(&buffer, text)[0];
+        Some(buffer[(x, y)].fg)
+    };
+    assert_eq!(fg("retry"), muted);
+    assert_ne!(fg("answer ·"), muted);
+    assert_ne!(fg("cancel task"), muted);
 }

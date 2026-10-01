@@ -6,6 +6,7 @@
 use super::alerts::{AlertKey, alerts};
 use super::{App, Effect};
 use crate::actions_request::ActionTarget;
+use crate::keymap::Command;
 use crate::tree::NodeKey;
 use crossterm::event::{KeyCode, KeyEvent};
 use proto::{ActionInfo, ActionKind, BlockReason, RunInfo, WindowKind};
@@ -24,7 +25,10 @@ pub(crate) fn alert_node(key: &AlertKey) -> Option<(String, ActionTarget)> {
     }
 }
 
-fn run_of<'a>(app: &'a App, run_id: &str) -> Option<&'a RunInfo> {
+/// Fix round 1 ruling: the toast for a command refused under the view.
+pub const LEAVE_ALERTS_FIRST: &str = "leave the alerts first (esc)";
+
+pub(crate) fn run_of<'a>(app: &'a App, run_id: &str) -> Option<&'a RunInfo> {
     app.runs.runs.iter().find(|run| run.run_id == run_id)
 }
 
@@ -95,6 +99,37 @@ pub(crate) fn can_message(app: &App, key: &AlertKey) -> bool {
 }
 
 impl App {
+    /// Fix round 1 ruling: no command acts unseen under the view. While it is open,
+    /// whatever changes or acts on what lies under the main pane — the focused window
+    /// (`C-b j`/`k`/`1-9`, `c`, `x`, `X`, `,`, `R`, `g`), the conversation, the tree and
+    /// the overview (`m`, `t`, `T`) — is refused with a toast, as `screen_refuses`
+    /// does. The help, detach, stop, the sidebar's keys, reconnect and the full-body
+    /// screens (which cover the view, and give it back) keep working.
+    pub(super) fn alerts_refuses(&mut self, cmd: Command) -> bool {
+        if self.alerts_focus.is_none() {
+            return false;
+        }
+        let refused = matches!(
+            cmd,
+            Command::NextWindow
+                | Command::PrevWindow
+                | Command::FocusIndex(_)
+                | Command::NewWindow
+                | Command::KillWindow
+                | Command::RemoveWindow
+                | Command::RenameWindow
+                | Command::RestartWindow
+                | Command::StartGoal
+                | Command::ToggleConversation
+                | Command::ToggleTree
+                | Command::ToggleOverview
+        );
+        if refused {
+            self.toast(LEAVE_ALERTS_FIRST);
+        }
+        refused
+    }
+
     /// Decision 11's keys: `j`/`k` move, Enter runs the preselection, `.` the menu with
     /// none, `m` the menu on `Message` where listed, `o` the run view (each leaving the
     /// view), PgUp/PgDn scroll the detail, Esc leaves. Every other key does nothing;
@@ -224,12 +259,11 @@ impl App {
         if run_of(self, &run).is_none() {
             return vec![];
         }
-        let mut effects = Vec::new();
-        if self.conversation.is_open() {
-            self.conversation_follow = None;
-            effects = self.conversation.close();
-            self.sync_conversation_mode();
-        }
+        let effects = if self.conversation.is_open() {
+            self.toggle_conversation()
+        } else {
+            Vec::new()
+        };
         self.open_run_view(run.clone());
         if let Some(id) = task {
             let rows = super::nav_rows_of(

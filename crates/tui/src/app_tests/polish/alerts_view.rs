@@ -396,7 +396,12 @@ fn view_keys_send_no_input() {
     ]);
     for start in [gate(), t2()] {
         for code in &codes {
-            for mods in [KeyModifiers::NONE, KeyModifiers::SHIFT, KeyModifiers::ALT] {
+            for mods in [
+                KeyModifiers::NONE,
+                KeyModifiers::SHIFT,
+                KeyModifiers::ALT,
+                KeyModifiers::CONTROL,
+            ] {
                 let mut app = three_runs();
                 view_on(&mut app, &start);
                 let effects = press(&mut app, *code, mods);
@@ -479,4 +484,92 @@ fn no_click_or_wheel_reaches_the_main_pane_under_the_view() {
     tap(&mut app, KeyCode::Esc);
     app.on_click(node.0, node.1, &layout);
     assert_eq!(app.tree.selected, Some(NodeKey::Run("fix-ci-9b1e".into())));
+}
+
+/// Fix round 1 ruling: no command acts unseen under the view. Those that change or act
+/// on what lies under the main pane are refused with a toast and change nothing; `C-b
+/// a` again is nothing; the help, the sidebar, detach and stop keep working.
+#[test]
+fn commands_under_the_view_are_refused() {
+    for c in ['m', 't', 'T', 'j', 'k', '1', 'c', 'x', 'X', ',', 'R', 'g'] {
+        let mut app = three_runs();
+        view_on(&mut app, &t2());
+        let (focused, tree) = (app.focused, app.tree_input);
+        assert!(chord(&mut app, c).is_empty(), "C-b {c}");
+        assert_eq!(
+            app.toast_text(),
+            Some("leave the alerts first (esc)"),
+            "C-b {c}"
+        );
+        assert_eq!(selected(&app), Some(t2()), "C-b {c}");
+        assert_eq!((app.focused, app.tree_input), (focused, tree), "C-b {c}");
+        assert!(app.modal.is_none(), "C-b {c}");
+        assert!(!app.conversation.is_open(), "C-b {c}");
+        assert!(!app.overview, "C-b {c}");
+    }
+    // `C-b a` while open: nothing, the selection kept, no toast.
+    let mut app = three_runs();
+    view_on(&mut app, &t2());
+    assert!(chord(&mut app, 'a').is_empty());
+    assert_eq!(selected(&app), Some(t2()));
+    assert_eq!(app.toast_text(), None);
+    // The help opens over the view; the sidebar hides and shows; detach and stop act.
+    chord(&mut app, '?');
+    assert!(app.modal.is_some());
+    app.modal = None;
+    chord(&mut app, 's');
+    assert!(!app.sidebar_visible);
+    assert_eq!(app.key_region(), KeyRegion::Alerts);
+    assert_eq!(chord(&mut app, 'd'), vec![Effect::Quit]);
+    chord(&mut app, 'Q');
+    assert!(app.modal.is_some(), "C-b Q asks");
+    assert_eq!(app.toast_text(), None);
+}
+
+/// Fix round 1 ruling: a sidebar row clicked beside the view is visible, so the view
+/// is left first and the click acts.
+#[test]
+fn a_sidebar_click_leaves_the_view_and_acts() {
+    use ratatui::layout::Rect;
+    let mut app = three_runs();
+    view_on(&mut app, &t2());
+    let layout = crate::ui::layout_for(&app, Rect::new(0, 0, 120, 40));
+    let buffer = crate::ui::audit::draw(&app, 120, 40);
+    let (x, y) = crate::ui::audit::find(&buffer, "Fix CI")
+        .into_iter()
+        .find(|&(x, y)| layout.sidebar_list.contains((x, y).into()))
+        .expect("the run's row in the sidebar");
+    app.on_click(x, y, &layout);
+    assert_eq!(app.alerts_focus, None);
+    assert!(!app.keymap.alerts_mode());
+    assert_eq!(
+        app.run_view.as_ref().map(|v| v.run_id.as_str()),
+        Some("fix-ci-9b1e")
+    );
+    // A click on no row leaves the view open.
+    let mut app = three_runs();
+    view_on(&mut app, &t2());
+    let below = layout.sidebar_list.bottom() - 1;
+    app.on_click(layout.sidebar_list.x + 1, below, &layout);
+    assert_eq!(selected(&app), Some(t2()));
+}
+
+/// Fix round 1: a scrolled detail starts at its top when its alert resolves and
+/// another takes its place.
+#[test]
+fn the_scroll_resets_when_the_selected_alert_resolves() {
+    let mut app = three_runs();
+    app.set_graph_viewport(ratatui::layout::Rect::new(34, 0, 86, 6));
+    view_on(&mut app, &t2());
+    tap(&mut app, KeyCode::PageDown);
+    assert!(app.alerts_focus.as_ref().unwrap().scroll > 0, "scrolled");
+    let mut snap = three_runs_snapshot();
+    snap[1].tasks[1].state = proto::TaskState::Working;
+    snap[1].tasks[1].block = None;
+    deliver(
+        &mut app,
+        crate::tree::run_fixtures::snapshot(crate::ui::alerts::fixture::NOW, snap),
+    );
+    assert_eq!(selected(&app), Some(AlertKey::Accept("fix-ci-9b1e".into())));
+    assert_eq!(app.alerts_focus.as_ref().unwrap().scroll, 0);
 }

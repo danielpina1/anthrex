@@ -156,6 +156,11 @@ impl App {
             return vec![];
         };
         let key = rows[index].key.clone();
+        // Fix round 1 ruling: a row clicked beside the Alerts view is something the
+        // user sees, so the view is left first and the click acts.
+        if self.alerts_focus.is_some() {
+            self.leave_alerts();
+        }
         // Review I1: the sidebar is the project tree. A click on any of its rows but a
         // run's leaves the run view first, so the selection it makes is a canvas row.
         if self.run_view.is_some() && !matches!(key, NodeKey::Run(_)) {

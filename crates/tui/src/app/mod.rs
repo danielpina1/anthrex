@@ -439,7 +439,7 @@ impl App {
     }
 
     fn run(&mut self, cmd: Command) -> Vec<Effect> {
-        if self.screen_refuses(cmd) {
+        if self.screen_refuses(cmd) || self.alerts_refuses(cmd) {
             return vec![];
         }
         match cmd {

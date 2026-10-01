@@ -60,7 +60,7 @@ pub struct AlertsFocus {
 }
 
 /// `1 task` or `<n> tasks`.
-fn tasks_text(n: usize) -> String {
+pub(crate) fn tasks_text(n: usize) -> String {
     match n {
         1 => "1 task".to_owned(),
         n => format!("{n} tasks"),
@@ -270,8 +270,12 @@ fn project_name(project: &std::path::Path) -> String {
 impl App {
     /// `C-b a` (milestone 9.0.7 decision 11): opens the Alerts view in the main pane on
     /// the first alert. A hidden sidebar stays hidden: the view does not need it.
-    /// Refused while the plan review is open (9.0.5 decision 13).
+    /// Refused while the plan review is open (9.0.5 decision 13); nothing while the
+    /// view is already open (fix round 1 ruling).
     pub(super) fn focus_alerts(&mut self) -> Vec<Effect> {
+        if self.alerts_focus.is_some() {
+            return vec![];
+        }
         if self.plan_review.is_some() {
             self.toast(super::plan_review::LEAVE_REVIEW_FIRST);
             return vec![];
@@ -291,7 +295,7 @@ impl App {
         self.keymap.set_alerts_mode(self.alerts_focus.is_some());
     }
 
-    pub(super) fn leave_alerts(&mut self) {
+    pub(crate) fn leave_alerts(&mut self) {
         self.alerts_focus = None;
         self.sync_alerts_mode();
     }
