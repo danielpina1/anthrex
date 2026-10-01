@@ -5,7 +5,7 @@
 //! Pure like the rest of `app`: a gesture reads the geometry the renderer
 //! would produce for the same frame and returns effects. Nothing here draws.
 
-use crate::app::{App, Effect};
+use crate::app::{App, Effect, nav_rows_of};
 use crate::graph::Pan;
 use crate::tree::{self, NodeKey};
 use crate::ui::{self, overview};
@@ -110,9 +110,25 @@ impl App {
     /// The wheel over the graph canvas scrolls it vertically by three rows
     /// (decision 16). There are no panning keys, so this and a drag are the
     /// only ways to move the viewport by hand.
+    ///
+    /// Milestone 9.0.7 decision 22: over the compact list it moves the selection three
+    /// rows instead, stopping at the first and the last.
     fn scroll_graph(&mut self, up: bool, column: u16, row: u16, main: ratatui::layout::Rect) {
         let view = overview::view(self, main);
         if !view.canvas.contains((column, row).into()) {
+            return;
+        }
+        if view.list {
+            let rows = nav_rows_of(
+                &self.windows,
+                &self.runs.runs,
+                &self.tree,
+                self.run_view.as_ref(),
+            );
+            let delta = WHEEL_ROWS as isize;
+            self.tree
+                .move_selection(&rows, if up { -delta } else { delta });
+            self.reveal_tree_anchor();
             return;
         }
         let y = if up {
@@ -219,7 +235,7 @@ impl App {
         // One row build for the gesture: `overview::view` would otherwise
         // build its own, and the selection below needs the same list — the run
         // view's while it is open (milestone 8c decision 11).
-        let rows = crate::app::nav_rows_of(
+        let rows = nav_rows_of(
             &self.windows,
             &self.runs.runs,
             &self.tree,
@@ -230,7 +246,15 @@ impl App {
             return None;
         }
         let double = self.graph_mouse.press(column, row);
-        let Some(key) = view.geometry().node_at(&view.layout, column, row) else {
+        // Decision 22: the list hit-tests through the function its renderer windows by.
+        let key = if view.list {
+            let selected = self.tree.selected_index(&rows).unwrap_or(0);
+            ui::run_list::row_at(view.canvas, rows.len(), selected, column, row)
+                .map(|index| rows[index].key.clone())
+        } else {
+            view.geometry().node_at(&view.layout, column, row)
+        };
+        let Some(key) = key else {
             return Some(vec![]);
         };
         self.tree.select(&rows, key.clone());
@@ -260,6 +284,9 @@ impl App {
         };
         self.graph_mouse.drag_from = Some((column, row));
         let view = overview::view(self, layout.main);
+        if view.list {
+            return vec![];
+        }
         self.graph_pan = Pan {
             x: dragged(view.pan.x, from_x, column),
             y: dragged(view.pan.y, from_y, row),

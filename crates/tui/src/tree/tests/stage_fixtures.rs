@@ -67,3 +67,43 @@ pub(crate) fn staged_gate_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
     gate.stages = vec![stage(1, None, 1, 0), stage(2, None, 1, 0)];
     (snapshot(10_000, vec![gate]), vec![])
 }
+
+/// Milestone 9.0.7 task 10: run `add-mul-0723` (`Add mul()`), `running`, in two stages,
+/// with no windows but the plain shell `1`. Stage 1 is green in 38 s with `t1 add mul()
+/// to a` (S, tdd) merged; stage 2 runs tier 3 with `t2 report_product in c` (M, tdd) in
+/// review round 1 after `t1`, and `t3 docs for report_product` (S, none) waiting after
+/// `t2`.
+pub(crate) fn two_stage_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
+    let id = "add-mul-0723";
+    let mut info = run(id, PROJECT, RunState::Running);
+    info.goal = "Add mul()".into();
+    let t1 = task("t1", "add mul() to a", Size::S, TaskState::Merged);
+    let mut t2 = task("t2", "report_product in c", Size::M, TaskState::Review);
+    t2.stage = 2;
+    t2.deps = vec!["t1".into()];
+    t2.reviews = vec![proto::ReviewInfo {
+        round: 1,
+        route: t2.route.clone(),
+        verdict: None,
+        summary: String::new(),
+        findings: vec![],
+        blocking: false,
+    }];
+    t2.review_route = Some(t2.route.clone());
+    let mut t3 = task("t3", "docs for report_product", Size::S, TaskState::Pending);
+    t3.stage = 2;
+    t3.deps = vec!["t2".into()];
+    t3.test_mode = proto::TestMode::None;
+    info.tasks = vec![t1, t2, t3];
+    let mut one = stage(1, Some(&"1".repeat(40)), 1, 1);
+    one.full.state = FullState::Green;
+    one.full.secs = Some(38);
+    let mut two = stage(2, Some(&"2".repeat(40)), 2, 0);
+    two.full.state = FullState::Running;
+    for s in [&mut one, &mut two] {
+        s.branch = format!("anthrex/{id}/stage-{}", s.n);
+    }
+    info.stages = vec![one, two];
+    let shell = super::run_fixtures::pty(1, "shell", PROJECT, proto::Status::Idle);
+    (snapshot(10_000, vec![info]), vec![shell])
+}

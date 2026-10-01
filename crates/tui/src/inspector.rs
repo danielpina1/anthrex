@@ -415,6 +415,7 @@ mod run_task_sections;
 
 pub use panel::panel_rows;
 pub(crate) use run_stage::tier_duration;
+pub(crate) use run_task::state_word;
 pub use run_task::{task_panel_room, task_panel_rows};
 
 #[cfg(test)]

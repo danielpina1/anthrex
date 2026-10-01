@@ -171,6 +171,11 @@ fn graph_boxes_are_never_accented() {
                 );
             }
         }
+        // Milestone 9.0.7 decision 22: at 80x24 the run view is the compact list, which
+        // has no boxes; the graph's are checked at 120x40.
+        if crate::ui::overview::view(&app, main).list {
+            continue;
+        }
         // `t0` is `t1`'s dependency, so it is lit: its box's corner is bold.
         let (at, row) = audit::find(&buffer, "t0 proto")
             .into_iter()

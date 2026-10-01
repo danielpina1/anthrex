@@ -90,6 +90,8 @@ pub struct View {
     /// Whether `footer` is the panel (`areas` gave it a panel's height), so what is
     /// drawn there can never disagree with the height it was drawn into.
     pub panel: bool,
+    /// Decision 22: the canvas draws `run_list` instead of the graph.
+    pub list: bool,
     pub layout: graph::Layout,
     pub pan: Pan,
 }
@@ -120,6 +122,7 @@ pub fn view_of(app: &App, main: Rect, rows: &[Row<'_>]) -> View {
         canvas,
         footer,
         panel: footer.height >= INSPECTOR_HEIGHT,
+        list: app.run_view.is_some() && super::inset(main).height < super::run_list::RUN_LIST_BELOW,
         layout,
         pan,
     }
@@ -146,8 +149,12 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     // second. The run view's rows while it is open (milestone 8c decision 11).
     let rows = app.nav_rows();
     let view = view_of(app, area, &rows);
-    let lines = paint(&view.layout, view.canvas, view.pan, &rows, app);
-    frame.render_widget(Paragraph::new(lines), view.canvas);
+    if view.list {
+        super::run_list::render(frame, app, view.canvas, &rows);
+    } else {
+        let lines = paint(&view.layout, view.canvas, view.pan, &rows, app);
+        frame.render_widget(Paragraph::new(lines), view.canvas);
+    }
 
     // What stands below the canvas is whatever `areas` made room for: the
     // panel when it gave the rect the panel's height, and the single line

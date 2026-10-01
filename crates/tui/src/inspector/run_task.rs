@@ -106,7 +106,7 @@ fn footer_text(run: &RunInfo, task: &TaskInfo) -> String {
 
 /// The state word: the stage, then ` · held` while the task waits in a hold
 /// (milestone 9 decision 28); `planned` at the gate.
-pub(super) fn state_word(run: &RunInfo, task: &TaskInfo) -> String {
+pub(crate) fn state_word(run: &RunInfo, task: &TaskInfo) -> String {
     if run.state == RunState::AwaitingApproval {
         return "planned".to_owned();
     }

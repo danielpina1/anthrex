@@ -123,7 +123,7 @@ pub(crate) fn stage_text_in(run: &RunInfo, stage: &StageInfo, ascii: bool) -> St
 }
 
 /// The tag after a task made by the engine rather than the plan: ` (bisect)`, ` (sync)`.
-fn origin_tag(origin: TaskOrigin) -> &'static str {
+pub(crate) fn origin_tag(origin: TaskOrigin) -> &'static str {
     match origin {
         TaskOrigin::Plan => "",
         TaskOrigin::Bisect => " (bisect)",

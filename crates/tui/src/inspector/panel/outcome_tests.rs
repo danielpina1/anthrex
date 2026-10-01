@@ -153,6 +153,35 @@ fn at_80_columns_the_state_word_moves_under_the_title() {
     assert_eq!(drawn[2], "│   in review · r2         │");
 }
 
+/// Task 8's `map Gemini hook…` cut, in the compact list's real 80x24 run view (task
+/// 10, decision 22): the list's 44-column row cuts the title to `map Gem…`, and the
+/// panel below names it whole with the state word on its own row.
+#[test]
+fn at_80x24_the_compact_list_cuts_the_title_and_the_panel_keeps_it() {
+    let mut app = run_view(in_review(), 80, 24);
+    let layout = crate::ui::layout_for(&app, Rect::new(0, 0, 80, 24));
+    let view = crate::ui::overview::view(&app, layout.main);
+    assert!(view.list, "80x24 draws the compact list");
+    let buffer = crate::ui::audit::draw(&app, 80, 24);
+    let canvas: Vec<String> = (view.canvas.y..view.canvas.bottom())
+        .map(|y| {
+            let row: String = (view.canvas.x..view.canvas.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            row.trim_end().to_owned()
+        })
+        .collect();
+    let t2 = canvas
+        .iter()
+        .find(|row| row.contains("t2 map"))
+        .unwrap_or_else(|| panic!("t2's row:\n{}", canvas.join("\n")));
+    // The title is cut to its eight columns and the deps last (decision 22's order).
+    assert_eq!(t2, "▌   ◐ t2 map Gem…  in review ·…  after t0, …");
+    let rows = interior(&panel(&mut app, 80, 24));
+    assert_eq!(rows[0], "◐ t2  map Gemini hook events to status");
+    assert_eq!(rows[1], "  in review · r2");
+}
+
 /// At 80x24, where decision 17's panel is cut at 15 rows (the title on two rows).
 #[test]
 fn the_footer_stays_while_the_body_scrolls() {

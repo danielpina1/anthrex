@@ -175,6 +175,9 @@ pub(crate) fn shows(name: &str) -> Shows {
         "run view running" | "run view on a task" => row("RUN", Some("esc back"), &["j/k move"]),
         // Milestone 9.0.7 decision 12: the task panel's state word, always shown.
         "run view on a task in review" => row("in review · r2", Some("esc back"), &["j/k move"]),
+        // Decision 22: at 80x24 the two-stage run is the compact list; the task panel
+        // below names `t2`'s state whole.
+        "run view as a list" => row("in review · r1", Some("esc back"), &["j/k move"]),
         "conversation" => row("CHAT", None, &["C-b ? help"]),
         // Decision 11: the Alerts view on `t2`'s blocked alert. Its detail row's `o open
         // task` drops first at 80x24 (decision 34's priorities); the bar keeps `o open`.
@@ -317,6 +320,10 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
         (
             "run view on a task in review",
             on_task(run_view(with(running(), in_review_r2)), "t1"),
+        ),
+        (
+            "run view as a list",
+            crate::ui::run_list::tests::two_stage_run_selected("t2"),
         ),
         ("conversation", with(gate(), |a| chord(a, 'm'))),
         // Decision 11: `C-b a`, then `j`: the Alerts view on the blocked alert.

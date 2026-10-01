@@ -18,6 +18,7 @@ pub mod plan_review;
 pub mod profile;
 pub mod run_edit;
 pub mod run_goal;
+pub mod run_list;
 pub mod settings;
 pub mod sidebar;
 pub mod stats;

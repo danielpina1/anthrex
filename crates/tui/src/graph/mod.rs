@@ -14,7 +14,7 @@ use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 pub mod paint;
-mod run_text;
+pub(crate) mod run_text;
 pub mod viewport;
 
 pub use viewport::Pan;
