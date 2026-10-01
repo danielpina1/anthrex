@@ -19,6 +19,8 @@ pub struct SettingsCache {
     pub doc: SettingsDoc,
     pub origin: BTreeMap<String, Origin>,
     pub path: PathBuf,
+    /// The request id of the reply that set this cache; an older reply never replaces it.
+    pub id: u64,
 }
 
 impl SettingsCache {
@@ -65,35 +67,46 @@ impl App {
     }
 
     /// `route_reply`'s settings arm: a reply to a `Get` or a `Put` of ours, by id. A
-    /// `Settings` reply with any other id is dropped.
+    /// `Settings` reply with any other id is dropped, and one whose id names another
+    /// kind of pending request is left for its owner. The daemon spawns each request, so
+    /// replies can arrive out of order: a reply applies only when its id is newer than
+    /// the id that last set the cache.
     pub(super) fn route_settings_reply(&mut self, reply: &RunReply) -> Option<Vec<Effect>> {
         let RunReply::Settings { reply, request_id } = reply else {
             return None;
         };
-        let Some(pending) = self.replies.take(*request_id) else {
+        let Some(id) = *request_id else {
             return Some(vec![]);
         };
-        let put = match pending.what {
-            PendingWhat::SettingsGet => false,
-            PendingWhat::SettingsPut => true,
-            _ => return None,
+        let put = match self.replies.peek(id) {
+            None => return Some(vec![]),
+            Some(PendingWhat::SettingsGet) => false,
+            Some(PendingWhat::SettingsPut) => true,
+            Some(_) => return None,
         };
+        self.replies.take(Some(id));
+        let newer = self.settings_cache.as_ref().is_none_or(|c| id > c.id);
         let mut effects = Vec::new();
         match &**reply {
             SettingsReply::Current { doc, origin, path } if !put => {
-                self.set_cache(SettingsCache {
-                    doc: doc.clone(),
-                    origin: origin.clone(),
-                    path: path.clone(),
-                });
+                if newer {
+                    self.set_cache(SettingsCache {
+                        doc: doc.clone(),
+                        origin: origin.clone(),
+                        path: path.clone(),
+                        id,
+                    });
+                }
             }
             SettingsReply::Saved { doc, origin } if put => {
                 match self.settings_cache.as_ref().map(|c| c.path.clone()) {
-                    Some(path) => self.set_cache(SettingsCache {
+                    Some(path) if newer => self.set_cache(SettingsCache {
                         doc: doc.clone(),
                         origin: origin.clone(),
                         path,
+                        id,
                     }),
+                    Some(_) => {}
                     // No `Current` yet: the path is unknown, so ask.
                     None => effects.push(self.settings_fetch()),
                 }

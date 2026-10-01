@@ -498,6 +498,12 @@ impl App {
     /// Called every 100 ms: advances the spinner, expires toasts, retries a dropped
     /// `Subscribe`, flushes a debounced resize.
     pub fn on_tick(&mut self) -> Vec<Effect> {
+        let mut effects = self.expire_replies();
+        effects.extend(self.tick());
+        effects
+    }
+
+    fn tick(&mut self) -> Vec<Effect> {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
         self.forget_stale_panel_state();
         if self
@@ -510,7 +516,6 @@ impl App {
         // Decision 36: the third of the three ways `C-b Q`'s wait can end — nothing
         // arrived at all within `link::STOPPING_TIMEOUT`.
         self.check_stopping_timeout();
-        self.expire_replies();
         let retries = self.retry_dropped_subscribes();
         if !retries.is_empty() {
             return retries;

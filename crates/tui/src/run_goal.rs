@@ -47,7 +47,8 @@ const FIELDS: [GoalField; 6] = [
 pub enum GoalModel {
     Default,
     Pick(usize),
-    Custom(TextInput),
+    /// Selects [`GoalForm::custom`], whose text survives a move of the picker.
+    Custom,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +60,8 @@ pub struct GoalForm {
     /// `None` is the configured orchestrator (`[orchestrator.agent]`, then the default).
     pub runtime: Option<Runtime>,
     pub model: GoalModel,
+    /// The text typed after `custom…`; kept while the picker moves away and back.
+    pub custom: TextInput,
     /// The settings cache's roster as of the last `set_roster` (decision 24); empty
     /// while no cache has arrived.
     pub roster: Vec<ModelEntry>,
@@ -135,6 +138,7 @@ impl GoalForm {
             goal: TextArea::new(),
             runtime: None,
             model: GoalModel::Default,
+            custom: TextInput::default(),
             roster: Vec::new(),
             trust_project: false,
             yes: false,
@@ -171,7 +175,7 @@ impl GoalForm {
         match &self.model {
             GoalModel::Default => 0,
             GoalModel::Pick(i) => 1 + i,
-            GoalModel::Custom(_) => 1 + self.models().len(),
+            GoalModel::Custom => 1 + self.models().len(),
         }
     }
 
@@ -243,15 +247,17 @@ impl GoalForm {
         self.runtime = next_runtime(self.runtime, forward);
         // A model names one runtime's model.
         self.model = GoalModel::Default;
+        self.custom = TextInput::default();
     }
 
     /// `←`/`→` always move the picker; `Space` does too, except while `custom…` is
     /// chosen, where it and every other character edit the text.
     fn on_model_key(&mut self, key: KeyEvent) {
-        match (&mut self.model, key.code) {
+        match (&self.model, key.code) {
             (_, KeyCode::Right) => self.cycle_model(true),
             (_, KeyCode::Left) => self.cycle_model(false),
-            (GoalModel::Custom(input), _) => {
+            (GoalModel::Custom, _) => {
+                let input = &mut self.custom;
                 let full = input.text().chars().count() >= TEXT_MAX_CHARS;
                 let typing = matches!(key.code, KeyCode::Char(_))
                     && !key.modifiers.contains(KeyModifiers::CONTROL);
@@ -274,7 +280,7 @@ impl GoalForm {
         };
         self.model = match to {
             0 => GoalModel::Default,
-            n if n == len - 1 => GoalModel::Custom(TextInput::default()),
+            n if n == len - 1 => GoalModel::Custom,
             n => GoalModel::Pick(n - 1),
         };
     }
@@ -285,10 +291,10 @@ impl GoalForm {
         if self.submitting {
             return;
         }
-        match (self.focus, &mut self.model) {
+        match (self.focus, &self.model) {
             (GoalField::Goal, _) => self.goal.on_paste(text),
-            (GoalField::Model, GoalModel::Custom(input)) => {
-                insert_bounded(input, &clean_line(text));
+            (GoalField::Model, GoalModel::Custom) => {
+                insert_bounded(&mut self.custom, &clean_line(text));
             }
             _ => {}
         }
@@ -314,8 +320,8 @@ impl GoalForm {
         match &self.model {
             GoalModel::Default => None,
             GoalModel::Pick(i) => self.models().get(*i).cloned(),
-            GoalModel::Custom(input) => {
-                let text = input.text().trim();
+            GoalModel::Custom => {
+                let text = self.custom.text().trim();
                 (!text.is_empty()).then(|| text.to_string())
             }
         }

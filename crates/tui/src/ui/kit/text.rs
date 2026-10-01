@@ -87,6 +87,18 @@ pub(crate) fn wrap_words(text: &str, width: usize) -> Vec<String> {
 /// column short of `width` (so the cursor always has a cell) and the view scrolls to
 /// keep the cursor's row visible. The cursor is drawn reversed.
 pub fn text_area(area: &TextArea, rows: u16, width: u16, p: Palette) -> Vec<Line<'static>> {
+    text_area_focus(area, rows, width, true, p)
+}
+
+/// [`text_area`] with the cursor drawn only when `focused`: a form whose focus is on
+/// another field leaves the area's text plain.
+pub fn text_area_focus(
+    area: &TextArea,
+    rows: u16,
+    width: u16,
+    focused: bool,
+    p: Palette,
+) -> Vec<Line<'static>> {
     let rows = usize::from(rows);
     let wrap_at = usize::from(width).saturating_sub(1).max(1);
     // Visual rows of graphemes, and where the cursor is.
@@ -129,7 +141,7 @@ pub fn text_area(area: &TextArea, rows: u16, width: u16, p: Palette) -> Vec<Line
             out.push(Line::default());
             continue;
         };
-        if r != cursor_at.0 {
+        if r != cursor_at.0 || !focused {
             out.push(Line::from(row.concat()));
             continue;
         }

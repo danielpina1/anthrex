@@ -241,12 +241,78 @@ fn a_put_that_was_not_saved_asks_for_the_settings_again() {
 }
 
 #[test]
+fn an_older_reply_never_replaces_a_newer_cache() {
+    let mut app = app();
+    let get = gets(&[app.settings_fetch()])[0];
+    app.on_daemon(reply(current(roster()), get));
+    // A newer Get, then a Put after it: the Put's Saved lands first, the Get's
+    // (older) Current arrives late and is ignored.
+    let older = gets(&[app.settings_fetch()])[0];
+    let (put, _) = tagged(&[app.settings_put(doc(vec![]))]);
+    let one = vec![entry(Runtime::Claude, "claude-opus-5-5")];
+    app.on_daemon(reply(saved(one.clone()), put));
+    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models, one);
+    assert!(app.on_daemon(reply(current(roster()), older)).is_empty());
+    assert_eq!(app.settings_cache.as_ref().unwrap().doc.models, one);
+    assert!(
+        !app.replies.contains(older),
+        "the stale reply was still spent"
+    );
+}
+
+#[test]
+fn saved_with_no_cache_asks_for_the_settings() {
+    let mut app = app();
+    let (put, _) = tagged(&[app.settings_put(doc(vec![]))]);
+    let effects = app.on_daemon(reply(saved(roster()), put));
+    assert_eq!(gets(&effects).len(), 1, "{effects:?}");
+    assert_eq!(app.settings_cache, None);
+}
+
+#[test]
+fn a_put_that_expires_asks_for_the_settings_again() {
+    let mut app = app_with_cache(roster());
+    let (put, _) = tagged(&[app.settings_put(doc(vec![]))]);
+    app.set_reply_sent_at(put, Instant::now() - std::time::Duration::from_secs(60));
+    let effects = app.on_tick();
+    assert_eq!(gets(&effects).len(), 1, "{effects:?}");
+    assert_eq!(app.toast_text(), Some("no reply from daemon"));
+    assert!(!app.replies.contains(put));
+}
+
+#[test]
+fn a_settings_reply_with_another_kinds_id_leaves_that_entry() {
+    let mut app = app();
+    app.replies.insert(
+        7,
+        PendingWhat::FormBrief {
+            run_id: "r".into(),
+            task_id: "t".into(),
+        },
+        std::time::Duration::from_secs(30),
+    );
+    app.on_daemon(reply(current(roster()), 7));
+    assert!(app.replies.contains(7));
+    assert_eq!(app.settings_cache, None);
+}
+
+#[test]
+fn a_refused_put_send_stops_waiting_and_says_so() {
+    let mut app = app_with_cache(roster());
+    let (id, request) = tagged(&[app.settings_put(doc(vec![]))]);
+    let msg = ClientMsg::RunTagged { id, request };
+    app.on_send_failed(&msg);
+    assert!(!app.replies.contains(id));
+    assert!(app.toast_text().is_some());
+}
+
+#[test]
 fn a_put_waits_longer_than_two_write_timeouts() {
     let mut app = app_with_cache(roster());
     let (id, _) = tagged(&[app.settings_put(doc(vec![]))]);
     // The daemon may wait 5 s for the write lock and 5 s for the save.
     let later = Instant::now() + std::time::Duration::from_secs(11);
-    assert_eq!(app.replies.expire(later), 0);
+    assert!(app.replies.expire(later).is_empty());
     assert!(app.replies.contains(id));
     assert_eq!(app.replies.peek(id), Some(&PendingWhat::SettingsPut));
 }
@@ -342,14 +408,17 @@ fn custom_reveals_the_text_line_and_its_text_is_the_model_sent() {
     focus(&mut app, GoalField::Model);
     // `custom…` is last: one step back from `default` wraps to it.
     tap(&mut app, KeyCode::Left);
-    assert!(matches!(form(&app).model, GoalModel::Custom(_)));
+    assert!(matches!(form(&app).model, GoalModel::Custom));
     // Space and every character are text now; the arrows still move the picker.
     typed(&mut app, "my model");
     app.on_paste("-2\n".into());
-    let GoalModel::Custom(input) = &form(&app).model else {
-        panic!()
-    };
-    assert_eq!(input.text(), "my model-2");
+    assert_eq!(form(&app).custom.text(), "my model-2");
+    // The picker moving away and back keeps what was typed.
+    tap(&mut app, KeyCode::Left);
+    assert_eq!(form(&app).model, GoalModel::Pick(1));
+    tap(&mut app, KeyCode::Right);
+    assert_eq!(form(&app).model, GoalModel::Custom);
+    assert_eq!(form(&app).custom.text(), "my model-2");
     assert_eq!(
         request(&mut app, "add a"),
         RunRequest::StartGoal {
@@ -376,7 +445,7 @@ fn custom_with_no_text_is_the_default_model() {
     focus(&mut app, GoalField::Model);
     assert_eq!(picker(&app).0, ["default", "gpt-6-sol", "custom…"]);
     tap(&mut app, KeyCode::Left);
-    assert!(matches!(form(&app).model, GoalModel::Custom(_)));
+    assert!(matches!(form(&app).model, GoalModel::Custom));
     let RunRequest::StartGoal { orchestrator, .. } = request(&mut app, "add a") else {
         panic!()
     };

@@ -104,12 +104,17 @@ impl PendingReplies {
         self.by_id.clear();
     }
 
-    /// Drops every entry past its timeout at `now`; how many went.
-    pub fn expire(&mut self, now: Instant) -> usize {
-        let before = self.by_id.len();
-        self.by_id
-            .retain(|_, p| now.saturating_duration_since(p.sent_at) < p.timeout);
-        before - self.by_id.len()
+    /// Drops every entry past its timeout at `now`; what each one was.
+    pub fn expire(&mut self, now: Instant) -> Vec<PendingWhat> {
+        let mut gone = Vec::new();
+        self.by_id.retain(|_, p| {
+            let live = now.saturating_duration_since(p.sent_at) < p.timeout;
+            if !live {
+                gone.push(p.what.clone());
+            }
+            live
+        });
+        gone
     }
 }
 
@@ -216,10 +221,18 @@ impl App {
 
     /// `on_tick` (decision 19): a pending request with no reply within its timeout is
     /// dropped with an error toast, and changes no state.
-    pub(super) fn expire_replies(&mut self) {
-        if self.replies.expire(Instant::now()) > 0 {
-            self.toast_at(ToastLevel::Error, "no reply from daemon");
+    pub(super) fn expire_replies(&mut self) -> Vec<Effect> {
+        let gone = self.replies.expire(Instant::now());
+        if gone.is_empty() {
+            return vec![];
         }
+        self.toast_at(ToastLevel::Error, "no reply from daemon");
+        // A save that went unanswered may still land: ask for the settings again, so a
+        // late `Saved` does not leave the cache stale.
+        if gone.contains(&PendingWhat::SettingsPut) {
+            return vec![self.settings_fetch()];
+        }
+        vec![]
     }
 
     /// Tests move a request's sending into the past instead of sleeping (Global

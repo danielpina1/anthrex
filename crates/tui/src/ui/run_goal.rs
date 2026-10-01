@@ -57,6 +57,15 @@ fn label(form: &GoalForm, field: GoalField, p: Palette) -> Vec<Span<'static>> {
     ]
 }
 
+/// Whether the text area's first line is its `↑ n more` mark (`^ n more` in ASCII).
+fn starts_with_mark(lines: &[Line<'static>]) -> bool {
+    let first: String = lines
+        .first()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .unwrap_or_default();
+    (first.starts_with("↑ ") || first.starts_with("^ ")) && first.ends_with(" more")
+}
+
 fn indent() -> Span<'static> {
     Span::raw(" ".repeat(MARK_W + LABEL_W))
 }
@@ -116,10 +125,13 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
 
     // The text area takes `rows + 2` lines, so the dialog keeps its height when a
     // scroll mark appears.
-    let mut area = kit::text_area(&form.goal, GOAL_ROWS, value_w as u16, p);
+    let focused = form.focus == GoalField::Goal && !form.submitting;
+    let mut area = kit::text_area_focus(&form.goal, GOAL_ROWS, value_w as u16, focused, p);
     area.resize(usize::from(GOAL_ROWS) + 2, Line::default());
+    // The label sits on the first text row, below a leading `↑ n more` mark.
+    let first = usize::from(starts_with_mark(&area));
     for (i, line) in area.into_iter().enumerate() {
-        let mut spans = if i == 0 {
+        let mut spans = if i == first {
             label(form, GoalField::Goal, p)
         } else {
             vec![indent()]
@@ -144,7 +156,8 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
         shown
     };
     body.push(choice_line(form, GoalField::Model, shown, p));
-    if let GoalModel::Custom(input) = &form.model {
+    if form.model == GoalModel::Custom {
+        let input = &form.custom;
         let focused = form.focus == GoalField::Model && !form.submitting;
         body.push(input_line(input, value_w, focused));
     }
@@ -185,6 +198,7 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
         let keys = [
             hint("⏎", "start", 9),
             hint("tab", "next", 6),
+            hint("^J", "newline", 3),
             hint("esc", "cancel", 1),
         ];
         body.push(kit::hints_joined(width, &keys, dot(p), p));

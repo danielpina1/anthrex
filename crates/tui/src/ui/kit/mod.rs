@@ -12,8 +12,8 @@ mod text;
 pub use dialog::{choice, choice_in, dialog_area, dialog_frame};
 pub use hints::{Hint, hints, hints_joined};
 pub use rows::{labelled_rows, run_name, run_name_in, scroll_marks};
-pub use text::text_area;
 pub(crate) use text::{cut, wrap_words};
+pub use text::{text_area, text_area_focus};
 
 /// Dialog text wraps at this many columns (decision 5).
 pub const WRAP: u16 = 60;
