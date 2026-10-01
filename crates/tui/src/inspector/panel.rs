@@ -22,7 +22,9 @@ const LABEL_GAP: usize = 2;
 /// The two spaces between one column and the next (decision 4).
 const GUTTER: usize = 2;
 
-/// [`render_in`] with the default palette (no truecolor, unicode).
+/// [`render_in`] with the default palette (no truecolor, unicode), for the panel's
+/// own tests, which draw an `Inspection` without an `App`.
+#[cfg(test)]
 pub fn render(frame: &mut Frame, inspection: &Inspection, area: Rect) {
     let p = Palette {
         accent: theme::DEFAULT_ACCENT,

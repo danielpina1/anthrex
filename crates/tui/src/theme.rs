@@ -4,9 +4,11 @@ use proto::{RunState, Status, SubagentInfo, SubagentState, TaskState};
 use ratatui::style::{Color, Modifier, Style};
 
 /// The built-in accent, used until `config.toml`'s `accent` (decision 4) says
-/// otherwise. Every renderer takes its accent from `app.settings.accent`
-/// instead of this constant directly (decision 38); it survives only as
-/// `UiSettings::default`'s source of truth and this module's own tests.
+/// otherwise. Renderers never use this constant directly (decision 38): they draw
+/// the `Accent` role through `role(Role::Accent, app.palette())`, which is
+/// `app.settings.accent` under truecolor and ANSI light blue otherwise (milestone
+/// 9.0.6 decision 1). It survives as `UiSettings::default`'s source of truth and
+/// as the palette of tests that draw without an `App`.
 pub const DEFAULT_ACCENT: Color = Color::Rgb(0x89, 0xb4, 0xfa);
 pub const DIM: Color = Color::DarkGray;
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

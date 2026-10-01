@@ -461,6 +461,7 @@ impl App {
             Command::RemoveWindow => self.open_remove_confirm(),
             Command::ToggleSidebar => {
                 self.sidebar_visible = !self.sidebar_visible;
+                self.release_a_hidden_sidebar();
                 vec![]
             }
             Command::Detach => vec![Effect::Quit],

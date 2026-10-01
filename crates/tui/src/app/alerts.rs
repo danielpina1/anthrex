@@ -215,7 +215,7 @@ impl App {
         self.keymap.set_alerts_mode(self.alerts_focus.is_some());
     }
 
-    fn leave_alerts(&mut self) {
+    pub(super) fn leave_alerts(&mut self) {
         self.alerts_focus = None;
         self.sync_alerts_mode();
     }

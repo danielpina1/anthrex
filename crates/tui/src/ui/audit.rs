@@ -4,7 +4,7 @@
 //! `assert_actionable`. Every screen task adds its screen's fixture here; fixture text
 //! is ASCII only, so an ASCII render can be checked whole. Pure, and test-only.
 
-use crate::app::{App, Modal, PendingAction};
+use crate::app::{App, Modal};
 use crate::theme::{Palette, Role, role};
 use crate::tree::run_fixtures::{RUN_ID, gate_fixture, three_task_fixture};
 use crate::{settings::UiSettings, tree};
@@ -63,35 +63,56 @@ pub(crate) fn find(buffer: &Buffer, text: &str) -> Vec<(u16, u16)> {
 }
 
 const CORNERS: [&str; 3] = ["╭", "┌", "+"];
+const BOTTOM_LEFTS: [&str; 3] = ["╰", "└", "+"];
 const HORIZONTALS: [&str; 2] = ["─", "-"];
 const VERTICALS: [&str; 2] = ["│", "|"];
-const TOP_RIGHTS: [&str; 3] = ["╮", "┐", "+"];
+/// Every glyph a border is drawn with, the junctions an edge leaves on a box included.
+const BORDER_GLYPHS: &str = "╭╮╰╯┌┐└┘├┤┬┴┼─│+-|";
 
 /// How many frames wear the accent. A frame is a top-left corner (`╭`, `┌` or `+`) in
-/// the accent, with a vertical border glyph (`│`, `|`) in the accent below it, whose
-/// row runs on, past any title, to a top-right corner (`╮`, `┐` or `+`) in the accent
-/// with a vertical in the accent below it, at least one horizontal border glyph (`─`,
-/// `-`) in the accent lying between the two corners. (A title starts in the column
-/// right after its corner, so the corner's right neighbour alone cannot tell.) A `+`
-/// whose left neighbour is an accented horizontal is a top-right corner, not a frame.
+/// the accent whose left side runs down, as verticals (`│`, `|`) in the accent, to a
+/// bottom-left corner (`╰`, `└` or `+`) in the accent whose bottom edge goes on to the
+/// right: the first accented border glyph after the corner (past a bottom title) is a
+/// horizontal (`─`, `-`). The bottom edge is read, not the top, because a title
+/// starts in the column right after the top corner and can fill the top row; a
+/// modal's top row can also lie on a pane's top row. A left side that runs off the
+/// buffer's last row is a frame clipped at the screen's edge and counts (ratatui itself
+/// draws a clipped block's bottom border on the last row; this is a frame drawn
+/// without one, or cut by hand), unless its
+/// corner is a `+` right after an accented horizontal (an ASCII frame's top-right
+/// corner, whose right side would read the same). Each top-left corner is one frame.
 pub(crate) fn accented_frames(buffer: &Buffer, p: Palette) -> usize {
     let accent = role(Role::Accent, p).fg;
     let area = buffer.area;
-    let is = |x: u16, y: u16, set: &[&str]| {
-        let cell = &buffer[(x, y)];
-        Some(cell.fg) == accent && set.contains(&cell.symbol())
-    };
-    let post = |x: u16, y: u16, set: &[&str]| is(x, y, set) && is(x, y + 1, &VERTICALS);
+    let lit = |x: u16, y: u16| Some(buffer[(x, y)].fg) == accent;
+    let is = |x: u16, y: u16, set: &[&str]| lit(x, y) && set.contains(&buffer[(x, y)].symbol());
     let mut count = 0;
     for y in area.y..area.bottom().saturating_sub(1) {
         for x in area.x..area.right() {
-            if !post(x, y, &CORNERS) || (x > area.x && is(x - 1, y, &HORIZONTALS)) {
+            if !is(x, y, &CORNERS) || !is(x, y + 1, &VERTICALS) {
                 continue;
             }
-            let Some(right) = (x + 1..area.right()).find(|&e| post(e, y, &TOP_RIGHTS)) else {
-                continue;
+            let mut bottom = y + 1;
+            while bottom < area.bottom() && is(x, bottom, &VERTICALS) {
+                bottom += 1;
+            }
+            let frame = if bottom == area.bottom() {
+                let top_right =
+                    buffer[(x, y)].symbol() == "+" && x > area.x && is(x - 1, y, &HORIZONTALS);
+                !top_right
+            } else {
+                // A top-left corner ends the side too: a frame stacked on this one
+                // shares its bottom row.
+                let ends = is(x, bottom, &BOTTOM_LEFTS) || is(x, bottom, &CORNERS);
+                let border = |e: u16| {
+                    let symbol = buffer[(e, bottom)].symbol();
+                    lit(e, bottom) && !symbol.is_empty() && BORDER_GLYPHS.contains(symbol)
+                };
+                ends && (x + 1..area.right())
+                    .find(|&e| border(e))
+                    .is_some_and(|e| is(e, bottom, &HORIZONTALS))
             };
-            if (x + 1..right).any(|e| is(e, y, &HORIZONTALS)) {
+            if frame {
                 count += 1;
             }
         }
@@ -145,7 +166,7 @@ pub(crate) fn shows(name: &str) -> Shows {
         actionable,
     };
     match name {
-        "pane" => row("shell", None, &["C-b ? help"]),
+        "pane" | "sidebar tree, then hidden" => row("shell", None, &["C-b ? help"]),
         "sidebar tree" => row("TREE", Some("esc back"), &["j/k move"]),
         "project overview" => row("TREE", Some("esc back"), &["j/k move"]),
         "run view at the gate" => row("RUN", Some("esc back"), &["a approve", "x reject"]),
@@ -216,6 +237,13 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
     vec![
         ("pane", gate()),
         ("sidebar tree", with(gate(), |a| chord(a, 't'))),
+        (
+            "sidebar tree, then hidden",
+            with(gate(), |a| {
+                chord(a, 't');
+                chord(a, 's');
+            }),
+        ),
         ("project overview", with(gate(), |a| chord(a, 'T'))),
         ("run view at the gate", run_view(gate())),
         ("run view running", run_view(running())),
@@ -233,10 +261,11 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             "confirm over the overview",
             with(gate(), |a| {
                 chord(a, 'T');
-                a.modal = Some(Modal::Confirm {
-                    message: "Kill 'shell'?".into(),
-                    action: PendingAction::Kill(1),
-                });
+                chord(a, 'x');
+                assert!(
+                    matches!(a.modal, Some(Modal::Confirm { .. })),
+                    "`C-b x` asks"
+                );
             }),
         ),
         (

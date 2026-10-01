@@ -10,7 +10,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::Line;
-use ratatui::widgets::{Paragraph, Widget};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 fn palette(ascii: bool) -> Palette {
     Palette {
@@ -220,6 +220,95 @@ fn accented_frames_counts_dialog_and_pane_corners() {
         "{}",
         audit::rows(&buffer).join("\n")
     );
+}
+
+fn count(p: Palette, width: u16, height: u16, frames: &[(Rect, Block<'static>)]) -> usize {
+    let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
+    for (area, block) in frames {
+        Clear.render(*area, &mut buffer);
+        block.clone().render(*area, &mut buffer);
+    }
+    let n = audit::accented_frames(&buffer, p);
+    eprintln!("{n}:\n{}", audit::rows(&buffer).join("\n"));
+    n
+}
+
+/// Fix round 1: the frames a top-row reading miscounted. Abutting frames, frames
+/// sharing a column (rounded and ASCII), a top row filled by its title, left and right
+/// titles filling it, a modal whose top row lies on a pane's top row.
+#[test]
+fn accented_frames_counts_shared_and_filled_edges() {
+    let (p, ascii) = (palette(false), palette(true));
+    let pane = |t: &str, keys: bool, p: Palette| kit::pane_frame(Line::from(t.to_owned()), keys, p);
+    let a = Rect::new(0, 0, 8, 4);
+    for q in [p, ascii] {
+        let abut = [
+            (a, pane("a", true, q)),
+            (Rect::new(8, 0, 8, 4), pane("b", true, q)),
+        ];
+        assert_eq!(count(q, 20, 6, &abut), 2, "abutting, ascii {}", q.ascii);
+        let shared = [
+            (Rect::new(0, 0, 9, 4), pane("a", true, q)),
+            (Rect::new(8, 0, 8, 4), pane("b", true, q)),
+        ];
+        assert_eq!(
+            count(q, 20, 6, &shared),
+            2,
+            "a shared column, ascii {}",
+            q.ascii
+        );
+        let filled = [
+            (a, pane("a title too long", true, q)),
+            (Rect::new(8, 0, 8, 4), pane("b", true, q)),
+        ];
+        assert_eq!(
+            count(q, 20, 6, &filled),
+            2,
+            "a filled title, ascii {}",
+            q.ascii
+        );
+        let both = pane("left", true, q).title(Line::from("right side").right_aligned());
+        assert_eq!(count(q, 20, 6, &[(Rect::new(0, 0, 12, 4), both)]), 1);
+    }
+    // The help at 80x24 sits on row 0, over an accented pane, and has a bottom title.
+    let modal = pane("keys", true, p).title_bottom(Line::from(" any key  close "));
+    let under = |keys| {
+        let base = (Rect::new(0, 0, 40, 12), pane("agents", keys, p));
+        [base, (Rect::new(10, 0, 20, 12), modal.clone())]
+    };
+    assert_eq!(count(p, 40, 12, &under(true)), 2, "two accents");
+    assert_eq!(count(p, 40, 12, &under(false)), 1, "the modal's only");
+}
+
+/// Fix round 1: a frame clipped at the screen's bottom edge counts once, whether
+/// ratatui drew its bottom border on the last row or it has none; an ASCII one's
+/// top-right `+` is not a second frame. A frame whose bottom row is overwritten above
+/// the edge is broken, and does not count.
+#[test]
+fn accented_frames_counts_a_frame_clipped_at_the_bottom() {
+    let open = Borders::TOP | Borders::LEFT | Borders::RIGHT;
+    for q in [palette(false), palette(true)] {
+        let pane = |t: &str| kit::pane_frame(Line::from(t.to_owned()), true, q);
+        let drawn = [(Rect::new(0, 5, 10, 10), pane("cut"))];
+        assert_eq!(
+            count(q, 12, 10, &drawn),
+            1,
+            "ratatui's clip, ascii {}",
+            q.ascii
+        );
+        let bare = [(Rect::new(0, 5, 10, 5), pane("open").borders(open))];
+        assert_eq!(
+            count(q, 12, 10, &bare),
+            1,
+            "no bottom border, ascii {}",
+            q.ascii
+        );
+    }
+    let p = palette(false);
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 12, 10));
+    kit::pane_frame(Line::from("x"), true, p).render(Rect::new(0, 2, 10, 5), &mut buffer);
+    Paragraph::new("overwritten").render(Rect::new(0, 6, 12, 1), &mut buffer);
+    assert_eq!(audit::accented_frames(&buffer, p), 0);
 }
 
 /// Decision 2: the pane frame is `+ - |` in ASCII, its title wrapped in one space
