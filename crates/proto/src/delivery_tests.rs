@@ -28,7 +28,7 @@ fn a_stage_pr() -> StagePrInfo {
         url: "https://github.com/fake/app/pull/142".into(),
         state: PrState::Open,
         base: "main".into(),
-        opened_at: 1_700_000_000,
+        opened_at: 1_700_000_100,
         head: "aaaa1111".into(),
         ci: CiState::Red,
         checks: vec![
@@ -45,15 +45,15 @@ fn a_stage_pr() -> StagePrInfo {
         ],
         threads: ThreadCounts {
             new: 2,
-            tasked: 1,
-            replied: 0,
-            ignored: 3,
+            tasked: 3,
+            replied: 4,
+            ignored: 5,
         },
         fix_tasks: vec!["fix3 ci working".into()],
         paused: false,
         human_review_secs: 600,
-        merged_at: None,
-        merge_commit: None,
+        merged_at: Some(1_700_009_200),
+        merge_commit: Some("bbbb2222".into()),
     }
 }
 
@@ -78,13 +78,95 @@ fn a_stage_line() -> StageLine {
         pr: 142,
         time_to_open_secs: 90,
         human_review_secs: 600,
-        ci_rounds: 1,
+        ci_rounds: 5,
         review_rounds: 2,
-        sync_tasks: 0,
+        sync_tasks: 3,
         outcome: StageOutcome::Merged,
         merge_method: MergeMethod::SquashOrRebase,
         at: 1_700_009_000,
     }
+}
+
+/// Every key exactly as Interfaces "proto" spells it, each with a value no other field
+/// of its type has, so a swapped or renamed key fails here (review of `628a932`).
+#[test]
+fn delivery_keys_are_pinned_by_literal_json() {
+    use serde_json::json;
+    assert_eq!(
+        serde_json::to_value(ThreadCounts {
+            new: 2,
+            tasked: 3,
+            replied: 4,
+            ignored: 5,
+        })
+        .unwrap(),
+        json!({"new": 2, "tasked": 3, "replied": 4, "ignored": 5})
+    );
+    assert_eq!(
+        serde_json::to_value(a_stage_pr()).unwrap(),
+        json!({
+            "number": 142,
+            "url": "https://github.com/fake/app/pull/142",
+            "state": "open",
+            "base": "main",
+            "opened_at": 1_700_000_100u64,
+            "head": "aaaa1111",
+            "ci": "red",
+            "checks": [
+                {"name": "build", "state": "green", "fix_task": null},
+                {"name": "test", "state": "red", "fix_task": "fix3"}
+            ],
+            "threads": {"new": 2, "tasked": 3, "replied": 4, "ignored": 5},
+            "fix_tasks": ["fix3 ci working"],
+            "paused": false,
+            "human_review_secs": 600,
+            "merged_at": 1_700_009_200u64,
+            "merge_commit": "bbbb2222"
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(a_delivery_info()).unwrap(),
+        json!({
+            "mode": "pr",
+            "remote": "origin",
+            "repo": "fake/app",
+            "watching": true,
+            "delivering": false,
+            "poll_secs": 60,
+            "skipped_stages": [2]
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(DeliveryProfile {
+            mode: DeliveryMode::Pr,
+            remote: "upstream".into(),
+        })
+        .unwrap(),
+        json!({"mode": "pr", "remote": "upstream"})
+    );
+    // The `stage` line is written to `history.jsonl` for good: its keys are decision
+    // 44's `{ v, run_id, stage, pr, time_to_open_secs, human_review_secs, ci_rounds,
+    // review_rounds, sync_tasks, outcome, merge_method, at }` plus Interfaces'
+    // `record_id` ("<run>/stage/<n>"), under `"type": "stage"`.
+    assert_eq!(
+        serde_json::to_value(HistoryLine::Stage(a_stage_line())).unwrap(),
+        json!({
+            "type": "stage",
+            "v": 4,
+            "record_id": "run-a1b2/stage/1",
+            "run_id": "run-a1b2",
+            "stage": 1,
+            "pr": 142,
+            "time_to_open_secs": 90,
+            "human_review_secs": 600,
+            "ci_rounds": 5,
+            "review_rounds": 2,
+            "sync_tasks": 3,
+            "outcome": "merged",
+            "merge_method": "squash_or_rebase",
+            "at": 1_700_009_000u64
+        })
+    );
 }
 
 #[test]
@@ -321,6 +403,13 @@ fn profile_without_delivery_writes_no_table() {
     let profile: RepoProfile = toml::from_str(include_str!("m9_1_profile.toml")).unwrap();
     let text = toml::to_string(&profile).unwrap();
     assert!(!text.contains("delivery"), "{text}");
+    assert!(
+        serde_json::to_value(&profile)
+            .unwrap()
+            .get("delivery")
+            .is_none(),
+        "skip_serializing_if leaves the key out"
+    );
     assert_eq!(text, include_str!("m9_1_profile.toml"), "unchanged for it");
 
     let with = RepoProfile {
