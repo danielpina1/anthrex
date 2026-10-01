@@ -231,23 +231,20 @@ fn more_alerts_than_rows_shows_more() {
     );
 }
 
+/// Milestone 9.0.7 decisions 1 and 11: the box is never focused. Under `C-b a` its
+/// border stays muted and it draws no selection; the view in the main pane has the
+/// keys, the accent and the reversed selection (`alerts_view_tests.rs`).
 #[test]
-fn the_focused_box_has_the_focused_border_and_reversed_selection() {
+fn the_box_is_never_focused() {
     let mut app = every_app();
+    let muted = theme::role(theme::Role::Muted, theme::Palette::PLAIN).fg;
     let (buffer, layout) = draw_at(&app, 80, 24);
     let corner = (layout.alerts.x, layout.alerts.y);
-    assert_eq!(
-        buffer[corner].style().fg,
-        theme::role(theme::Role::Muted, theme::Palette::PLAIN).fg
-    );
-    // Until task 6's Alerts view, `C-b a` still gives the box the keys, and so the
-    // accent (decision 1). Milestone 9.0.7 decision 10: the box draws no selection;
-    // the reversed-selection assertions move to task 6's view.
+    assert_eq!(buffer[corner].style().fg, muted);
     focus(&mut app);
     key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
     let (buffer, layout) = draw_at(&app, 80, 24);
-    let accent = crate::theme::role(crate::theme::Role::Accent, app.palette()).fg;
-    assert_eq!(buffer[corner].style().fg, accent);
+    assert_eq!(buffer[corner].style().fg, muted);
     let inner = layout.alerts_inner;
     for y in inner.y..inner.y + inner.height {
         for x in inner.x..inner.x + inner.width {
@@ -259,8 +256,8 @@ fn the_focused_box_has_the_focused_border_and_reversed_selection() {
             );
         }
     }
-    // The status bar says so.
-    assert_eq!(row(&buffer, 23), " ALERTS  j/k move  ⏎ go  esc back");
+    // The status bar says the view has the keys.
+    assert!(row(&buffer, 23).starts_with(" ALERTS  j/k move  ⏎ "));
 }
 
 #[test]
@@ -301,6 +298,17 @@ fn hidden_sidebar_shows_the_flag() {
     assert!(!row(&buffer, 23).contains('⚑'), "{:?}", row(&buffer, 23));
     let (buffer, _) = draw_at(&every_app(), 80, 24);
     assert!(!row(&buffer, 23).contains('⚑'), "{:?}", row(&buffer, 23));
+    // Decision 11: `C-b a` opens the view and leaves the sidebar hidden; the flag stays.
+    let mut app = every_app();
+    app.sidebar_visible = false;
+    focus(&mut app);
+    let (buffer, _) = draw_at(&app, 80, 24);
+    assert!(!app.sidebar_visible);
+    assert!(
+        row(&buffer, 23).starts_with(" ALERTS  ⚑ 10 "),
+        "{:?}",
+        row(&buffer, 23)
+    );
 }
 
 #[test]
@@ -434,9 +442,10 @@ fn the_status_bar_precedence_is_prefix_plan_alerts_tree() {
     key(&mut app, KeyCode::Char('t'), KeyModifiers::NONE);
     assert!(app.tree_input.is_some());
     focus(&mut app);
-    assert!(app.tree_input.is_some(), "tree mode stays under the box");
+    assert!(app.tree_input.is_some(), "tree mode stays under the view");
     let (buffer, _) = draw_at(&app, 120, 24);
-    assert_eq!(row(&buffer, 23), " ALERTS  j/k move  ⏎ go  esc back");
+    let keys = " ALERTS  j/k move  ⏎ focus  . actions  o open  esc back";
+    assert_eq!(row(&buffer, 23), keys);
     // The prefix pending wins over the box.
     key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
     let (buffer, _) = draw_at(&app, 120, 24);

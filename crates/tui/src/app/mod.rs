@@ -551,6 +551,7 @@ impl App {
 
 pub(crate) mod actions;
 pub(crate) mod alerts;
+pub(crate) mod alerts_view;
 mod confirm;
 mod conversation;
 mod daemon;

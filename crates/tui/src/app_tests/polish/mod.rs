@@ -2,4 +2,5 @@
 //! reducer test of the milestone lives under this directory.
 
 mod alerts_model;
+mod alerts_view;
 mod region;

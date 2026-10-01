@@ -1,16 +1,16 @@
 //! Milestone 9.0.5 decisions 17–21: the alerts, computed from the snapshot and the
 //! window list on every draw and key, and the Alerts box's focus; milestone 9.0.7
 //! decisions 7 and 8 give each its who, task, full detail and age. Nothing is stored
-//! but the focus; an alert clears itself once what raised it is resolved. The box is
-//! drawn by `ui/alerts.rs`. Pure: no I/O.
+//! but the Alerts view's state; an alert clears itself once what raised it is
+//! resolved. The box is drawn by `ui/alerts.rs`, the view by `ui/alerts_view.rs`, and
+//! the view's keys are `app/alerts_view.rs`'s (decision 11). Pure: no I/O.
 
 use super::{App, Effect};
-use crate::actions_request::ActionTarget;
 use crate::inspector::run_format::reason_text;
 use crate::safe_text::one_line;
 use crate::tree::{self, awaiting_holds, is_paused};
-use crossterm::event::{KeyCode, KeyEvent};
-use proto::{ActionKind, BlockReason, RunInfo, RunState, Runtime, Status, TaskState, WindowKind};
+use crossterm::event::KeyEvent;
+use proto::{BlockReason, RunInfo, RunState, Runtime, Status, TaskState};
 use std::path::PathBuf;
 
 /// What an alert is about: its identity, which the focus follows (decision 21).
@@ -49,12 +49,14 @@ pub struct Alert {
     pub age: Option<u64>,
 }
 
-/// Decision 21: the box has the keys. `selected` is the alert's identity; `at` its
-/// position when last seen, so a resolved selection gives way to the alert now there.
+/// The Alerts view's state (milestone 9.0.7 decision 11; 9.0.5 decision 21's focus).
+/// `selected` is the alert's identity; `at` its position when last seen, so a resolved
+/// selection gives way to the alert now there; `scroll` the detail's first row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlertsFocus {
     pub selected: Option<AlertKey>,
     pub(crate) at: usize,
+    pub scroll: u16,
 }
 
 /// `1 task` or `<n> tasks`.
@@ -266,16 +268,20 @@ fn project_name(project: &std::path::Path) -> String {
 }
 
 impl App {
-    /// `C-b a` (decision 21): shows a hidden sidebar and gives the box the keys, its
-    /// first alert selected. Refused while the plan review is open (decision 13).
+    /// `C-b a` (milestone 9.0.7 decision 11): opens the Alerts view in the main pane on
+    /// the first alert. A hidden sidebar stays hidden: the view does not need it.
+    /// Refused while the plan review is open (9.0.5 decision 13).
     pub(super) fn focus_alerts(&mut self) -> Vec<Effect> {
         if self.plan_review.is_some() {
             self.toast(super::plan_review::LEAVE_REVIEW_FIRST);
             return vec![];
         }
-        self.sidebar_visible = true;
         let selected = alerts(self).into_iter().next().map(|alert| alert.key);
-        self.alerts_focus = Some(AlertsFocus { selected, at: 0 });
+        self.alerts_focus = Some(AlertsFocus {
+            selected,
+            at: 0,
+            scroll: 0,
+        });
         self.sync_alerts_mode();
         vec![]
     }
@@ -290,96 +296,11 @@ impl App {
         self.sync_alerts_mode();
     }
 
-    /// Decision 21's keys: `j`/`k` move, Enter jumps (and leaves the focus), `Esc`
-    /// leaves. Every other key does nothing.
+    /// A bare key while the view is open: the selection is repaired first, then the
+    /// view's keys (`app/alerts_view.rs`).
     pub(super) fn on_alerts_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         self.repair_alerts_focus();
-        match key.code {
-            KeyCode::Char('j') | KeyCode::Down => self.move_alert(1),
-            KeyCode::Char('k') | KeyCode::Up => self.move_alert(-1),
-            KeyCode::Esc => self.leave_alerts(),
-            KeyCode::Enter => {
-                let selected = self.alerts_focus.as_ref().and_then(|f| f.selected.clone());
-                self.leave_alerts();
-                if let Some(key) = selected {
-                    return self.enter_alert(key);
-                }
-            }
-            _ => {}
-        }
-        vec![]
-    }
-
-    fn move_alert(&mut self, delta: isize) {
-        let keys: Vec<AlertKey> = alerts(self).into_iter().map(|alert| alert.key).collect();
-        let Some(focus) = self.alerts_focus.as_mut() else {
-            return;
-        };
-        if keys.is_empty() {
-            return;
-        }
-        let at = focus.at.saturating_add_signed(delta).min(keys.len() - 1);
-        focus.at = at;
-        focus.selected = Some(keys[at].clone());
-    }
-
-    /// Decision 18's Enter, by priority.
-    fn enter_alert(&mut self, key: AlertKey) -> Vec<Effect> {
-        match key {
-            AlertKey::Orchestrator(run_id) => self.enter_orchestrator(&run_id),
-            AlertKey::Gate(run) => self.alert_menu(run, ActionTarget::Run, ActionKind::ReviewPlan),
-            AlertKey::Hold { run, hold } => {
-                self.alert_menu(run, ActionTarget::Run, ActionKind::ApproveHold { hold })
-            }
-            AlertKey::Blocked { run, task } => {
-                let question = self
-                    .runs
-                    .runs
-                    .iter()
-                    .find(|r| r.run_id == run)
-                    .and_then(|r| r.tasks.iter().find(|t| t.id == task))
-                    .and_then(|t| t.block.as_ref())
-                    .is_some_and(|b| b.reason == BlockReason::Question);
-                let kind = if question {
-                    ActionKind::Answer
-                } else {
-                    ActionKind::Retry
-                };
-                self.alert_menu(run, ActionTarget::Task(task), kind)
-            }
-            AlertKey::Halted(run) => self.alert_menu(run, ActionTarget::Run, ActionKind::Resume),
-            AlertKey::Accept(run) => self.alert_menu(run, ActionTarget::Run, ActionKind::Accept),
-            // Preflight F26: the Profile screen on that project's proposal.
-            AlertKey::Proposal(project) => self.open_profile_on(project, true),
-        }
-    }
-
-    /// Decision 17: Enter on an alert opens the menu on its node with `kind` selected
-    /// (the first entry when the state moved and `kind` is no longer listed).
-    fn alert_menu(&mut self, run: String, target: ActionTarget, kind: ActionKind) -> Vec<Effect> {
-        self.open_actions((run, target), Some(kind))
-    }
-
-    /// Priority 1's Enter: focus the orchestrator's window and leave tree mode, as
-    /// `enter_run_root` does; a headless one opens its conversation.
-    fn enter_orchestrator(&mut self, run_id: &str) -> Vec<Effect> {
-        let window = self
-            .runs
-            .runs
-            .iter()
-            .find(|run| run.run_id == run_id)
-            .and_then(|run| run.orchestrator.as_ref()?.window_id)
-            .and_then(|id| self.windows.iter().find(|w| w.id == id))
-            .map(|w| (w.id, w.kind));
-        match window {
-            None => vec![],
-            Some((id, WindowKind::Headless)) => self.open_conversation(id),
-            Some((id, WindowKind::Pty)) => {
-                let effects = self.focus(id);
-                self.exit_tree();
-                effects
-            }
-        }
+        self.alerts_view_key(key)
     }
 
     /// After every snapshot and window list, and before a key: the selection's
@@ -402,10 +323,13 @@ impl App {
             None if keys.is_empty() => {
                 focus.selected = None;
                 focus.at = 0;
+                focus.scroll = 0;
             }
             None => {
                 focus.at = focus.at.min(keys.len() - 1);
                 focus.selected = Some(keys[focus.at].clone());
+                // Another alert's detail starts at its top.
+                focus.scroll = 0;
             }
         }
     }

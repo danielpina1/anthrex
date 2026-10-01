@@ -62,7 +62,7 @@ pub(super) fn filtering(app: &App) -> bool {
         && app.tree_input == Some(TreeInput::Filter)
 }
 
-/// The hints to list. The pending prefix wins, then the review, the alerts box, tree
+/// The hints to list. The pending prefix wins, then the review, the Alerts view, tree
 /// navigation, then the default bar.
 pub(super) fn body(app: &App) -> Body {
     let (hints, git) = if app.keymap.pending() {
@@ -98,14 +98,7 @@ pub(super) fn body(app: &App) -> Body {
     } else if app.plan_review.is_some() {
         (review_hints(app), false)
     } else if app.alerts_focus.is_some() {
-        (
-            vec![
-                hint("j/k", "move", 5),
-                hint("⏎", "go", 5),
-                hint("esc", "back", 5),
-            ],
-            false,
-        )
+        (alerts_view_hints(app), false)
     } else if app.tree_input == Some(TreeInput::Navigate) {
         (navigate_hints(app), false)
     } else if app.tree_input.is_some() {
@@ -189,6 +182,27 @@ fn navigate_hints(app: &App) -> Vec<Hint> {
             h("esc", "back"),
         ]
     }
+}
+
+/// Milestone 9.0.7 decision 11 and Interfaces "Hint priorities": the Alerts view's
+/// keys for the selected alert — Enter's entry, `.` where the alert has a node, `o`
+/// but on a proposal (Enter opens its screen) — or `esc` alone with none selected.
+fn alerts_view_hints(app: &App) -> Vec<Hint> {
+    use crate::app::AlertKey;
+    use crate::app::alerts_view::{alert_node, enter_label};
+    let back = hint("esc", "back", 5);
+    let Some(key) = app.alerts_focus.as_ref().and_then(|f| f.selected.as_ref()) else {
+        return vec![back];
+    };
+    let mut hints = vec![hint("j/k", "move", 6), hint("⏎", &enter_label(app, key), 9)];
+    if alert_node(key).is_some() {
+        hints.push(hint(".", "actions", 8));
+    }
+    if !matches!(key, AlertKey::Proposal(_)) {
+        hints.push(hint("o", "open", 7));
+    }
+    hints.push(back);
+    hints
 }
 
 /// Milestone 9.0.5 decision 13: the plan review's keys, at the gate or for a hold.

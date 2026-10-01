@@ -28,18 +28,12 @@ pub enum KeyRegion {
 
 impl App {
     /// A hidden sidebar holds no keys (decision 1): `C-b s` hiding it leaves the
-    /// sidebar tree and the Alerts box, so the keys reach the pane that is drawn and
-    /// its frame is the one accented. The overview keeps its keys: its frame is the
-    /// main pane, which stays.
+    /// sidebar tree, so the keys reach the pane that is drawn and its frame is the one
+    /// accented. The overview and the Alerts view (decision 11) keep their keys: their
+    /// frame is the main pane, which stays.
     pub(super) fn release_a_hidden_sidebar(&mut self) {
-        if self.sidebar_visible {
-            return;
-        }
-        if self.tree_input.is_some() && !self.overview {
+        if !self.sidebar_visible && self.tree_input.is_some() && !self.overview {
             self.exit_tree();
-        }
-        if self.alerts_focus.is_some() {
-            self.leave_alerts();
         }
     }
 

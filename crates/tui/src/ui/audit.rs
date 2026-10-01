@@ -173,7 +173,9 @@ pub(crate) fn shows(name: &str) -> Shows {
         "run view at the gate" => row("RUN", Some("esc back"), &["a approve", "x reject"]),
         "run view running" | "run view on a task" => row("RUN", Some("esc back"), &["j/k move"]),
         "conversation" => row("CHAT", None, &["C-b ? help"]),
-        "alerts" => row("ALERTS", Some("esc back"), &["j/k move"]),
+        // Decision 11: the Alerts view on `t2`'s blocked alert. Its detail row's `o open
+        // task` drops first at 80x24 (decision 34's priorities); the bar keeps `o open`.
+        "alerts view" => row("phase", Some("esc back"), &["⏎ answer", "o open"]),
         // Milestone 9.0.7 decisions 9 and 10: the grown box, two lines an alert.
         "alerts box" => row("Alerts 3", None, &["C-b a open"]),
         "sidebar tree over the alerts box" => {
@@ -257,8 +259,8 @@ fn with(mut app: App, change: impl FnOnce(&mut App)) -> App {
 }
 
 /// One `App` per key region of decision 1 that exists, each reached by the keys a
-/// user presses where it can be. Later tasks add theirs (the Alerts view, the plan
-/// review's frame, the old dialogs).
+/// user presses where it can be. Later tasks add theirs (the plan review's frame, the
+/// old dialogs).
 pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
     use crate::app::profile_screen::ProfilePage;
     use crate::app::screens::Screen;
@@ -293,8 +295,14 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
         ("run view running", run_view(running())),
         ("run view on a task", on_task(run_view(running()), "t1")),
         ("conversation", with(gate(), |a| chord(a, 'm'))),
-        // The Alerts box with the keys, until task 6's Alerts view replaces it.
-        ("alerts", with(gate(), |a| chord(a, 'a'))),
+        // Decision 11: `C-b a`, then `j`: the Alerts view on the blocked alert.
+        (
+            "alerts view",
+            with(crate::ui::alerts::fixture::three_runs(), |a| {
+                chord(a, 'a');
+                tap(a, 'j');
+            }),
+        ),
         (
             "help over the sidebar tree",
             with(gate(), |a| {

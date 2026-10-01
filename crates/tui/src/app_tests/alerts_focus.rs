@@ -9,18 +9,20 @@ use crate::app::AlertKey;
 use crate::tree::run_fixtures::snapshot;
 use proto::RunState;
 
+/// Milestone 9.0.7 decision 11: `C-b a` opens the Alerts view in the main pane; a
+/// hidden sidebar stays hidden, since the view does not need it.
 #[test]
-fn c_b_a_focuses_and_shows_a_hidden_sidebar() {
+fn c_b_a_opens_the_view_and_leaves_the_sidebar_hidden() {
     let mut app = every_app();
     app.sidebar_visible = false;
     focus(&mut app);
-    assert!(app.sidebar_visible);
+    assert!(!app.sidebar_visible);
     assert!(app.keymap.alerts_mode());
     assert_eq!(
         selected(&app),
         Some(AlertKey::Orchestrator("a-attn".into()))
     );
-    // With no alert the box still takes the focus, with nothing selected.
+    // With no alert the view still opens, with nothing selected.
     let mut empty = app_with_runs(vec![], snapshot(1, vec![]));
     focus(&mut empty);
     assert_eq!(selected(&empty), None);

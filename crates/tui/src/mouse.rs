@@ -65,6 +65,11 @@ impl App {
                 .scroll(if up { -3 } else { 3 }, self.rows().len());
             return vec![];
         }
+        // Milestone 9.0.7 decision 11: the Alerts view covers the main pane; the wheel
+        // reaches nothing under it, as a key or a paste does not.
+        if self.alerts_focus.is_some() {
+            return vec![];
+        }
         // Review M3: the conversation view covers the main area; the wheel moves its
         // cursor and reaches nothing underneath.
         if self.conversation.is_open() {
@@ -77,12 +82,7 @@ impl App {
             self.scroll_graph(up, column, row, layout.main);
             return vec![];
         }
-        // Milestone 9.0.5: while the Alerts box has the keys, the wheel reaches the
-        // terminal no more than a key or a paste does.
-        if self.tree_input.is_some()
-            || self.alerts_focus.is_some()
-            || !main_inner.contains((column, row).into())
-        {
+        if self.tree_input.is_some() || !main_inner.contains((column, row).into()) {
             return vec![];
         }
         if self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None {
@@ -134,7 +134,10 @@ impl App {
         self.graph_mouse.drag_from = None;
         // Review M3: a press on the conversation view reaches nothing underneath it —
         // not the graph, not a double click's focus change.
-        if self.conversation.is_open() && layout.main.contains((column, row).into()) {
+        // Milestone 9.0.7 decision 11: nor one on the Alerts view.
+        if (self.conversation.is_open() || self.alerts_focus.is_some())
+            && layout.main.contains((column, row).into())
+        {
             self.graph_mouse.last_press = None;
             return vec![];
         }
@@ -243,6 +246,7 @@ impl App {
             || self.screen.is_some()
             || !self.overview
             || self.conversation.is_open()
+            || self.alerts_focus.is_some()
         {
             return vec![];
         }

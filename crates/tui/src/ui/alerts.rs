@@ -3,10 +3,11 @@
 //! who it is for (`⚑ Add mul() · 0723 › t2  41s`), then what happened, wrapped; `no
 //! alerts` when there is none; `↓ <k> more` on the last row when they do not fit. The
 //! box grows into the column's free rows (`ui::layout_for`, decision 9). The alerts
-//! are `app::alerts`'s, recomputed here on every draw. Pure: rendering takes `&App`.
+//! are `app::alerts`'s, recomputed here on every draw. The box is never focused:
+//! `C-b a` opens the Alerts view (`ui/alerts_view.rs`). Pure: rendering takes `&App`.
 
 use super::{Layout, kit};
-use crate::app::{Alert, AlertWho, App, alerts, region::KeyRegion};
+use crate::app::{Alert, AlertWho, App, alerts};
 use crate::safe_text::one_line;
 use crate::theme::{self, Glyph, Palette, Role, fold, glyph};
 use crate::tree::format_elapsed;
@@ -41,7 +42,7 @@ fn title(n: usize, p: Palette) -> Line<'static> {
 /// The who, in `room` columns: a run's name (`kit::run_name_in`, the goal cut before
 /// the short id), or a project's directory name. Where the goal would get no column
 /// beside the id, the name's head is kept instead.
-fn who_text(who: &AlertWho, room: usize, p: Palette) -> String {
+pub(crate) fn who_text(who: &AlertWho, room: usize, p: Palette) -> String {
     match who {
         AlertWho::Run { goal, id } => {
             let width = u16::try_from(room).unwrap_or(u16::MAX);
@@ -110,7 +111,7 @@ pub(crate) fn alert_lines(app: &App, alert: &Alert, width: u16) -> Vec<Line<'sta
 }
 
 /// `parts` as one line of at most `width` columns, cut from the right.
-fn fitted(parts: Vec<(String, Style)>, width: usize, ascii: bool) -> Line<'static> {
+pub(crate) fn fitted(parts: Vec<(String, Style)>, width: usize, ascii: bool) -> Line<'static> {
     let mut left = width;
     let mut spans = Vec::new();
     for (text, style) in parts {
@@ -182,10 +183,9 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
     }
     let p = app.palette();
     let n = alerts(app).len();
-    // Until task 6's Alerts view, the box itself takes the keys under `C-b a`, so its
-    // frame is the one accented then (decision 1); it draws no selection (decision 10).
-    let keys_here = app.key_region() == KeyRegion::Alerts;
-    let mut block = kit::pane_frame(title(n, p), keys_here, p);
+    // Decisions 1 and 11: the box is never focused and never accented; `C-b a` opens
+    // the Alerts view in the main pane, which has the keys.
+    let mut block = kit::pane_frame(title(n, p), false, p);
     if n > 0 && app.alerts_focus.is_none() {
         // ` <prefix> a open `: the key in the accent, the word muted, and one border
         // cell before the corner (§6.1's mockup).

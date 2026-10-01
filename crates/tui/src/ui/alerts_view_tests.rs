@@ -1,0 +1,360 @@
+//! M9.0.7.6: the Alerts view in the main pane (decision 11), rendered with
+//! `TestBackend` over `ui/alerts_fixture.rs`'s `three_runs`, the view open on `t2`'s
+//! blocked alert.
+
+use super::super::alerts::fixture::{NOW, app_of, three_runs, three_runs_snapshot};
+use crate::app::App;
+use crate::safe_text::tests::{first_hostile, hostile_text};
+use crate::theme::{self, Role};
+use crate::tree::run_fixtures::{pty, snapshot};
+use crate::ui::{Layout, audit};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use proto::{ProposalAlertInfo, RunState, Status};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
+use ratatui::style::Modifier;
+
+fn press(app: &mut App, code: KeyCode, mods: KeyModifiers) {
+    let _ = app.on_key(KeyEvent::new(code, mods));
+}
+
+fn chord(app: &mut App, c: char) {
+    press(app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+    press(app, KeyCode::Char(c), KeyModifiers::NONE);
+}
+
+/// `C-b a`, then `j`: the view on `t2`'s blocked alert (the second, after the gate).
+fn view_on_blocked() -> App {
+    let mut app = three_runs();
+    chord(&mut app, 'a');
+    press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+    assert!(app.alerts_focus.is_some());
+    app
+}
+
+fn draw_at(app: &App, w: u16, h: u16) -> (Buffer, Layout) {
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+    let mut layout = None;
+    terminal
+        .draw(|f| layout = Some(crate::ui::draw(f, app)))
+        .unwrap();
+    (terminal.backend().buffer().clone(), layout.unwrap())
+}
+
+/// The main pane's interior rows, trailing spaces trimmed.
+fn rows_of(app: &App, w: u16, h: u16) -> Vec<String> {
+    let (buffer, layout) = draw_at(app, w, h);
+    let inner = layout.main_inner;
+    (inner.y..inner.y + inner.height)
+        .map(|y| {
+            let row: String = (inner.x..inner.x + inner.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            row.trim_end().to_owned()
+        })
+        .collect()
+}
+
+/// The columns right of the `│` rule, trimmed.
+fn right_pane(rows: &[String]) -> Vec<&str> {
+    rows.iter()
+        .filter_map(|row| row.split_once('│').map(|(_, right)| right.trim()))
+        .collect()
+}
+
+/// The columns left of the `│` rule.
+fn left_pane(rows: &[String]) -> Vec<&str> {
+    rows.iter()
+        .filter_map(|row| row.split_once('│').map(|(left, _)| left.trim_end()))
+        .collect()
+}
+
+fn bar(buffer: &Buffer) -> String {
+    let y = buffer.area.height - 1;
+    (0..buffer.area.width)
+        .map(|x| buffer[(x, y)].symbol())
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
+}
+
+#[test]
+fn the_view_shows_the_whole_alert_at_120x40() {
+    let app = view_on_blocked();
+    let rows = rows_of(&app, 120, 40); // the main pane's interior, trimmed
+    let detail: Vec<&str> = right_pane(&rows); // the columns right of the `│` rule
+    assert_eq!(detail[0], "t2  report_product in c");
+    for want in [
+        "phase   blocked · question",
+        "asked   which crate owns the formatting helper?",
+        "run     Add mul() · 0723",
+        "worker  cx gpt-6-sol · 12 calls · 4m",
+        "age     41s",
+    ] {
+        assert!(detail.contains(&want), "{want:?} not in {detail:#?}");
+    }
+    assert!(
+        detail
+            .iter()
+            .any(|l| l.starts_with("actions  answer · message")),
+        "{detail:#?}"
+    );
+    assert!(
+        detail
+            .iter()
+            .any(|l| l.contains("⏎ answer") && l.contains("o open task")),
+        "{detail:#?}"
+    );
+    // The rows in order, then a blank, the actions and the hints; the title and the
+    // position in the top border.
+    assert_eq!(
+        &detail[..9],
+        [
+            "t2  report_product in c",
+            "phase   blocked · question",
+            "asked   which crate owns the formatting helper?",
+            "run     Add mul() · 0723",
+            "worker  cx gpt-6-sol · 12 calls · 4m",
+            "age     41s",
+            "",
+            "actions  answer · message · retry · override · c…",
+            "⏎ answer  . all actions  m message  o open task",
+        ]
+    );
+    let (buffer, layout) = draw_at(&app, 120, 40);
+    let top: String = (layout.main.x..layout.main.right())
+        .map(|x| buffer[(x, layout.main.y)].symbol())
+        .collect();
+    assert!(top.starts_with("╭ ⚑ Alerts ─"), "{top:?}");
+    assert!(top.ends_with("─ 2/3 ╮"), "{top:?}");
+    // The list is 33 columns, `clamp(84 × 2/5, 26, 44)`; the header, bold, starts two
+    // columns right of the rule.
+    let (x, y) = (layout.main_inner.x + 33, layout.main_inner.y);
+    assert_eq!(buffer[(x, y)].symbol(), "│");
+    assert_eq!(buffer[(x + 2, y)].symbol(), "t");
+    assert!(buffer[(x + 2, y)].modifier.contains(Modifier::BOLD));
+}
+
+/// Decision 11: at an interior under 60 columns the list sits on top, a `─` rule below
+/// it, the detail under that.
+#[test]
+fn the_view_stacks_below_60_columns() {
+    let app = view_on_blocked();
+    let (buffer, layout) = draw_at(&app, 80, 24);
+    assert_eq!(layout.main_inner.width, 44);
+    let rows = rows_of(&app, 80, 24);
+    let selected = format!("▌P3 ⚑ Add mul() · 0723 › t2{}41s", " ".repeat(13));
+    let rule = "─".repeat(44);
+    assert_eq!(
+        rows[..15],
+        [
+            " P2 ⚑ Docs · 77aa",
+            selected.as_str(),
+            " P4 ✓ Fix CI · 9b1e",
+            rule.as_str(),
+            " t2  report_product in c",
+            " phase   blocked · question",
+            " asked   which crate owns the formatting",
+            "         helper?",
+            " run     Add mul() · 0723",
+            " worker  cx gpt-6-sol · 12 calls · 4m",
+            " age     41s",
+            "",
+            " actions  answer · message · retry · overri…",
+            " ⏎ answer  . all actions  m message",
+            "",
+        ]
+    );
+    let status = bar(&buffer);
+    assert!(status.starts_with(" ALERTS "), "{status:?}");
+    assert!(status.ends_with("esc back"), "{status:?}");
+}
+
+#[test]
+fn list_rows_mark_priority_and_selection() {
+    let app = view_on_blocked();
+    let rows = rows_of(&app, 120, 40);
+    let list = left_pane(&rows);
+    assert_eq!(
+        list[..4],
+        [
+            " P2 ⚑ Docs · 77aa",
+            "▌P3 ⚑ Add mul() · 0723 › t2  41s",
+            " P4 ✓ Fix CI · 9b1e",
+            "",
+        ]
+    );
+    // Moved from task 5's box test: the selected (second) row is reversed across the
+    // list, the `▌` bar in the accent left of it; the first row is not reversed.
+    let (buffer, layout) = draw_at(&app, 120, 40);
+    let inner = layout.main_inner;
+    let reversed = |x: u16, y: u16| buffer[(x, y)].modifier.contains(Modifier::REVERSED);
+    let accent = theme::role(Role::Accent, app.palette()).fg;
+    assert_eq!(Some(buffer[(inner.x, inner.y + 1)].fg), accent);
+    assert!(!reversed(inner.x, inner.y + 1), "the bar is not reversed");
+    for x in inner.x + 1..inner.x + 33 {
+        assert!(reversed(x, inner.y + 1), "selected cell ({x})");
+        assert!(!reversed(x, inner.y), "first row cell ({x})");
+    }
+    // The priority's style: P2 and P3 Attention without bold, P4 Done.
+    let attention = theme::role(Role::Attention, app.palette()).fg;
+    let done = theme::role(Role::Done, app.palette()).fg;
+    assert_eq!(Some(buffer[(inner.x + 4, inner.y)].fg), attention);
+    assert_eq!(Some(buffer[(inner.x + 4, inner.y + 2)].fg), done);
+    // In ASCII: the twins.
+    let mut app = view_on_blocked();
+    app.settings.badges.ascii = true;
+    let rows = rows_of(&app, 120, 40);
+    let first = format!("{:<33}| t2  report_product in c", " P2 ! Docs - 77aa");
+    assert_eq!(rows[0], first);
+    assert!(
+        rows[1].starts_with(">P3 ! Add mul() - 0723 > t2  41s |"),
+        "{:?}",
+        rows[1]
+    );
+    let (buffer, _) = draw_at(&app, 120, 40);
+    assert_eq!(audit::first_non_ascii(&buffer), None);
+    let (buffer, _) = draw_at(&app, 80, 24);
+    assert_eq!(audit::first_non_ascii(&buffer), None);
+}
+
+#[test]
+fn the_status_bar_reads_alerts_and_its_keys() {
+    let app = view_on_blocked();
+    let (buffer, _) = draw_at(&app, 120, 40);
+    assert_eq!(
+        bar(&buffer),
+        " ALERTS  j/k move  ⏎ answer  . actions  o open  esc back"
+    );
+    let (buffer, _) = draw_at(&app, 40, 24);
+    let status = bar(&buffer);
+    assert!(status.starts_with(" ALERTS "), "{status:?}");
+    assert!(status.ends_with("esc back"), "{status:?}");
+    // On the gate: its preselection's label.
+    let mut app = three_runs();
+    chord(&mut app, 'a');
+    let (buffer, _) = draw_at(&app, 120, 40);
+    assert_eq!(
+        bar(&buffer),
+        " ALERTS  j/k move  ⏎ review plan  . actions  o open  esc back"
+    );
+}
+
+/// Decision 1: the view's frame is the one accented; the Alerts box stays muted
+/// (decision 26: the box is never focused).
+#[test]
+fn the_view_is_the_one_accented_frame() {
+    let app = view_on_blocked();
+    let accent = theme::role(Role::Accent, app.palette()).fg;
+    let muted = theme::role(Role::Muted, app.palette()).fg;
+    for (w, h) in [(80, 24), (120, 40)] {
+        let (buffer, layout) = draw_at(&app, w, h);
+        assert_eq!(audit::accented_frames(&buffer, app.palette()), 1, "{w}x{h}");
+        assert_eq!(Some(buffer[(layout.main.x, layout.main.y)].fg), accent);
+        assert_eq!(Some(buffer[(layout.alerts.x, layout.alerts.y)].fg), muted);
+        let alerts = layout.alerts_inner;
+        for y in alerts.y..alerts.bottom() {
+            for x in alerts.x..alerts.right() {
+                assert!(!buffer[(x, y)].modifier.contains(Modifier::REVERSED));
+            }
+        }
+    }
+    // Under the help the view mutes.
+    let mut app = view_on_blocked();
+    chord(&mut app, '?');
+    let (buffer, layout) = draw_at(&app, 120, 40);
+    assert_eq!(audit::accented_frames(&buffer, app.palette()), 1);
+    assert_eq!(Some(buffer[(layout.main.x, layout.main.y)].fg), muted);
+}
+
+/// Review focus 5: the goal, the task's title and id, the question, the worker's
+/// model and the actions' labels are agent or daemon text.
+#[test]
+fn alerts_view_text_is_sanitised() {
+    let bad = hostile_text();
+    let mut runs = three_runs_snapshot();
+    runs[0].goal = bad.clone();
+    runs[0].base_branch = format!("main{bad}");
+    runs[0].base_sha = format!("{bad}abcdef");
+    runs[1].goal = format!("Add{bad}");
+    let t2 = &mut runs[1].tasks[1];
+    t2.title = format!("title{bad}");
+    t2.block.as_mut().unwrap().text = format!("q{bad}\n{bad}\nmore{bad}");
+    t2.rounds[0].route.model = format!("m{bad}");
+    for action in &mut t2.actions {
+        action.label = format!("{}{bad}", action.label);
+    }
+    t2.actions[2].refused_why = Some(bad.clone());
+    let mut halted = crate::tree::alert_fixtures::at("halt-1", RunState::Halted, 9);
+    halted.halted_reason = Some(format!("why{bad}\n{bad}"));
+    runs.push(halted);
+    let mut app = app_of(vec![pty(1, "shell", "/tmp/repo", Status::Idle)], runs);
+    app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot({
+        let mut snap = snapshot(NOW, app.runs.runs.clone());
+        snap.proposals = vec![ProposalAlertInfo {
+            project: format!("/tmp/p{bad}").into(),
+            updated_at: NOW - 5,
+        }];
+        snap
+    })));
+    chord(&mut app, 'a');
+    let n = crate::app::alerts(&app).len();
+    assert_eq!(n, 5);
+    for at in 0..n {
+        for (w, h) in [(80, 24), (120, 40)] {
+            let (buffer, layout) = draw_at(&app, w, h);
+            let main = layout.main;
+            for y in main.y..main.bottom() {
+                let text: String = (main.x..main.right())
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect();
+                assert_eq!(first_hostile(&text), None, "alert {at} {w}x{h}: {text:?}");
+            }
+            assert_eq!(first_hostile(&bar(&buffer)), None, "alert {at} {w}x{h}");
+        }
+        let alert = crate::app::alerts(&app)[at].clone();
+        for width in [1, 10, 49, 400] {
+            for line in super::detail_lines(&app, &alert, width) {
+                let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                assert_eq!(first_hostile(&text), None, "{text:?}");
+            }
+        }
+        press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+    }
+}
+
+#[test]
+fn no_alerts_view_says_so() {
+    let mut app = app_of(vec![pty(1, "shell", "/tmp/repo", Status::Idle)], vec![]);
+    chord(&mut app, 'a');
+    assert!(app.alerts_focus.is_some());
+    for (w, h) in [(80, 24), (120, 40)] {
+        let rows = rows_of(&app, w, h);
+        assert_eq!(rows[0], "no alerts", "{w}x{h}");
+        assert!(rows[1..].iter().all(String::is_empty), "{rows:#?}");
+        let (buffer, layout) = draw_at(&app, w, h);
+        let top: String = (layout.main.x..layout.main.right())
+            .map(|x| buffer[(x, layout.main.y)].symbol())
+            .collect();
+        assert!(top.starts_with("╭ Alerts ──"), "{top:?}");
+        assert!(top.ends_with("──╮"), "{top:?}");
+        assert_eq!(bar(&buffer), " ALERTS  esc back");
+    }
+}
+
+#[test]
+fn no_panic_at_tiny_sizes() {
+    for ascii in [false, true] {
+        for sidebar in [true, false] {
+            for (w, h) in [(1, 1), (2, 2), (20, 5), (5, 40), (40, 3), (12, 4), (70, 6)] {
+                let mut app = view_on_blocked();
+                app.settings.badges.ascii = ascii;
+                app.sidebar_visible = sidebar;
+                draw_at(&app, w, h);
+                press(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
+                draw_at(&app, w, h);
+            }
+        }
+    }
+}

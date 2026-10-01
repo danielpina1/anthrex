@@ -79,27 +79,30 @@ fn key_region_follows_the_keymaps_precedence() {
     assert_eq!(app.key_region(), KeyRegion::Dialog);
 }
 
-/// Fix round 1: `C-b s` hiding the sidebar while the sidebar tree or the Alerts box has
-/// the keys hands them to the pane, which is then the one accented frame; the
-/// overview keeps its keys, since its frame is the main pane.
+/// Fix round 1: `C-b s` hiding the sidebar while the sidebar tree has the keys hands
+/// them to the pane, which is then the one accented frame; the overview and the Alerts
+/// view (task 6, decision 11) keep their keys, since their frame is the main pane.
 #[test]
 fn a_hidden_sidebar_holds_no_keys() {
-    for opens in ['t', 'a'] {
-        let mut app = gate_app();
-        chord(&mut app, opens);
-        assert_ne!(app.key_region(), KeyRegion::Pane, "`C-b {opens}`");
-        chord(&mut app, 's');
-        assert!(!app.sidebar_visible);
-        assert_eq!(app.key_region(), KeyRegion::Pane, "`C-b {opens}`, `C-b s`");
-        assert_eq!(app.tree_input, None);
-        assert_eq!(app.alerts_focus, None);
-        // The keys reach the pane's shell.
-        let effects = press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
-        assert!(
-            matches!(effects.as_slice(), [Effect::Send(ClientMsg::Input { .. })]),
-            "{effects:?}"
-        );
-    }
+    let mut app = gate_app();
+    chord(&mut app, 't');
+    assert_ne!(app.key_region(), KeyRegion::Pane, "`C-b t`");
+    chord(&mut app, 's');
+    assert!(!app.sidebar_visible);
+    assert_eq!(app.key_region(), KeyRegion::Pane, "`C-b t`, `C-b s`");
+    assert_eq!(app.tree_input, None);
+    // The keys reach the pane's shell.
+    let effects = press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+    assert!(
+        matches!(effects.as_slice(), [Effect::Send(ClientMsg::Input { .. })]),
+        "{effects:?}"
+    );
+    let mut app = gate_app();
+    chord(&mut app, 'a');
+    chord(&mut app, 's');
+    assert!(!app.sidebar_visible);
+    assert_eq!(app.key_region(), KeyRegion::Alerts);
+    assert!(press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE).is_empty());
     let mut app = gate_app();
     chord(&mut app, 'T');
     chord(&mut app, 's');

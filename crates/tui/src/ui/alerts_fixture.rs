@@ -1,12 +1,15 @@
 //! M9.0.7.5: the milestone's shared alert fixture, `three_runs` (§6.1's mockup): the
-//! grown Alerts box's tests, task 6's Alerts view and the render audit draw it.
-//! Test-only.
+//! grown Alerts box's tests, task 6's Alerts view and the render audit draw it. Task 6
+//! gives `t2` its worker round and the daemon's actions. Test-only.
 
 use crate::app::App;
 use crate::settings::UiSettings;
 use crate::tree::alert_fixtures::blocked;
-use crate::tree::run_fixtures::{pty, run, snapshot, task};
-use proto::{BlockReason, RunInfo, RunState, Size, Status, TaskEventInfo, TaskState, WindowInfo};
+use crate::tree::run_fixtures::{pty, run, snapshot, task, worker};
+use proto::{
+    ActionInfo, ActionKind, BlockReason, RunInfo, RunState, Runtime, Size, Status, TaskEventInfo,
+    TaskState, WindowInfo,
+};
 use std::time::Instant;
 
 pub(crate) const REPO: &str = "/tmp/repo";
@@ -21,10 +24,35 @@ pub(crate) fn named(id: &str, goal: &str, state: RunState, created_at: u64) -> R
     info
 }
 
-/// `t2` of `add-mul-0723`: blocked on a question, blocked `ago` seconds before `NOW`.
+/// A daemon entry, listed and not refused.
+pub(crate) fn action(kind: ActionKind, label: &str) -> ActionInfo {
+    ActionInfo {
+        needs: kind.needs(),
+        destructive: kind.destructive(),
+        effect: format!("{label}: the effect"),
+        label: label.into(),
+        refused_why: None,
+        kind,
+    }
+}
+
+/// `t2` of `add-mul-0723`: blocked on a question, blocked `ago` seconds before `NOW`;
+/// its worker round `cx gpt-6-sol`, 12 tool calls, started four minutes before `NOW`;
+/// the daemon's entries `answer`, `message`, `retry`, `override`, `cancel task`.
 pub(crate) fn blocked_t2(ago: u64) -> proto::TaskInfo {
     let mut t2 = blocked("t2", BlockReason::Question, QUESTION);
     t2.title = "report_product in c".into();
+    let mut round = worker(2, None, Runtime::Codex, NOW - 240);
+    round.route.model = "gpt-6-sol".into();
+    round.tool_calls = 12;
+    t2.rounds = vec![round];
+    t2.actions = vec![
+        action(ActionKind::Answer, "answer"),
+        action(ActionKind::Message, "message"),
+        action(ActionKind::Retry, "retry"),
+        action(ActionKind::Override, "override"),
+        action(ActionKind::CancelTask, "cancel task"),
+    ];
     // Newest first, as the daemon sends it; an older block and a later event around it.
     t2.history = vec![
         event(NOW - ago + 1, "worker round 2 started"),

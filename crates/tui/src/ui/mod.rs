@@ -3,6 +3,7 @@
 pub mod action_forms;
 pub mod action_menu;
 pub mod alerts;
+pub mod alerts_view;
 #[cfg(test)]
 pub(crate) mod audit;
 #[cfg(test)]
@@ -189,7 +190,11 @@ pub fn draw(frame: &mut Frame, app: &App) -> Layout {
             sidebar::render(frame, app, &l);
             alerts::render(frame, app, &l);
         }
-        if app.conversation.is_open() {
+        if app.alerts_focus.is_some() {
+            // Milestone 9.0.7 decision 11: the Alerts view covers the main pane; what
+            // is under it is as it was when the view closes.
+            alerts_view::render(frame, app, l.main);
+        } else if app.conversation.is_open() {
             conversation::render(frame, app, l.main);
         } else if app.overview {
             overview::render(frame, app, l.main);
