@@ -488,6 +488,7 @@ impl App {
             Command::StartGoal => self.open_goal_form(),
             Command::FocusAlerts => self.focus_alerts(),
             Command::OpenProfile => self.open_profile(),
+            Command::OpenSettings => self.open_settings(),
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -567,6 +568,7 @@ mod run_gate;
 mod run_holds;
 mod runs;
 pub(crate) mod screens;
+pub(crate) mod settings_screen;
 pub(crate) mod task_detail;
 mod toast;
 mod windows;

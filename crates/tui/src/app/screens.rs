@@ -21,6 +21,7 @@ use std::time::Instant;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
     Profile(Box<super::profile_screen::ProfileScreen>),
+    Settings(Box<super::settings_screen::SettingsScreen>),
 }
 
 impl App {
@@ -31,24 +32,30 @@ impl App {
     }
 
     /// Progress ruling: `C-b a`, `C-b m` and `C-b t` would act under a full screen, so
-    /// they are refused with a toast while one is open.
+    /// they are refused with a toast while one is open; and the Settings screen's
+    /// unsaved changes are not dropped by opening another screen over them.
     pub(super) fn screen_refuses(&mut self, cmd: crate::keymap::Command) -> bool {
+        use super::settings_screen::{LEAVE_SETTINGS_FIRST, UNSAVED_FIRST};
         use crate::keymap::Command;
-        let refused = self.screen.is_some()
-            && matches!(
-                cmd,
-                Command::FocusAlerts | Command::ToggleConversation | Command::ToggleTree
-            );
-        if refused {
-            self.toast(super::profile_screen::LEAVE_SCREEN_FIRST);
-        }
-        refused
+        let leave = match &self.screen {
+            Some(Screen::Profile(_)) => super::profile_screen::LEAVE_SCREEN_FIRST,
+            Some(Screen::Settings(_)) => LEAVE_SETTINGS_FIRST,
+            None => return false,
+        };
+        let text = match (&self.screen, cmd) {
+            (_, Command::FocusAlerts | Command::ToggleConversation | Command::ToggleTree) => leave,
+            (Some(Screen::Settings(s)), Command::OpenProfile) if s.dirty() => UNSAVED_FIRST,
+            _ => return false,
+        };
+        self.toast(text);
+        true
     }
 
     /// A bare key while a screen is open (`KeyAction::Screen`).
     pub(super) fn on_screen_key(&mut self, key: crossterm::event::KeyEvent) -> Vec<Effect> {
         match &self.screen {
             Some(Screen::Profile(_)) => self.on_profile_key(key),
+            Some(Screen::Settings(_)) => self.on_settings_key(key),
             None => vec![],
         }
     }
@@ -58,7 +65,7 @@ impl App {
     pub(crate) fn screens_tick(&mut self, now: Instant) -> Vec<Effect> {
         match &self.screen {
             Some(Screen::Profile(_)) => self.profile_tick(now),
-            None => vec![],
+            Some(Screen::Settings(_)) | None => vec![],
         }
     }
 }
@@ -174,6 +181,8 @@ impl App {
                 }
             }
         }
+        // Decision 36: the Settings screen shows its own save's outcome.
+        self.settings_screen_reply(id, reply);
         Some(effects)
     }
 
@@ -183,5 +192,6 @@ impl App {
             form.set_roster(cache.doc.models.clone());
         }
         self.settings_cache = Some(cache);
+        self.sync_settings_screen();
     }
 }

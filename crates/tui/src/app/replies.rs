@@ -101,6 +101,11 @@ impl PendingReplies {
         self.by_id.contains_key(&id)
     }
 
+    /// Whether a request of this kind is waiting.
+    pub fn waits_for(&self, what: &PendingWhat) -> bool {
+        self.by_id.values().any(|p| p.what == *what)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.by_id.is_empty()
     }
@@ -261,6 +266,7 @@ impl App {
         // A save that went unanswered may still land: ask for the settings again, so a
         // late `Saved` does not leave the cache stale.
         if gone.contains(&PendingWhat::SettingsPut) {
+            self.settings_screen_no_reply();
             return vec![self.settings_fetch()];
         }
         vec![]

@@ -98,6 +98,12 @@ mod profile_screen_edit;
 #[path = "../app_tests/profile_screen_rules.rs"]
 mod profile_screen_rules;
 
+#[path = "../app_tests/settings_screen.rs"]
+mod settings_screen;
+
+#[path = "../app_tests/settings_screen_save.rs"]
+mod settings_screen_save;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

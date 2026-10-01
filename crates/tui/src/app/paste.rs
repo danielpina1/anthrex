@@ -58,6 +58,7 @@ impl App {
         // editor or nowhere.
         if self.screen.is_some() {
             self.on_profile_paste(&text);
+            self.on_settings_paste(&text);
             return vec![];
         }
         // Milestone 9.0.5 review finding 1: the plan review covers the body, so a

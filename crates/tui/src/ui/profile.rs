@@ -362,7 +362,12 @@ pub(crate) fn body_lines(app: &App, s: &ProfileScreen, width: u16) -> Vec<Line<'
 }
 
 /// `lines` cut to `rows`, keeping line `at` in view; what is cut is marked.
-fn window(lines: Vec<Line<'static>>, at: usize, rows: usize, p: Palette) -> Vec<Line<'static>> {
+pub(super) fn window(
+    lines: Vec<Line<'static>>,
+    at: usize,
+    rows: usize,
+    p: Palette,
+) -> Vec<Line<'static>> {
     if lines.len() <= rows {
         return lines;
     }
@@ -385,7 +390,7 @@ fn window(lines: Vec<Line<'static>>, at: usize, rows: usize, p: Palette) -> Vec<
     out
 }
 
-fn frame_block(title: String, accent: bool, p: Palette) -> Block<'static> {
+pub(super) fn frame_block(title: String, accent: bool, p: Palette) -> Block<'static> {
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(role(if accent { Role::Accent } else { Role::Muted }, p))

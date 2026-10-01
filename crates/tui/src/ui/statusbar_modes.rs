@@ -25,7 +25,7 @@ fn hint(key: &str, word: &str, priority: u8) -> Hint {
 }
 
 /// The mode badge, in decision 6's precedence: ` PREFIX ` first, then ` MENU `, then
-/// the screens' (` PROFILE `), above ` PLAN `.
+/// the screens' (` PROFILE `, ` SETTINGS `), above ` PLAN `.
 pub(super) fn badge(app: &App) -> Option<&'static str> {
     if app.keymap.pending() {
         Some(" PREFIX ")
@@ -33,6 +33,8 @@ pub(super) fn badge(app: &App) -> Option<&'static str> {
         Some(" MENU ")
     } else if matches!(app.screen, Some(Screen::Profile(_))) {
         Some(" PROFILE ")
+    } else if matches!(app.screen, Some(Screen::Settings(_))) {
+        Some(" SETTINGS ")
     } else if app.plan_review.is_some() {
         Some(" PLAN ")
     } else if app.alerts_focus.is_some() {
@@ -84,6 +86,11 @@ pub(super) fn body(app: &App) -> Body {
         };
     } else if let Some(Screen::Profile(screen)) = &app.screen {
         (crate::ui::profile::hints(screen), false)
+    } else if let Some(Screen::Settings(screen)) = &app.screen {
+        (
+            crate::ui::settings::hints(screen, app.settings.badges.ascii),
+            false,
+        )
     } else if app.plan_review.is_some() {
         (review_hints(app), false)
     } else if app.alerts_focus.is_some() {

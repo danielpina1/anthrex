@@ -33,6 +33,8 @@ pub enum Command {
     FocusAlerts,
     /// `C-b P` (milestone 9.0.6 decision 33): opens the Profile screen.
     OpenProfile,
+    /// `C-b S` (milestone 9.0.6 decision 36): opens the Settings screen.
+    OpenSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +191,7 @@ impl Keymap {
                 KeyCode::Char('g') => KeyAction::Run(Command::StartGoal),
                 KeyCode::Char('a') => KeyAction::Run(Command::FocusAlerts),
                 KeyCode::Char('P') => KeyAction::Run(Command::OpenProfile),
+                KeyCode::Char('S') => KeyAction::Run(Command::OpenSettings),
                 KeyCode::Esc => KeyAction::Cancel,
                 _ => KeyAction::Nothing,
             };
