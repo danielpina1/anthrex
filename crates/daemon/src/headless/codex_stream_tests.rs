@@ -247,6 +247,7 @@ fn a_rate_limited_turn_failure_is_classified() {
         let line = json!({"type": "turn.failed", "error": {"message": message}}).to_string();
         match parse_line(&line).as_slice() {
             [
+                SessionEvent::ApiErrorText { .. },
                 SessionEvent::TurnEnded {
                     outcome: TurnOutcome::Failed { kind, error },
                     ..
@@ -447,6 +448,7 @@ fn a_429_inside_an_id_or_a_count_is_not_a_rate_limit() {
         let line = json!({"type": "turn.failed", "error": {"message": message}}).to_string();
         match parse_line(&line).as_slice() {
             [
+                SessionEvent::ApiErrorText { .. },
                 SessionEvent::TurnEnded {
                     outcome: TurnOutcome::Failed { kind, .. },
                     ..

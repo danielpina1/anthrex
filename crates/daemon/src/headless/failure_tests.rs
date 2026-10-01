@@ -10,6 +10,7 @@ fn codex_failed(message: &str) -> (FailureKind, String) {
     let line = json!({"type": "turn.failed", "error": {"message": message}}).to_string();
     match codex_stream::parse_line(&line).as_slice() {
         [
+            SessionEvent::ApiErrorText { .. },
             SessionEvent::TurnEnded {
                 outcome: TurnOutcome::Failed { kind, error },
                 ..

@@ -11,12 +11,14 @@
 //!   "Model metadata … not found"), not failures: `Other { kind: "item/error" }`.
 //! - `turn.failed.error.message` is the API's JSON error as a string. The failure text
 //!   is its inner `error.message` when it parses, and its `status` counts towards the
-//!   rate-limit rule.
+//!   rate-limit rule and ruling F-1's client errors. The line gives `ApiErrorText`
+//!   (`Turn failed: <text>`, ruling F-3) before its `TurnEnded`.
 //! - A command that exits non-zero is not reported at all by Codex 0.155, and an
 //!   interrupted turn ends with no `turn.*` line; the driver's `ProcessExited` covers it.
 
 use super::{FailureKind, SessionEvent, TurnOutcome, bounded_text, unknown};
 use proto::TokenUsage;
+use proto::safe_text::one_line;
 use serde_json::{Map, Value, json};
 
 /// Zero or more events for one stdout line. Never panics: a line that is not a JSON
@@ -44,11 +46,19 @@ pub fn parse_line(line: &str) -> Vec<SessionEvent> {
                 .and_then(Value::as_str)
                 .unwrap_or("turn failed");
             let (error, kind) = classify(message);
-            vec![SessionEvent::TurnEnded {
-                outcome: TurnOutcome::Failed { error, kind },
-                usage: None,
-                denials: Vec::new(),
-            }]
+            // Ruling F-3: the failure's own text for the conversation, as Claude's
+            // synthetic API-error message is; one safe line.
+            let text = format!("Turn failed: {}", one_line(&error).trim());
+            vec![
+                SessionEvent::ApiErrorText {
+                    text: bounded_text(&text),
+                },
+                SessionEvent::TurnEnded {
+                    outcome: TurnOutcome::Failed { error, kind },
+                    usage: None,
+                    denials: Vec::new(),
+                },
+            ]
         }
         "error" => vec![SessionEvent::Diagnostic {
             text: string(&object, "message").unwrap_or_default(),
