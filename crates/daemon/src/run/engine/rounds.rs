@@ -6,7 +6,7 @@
 use proto::safe_text::{multi_line, one_line};
 use proto::{ACTIVITY_MAX, AgentRole, WORKER_SUMMARY_MAX};
 
-use crate::run::model::{AgentRound, OpId};
+use crate::run::model::{AgentRound, OpId, Run};
 use crate::run::snapshot_detail::cut;
 
 /// The anthrex MCP server's tool prefix, dropped from an activity line.
@@ -103,4 +103,26 @@ pub(super) fn note_said(round: &mut AgentRound, text: &str) {
 fn set_activity(round: &mut AgentRound, line: &str) {
     let line = one_line(line);
     round.activity = Some(cut(line.trim(), ACTIVITY_MAX - 1));
+}
+
+/// How many characters of a failed turn's error its history line keeps.
+pub(super) const FAILED_TURN_NOTE_MAX: usize = 200;
+
+/// Ruling F-2: the history line of round `r`'s failed turn, which the engine continues
+/// at `at`: `<role> round <n>: turn failed (<error>); continuing at <time>`, the error
+/// one safe line, cut to [`FAILED_TURN_NOTE_MAX`] characters.
+pub(super) fn note_failed_turn(run: &mut Run, i: usize, r: usize, error: &str, at: u64, now: u64) {
+    let round = &run.tasks[i].rounds[r];
+    let role = match round.role {
+        AgentRole::Reviewer => "reviewer",
+        AgentRole::Scout => "research",
+        _ => "worker",
+    };
+    let text = format!(
+        "{role} round {}: turn failed ({}); continuing at {}",
+        round.round,
+        cut(one_line(error).trim(), FAILED_TURN_NOTE_MAX),
+        crate::run::report::format_utc(at)
+    );
+    super::dispatch::history(run, i, now, text);
 }

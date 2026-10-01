@@ -452,7 +452,8 @@ fn failed_turn(
     if rate_limit {
         round.set_rate_limited(Some(not_before(now, wait)), now);
     }
-    round.failed_error = Some(error);
+    super::rounds::note_failed_turn(run, i, r, &error, not_before(now, wait), now);
+    run.tasks[i].rounds[r].failed_error = Some(error);
     // One event, unless a retry streak ran straight into this failure (decision 32).
     if rate_limit && !streak {
         count_rate_limit(run, i, r);

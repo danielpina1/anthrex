@@ -87,6 +87,7 @@ mod stages;
 mod tiers;
 mod tiers_untiered;
 mod turns;
+mod turns_failed_notes;
 mod turns_fixes;
 mod turns_holds;
 mod turns_minors;
