@@ -298,9 +298,12 @@ fn a_strength_on_one_runtime_warns_but_saves() {
         ]
     );
     assert!(screen(&app).problems().is_empty());
+    set_limit(&mut app, key::MAX_READERS, "4");
     let sent = puts(&w(&mut app));
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].1, sample());
+    let mut want = sample();
+    want.limits.max_readers = 4;
+    assert_eq!(sent[0].1, want);
 }
 
 #[test]

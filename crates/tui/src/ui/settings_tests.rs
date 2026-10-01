@@ -388,7 +388,44 @@ fn the_pages_render_as_kit_dialogs() {
             })
             .unwrap();
         assert_eq!(buffer[(x, y)].fg, failed, "the destructive title");
+        // The action word is in `Failed` too (decision 5).
+        let hint_y = (0..h)
+            .find(|&y| {
+                (0..w)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .contains("y discard · esc back")
+            })
+            .unwrap();
+        let x = (0..w)
+            .find(|&x| buffer[(x, hint_y)].symbol() == "y")
+            .unwrap();
+        for dx in [0, 2, 8] {
+            assert_eq!(buffer[(x + dx, hint_y)].fg, failed, "{w}x{h} +{dx}");
+        }
     }
+}
+
+/// Fix round 1: a shipped name keeps the shipped strength, and the dialog says so.
+#[test]
+fn the_custom_dialog_names_a_shipped_model() {
+    let mut app = opened(false, sample());
+    let mut c = custom();
+    c.error = None;
+    screen_mut(&mut app).page = Some(SettingsPage::Custom(c.clone()));
+    assert!(!screen_text(&app, 80, 24).contains("shipped model"));
+    c.model = crate::text_area::TextArea::from_text("gpt-6-luna");
+    screen_mut(&mut app).page = Some(SettingsPage::Custom(c));
+    let text = screen_text(&app, 80, 24);
+    assert!(
+        text.contains("│ shipped model · strength is fixed"),
+        "{text}"
+    );
+    let mut ascii = opened(true, sample());
+    let mut c = custom();
+    c.model = crate::text_area::TextArea::from_text("gpt-6-luna");
+    screen_mut(&mut ascii).page = Some(SettingsPage::Custom(c));
+    assert!(screen_text(&ascii, 80, 24).contains("shipped model - strength is fixed"));
 }
 
 #[test]

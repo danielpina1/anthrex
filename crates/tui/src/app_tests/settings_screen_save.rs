@@ -11,7 +11,8 @@ use super::settings_screen::{
 use super::*;
 use crate::app::screens::Screen;
 use crate::app::settings_screen::{
-    DISCARD_ASK, LEAVE_SETTINGS_FIRST, SAVED, SaveOutcome, SettingsPage, UNSAVED_FIRST,
+    DISCARD_ASK, LEAVE_SETTINGS_FIRST, LINK_LOST, NO_CHANGES, SAVED, SaveOutcome, SettingsPage,
+    UNSAVED_FIRST,
 };
 use proto::SettingsReply;
 use proto::settings::key;
@@ -102,6 +103,7 @@ fn a_put_with_no_reply_shows_so_and_stops_saving() {
 #[test]
 fn disconnected_w_toasts_not_connected() {
     let mut app = opened();
+    set_limit(&mut app, key::MAX_READERS, "4");
     app.on_link_lost("gone");
     assert!(w(&mut app).is_empty());
     assert_eq!(app.toast_text(), Some("not connected"));
@@ -184,4 +186,102 @@ fn a_paste_reaches_only_the_custom_name() {
     let rows = names(&app, Runtime::Claude);
     let added = &rows.last().unwrap().0;
     assert!(added.starts_with("claude-") && !added.contains('\u{1b}') && !added.contains('\n'));
+}
+
+/// Fix round 1, ruling 1: editing stays allowed while a save is in flight, and a `Saved`
+/// of the doc sent before those edits rebases on it instead of dropping them.
+#[test]
+fn a_saved_reply_keeps_edits_made_while_saving() {
+    let mut app = opened();
+    set_limit(&mut app, key::MAX_READERS, "4");
+    let (id, sent) = puts(&w(&mut app))[0].clone();
+    tap(&mut app, KeyCode::BackTab);
+    tap(&mut app, KeyCode::BackTab);
+    tap(&mut app, KeyCode::BackTab);
+    select(&mut app, 0);
+    tap(&mut app, KeyCode::Char(' '));
+    let saved = SettingsReply::Saved {
+        doc: sent.clone(),
+        origin: origin(&[]),
+    };
+    app.on_daemon(reply(saved, id));
+    assert!(names(&app, Runtime::Claude)[0].1, "the toggle survives");
+    assert!(screen(&app).dirty());
+    assert_eq!(screen(&app).base, sent);
+    assert_eq!(screen(&app).outcome, Some(SaveOutcome::Saved));
+    assert_eq!(screen(&app).doc().unwrap().limits.max_readers, 4);
+    // Unchanged since the send: the screen reloads on the saved doc.
+    let (id, sent) = puts(&w(&mut app))[0].clone();
+    let saved = SettingsReply::Saved {
+        doc: sent.clone(),
+        origin: origin(&[]),
+    };
+    app.on_daemon(reply(saved, id));
+    assert!(!screen(&app).dirty());
+}
+
+/// Fix round 1, ruling 2: a link lost mid-save says so (not `saving…`, not nothing); a
+/// re-sync whose doc is exactly the screen's (the save landed) is taken.
+#[test]
+fn a_lost_link_mid_save_says_so_and_a_landed_save_is_taken() {
+    let mut app = opened();
+    set_limit(&mut app, key::MAX_READERS, "4");
+    let (_, sent) = puts(&w(&mut app))[0].clone();
+    app.on_link_lost("gone");
+    app.screens_tick(std::time::Instant::now());
+    assert_eq!(screen(&app).put_id, None);
+    assert_eq!(screen(&app).outcome, Some(SaveOutcome::LinkLost));
+    let text = crate::ui::settings::tests::screen_text(&app, 80, 24);
+    assert!(text.contains(LINK_LOST), "{text}");
+    assert_eq!(LINK_LOST, "not saved: link lost");
+    // Another doc: the edits stay.
+    let (id, _) = tagged(&[app.settings_fetch()]);
+    app.on_daemon(reply(current(sample(), origin(&[])), id));
+    assert!(screen(&app).dirty());
+    // The saved doc: the screen takes it and the line goes.
+    let (id, _) = tagged(&[app.settings_fetch()]);
+    app.on_daemon(reply(current(sent, origin(&[])), id));
+    assert!(!screen(&app).dirty());
+    assert_eq!(screen(&app).outcome, None);
+}
+
+/// Fix round 1, ruling 3: the open screen owns its save's feedback (no toast for its
+/// `Refused` or its expiry); with no screen open the toast stays.
+#[test]
+fn the_screens_own_save_is_not_toasted() {
+    let mut app = opened();
+    set_limit(&mut app, key::MAX_READERS, "4");
+    let (id, _) = puts(&w(&mut app))[0].clone();
+    let refused = || SettingsReply::Refused {
+        problems: vec!["config.toml was not written within 5 s; nothing changed".into()],
+    };
+    app.on_daemon(reply(refused(), id));
+    assert_eq!(app.toast_text(), None);
+    let (id, _) = puts(&w(&mut app))[0].clone();
+    app.set_reply_sent_at(
+        id,
+        std::time::Instant::now() - std::time::Duration::from_secs(60),
+    );
+    app.on_tick();
+    assert_eq!(app.toast_text(), None);
+    assert!(matches!(
+        screen(&app).outcome,
+        Some(SaveOutcome::Refused(_))
+    ));
+    // The screen discarded before the reply: the toast is the only feedback.
+    let (id, _) = puts(&w(&mut app))[0].clone();
+    tap(&mut app, KeyCode::Esc);
+    tap(&mut app, KeyCode::Char('y'));
+    assert_eq!(app.screen, None);
+    app.on_daemon(reply(refused(), id));
+    assert!(app.toast_text().unwrap().contains("not written within 5 s"));
+}
+
+/// Fix round 1, ruling 5.
+#[test]
+fn w_with_no_changes_sends_nothing() {
+    let mut app = opened();
+    assert!(w(&mut app).is_empty());
+    assert_eq!(app.toast_text(), Some(NO_CHANGES));
+    assert_eq!(NO_CHANGES, "no changes to save");
 }

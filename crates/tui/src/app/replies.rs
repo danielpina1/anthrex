@@ -258,11 +258,16 @@ impl App {
     /// `on_tick` (decision 19): a pending request with no reply within its timeout is
     /// dropped with an error toast, and changes no state.
     pub(super) fn expire_replies(&mut self) -> Vec<Effect> {
+        let screens = self.settings_saving();
         let gone = self.replies.expire(Instant::now());
         if gone.is_empty() {
             return vec![];
         }
-        self.toast_at(ToastLevel::Error, "no reply from daemon");
+        // The open Settings screen shows its own save's expiry (`settings_flow.rs`).
+        let owned = screens && !self.settings_saving();
+        if gone.len() > usize::from(owned) {
+            self.toast_at(ToastLevel::Error, "no reply from daemon");
+        }
         // A save that went unanswered may still land: ask for the settings again, so a
         // late `Saved` does not leave the cache stale.
         if gone.contains(&PendingWhat::SettingsPut) {

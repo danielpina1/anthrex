@@ -6,11 +6,10 @@
 //! model name, note, path and daemon problem passes `safe_text` here or in the kit.
 //! Pure: `&App` in.
 
-use super::profile::{frame_block, window};
 use crate::app::App;
 use crate::app::settings_screen::{
-    DISCARD_ASK, SAVED, SaveOutcome, SettingsPage, SettingsScreen, SettingsSection,
-    hard_stop_calls, hard_stop_minutes, strength_name,
+    DISCARD_ASK, LINK_LOST, SAVED, SHIPPED_FIXED, SaveOutcome, SettingsPage, SettingsScreen,
+    SettingsSection, hard_stop_calls, hard_stop_minutes, strength_name,
 };
 use crate::safe_text::one_line;
 use crate::theme::{Glyph, Palette, Role, glyph, role};
@@ -334,6 +333,9 @@ fn footer(app: &App, s: &SettingsScreen, width: u16, p: Palette) -> Vec<Line<'st
                     out.extend(marked(Glyph::Failed, problem, w, Role::Failed, p));
                 }
             }
+            Some(SaveOutcome::LinkLost) => {
+                out.push(Line::styled(LINK_LOST, role(Role::Failed, p)));
+            }
             None => {}
         }
     }
@@ -374,7 +376,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
     };
     // Decision 5: the one accented border is the dialog's while one is open.
     let keys_here = s.page.is_none() && app.modal.is_none();
-    let block = frame_block(title, keys_here, p);
+    let block = kit::screen_frame(&title, keys_here, p);
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -387,7 +389,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
     let (lines, at) = section_lines(s, inner.width, p);
     let rows = height.saturating_sub(2 + foot.len());
     let mut all = vec![section_row(s, p), Line::default()];
-    all.extend(window(lines, at, rows, p));
+    all.extend(kit::window(lines, at, rows, p));
     if !foot.is_empty() {
         all.extend(std::iter::repeat_n(
             Line::default(),
@@ -418,7 +420,13 @@ fn page_parts(
                 .into_iter()
                 .map(Line::raw)
                 .collect();
-            let h = hints(&[("y", "discard"), ("esc", "back")]);
+            let mut h = hints(&[("y", "discard"), ("esc", "back")]);
+            // Decision 5: a destructive dialog's action word is in `Failed`.
+            for span in h.spans.iter_mut() {
+                if span.content == "y" || span.content == "discard" {
+                    span.style = role(Role::Failed, p);
+                }
+            }
             ("discard changes".into(), true, body, h)
         }
         SettingsPage::Custom(c) => {
@@ -435,6 +443,10 @@ fn page_parts(
             let mut strength = label("strength", c.on_strength);
             strength.push(Span::raw(kit::choice_in(strength_name(c.strength), p)));
             let mut body = vec![Line::from(spans), Line::from(strength)];
+            if c.shipped() {
+                let text = SHIPPED_FIXED.replace('·', dot(p));
+                body.push(Line::styled(text, role(Role::Muted, p)));
+            }
             if let Some(error) = &c.error {
                 body.push(Line::styled(one_line(error), role(Role::Failed, p)));
             }

@@ -65,7 +65,8 @@ impl App {
     pub(crate) fn screens_tick(&mut self, now: Instant) -> Vec<Effect> {
         match &self.screen {
             Some(Screen::Profile(_)) => self.profile_tick(now),
-            Some(Screen::Settings(_)) | None => vec![],
+            Some(Screen::Settings(_)) => self.settings_tick(),
+            None => vec![],
         }
     }
 }
@@ -141,6 +142,8 @@ impl App {
             Some(PendingWhat::SettingsPut) => true,
             Some(_) => return None,
         };
+        // The open Settings screen shows its own save's outcome; no toast for it.
+        let screens = put && self.settings_put_is_screens(id);
         self.replies.take(Some(id));
         let newer = self.settings_cache.as_ref().is_none_or(|c| id > c.id);
         let mut effects = Vec::new();
@@ -169,7 +172,9 @@ impl App {
                 }
             }
             other => {
-                if let SettingsReply::Refused { problems } = other {
+                if let SettingsReply::Refused { problems } = other
+                    && !screens
+                {
                     let text = first_line_and_more(&problems.join("\n"))
                         .unwrap_or_else(|| "settings refused".into());
                     self.toast_at(ToastLevel::Error, text);

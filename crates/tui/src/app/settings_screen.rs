@@ -9,8 +9,6 @@
 //! `app/screens.rs::route_settings_reply`. Keys are `settings_keys.rs`; drawing is
 //! `ui/settings.rs`. Pure: every request leaves as an `Effect`.
 
-use super::screens::Screen;
-use super::{App, Effect, ToastLevel};
 use crate::text_area::TextArea;
 use config::settings::{SHIPPED_CLAUDE, SHIPPED_CODEX, ShippedModel, validate, warnings};
 use proto::settings::key;
@@ -26,6 +24,12 @@ pub const SAVED: &str = "saved · new runs use these settings · runs in progres
 pub const DISCARD_ASK: &str = "discard unsaved settings? y";
 /// `C-b a`, `C-b m` and `C-b t` while the screen is open (as the Profile screen's).
 pub const LEAVE_SETTINGS_FIRST: &str = "leave the settings first (esc)";
+/// `w` with nothing changed.
+pub const NO_CHANGES: &str = "no changes to save";
+/// The screen's `Put` lost its link before any reply.
+pub const LINK_LOST: &str = "not saved: link lost";
+/// The custom dialog, when the typed name is a shipped model of its runtime.
+pub const SHIPPED_FIXED: &str = "shipped model · strength is fixed";
 /// Another screen asked for while this one holds unsaved changes.
 pub const UNSAVED_FIRST: &str = "unsaved settings: w saves, esc discards";
 
@@ -109,6 +113,19 @@ pub struct CustomModel {
     pub error: Option<String>,
 }
 
+impl CustomModel {
+    /// The typed name is one of the runtime's shipped models: its row is enabled with
+    /// the shipped strength (decision 36), so the dialog says so.
+    pub fn shipped(&self) -> bool {
+        let name = crate::safe_text::one_line(self.model.text());
+        let shipped: &[ShippedModel] = match self.runtime {
+            Runtime::Codex => &SHIPPED_CODEX,
+            _ => &SHIPPED_CLAUDE,
+        };
+        shipped.iter().any(|m| m.model == name.trim())
+    }
+}
+
 /// A dialog over the screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsPage {
@@ -123,6 +140,8 @@ pub enum SaveOutcome {
     Saved,
     /// The daemon's problems (or `no reply from daemon`), every one.
     Refused(Vec<String>),
+    /// The link went before any reply: `not saved: link lost`.
+    LinkLost,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,6 +165,9 @@ pub struct SettingsScreen {
     pub page: Option<SettingsPage>,
     /// The screen's own `Put`, while its reply is awaited (see `App::settings_saving`).
     pub put_id: Option<u64>,
+    /// The doc that `Put` carried: a `Saved` reloads the screen only when nothing was
+    /// edited since.
+    pub sent: Option<SettingsDoc>,
     pub outcome: Option<SaveOutcome>,
 }
 
@@ -295,6 +317,7 @@ impl SettingsScreen {
             path: String::new(),
             page: None,
             put_id: None,
+            sent: None,
             outcome: None,
         };
         s.load(&empty, &BTreeMap::new());
@@ -460,121 +483,7 @@ impl SettingsScreen {
     }
 }
 
-impl App {
-    /// `C-b S` (decision 36): the screen from the cache, or a loading screen and one
-    /// `Settings(Get)` when there is no cache yet (and none is on its way). Refused over
-    /// the plan review (decision 33); already open, it stays as it is.
-    pub(super) fn open_settings(&mut self) -> Vec<Effect> {
-        if self.plan_review.is_some() {
-            self.toast(super::plan_review::LEAVE_REVIEW_FIRST);
-            return vec![];
-        }
-        if matches!(self.screen, Some(Screen::Settings(_))) {
-            return vec![];
-        }
-        let (screen, effects) = match &self.settings_cache {
-            Some(cache) => {
-                let mut s = SettingsScreen::from_doc(&cache.doc, &cache.origin);
-                s.path = cache.path.display().to_string();
-                (s, vec![])
-            }
-            None if self
-                .replies
-                .waits_for(&super::replies::PendingWhat::SettingsGet) =>
-            {
-                (SettingsScreen::loading(), vec![])
-            }
-            None => (SettingsScreen::loading(), vec![self.settings_fetch()]),
-        };
-        self.set_screen(Some(Screen::Settings(Box::new(screen))));
-        effects
-    }
-
-    pub(crate) fn settings_screen_mut(&mut self) -> Option<&mut SettingsScreen> {
-        match &mut self.screen {
-            Some(Screen::Settings(s)) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// The screen's `Put` is still awaited: the screen shows `saving…`. Derived from
-    /// `App.replies`, so a lost link, a refused send or an expiry never leaves it stale.
-    pub fn settings_saving(&self) -> bool {
-        match &self.screen {
-            Some(Screen::Settings(s)) => s.put_id.is_some_and(|id| self.replies.contains(id)),
-            _ => false,
-        }
-    }
-
-    /// `w`: the screen's doc as a tagged `Settings(Put)`, unless a problem blocks it
-    /// (listed inline already), a save is under way, or the link is down.
-    pub(super) fn settings_save(&mut self) -> Vec<Effect> {
-        if self.settings_saving() {
-            return vec![];
-        }
-        let Some(doc) = self.settings_screen_mut().and_then(|s| s.doc().ok()) else {
-            return vec![];
-        };
-        if !self.connected() {
-            self.toast_at(ToastLevel::Warn, "not connected");
-            return vec![];
-        }
-        let effect = self.settings_put(doc);
-        if let (Some(s), Effect::Send(proto::ClientMsg::RunTagged { id, .. })) =
-            (self.settings_screen_mut(), &effect)
-        {
-            s.put_id = Some(*id);
-            s.outcome = None;
-        }
-        vec![effect]
-    }
-
-    /// `set_cache`'s share: a loading screen fills from the new cache, and an
-    /// unchanged one follows it; unsaved changes are never replaced.
-    pub(super) fn sync_settings_screen(&mut self) {
-        let saving = self.settings_saving();
-        let Some(cache) = self.settings_cache.clone() else {
-            return;
-        };
-        if let Some(s) = self.settings_screen_mut()
-            && (!s.loaded || (!s.dirty() && !saving))
-        {
-            s.load(&cache.doc, &cache.origin);
-            s.path = cache.path.display().to_string();
-        }
-    }
-
-    /// `route_settings_reply`'s share: the outcome of the screen's own `Put`. `Saved`
-    /// reloads the screen on the saved doc; anything else lists what the daemon said.
-    pub(super) fn settings_screen_reply(&mut self, id: u64, reply: &proto::SettingsReply) {
-        let Some(s) = self.settings_screen_mut().filter(|s| s.put_id == Some(id)) else {
-            return;
-        };
-        s.put_id = None;
-        match reply {
-            proto::SettingsReply::Saved { doc, origin } => {
-                s.load(doc, origin);
-                s.outcome = Some(SaveOutcome::Saved);
-            }
-            proto::SettingsReply::Refused { problems } => {
-                s.outcome = Some(SaveOutcome::Refused(problems.clone()));
-            }
-            proto::SettingsReply::Current { .. } => {}
-        }
-    }
-
-    /// `expire_replies`' share: the screen's `Put` went unanswered.
-    pub(super) fn settings_screen_no_reply(&mut self) {
-        let lost = match &self.screen {
-            Some(Screen::Settings(s)) => s.put_id.is_some_and(|id| !self.replies.contains(id)),
-            _ => false,
-        };
-        if lost && let Some(s) = self.settings_screen_mut() {
-            s.put_id = None;
-            s.outcome = Some(SaveOutcome::Refused(vec!["no reply from daemon".into()]));
-        }
-    }
-}
-
+#[path = "settings_flow.rs"]
+mod flow;
 #[path = "settings_keys.rs"]
 mod keys;
