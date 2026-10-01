@@ -4,6 +4,8 @@
 
 mod support;
 
+use std::time::Duration;
+
 use proto::{AgentRole, BlockReason, RunState, Runtime, TaskState};
 use serde_json::{Value, json};
 use support::run_harness::{RUN_WAIT, RunHarness};
@@ -266,4 +268,47 @@ fn e2e_minor_findings_do_not_bounce() {
         ),
         "{report}"
     );
+}
+
+/// The trial's reviewer failure (2026-10-01): Codex prints its `error` line and
+/// `turn.failed` with a 400 `invalid_request_error`, then exits. Decision 32 (ruling
+/// T13-I1 for reviewers): one `rate_limit_continue` after `rate_limit_retry_secs`; the
+/// second such turn in a row blocks the task `blocked(environment)` with the error.
+#[test]
+fn e2e_a_reviewer_whose_model_is_refused_twice_blocks_on_the_error() {
+    const RETRY_SECS: u64 = 5;
+    const UNSUPPORTED: &str =
+        "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.";
+    let api = json!({"type": "error", "status": 400,
+        "error": {"type": "invalid_request_error", "message": UNSUPPORTED}})
+    .to_string();
+    let h = RunHarness::new(&format!("rate_limit_retry_secs = {RETRY_SECS}"));
+    h.script("worker-t1-1", &[commit("a.txt", "a\n"), done("added a")]);
+    h.script(
+        "reviewer-t1-1",
+        &[
+            json!({"fail_turn": {"error": api}}),
+            read("stopped on an API error"),
+            json!({"fail_turn": {"error": api}}),
+        ],
+    );
+    let id = h.start(&plan("", &[task("t1", &["a.txt"], "")]), true);
+    // One task path, plus the one engine timer on its critical path: the first failed
+    // turn's `rate_limit_retry_secs` (docs/timing-budgets.md).
+    let wait = RUN_WAIT + Duration::from_secs(RETRY_SECS);
+    let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Blocked, wait);
+    let t1 = t(&run, "t1");
+    let block = t1.block.as_ref().expect("a blocked task has its block");
+    assert_eq!(
+        (block.reason, block.text.as_str()),
+        (BlockReason::Environment, UNSUPPORTED)
+    );
+    let reviewer = t1
+        .rounds
+        .iter()
+        .find(|a| a.role == AgentRole::Reviewer)
+        .expect("the reviewer's round");
+    assert_eq!(reviewer.route.runtime, Runtime::Codex);
+    assert_eq!(reviewer.turns, 2, "one continue, then the block");
+    assert!(reviewer.ended_at.is_some(), "the reviewer's round is over");
 }
