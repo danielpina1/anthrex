@@ -566,4 +566,6 @@ pub(crate) fn example_windows() -> Vec<WindowInfo> {
 }
 
 #[cfg(test)]
-pub(crate) use tests::{alert_fixtures, orch_fixtures, run_fixtures, stage_fixtures};
+pub(crate) use tests::{
+    alert_fixtures, orch_fixtures, plan_fixtures, run_fixtures, stage_fixtures,
+};

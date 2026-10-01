@@ -65,12 +65,16 @@ pub(crate) fn find(buffer: &Buffer, text: &str) -> Vec<(u16, u16)> {
 const CORNERS: [&str; 3] = ["╭", "┌", "+"];
 const BOTTOM_LEFTS: [&str; 3] = ["╰", "└", "+"];
 const HORIZONTALS: [&str; 2] = ["─", "-"];
-const VERTICALS: [&str; 2] = ["│", "|"];
+/// A frame's left side: its verticals (`│`, `|`), and the `├` where a rule inside the
+/// frame joins it (the plan review's header and list rules, milestone 9.0.7 decision
+/// 23).
+const SIDES: [&str; 3] = ["│", "|", "├"];
 /// Every glyph a border is drawn with, the junctions an edge leaves on a box included.
 const BORDER_GLYPHS: &str = "╭╮╰╯┌┐└┘├┤┬┴┼─│+-|";
 
 /// How many frames wear the accent. A frame is a top-left corner (`╭`, `┌` or `+`) in
-/// the accent whose left side runs down, as verticals (`│`, `|`) in the accent, to a
+/// the accent whose left side runs down, as verticals (`│`, `|`, or a rule's `├`) in
+/// the accent, to a
 /// bottom-left corner (`╰`, `└` or `+`) in the accent whose bottom edge goes on to the
 /// right: the first accented border glyph after the corner (past a bottom title) is a
 /// horizontal (`─`, `-`). The bottom edge is read, not the top, because a title
@@ -89,11 +93,11 @@ pub(crate) fn accented_frames(buffer: &Buffer, p: Palette) -> usize {
     let mut count = 0;
     for y in area.y..area.bottom().saturating_sub(1) {
         for x in area.x..area.right() {
-            if !is(x, y, &CORNERS) || !is(x, y + 1, &VERTICALS) {
+            if !is(x, y, &CORNERS) || !is(x, y + 1, &SIDES) {
                 continue;
             }
             let mut bottom = y + 1;
-            while bottom < area.bottom() && is(x, bottom, &VERTICALS) {
+            while bottom < area.bottom() && is(x, bottom, &SIDES) {
                 bottom += 1;
             }
             let frame = if bottom == area.bottom() {
@@ -179,6 +183,8 @@ pub(crate) fn shows(name: &str) -> Shows {
         // below names `t2`'s state whole.
         "run view as a list" => row("in review · r1", Some("esc back"), &["j/k move"]),
         "conversation" => row("CHAT", None, &["C-b ? help"]),
+        // Milestone 9.0.7 decision 23: the framed review's right-hand title.
+        "plan review" => row("awaiting approval", Some("esc back"), &["a approve"]),
         // Decision 11: the Alerts view on `t2`'s blocked alert. Its detail row's `o open
         // task` drops first at 80x24 (decision 34's priorities); the bar keeps `o open`.
         "alerts view" => row("phase", Some("esc back"), &["⏎ answer", "o open"]),
@@ -326,6 +332,8 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             crate::ui::run_list::tests::two_stage_run_selected("t2"),
         ),
         ("conversation", with(gate(), |a| chord(a, 'm'))),
+        // Decisions 23–26: `p` in the run view at the gate.
+        ("plan review", with(run_view(gate()), |a| tap(a, 'p'))),
         // Decision 11: `C-b a`, then `j`: the Alerts view on the blocked alert.
         (
             "alerts view",

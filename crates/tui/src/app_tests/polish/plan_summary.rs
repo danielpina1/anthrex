@@ -1,0 +1,182 @@
+//! M9.0.7.11: the plan review's summary facts (decisions 23 and 24), pure.
+
+use crate::app::ReviewTarget;
+use crate::app::plan_review::review_tasks;
+use crate::app::plan_summary::{Overlap, columns, header_line, overlap_lines, overlaps};
+use crate::tree::plan_fixtures::{plan_task, three_task_plan};
+use proto::Size;
+
+#[test]
+fn the_header_counts_sizes_budget_and_the_critical_path() {
+    // t1 S (40 calls) stage 1; t2 M (100) stage 2 after t1; t3 S (50) stage 2 after t2;
+    // critical_path [t1, t2, t3].
+    let run = three_task_plan();
+    assert_eq!(
+        header_line(&run, &review_tasks(&run, &ReviewTarget::Gate), 200, false),
+        "3 tasks · 2 stages · S+M+S · ~190 calls · critical t1 › t2 › t3"
+    );
+    // Cut with `…` to the width, the critical path first; folded in ASCII.
+    let tasks = review_tasks(&run, &ReviewTarget::Gate);
+    assert_eq!(
+        header_line(&run, &tasks, 50, false),
+        "3 tasks · 2 stages · S+M+S · ~190 calls · critica…"
+    );
+    assert_eq!(
+        header_line(&run, &tasks, 200, true),
+        "3 tasks - 2 stages - S+M+S - ~190 calls - critical t1 > t2 > t3"
+    );
+    // One stage, no critical path: neither part shows.
+    let mut single = three_task_plan();
+    for task in &mut single.tasks {
+        task.stage = 1;
+    }
+    single.critical_path.clear();
+    let tasks = review_tasks(&single, &ReviewTarget::Gate);
+    assert_eq!(
+        header_line(&single, &tasks[..1], 200, false),
+        "1 task · S · ~40 calls"
+    );
+}
+
+#[test]
+fn overlaps_need_owners_that_can_run_together() {
+    let mut run = three_task_plan();
+    run.tasks[1].owns = vec!["crates/c/src/lib.rs".into()];
+    run.tasks[2].owns = vec!["crates/c/src/".into()];
+    assert!(
+        overlaps(&run.tasks.iter().collect::<Vec<_>>()).is_empty(),
+        "t3 runs after t2"
+    );
+    run.tasks[2].deps.clear();
+    run.tasks[2].implicit_deps.clear();
+    assert_eq!(
+        overlaps(&run.tasks.iter().collect::<Vec<_>>()),
+        vec![Overlap {
+            a: "t2".into(),
+            b: "t3".into(),
+            path: "crates/c/src/lib.rs".into()
+        }]
+    );
+}
+
+#[test]
+fn overlaps_follow_deps_transitively_and_stop_at_a_slash() {
+    let mut run = three_task_plan();
+    // t3 after t2 after t1: t1 and t3 never run together, through t2.
+    run.tasks[0].owns = vec!["docs/".into()];
+    run.tasks[2].owns = vec!["docs/guide.md".into()];
+    assert!(overlaps(&run.tasks.iter().collect::<Vec<_>>()).is_empty());
+    // An implicit dep orders them as well as an explicit one.
+    run.tasks[2].deps.clear();
+    run.tasks[2].implicit_deps = vec!["t1".into()];
+    assert!(overlaps(&run.tasks.iter().collect::<Vec<_>>()).is_empty());
+    // `crates/c` is not a directory of `crates/cli`; `crates/c` is one of `crates/c/x`.
+    run.tasks[2].implicit_deps.clear();
+    run.tasks[0].owns = vec!["crates/c".into()];
+    run.tasks[2].owns = vec!["crates/cli/src/main.rs".into()];
+    assert!(overlaps(&run.tasks.iter().collect::<Vec<_>>()).is_empty());
+    run.tasks[2].owns = vec!["crates/c/x.rs".into()];
+    assert_eq!(
+        overlaps(&run.tasks.iter().collect::<Vec<_>>()),
+        vec![Overlap {
+            a: "t1".into(),
+            b: "t3".into(),
+            path: "crates/c/x.rs".into()
+        }]
+    );
+}
+
+#[test]
+fn more_than_eight_tasks_count_sizes() {
+    let mut run = three_task_plan();
+    run.tasks = (1..=9)
+        .map(|n| {
+            let size = if n % 2 == 1 { Size::S } else { Size::M };
+            plan_task(&format!("t{n}"), "x", size, 1, 10)
+        })
+        .collect();
+    run.critical_path.clear();
+    let tasks = review_tasks(&run, &ReviewTarget::Gate);
+    assert_eq!(
+        header_line(&run, &tasks, 200, false),
+        "9 tasks · 5S 4M · ~90 calls"
+    );
+    // Eight are still a sequence.
+    assert_eq!(
+        header_line(&run, &tasks[..8], 200, false),
+        "8 tasks · S+M+S+M+S+M+S+M · ~80 calls"
+    );
+}
+
+#[test]
+fn epics_are_counted_when_present() {
+    let mut run = three_task_plan();
+    run.tasks[0].epic = Some("api".into());
+    run.tasks[1].epic = Some("api".into());
+    run.tasks[2].epic = Some("docs".into());
+    let tasks = review_tasks(&run, &ReviewTarget::Gate);
+    assert!(
+        header_line(&run, &tasks, 200, false).starts_with("3 tasks · 2 epics · 2 stages · "),
+        "{}",
+        header_line(&run, &tasks, 200, false)
+    );
+    run.tasks[2].epic = None;
+    let tasks = review_tasks(&run, &ReviewTarget::Gate);
+    assert!(header_line(&run, &tasks, 200, false).starts_with("3 tasks · 1 epic · 2 stages · "));
+}
+
+#[test]
+fn implied_deps_are_marked() {
+    let mut run = three_task_plan();
+    // t4 after t1 and, implicitly, t1 again and t3: an implicit dep that is also
+    // explicit is not `(implied)`.
+    let mut t4 = plan_task("t4", "release", Size::S, 2, 10);
+    t4.deps = vec!["t1".into()];
+    t4.implicit_deps = vec!["t1".into(), "t3".into()];
+    run.tasks.push(t4);
+    let tasks = review_tasks(&run, &ReviewTarget::Gate);
+    let cells = columns(&run, &tasks, false);
+    assert_eq!(cells[3].deps, "after t1, t3 (implied)");
+    assert_eq!(cells[1].deps, "after t1");
+    assert_eq!(cells[0].deps, "");
+    // The other cells, for the route tag and the stage column.
+    assert_eq!(
+        cells[0].route, "cx gpt-6-so",
+        "tree::short_model's eight columns"
+    );
+    assert_eq!(cells[1].route, "cl opus");
+    assert_eq!(cells[2].route, "cl haiku");
+    assert_eq!(cells[2].size, "S none");
+    assert_eq!(cells[1].stage.as_deref(), Some("stage 2"));
+    run.tasks[0].route.model.clear();
+    let tasks = review_tasks(&run, &ReviewTarget::Gate);
+    assert_eq!(columns(&run, &tasks, false)[0].route, "cx default");
+}
+
+#[test]
+fn more_than_three_overlaps_are_summed() {
+    let mut run = three_task_plan();
+    run.tasks = (1..=4)
+        .map(|n| {
+            let mut t = plan_task(&format!("t{n}"), "x", Size::S, 1, 10);
+            t.owns = vec!["src/lib.rs".into()];
+            t
+        })
+        .collect();
+    let tasks = review_tasks(&run, &ReviewTarget::Gate);
+    // Four tasks that all own the file, none ordered: six pairs.
+    let all = overlaps(&tasks);
+    assert_eq!(all.len(), 6);
+    assert_eq!(
+        overlap_lines(&all, false),
+        [
+            "⚠ t1 and t2 both own src/lib.rs",
+            "⚠ t1 and t3 both own src/lib.rs",
+            "⚠ t1 and t4 both own src/lib.rs",
+            "⚠ 3 more overlaps",
+        ]
+    );
+    assert_eq!(overlap_lines(&all[..5], true)[3], "! 2 more overlaps");
+    assert_eq!(overlap_lines(&all[..4], false)[3], "⚠ 1 more overlap");
+    assert_eq!(overlap_lines(&all[..3], false).len(), 3);
+}

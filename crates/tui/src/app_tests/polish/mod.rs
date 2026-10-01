@@ -3,4 +3,5 @@
 
 mod alerts_model;
 mod alerts_view;
+mod plan_summary;
 mod region;

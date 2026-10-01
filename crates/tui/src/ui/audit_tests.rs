@@ -336,6 +336,27 @@ fn accented_frames_counts_a_frame_clipped_at_the_bottom() {
     assert_eq!(audit::accented_frames(&buffer, p), 0);
 }
 
+/// Milestone 9.0.7 task 11: a rule joined to the frame's sides (`├─…─┤`, the plan
+/// review's) continues the frame's left side, so the frame still counts once; a muted
+/// junction breaks the side, so a frame whose rules are not its border's colour does
+/// not count.
+#[test]
+fn accented_frames_counts_a_frame_with_joined_rules_once() {
+    let p = palette(false);
+    let accent = role(Role::Accent, p);
+    let draw = |style: ratatui::style::Style| {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 12, 8));
+        kit::pane_frame(Line::from("plan"), true, p).render(Rect::new(0, 0, 12, 8), &mut buffer);
+        for y in [2, 4] {
+            Paragraph::new(Line::styled(format!("├{}┤", "─".repeat(10)), style))
+                .render(Rect::new(0, y, 12, 1), &mut buffer);
+        }
+        audit::accented_frames(&buffer, p)
+    };
+    assert_eq!(draw(accent), 1);
+    assert_eq!(draw(role(Role::Muted, p)), 0);
+}
+
 /// Decision 2: the pane frame is `+ - |` in ASCII, its title wrapped in one space
 /// each side, bold in the default colour.
 #[test]

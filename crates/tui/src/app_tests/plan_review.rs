@@ -4,7 +4,7 @@
 use super::gate::{select, send, tap, task_key};
 use super::runs::{app_with_runs, deliver, open_run_view};
 use super::*;
-use crate::app::plan_review::{detail_lines, panes, review_tasks};
+use crate::app::plan_review::{detail_lines, review_tasks};
 use crate::app::{Modal, PendingAction, PlanReview, ReviewTarget, TreeInput};
 use crate::tree::NodeKey;
 use crate::tree::orch_fixtures::{held_fixture, hold, orch_fixture};
@@ -174,15 +174,16 @@ fn page_keys_scroll_within_the_content() {
     let body = Rect::new(0, 0, 80, 23);
     app.set_body_area(body);
     tap(&mut app, KeyCode::Char('p'));
-    let right = panes(body).right;
+    // Milestone 9.0.7 decision 26: the detail is the stacked geometry's last area.
+    let detail = app.review_layout(body).detail;
     let run = &app.runs.runs[0];
-    let rows = detail_lines(run, &run.tasks[0], right.width).len() as u16;
-    let page = right.height - 1;
+    let rows = detail_lines(run, &run.tasks[0], detail.width, app.palette()).len() as u16;
+    let page = detail.height - 1;
     assert!(
-        rows > right.height + page,
+        rows > detail.height + page,
         "the fixture's brief spans pages"
     );
-    let max = rows - right.height;
+    let max = rows - detail.height;
 
     assert!(tap(&mut app, KeyCode::PageDown).is_empty());
     assert_eq!(review(&app).scroll, page);

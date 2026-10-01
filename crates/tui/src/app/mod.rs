@@ -562,6 +562,7 @@ mod link;
 mod modal_keys;
 mod paste;
 pub(crate) mod plan_review;
+pub(crate) mod plan_summary;
 pub(crate) mod profile_screen;
 pub(crate) mod prompt;
 pub(crate) mod region;

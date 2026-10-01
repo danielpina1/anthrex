@@ -4,15 +4,19 @@
 //! (decision 16). `Keymap::review_mode` is kept in step with `App.plan_review` here,
 //! in one place (Risks 1). Rendering is `ui/plan_review.rs`; this file does no I/O.
 
+use super::plan_summary::{after_text, header_rows, plan_stages};
 use super::{App, Effect};
 use crate::inspector::run_format::{effort_text, strength_text, test_mode_text};
 use crate::safe_text::{multi_line, one_line};
+use crate::theme::{self, Glyph, Palette};
 use crate::tree::{NodeKey, awaiting_holds, task_held};
-use crate::ui::tree_view::truncate;
+use crate::ui::kit::labelled_rows;
+use crate::ui::tree_view::truncate_in;
 use crossterm::event::{KeyCode, KeyEvent};
 use proto::{HoldState, Route, RunInfo, RunState, TaskInfo, TaskState};
 use ratatui::layout::Rect;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 
 /// Decision 11: what the review is of.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,8 +27,8 @@ pub enum ReviewTarget {
     Hold(String),
 }
 
-/// Decision 11: the open review. `selected` is a task id; `scroll` the right pane's
-/// first row.
+/// Decision 11: the open review. `selected` is a task id; `scroll` the detail's first
+/// row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanReview {
     pub run_id: String,
@@ -68,63 +72,58 @@ fn still_awaiting(run: &RunInfo, target: &ReviewTarget) -> bool {
     }
 }
 
-/// Decision 12's screen areas inside `body`: the title row, the task list on the left
-/// (`clamp(width × 2 / 5, 30, 56)` columns) and the selected task's detail on the right,
-/// one column of separator between them. The renderer and the reducer both use it, so
-/// a page is the height the user sees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ReviewPanes {
-    pub title: Rect,
-    pub left: Rect,
-    pub right: Rect,
+/// Milestone 9.0.7 decision 26's geometry inside the frame `body`, top to bottom: the
+/// summary header, a rule, the task list (its rows, at most `max(3, interior / 2)`), a
+/// rule, and the detail in the rest. The renderer and the reducer both use it, so a
+/// page is the height the user sees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct ReviewLayout {
+    /// The frame's interior.
+    pub inner: Rect,
+    pub header: Rect,
+    /// The rows of the two `├─…─┤` rules, below the header and below the list, while
+    /// they fit.
+    pub rules: [Option<u16>; 2],
+    pub list: Rect,
+    pub detail: Rect,
 }
 
-pub(crate) fn panes(body: Rect) -> ReviewPanes {
-    let title = Rect {
-        height: body.height.min(1),
-        ..body
-    };
-    let below = Rect {
-        y: body.y + title.height,
-        height: body.height - title.height,
-        ..body
-    };
-    let left_width = (below.width * 2 / 5).clamp(30, 56).min(below.width);
-    let left = Rect {
-        width: left_width,
-        ..below
-    };
-    let gap = u16::from(below.width > left_width);
-    let right = Rect {
-        x: below.x + left_width + gap,
-        width: below.width - left_width - gap,
-        ..below
-    };
-    ReviewPanes { title, left, right }
-}
+/// The columns the header and the detail are indented by: the list's selection bar's,
+/// so every text starts in one column.
+pub(crate) const BAR: u16 = 1;
 
-/// What a right-pane row is, for the renderer's styles.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LineKind {
-    /// `<id>  <title>`.
-    Title,
-    /// A section label (`brief`, `owns`, …).
-    Label,
-    /// A section's text, indented under its label.
-    Text,
-    /// The empty row between sections.
-    Blank,
+/// Decision 26's stacking of a header of `header_rows` and a list of `tasks` in `body`.
+pub(crate) fn stacked(body: Rect, header_rows: u16, tasks: usize) -> ReviewLayout {
+    let inner = Rect {
+        x: body.x.saturating_add(1),
+        y: body.y.saturating_add(1),
+        width: body.width.saturating_sub(2),
+        height: body.height.saturating_sub(2),
+    };
+    let mut y = inner.y;
+    let mut take = |rows: u16| {
+        let height = rows.min(inner.bottom() - y);
+        let area = Rect { y, height, ..inner };
+        y += height;
+        area
+    };
+    let header = take(header_rows);
+    let first = take(1);
+    let list_rows = u16::try_from(tasks)
+        .unwrap_or(u16::MAX)
+        .min((inner.height / 2).max(3));
+    let list = take(list_rows);
+    let second = take(1);
+    let detail = take(u16::MAX);
+    let rule = |area: Rect| (area.height == 1).then_some(area.y);
+    ReviewLayout {
+        inner,
+        header,
+        rules: [rule(first), rule(second)],
+        list,
+        detail,
+    }
 }
-
-/// One right-pane row, already sanitised and wrapped to the pane's width.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ReviewLine {
-    pub kind: LineKind,
-    pub text: String,
-}
-
-/// Columns a section's text is indented under its label.
-const INDENT: usize = 2;
 
 /// `<runtime> · <model> · <strength> · <effort> effort` (decision 12).
 /// A blank model (the policy's default) is left out.
@@ -163,9 +162,14 @@ fn or_none(lines: Vec<String>) -> Vec<String> {
 }
 
 /// The sections of decision 12, unwrapped: each label with its lines of text.
-fn sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> {
+fn sections(run: &RunInfo, task: &TaskInfo, ascii: bool) -> Vec<(&'static str, Vec<String>)> {
+    let pending = theme::glyph(Glyph::NotStarted, ascii);
     let mut out = vec![
-        ("brief", vec![task.brief.clone()]),
+        // One row a line of the brief, each through `one_line`.
+        (
+            "brief",
+            multi_line(&task.brief).split('\n').map(one_line).collect(),
+        ),
         // One entry is one row: a line break inside an entry must not forge another.
         (
             "owns",
@@ -176,7 +180,7 @@ fn sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> 
             or_none(
                 task.acceptance
                     .iter()
-                    .map(|c| format!("☐ {}", one_line(c)))
+                    .map(|c| format!("{pending} {}", one_line(c)))
                     .collect(),
             ),
         ),
@@ -191,22 +195,23 @@ fn sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> 
     if !task.notes.is_empty() {
         out.push(("notes", task.notes.iter().map(|n| one_line(n)).collect()));
     }
+    // Milestone 9.0.7 decision 19's form, then what the task unblocks, on one row.
     let mut deps = Vec::new();
-    let after = all_deps(task);
+    let after = after_text(task);
     if !after.is_empty() {
-        deps.push(format!("after {}", after.join(", ")));
+        deps.push(after);
     }
-    let unblocks: Vec<&str> = run
+    let unblocks: Vec<String> = run
         .tasks
         .iter()
         .filter(|other| all_deps(other).contains(&task.id.as_str()))
-        .map(|other| other.id.as_str())
+        .map(|other| one_line(&other.id))
         .collect();
     if !unblocks.is_empty() {
         deps.push(format!("unblocks {}", unblocks.join(", ")));
     }
     if !deps.is_empty() {
-        out.push(("deps", deps));
+        out.push(("deps", vec![deps.join(" · ")]));
     }
     out.push(("route", vec![route_line(&task.route)]));
     let review = task
@@ -221,8 +226,7 @@ fn sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> 
 /// `atomic` (the plan's reason, else `yes`) and `interface change` when set. A Single
 /// plan has none, so its review is as it was.
 fn stage_sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<String>)> {
-    let planned = run.tasks.iter().map(|t| t.stage).max().unwrap_or(1);
-    let stages = planned.max(u16::try_from(run.stages.len()).unwrap_or(u16::MAX));
+    let stages = plan_stages(run);
     if stages <= 1 {
         return Vec::new();
     }
@@ -241,67 +245,36 @@ fn stage_sections(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Vec<Stri
     out
 }
 
-/// Greedy word wrap to `width` display columns; a word wider than the line is broken.
-/// A blank line stays one empty row.
-pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut lines = Vec::new();
-    let mut current = String::new();
-    for word in text.split_whitespace() {
-        let joined = current.width() + 1 + word.width();
-        if !current.is_empty() && joined > width {
-            lines.push(std::mem::take(&mut current));
-        } else if !current.is_empty() {
-            current.push(' ');
-        }
-        current.push_str(word);
-        while current.width() > width {
-            let (mut used, mut end) = (0, 0);
-            for (at, c) in current.char_indices() {
-                let w = UnicodeWidthChar::width(c).unwrap_or(0);
-                if used + w > width && end > 0 {
-                    break;
-                }
-                used += w;
-                end = at + c.len_utf8();
-            }
-            let rest = current.split_off(end);
-            lines.push(std::mem::replace(&mut current, rest));
+/// Milestone 9.0.7 decision 25's detail for `task` in a detail area `width` columns
+/// wide (the bar's column left out): the bold `<id>  <title>` row, as the task panel
+/// leads with its title, then `kit::labelled_rows` of decision 12's sections in their
+/// order, an entry a row (a label on its first), each value wrapped under itself.
+/// Every agent-written string goes through `multi_line` and `one_line` (decision 27);
+/// `labelled_rows` folds in ASCII. The reducer pages by these rows' count.
+pub(crate) fn detail_lines(
+    run: &RunInfo,
+    task: &TaskInfo,
+    width: u16,
+    p: Palette,
+) -> Vec<Line<'static>> {
+    let width = width.saturating_sub(BAR);
+    let title = theme::fold(&one_line(&format!("{}  {}", task.id, task.title)), p.ascii);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let title = truncate_in(&title, usize::from(width), p.ascii);
+    let mut rows = Vec::new();
+    for (label, texts) in sections(run, task, p.ascii) {
+        for (n, text) in texts.into_iter().enumerate() {
+            let label = if n == 0 { label } else { "" };
+            rows.push((label.to_owned(), text));
         }
     }
-    if !current.is_empty() || lines.is_empty() {
-        lines.push(current);
-    }
-    lines
-}
-
-/// Decision 12's right pane for `task`, wrapped to `width` columns: the title row, then
-/// each section's label and its text indented under it, a blank row between sections.
-/// Every agent-written string goes through `multi_line`, then `one_line` per line
-/// (decision 27).
-pub(crate) fn detail_lines(run: &RunInfo, task: &TaskInfo, width: u16) -> Vec<ReviewLine> {
-    let width = usize::from(width);
-    let line = |kind, text: String| ReviewLine { kind, text };
-    // One row, spacing kept, cut with `…`: the list on the left carries the same title.
-    let title = one_line(&format!("{}  {}", task.id, task.title));
-    let mut out = vec![line(LineKind::Title, truncate(&title, width))];
-    for (label, texts) in sections(run, task) {
-        out.push(line(LineKind::Blank, String::new()));
-        out.push(line(LineKind::Label, label.to_owned()));
-        let pad = " ".repeat(INDENT.min(width.saturating_sub(1)));
-        for text in texts {
-            for raw in multi_line(&text).split('\n') {
-                for row in wrap(&one_line(raw), width.saturating_sub(pad.len())) {
-                    out.push(line(LineKind::Text, format!("{pad}{row}")));
-                }
-            }
-        }
-    }
+    let mut out = vec![Line::from(Span::styled(title, bold))];
+    out.extend(labelled_rows(&rows, width, p));
     out
 }
 
 impl App {
-    /// The renderer's body area (decision 12), reported after every draw.
+    /// The renderer's body area (the review's frame), reported after every draw.
     pub fn set_body_area(&mut self, area: Rect) {
         self.body_area = area;
     }
@@ -416,19 +389,19 @@ impl App {
         }
     }
 
-    /// The page keys: by the right pane's height minus one, clamped to its content, by
+    /// The page keys: by the detail's height minus one, clamped to its content, by
     /// the same row count the renderer draws (`detail_lines`).
     ///
     /// The scroll is clamped first (review finding 3): content that shrank, or a body
     /// that grew, since the last step leaves it past the end, and a page up must step
     /// from the end the user sees.
     fn scroll_review(&mut self, down: bool) {
-        let right = panes(self.body_area).right;
+        let detail = self.review_layout(self.body_area).detail;
         let (Some(max), Some(review)) = (self.review_max_scroll(), self.plan_review.as_mut())
         else {
             return;
         };
-        let page = right.height.saturating_sub(1).max(1);
+        let page = detail.height.saturating_sub(1).max(1);
         let from = review.scroll.min(max);
         review.scroll = if down {
             from.saturating_add(page).min(max)
@@ -438,18 +411,27 @@ impl App {
     }
 
     /// The last first row of the selected task's detail at `body_area`: its rows, by
-    /// the renderer's own count, less the pane's height.
+    /// the renderer's own count, less the detail's height.
     fn review_max_scroll(&self) -> Option<u16> {
-        let right = panes(self.body_area).right;
+        let detail = self.review_layout(self.body_area).detail;
         let (run, tasks) = self.reviewed()?;
         let selected = self.plan_review.as_ref()?.selected.as_ref()?;
         let task = tasks.into_iter().find(|task| task.id == *selected)?;
-        let rows = detail_lines(run, task, right.width).len();
+        let rows = detail_lines(run, task, detail.width, self.palette()).len();
         Some(
             u16::try_from(rows)
                 .unwrap_or(u16::MAX)
-                .saturating_sub(right.height),
+                .saturating_sub(detail.height),
         )
+    }
+
+    /// Decision 26's geometry of the open review in the frame `body`: the header's rows
+    /// and the list's from the reviewed tasks (`stacked`).
+    pub(crate) fn review_layout(&self, body: Rect) -> ReviewLayout {
+        let (header, tasks) = self
+            .reviewed()
+            .map_or((1, 0), |(_, tasks)| (header_rows(&tasks), tasks.len()));
+        stacked(body, header, tasks)
     }
 
     /// Decision 14's `p` in the run view on `run_id`: the gate while the run awaits
