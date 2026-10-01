@@ -180,8 +180,7 @@ fn resume(run: &Run) -> String {
     let reason = run
         .halted_reason
         .as_deref()
-        .and_then(|r| r.lines().next())
-        .filter(|r| !r.trim().is_empty())
+        .and_then(|r| r.lines().find(|l| !l.trim().is_empty()))
         .unwrap_or("run halted");
     format!(
         "resume: {reason}; rebaseline reads {} and the run head again",

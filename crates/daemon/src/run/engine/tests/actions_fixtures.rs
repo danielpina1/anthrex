@@ -29,6 +29,7 @@ pub(super) type Build = fn() -> Fixture;
 /// Every fixture by name.
 pub(super) const FIXTURES: &[(&str, Build)] = &[
     ("gate", gate),
+    ("gate_dormant", gate_dormant),
     ("planning", planning),
     ("planning_empty", planning_empty),
     ("planning_paused", planning_paused),
@@ -106,6 +107,21 @@ pub(super) fn gate() -> Fixture {
     let mut fx = Fixture::new(&plan);
     fx.ready(false);
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
+    fx
+}
+
+/// A planned run whose orchestrator submitted `t1`, at its gate, its orchestrator
+/// dormant after a daemon restart (`orch_window::restored`, as the restore leaves it):
+/// a resume relaunches it (milestone 9 decision 11).
+fn gate_dormant() -> Fixture {
+    let mut fx = launched(false);
+    edit_plan(
+        &mut fx,
+        json!({"edits": [add("t1", "auth")], "submit": true}),
+    );
+    assert_eq!(fx.run().state, RunState::AwaitingApproval);
+    crate::run::engine::orch_window::restored(fx.run_mut());
+    assert!(crate::run::engine::orch_window::relaunchable(fx.run()));
     fx
 }
 

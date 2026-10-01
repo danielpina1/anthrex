@@ -189,6 +189,10 @@ fn listed_kinds_follow_decision_9() {
         vec![Approve, Reject]
     );
     assert_eq!(
+        kinds(&named("gate_dormant"), ActionNode::Run),
+        vec![Approve, Reject]
+    );
+    assert_eq!(
         kinds(&named("planning"), ActionNode::Run),
         vec![Approve, Reject, Submit]
     );

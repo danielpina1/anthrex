@@ -475,7 +475,6 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
     Ok(())
 }
 
-/// Decision 27: no sub-planner is queued or planning.
 /// Why [`submit_plan`] refuses `run` now, if it does (milestone 9.0.6 decision 42's pure
 /// twin, which `actions::check` asks).
 pub(super) fn submit_refusal(run: &Run) -> Option<String> {
@@ -498,6 +497,7 @@ pub(super) fn submit_refusal(run: &Run) -> Option<String> {
     }
 }
 
+/// Decision 27: no sub-planner is queued or planning.
 pub(super) fn planners_finished(run: &Run) -> Result<(), String> {
     match run.orch.epics.iter().find(|e| e.phase.is_live()) {
         Some(e) => Err(format!(

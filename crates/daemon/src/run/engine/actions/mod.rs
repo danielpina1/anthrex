@@ -55,7 +55,7 @@ pub(crate) fn available(run: &Run, node: &ActionNode) -> Vec<ActionInfo> {
         .into_iter()
         .filter(|kind| relevant(run, node, kind))
         .map(|kind| ActionInfo {
-            label: clean(&label(&kind)),
+            label: clean(&label_on(run, &kind)),
             effect: clean(&effects::effect(run, node, &kind)),
             needs: needs(run, &kind),
             destructive: kind.destructive(),
@@ -63,6 +63,14 @@ pub(crate) fn available(run: &Run, node: &ActionNode) -> Vec<ActionInfo> {
             kind,
         })
         .collect()
+}
+
+/// Preflight F32 (controller ruling): a running run's resume retries its held tier 3.
+fn label_on(run: &Run, kind: &ActionKind) -> String {
+    match kind {
+        ActionKind::Resume if run.state == RunState::Running => "retry tier 3".into(),
+        kind => label(kind),
+    }
 }
 
 /// Preflight F32: a held tier 3's resume takes no form (a plain `Resume`).

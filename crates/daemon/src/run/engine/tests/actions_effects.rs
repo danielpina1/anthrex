@@ -120,7 +120,7 @@ fn resume_names_the_halt_or_the_held_stage() {
             "resume: refs/heads/anthrex/{RUN_ID}/integration moved from 1eeeeee to 9999999; rebaseline reads main and the run head again"
         )
     );
-    fx.run_mut().halted_reason = Some("first line\nsecond line".into());
+    fx.run_mut().halted_reason = Some("\n  \nfirst line\nsecond line".into());
     assert_eq!(
         effect(&fx, ActionNode::Run, ActionKind::Resume),
         "resume: first line; rebaseline reads main and the run head again"
@@ -132,6 +132,7 @@ fn resume_names_the_halt_or_the_held_stage() {
     );
     // Preflight F32: no form, a plain resume retries the held tier 3.
     let held = action(&named("held_tier3"), ActionNode::Run, &ActionKind::Resume);
+    assert_eq!(held.label, "retry tier 3");
     assert_eq!(held.effect, "resume: tier 3 retries on stage 1");
     assert_eq!(held.needs, ActionNeeds::Confirm);
     assert_eq!(held.refused_why, None);
@@ -300,4 +301,21 @@ fn action_text_is_sanitised_and_capped() {
     assert!(!resume.effect.contains('\x1b') && !resume.effect.contains('\u{202e}'));
     assert!(resume.effect.chars().count() <= proto::ACTION_TEXT_MAX);
     assert!(resume.effect.ends_with('…'));
+    // A refusal carries the run's own words too: a hostile run id in accept's refusal
+    // (the run is halted) is sanitised and capped the same way.
+    let mut run = fx.run().clone();
+    run.id = format!("\x1b[2J\u{202e}run{}", "r".repeat(400));
+    let accept = actions::available(&run, &ActionNode::Run)
+        .into_iter()
+        .find(|a| a.kind == ActionKind::Accept)
+        .unwrap();
+    let why = accept
+        .refused_why
+        .expect("a halted run's accept is refused");
+    assert!(!why.contains('\x1b') && !why.contains('\u{202e}'), "{why}");
+    assert!(why.chars().count() <= proto::ACTION_TEXT_MAX, "{why}");
+    assert!(
+        why.starts_with("run  [2Jrun") && why.ends_with('…'),
+        "{why}"
+    );
 }
