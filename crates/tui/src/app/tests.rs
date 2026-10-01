@@ -119,6 +119,9 @@ mod form_brief;
 #[path = "../app_tests/profile_screen_views.rs"]
 mod profile_screen_views;
 
+#[path = "../app_tests/polish/mod.rs"]
+mod polish;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

@@ -89,7 +89,7 @@ fn shown(profile: RepoProfile, v: ProfileVerification, dropped: Vec<DroppedComma
     }))
 }
 
-fn screen_mut(app: &mut App) -> &mut ProfileScreen {
+pub(crate) fn screen_mut(app: &mut App) -> &mut ProfileScreen {
     match &mut app.screen {
         Some(Screen::Profile(s)) => s,
         _ => panic!("no profile screen"),
@@ -109,7 +109,9 @@ fn base_app(ascii: bool) -> App {
 
 /// The screen on `/p/shop` with a stored profile and its verification (each changed by
 /// `change`), and a proposal that drops a command, on the Profile tab.
-fn app_with_profile(change: impl FnOnce(&mut RepoProfile, &mut ProfileVerification)) -> App {
+pub(crate) fn app_with_profile(
+    change: impl FnOnce(&mut RepoProfile, &mut ProfileVerification),
+) -> App {
     let mut app = base_app(false);
     let (mut p, mut v) = (profile(), verification());
     change(&mut p, &mut v);

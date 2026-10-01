@@ -562,6 +562,7 @@ mod paste;
 pub(crate) mod plan_review;
 pub(crate) mod profile_screen;
 pub(crate) mod prompt;
+pub(crate) mod region;
 pub(crate) mod replies;
 mod run_enter;
 mod run_gate;

@@ -111,7 +111,7 @@ fn text(text: &str, width: u16, style: Style) -> Line<'static> {
     Line::from(Span::styled(truncate(text, usize::from(width)), style))
 }
 
-fn render_title(out: &mut Vec<Placed>, app: &App, area: Rect, left: &str, right: &str) {
+fn render_title(out: &mut Vec<Placed>, area: Rect, left: &str, right: &str) {
     if area.height == 0 {
         return;
     }
@@ -122,7 +122,8 @@ fn render_title(out: &mut Vec<Placed>, app: &App, area: Rect, left: &str, right:
     if right_width + 2 <= width {
         let left = truncate(left, width - right_width - 1);
         let gap = width - left.width() - right_width;
-        spans.push(Span::styled(left, theme::title(app.settings.accent)));
+        // Milestone 9.0.7 decision 2: titles use weight, not the accent.
+        spans.push(Span::styled(left, bold));
         spans.push(Span::raw(" ".repeat(gap)));
         spans.push(Span::styled(right.to_owned(), theme::muted()));
     } else {
@@ -181,7 +182,7 @@ fn render_detail(out: &mut Vec<Placed>, app: &App, area: Rect, run: &RunInfo, ta
     {
         let style = match line.kind {
             LineKind::Title => Style::default().add_modifier(Modifier::BOLD),
-            LineKind::Label => theme::title(app.settings.accent),
+            LineKind::Label => Style::default().add_modifier(Modifier::BOLD),
             LineKind::Text | LineKind::Blank => Style::default(),
         };
         let y = area.y + n as u16;
@@ -217,7 +218,7 @@ pub(crate) fn placed(app: &App, body: Rect) -> Vec<Placed> {
         .unwrap_or_default();
     let areas = panes(body);
     let title = title_text(review, run);
-    render_title(&mut out, app, areas.title, &title, &count_text(tasks.len()));
+    render_title(&mut out, areas.title, &title, &count_text(tasks.len()));
     let Some(run) = run else {
         return out;
     };

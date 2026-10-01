@@ -169,18 +169,19 @@ fn ascii_mode_uses_no_box_drawing_glyphs() {
     );
 }
 
-/// Review N2: the view's border is `theme::border_focused(accent)`, with the configured
-/// accent, not the dimmed unfocused border.
+/// Review N2: the view's border is the `Accent` role, with the configured accent under
+/// truecolor (milestone 9.0.7 decision 2), not the dimmed unfocused border.
 #[test]
 fn the_border_uses_the_focused_accent() {
     let accent = Color::Rgb(0x12, 0x34, 0x56);
     let settings = UiSettings {
         accent,
+        truecolor: true,
         ..UiSettings::default()
     };
     let app = app_showing(settings, Runtime::Claude, 60, 12, main_conversation());
     let buf = draw(&app, 60, 12);
-    let expected = theme::border_focused(accent).fg;
+    let expected = theme::role(theme::Role::Accent, app.palette()).fg;
     assert_eq!(expected, Some(accent));
     for (x, y) in [(0, 0), (0, 5), (59, 5), (30, 11), (59, 11)] {
         assert_eq!(Some(buf[(x, y)].fg), expected, "cell ({x}, {y})");

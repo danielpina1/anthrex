@@ -7,8 +7,8 @@
 //! border (decision 5). Every class, test name, problem, path and refusal passes
 //! `safe_text`. Pure: `&App` in.
 
-use crate::app::App;
 use crate::app::stats::{StatsScreen, StatsState};
+use crate::app::{App, region::KeyRegion};
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{Palette, Role, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
@@ -272,7 +272,8 @@ fn scrolled(lines: Vec<Line<'static>>, top: usize, rows: usize, p: Palette) -> V
 pub fn render(frame: &mut Frame, app: &App, s: &StatsScreen, area: Rect) {
     let p = app.palette();
     // Decision 5: the one accented border is the dialog's while one is open.
-    let block = kit::screen_frame(&title(s, p), app.modal.is_none(), p);
+    let keys_here = app.key_region() == KeyRegion::Screen;
+    let block = kit::screen_frame(&title(s, p), keys_here, p);
     let inner = interior(area, p);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);

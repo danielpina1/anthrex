@@ -4,15 +4,15 @@
 //! focused, and a window that keeps the selection in view when it is. The alerts are
 //! `app::alerts`'s, recomputed here on every draw. Pure: rendering takes `&App`.
 
-use super::Layout;
-use crate::app::{Alert, App, alerts};
+use super::{Layout, kit};
+use crate::app::{Alert, App, alerts, region::KeyRegion};
 use crate::safe_text::one_line;
 use crate::theme;
 use crate::ui::tree_view::truncate;
 use ratatui::Frame;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
 /// Decision 20: the box never lists more than this many rows.
@@ -114,20 +114,10 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
     if layout.alerts.height == 0 || layout.alerts.width == 0 {
         return;
     }
-    let focused = app.alerts_focus.is_some();
     let n = alerts(app).len();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(if focused {
-            theme::border_focused(app.settings.accent)
-        } else {
-            theme::border()
-        })
-        .title(Line::from(Span::styled(
-            format!(" {} ", title(n)),
-            theme::title(app.settings.accent),
-        )));
+    // Until task 6's Alerts view, the box itself takes the keys under `C-b a`.
+    let keys_here = app.key_region() == KeyRegion::Alerts;
+    let block = kit::pane_frame(Line::from(title(n)), keys_here, app.palette());
     frame.render_widget(block, layout.alerts);
     let inner = layout.alerts_inner;
     frame.render_widget(Paragraph::new(lines(app, inner.width, inner.height)), inner);

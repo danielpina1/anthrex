@@ -9,19 +9,20 @@
 //! short for it.
 
 use super::tree_view;
+use crate::app::{App, region::KeyRegion};
 use crate::graph::{self, Pan, paint::paint, viewport::GraphGeometry};
 use crate::inspector::{
     self, INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL, MIN_INTERIOR_FOR_RUN_PANEL,
     MIN_INTERIOR_FOR_TALL_RUN_PANEL, RUN_INSPECTOR_HEIGHT, RUN_INSPECTOR_TALL_HEIGHT,
 };
+use crate::theme;
 use crate::tree::{self, Row, RowKind};
-use crate::{app::App, theme};
 use ratatui::{
     Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::Paragraph,
 };
 
 /// Splits the overview's interior into the graph canvas and the rect below it:
@@ -115,21 +116,12 @@ pub fn view_of(app: &App, main: Rect, rows: &[Row<'_>]) -> View {
 }
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(if app.modal.is_none() {
-            theme::border_focused(app.settings.accent)
-        } else {
-            theme::border()
-        })
-        .title(Line::from(Span::styled(
-            match &app.run_view {
-                Some(view) => format!(" run {} ", view.run_id),
-                None => " tree overview ".to_string(),
-            },
-            theme::title(app.settings.accent),
-        )));
+    let title = match &app.run_view {
+        Some(view) => format!("run {}", view.run_id),
+        None => "tree overview".to_string(),
+    };
+    let keys_here = app.key_region() == KeyRegion::Overview;
+    let block = super::kit::pane_frame(Line::from(title), keys_here, app.palette());
     frame.render_widget(block, area);
 
     // One row build for the whole frame: the layout, the painter and the
@@ -144,7 +136,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     // panel when it gave the rect the panel's height, and the single line
     // otherwise (decisions 1, 6 and 7).
     match (view.shows_panel(), selected_row(app, &rows)) {
-        (true, Some(row)) => inspector::render(frame, &inspector::inspect(row, app), view.footer),
+        (true, Some(row)) => {
+            let inspection = inspector::inspect(row, app);
+            inspector::render_in(frame, &inspection, view.footer, app.palette());
+        }
         // A panel with nothing to inspect is left blank rather than drawn as an
         // empty box: the panel is one node spelled out, and there is no node.
         (true, None) => {}

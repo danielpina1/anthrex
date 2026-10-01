@@ -1,10 +1,11 @@
-use super::{Layout, tree_view};
-use crate::{app::App, theme, tree};
+use super::{Layout, kit, tree_view};
+use crate::app::{App, region::KeyRegion};
+use crate::{theme, tree};
 use proto::Status;
 use ratatui::{
     Frame,
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::Paragraph,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -36,22 +37,13 @@ fn summary(app: &App, width: u16) -> String {
 }
 
 pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(if app.tree_input.is_some() {
-            theme::border_focused(app.settings.accent)
-        } else {
-            theme::border()
-        })
-        .title(Line::from(Span::styled(
-            if app.tree_input.is_some() {
-                " agents · tree "
-            } else {
-                " agents "
-            },
-            theme::title(app.settings.accent),
-        )));
+    let title = if app.tree_input.is_some() {
+        "agents · tree"
+    } else {
+        "agents"
+    };
+    let keys_here = app.key_region() == KeyRegion::Sidebar;
+    let block = kit::pane_frame(Line::from(title), keys_here, app.palette());
     frame.render_widget(block, layout.sidebar);
     let rows = app.rows();
     let geometry = tree_view::geometry(layout.sidebar_list, rows.len(), app.tree.sidebar.top);

@@ -231,7 +231,8 @@ fn the_focused_box_has_the_focused_border_and_reversed_selection() {
     focus(&mut app);
     key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
     let (buffer, layout) = draw_at(&app, 80, 24);
-    assert_eq!(buffer[corner].style().fg, Some(app.settings.accent));
+    let accent = crate::theme::role(crate::theme::Role::Accent, app.palette()).fg;
+    assert_eq!(buffer[corner].style().fg, accent);
     let inner = layout.alerts_inner;
     for x in inner.x..inner.x + inner.width - 1 {
         assert!(

@@ -5,7 +5,7 @@
 
 pub mod diff;
 
-use crate::app::App;
+use crate::app::{App, region::KeyRegion};
 use crate::conversation::{DetailKind, Row, SUBAGENT_FOOTER, TEXT_INDENT, clean};
 use crate::conversation_label::user_turn_label;
 use crate::theme;
@@ -15,9 +15,7 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType};
 use std::collections::HashMap;
 
 /// Where rows other than prose start, in columns from the interior's left edge.
@@ -28,8 +26,6 @@ const DETAIL_INDENT: u16 = 6;
 /// The view's own glyphs, unicode or ASCII (decision A5 switches both together with the
 /// badges, so a screen is never half one and half the other).
 struct Glyphs {
-    /// Review M4: `None` draws the rounded unicode border.
-    border: Option<border::Set<'static>>,
     /// Between the window's name and its model, and a spawn's kind and label.
     sep: &'static str,
     /// Whether `punct` folds the unicode punctuation in the view's own text and the
@@ -47,7 +43,6 @@ struct Glyphs {
 }
 
 const UNICODE: Glyphs = Glyphs {
-    border: None,
     sep: "·",
     ascii: false,
     folded: "▸",
@@ -62,16 +57,6 @@ const UNICODE: Glyphs = Glyphs {
 };
 
 const ASCII: Glyphs = Glyphs {
-    border: Some(border::Set {
-        top_left: "+",
-        top_right: "+",
-        bottom_left: "+",
-        bottom_right: "+",
-        vertical_left: "|",
-        vertical_right: "|",
-        horizontal_top: "-",
-        horizontal_bottom: "-",
-    }),
     sep: "-",
     ascii: true,
     folded: ">",
@@ -133,22 +118,15 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         place.push_str(&clean(&crumb.label));
     }
     let mut title = vec![
-        Span::raw(" "),
         Span::styled(badge.text.clone(), Style::default().fg(badge.color)),
         Span::raw(" "),
-        Span::styled(place, theme::title(app.settings.accent)),
+        Span::raw(place),
     ];
     if let Some(model) = window.and_then(|w| w.model.as_deref()) {
         title.push(Span::raw(format!(" {} {}", glyphs.sep, clean(model))));
     }
-    title.push(Span::raw(" "));
-    let mut block = Block::bordered()
-        .border_style(theme::border_focused(app.settings.accent))
-        .title(Line::from(title));
-    block = match glyphs.border {
-        Some(set) => block.border_set(set),
-        None => block.border_type(BorderType::Rounded),
-    };
+    let keys_here = app.key_region() == KeyRegion::Conversation;
+    let mut block = super::kit::pane_frame(Line::from(title), keys_here, app.palette());
     if let Some(rev) = view.rev() {
         block = block.title(Line::from(format!(" rev {rev} ")).right_aligned());
     }

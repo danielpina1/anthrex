@@ -29,16 +29,7 @@ pub fn dialog_frame(title: &str, destructive: bool, p: Palette) -> Block<'static
         Role::Accent
     };
     let set = if p.ascii {
-        ratatui::symbols::border::Set {
-            top_left: "+",
-            top_right: "+",
-            bottom_left: "+",
-            bottom_right: "+",
-            vertical_left: "|",
-            vertical_right: "|",
-            horizontal_top: "-",
-            horizontal_bottom: "-",
-        }
+        crate::theme::ASCII_BORDER
     } else {
         ratatui::symbols::border::PLAIN
     };

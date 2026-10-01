@@ -389,7 +389,7 @@ pub fn task_panel_rows(app: &App, width: u16) -> usize {
     panel::sections::body_lines(&inspection.sections, usize::from(width)).len()
 }
 
-pub use panel::render;
+pub use panel::{render, render_in};
 pub use run_format::{format_duration, format_tokens, local_hhmm, progress_bar};
 
 #[cfg(test)]

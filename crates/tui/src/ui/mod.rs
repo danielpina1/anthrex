@@ -3,6 +3,10 @@
 pub mod action_forms;
 pub mod action_menu;
 pub mod alerts;
+#[cfg(test)]
+pub(crate) mod audit;
+#[cfg(test)]
+mod audit_tests;
 pub mod badge;
 pub mod conversation;
 pub mod dialog;

@@ -317,13 +317,13 @@ fn help_and_hints_use_the_configured_prefix() {
     assert!(!out.contains("C-b"), "{out}");
 }
 
-/// Task M6.9: `app.settings.accent` colours the focused main pane's border, not the
-/// built-in `theme::DEFAULT_ACCENT`.
+/// Task M6.9: under truecolor, `app.settings.accent` colours the focused pane's border.
 #[test]
 fn accent_colours_the_focused_border() {
     let accent = ratatui::style::Color::Rgb(0x11, 0x22, 0x33);
     let settings = UiSettings {
         accent,
+        truecolor: true,
         ..UiSettings::default()
     };
     let mut app = App::new(

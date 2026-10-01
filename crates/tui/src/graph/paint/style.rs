@@ -86,20 +86,17 @@ impl Highlight {
     }
 }
 
-/// The border and dimming of one node. The focused window's box and a lit task's use
-/// the focused border colour; a critical-path task's border is bold; a finished
+/// The border and dimming of one node. Every box's border is muted: a box never has
+/// the keys, so it never wears the accent (milestone 9.0.7 decision 1). The focused
+/// window's box, a lit task's and a critical-path task's are bold instead; a finished
 /// agent node, and every node the highlight leaves out, is dim.
 pub(super) fn node_style(row: &Row<'_>, app: &App, highlight: &Highlight) -> NodeStyle {
     let focused = match &row.kind {
         RowKind::Window { info, .. } => app.focused == Some(info.id),
         _ => highlight.lights(&row.key),
     };
-    let mut border = if focused {
-        theme::border_focused(app.settings.accent)
-    } else {
-        theme::border()
-    };
-    if matches!(&row.kind, RowKind::Task { task, .. } if task.on_critical_path) {
+    let mut border = theme::role(theme::Role::Muted, app.palette());
+    if focused || matches!(&row.kind, RowKind::Task { task, .. } if task.on_critical_path) {
         border = border.add_modifier(Modifier::BOLD);
     }
     NodeStyle {

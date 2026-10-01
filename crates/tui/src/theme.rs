@@ -264,6 +264,28 @@ pub fn spinner(frame: usize, ascii: bool) -> &'static str {
     }
 }
 
+/// Milestone 9.0.7 decision 2: the one ASCII border every frame draws in ASCII mode,
+/// the pane frame, the dialog frame and the screen frame alike.
+pub const ASCII_BORDER: ratatui::symbols::border::Set<'static> = ratatui::symbols::border::Set {
+    top_left: "+",
+    top_right: "+",
+    bottom_left: "+",
+    bottom_right: "+",
+    vertical_left: "|",
+    vertical_right: "|",
+    horizontal_top: "-",
+    horizontal_bottom: "-",
+};
+
+/// A pane's border: rounded, or [`ASCII_BORDER`] when `ascii` (decision 2).
+pub fn border_set(ascii: bool) -> ratatui::symbols::border::Set<'static> {
+    if ascii {
+        ASCII_BORDER
+    } else {
+        ratatui::symbols::border::ROUNDED
+    }
+}
+
 /// New screens draw runtimes as text tags, not logos.
 pub fn runtime_tag(r: proto::Runtime) -> &'static str {
     match r {

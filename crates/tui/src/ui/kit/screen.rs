@@ -43,16 +43,7 @@ pub fn screen_frame(title: &str, accent: bool, p: Palette) -> Block<'static> {
             ratatui::style::Style::default().add_modifier(Modifier::BOLD),
         ));
     if p.ascii {
-        block = block.border_set(ratatui::symbols::border::Set {
-            top_left: "+",
-            top_right: "+",
-            bottom_left: "+",
-            bottom_right: "+",
-            vertical_left: "|",
-            vertical_right: "|",
-            horizontal_top: "-",
-            horizontal_bottom: "-",
-        });
+        block = block.border_set(crate::theme::ASCII_BORDER);
     }
     block
 }

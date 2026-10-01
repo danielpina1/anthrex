@@ -260,7 +260,8 @@ fn selecting_a_task_lights_its_dependencies_and_dims_the_rest() {
     app.enter_tree();
     app.tree.selected = Some(task_key("t1"));
     let (layout, lines) = paint_view(&app);
-    let focused = theme::border_focused(app.settings.accent);
+    // Milestone 9.0.7 decision 1: a lit box is bold on the muted border, never accented.
+    let focused = theme::role(theme::Role::Muted, app.palette()).add_modifier(Modifier::BOLD);
 
     for (x, y) in border_cells(rect_of(&layout, &task_key("t0"))) {
         assert_eq!(style_at(&lines, x, y), focused, "t0 border ({x}, {y})");

@@ -1,9 +1,9 @@
-use crate::app::App;
+use crate::app::{App, region::KeyRegion};
 use crate::theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 use std::path::Path;
 use tui_term::widget::{Cursor, PseudoTerminal};
 
@@ -40,33 +40,22 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         // windows this daemon made no worktree for.
         Some(w) => match super::tree_view::branch_text(w, app) {
             Some(branch) => format!(
-                " {} · {} · {} ({branch}, worktree) ",
+                "{} · {} · {} ({branch}, worktree)",
                 w.name,
                 w.runtime.label(),
                 shorten_home(&w.project)
             ),
             None => format!(
-                " {} · {} · {} ",
+                "{} · {} · {}",
                 w.name,
                 w.runtime.label(),
                 shorten_home(&w.cwd)
             ),
         },
-        None => " no window ".to_string(),
+        None => "no window".to_string(),
     };
-    let border = if app.modal.is_none() {
-        theme::border_focused(app.settings.accent)
-    } else {
-        theme::border()
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(border)
-        .title(Line::from(Span::styled(
-            title,
-            theme::title(app.settings.accent),
-        )));
+    let keys_here = app.key_region() == KeyRegion::Pane;
+    let block = super::kit::pane_frame(Line::from(title), keys_here, app.palette());
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

@@ -179,10 +179,10 @@ pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, acce
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(theme::border_focused(accent))
+        .border_style(Style::default().fg(accent))
         .title(Line::from(Span::styled(
             " new agent ",
-            theme::title(accent),
+            dialog_title(accent),
         )));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
@@ -290,9 +290,15 @@ fn render_box(frame: &mut Frame, title: &str, body: Vec<Line<'static>>, area: Re
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(theme::border_focused(accent))
-        .title(Line::from(Span::styled(title, theme::title(accent))));
+        .border_style(Style::default().fg(accent))
+        .title(Line::from(Span::styled(title, dialog_title(accent))));
     frame.render_widget(Paragraph::new(body).block(block), rect);
+}
+
+/// A dialog's title, bold in the accent, as `kit::dialog_frame` draws it (milestone
+/// 9.0.7 task 13 moves these dialogs onto the kit).
+pub(crate) fn dialog_title(accent: Color) -> Style {
+    Style::default().fg(accent).add_modifier(Modifier::BOLD)
 }
 
 /// Decision 35's remove-confirm rendering. `confirm.branch` is `None` for a window this

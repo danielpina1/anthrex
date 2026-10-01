@@ -50,10 +50,10 @@ pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, accent: Color)
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(theme::border_focused(accent))
+        .border_style(Style::default().fg(accent))
         .title(Line::from(Span::styled(
             format!(" edit {} ", form.task_id),
-            theme::title(accent),
+            crate::ui::dialog::dialog_title(accent),
         )));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);

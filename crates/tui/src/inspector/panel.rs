@@ -6,13 +6,14 @@
 //! strings the way the graph's painter is (decision 13).
 
 use super::{Field, FieldLayout, Inspection};
-use crate::theme;
+use crate::theme::{self, Palette};
+use crate::ui::kit::pane_frame;
 use crate::ui::tree_view::{cut, truncate};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph};
+use ratatui::widgets::{Block, Padding, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 /// The two spaces between a label and its value — spec §2's `model  opus`.
@@ -21,16 +22,23 @@ const LABEL_GAP: usize = 2;
 /// The two spaces between one column and the next (decision 4).
 const GUTTER: usize = 2;
 
-/// Lays an `Inspection` into a rounded panel: the title row, then the fields in
-/// columns below it, or one per row for a run-view node (`inspection.layout`).
+/// [`render_in`] with the default palette (no truecolor, unicode).
 pub fn render(frame: &mut Frame, inspection: &Inspection, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme::border())
-        // One column in from the border on each side, so the fields do not sit
-        // flush against it the way the graph's boxes never do.
-        .padding(Padding::horizontal(1));
+    let p = Palette {
+        accent: theme::DEFAULT_ACCENT,
+        truecolor: false,
+        ascii: false,
+    };
+    render_in(frame, inspection, area, p);
+}
+
+/// Lays an `Inspection` into a rounded panel: the title row, then the fields in
+/// columns below it, or one per row for a run-view node (`inspection.layout`). The
+/// panel never has the keys, so its pane frame is muted (milestone 9.0.7 decision 1).
+pub fn render_in(frame: &mut Frame, inspection: &Inspection, area: Rect, p: Palette) {
+    // One column in from the border on each side, so the fields do not sit
+    // flush against it the way the graph's boxes never do.
+    let block = pane_frame(Line::default(), false, p).padding(Padding::horizontal(1));
     let inner = block.inner(area);
     let (width, height) = (usize::from(inner.width), usize::from(inner.height));
     let block = if inspection.layout == FieldLayout::Sections {

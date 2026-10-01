@@ -6,12 +6,14 @@
 
 mod dialog;
 mod hints;
+mod pane;
 mod rows;
 mod screen;
 mod text;
 
 pub use dialog::{choice, choice_in, dialog_area, dialog_frame};
 pub use hints::{Hint, hints, hints_joined};
+pub use pane::pane_frame;
 pub use rows::{labelled_rows, run_name, run_name_in, scroll_marks};
 pub use screen::{screen_frame, window};
 pub(crate) use text::{cut, wrap_words};

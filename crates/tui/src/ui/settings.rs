@@ -6,12 +6,12 @@
 //! model name, note, path and daemon problem passes `safe_text` here or in the kit.
 //! Pure: `&App` in.
 
-use crate::app::App;
 use crate::app::replies::NOT_SENT;
 use crate::app::settings_screen::{
     DISCARD_ASK, LINK_LOST, SAVED, SHIPPED_FIXED, SaveOutcome, SettingsPage, SettingsScreen,
     SettingsSection, hard_stop_calls, hard_stop_minutes, strength_name,
 };
+use crate::app::{App, region::KeyRegion};
 use crate::safe_text::one_line;
 use crate::theme::{Glyph, Palette, Role, glyph, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
@@ -379,7 +379,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &SettingsScreen, area: Rect) {
         format!("settings {} {}", dot(p), one_line(&s.path))
     };
     // Decision 5: the one accented border is the dialog's while one is open.
-    let keys_here = s.page.is_none() && app.modal.is_none();
+    let keys_here = s.page.is_none() && app.key_region() == KeyRegion::Screen;
     let block = kit::screen_frame(&title, keys_here, p);
     let inner = block.inner(area);
     frame.render_widget(Clear, area);

@@ -5,8 +5,8 @@
 //! screen's border is then muted (decision 5). Every string a profile, a check, the
 //! scout or the daemon wrote passes `safe_text` here or in the kit. Pure: `&App` in.
 
-use crate::app::App;
 use crate::app::profile_screen::{ProfileScreen, ProfileTab, Shown, Side};
+use crate::app::{App, region::KeyRegion};
 use crate::inspector::run_format::format_duration;
 use crate::profile_view::{ENV_ADD, Row, check_cell};
 use crate::safe_text::{multi_line, one_line};
@@ -376,7 +376,8 @@ pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
     let p = app.palette();
     let title = format!("profile {} {}", dot(p), project_name(s));
     // Decision 5: a page or any modal over the screen has the one accented border.
-    let block = kit::screen_frame(&title, s.page.is_none() && app.modal.is_none(), p);
+    let keys_here = s.page.is_none() && app.key_region() == KeyRegion::Screen;
+    let block = kit::screen_frame(&title, keys_here, p);
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -406,4 +407,4 @@ use pages::render_page;
 
 #[cfg(test)]
 #[path = "profile_tests.rs"]
-mod tests;
+pub(crate) mod tests;

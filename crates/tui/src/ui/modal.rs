@@ -1,4 +1,4 @@
-use crate::app::{App, Modal, PendingAction};
+use crate::app::{App, Modal, PendingAction, region::KeyRegion};
 use crate::dialog::TextInput;
 use crate::theme::{self, Palette, Role, role};
 use crate::ui::dialog;
@@ -8,7 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -179,7 +179,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let Some(modal) = &app.modal else {
         return;
     };
-    let accent = app.settings.accent;
+    let p = app.palette();
+    let accent = role(Role::Accent, p).fg.unwrap_or(p.accent);
     match modal {
         Modal::NewAgent(form) => return dialog::render_new_agent(frame, form, area, accent),
         Modal::Remove(confirm) => {
@@ -246,11 +247,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let height = body.len() as u16 + 2;
     let rect = centered(area, width, height);
     frame.render_widget(Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme::border_focused(accent))
-        .title(Line::from(Span::styled(title, theme::title(accent))));
+    let keys_here = app.key_region() == KeyRegion::Dialog;
+    let block = kit::pane_frame(Line::from(title.trim().to_owned()), keys_here, p);
     let block = if matches!(modal, Modal::Help) {
         block.title_bottom(Line::from(vec![
             Span::styled(format!(" {}", HELP_CLOSE.0), Style::default().fg(accent)),
