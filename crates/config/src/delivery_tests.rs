@@ -172,16 +172,14 @@ fn mode_and_remote_in_config_are_refused_with_the_profile_hint() {
         let text = format!("[delivery]\n{key} = {value}\npoll_secs = 7\n");
         let (config, problems) = parse(&text);
         assert_eq!(problems.len(), 1, "{problems:?}");
-        let p = &problems[0];
-        // Decision 3's exact text: `delivery.<key> is set per repository in its profile
-        // (anthrex profile edit), ignored`.
+        // Decision 3's text, in the displayed form the user sees (M8a's `key: message
+        // (using default)`, M9.2.3's review fix 3).
         assert_eq!(
-            format!("{} {}", p.key, p.message),
+            problems[0].to_string(),
             format!(
-                "delivery.{key} is set per repository in its profile (anthrex profile edit), ignored"
+                "delivery.{key}: is set per repository in its profile (anthrex profile edit), ignored (using nothing)"
             )
         );
-        assert_eq!(p.default, "nothing");
         // The rest of the table is still read.
         assert_eq!(config.delivery.poll_secs, 7);
     }

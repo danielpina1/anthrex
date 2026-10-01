@@ -118,9 +118,13 @@ fn profile_edit_refuses_an_unknown_delivery_key() {
             "{bad:?}"
         );
     }
-    // A remote must be a valid remote name (`git check-ref-format --branch`'s rule).
+    // A remote must be a valid remote name: `git check-ref-format --branch`'s rule,
+    // checked against git 2.50.1 (M9.2.3's review fix 4).
     for bad in [
         "",
+        "a.",
+        "x/a.",
+        "HEAD",
         "has space",
         "-x",
         ".x",
@@ -136,8 +140,6 @@ fn profile_edit_refuses_an_unknown_delivery_key() {
         "x/",
         "a//b",
         "a@{b",
-        "@",
-        "a\tb",
     ] {
         assert_eq!(
             apply_edit(&base, "delivery.remote", Some(bad)),
@@ -145,7 +147,17 @@ fn profile_edit_refuses_an_unknown_delivery_key() {
             "{bad:?}"
         );
     }
-    for ok in ["origin", "up-stream", "team/fork", "my_remote2"] {
+    for ok in [
+        "origin",
+        "up-stream",
+        "team/fork",
+        "my_remote2",
+        "@",
+        "a/HEAD",
+        "HEAD/x",
+        "a.b",
+        "a@b",
+    ] {
         assert!(
             apply_edit(&base, "delivery.remote", Some(ok)).is_ok(),
             "{ok}"
@@ -159,6 +171,41 @@ fn profile_edit_refuses_an_unknown_delivery_key() {
     assert_eq!(
         validate(&bad),
         vec!["delivery.remote: a..b is not a valid remote name".to_string()]
+    );
+}
+
+/// M9.2.3's review fix 5: a refused remote is not echoed verbatim. A URL's userinfo
+/// (a token, say) is redacted, and control characters are escaped.
+#[test]
+fn a_refused_remote_is_redacted_in_the_error() {
+    let base = stored();
+    let refused = |name: &str| apply_edit(&base, "delivery.remote", Some(name)).unwrap_err();
+    let url = refused("https://u:tok@github.com/o/r");
+    assert!(!url.contains("tok"), "{url}");
+    assert_eq!(
+        url,
+        "delivery.remote: https://***@github.com/o/r is not a valid remote name"
+    );
+    let scp = refused("u:tok@github.com:o/r");
+    assert!(!scp.contains("tok"), "{scp}");
+    assert_eq!(
+        scp,
+        "delivery.remote: ***@github.com:o/r is not a valid remote name"
+    );
+    let control = refused("a\tb\x1b[2Jc");
+    assert!(!control.chars().any(|c| c.is_control()), "{control:?}");
+    assert_eq!(
+        control,
+        "delivery.remote: a\\tb\\u{1b}[2Jc is not a valid remote name"
+    );
+    // A stored profile's bad remote is reported the same way.
+    let bad = RepoProfile {
+        delivery: pr("https://u:tok@github.com/o/r"),
+        ..base.clone()
+    };
+    assert_eq!(
+        validate(&bad),
+        vec!["delivery.remote: https://***@github.com/o/r is not a valid remote name".to_string()]
     );
 }
 

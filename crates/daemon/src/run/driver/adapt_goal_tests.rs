@@ -404,3 +404,6 @@ async fn a_run_keeps_whether_it_started_with_trust_project() {
 
 #[path = "adapt_goal_installed_tests.rs"]
 mod installed;
+
+#[path = "adapt_goal_delivery_tests.rs"]
+mod delivery;

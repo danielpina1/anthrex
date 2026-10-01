@@ -75,6 +75,20 @@ impl RunContext {
         }
     }
 
+    /// The daemon's context: `manager`'s, with the `[orchestrator]`, `[testing]` and
+    /// `[delivery]` tables of the loaded `config.toml`. `lifecycle` builds the daemon's
+    /// context with it, so a test covers the same wiring (M9.2.3's review fix 1).
+    pub fn from_config(
+        data_dir: PathBuf,
+        manager: &ManagerConfig,
+        config: &config::Config,
+        git_roots: Arc<dyn GitRoots>,
+    ) -> Self {
+        RunContext::new(data_dir, manager, config.orchestrator.clone(), git_roots)
+            .with_testing(config.testing.clone())
+            .with_delivery(config.delivery.clone())
+    }
+
     /// This context with the daemon's `[delivery]` table (the defaults otherwise).
     pub fn with_delivery(mut self, delivery: config::Delivery) -> Self {
         self.delivery = delivery;

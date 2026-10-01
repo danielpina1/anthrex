@@ -77,3 +77,28 @@ impl Default for DeliveryLimits {
         (&config::Delivery::default()).into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `run.json`'s spelling of `[delivery] sync` is the config's: `on_conflict` and
+    /// `always` (M9.2.3's review fix 2).
+    #[test]
+    fn sync_policy_is_persisted_in_snake_case() {
+        for (sync, text) in [
+            (SyncPolicy::OnConflict, "on_conflict"),
+            (SyncPolicy::Always, "always"),
+        ] {
+            let limits = DeliveryLimits {
+                sync,
+                ..DeliveryLimits::default()
+            };
+            let json = serde_json::to_value(&limits).unwrap();
+            assert_eq!(json["sync"], serde_json::json!(text));
+            let back: DeliveryLimits =
+                serde_json::from_value(serde_json::json!({ "sync": text })).unwrap();
+            assert_eq!(back.sync, sync);
+        }
+    }
+}

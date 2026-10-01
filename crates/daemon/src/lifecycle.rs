@@ -279,14 +279,12 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     let git_wiring =
         server::GitWiring::new(crate::git::settings_from_env(loaded_config.git.clone()));
     let (manager, mut events) = WindowManager::new(config);
-    let run_context = RunContext::new(
+    let run_context = RunContext::from_config(
         opts.data_dir.clone(),
         manager.config(),
-        loaded_config.orchestrator.clone(),
+        &loaded_config,
         git_wiring.registry.clone(),
-    )
-    .with_testing(loaded_config.testing.clone())
-    .with_delivery(loaded_config.delivery.clone());
+    );
     // Decision 12/14: every restored window is listed, dormant and viewable before
     // anything can connect.
     manager.restore(loaded_state);

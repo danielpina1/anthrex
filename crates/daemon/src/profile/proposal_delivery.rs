@@ -60,18 +60,50 @@ pub(super) fn problems(profile: &RepoProfile) -> Vec<String> {
 }
 
 /// `git check-ref-format --branch`'s rule for a remote's name, applied without
-/// running git: no empty name or component, no leading `-` or `.`, no `..`, `@{`,
-/// `//`, trailing `/` or `.lock`, no `@` alone, and none of ASCII control characters,
-/// space, `~ ^ : ? * [ \`.
+/// running git (checked against git 2.50.1): no empty name or component, no leading `-`
+/// or `.` and no trailing `.`, not `HEAD`, no `..`, `@{`, `//`, trailing `/` or `.lock`
+/// component, and none of ASCII control characters, space, `~ ^ : ? * [ \`. `@` alone
+/// is accepted, as git accepts it.
 fn remote_problem(name: &str) -> Option<String> {
     let bad_char = |c: char| c.is_ascii_control() || " ~^:?*[\\".contains(c);
     let bad_part = |part: &str| part.is_empty() || part.starts_with('.') || part.ends_with(".lock");
     let refused = name.is_empty()
-        || name == "@"
+        || name == "HEAD"
         || name.starts_with('-')
+        || name.ends_with('.')
         || name.contains("..")
         || name.contains("@{")
         || name.chars().any(bad_char)
         || name.split('/').any(bad_part);
-    refused.then(|| format!("delivery.remote: {name} is not a valid remote name"))
+    refused.then(|| {
+        let shown = redacted(name);
+        format!("delivery.remote: {shown} is not a valid remote name")
+    })
+}
+
+/// `name` as an error may show it (M9.2.3's review fix 5): a URL's or an scp-style
+/// address's userinfo (`user:token@`) becomes `***@`, and control characters are
+/// escaped, so a pasted token never reaches the terminal or a log.
+fn redacted(name: &str) -> String {
+    let (scheme, rest) = match name.find("://") {
+        Some(at) => name.split_at(at + 3),
+        None => ("", name),
+    };
+    let authority = &rest[..rest.find('/').unwrap_or(rest.len())];
+    let rest = match authority.rfind('@') {
+        Some(at) if !scheme.is_empty() || authority[..at].contains(':') => {
+            format!("***{}", &rest[at..])
+        }
+        _ => rest.to_string(),
+    };
+    format!("{scheme}{rest}")
+        .chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_debug().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
 }
