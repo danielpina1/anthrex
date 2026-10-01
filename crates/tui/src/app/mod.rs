@@ -569,6 +569,7 @@ mod run_holds;
 mod runs;
 pub(crate) mod screens;
 pub(crate) mod settings_screen;
+pub(crate) mod stats;
 pub(crate) mod task_detail;
 mod toast;
 mod windows;

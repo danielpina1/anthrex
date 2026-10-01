@@ -230,6 +230,8 @@ impl App {
         if matches!(self.screen, Some(super::screens::Screen::Profile(_))) {
             effects.extend(self.profile_fetch_all(std::time::Instant::now()));
         }
+        // Decision 38: an open stats screen with no history yet asks again, once.
+        effects.extend(self.stats_reconnected());
         effects
     }
 
@@ -295,10 +297,12 @@ impl App {
                         id,
                         request: RunRequest::StartGoal { .. },
                     } => self.goal_not_sent(Some(*id)),
-                    // A refused save, or profile action, is not waited on any longer.
+                    // A refused save, profile action or stats request is not waited on
+                    // any longer (the stats screen then says so at the next tick).
                     ClientMsg::RunTagged {
                         id,
-                        request: RunRequest::Settings(_) | RunRequest::Profile(_),
+                        request:
+                            RunRequest::Settings(_) | RunRequest::Profile(_) | RunRequest::Stats { .. },
                     } => {
                         self.replies.take(Some(*id));
                     }

@@ -38,7 +38,10 @@ pub fn reply_timeout(request: &RunRequest) -> Duration {
     }
 }
 
-/// How many expired Profile view ids `PendingReplies` remembers.
+/// Decision 16: the error toast of a request that got no reply in time.
+pub const NO_REPLY: &str = "no reply from daemon";
+
+/// How many expired Profile and stats view ids `PendingReplies` remembers.
 const QUIET_KEPT: usize = 32;
 
 /// What a pending request was.
@@ -61,6 +64,8 @@ pub enum PendingWhat {
         dir: std::path::PathBuf,
         ask: super::profile_screen::ProfileAsk,
     },
+    /// The stats screen's `Stats { dir }` (decision 38, `app/stats.rs`).
+    Stats { dir: std::path::PathBuf },
 }
 
 /// One request waiting for its reply.
@@ -75,8 +80,8 @@ pub struct Pending {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PendingReplies {
     by_id: BTreeMap<u64, Pending>,
-    /// The last few expired Profile views (`Status`, `Show`): their late reply is
-    /// dropped, not toasted, since it only describes.
+    /// The last few expired views (a Profile `Status` or `Show`, a `Stats`): their
+    /// late reply is dropped, not toasted, since it only describes.
     quiet: Vec<u64>,
 }
 
@@ -127,13 +132,16 @@ impl PendingReplies {
         self.by_id.retain(|id, p| {
             let live = now.saturating_duration_since(p.sent_at) < p.timeout;
             if !live {
-                if let PendingWhat::Profile { ask, .. } = &p.what
-                    && matches!(
+                let view = match &p.what {
+                    PendingWhat::Profile { ask, .. } => matches!(
                         ask,
                         super::profile_screen::ProfileAsk::Status
                             | super::profile_screen::ProfileAsk::Show { .. }
-                    )
-                {
+                    ),
+                    PendingWhat::Stats { .. } => true,
+                    _ => false,
+                };
+                if view {
                     quiet.push(*id);
                 }
                 gone.push(p.what.clone());
@@ -145,7 +153,7 @@ impl PendingReplies {
         gone
     }
 
-    /// Whether `id` was an expired Profile view, whose late reply is not shown.
+    /// Whether `id` was an expired view, whose late reply is not shown.
     pub fn expired_quietly(&self, id: u64) -> bool {
         self.quiet.contains(&id)
     }
@@ -163,6 +171,9 @@ impl App {
             return Some(effects);
         }
         if let Some(effects) = self.route_profile_reply(reply) {
+            return Some(effects);
+        }
+        if let Some(effects) = self.route_stats_reply(reply) {
             return Some(effects);
         }
         match reply {
@@ -259,14 +270,18 @@ impl App {
     /// dropped with an error toast, and changes no state.
     pub(super) fn expire_replies(&mut self) -> Vec<Effect> {
         let screens = self.settings_saving();
+        let stats = self.stats_awaited();
         let gone = self.replies.expire(Instant::now());
         if gone.is_empty() {
             return vec![];
         }
-        // The open Settings screen shows its own save's expiry (`settings_flow.rs`).
-        let owned = screens && !self.settings_saving();
-        if gone.len() > usize::from(owned) {
-            self.toast_at(ToastLevel::Error, "no reply from daemon");
+        // The open Settings screen shows its own save's expiry (`settings_flow.rs`), and
+        // the stats screen its request's (`stats.rs`): no toast for either.
+        let owned = usize::from(screens && !self.settings_saving())
+            + usize::from(stats.is_some() && self.stats_awaited().is_none());
+        self.stats_tick();
+        if gone.len() > owned {
+            self.toast_at(ToastLevel::Error, NO_REPLY);
         }
         // A save that went unanswered may still land: ask for the settings again, so a
         // late `Saved` does not leave the cache stale.

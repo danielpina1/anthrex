@@ -22,6 +22,7 @@ use std::time::Instant;
 pub enum Screen {
     Profile(Box<super::profile_screen::ProfileScreen>),
     Settings(Box<super::settings_screen::SettingsScreen>),
+    Stats(Box<super::stats::StatsScreen>),
 }
 
 impl App {
@@ -40,6 +41,7 @@ impl App {
         let leave = match &self.screen {
             Some(Screen::Profile(_)) => super::profile_screen::LEAVE_SCREEN_FIRST,
             Some(Screen::Settings(_)) => LEAVE_SETTINGS_FIRST,
+            Some(Screen::Stats(_)) => super::stats::LEAVE_STATS_FIRST,
             None => return false,
         };
         let text = match (&self.screen, cmd) {
@@ -56,16 +58,19 @@ impl App {
         match &self.screen {
             Some(Screen::Profile(_)) => self.on_profile_key(key),
             Some(Screen::Settings(_)) => self.on_settings_key(key),
+            Some(Screen::Stats(_)) => self.on_stats_key(key),
             None => vec![],
         }
     }
 
-    /// `on_tick`: the open screen's timed work at `now` (the Profile screen's poll).
+    /// `on_tick`: the open screen's timed work at `now` (the Profile screen's poll; the
+    /// Settings and stats screens settle a request no longer awaited).
     /// Tests call it with a moved clock instead of sleeping.
     pub(crate) fn screens_tick(&mut self, now: Instant) -> Vec<Effect> {
         match &self.screen {
             Some(Screen::Profile(_)) => self.profile_tick(now),
             Some(Screen::Settings(_)) => self.settings_tick(),
+            Some(Screen::Stats(_)) => self.stats_tick(),
             None => vec![],
         }
     }

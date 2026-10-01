@@ -475,3 +475,28 @@ fn the_settings_badge_sits_above_plan() {
         assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
     }
 }
+
+/// Preflight F10, task 15: ` STATS ` while the stats screen is open, above ` PLAN ` and
+/// below ` MENU `; its hints are the screen's.
+#[test]
+fn the_stats_badge_sits_above_plan() {
+    for (w, h) in [(80, 24), (120, 40)] {
+        let mut app = gate_app(w, h);
+        app.open_plan_review(RUN_ID.into(), ReviewTarget::Gate);
+        assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
+        let _ = app.open_stats("/r/demo".into());
+        let text = bar(&app, w, h);
+        assert!(text.starts_with(" STATS "), "{w}: {text}");
+        assert!(text.contains("j/k scroll"), "{w}: {text}");
+        assert!(text.contains("esc back"), "{w}: {text}");
+        app.open_actions(
+            (RUN_ID.into(), crate::actions_request::ActionTarget::Run),
+            None,
+        );
+        assert!(bar(&app, w, h).starts_with(" MENU "), "{w}");
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(bar(&app, w, h).starts_with(" STATS "), "{w}");
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
+    }
+}

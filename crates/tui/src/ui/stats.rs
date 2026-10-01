@@ -1,0 +1,246 @@
+//! Milestone 9.0.6 decision 38: the run-history stats screen, drawn over the body. A
+//! frame titled `stats · <project>`, then the records line, the table (one row per size
+//! class, a `None` median read `–`), the deciders line, the flaky proposals and the
+//! problems, one row each, scrolled from `scroll` with the kit's marks. Loading shows
+//! `loading…`; a refusal or a lost reply shows in `Failed`. A dialog over it mutes its
+//! border (decision 5). Every class, test name, problem, path and refusal passes
+//! `safe_text`. Pure: `&App` in.
+
+use crate::app::App;
+use crate::app::stats::{StatsScreen, StatsState};
+use crate::inspector::run_format::{format_duration, format_tokens};
+use crate::safe_text::{multi_line, one_line};
+use crate::theme::{Palette, Role, role};
+use crate::ui::kit::{self, Hint, cut, wrap_words};
+use proto::HistoryStats;
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Line;
+use ratatui::widgets::{Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
+
+/// Interfaces "Stats sections": the table's header, one column each.
+const HEADER: [&str; 9] = [
+    "class", "tasks", "merged", "lines", "calls", "tokens", "work", "bounces", "reverted",
+];
+
+fn ellipsis(p: Palette) -> &'static str {
+    if p.ascii { "..." } else { "…" }
+}
+
+fn dot(p: Palette) -> &'static str {
+    if p.ascii { "-" } else { "·" }
+}
+
+/// A `None` median.
+fn none(p: Palette) -> &'static str {
+    if p.ascii { "-" } else { "–" }
+}
+
+fn hint(key: &str, word: &str, priority: u8) -> Hint {
+    Hint {
+        key: key.to_string(),
+        word: word.to_string(),
+        priority,
+    }
+}
+
+/// `<n> <word>`, with an `s` unless `n` is 1.
+fn count(n: u32, word: &str) -> String {
+    if n == 1 {
+        format!("1 {word}")
+    } else {
+        format!("{n} {word}s")
+    }
+}
+
+/// The status bar's hints while the screen has the keys (decision 6).
+pub(crate) fn hints() -> Vec<Hint> {
+    vec![
+        hint("j/k", "scroll", 7),
+        hint("PgUp/PgDn", "page", 5),
+        hint("esc", "back", 9),
+    ]
+}
+
+/// `stats · <project dir name>`.
+pub(crate) fn title(s: &StatsScreen, p: Palette) -> String {
+    let name = s
+        .project
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| s.project.display().to_string());
+    format!("stats {} {}", dot(p), one_line(&name))
+}
+
+/// The table's cells, header first, every class sanitised.
+fn table(stats: &HistoryStats, p: Palette) -> Vec<Vec<String>> {
+    let or = |v: Option<String>| v.unwrap_or_else(|| none(p).to_string());
+    let mut out = vec![HEADER.map(str::to_string).to_vec()];
+    for r in &stats.rows {
+        out.push(vec![
+            one_line(&r.class),
+            r.tasks.to_string(),
+            r.merged.to_string(),
+            or(r.median_lines.map(|n| n.to_string())),
+            or(r.median_tool_calls.map(|n| n.to_string())),
+            or(r.median_tokens.map(format_tokens)),
+            or(r.median_work_secs.map(format_duration)),
+            r.bounces.to_string(),
+            r.reverted.to_string(),
+        ]);
+    }
+    out
+}
+
+/// Columns as wide as their header or widest cell, two spaces apart, left-aligned
+/// (as `anthrex run stats` lays them out).
+fn table_lines(stats: &HistoryStats, p: Palette) -> Vec<String> {
+    let cells = table(stats, p);
+    let widths: Vec<usize> = (0..HEADER.len())
+        .map(|i| cells.iter().map(|row| row[i].width()).max().unwrap_or(0))
+        .collect();
+    cells
+        .iter()
+        .map(|row| {
+            let padded: Vec<String> = row
+                .iter()
+                .zip(&widths)
+                .map(|(cell, &w)| format!("{cell}{}", " ".repeat(w - cell.width())))
+                .collect();
+            padded.join("  ").trim_end().to_string()
+        })
+        .collect()
+}
+
+/// Decision 38's lines while ready, one row each, cut to `width`;
+/// `crate::app::stats::line_count` counts them.
+fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'static>> {
+    let e = ellipsis(p);
+    let line = |text: String, style: Style| Line::styled(cut(&text, width, e), style);
+    let plain = Style::default();
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let muted = role(Role::Muted, p);
+    let d = dot(p);
+    let records = format!(
+        "{} {d} {}",
+        count(stats.task_records, "task record"),
+        count(stats.run_records, "run")
+    );
+    let mut out = vec![line(records, muted), Line::default()];
+    for (i, text) in table_lines(stats, p).into_iter().enumerate() {
+        out.push(line(text, if i == 0 { bold } else { plain }));
+    }
+    out.push(Line::default());
+    out.push(line(
+        format!(
+            "deciders {} {d} {} {d} size raised {}/{}",
+            count(stats.decider_calls, "call"),
+            count(stats.decider_fallbacks, "fallback"),
+            stats.size_raised,
+            stats.size_checked
+        ),
+        plain,
+    ));
+    out.push(Line::default());
+    out.push(line(
+        format!(
+            "flaky proposals ({} days, after {})",
+            stats.window_days, stats.quarantine_after
+        ),
+        bold,
+    ));
+    let names: Vec<String> = stats
+        .flaky_proposals
+        .iter()
+        .map(|f| one_line(&f.test))
+        .collect();
+    // The runs column stays in view: a long name is cut first.
+    let name_w = names
+        .iter()
+        .map(|n| n.width())
+        .max()
+        .unwrap_or(0)
+        .min(width.saturating_sub(12).max(1));
+    for (name, f) in names.iter().zip(&stats.flaky_proposals) {
+        let name = cut(name, name_w, e);
+        let pad = " ".repeat(name_w.saturating_sub(name.width()));
+        out.push(line(
+            format!("  {name}{pad}  {}", count(f.runs, "run")),
+            plain,
+        ));
+    }
+    if names.is_empty() {
+        out.push(line("  none".into(), muted));
+    }
+    if !stats.problems.is_empty() {
+        out.push(Line::default());
+        out.push(line("problems".into(), role(Role::Attention, p)));
+        for problem in &stats.problems {
+            out.push(line(format!("  {}", one_line(problem)), plain));
+        }
+    }
+    out
+}
+
+/// Everything the screen shows under its title, before scrolling.
+pub(crate) fn body_lines(app: &App, s: &StatsScreen, width: u16) -> Vec<Line<'static>> {
+    let p = app.palette();
+    let width = usize::from(width).max(1);
+    match &s.state {
+        StatsState::Loading(_) => {
+            let text = if p.ascii { "loading..." } else { "loading…" };
+            vec![Line::styled(text, role(Role::Muted, p))]
+        }
+        StatsState::Ready(stats) => ready_lines(stats, width, p),
+        StatsState::Failed(text) => multi_line(text)
+            .lines()
+            .flat_map(|l| wrap_words(&one_line(l), width))
+            .map(|l| Line::styled(l, role(Role::Failed, p)))
+            .collect(),
+    }
+}
+
+/// `lines` from `top` in `rows` rows; a cut above or below is marked with the kit's
+/// marks, and the view never scrolls past its last line.
+fn scrolled(lines: Vec<Line<'static>>, top: usize, rows: usize, p: Palette) -> Vec<Line<'static>> {
+    let len = lines.len();
+    if len <= rows || rows < 3 {
+        let top = top.min(len.saturating_sub(rows));
+        return lines.into_iter().skip(top).take(rows).collect();
+    }
+    // At the bottom only the `↑` mark shows, so the last top leaves `rows - 1` lines.
+    let last_top = len - (rows - 1);
+    let top = top.min(last_top);
+    let room = if top == 0 || top == last_top {
+        rows - 1
+    } else {
+        rows - 2
+    };
+    let (up, down) = kit::scroll_marks(top, len - top - room, p.ascii);
+    let muted = role(Role::Muted, p);
+    let mut out: Vec<Line<'static>> = up.map(|m| Line::styled(m, muted)).into_iter().collect();
+    out.extend(lines.into_iter().skip(top).take(room));
+    out.extend(down.map(|m| Line::styled(m, muted)));
+    out
+}
+
+pub fn render(frame: &mut Frame, app: &App, s: &StatsScreen, area: Rect) {
+    let p = app.palette();
+    // Decision 5: the one accented border is the dialog's while one is open.
+    let block = kit::screen_frame(&title(s, p), app.modal.is_none(), p);
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let lines = body_lines(app, s, inner.width);
+    let shown = scrolled(lines, s.scroll, usize::from(inner.height), p);
+    frame.render_widget(Paragraph::new(shown), inner);
+}
+
+#[cfg(test)]
+#[path = "stats_tests.rs"]
+pub(crate) mod tests;
