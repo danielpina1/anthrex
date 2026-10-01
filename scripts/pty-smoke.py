@@ -794,7 +794,8 @@ def run_worktree_form_stage(repo):
     proc.send(b"\x02X")
     proc.wait_for("also remove worktree", label="remove-confirm worktree checkbox")
     proc.send(b" ")
-    proc.send(b"\r")
+    # Removing an agent is destructive: only `y` confirms (Enter just toasts).
+    proc.send(b"y")
     proc.wait_for(
         "uncommitted or untracked",
         timeout=WORKTREE_FORM_TIMEOUT,

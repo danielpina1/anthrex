@@ -148,7 +148,7 @@ fn a_dirty_refusal_opens_the_force_prompt() {
     );
 
     // Enter is deliberately not a synonym for either destructive choice.
-    assert!(press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE).is_empty());
+    assert!(press(&mut app, KeyCode::Enter, KeyModifiers::NONE).is_empty());
     assert!(
         matches!(app.modal, Some(Modal::ForceRemove { .. })),
         "Enter must leave the force prompt open"
