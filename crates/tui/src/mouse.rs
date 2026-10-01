@@ -26,6 +26,9 @@ const WHEEL_ROWS: u16 = 3;
 pub struct MouseState {
     last_press: Option<(u16, u16, Instant)>,
     drag_from: Option<(u16, u16)>,
+    /// The node the last press on the compact list selected (milestone 9.0.7 decision
+    /// 22): what its double click opens, whatever row the re-centred list puts there.
+    list_pick: Option<NodeKey>,
 }
 
 impl MouseState {
@@ -119,16 +122,10 @@ impl App {
             return;
         }
         if view.list {
-            let rows = nav_rows_of(
-                &self.windows,
-                &self.runs.runs,
-                &self.tree,
-                self.run_view.as_ref(),
-            );
             let delta = WHEEL_ROWS as isize;
-            self.tree
-                .move_selection(&rows, if up { -delta } else { delta });
-            self.reveal_tree_anchor();
+            self.move_tree_selection(if up { -delta } else { delta });
+            // Decision 25: a new selection's panel starts at the top.
+            self.forget_stale_panel_state();
             return;
         }
         let y = if up {
@@ -247,10 +244,16 @@ impl App {
         }
         let double = self.graph_mouse.press(column, row);
         // Decision 22: the list hit-tests through the function its renderer windows by.
-        let key = if view.list {
+        let key = if view.list && double {
+            // The first press re-centred the window on its row, so the second, on the
+            // same cell, may lie over another: it opens the row the first selected.
+            self.graph_mouse.list_pick.take()
+        } else if view.list {
             let selected = self.tree.selected_index(&rows).unwrap_or(0);
-            ui::run_list::row_at(view.canvas, rows.len(), selected, column, row)
-                .map(|index| rows[index].key.clone())
+            let hit = ui::run_list::row_at(view.canvas, rows.len(), selected, column, row)
+                .map(|index| rows[index].key.clone());
+            self.graph_mouse.list_pick.clone_from(&hit);
+            hit
         } else {
             view.geometry().node_at(&view.layout, column, row)
         };

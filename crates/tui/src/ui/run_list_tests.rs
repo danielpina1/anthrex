@@ -1,7 +1,7 @@
 //! M9.0.7.10: the run view as a compact list below 30 rows of interior (decision 22):
 //! its rows, its window, its mouse and its keys.
 
-use super::{RUN_LIST_BELOW, first_row, row_at};
+use super::{RUN_LIST_BELOW, first_row};
 use crate::app::App;
 use crate::safe_text::tests::{first_hostile, hostile_text};
 use crate::settings::UiSettings;
@@ -15,11 +15,10 @@ use proto::{DaemonMsg, RunReply, RunState, RunsSnapshot, Size, TaskState, Window
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
-use ratatui::{Terminal, backend::TestBackend};
 
-const MUL: &str = "add-mul-0723";
+pub(super) const MUL: &str = "add-mul-0723";
 
-fn app_of((snap, windows): (RunsSnapshot, Vec<WindowInfo>), ascii: bool) -> App {
+pub(super) fn app_of((snap, windows): (RunsSnapshot, Vec<WindowInfo>), ascii: bool) -> App {
     let mut settings = UiSettings::default();
     settings.badges.ascii = ascii;
     let mut app = App::new(windows, "/tmp".into(), settings);
@@ -29,12 +28,12 @@ fn app_of((snap, windows): (RunsSnapshot, Vec<WindowInfo>), ascii: bool) -> App 
     app
 }
 
-fn key(app: &mut App, code: KeyCode) {
+pub(super) fn key(app: &mut App, code: KeyCode) {
     app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
 }
 
 /// `C-b T`, the run's node selected, then `l`: the run view on `run_id`.
-fn run_view(mut app: App, run_id: &str) -> App {
+pub(super) fn run_view(mut app: App, run_id: &str) -> App {
     app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
     key(&mut app, KeyCode::Char('T'));
     let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
@@ -44,14 +43,14 @@ fn run_view(mut app: App, run_id: &str) -> App {
     app
 }
 
-fn task_key(run: &str, id: &str) -> NodeKey {
+pub(super) fn task_key(run: &str, id: &str) -> NodeKey {
     NodeKey::Task {
         run: run.into(),
         id: id.into(),
     }
 }
 
-fn select(app: &mut App, key: NodeKey) {
+pub(super) fn select(app: &mut App, key: NodeKey) {
     let rows = crate::app::nav_rows_of(
         &app.windows,
         &app.runs.runs,
@@ -71,14 +70,14 @@ pub(crate) fn two_stage_run_selected(id: &str) -> App {
 }
 
 /// One frame as `lib::draw` lays it out: the viewports set from it, then drawn whole.
-fn frame(app: &mut App, w: u16, h: u16) -> (Buffer, crate::ui::Layout) {
+pub(super) fn frame(app: &mut App, w: u16, h: u16) -> (Buffer, crate::ui::Layout) {
     let layout = crate::ui::layout_for(app, Rect::new(0, 0, w, h));
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     app.set_graph_viewport(layout.main);
     (audit::draw(app, w, h), layout)
 }
 
-fn rows_in(buffer: &Buffer, rect: Rect) -> Vec<String> {
+pub(super) fn rows_in(buffer: &Buffer, rect: Rect) -> Vec<String> {
     (rect.y..rect.bottom())
         .map(|y| {
             let row: String = (rect.x..rect.right())
@@ -90,7 +89,7 @@ fn rows_in(buffer: &Buffer, rect: Rect) -> Vec<String> {
 }
 
 /// The canvas's rows at `w`×`h`, trimmed, with trailing empty rows dropped.
-fn canvas_rows(app: &App, w: u16, h: u16) -> Vec<String> {
+pub(super) fn canvas_rows(app: &App, w: u16, h: u16) -> Vec<String> {
     let layout = crate::ui::layout_for(app, Rect::new(0, 0, w, h));
     let view = overview::view(app, layout.main);
     assert!(view.list, "the run view draws the list at {w}x{h}");
@@ -102,7 +101,7 @@ fn canvas_rows(app: &App, w: u16, h: u16) -> Vec<String> {
 }
 
 /// A one-stage run of forty waiting tasks `t0`…`t39`, S, tdd, titled `work <n>`.
-fn forty_tasks() -> (RunsSnapshot, Vec<WindowInfo>) {
+pub(super) fn forty_tasks() -> (RunsSnapshot, Vec<WindowInfo>) {
     let mut info = run(RUN_ID, PROJECT, RunState::Running);
     info.tasks = (0..40)
         .map(|n| {
@@ -120,14 +119,15 @@ fn forty_tasks() -> (RunsSnapshot, Vec<WindowInfo>) {
     )
 }
 
-fn forty_selected(id: &str) -> App {
+pub(super) fn forty_selected(id: &str) -> App {
     let mut app = run_view(app_of(forty_tasks(), false), RUN_ID);
     select(&mut app, task_key(RUN_ID, id));
     app
 }
 
 /// At 80x24 the default 34-column sidebar leaves the canvas 44 columns: the titles
-/// shrink, the state word is cut to 12 and the size and mode go (decision 22's order).
+/// shrink, the state word is cut, the size and mode go, and what that frees goes back
+/// to the state word first, then the titles (decision 22's order; fix round 1, I3).
 /// The brief's own literal is a 58-column canvas (a 60-column terminal, no sidebar),
 /// where every column shows; there `t2`'s title is cut to the 18 columns `t3`'s takes.
 #[test]
@@ -139,10 +139,10 @@ fn below_30_rows_the_run_view_is_a_list() {
         vec![
             "◉ run 0723  1/3",
             "  ✓ stage 1/2  tier 3 ✓ 38s",
-            "    ✓ t1 add mul() …  merged",
+            "    ✓ t1 add mul(…  merged",
             "  ⠋ stage 2/2  tier 3 running",
-            "▌   ◐ t2 report_pro…  in review ·…  after t1",
-            "    ◌ t3 docs for r…  waiting       after t2",
+            "▌   ◐ t2 report_p…  in review · r1  after t1",
+            "    ◌ t3 docs for…  waiting         after t2",
         ]
     );
     app.sidebar_visible = false;
@@ -242,148 +242,6 @@ fn the_window_is_centred_and_clamped() {
     assert_eq!(first_row(41, 20, 0), 0);
 }
 
-/// Review focus 3: `row_at` names exactly the node `render` drew on each row, at every
-/// height and selection, scrolled or not; marks and empty rows name none.
-#[test]
-fn row_at_maps_exactly_the_rows_render_draws() {
-    let mut app = forty_selected("t0");
-    for height in 0..=9u16 {
-        for selected in [0usize, 1, 2, 5, 20, 38, 39, 40] {
-            let rows = app.nav_rows();
-            let key = rows[selected].key.clone();
-            drop(rows);
-            select(&mut app, key);
-            let area = Rect::new(3, 2, 30, height);
-            let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
-            let rows = app.nav_rows();
-            terminal
-                .draw(|f| super::render(f, &app, area, &rows))
-                .unwrap();
-            let drawn = rows_in(terminal.backend().buffer(), area);
-            for (r, text) in drawn.iter().enumerate() {
-                let y = area.y + u16::try_from(r).unwrap();
-                let hit = row_at(area, rows.len(), selected, area.x + 5, y);
-                let label = |i: usize| match i {
-                    0 => "run 3f9a".to_owned(),
-                    i => format!("t{} work", i - 1),
-                };
-                match hit {
-                    Some(i) => assert!(
-                        text.contains(&label(i)),
-                        "h{height} s{selected} row {r}: {text:?} is not {}",
-                        label(i)
-                    ),
-                    None => assert!(
-                        text.is_empty() || text.contains(" more"),
-                        "h{height} s{selected} row {r}: {text:?} names no node"
-                    ),
-                }
-            }
-            assert_eq!(
-                row_at(area, rows.len(), selected, area.x, area.bottom()),
-                None
-            );
-            assert_eq!(
-                row_at(area, rows.len(), selected, area.right(), area.y),
-                None
-            );
-        }
-    }
-}
-
-/// Review focus 3, through `mouse.rs`: a click selects the row drawn under it, also
-/// with the list scrolled; a mark and the rows below the last node select nothing.
-#[test]
-fn a_click_in_the_compact_list_selects_its_row() {
-    let mut app = forty_selected("t30");
-    let (_, layout) = frame(&mut app, 80, 24);
-    let canvas = overview::view(&app, layout.main).canvas;
-    let first = first_row(41, 31, usize::from(canvas.height));
-    assert!(first > 0, "the list is scrolled");
-    assert!(app.on_click(canvas.x + 6, canvas.y + 1, &layout).is_empty());
-    let want = format!("t{}", first);
-    assert_eq!(app.tree.selected, Some(task_key(RUN_ID, &want)), "row 1");
-    let (buffer, layout) = frame(&mut app, 80, 24);
-    let canvas = overview::view(&app, layout.main).canvas;
-    let rows = rows_in(&buffer, canvas);
-    assert!(
-        rows.iter()
-            .any(|row| row.starts_with('▌') && row.contains(&format!("{want} work"))),
-        "{rows:#?}"
-    );
-
-    // The `↑` mark selects nothing.
-    let before = app.tree.selected.clone();
-    assert!(app.on_click(canvas.x + 2, canvas.y, &layout).is_empty());
-    assert_eq!(app.tree.selected, before);
-
-    // On a short list, a click under the last node selects nothing; one on the
-    // root selects it.
-    let mut app = two_stage_run_selected("t3");
-    let (_, layout) = frame(&mut app, 80, 24);
-    let canvas = overview::view(&app, layout.main).canvas;
-    let len = app.nav_rows().len();
-    if usize::from(canvas.height) > len {
-        let y = canvas.y + u16::try_from(len).unwrap();
-        assert!(app.on_click(canvas.x + 2, y, &layout).is_empty());
-        assert_eq!(app.tree.selected, Some(task_key(MUL, "t3")));
-    }
-    assert!(app.on_click(canvas.x + 2, canvas.y, &layout).is_empty());
-    assert_eq!(app.tree.selected, Some(NodeKey::Run(MUL.into())));
-}
-
-#[test]
-fn a_double_click_in_the_list_opens_as_enter_does() {
-    let mut by_click = two_stage_run_selected("t3");
-    let (_, layout) = frame(&mut by_click, 80, 24);
-    let canvas = overview::view(&by_click, layout.main).canvas;
-    // Row 2 is `t1`.
-    let _ = by_click.on_click(canvas.x + 6, canvas.y + 2, &layout);
-    let (_, layout) = frame(&mut by_click, 80, 24);
-    let canvas = overview::view(&by_click, layout.main).canvas;
-    assert_eq!(by_click.tree.selected, Some(task_key(MUL, "t1")));
-    let clicked = by_click.on_click(canvas.x + 6, canvas.y + 2, &layout);
-
-    let mut by_key = two_stage_run_selected("t1");
-    let _ = frame(&mut by_key, 80, 24);
-    let entered = by_key.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert_eq!(clicked, entered);
-    assert_eq!(by_click.tree.selected, by_key.tree.selected);
-}
-
-#[test]
-fn the_wheel_moves_the_selection_three_rows() {
-    let mut app = forty_selected("t30");
-    let (_, layout) = frame(&mut app, 80, 24);
-    let canvas = overview::view(&app, layout.main).canvas;
-    let (x, y) = (canvas.x + 2, canvas.y + 1);
-    assert!(app.on_scroll(false, x, y, &layout).is_empty());
-    assert_eq!(app.tree.selected, Some(task_key(RUN_ID, "t33")));
-    let _ = app.on_scroll(true, x, y, &layout);
-    let _ = app.on_scroll(true, x, y, &layout);
-    assert_eq!(app.tree.selected, Some(task_key(RUN_ID, "t27")));
-
-    // At the ends the wheel stops on the first and the last row.
-    let mut app = forty_selected("t38");
-    let (_, layout) = frame(&mut app, 80, 24);
-    let canvas = overview::view(&app, layout.main).canvas;
-    let _ = app.on_scroll(false, canvas.x + 2, canvas.y + 1, &layout);
-    assert_eq!(app.tree.selected, Some(task_key(RUN_ID, "t39")));
-    let _ = app.on_scroll(false, canvas.x + 2, canvas.y + 1, &layout);
-    assert_eq!(app.tree.selected, Some(task_key(RUN_ID, "t39")));
-    let mut app = forty_selected("t0");
-    let (_, layout) = frame(&mut app, 80, 24);
-    let canvas = overview::view(&app, layout.main).canvas;
-    let _ = app.on_scroll(true, canvas.x + 2, canvas.y + 1, &layout);
-    assert_eq!(app.tree.selected, Some(NodeKey::Run(RUN_ID.into())));
-    let _ = app.on_scroll(true, canvas.x + 2, canvas.y + 1, &layout);
-    assert_eq!(app.tree.selected, Some(NodeKey::Run(RUN_ID.into())));
-    // The wheel over the panel below moves nothing.
-    let footer = overview::view(&app, layout.main).footer;
-    let _ = app.on_scroll(false, footer.x + 2, footer.y + 1, &layout);
-    assert_eq!(app.tree.selected, Some(NodeKey::Run(RUN_ID.into())));
-}
-
 /// Pinning: the list changes the drawing only; `j`, `k`, `h`, `l`, `space` and `.`
 /// select what they select over the graph.
 #[test]
@@ -437,7 +295,7 @@ fn the_list_in_ascii() {
     let rows = canvas_rows(&app, 80, 24);
     assert_eq!(rows[0], "@ run 0723  1/3");
     assert_eq!(rows[1], "  + stage 1/2  tier 3 + 38s");
-    assert_eq!(rows[4], ">   % t2 report_p...  in review...  after t1");
+    assert_eq!(rows[4], ">   % t2 report...  in review - r1  after t1");
     app.sidebar_visible = false;
     let rows = canvas_rows(&app, 60, 24);
     assert_eq!(
@@ -451,25 +309,33 @@ fn the_list_in_ascii() {
     assert!(rows.last().unwrap().starts_with("v "));
 }
 
-/// Global Constraint 4: a task's title, id and deps are agents' text.
+/// Global Constraint 4: a task's title, id and deps are agents' text. The hostile
+/// characters sit inside the columns the cut keeps (fix round 1, I2), so dropping the
+/// sanitiser shows on screen.
 #[test]
 fn list_text_is_sanitised() {
     let (mut snap, windows) = two_stage_fixture();
     let tasks = &mut snap.runs[0].tasks;
-    tasks[1].title = hostile_text();
+    tasks[1].title = "x\u{200D}y\u{202E}z\u{1b}w work".into();
     tasks[2].title = format!("x{}", hostile_text());
-    tasks[2].deps = vec![hostile_text()];
+    tasks[2].deps = vec!["t\u{202E}2\u{1b}x".into()];
     for ascii in [false, true] {
         let mut app = run_view(app_of((snap.clone(), windows.clone()), ascii), MUL);
         select(&mut app, task_key(MUL, "t2"));
-        for (w, h) in [(80, 24), (120, 24), (60, 20)] {
+        for (w, h) in [(80, 24), (120, 24), (100, 20)] {
             let rows = canvas_rows(&app, w, h);
             for row in &rows {
                 assert_eq!(first_hostile(row), None, "{row:?} at {w}x{h}");
             }
-            assert!(rows[4].contains("t2 "), "{rows:#?}");
+            assert!(rows[4].contains("t2 xyz w"), "{rows:#?}");
+            assert!(rows[5].contains("after t2 x"), "{rows:#?}");
         }
     }
+    let mut app = run_view(app_of((snap, windows), false), MUL);
+    select(&mut app, task_key(MUL, "t2"));
+    let rows = canvas_rows(&app, 80, 24);
+    // The deps column is wider here, so the freed columns give the state word 13.
+    assert_eq!(rows[4], "▌   ◐ t2 xyz w w…  in review · …  after t1");
 }
 
 /// Decision 22's cut order, on canvases `w` columns wide (the sidebar hidden): the
@@ -493,9 +359,34 @@ fn narrow_lists_cut_the_title_then_the_state_then_the_size() {
         "    ◐ t2 report_…  M tdd   in review · r1  after t1"
     );
     assert_eq!(at(49), "    ◐ t2 report_…  M tdd   in review ·…  after t1");
-    assert_eq!(at(48), "    ◐ t2 report_product…  in review ·…  after t1");
+    assert_eq!(at(48), "    ◐ t2 report_produ…  in review · r1  after t1");
     assert_eq!(at(41), "    ◐ t2 report_…  in review ·…  after t1");
     assert_eq!(at(39), "    ◐ t2 report_…  in review ·…  after…");
+}
+
+/// Fix round 1 (I3): narrowing the canvas never lengthens a title while the state word
+/// is cut — the columns a cut frees go to the state word before the titles.
+#[test]
+fn narrowing_never_lengthens_a_title_while_the_state_is_cut() {
+    let mut app = two_stage_run_selected("t1");
+    app.sidebar_visible = false;
+    let state = "in review · r1";
+    let mut wider: Option<(u16, usize)> = None;
+    for w in (30..=70u16).rev() {
+        let row = canvas_rows(&app, w + 2, 24)[4].clone();
+        let title = row
+            .split("  ")
+            .find(|part| part.contains("t2 "))
+            .map_or(0, |part| part.trim().chars().count());
+        let cut = !row.contains(state);
+        if let (true, Some((at, longer))) = (cut, wider) {
+            assert!(
+                title <= longer,
+                "at {w} columns the title is {title} wide, at {at} {longer}: {row:?}"
+            );
+        }
+        wider = Some((w, title));
+    }
 }
 
 #[test]

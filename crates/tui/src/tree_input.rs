@@ -287,7 +287,7 @@ impl App {
         }
     }
 
-    fn move_tree_selection(&mut self, delta: isize) {
+    pub(crate) fn move_tree_selection(&mut self, delta: isize) {
         let rows = nav_rows_of(
             &self.windows,
             &self.runs.runs,

@@ -162,7 +162,8 @@ fn width_of(text: &str) -> usize {
 
 impl Columns {
     /// The title is cut first (to `MIN_TITLE` columns), then the state word (to
-    /// `STATE_CUT`), then the size and mode go, and only then are the deps cut.
+    /// `STATE_CUT`), then the size and mode go, and only then are the deps cut. What
+    /// the later cuts free goes back to the state word, then to the titles.
     fn of(rows: &[Row<'_>], width: usize, ascii: bool) -> Self {
         let tasks: Vec<TaskParts> = rows.iter().filter_map(|r| task_parts(r, ascii)).collect();
         let max = |f: &dyn Fn(&TaskParts) -> usize| tasks.iter().map(f).max().unwrap_or(0);
@@ -173,10 +174,11 @@ impl Columns {
         let want = max(&|t| head(t, usize::MAX));
         let least = max(&|t| head(t, MIN_TITLE));
         let deps = max(&|t| width_of(&t.deps));
+        let state = max(&|t| width_of(&t.state));
         let mut columns = Columns {
             label_end: want,
             size: Some(max(&|t| width_of(&t.size))),
-            state: max(&|t| width_of(&t.state)),
+            state,
             deps,
         };
         let rest = |c: &Columns| {
@@ -189,7 +191,12 @@ impl Columns {
         if columns.label_end + rest(&columns) > width {
             columns.size = None;
         }
-        // What the cuts after the title freed goes back to it.
+        // What the cuts after the title freed goes back to the state word first, up to
+        // its whole width, then to the titles: narrowing never lengthens a title while
+        // the state word is cut (fix round 1, I3).
+        let others = rest(&columns) - columns.state;
+        let room = width.saturating_sub(least + others);
+        columns.state = room.clamp(columns.state, state);
         columns.label_end = width.saturating_sub(rest(&columns)).clamp(least, want);
         let used = columns.label_end + rest(&columns) - deps;
         columns.deps = deps.min(width.saturating_sub(used));
@@ -271,3 +278,7 @@ fn row_line(
 #[cfg(test)]
 #[path = "run_list_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "run_list_mouse_tests.rs"]
+mod mouse_tests;
