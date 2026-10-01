@@ -11,6 +11,7 @@ mod git;
 mod orchestrator;
 pub mod reserved_env;
 mod runtimes;
+pub mod settings;
 mod testing;
 mod theme;
 

@@ -29,8 +29,8 @@ pub use adapt::{Deciders, Metering, Onboarding, Scouts};
 pub use agent::AgentConfig;
 
 use profile::{read_profile, report_unknown_profile};
-pub use roster::default_roster;
 use roster::read_models;
+pub use roster::{MODEL_NOTE_MAX, default_roster};
 mod unknown;
 pub(crate) use unknown::report_unknown;
 
