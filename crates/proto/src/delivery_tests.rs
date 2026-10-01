@@ -360,6 +360,13 @@ const A_PLAN_TASK: &str = r#"{"id":"t1","title":"Add a flag","kind":"code","size
 fn plan_task_addresses_defaults_empty() {
     let task: PlanTask = serde_json::from_str(A_PLAN_TASK).expect("a 9.1 plan task decodes");
     assert!(task.addresses.is_empty());
+    assert!(
+        serde_json::to_value(&task)
+            .unwrap()
+            .get("addresses")
+            .is_none(),
+        "an empty addresses is left out, so a plan is written as 9.1's"
+    );
     assert_eq!(task.stage, 2);
     let mut task = task;
     task.addresses = vec!["142:t98765".into(), "142:c5".into()];
@@ -386,6 +393,11 @@ fn old_snapshot_and_profile_still_decode() {
     assert!(run.stages.iter().all(|s| s.pr.is_none()));
     assert_eq!(run.test_slots, 8, "a 9.1 field survives");
     assert_eq!(run.tasks[0].fixes.as_deref(), Some("bisect of t4"));
+    // A local run's snapshot is written exactly as 9.1 wrote it: `delivery` and each
+    // stage's `pr` are left out while `None`.
+    let stored: serde_json::Value =
+        serde_json::from_str(include_str!("m9_1_run_info.json")).unwrap();
+    assert_eq!(serde_json::to_value(&run).unwrap(), stored);
 
     let mut run = run;
     run.delivery = Some(a_delivery_info());

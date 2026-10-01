@@ -397,8 +397,9 @@ pub struct RunInfo {
     pub stages: Vec<StageInfo>,
     #[serde(default)]
     pub test_slots: u32,
-    /// Milestone 9.2 decision 41: `None` in local mode.
-    #[serde(default)]
+    /// Milestone 9.2 decision 41: `None` in local mode, and then left out, so a local
+    /// run's snapshot is 9.1's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<crate::delivery::DeliveryInfo>,
 }
 

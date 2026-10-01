@@ -60,8 +60,9 @@ pub struct StageInfo {
     pub full: FullInfo,
     pub fix_tasks: Vec<String>,
     pub propagate_red: Option<String>,
-    /// Milestone 9.2 decision 41: the stage's pull request, in `pr` mode.
-    #[serde(default)]
+    /// Milestone 9.2 decision 41: the stage's pull request, in `pr` mode. Left out when
+    /// `None`, so a local run's stages (and the digest built from them) are 9.1's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr: Option<crate::delivery::StagePrInfo>,
 }
 

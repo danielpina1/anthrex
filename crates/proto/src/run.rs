@@ -230,8 +230,9 @@ pub struct PlanTask {
     #[serde(default)]
     pub atomic_reason: Option<String>,
     /// Milestone 9.2 decision 31: the review threads (`"<pr>:<t|c|r><id>"`) this task
-    /// addresses; the engine then makes it a `review` fix task.
-    #[serde(default)]
+    /// addresses; the engine then makes it a `review` fix task. Left out when empty, so
+    /// a plan, a `run.json` and a snapshot without review fixes are written as 9.1's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub addresses: Vec<String>,
 }
 
