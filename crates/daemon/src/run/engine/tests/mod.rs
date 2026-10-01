@@ -1,5 +1,8 @@
 //! The engine unit tests (M8a.11 onwards).
 
+mod actions_effects;
+mod actions_fixtures;
+mod actions_matrix;
 mod actions_rules;
 mod actions_twins;
 mod activity;

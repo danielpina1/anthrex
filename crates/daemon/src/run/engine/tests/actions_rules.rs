@@ -238,7 +238,8 @@ fn a_batch_checks_each_pause_against_the_state_before_it() {
 
 #[test]
 fn resume_reads_as_before() {
-    // `merge::resume` (`merge.rs:549-566`) behind `restore::resume`.
+    // `restore::resume`, which asks `rules::resume` first; `merge::resume`'s two
+    // refusals (not halted; halted without `--rebaseline`) reply with its text too.
     let mut fx = running();
     assert_eq!(
         rules::resume(fx.run(), false),

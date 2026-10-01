@@ -580,3 +580,6 @@ mod tests;
 
 #[cfg(test)]
 mod gated_git;
+
+#[cfg(test)]
+mod finish_tests;

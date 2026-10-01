@@ -71,7 +71,7 @@ fn infra_at_head(s: &StageRecord) -> Option<&InfraFailures> {
 }
 
 /// Stage `s`'s head failed [`INFRA_MAX`] times in a row: held until `run resume`.
-fn infra_held(s: &StageRecord) -> bool {
+pub(super) fn infra_held(s: &StageRecord) -> bool {
     infra_at_head(s).is_some_and(|i| i.count >= INFRA_MAX)
 }
 

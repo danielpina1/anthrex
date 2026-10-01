@@ -1,10 +1,11 @@
 //! Milestone 9.0.6 decision 8: every run request's precondition, one function per
 //! request, each returning the handler's refusal text byte for byte (`None`: the request
 //! is not refused by the run's state). The handlers call these instead of inline checks,
-//! so `check` (task 7) and the handlers cannot drift apart. Pure (design decision 2).
+//! so `check` and the handlers cannot drift apart. Pure (design decision 2).
 //!
-//! `merge::resume` keeps its own refusals (its file is at its bound); [`resume`] repeats
-//! them, and the actions matrix proves they agree.
+//! `restore::resume` asks [`resume`] first, and `merge::resume`'s refusals reply with its
+//! text too; the actions matrix (`tests/actions_matrix.rs`) proves every rule agrees
+//! with its handler in every fixture state.
 
 use proto::{
     BlockReason, FinishAction, HoldState, MessageKind, MessageTarget, PlanEdit, RunPath, RunState,
@@ -119,7 +120,6 @@ pub(crate) fn edit_run(run: &Run, edits: &[PlanEdit], submit: bool) -> Option<St
 }
 
 /// Decision 45: a `pause` edit applies only to a running run (`batch.rs`).
-#[cfg_attr(not(test), allow(dead_code))] // task 7's `check` calls it
 pub(crate) fn pause(run: &Run) -> Option<String> {
     pause_in(&run.id, run.state)
 }
@@ -136,7 +136,6 @@ pub(crate) fn pause_in(id: &str, state: RunState) -> Option<String> {
 }
 
 /// Decision 45: a `resume` edit applies only to a paused run (`batch.rs`).
-#[cfg_attr(not(test), allow(dead_code))] // task 7's `check` calls it
 pub(crate) fn unpause(run: &Run) -> Option<String> {
     unpause_in(&run.id, run.state)
 }
@@ -248,9 +247,8 @@ pub(crate) fn hold(run: &Run, id: &str) -> Option<String> {
 
 /// An `info` message to task `task_id` (`edits_orch::apply_message`), past its text
 /// check: the run's own per-turn limit. It models `info` and `change` only: a
-/// `stop_and_wait` refuses more (a task already paused, or not working), so task 7
+/// `stop_and_wait` refuses more (a task already paused, or not working), so `check`
 /// must not use it for one.
-#[cfg_attr(not(test), allow(dead_code))] // task 7's `check` calls it
 pub(crate) fn message(run: &Run, task_id: &str) -> Option<String> {
     let to = MessageTarget::Tasks(vec![task_id.to_string()]);
     message_to(run, &to)
@@ -258,12 +256,10 @@ pub(crate) fn message(run: &Run, task_id: &str) -> Option<String> {
 
 /// An `info` message to every unfinished task of stage `stage` (milestone 9.1 decision
 /// 56). Like [`message`], it models `info` and `change` only, never `stop_and_wait`.
-#[cfg_attr(not(test), allow(dead_code))] // task 7's `check` calls it
 pub(crate) fn message_stage(run: &Run, stage: u16) -> Option<String> {
     message_to(run, &MessageTarget::Stage(u32::from(stage)))
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // task 7's `check` calls it
 fn message_to(run: &Run, to: &MessageTarget) -> Option<String> {
     let limit = run.limits.orch.message_max_per_turn;
     plan_message(run, to, MessageKind::Info, limit)
@@ -290,7 +286,6 @@ pub(crate) fn answer(run: &Run, task_id: &str) -> Option<String> {
 }
 
 /// A `refresh` edit from the user (`edits_orch::apply_refresh`).
-#[cfg_attr(not(test), allow(dead_code))] // task 7's `check` calls it
 pub(crate) fn refresh(run: &Run, task_id: &str) -> Option<String> {
     refresh_refusal(run, task_id).map(|e| e.to_string())
 }

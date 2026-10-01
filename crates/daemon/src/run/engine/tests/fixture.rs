@@ -166,6 +166,23 @@ impl Fixture {
         })
     }
 
+    /// The user's verdict on hold `hold` (`run approve --hold`, `run reject --hold`).
+    pub fn hold_event(&self, reply: ReplyId, hold: &str, approve: bool) -> EventKind {
+        let (run_id, hold) = (RUN_ID.to_string(), hold.to_string());
+        EventKind::Orch(match approve {
+            true => crate::run::engine::OrchEvent::ApproveHold {
+                reply,
+                run_id,
+                hold,
+            },
+            false => crate::run::engine::OrchEvent::RejectHold {
+                reply,
+                run_id,
+                hold,
+            },
+        })
+    }
+
     pub fn tick(&mut self) -> Vec<crate::run::engine::Effect> {
         self.next(EventKind::Tick)
     }

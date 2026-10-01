@@ -8,12 +8,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use proto::run_wire::request;
-use proto::{BaseMovedInfo, FinishAction, RunReply, RunRequest};
+use proto::{ActionKind, BaseMovedInfo, FinishAction, RunReply, RunRequest};
 
 use super::RunService;
 use super::adapt::BuildError;
 use super::build::Shape;
 use crate::run::engine::EventKind;
+use crate::run::engine::actions::{self, ActionNode};
 use crate::run::git::{self, Git};
 use crate::run::model::Run;
 use crate::run::plan::parse_plan;
@@ -296,8 +297,9 @@ impl RunService {
         ))
     }
 
-    /// `run accept` and `run discard` (decision 20): the confirmation first; for accept,
-    /// the base branch read and classified before the engine sees the request.
+    /// `run accept` and `run discard` (decision 20): the engine's predicate, then the
+    /// confirmation; for accept, the base branch read and classified before the engine
+    /// sees the request.
     pub(super) async fn finish(
         &self,
         run_id: String,
@@ -308,11 +310,19 @@ impl RunService {
         let Ok((root, base_branch, run_branch, timeout)) = self.run_refs_of(&run_id) else {
             return refused(format!("unknown run {run_id}"));
         };
-        let (base_sha, run_head) = crate::lock(&self.state)
-            .runs
-            .get(&run_id)
-            .map(|run| (run.base_sha.clone(), run.run_head.clone()))
-            .unwrap_or_default();
+        // Milestone 9.0.6 decision 41: the engine's own predicate first, before any git
+        // read or confirmation, with the handler's text.
+        let kind = match action {
+            FinishAction::Accept => ActionKind::Accept,
+            FinishAction::Discard => ActionKind::Discard,
+        };
+        let (base_sha, run_head) = match crate::lock(&self.state).runs.get(&run_id) {
+            Some(run) => match actions::check(run, &ActionNode::Run, &kind) {
+                Ok(()) => (run.base_sha.clone(), run.run_head.clone()),
+                Err(text) => return refused(text),
+            },
+            None => Default::default(),
+        };
         if action == FinishAction::Discard {
             if confirm.as_deref() != Some(run_id.as_str()) {
                 return RunReply::ConfirmNeeded {
