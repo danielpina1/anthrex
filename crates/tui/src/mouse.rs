@@ -56,7 +56,7 @@ impl App {
     ) -> Vec<Effect> {
         let main_inner = layout.main_inner;
         // Milestone 9.0.5: the plan review covers the body; nothing under it scrolls.
-        if self.modal.is_some() || self.plan_review.is_some() {
+        if self.modal.is_some() || self.plan_review.is_some() || self.screen.is_some() {
             return vec![];
         }
         if self.sidebar_visible && layout.sidebar_list.contains((column, row).into()) {
@@ -125,7 +125,7 @@ impl App {
 
     pub fn on_click(&mut self, column: u16, row: u16, layout: &ui::Layout) -> Vec<Effect> {
         self.forget_stale_panel_state();
-        if self.modal.is_some() || self.plan_review.is_some() {
+        if self.modal.is_some() || self.plan_review.is_some() || self.screen.is_some() {
             return vec![];
         }
         // Every press ends the previous gesture. Without this, a press on the
@@ -240,6 +240,7 @@ impl App {
     pub fn on_drag(&mut self, column: u16, row: u16, layout: &ui::Layout) -> Vec<Effect> {
         if self.modal.is_some()
             || self.plan_review.is_some()
+            || self.screen.is_some()
             || !self.overview
             || self.conversation.is_open()
         {

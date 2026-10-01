@@ -54,6 +54,12 @@ impl App {
             }
             return vec![];
         }
+        // Milestone 9.0.6 decision 33: a screen covers the body; a paste goes to its
+        // editor or nowhere.
+        if self.screen.is_some() {
+            self.on_profile_paste(&text);
+            return vec![];
+        }
         // Milestone 9.0.5 review finding 1: the plan review covers the body, so a
         // paste reaches neither the PTY nor the conversation's search under it.
         if self.plan_review.is_some() {

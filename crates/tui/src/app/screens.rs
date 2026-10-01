@@ -1,4 +1,6 @@
-//! Milestone 9.0.6 decision 24: the settings the daemon owns, as the client keeps them.
+//! Milestone 9.0.6 decision 33: the one slot the full-body screens share (`Screen`),
+//! its keys and its tick; and decision 24: the settings the daemon owns, as the client
+//! keeps them.
 //! One tagged `Settings(Get)` leaves with every new connection; its `Current` reply and
 //! every `Saved` become `App.settings_cache`, which the goal form's model picker, the
 //! Promote form and (tasks 13-15) the screens read. None of them sends a request of its
@@ -12,6 +14,39 @@ use proto::{
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Instant;
+
+/// Decision 33: the full-body screen drawn over `Layout.body`, the status bar staying.
+/// Opening one replaces another.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Screen {
+    Profile(Box<super::profile_screen::ProfileScreen>),
+}
+
+impl App {
+    /// Opens `screen` over the body; the keymap's screen mode follows.
+    pub(super) fn set_screen(&mut self, screen: Option<Screen>) {
+        self.screen = screen;
+        self.keymap.set_screen_mode(self.screen.is_some());
+    }
+
+    /// A bare key while a screen is open (`KeyAction::Screen`).
+    pub(super) fn on_screen_key(&mut self, key: crossterm::event::KeyEvent) -> Vec<Effect> {
+        match &self.screen {
+            Some(Screen::Profile(_)) => self.on_profile_key(key),
+            None => vec![],
+        }
+    }
+
+    /// `on_tick`: the open screen's timed work at `now` (the Profile screen's poll).
+    /// Tests call it with a moved clock instead of sleeping.
+    pub(crate) fn screens_tick(&mut self, now: Instant) -> Vec<Effect> {
+        match &self.screen {
+            Some(Screen::Profile(_)) => self.profile_tick(now),
+            None => vec![],
+        }
+    }
+}
 
 /// The daemon's settings document, where each key came from, and the config path.
 #[derive(Debug, Clone, PartialEq, Eq)]

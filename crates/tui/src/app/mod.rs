@@ -201,6 +201,7 @@ pub struct App {
     pub replies: replies::PendingReplies, // Milestone 9.0.6 decision 16, by request id.
     /// Decision 24: the daemon's settings, fetched once per connection (`app/screens.rs`).
     pub settings_cache: Option<screens::SettingsCache>,
+    pub screen: Option<screens::Screen>, // Decision 33: the open full-body screen.
 }
 
 impl App {
@@ -259,6 +260,7 @@ impl App {
             brief_expanded: None,
             replies: Default::default(),
             settings_cache: None,
+            screen: None,
             settings,
         }
     }
@@ -431,6 +433,7 @@ impl App {
             KeyAction::Conversation(key) => self.on_conversation_key(key),
             KeyAction::Review(key) => self.on_review_key(key),
             KeyAction::Alerts(key) => self.on_alerts_key(key),
+            KeyAction::Screen(key) => self.on_screen_key(key),
             KeyAction::AwaitPrefix | KeyAction::Cancel | KeyAction::Nothing => vec![],
         }
     }
@@ -481,6 +484,7 @@ impl App {
             Command::ToggleConversation => self.toggle_conversation(),
             Command::StartGoal => self.open_goal_form(),
             Command::FocusAlerts => self.focus_alerts(),
+            Command::OpenProfile => self.open_profile(),
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -499,6 +503,7 @@ impl App {
     /// `Subscribe`, flushes a debounced resize.
     pub fn on_tick(&mut self) -> Vec<Effect> {
         let mut effects = self.expire_replies();
+        effects.extend(self.screens_tick(Instant::now()));
         effects.extend(self.tick());
         effects
     }
@@ -551,6 +556,7 @@ mod link;
 mod modal_keys;
 mod paste;
 pub(crate) mod plan_review;
+pub(crate) mod profile_screen;
 pub(crate) mod prompt;
 pub(crate) mod replies;
 mod run_enter;

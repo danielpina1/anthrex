@@ -31,6 +31,8 @@ pub enum Command {
     StartGoal,
     /// `C-b a` (milestone 9.0.5 decision 21): focuses the Alerts box.
     FocusAlerts,
+    /// `C-b P` (milestone 9.0.6 decision 33): opens the Profile screen.
+    OpenProfile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +52,8 @@ pub enum KeyAction {
     Review(KeyEvent),
     /// A bare key pressed while the Alerts box has the focus (decision 21).
     Alerts(KeyEvent),
+    /// A bare key pressed while a full-body screen is open (milestone 9.0.6 decision 33).
+    Screen(KeyEvent),
     Nothing,
 }
 
@@ -61,6 +65,7 @@ pub struct Keymap {
     conversation_mode: bool,
     review_mode: bool,
     alerts_mode: bool,
+    screen_mode: bool,
 }
 
 impl Keymap {
@@ -76,6 +81,7 @@ impl Keymap {
             conversation_mode: false,
             review_mode: false,
             alerts_mode: false,
+            screen_mode: false,
         }
     }
 
@@ -121,6 +127,16 @@ impl Keymap {
         self.alerts_mode
     }
 
+    /// Milestone 9.0.6 decision 33: while set, bare keys go to the open screen. It wins
+    /// over the review, the alerts, the conversation and the tree; the prefix still works.
+    pub fn set_screen_mode(&mut self, on: bool) {
+        self.screen_mode = on;
+    }
+
+    pub fn screen_mode(&self) -> bool {
+        self.screen_mode
+    }
+
     fn is_prefix(&self, key: &KeyEvent) -> bool {
         key.code == self.prefix.0 && key.modifiers == self.prefix.1
     }
@@ -138,7 +154,11 @@ impl Keymap {
                 // Decision 11 (review N3): the conversation view is read-only, so the
                 // literal prefix byte reaches no PTY while it is open; nor while the
                 // plan review is (milestone 9.0.5).
-                if self.conversation_mode || self.review_mode || self.alerts_mode {
+                if self.conversation_mode
+                    || self.review_mode
+                    || self.alerts_mode
+                    || self.screen_mode
+                {
                     return KeyAction::Nothing;
                 }
                 return encode_key(KeyEvent::new(self.prefix.0, self.prefix.1), app_cursor)
@@ -168,6 +188,7 @@ impl Keymap {
                 KeyCode::Char('m') => KeyAction::Run(Command::ToggleConversation),
                 KeyCode::Char('g') => KeyAction::Run(Command::StartGoal),
                 KeyCode::Char('a') => KeyAction::Run(Command::FocusAlerts),
+                KeyCode::Char('P') => KeyAction::Run(Command::OpenProfile),
                 KeyCode::Esc => KeyAction::Cancel,
                 _ => KeyAction::Nothing,
             };
@@ -175,6 +196,9 @@ impl Keymap {
         if self.is_prefix(&key) {
             self.pending = true;
             return KeyAction::AwaitPrefix;
+        }
+        if self.screen_mode {
+            return KeyAction::Screen(key);
         }
         if self.review_mode {
             return KeyAction::Review(key);

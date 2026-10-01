@@ -165,9 +165,10 @@ fn enter_on_each_alert_preselects_its_action() {
     }
 }
 
-/// P1 keeps its meaning (decision 17); a proposal still toasts until task 13 (F26).
+/// P1 keeps its meaning (decision 17); a proposal opens the Profile screen (task 13,
+/// F26: `profile_screen.rs::enter_on_a_proposal_alert_opens_the_profile_screen`).
 #[test]
-fn the_orchestrator_and_proposal_alerts_are_unchanged() {
+fn the_orchestrator_and_proposal_alerts_open_no_menu() {
     let mut app = app_with_actions();
     let effects = enter_on(&mut app, &AlertKey::Orchestrator("a-attn".into()));
     assert!(
@@ -178,15 +179,10 @@ fn the_orchestrator_and_proposal_alerts_are_unchanged() {
     assert_eq!(app.focused, Some(11));
 
     let mut app = app_with_actions();
-    assert!(enter_on(&mut app, &AlertKey::Proposal("/r/shop".into())).is_empty());
+    assert!(!enter_on(&mut app, &AlertKey::Proposal("/r/shop".into())).is_empty());
     assert!(app.modal.is_none());
-    assert_eq!(
-        app.toast_text(),
-        Some(
-            "profile proposal for shop: run anthrex profile show --proposed, then \
-             anthrex profile confirm or reject, in that project"
-        )
-    );
+    assert!(app.screen.is_some());
+    assert_eq!(app.toast_text(), None);
 }
 
 #[test]

@@ -10,6 +10,7 @@ pub mod graph;
 pub mod inspector;
 pub mod keymap;
 mod mouse;
+pub mod profile_view;
 pub mod reconnect;
 pub mod run_edit;
 pub mod run_goal;

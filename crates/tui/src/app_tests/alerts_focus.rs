@@ -171,7 +171,7 @@ fn enter_on_each_priority() {
     assert_eq!(menu(&app), ("e-halt".into(), ActionTarget::Run, 0));
     assert_eq!(app.run_view, None);
 
-    // P4: the menu on the run; a proposal toasts.
+    // P4: the menu on the run; a proposal opens the Profile screen (task 13, F26).
     let mut app = every_app();
     select_alert(&mut app, &AlertKey::Accept("f-done".into()));
     assert!(tap(&mut app, KeyCode::Enter).is_empty());
@@ -179,14 +179,13 @@ fn enter_on_each_priority() {
     assert_eq!(app.run_view, None);
     let mut app = every_app();
     select_alert(&mut app, &AlertKey::Proposal("/r/shop".into()));
-    assert!(tap(&mut app, KeyCode::Enter).is_empty());
     assert_eq!(
-        app.toast_text(),
-        Some(
-            "profile proposal for shop: run anthrex profile show --proposed, then \
-             anthrex profile confirm or reject, in that project"
-        )
+        tap(&mut app, KeyCode::Enter).len(),
+        3,
+        "status and both shows"
     );
+    assert!(app.screen.is_some());
+    assert_eq!(app.toast_text(), None);
     assert_eq!(app.alerts_focus, None);
     assert_eq!(app.run_view, None);
 }

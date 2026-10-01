@@ -1,6 +1,7 @@
 //! Which badge the status bar wears and which hints it lists (milestone 9.0.6
 //! decision 6). Pure: both are read off `&App`; `statusbar.rs` only draws them.
 
+use crate::app::screens::Screen;
 use crate::app::{App, ReviewTarget, TreeInput};
 use crate::ui::kit::Hint;
 
@@ -23,13 +24,15 @@ fn hint(key: &str, word: &str, priority: u8) -> Hint {
     }
 }
 
-/// The mode badge, in decision 6's precedence: ` PREFIX ` first, then ` MENU `; the
-/// badges of the three screens slot in above ` PLAN ` as their tasks add them.
+/// The mode badge, in decision 6's precedence: ` PREFIX ` first, then ` MENU `, then
+/// the screens' (` PROFILE `), above ` PLAN `.
 pub(super) fn badge(app: &App) -> Option<&'static str> {
     if app.keymap.pending() {
         Some(" PREFIX ")
     } else if matches!(app.modal, Some(crate::app::Modal::Action(_))) {
         Some(" MENU ")
+    } else if matches!(app.screen, Some(Screen::Profile(_))) {
+        Some(" PROFILE ")
     } else if app.plan_review.is_some() {
         Some(" PLAN ")
     } else if app.alerts_focus.is_some() {
@@ -49,6 +52,7 @@ pub(super) fn badge(app: &App) -> Option<&'static str> {
 /// `true` while a filter is being typed: the bar shows `/text`, not hints.
 pub(super) fn filtering(app: &App) -> bool {
     !app.keymap.pending()
+        && app.screen.is_none()
         && app.plan_review.is_none()
         && app.alerts_focus.is_none()
         && app.tree_input == Some(TreeInput::Filter)
@@ -71,13 +75,15 @@ pub(super) fn body(app: &App) -> Body {
             crate::theme::glyph(crate::theme::Glyph::Separator, app.settings.badges.ascii)
                 .to_string(),
         );
-        let git = app.plan_review.is_none() && app.alerts_focus.is_none();
+        let git = app.screen.is_none() && app.plan_review.is_none() && app.alerts_focus.is_none();
         return Body {
             lead: Some(lead),
             hints: list.iter().map(|(k, w, p)| hint(k, w, *p)).collect(),
             separator: " · ",
             git: git && app.tree_input.is_none(),
         };
+    } else if let Some(Screen::Profile(screen)) = &app.screen {
+        (crate::ui::profile::hints(screen), false)
     } else if app.plan_review.is_some() {
         (review_hints(app), false)
     } else if app.alerts_focus.is_some() {

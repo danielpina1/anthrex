@@ -42,14 +42,6 @@ pub struct AlertsFocus {
     pub(crate) at: usize,
 }
 
-/// The toast of a proposal's Enter (Interfaces "Exact user-visible text").
-fn proposal_toast(project: &str) -> String {
-    format!(
-        "profile proposal for {project}: run anthrex profile show --proposed, then \
-         anthrex profile confirm or reject, in that project"
-    )
-}
-
 /// `1 task` or `<n> tasks`.
 fn tasks_text(n: usize) -> String {
     match n {
@@ -287,10 +279,8 @@ impl App {
             }
             AlertKey::Halted(run) => self.alert_menu(run, ActionTarget::Run, ActionKind::Resume),
             AlertKey::Accept(run) => self.alert_menu(run, ActionTarget::Run, ActionKind::Accept),
-            AlertKey::Proposal(project) => {
-                self.toast(proposal_toast(&project_name(&project)));
-                vec![]
-            }
+            // Preflight F26: the Profile screen on that project's proposal.
+            AlertKey::Proposal(project) => self.open_profile_on(project, true),
         }
     }
 

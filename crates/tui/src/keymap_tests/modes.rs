@@ -88,3 +88,34 @@ fn alerts_mode_sits_between_the_review_and_the_conversation() {
     km.set_review_mode(true);
     assert_eq!(km.handle(j, false), KeyAction::Review(j));
 }
+
+/// Milestone 9.0.6 decision 33: `C-b P` opens the Profile screen; in screen mode bare
+/// keys go to the screen, which wins over every other mode; the prefix still works and
+/// twice sends nothing.
+#[test]
+fn screen_mode_routes_bare_keys_to_the_screen() {
+    let mut km = Keymap::new(Keymap::default_prefix());
+    let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
+    assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+    assert_eq!(
+        km.handle(key(KeyCode::Char('P'), KeyModifiers::SHIFT), false),
+        KeyAction::Run(Command::OpenProfile)
+    );
+    km.set_tree_mode(true);
+    km.set_conversation_mode(true);
+    km.set_alerts_mode(true);
+    km.set_review_mode(true);
+    km.set_screen_mode(true);
+    assert!(km.screen_mode());
+    let j = key(KeyCode::Char('j'), KeyModifiers::NONE);
+    assert_eq!(km.handle(j, false), KeyAction::Screen(j));
+    assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+    assert_eq!(
+        km.handle(key(KeyCode::Char('t'), KeyModifiers::NONE), false),
+        KeyAction::Run(Command::ToggleTree)
+    );
+    assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+    assert_eq!(km.handle(prefix, false), KeyAction::Nothing);
+    km.set_screen_mode(false);
+    assert_eq!(km.handle(j, false), KeyAction::Review(j));
+}

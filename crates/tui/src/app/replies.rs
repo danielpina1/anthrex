@@ -53,6 +53,11 @@ pub enum PendingWhat {
     SettingsGet,
     /// A `Settings(Put)`; its `Saved` replaces the cache, any other reply re-syncs it.
     SettingsPut,
+    /// A Profile screen request on `dir` (decision 34, `app/profile_screen.rs`).
+    Profile {
+        dir: std::path::PathBuf,
+        ask: super::profile_screen::ProfileAsk,
+    },
 }
 
 /// One request waiting for its reply.
@@ -127,6 +132,9 @@ impl App {
             return Some(effects);
         }
         if let Some(effects) = self.route_settings_reply(reply) {
+            return Some(effects);
+        }
+        if let Some(effects) = self.route_profile_reply(reply) {
             return Some(effects);
         }
         match reply {

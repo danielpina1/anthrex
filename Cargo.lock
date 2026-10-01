@@ -199,6 +199,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "toml",
  "tui-term",
  "unicode-segmentation",
  "unicode-width",

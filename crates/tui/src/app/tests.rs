@@ -89,6 +89,12 @@ mod action_forms;
 #[path = "../app_tests/alerts_menu.rs"]
 mod alerts_menu;
 
+#[path = "../app_tests/profile_screen.rs"]
+mod profile_screen;
+
+#[path = "../app_tests/profile_screen_edit.rs"]
+mod profile_screen_edit;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,
