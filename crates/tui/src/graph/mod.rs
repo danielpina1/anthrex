@@ -25,6 +25,10 @@ pub const MIN_NODE_WIDTH: u16 = 12;
 /// A tier is never wider than this; a single very long label is truncated by
 /// the painter rather than allowed to stretch its whole tier.
 pub const MAX_NODE_WIDTH: u16 = 30;
+/// A stage node's cap (milestone 9.0.7 decision 18): its whole text, the longest being
+/// `stage 99/99  tier 3 ✗ bisecting` (31 columns), plus the glyph, its space, the
+/// borders and the padding. Task, run and every other box keep [`MAX_NODE_WIDTH`].
+pub const MAX_STAGE_NODE_WIDTH: u16 = 37;
 /// Top border, content, bottom border.
 pub const NODE_HEIGHT: u16 = 3;
 /// Columns between a tier's right edge and the next tier's left edge. The
@@ -152,10 +156,14 @@ fn parentage(rows: &[Row<'_>], tiers: usize) -> (Vec<Vec<usize>>, Vec<usize>) {
 fn tier_widths(rows: &[Row<'_>], tiers: usize) -> Vec<u16> {
     let mut widths = vec![MIN_NODE_WIDTH; tiers];
     for row in rows {
-        let content = u16::try_from(content_width(row)).unwrap_or(MAX_NODE_WIDTH);
+        let cap = match row.kind {
+            RowKind::Stage { .. } => MAX_STAGE_NODE_WIDTH,
+            _ => MAX_NODE_WIDTH,
+        };
+        let content = u16::try_from(content_width(row)).unwrap_or(cap);
         let wanted = content
             .saturating_add(BORDERS_AND_PADDING)
-            .clamp(MIN_NODE_WIDTH, MAX_NODE_WIDTH);
+            .clamp(MIN_NODE_WIDTH, cap);
         let width = &mut widths[usize::from(row.depth)];
         *width = (*width).max(wanted);
     }

@@ -231,8 +231,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let keys_here = app.key_region() == KeyRegion::Alerts;
     let mut block = kit::pane_frame(title(all.len(), p), keys_here, p);
     if let Some(i) = index {
+        // Muted: unstyled, the right title would take the border's accent.
         let at = format!(" {}/{} ", i + 1, all.len());
-        block = block.title_top(Line::from(at).right_aligned());
+        let muted = theme::role(Role::Muted, p);
+        block = block.title_top(Line::from(Span::styled(at, muted)).right_aligned());
     }
     frame.render_widget(block, area);
     let inner = inset(area);

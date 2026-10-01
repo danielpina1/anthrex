@@ -10,11 +10,11 @@ use proto::AgentRole;
 use ratatui::backend::TestBackend;
 use ratatui::text::Span;
 use ratatui::{Terminal, layout::Rect};
+use unicode_width::UnicodeWidthStr;
 
 /// M8c decision 28's twelve-row panel, the height these mockups are drawn at (milestone
 /// 9.0.7 decision 17 sizes the run view's panel to its node; the layout is the same).
 const M8C_PANEL_HEIGHT: u16 = 12;
-use unicode_width::UnicodeWidthStr;
 
 /// One string per row of the buffer, as a reader sees it: the cell a wide character
 /// spills into is skipped, so a correct row is exactly `width` columns wide.

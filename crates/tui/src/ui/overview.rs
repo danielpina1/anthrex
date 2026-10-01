@@ -21,6 +21,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
+use unicode_width::UnicodeWidthStr;
 
 /// Splits the overview's interior into the graph canvas and the rect below it:
 /// the inspector panel when `inspector_visible` and the interior has the rows
@@ -133,8 +134,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let keys_here = app.key_region() == KeyRegion::Overview;
     let mut block = super::kit::pane_frame(Line::from(title), keys_here, p);
     if let Some(right) = right {
+        // Muted, as the sidebar's marks: unstyled it would take the border's accent.
         let right = format!(" {} ", theme::fold(&right, p.ascii));
-        block = block.title_top(Line::from(right).right_aligned());
+        let muted = theme::role(theme::Role::Muted, p);
+        block = block.title_top(Line::from(Span::styled(right, muted)).right_aligned());
     }
     frame.render_widget(block, area);
 
@@ -183,7 +186,7 @@ fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
     // The corners, the title's own spaces and `run · `, the right text's two spaces,
     // and a column between the two.
     let chrome = 2 + 2 + 6 + 1;
-    let right_width = u16::try_from(right.chars().count() + 2).unwrap_or(u16::MAX);
+    let right_width = u16::try_from(right.width() + 2).unwrap_or(u16::MAX);
     let (room, right) = match width.checked_sub(chrome + right_width) {
         Some(room) if room >= MIN_NAME_ROOM => (room, Some(right)),
         _ => (width.saturating_sub(chrome), None),
@@ -313,3 +316,7 @@ fn finished_secs(info: &proto::SubagentInfo) -> u64 {
 #[cfg(test)]
 #[path = "overview_polish_tests.rs"]
 mod polish_tests;
+
+#[cfg(test)]
+#[path = "overview_title_tests.rs"]
+mod title_tests;

@@ -22,14 +22,13 @@ use std::path::Path;
 /// (decision 2).
 pub const INSPECTOR_HEIGHT: u16 = 8;
 
+/// Milestone 9.0.7 decision 17: the canvas rows the panel always leaves above it
+/// (milestone 4.7 decision 6's six), the run view's content-sized one included.
+pub const RUN_CANVAS_MIN: u16 = 6;
 /// Below this many rows of overview interior the panel gives way to milestone
 /// 4.6's single line, so a short terminal loses the inspector and never the
-/// canvas (decision 6).
-pub const MIN_INTERIOR_FOR_PANEL: u16 = INSPECTOR_HEIGHT + 6;
-
-/// Milestone 9.0.7 decision 17: the canvas rows the run view's content-sized panel
-/// always leaves above it (milestone 4.7 decision 6's six).
-pub const RUN_CANVAS_MIN: u16 = 6;
+/// canvas (decision 6). Derived, so the run view's clamp always has room.
+pub const MIN_INTERIOR_FOR_PANEL: u16 = INSPECTOR_HEIGHT + RUN_CANVAS_MIN;
 /// Decision 29: a run inspection's label column.
 pub const RUN_LABEL_WIDTH: usize = 10;
 /// Decision 30: the run's progress bar, and a planner's and a task budget's.

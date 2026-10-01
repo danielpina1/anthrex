@@ -15,7 +15,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 
-fn app_of((snap, windows): (RunsSnapshot, Vec<WindowInfo>), ascii: bool) -> App {
+pub(super) fn app_of((snap, windows): (RunsSnapshot, Vec<WindowInfo>), ascii: bool) -> App {
     let mut settings = UiSettings::default();
     settings.badges.ascii = ascii;
     let mut app = App::new(windows, "/tmp".into(), settings);
@@ -25,12 +25,12 @@ fn app_of((snap, windows): (RunsSnapshot, Vec<WindowInfo>), ascii: bool) -> App 
     app
 }
 
-fn key(app: &mut App, code: KeyCode) {
+pub(super) fn key(app: &mut App, code: KeyCode) {
     app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
 }
 
 /// `C-b T`, the run's node selected, then `l`: the run view on `run_id`.
-fn run_view(mut app: App, run_id: &str) -> App {
+pub(super) fn run_view(mut app: App, run_id: &str) -> App {
     app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
     key(&mut app, KeyCode::Char('T'));
     let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
@@ -40,7 +40,7 @@ fn run_view(mut app: App, run_id: &str) -> App {
     app
 }
 
-fn select(app: &mut App, key: NodeKey) {
+pub(super) fn select(app: &mut App, key: NodeKey) {
     let rows = app.nav_rows();
     let keys: Vec<NodeKey> = rows.iter().map(|row| row.key.clone()).collect();
     assert!(keys.contains(&key), "{key:?} is on the canvas");
@@ -48,7 +48,7 @@ fn select(app: &mut App, key: NodeKey) {
     app.tree.selected = Some(key);
 }
 
-fn task_key(run: &str, id: &str) -> NodeKey {
+pub(super) fn task_key(run: &str, id: &str) -> NodeKey {
     NodeKey::Task {
         run: run.into(),
         id: id.into(),
@@ -57,7 +57,7 @@ fn task_key(run: &str, id: &str) -> NodeKey {
 
 /// One frame as `lib::draw` lays it out: both viewports set from the frame's layout,
 /// then drawn whole.
-fn frame(app: &mut App, w: u16, h: u16) -> (Buffer, crate::ui::Layout) {
+pub(super) fn frame(app: &mut App, w: u16, h: u16) -> (Buffer, crate::ui::Layout) {
     let layout = crate::ui::layout_for(app, Rect::new(0, 0, w, h));
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     app.set_graph_viewport(layout.main);
@@ -65,7 +65,7 @@ fn frame(app: &mut App, w: u16, h: u16) -> (Buffer, crate::ui::Layout) {
 }
 
 /// The rows of `rect` in `buffer`, trailing spaces trimmed.
-fn rows_in(buffer: &Buffer, rect: Rect) -> Vec<String> {
+pub(super) fn rows_in(buffer: &Buffer, rect: Rect) -> Vec<String> {
     (rect.y..rect.bottom())
         .map(|y| {
             let row: String = (rect.x..rect.right())
@@ -192,7 +192,7 @@ fn page_down_follows_the_sized_panel() {
 
 /// A running run `add-mul-0723`, "Add mul()", two of three tasks merged, approved 14
 /// minutes ago; the shell window `1` in its project.
-fn add_mul(state: RunState) -> (RunsSnapshot, Vec<WindowInfo>) {
+pub(super) fn add_mul(state: RunState) -> (RunsSnapshot, Vec<WindowInfo>) {
     let now = 10_000;
     let mut info = run("add-mul-0723", PROJECT, state);
     info.goal = "Add mul()".into();
@@ -246,7 +246,7 @@ fn the_run_view_title_names_the_run() {
 
 /// The staged run with stage 2 created (a head) and in `state`, `secs` long; the shell
 /// window `1` lists its project.
-fn staged(change: impl FnOnce(&mut proto::StageInfo)) -> App {
+pub(super) fn staged(change: impl FnOnce(&mut proto::StageInfo)) -> App {
     let (mut snap, _) = staged_fixture();
     let two = &mut snap.runs[0].stages[1];
     two.head = Some("3".repeat(40));

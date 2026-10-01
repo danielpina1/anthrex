@@ -1,6 +1,7 @@
-//! M8c.8: the run view's tall panel (decision 28) wired into the overview — its height
-//! steps, the `i` toggle, the single line, and the degenerate-size guard with the run
-//! view open.
+//! M8c.8, after milestone 9.0.7 decision 17: the run view's panel wired into the
+//! overview — its height sized to the selected node (at least eight rows, at most the
+//! interior less six canvas rows), the `i` toggle, the single line, and the
+//! degenerate-size guard with the run view open.
 
 use super::run_view::{select_nav, three};
 use super::*;
@@ -65,8 +66,8 @@ fn below_the_canvas(app: &mut App, interior: u16) -> String {
 }
 
 /// Milestone 9.0.7 decision 17: the run view's panel takes the rows its node needs,
-/// here all of `t2`'s (its title, nineteen body rows before the detail lands, and the
-/// footer) and its borders: 21 of an interior of 30, nothing cut.
+/// here all of `t2`'s (its title row, seventeen body rows before the detail lands, and
+/// the footer) and its two borders: 21 of an interior of 30, nothing cut.
 #[test]
 fn the_run_view_gets_the_tall_panel() {
     let mut app = gemini_view();
