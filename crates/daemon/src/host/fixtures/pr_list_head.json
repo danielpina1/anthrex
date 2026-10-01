@@ -1,0 +1,14 @@
+[
+  {
+    "baseRefName": "trunk",
+    "number": 13940,
+    "state": "MERGED",
+    "url": "https://github.com/cli/cli/pull/13940"
+  },
+  {
+    "baseRefName": "multi-account-two-rebase",
+    "number": 12785,
+    "state": "CLOSED",
+    "url": "https://github.com/cli/cli/pull/12785"
+  }
+]

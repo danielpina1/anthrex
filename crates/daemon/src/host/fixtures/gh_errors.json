@@ -1,0 +1,87 @@
+{
+  "auth_missing": {
+    "argv": [
+      "gh",
+      "auth",
+      "status",
+      "--hostname",
+      "example.invalid"
+    ],
+    "exit": 1,
+    "stderr": "You are not logged into any accounts on example.invalid\n",
+    "source": "observed, gh 2.92.0"
+  },
+  "repo_missing": {
+    "argv": [
+      "gh",
+      "repo",
+      "view",
+      "cli/anthrex-does-not-exist-9z",
+      "--json",
+      "nameWithOwner"
+    ],
+    "exit": 1,
+    "stderr": "GraphQL: Could not resolve to a Repository with the name 'cli/anthrex-does-not-exist-9z'. (repository)\n",
+    "source": "observed, gh 2.92.0"
+  },
+  "pr_missing": {
+    "argv": [
+      "gh",
+      "pr",
+      "view",
+      "99999999",
+      "--repo",
+      "cli/cli",
+      "--json",
+      "state"
+    ],
+    "exit": 1,
+    "stderr": "GraphQL: Could not resolve to a PullRequest with the number of 99999999. (repository.pullRequest)\n",
+    "source": "observed, gh 2.92.0"
+  },
+  "run_missing": {
+    "argv": [
+      "gh",
+      "run",
+      "view",
+      "1",
+      "--repo",
+      "cli/cli",
+      "--log-failed"
+    ],
+    "exit": 1,
+    "stderr": "failed to get run: HTTP 404: Not Found (https://api.github.com/repos/cli/cli/actions/runs/1?exclude_pull_requests=true)\n",
+    "source": "observed, gh 2.92.0"
+  },
+  "permission_without_push_access": {
+    "argv": [
+      "gh",
+      "api",
+      "repos/cli/cli/collaborators/octocat/permission"
+    ],
+    "exit": 1,
+    "stdout": "{\"message\":\"Must have push access to view collaborator permission.\",\"documentation_url\":\"https://docs.github.com/rest/collaborators/collaborators#get-repository-permissions-for-a-user\",\"status\":\"403\"}",
+    "stderr": "gh: Must have push access to view collaborator permission. (HTTP 403)\n",
+    "source": "observed, gh 2.92.0"
+  },
+  "rate_limit_rest": {
+    "exit": 1,
+    "stderr": "gh: API rate limit exceeded for user ID 1. (HTTP 403)\n",
+    "source": "from the documentation (REST: HTTP 403 or 429 with x-ratelimit-remaining: 0; gh prints the message and the status)"
+  },
+  "rate_limit_graphql": {
+    "exit": 1,
+    "stderr": "GraphQL: API rate limit exceeded for user ID 1.\n",
+    "source": "from the documentation"
+  },
+  "rate_limit_secondary": {
+    "exit": 1,
+    "stderr": "gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (HTTP 403)\n",
+    "source": "from the documentation"
+  },
+  "rerun_in_progress": {
+    "exit": 1,
+    "stderr": "run 1 cannot be rerun; This workflow is already running\n",
+    "source": "from the documentation (REST POST /actions/runs/{id}/rerun-failed-jobs answers 403 'This workflow is already running'); not observed"
+  }
+}
