@@ -360,3 +360,54 @@ fn the_interface_line_needs_an_interface_change_and_a_staged_or_tiered_run() {
         interface_prompt(false, false, false)
     );
 }
+
+/// Ruling F-4a (2026-10-01): a check whose kept output is empty (a passing tier job
+/// keeps none) is one line saying how it ended, never an empty block the reviewer reads
+/// as missing evidence. A check with output keeps M8a's block.
+#[test]
+fn reviewer_prompt_states_a_check_with_no_output() {
+    let mut run = prompt_run(PROFILE, "");
+    let check = |ok: bool, code: Option<i32>, timed_out: bool, tail: &str| CheckRecord {
+        at: 1,
+        ok,
+        code,
+        timed_out,
+        tail: tail.into(),
+        secs: 3,
+        on_candidate: false,
+        summary: None,
+        summary_source: None,
+        tier: None,
+    };
+    let (base, head) = ("c".repeat(40), "d".repeat(40));
+    let cases = [
+        (
+            check(true, Some(0), false, ""),
+            "Last check: passed (exit 0, 3s); output omitted.",
+        ),
+        (
+            check(true, Some(0), false, "\n  \n"),
+            "Last check: passed (exit 0, 3s); output omitted.",
+        ),
+        (
+            check(false, Some(101), false, ""),
+            "Last check: failed (exit 101, 3s); output omitted.",
+        ),
+        (
+            check(false, None, true, ""),
+            "Last check: timed out (3s); output omitted.",
+        ),
+    ];
+    for (record, line) in cases {
+        run.tasks[0].checks = vec![record];
+        let prompt = reviewer_prompt(&run, &run.tasks[0], 1, &base, &head, "+x", "");
+        assert!(prompt.contains(&format!("\n{line}\n")), "{prompt}");
+        assert!(!prompt.contains("Last check (40 lines)"), "{prompt}");
+    }
+    run.tasks[0].checks = vec![check(true, Some(0), false, "test a::works ... ok")];
+    let prompt = reviewer_prompt(&run, &run.tasks[0], 1, &base, &head, "+x", "");
+    assert!(
+        prompt.contains("Last check (40 lines):\ntest a::works ... ok\n"),
+        "{prompt}"
+    );
+}
