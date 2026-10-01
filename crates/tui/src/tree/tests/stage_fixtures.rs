@@ -16,6 +16,7 @@ pub(crate) fn stage(n: u16, head: Option<&str>, tasks: u32, merged: u32) -> Stag
         full: FullInfo::default(),
         fix_tasks: vec![],
         propagate_red: None,
+        pr: None,
     }
 }
 

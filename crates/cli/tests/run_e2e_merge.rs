@@ -135,6 +135,7 @@ fn half(id: &str, owns: &str) -> PlanTask {
         stage: 1,
         atomic: false,
         atomic_reason: None,
+        addresses: Vec::new(),
     }
 }
 

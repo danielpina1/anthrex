@@ -86,6 +86,7 @@ pub(crate) fn add_fix(
         stage: spec.stage,
         atomic: false,
         atomic_reason: None,
+        addresses: Vec::new(),
     };
     let (mut task, mut errors) = resolve_task_lenient(
         plan,

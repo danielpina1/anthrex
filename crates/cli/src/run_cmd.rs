@@ -341,6 +341,7 @@ async fn start(
             yes,
             trust_project,
             unconfined_checks,
+            delivery: None,
         })
         .await?;
     let run_id = match reply {

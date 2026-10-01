@@ -30,6 +30,8 @@ pub enum HoldKind {
     Promotion,
     /// An epic added after the plan gate.
     Epic { epic: String },
+    /// Milestone 9.2 decision 26: a fix task whose `owns` lie outside its stage.
+    Fix { stage: u16, paths: Vec<String> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

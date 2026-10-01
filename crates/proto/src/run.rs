@@ -229,6 +229,10 @@ pub struct PlanTask {
     pub atomic: bool,
     #[serde(default)]
     pub atomic_reason: Option<String>,
+    /// Milestone 9.2 decision 31: the review threads (`"<pr>:<t|c|r><id>"`) this task
+    /// addresses; the engine then makes it a `review` fix task.
+    #[serde(default)]
+    pub addresses: Vec<String>,
 }
 
 fn default_kind() -> TaskKind {
@@ -261,8 +265,14 @@ pub struct Plan {
 
 /// One edit a running plan can be given, either interactively (`run edit`) or in a
 /// batch file (`run edit --file`, [`EditFile`]).
+///
+/// `AddTask` holds a whole `PlanTask` unboxed: milestone 9.2's `addresses` took it past
+/// clippy's `large_enum_variant` line. An edit is built once per request and lives in
+/// a short batch, so its size does not matter, and boxing it would change the
+/// constructor every client and test uses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+#[allow(clippy::large_enum_variant)]
 pub enum PlanEdit {
     AddTask {
         task: PlanTask,
@@ -318,6 +328,13 @@ pub enum PlanEdit {
     /// branch at its next turn boundary, always alone in its call.
     Refresh {
         task_id: String,
+    },
+    /// Milestone 9.2 decision 30: a reply on a stage PR's thread, always alone in its
+    /// call.
+    ReplyComment {
+        pr: u64,
+        thread: String,
+        body: String,
     },
 }
 

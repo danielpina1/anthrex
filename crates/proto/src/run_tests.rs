@@ -153,6 +153,7 @@ fn minimal_task(id: &str) -> PlanTask {
         stage: 1,
         atomic: false,
         atomic_reason: None,
+        addresses: Vec::new(),
     }
 }
 
@@ -312,6 +313,7 @@ fn every_run_request_and_reply_round_trips() {
             yes: false,
             trust_project: true,
             unconfined_checks: true,
+            delivery: None,
         },
         RunRequest::Approve {
             run_id: "run-a1b2".into(),
@@ -365,6 +367,7 @@ fn every_run_request_and_reply_round_trips() {
         yes: false,
         trust_project: true,
         unconfined_checks: true,
+        delivery: None,
     });
     let packed = rmp_serde::to_vec_named(&start).unwrap();
     let ClientMsg::Run(RunRequest::Start {

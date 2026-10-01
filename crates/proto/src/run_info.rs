@@ -397,6 +397,9 @@ pub struct RunInfo {
     pub stages: Vec<StageInfo>,
     #[serde(default)]
     pub test_slots: u32,
+    /// Milestone 9.2 decision 41: `None` in local mode.
+    #[serde(default)]
+    pub delivery: Option<crate::delivery::DeliveryInfo>,
 }
 
 /// Every run the daemon knows about, at one revision.

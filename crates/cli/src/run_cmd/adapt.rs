@@ -35,6 +35,7 @@ pub(super) async fn start_goal(
             trust_project,
             unconfined_checks,
             orchestrator,
+            delivery: None,
         })
         .await?;
     match reply {
@@ -123,6 +124,7 @@ mod tests {
             trust_project: false,
             unconfined_checks: false,
             orchestrator: None,
+            delivery: None,
         };
         assert_eq!(request_timeout(&goal), GOAL_REQUEST_TIMEOUT);
         assert_eq!(

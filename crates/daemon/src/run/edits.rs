@@ -165,6 +165,13 @@ impl Batch {
             PlanEdit::Pause => self.consequences.push(EditConsequence::Pause),
             PlanEdit::Resume => self.consequences.push(EditConsequence::Resume),
             PlanEdit::Finish => self.consequences.push(EditConsequence::Finish),
+            // Milestone 9.2 decision 30: accepted from task M9.2.10 on.
+            PlanEdit::ReplyComment { .. } => self.errors.push(PlanError::new(
+                None,
+                "op",
+                "30",
+                "reply_comment is not available yet",
+            )),
         }
     }
 

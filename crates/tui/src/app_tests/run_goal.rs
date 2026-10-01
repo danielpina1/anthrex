@@ -149,6 +149,7 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
                 runtime: proto::Runtime::Claude,
                 model: Some("claude-opus-5".into()),
             }),
+            delivery: None,
         }
     );
     assert!(goal_form(&app).submitting);

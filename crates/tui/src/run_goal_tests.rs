@@ -44,6 +44,7 @@ fn codex_with_no_model_is_its_configured_default() {
                 runtime: Runtime::Codex,
                 model: None,
             }),
+            delivery: None,
         })
     );
 }

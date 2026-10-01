@@ -239,6 +239,7 @@ impl GoalForm {
             trust_project: self.trust_project,
             unconfined_checks: false,
             orchestrator,
+            delivery: None,
         })
     }
 

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::adapt::TriageInfo;
+use crate::delivery::DeliveryMode;
 use crate::history::HistoryStats;
 use crate::orch::OrchestratorChoice;
 use crate::profile::{
@@ -44,6 +45,9 @@ pub enum RunRequest {
         /// confinement off where it is available.
         #[serde(default)]
         unconfined_checks: bool,
+        /// Milestone 9.2 decision 3: `--delivery pr|local`; `None` uses the profile's.
+        #[serde(default)]
+        delivery: Option<DeliveryMode>,
     },
     Approve {
         run_id: String,
@@ -94,6 +98,9 @@ pub enum RunRequest {
         /// Milestone 9 decision 6: `--orchestrator <runtime>[:<model>]`.
         #[serde(default)]
         orchestrator: Option<OrchestratorChoice>,
+        /// Milestone 9.2 decision 3.
+        #[serde(default)]
+        delivery: Option<DeliveryMode>,
     },
     Promote {
         run_id: String,
@@ -119,6 +126,15 @@ pub enum RunRequest {
     TaskDetail {
         run_id: String,
         task_id: String,
+    },
+    // Milestone 9.2 decision 25: answered under `request::DELIVER` and `request::WATCH`.
+    Deliver {
+        run_id: String,
+        stage: u16,
+    },
+    Watch {
+        run_id: String,
+        on: bool,
     },
 }
 
@@ -354,4 +370,7 @@ pub mod request {
     pub const PROFILE: &str = "profile";
     /// Milestone 9.0.5 decision 7.
     pub const TASK_DETAIL: &str = "run task-detail";
+    /// Milestone 9.2 decision 25.
+    pub const DELIVER: &str = "run deliver";
+    pub const WATCH: &str = "run watch";
 }

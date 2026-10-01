@@ -164,6 +164,7 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
         stage,
         atomic: false,
         atomic_reason: None,
+        addresses: Vec::new(),
     };
     let (mut task, _) = resolve_task_lenient(
         spec,

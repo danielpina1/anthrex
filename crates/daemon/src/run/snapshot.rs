@@ -129,6 +129,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         // Milestone 9.1 decision 55.
         stages: super::snapshot_stages::stage_infos(run),
         test_slots: run.test_slots,
+        delivery: None,
     }
 }
 

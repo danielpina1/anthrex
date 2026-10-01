@@ -235,6 +235,7 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         research_report: None,
         stages: Vec::new(),
         test_slots: 0,
+        delivery: None,
     }
 }
 

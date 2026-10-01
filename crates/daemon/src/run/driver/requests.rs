@@ -41,6 +41,9 @@ impl RunService {
                 yes,
                 trust_project,
                 unconfined_checks,
+                // Milestone 9.2: `--delivery`, read by M9.2.12's preflight; no client
+                // sends it before M9.2.14.
+                delivery: _,
             } => {
                 self.start(plan_toml, dir, yes, trust_project, unconfined_checks)
                     .await
@@ -104,6 +107,8 @@ impl RunService {
                 trust_project,
                 unconfined_checks,
                 orchestrator,
+                // Milestone 9.2: read by M9.2.12's preflight.
+                delivery: _,
             } => {
                 let flags = (trust_project, unconfined_checks);
                 self.start_goal(goal, dir, flags, yes, orchestrator).await
@@ -119,6 +124,13 @@ impl RunService {
             RunRequest::RejectHold { run_id, hold } => self.hold_verdict(run_id, hold, false).await,
             // Milestone 9.0.5 decision 7: answered from memory.
             RunRequest::TaskDetail { run_id, task_id } => self.task_detail(&run_id, &task_id),
+            // Milestone 9.2 decision 25: the engine's handling comes with M9.2.7.
+            RunRequest::Deliver { .. } => {
+                RunReply::refused(request::DELIVER, "run deliver is not available yet")
+            }
+            RunRequest::Watch { .. } => {
+                RunReply::refused(request::WATCH, "run watch is not available yet")
+            }
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }

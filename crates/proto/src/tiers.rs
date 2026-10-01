@@ -60,6 +60,9 @@ pub struct StageInfo {
     pub full: FullInfo,
     pub fix_tasks: Vec<String>,
     pub propagate_red: Option<String>,
+    /// Milestone 9.2 decision 41: the stage's pull request, in `pr` mode.
+    #[serde(default)]
+    pub pr: Option<crate::delivery::StagePrInfo>,
 }
 
 /// A task's last tier record (decision 55).

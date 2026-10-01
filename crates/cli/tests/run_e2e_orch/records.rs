@@ -30,6 +30,7 @@ fn e2e_goal_form_request_matches_the_cli() {
             runtime: Runtime::Claude,
             model: None,
         }),
+        delivery: None,
     };
     let RunReply::Triaged {
         triage,

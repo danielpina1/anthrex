@@ -114,6 +114,8 @@ fn describe_one(edit: &PlanEdit) -> String {
         // Decision 40's wording: `message t1,t2 (change)`.
         PlanEdit::Message { to, kind, .. } => format!("message {to} ({})", kind_label(*kind)),
         PlanEdit::Refresh { task_id } => format!("refresh {task_id}"),
+        // Milestone 9.2 decision 30.
+        PlanEdit::ReplyComment { pr, thread, .. } => format!("reply to {pr}:{thread}"),
     }
 }
 

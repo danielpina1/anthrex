@@ -438,6 +438,7 @@ impl RunHarness {
             yes,
             trust_project: trust,
             unconfined_checks: false,
+            delivery: None,
         })
     }
 

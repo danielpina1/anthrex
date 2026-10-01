@@ -197,6 +197,7 @@ fn profile(value: &Value) -> Result<RepoProfile, String> {
         full_shards,
         toolchain_id: tier("toolchain_id")?,
         env: env(p.get("env"))?,
+        delivery: None,
     })
 }
 
