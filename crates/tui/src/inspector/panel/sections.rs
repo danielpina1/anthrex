@@ -9,8 +9,9 @@
 //!
 //! Pure like the rest of the panel: it lays out what it was handed.
 
-use super::{Inspection, marks::marked, pad, rows, wrap_value};
-use crate::inspector::{BRIEF_LINES, RUN_LABEL_WIDTH, Section, SectionField};
+use super::marks::{current_step, marked};
+use super::{Inspection, pad, rows, wrap_value};
+use crate::inspector::{BRIEF_LINES, Marks, RUN_LABEL_WIDTH, Section, SectionField};
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{self, Palette, Role};
 use crate::ui::tree_view::truncate_in;
@@ -71,18 +72,17 @@ fn field_lines(field: &SectionField, width: usize, p: Palette) -> Vec<Line<'stat
         }
         return out;
     }
+    let current = current_step(&multi_line(&field.value), field.marks, p.ascii);
     for (n, (value, starts)) in values.into_iter().enumerate() {
         let head = if n == 0 { label.as_str() } else { "" };
         let mut spans = vec![Span::styled(pad(head, label_width), muted)];
         if value == more {
             spans.push(Span::styled(value, muted));
         } else {
-            spans.extend(marked(
-                truncate(&value, value_width),
-                field.marks,
-                starts,
-                p,
-            ));
+            // `First`: only the value's first line carries the client's mark.
+            let starts = starts && (n == 0 || field.marks != Marks::First);
+            let text = truncate(&value, value_width);
+            spans.extend(marked(text, field.marks, starts, current.as_deref(), p));
         }
         out.push(Line::from(spans));
     }

@@ -10,7 +10,7 @@ use crate::app::App;
 use crate::app::task_detail::DetailState;
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{self, Glyph};
-use proto::{ReviewInfo, RunInfo, SummarySource, TaskInfo, TaskState, TestMode, Verdict};
+use proto::{ReviewInfo, RunInfo, SummarySource, TaskInfo, TaskKind, TaskState, TestMode, Verdict};
 
 /// One step of the pipeline (decision 13).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,8 @@ fn last_verdict(task: &TaskInfo) -> Option<&ReviewInfo> {
 }
 
 /// The steps that apply to `task`, each with its mark: proof only in `tdd` mode, check
-/// unless the run is unverified, review only with a review route.
+/// unless the run is unverified, review only with a review route, merge unless the
+/// task reports instead.
 fn steps(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Step)> {
     let at = |state: TaskState, otherwise: Step| {
         if task.state == state {
@@ -64,12 +65,16 @@ fn steps(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, Step)> {
         let review = judged(last_verdict(task).map(|review| !review.blocking));
         steps.push(("review", at(TaskState::Review, review)));
     }
-    let merge = match task.state {
-        TaskState::Merged => Step::Passed,
-        TaskState::MergeQueue => Step::Current,
-        _ => Step::NotReached,
-    };
-    steps.push(("merge", merge));
+    // A research or review task is reported, never merged: no merge step.
+    let reports = matches!(task.kind, TaskKind::Research | TaskKind::Review);
+    if !reports && task.state != TaskState::Reported {
+        let merge = match task.state {
+            TaskState::Merged => Step::Passed,
+            TaskState::MergeQueue => Step::Current,
+            _ => Step::NotReached,
+        };
+        steps.push(("merge", merge));
+    }
     steps
 }
 
@@ -120,8 +125,9 @@ pub(crate) fn criteria_rows<S: AsRef<str>>(
 }
 
 /// Decision 12's review row: `r<n> ✓ approve · <line>`, `r<n> ✗ changes · <counts>:
-/// <worst finding>`, `in review · r<n>` while a round runs, `not yet` before the first
-/// verdict, `none` without a review route.
+/// <worst finding>` and the summary's first line on the next row, `in review · r<n>`
+/// while a round runs, `not yet` before the first verdict, `none` without a review
+/// route.
 pub(crate) fn review_row(task: &TaskInfo) -> String {
     if task.review_route.is_none() {
         return "none".to_owned();
@@ -142,7 +148,12 @@ pub(crate) fn review_row(task: &TaskInfo) -> String {
         let worst = most_severe(&review.findings).map(|worst| {
             let text = format!("\"{}\"", clean(&worst.text));
             let place = location(worst).map_or(text.clone(), |place| format!("{place} {text}"));
-            format!("{}: {place}", counts_text(&review.findings))
+            let head = format!("{}: {place}", counts_text(&review.findings));
+            // The summary line the 9.0.5 panel's `verdict` showed, on the next row.
+            match &summary {
+                Some(line) => format!("{head}\n{line}"),
+                None => head,
+            }
         });
         ("changes", worst.or(summary))
     };
@@ -190,7 +201,8 @@ pub(super) fn evidence(run: &RunInfo, task: &TaskInfo, app: &App) -> Section {
     if let Some(diff) = diff_text(task) {
         fields.push(row("diff", diff, Marks::None));
     }
-    fields.push(row("review", review_row(task), Marks::Lead));
+    // Only the row's first line is the client's: the summary under it is agent text.
+    fields.push(row("review", review_row(task), Marks::First));
     if let Some(DetailState::Ready(detail)) = app.task_detail_for(&run.run_id, &task.id)
         && let Some(summary) = &detail.worker_summary
     {

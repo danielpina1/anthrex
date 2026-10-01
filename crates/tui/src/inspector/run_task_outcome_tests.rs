@@ -175,6 +175,17 @@ fn the_pipeline_marks_each_step() {
         pipeline_text(&run, &task, false),
         "done › proof ◌ › check ◌ › review ◌ › merge ◌"
     );
+    // Fix round 1 (m1): a reported task, or a research or review task at any state,
+    // is never merged: no merge step.
+    let (run, mut task) = in_review_task();
+    task.state = TaskState::Reported;
+    assert_eq!(
+        pipeline_text(&run, &task, false),
+        "done ✓ › proof ✓ › check ✓ › review ✗"
+    );
+    task.state = TaskState::Working;
+    task.kind = proto::TaskKind::Research;
+    assert!(!pipeline_text(&run, &task, false).contains("merge"));
 }
 
 /// Review focus 4: nothing ticks a criterion but an approving review.
@@ -252,9 +263,10 @@ fn review_rows_read_decision_12() {
     // Round 1's changes, with its worst finding.
     task.reviews.truncate(1);
     task.state = TaskState::Working;
+    // Fix round 1 (m2): the summary line the 9.0.5 `verdict` showed, on the next row.
     assert_eq!(
         review_row(&task),
-        "r1 ✗ changes · 1 critical, 2 minor: status.rs:118 \"SubagentStop not paired\""
+        "r1 ✗ changes · 1 critical, 2 minor: status.rs:118 \"SubagentStop not paired\"\none pairing bug"
     );
     // Changes without a finding read the summary's first line.
     task.reviews[0].findings.clear();
@@ -557,4 +569,25 @@ fn a_finished_task_leads_with_its_result() {
     // A task still in review has no result line.
     let app = app_of(gemini_fixture());
     assert!(field(&inspect_node(&app, &t2_key()), "OUTCOME", "result").is_none());
+}
+
+/// Fix round 1 (m3): every M8c flat field but the three OUTCOME and EVIDENCE draw is a
+/// DETAIL row with the same value, so a field missing from `DETAIL_ROWS` fails here.
+#[test]
+fn every_flat_field_is_a_detail_row() {
+    let inspection = inspect_node(&everything(), &t2_key());
+    let detail = &inspection.sections[3];
+    assert_eq!(detail.title, "DETAIL");
+    for flat in &inspection.fields {
+        if matches!(flat.label, "pipeline" | "diff" | "review") {
+            continue;
+        }
+        let row = detail.fields.iter().find(|f| f.label == flat.label);
+        assert_eq!(
+            row.map(|f| f.value.as_str()),
+            Some(flat.value.as_str()),
+            "{}",
+            flat.label
+        );
+    }
 }

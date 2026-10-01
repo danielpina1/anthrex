@@ -35,7 +35,9 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
         fields.push(field("diff", diff));
     }
     if task.review_route.is_some() {
-        fields.push(field("review", review_row(task)));
+        // One row in M8c's flat list: the review row's first line.
+        let review = review_row(task);
+        fields.push(field("review", review.lines().next().unwrap_or_default()));
     }
     if let Some(messages) = messages_text(task) {
         fields.push(field("messages", messages));

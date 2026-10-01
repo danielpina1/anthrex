@@ -78,6 +78,8 @@ pub enum Marks {
     /// The first mark among the first two words of each line (`✓ passed`, `◌ <criterion>`,
     /// `r2 ✓ approve`): what follows is agent text and never coloured.
     Lead,
+    /// `Lead` on the value's first line only (the review row; its summary line follows).
+    First,
     /// The pipeline: every step's mark, and the current step's word in `Working` bold.
     Pipeline,
 }

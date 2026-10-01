@@ -16,6 +16,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::TaskState;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
 use ratatui::{Terminal, backend::TestBackend};
 
 fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
@@ -339,5 +340,132 @@ fn no_panic_at_tiny_sizes() {
         key(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
         key(&mut app, KeyCode::PageUp, KeyModifiers::NONE);
         let _ = crate::ui::audit::draw(&app, w, h);
+    }
+}
+
+/// The value spans `style` picks out of `field`'s body rows at `value_width` columns.
+fn styled(
+    inspection: &Inspection,
+    label: &str,
+    value_width: usize,
+    p: Palette,
+    pick: impl Fn(Style) -> bool,
+) -> Vec<String> {
+    let width = crate::inspector::RUN_LABEL_WIDTH + value_width;
+    let lines = crate::inspector::panel::sections::body_lines(&inspection.sections, width, p);
+    let at = lines
+        .iter()
+        .position(|line| {
+            line.spans
+                .first()
+                .is_some_and(|s| s.content.trim() == label)
+        })
+        .unwrap_or_else(|| panic!("no {label} row"));
+    let end = lines[at + 1..]
+        .iter()
+        .position(|line| {
+            !line
+                .spans
+                .first()
+                .is_some_and(|s| s.content.trim().is_empty())
+        })
+        .map_or(lines.len(), |n| at + 1 + n);
+    lines[at..end]
+        .iter()
+        .flat_map(|line| line.spans.iter().skip(1))
+        .filter(|span| pick(span.style))
+        .map(|span| span.content.to_string())
+        .collect()
+}
+
+/// Fix round 1 (I1): the current step is judged on the whole pipeline, so a wrapped
+/// pipeline colours `review` alone, never a step word that ends a wrapped line.
+#[test]
+fn a_wrapped_pipeline_colours_only_the_current_step() {
+    let inspection = inspect_node(&in_review(), &t2_key());
+    let working = theme::role(Role::Working, Palette::PLAIN).add_modifier(Modifier::BOLD);
+    for width in [24, 44, 80] {
+        assert_eq!(
+            styled(&inspection, "pipeline", width, Palette::PLAIN, |s| s
+                == working),
+            ["review"],
+            "at {width} value columns"
+        );
+    }
+}
+
+/// Fix round 1 (m5): a criterion or a review summary that begins with a mark
+/// lookalike draws it in the default colour; only the client's own mark is coloured.
+#[test]
+fn a_mark_lookalike_in_agent_text_is_not_coloured() {
+    let done = theme::role(Role::Done, Palette::PLAIN);
+    for ascii in [false, true] {
+        let mut app = in_review();
+        app.settings.badges.ascii = ascii;
+        let fake = if ascii { "+ fake" } else { "✓ fake" };
+        if let Some(DetailState::Ready(detail)) = app.task_detail.as_mut().map(|c| &mut c.state) {
+            detail.acceptance = vec![fake.into()];
+        }
+        let task = app.runs.runs[0]
+            .tasks
+            .iter_mut()
+            .find(|t| t.id == "t2")
+            .unwrap();
+        task.state = TaskState::Working;
+        task.reviews[0].summary = fake.into();
+        let inspection = inspect_node(&app, &t2_key());
+        let p = app.palette();
+        let accept = styled(&inspection, "accept", 60, p, |s| s == done);
+        assert!(accept.is_empty(), "ascii {ascii}: {accept:?}");
+        // The review row's own `✗` is coloured; its summary line's lookalike is not.
+        let review = styled(&inspection, "review", 120, p, |s| s != Style::default());
+        assert_eq!(review.len(), 1, "ascii {ascii}: {review:?}");
+        let rows = text_rows(&inspection, 130);
+        assert!(
+            rows.iter().any(|r| r.ends_with(fake)),
+            "ascii {ascii}: {rows:#?}"
+        );
+    }
+}
+
+fn text_rows(inspection: &Inspection, width: usize) -> Vec<String> {
+    crate::inspector::panel::sections::body_lines(&inspection.sections, width, Palette::PLAIN)
+        .iter()
+        .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect()
+}
+
+/// Fix round 1 (m4): the route's model in the footer and a changes review's worst
+/// finding are agent- or config-written text, asserted on the drawn cells.
+#[test]
+fn the_footer_model_and_the_worst_finding_are_sanitised() {
+    let hostile = hostile_text();
+    let (mut snapshot, windows) = in_review_snapshot();
+    let task = snapshot.runs[0]
+        .tasks
+        .iter_mut()
+        .find(|t| t.id == "t2")
+        .unwrap();
+    task.state = TaskState::Working;
+    task.route.model = format!("MODEL {hostile}");
+    task.reviews[0].findings[1].text = format!("FINDING {hostile}");
+    task.reviews[0].summary = format!("SUMMARY {hostile}");
+    let inspection = inspect_node(&app_of((snapshot, windows)), &t2_key());
+    let footer = inspection.footer.clone().unwrap_or_default();
+    assert!(
+        footer.contains("MODEL") && first_hostile(&footer).is_none(),
+        "{footer:?}"
+    );
+    for (w, h) in [(84, 40), (200, 40)] {
+        let rows = draw(&inspection, w, h);
+        for row in &rows {
+            assert_eq!(first_hostile(row), None, "{w}x{h}: {row:?}");
+        }
+        for text in ["MODEL", "FINDING", "SUMMARY"] {
+            assert!(
+                rows.iter().any(|r| r.contains(text)),
+                "{text} at {w}x{h}: {rows:#?}"
+            );
+        }
     }
 }

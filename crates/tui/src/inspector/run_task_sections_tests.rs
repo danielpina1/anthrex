@@ -392,7 +392,7 @@ fn evidence_shows_the_diff_review_summary_and_merge() {
             (
                 "review",
                 None,
-                "r1 ✗ changes · 1 critical, 2 minor: status.rs:118 \"SubagentStop not paired\""
+                "r1 ✗ changes · 1 critical, 2 minor: status.rs:118 \"SubagentStop not paired\"\none pairing bug"
             ),
             (
                 "summary",
