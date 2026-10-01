@@ -11,6 +11,7 @@ use crate::app::stats::{StatsScreen, StatsState};
 use crate::tree::run_fixtures::RUN_ID;
 use crate::ui::stats::tests::history;
 use proto::{ActionKind, HistoryStats, RunReply, RunRequest};
+use ratatui::layout::Rect;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -111,10 +112,11 @@ fn a_late_or_older_reply_is_dropped() {
     assert!(matches!(stats_screen(&app).state, StatsState::Ready(_)));
 }
 
-/// Decision 19: with no reply within `REPLY_TIMEOUT` the screen says so (its own
-/// feedback, as the Settings screen's save, so no toast); the late reply is dropped.
+/// Decision 19 and ruling R-a: with no reply within `REPLY_TIMEOUT` the screen says so
+/// (its own feedback, as the Settings screen's save, so no toast). Ruling R-b
+/// (decision 16): a late reply to the screen's own request still fills it.
 #[test]
-fn an_expired_request_fails_the_screen_and_its_late_reply_is_dropped() {
+fn an_expired_request_fails_the_screen_and_its_late_reply_still_fills_it() {
     let mut app = running_app();
     let id = open(&mut app);
     app.set_reply_sent_at(id, Instant::now() - Duration::from_secs(29));
@@ -127,12 +129,39 @@ fn an_expired_request_fails_the_screen_and_its_late_reply_is_dropped() {
         StatsState::Failed("no reply from daemon".into())
     );
     assert_eq!(app.toast_text(), None, "the screen says it");
-    assert!(refuse(&mut app, id, "late").is_empty());
     assert!(reply(&mut app, id, history()).is_empty());
     assert_eq!(app.toast_text(), None);
     assert_eq!(
         stats_screen(&app).state,
-        StatsState::Failed("no reply from daemon".into())
+        StatsState::Ready(Box::new(history()))
+    );
+}
+
+/// Ruling R-b's limit: a late reply to any other request (an older screen's) is
+/// dropped, pending or expired, and leaves the open screen as it is.
+#[test]
+fn a_late_reply_to_another_request_is_dropped() {
+    let mut app = running_app();
+    let older = open(&mut app);
+    tap(&mut app, KeyCode::Esc);
+    let newer = open(&mut app);
+    let past = Instant::now() - Duration::from_secs(31);
+    app.set_reply_sent_at(older, past);
+    app.set_reply_sent_at(newer, past);
+    app.on_tick();
+    let failed = StatsState::Failed("no reply from daemon".into());
+    assert_eq!(stats_screen(&app).state, failed);
+    // The closed screen's request is no screen's own: its expiry is toasted.
+    assert_eq!(app.toast_text(), Some("no reply from daemon"));
+    app.toast = None;
+    assert!(reply(&mut app, older, history()).is_empty());
+    assert!(refuse(&mut app, older, "old").is_empty());
+    assert_eq!(app.toast_text(), None);
+    assert_eq!(stats_screen(&app).state, failed);
+    refuse(&mut app, newer, "late refusal");
+    assert_eq!(
+        stats_screen(&app).state,
+        StatsState::Failed("late refusal".into())
     );
 }
 
@@ -166,7 +195,8 @@ fn a_lost_link_fails_the_screen_and_a_reconnect_asks_again() {
     assert!(matches!(stats_screen(&app).state, StatsState::Ready(_)));
 }
 
-/// A refused send is not waited on: the screen fails at once instead of after 30 s.
+/// A refused send is not waited on: the screen says so at once (not after 30 s, and
+/// not at the next tick), in its own words.
 #[test]
 fn a_refused_send_fails_the_screen() {
     let mut app = running_app();
@@ -177,21 +207,27 @@ fn a_refused_send_fails_the_screen() {
         request: RunRequest::Stats { dir },
     });
     assert!(!app.replies.contains(id));
+    assert_eq!(
+        stats_screen(&app).state,
+        StatsState::Failed("not sent: daemon is not responding".into())
+    );
     app.on_tick();
     assert_eq!(
         stats_screen(&app).state,
-        StatsState::Failed("no reply from daemon".into())
+        StatsState::Failed("not sent: daemon is not responding".into())
     );
 }
 
-/// `j`/`k`/Down/Up move one line, PgDn/PgUp ten, never past the first or last line;
-/// Esc leaves.
+/// `j`/`k`/Down/Up move one line, PgDn/PgUp ten, between the first line and the
+/// renderer's own last first line over the reported body (`ui::stats::max_scroll`), so
+/// no press is dead; a taller body clamps first. Esc leaves.
 #[test]
 fn stats_scroll() {
     let mut app = running_app();
+    // 13 rows inside the frame for the sample's 16 lines: the last first line is 4.
+    app.set_body_area(Rect::new(0, 0, 80, 15));
     let id = open(&mut app);
     reply(&mut app, id, history());
-    let last = stats_screen(&app).line_count() - 1;
     let scroll = |app: &App| stats_screen(app).scroll;
     tap(&mut app, KeyCode::Char('k'));
     assert_eq!(scroll(&app), 0);
@@ -201,20 +237,57 @@ fn stats_scroll() {
     tap(&mut app, KeyCode::Up);
     assert_eq!(scroll(&app), 1);
     tap(&mut app, KeyCode::PageDown);
-    assert_eq!(scroll(&app), 11.min(last));
-    tap(&mut app, KeyCode::PageDown);
-    tap(&mut app, KeyCode::PageDown);
-    assert_eq!(scroll(&app), last);
+    assert_eq!(scroll(&app), 4);
     tap(&mut app, KeyCode::Char('j'));
-    assert_eq!(scroll(&app), last);
-    tap(&mut app, KeyCode::PageUp);
-    assert_eq!(scroll(&app), last.saturating_sub(10));
-    tap(&mut app, KeyCode::PageUp);
+    assert_eq!(scroll(&app), 4);
+    tap(&mut app, KeyCode::Char('k'));
+    assert_eq!(scroll(&app), 3, "the first press back moves the view");
     tap(&mut app, KeyCode::PageUp);
     assert_eq!(scroll(&app), 0);
+    tap(&mut app, KeyCode::PageDown);
+    assert_eq!(scroll(&app), 4);
+    // A taller body (15 rows inside): the last first line is 2, and `k` steps from it.
+    app.set_body_area(Rect::new(0, 0, 80, 17));
+    tap(&mut app, KeyCode::Char('k'));
+    assert_eq!(scroll(&app), 1, "clamped first");
+    app.set_body_area(Rect::new(0, 0, 80, 40));
+    tap(&mut app, KeyCode::Char('j'));
+    assert_eq!(scroll(&app), 0, "everything fits");
     tap(&mut app, KeyCode::Esc);
     assert!(app.screen.is_none());
     assert!(!app.keymap.screen_mode());
+}
+
+/// A refusal is drawn wrapped, and scrolls by its wrapped lines.
+#[test]
+fn a_tall_refusal_scrolls() {
+    let mut app = running_app();
+    app.set_body_area(Rect::new(0, 0, 80, 10));
+    let id = open(&mut app);
+    let text: Vec<String> = (0..20).map(|i| format!("line {i}")).collect();
+    refuse(&mut app, id, &text.join("\n"));
+    tap(&mut app, KeyCode::PageDown);
+    assert_eq!(stats_screen(&app).scroll, 10);
+    tap(&mut app, KeyCode::PageDown);
+    // 20 lines in 8 rows: the last first line is 13.
+    assert_eq!(stats_screen(&app).scroll, 13);
+}
+
+/// Ruling R-c: the menu's `Stats` opens over the plan review; Esc gives the review back
+/// unchanged, with its keys.
+#[test]
+fn esc_from_stats_returns_to_the_plan_review() {
+    let mut app = super::actions::gate_app();
+    app.open_plan_review(RUN_ID.into(), crate::app::ReviewTarget::Gate);
+    let before = app.plan_review.clone();
+    assert!(before.is_some() && app.keymap.review_mode());
+    open(&mut app);
+    assert!(matches!(app.screen, Some(Screen::Stats(_))));
+    tap(&mut app, KeyCode::Char('j'));
+    tap(&mut app, KeyCode::Esc);
+    assert!(app.screen.is_none());
+    assert_eq!(app.plan_review, before);
+    assert!(app.keymap.review_mode() && !app.keymap.screen_mode());
 }
 
 /// `C-b a`, `C-b m` and `C-b t` would act under the screen, so they are refused as on

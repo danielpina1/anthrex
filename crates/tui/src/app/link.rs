@@ -297,12 +297,15 @@ impl App {
                         id,
                         request: RunRequest::StartGoal { .. },
                     } => self.goal_not_sent(Some(*id)),
-                    // A refused save, profile action or stats request is not waited on
-                    // any longer (the stats screen then says so at the next tick).
+                    // Decision 38: nor a stats request; its screen says so at once.
                     ClientMsg::RunTagged {
                         id,
-                        request:
-                            RunRequest::Settings(_) | RunRequest::Profile(_) | RunRequest::Stats { .. },
+                        request: RunRequest::Stats { .. },
+                    } => self.stats_not_sent(*id),
+                    // A refused save, or profile action, is not waited on any longer.
+                    ClientMsg::RunTagged {
+                        id,
+                        request: RunRequest::Settings(_) | RunRequest::Profile(_),
                     } => {
                         self.replies.take(Some(*id));
                     }

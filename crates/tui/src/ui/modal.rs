@@ -68,9 +68,12 @@ fn help_lines(prefix_label: &str) -> Vec<(String, String)> {
             format!("{prefix_label} {prefix_label}"),
             format!("send a literal {prefix_label}"),
         ),
-        ("any key".to_string(), "close this help".to_string()),
     ]
 }
+
+/// The help's close hint, drawn as the box's bottom title so the key lines keep every
+/// row of a 24-row terminal (milestone 9.0.6 task 15).
+const HELP_CLOSE: (&str, &str) = ("any key", "close this help");
 
 /// `input`'s text with a solid block drawn at the cursor's grapheme position — the
 /// rename box's own way of showing a cursor (task M6.10 brief's mock), rather than the
@@ -248,6 +251,14 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(theme::border_focused(accent))
         .title(Line::from(Span::styled(title, theme::title(accent))));
+    let block = if matches!(modal, Modal::Help) {
+        block.title_bottom(Line::from(vec![
+            Span::styled(format!(" {}", HELP_CLOSE.0), Style::default().fg(accent)),
+            Span::raw(format!("  {} ", HELP_CLOSE.1)),
+        ]))
+    } else {
+        block
+    };
     frame.render_widget(Paragraph::new(body).block(block), rect);
 }
 
@@ -336,8 +347,9 @@ mod tests {
         );
     }
 
-    /// Milestone 9.0.6 decision 43: the three new keys, with the configured prefix, and
-    /// drawn in the help at 80×24.
+    /// Milestone 9.0.6 decision 43: the three new keys, with the configured prefix; and
+    /// at 80×24 every help line and the close hint are drawn (fix round 1: the hint is
+    /// the box's bottom title, so 22 key lines and the frame fill the 24 rows).
     #[test]
     fn help_lists_the_new_keys() {
         let want = [
@@ -366,10 +378,12 @@ mod tests {
         let text: Vec<String> = (0..24)
             .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect())
             .collect();
-        for (key, what) in want {
+        assert_eq!(lines.len(), 22, "{lines:?}");
+        for (key, what) in &lines {
             let row = format!("{key:<11}{what}");
             assert!(text.iter().any(|l| l.contains(&row)), "{row}: {text:#?}");
         }
+        assert!(text[23].contains("any key  close this help"), "{text:#?}");
         assert!(!text.concat().contains("C-b"), "{text:#?}");
     }
 }

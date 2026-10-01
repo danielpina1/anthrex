@@ -1,14 +1,14 @@
 //! Milestone 9.0.6 decision 38: the run-history stats screen, drawn over the body. A
 //! frame titled `stats · <project>`, then the records line, the table (one row per size
 //! class, a `None` median read `–`), the deciders line, the flaky proposals and the
-//! problems, one row each, scrolled from `scroll` with the kit's marks. Loading shows
+//! problems, one row each, and last the history file (`history: <path>`, as the CLI
+//! ends its first line), scrolled from `scroll` with the kit's marks. Loading shows
 //! `loading…`; a refusal or a lost reply shows in `Failed`. A dialog over it mutes its
 //! border (decision 5). Every class, test name, problem, path and refusal passes
 //! `safe_text`. Pure: `&App` in.
 
 use crate::app::App;
 use crate::app::stats::{StatsScreen, StatsState};
-use crate::inspector::run_format::{format_duration, format_tokens};
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{Palette, Role, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
@@ -74,6 +74,23 @@ pub(crate) fn title(s: &StatsScreen, p: Palette) -> String {
     format!("stats {} {}", dot(p), one_line(&name))
 }
 
+/// Tokens as `anthrex run stats` writes them (`daemon/src/run/stats.rs::tokens`, the
+/// rule copied, not linked): `<n>`, `<n>.<d>k` under 10k, `<n>k`, or `<n>.<d>M`,
+/// rounded down.
+pub(crate) fn tokens(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..10_000 => format!("{}.{}k", n / 1_000, n % 1_000 / 100),
+        10_000..1_000_000 => format!("{}k", n / 1_000),
+        _ => format!("{}.{}M", n / 1_000_000, n % 1_000_000 / 100_000),
+    }
+}
+
+/// Work time in minutes, rounded to the nearest minute as `anthrex run stats` does.
+pub(crate) fn work(secs: u64) -> String {
+    format!("{}m", secs.saturating_add(30) / 60)
+}
+
 /// The table's cells, header first, every class sanitised.
 fn table(stats: &HistoryStats, p: Palette) -> Vec<Vec<String>> {
     let or = |v: Option<String>| v.unwrap_or_else(|| none(p).to_string());
@@ -85,8 +102,8 @@ fn table(stats: &HistoryStats, p: Palette) -> Vec<Vec<String>> {
             r.merged.to_string(),
             or(r.median_lines.map(|n| n.to_string())),
             or(r.median_tool_calls.map(|n| n.to_string())),
-            or(r.median_tokens.map(format_tokens)),
-            or(r.median_work_secs.map(format_duration)),
+            or(r.median_tokens.map(tokens)),
+            or(r.median_work_secs.map(work)),
             r.bounces.to_string(),
             r.reverted.to_string(),
         ]);
@@ -114,8 +131,8 @@ fn table_lines(stats: &HistoryStats, p: Palette) -> Vec<String> {
         .collect()
 }
 
-/// Decision 38's lines while ready, one row each, cut to `width`;
-/// `crate::app::stats::line_count` counts them.
+/// Decision 38's lines while ready, one row each, cut to `width`, then the history
+/// file. (`FlakyProposal.last_at` is not drawn: Task 15 notes.)
 fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'static>> {
     let e = ellipsis(p);
     let line = |text: String, style: Style| Line::styled(cut(&text, width, e), style);
@@ -181,6 +198,9 @@ fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'stat
             out.push(line(format!("  {}", one_line(problem)), plain));
         }
     }
+    out.push(Line::default());
+    let path = format!("history: {}", one_line(&stats.path.display().to_string()));
+    out.push(line(path, muted));
     out
 }
 
@@ -202,17 +222,40 @@ pub(crate) fn body_lines(app: &App, s: &StatsScreen, width: u16) -> Vec<Line<'st
     }
 }
 
+/// The last first line `len` lines can show from in `rows` rows: at the bottom only
+/// the `↑` mark shows, so it leaves `rows - 1` lines (all `rows` under 3 rows).
+fn last_top(len: usize, rows: usize) -> usize {
+    if rows == 0 || len <= rows {
+        0
+    } else if rows < 3 {
+        len - rows
+    } else {
+        len - (rows - 1)
+    }
+}
+
+/// The interior of the screen's frame over `body` (the renderer's own block).
+fn interior(body: Rect, p: Palette) -> Rect {
+    kit::screen_frame("", true, p).inner(body)
+}
+
+/// The largest useful `scroll` over `body`, by the renderer's own lines and rows, so
+/// the screen's keys stop where the view stops (the plan review's rule).
+pub(crate) fn max_scroll(app: &App, s: &StatsScreen, body: Rect) -> usize {
+    let inner = interior(body, app.palette());
+    let len = body_lines(app, s, inner.width).len();
+    last_top(len, usize::from(inner.height))
+}
+
 /// `lines` from `top` in `rows` rows; a cut above or below is marked with the kit's
 /// marks, and the view never scrolls past its last line.
 fn scrolled(lines: Vec<Line<'static>>, top: usize, rows: usize, p: Palette) -> Vec<Line<'static>> {
     let len = lines.len();
+    let last_top = last_top(len, rows);
+    let top = top.min(last_top);
     if len <= rows || rows < 3 {
-        let top = top.min(len.saturating_sub(rows));
         return lines.into_iter().skip(top).take(rows).collect();
     }
-    // At the bottom only the `↑` mark shows, so the last top leaves `rows - 1` lines.
-    let last_top = len - (rows - 1);
-    let top = top.min(last_top);
     let room = if top == 0 || top == last_top {
         rows - 1
     } else {
@@ -230,7 +273,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &StatsScreen, area: Rect) {
     let p = app.palette();
     // Decision 5: the one accented border is the dialog's while one is open.
     let block = kit::screen_frame(&title(s, p), app.modal.is_none(), p);
-    let inner = block.inner(area);
+    let inner = interior(area, p);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {

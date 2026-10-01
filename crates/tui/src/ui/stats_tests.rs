@@ -72,6 +72,7 @@ fn app_with(ascii: bool, state: StatsState) -> App {
         project: "/r/demo".into(),
         state,
         scroll: 0,
+        request: 4,
     })));
     app
 }
@@ -118,7 +119,7 @@ fn rows(app: &App, w: u16, h: u16) -> Vec<String> {
         .collect()
 }
 
-const READY: [&str; 14] = [
+const READY: [&str; 16] = [
     "7 task records · 3 runs",
     "",
     "class  tasks  merged  lines  calls  tokens  work  bounces  reverted",
@@ -133,10 +134,13 @@ const READY: [&str; 14] = [
     "",
     "problems",
     "  runs.jsonl line 9: missing field `at`",
+    "",
+    "history: /r/demo",
 ];
 
 /// Decision 38's rows, exactly: the table (a `None` median reads `–`), the deciders
-/// line, the flaky proposals and the problems, at 80×24 and 120×40, under the title.
+/// line, the flaky proposals, the problems and the history file, at 80×24 and 120×40,
+/// under the title.
 #[test]
 fn stats_render_rows_deciders_and_flaky_proposals() {
     let app = ready(false);
@@ -149,11 +153,32 @@ fn stats_render_rows_deciders_and_flaky_proposals() {
             text.lines().next().unwrap().contains(" stats · demo "),
             "{text}"
         );
-        assert_eq!(
-            super::body_lines(&app, screen(&app), w).len(),
-            screen(&app).line_count(),
-            "the app scrolls over exactly the lines drawn"
-        );
+    }
+}
+
+/// The CLI's units (`daemon/src/run/stats.rs`): tokens `1.2k` under 10k, work in
+/// minutes rounded to the nearest.
+#[test]
+fn stats_cells_use_the_clis_units() {
+    let cases = [
+        (999, "999"),
+        (1000, "1.0k"),
+        (1250, "1.2k"),
+        (9999, "9.9k"),
+        (10_000, "10k"),
+        (2_345_678, "2.3M"),
+    ];
+    for (n, want) in cases {
+        assert_eq!(super::tokens(n), want, "{n}");
+    }
+    for (secs, want) in [
+        (0, "0m"),
+        (29, "0m"),
+        (30, "1m"),
+        (380, "6m"),
+        (3599, "60m"),
+    ] {
+        assert_eq!(super::work(secs), want, "{secs}");
     }
 }
 
@@ -210,7 +235,8 @@ fn stats_render_an_empty_history() {
             "  none",
         ]
     );
-    assert!(all[8..].iter().all(String::is_empty), "{all:#?}");
+    assert_eq!(all[8..10], ["", "history: /r/demo"]);
+    assert!(all[10..].iter().all(String::is_empty), "{all:#?}");
 }
 
 /// Loading, and a refusal or an expiry in `Failed`, never a toast.
@@ -234,51 +260,52 @@ fn stats_render_loading_and_failed() {
 }
 
 /// Scrolled: the first line shown is `scroll`'s, cuts are marked with the kit's marks,
-/// and the view never scrolls past its last line.
+/// and the view never scrolls past its last line, which is `max_scroll`, the bound the
+/// screen's keys use: every scroll up to it draws a different view.
 #[test]
 fn stats_render_scrolls_with_marks() {
     // 10 rows: 9 for the body, 7 inside the frame.
+    let body = ratatui::layout::Rect::new(0, 0, 80, 9);
     let mut app = ready(false);
-    assert_eq!(
-        rows(&app, 80, 10),
-        [
-            READY[0],
-            READY[1],
-            READY[2],
-            READY[3],
-            READY[4],
-            READY[5],
-            "↓ 8 more"
-        ]
-    );
+    let r = |i: usize| READY[i].to_string();
+    let top: Vec<String> = (0..6).map(r).chain(["↓ 10 more".into()]).collect();
+    assert_eq!(rows(&app, 80, 10), top);
     screen_mut(&mut app).scroll = 3;
+    let mid: Vec<String> = ["↑ 3 more".into()]
+        .into_iter()
+        .chain((3..8).map(r))
+        .chain(["↓ 8 more".into()])
+        .collect();
+    assert_eq!(rows(&app, 80, 10), mid);
+    let max = super::max_scroll(&app, screen(&app), body);
+    assert_eq!(max, 10);
+    let bottom: Vec<String> = ["↑ 10 more".into()]
+        .into_iter()
+        .chain((10..16).map(r))
+        .collect();
+    screen_mut(&mut app).scroll = max;
+    assert_eq!(rows(&app, 80, 10), bottom);
+    screen_mut(&mut app).scroll = max + 3;
     assert_eq!(
         rows(&app, 80, 10),
-        [
-            "↑ 3 more",
-            READY[3],
-            READY[4],
-            READY[5],
-            READY[6],
-            READY[7],
-            "↓ 6 more"
-        ]
+        bottom,
+        "past the bound draws the bottom"
     );
-    screen_mut(&mut app).scroll = 13;
-    let bottom = [
-        "↑ 8 more",
-        READY[8],
-        READY[9],
-        READY[10],
-        READY[11],
-        READY[12],
-        READY[13],
-    ];
-    assert_eq!(rows(&app, 80, 10), bottom);
+    let mut views = Vec::new();
+    for scroll in 0..=max {
+        screen_mut(&mut app).scroll = scroll;
+        views.push(rows(&app, 80, 10));
+    }
+    views.dedup();
+    assert_eq!(
+        views.len(),
+        max + 1,
+        "no scroll up to the bound is a dead press"
+    );
     let mut ascii = ready(true);
     screen_mut(&mut ascii).scroll = 3;
     let all = rows(&ascii, 80, 10);
-    assert_eq!((all[0].as_str(), all[6].as_str()), ("^ 3 more", "v 6 more"));
+    assert_eq!((all[0].as_str(), all[6].as_str()), ("^ 3 more", "v 8 more"));
 }
 
 /// Nothing panics at any small size, in either mode, in any state.
@@ -326,6 +353,7 @@ fn stats_screen_text_is_sanitised() {
     stats.rows[0].class = hostile.clone();
     stats.flaky_proposals[0].test = hostile.clone();
     stats.problems = vec![hostile.clone()];
+    stats.path = hostile.clone().into();
     let mut seen = String::new();
     for state in [
         StatsState::Ready(Box::new(stats)),
