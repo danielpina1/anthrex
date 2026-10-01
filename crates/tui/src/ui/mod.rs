@@ -12,6 +12,7 @@ pub mod run_edit;
 pub mod run_goal;
 pub mod sidebar;
 pub mod statusbar;
+mod statusbar_modes;
 pub mod terminal;
 pub mod tree_view;
 

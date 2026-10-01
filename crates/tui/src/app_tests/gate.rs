@@ -223,8 +223,11 @@ fn x_asks_then_rejects() {
             &PendingAction::RejectRun(RUN_ID.into())
         )
     );
+    // Decision 5: a destructive confirm takes only `y`.
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
+    assert_eq!(app.toast_text(), Some("press y to reject"));
     assert_eq!(
-        tap(&mut app, KeyCode::Enter),
+        tap(&mut app, KeyCode::Char('y')),
         send(RunRequest::Reject {
             run_id: RUN_ID.into()
         })

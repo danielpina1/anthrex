@@ -10,7 +10,7 @@ mod rows;
 mod text;
 
 pub use dialog::{choice, choice_in, dialog_area, dialog_frame};
-pub use hints::{Hint, hints};
+pub use hints::{Hint, hints, hints_joined};
 pub use rows::{labelled_rows, run_name, run_name_in, scroll_marks};
 pub use text::text_area;
 

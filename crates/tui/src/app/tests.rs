@@ -379,7 +379,7 @@ fn kill_asks_for_confirmation_first() {
     prefix(&mut app);
     press(&mut app, KeyCode::Char('Q'), KeyModifiers::SHIFT);
     assert_eq!(
-        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
         vec![Effect::Send(ClientMsg::Shutdown)]
     );
 }

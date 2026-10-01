@@ -29,6 +29,21 @@ pub enum Effect {
     Reconnect,
 }
 
+/// How a toast is drawn (milestone 9.0.6 decision 6): info in the default colour, a
+/// warning in `Attention`, an error in `Failed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+struct Toast {
+    text: String,
+    at: Instant,
+    level: ToastLevel,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
     Kill(u32),
@@ -160,7 +175,7 @@ pub struct App {
     /// those three clears it on any given run, so a second `C-b Q` is always possible
     /// once one of them has.
     stopping: Option<Instant>,
-    toast: Option<(String, Instant)>,
+    toast: Option<Toast>,
     windows_received_at: Instant,
     /// (cols, rows) of the main inner area; (0, 0) until the first draw.
     term_size: (u16, u16),
@@ -292,14 +307,29 @@ impl App {
     }
 
     pub fn toast_text(&self) -> Option<&str> {
-        self.toast.as_ref().map(|(t, _)| t.as_str())
+        self.toast.as_ref().map(|t| t.text.as_str())
+    }
+
+    /// The severity of the toast on screen, if any (decision 6): the status bar draws an
+    /// error in `Failed` and a warning in `Attention`.
+    pub fn toast_level(&self) -> Option<ToastLevel> {
+        self.toast.as_ref().map(|t| t.level)
     }
 
     /// Shows `text` in the status bar for [`TOAST_TTL`], on one line and with no control
     /// or bidi character: a toast often quotes the daemon, or an id an agent chose.
     pub fn toast(&mut self, text: impl Into<String>) {
+        self.toast_at(ToastLevel::Info, text);
+    }
+
+    /// [`App::toast`] with a severity.
+    pub fn toast_at(&mut self, level: ToastLevel, text: impl Into<String>) {
         let text = crate::safe_text::one_line(&text.into());
-        self.toast = Some((text, Instant::now()));
+        self.toast = Some(Toast {
+            text,
+            at: Instant::now(),
+            level,
+        });
     }
 
     /// Decision 7: every config `Problem` `attach` found, already formatted, shown
@@ -507,7 +537,7 @@ impl App {
         if self
             .toast
             .as_ref()
-            .is_some_and(|(_, at)| at.elapsed() >= TOAST_TTL)
+            .is_some_and(|t| t.at.elapsed() >= TOAST_TTL)
         {
             self.toast = None;
         }
@@ -538,6 +568,7 @@ impl App {
 }
 
 pub(crate) mod alerts;
+mod confirm;
 mod conversation;
 mod daemon;
 mod goal;

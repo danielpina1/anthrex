@@ -1,7 +1,8 @@
-use crate::app::{App, Modal};
+use crate::app::{App, Modal, PendingAction};
 use crate::dialog::TextInput;
-use crate::theme;
+use crate::theme::{self, Palette, Role, role};
 use crate::ui::dialog;
+use crate::ui::kit::{self, Hint};
 use proto::Status;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -101,16 +102,54 @@ fn wrapped(text: &str, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
-/// A confirm's body: its message on one line per `width` (with no control, separator
-/// or bidi character — it may quote a hold id or a daemon text), a blank line, the keys.
-fn confirm_body(message: &str, width: usize) -> Vec<Line<'static>> {
-    let mut lines = wrapped(&crate::safe_text::one_line(message), width);
-    lines.push(Line::raw(""));
-    lines.push(Line::styled(
-        "y / Enter = yes    n / Esc = no",
-        theme::muted(),
-    ));
-    lines
+/// A confirm on the kit's dialog grammar (milestone 9.0.6 decision 5): the message
+/// wrapped at 60 columns with no control, separator or bidi character (it may quote a hold
+/// id or a daemon text), a blank line, the key hints. A destructive confirm's title and
+/// verb draw in `Failed` and its hint offers only `y`.
+fn render_confirm(
+    frame: &mut Frame,
+    message: &str,
+    action: &PendingAction,
+    area: Rect,
+    p: Palette,
+) {
+    let destructive = action.destructive();
+    let width = usize::from(area.width.min(kit::DIALOG_MAX).saturating_sub(4));
+    let mut body = wrapped(
+        &crate::safe_text::one_line(message),
+        width.min(usize::from(kit::WRAP)),
+    );
+    body.push(Line::raw(""));
+    let key = if destructive { "y" } else { "⏎" };
+    let verb = Hint {
+        key: key.to_string(),
+        word: action.verb().to_string(),
+        priority: 9,
+    };
+    let esc = Hint {
+        key: "esc".to_string(),
+        word: "back".to_string(),
+        priority: 1,
+    };
+    let mut hints = kit::hints_joined(width as u16, &[verb, esc], " · ", p);
+    if destructive && let Some(first) = hints.spans.get_mut(0) {
+        first.style = role(Role::Failed, p);
+    }
+    if destructive && let Some(word) = hints.spans.get_mut(2) {
+        word.style = role(Role::Failed, p);
+    }
+    body.push(hints);
+    let title = if destructive {
+        action.verb()
+    } else {
+        "confirm"
+    };
+    let rect = kit::dialog_area(area, body.len() as u16);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(
+        Paragraph::new(body).block(kit::dialog_frame(title, destructive, p)),
+        rect,
+    );
 }
 
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
@@ -139,14 +178,12 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }
         Modal::EditTask(form) => return crate::ui::run_edit::render(frame, form, area, accent),
         Modal::StartGoal(form) => return crate::ui::run_goal::render(frame, form, area, accent),
-        Modal::Confirm { .. } | Modal::Help | Modal::Notice { .. } | Modal::Rename(_) => {}
+        Modal::Confirm { message, action } => {
+            return render_confirm(frame, message, action, area, app.palette());
+        }
+        Modal::Help | Modal::Notice { .. } | Modal::Rename(_) => {}
     }
     let (title, body): (String, Vec<Line>) = match modal {
-        // Review M5: a message wider than the screen wraps inside the box.
-        Modal::Confirm { message, .. } => (
-            " confirm ".to_string(),
-            confirm_body(message, usize::from(area.width.saturating_sub(4))),
-        ),
         Modal::Help => (
             " keys ".to_string(),
             help_lines(&app.settings.prefix_label)
@@ -180,7 +217,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 Line::styled("Enter = rename    Esc = cancel", theme::muted()),
             ],
         ),
-        Modal::NewAgent(_)
+        Modal::Confirm { .. }
+        | Modal::NewAgent(_)
         | Modal::Remove(_)
         | Modal::ForceRemove { .. }
         | Modal::EditTask(_)
@@ -242,7 +280,7 @@ mod tests {
         let text = inner.iter().filter(|l| !l.is_empty()).cloned();
         let joined = text.collect::<Vec<_>>().join(" ");
         assert!(joined.starts_with(message), "{lines:#?}");
-        assert!(joined.ends_with("y / Enter = yes    n / Esc = no"));
+        assert!(joined.ends_with("y reject · esc back"));
         let box_rows: Vec<_> = lines.iter().filter(|l| l.contains('│')).collect();
         assert!(
             box_rows.iter().all(|l| l.trim_end().ends_with('│')),
@@ -256,11 +294,8 @@ mod tests {
     fn a_confirm_quoting_a_hold_id_is_sanitised() {
         let bad = crate::safe_text::tests::hostile_text();
         let message = format!("Reject hold epic:{bad} of run r? Its 1 task is cancelled.");
-        let text: String = confirm_body(&message, 1_000)
-            .iter()
-            .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
-            .collect();
-        assert!(text.starts_with("Reject hold epic:a b"), "{text:?}");
+        let text = confirm_lines(&message, 200, 24).join("");
+        assert!(text.contains("Reject hold epic:a b"), "{text:?}");
         assert_eq!(
             crate::safe_text::tests::first_hostile(&text),
             None,
@@ -271,10 +306,7 @@ mod tests {
     #[test]
     fn a_short_confirm_stays_on_one_line() {
         let lines = confirm_lines("Kill 'a'?", 80, 24);
-        assert_eq!(
-            inner(&lines),
-            vec!["Kill 'a'?", "", "y / Enter = yes    n / Esc = no"]
-        );
+        assert_eq!(inner(&lines), vec!["Kill 'a'?", "", "y reject · esc back"]);
     }
 
     /// Milestone 9.0.5: the help lists `C-b a`, with the configured prefix.

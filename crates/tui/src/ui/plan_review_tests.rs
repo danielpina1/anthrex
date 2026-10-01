@@ -148,7 +148,7 @@ fn review_renders_at_80x24() {
         "                                │  Brief line 17 of the token model.",
         "                                │  Brief line 18 of the token model.",
         "waves  1 t1 · 2 t2 t3 · 3 t4 t5 │  Brief line 19 of the token model.",
-        " REVIEW  a approve  x reject  e edit  d drop  j/k task  PgUp/PgDn scroll  esc ba",
+        " PLAN  a approve  x reject  e edit  d drop  j/k task  PgUp/PgDn scroll  esc back",
     ];
     assert_eq!(got, want, "{got:#?}");
 }
@@ -199,7 +199,7 @@ fn review_renders_at_120x40() {
         "                                                │",
         "                                                │",
         "waves  1 t1 · 2 t2 t3 · 3 t4 t5                 │",
-        " REVIEW  a approve  x reject  e edit  d drop  j/k task  PgUp/PgDn scroll  esc back",
+        " PLAN  a approve  x reject  e edit  d drop  j/k task  PgUp/PgDn scroll  esc back",
     ];
     assert_eq!(got, want, "{got:#?}");
 }
@@ -277,7 +277,7 @@ fn hold_review_lists_only_the_hold_tasks() {
     assert_eq!(left[37], "waves  2 t3 · 3 t4");
     assert_eq!(
         got[39],
-        " REVIEW  a approve hold  x reject hold  j/k task  PgUp/PgDn scroll  esc back"
+        " PLAN  a approve hold  x reject hold  j/k task  PgUp/PgDn scroll  esc back"
     );
 }
 
@@ -287,13 +287,13 @@ fn review_hints() {
     let rows_gate = rows(&draw(&mut gate, 160, 30));
     assert_eq!(
         rows_gate[29],
-        " REVIEW  a approve  x reject  e edit  d drop  j/k task  PgUp/PgDn scroll  esc back"
+        " PLAN  a approve  x reject  e edit  d drop  j/k task  PgUp/PgDn scroll  esc back"
     );
     let mut held = app_with(hold_plan(), ReviewTarget::Hold("epic:mail".into()));
     let rows_held = rows(&draw(&mut held, 160, 30));
     assert_eq!(
         rows_held[29],
-        " REVIEW  a approve hold  x reject hold  j/k task  PgUp/PgDn scroll  esc back"
+        " PLAN  a approve hold  x reject hold  j/k task  PgUp/PgDn scroll  esc back"
     );
     // Esc: the status bar is the terminal's again.
     press(&mut held, KeyCode::Esc);

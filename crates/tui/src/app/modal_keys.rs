@@ -130,7 +130,17 @@ impl App {
             // Any key closes the help overlay or the config notice; nothing to restore.
             Modal::Help | Modal::Notice { .. } => vec![],
             Modal::Confirm { message, action } => match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => self.perform(action),
+                KeyCode::Char('y') | KeyCode::Char('Y') => self.perform(action),
+                KeyCode::Enter if !action.destructive() => self.perform(action),
+                // Decision 5: a destructive confirm takes only `y`.
+                KeyCode::Enter => {
+                    self.toast_at(
+                        super::ToastLevel::Warn,
+                        format!("press y to {}", action.verb()),
+                    );
+                    self.modal = Some(Modal::Confirm { message, action });
+                    vec![]
+                }
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => vec![],
                 _ => {
                     self.modal = Some(Modal::Confirm { message, action });

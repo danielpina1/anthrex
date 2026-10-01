@@ -20,13 +20,19 @@ const SEPARATOR: &str = "  ";
 /// and the rightmost among equals, until the line fits; `esc` goes last, and only if it
 /// alone does not fit, which leaves an empty line.
 pub fn hints(width: u16, hints: &[Hint], p: Palette) -> Line<'static> {
+    hints_joined(width, hints, SEPARATOR, p)
+}
+
+/// [`hints`] with another separator between the hints, in the muted role: the prefix
+/// list and the dialogs' hint lines join with ` · `.
+pub fn hints_joined(width: u16, hints: &[Hint], separator: &str, p: Palette) -> Line<'static> {
     let mut kept: Vec<(String, String, u8)> = hints
         .iter()
         .map(|h| (one_line(&h.key), one_line(&h.word), h.priority))
         .collect();
     let total = |kept: &[(String, String, u8)]| -> usize {
         let words: usize = kept.iter().map(|(k, w, _)| k.width() + 1 + w.width()).sum();
-        words + SEPARATOR.len() * kept.len().saturating_sub(1)
+        words + separator.width() * kept.len().saturating_sub(1)
     };
     while total(&kept) > usize::from(width) {
         let victim = kept
@@ -47,7 +53,7 @@ pub fn hints(width: u16, hints: &[Hint], p: Palette) -> Line<'static> {
     let mut spans = Vec::new();
     for (i, (key, word, _)) in kept.into_iter().enumerate() {
         if i > 0 {
-            spans.push(Span::raw(SEPARATOR));
+            spans.push(Span::styled(separator.to_string(), word_style));
         }
         spans.push(Span::styled(key, key_style));
         spans.push(Span::raw(" "));

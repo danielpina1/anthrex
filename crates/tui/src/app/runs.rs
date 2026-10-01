@@ -210,7 +210,7 @@ impl App {
                     form.submitting = false;
                     form.request_id = None;
                 } else {
-                    self.toast(text);
+                    self.toast_at(super::ToastLevel::Error, text);
                 }
             }
             RunReply::Triaged {

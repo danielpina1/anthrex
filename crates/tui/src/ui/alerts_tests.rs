@@ -400,10 +400,10 @@ fn a_raw_alert_line_is_sanitised_by_the_box_itself() {
     }
 }
 
-/// Review: the status bar's badge and hint precedence, PREFIX > REVIEW > ALERTS >
+/// Review: the status bar's badge and hint precedence, PREFIX > PLAN > ALERTS >
 /// TREE. `C-b a` from tree mode (the overview, the run view) keeps `tree_input` set.
 #[test]
-fn the_status_bar_precedence_is_prefix_review_alerts_tree() {
+fn the_status_bar_precedence_is_prefix_plan_alerts_tree() {
     let mut app = every_app();
     key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
     key(&mut app, KeyCode::Char('t'), KeyModifiers::NONE);
@@ -427,7 +427,7 @@ fn the_status_bar_precedence_is_prefix_review_alerts_tree() {
     assert!(app.alerts_focus.is_some());
     let (buffer, _) = draw_at(&app, 120, 24);
     assert!(
-        row(&buffer, 23).starts_with(" REVIEW  a approve  x reject"),
+        row(&buffer, 23).starts_with(" PLAN  a approve  x reject"),
         "{:?}",
         row(&buffer, 23)
     );
