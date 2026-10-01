@@ -174,6 +174,11 @@ pub(crate) fn shows(name: &str) -> Shows {
         "run view running" | "run view on a task" => row("RUN", Some("esc back"), &["j/k move"]),
         "conversation" => row("CHAT", None, &["C-b ? help"]),
         "alerts" => row("ALERTS", Some("esc back"), &["j/k move"]),
+        // Milestone 9.0.7 decisions 9 and 10: the grown box, two lines an alert.
+        "alerts box" => row("Alerts 3", None, &["C-b a open"]),
+        "sidebar tree over the alerts box" => {
+            row("TREE", Some("esc back"), &["j/k move", "C-b a open"])
+        }
         "help over the sidebar tree" | "profile under the help" => row("keys", None, &["any key"]),
         "confirm over the overview" => row("Kill 'shell'?", Some("esc back"), &["y kill"]),
         "action menu over the run view" => row("review plan", Some("esc close"), &["j/k move"]),
@@ -278,6 +283,14 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             }),
         ),
         ("project overview", with(gate(), |a| chord(a, 'T'))),
+        // Decisions 9 and 10: three alerts grow the box under the agents block.
+        ("alerts box", crate::ui::alerts::box_tests::three_runs()),
+        (
+            "sidebar tree over the alerts box",
+            with(crate::ui::alerts::box_tests::three_runs(), |a| {
+                chord(a, 't')
+            }),
+        ),
         ("run view at the gate", run_view(gate())),
         ("run view running", run_view(running())),
         ("run view on a task", on_task(run_view(running()), "t1")),

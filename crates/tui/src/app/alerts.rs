@@ -1,5 +1,6 @@
 //! Milestone 9.0.5 decisions 17–21: the alerts, computed from the snapshot and the
-//! window list on every draw and key, and the Alerts box's focus. Nothing is stored
+//! window list on every draw and key, and the Alerts box's focus; milestone 9.0.7
+//! decisions 7 and 8 give each its who, task, full detail and age. Nothing is stored
 //! but the focus; an alert clears itself once what raised it is resolved. The box is
 //! drawn by `ui/alerts.rs`. Pure: no I/O.
 
@@ -24,14 +25,28 @@ pub enum AlertKey {
     Proposal(PathBuf),
 }
 
-/// One line of the box: `● <label>  <text>` (decision 19). `label` and `text` are
-/// already one line each.
+/// Who an alert is for (milestone 9.0.7 decision 7): a run, by its goal (the id when
+/// it has none, as the sidebar names it) and its id, or a project, by its directory
+/// name. Each already one line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AlertWho {
+    Run { goal: String, id: String },
+    Project(String),
+}
+
+/// One alert (milestone 9.0.7 decision 7). `who`, `task` and `text` are already one
+/// line each; `detail` is the whole text (a block's or a halted reason's every line,
+/// else `text`), raw, sanitised where it is drawn. `age` is set only where the
+/// snapshot holds the moment it began (decision 8).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alert {
     pub priority: u8,
     pub key: AlertKey,
-    pub label: String,
+    pub who: AlertWho,
+    pub task: Option<String>,
     pub text: String,
+    pub detail: String,
+    pub age: Option<u64>,
 }
 
 /// Decision 21: the box has the keys. `selected` is the alert's identity; `at` its
@@ -57,8 +72,9 @@ fn first_line(text: &str) -> Option<String> {
         .find(|line| !line.is_empty())
 }
 
-/// Decision 18's priority 1 for `run`, first match wins.
-fn orchestrator_text(app: &App, run: &RunInfo) -> Option<&'static str> {
+/// Decision 18's priority 1 for `run`, first match wins, with the orchestrator
+/// window's time in its status (milestone 9.0.7 decision 8).
+fn orchestrator_text(app: &App, run: &RunInfo) -> Option<(&'static str, u64)> {
     let orch = run.orchestrator.as_ref().filter(|orch| orch.live)?;
     let id = orch.window_id?;
     let window = app.windows.iter().find(|window| window.id == id)?;
@@ -67,15 +83,16 @@ fn orchestrator_text(app: &App, run: &RunInfo) -> Option<&'static str> {
         window.status,
         Status::Idle | Status::Done | Status::Attention
     );
-    if orch.wake_held {
-        Some("orchestrator wake-up held")
+    let text = if orch.wake_held {
+        "orchestrator wake-up held"
     } else if window.status == Status::Attention && window.signals_seen {
-        Some("orchestrator asks for permission")
+        "orchestrator asks for permission"
     } else if agent && !window.signals_seen && quiet {
-        Some("orchestrator waits at a start prompt")
+        "orchestrator waits at a start prompt"
     } else {
-        None
-    }
+        return None;
+    };
+    Some((text, app.elapsed_secs(window)))
 }
 
 /// Decision 18's priority 3 for a blocked task: while the orchestrator lives, only
@@ -98,15 +115,37 @@ fn blocked_text(run: &RunInfo, task: &proto::TaskInfo) -> Option<String> {
     if orchestrator_lives && !asks_the_user {
         return None;
     }
-    let id = one_line(&task.id);
+    // Milestone 9.0.7 decision 7: the task id is the alert's `task`, drawn in its who
+    // line; a question reads `blocked: <line>`, any other reason names itself.
     let Some(block) = &task.block else {
-        return Some(format!("{id} blocked"));
+        return Some("blocked".to_owned());
     };
-    let head = format!("{id} blocked ({})", reason_text(block.reason));
+    let head = match block.reason {
+        BlockReason::Question => "blocked".to_owned(),
+        reason => format!("blocked ({})", reason_text(reason)),
+    };
     Some(match first_line(&block.text) {
         Some(line) => format!("{head}: {line}"),
         None => head,
     })
+}
+
+/// Decision 8: when a blocked task's block began, the newest history entry the daemon
+/// wrote at a block (`blocked (<reason>): …`); `None` when the snapshot kept none.
+fn blocked_since(task: &proto::TaskInfo) -> Option<u64> {
+    task.history
+        .iter()
+        .filter(|event| event.text.starts_with("blocked ("))
+        .map(|event| event.at)
+        .max()
+}
+
+/// `text` when it holds a non-blank line, else `fallback`: an alert's `detail`.
+fn detail_or(text: Option<&str>, fallback: &str) -> String {
+    match text {
+        Some(text) if first_line(text).is_some() => text.to_owned(),
+        _ => fallback.to_owned(),
+    }
 }
 
 /// Milestone 9.0.7 decision 4: "needs you" is one rule. A task needs the user exactly
@@ -125,16 +164,26 @@ pub fn alerts(app: &App) -> Vec<Alert> {
     let mut out = Vec::new();
     for run in tree::shown_runs(&app.runs.runs) {
         let id = run.run_id.clone();
-        let mut push = |priority, key, text: String| {
+        let who = AlertWho::Run {
+            goal: one_line(tree::run_title(run)),
+            id: one_line(&id),
+        };
+        // `detail` defaults to the text; `age` only where decision 8 knows it.
+        let mut push = |priority, key, text: String, task: Option<&str>, detail, age| {
+            let text = one_line(&text);
             out.push(Alert {
                 priority,
                 key,
-                label: one_line(&id),
-                text: one_line(&text),
+                who: who.clone(),
+                task: task.map(one_line),
+                detail: detail_or(detail, &text),
+                text,
+                age,
             });
         };
-        if let Some(text) = orchestrator_text(app, run) {
-            push(1, AlertKey::Orchestrator(id.clone()), text.to_owned());
+        if let Some((text, age)) = orchestrator_text(app, run) {
+            let key = AlertKey::Orchestrator(id.clone());
+            push(1, key, text.to_owned(), None, None, Some(age));
         }
         if run.state == RunState::AwaitingApproval {
             let n = run
@@ -143,7 +192,7 @@ pub fn alerts(app: &App) -> Vec<Alert> {
                 .filter(|task| task.state != TaskState::Cancelled)
                 .count();
             let text = format!("plan awaits approval · {}", tasks_text(n));
-            push(2, AlertKey::Gate(id.clone()), text);
+            push(2, AlertKey::Gate(id.clone()), text, None, None, None);
         }
         for hold in awaiting_holds(run) {
             let text = format!(
@@ -155,7 +204,7 @@ pub fn alerts(app: &App) -> Vec<Alert> {
                 run: id.clone(),
                 hold: hold.id.clone(),
             };
-            push(2, key, text);
+            push(2, key, text, None, None, None);
         }
         for task in &run.tasks {
             if let Some(text) = blocked_text(run, task) {
@@ -163,7 +212,9 @@ pub fn alerts(app: &App) -> Vec<Alert> {
                     run: id.clone(),
                     task: task.id.clone(),
                 };
-                push(3, key, text);
+                let detail = task.block.as_ref().map(|block| block.text.as_str());
+                let age = blocked_since(task).map(|at| app.run_age(at));
+                push(3, key, text, Some(&task.id), detail, age);
             }
         }
         if run.state == RunState::Halted {
@@ -171,7 +222,8 @@ pub fn alerts(app: &App) -> Vec<Alert> {
                 Some(line) => format!("run halted: {line}"),
                 None => "run halted".to_owned(),
             };
-            push(3, AlertKey::Halted(id.clone()), text);
+            let detail = run.halted_reason.as_deref();
+            push(3, AlertKey::Halted(id.clone()), text, None, detail, None);
         }
         if run.state == RunState::Complete {
             let counted = run
@@ -182,19 +234,20 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             let m = counted
                 .filter(|task| task.state == TaskState::Merged)
                 .count();
-            push(
-                4,
-                AlertKey::Accept(id.clone()),
-                format!("ready to accept · {m}/{n} merged"),
-            );
+            let text = format!("ready to accept · {m}/{n} merged");
+            push(4, AlertKey::Accept(id.clone()), text, None, None, None);
         }
     }
     for proposal in &app.runs.proposals {
+        let text = "profile proposal ready".to_owned();
         out.push(Alert {
             priority: 4,
             key: AlertKey::Proposal(proposal.project.clone()),
-            label: one_line(&project_name(&proposal.project)),
-            text: "profile proposal ready".to_owned(),
+            who: AlertWho::Project(one_line(&project_name(&proposal.project))),
+            task: None,
+            detail: text.clone(),
+            text,
+            age: Some(app.run_age(proposal.updated_at)),
         });
     }
     // Stable: within a priority the runs' order, then the rules', then the proposals.

@@ -3,17 +3,29 @@
 
 use super::runs::{app_with_runs, deliver};
 use super::*;
-use crate::app::{AlertKey, alerts};
+use crate::app::{AlertKey, AlertWho, alerts};
 pub(super) use crate::tree::alert_fixtures::every_source;
 use crate::tree::alert_fixtures::{at, blocked, orch_window, with_orch};
 use crate::tree::orch_fixtures::hold;
 use crate::tree::run_fixtures::{snapshot, task};
 use proto::{BlockReason, HoldState, ProposalAlertInfo, RunState, Size, TaskState};
 
+/// Each alert as `(priority, who, text)`, the who its run id (` › <t>` after it for a
+/// task alert) or its project's name (milestone 9.0.7 decision 7).
 pub(super) fn listed(app: &App) -> Vec<(u8, String, String)> {
     alerts(app)
         .into_iter()
-        .map(|alert| (alert.priority, alert.label, alert.text))
+        .map(|alert| {
+            let who = match alert.who {
+                AlertWho::Run { id, .. } => id,
+                AlertWho::Project(name) => name,
+            };
+            let who = match alert.task {
+                Some(task) => format!("{who} › {task}"),
+                None => who,
+            };
+            (alert.priority, who, alert.text)
+        })
         .collect()
 }
 
@@ -37,8 +49,8 @@ fn alerts_in_priority_order() {
             line(1, "c-held", "orchestrator wake-up held"),
             line(2, "b-gate", "plan awaits approval · 1 task"),
             line(2, "c-held", "hold epic:ui awaits approval · 1 task"),
-            line(3, "c-held", "t1 blocked (human): needs a key"),
-            line(3, "d-bare", "t1 blocked (question): which db?"),
+            line(3, "c-held › t1", "blocked (human): needs a key"),
+            line(3, "d-bare › t1", "blocked: which db?"),
             line(3, "e-halt", "run halted: disk full"),
             line(4, "f-done", "ready to accept · 2/2 merged"),
             line(4, "shop", "profile proposal ready"),
@@ -160,8 +172,8 @@ fn each_priority_rule() {
     assert_eq!(
         listed(&app),
         vec![
-            line(3, "r", "t1 blocked (conflict): merge conflict in a.rs"),
-            line(3, "r", "t2 blocked (environment)"),
+            line(3, "r › t1", "blocked (conflict): merge conflict in a.rs"),
+            line(3, "r › t2", "blocked (environment)"),
         ]
     );
     // With no live orchestrator every reason but a pause.
@@ -171,11 +183,11 @@ fn each_priority_rule() {
     assert_eq!(
         texts,
         [
-            "t1 blocked (conflict): merge conflict in a.rs",
-            "t2 blocked (environment)",
-            "t3 blocked (mis-sized): too big",
-            "t4 blocked (dependency cancelled): t0 cancelled",
-            "t5 blocked (question): which?",
+            "blocked (conflict): merge conflict in a.rs",
+            "blocked (environment)",
+            "blocked (mis-sized): too big",
+            "blocked (dependency cancelled): t0 cancelled",
+            "blocked: which?",
         ]
     );
     // A halted run with no reason.
@@ -203,9 +215,10 @@ fn each_priority_rule() {
 }
 
 #[test]
-fn alert_labels_and_text_are_one_line() {
+fn alert_who_and_text_are_one_line() {
     let bad = crate::safe_text::tests::hostile_text();
     let mut gate = at(&format!("r{bad}"), RunState::Halted, 1);
+    gate.goal = format!("g{bad}");
     gate.halted_reason = Some(format!("{bad}\nsecond"));
     gate.tasks = vec![blocked(&format!("t{bad}"), BlockReason::Human, &bad)];
     let mut snap = snapshot(1, vec![gate]);
@@ -217,7 +230,12 @@ fn alert_labels_and_text_are_one_line() {
     let all = alerts(&app);
     assert_eq!(all.len(), 3);
     for alert in all {
-        for text in [&alert.label, &alert.text] {
+        let who = match &alert.who {
+            AlertWho::Run { goal, id } => format!("{goal}{id}"),
+            AlertWho::Project(name) => name.clone(),
+        };
+        let task = alert.task.clone().unwrap_or_default();
+        for text in [&who, &task, &alert.text] {
             assert_eq!(
                 crate::safe_text::tests::first_hostile(text),
                 None,

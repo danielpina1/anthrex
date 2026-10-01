@@ -4,7 +4,7 @@ use crate::dialog::{FormDefaults, NewAgentForm, RemoveConfirm};
 use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
-pub use alerts::{Alert, AlertKey, AlertsFocus, alerts};
+pub use alerts::{Alert, AlertKey, AlertWho, AlertsFocus, alerts};
 use crossterm::event::KeyEvent;
 pub use link::Link;
 pub use plan_review::{PlanReview, ReviewTarget};

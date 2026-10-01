@@ -63,21 +63,46 @@ fn inset(r: Rect) -> Rect {
     }
 }
 
-/// Decision 20: the Alerts box's interior rows for `count` alerts in a sidebar column
-/// `height` rows tall — one (`no alerts`) with none, else `min(n, ALERTS_MAX_ROWS,
-/// max(1, height / 3 − 2))`.
-pub fn alerts_rows(count: usize, height: u16) -> u16 {
-    if count == 0 {
-        return 1;
-    }
-    let share = (height / 3).saturating_sub(2).max(1);
-    let count = u16::try_from(count).unwrap_or(u16::MAX);
-    count.min(alerts::ALERTS_MAX_ROWS).min(share)
+/// What sizes the sidebar column's two blocks (milestone 9.0.7 decision 9): the
+/// agents block's tree rows and the Alerts box's content lines (decision 10's lines
+/// for every alert at the box's interior width; 0 with no alert).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SidebarSizing {
+    pub tree_rows: usize,
+    pub alert_lines: usize,
 }
 
-/// The screen's areas. `alert_count`: how many alerts the box lists (decision 20),
-/// which sets its height; `crate::app::alerts(app).len()`.
+/// Decision 9: the Alerts box's interior rows in a sidebar column `column_height`
+/// rows tall — 1 (`no alerts`) with no alert, else `max(3, min(C, H/2 − 2,
+/// H − (R + 3) − 2))`, every term saturating, and at most `H − 2`. `R + 3` is the
+/// agents block's need: its rows, two borders and the footer row.
+pub fn alerts_box_rows(column_height: u16, sizing: SidebarSizing) -> u16 {
+    let h = usize::from(column_height);
+    let rows = if sizing.alert_lines == 0 {
+        1
+    } else {
+        let half = (h / 2).saturating_sub(2);
+        let free = h
+            .saturating_sub(sizing.tree_rows.saturating_add(3))
+            .saturating_sub(2);
+        sizing.alert_lines.min(half).min(free).max(3)
+    };
+    u16::try_from(rows.min(h.saturating_sub(2))).unwrap_or(u16::MAX)
+}
+
+/// The screen's areas, the Alerts box sized as for `alert_count` two-line alerts
+/// beside an empty tree (decision 9): kept for the tests that need only the panes.
+/// A test that draws alerts and hit-tests the sidebar calls [`layout_for`].
 pub fn layout(area: Rect, sidebar_width: u16, alert_count: usize) -> Layout {
+    let sizing = SidebarSizing {
+        tree_rows: 0,
+        alert_lines: alert_count.saturating_mul(2),
+    };
+    layout_sized(area, sidebar_width, sizing)
+}
+
+/// The screen's areas, the sidebar column split by [`alerts_box_rows`].
+pub fn layout_sized(area: Rect, sidebar_width: u16, sizing: SidebarSizing) -> Layout {
     let [body, statusbar] =
         RLayout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(area);
     let (column, main) = if sidebar_width > 0 {
@@ -88,7 +113,7 @@ pub fn layout(area: Rect, sidebar_width: u16, alert_count: usize) -> Layout {
         (Rect::new(body.x, body.y, 0, body.height), body)
     };
     let box_height = if column.width > 0 {
-        (alerts_rows(alert_count, column.height) + 2).min(column.height)
+        (alerts_box_rows(column.height, sizing) + 2).min(column.height)
     } else {
         0
     };
@@ -124,15 +149,25 @@ pub fn layout(area: Rect, sidebar_width: u16, alert_count: usize) -> Layout {
     }
 }
 
-/// The layout the frame draws for `app` in `area`: the sidebar's width while it is
-/// shown, and the Alerts box sized by the alerts it lists.
+/// The layout the frame draws for `app` in `area`, and the one every mouse path
+/// hit-tests against (Review focus 3): the sidebar's width while it is shown, the
+/// Alerts box sized by the tree's rows and the alerts' lines at the box's own
+/// interior width (decision 9).
 pub fn layout_for(app: &App, area: Rect) -> Layout {
-    let width = if app.sidebar_visible {
-        app.sidebar_width
-    } else {
-        0
+    if !app.sidebar_visible {
+        return layout_sized(area, 0, SidebarSizing::default());
+    }
+    let width = app.sidebar_width;
+    // The column can be narrower than asked on a narrow terminal: measure the alerts
+    // at the interior the box gets.
+    let interior = layout_sized(area, width, SidebarSizing::default())
+        .alerts_inner
+        .width;
+    let sizing = SidebarSizing {
+        tree_rows: app.rows().len(),
+        alert_lines: alerts::content_lines(app, interior),
     };
-    layout(area, width, crate::app::alerts(app).len())
+    layout_sized(area, width, sizing)
 }
 
 /// Draws everything and returns the layout so the caller can size the PTY and hit-test the mouse.

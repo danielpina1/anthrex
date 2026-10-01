@@ -1,6 +1,7 @@
-//! M9.0.5.9: the Alerts box (decisions 19 and 20) and the status bar's flag, rendered
-//! with `TestBackend`. The fixture is task 8's (`tree::alert_fixtures::every_source`):
-//! ten alerts, three of priority 1.
+//! M9.0.5.9: the Alerts box (decisions 19 and 20; milestone 9.0.7 decisions 9 and 10:
+//! two lines an alert, the box grown into the column) and the status bar's flag,
+//! rendered with `TestBackend`. The fixture is task 8's
+//! (`tree::alert_fixtures::every_source`): ten alerts, three of priority 1.
 
 use super::*;
 use crate::safe_text::tests::{first_hostile, hostile_text};
@@ -83,7 +84,7 @@ fn empty_alerts_collapse_to_one_line_at_80x24() {
     assert_eq!(
         box_rows(&buffer, &layout),
         [
-            "╭ Alerts (0) ────────────────────╮",
+            "╭ Alerts ────────────────────────╮",
             "│no alerts                       │",
             "╰────────────────────────────────╯",
         ]
@@ -102,20 +103,28 @@ fn empty_alerts_collapse_to_one_line_at_120x40() {
     assert_eq!(
         box_rows(&buffer, &layout),
         [
-            "╭ Alerts (0) ────────────────────╮",
+            "╭ Alerts ────────────────────────╮",
             "│no alerts                       │",
             "╰────────────────────────────────╯",
         ]
     );
 }
 
-/// Each alert row's `●` colour, top to bottom. Milestone 9.0.7 decision 3: P1–P3 in
+/// Each alert's glyph colour, top to bottom. Milestone 9.0.7 decision 3: P1–P3 in
 /// `Attention` (P1 alone bold), P4 in `Done`.
-fn dot_colours(buffer: &Buffer, layout: &crate::ui::Layout) -> Vec<Option<Color>> {
+fn glyph_colours(buffer: &Buffer, layout: &crate::ui::Layout) -> Vec<Option<Color>> {
+    glyph_cells(buffer, layout)
+        .into_iter()
+        .map(|(x, y)| buffer[(x, y)].style().fg)
+        .collect()
+}
+
+/// The cells of the alerts' glyphs, `⚑` or `✓`, at the interior's first column.
+fn glyph_cells(buffer: &Buffer, layout: &crate::ui::Layout) -> Vec<(u16, u16)> {
     let inner = layout.alerts_inner;
     (inner.y..inner.y + inner.height)
-        .filter(|y| buffer[(inner.x, *y)].symbol() == "●")
-        .map(|y| buffer[(inner.x, y)].style().fg)
+        .filter(|y| matches!(buffer[(inner.x, *y)].symbol(), "⚑" | "✓"))
+        .map(|y| (inner.x, y))
         .collect()
 }
 
@@ -123,33 +132,31 @@ fn dot_colours(buffer: &Buffer, layout: &crate::ui::Layout) -> Vec<Option<Color>
 fn four_priorities_render_at_80x24() {
     let app = every_app();
     let (buffer, layout) = draw_at(&app, 80, 24);
-    // 23 rows of column: max(1, 23 / 3 − 2) = 5 rows, the last `+6 more`.
+    // 23 rows of column: max(3, min(C, 23 / 2 − 2, 23 − R − 5)) = 9 rows; the
+    // three P1 alerts whole (eight rows), the last `↓ 7 more`.
     assert_eq!(
         box_rows(&buffer, &layout),
         [
-            "╭ Alerts (10) ───────────────────╮",
-            "│● a-attn  orchestrator asks for…│",
-            "│● b-gate  orchestrator waits at…│",
-            "│● c-held  orchestrator wake-up …│",
-            "│● b-gate  plan awaits approval …│",
-            "│+6 more                         │",
-            "╰────────────────────────────────╯",
+            "╭ ⚑ Alerts 10 ───────────────────╮",
+            "│⚑ Add password reset · attn  now│",
+            "│  orchestrator asks for         │",
+            "│  permission                    │",
+            "│⚑ Add password reset · gate  now│",
+            "│  orchestrator waits at a start │",
+            "│  prompt                        │",
+            "│⚑ Add password reset · held  now│",
+            "│  orchestrator wake-up held     │",
+            "│↓ 7 more                        │",
+            "╰──────────────────── C-b a open ╯",
         ]
     );
     let attention = Some(Color::LightMagenta);
-    assert_eq!(dot_colours(&buffer, &layout), [attention; 4]);
-    let bold = |y: u16| {
-        let cell = &buffer[(layout.alerts_inner.x, layout.alerts_inner.y + y)];
-        cell.style()
-            .add_modifier
-            .contains(ratatui::style::Modifier::BOLD)
-    };
-    assert_eq!([0, 1, 2, 3].map(bold), [true, true, true, false], "P1 bold");
-    // The label shares the dot's colour; the text is the default colour.
+    assert_eq!(glyph_colours(&buffer, &layout), [attention; 3]);
+    // The who shares the glyph's colour; the text is the default colour.
     let y = layout.alerts_inner.y;
     assert_eq!(buffer[(layout.alerts_inner.x + 2, y)].style().fg, attention);
     assert_eq!(
-        buffer[(layout.alerts_inner.x + 10, y)].style().fg,
+        buffer[(layout.alerts_inner.x + 2, y + 1)].style().fg,
         Some(Color::Reset)
     );
 }
@@ -158,72 +165,69 @@ fn four_priorities_render_at_80x24() {
 fn four_priorities_render_at_120x40() {
     let app = every_app();
     let (buffer, layout) = draw_at(&app, 120, 40);
-    // 39 rows of column: min(10, 6, 11) = 6 rows, the last `+5 more`.
+    // 39 rows of column: min(C, 17, 39 − R − 5) = 17 rows. Whole alerts only: six fit
+    // above the `↓ 4 more` row, and the next would need two more.
     assert_eq!(
         box_rows(&buffer, &layout),
         [
-            "╭ Alerts (10) ───────────────────╮",
-            "│● a-attn  orchestrator asks for…│",
-            "│● b-gate  orchestrator waits at…│",
-            "│● c-held  orchestrator wake-up …│",
-            "│● b-gate  plan awaits approval …│",
-            "│● c-held  hold epic:ui awaits a…│",
-            "│+5 more                         │",
-            "╰────────────────────────────────╯",
+            "╭ ⚑ Alerts 10 ───────────────────╮",
+            "│⚑ Add password reset · attn  now│",
+            "│  orchestrator asks for         │",
+            "│  permission                    │",
+            "│⚑ Add password reset · gate  now│",
+            "│  orchestrator waits at a start │",
+            "│  prompt                        │",
+            "│⚑ Add password reset · held  now│",
+            "│  orchestrator wake-up held     │",
+            "│⚑ Add password reset · gate     │",
+            "│  plan awaits approval · 1 task │",
+            "│⚑ Add password reset · held     │",
+            "│  hold epic:ui awaits approval ·│",
+            "│  1 task                        │",
+            "│⚑ Add password reset · held › t1│",
+            "│  blocked (human): needs a key  │",
+            "│↓ 4 more                        │",
+            "│                                │",
+            "╰──────────────────── C-b a open ╯",
         ]
     );
     let attention = Some(Color::LightMagenta);
-    assert_eq!(dot_colours(&buffer, &layout), [attention; 5]);
-    // Focused at the last alert, the window shows the last six: P2, P3 ×3, P4 ×2.
-    let mut app = every_app();
-    focus(&mut app);
-    for _ in 0..9 {
-        key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
-    }
-    let (buffer, layout) = draw_at(&app, 120, 40);
-    let green = Some(Color::Green);
-    assert_eq!(
-        dot_colours(&buffer, &layout),
-        [attention, attention, attention, attention, green, green]
-    );
+    assert_eq!(glyph_colours(&buffer, &layout), [attention; 6]);
+    let bold: Vec<bool> = glyph_cells(&buffer, &layout)
+        .into_iter()
+        .map(|cell| {
+            buffer[cell]
+                .style()
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        })
+        .collect();
+    assert_eq!(bold, [true, true, true, false, false, false], "P1 bold");
 }
 
 #[test]
-fn more_alerts_than_rows_shows_more_and_scrolls_when_focused() {
-    let mut app = every_app();
-    focus(&mut app);
-    // Focused, the first five rows are alerts and no `+k more` shows.
+fn more_alerts_than_rows_shows_more() {
+    let app = every_app();
     let (buffer, layout) = draw_at(&app, 80, 24);
     let rows = box_rows(&buffer, &layout);
-    assert!(rows.iter().all(|r| !r.contains("more")), "{rows:#?}");
-    assert_eq!(rows[1], "│● a-attn  orchestrator asks for…│");
-    // The selection walks down; the rows scroll to keep it in view, on the last row.
-    for step in 1..10 {
-        key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
-        let (buffer, layout) = draw_at(&app, 80, 24);
-        let inner = layout.alerts_inner;
-        let reversed: Vec<u16> = (inner.y..inner.y + inner.height)
-            .filter(|y| {
-                buffer[(inner.x, *y)]
-                    .modifier
-                    .contains(ratatui::style::Modifier::REVERSED)
-            })
-            .collect();
-        let expected = inner.y + (step as u16).min(inner.height - 1);
-        assert_eq!(reversed, [expected], "step {step}");
-    }
-    let (buffer, layout) = draw_at(&app, 80, 24);
+    let inner = layout.alerts_inner;
+    let last = inner.y + inner.height - 1;
     assert_eq!(
-        box_rows(&buffer, &layout),
-        [
-            "╭ Alerts (10) ───────────────────╮",
-            "│● c-held  t1 blocked (human): n…│",
-            "│● d-bare  t1 blocked (question)…│",
-            "│● e-halt  run halted: disk full │",
-            "│● f-done  ready to accept · 2/2…│",
-            "│● shop  profile proposal ready  │",
-            "╰────────────────────────────────╯",
-        ]
+        rows[usize::from(inner.height)],
+        "│↓ 7 more                        │"
+    );
+    assert_eq!(
+        buffer[(inner.x, last)].style().fg,
+        Some(theme::fg(theme::Role::Muted))
+    );
+    // In ASCII the mark is `v`.
+    let mut app = every_app();
+    app.settings.badges.ascii = true;
+    let (buffer, layout) = draw_at(&app, 80, 24);
+    let rows = box_rows(&buffer, &layout);
+    assert_eq!(
+        rows[usize::from(layout.alerts_inner.height)],
+        "|v 7 more                        |"
     );
 }
 
@@ -236,25 +240,24 @@ fn the_focused_box_has_the_focused_border_and_reversed_selection() {
         buffer[corner].style().fg,
         theme::role(theme::Role::Muted, theme::Palette::PLAIN).fg
     );
+    // Until task 6's Alerts view, `C-b a` still gives the box the keys, and so the
+    // accent (decision 1). Milestone 9.0.7 decision 10: the box draws no selection;
+    // the reversed-selection assertions move to task 6's view.
     focus(&mut app);
     key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
     let (buffer, layout) = draw_at(&app, 80, 24);
     let accent = crate::theme::role(crate::theme::Role::Accent, app.palette()).fg;
     assert_eq!(buffer[corner].style().fg, accent);
     let inner = layout.alerts_inner;
-    for x in inner.x..inner.x + inner.width - 1 {
-        assert!(
-            buffer[(x, inner.y + 1)]
-                .modifier
-                .contains(ratatui::style::Modifier::REVERSED),
-            "cell ({x}, {}) of the selected row",
-            inner.y + 1
-        );
-        assert!(
-            !buffer[(x, inner.y)]
-                .modifier
-                .contains(ratatui::style::Modifier::REVERSED)
-        );
+    for y in inner.y..inner.y + inner.height {
+        for x in inner.x..inner.x + inner.width {
+            assert!(
+                !buffer[(x, y)]
+                    .modifier
+                    .contains(ratatui::style::Modifier::REVERSED),
+                "cell ({x}, {y})"
+            );
+        }
     }
     // The status bar says so.
     assert_eq!(row(&buffer, 23), " ALERTS  j/k move  ⏎ go  esc back");
@@ -309,7 +312,7 @@ fn the_agent_list_keeps_its_rows_above_the_box() {
         assert_eq!(layout.sidebar.y + layout.sidebar.height, layout.alerts.y);
         let bottom = layout.sidebar.y + layout.sidebar.height - 1;
         assert!(row(&buffer, bottom).starts_with('╰'), "{width}x{height}");
-        assert!(row(&buffer, layout.alerts.y).starts_with("╭ Alerts"));
+        assert!(row(&buffer, layout.alerts.y).starts_with("╭ ⚑ Alerts 10 "));
         // The list and its footer sit inside the agents block.
         let list = layout.sidebar_list;
         assert!(list.y + list.height <= layout.sidebar_footer.y);
@@ -361,7 +364,7 @@ fn alert_text_is_sanitised() {
             }
             let inner = layout.alerts_inner;
             assert_lines_clean(&app, inner.width, inner.height, "hostile");
-            assert!(box_rows(&buffer, &layout)[1].starts_with("│● "), "drawn");
+            assert!(box_rows(&buffer, &layout)[1].starts_with("│⚑ "), "drawn");
         }
     }
 }
@@ -404,12 +407,18 @@ fn a_raw_alert_line_is_sanitised_by_the_box_itself() {
     let alert = crate::app::Alert {
         priority: 3,
         key: crate::app::AlertKey::Halted("r".into()),
-        label: format!("r{bad}"),
+        who: crate::app::AlertWho::Run {
+            goal: format!("g{bad}"),
+            id: format!("r{bad}"),
+        },
+        task: Some(format!("t{bad}")),
         text: format!("t{bad}"),
+        detail: bad.clone(),
+        age: Some(41),
     };
+    let app = empty_app();
     for width in [4, 20, 400] {
-        for selected in [false, true] {
-            let line = super::alert_line(&alert, width, selected, crate::theme::Palette::PLAIN);
+        for line in super::alert_lines(&app, &alert, width) {
             let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
             assert_eq!(first_hostile(&text), None, "{width}: {text:?}");
         }
@@ -449,7 +458,7 @@ fn the_status_bar_precedence_is_prefix_plan_alerts_tree() {
     );
 }
 
-/// Review: exactly as many alerts as rows show them all, with no `+<k> more`.
+/// Review: exactly as many alert lines as rows show them all, with no `↓ <k> more`.
 #[test]
 fn as_many_alerts_as_rows_show_them_all() {
     let runs = (0..6)
@@ -461,22 +470,39 @@ fn as_many_alerts_as_rows_show_them_all() {
     );
     let (buffer, layout) = draw_at(&app, 120, 40);
     let rows = box_rows(&buffer, &layout);
-    assert_eq!(rows.len(), 8, "{rows:#?}");
-    assert!(
-        rows[1..7].iter().all(|r| r.starts_with("│● h")),
-        "{rows:#?}"
-    );
+    // Six alerts of two lines: min(12, 17, 39 − R − 5) = 12 rows.
+    assert_eq!(rows.len(), 14, "{rows:#?}");
+    for (n, pair) in rows[1..13].chunks(2).enumerate() {
+        assert!(
+            pair[0].starts_with(&format!("│⚑ Add password reset · h{n} ")),
+            "{rows:#?}"
+        );
+        assert!(pair[1].starts_with("│  run halted "), "{rows:#?}");
+    }
     assert!(rows.iter().all(|r| !r.contains("more")), "{rows:#?}");
 }
 
-/// Review: a short terminal still shows one alert row (the formula's `max(1, …)`).
+/// Review: a short terminal still shows one alert: decision 9's floor of three rows
+/// holds the first alert whole (its two-line text), with no `↓ <k> more` beside it,
+/// the title having the count. Below that floor, a 4-row column, the box takes the
+/// column and shows only the count of what does not fit.
 #[test]
 fn a_short_terminal_still_shows_one_alert() {
-    for height in 5..=9 {
+    for height in 6..=9 {
         let app = every_app();
         let (buffer, layout) = draw_at(&app, 80, height);
         let rows = box_rows(&buffer, &layout);
-        assert_eq!(rows.len(), 3, "{height}: {rows:#?}");
-        assert!(rows[1].starts_with("│● a-attn"), "{height}: {rows:#?}");
+        assert_eq!(rows.len(), 5, "{height}: {rows:#?}");
+        assert!(
+            rows[1].starts_with("│⚑ Add password reset · attn"),
+            "{height}: {rows:#?}"
+        );
+        assert!(rows[3].starts_with("│  permission"), "{height}: {rows:#?}");
     }
+    let (buffer, layout) = draw_at(&every_app(), 80, 5);
+    assert_eq!(layout.sidebar.height, 0);
+    assert_eq!(
+        box_rows(&buffer, &layout)[1],
+        "│↓ 10 more                       │"
+    );
 }
