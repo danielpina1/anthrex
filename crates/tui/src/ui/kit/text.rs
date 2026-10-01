@@ -8,8 +8,8 @@ use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// `text` cut to `max` columns, ending in `…` when it was cut.
-pub(super) fn cut(text: &str, max: usize) -> String {
+/// `text` cut to `max` columns, ending in `ellipsis` when it was cut.
+pub(super) fn cut(text: &str, max: usize, ellipsis: &str) -> String {
     if text.width() <= max {
         return text.to_string();
     }
@@ -17,14 +17,14 @@ pub(super) fn cut(text: &str, max: usize) -> String {
     let mut used = 0;
     for g in text.graphemes(true) {
         let w = g.width();
-        if used + w + 1 > max {
+        if used + w + ellipsis.width() > max {
             break;
         }
         out.push_str(g);
         used += w;
     }
-    if max > 0 {
-        out.push('…');
+    if max >= ellipsis.width() {
+        out.push_str(ellipsis);
     }
     out
 }
@@ -118,7 +118,7 @@ pub fn text_area(area: &TextArea, rows: u16, width: u16, p: Palette) -> Vec<Line
     let top = (cursor_at.0 + 1).saturating_sub(rows);
     let above = top;
     let below = visual.len().saturating_sub(top + rows);
-    let (up, down) = scroll_marks(above, below, false);
+    let (up, down) = scroll_marks(above, below, p.ascii);
     let muted = role(Role::Muted, p);
     let mut out = Vec::new();
     if let Some(mark) = up {

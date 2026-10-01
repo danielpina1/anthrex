@@ -70,6 +70,7 @@ fn rendering_keeps_the_cursor_row_visible() {
     let p = crate::theme::Palette {
         accent: Color::Blue,
         truecolor: false,
+        ascii: false,
     };
     let mut a = TextArea::new();
     for i in 0..12 {
@@ -95,6 +96,7 @@ fn a_short_text_pads_to_the_rows_and_a_long_line_wraps() {
     let p = crate::theme::Palette {
         accent: Color::Blue,
         truecolor: false,
+        ascii: false,
     };
     let mut a = TextArea::new();
     a.on_paste("abcdefghij");

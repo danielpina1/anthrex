@@ -9,9 +9,9 @@ mod hints;
 mod rows;
 mod text;
 
-pub use dialog::{choice, dialog_area, dialog_frame};
+pub use dialog::{choice, choice_in, dialog_area, dialog_frame};
 pub use hints::{Hint, hints};
-pub use rows::{labelled_rows, run_name, scroll_marks};
+pub use rows::{labelled_rows, run_name, run_name_in, scroll_marks};
 pub use text::text_area;
 
 /// Dialog text wraps at this many columns (decision 5).

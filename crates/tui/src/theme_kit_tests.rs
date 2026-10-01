@@ -18,6 +18,7 @@ fn every_role_is_ansi_when_truecolor_is_off() {
     let p = Palette {
         accent: Color::Rgb(1, 2, 3),
         truecolor: false,
+        ascii: false,
     };
     for r in ROLES {
         let fg = role(r, p).fg.expect("a role has a foreground");
@@ -70,6 +71,7 @@ fn truecolor_roles_use_the_configured_accent_and_the_decision_colours() {
     let p = Palette {
         accent,
         truecolor: true,
+        ascii: false,
     };
     assert_eq!(role(Role::Accent, p).fg, Some(accent));
     assert_eq!(
@@ -94,6 +96,7 @@ fn attention_is_bold_and_the_ansi_table_is_decision_1s() {
         let p = Palette {
             accent: Color::Rgb(1, 2, 3),
             truecolor,
+            ascii: false,
         };
         assert!(
             role(Role::Attention, p)
@@ -105,6 +108,7 @@ fn attention_is_bold_and_the_ansi_table_is_decision_1s() {
     let p = Palette {
         accent: Color::Rgb(1, 2, 3),
         truecolor: false,
+        ascii: false,
     };
     let fgs: Vec<_> = ROLES.iter().map(|r| role(*r, p).fg).collect();
     assert_eq!(

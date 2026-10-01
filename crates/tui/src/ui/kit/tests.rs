@@ -1,3 +1,4 @@
+use super::text_area as kit_text_area;
 use super::*;
 use crate::theme::Palette;
 use ratatui::buffer::Buffer;
@@ -8,6 +9,7 @@ use ratatui::widgets::Widget;
 const P: Palette = Palette {
     accent: Color::Blue,
     truecolor: false,
+    ascii: false,
 };
 
 fn text(line: &ratatui::text::Line) -> String {
@@ -170,4 +172,62 @@ fn scroll_marks_read_up_and_down_n_more() {
 #[test]
 fn choice_wraps_in_guillemets() {
     assert_eq!(choice("info"), "‹ info ›");
+}
+
+const A: Palette = Palette {
+    accent: Color::Blue,
+    truecolor: false,
+    ascii: true,
+};
+
+#[test]
+fn ascii_mode_has_a_twin_for_every_kit_glyph() {
+    assert_eq!(choice_in("info", A), "< info >");
+    assert_eq!(choice_in("info", P), "‹ info ›");
+    assert_eq!(
+        run_name_in("Add a multiply function to crate a", "add-a-0723", 20, A),
+        "Add a mult... - 0723"
+    );
+    assert_eq!(
+        run_name_in("Add mul()", "x-0723", 40, A),
+        "Add mul() - 0723"
+    );
+}
+
+#[test]
+fn a_full_kit_render_in_ascii_mode_is_ascii() {
+    let mut area = crate::text_area::TextArea::new();
+    for i in 0..12 {
+        area.on_paste(&format!("line{i}\n"));
+    }
+    let mut lines = kit_text_area(&area, 4, 30, A);
+    lines.push(hints(80, &[h("y", "accept", 1), h("esc", "back", 0)], A));
+    lines.extend(labelled_rows(&[("k".into(), "v".into())], 30, A));
+    lines.push(ratatui::text::Line::from(choice_in("on", A)));
+    lines.push(ratatui::text::Line::from(run_name_in(
+        "Goal that is long",
+        "a-0001",
+        12,
+        A,
+    )));
+    assert_eq!(text(&lines[0]), "^ 9 more");
+    for l in &lines {
+        assert!(text(l).is_ascii(), "{:?}", text(l));
+    }
+    let mut buf = Buffer::empty(Rect::new(0, 0, 20, 3));
+    dialog_frame("discard", true, A).render(buf.area, &mut buf);
+    for y in 0..3 {
+        for x in 0..20 {
+            assert!(buf[(x, y)].symbol().is_ascii());
+        }
+    }
+}
+
+#[test]
+fn text_area_render_is_free_of_hostile_characters() {
+    let mut area = crate::text_area::TextArea::new();
+    area.on_paste(&crate::safe_text::tests::hostile_text());
+    for l in kit_text_area(&area, 4, 60, P) {
+        assert_eq!(crate::safe_text::tests::first_hostile(&text(&l)), None);
+    }
 }

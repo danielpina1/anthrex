@@ -38,12 +38,25 @@ pub fn labelled_rows(rows: &[(String, String)], width: u16, p: Palette) -> Vec<L
 /// `<goal> · <short>`: the goal cut with `…` so the whole name fits `width`, then the
 /// run id's last four characters.
 pub fn run_name(goal: &str, id: &str, width: u16) -> String {
+    name_with(goal, id, width, "·", "…")
+}
+
+/// [`run_name`] honouring the palette's `ascii` flag: `-` and `...` in ASCII.
+pub fn run_name_in(goal: &str, id: &str, width: u16, p: Palette) -> String {
+    if p.ascii {
+        name_with(goal, id, width, "-", "...")
+    } else {
+        run_name(goal, id, width)
+    }
+}
+
+fn name_with(goal: &str, id: &str, width: u16, sep: &str, ellipsis: &str) -> String {
     let id = one_line(id);
     let chars: Vec<char> = id.chars().collect();
     let short: String = chars[chars.len().saturating_sub(4)..].iter().collect();
-    let suffix = format!(" · {short}");
+    let suffix = format!(" {sep} {short}");
     let room = usize::from(width).saturating_sub(suffix.width());
-    format!("{}{suffix}", cut(one_line(goal).trim(), room))
+    format!("{}{suffix}", cut(one_line(goal).trim(), room, ellipsis))
 }
 
 /// `↑ n more` and `↓ n more` (`^`, `v` in ASCII); `None` for a side with nothing.

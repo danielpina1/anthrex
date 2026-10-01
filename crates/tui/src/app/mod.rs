@@ -287,6 +287,7 @@ impl App {
         crate::theme::Palette {
             accent: self.settings.accent,
             truecolor: self.settings.truecolor,
+            ascii: self.settings.badges.ascii,
         }
     }
 

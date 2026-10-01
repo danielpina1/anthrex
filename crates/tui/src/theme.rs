@@ -187,6 +187,8 @@ pub enum Role {
 pub struct Palette {
     pub accent: Color,
     pub truecolor: bool,
+    /// ASCII-only glyphs (`UiSettings.badges.ascii`): every kit widget honours it.
+    pub ascii: bool,
 }
 
 /// A role's style. With truecolor off every role is one of the 16 ANSI colours,

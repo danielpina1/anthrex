@@ -28,8 +28,23 @@ pub fn dialog_frame(title: &str, destructive: bool, p: Palette) -> Block<'static
     } else {
         Role::Accent
     };
+    let set = if p.ascii {
+        ratatui::symbols::border::Set {
+            top_left: "+",
+            top_right: "+",
+            bottom_left: "+",
+            bottom_right: "+",
+            vertical_left: "|",
+            vertical_right: "|",
+            horizontal_top: "-",
+            horizontal_bottom: "-",
+        }
+    } else {
+        ratatui::symbols::border::PLAIN
+    };
     Block::default()
         .borders(Borders::ALL)
+        .border_set(set)
         .border_style(role(Role::Accent, p))
         .padding(Padding::horizontal(1))
         .title(Span::styled(
@@ -41,4 +56,13 @@ pub fn dialog_frame(title: &str, destructive: bool, p: Palette) -> Block<'static
 /// A choice field's value: `‹ value ›`.
 pub fn choice(value: &str) -> String {
     format!("‹ {} ›", one_line(value))
+}
+
+/// [`choice`] honouring the palette's `ascii` flag: `< value >` in ASCII.
+pub fn choice_in(value: &str, p: Palette) -> String {
+    if p.ascii {
+        format!("< {} >", one_line(value))
+    } else {
+        choice(value)
+    }
 }
