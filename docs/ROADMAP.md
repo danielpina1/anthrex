@@ -1,19 +1,20 @@
 # anthrex roadmap
 
-anthrex is built in eighteen milestones. Milestones 1 to 6.5, 8a, 8b and 8c are merged, and milestones 9 and 9.0.5 are done. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
+anthrex is built in twenty milestones. Milestones 1 to 6.5, 8a, 8b and 8c are merged, and milestones 9, 9.0.5 and 9.1 are done. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
 
 The design is layered, newest first:
 
-0. `docs/superpowers/specs/2026-09-26-tiered-testing-and-pr-delivery-design.md` — milestones 9.1 and 9.2: tiered testing and stacked-PR delivery, plus orchestrator-to-worker messaging (its §12), which joins milestone 9. Amends the adaptive orchestrator spec below; its §11 lists exactly what it replaces. Where the two disagree, it wins.
-1. `docs/superpowers/specs/2026-09-22-adaptive-orchestrator-design.md` — milestones 8a, 8b, 8c, 9 and 9.5: the adaptive orchestrator. Replaces the orchestration parts of every document below (its §18 lists exactly what), and replaces the old milestone 8 and 9 briefs.
-2. `docs/superpowers/specs/2026-09-21-agent-conversation-view-design.md` — milestone 6.5: the structured conversation model and its view. Amends milestone 8's scope and milestone 9's plan gate. Where it disagrees with anything below, it wins.
-3. `docs/superpowers/specs/2026-09-21-node-inspector-design.md` — milestone 4.7: the panel below the graph. Amends the document below.
-4. `docs/superpowers/specs/2026-09-20-graph-overview-design.md` — milestone 4.6: the drawn graph overview and sub-agent labels. Amends §5.1 and §10.3 of the product design below.
-5. `docs/superpowers/specs/2026-09-20-git-surface-and-simple-orchestration-design.md` — milestone 4.5, and the cut-down scope of milestones 8 and 9. Where it disagrees with the document below, it wins.
-6. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
-7. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
+0. `docs/superpowers/specs/2026-10-01-tui-end-to-end-design.md` — milestones 9.0.6 and 9.0.7: the TUI end to end (the daemon-computed action menu, its forms and confirmation pages, the Profile and Settings screens, run stats, the settings protocol and live reload) and a design kit, then the polish of every existing screen to that kit. Builds on the milestone 9.0.5 brief and the adaptive orchestrator spec; where they disagree on a TUI matter, it wins.
+1. `docs/superpowers/specs/2026-09-26-tiered-testing-and-pr-delivery-design.md` — milestones 9.1 and 9.2: tiered testing and stacked-PR delivery, plus orchestrator-to-worker messaging (its §12), which joins milestone 9. Amends the adaptive orchestrator spec below; its §11 lists exactly what it replaces. Where the two disagree, it wins.
+2. `docs/superpowers/specs/2026-09-22-adaptive-orchestrator-design.md` — milestones 8a, 8b, 8c, 9 and 9.5: the adaptive orchestrator. Replaces the orchestration parts of every document below (its §18 lists exactly what), and replaces the old milestone 8 and 9 briefs.
+3. `docs/superpowers/specs/2026-09-21-agent-conversation-view-design.md` — milestone 6.5: the structured conversation model and its view. Amends milestone 8's scope and milestone 9's plan gate. Where it disagrees with anything below, it wins.
+4. `docs/superpowers/specs/2026-09-21-node-inspector-design.md` — milestone 4.7: the panel below the graph. Amends the document below.
+5. `docs/superpowers/specs/2026-09-20-graph-overview-design.md` — milestone 4.6: the drawn graph overview and sub-agent labels. Amends §5.1 and §10.3 of the product design below.
+6. `docs/superpowers/specs/2026-09-20-git-surface-and-simple-orchestration-design.md` — milestone 4.5, and the cut-down scope of milestones 8 and 9. Where it disagrees with the document below, it wins.
+7. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
+8. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
-The protocol version is **10** once milestone 9 merges, raised from 9 (milestone 8c's) by milestone 9, **11** once milestone 9.0.5 merges, raised from 10 by milestone 9.0.5, and **12** once milestone 9.1 merges, raised from 11 by milestone 9.1 (`crates/proto/src/lib.rs`). Protocol numbers written in the milestone 9.2 to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 9.2's brief says 12, and becomes 13.
+The protocol version is **10** once milestone 9 merges, raised from 9 (milestone 8c's) by milestone 9, **11** once milestone 9.0.5 merges, raised from 10 by milestone 9.0.5, **12** once milestone 9.1 merges, raised from 11 by milestone 9.1, and **13** once milestone 9.0.6 merges, raised from 12 by milestone 9.0.6 (`crates/proto/src/lib.rs`). Milestone 9.0.7 changes no message and stays at 13. Protocol numbers written in the milestone 9.2 to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 9.2's brief says 12, and becomes **14**.
 
 ## What anthrex does when all milestones are done
 
@@ -47,10 +48,12 @@ The protocol version is **10** once milestone 9 merges, raised from 9 (milestone
 | 9 | Orchestrator and sub-planners: planning, steering, plan gate, worker messaging and refresh, role-routing history, TUI goal start | `docs/milestones/M9-orchestrator-and-subplanners.md` | 8a, 8b, 8c | `done` |
 | 9.0.5 | Plan review screen, the Alerts box, and the task panel's goal, live status and result | `docs/milestones/M9.0.5-plan-review-and-alerts.md` | 9 | `done` |
 | 9.1 | Tiered testing: affected-set tiers, test scheduler, result cache, flake handling, bisect, stages | `docs/milestones/M9.1-tiered-testing.md` | 9, 9.0.5 | `done` |
-| 9.2 | Stacked-PR delivery: CI and review comments become fix tasks; anthrex never merges | `docs/milestones/M9.2-pr-delivery.md` | 9.1 | `ready` |
+| 9.0.6 | TUI end to end: design kit, daemon-computed action menu with forms and confirmation pages, Profile and Settings screens, run stats, settings protocol and live reload | `docs/milestones/M9.0.6-tui-end-to-end.md` | 9.1 | `ready` |
+| 9.0.7 | TUI polish: every existing screen moved to the 9.0.6 design kit (alerts, task panel, run view, plan review, sidebar, status bar, help, dialogs) | `docs/milestones/M9.0.7-tui-polish.md` (not written yet; written after 9.0.6 merges, from spec §6) | 9.0.6 | `blocked` |
+| 9.2 | Stacked-PR delivery: CI and review comments become fix tasks; anthrex never merges | `docs/milestones/M9.2-pr-delivery.md` | 9.0.7 | `blocked` |
 | 9.5 | Tuning: adaptive concurrency, threshold and budget refit, race and test-writer patterns | `docs/milestones/M9.5-tuning.md` | 9.2 | `blocked` |
 
-Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.0.5 → 9.1 → 9.2 → 9.5**, then 7. Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
+Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.0.5 → 9.1 → 9.0.6 → 9.0.7 → 9.2 → 9.5**, then 7. Milestones 9.0.6 and 9.0.7 go before the rest of 9.2 by the user's choice (spec `2026-10-01-tui-end-to-end-design.md` §0). Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
 
 Only one milestone should be in progress at a time: they all touch the protocol and the client state.
 
@@ -74,7 +77,9 @@ flowchart LR
   M8c --> M9
   M9 --> M905[9.0.5 Plan review and alerts]
   M905 --> M91[9.1 Tiered testing]
-  M91 --> M92[9.2 Stacked-PR delivery]
+  M91 --> M906[9.0.6 TUI end to end]
+  M906 --> M907[9.0.7 TUI polish]
+  M907 --> M92[9.2 Stacked-PR delivery]
   M92 --> M95[9.5 Tuning]
 ```
 
