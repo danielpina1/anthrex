@@ -523,21 +523,14 @@ fn open_conversation_and_review_plan_act_locally() {
     );
 }
 
-/// Until tasks 11 and 15, the input forms and the stats screen toast `not yet`.
+/// Until task 15, the stats screen toasts `not yet` (the input forms are task 11's).
 #[test]
-fn input_kinds_and_stats_are_not_yet() {
+fn stats_is_not_yet() {
     let mut app = running_app();
-    app.open_actions(
-        (RUN_ID.into(), ActionTarget::Task("t1".into())),
-        Some(ActionKind::Answer),
-    );
-    assert!(tap(&mut app, KeyCode::Enter).is_empty());
-    assert_eq!(app.toast_text(), Some("not yet"));
-    assert_eq!(flow(&app).step, ActionStep::Menu);
-    app.modal = None;
     app.open_actions((RUN_ID.into(), ActionTarget::Run), Some(ActionKind::Stats));
     assert!(tap(&mut app, KeyCode::Enter).is_empty());
     assert_eq!(app.toast_text(), Some("not yet"));
+    assert_eq!(flow(&app).step, ActionStep::Menu);
 }
 
 /// No key in the menu, on any page, sends terminal input.

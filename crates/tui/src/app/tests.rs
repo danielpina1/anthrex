@@ -77,6 +77,12 @@ mod actions_accept;
 #[path = "../app_tests/actions_replies.rs"]
 mod actions_replies;
 
+#[path = "../app_tests/action_forms.rs"]
+mod action_forms;
+
+#[path = "../app_tests/alerts_menu.rs"]
+mod alerts_menu;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

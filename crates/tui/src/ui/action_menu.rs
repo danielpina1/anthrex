@@ -258,6 +258,11 @@ pub fn render(frame: &mut Frame, app: &App, flow: &ActionFlow, area: Rect) {
             false,
             menu_body(app, flow, width, rows, p),
         ),
+        ActionStep::Form(form) => (
+            crate::ui::action_forms::title(form),
+            false,
+            crate::ui::action_forms::body(form, width, p),
+        ),
         ActionStep::Confirm(page) => (
             page.info.label.clone(),
             page.info.destructive || page.info.kind.destructive(),

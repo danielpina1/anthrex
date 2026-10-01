@@ -4,6 +4,9 @@
 //! tagged request on `y` (or Enter, unless the action is destructive-grade) and records
 //! it in `App.replies`. The menu re-reads its node after every snapshot. Pure.
 
+#[path = "action_forms.rs"]
+pub(crate) mod forms;
+
 use super::replies::{PendingWhat, reply_timeout};
 use super::{App, Effect, Modal, ToastLevel};
 use crate::actions_request::{
@@ -12,6 +15,7 @@ use crate::actions_request::{
 use crate::theme::{Glyph, glyph};
 use crate::tree::NodeKey;
 use crossterm::event::{KeyCode, KeyEvent};
+use forms::ActionForm;
 use proto::{
     ActionInfo, ActionKind, ActionNeeds, AgentRole, BaseMovedInfo, FinishAction, FullState,
     HoldState, RunInfo, RunRequest, RunState, TaskInfo, TaskState,
@@ -32,6 +36,8 @@ pub struct ActionFlow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionStep {
     Menu,
+    /// Decision 15: an input form; Enter goes to its page, Esc back to the menu.
+    Form(Box<ActionForm>),
     Confirm(ConfirmPage),
     MovedBase(MovedBasePage),
 }
@@ -41,6 +47,8 @@ pub enum ActionStep {
 pub struct ConfirmPage {
     pub info: ActionInfo,
     pub details: Vec<(String, String)>,
+    /// The form this page confirms: what it sends, and where Esc goes back to.
+    pub form: Option<Box<ActionForm>>,
 }
 
 impl ConfirmPage {
@@ -271,7 +279,7 @@ impl App {
         self.open_actions(target, None)
     }
 
-    fn page_of(&self, flow: &ActionFlow, info: ActionInfo) -> ConfirmPage {
+    pub(super) fn page_of(&self, flow: &ActionFlow, info: ActionInfo) -> ConfirmPage {
         let details = self
             .runs
             .runs
@@ -279,7 +287,11 @@ impl App {
             .find(|r| r.run_id == flow.run_id)
             .map(|run| confirm_details(run, &info.kind, self.settings.badges.ascii))
             .unwrap_or_default();
-        ConfirmPage { info, details }
+        ConfirmPage {
+            info,
+            details,
+            form: None,
+        }
     }
 
     /// `Modal::Action`'s keys; the modal was taken out, and is put back unless the key
@@ -288,11 +300,20 @@ impl App {
         if flow.step == ActionStep::Menu {
             return self.on_menu_key(flow, key);
         }
+        match std::mem::replace(&mut flow.step, ActionStep::Menu) {
+            ActionStep::Form(form) => {
+                self.on_form_key(&mut flow, form, key);
+                self.modal = Some(Modal::Action(Box::new(flow)));
+                return vec![];
+            }
+            other => flow.step = other,
+        }
         let effects = match &mut flow.step {
-            ActionStep::Menu => vec![],
+            ActionStep::Menu | ActionStep::Form(_) => vec![],
             ActionStep::Confirm(page) => match key.code {
                 KeyCode::Esc => {
-                    flow.step = ActionStep::Menu;
+                    let form = page.form.take();
+                    flow.step = form.map_or(ActionStep::Menu, ActionStep::Form);
                     vec![]
                 }
                 KeyCode::Enter if page.y_only() => {
@@ -302,9 +323,21 @@ impl App {
                 }
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                     let info = page.info.clone();
-                    let request = self.run_of(&flow).and_then(|run| {
-                        request_for(run, &flow.target, &info.kind, &ActionInput::None)
-                    });
+                    let input = match &page.form {
+                        Some(form) => form.input(),
+                        None => Ok(ActionInput::None),
+                    };
+                    let input = match input {
+                        Ok(input) => input,
+                        Err(why) => {
+                            self.toast_at(ToastLevel::Warn, why);
+                            self.modal = Some(Modal::Action(Box::new(flow)));
+                            return vec![];
+                        }
+                    };
+                    let request = self
+                        .run_of(&flow)
+                        .and_then(|run| request_for(run, &flow.target, &info.kind, &input));
                     match request {
                         Some(request) => match self.send_action(&flow, &info, request) {
                             Some(effects) => return effects,
@@ -372,8 +405,11 @@ impl App {
                                 flow.step = ActionStep::Confirm(self.page_of(&flow, info));
                             }
                             ActionNeeds::Open => return self.act_locally(flow, info.kind),
-                            // Task 11 builds the forms.
-                            ActionNeeds::Input(_) => self.toast("not yet"),
+                            ActionNeeds::Input(kind) => {
+                                let effects = self.open_form(&mut flow, info, kind);
+                                self.modal = Some(Modal::Action(Box::new(flow)));
+                                return effects;
+                            }
                         }
                     }
                 }
@@ -469,19 +505,30 @@ impl App {
         flow.items = items;
         let current = match &flow.step {
             ActionStep::Menu => None,
+            ActionStep::Form(form) => Some(form.info().clone()),
             ActionStep::Confirm(page) => Some(page.info.clone()),
             ActionStep::MovedBase(page) => Some(page.info.clone()),
         };
         if let Some(old) = current {
             match flow.items.iter().find(|a| a.kind == old.kind).cloned() {
-                Some(info) => {
-                    if let ActionStep::MovedBase(page) = &mut flow.step {
-                        page.info = info;
-                    } else {
-                        let page = self.page_of(&flow, info);
+                Some(info) => match &mut flow.step {
+                    ActionStep::MovedBase(page) => page.info = info,
+                    ActionStep::Form(form) => form.set_info(info),
+                    _ => {
+                        let form = match &mut flow.step {
+                            ActionStep::Confirm(page) => page.form.take(),
+                            _ => None,
+                        };
+                        let mut page = self.page_of(&flow, info);
+                        if let Some(mut form) = form {
+                            form.set_info(page.info.clone());
+                            page.details
+                                .extend(form.details(self.settings.badges.ascii));
+                            page.form = Some(form);
+                        }
                         flow.step = ActionStep::Confirm(page);
                     }
-                }
+                },
                 None => {
                     flow.step = ActionStep::Menu;
                     let text = format!("{} is no longer available", old.label);

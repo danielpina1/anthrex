@@ -45,6 +45,11 @@ impl App {
                 Modal::NewAgent(form) => form.on_paste(&text),
                 Modal::EditTask(form) => form.on_paste(&text),
                 Modal::StartGoal(form) => form.on_paste(&text),
+                Modal::Action(flow) => {
+                    if let super::actions::ActionStep::Form(form) = &mut flow.step {
+                        form.on_paste(&text);
+                    }
+                }
                 _ => {}
             }
             return vec![];

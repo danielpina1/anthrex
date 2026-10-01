@@ -47,6 +47,8 @@ pub enum PendingWhat {
         target: ActionTarget,
         kind: ActionKind,
     },
+    /// The answer form's `TaskDetail` (decision 15): fills its brief rows.
+    FormBrief { run_id: String, task_id: String },
 }
 
 /// One request waiting for its reply.
@@ -74,6 +76,10 @@ impl PendingReplies {
                 timeout,
             },
         );
+    }
+
+    pub fn peek(&self, id: u64) -> Option<&PendingWhat> {
+        self.by_id.get(&id).map(|p| &p.what)
     }
 
     pub fn contains(&self, id: u64) -> bool {
@@ -108,6 +114,9 @@ impl App {
     /// and is handled; `None` leaves it to `on_run_reply`'s own arms (a late reply
     /// among them, which is still shown).
     pub(super) fn route_reply(&mut self, reply: &RunReply) -> Option<Vec<Effect>> {
+        if let Some(effects) = self.route_form_reply(reply) {
+            return Some(effects);
+        }
         match reply {
             RunReply::Done {
                 message,

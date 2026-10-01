@@ -4,8 +4,8 @@
 use super::alerts::{every_app, every_source};
 use super::runs::{app_with_runs, deliver};
 use super::*;
-use crate::app::{AlertKey, ReviewTarget, TreeInput};
-use crate::tree::NodeKey;
+use crate::actions_request::ActionTarget;
+use crate::app::AlertKey;
 use crate::tree::run_fixtures::snapshot;
 use proto::RunState;
 
@@ -128,17 +128,18 @@ fn enter_on_each_priority() {
     assert_eq!(app.alerts_focus, None);
     assert!(!app.keymap.alerts_mode());
 
-    // P2: the review on that gate, and on that hold.
+    // P2 (decision 17, task 11): the menu on that gate's run and on that hold's run,
+    // not the review itself; the plan review opens from its `review plan` entry.
+    let menu = |app: &App| match &app.modal {
+        Some(Modal::Action(flow)) => (flow.run_id.clone(), flow.target.clone(), flow.selected),
+        other => panic!("no menu: {other:?}"),
+    };
     let mut app = every_app();
     select_alert(&mut app, &AlertKey::Gate("b-gate".into()));
     assert!(tap(&mut app, KeyCode::Enter).is_empty());
-    let review = app.plan_review.as_ref().expect("the review is open");
-    assert_eq!(
-        (review.run_id.as_str(), &review.target),
-        ("b-gate", &ReviewTarget::Gate)
-    );
-    assert!(app.keymap.review_mode());
-    assert!(!app.keymap.alerts_mode());
+    assert_eq!(menu(&app), ("b-gate".into(), ActionTarget::Run, 0));
+    assert!(app.plan_review.is_none());
+    assert_eq!(app.alerts_focus, None);
     let hold_key = AlertKey::Hold {
         run: "c-held".into(),
         hold: "epic:ui".into(),
@@ -146,11 +147,10 @@ fn enter_on_each_priority() {
     let mut app = every_app();
     select_alert(&mut app, &hold_key);
     assert!(tap(&mut app, KeyCode::Enter).is_empty());
-    let review = app.plan_review.as_ref().expect("the review is open");
-    assert_eq!(review.target, ReviewTarget::Hold("epic:ui".into()));
-    assert_eq!(review.selected.as_deref(), Some("t5"));
+    assert_eq!(menu(&app), ("c-held".into(), ActionTarget::Run, 0));
+    assert!(app.plan_review.is_none());
 
-    // P3: the run view with the task selected; a halted run's root.
+    // P3: the menu on the blocked task, and on the halted run.
     let mut app = every_app();
     select_alert(
         &mut app,
@@ -161,35 +161,22 @@ fn enter_on_each_priority() {
     );
     assert!(tap(&mut app, KeyCode::Enter).is_empty());
     assert_eq!(
-        app.run_view.as_ref().map(|v| v.run_id.as_str()),
-        Some("d-bare")
+        menu(&app),
+        ("d-bare".into(), ActionTarget::Task("t1".into()), 0)
     );
-    assert_eq!(
-        app.tree.selected,
-        Some(NodeKey::Task {
-            run: "d-bare".into(),
-            id: "t1".into()
-        })
-    );
-    assert_eq!(app.tree_input, Some(TreeInput::Navigate));
+    assert_eq!(app.run_view, None);
     let mut app = every_app();
     select_alert(&mut app, &AlertKey::Halted("e-halt".into()));
     assert!(tap(&mut app, KeyCode::Enter).is_empty());
-    assert_eq!(
-        app.run_view.as_ref().map(|v| v.run_id.as_str()),
-        Some("e-halt")
-    );
-    assert_eq!(app.tree.selected, Some(NodeKey::Run("e-halt".into())));
+    assert_eq!(menu(&app), ("e-halt".into(), ActionTarget::Run, 0));
+    assert_eq!(app.run_view, None);
 
-    // P4: the run view on the run; a proposal toasts.
+    // P4: the menu on the run; a proposal toasts.
     let mut app = every_app();
     select_alert(&mut app, &AlertKey::Accept("f-done".into()));
     assert!(tap(&mut app, KeyCode::Enter).is_empty());
-    assert_eq!(
-        app.run_view.as_ref().map(|v| v.run_id.as_str()),
-        Some("f-done")
-    );
-    assert_eq!(app.tree.selected, Some(NodeKey::Run("f-done".into())));
+    assert_eq!(menu(&app), ("f-done".into(), ActionTarget::Run, 0));
+    assert_eq!(app.run_view, None);
     let mut app = every_app();
     select_alert(&mut app, &AlertKey::Proposal("/r/shop".into()));
     assert!(tap(&mut app, KeyCode::Enter).is_empty());
