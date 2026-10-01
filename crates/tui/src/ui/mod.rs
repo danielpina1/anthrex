@@ -4,6 +4,7 @@ pub mod alerts;
 pub mod badge;
 pub mod conversation;
 pub mod dialog;
+pub mod kit;
 pub mod modal;
 pub mod overview;
 pub mod plan_review;

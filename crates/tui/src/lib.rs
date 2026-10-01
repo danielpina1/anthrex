@@ -15,6 +15,7 @@ pub mod run_goal;
 pub mod safe_text;
 pub mod settings;
 pub mod spawn;
+pub mod text_area;
 pub mod theme;
 pub mod tree;
 mod tree_input;
