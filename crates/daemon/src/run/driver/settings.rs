@@ -27,7 +27,7 @@ use crate::live_config::LiveSettings;
 pub const WRITE_TIMEOUT_TEXT: &str = "config.toml was not written within 5 s; nothing changed";
 
 /// A save that had begun renaming when the timeout fired (Task 9 notes).
-pub const WRITE_UNKNOWN_TEXT: &str = "config.toml was still being written after 5 s; if the write completes, new runs use the new settings (open settings again to see what config.toml holds)";
+pub const WRITE_UNKNOWN_TEXT: &str = "config.toml was still being written after 5 s; if the write completes, new runs use the new settings";
 
 fn reply(reply: SettingsReply) -> RunReply {
     RunReply::Settings {

@@ -125,9 +125,8 @@ impl RunService {
                 let deciders = &adaptation.deciders;
                 let id = match record {
                     Some((op, tasks)) if deciders.mode != proto::DeciderMode::Off => {
-                        let roster = &adaptation.scouts.context().roster.current();
                         let at = (op, tasks.as_slice());
-                        self.decider_dispatched(ctx, at, (roster, &deciders.route), &request)
+                        self.decider_dispatched(ctx, at, &deciders.route, &request)
                             .await
                     }
                     _ => None,
@@ -164,19 +163,21 @@ impl RunService {
     /// Decision 43: a run-bound decider's record, built under the engine's lock (pure),
     /// with the full candidate snapshot (review I-2), and kept by the engine before the
     /// call: the engine answers once the step that keeps it was saved (review M-2). No
-    /// lock is held across the wait. Its record id, and whether it was kept.
+    /// lock is held across the wait. Its record id, and whether it was kept. The
+    /// candidates come from the roster the run froze (milestone 9.0.6 decision 29: a
+    /// settings save leaves a running run untouched, its records included).
     async fn decider_dispatched(
         &self,
         ctx: &OpCtx,
         (op, tasks): (OpId, &[String]),
-        (roster, route): (&[proto::ModelEntry], &proto::Route),
+        route: &proto::Route,
         request: &DeciderRequest,
     ) -> Option<(String, Result<(), String>)> {
         let strength = self.ctx.settings.current().orchestrator.deciders.strength;
         let decision = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
             let session = (op.to_string(), request.kind().label());
             let input = roles::input_of(run);
-            let candidates = roles::decider_candidates(roster, route, strength);
+            let candidates = roles::decider_candidates(&run.roster, route, strength);
             let at = super::unix_now();
             let chosen = (route, candidates);
             roles::decider_record(Some(run), (&session.0, session.1), tasks, chosen, input, at)

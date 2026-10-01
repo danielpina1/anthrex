@@ -1,6 +1,6 @@
 //! Milestone 9.0.6 decision 29: the daemon's live `[orchestrator]` settings. A Settings
-//! save swaps the settings-owned fields of the value new runs, goals, promotions and the
-//! onboarding scout read; every other key stays as the daemon loaded it at start, and a
+//! save swaps the settings-owned fields of the value new runs, goals and the onboarding
+//! scout read; every other key stays as the daemon loaded it at start, and a
 //! running run keeps the roster and limits it froze at build.
 //!
 //! **Lock.** `inner` is a `std::sync::Mutex<Arc<Live>>`, taken with `crate::lock` only to

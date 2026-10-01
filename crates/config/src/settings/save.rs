@@ -22,8 +22,9 @@ pub struct Saved {
 
 /// Blocking: [`super::validate`], read, [`super::edit_text`], temporary file, fsync,
 /// `cancel` check, rename, fsync the directory. The check swaps `cancel` to `true`, so
-/// exactly one of this save and a caller that swaps it later reads `false`. A missing file (and its directory) is
-/// created. On any refusal the file is untouched and no temporary file is left.
+/// exactly one of this save and a caller that swaps it later reads `false`. A missing
+/// file (and its directory) is created. On any refusal the file is untouched and no
+/// temporary file is left.
 pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved, Vec<String>> {
     let problems = super::validate(doc);
     if !problems.is_empty() {

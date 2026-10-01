@@ -295,6 +295,11 @@ async fn a_put_whose_rename_had_begun_reports_the_outcome_unknown_and_lands() {
             problems: vec![WRITE_UNKNOWN_TEXT.into()]
         }
     );
+    // The exact text (Exact user-visible text): no advice to reopen Settings.
+    assert_eq!(
+        WRITE_UNKNOWN_TEXT,
+        "config.toml was still being written after 5 s; if the write completes, new runs use the new settings"
+    );
     release.store(true, Ordering::SeqCst);
     wait_for("the late save to be applied", LAND_WAIT, || {
         live_doc(&s) == doc
