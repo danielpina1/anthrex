@@ -125,7 +125,7 @@ impl RunService {
                 let deciders = &adaptation.deciders;
                 let id = match record {
                     Some((op, tasks)) if deciders.mode != proto::DeciderMode::Off => {
-                        let roster = &adaptation.scouts.context().roster;
+                        let roster = &adaptation.scouts.context().roster.current();
                         let at = (op, tasks.as_slice());
                         self.decider_dispatched(ctx, at, (roster, &deciders.route), &request)
                             .await
@@ -172,7 +172,7 @@ impl RunService {
         (roster, route): (&[proto::ModelEntry], &proto::Route),
         request: &DeciderRequest,
     ) -> Option<(String, Result<(), String>)> {
-        let strength = self.ctx.orchestrator.deciders.strength;
+        let strength = self.ctx.settings.current().orchestrator.deciders.strength;
         let decision = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
             let session = (op.to_string(), request.kind().label());
             let input = roles::input_of(run);

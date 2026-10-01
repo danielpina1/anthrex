@@ -137,7 +137,7 @@ async fn a_planner_session_runs_on_the_scout_machine_and_is_accepted() {
     let scouts: Arc<ScoutService> = ScoutService::new(
         manager.clone(),
         ScoutContext {
-            roster: orchestrator.models.clone(),
+            roster: orchestrator.models.clone().into(),
             default_runtime: Runtime::Claude,
             scouts: orchestrator.scouts.clone(),
             claude: orchestrator.claude.clone(),

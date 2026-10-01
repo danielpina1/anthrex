@@ -67,6 +67,21 @@ fn a_cancelled_save_does_not_rename() {
     assert_eq!(entries(dir.path()), ["config.toml"]);
 }
 
+/// Milestone 9.0.6 task 9 (the timeout's window): a save claims the rename by setting
+/// the flag, so a caller that sets it afterwards and reads `true` knows the rename was
+/// already under way, and one that reads `false` knows it never will be.
+#[test]
+fn a_save_claims_the_flag_before_it_renames() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[orchestrator]\nmax_writers = 2\n").unwrap();
+    let mut doc = doc_of(&crate::load(&path).0.orchestrator);
+    doc.limits.max_writers = 5;
+    let flag = AtomicBool::new(false);
+    save(&path, &doc, &flag).unwrap();
+    assert!(flag.load(std::sync::atomic::Ordering::SeqCst));
+}
+
 #[cfg(unix)]
 #[test]
 fn a_save_keeps_the_file_mode() {

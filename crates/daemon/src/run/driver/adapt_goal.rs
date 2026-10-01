@@ -116,7 +116,8 @@ impl RunService {
             return refused("the profile service is not running".to_string());
         };
         // 1. M8a's early refusals, exactly as `build_plan` applies them.
-        let config = &self.ctx.orchestrator;
+        let live = self.ctx.settings.current();
+        let config = &live.orchestrator;
         let allowed = unconfined_checks || config.unconfined_checks;
         if let Some(refusal) =
             confine::start_refusal(config.worker_sandbox, confine::available(), allowed)
@@ -225,7 +226,7 @@ impl RunService {
         pre: &Preflight,
         timeout: Duration,
     ) -> Decision {
-        let mut input = triage_input(goal, profile, &self.ctx.orchestrator);
+        let mut input = triage_input(goal, profile, &self.ctx.settings.current().orchestrator);
         if adaptation.deciders.mode == DeciderMode::Off {
             return fallback_decision(&DeciderRequest::Triage(input), OFF_REASON.into());
         }
@@ -297,8 +298,8 @@ impl RunService {
         };
         let session = format!("{nanos}/{n}");
         let route = &adaptation.deciders.route;
-        let roster = &adaptation.scouts.context().roster;
-        let strength = self.ctx.orchestrator.deciders.strength;
+        let roster = &adaptation.scouts.context().roster.current();
+        let strength = self.ctx.settings.current().orchestrator.deciders.strength;
         let chosen = (route, roles::decider_candidates(roster, route, strength));
         let at = unix_now();
         let mut record = roles::decider_record(None, (&session, "triage"), &[], chosen, input, at);

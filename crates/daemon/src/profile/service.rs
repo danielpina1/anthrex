@@ -112,7 +112,12 @@ pub struct ProfileService {
     pub(super) table: Mutex<Table>,
     pub(super) writes: tokio::sync::Mutex<()>,
     next_generation: AtomicU64,
+    /// Milestone 9.0.6 decision 37: the runs a profile edit waits for (`set_live_runs`).
+    live_runs: Mutex<Option<LiveRuns>>,
 }
+
+/// Decision 37: the ids of the runs live in a project (`RunService::live_runs_in`).
+pub type LiveRuns = Arc<dyn Fn(&Path) -> Vec<String> + Send + Sync>;
 
 /// A blocking step on `spawn_blocking`, its panic an error.
 pub(super) async fn blocking<T: Send + 'static>(
@@ -185,7 +190,20 @@ impl ProfileService {
             table: Mutex::new(Table::default()),
             writes: tokio::sync::Mutex::new(()),
             next_generation: AtomicU64::new(1),
+            live_runs: Mutex::new(None),
         })
+    }
+
+    /// Decision 37: installs the callback `edit` asks which runs are live in a project.
+    pub fn set_live_runs(&self, f: LiveRuns) {
+        *crate::lock(&self.live_runs) = Some(f);
+    }
+
+    /// The runs live in `project`; none until `set_live_runs`. The callback runs with no
+    /// lock of this service held.
+    pub(super) fn live_runs(&self, project: &Path) -> Vec<String> {
+        let f = crate::lock(&self.live_runs).clone();
+        f.map_or_else(Vec::new, |f| f(project))
     }
 
     /// The scout service this one starts onboarding scouts with.
@@ -375,6 +393,9 @@ impl ProfileService {
 
 /// The daemon's milestone-8b services (decisions 8 and 12): the scout service and this
 /// one, set on the engine once (`RunService::set_adaptation`). Called by `lifecycle`.
+/// The scouts read `runs`' live roster at each spawn and the profile service asks `runs`
+/// which runs are live (milestone 9.0.6 decisions 29 and 37); `orchestrator` gives the
+/// start-time copies of the keys Settings does not own.
 pub fn wire(
     manager: &Arc<WindowManager>,
     runs: &Arc<crate::run::driver::RunService>,
@@ -385,7 +406,7 @@ pub fn wire(
     let scouts = ScoutService::new(
         manager.clone(),
         crate::scout::spec::ScoutContext {
-            roster: orchestrator.models.clone(),
+            roster: crate::scout::spec::Roster::Live(runs.live_settings().clone()),
             default_runtime: orchestrator.default_runtime,
             scouts: orchestrator.scouts.clone(),
             claude: orchestrator.claude.clone(),
@@ -407,6 +428,12 @@ pub fn wire(
             scheduler: runs.scheduler().clone(),
         },
     );
+    // Decision 37: a weak handle, since the run service holds this one (`Adaptation`).
+    let weak = Arc::downgrade(runs);
+    profiles.set_live_runs(Arc::new(move |project: &Path| {
+        weak.upgrade()
+            .map_or_else(Vec::new, |runs| runs.live_runs_in(project))
+    }));
     runs.set_adaptation(crate::run::driver::Adaptation {
         profiles: profiles.clone(),
         scouts,

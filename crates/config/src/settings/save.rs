@@ -21,7 +21,8 @@ pub struct Saved {
 }
 
 /// Blocking: [`super::validate`], read, [`super::edit_text`], temporary file, fsync,
-/// `cancel` check, rename, fsync the directory. A missing file (and its directory) is
+/// `cancel` check, rename, fsync the directory. The check swaps `cancel` to `true`, so
+/// exactly one of this save and a caller that swaps it later reads `false`. A missing file (and its directory) is
 /// created. On any refusal the file is untouched and no temporary file is left.
 pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved, Vec<String>> {
     let problems = super::validate(doc);
@@ -45,7 +46,9 @@ pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved
         .map_err(|e| vec![format!("could not create {}: {e}", dir.display())])?;
     let temp = temp_path(&dir, path);
     let written = write_temp(&temp, &out, mode).and_then(|()| {
-        if cancel.load(Ordering::SeqCst) {
+        // The claim (task 9): setting the flag here tells a caller that times out and
+        // swaps it afterwards that the rename was already under way.
+        if cancel.swap(true, Ordering::SeqCst) {
             return Err("the save was cancelled; nothing changed".to_string());
         }
         std::fs::rename(&temp, path)
