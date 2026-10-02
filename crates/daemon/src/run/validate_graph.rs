@@ -37,8 +37,8 @@ pub(crate) fn is_valid_area_glob(glob: &str) -> bool {
 /// cancelled is checked; the L rule, the cancelled-dependency rule and the area rule
 /// apply only to `touched` tasks (the cancelled-dependency rule can be narrowed further
 /// with [`validate_tasks_with`]) (decision 13's L exemption: a task raised to L by
-/// rung 3 must not block unrelated edits). `max_tasks` counts every task of the
-/// highest round that is not cancelled (milestone 9.3 decision 14). Rule 9 compares the runtimes the plan gives (`default_runtime` fills a
+/// rung 3 must not block unrelated edits). `max_tasks` counts every task of
+/// `round`, the run's current one, that is not cancelled (milestone 9.3 decision 14). Rule 9 compares the runtimes the plan gives (`default_runtime` fills a
 /// spec that names none) and applies to a pair only when the batch touches one of the
 /// two: a runtime the engine escalated to (rung 2, `run retry`) is not the plan's, and
 /// must not block every later edit (final review A-I1, the same reason as the L
@@ -47,10 +47,17 @@ pub fn validate_tasks(
     tasks: &[Task],
     touched: &BTreeSet<String>,
     scope: &EditScope,
-    max_tasks: u32,
+    (max_tasks, round): (u32, u32),
     default_runtime: Runtime,
 ) -> Vec<PlanError> {
-    validate_tasks_with(tasks, touched, None, scope, max_tasks, default_runtime)
+    validate_tasks_with(
+        tasks,
+        touched,
+        None,
+        scope,
+        (max_tasks, round),
+        default_runtime,
+    )
 }
 
 /// The runtime the plan gives `task`: its spec's, or `default_runtime` when the spec
@@ -71,13 +78,12 @@ pub fn validate_tasks_with(
     touched: &BTreeSet<String>,
     added_deps: Option<&BTreeSet<(String, String)>>,
     scope: &EditScope,
-    max_tasks: u32,
+    (max_tasks, round): (u32, u32),
     default_runtime: Runtime,
 ) -> Vec<PlanError> {
     let mut errors = Vec::new();
-    // Milestone 9.3 decision 14: `max_tasks` counts the current round's tasks, the
-    // highest round among them.
-    let round = tasks.iter().map(|t| t.round).max().unwrap_or(1);
+    // Milestone 9.3 decision 14: `max_tasks` counts the tasks of `round`, the run's
+    // current round (task 4b fix round 1, m3).
     let counted = tasks
         .iter()
         .filter(|t| t.state != TaskState::Cancelled && t.round == round)

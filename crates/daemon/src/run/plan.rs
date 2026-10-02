@@ -379,7 +379,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         &tasks,
         &touched,
         &EditScope::Run,
-        limits.max_tasks,
+        // Milestone 9.3 decision 14: a new plan is round 1's.
+        (limits.max_tasks, proto::first_round()),
         limits.default_runtime,
     ));
     if !errors.is_empty() {

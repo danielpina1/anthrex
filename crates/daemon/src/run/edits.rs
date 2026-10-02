@@ -93,7 +93,7 @@ pub fn apply_edits(
         &touched,
         Some(&added_deps),
         scope,
-        edited.limits.max_tasks,
+        (edited.limits.max_tasks, edited.round()),
         edited.limits.default_runtime,
     ));
     errors.extend(super::validate_stages::single_layout_rule(&edited));

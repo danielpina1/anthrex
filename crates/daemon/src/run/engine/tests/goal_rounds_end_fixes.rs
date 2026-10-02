@@ -7,14 +7,17 @@ use proto::{HoldState, RoundOrigin, RoundOutcome, RunState};
 use serde_json::json;
 
 use super::delivery_open::pr_mode;
+use super::fixes::spec as fixes_spec;
 use super::fixture::*;
 use super::gate_holds::{hold_state, in_epic};
 use super::goal_rounds_end::{create_stages, submit_round};
+use super::goal_rounds_stages::add_in;
 use super::goal_rounds_start::{complete, iterate, reply, round_lines, started};
 use super::kinds_cancel::{cancel, settle_all};
 use super::orch::{answer, edit_plan};
 use super::orch_restore::restart;
 use super::planners::spawn;
+use crate::run::engine::fixes::add_fix;
 use crate::run::engine::{Effect, EventKind};
 use crate::run::model::StageLayout;
 use crate::run::orch::PlannerPhase;
@@ -176,4 +179,33 @@ fn an_orchestrator_rounds_holds_await_the_user_under_yes() {
         };
         assert_eq!(hold_state(&fx, "epic:mail"), want, "{origin:?}");
     }
+}
+
+/// m3: `max_tasks` counts the run's current round. Fix tasks the engine adds to round
+/// 1's stage while round 2 has no task yet refuse neither themselves nor round 2's
+/// batch.
+#[test]
+fn engine_added_round_one_tasks_do_not_refuse_a_round_two_batch() {
+    let mut fx = complete();
+    fx.run_mut().limits.max_tasks = 1;
+    assert_eq!(reply(&iterate(&mut fx, "more")), started(2));
+    let (now, route) = (fx.now, proto::RouteSpec::default());
+    for owns in ["crates/fix/**", "crates/fix2/**"] {
+        let mut spec = fixes_spec(proto::TaskOrigin::Bisect, owns, route.clone());
+        spec.stage = 1;
+        let id = add_fix(fx.run_mut(), spec, now, &mut Vec::new()).expect("added");
+        assert_eq!(fx.task(&id).round, 1);
+    }
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": []})));
+    assert!(ok, "{value}");
+    let edits = json!({"edits": [add_in("t2", "mail", 2, &[])]});
+    let (ok, value) = answer(&edit_plan(&mut fx, edits));
+    assert!(ok, "{value}");
+    let third = json!({"edits": [add_in("t3", "web", 2, &[])]});
+    let (ok, value) = answer(&edit_plan(&mut fx, third));
+    assert!(!ok);
+    assert_eq!(
+        value["errors"][0]["message"],
+        "2 tasks exceed max_tasks (1)"
+    );
 }

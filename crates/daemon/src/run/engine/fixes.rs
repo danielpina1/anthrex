@@ -117,7 +117,7 @@ pub(crate) fn add_fix(
         &touched,
         None,
         &EditScope::Run,
-        run.limits.max_tasks,
+        (run.limits.max_tasks, run.round()),
         run.limits.default_runtime,
     ));
     let implicit = implicit_deps(&tasks);

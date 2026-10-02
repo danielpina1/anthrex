@@ -260,7 +260,7 @@ fn dependency_on_a_cancelled_task() {
     tasks[1].state = TaskState::Cancelled;
     let touched: BTreeSet<String> = ["t3".to_string()].into();
     assert_eq!(
-        validate_tasks(&tasks, &touched, &EditScope::Run, 50, runtime),
+        validate_tasks(&tasks, &touched, &EditScope::Run, (50, 1), runtime),
         vec![err(Some("t3"), "deps", "12.1", "t2 is cancelled")]
     );
 }
@@ -271,12 +271,12 @@ fn l_rule_applies_only_to_touched_tasks() {
     tasks[0].size = proto::Size::L; // raised by rung 3, untouched by this batch
     let untouched: BTreeSet<String> = ["t2".to_string()].into();
     assert_eq!(
-        validate_tasks(&tasks, &untouched, &EditScope::Run, 50, runtime),
+        validate_tasks(&tasks, &untouched, &EditScope::Run, (50, 1), runtime),
         vec![]
     );
     let touched: BTreeSet<String> = ["t1".to_string()].into();
     assert_eq!(
-        validate_tasks(&tasks, &touched, &EditScope::Run, 50, runtime),
+        validate_tasks(&tasks, &touched, &EditScope::Run, (50, 1), runtime),
         vec![err(
             Some("t1"),
             "size",
@@ -297,7 +297,7 @@ fn area_scope_rejects_owns_outside_it() {
         globs: vec!["crates/daemon/**".to_string()],
     };
     assert_eq!(
-        validate_tasks(&tasks, &touched, &area, 50, runtime),
+        validate_tasks(&tasks, &touched, &area, (50, 1), runtime),
         vec![err(
             Some("t4"),
             "owns",
@@ -310,7 +310,7 @@ fn area_scope_rejects_owns_outside_it() {
         globs: vec!["crates/*/src".to_string()],
     };
     assert_eq!(
-        validate_tasks(&tasks[..1], &touched, &bad_area, 50, runtime),
+        validate_tasks(&tasks[..1], &touched, &bad_area, (50, 1), runtime),
         vec![err(
             None,
             "area",
@@ -385,7 +385,7 @@ fn cross_runtime_overlap_ignores_finished_earlier_tasks() {
     tasks[1].spec.route.runtime = Some(proto::Runtime::Codex);
     tasks[1].spec.owns = vec!["crates/a/src/lib.rs".to_string()];
     assert_eq!(
-        validate_tasks(&tasks, &set(&["t2"]), &EditScope::Run, 50, runtime),
+        validate_tasks(&tasks, &set(&["t2"]), &EditScope::Run, (50, 1), runtime),
         vec![]
     );
 }
@@ -421,7 +421,7 @@ fn a_cancelled_dependency_of_an_untouched_task_is_allowed() {
     let (mut tasks, runtime) = built(&[one("t1", ""), one("t2", ""), one("t3", "deps = [\"t2\"]")]);
     tasks[1].state = TaskState::Cancelled;
     assert_eq!(
-        validate_tasks(&tasks, &set(&["t1"]), &EditScope::Run, 50, runtime),
+        validate_tasks(&tasks, &set(&["t1"]), &EditScope::Run, (50, 1), runtime),
         vec![]
     );
 }
@@ -432,12 +432,12 @@ fn max_tasks_does_not_count_cancelled_tasks() {
     let (mut tasks, runtime) = built(&[one("t1", ""), one("t2", ""), one("t3", "")]);
     tasks[1].state = TaskState::Cancelled;
     assert_eq!(
-        validate_tasks(&tasks, &set(&[]), &EditScope::Run, 2, runtime),
+        validate_tasks(&tasks, &set(&[]), &EditScope::Run, (2, 1), runtime),
         vec![]
     );
     tasks[1].state = TaskState::Merged;
     assert_eq!(
-        validate_tasks(&tasks, &set(&[]), &EditScope::Run, 2, runtime),
+        validate_tasks(&tasks, &set(&[]), &EditScope::Run, (2, 1), runtime),
         vec![err(None, "tasks", "range", "3 tasks exceed max_tasks (2)")]
     );
 }
@@ -452,7 +452,7 @@ fn the_area_rule_applies_only_to_touched_tasks() {
         globs: vec!["crates/daemon/**".to_string()],
     };
     assert_eq!(
-        validate_tasks(&tasks, &set(&["t3"]), &area, 50, runtime),
+        validate_tasks(&tasks, &set(&["t3"]), &area, (50, 1), runtime),
         vec![]
     );
 }
@@ -463,7 +463,7 @@ fn a_duplicate_of_a_finished_task_is_still_a_duplicate() {
     tasks[0].state = TaskState::Cancelled;
     tasks[1].spec.id = "t1".to_string();
     assert_eq!(
-        validate_tasks(&tasks, &set(&["t1"]), &EditScope::Run, 50, runtime),
+        validate_tasks(&tasks, &set(&["t1"]), &EditScope::Run, (50, 1), runtime),
         vec![err(Some("t1"), "id", "id", "t1 is used by an earlier task")]
     );
 }
@@ -478,7 +478,7 @@ fn a_dependency_resolves_to_the_first_task_with_that_id() {
     tasks.swap(1, 2);
     // Order now: t2 (pending), t3 (deps t2), t2 (cancelled).
     assert_eq!(
-        validate_tasks(&tasks, &set(&["t3"]), &EditScope::Run, 50, runtime),
+        validate_tasks(&tasks, &set(&["t3"]), &EditScope::Run, (50, 1), runtime),
         vec![]
     );
 }
