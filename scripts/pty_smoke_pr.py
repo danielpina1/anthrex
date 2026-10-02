@@ -30,7 +30,7 @@ import sys
 import tempfile
 import time
 
-from pty_smoke_run import GIT_ENV_DROP, POLL, RUN_CMD_TIMEOUT, _git, _write_script
+from pty_smoke_run import POLL, RUN_CMD_TIMEOUT, _git, _write_script, git_env
 
 # The bounds of `crates/cli/tests/support/run_pr.rs`, restated across the language
 # boundary from the daemon's host constants (`crates/daemon/src/host/mod.rs`:
@@ -62,6 +62,11 @@ REPLY_WAIT = 2 * READ + WRITE + MARGIN
 # A landing to the next stage's push and retarget: the view, the base fetch, the base
 # sync bounded as one task path, the push, one write: 1 292 s.
 LAND_WAIT = VIEW_WAIT + FETCH_WAIT + TIER_WAIT + PUSH_WAIT + WRITE + MARGIN
+
+# `DAEMON_START_WAIT` (60 s) of `crates/cli/tests/support/run_daemon.rs`, the bound on a
+# daemon binding its socket, and `DAEMON_STOP_CMD_TIMEOUT` (40 s) of
+# `scripts/pty-smoke.py`, `daemon stop`'s 19 s worst case with margin.
+DAEMON_START_WAIT, DAEMON_STOP_WAIT = 60.0, 40.0
 
 URL = "https://github.com/fake/app.git"
 
@@ -204,7 +209,7 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         }
     )
     proc = None
-    started_daemon = False
+    daemon = None
 
     def cmd(args, timeout=RUN_CMD_TIMEOUT, expect_ok=True):
         return run_cmd(args, expect_ok=expect_ok, timeout=timeout, env=env)
@@ -259,7 +264,9 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         _git(["config", "remote.origin.url", URL], repo, fail)
         for key in ("insteadOf", "pushInsteadOf"):
             _git(["config", f"url.{bare}.{key}", URL], repo, fail)
-        _git(["push", "-q", "origin", "main"], repo, fail)
+        # `insteadOf` sends the push to the bare repository; `GIT_ALLOW_PROTOCOL=file`
+        # makes a mis-set rewrite fail instead of reaching github.com.
+        _git(["push", "-q", "origin", "main"], repo, fail, {"GIT_ALLOW_PROTOCOL": "file"})
 
         _write_script(repo, "worker-t1-1", _commit("a.txt", "bad\n"))
         # Stage 2's task waits until stage 1's CI fix is on its PR, so stage 2's PR opens
@@ -280,8 +287,26 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         fake_github("set-permission", "tester", "write")
         fake_github("set-ci", json.dumps(CI_RULES))
 
-        cmd(["daemon", "start"], timeout=28)
-        started_daemon = True
+        # The daemon is this stage's own child (`daemon start --foreground`, as the Rust
+        # harness starts its daemons), so the `finally` knows its pid and waits for it to
+        # exit, whenever it binds its socket: a detached `daemon start` that fails or
+        # times out can leave a daemon that binds only after the cleanup has looked.
+        daemon = subprocess.Popen(
+            [bin_path, "daemon", "start", "--foreground"],
+            cwd=root,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        _poll(
+            "the stage's daemon binding its socket",
+            DAEMON_START_WAIT,
+            lambda: os.path.exists(socket) or daemon.poll() is not None,
+            fail,
+        )
+        if daemon.poll() is not None:
+            fail(f"the stage's daemon exited at its start ({daemon.returncode})")
         start = ["run", "start", "--plan", plan, "--dir", repo, "--delivery", "pr", "--yes"]
         if sys.platform != "darwin":
             start.append("--unconfined-checks")
@@ -416,28 +441,42 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
                 if pid == proc.pid:
                     break
                 time.sleep(0.1)
-        if started_daemon:
-            # `DAEMON_STOP_CMD_TIMEOUT` of `scripts/pty-smoke.py`: `daemon stop`'s 19 s
-            # worst case with margin. Not checked: this runs on the way out of a failure
-            # too, and the socket wait below is the confirmation.
-            run_cmd(["daemon", "stop"], expect_ok=False, timeout=40.0, env=env)
-            deadline = time.monotonic() + 40.0
-            while os.path.exists(socket) and time.monotonic() < deadline:
-                time.sleep(0.1)
-            if os.path.exists(socket):
-                print(f"stage 11i: the daemon on {socket} did not stop", file=sys.stderr)
+        _stop_daemon(run_cmd, env, socket, daemon)
         if not os.environ.get("ANTHREX_SMOKE_KEEP"):
             shutil.rmtree(root, ignore_errors=True)
 
 
+def _stop_daemon(run_cmd, env, socket, daemon):
+    """The stage's cleanup of its own daemon, on every way out: `anthrex daemon stop`
+    under the stage's variables whenever its socket is there, until the child it
+    spawned has exited (it may bind its socket late), for at most `DAEMON_START_WAIT`
+    plus `DAEMON_STOP_WAIT`. A stop that times out (`run_cmd`'s `fail`, a
+    `SystemExit`) is reported and the cleanup goes on. Nothing is signalled: a daemon
+    that will not stop is reported by its pid."""
+    deadline = time.monotonic() + DAEMON_START_WAIT + DAEMON_STOP_WAIT
+    while time.monotonic() < deadline:
+        child_gone = daemon is None or daemon.poll() is not None
+        if os.path.exists(socket):
+            try:
+                run_cmd(["daemon", "stop"], expect_ok=False, timeout=DAEMON_STOP_WAIT, env=env)
+            except SystemExit:
+                print(f"stage 11i: `anthrex daemon stop` on {socket} timed out", file=sys.stderr)
+        elif child_gone:
+            return
+        time.sleep(0.2)
+    if daemon is not None and daemon.poll() is None:
+        print(f"stage 11i: LEAKED its daemon, pid {daemon.pid} (socket {socket})", file=sys.stderr)
+    elif os.path.exists(socket):
+        print(f"stage 11i: a daemon still answers on {socket}", file=sys.stderr)
+
+
 def subprocess_ok(argv, cwd):
     """Whether a read-only `git` command succeeds in `cwd` (`merge-base --is-ancestor`),
-    with the same scrubbed environment as `_git`."""
-    env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
-    env["GIT_CONFIG_NOSYSTEM"] = "1"
-    env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    with `_git`'s environment (`git_env`)."""
     try:
-        result = subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=15)
+        result = subprocess.run(
+            argv, cwd=cwd, env=git_env(), stdin=subprocess.DEVNULL, capture_output=True, timeout=15
+        )
     except subprocess.TimeoutExpired:
         return False
     return result.returncode == 0

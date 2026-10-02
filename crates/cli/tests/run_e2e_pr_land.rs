@@ -39,9 +39,8 @@ fn stage_branch(id: &str, n: u16) -> String {
 }
 
 /// A green two-stage fast-path `pr` run (`t1` on `a.txt` in stage 1, `t2` on `b.txt`
-/// in stage 2), its profile `check = "true"` or `profile`'s lines, both PRs open and
-/// green; the run id.
-fn open_two(h: &RunHarness, rig: &PrRig, profile: &str) -> String {
+/// in stage 2), its profile `check = "true"`, both PRs open and green; the run id.
+fn open_two(h: &RunHarness, rig: &PrRig) -> String {
     rig.ctl()
         .set_ci(vec![CiRule::new("build", Conclusion::Success)]);
     scripts(h, "t1", &[commit("a.txt", "a\n"), done("a")]);
@@ -50,15 +49,7 @@ fn open_two(h: &RunHarness, rig: &PrRig, profile: &str) -> String {
         task("t1", &["a.txt"], ""),
         task("t2", &["b.txt"], "stage = 2"),
     ];
-    let toml = if profile.is_empty() {
-        plan("", &tasks)
-    } else {
-        format!(
-            "goal = \"Add a\"\n\n[profile]\n{profile}\n{}",
-            tasks.concat()
-        )
-    };
-    let id = pr_run(h, &toml);
+    let id = pr_run(h, &plan("", &tasks));
     for n in [1, 2] {
         rig.wait_stage(h, &id, n, "/state", &json!("open"));
         rig.wait_stage(h, &id, n, "/ci", &json!("green"));
@@ -150,7 +141,7 @@ fn e2e_pr_base_conflict_becomes_a_sync_task() {
 #[test]
 fn e2e_pr_squash_merged_stage_retargets_the_next() {
     let (h, rig) = pr_harness("");
-    let id = open_two(&h, &rig, "");
+    let id = open_two(&h, &rig);
     let old2 = rig.wait_pr(2, |_| true).head_oid;
     let tree = rig.bare_git(&["rev-parse", &format!("{old2}^{{tree}}")]);
 
@@ -261,7 +252,10 @@ fn e2e_pr_closed_without_merging_pauses_the_stages_above() {
         .as_str()
         .unwrap()
         .to_string();
-    assert!(text.contains(closed), "{text}");
+    assert_eq!(
+        text,
+        format!("[anthrex] Run {id} changed: {closed}. Call run_status for the details.")
+    );
     assert_eq!(rig.wait_pr(2, |_| true).state, PrState::Open, "left alone");
     assert!(
         rig.calls_of(&["pr", "reopen"]).is_empty(),
@@ -358,6 +352,7 @@ fn e2e_pr_restart_resumes_watching_without_duplicate_fix_tasks() {
     let log_before = log_lines(&h, &id);
     let batches = |log: &[String]| log.iter().filter(|l| l.contains("review batch")).count();
     let posts = rig.calls_of(&["api", "-X", "POST"]).len();
+    let threads = rig.stage_entry(&h, &id, 1)["threads"].clone();
     let reruns = rig.calls_of(&["run", "rerun"]).len();
     let logs = rig.calls_of(&["run", "view"]).len();
 
@@ -373,13 +368,10 @@ fn e2e_pr_restart_resumes_watching_without_duplicate_fix_tasks() {
         "{}",
         String::from_utf8_lossy(&resumed.stderr)
     );
-    let views = rig.calls_of(&["pr", "view"]).len();
-    until(
-        "two more views",
-        VIEW_WAIT.saturating_add(VIEW_WAIT),
-        || (rig.calls_of(&["pr", "view"]).len() >= views + 2).then_some(()),
-    );
-    // No task, no reply, no re-run, no log read and no batch (the wake's source).
+    rig.quiet_views();
+    // No task, no reply, no re-run, no log read and no batch (the wake's source), and
+    // the thread counts as before the restart.
+    assert_eq!(rig.stage_entry(&h, &id, 1)["threads"], threads);
     let run = h.run(&id).unwrap();
     let after: Vec<String> = run.tasks.iter().map(|t| t.id.clone()).collect();
     assert_eq!(after, tasks, "no new task");

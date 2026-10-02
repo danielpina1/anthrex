@@ -112,15 +112,31 @@ pub const REPLY_WAIT: Duration = HOST_WRITE_TIMEOUT.saturating_add(Duration::fro
     2 * HOST_READ_TIMEOUT.as_secs() + OP_MARGIN_SECS,
 ));
 
+/// A retarget (`Retarget`'s bound: one write, plus the margin).
+pub const RETARGET_WAIT: Duration =
+    HOST_WRITE_TIMEOUT.saturating_add(Duration::from_secs(OP_MARGIN_SECS));
+
 /// A stage's landing or a base move to its next push (task M9.2.17): the view that sees
 /// it ([`VIEW_WAIT`]), the base's fetch ([`FETCH_WAIT`]), the base sync, bounded as one
 /// task path with its tier commands (`TIER_WAIT`: it is a merge and tier 2 on it), the
-/// push ([`PUSH_WAIT`]), and a retarget (one write, plus the margin).
+/// push ([`PUSH_WAIT`]), and a retarget ([`RETARGET_WAIT`]).
 pub const LAND_WAIT: Duration = VIEW_WAIT
     .saturating_add(FETCH_WAIT)
     .saturating_add(TIER_WAIT)
     .saturating_add(PUSH_WAIT)
-    .saturating_add(RERUN_WAIT);
+    .saturating_add(RETARGET_WAIT);
+
+/// How long a thread seen by a view may take to become a batch, and so a task or a
+/// wake (task M9.2.17 fix round 1, m1): the test configuration's `review_batch_secs`
+/// (1 s) and one 1 s tick whose pass closes the batch.
+pub const BATCH_QUIET: Duration = Duration::from_secs(1 + 1);
+
+/// [`PrRig::quiet_views`]'s bound: three views, the batch's quiet, and one more view.
+pub const QUIET_VIEWS_WAIT: Duration = VIEW_WAIT
+    .saturating_add(VIEW_WAIT)
+    .saturating_add(VIEW_WAIT)
+    .saturating_add(BATCH_QUIET)
+    .saturating_add(VIEW_WAIT);
 
 /// How long `anthrex run start --goal … --delivery pr` may take: a goal start's reply
 /// (`GOAL_WAIT`) plus the host preflight a `pr` goal runs before triage
@@ -237,6 +253,42 @@ impl PrRig {
             .stderr(std::process::Stdio::null())
             .status()
             .is_ok_and(|s| s.success())
+    }
+
+    /// The window a test watches for something that must *not* happen (a duplicate
+    /// task, reply, batch or wake; task M9.2.17 fix round 1, m1), on a run with one PR.
+    /// Two more views; the second has been answered once a third starts (one view of a
+    /// PR is in flight at a time). [`BATCH_QUIET`] after that start, the next view a pass emits comes from
+    /// a pass that has closed any batch the second view opened, and its task, hold or
+    /// wake is recorded in that same step. So: wait for the third view, then the quiet,
+    /// then one view that starts after it. A deadline loop on `calls.jsonl` (which
+    /// records a call when it starts), at most [`QUIET_VIEWS_WAIT`].
+    pub fn quiet_views(&self) {
+        let views = || self.calls_of(&["pr", "view"]).len();
+        let deadline = Instant::now() + QUIET_VIEWS_WAIT;
+        let wait = |what: &str, done: &mut dyn FnMut() -> bool| loop {
+            if done() {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{what} did not happen within {QUIET_VIEWS_WAIT:?}"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        let start = views();
+        wait("three more views", &mut || views() >= start + 3);
+        let third = Instant::now();
+        wait("the batch's quiet", &mut || third.elapsed() >= BATCH_QUIET);
+        let after = views();
+        wait("a view after the quiet", &mut || views() > after);
+    }
+
+    /// Stage `stage`'s entry of `anthrex run prs <run> --json`, now.
+    pub fn stage_entry(&self, harness: &RunHarness, run: &str, stage: u16) -> Value {
+        let out = harness.anthrex(&["run", "prs", run, "--json"]);
+        let all: Value = serde_json::from_slice(&out.stdout).expect("run prs --json");
+        all[usize::from(stage) - 1].clone()
     }
 
     /// Waits until pull request `number` satisfies `pred`.

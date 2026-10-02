@@ -42,11 +42,19 @@ POLL = 0.5
 GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_PREFIX")
 
 
-def _git(args, cwd, fail):
+def git_env(extra=None):
+    """The environment every smoke `git` runs with: the location variables dropped, no
+    system or global config, never a prompt; plus `extra`."""
     env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = "/dev/null"
     env["GIT_TERMINAL_PROMPT"] = "0"
+    env.update(extra or {})
+    return env
+
+
+def _git(args, cwd, fail, extra_env=None):
+    env = git_env(extra_env)
     try:
         result = subprocess.run(
             ["git", *args],
