@@ -28,9 +28,13 @@ mod tests;
 #[cfg(test)]
 mod tests_allow;
 #[cfg(test)]
+mod tests_allow_git;
+#[cfg(test)]
 mod tests_git;
 #[cfg(test)]
 mod tests_limits;
+#[cfg(test)]
+mod tests_open_logs;
 #[cfg(test)]
 mod tests_parse;
 #[cfg(test)]
@@ -153,6 +157,12 @@ pub struct FetchReq {
     /// locally (`git rev-list --parents -n 1 <oid>`), for decision 44's merge method.
     #[serde(default)]
     pub parents_of: Option<String>,
+    /// Fix wave A2 (review A, M2): when the op's bound ends, counted from the moment it
+    /// took the project's git queue. An adoption checks it just before its
+    /// compare-and-swap and answers `TimedOut` rather than move a ref after the op's
+    /// answer has gone. `None` outside the executor. Never serialized.
+    #[serde(skip)]
+    pub deadline: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -438,11 +448,12 @@ pub const HOST_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Decision 9: `git push` (the dry run too), `git fetch`, a branch delete.
 pub const PUSH_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Preflight's whole bound (task M9.2.12): its six checks' own (decision 9), the seal's
-/// two reads, and a margin, so a host that ignores its per-command timeouts still
-/// answers. The CLI's `run start` reply bound is derived from it.
+/// Preflight's whole bound (task M9.2.12): its six checks' own (decision 9), the
+/// ahead count's read (the final fix wave, A5), the seal's two reads, and a margin, so
+/// a host that ignores its per-command timeouts still answers. The CLI's `run start`
+/// reply bound is derived from it.
 pub const PREFLIGHT_BOUND: Duration =
-    Duration::from_secs(7 * HOST_READ_TIMEOUT.as_secs() + PUSH_TIMEOUT.as_secs() + 5);
+    Duration::from_secs(8 * HOST_READ_TIMEOUT.as_secs() + PUSH_TIMEOUT.as_secs() + 5);
 /// Decision 9: `gh run view --log-failed`.
 pub const LOG_TIMEOUT: Duration = Duration::from_secs(120);
 /// Each body kept from a view is cut to this many characters; a view keeps at most

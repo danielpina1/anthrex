@@ -28,19 +28,30 @@ use super::run_harness::{
 use super::run_tiers::TIER_WAIT;
 
 /// How long a one-task `pr` run may take to open its stage PR and show it (ruling "task
-/// 14 fix round 1", I1): one task path (`RUN_WAIT`), tier 3 on the stage head (two
-/// check commands at the harness's `check_timeout_secs`), the stage's push
-/// (`PUSH_TIMEOUT`), the three reads before the PR (`HOST_READ_TIMEOUT` each) and its
-/// create (`HOST_WRITE_TIMEOUT`), then the first view (one more read) after one poll at
-/// the test configuration's `poll_max_secs` (2 s) and 3 s of scheduling. Every term is
-/// the daemon's or the harness's own constant (`docs/timing-budgets.md`).
+/// 14 fix round 1", I1; re-derived op by op in the final fix wave, review C M3): one
+/// task path (`RUN_WAIT`); tier 3 on the stage head, its two check commands at the
+/// harness's `check_timeout_secs` and its own git calls ([`TIER3_GIT_CALLS`] at
+/// `git_timeout_secs`); then each host op's own bound, the executor's margin included:
+/// the push ([`PUSH_WAIT`]), the open ([`OPEN_WAIT`]) and the first view after one poll
+/// ([`VIEW_WAIT`]); and 3 s of scheduling. Every term is the daemon's or the harness's
+/// own constant (`docs/timing-budgets.md`).
 pub const PR_OPEN_WAIT: Duration = RUN_WAIT
-    .saturating_add(Duration::from_secs(2 * CHECK_TIMEOUT_SECS))
-    .saturating_add(PUSH_TIMEOUT)
-    .saturating_add(Duration::from_secs(3 * HOST_READ_TIMEOUT.as_secs()))
+    .saturating_add(Duration::from_secs(
+        2 * CHECK_TIMEOUT_SECS + TIER3_GIT_CALLS * GIT_SECS + 3,
+    ))
+    .saturating_add(PUSH_WAIT)
+    .saturating_add(OPEN_WAIT)
+    .saturating_add(VIEW_WAIT);
+
+/// The git calls of one tier-3 job (its checkout, diff and cache reads): at most 10,
+/// as `run_tiers::TIER_WAIT` counts a test's tier jobs'.
+const TIER3_GIT_CALLS: u64 = 10;
+
+/// A PR's open (`OpenPr`'s bound: `pr list`, one read, then `pr create`, one write, plus
+/// the margin).
+pub const OPEN_WAIT: Duration = HOST_READ_TIMEOUT
     .saturating_add(HOST_WRITE_TIMEOUT)
-    .saturating_add(HOST_READ_TIMEOUT)
-    .saturating_add(Duration::from_secs(2 + 3));
+    .saturating_add(Duration::from_secs(OP_MARGIN_SECS));
 
 /// How long `anthrex run start --delivery pr` may take: a local start's request
 /// (`REQUEST_WAIT`) plus the host preflight, bounded by the daemon's own
@@ -53,9 +64,9 @@ const GIT_SECS: u64 = GIT_TIMEOUT_SECS;
 const OP_MARGIN_SECS: u64 = 5;
 
 /// One view of a PR after it changed (task M9.2.16): the poll at the test
-/// configuration's `poll_max_secs` (2 s), then the `ViewPr` op's own bound (two reads at
-/// `HOST_READ_TIMEOUT`, plus the executor's margin).
-pub const VIEW_WAIT: Duration = Duration::from_secs(2 + OP_MARGIN_SECS)
+/// configuration's `poll_max_secs` ([`POLL_MAX_SECS`]), then the `ViewPr` op's own
+/// bound (two reads at `HOST_READ_TIMEOUT`, plus the executor's margin).
+pub const VIEW_WAIT: Duration = Duration::from_secs(POLL_MAX_SECS + OP_MARGIN_SECS)
     .saturating_add(HOST_READ_TIMEOUT)
     .saturating_add(HOST_READ_TIMEOUT);
 
@@ -100,11 +111,22 @@ pub const FIX_PUSH_WAIT: Duration = TIER_WAIT
 
 /// A writer's new comment to its fix task (task M9.2.17): the view that sees it
 /// ([`VIEW_WAIT`]), its author's `Permission` read (`HOST_READ_TIMEOUT`, plus the
-/// executor's margin), the batch's quiet (`review_batch_secs`, 1 s) and the 1 s tick
-/// whose pass closes it, and 2 s of scheduling.
-pub const COMMENT_WAIT: Duration = VIEW_WAIT
-    .saturating_add(HOST_READ_TIMEOUT)
-    .saturating_add(Duration::from_secs(OP_MARGIN_SECS + 1 + 1 + 2));
+/// executor's margin), the batch's quiet ([`REVIEW_BATCH_SECS`]) and the 1 s tick whose
+/// pass closes it, and 2 s of scheduling.
+pub const COMMENT_WAIT: Duration =
+    VIEW_WAIT
+        .saturating_add(HOST_READ_TIMEOUT)
+        .saturating_add(Duration::from_secs(
+            OP_MARGIN_SECS + REVIEW_BATCH_SECS + 1 + 2,
+        ));
+
+/// The test configuration's `poll_max_secs`.
+pub const POLL_MAX_SECS: u64 = 2;
+
+/// The test configuration's `review_batch_secs`: above `poll_max_secs + 1` (review C,
+/// I2), so the view after a batch's first thread always lands before the batch closes,
+/// and two comments written by two calls are one batch, as one review is on GitHub.
+pub const REVIEW_BATCH_SECS: u64 = POLL_MAX_SECS + 2;
 
 /// One reply on a thread (`Reply`'s bound: the viewer's login and the thread's listing,
 /// two reads, then the post, one write, plus the margin).
@@ -128,8 +150,8 @@ pub const LAND_WAIT: Duration = VIEW_WAIT
 
 /// How long a thread seen by a view may take to become a batch, and so a task or a
 /// wake (task M9.2.17 fix round 1, m1): the test configuration's `review_batch_secs`
-/// (1 s) and one 1 s tick whose pass closes the batch.
-pub const BATCH_QUIET: Duration = Duration::from_secs(1 + 1);
+/// ([`REVIEW_BATCH_SECS`]) and one 1 s tick whose pass closes the batch.
+pub const BATCH_QUIET: Duration = Duration::from_secs(REVIEW_BATCH_SECS + 1);
 
 /// [`PrRig::quiet_views`]'s bound: three views, the batch's quiet, and one more view.
 pub const QUIET_VIEWS_WAIT: Duration = VIEW_WAIT
@@ -151,9 +173,10 @@ pub fn pr_start(harness: &RunHarness, args: &[&str]) -> Output {
 /// The URL the repository's `origin` names; `insteadOf` sends it to the bare remote.
 pub const URL: &str = "https://github.com/fake/app.git";
 
-/// The brief's test configuration for every `pr` end-to-end test.
+/// The brief's test configuration for every `pr` end-to-end test, with
+/// `review_batch_secs` raised to [`REVIEW_BATCH_SECS`] (review C, I2).
 pub const DELIVERY_TOML: &str =
-    "[delivery]\npoll_secs = 1\npoll_max_secs = 2\nreview_batch_secs = 1\n";
+    "[delivery]\npoll_secs = 1\npoll_max_secs = 2\nreview_batch_secs = 4\n";
 
 pub struct PrRig {
     pub bare: PathBuf,
@@ -258,9 +281,9 @@ impl PrRig {
     /// The window a test watches for something that must *not* happen (a duplicate
     /// task, reply, batch or wake; task M9.2.17 fix round 1, m1), on a run with one PR.
     /// Two more views; the second has been answered once a third starts (one view of a
-    /// PR is in flight at a time). [`BATCH_QUIET`] after that start, the next view a pass emits comes from
-    /// a pass that has closed any batch the second view opened, and its task, hold or
-    /// wake is recorded in that same step. So: wait for the third view, then the quiet,
+    /// PR is in flight at a time). [`BATCH_QUIET`] after that start, the next view a
+    /// pass emits comes from a pass that has closed any batch the second view opened,
+    /// and its task, hold or wake is recorded in that same step. So: wait for the third view, then the quiet,
     /// then one view that starts after it. A deadline loop on `calls.jsonl` (which
     /// records a call when it starts), at most [`QUIET_VIEWS_WAIT`].
     pub fn quiet_views(&self) {

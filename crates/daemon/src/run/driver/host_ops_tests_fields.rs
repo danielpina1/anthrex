@@ -190,6 +190,19 @@ async fn only_a_panicked_task_is_a_halt() {
     assert!(text.starts_with("view_pr did not finish: "), "{text}");
 }
 
+/// Deferred from task 12: a queued op whose queue lost its task (a shutdown) answers
+/// `Failed`, retried when next due, never `Forbidden`.
+#[test]
+fn a_lost_queue_task_is_retryable() {
+    let lost = "a git write did not finish: task 7 was cancelled".to_string();
+    assert_eq!(
+        crate::run::driver::host_ops::queue_lost("push", lost),
+        HostResult::Error(HostError::Failed(
+            "push: a git write did not finish: task 7 was cancelled".to_string()
+        ))
+    );
+}
+
 fn git(dir: &Path, args: &[&str]) -> String {
     let os: Vec<&std::ffi::OsStr> = args.iter().map(std::ffi::OsStr::new).collect();
     let deadline = Instant::now() + Duration::from_secs(30);

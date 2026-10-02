@@ -352,7 +352,10 @@ fn e2e_pr_restart_resumes_watching_without_duplicate_fix_tasks() {
     let log_before = log_lines(&h, &id);
     let batches = |log: &[String]| log.iter().filter(|l| l.contains("review batch")).count();
     let posts = rig.calls_of(&["api", "-X", "POST"]).len();
-    let threads = rig.stage_entry(&h, &id, 1)["threads"].clone();
+    // The fake records the reply while the daemon's `Reply` op runs; the thread is
+    // `replied` only once its answer is processed (review C, I1).
+    let entry = rig.wait_stage_within(&h, &id, 1, "/threads/replied", &json!(1), REPLY_WAIT);
+    let threads = entry["threads"].clone();
     let reruns = rig.calls_of(&["run", "rerun"]).len();
     let logs = rig.calls_of(&["run", "view"]).len();
 

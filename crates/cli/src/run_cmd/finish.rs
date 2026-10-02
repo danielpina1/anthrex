@@ -6,6 +6,12 @@ use proto::{FinishAction, RunInfo, RunReply, RunState};
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Accept's `research report: <path>` line, through `printable` (deferred from task
+/// 14: the path is the daemon's text).
+pub(super) fn report_line(report: &std::path::Path) -> String {
+    status::printable(&format!("research report: {}", report.display()))
+}
+
 /// The text a wrong typed or `--confirm` id gets.
 const CONFIRM_MISMATCH: &str = "confirmation does not match the run id";
 
@@ -54,7 +60,7 @@ pub(super) async fn accept(
         );
     }
     if let Some(report) = &info.research_report {
-        eprintln!("research report: {}", report.display());
+        eprintln!("{}", report_line(report));
     }
     let mut asked = yes;
     let mut confirm = None;

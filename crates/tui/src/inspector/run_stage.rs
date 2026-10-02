@@ -27,6 +27,7 @@ pub(crate) fn stage_inspection(run: &RunInfo, stage: &StageInfo, app: &App) -> I
             label: "failing",
             value: names.join(", "),
             wrap: true,
+            marks: Vec::new(),
         });
     }
     if let Some(bisect) = bisect_text(stage) {

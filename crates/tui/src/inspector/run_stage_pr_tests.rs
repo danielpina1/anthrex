@@ -8,6 +8,8 @@ use crate::tree::pr_fixtures::{check, pr_fixture, single_pr_fixture};
 use crate::tree::run_fixtures::RUN_ID;
 use crate::tree::stage_fixtures::staged_fixture;
 use proto::{CiState, RunState};
+use ratatui::backend::TestBackend;
+use ratatui::{Terminal, layout::Rect};
 
 fn stage_key(n: u16) -> NodeKey {
     NodeKey::Stage {
@@ -313,4 +315,78 @@ fn the_task_panels_fixes_is_cleaned() {
         assert!(row.is_ascii(), "{row:?}");
         assert_eq!(crate::safe_text::tests::first_hostile(row), None, "{row:?}");
     }
+}
+
+/// Deferred from task 15: the `ci` row's marks are coloured from each check's state,
+/// by position, never by reading the text, so a check named `✓` stays default.
+#[test]
+fn the_ci_row_marks_each_check_by_its_state_never_its_text() {
+    use crate::theme::Role;
+    let (mut snap, windows) = pr_fixture();
+    let two = snap.runs[0].stages[1].pr.as_mut().expect("#142");
+    two.checks = vec![
+        check("✓", CiState::Red, None),
+        check("build", CiState::Green, None),
+    ];
+    let ci = |app: &App| {
+        let inspection = inspect_node(app, &stage_key(2));
+        let field = inspection.fields.iter().find(|f| f.label == "ci").cloned();
+        field.expect("a ci row")
+    };
+    let row = ci(&app_of((snap.clone(), windows.clone())));
+    assert_eq!(row.value, "✗ ✓ · ✓ build");
+    assert_eq!(row.marks, [(0, Role::Failed), (3, Role::Done)]);
+    // ASCII: a name whose fold is more words (`☐` is `[ ]`) does not move a mark.
+    let two = snap.runs[0].stages[1].pr.as_mut().expect("#142");
+    two.checks[0].name = "☐ ☐ +".into();
+    let row = ci(&ascii(app_of((snap.clone(), windows.clone()))));
+    assert_eq!(row.value, "x [ ] [ ] + - + build");
+    assert_eq!(row.marks, [(0, Role::Failed), (7, Role::Done)]);
+
+    // Drawn: each mark in its role's colour, the names (`✓` included) default.
+    let two = snap.runs[0].stages[1].pr.as_mut().expect("#142");
+    two.checks[0].name = "✓".into();
+    let app = app_of((snap, windows));
+    let inspection = inspect_node(&app, &stage_key(2));
+    let p = crate::theme::Palette::PLAIN;
+    let (width, height) = (60, 12);
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| {
+            crate::inspector::panel::render_in(
+                frame,
+                &inspection,
+                Rect::new(0, 0, width, height),
+                p,
+            )
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let line = (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| buffer[(x, y)].symbol().to_owned())
+                .collect::<String>()
+        })
+        .position(|row| row.contains("✗ ✓ · ✓ build"))
+        .expect("the ci row is drawn");
+    let row: String = (0..width)
+        .map(|x| buffer[(x, line as u16)].symbol().to_owned())
+        .collect();
+    let at = |nth: usize, symbol: &str| {
+        let x = row
+            .match_indices(symbol)
+            .nth(nth)
+            .map(|(i, _)| row[..i].chars().count());
+        buffer[(x.expect(symbol) as u16, line as u16)].fg
+    };
+    let fg = |role| crate::theme::role(role, p).fg.unwrap();
+    assert_eq!(at(0, "✗"), fg(Role::Failed));
+    assert_eq!(
+        at(0, "✓"),
+        ratatui::style::Color::Reset,
+        "the check named ✓"
+    );
+    assert_eq!(at(1, "✓"), fg(Role::Done));
+    assert_eq!(at(0, "b"), ratatui::style::Color::Reset);
 }

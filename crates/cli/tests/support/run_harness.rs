@@ -25,14 +25,14 @@ use super::{ANTHREX, RunningCommand, fake_agent_bin, runtime};
 /// task paths waits `k * RUN_WAIT` (`docs/timing-budgets.md`).
 pub const RUN_WAIT: Duration = Duration::from_secs(300);
 
-/// The harness's decider command: a path that does not exist, so a decider a test did
-/// not ask for falls back instead of running anything.
 /// The harness's `[orchestrator.profile] check_timeout_secs` (M9.2.14 fix round 1).
 pub const CHECK_TIMEOUT_SECS: u64 = 10;
 
 /// The harness's `[orchestrator] git_timeout_secs` (task M9.2.16 fix round 1, m2).
 pub const GIT_TIMEOUT_SECS: u64 = 5;
 
+/// The harness's decider command: a path that does not exist, so a decider a test did
+/// not ask for falls back instead of running anything.
 pub const NO_DECIDER_BIN: &str = "/nonexistent/anthrex-test/decider";
 
 /// How long one raw request may take, `run accept` and `run discard` aside: `run

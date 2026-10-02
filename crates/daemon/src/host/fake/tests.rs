@@ -216,12 +216,8 @@ fn fake_gh_refuses_unknown_commands() {
         ],
         &["api", "repos/anthrex-test/widgets/pulls/1"],
         &["api", "graphql", "-f", "query={ viewer { login } }"],
-        &[
-            "api",
-            "-X",
-            "DELETE",
-            "repos/anthrex-test/widgets/git/refs/heads/main",
-        ],
+        // A read of a ref; a write to one is a landing (`tests_guard.rs`).
+        &["api", "repos/anthrex-test/widgets/git/refs/heads/main"],
         &["pr", "edit", "1", "--repo", FULL, "--title", "other"],
     ];
     for args in unknown {

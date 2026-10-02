@@ -3,6 +3,8 @@
 //! [`Runner`] (so through `worktree::run_git`); the adoption's compare-and-swap is 9.1's
 //! `git::refs_tx::cas`. Split from `gh.rs` for AGENTS.md rule 8. Blocking.
 
+use std::time::Instant;
+
 use super::allow::{self, AllowCtx};
 use super::gh::{GhHost, run_ctx};
 use super::gh_parse::{self, last_line};
@@ -51,6 +53,8 @@ impl<R: Runner> GhHost<R> {
     pub(super) fn fetch_ref(&self, req: &FetchReq) -> Result<FetchOutcome, HostError> {
         let ctx = run_ctx(&req.repo, Some(&req.run_id));
         let spec = format!("{FETCH_UPDATE}refs/heads/{}:{}", req.branch, req.into);
+        // `--no-prune --no-prune-tags` (deferred from task 4): a user's `fetch.prune`
+        // or `pruneTags` never makes anthrex's fetch delete a ref.
         let out = self.git(
             &ctx,
             &req.repo.root,
@@ -58,6 +62,8 @@ impl<R: Runner> GhHost<R> {
             &[
                 "fetch",
                 "--no-tags",
+                "--no-prune",
+                "--no-prune-tags",
                 "--no-recurse-submodules",
                 "--no-auto-maintenance",
                 "--no-write-fetch-head",
@@ -163,6 +169,18 @@ impl<R: Runner> GhHost<R> {
         let run = ctx.run_id.unwrap_or_default();
         let moved = allow::local_run_ref(&adopt.local_ref, run)
             .ok_or_else(|| allow::forbidden_text(&format!("adopt into {}", adopt.local_ref)))?;
+        // Fix wave A2: the swap needs its own bound inside the op's; without it, the op
+        // may already have answered `TimedOut`, and a ref moved now is one the engine
+        // was told never moved.
+        if req
+            .deadline
+            .is_some_and(|deadline| Instant::now() + HOST_READ_TIMEOUT > deadline)
+        {
+            return Err(HostError::TimedOut(format!(
+                "fetch ran out of its bound before adopting into {}; nothing was moved",
+                adopt.local_ref
+            )));
+        }
         let mut updates = vec![(moved, fetched.to_string(), adopt.expected_local.clone())];
         if adopt.also_integration {
             updates.push((

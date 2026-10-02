@@ -75,6 +75,27 @@ fn the_seal_reads_pass_the_allow_list_exactly() {
     );
     refused(seal_argv(&NOHOOK, &PUSH, "-x"), "-x");
     refused(seal_argv(&NOHOOK, &FETCH, ""), "");
+    // A remote shaped like a URL or a path, even when the context names it (deferred
+    // from task 12): the seal reads a configured remote's URLs, never a location.
+    for remote in [
+        "https://github.com/o/r.git",
+        "git@github.com:o/r.git",
+        "file:///tmp/r.git",
+        "/tmp/r.git",
+        "/",
+        "o:r",
+    ] {
+        refused(seal_argv(&NOHOOK, &FETCH, remote), remote);
+        refused(seal_argv(&NOHOOK, &PUSH, remote), remote);
+    }
+    // Near misses that stay accepted: a remote name with a dot, a dash or a slash
+    // inside it is still a name.
+    for remote in ["up.stream", "my-fork", "team/fork"] {
+        for shape in [&FETCH[..], &PUSH[..]] {
+            let ok = seal_argv(&NOHOOK, shape, remote);
+            assert_eq!(check(Program::Git, &ok, &ctx(remote)), Ok(()), "{ok:?}");
+        }
+    }
     // The write context, no hooks flag at all, or another `remote` subcommand.
     refused(seal_argv(&WRITE, &FETCH, "origin"), "origin");
     refused(seal_argv(&WRITE, &PUSH, "origin"), "origin");

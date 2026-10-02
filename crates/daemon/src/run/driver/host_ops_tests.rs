@@ -511,5 +511,64 @@ async fn push_and_fetch_go_through_the_git_queue() {
     );
 }
 
+/// Fix wave A2 (review A, M2): a queued op's bound starts once it holds the project's
+/// queue, so a write that waited behind others longer than its whole bound still runs
+/// and answers. (The wait is the condition under test, not a synchronisation: the op is
+/// held for longer than its cap, then released.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_queued_ops_bound_starts_when_it_takes_the_queue() {
+    let tmp = tempfile::tempdir().unwrap();
+    let stub = Arc::new(Stub::default());
+    let queue = Arc::new(GitQueue::new());
+    let mut e = exec(stub.clone(), queue.clone());
+    e.cap = Some(QUEUED_CAP);
+    let project = at(tmp.path(), None).project;
+
+    let (held_tx, held) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let holder = {
+        let (queue, project) = (queue.clone(), project.clone());
+        tokio::spawn(async move {
+            queue
+                .write(&project, move || {
+                    let _ = held_tx.send(());
+                    let _ = crate::lock(&released).recv_timeout(Duration::from_secs(30));
+                    Ok(())
+                })
+                .await
+        })
+    };
+    held.recv_timeout(Duration::from_secs(10)).unwrap();
+    let push = {
+        let dir = tmp.path().to_path_buf();
+        tokio::spawn(async move {
+            let op = HostOp::Push {
+                stage: 1,
+                sha: SHA.into(),
+            };
+            execute(&e, &at(&dir, None), repo(&dir), op).await
+        })
+    };
+    tokio::time::sleep(QUEUED_CAP * 2).await;
+    assert!(
+        !stub.called("push"),
+        "the push ran while the queue was held"
+    );
+    stub.released.store(true, Ordering::SeqCst);
+    release.send(()).unwrap();
+    holder.await.unwrap().unwrap();
+    let answer = tokio::time::timeout(Duration::from_secs(30), push)
+        .await
+        .expect("the push answered")
+        .unwrap();
+    assert_eq!(host_result(answer), HostResult::Pushed(PushOutcome::Pushed));
+    assert!(stub.called("push"));
+}
+
+/// [`a_queued_ops_bound_starts_when_it_takes_the_queue`]'s cap: the push after the
+/// queue is released is one in-memory call, far inside it.
+const QUEUED_CAP: Duration = Duration::from_secs(1);
+
 #[path = "host_ops_tests_fields.rs"]
 mod fields;

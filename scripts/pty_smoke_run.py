@@ -25,10 +25,10 @@ RUN_WAIT = 300.0
 # Every `anthrex run` command but accept: `run start`'s legal worst case is
 # `ensure_daemon` (`SPAWN_HANDOFF_GRACE` 0.25 s + `ENSURE_DAEMON_SOCKET_WAIT` 3 s,
 # `crates/tui/src/spawn.rs`) + `HANDSHAKE_TIMEOUT` (5 s, `crates/proto/src/lib.rs`) +
-# `RUN_START_TIMEOUT` (545 s, `crates/cli/src/run_cmd.rs`: `RUN_REQUEST_TIMEOUT`'s
-# 180 s, the daemon's `PREFLIGHT_BOUND` of 335 s and 30 s, task M9.2.12) = 553.25 s,
-# above `run_cmd`'s default of 28 s. 600 s clears it by about 8%; every other run
-# request waits only `RUN_REQUEST_TIMEOUT` (180 s).
+# `RUN_START_TIMEOUT` (575 s, `crates/cli/src/run_cmd.rs`: `RUN_REQUEST_TIMEOUT`'s
+# 180 s, the daemon's `PREFLIGHT_BOUND` of 365 s and 30 s, task M9.2.12 and the final
+# fix wave's ahead count) = 583.25 s, above `run_cmd`'s default of 28 s. 600 s clears
+# it by about 3%; every other run request waits only `RUN_REQUEST_TIMEOUT` (180 s).
 RUN_CMD_TIMEOUT = 600.0
 
 # `run accept` waits `FINISH_REQUEST_TIMEOUT` (`ACCEPT_MERGE_TIMEOUT` 600 s + 60 s,

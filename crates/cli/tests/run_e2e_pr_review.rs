@@ -172,7 +172,9 @@ fn e2e_pr_review_batch_goes_to_the_orchestrator_then_fix_and_reply() {
     }
     // More views and a batch's quiet later: still one reply per thread, the same
     // thread counts, no engine-made fix task and no second wake.
-    let threads = rig.stage_entry(&h, &id, 1)["threads"].clone();
+    // Both threads `replied` in the daemon's own view first (review C, I1).
+    let entry = rig.wait_stage_within(&h, &id, 1, "/threads/replied", &json!(2), REPLY_WAIT);
+    let threads = entry["threads"].clone();
     rig.quiet_views();
     assert_eq!(rig.stage_entry(&h, &id, 1)["threads"], threads);
     for first in [one, two] {
@@ -355,4 +357,14 @@ fn e2e_pr_comment_on_an_unowned_file_holds_its_fix_task() {
         "b",
         "the released task ran"
     );
+}
+
+/// Review C, I2: the batch's quiet outlasts one poll, so the view after a batch's first
+/// thread always lands before the batch closes. The bounds are derived from the same
+/// constant the configuration writes.
+#[test]
+fn the_test_batch_outlasts_a_poll() {
+    const { assert!(REVIEW_BATCH_SECS > POLL_MAX_SECS + 1) };
+    assert!(DELIVERY_TOML.contains(&format!("poll_max_secs = {POLL_MAX_SECS}\n")));
+    assert!(DELIVERY_TOML.contains(&format!("review_batch_secs = {REVIEW_BATCH_SECS}\n")));
 }

@@ -129,3 +129,34 @@ fn run_start_outwaits_both_preflights() {
     // The goal's own terms (the triage decider's 600 s and 30 s) on top.
     assert!(request_timeout(&goal) > preflights + Duration::from_secs(600 + 30));
 }
+
+/// Deferred from task 14: `run stats --json` and accept's research-report line go through
+/// `printable` like every other text the CLI prints of the daemon's.
+#[test]
+fn stats_json_and_the_report_line_are_printable() {
+    let hostile = "re\u{202E}po\u{200D}\x1b[2J";
+    let stats = proto::HistoryStats {
+        path: hostile.into(),
+        task_records: 0,
+        run_records: 0,
+        rows: Vec::new(),
+        decider_calls: 0,
+        decider_fallbacks: 0,
+        size_checked: 0,
+        size_raised: 0,
+        problems: vec![format!("bad line: {hostile}")],
+        flaky_proposals: Vec::new(),
+        window_days: 0,
+        quarantine_after: 0,
+    };
+    let json = super::adapt::stats_json(&stats).unwrap();
+    // JSON escapes the control character itself; the bidi override and the ZWJ, which
+    // JSON leaves raw, are dropped.
+    assert!(json.contains("\"path\": \"repo\\u001b[2J\""), "{json}");
+    assert!(!json.contains(['\u{202E}', '\u{200D}', '\x1b']), "{json}");
+    assert!(json.contains('\n'), "the JSON keeps its lines");
+    assert_eq!(
+        super::finish::report_line(std::path::Path::new(&format!("/tmp/{hostile}.md"))),
+        "research report: /tmp/repo [2J.md"
+    );
+}

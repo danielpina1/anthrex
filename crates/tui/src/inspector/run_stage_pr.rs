@@ -8,7 +8,7 @@
 use super::run_format::{clean, local_hhmm};
 use super::{Field, field};
 use crate::app::App;
-use crate::theme::ci_look;
+use crate::theme::{self, Role, ci_look};
 use proto::{
     CiState, DeliveryInfo, DeliveryMode, PrState, RunInfo, RunState, StageInfo, StagePrInfo,
     TaskInfo,
@@ -114,10 +114,14 @@ fn pr_fields(pr: &StagePrInfo, app: &App) -> Vec<Field> {
     let mut fields = vec![
         field("pr", pr_text(pr, app)),
         field("url", clean(&pr.url)),
-        Field {
-            label: "ci",
-            value: ci_text(pr, ascii),
-            wrap: true,
+        {
+            let (value, marks) = ci_text(pr, ascii);
+            Field {
+                label: "ci",
+                value,
+                wrap: true,
+                marks,
+            }
         },
         field("threads", threads_text(pr)),
     ];
@@ -153,21 +157,35 @@ fn pr_text(pr: &StagePrInfo, app: &App) -> String {
 
 /// Each check of the most recent head, `✓ build · ✗ test (fix3)` (the row wraps, so
 /// the checks are `·`-separated rather than two spaces apart, which a wrap would fold);
-/// with none, the PR's CI as a word.
-fn ci_text(pr: &StagePrInfo, ascii: bool) -> String {
+/// with none, the PR's CI as a word. With it, the word index of each check's mark and
+/// the role of its state (deferred from task 15): the panel colours those words, so a
+/// check named `✓` is never drawn as a green mark. In ASCII the host's text is folded
+/// here, so `inspect`'s fold changes no word count and the indexes hold.
+fn ci_text(pr: &StagePrInfo, ascii: bool) -> (String, Vec<(usize, Role)>) {
     if pr.checks.is_empty() {
-        return ci_word(pr.ci).to_owned();
+        return (ci_word(pr.ci).to_owned(), Vec::new());
     }
-    let checks: Vec<String> = (pr.checks.iter())
-        .map(|c| {
-            let mut text = format!("{} {}", ci_look(c.state, ascii).0, clean(&c.name));
-            if let Some(fix) = &c.fix_task {
-                text.push_str(&format!(" ({})", clean(fix)));
-            }
+    let host = |text: &str| {
+        let text = clean(text);
+        if ascii {
+            theme::ascii_twins(&theme::fold(&text, true))
+        } else {
             text
-        })
-        .collect();
-    checks.join(" · ")
+        }
+    };
+    let (mut value, mut marks) = (String::new(), Vec::new());
+    for (i, c) in pr.checks.iter().enumerate() {
+        if i > 0 {
+            value.push_str(" · ");
+        }
+        let (mark, role) = ci_look(c.state, ascii);
+        marks.push((value.split_whitespace().count(), role));
+        value.push_str(&format!("{mark} {}", host(&c.name)));
+        if let Some(fix) = &c.fix_task {
+            value.push_str(&format!(" ({})", host(fix)));
+        }
+    }
+    (value, marks)
 }
 
 /// `2 open, 1 addressed, 1 replied`, then `, 4 ignored` (non-writers and bots); `none`

@@ -231,6 +231,7 @@ fn fetch_adopts_only_a_descendant() {
                 also_integration,
             }),
             parents_of: None,
+            deadline: None,
         })
     };
 
@@ -288,6 +289,7 @@ fn fetch_adopts_only_a_descendant() {
             into: format!("refs/anthrex/{RUN}/remote/base"),
             adopt: None,
             parents_of: None,
+            deadline: None,
         })
     };
     assert_eq!(base(), Ok(FetchOutcome::Missing));
@@ -331,6 +333,7 @@ fn a_base_fetch_counts_the_merge_commits_parents() {
             into: format!("refs/anthrex/{RUN}/remote/base"),
             adopt: None,
             parents_of: oid.map(str::to_string),
+            deadline: None,
         })
     };
     let fetched = |parents| {
@@ -400,4 +403,93 @@ fn the_rev_list_arm_takes_only_a_full_object_id_read_only() {
             "{refused:?} was not refused"
         );
     }
+}
+
+/// Fix wave A2 (review A, M2): an adoption checks its op's deadline just before the
+/// compare-and-swap. With too little of the bound left for the swap's own timeout, it
+/// answers `TimedOut` and moves nothing, so a swap never lands after the op's answer
+/// told the engine it timed out.
+#[test]
+fn an_adoption_past_its_deadline_moves_nothing() {
+    let rig = Rig::new();
+    let a = commit(&rig.work, "a");
+    let stage = format!("anthrex/{RUN}/stage-1");
+    let integration = format!("anthrex/{RUN}/integration");
+    git(&rig.work, &["branch", &stage, &a]);
+    git(&rig.work, &["branch", &integration, &a]);
+    let b = commit(&rig.work, "b (the user's commit on the stage branch)");
+    rig.push(1, &b).unwrap();
+    let fetch = |deadline: Option<Instant>| {
+        rig.fetch(&FetchReq {
+            repo: rig.repo.clone(),
+            run_id: RUN.to_string(),
+            branch: stage.clone(),
+            into: format!("refs/anthrex/{RUN}/remote/stage-1"),
+            adopt: Some(Adopt {
+                local_ref: stage.clone(),
+                expected_local: a.clone(),
+                also_integration: true,
+            }),
+            parents_of: None,
+            deadline,
+        })
+    };
+
+    // Less than the swap's own bound is left: refused, nothing moved.
+    let close = Instant::now() + HOST_READ_TIMEOUT - Duration::from_secs(1);
+    let Err(HostError::TimedOut(text)) = fetch(Some(close)) else {
+        panic!("an adoption without room for its swap went ahead");
+    };
+    assert_eq!(
+        text,
+        format!("fetch ran out of its bound before adopting into {stage}; nothing was moved")
+    );
+    assert_eq!(rig.local(&stage), a);
+    assert_eq!(rig.local(&integration), a);
+
+    // With room left, the same adoption goes ahead.
+    let roomy = Instant::now() + HOST_READ_TIMEOUT + Duration::from_secs(60);
+    assert_eq!(
+        fetch(Some(roomy)),
+        Ok(FetchOutcome::Adopted { sha: b.clone() })
+    );
+    assert_eq!(rig.local(&stage), b);
+}
+
+/// Deferred from task 4: a user's `fetch.prune` and `fetch.pruneTags` never reach
+/// anthrex's fetch, so it deletes neither their local tags nor anything under its own
+/// private refs that the remote lacks (`--no-prune --no-prune-tags`).
+#[test]
+fn a_users_prune_config_prunes_nothing() {
+    let rig = Rig::new();
+    let a = commit(&rig.work, "a");
+    git(&rig.work, &["push", "-q", "origin", "main"]);
+    git(&rig.work, &["tag", "local-only", &a]);
+    let gone = format!("refs/anthrex/{RUN}/remote/gone");
+    git(&rig.work, &["update-ref", &gone, &a]);
+    git(&rig.work, &["config", "fetch.prune", "true"]);
+    git(&rig.work, &["config", "fetch.pruneTags", "true"]);
+    git(&rig.work, &["config", "remote.origin.prune", "true"]);
+    git(&rig.work, &["config", "remote.origin.pruneTags", "true"]);
+    let fetched = rig.fetch(&FetchReq {
+        repo: rig.repo.clone(),
+        run_id: RUN.to_string(),
+        branch: "main".to_string(),
+        into: format!("refs/anthrex/{RUN}/remote/base"),
+        adopt: None,
+        parents_of: None,
+        deadline: None,
+    });
+    assert_eq!(
+        fetched,
+        Ok(FetchOutcome::Fetched {
+            sha: a.clone(),
+            parents: None
+        })
+    );
+    assert_eq!(
+        git(&rig.work, &["tag", "--list", "local-only"]),
+        "local-only"
+    );
+    assert_eq!(git(&rig.work, &["rev-parse", "--verify", &gone]), a);
 }

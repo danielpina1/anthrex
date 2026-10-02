@@ -3,8 +3,11 @@
 //! in it is agent or host text: a number, the CI mark (`theme::ci_look`, with its ASCII
 //! twin) and counts.
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::theme::{Role, ci_look};
 use crate::tree::{Row, RowKind};
+use crate::ui::tree_view::truncate_in;
 use proto::{DeliveryMode, PrState, RunInfo, StageInfo};
 
 /// Where the suffix's CI mark starts: the text after it is client-written too, so
@@ -43,7 +46,20 @@ pub(crate) fn ci_mark_span(
 /// still to address) and `  paused` while a lower stage's PR is closed; `  #<n>  merged`
 /// or `  #<n>  closed` once it landed; `  skipped` for a stage with no changes, and
 /// `  no PR yet` before its PR opens.
+#[cfg(test)]
 pub(crate) fn row_suffix(run: &RunInfo, stage: &StageInfo, ascii: bool) -> String {
+    row_suffix_within(run, stage, ascii, usize::MAX)
+}
+
+/// [`row_suffix`] in at most `room` display columns where it can: the PR number's
+/// digits are cut first (`#1234…`), so the CI mark, the thread count and the state word
+/// after them stay whole (the final fix wave, review C M4).
+pub(crate) fn row_suffix_within(
+    run: &RunInfo,
+    stage: &StageInfo,
+    ascii: bool,
+    room: usize,
+) -> String {
     let Some(delivery) = run.delivery.as_ref().filter(|d| d.mode == DeliveryMode::Pr) else {
         return String::new();
     };
@@ -55,23 +71,30 @@ pub(crate) fn row_suffix(run: &RunInfo, stage: &StageInfo, ascii: bool) -> Strin
         }
         .to_owned();
     };
-    let mut out = format!("  #{}", pr.number);
+    let mut rest = String::new();
     match pr.state {
-        PrState::Merged => out.push_str("  merged"),
-        PrState::Closed => out.push_str("  closed"),
+        PrState::Merged => rest.push_str("  merged"),
+        PrState::Closed => rest.push_str("  closed"),
         PrState::Open => {
-            out.push_str(&format!("{CI_LEAD}{}", ci_look(pr.ci, ascii).0));
+            rest.push_str(&format!("{CI_LEAD}{}", ci_look(pr.ci, ascii).0));
             match pr.threads.new.saturating_add(pr.threads.tasked) {
                 0 => {}
-                1 => out.push_str("  1 thread"),
-                k => out.push_str(&format!("  {k} threads")),
+                1 => rest.push_str("  1 thread"),
+                k => rest.push_str(&format!("  {k} threads")),
             }
             if pr.paused {
-                out.push_str("  paused");
+                rest.push_str("  paused");
             }
         }
     }
-    out
+    let number = format!("#{}", pr.number);
+    let fixed = 2 + UnicodeWidthStr::width(rest.as_str());
+    let number = if fixed + UnicodeWidthStr::width(number.as_str()) > room {
+        truncate_in(&number, room.saturating_sub(fixed).max(1), ascii)
+    } else {
+        number
+    };
+    format!("  {number}{rest}")
 }
 
 #[cfg(test)]

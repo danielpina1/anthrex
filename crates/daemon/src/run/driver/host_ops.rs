@@ -17,7 +17,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{OpCtx, RunService};
 use crate::host::{
@@ -112,28 +112,39 @@ pub(crate) async fn execute(exec: &HostExec, at: &HostAt, repo: HostRepo, op: Ho
     let (name, queued) = (op_name(&op), writes(&op));
     let host = exec.host.clone();
     let (run_id, data_dir, seal) = (at.run_id.clone(), at.data_dir.clone(), at.seal.clone());
-    let work = move || {
+    let work = move |deadline: Option<Instant>| {
         guarded(name, || {
             if queued && let Err(error) = unchanged(&*host, name, &repo, seal.as_deref()) {
                 return HostResult::Error(error);
             }
-            call(&*host, &run_id, &data_dir, repo.clone(), op.clone())
+            call(
+                &*host,
+                &run_id,
+                &data_dir,
+                repo.clone(),
+                op.clone(),
+                deadline,
+            )
         })
     };
     let answer = if queued {
-        let (queue, project) = (exec.queue.clone(), at.project.clone());
-        let write = async move { queue.write(&project, move || Ok(work())).await };
+        // Fix wave A2: the bound starts once the op holds the project's queue, and the
+        // closure gets its deadline (an adoption checks it before its swap).
+        let write = exec
+            .queue
+            .write_within(&at.project, limit, move |deadline| Ok(work(Some(deadline))));
         // The closure catches its own panic, so the queue's error is a lost task (a
         // shutdown): retryable.
-        tokio::time::timeout(limit, write).await.map(|r| {
-            r.unwrap_or_else(|e| HostResult::Error(HostError::Failed(format!("{name}: {e}"))))
-        })
-    } else {
-        tokio::time::timeout(limit, tokio::task::spawn_blocking(work))
+        write
             .await
+            .map(|r| r.unwrap_or_else(|e| queue_lost(name, e)))
+    } else {
+        tokio::time::timeout(limit, tokio::task::spawn_blocking(move || work(None)))
+            .await
+            .ok()
             .map(|r| r.unwrap_or_else(|e| lost(name, e)))
     };
-    OpResult::Host(answer.unwrap_or_else(|_| {
+    OpResult::Host(answer.unwrap_or_else(|| {
         HostResult::Error(HostError::TimedOut(format!(
             "{name} did not answer within {} s",
             limit.as_millis().div_ceil(1000)
@@ -156,6 +167,12 @@ pub(crate) fn lost(name: &str, error: tokio::task::JoinError) -> HostResult {
     } else {
         HostError::Failed(format!("{name} did not finish: {error}"))
     })
+}
+
+/// A queued op whose queue lost its task (a shutdown): an ordinary failure, retried
+/// when next due. The closure catches its own panic, so this is never a panic.
+pub(crate) fn queue_lost(name: &str, error: String) -> HostResult {
+    HostResult::Error(HostError::Failed(format!("{name}: {error}")))
 }
 
 /// `f`, its panic caught and answered `Forbidden` (see the module doc).
@@ -236,6 +253,7 @@ fn call(
     data_dir: &Path,
     repo: HostRepo,
     op: HostOp,
+    deadline: Option<Instant>,
 ) -> HostResult {
     let run_id = run_id.to_string();
     let files = data_dir.join(DELIVERY_DIR);
@@ -262,6 +280,7 @@ fn call(
                 into,
                 adopt,
                 parents_of,
+                deadline,
             })
             .map(HostResult::Fetched),
         HostOp::OpenPr {

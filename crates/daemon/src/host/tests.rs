@@ -180,6 +180,7 @@ fn every_method(root: &Path) -> GhHost<ScriptedRunner> {
         into: into.clone(),
         adopt: None,
         parents_of: None,
+        deadline: None,
     };
     assert_eq!(
         host.fetch(&fetch).unwrap(),
@@ -356,6 +357,8 @@ fn every_method_builds_its_exact_argv() {
                 &[
                     "fetch",
                     "--no-tags",
+                    "--no-prune",
+                    "--no-prune-tags",
                     "--no-recurse-submodules",
                     "--no-auto-maintenance",
                     "--no-write-fetch-head",
@@ -381,6 +384,8 @@ fn every_method_builds_its_exact_argv() {
                 &[
                     "fetch",
                     "--no-tags",
+                    "--no-prune",
+                    "--no-prune-tags",
                     "--no-recurse-submodules",
                     "--no-auto-maintenance",
                     "--no-write-fetch-head",

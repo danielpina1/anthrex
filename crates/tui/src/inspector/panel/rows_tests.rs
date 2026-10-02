@@ -90,6 +90,7 @@ fn plain(label: &'static str, value: &str) -> Field {
         label,
         value: value.to_owned(),
         wrap: false,
+        marks: Vec::new(),
     }
 }
 

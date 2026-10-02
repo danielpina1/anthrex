@@ -3,12 +3,16 @@
 //!
 //! - `gh pr merge` (any flags; `--auto` is "enable auto-merge") and `gh pr review` (any
 //!   form), with `-R`/`--repo` in any of their forms before the subcommand;
-//! - `gh api` with any positional whose path has a `merge` or `merges` segment
-//!   ("merge") or a `reviews` segment ("approve"), with method `PUT` ("merge"), or a
-//!   body containing `mutation` sent to `graphql` (`graphql`, `/graphql`,
-//!   `api/graphql` or a full URL ending so). Flags are read as pflag reads them: `-Xv`,
+//! - `gh api` with any positional whose path has a segment starting `merge` (`merge`,
+//!   `merges`, `merge-upstream`: "merge") or a `reviews` segment ("approve"), with
+//!   method `PUT` ("merge"), any write to `git/refs` ("move a branch"), or a body
+//!   containing `mutation` sent to `graphql` (`graphql`, `/graphql`, `graphql/`,
+//!   `api/graphql` or a full URL ending so). Paths are percent-decoded first, and a
+//!   positional's query string is a body. Flags are read as pflag reads them: `-Xv`,
 //!   `-X=v`, `-X v`, combined shorthands (`-iXPUT`), `--flag=v`, `--flag v`; `-F k=@f`
-//!   and `--input f` bodies are read from `f` relative to the directory `gh` runs in.
+//!   and `--input f` bodies are read from `f` relative to the directory `gh` runs in,
+//!   and every string in a JSON body is read too;
+//! - `gh repo sync` ("sync").
 
 use std::path::Path;
 
@@ -33,6 +37,10 @@ pub(super) fn landing(args: &[&str], dir: &Path) -> Option<&'static str> {
     match args.split_first()? {
         (&"pr", rest) => pr_landing(rest),
         (&"api", rest) => api_landing(rest, dir),
+        // The final fix wave (A3): `gh repo sync` moves a branch to its upstream's.
+        (&"repo", rest) => {
+            (rest.iter().find(|a| !a.starts_with('-')) == Some(&"sync")).then_some("sync")
+        }
         _ => None,
     }
 }
@@ -119,48 +127,126 @@ fn short_of(flag: &str) -> char {
     }
 }
 
-/// A positional as a path: no `scheme://host/`, no leading `/`, no query.
-fn path_of(positional: &str) -> &str {
+/// A positional as a path, percent-decoded (deferred from task 5): no `scheme://host/`,
+/// no leading or trailing `/`, no query.
+fn path_of(positional: &str) -> String {
     let rest = match positional.split_once("://") {
         Some((_, after)) => after.split_once('/').map_or("", |(_, p)| p),
         None => positional,
     };
-    let rest = rest.trim_start_matches('/');
-    rest.split(['?', '#']).next().unwrap_or("")
+    let path = rest.split(['?', '#']).next().unwrap_or("");
+    decode(path).trim_matches('/').to_string()
 }
 
-fn read(dir: &Path, file: &str) -> String {
-    std::fs::read_to_string(dir.join(file)).unwrap_or_default()
+/// A positional's query string, percent-decoded: `gh api` sends it as given, so a
+/// `graphql?query=mutation…` is a mutation (deferred from task 5).
+fn query_of(positional: &str) -> Option<String> {
+    let (_, query) = positional.split_once('?')?;
+    Some(decode(query.split('#').next().unwrap_or("")))
+}
+
+/// `%XX` decoded (an invalid escape is kept as written).
+fn decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(b)) => {
+                out.push(b);
+                i += 3;
+            }
+            (b, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A body file's text, and every string inside it when it is JSON, so an escaped
+/// `\u006dutation` reads as `mutation` (deferred from task 5).
+fn read(dir: &Path, file: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(dir.join(file)).unwrap_or_default();
+    let mut found = Vec::new();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+        strings_in(&value, &mut found);
+    }
+    found.push(text);
+    found
+}
+
+fn strings_in(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(s) => out.push(s.clone()),
+        serde_json::Value::Array(items) => items.iter().for_each(|v| strings_in(v, out)),
+        serde_json::Value::Object(map) => map.iter().for_each(|(k, v)| {
+            out.push(k.clone());
+            strings_in(v, out);
+        }),
+        _ => {}
+    }
+}
+
+/// Whether a path's segments name `wanted`. The segment after `collaborators` (or
+/// `users`) is a login, never read as a verb: a reviewer may be called `mergebot`.
+fn has_segment(path: &str, wanted: impl Fn(&str) -> bool) -> bool {
+    let segments: Vec<&str> = path.split('/').collect();
+    segments.iter().enumerate().any(|(at, s)| {
+        let login = at > 0 && matches!(segments[at - 1], "collaborators" | "users");
+        !login && wanted(s)
+    })
 }
 
 fn api_landing(rest: &[&str], dir: &Path) -> Option<&'static str> {
     let (values, positional) = flag_values(rest);
-    let paths: Vec<&str> = positional.iter().map(|p| path_of(p)).collect();
-    let segment = |wanted: &[&str]| {
-        paths
-            .iter()
-            .any(|p| p.split('/').any(|s| wanted.contains(&s)))
-    };
-    if segment(&["merge", "merges"]) {
-        return Some("merge");
-    }
-    if segment(&["reviews"]) {
-        return Some("approve");
-    }
-    let mut bodies = Vec::new();
+    let paths: Vec<String> = positional.iter().map(|p| path_of(p)).collect();
+    let segment = |wanted: &dyn Fn(&str) -> bool| paths.iter().any(|p| has_segment(p, wanted));
+    let mut bodies: Vec<String> = positional.iter().filter_map(|p| query_of(p)).collect();
+    let mut method = None;
     for (flag, value) in values {
         match flag {
-            'X' if value.eq_ignore_ascii_case("PUT") => return Some("merge"),
+            'X' => method = Some(value.to_ascii_uppercase()),
             'f' => bodies.push(value),
-            'F' => bodies.push(match value.split_once("=@") {
-                Some((_, file)) => read(dir, file),
-                None => value,
-            }),
-            'I' => bodies.push(read(dir, &value)),
+            'F' => match value.split_once("=@") {
+                Some((_, file)) => bodies.extend(read(dir, file)),
+                None => bodies.push(value),
+            },
+            'I' => bodies.extend(read(dir, &value)),
             _ => {}
         }
     }
-    let graphql = paths.iter().any(|p| *p == "graphql" || *p == "api/graphql");
+    // `gh api` sends a GET unless fields or an input make it a POST.
+    let method = method.unwrap_or_else(|| {
+        let body = rest.iter().any(|a| {
+            ["-f", "-F", "--raw-field", "--field", "--input"]
+                .iter()
+                .any(|f| a.starts_with(f))
+        });
+        (if body { "POST" } else { "GET" }).to_string()
+    });
+    // Deferred from task 5: a write to a branch's ref is a landing (anthrex pushes its
+    // stage refs through git, never through the API).
+    let writes = ["POST", "PATCH", "PUT", "DELETE"].contains(&method.as_str());
+    if writes && paths.iter().any(|p| p.contains("git/refs")) {
+        return Some("move a branch");
+    }
+    // A3: any segment that starts with `merge` (`merge`, `merges`, `merge-upstream`).
+    if segment(&|s| s.starts_with("merge")) {
+        return Some("merge");
+    }
+    if segment(&|s| s == "reviews") {
+        return Some("approve");
+    }
+    if method == "PUT" {
+        return Some("merge");
+    }
+    let graphql = paths.iter().any(|p| p == "graphql" || p == "api/graphql");
     let mutation = bodies.iter().find(|b| b.contains("mutation"));
     let lower = mutation.filter(|_| graphql)?.to_ascii_lowercase();
     Some(if lower.contains("automerge") {
