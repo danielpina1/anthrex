@@ -411,6 +411,33 @@ fn a_base_conflict_outside_the_stage_is_held() {
     );
 }
 
+/// Fix round 1 (m1): while a sync task resolves the base, a view that still finds the
+/// PR conflicting fetches the same base, which is not queued again: no second "moved"
+/// line, and no base sync after the task merges.
+#[test]
+fn a_base_its_sync_task_carries_is_not_queued_again() {
+    let mut fx = base_conflicted(&["docs/t1/a.md"]);
+    let at = commit(1);
+    poll_with(&mut fx, conflicting(PR, &at));
+    fetched(&mut fx, &commit(50), None);
+    let moved = "stage 1: main moved to 50eeeee; merging it into stage 1";
+    let count = fx.run().log.iter().filter(|l| l.text == moved).count();
+    assert_eq!(count, 1);
+    assert!(fx.run().delivery.base_sync_due.is_empty());
+    fx.tick();
+    let (op, _) = pending_one(&fx, "PrepareWorktree", Some("fix1"));
+    fx.done(op, OpResult::Worktree { head: at.clone() });
+    let (op, _) = pending_one(&fx, "HandBack", Some("fix1"));
+    fx.done(op, handed(&at));
+    let windows = fx.launch_all();
+    let window = window_of(&windows, "fix1");
+    let args = serde_json::json!({"summary": "resolved"});
+    fx.tool_as(AgentRole::Worker, window, "fix1", "task_done", args);
+    super::kinds_integration::merge_real(&mut fx, "fix1", &commit(52));
+    fx.tick();
+    assert!(base_syncs(&fx).is_empty(), "{:#?}", base_syncs(&fx));
+}
+
 /// Ruling R-7: a base sync that a restart lost is a base sync again (back into
 /// `base_sync_due`), never a stage propagate; a red one is not tried again on the same
 /// base and head.

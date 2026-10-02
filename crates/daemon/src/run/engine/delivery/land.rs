@@ -27,6 +27,7 @@ use super::super::{Effect, wake};
 use super::open::remote_branch;
 use super::watch::{named, pr_mut};
 use super::{emit, host_busy, stage_mut};
+use crate::host::allow::is_object_id;
 use crate::run::contract::sha7;
 use crate::run::delivery::body::stacked_on;
 use crate::run::delivery::ops::HostOp;
@@ -70,6 +71,12 @@ fn landing(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
     match (pr.state, landed) {
         (PrState::Merged, Some(PrState::Merged)) | (PrState::Closed, Some(PrState::Closed)) => {}
         (PrState::Open, None) => {}
+        // Fix round 1 (I2): reopened and merged between two polls; the reopen's reset
+        // first, so the closed line goes and the merge gets its own history line.
+        (PrState::Merged, Some(PrState::Closed)) => {
+            reopened(run, n, &pr, now);
+            merged(run, n, &pr, now);
+        }
         (PrState::Merged, _) => merged(run, n, &pr, now),
         (PrState::Closed, _) => closed(run, n, &pr, now, fx),
         (PrState::Open, Some(_)) => reopened(run, n, &pr, now),
@@ -89,8 +96,9 @@ fn merged(run: &mut Run, n: u16, pr: &PrRecord, now: u64) {
         now,
         format!("{}: merged on the host at {commit}", named(n, pr)),
     );
-    if pr.merge_commit.is_none() {
-        // Nothing to count the parents of (ruling R-4): the method is unknown.
+    if !pr.merge_commit.as_deref().is_some_and(is_object_id) {
+        // Nothing git can count the parents of (ruling R-4; fix round 1, m2): the
+        // method is unknown.
         if let Some(record) = pr_mut(run, n) {
             record.merge_method = Some(MergeMethod::None);
         }

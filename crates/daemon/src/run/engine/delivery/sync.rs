@@ -20,6 +20,7 @@ use super::super::requests::log;
 use super::super::{Effect, OpId, OpKind, OpResult, emit_op, next_op, stages, wake};
 use super::watch::{stage_busy, stage_paused};
 use super::{emit, pr, stage_mut};
+use crate::host::allow::is_object_id;
 use crate::host::{FetchOutcome, Mergeable};
 use crate::run::contract::sha7;
 use crate::run::delivery::ops::HostOp;
@@ -67,6 +68,15 @@ fn sync_open(run: &Run, n: u16) -> bool {
     (run.tasks.iter()).any(|t| t.sync.is_some() && t.stage() == n && !t.state.is_finished())
 }
 
+/// An unfinished sync task of stage `n` is resolving the merge of base `sha` (fix
+/// round 1, m1): its merge brings `sha` in, so it is not queued again.
+fn resolving(run: &Run, n: u16, sha: &str) -> bool {
+    (run.tasks.iter()).any(|t| {
+        !t.state.is_finished()
+            && matches!(&t.fixes, Some(FixOf::Base { stage, base_sha }) if *stage == n && base_sha == sha)
+    })
+}
+
 /// A base sync of `sha` into stage `n` is in flight.
 fn in_flight(run: &Run, n: u16, sha: &str) -> bool {
     (run.pending_ops.values()).any(
@@ -102,19 +112,29 @@ pub(super) fn viewed(run: &mut Run, n: u16) {
     run.delivery.base_fetch_due |= due;
 }
 
+/// The merge commit of the oldest merged stage whose method is not known yet (ruling
+/// R-4). A base fetch counts its parents, so one is due while any is left (fix round
+/// 1, I1: two merges seen around one fetch each get theirs).
+fn method_due(run: &Run) -> Option<String> {
+    (run.delivery.stages.iter())
+        .filter_map(|s| s.pr.as_ref())
+        .find(|p| {
+            p.state == proto::PrState::Merged
+                && p.merge_method.is_none()
+                && p.merge_commit.as_deref().is_some_and(is_object_id)
+        })
+        .and_then(|p| p.merge_commit.clone())
+}
+
 /// The pass: the due base fetch, one at a time, after a failed one's wait. It asks for
-/// the parents of the oldest merged stage's merge commit whose method is not known yet
-/// (ruling R-4).
+/// the parents of `method_due`'s merge commit.
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let d = &run.delivery;
     let waiting = d.base_fetch_retry_at.is_some_and(|t| t > now);
-    if !d.base_fetch_due || waiting || fetching(run) {
+    let parents_of = method_due(run);
+    if !(d.base_fetch_due || parents_of.is_some()) || waiting || fetching(run) {
         return;
     }
-    let parents_of = (d.stages.iter())
-        .filter_map(|s| s.pr.as_ref())
-        .find(|p| p.state == proto::PrState::Merged && p.merge_method.is_none())
-        .and_then(|p| p.merge_commit.clone());
     let op = HostOp::Fetch {
         stage: None,
         branch: run.base_branch.clone(),
@@ -167,6 +187,7 @@ fn queue(run: &mut Run, sha: String, now: u64) {
     if sha == synced(run)
         || run.delivery.base_sync_due.get(&n) == Some(&sha)
         || in_flight(run, n, &sha)
+        || resolving(run, n, &sha)
         || red == Some((sha.clone(), head))
     {
         return;

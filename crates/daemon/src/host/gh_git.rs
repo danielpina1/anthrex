@@ -109,6 +109,10 @@ impl<R: Runner> GhHost<R> {
         req: &FetchReq,
         oid: &str,
     ) -> Result<Option<u32>, HostError> {
+        // Fix round 1 (m2): an oid the allow-list would refuse fails nothing.
+        if !allow::is_object_id(oid) {
+            return Ok(None);
+        }
         let out = self.git(
             ctx,
             &req.repo.root,

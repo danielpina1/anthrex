@@ -344,6 +344,60 @@ fn a_base_fetch_counts_the_merge_commits_parents() {
     assert_eq!(fetch(Some(&b)), fetched(Some(1)));
     assert_eq!(fetch(Some(&"e".repeat(40))), fetched(None));
     assert_eq!(fetch(None), fetched(None));
+    // Fix round 1 (m2): an oid that is not one fails nothing; git is not asked.
+    assert_eq!(fetch(Some("not-an-object-id")), fetched(None));
+    assert_eq!(fetch(Some("HEAD")), fetched(None));
     assert_eq!(rig.local("main"), main_before, "the local base never moves");
     assert_ne!(a, squash);
+}
+
+/// Fix round 1 (m3): the `rev-list` arm takes exactly one shape, read-only, with a full
+/// object id; every other is refused before any process starts.
+#[test]
+fn the_rev_list_arm_takes_only_a_full_object_id_read_only() {
+    use super::allow::{AllowCtx, check};
+    let ctx = AllowCtx {
+        run_id: Some(RUN),
+        remote: "origin",
+        base_branch: Some("main"),
+        repo: Some("o/r"),
+    };
+    let sha = "a560bea91b8cd58b3c0d78e5db98c7fdc8e5036b";
+    let read = ["-c", "core.hooksPath=/dev/null"];
+    let write = [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "commit.gpgSign=false",
+        "-c",
+        "core.logAllRefUpdates=false",
+    ];
+    let args = |flags: &[&str], rest: &[&str]| -> Vec<String> {
+        flags.iter().chain(rest).map(|a| a.to_string()).collect()
+    };
+    let ok = args(&read, &["rev-list", "--parents", "-n", "1", sha]);
+    assert_eq!(check(Program::Git, &ok, &ctx), Ok(()));
+    for refused in [
+        args(
+            &read,
+            &["rev-list", "--parents", "-n", "1", "refs/heads/main"],
+        ),
+        args(&read, &["rev-list", "--parents", "-n", "1", "main"]),
+        args(&read, &["rev-list", "--parents", "-n", "2", sha]),
+        args(&read, &["rev-list", "--parents", "-n", "1", "--all"]),
+        args(&read, &["rev-list", "--all", "--parents", "-n", "1", sha]),
+        args(&read, &["rev-list", "--parents", "-n", "1", &sha[..7]]),
+        args(&read, &["rev-list", "--parents", "-n", "1", sha, sha]),
+        args(&read, &["rev-list", "--parents", "-n", "1", sha, "--", "x"]),
+        args(&write, &["rev-list", "--parents", "-n", "1", sha]),
+        args(&[], &["rev-list", "--parents", "-n", "1", sha]),
+    ] {
+        assert!(
+            matches!(
+                check(Program::Git, &refused, &ctx),
+                Err(HostError::Forbidden(_))
+            ),
+            "{refused:?} was not refused"
+        );
+    }
 }

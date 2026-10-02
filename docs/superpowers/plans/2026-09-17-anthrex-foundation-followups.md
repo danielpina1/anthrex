@@ -1808,3 +1808,13 @@ For M9.2 (the next milestone that touches the daemon and the config writer):
 - **`plan_review::all_deps` keeps a task's own id (for M9.2).** `app/plan_review.rs::all_deps` joins `deps` and `implicit_deps` without dropping the task's own id. The daemon refuses a self-dependency, so no live plan shows it, but the plan review, the compact list and the graph's boxes (all through `run_format::after_text`) would print `after t1` on `t1` from a hand-built snapshot. Filter `t.id` out, with a test.
 - **The overview inspects the selection again for its single-line footer (for M9.5).** M9.0.7's final fix wave made the overview frame inspect the selected node once to size and draw its panel, but `ui/overview_footer.rs` (the single line shown when the panel is hidden) calls `inspector::inspect` again (`:105`), and `settle_graph_viewport` inspects on the reducer's side. Two or three inspections a frame are cheap at 10 frames a second; share one if a profile ever shows them.
 - **`audit::stray_accent` checks colour only, and not ASCII (for M9.2's TUI work).** The M9.0.7 render audit's stray-accent rule (`ui/audit.rs::stray_accent`, test-only) takes any cell whose foreground is the accent and whose symbol is a Unicode box glyph as part of a frame, so an accented toast or hint that draws `─` would fail it falsely; and it leaves ASCII `+ - |` out entirely (accented hint keys like `C-b` use `-`), so an ASCII frame left accented under a dialog is invisible to it. Tell frames from text by their shape (a closed rectangle), or let the audit read the regions the renderers draw. Also untriggered: a frame whose bottom row a title fills corner to corner is not counted by `accented_frames` (no frame draws one).
+
+## From M9.2.11's review (2026-10-02, fix round 1, m5), for M9.5
+
+- **A merged stage's unfinished fix tasks keep running.** `engine/delivery/land.rs::merged` doesn't cancel or flag a merged stage's unfinished fix tasks. A closed stage does both (`closed`).
+  - *Below a delivering stage:* a fix task's later commits go up with the next stage, through 9.1's propagate.
+  - *On the top stage:* they are never pushed. They raise no "not delivered" line either, because `unpushed` runs only at the moment of the merge.
+  - The brief says nothing about this (M9.2.11's notes record it as a reading).
+  - Fix direction:
+    - Cancel a merged top stage's unfinished fix tasks, with a reason like `stage <n> PR merged`.
+    - Or run `unpushed` again when such a task merges after its stage landed.

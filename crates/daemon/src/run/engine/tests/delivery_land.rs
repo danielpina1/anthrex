@@ -31,7 +31,7 @@ use crate::run::engine::{Effect, EventKind, OpKind, OpResult};
 use crate::run::model::FixOf;
 
 /// A view of stage PR `number` merged on GitHub at merge commit `oid`.
-fn merged_view(number: u64, head: &str, oid: &str) -> PrView {
+pub(super) fn merged_view(number: u64, head: &str, oid: &str) -> PrView {
     PrView {
         state: PrState::Merged,
         merged_at: Some(5_000),
@@ -40,7 +40,7 @@ fn merged_view(number: u64, head: &str, oid: &str) -> PrView {
     }
 }
 
-fn closed_view(number: u64, head: &str) -> PrView {
+pub(super) fn closed_view(number: u64, head: &str) -> PrView {
     PrView {
         state: PrState::Closed,
         ..view_of(number, head)
@@ -71,16 +71,16 @@ pub(super) fn pr_record(number: u64, state: PrState) -> crate::run::delivery::Pr
 }
 
 /// Stage `n`'s PR is not polled again in this test.
-fn park(fx: &mut Fixture, n: u16) {
+pub(super) fn park(fx: &mut Fixture, n: u16) {
     let pr = fx.run_mut().delivery.stages[usize::from(n) - 1].pr.as_mut();
     pr.unwrap().next_poll_at = u64::MAX / 2;
 }
 
-fn head(fx: &Fixture, n: u16) -> String {
+pub(super) fn head(fx: &Fixture, n: u16) -> String {
     fx.run().stage_head(n).unwrap().to_string()
 }
 
-fn logged(fx: &Fixture, text: &str) -> bool {
+pub(super) fn logged(fx: &Fixture, text: &str) -> bool {
     fx.run().log.iter().any(|l| l.text == text)
 }
 
@@ -91,7 +91,7 @@ fn branch(n: u16) -> String {
 /// Merges stage 1 of `two_stages(true)` on GitHub as a squash at `commit(70)`, the
 /// base then at `commit(71)`; answers the base fetch and stage 2's base sync, landed at
 /// `commit(72)`.
-fn stage_1_squashed(fx: &mut Fixture) {
+pub(super) fn stage_1_squashed(fx: &mut Fixture) {
     let h1 = head(fx, 1);
     poll_stage(fx, 1, merged_view(11, &h1, &commit(70)));
     fetched(fx, &commit(71), Some(1));
@@ -453,7 +453,7 @@ fn a_held_stage_lands_only_what_it_pushed() {
 }
 
 /// The `stage` history lines among `effects`.
-fn stage_lines(effects: &[Effect]) -> Vec<StageLine> {
+pub(super) fn stage_lines(effects: &[Effect]) -> Vec<StageLine> {
     ops_in(effects, "AppendHistory")
         .into_iter()
         .filter_map(|(_, kind)| match kind {
