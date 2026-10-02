@@ -18,6 +18,12 @@ use crate::run::delivery::ops::{HostOp, HostResult};
 use crate::run::model::Run;
 
 mod open;
+mod view;
+mod watch;
+
+#[cfg(test)]
+pub(crate) use open::REWRITTEN;
+pub(crate) use watch::{attention, held, release, stage_busy, stage_paused};
 
 /// Decision 25: `run deliver` and `run watch`, as the driver hands them to the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,7 +97,7 @@ pub(crate) fn op_name(op: &HostOp) -> &'static str {
 }
 
 /// `"<stage>/<op>"` (`"run/<op>"` for a run-level op), decision 11's failure key.
-fn failure_key(op: &HostOp) -> String {
+pub(super) fn failure_key(op: &HostOp) -> String {
     let stage = stage_of(op).map_or_else(|| "run".to_string(), |n| n.to_string());
     format!("{stage}/{}", op_name(op))
 }
@@ -122,6 +128,7 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         return;
     }
     open::pass(run, now, fx);
+    watch::pass(run, now, fx);
 }
 
 /// A host op's answer (decision 8). An error is decision 11's; a `Push` or an `OpenPr`
@@ -140,23 +147,40 @@ pub(super) fn host_done(
     if let HostResult::Error(error) = result {
         return failed(run, &op, error, now);
     }
-    run.delivery.failures.remove(&failure_key(&op));
+    watch::succeeded(run, &op);
     match (op, result) {
         (HostOp::Push { stage, sha }, HostResult::Pushed(outcome))
             if run.delivery.pr(stage).is_none() =>
         {
             open::pushed(run, stage, sha, outcome, now, fx)
         }
+        (HostOp::Push { stage, sha }, HostResult::Pushed(outcome)) => {
+            watch::pushed(run, stage, sha, outcome, now)
+        }
         (HostOp::OpenPr { stage, base, .. }, HostResult::PrOpened(pr)) => {
             open::opened(run, stage, base, pr, now)
         }
+        (HostOp::ViewPr { stage, .. }, HostResult::PrViewed(view)) => {
+            view::viewed(run, stage, *view, now)
+        }
+        (
+            HostOp::Fetch {
+                stage: Some(n),
+                adopt: Some(_),
+                ..
+            },
+            HostResult::Fetched(outcome),
+        ) => watch::fetched(run, n, outcome, now, fx),
         _ => {}
     }
 }
 
 /// Decision 11: `Forbidden` is a bug, and the run halts on it; any other error is a
-/// line on the run's log and a retry when next due (for opening: after the poll
-/// interval, so a lasting failure is not retried every second).
+/// line on the run's log and a retry when next due (a view: on its backed-off
+/// interval; any other op: after the poll interval, so a lasting failure is not retried
+/// every second). A rate limit doubles the interval base and a lost login is an
+/// attention line, both until the next success; any other error counts towards the
+/// attention line of an op that keeps failing (task M9.2.8).
 fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
     if let HostError::Forbidden(text) = &error {
         let argv = text.strip_prefix("anthrex never runs: ").unwrap_or(text);
@@ -166,8 +190,16 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
             now,
         );
     }
-    *run.delivery.failures.entry(failure_key(op)).or_default() += 1;
     let text: String = error.text().chars().take(200).collect();
+    let rate_limited = matches!(error, HostError::RateLimited(_));
+    match error {
+        HostError::RateLimited(_) => watch::rate_limited(run),
+        HostError::Auth(_) => watch::auth_lost(run),
+        _ => {
+            *run.delivery.failures.entry(failure_key(op)).or_default() += 1;
+            watch::keeps_failing(run, op, op_name(op), &text);
+        }
+    }
     let Some(n) = stage_of(op) else {
         return log(run, now, format!("{} failed: {text}", op_name(op)));
     };
@@ -176,6 +208,9 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
         now,
         format!("stage {n}: {} failed: {text}", op_name(op)),
     );
+    if let HostOp::ViewPr { .. } = op {
+        return watch::view_failed(run, n, rate_limited, now);
+    }
     let wait = retry_secs(run);
     stage_mut(run, n).retry_at = Some(now.saturating_add(wait));
 }

@@ -297,6 +297,8 @@ fn the_delivery_model_round_trips_through_run_json() {
     run.delivery.base_synced = Some("b".repeat(40));
     run.delivery.base_sync_due.insert(2, "d".repeat(40));
     run.delivery.failures.insert("2/view_pr".into(), 3);
+    let line = "PR #142: view_pr keeps failing: boom";
+    run.delivery.alerts.insert("2/view_pr".into(), line.into());
     let mut record = pr(142, PrState::Merged);
     record.merged_at = Some(9_000);
     record.merge_commit = Some("e".repeat(40));
@@ -348,6 +350,8 @@ fn the_delivery_model_round_trips_through_run_json() {
         history_written: true,
         pushed: Some(HEAD2.into()),
         retry_at: Some(3_000),
+        remote_head: Some(HEAD2.into()),
+        held: Some("the remote refused the push".into()),
     };
     let json = serde_json::to_value(&run.delivery).unwrap();
     assert_eq!(json["stages"][1]["ci"][0]["phase"], "to_user");

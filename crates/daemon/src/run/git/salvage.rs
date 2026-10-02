@@ -333,6 +333,10 @@ pub fn delete_branches(
 /// and the remote-tracking refs a push to a named remote leaves
 /// (`refs/remotes/<remote>/anthrex/<run>/*`) go with its branches. Local refs only:
 /// nothing is pushed, and the remote's branches, which back its pull requests, stay.
+/// A remote whose name contains `/` (`team/origin`) keeps its tracking refs: the
+/// remote's name is read as the first path segment, so `refs/remotes/team/origin/…`
+/// never matches. That is the safe direction: a ref is left, never one deleted that is
+/// not the run's (task M9.2.7's review m5).
 fn delete_remote_refs(g: Git<'_>, root: &Path, prefix: &str) -> Result<(), String> {
     let private = format!("refs/{prefix}/remote/");
     let listing = g.ok(

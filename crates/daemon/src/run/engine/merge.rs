@@ -74,6 +74,10 @@ pub(super) fn start_merge(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     // Milestone 9.1 decisions 47, 53: into the task's stage; `integration` moves with
     // it when that is a `Multi` run's highest stage.
     let n = run.tasks[i].stage();
+    // Milestone 9.2 decision 24: an adopt in flight on the stage moves its ref.
+    if super::delivery::stage_busy(run, n) {
+        return;
+    }
     let multi = run.stage_layout == StageLayout::Multi;
     let expected = run.head_for(&run.tasks[i]).to_string();
     // Milestone 9.1 decision 16: a tiered profile's candidate runs tier 2, not `check`.

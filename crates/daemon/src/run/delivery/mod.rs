@@ -52,6 +52,10 @@ pub struct RunDelivery {
     pub base_sync_due: BTreeMap<u16, String>,
     /// Decision 11: `"<stage>/<op>"` → failures in a row.
     pub failures: BTreeMap<String, u32>,
+    /// Task M9.2.8: the run's delivery attention lines by key (`"auth"`, or a failure
+    /// key once it reaches [`FAILURES_BEFORE_ATTENTION`]), each removed when what it
+    /// reports clears (not in Interfaces' `RunDelivery`).
+    pub alerts: BTreeMap<String, String>,
 }
 
 impl RunDelivery {
@@ -106,6 +110,12 @@ pub struct StageDelivery {
     /// Task M9.2.7: a failed opening op is not retried before this time (decision 11's
     /// "retry when next due").
     pub retry_at: Option<u64>,
+    /// Task M9.2.8 (decision 24): the head a view saw on the remote stage branch that is
+    /// not the pushed head; an adoption is due until it is fetched.
+    pub remote_head: Option<String>,
+    /// Task M9.2.8 (ruling R-11): the remote refused this stage's push; the stage pushes
+    /// nothing until `run resume` (the reason, as the host gave it).
+    pub held: Option<String>,
 }
 
 /// A stage's pull request (decisions 20, 23, 35).

@@ -359,7 +359,7 @@ fn a_host_error_is_retried_after_the_poll_interval() {
 }
 
 #[test]
-fn a_rejected_push_halts_and_a_forbidden_command_halts() {
+fn a_rejected_push_halts_a_refused_one_holds_and_a_forbidden_command_halts() {
     let mut fx = delivered_until_push();
     let (op, _) = super::delivery_open::host_op(&fx);
     let rejected = crate::host::PushOutcome::Rejected {
@@ -379,10 +379,11 @@ fn a_rejected_push_halts_and_a_forbidden_command_halts() {
         reason: reason.clone(),
     };
     answer(&mut fx, op, HostResult::Pushed(refused));
+    // Ruling R-11 (task M9.2.8): the stage is held, not the run.
     let run = fx.run();
-    assert_eq!(run.state, RunState::Halted);
-    assert_eq!(run.halted_reason.as_deref(), Some(reason.as_str()));
-    assert!(run.halt_retryable, "run resume pushes again");
+    assert_eq!(run.state, RunState::Running);
+    let held = run.delivery.stage(1).unwrap().held.as_deref();
+    assert_eq!(held, Some(reason.as_str()), "run resume pushes again");
 
     let mut fx = delivered_until_push();
     let (op, _) = super::delivery_open::host_op(&fx);
@@ -390,6 +391,42 @@ fn a_rejected_push_halts_and_a_forbidden_command_halts() {
     answer(&mut fx, op, HostResult::Error(forbidden));
     let text = "anthrex refused its own host command: gh pr merge 1";
     assert_eq!(fx.run().halted_reason.as_deref(), Some(text));
+}
+
+/// Task M9.2.7's review m4 (carried to M9.2.8): the state checks come first. A
+/// discarded `pr`-mode run gets its state's text, and a cancelled `pr`-mode run that
+/// halted, with nothing left to verify, may be discarded at once (review m2).
+#[test]
+fn delivery_refusals_follow_the_state_checks() {
+    let mut fx = delivered();
+    fx.run_mut().state = RunState::Discarded;
+    let effects = finish(&mut fx, FinishAction::Discard);
+    let text = format!("run {RUN_ID} is discarded; discard applies only to a complete run");
+    assert_eq!(replies(&effects), vec![Err(text)]);
+    let effects = finish(&mut fx, FinishAction::Accept);
+    let text = format!("run {RUN_ID} is discarded; accept applies only to a complete run");
+    assert_eq!(replies(&effects), vec![Err(text)]);
+
+    let mut fx = delivered_until_push();
+    let (op, _) = super::delivery_open::host_op(&fx);
+    let rejected = crate::host::PushOutcome::Rejected {
+        reason: "non-fast-forward".into(),
+    };
+    answer(&mut fx, op, HostResult::Pushed(rejected));
+    assert_eq!(fx.run().state, RunState::Halted);
+    let reply = fx.reply();
+    let effects = fx.next(EventKind::Cancel {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    assert!(fx.run().cancelled && fx.run().state == RunState::Halted);
+    let effects = finish(&mut fx, FinishAction::Accept);
+    assert_eq!(replies(&effects), vec![Err(ACCEPT_REFUSED.to_string())]);
+    let effects = finish(&mut fx, FinishAction::Discard);
+    assert!(replies(&effects).is_empty(), "{effects:#?}");
+    assert_eq!(ops_in(&effects, "Discard").len(), 1);
+    assert!(host_ops_in(&effects).is_empty(), "no host call");
 }
 
 /// A `pr`-mode `Single` run whose stage 1 is green and whose push is pending.

@@ -29,7 +29,7 @@ use crate::run::model::Run;
 pub(crate) const REWRITTEN: &str = "remote stage branch was rewritten by someone else";
 
 /// `anthrex/<run>/stage-<n>`: a stage's branch on the remote (decision 20).
-fn remote_branch(run: &Run, n: u16) -> String {
+pub(super) fn remote_branch(run: &Run, n: u16) -> String {
     format!("anthrex/{}/stage-{n}", run.id)
 }
 
@@ -71,7 +71,7 @@ pub(super) fn ready(run: &Run, n: u16) -> Result<(), String> {
 
 /// No merge-queue item targets stage `n`: no queued task of it, no due propagate or
 /// base sync into it, and no candidate or propagate in flight for it.
-fn queue_busy(run: &Run, n: u16) -> bool {
+pub(super) fn queue_busy(run: &Run, n: u16) -> bool {
     let of_stage = |id: &str| run.task(id).is_some_and(|t| t.stage() == n);
     run.merge_queue.iter().any(|id| of_stage(id))
         || run.propagate_due.contains(&n)
@@ -98,7 +98,8 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             .delivery
             .stage(n)
             .is_some_and(|s| s.pr.is_some() || s.skipped);
-        let waiting = run.delivery.stage(n).and_then(|s| s.retry_at) > Some(now);
+        let waiting = run.delivery.stage(n).and_then(|s| s.retry_at) > Some(now)
+            || run.delivery.stage(n).is_some_and(|s| s.held.is_some());
         if done || waiting || host_busy(run, n) || ready(run, n).is_err() {
             continue;
         }
@@ -158,10 +159,10 @@ fn push(run: &mut Run, n: u16, head: String, now: u64, fx: &mut Vec<Effect>) {
 }
 
 /// A push of stage `n`'s head `sha`, before its PR exists. Pushed (or already there):
-/// the PR is created, unless the run stopped or the head moved meanwhile (the next pass
-/// pushes the new head once tier 3 is green on it). A non-fast-forward halts (decision
-/// 13; nothing is ever forced); a push the remote refused (ruling R-11: protection, a
-/// ruleset, a hook) halts too, retryable by `run resume`.
+/// the PR is created, unless the run stopped, the head moved, or the stage is no longer
+/// ready meanwhile (the next pass pushes again once it is; review m1). A
+/// non-fast-forward halts (decision 13; nothing is ever forced); a push the remote
+/// refused (ruling R-11: protection, a ruleset, a hook) holds the stage (`watch.rs`).
 pub(super) fn pushed(
     run: &mut Run,
     n: u16,
@@ -173,9 +174,12 @@ pub(super) fn pushed(
     let to = remote_branch(run, n);
     match outcome {
         PushOutcome::Pushed | PushOutcome::UpToDate => {
-            stage_mut(run, n).pushed = Some(sha.clone());
+            let stage = stage_mut(run, n);
+            stage.pushed = Some(sha.clone());
+            stage.held = None;
             let current = run.stage_head(n) == Some(sha.as_str());
-            if run.state != RunState::Running || run.cancelled || !current {
+            let stopped = run.state != RunState::Running || run.cancelled;
+            if stopped || !current || ready(run, n).is_err() {
                 return;
             }
             let base = match stacked_on(run, n) {
@@ -201,10 +205,7 @@ pub(super) fn pushed(
             log(run, now, line);
             halt(run, REWRITTEN.to_string(), now);
         }
-        PushOutcome::Refused { reason } => {
-            halt(run, reason, now);
-            run.halt_retryable = true;
-        }
+        PushOutcome::Refused { reason } => super::watch::refused(run, n, reason, now),
     }
 }
 
@@ -216,7 +217,7 @@ pub(super) fn opened(run: &mut Run, n: u16, base: String, pr: PrRef, now: u64) {
         return;
     }
     let head = run.stage_head(n).unwrap_or_default().to_string();
-    let poll = now.saturating_add(run.delivery.poll_base_secs);
+    let poll = now.saturating_add(super::watch::base_secs(run));
     let stage = stage_mut(run, n);
     let pushed_head = stage.pushed.take().unwrap_or(head);
     stage.retry_at = None;

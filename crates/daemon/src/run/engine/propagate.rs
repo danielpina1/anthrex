@@ -172,7 +172,8 @@ pub(super) fn start(run: &mut Run, fx: &mut Vec<Effect>) -> bool {
         return false;
     }
     let all: Vec<u16> = run.stages.iter().map(|s| s.n).collect();
-    let Some(n) = all.into_iter().find(|&n| startable(run, n)) else {
+    let free = |n: u16| startable(run, n) && !super::delivery::stage_busy(run, n);
+    let Some(n) = all.into_iter().find(|&n| free(n)) else {
         return false;
     };
     run.propagate_due.remove(&n);
