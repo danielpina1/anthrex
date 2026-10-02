@@ -364,7 +364,7 @@ fn e2e_pr_comment_on_an_unowned_file_holds_its_fix_task() {
 /// constant the configuration writes.
 #[test]
 fn the_test_batch_outlasts_a_poll() {
-    assert!(REVIEW_BATCH_SECS > POLL_MAX_SECS + 1);
+    const { assert!(REVIEW_BATCH_SECS > POLL_MAX_SECS + 1) };
     assert!(DELIVERY_TOML.contains(&format!("poll_max_secs = {POLL_MAX_SECS}\n")));
     assert!(DELIVERY_TOML.contains(&format!("review_batch_secs = {REVIEW_BATCH_SECS}\n")));
 }
