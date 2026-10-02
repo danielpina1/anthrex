@@ -173,8 +173,14 @@ impl ActionForm {
         }
     }
 
-    /// The form's own keys; Enter, Esc and what the form does not use are decided here.
+    #[cfg(test)]
     pub fn on_key(&mut self, key: KeyEvent) -> FormOutcome {
+        self.on_key_in(key, 0)
+    }
+
+    /// The form's own keys; Enter, Esc and what the form does not use are decided here.
+    /// Up and Down move a row of its text area drawn `width` wide (decision 35).
+    pub fn on_key_in(&mut self, key: KeyEvent, width: u16) -> FormOutcome {
         match key.code {
             KeyCode::Esc => return FormOutcome::Back,
             KeyCode::Enter => {
@@ -200,20 +206,20 @@ impl ActionForm {
         let forward = key.code == KeyCode::Tab && !back;
         match self {
             ActionForm::Answer(f) => {
-                if f.text.on_key(key) {
+                if f.text.on_key_in(key, width) {
                     f.blank = false;
                 }
             }
             ActionForm::Message(f) => {
                 if forward || back {
                     f.kind = cycle_kind(f.kind, back);
-                } else if f.text.on_key(key) {
+                } else if f.text.on_key_in(key, width) {
                     f.blank = false;
                 }
             }
             ActionForm::Override(f) => {
                 // One line: a newline has no place in a reason.
-                if !is_ctrl_j(&key) && f.reason.on_key(key) {
+                if !is_ctrl_j(&key) && f.reason.on_key_in(key, width) {
                     f.blank = false;
                 }
             }
@@ -507,7 +513,10 @@ impl App {
         mut form: Box<ActionForm>,
         key: KeyEvent,
     ) {
-        match form.on_key(key) {
+        match form.on_key_in(
+            key,
+            crate::ui::action_forms::area_width(self.body_area.width),
+        ) {
             FormOutcome::Stay => flow.step = ActionStep::Form(form),
             FormOutcome::Back => flow.step = ActionStep::Menu,
             FormOutcome::Page => {

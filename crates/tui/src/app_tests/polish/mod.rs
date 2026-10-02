@@ -7,3 +7,4 @@ mod dialogs;
 mod help;
 mod plan_summary;
 mod region;
+mod text_rows;

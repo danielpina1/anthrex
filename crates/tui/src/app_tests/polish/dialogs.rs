@@ -51,8 +51,7 @@ fn the_goal_field_shows_its_placeholder_while_empty() {
     assert!(!audit::find(&buffer, PLACEHOLDER).is_empty());
 }
 
-/// The rows of the brief: the label's row and the text area's three rows under it, in
-/// the value column.
+/// The brief's four text rows in the value column, the first on the label's row.
 fn brief_rows(buffer: &ratatui::buffer::Buffer) -> Vec<String> {
     let rows = audit::rows(buffer);
     let at = rows
@@ -334,4 +333,104 @@ fn a_hostile_start_directory_is_drawn_sanitised() {
     let rows = audit::rows(&buffer).join("\n");
     assert!(rows.contains("the proposal for /tmp/xyz is"), "{rows}");
     assert!(!hidden(&buffer), "{rows}");
+}
+
+/// Decision 35 (fix round 1, m5): a brief round-trips byte for byte through an edit:
+/// CJK, trailing spaces and blank lines kept. Hidden format characters (a joiner, a
+/// right-to-left mark) are dropped on edit, as M8c meant; a tab becomes a space.
+#[test]
+fn an_edited_brief_round_trips_byte_for_byte() {
+    use crate::run_edit::TaskEditForm;
+    use crate::run_edit::tests::edit_fixture_task;
+    let brief = "改善する  \n\n  末尾の空白  \n  last line ";
+    let mut t = edit_fixture_task();
+    t.brief = brief.into();
+    let mut form = TaskEditForm::new(crate::tree::run_fixtures::RUN_ID, &t);
+    assert_eq!(form.brief.text(), brief, "opens whole");
+    assert_eq!(form.edits(), Ok(vec![]), "an untouched brief is not sent");
+    while form.focus != EditField::Brief {
+        form.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    }
+    form.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+    form.on_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+    let [PlanEdit::AmendTask { brief: sent, .. }] = &form.edits().unwrap()[..] else {
+        panic!("one amend");
+    };
+    assert_eq!(sent.as_deref(), Some(format!("{brief}\nx").as_str()));
+
+    t.brief = "a\u{200D}b\u{200F}c\td".into();
+    let mut form = TaskEditForm::new(crate::tree::run_fixtures::RUN_ID, &t);
+    assert_eq!(form.brief.text(), "abc d");
+    assert_eq!(
+        form.edits(),
+        Ok(vec![]),
+        "untouched, the plan's own is kept"
+    );
+    form.on_paste("!");
+    assert_eq!(
+        form.edits(),
+        Ok(vec![]),
+        "a paste elsewhere changes nothing"
+    );
+    while form.focus != EditField::Brief {
+        form.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    }
+    form.on_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+    let [PlanEdit::AmendTask { brief: sent, .. }] = &form.edits().unwrap()[..] else {
+        panic!("one amend");
+    };
+    assert_eq!(sent.as_deref(), Some("abc dx"));
+}
+
+/// Decision 35 (fix round 1, R2): a brief opens whole up to `BRIEF_MAX_CHARS`, past
+/// the old 16,384-character field bound, and is sent whole.
+#[test]
+fn a_long_brief_opens_and_is_sent_whole() {
+    use crate::run_edit::{TEXT_MAX_CHARS, TaskEditForm};
+    let mut t = crate::run_edit::tests::edit_fixture_task();
+    let brief = "word \n".repeat(TEXT_MAX_CHARS);
+    t.brief = brief.clone();
+    let mut form = TaskEditForm::new(crate::tree::run_fixtures::RUN_ID, &t);
+    assert_eq!(form.brief.text(), brief);
+    assert_eq!(form.error, None);
+    while form.focus != EditField::Brief {
+        form.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    }
+    form.on_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+    let [PlanEdit::AmendTask { brief: sent, .. }] = &form.edits().unwrap()[..] else {
+        panic!("one amend");
+    };
+    assert_eq!(sent.as_deref(), Some(format!("{brief}x").as_str()));
+}
+
+/// Decision 35 (fix round 1, R2): a brief past `BRIEF_MAX_CHARS` opens cut with an
+/// error row, its other fields still edit, and an edit of it is refused: a cut brief
+/// is never sent back.
+#[test]
+fn a_brief_past_the_cap_is_never_sent_cut() {
+    use crate::run_edit::{BRIEF_MAX_CHARS, BRIEF_TOO_LONG, EditOutcome, TaskEditForm};
+    let mut t = crate::run_edit::tests::edit_fixture_task();
+    t.brief = "z".repeat(BRIEF_MAX_CHARS + 10);
+    let mut form = TaskEditForm::new(crate::tree::run_fixtures::RUN_ID, &t);
+    assert_eq!(form.error.as_deref(), Some(BRIEF_TOO_LONG));
+    let key = |c| KeyEvent::new(c, KeyModifiers::NONE);
+    while form.focus != EditField::Size {
+        form.on_key(key(KeyCode::Tab));
+    }
+    form.on_key(key(KeyCode::Right));
+    let [PlanEdit::AmendTask { brief, size, .. }] = &form.edits().unwrap()[..] else {
+        panic!("one amend");
+    };
+    assert_eq!(
+        (brief, size),
+        (&None, &Some(proto::Size::S)),
+        "the size alone"
+    );
+    while form.focus != EditField::Brief {
+        form.on_key(key(KeyCode::Tab));
+    }
+    form.on_key(key(KeyCode::Backspace));
+    assert_eq!(form.on_key(key(KeyCode::Enter)), EditOutcome::Stay);
+    assert_eq!(form.error.as_deref(), Some(BRIEF_TOO_LONG));
+    assert!(!form.submitting, "nothing sent");
 }

@@ -12,6 +12,7 @@ use crate::text_area::TextArea;
 use crate::theme::Palette;
 use crate::ui::kit::choice_in;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use cycle::{next_effort, next_runtime, next_size, next_strength, next_test_mode};
 use proto::{
     Effort, PlanEdit, Route, RouteSpec, RunInfo, Runtime, Size, Strength, TaskInfo, TaskState,
     TestMode,
@@ -20,6 +21,17 @@ use proto::{
 /// The most characters a text field takes, by typing or pasting: a 1 MB paste stops
 /// here rather than growing a request the daemon would carry into its plan.
 pub const TEXT_MAX_CHARS: usize = 16_384;
+
+/// The most characters the brief holds. The daemon checks a brief only for being
+/// blank (`daemon/src/run/validate.rs`); its one bound is the frame (`proto::MAX_FRAME`),
+/// which the snapshot that carried the brief obeyed too. A brief this long, at most 4
+/// bytes a character, and the edit's other fields (each at most `TEXT_MAX_CHARS`) fit
+/// one frame, so every brief the form opens is whole up to here (decision 35).
+pub const BRIEF_MAX_CHARS: usize = (proto::MAX_FRAME - 256 * 1024) / 4;
+
+/// A brief past [`BRIEF_MAX_CHARS`] opens cut, says so, and an edit of it is refused,
+/// so a cut brief is never sent back.
+pub const BRIEF_TOO_LONG: &str = "the brief is too long to edit here; it is not sent";
 
 /// M8a decision 10, mirrored so the form says so before the engine does.
 pub const REASON_REQUIRED: &str = "a reason is required when test mode is check or none";
@@ -105,60 +117,6 @@ fn clean(text: &str) -> String {
         .collect()
 }
 
-fn next_runtime(value: Option<Runtime>, forward: bool) -> Option<Runtime> {
-    let order = [None, Some(Runtime::Claude), Some(Runtime::Codex)];
-    step(&order, value, forward)
-}
-
-fn next_strength(value: Option<Strength>, forward: bool) -> Option<Strength> {
-    let order = [
-        None,
-        Some(Strength::Fast),
-        Some(Strength::Standard),
-        Some(Strength::Frontier),
-    ];
-    step(&order, value, forward)
-}
-
-fn next_effort(value: Option<Effort>, forward: bool) -> Option<Effort> {
-    let order = [
-        None,
-        Some(Effort::Low),
-        Some(Effort::Medium),
-        Some(Effort::High),
-    ];
-    step(&order, value, forward)
-}
-
-fn next_test_mode(value: TestMode, forward: bool) -> TestMode {
-    step(
-        &[TestMode::Tdd, TestMode::Check, TestMode::None],
-        value,
-        forward,
-    )
-}
-
-/// `S ↔ M`; an `L` the plan opened with steps into them (`S` forward, `M` back).
-fn next_size(value: Size, forward: bool) -> Size {
-    match (value, forward) {
-        (Size::S, _) => Size::M,
-        (Size::M, _) => Size::S,
-        (Size::L, true) => Size::S,
-        (Size::L, false) => Size::M,
-    }
-}
-
-/// The neighbour of `value` in `order`, wrapping; a value not in `order` (a `shell`
-/// runtime from a hand-written plan) steps to the first.
-fn step<T: Copy + PartialEq>(order: &[T], value: T, forward: bool) -> T {
-    let len = order.len();
-    match order.iter().position(|v| *v == value) {
-        Some(at) if forward => order[(at + 1) % len],
-        Some(at) => order[(at + len - 1) % len],
-        None => order[0],
-    }
-}
-
 pub fn runtime_word(runtime: Runtime) -> &'static str {
     runtime.label()
 }
@@ -209,6 +167,11 @@ pub fn field_label(field: EditField) -> &'static str {
     }
 }
 
+/// Whether a brief as opened reached [`BRIEF_MAX_CHARS`], so may have been cut.
+fn is_cut(brief: &str) -> bool {
+    brief.chars().count() >= BRIEF_MAX_CHARS
+}
+
 fn is_ctrl(key: &KeyEvent, c: char) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(key.code, KeyCode::Char(k) if k.eq_ignore_ascii_case(&c))
@@ -231,7 +194,8 @@ impl TaskEditForm {
         let model = clean(spec.model.as_deref().unwrap_or(""));
         let reason = clean(task.test_mode_reason.as_deref().unwrap_or(""));
         // `TextArea` keeps newlines and drops control and invisible format characters.
-        let brief = TextArea::from_text(&task.brief);
+        let brief = TextArea::with_cap(&task.brief, BRIEF_MAX_CHARS);
+        let brief_cut = is_cut(brief.text());
         Self {
             run_id: run_id.to_string(),
             task_id: task.id.clone(),
@@ -246,7 +210,7 @@ impl TaskEditForm {
             stage: task.stage,
             stage_max: None,
             focus: EditField::Runtime,
-            error: None,
+            error: brief_cut.then(|| BRIEF_TOO_LONG.to_string()),
             submitting: false,
             request_id: None,
             resolved: task.route.clone(),
@@ -479,6 +443,10 @@ impl TaskEditForm {
             return Err((EditField::Reason, REASON_REQUIRED.to_string()));
         }
         let brief_changed = self.brief.text() != original.brief;
+        // The brief opened cut at the cap: an edit of it is refused.
+        if brief_changed && is_cut(&original.brief) {
+            return Err((EditField::Brief, BRIEF_TOO_LONG.to_string()));
+        }
 
         let edit = PlanEdit::AmendTask {
             task_id: self.task_id.clone(),
@@ -543,6 +511,9 @@ impl TaskEditForm {
         }
     }
 }
+
+#[path = "run_edit_cycle.rs"]
+mod cycle;
 
 #[cfg(test)]
 #[path = "run_edit_tests.rs"]

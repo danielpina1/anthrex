@@ -401,6 +401,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
 
 #[path = "profile_pages.rs"]
 mod pages;
+pub(crate) use pages::list_width;
 #[cfg(test)]
 pub(crate) use pages::page_lines;
 use pages::render_page;

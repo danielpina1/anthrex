@@ -333,21 +333,20 @@ fn the_model_is_sent_trimmed_and_blank_is_policy() {
 
 #[test]
 fn a_paste_of_a_megabyte_is_bounded() {
+    // A one-line field stops at `TEXT_MAX_CHARS`, and takes no more typing.
     let mut form = edit_fixture_form();
+    focus(&mut form, EditField::Model);
+    form.on_paste(&"m".repeat(1_000_000));
+    assert_eq!(form.model.text().chars().count(), TEXT_MAX_CHARS);
+    typed(&mut form, "xyz");
+    assert_eq!(form.model.text().chars().count(), TEXT_MAX_CHARS);
+    assert!(!form.model.text().ends_with('z'));
+    // The brief holds up to `BRIEF_MAX_CHARS` (decision 35): a megabyte goes in whole.
     focus(&mut form, EditField::Brief);
     let huge = "word\n".repeat(200_000);
     assert_eq!(huge.len(), 1_000_000);
     form.on_paste(&huge);
-    assert_eq!(form.brief.text().chars().count(), TEXT_MAX_CHARS);
-    assert!(
-        form.brief
-            .text()
-            .starts_with("Line one\nLine twoword\nword\n")
-    );
-    // A full field takes no more typing either.
-    typed(&mut form, "xyz");
-    assert_eq!(form.brief.text().chars().count(), TEXT_MAX_CHARS);
-    assert!(!form.brief.text().ends_with('z'));
+    assert_eq!(form.brief.text(), format!("Line one\nLine two{huge}"));
 }
 
 #[test]

@@ -135,6 +135,16 @@ fn why_not(form: &ActionForm, blank: bool, lw: usize, p: Palette) -> Option<Line
     Some(indent(lw, vec![Span::styled(why, role(Role::Failed, p))]))
 }
 
+/// The answer, message and reason areas' width in a terminal `width` wide (the
+/// menu's interior less the 8-column label), which their Up and Down move by.
+pub fn area_width(width: u16) -> u16 {
+    width
+        .min(kit::DIALOG_MAX)
+        .saturating_sub(4)
+        .min(kit::WRAP)
+        .saturating_sub(8)
+}
+
 /// The form's rows, then a blank row and its hints, for a dialog `width` columns wide.
 pub fn body(form: &ActionForm, width: u16, p: Palette) -> Vec<Line<'static>> {
     let width = width.min(kit::WRAP);

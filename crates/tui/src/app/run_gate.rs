@@ -74,7 +74,7 @@ impl App {
                 ),
                 PendingAction::RejectRun(run_id),
             ),
-            ('e', Some(task)) => Modal::EditTask(TaskEditForm::in_run(run, task)),
+            ('e', Some(task)) => Modal::EditTask(Box::new(TaskEditForm::in_run(run, task))),
             (_, Some(task)) => confirm(
                 format!("Remove {} from run {run_id}'s plan?", task.id),
                 PendingAction::RemoveTask {

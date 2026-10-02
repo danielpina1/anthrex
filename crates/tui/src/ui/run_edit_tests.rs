@@ -3,6 +3,7 @@
 use super::*;
 use crate::run_edit::EditField;
 use crate::run_edit::tests::edit_fixture_form;
+use crate::theme;
 use proto::TestMode;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -191,4 +192,55 @@ fn hostile_fields_are_drawn_sanitised() {
     );
     assert_eq!(rows[6], "  reason     ren");
     assert_eq!(rows[7], "  brief      brf");
+}
+
+/// Fix round 1 (m3): on a short terminal the hints (with `esc`) and the error stay,
+/// and the fields scroll with the focused one in view.
+#[test]
+fn a_short_terminal_keeps_the_hints_and_the_focused_field() {
+    let mut form = crate::run_edit::TaskEditForm::in_run(
+        &crate::tree::run_fixtures::gate_fixture().0.runs[0],
+        &crate::run_edit::tests::edit_fixture_task(),
+    );
+    form.error = Some("task t1: size: one".into());
+    for field in form.visible_fields() {
+        form.focus = field;
+        let buffer = draw(&form, 80, 14);
+        let text: Vec<String> = (0..14).map(|y| line(&buffer, y)).collect();
+        let shown = text.join("\n");
+        assert!(shown.contains("esc cancel"), "{field:?}:\n{shown}");
+        assert!(shown.contains("task t1: size: one"), "{field:?}:\n{shown}");
+        let focused = format!("▌ {}", crate::run_edit::field_label(field));
+        assert!(shown.contains(&focused), "{field:?}:\n{shown}");
+    }
+    assert!(
+        form.visible_fields().contains(&EditField::Stage),
+        "all eight rows"
+    );
+    // The model's hardware cursor follows the scroll.
+    form.focus = EditField::Model;
+    form.model = crate::dialog::TextInput::new("gpt");
+    let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+    terminal
+        .draw(|frame| render(frame, &form, frame.area(), theme::Palette::PLAIN))
+        .unwrap();
+    let (x, y) = position(terminal.backend().buffer(), "gpt");
+    let cursor = terminal.get_cursor_position().unwrap();
+    assert_eq!((cursor.x, cursor.y), (x + 3, y));
+}
+
+/// Fix round 1 (m6): the hardware cursor's column is measured on the text as drawn,
+/// where a hidden character takes no column.
+#[test]
+fn the_cursor_column_skips_hidden_characters() {
+    let mut form = edit_fixture_form();
+    form.focus = EditField::Model;
+    form.model = crate::dialog::TextInput::new("x\u{200D}y\u{202E}z");
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal
+        .draw(|frame| render(frame, &form, frame.area(), theme::Palette::PLAIN))
+        .unwrap();
+    let (x, y) = position(terminal.backend().buffer(), "xyz");
+    let cursor = terminal.get_cursor_position().unwrap();
+    assert_eq!((cursor.x, cursor.y), (x + 3, y), "after `xyz`");
 }

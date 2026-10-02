@@ -10,26 +10,37 @@ use ratatui::widgets::{Block, Borders};
 
 /// `lines` cut to `rows`, keeping line `at` in view; what is cut is marked.
 pub fn window(lines: Vec<Line<'static>>, at: usize, rows: usize, p: Palette) -> Vec<Line<'static>> {
-    if lines.len() <= rows {
-        return lines;
+    let len = lines.len();
+    let (top, room) = window_span(len, at, rows);
+    if len <= rows || rows < 3 {
+        return lines.into_iter().skip(top).take(room).collect();
     }
-    if rows < 3 {
-        return lines.into_iter().skip(at).take(rows).collect();
-    }
-    // From the top while `at` fits above the one `↓` mark; else both marks.
-    let (top, room) = if at + 1 < rows {
-        (0, rows - 1)
-    } else {
-        let room = rows - 2;
-        ((at + 1).saturating_sub(room).min(lines.len() - room), room)
-    };
-    let below = lines.len() - top - room;
+    let below = len - top - room;
     let (up, down) = scroll_marks(top, below, p.ascii);
     let muted = role(Role::Muted, p);
     let mut out: Vec<Line<'static>> = up.map(|m| Line::styled(m, muted)).into_iter().collect();
     out.extend(lines.into_iter().skip(top).take(room));
     out.extend(down.map(|m| Line::styled(m, muted)));
     out
+}
+
+/// What [`window`] shows of `len` lines: its first line and how many follow. Line `i`
+/// of them is drawn at row `i - top`, one lower when `top > 0` and `rows >= 3` (the
+/// `↑` mark).
+pub(crate) fn window_span(len: usize, at: usize, rows: usize) -> (usize, usize) {
+    if len <= rows {
+        return (0, len);
+    }
+    if rows < 3 {
+        return (at.min(len), rows);
+    }
+    // From the top while `at` fits above the one `↓` mark; else both marks.
+    if at + 1 < rows {
+        (0, rows - 1)
+    } else {
+        let room = rows - 2;
+        ((at + 1).saturating_sub(room).min(len - room), room)
+    }
 }
 
 /// The last first line `len` lines can show from in `rows` rows: at the bottom only

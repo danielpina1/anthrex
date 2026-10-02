@@ -153,13 +153,17 @@ fn a_paste_goes_to_the_focused_text_field() {
     focus(&mut app, EditField::Model);
     assert!(app.on_paste("gpt-\n5\r\n".into()).is_empty());
     assert_eq!(form(&app).model.text(), "gpt-5");
-    // A megabyte is bounded (`run_edit::TEXT_MAX_CHARS`).
-    focus(&mut app, EditField::Brief);
+    // A megabyte is bounded in a one-line field (`run_edit::TEXT_MAX_CHARS`); the
+    // brief takes it whole, up to `run_edit::BRIEF_MAX_CHARS` (decision 35).
     app.on_paste("y".repeat(1_000_000));
     assert_eq!(
-        form(&app).brief.text().chars().count(),
+        form(&app).model.text().chars().count(),
         crate::run_edit::TEXT_MAX_CHARS
     );
+    focus(&mut app, EditField::Brief);
+    let before = form(&app).brief.text().chars().count();
+    app.on_paste("y".repeat(1_000_000));
+    assert_eq!(form(&app).brief.text().chars().count(), before + 1_000_000);
 }
 
 #[test]

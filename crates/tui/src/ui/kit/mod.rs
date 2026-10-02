@@ -15,9 +15,9 @@ pub use dialog::{choice, choice_in, dialog_area, dialog_frame};
 pub use hints::{Hint, hints, hints_joined};
 pub use pane::pane_frame;
 pub use rows::{labelled_rows, run_name, run_name_in, scroll_marks};
-pub(crate) use screen::{from_top, from_top_until, last_top};
+pub(crate) use screen::{from_top, from_top_until, last_top, window_span};
 pub use screen::{screen_frame, window};
-pub(crate) use text::{cut, wrap_words};
+pub(crate) use text::{cut, starts_with_mark, wrap_words};
 pub use text::{text_area, text_area_focus};
 
 /// Dialog text wraps at this many columns (decision 5).

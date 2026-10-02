@@ -59,10 +59,12 @@ impl App {
     /// The open goal form's keys. `Enter` sends one tagged `StartGoal` and leaves the
     /// form open, submitting, until its reply.
     pub(crate) fn on_goal_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        // The goal's text area as the form draws it over the whole terminal.
+        let goal_width = crate::ui::run_goal::goal_width(self.body_area.width);
         let Some(Modal::StartGoal(form)) = &mut self.modal else {
             return vec![];
         };
-        match form.on_key(key) {
+        match form.on_key_in(key, goal_width) {
             GoalOutcome::Stay => vec![],
             GoalOutcome::Cancel => {
                 self.modal = None;

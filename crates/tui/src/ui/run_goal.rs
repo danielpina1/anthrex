@@ -59,15 +59,6 @@ fn label(form: &GoalForm, field: GoalField, p: Palette) -> Vec<Span<'static>> {
     ]
 }
 
-/// Whether the text area's first line is its `↑ n more` mark (`^ n more` in ASCII).
-pub(crate) fn starts_with_mark(lines: &[Line<'static>]) -> bool {
-    let first: String = lines
-        .first()
-        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
-        .unwrap_or_default();
-    (first.starts_with("↑ ") || first.starts_with("^ ")) && first.ends_with(" more")
-}
-
 fn indent() -> Span<'static> {
     Span::raw(" ".repeat(MARK_W + LABEL_W))
 }
@@ -130,6 +121,13 @@ pub fn title(form: &GoalForm, width: u16, p: Palette) -> String {
     )
 }
 
+/// The goal's text area width in a terminal `width` wide (0: not yet drawn), which its
+/// Up and Down move by (`GoalForm::on_key_in`).
+pub fn goal_width(width: u16) -> u16 {
+    let width = width.min(kit::DIALOG_MAX).saturating_sub(4).min(kit::WRAP);
+    width.saturating_sub((MARK_W + LABEL_W) as u16)
+}
+
 /// The dialog's rows for `width` interior columns: the fields, the error, a blank row
 /// and the hints.
 pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
@@ -146,7 +144,7 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
     }
     area.resize(usize::from(GOAL_ROWS) + 2, Line::default());
     // The label sits on the first text row, below a leading `↑ n more` mark.
-    let first = usize::from(starts_with_mark(&area));
+    let first = usize::from(kit::starts_with_mark(&area));
     for (i, line) in area.into_iter().enumerate() {
         let mut spans = if i == first {
             label(form, GoalField::Goal, p)

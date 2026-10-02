@@ -165,3 +165,12 @@ pub fn text_area_focus(
     }
     out
 }
+
+/// Whether the text area's first line is its `↑ n more` mark (`^ n more` in ASCII).
+pub(crate) fn starts_with_mark(lines: &[Line<'static>]) -> bool {
+    let first: String = lines
+        .first()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .unwrap_or_default();
+    (first.starts_with("↑ ") || first.starts_with("^ ")) && first.ends_with(" more")
+}

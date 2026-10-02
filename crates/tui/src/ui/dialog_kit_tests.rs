@@ -207,6 +207,25 @@ fn the_new_agent_cursor_sits_in_the_focused_field() {
     assert_eq!((cursor.x, cursor.y), (x + 13, y), "after `ab`");
 }
 
+/// Fix round 1 (m6): the cursor column is measured on the sanitised name, where a
+/// hidden character takes no column.
+#[test]
+fn the_new_agent_cursor_skips_hidden_characters() {
+    let mut form = form();
+    form.focus = crate::dialog::FormField::Name;
+    form.name = TextInput::new(PLANT);
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal
+        .draw(|f| render_new_agent(f, &form, f.area(), Palette::PLAIN))
+        .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let &(x, y) = audit::find(&buffer, "name       xyz")
+        .first()
+        .expect("the name row");
+    let cursor = terminal.get_cursor_position().unwrap();
+    assert_eq!((cursor.x, cursor.y), (x + 14, y), "after `xyz`");
+}
+
 #[test]
 fn the_remove_confirm_is_destructive() {
     let confirm = RemoveConfirm {

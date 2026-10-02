@@ -83,7 +83,7 @@ pub enum Modal {
     /// `on_rename_key`, and rendering is `ui/modal.rs`.
     Rename(RenamePrompt),
     /// Milestone 8c decision 33: the plan gate's task edit form (`crate::run_edit`).
-    EditTask(crate::run_edit::TaskEditForm),
+    EditTask(Box<crate::run_edit::TaskEditForm>),
     /// Milestone 9 decision 44: the goal form (`crate::run_goal`).
     StartGoal(crate::run_goal::GoalForm),
     Action(Box<actions::ActionFlow>), // Milestone 9.0.6 decision 12: the action menu.

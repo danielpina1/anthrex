@@ -27,6 +27,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 #[cfg(test)]
@@ -230,6 +231,10 @@ pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, p: P
             _ => {
                 let input = text_input_for(form, field);
                 let (visible, column) = input.visible(value_w as u16);
+                // The column on the text as drawn, sanitised (a dropped character
+                // takes none).
+                let before: String = visible.graphemes(true).take(usize::from(column)).collect();
+                let column = one_line(&before).width() as u16;
                 if field == FormField::Name && input.text().is_empty() {
                     spans.push(Span::styled(
                         format!("automatic ({}-N)", form.runtime.label()),
