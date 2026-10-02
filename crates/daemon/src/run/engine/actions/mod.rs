@@ -13,7 +13,7 @@ use proto::{
     MessageTarget, PlanEdit, RunPath, RunState, TaskState,
 };
 
-use super::{full, orch, schedule};
+use super::{delivery, full, orch, schedule};
 use crate::run::edits_state::is_paused;
 use crate::run::model::{Run, StageLayout};
 
@@ -104,6 +104,9 @@ fn relevant(run: &Run, node: &ActionNode, kind: &ActionKind) -> bool {
     );
     let complete = state == RunState::Complete;
     match (node, kind) {
+        // Milestone 9.2 decisions 38-39 and ruling R-1: a `pr`-mode run never lists
+        // accept (anthrex never merges), and discard only once it is complete.
+        (ActionNode::Run, Accept | Discard) if delivery::pr(run) => complete && *kind == Discard,
         // A complete run lists accept and discard only.
         (ActionNode::Run, Accept | Discard) => live || complete,
         (_, _) if complete => false,

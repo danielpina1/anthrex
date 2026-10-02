@@ -444,8 +444,11 @@ fn full_request_is_refused_while_one_runs_and_queued_for_deliver() {
     assert!(again.is_empty());
 }
 
+/// Milestone 9.2 decision 19 (task M9.2.7) changed this 9.1 pin for `Deliver` only: an
+/// untiered profile's tier 3 before a PR opens is its `check`, one step. Idle and
+/// completion still do nothing for it (9.1 decision 6).
 #[test]
-fn full_request_does_nothing_for_an_untiered_profile() {
+fn full_request_runs_only_check_for_an_untiered_profile_before_delivery() {
     let (mut fx, windows) = start(&[doc_task("t1", ""), doc_task("t2", "")]);
     block(&mut fx, "t2", window_of(&windows, "t2"));
     to_queue(&mut fx, "t1", window_of(&windows, "t1"));
@@ -453,15 +456,26 @@ fn full_request_does_nothing_for_an_untiered_profile() {
     let before = fx.run().clone();
     let mut effects = Vec::new();
     let now = fx.now;
-    assert!(!request(
+    for why in [FullWhy::Idle, FullWhy::Completion] {
+        assert!(!request(fx.run_mut(), 1, why, now, &mut effects));
+        assert!(effects.is_empty());
+        assert_eq!(fx.run(), &before);
+    }
+    assert!(request(
         fx.run_mut(),
         1,
         FullWhy::Deliver,
         now,
         &mut effects
     ));
-    assert!(effects.is_empty());
-    assert_eq!(fx.run(), &before);
+    let jobs = full_jobs(&effects);
+    assert_eq!(jobs.len(), 1, "{effects:#?}");
+    let spec = &jobs[0].1;
+    assert_eq!(
+        (spec.head.as_str(), spec.check.as_deref()),
+        (commit(1).as_str(), Some("cargo test"))
+    );
+    assert!(!spec.profile.is_tiered() && spec.cache.is_none());
 }
 
 #[test]

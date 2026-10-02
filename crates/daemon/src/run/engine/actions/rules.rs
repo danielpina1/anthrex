@@ -16,7 +16,7 @@ use crate::run::edits_orch::{one_edit_rule, plan_message, refresh_refusal};
 use crate::run::edits_state::state_label;
 use crate::run::engine::dispatch::finishing_as;
 use crate::run::engine::gates::{OVERRIDE_APPLIES, OVERRIDE_KINDS};
-use crate::run::engine::{full, orch_window, schedule, worker_messages};
+use crate::run::engine::{delivery, full, orch_window, schedule, worker_messages};
 use crate::run::model::Run;
 use crate::run::plan::PlanError;
 
@@ -210,6 +210,10 @@ pub(crate) fn finish_verb(action: FinishAction) -> &'static str {
 /// `run accept` and `run discard` (`complete::finish`).
 pub(crate) fn finish(run: &Run, action: FinishAction) -> Option<String> {
     if let Some(text) = being_finished(run) {
+        return Some(text);
+    }
+    // Milestone 9.2 decisions 38-39 and ruling R-1: delivered by pull request.
+    if let Some(text) = delivery::finish_refusal(run, action) {
         return Some(text);
     }
     let verb = finish_verb(action);

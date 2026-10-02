@@ -100,6 +100,12 @@ pub struct StageDelivery {
     /// Decision 43: seconds open with no fix task in flight and no CI running.
     pub review_wait_secs: u64,
     pub history_written: bool,
+    /// Task M9.2.7: the head the opening push sent, until the stage's PR is recorded
+    /// with it as `pushed_head` (not in Interfaces' `StageDelivery`).
+    pub pushed: Option<String>,
+    /// Task M9.2.7: a failed opening op is not retried before this time (decision 11's
+    /// "retry when next due").
+    pub retry_at: Option<u64>,
 }
 
 /// A stage's pull request (decisions 20, 23, 35).

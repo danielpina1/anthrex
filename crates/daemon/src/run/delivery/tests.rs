@@ -337,6 +337,8 @@ fn the_delivery_model_round_trips_through_run_json() {
         review_rounds: 2,
         review_wait_secs: 77,
         history_written: true,
+        pushed: Some(HEAD2.into()),
+        retry_at: Some(3_000),
     };
     let json = serde_json::to_value(&run.delivery).unwrap();
     assert_eq!(json["stages"][1]["ci"][0]["phase"], "to_user");

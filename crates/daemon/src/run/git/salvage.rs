@@ -276,7 +276,8 @@ pub fn remove_checkout(
 /// A branch still checked out in any worktree is skipped, and returned: by the time
 /// branches are deleted the engine's own worktrees are gone, so a worktree still on
 /// one is the user's (they checked the run out to try it), and deleting the branch
-/// would leave that checkout on an unborn branch.
+/// would leave that checkout on an unborn branch. The run's remote refs go last
+/// ([`delete_remote_refs`], milestone 9.2).
 pub fn delete_branches(
     git: &OsStr,
     root: &Path,
@@ -323,7 +324,49 @@ pub fn delete_branches(
             ],
         )?;
     }
+    delete_remote_refs(g, root, prefix)?;
     Ok(skipped)
+}
+
+/// Milestone 9.2 ruling R-1 (with R-12 and task 4's ruling): the run's private copies
+/// of its remote branches (`refs/anthrex/<run>/remote/*`, decision 13's fetch targets)
+/// and the remote-tracking refs a push to a named remote leaves
+/// (`refs/remotes/<remote>/anthrex/<run>/*`) go with its branches. Local refs only:
+/// nothing is pushed, and the remote's branches, which back its pull requests, stay.
+fn delete_remote_refs(g: Git<'_>, root: &Path, prefix: &str) -> Result<(), String> {
+    let private = format!("refs/{prefix}/remote/");
+    let listing = g.ok(
+        root,
+        &[
+            os("for-each-ref"),
+            os("--format=%(objectname) %(refname)"),
+            os(&private),
+            os("refs/remotes/"),
+        ],
+    )?;
+    let ours = |refname: &str| {
+        let tracking = refname
+            .strip_prefix("refs/remotes/")
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(_, branch)| branch.starts_with(&format!("{prefix}/")));
+        tracking || refname.starts_with(&private)
+    };
+    for line in listing.lines() {
+        let Some((sha, refname)) = line.split_once(' ') else {
+            continue;
+        };
+        if ours(refname) {
+            let args = [
+                os("update-ref"),
+                os("--no-deref"),
+                os("-d"),
+                os(refname),
+                os(sha),
+            ];
+            g.write(root, &args)?;
+        }
+    }
+    Ok(())
 }
 
 /// The `refs/heads/…` every worktree of the repository has checked out.

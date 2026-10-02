@@ -20,7 +20,6 @@ use crate::run::tiers::{TierOutcome, TierSpec};
 /// Why a tier-3 job starts (decision 17): (b) the queue is idle, (c) completion, (a)
 /// before a stage PR opens (9.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum FullWhy {
     Idle,
     Completion,
@@ -252,10 +251,10 @@ pub(super) fn retryable(run: &Run) -> bool {
 }
 
 /// Decision 17(a), 9.2's entry: tier 3 on stage `stage` at `FullStage` priority unless
-/// the profile is untiered, the run is not running, the stage is not created or its
+/// the profile has no tier 3, the run is not running, the stage is not created or its
 /// head is green already, or a tier-3 job or bisect is in flight. `true` when a job
-/// started.
-#[cfg_attr(not(test), allow(dead_code))]
+/// started. 9.2 decision 19: before a PR opens, an untiered profile's tier 3 is its
+/// `check`, one step (the executor runs it as written: no cache, no retry; no bisect).
 pub(crate) fn request(
     run: &mut Run,
     stage: u16,
@@ -263,7 +262,8 @@ pub(crate) fn request(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> bool {
-    if !active(run) || run.state != RunState::Running || in_flight(run) {
+    let untiered = why == FullWhy::Deliver && run.profile.check.is_some();
+    if !(active(run) || untiered) || run.state != RunState::Running || in_flight(run) {
         return false;
     }
     let Some(s) = run.stage(stage) else {
@@ -403,7 +403,9 @@ fn red(
         mark_red(run, n, commit, text.clone());
         return wake_on_head(run, n, commit, text);
     }
-    let reason = if failing.is_empty() {
+    let reason = if !tiers::tiered(run) {
+        "the profile is untiered, so nothing is bisected".to_string()
+    } else if failing.is_empty() {
         "no failing test names to bisect with".to_string()
     } else if run.profile.single_test.is_none() {
         "the profile has no single_test to bisect with".to_string()

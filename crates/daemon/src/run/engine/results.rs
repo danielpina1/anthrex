@@ -2,9 +2,9 @@
 //! size limit milestone 9 would otherwise pass). Pure (design decision 2).
 
 use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, bisect, complete, deciders, dispatch, done, early,
-    fallback, full, gates, history, holds, kinds, ladder, merge, orch_window, outbox, planners,
-    propagate, requests, review, run_scouts, stages, tiers, worker_messages,
+    Effect, EngineState, OpId, OpKind, OpResult, bisect, complete, deciders, delivery, dispatch,
+    done, early, fallback, full, gates, history, holds, kinds, ladder, merge, orch_window, outbox,
+    planners, propagate, requests, review, run_scouts, stages, tiers, worker_messages,
 };
 
 /// Routes an op's result by the kind of the op it answers. A result for an op the run
@@ -109,6 +109,8 @@ pub(super) fn op_done(
         (OpKind::RestartOrchestrator { .. }, _) => orch_window::restarted(run, result, now, fx),
         // Decisions 20 and 32: a run scout's and a sub-planner's session.
         (kind @ OpKind::StartScout { .. }, _) => run_scouts::started(run, &kind, result, now, fx),
+        // Milestone 9.2 decision 8: a host call's answer.
+        (OpKind::Host { op: host, .. }, _) => delivery::host_done(run, host, result, now, fx),
         (kind @ OpKind::StartPlanner { .. }, _) => {
             bound = planners::started(run, &kind, result, now, fx);
         }

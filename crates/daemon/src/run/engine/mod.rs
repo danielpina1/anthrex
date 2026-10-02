@@ -48,6 +48,7 @@ mod clock;
 mod complete;
 pub(crate) mod deciders;
 mod deciders_size;
+pub mod delivery;
 mod dispatch;
 mod done;
 pub(crate) mod early;
@@ -235,6 +236,8 @@ pub enum EventKind {
     Tick,
     /// Milestone 9: the orchestrator's and sub-planners' events (`orch.rs`).
     Orch(OrchEvent),
+    /// Milestone 9.2 decision 25: `run deliver` and `run watch` (`delivery/`).
+    Delivery(delivery::DeliveryRequest),
 }
 
 /// The driver's translation of a window's session events (decision 27).
@@ -373,6 +376,7 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             orchestrator,
         } => promote::request(&mut state, reply, &run_id, orchestrator, now, &mut fx),
         EventKind::Orch(event) => orch::on_orch_event(&mut state, event, now, &mut fx),
+        EventKind::Delivery(request) => delivery::request(&mut state, request, now, &mut fx),
         EventKind::BaseAdvanced {
             run_id,
             to,
