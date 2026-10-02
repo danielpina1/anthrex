@@ -64,8 +64,8 @@ const GIT_SECS: u64 = GIT_TIMEOUT_SECS;
 const OP_MARGIN_SECS: u64 = 5;
 
 /// One view of a PR after it changed (task M9.2.16): the poll at the test
-/// configuration's `poll_max_secs` ([`POLL_MAX_SECS`]), then the `ViewPr` op's own bound (two reads at
-/// `HOST_READ_TIMEOUT`, plus the executor's margin).
+/// configuration's `poll_max_secs` ([`POLL_MAX_SECS`]), then the `ViewPr` op's own
+/// bound (two reads at `HOST_READ_TIMEOUT`, plus the executor's margin).
 pub const VIEW_WAIT: Duration = Duration::from_secs(POLL_MAX_SECS + OP_MARGIN_SECS)
     .saturating_add(HOST_READ_TIMEOUT)
     .saturating_add(HOST_READ_TIMEOUT);
@@ -281,9 +281,9 @@ impl PrRig {
     /// The window a test watches for something that must *not* happen (a duplicate
     /// task, reply, batch or wake; task M9.2.17 fix round 1, m1), on a run with one PR.
     /// Two more views; the second has been answered once a third starts (one view of a
-    /// PR is in flight at a time). [`BATCH_QUIET`] after that start, the next view a pass emits comes from
-    /// a pass that has closed any batch the second view opened, and its task, hold or
-    /// wake is recorded in that same step. So: wait for the third view, then the quiet,
+    /// PR is in flight at a time). [`BATCH_QUIET`] after that start, the next view a
+    /// pass emits comes from a pass that has closed any batch the second view opened,
+    /// and its task, hold or wake is recorded in that same step. So: wait for the third view, then the quiet,
     /// then one view that starts after it. A deadline loop on `calls.jsonl` (which
     /// records a call when it starts), at most [`QUIET_VIEWS_WAIT`].
     pub fn quiet_views(&self) {

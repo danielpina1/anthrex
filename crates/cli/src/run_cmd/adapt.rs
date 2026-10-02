@@ -58,13 +58,21 @@ pub(super) async fn start_goal(
     }
 }
 
+/// `run stats --json`'s text, through `printable` like everything else the CLI prints
+/// of the daemon's (deferred from task 14: a history's path and problems are text).
+pub(super) fn stats_json(stats: &proto::HistoryStats) -> anyhow::Result<String> {
+    Ok(super::status::printable(&serde_json::to_string_pretty(
+        stats,
+    )?))
+}
+
 /// `run stats`: the daemon's summary of the history of `dir`'s repository, as
 /// `stats::render` lays it out, or with `--json` as `HistoryStats`.
 pub(super) async fn stats(runs: &mut Runs, dir: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
     let dir = crate::resolve_dir(dir)?;
     match runs.request(RunRequest::Stats { dir }).await? {
         RunReply::Stats { stats, .. } if json => {
-            println!("{}", serde_json::to_string_pretty(&stats)?);
+            println!("{}", stats_json(&stats)?);
             Ok(())
         }
         RunReply::Stats { stats, .. } => {
