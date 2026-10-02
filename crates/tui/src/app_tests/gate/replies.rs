@@ -154,16 +154,21 @@ fn a_paste_goes_to_the_focused_text_field() {
     assert!(app.on_paste("gpt-\n5\r\n".into()).is_empty());
     assert_eq!(form(&app).model.text(), "gpt-5");
     // A megabyte is bounded in a one-line field (`run_edit::TEXT_MAX_CHARS`); the
-    // brief takes it whole, up to `run_edit::BRIEF_MAX_CHARS` (decision 35).
+    // brief takes up to `run_edit::BRIEF_MAX_CHARS` (decision 35).
     app.on_paste("y".repeat(1_000_000));
     assert_eq!(
         form(&app).model.text().chars().count(),
         crate::run_edit::TEXT_MAX_CHARS
     );
+    // Final fix wave: the cap is one million characters; a paste up to it goes in
+    // whole, and the next stops there.
     focus(&mut app, EditField::Brief);
+    let cap = crate::run_edit::BRIEF_MAX_CHARS;
     let before = form(&app).brief.text().chars().count();
-    app.on_paste("y".repeat(1_000_000));
-    assert_eq!(form(&app).brief.text().chars().count(), before + 1_000_000);
+    app.on_paste("y".repeat(cap - before));
+    assert_eq!(form(&app).brief.text().chars().count(), cap);
+    app.on_paste("y".repeat(10));
+    assert_eq!(form(&app).brief.text().chars().count(), cap);
 }
 
 #[test]

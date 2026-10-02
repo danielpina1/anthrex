@@ -2,10 +2,10 @@
 //! The cursor is a grapheme index, as `dialog::TextInput`'s is. Characters are typed with
 //! `on_key`, pasted with `on_paste`; Ctrl-J inserts a newline and Enter is left to the
 //! form. Every way in drops control and invisible format characters (keeping `\n`), and
-//! the text never passes [`TEXT_MAX_CHARS`] (or the cap it was made with). Rendering is `ui::kit::text_area`. Up and
-//! Down move the cursor a row at the same column (milestone 9.0.7 decision 35): a row of
-//! the text as `ui::kit::text_area` wraps it at the width [`TextArea::on_key_in`] is
-//! given, or a logical line with none.
+//! the text never passes [`TEXT_MAX_CHARS`] (or the cap it was made with). Rendering is
+//! `ui::kit::text_area`. Up and Down move the cursor a row at the same column
+//! (milestone 9.0.7 decision 35): a row of the text as `ui::kit::text_area` wraps it at
+//! the width [`TextArea::on_key_in`] is given, or a logical line with none.
 
 use crate::run_edit::TEXT_MAX_CHARS;
 use crate::safe_text::is_hidden_format;

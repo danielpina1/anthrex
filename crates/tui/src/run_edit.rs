@@ -21,12 +21,14 @@ use proto::{
 /// here rather than growing a request the daemon would carry into its plan.
 pub const TEXT_MAX_CHARS: usize = 16_384;
 
-/// The most characters the brief holds. The daemon checks a brief only for being
-/// blank (`daemon/src/run/validate.rs`); its one bound is the frame (`proto::MAX_FRAME`),
-/// which the snapshot that carried the brief obeyed too. A brief this long, at most 4
-/// bytes a character, and the edit's other fields (each at most `TEXT_MAX_CHARS`) fit
-/// one frame, so every brief the form opens is whole up to here (decision 35).
-pub const BRIEF_MAX_CHARS: usize = (proto::MAX_FRAME - 256 * 1024) / 4;
+/// The most characters the brief holds: one million (the final fix wave's ruling).
+/// The daemon checks a brief only for being blank (`daemon/src/run/validate.rs`); its
+/// one bound is the frame (`proto::MAX_FRAME`). A brief this long, at most 4 bytes a
+/// character, and the edit's other fields (each at most `TEXT_MAX_CHARS`) fit one frame
+/// (`the_largest_edit_fits_one_frame`), and the form's per-key draw and insert stay
+/// well inside the 100 ms tick (18–23 ms a pass in release at this size, 75–95 ms at
+/// the old 4.1 M). A longer brief opens refused, never cut and sent (decision 35).
+pub const BRIEF_MAX_CHARS: usize = 1_000_000;
 
 /// A brief past [`BRIEF_MAX_CHARS`] opens cut, says so, and an edit of it is refused,
 /// so a cut brief is never sent back.
