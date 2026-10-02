@@ -112,6 +112,10 @@ pub struct StageFull {
     /// Task M9.1.20: every ended bisect of the stage, for the report's "Testing".
     #[serde(default)]
     pub ended: Vec<BisectEnd>,
+    /// Milestone 9.2 (M9.2.6 fix round 1): the stage's tier-3 runs, each job that
+    /// answered a tier result (an executor failure is none); 0 for a 9.1 stage.
+    #[serde(default)]
+    pub runs: u32,
 }
 
 /// One ended bisect (decisions 36–38), as its `bisect` history line records it.

@@ -10,6 +10,9 @@ use proto::{
 use super::{CHECKS_MAX, CheckSeen, StageDelivery, ThreadState, quote};
 use crate::run::contract::sha7;
 use crate::run::model::{FixOf, Run, Task};
+/// The one count of a run's stages (fix round 1, m4), re-exported for the delivery
+/// engine.
+pub(crate) use crate::run::snapshot_stages::stage_count;
 
 /// `RunInfo.delivery`: `None` in local mode.
 pub fn delivery_info(run: &Run) -> Option<DeliveryInfo> {
@@ -31,14 +34,6 @@ pub fn delivery_info(run: &Run) -> Option<DeliveryInfo> {
             .map(|(n, _)| n)
             .collect(),
     })
-}
-
-/// The run's stages: the highest the plan names or the run created (9.1's
-/// `stage_infos`).
-pub(crate) fn stage_count(run: &Run) -> u16 {
-    let planned = run.tasks.iter().map(Task::stage).max().unwrap_or(1);
-    let created = run.stages.iter().map(|s| s.n).max().unwrap_or(0);
-    planned.max(created).max(1)
 }
 
 /// `StageInfo.pr`: stage `n`'s pull request, when it has one.
@@ -150,10 +145,18 @@ pub(crate) fn origin_label(origin: TaskOrigin) -> &'static str {
 /// <base>@<sha7>`. `None` for 9.1's own, whose texts `engine::fix_text` builds.
 pub fn fix_text(run: &Run, fixes: &FixOf) -> Option<String> {
     match fixes {
+        // Fix round 1 (m1): a CI fix with no Actions run (an external check) names its
+        // head, a review fix with no thread its PR, so the text is never empty.
+        FixOf::Ci { ci_runs, head, .. } if ci_runs.is_empty() => {
+            Some(format!("CI on {}", sha7(head)))
+        }
         FixOf::Ci { ci_runs, .. } => {
             let ids: Vec<String> = ci_runs.iter().map(u64::to_string).collect();
             let word = if ids.len() == 1 { "run" } else { "runs" };
             Some(format!("CI {word} {}", ids.join(", ")))
+        }
+        FixOf::Review { pr, threads, .. } if threads.is_empty() => {
+            Some(format!("review of PR #{pr}"))
         }
         FixOf::Review { stage, threads, .. } => {
             let mut logins: Vec<&str> = Vec::new();

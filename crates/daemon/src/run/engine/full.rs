@@ -353,6 +353,7 @@ pub(super) fn full_done(
             let failing = record.failing.clone();
             if let Some(s) = stage_mut(run, n) {
                 s.full.last = Some(record);
+                s.full.runs = s.full.runs.saturating_add(1);
                 s.full.infra = None;
             }
             if outcome.ok {

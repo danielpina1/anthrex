@@ -69,9 +69,11 @@ pub fn login(login: &str) -> &str {
 }
 
 /// Line endings normalised to `\n` (`\r\n` and a bare `\r` alike); every hidden format
-/// character (the bidi controls, zero-width characters) dropped, and every other
-/// control character but `\n` and `\t` made a space, so a quote cannot reorder or
-/// redraw what a reader sees.
+/// character `proto::safe_text::is_hidden_format` names dropped (the bidi controls, the
+/// zero-width and joiner characters, the tag block, the variation selectors, the soft
+/// hyphen, the Hangul fillers and the other invisible carriers of fix round 1's I1),
+/// and every other control character but `\n` and `\t` made a space, so a quote cannot
+/// reorder, redraw or hide anything from what a reader sees.
 fn clean(text: &str) -> String {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
     text.chars()

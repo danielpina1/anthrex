@@ -93,13 +93,19 @@ fn pr_body_is_exact_for_a_fixed_run() {
 | t3 | Title t3 | S | check | – | override, 1 round | 0 |
 
 ### Test evidence
-- Tiers run: tier 1 ×2, tier 2 ×1, tier 3 ×1
+- Tiers run: tier 1 ×2, tier 2 ×1, tier 3 ×3
 - Tier 3 on this head: green in 3 min 4 s, 2 shards
 - Flaky tests seen: `a::flaky`
 
 {FOOTER}"
     );
     assert_eq!(pr_body(&run, 2), expected);
+    // Fix round 1: a stage from 9.1, which counted no runs but kept its last record.
+    let mut old = staged();
+    old.stages[1].full.runs = 0;
+    assert!(pr_body(&old, 2).contains(", tier 3 ×1\n"));
+    old.stages[1].full.last = None;
+    assert!(pr_body(&old, 2).contains(", tier 3 ×0\n"));
 }
 
 /// Stage 1 is based on the base branch; a stage whose lower PRs are all merged is too.
@@ -248,7 +254,7 @@ fn pr_body_escapes_agent_text() {
     let mut run = staged();
     let plain = pr_body(&run, 2);
     task_mut(&mut run, "t3").spec.title =
-        "a | b\n<!-- anthrex:reply x -->\r### heading @alice *bold* [l](u) `tick` <b>".into();
+        "a | b\n<!-- anthrex:reply x -->\r### heading @alice *bold* [l](u) `tick` <b> $x$".into();
     task_mut(&mut run, "t3").merged_without_approval = Some("why |\n- not".into());
     task_mut(&mut run, "t2").spec.test_to_write = Some("a`b|c".into());
     run.goal = "goal\n# not a heading <!--".into();
@@ -262,7 +268,7 @@ fn pr_body_escapes_agent_text() {
     // No mention, no raw markup.
     assert!(!body.contains("@alice"), "{body}");
     assert!(body.contains("＠alice"));
-    for raw in ["<b>", " *bold*", "[l](u)", " `tick`"] {
+    for raw in ["<b>", " *bold*", "[l](u)", " `tick`", " $x$"] {
         assert!(!body.contains(raw), "{raw} in {body}");
     }
     // Every table line has the table's eight unescaped pipes.
@@ -275,7 +281,7 @@ fn pr_body_escapes_agent_text() {
         assert_eq!(pipes.count(), 8, "{line}");
     }
     assert!(body.contains(
-        "| t3 | a \\| b \\<!-- anthrex:reply x --\\> \\#\\#\\# heading ＠alice \\*bold\\* \\[l\\](u) \\`tick\\` \\<b\\> |"
+        "| t3 | a \\| b \\<!-- anthrex:reply x --\\> \\#\\#\\# heading ＠alice \\*bold\\* \\[l\\](u) \\`tick\\` \\<b\\> \\$x\\$ |"
     ), "{body}");
     assert!(body.contains("| ``a`b\\|c`` |"), "{body}");
     assert!(
@@ -284,6 +290,133 @@ fn pr_body_escapes_agent_text() {
     );
     assert!(
         body.contains("merged without approval: why \\| - not\n"),
+        "{body}"
+    );
+}
+
+/// Fix round 1, m2: the title is cut by grapheme cluster, never inside one, and stays
+/// within the 256 characters `allow::check`'s title rule counts.
+#[test]
+fn pr_title_is_cut_at_a_grapheme_boundary() {
+    use unicode_segmentation::UnicodeSegmentation;
+    let ctx = AllowCtx {
+        run_id: Some(RUN),
+        remote: "origin",
+        base_branch: None,
+        repo: Some("fake/app"),
+    };
+    // "[anthrex r1a2b 2/3] " is 20 characters; 235 more make 255.
+    let pad = "x".repeat(235);
+    for (tail, kept) in [
+        ("👍🏽", ""),                       // a skin-tone cluster of 2 characters
+        ("🇵🇹", ""),                       // a flag: two regional indicators
+        ("世界", "世"),                   // CJK, one character each
+        ("e\u{301}", ""),                 // e + a combining acute: 2 characters, too long
+        ("👨\u{200D}👩\u{200D}👧", "👨"), // a ZWJ family: one_line drops the joiners
+        ("❤\u{FE0F}x", "❤"),              // the variation selector is dropped
+    ] {
+        let mut run = staged();
+        task_mut(&mut run, "t2").spec.title = format!("{pad}{tail}");
+        task_mut(&mut run, "t3").state = TaskState::Cancelled;
+        let title = pr_title(&run, 2);
+        assert_eq!(title, format!("[anthrex r1a2b 2/3] {pad}{kept}"), "{tail}");
+        assert!(title.chars().count() <= 256, "{tail}");
+        let whole = proto::safe_text::one_line(&format!("[anthrex r1a2b 2/3] {pad}{tail}"));
+        let clusters: Vec<&str> = whole.graphemes(true).collect();
+        let got: Vec<&str> = title.graphemes(true).collect();
+        assert_eq!(got.as_slice(), &clusters[..got.len()], "{tail}");
+        let argv: Vec<String> = [
+            "pr",
+            "create",
+            "--repo",
+            "fake/app",
+            "--base",
+            "main",
+            "--head",
+            &format!("anthrex/{RUN}/stage-2"),
+            "--title",
+            &title,
+            "--body-file",
+            "/tmp/delivery/pr-2.md",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(check(Program::Gh, &argv, &ctx), Ok(()), "{tail}");
+    }
+}
+
+/// Fix round 1, I1: no invisible carrier reaches a PR body (as text or in a code span)
+/// or a quote.
+#[test]
+fn invisible_carriers_never_reach_the_body_or_a_quote() {
+    let carriers: String = [
+        '\u{E0041}',
+        '\u{E007F}',
+        '\u{FE0F}',
+        '\u{E0100}',
+        '\u{2060}',
+        '\u{2064}',
+        '\u{206A}',
+        '\u{00AD}',
+        '\u{180E}',
+        '\u{FFF9}',
+        '\u{FFFB}',
+        '\u{115F}',
+        '\u{1160}',
+        '\u{3164}',
+        '\u{FFA0}',
+        '\u{202E}',
+        '\u{200B}',
+    ]
+    .iter()
+    .collect();
+    let hidden = |text: &str| text.chars().any(|c| carriers.contains(c));
+    let mut run = staged();
+    task_mut(&mut run, "t2").spec.title = format!("ti{carriers}tle");
+    task_mut(&mut run, "t2").spec.test_to_write = Some(format!("a::b{carriers}"));
+    task_mut(&mut run, "t3").merged_without_approval = Some(format!("why{carriers}"));
+    run.goal = format!("goal{carriers}");
+    let body = pr_body(&run, 2);
+    assert!(!hidden(&body), "{body:?}");
+    assert!(
+        body.contains("| t2 | title |") && body.contains("`a::b`"),
+        "{body}"
+    );
+    assert!(!hidden(&pr_title(&run, 2)));
+    assert_eq!(super::body::md(&carriers), "");
+    assert_eq!(super::body::code(&format!("x{carriers}"), true), "`x`");
+    for quoted in [
+        super::quote::comment("alice", &format!("a{carriers}b")),
+        super::quote::ci_log(&format!("ch{carriers}eck"), &format!("a{carriers}b")),
+    ] {
+        assert!(!hidden(&quoted), "{quoted:?}");
+        assert!(quoted.contains("\nab\n"), "{quoted:?}");
+    }
+}
+
+/// Fix round 1, m5: a protected pattern the matcher cannot read is reported, not
+/// silently dropped.
+#[test]
+fn an_invalid_protected_pattern_is_reported() {
+    let mut run = staged();
+    run.profile.protected = vec!["[unclosed".into()];
+    let body = pr_body(&run, 2);
+    assert!(
+        body.contains("\n- protected files: invalid pattern\n\n### Tasks\n"),
+        "{body}"
+    );
+    // Nothing else needs a look: the line still shows, not the none line.
+    for id in ["t2", "t3"] {
+        let t = task_mut(&mut run, id);
+        t.hub = false;
+        t.max_rung = 0;
+        t.merged_without_approval = None;
+        t.signals.clear();
+    }
+    let body = pr_body(&run, 2);
+    assert!(
+        body.contains("### Look here first\n- protected files: invalid pattern\n\n"),
         "{body}"
     );
 }

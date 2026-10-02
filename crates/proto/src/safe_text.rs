@@ -10,14 +10,34 @@
 /// (isolates), U+061C (the Arabic letter mark) — and U+200B–U+200D (zero-width space,
 /// non-joiner, joiner) and U+FEFF (the byte-order mark). `char::is_control` (category
 /// `Cc`) lets them all through, because they are category `Cf`.
+///
+/// Milestone 9.2 (M9.2.6 fix round 1, ruling I1) adds every other invisible carrier a
+/// text can hide data or a second meaning in: the tag block U+E0000–U+E007F, the
+/// variation selectors U+FE00–U+FE0F and U+E0100–U+E01EF, U+2060–U+2064 (word joiner
+/// and the invisible operators), U+206A–U+206F (the deprecated format characters),
+/// U+00AD (soft hyphen), U+180E (Mongolian vowel separator), U+FFF9–U+FFFB (the
+/// interlinear annotation characters) and the Hangul fillers U+115F, U+1160, U+3164
+/// and U+FFA0. Dropping a variation selector or a joiner can change how an emoji is
+/// drawn (`❤️` becomes `❤`), never what the text says.
 pub fn is_hidden_format(c: char) -> bool {
     matches!(
         c,
-        '\u{061C}'
+        '\u{00AD}'
+            | '\u{061C}'
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{180E}'
             | '\u{200B}'..='\u{200F}'
             | '\u{202A}'..='\u{202E}'
-            | '\u{2066}'..='\u{2069}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
             | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{E0000}'..='\u{E007F}'
+            | '\u{E0100}'..='\u{E01EF}'
     )
 }
 
@@ -115,6 +135,58 @@ mod tests {
         }
         assert_eq!(first_hostile(&one_line(&hostile_text())), None);
         assert_eq!(one_line("tab\there\nnext"), "tab here next");
+    }
+
+    /// Milestone 9.2's M9.2.6 fix round 1 (ruling I1): the invisible carriers a text can
+    /// hide data or a second meaning in, written out as ranges apart from the predicate
+    /// under test: the tag block, both variation-selector blocks, the invisible
+    /// operators and word joiner, the deprecated format characters, the soft hyphen, the
+    /// Mongolian vowel separator, the interlinear annotation characters and the Hangul
+    /// fillers.
+    const INVISIBLE: &[(u32, u32)] = &[
+        (0xE0000, 0xE007F),
+        (0xFE00, 0xFE0F),
+        (0xE0100, 0xE01EF),
+        (0x2060, 0x2064),
+        (0x206A, 0x206F),
+        (0x00AD, 0x00AD),
+        (0x180E, 0x180E),
+        (0xFFF9, 0xFFFB),
+        (0x115F, 0x1160),
+        (0x3164, 0x3164),
+        (0xFFA0, 0xFFA0),
+    ];
+
+    fn invisible() -> Vec<char> {
+        INVISIBLE
+            .iter()
+            .flat_map(|(a, b)| *a..=*b)
+            .filter_map(char::from_u32)
+            .collect()
+    }
+
+    #[test]
+    fn invisible_carriers_are_dropped() {
+        let all = invisible();
+        assert_eq!(all.len(), 128 + 16 + 240 + 5 + 6 + 1 + 1 + 3 + 2 + 1 + 1);
+        for c in &all {
+            assert!(is_hidden_format(*c), "U+{:04X}", *c as u32);
+            assert_eq!(one_line(&format!("a{c}b")), "ab", "U+{:04X}", *c as u32);
+            assert_eq!(multi_line(&format!("a{c}b")), "ab", "U+{:04X}", *c as u32);
+        }
+        // Their neighbours are ordinary text.
+        for c in [
+            '\u{DFFFF}',
+            '\u{FDFF}',
+            '\u{FE10}',
+            '\u{205F}',
+            '\u{2065}',
+            '\u{00AC}',
+            '\u{FFFC}',
+            '\u{3165}',
+        ] {
+            assert!(!is_hidden_format(c), "U+{:04X}", c as u32);
+        }
     }
 
     #[test]

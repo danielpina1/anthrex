@@ -10,12 +10,13 @@
 
 use proto::TaskState;
 use proto::safe_text::one_line;
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::snapshot::stage_count;
 use super::{BODY_MAX_CHARS, PrRecord};
 use crate::run::contract::{mode_label, size_label};
 use crate::run::globs::{ProtectedMatcher, names_literally};
-use crate::run::model::{Run, Task};
+use crate::run::model::{Run, Task, TierRecord};
 use crate::run::report::verdict_label;
 
 /// GitHub's own cap on a pull request's title, which `allow::check` also enforces.
@@ -35,8 +36,23 @@ pub fn pr_title(run: &Run, stage: u16) -> String {
         stage_count(run),
         stage_title(&stage_tasks(run, stage), str::to_string)
     );
-    let title = one_line(&title);
-    title.chars().take(TITLE_MAX_CHARS).collect()
+    cut_title(&one_line(&title))
+}
+
+/// At most [`TITLE_MAX_CHARS`] characters (as `allow::check` counts them), cut between
+/// grapheme clusters (fix round 1, m2), so a flag, a skin-toned emoji or a letter with
+/// its combining mark is kept whole or dropped whole.
+fn cut_title(title: &str) -> String {
+    let mut out = String::new();
+    let mut count = 0;
+    for cluster in title.graphemes(true) {
+        count += cluster.chars().count();
+        if count > TITLE_MAX_CHARS {
+            break;
+        }
+        out.push_str(cluster);
+    }
+    out
 }
 
 /// The stage's nearest lower stage whose PR is open, which stage `stage`'s PR is
@@ -103,8 +119,12 @@ fn look_here(run: &Run, tasks: &[&Task]) -> String {
             }
         }
     }
-    for path in protected(run, tasks) {
+    let (paths, invalid) = protected(run, tasks);
+    for path in paths {
         out.push_str(&format!("- {}: a protected file\n", code(&path, false)));
+    }
+    if invalid {
+        out.push_str("- protected files: invalid pattern\n");
     }
     if out.is_empty() {
         out = format!("{NONE_LINE}\n");
@@ -140,8 +160,10 @@ fn reason(rank: usize, t: &Task) -> Option<String> {
 /// file only when its `owns` names it exactly (M8a decision 56), so these are the
 /// paths a task of the stage names exactly that `profile.protected` matches or that
 /// were protected at the run's base. (The stage's changed paths are not in the model,
-/// which is pure; this is what it can know.)
-fn protected(run: &Run, tasks: &[&Task]) -> Vec<String> {
+/// which is pure; this is what it can know.) The `bool` is true when
+/// `profile.protected` does not compile (fix round 1, m5): the body then says so
+/// rather than silently listing less.
+fn protected(run: &Run, tasks: &[&Task]) -> (Vec<String>, bool) {
     let matcher = ProtectedMatcher::new(&run.profile.protected).ok();
     let mut paths: Vec<String> = Vec::new();
     for t in tasks {
@@ -159,7 +181,7 @@ fn protected(run: &Run, tasks: &[&Task]) -> Vec<String> {
         }
     }
     paths.sort();
-    paths
+    (paths, matcher.is_none())
 }
 
 /// One table row: id, title, size, test mode, named test, review verdict and rounds,
@@ -239,8 +261,8 @@ fn footer_of(tail: &str) -> &str {
 }
 
 /// Decision 21's test evidence, from 9.1's records: the tier jobs the stage's tasks
-/// ran (tiers 1 and 2) and the stage's tier-3 record (9.1 keeps the last one), tier 3
-/// on the stage's head, and every flaky test seen.
+/// ran (tiers 1 and 2) and the stage's counted tier-3 runs (`StageFull.runs`, fix
+/// round 1), tier 3 on the stage's head, and every flaky test seen.
 fn evidence(run: &Run, stage: u16, tasks: &[&Task]) -> String {
     let records = || {
         tasks
@@ -294,8 +316,14 @@ fn evidence(run: &Run, stage: u16, tasks: &[&Task]) -> String {
         "### Test evidence\n- Tiers run: tier 1 ×{}, tier 2 ×{}, tier 3 ×{}\n- Tier 3 on this head: {tier3}\n- Flaky tests seen: {flaky}\n",
         count(1),
         count(2),
-        usize::from(last.is_some()),
+        tier3_runs(full, last),
     )
+}
+
+/// Fix round 1: the stage's counted tier-3 runs; a stage from 9.1, which counted none
+/// but kept its last record, shows that one.
+fn tier3_runs(full: Option<&crate::run::model::StageFull>, last: Option<&TierRecord>) -> u32 {
+    full.map_or(0, |f| f.runs).max(u32::from(last.is_some()))
 }
 
 fn footer(run: &Run) -> String {
@@ -315,12 +343,14 @@ fn plural(n: u32, word: &str) -> String {
 
 /// Untrusted text as inline Markdown: one line, every character GFM reads as markup
 /// mid-line backslash-escaped (CommonMark renders an escaped ASCII punctuation
-/// character as itself), and `@` made `＠` so it mentions no one.
+/// character as itself; `$` too, fix round 1's m3, so no `$…$` renders as math), and
+/// `@` made `＠` so it mentions no one. Bare URLs and `owner/repo#n` cross-references
+/// still autolink (accepted, fix round 1).
 pub(crate) fn md(text: &str) -> String {
     let mut out = String::new();
     for c in one_line(text).chars() {
         match c {
-            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '&' | '~' | '|' | '#' => {
+            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '&' | '~' | '|' | '#' | '$' => {
                 out.push('\\');
                 out.push(c);
             }
@@ -334,7 +364,7 @@ pub(crate) fn md(text: &str) -> String {
 /// Untrusted text as an inline code span: one line, between backtick runs one longer
 /// than any in it (padded with a space where it starts or ends with a backtick or a
 /// space). In a table cell `|` is escaped too, which GFM requires even in code.
-fn code(text: &str, in_table: bool) -> String {
+pub(crate) fn code(text: &str, in_table: bool) -> String {
     let text = one_line(text);
     let mut longest = 0;
     let mut run = 0;

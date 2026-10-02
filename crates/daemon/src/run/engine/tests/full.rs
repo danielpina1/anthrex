@@ -493,3 +493,41 @@ fn a_lost_tier3_is_issued_again_after_the_restart() {
     assert_ne!(jobs[0].0, lost);
     assert_eq!(fx.run().full_op, Some(jobs[0].0));
 }
+
+/// Milestone 9.2's M9.2.6 fix round 1: `StageFull.runs` counts every tier-3 run of the
+/// stage (the PR body's `tier 3 ×<c>`); an executor failure is not a run.
+#[test]
+fn the_stage_counts_every_tier3_run() {
+    let tasks = [doc_task("t1", ""), doc_task("t2", ""), doc_task("t3", "")];
+    let (mut fx, windows) = start_on(&profile(), &tasks);
+    block(&mut fx, "t3", window_of(&windows, "t3"));
+    assert_eq!(fx.run().stage(1).unwrap().full.runs, 0);
+    merge_tiered(&mut fx, "t1", window_of(&windows, "t1"), &commit(1));
+    let idle = fx.run().limits.testing.full_idle_secs;
+    let since = fx.run().queue_idle_since.unwrap();
+    let (op, _) = full_jobs(&fx.send(since + idle, EventKind::Tick))[0].clone();
+    fx.done(
+        op,
+        OpResult::Failed {
+            message: "no space left".into(),
+        },
+    );
+    assert_eq!(
+        fx.run().stage(1).unwrap().full.runs,
+        0,
+        "a failure is no run"
+    );
+    let jobs = full_jobs(&later(&mut fx, 600));
+    assert_eq!(jobs.len(), 1, "retried");
+    fx.done(jobs[0].0, tier(outcome(3, &[])));
+    assert_eq!(fx.run().stage(1).unwrap().full.runs, 1);
+    merge_tiered(&mut fx, "t2", window_of(&windows, "t2"), &commit(2));
+    let since = fx.run().queue_idle_since.unwrap();
+    let (op, _) = full_jobs(&fx.send(since + idle, EventKind::Tick))[0].clone();
+    fx.done(op, tier(outcome(3, &[])));
+    let stage = fx.run().stage(1).unwrap();
+    assert_eq!(
+        (stage.full.runs, stage.full.green_at.clone()),
+        (2, Some(commit(2)))
+    );
+}

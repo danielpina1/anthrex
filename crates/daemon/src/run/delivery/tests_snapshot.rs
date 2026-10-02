@@ -299,8 +299,10 @@ fn stage_pr_info_counts_threads_and_ci() {
     assert_eq!(snapshot.stages[0].pr, None);
 }
 
-/// Decision 41's texts for 9.2's three origins, in `TaskInfo.fixes`, the task's
-/// history and the run's log.
+/// Decision 41's texts for 9.2's three origins, from `engine::fix_text` and in the
+/// snapshot's `TaskInfo.fixes` (the history and log lines are
+/// `engine/tests/fixes.rs::a_ci_fix_task_logs_its_text`'s), with fix round 1's (m1)
+/// fallbacks when a CI fix names no run or a review fix no thread.
 #[test]
 fn fixes_texts_for_ci_review_and_base() {
     let mut run = staged();
@@ -345,6 +347,9 @@ fn fixes_texts_for_ci_review_and_base() {
         base_sha: "1a2b3c4d5e6f".repeat(3) + "abcd",
     };
     assert_eq!(fix_text(&run, &base), "sync with main@1a2b3c4");
+    // Fix round 1, m1: never an empty text.
+    assert_eq!(fix_text(&run, &ci(Vec::new())), "CI on c2c2c2c");
+    assert_eq!(fix_text(&run, &review(&[])), "review of PR #142");
 
     // Through the snapshot and `add_fix`'s history and log lines.
     fix_task(

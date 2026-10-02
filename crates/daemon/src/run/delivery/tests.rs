@@ -145,6 +145,7 @@ pub(super) fn staged() -> Run {
     stage2.head = HEAD2.into();
     stage2.full.green_at = Some(HEAD2.into());
     stage2.full.last = Some(tier(3, &[], HEAD2, 184));
+    stage2.full.runs = 3;
     run.stages = vec![
         StageRecord::new(
             1,
@@ -247,6 +248,9 @@ fn old_run_json_loads_with_local_delivery() {
     assert_eq!(run.delivery, RunDelivery::default());
     assert_eq!(run.delivery.mode, DeliveryMode::Local);
     assert_eq!(run.delivery.repo, None);
+    // Fix round 1: 9.1 counted no tier-3 runs; its stage loads with 0.
+    assert!(run.stages.iter().all(|s| s.full.runs == 0));
+    assert!(run.stages.iter().any(|s| s.full.last.is_some()));
     assert!(run.delivery.stages.is_empty());
     assert_eq!(delivery_info(&run), None);
     assert_eq!(stage_pr_info(&run, 1), None);
@@ -259,6 +263,11 @@ fn old_run_json_loads_with_local_delivery() {
         serde_json::from_value::<RunDelivery>(delivery).unwrap(),
         RunDelivery::default()
     );
+    // Fix round 1's tier-3 run counter is the one other key written back, 0.
+    for stage in back["stages"].as_array_mut().unwrap() {
+        let full = stage["full"].as_object_mut().unwrap();
+        assert_eq!(full.remove("runs"), Some(serde_json::json!(0)));
+    }
     let stored: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(back, stored);
     // A BisectRecord without `ci` (9.1's) is not a CI bisect.
