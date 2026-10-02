@@ -305,6 +305,27 @@ fn reproduced_without_a_culprit_adds_a_stage_fix_with_the_strongest_route() {
     assert_stage_fix(&fx, &["docs/t1/**"], &route);
 }
 
+/// Ruling F1 (the final fix wave): a red on the head tier 3 passed on has nothing to
+/// bisect (decision 36's range after it is empty); the line says why, not that the head
+/// is off the stage's line.
+#[test]
+fn a_red_on_the_head_tier_3_passed_is_a_stage_fix_with_its_reason() {
+    let mut fx = tiered_watched(&["t1", "t2"]);
+    fx.run_mut().stages[0].full.green_at = Some(commit(2));
+    let (_, strong) = routes(&fx);
+    fx.task_mut("t2").route = strong.clone();
+    red_summarised(&mut fx, &commit(2), &[TEST], CiCategory::Test);
+    let (op, spec) = reproduction(&fx);
+    fx.done(op, red_probe(&spec.commands[0]));
+    let line = format!(
+        "stage 1: CI red at {} reproduces; CI fails a test tier 3 passed on this head (outside tier 3's set or environment-dependent); a stage fix task was added",
+        sha7(&commit(2))
+    );
+    assert!(logged(&fx, &line), "{:#?}", fx.run().log);
+    assert!(fx.run().stage(1).unwrap().bisect.is_none());
+    assert_stage_fix(&fx, &["docs/t1/**", "docs/t2/**"], &strong);
+}
+
 #[test]
 fn not_reproduced_adds_an_environment_fix_task_with_tts_sentence() {
     let mut fx = watched();

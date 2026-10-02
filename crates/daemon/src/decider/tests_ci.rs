@@ -244,6 +244,12 @@ fn ci_summary_drops_unsafe_test_names() {
     assert_eq!(dropped, 6, "the repeat is not counted as dropped");
     assert!(!safe_test_name("é"), "ASCII only");
     assert!(!safe_test_name("a\nb"));
+    // The final fix wave's B m-9: a leading `-` would read as an option to the test
+    // runner; one inside a name is fine.
+    for name in ["-", "--exact", "-rf", "--", "-a::b"] {
+        assert!(!safe_test_name(name), "{name}");
+    }
+    assert!(safe_test_name("a-b::c-d"));
     // A decider that sends an unsafe name keeps its answer: the parse does not throw
     // the summary away for it; the names are filtered before anything uses them.
     let value =

@@ -181,8 +181,10 @@ fn logs_step(run: &mut Run, n: u16, i: usize, rec: &CiRecord, now: u64, fx: &mut
     emit(run, op, fx);
 }
 
-/// `FailedLogs` answered: the log's text joins the record's.
-pub(super) fn logs(run: &mut Run, n: u16, ci_run: u64, file: LogFile) {
+/// `FailedLogs` answered: the log's text joins the record's. An answer replayed from
+/// the journal has no text (A4: the journal never carries it): that log is fetched
+/// again.
+pub(super) fn logs(run: &mut Run, n: u16, ci_run: u64, file: LogFile, now: u64) {
     let Some(i) = active(run, n) else {
         return;
     };
@@ -191,6 +193,12 @@ pub(super) fn logs(run: &mut Run, n: u16, ci_run: u64, file: LogFile) {
     };
     if r.phase != CiPhase::Logs || !r.ci_runs.contains(&ci_run) || r.fetched.contains(&ci_run) {
         return;
+    }
+    if file.tail.is_empty() && file.bytes > 0 {
+        let text = format!(
+            "stage {n}: the failed log of CI run {ci_run} came back without its text (a journal replay); fetching it again"
+        );
+        return log(run, now, text);
     }
     r.fetched.push(ci_run);
     r.log_failures = 0;
@@ -319,6 +327,8 @@ pub(crate) fn summarised(
         r.failing_tests = names;
         r.category = Some(*category);
         r.source = Some(source);
+        // A4: from here on the log's text is only the fix brief's quote.
+        r.text = super::fix::last_lines(&r.text, super::fix::LOG_LINES);
     }
     if dropped > 0 {
         let text = format!(
@@ -490,7 +500,10 @@ fn rerun_step(run: &mut Run, n: u16, i: usize, rec: &CiRecord, now: u64, fx: &mu
         .filter(|r| !rec.reruns_answered.contains(r))
         .collect();
     if !lost.is_empty() && !in_flight {
-        let why = if lost.iter().all(|r| rec.rerun_timeouts.contains(r)) {
+        // A run is in `rerun_timeouts` once per timeout (at most twice); one that timed
+        // out once and whose second issue a restart lost did not time out twice.
+        let twice = |r: &u64| rec.rerun_timeouts.iter().filter(|t| *t == r).count() >= 2;
+        let why = if lost.iter().all(|r| twice(r)) {
             "a re-run timed out twice"
         } else {
             "a re-run's answer was lost in a restart"
@@ -518,12 +531,14 @@ pub(super) fn rerun_done(run: &mut Run, n: u16, ci_run: u64, now: u64) {
 
 /// `RerunFailed` failed: issued again, except that a re-run that timed out (GitHub may
 /// have started it) is issued again once; after a second timeout it stays issued and
-/// unanswered, and `rerun_step` handles the red as `unknown` (fix round 1).
+/// unanswered, and `rerun_step` handles the red as `unknown` (fix round 1). Each timeout
+/// is recorded, so the line can tell a second timeout from a lost second issue.
 pub(super) fn rerun_failed(run: &mut Run, n: u16, ci_run: u64, timed_out: bool) {
     let Some(r) = active(run, n).and_then(|i| record_mut(run, n, i)) else {
         return;
     };
     if timed_out && r.rerun_timeouts.contains(&ci_run) {
+        r.rerun_timeouts.push(ci_run);
         return;
     }
     if timed_out {

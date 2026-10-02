@@ -375,9 +375,10 @@ impl RunService {
             if service.stopped.load(Ordering::SeqCst) {
                 return;
             }
+            // The final fix wave's A4: a CI log's text stays out of the journal.
             let line = JournalLine::Done {
                 op,
-                result: result.clone(),
+                result: crate::run::delivery::view_trim::journal_line(&result),
             };
             service.append_done(&ctx, line, hold).await;
             service.send(EventKind::OpDone {

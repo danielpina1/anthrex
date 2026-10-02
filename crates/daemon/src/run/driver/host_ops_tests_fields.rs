@@ -336,18 +336,17 @@ async fn failed_logs_are_written_0600_and_kept_out_of_the_journal() {
         "the head is kept in the file"
     );
     assert!(written.len() <= 200_000);
-    // The journal names the file and carries only the decider's tail.
+    // The journal names the file and its size, never its text (the final fix wave's
+    // A4: a replayed answer has no tail, and the engine fetches the log again).
     assert!(
         !line.contains("HEAD-OF-THE-LOG"),
         "the log is not journaled"
     );
-    assert!(line.contains("TestTail"));
+    assert!(!line.contains("TestTail"), "nor is its tail");
     assert!(line.contains("ci-28000000001.log"));
-    assert!(
-        line.len() < crate::decider::CI_SUMMARY_INPUT_BYTES + 8 * 1024,
-        "{}",
-        line.len()
-    );
+    assert_eq!(logs.tail, "");
+    assert!(logs.bytes > 0);
+    assert!(line.len() < 1024, "{}", line.len());
     s.stop().await;
 }
 

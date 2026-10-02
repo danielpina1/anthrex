@@ -27,6 +27,7 @@ mod delivery_ci;
 mod delivery_ci_cap;
 mod delivery_ci_dupes;
 mod delivery_ci_edges;
+mod delivery_ci_journal;
 mod delivery_ci_repro;
 mod delivery_digest;
 mod delivery_land;

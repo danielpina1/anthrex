@@ -4,7 +4,7 @@
 //! review text within its budget, every id kept, and anthrex's marker kept at the end
 //! of a cut body (so a reply anthrex sent is still known by it).
 
-use super::view_trim::{CUT_MARK, journaled};
+use super::view_trim::{CUT_MARK, journal_line, journaled};
 use crate::host::{
     Author, IssueComment, Mergeable, PrState, PrView, Review, ReviewState, ReviewThread,
     ThreadComment,
@@ -175,4 +175,34 @@ fn a_small_view_and_other_results_are_journaled_as_they_are() {
         message: "x".repeat(10_000),
     };
     assert_eq!(journaled(other.clone()), other);
+}
+
+/// The final fix wave's A4: a `FailedLogs` answer's journal line keeps the file's path
+/// and size, never its text; anything else is journaled as it is handed over.
+#[test]
+fn a_ci_logs_journal_line_carries_no_tail() {
+    let file = crate::host::LogFile {
+        path: "/tmp/data/delivery/ci-28000000001.log".into(),
+        bytes: 48_000,
+        truncated: true,
+        tail: "--- FAIL: a::works".into(),
+    };
+    let result = OpResult::Host(HostResult::Logs(file.clone()));
+    let line = journal_line(&result);
+    let OpResult::Host(HostResult::Logs(kept)) = &line else {
+        panic!("{line:?}")
+    };
+    assert_eq!(kept.tail, "");
+    assert_eq!(
+        (&kept.path, kept.bytes, kept.truncated),
+        (&file.path, 48_000, true)
+    );
+    let text = serde_json::to_string(&JournalLine::Done {
+        op: 3,
+        result: line,
+    })
+    .unwrap();
+    assert!(!text.contains("a::works"), "{text}");
+    let other = OpResult::Host(HostResult::Rerun);
+    assert_eq!(journal_line(&other), other);
 }

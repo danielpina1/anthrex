@@ -41,6 +41,17 @@ pub fn journaled(result: OpResult) -> OpResult {
     }
 }
 
+/// The final fix wave's A4: `result` as its journal `done` line keeps it. A CI log's
+/// text never goes there (only its path and size): a replayed answer has an empty tail,
+/// and the engine fetches that log again.
+pub fn journal_line(result: &OpResult) -> OpResult {
+    let mut line = result.clone();
+    if let OpResult::Host(HostResult::Logs(file)) = &mut line {
+        file.tail.clear();
+    }
+    line
+}
+
 fn trim_view(view: &mut PrView) {
     let mut budget = STAGE_TEXT_CHARS;
     for r in view.reviews.iter_mut().rev() {

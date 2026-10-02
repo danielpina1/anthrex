@@ -106,9 +106,12 @@ pub fn parse(value: &Value) -> Result<DeciderAnswer, String> {
 }
 
 /// Decision 18: a test name from a CI log is untrusted; it reaches 9.1's reproduce and
-/// bisect commands only when it matches `^[A-Za-z0-9_:./\[\]-]{1,200}$`.
+/// bisect commands only when it matches `^[A-Za-z0-9_:./\[\]-]{1,200}$` and does not
+/// start with `-`, which a test runner would read as an option (the final fix wave's
+/// B m-9).
 pub fn safe_test_name(name: &str) -> bool {
     (1..=TEST_NAME_MAX_CHARS).contains(&name.chars().count())
+        && !name.starts_with('-')
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "_:./[]-".contains(c))

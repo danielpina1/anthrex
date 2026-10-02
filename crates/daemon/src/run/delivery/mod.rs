@@ -371,8 +371,9 @@ pub struct CiRecord {
     /// a restart never issues one twice).
     #[serde(default)]
     pub reruns_answered: Vec<u64>,
-    /// The re-runs that timed out once (issued again once, never a third time), and the
-    /// failures in a row of the failed log being fetched (fix round 1).
+    /// The re-runs that timed out, once per timeout (issued again once, never a third
+    /// time, so a run is here at most twice), and the failures in a row of the failed
+    /// log being fetched (fix round 1).
     #[serde(default)]
     pub rerun_timeouts: Vec<u64>,
     #[serde(default)]

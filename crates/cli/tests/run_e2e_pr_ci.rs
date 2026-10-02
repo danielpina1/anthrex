@@ -320,11 +320,10 @@ fn e2e_pr_ci_red_reproduced_under_a_check_is_a_stage_fix_without_a_bisect() {
     let log: Vec<String> = (run_json(&run)["log"].as_array().into_iter().flatten())
         .filter_map(|l| l["text"].as_str().map(str::to_string))
         .collect();
-    // RULING F1 (task M9.2.16): this is today's text; the final wave replaces it (the
-    // head is on the stage's line, the range after its green tier 3 is empty), and
-    // this pin moves with it.
+    // Ruling F1 (the final fix wave): tier 3 passed on this head, so the range after it
+    // is empty; the line says so.
     let not_bisected = format!(
-        "stage 1: CI red at {h7} reproduces; not bisected: {h7} is not a merge recorded on the stage's line"
+        "stage 1: CI red at {h7} reproduces; CI fails a test tier 3 passed on this head (outside tier 3's set or environment-dependent); a stage fix task was added"
     );
     assert!(log.contains(&not_bisected), "{not_bisected:?} in {log:#?}");
     let (fix, brief) = (t(&run, "fix1"), brief_of(&run, "fix1"));

@@ -28,7 +28,7 @@ pub(crate) const NOT_REPRODUCED: &str =
     "This failure does not reproduce locally; the difference is in CI's environment. Find it.";
 /// The template quotes the log's last this many lines, and a culprit's `show --stat`
 /// to this many lines.
-const LOG_LINES: usize = 200;
+pub(super) const LOG_LINES: usize = 200;
 const STAT_LINES: usize = 60;
 /// The characters of a CI key an attention line shows.
 const KEY_SHOWN: usize = 120;
@@ -78,7 +78,7 @@ fn acceptance(rec: &CiRecord) -> Vec<String> {
 }
 
 /// The last `k` lines of `text`.
-fn last_lines(text: &str, k: usize) -> String {
+pub(super) fn last_lines(text: &str, k: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(k)..].join("\n")
 }

@@ -216,8 +216,9 @@ fn a_rerun_already_running_is_accepted() {
     let cancelled = vec![job_check("test", Conclusion::Cancelled, RUN_A, 1)];
     poll_with(&mut fx, red_view(&commit(1), cancelled.clone()));
     let (op, _) = host_ops(&fx)[0].clone();
+    // `gh_parse::classify` reads GitHub's 403 as `Failed`.
     let text = format!("run {RUN_A} cannot be rerun; This workflow is already running");
-    answer(&mut fx, op, HostResult::Error(HostError::Rejected(text)));
+    answer(&mut fx, op, HostResult::Error(HostError::Failed(text)));
     retry(&mut fx, &cancelled);
     retry(&mut fx, &cancelled);
     assert_eq!(reruns(&fx), 1, "not issued again");
@@ -230,6 +231,57 @@ fn a_rerun_already_running_is_accepted() {
         &fx,
         &format!("stage 1: re-ran the failed jobs of CI run {RUN_A}")
     ));
+}
+
+/// The final fix wave (task 9's deferred item): only the error kind GitHub's "already
+/// running" comes as is a re-run accepted; any other kind is a failure, whatever its
+/// text says, and the re-run is issued again.
+#[test]
+fn already_running_in_another_error_kind_is_not_a_rerun() {
+    let text = format!("run {RUN_A}: already running");
+    for error in [
+        HostError::RateLimited(text.clone()),
+        HostError::Auth(text.clone()),
+        HostError::Rejected(text.clone()),
+    ] {
+        let mut fx = watched();
+        let cancelled = vec![job_check("test", Conclusion::Cancelled, RUN_A, 1)];
+        poll_with(&mut fx, red_view(&commit(1), cancelled.clone()));
+        let (op, _) = host_ops(&fx)[0].clone();
+        answer(&mut fx, op, HostResult::Error(error.clone()));
+        assert!(ci_record(&fx).reruns_answered.is_empty(), "{error:?}");
+        retry(&mut fx, &cancelled);
+        retry(&mut fx, &cancelled);
+        assert_eq!(reruns(&fx), 2, "issued again after {error:?}");
+    }
+}
+
+/// Task 9's deferred item: a re-run that timed out once, then whose second issue a
+/// restart lost, did not time out twice; the line says what happened.
+#[test]
+fn a_lost_second_issue_after_a_timeout_is_not_called_a_second_timeout() {
+    let mut fx = watched();
+    let cancelled = vec![job_check("test", Conclusion::Cancelled, RUN_A, 1)];
+    poll_with(&mut fx, red_view(&commit(1), cancelled.clone()));
+    let (op, _) = host_ops(&fx)[0].clone();
+    let timed_out = HostError::TimedOut("gh run rerun timed out after 60 s".into());
+    answer(&mut fx, op, HostResult::Error(timed_out));
+    retry(&mut fx, &cancelled);
+    assert_eq!(reruns(&fx), 2, "issued again once");
+    super::control_restore::restart(&mut fx, Vec::new());
+    super::control::resume(&mut fx);
+    retry(&mut fx, &cancelled);
+    retry(&mut fx, &cancelled);
+    assert_eq!(reruns(&fx), 2, "not issued a third time");
+    let head = commit(1);
+    let at = sha7(&head);
+    let lost = format!(
+        "stage 1: a re-run's answer was lost in a restart; CI red at {at} is unknown, not re-run again"
+    );
+    assert!(logged(&fx, &lost), "{:#?}", fx.run().log);
+    let twice =
+        format!("stage 1: a re-run timed out twice; CI red at {at} is unknown, not re-run again");
+    assert!(!logged(&fx, &twice));
 }
 
 #[test]

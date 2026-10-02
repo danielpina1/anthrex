@@ -193,10 +193,11 @@ pub(super) fn host_done(
         return;
     };
     // Decision 10, in the engine too (fix round 1): a run GitHub already re-runs is a
-    // re-run accepted, never issued again.
+    // re-run accepted, never issued again. Only the kind GitHub's 403 comes as
+    // (`gh_parse::classify`'s `Failed`); any other kind is a failure, whatever its text.
     let result = match result {
-        HostResult::Error(e)
-            if matches!(op, HostOp::RerunFailed { .. }) && e.text().contains("already running") =>
+        HostResult::Error(HostError::Failed(text))
+            if matches!(op, HostOp::RerunFailed { .. }) && text.contains("already running") =>
         {
             HostResult::Rerun
         }
@@ -244,7 +245,7 @@ pub(super) fn host_done(
         (HostOp::DeleteBranch { stage }, HostResult::Deleted) => land::deleted(run, stage, now),
         // Decision 27 (task M9.2.9).
         (HostOp::FailedLogs { stage, ci_run, .. }, HostResult::Logs(file)) => {
-            ci::logs(run, stage, ci_run, file)
+            ci::logs(run, stage, ci_run, file, now)
         }
         (HostOp::RerunFailed { stage, ci_run }, HostResult::Rerun) => {
             ci::rerun_done(run, stage, ci_run, now)
