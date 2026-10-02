@@ -506,3 +506,43 @@ exec sleep 30"#,
     assert!(error.contains("exited with code 1"), "{error}");
     assert_eq!(find(&m, info.id).status, Status::Exited);
 }
+
+/// CI flake F-b: the order where the resumed process has exited before its message is
+/// written (forced by the manager's install pause). The write fails, and the error
+/// reported is the process's own reason, not the failed write.
+#[tokio::test]
+async fn a_resume_that_exits_before_its_message_reports_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let claude = script(
+        dir.path(),
+        "claude",
+        r#"case " $* " in
+  *" --resume "*)
+    echo "No conversation found with session ID: nope" >&2
+    printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":0,"errors":["No conversation found with session ID: nope"]}'
+    exit 1;;
+esac
+exec sleep 30"#,
+    );
+    // The pause after each spawn outlasts the resumed process's exit and reap, so the
+    // message's write comes after it.
+    let m = manager(&claude, &claude, |c| {
+        c.headless_install_pause = Duration::from_secs(1)
+    });
+    let _cleanup = Cleanup(m.clone());
+    let info = create(&m, "w", spec(Runtime::Claude, dir.path()), "first").await;
+    let error = m
+        .headless_resume(info.id, "nope", "go on", Duration::ZERO)
+        .await
+        .unwrap_err();
+    let text = format!("{error:#}");
+    assert!(
+        text.contains("No conversation found with session ID: nope"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("could not write the turn's message"),
+        "{text}"
+    );
+    assert_eq!(find(&m, info.id).status, Status::Exited);
+}
