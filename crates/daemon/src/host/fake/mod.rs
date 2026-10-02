@@ -71,6 +71,9 @@ impl CodeHost for FakeHost {
     fn preflight(&self, req: &PreflightReq) -> Result<HostRepo, HostError> {
         self.inner.preflight(req)
     }
+    fn detect(&self, root: &Path, remote: &str) -> Result<HostRepo, HostError> {
+        self.inner.detect(root, remote)
+    }
     fn push(&self, req: &PushReq) -> Result<PushOutcome, HostError> {
         self.inner.push(req)
     }

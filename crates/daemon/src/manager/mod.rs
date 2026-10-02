@@ -12,7 +12,7 @@ mod restart;
 mod restore;
 mod role_window;
 
-pub use config::ManagerConfig;
+pub use config::{ManagerConfig, TEST_GH_BIN};
 pub use conversation::{CONVERSATION_GONE, ReaderStep, conversation_delta_message};
 pub use headless::{
     DIAGNOSTIC_LINES, SIGNAL_CHANNEL_CAPACITY, WindowSignal, WindowSignalKind, control_refusal,

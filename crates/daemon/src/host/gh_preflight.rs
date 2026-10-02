@@ -2,6 +2,7 @@
 //! each refusal in the brief's exact text ("Messages"). Split from `gh.rs` for AGENTS.md
 //! rule 8. Blocking.
 
+use std::path::Path;
 use std::time::Duration;
 
 use super::allow::AllowCtx;
@@ -15,92 +16,13 @@ use crate::run::git::{NO_HOOKS, WRITE_FLAGS};
 impl<R: Runner> GhHost<R> {
     pub(super) fn check_preflight(&self, req: &PreflightReq) -> Result<HostRepo, HostError> {
         let remote_name = req.remote.as_str();
-        let early = AllowCtx {
+        let (repo, full) = self.check_repo(&req.root, remote_name, Some(&req.base_branch))?;
+        let ctx = AllowCtx {
             run_id: None,
             remote: remote_name,
             base_branch: Some(&req.base_branch),
-            repo: None,
-        };
-        let key = format!("remote.{remote_name}.url");
-        let config = self
-            .git(
-                &early,
-                &req.root,
-                &NO_HOOKS,
-                &["config", "--get", &key],
-                HOST_READ_TIMEOUT,
-            )
-            .map_err(|e| check_timeout(e, "git config", HOST_READ_TIMEOUT))?;
-        let url = config.stdout_text().trim().to_string();
-        if !config.success || url.is_empty() {
-            return Err(if config.stderr.trim().is_empty() {
-                HostError::NotFound(format!(
-                    "remote {remote_name} is not set in this repository; use --delivery local"
-                ))
-            } else {
-                HostError::Failed(format!("git config: {}", last_line(&config.stderr)))
-            });
-        }
-        let not_github = || {
-            HostError::Rejected(format!(
-                "remote {remote_name} is not a GitHub repository ({}); use --delivery local",
-                remote::redact(&url)
-            ))
-        };
-        let parsed = remote::parse(&url).ok_or_else(not_github)?;
-        let repo = HostRepo {
-            host: parsed.host,
-            owner: parsed.owner,
-            name: parsed.name,
-            remote: req.remote.clone(),
-            root: req.root.clone(),
-        };
-        let full = repo.full();
-        let ctx = AllowCtx {
             repo: Some(&full),
-            ..early
         };
-        let cap = Capture::Bytes(GH_OUTPUT_MAX);
-        let gh_cmd = |args: &[&str], check: &str| {
-            let argv = args.iter().map(|a| a.to_string()).collect();
-            self.gh(&repo.host, &ctx, &repo.root, argv, HOST_READ_TIMEOUT, cap)
-                .map_err(|e| check_timeout(e, check, HOST_READ_TIMEOUT))
-        };
-        let missing = || {
-            HostError::Missing(format!(
-                "gh is not installed (looked for {}); install it, or use --delivery local",
-                self.gh.display()
-            ))
-        };
-        let version = match gh_cmd(&["--version"], "gh --version") {
-            Err(HostError::Missing(_)) => return Err(missing()),
-            Err(other) => return Err(other),
-            Ok(out) if !out.success => return Err(missing()),
-            Ok(out) => out.stdout_text(),
-        };
-        check_version(&version)?;
-        let auth = gh_cmd(
-            &["auth", "status", "--hostname", &repo.host],
-            "gh auth status",
-        )?;
-        if !auth.success {
-            return Err(if repo.host == remote::GITHUB_HOST {
-                HostError::Auth(format!(
-                    "gh is not logged in to {}; run gh auth login, or use --delivery local",
-                    repo.host
-                ))
-            } else {
-                not_github()
-            });
-        }
-        let seen = gh_cmd(
-            &["repo", "view", &full, "--json", "nameWithOwner"],
-            "gh repo view",
-        )?;
-        if !seen.success {
-            let text = format!("gh cannot see {full}: {}", last_line(&seen.stderr));
-            return Err(with_text(gh_parse::classify(&seen.stderr), text));
-        }
         let dry = format!(
             "{}:refs/heads/anthrex/preflight-{}",
             req.base_sha, req.nonce
@@ -155,6 +77,104 @@ impl<R: Runner> GhHost<R> {
             )));
         }
         Ok(repo)
+    }
+
+    /// Preflight's checks 1 to 4 (decision 17), which detection also runs (decision 3):
+    /// the remote's URL, `gh --version`, `gh auth status` and `gh repo view`. Answers the
+    /// repository and its `<owner>/<name>`.
+    pub(super) fn check_repo(
+        &self,
+        root: &Path,
+        remote_name: &str,
+        base_branch: Option<&str>,
+    ) -> Result<(HostRepo, String), HostError> {
+        let early = AllowCtx {
+            run_id: None,
+            remote: remote_name,
+            base_branch,
+            repo: None,
+        };
+        let key = format!("remote.{remote_name}.url");
+        let config = self
+            .git(
+                &early,
+                root,
+                &NO_HOOKS,
+                &["config", "--get", &key],
+                HOST_READ_TIMEOUT,
+            )
+            .map_err(|e| check_timeout(e, "git config", HOST_READ_TIMEOUT))?;
+        let url = config.stdout_text().trim().to_string();
+        if !config.success || url.is_empty() {
+            return Err(if config.stderr.trim().is_empty() {
+                HostError::NotFound(format!(
+                    "remote {remote_name} is not set in this repository; use --delivery local"
+                ))
+            } else {
+                HostError::Failed(format!("git config: {}", last_line(&config.stderr)))
+            });
+        }
+        let not_github = || {
+            HostError::Rejected(format!(
+                "remote {remote_name} is not a GitHub repository ({}); use --delivery local",
+                remote::redact(&url)
+            ))
+        };
+        let parsed = remote::parse(&url).ok_or_else(not_github)?;
+        let repo = HostRepo {
+            host: parsed.host,
+            owner: parsed.owner,
+            name: parsed.name,
+            remote: remote_name.to_string(),
+            root: root.to_path_buf(),
+        };
+        let full = repo.full();
+        let ctx = AllowCtx {
+            repo: Some(&full),
+            ..early
+        };
+        let cap = Capture::Bytes(GH_OUTPUT_MAX);
+        let gh_cmd = |args: &[&str], check: &str| {
+            let argv = args.iter().map(|a| a.to_string()).collect();
+            self.gh(&repo.host, &ctx, &repo.root, argv, HOST_READ_TIMEOUT, cap)
+                .map_err(|e| check_timeout(e, check, HOST_READ_TIMEOUT))
+        };
+        let missing = || {
+            HostError::Missing(format!(
+                "gh is not installed (looked for {}); install it, or use --delivery local",
+                self.gh.display()
+            ))
+        };
+        let version = match gh_cmd(&["--version"], "gh --version") {
+            Err(HostError::Missing(_)) => return Err(missing()),
+            Err(other) => return Err(other),
+            Ok(out) if !out.success => return Err(missing()),
+            Ok(out) => out.stdout_text(),
+        };
+        check_version(&version)?;
+        let auth = gh_cmd(
+            &["auth", "status", "--hostname", &repo.host],
+            "gh auth status",
+        )?;
+        if !auth.success {
+            return Err(if repo.host == remote::GITHUB_HOST {
+                HostError::Auth(format!(
+                    "gh is not logged in to {}; run gh auth login, or use --delivery local",
+                    repo.host
+                ))
+            } else {
+                not_github()
+            });
+        }
+        let seen = gh_cmd(
+            &["repo", "view", &full, "--json", "nameWithOwner"],
+            "gh repo view",
+        )?;
+        if !seen.success {
+            let text = format!("gh cannot see {full}: {}", last_line(&seen.stderr));
+            return Err(with_text(gh_parse::classify(&seen.stderr), text));
+        }
+        Ok((repo, full))
     }
 }
 

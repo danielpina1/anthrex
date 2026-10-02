@@ -70,6 +70,12 @@ pub struct RunDelivery {
     /// failed one is not retried before `base_fetch_retry_at` (not in Interfaces).
     pub base_fetch_due: bool,
     pub base_fetch_retry_at: Option<u64>,
+    /// Task M9.2.12 (the controller's ruling): a digest of the remote's fetch and push
+    /// URLs as preflight found them (`git remote get-url --all`, and `--push`, so
+    /// `insteadOf` rewriting counts too). A push or fetch is refused when they changed,
+    /// so a worker's `git config` in the shared `.git/config` never redirects one. A
+    /// digest, not the URLs: one may carry a token (not in Interfaces).
+    pub remote_seal: Option<String>,
 }
 
 impl RunDelivery {

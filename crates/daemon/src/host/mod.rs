@@ -19,6 +19,7 @@ pub mod gh_parse;
 mod gh_preflight;
 pub mod remote;
 pub mod runner;
+pub mod select;
 
 #[cfg(test)]
 pub(crate) mod scripted;
@@ -49,6 +50,10 @@ pub use runner::{Capture, Cut, Program, RunOutput, Runner, SystemRunner};
 /// Decision 5. Every method blocks: call it only on `spawn_blocking`, never under a lock.
 pub trait CodeHost: Send + Sync {
     fn preflight(&self, req: &PreflightReq) -> Result<HostRepo, HostError>;
+    /// Decision 3's detection at `profile detect` (task M9.2.12): preflight's first
+    /// checks only (the remote's URL, `gh --version`, `gh auth status`, `gh repo view`),
+    /// never a push.
+    fn detect(&self, root: &Path, remote: &str) -> Result<HostRepo, HostError>;
     fn push(&self, req: &PushReq) -> Result<PushOutcome, HostError>;
     fn fetch(&self, req: &FetchReq) -> Result<FetchOutcome, HostError>;
     fn open_pr(&self, req: &OpenPrReq) -> Result<PrRef, HostError>;

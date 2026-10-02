@@ -103,3 +103,25 @@ fn a_marker_pasted_by_someone_else_does_not_stop_the_reply() {
     );
     assert_eq!(h.runner().calls().len(), 1);
 }
+
+/// Task M9.2.12 (task 10's carried ruling): the viewer's login is read once per host,
+/// not once per reply; a failed read is not remembered.
+#[test]
+fn the_viewer_login_is_read_once_per_host() {
+    let tmp = tempfile::tempdir().unwrap();
+    let req = thread_req(tmp.path());
+    let h = host(
+        ScriptedRunner::new()
+            .fails("", "gh: Something went wrong (HTTP 502)")
+            .ok(REST_USER)
+            .ok(REST_REVIEW_COMMENTS)
+            .ok(REST_REVIEW_COMMENTS),
+    );
+    assert!(h.reply(&req).is_err(), "the first read fails");
+    assert_eq!(h.reply(&req).unwrap(), 3658444294);
+    assert_eq!(h.reply(&req).unwrap(), 3658444294);
+    let user = argv(&["api", "user"]);
+    let reads = h.runner().argvs().iter().filter(|a| **a == user).count();
+    assert_eq!(reads, 2, "{:?}", h.runner().argvs());
+    assert_eq!(h.runner().unanswered(), 0);
+}

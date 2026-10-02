@@ -86,6 +86,9 @@ pub struct ManagerConfig {
     /// `ANTHREX_DECIDER_BIN` when set and non-empty, read once at daemon start (M8b
     /// decision 16): every decider runs it instead of `claude_bin` or `codex_bin`.
     pub decider_bin: Option<String>,
+    /// Milestone 9.2 decision 15: `ANTHREX_CODE_HOST`, `ANTHREX_GH_BIN` and
+    /// `ANTHREX_FAKE_HOST_DIR`, read once at daemon start; `RunContext` builds the host.
+    pub code_host: crate::host::select::CodeHostChoice,
 }
 
 /// The agent programs [`ManagerConfig::for_tests`] names: none of them exists, so a
@@ -93,6 +96,8 @@ pub struct ManagerConfig {
 pub const TEST_CLAUDE_BIN: &str = "/nonexistent/anthrex-test/claude";
 pub const TEST_CODEX_BIN: &str = "/nonexistent/anthrex-test/codex";
 pub const TEST_DECIDER_BIN: &str = "/nonexistent/anthrex-test/decider";
+/// Decision 15: the `gh` [`ManagerConfig::for_tests`] names, which does not exist.
+pub const TEST_GH_BIN: &str = "/nonexistent/anthrex-test/gh";
 
 impl ManagerConfig {
     /// For tests only: [`ManagerConfig::new`] with `claude_bin`, `codex_bin` and
@@ -104,6 +109,9 @@ impl ManagerConfig {
         config.claude_bin = TEST_CLAUDE_BIN.to_string();
         config.codex_bin = TEST_CODEX_BIN.to_string();
         config.decider_bin = Some(TEST_DECIDER_BIN.to_string());
+        config.code_host = crate::host::select::CodeHostChoice::Gh {
+            bin: TEST_GH_BIN.into(),
+        };
         config
     }
 
@@ -128,6 +136,7 @@ impl ManagerConfig {
             conversation: ::config::Conversation::default(),
             cli_caps: crate::headless::argv::CLI_CAPS,
             decider_bin: None,
+            code_host: Default::default(),
         }
     }
 
@@ -143,6 +152,10 @@ impl ManagerConfig {
         runtimes: &::config::Runtimes,
     ) -> Self {
         let nonempty = |key| var(key).filter(|value| !value.is_empty());
+        let (code_host, warning) = crate::host::select::CodeHostChoice::from_vars(&var);
+        if let Some(warning) = warning {
+            tracing::warn!("{warning}");
+        }
         Self {
             socket_path,
             shell,
@@ -165,6 +178,7 @@ impl ManagerConfig {
             conversation: ::config::Conversation::default(),
             cli_caps: crate::headless::argv::CLI_CAPS,
             decider_bin: nonempty("ANTHREX_DECIDER_BIN"),
+            code_host,
         }
     }
 

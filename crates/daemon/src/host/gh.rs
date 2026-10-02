@@ -4,9 +4,11 @@
 //! only from `spawn_blocking`. Preflight is in `gh_preflight.rs`, the `git` side (push,
 //! fetch, adoption, branch delete) in `gh_git.rs`.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -61,6 +63,9 @@ pub struct GhHost<R: Runner> {
     runner: R,
     pub(super) gh: PathBuf,
     pub(super) git: PathBuf,
+    /// Task M9.2.12 (task 10's carried ruling): the login `gh api user` names, read once
+    /// per GitHub host for the host's life (one per daemon), not once per reply.
+    viewer: Mutex<HashMap<String, String>>,
 }
 
 impl<R: Runner> GhHost<R> {
@@ -69,7 +74,20 @@ impl<R: Runner> GhHost<R> {
             runner,
             gh: gh.into(),
             git: git.into(),
+            viewer: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The login anthrex posts with on `repo`'s host: read once, then cached. A failed
+    /// read is not cached.
+    fn viewer(&self, repo: &HostRepo, ctx: &AllowCtx<'_>) -> Result<String, HostError> {
+        if let Some(login) = crate::lock(&self.viewer).get(&repo.host) {
+            return Ok(login.clone());
+        }
+        let user = self.gh_ok(repo, ctx, strings(&["api", "user"]), HOST_READ_TIMEOUT)?;
+        let login = gh_parse::user_login(&user.stdout_text())?;
+        crate::lock(&self.viewer).insert(repo.host.clone(), login.clone());
+        Ok(login)
     }
 
     pub fn runner(&self) -> &R {
@@ -138,6 +156,10 @@ impl<R: Runner> GhHost<R> {
 impl<R: Runner> CodeHost for GhHost<R> {
     fn preflight(&self, req: &PreflightReq) -> Result<HostRepo, HostError> {
         self.check_preflight(req)
+    }
+
+    fn detect(&self, root: &Path, remote: &str) -> Result<HostRepo, HostError> {
+        self.check_repo(root, remote, None).map(|(repo, _)| repo)
     }
 
     fn push(&self, req: &PushReq) -> Result<PushOutcome, HostError> {
@@ -330,8 +352,7 @@ impl<R: Runner> CodeHost for GhHost<R> {
             ReplyTarget::Conversation => format!("repos/{full}/issues/{n}/comments"),
         };
         // Only the user's own comment is a reply anthrex posted (the fix round's ruling).
-        let user = self.gh_ok(repo, &ctx, strings(&["api", "user"]), HOST_READ_TIMEOUT)?;
-        let me = gh_parse::user_login(&user.stdout_text())?;
+        let me = self.viewer(repo, &ctx)?;
         let seen = self.gh_ok(
             repo,
             &ctx,

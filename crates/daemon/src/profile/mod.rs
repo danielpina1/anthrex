@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use proto::RepoProfile;
 
+pub mod delivery;
 pub mod proposal;
 mod proposal_delivery;
 mod proposal_tiers;

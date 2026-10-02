@@ -149,7 +149,7 @@ fn every_method(root: &Path) -> GhHost<ScriptedRunner> {
         .ok(REST_USER)
         .ok("[]")
         .ok(&created)
-        .ok(REST_USER)
+        // (the viewer's login is cached: read once for both replies)
         .ok(REST_ISSUE_COMMENTS)
         .ok("https://github.com/cli/cli/pull/13982#issuecomment-5200000001\n")
         // retarget, permission, delete_branch
@@ -493,7 +493,6 @@ fn every_method_builds_its_exact_argv() {
             ]),
             w,
         ),
-        (Program::Gh, argv(&["api", "user"]), r),
         (
             Program::Gh,
             argv(&["api", "repos/cli/cli/issues/13982/comments", "--paginate"]),
@@ -543,7 +542,7 @@ fn every_method_builds_its_exact_argv() {
             Program::Git => assert!(call.env.is_empty(), "call {i}: {:?}", call.env),
         }
     }
-    let comment = &calls[23].argv;
+    let comment = &calls[22].argv;
     assert_eq!(
         comment[..6],
         argv(&["pr", "comment", "13982", "--repo", "cli/cli", "--body-file"])[..]
@@ -566,7 +565,7 @@ fn allow_list_accepts_every_built_command() {
     let tmp = tempfile::tempdir().unwrap();
     let host = every_method(tmp.path());
     let calls: Vec<Call> = host.runner().calls();
-    assert_eq!(calls.len(), 27);
+    assert_eq!(calls.len(), 26);
     let ctx = allow::AllowCtx {
         run_id: Some(RUN),
         remote: "origin",

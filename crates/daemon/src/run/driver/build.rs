@@ -14,6 +14,7 @@ use std::time::Duration;
 use proto::{Plan, Runtime};
 
 use super::adapt::BuildError;
+use super::delivery::DeliveryStart;
 use super::ops::blocking;
 use super::{RunService, unix_now};
 use crate::run::confine;
@@ -255,15 +256,16 @@ impl RunService {
     /// it with the fast path, [`Shape::Fast`]: its barrier before the runtime checks,
     /// review m1; milestone 9 decision 26 with the planned path, [`Shape::Planned`]: the
     /// orchestrator's record before the runtime checks, so they cover its runtime and
-    /// its sub-planners'); decision 6's profile choice right after preflight.
-    pub(super) async fn build_plan(
+    /// its sub-planners'); decision 6's profile choice right after preflight. Milestone
+    /// 9.2 (decisions 3, 17): the delivery resolved and preflighted right after the
+    /// profile choice, or already done before triage (`run start --goal`), and frozen.
+    pub(super) async fn build_delivered(
         &self,
         mut plan: Plan,
         dir: PathBuf,
-        yes: bool,
-        trust_project: bool,
-        unconfined_checks: bool,
+        (yes, trust_project, unconfined_checks): (bool, bool, bool),
         shape: Shape,
+        delivery: DeliveryStart,
     ) -> Result<Run, BuildError> {
         let fast = matches!(shape, Shape::Fast);
         let mut config = self.ctx.settings.current().orchestrator.clone();
@@ -279,6 +281,13 @@ impl RunService {
         let g = git.clone();
         let mut pre = blocking(move || git::preflight(&g, &dir, timeout)).await?;
         let choice = self.choose_profile(&mut plan, &mut config, &pre).await?;
+        let delivery = match delivery {
+            DeliveryStart::Done(frozen) => frozen,
+            DeliveryStart::Resolve(asked) => {
+                let profile = choice.delivery.as_ref();
+                self.freeze_delivery(&pre, asked, profile).await?
+            }
+        };
 
         // Decision 17 (carry): the protected files, by the chosen profile's matcher,
         // before `build_run` turns them into the plan's warnings (decision 56).
@@ -304,6 +313,7 @@ impl RunService {
             yes,
         };
         let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
+        delivery.apply(&mut run);
         super::adapt::fast_barrier(fast, &run)?;
         super::adapt::apply_choice(&mut run, choice, now);
         run.limits.unconfined_checks = run.limits.worker_sandbox && !available;

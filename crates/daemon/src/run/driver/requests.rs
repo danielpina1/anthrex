@@ -13,6 +13,7 @@ use proto::{ActionKind, BaseMovedInfo, FinishAction, RunReply, RunRequest};
 use super::RunService;
 use super::adapt::BuildError;
 use super::build::Shape;
+use super::delivery::{DeliveryRequestOf, DeliveryStart};
 use crate::run::engine::EventKind;
 use crate::run::engine::actions::{self, ActionNode};
 use crate::run::git::{self, Git};
@@ -42,12 +43,11 @@ impl RunService {
                 yes,
                 trust_project,
                 unconfined_checks,
-                // Milestone 9.2: `--delivery`, read by M9.2.12's preflight; no client
-                // sends it before M9.2.14.
-                delivery: _,
+                // Milestone 9.2 decision 3: `--delivery`, resolved once, at the start.
+                delivery,
             } => {
-                self.start(plan_toml, dir, yes, trust_project, unconfined_checks)
-                    .await
+                let flags = (yes, trust_project, unconfined_checks);
+                self.start(plan_toml, dir, flags, delivery).await
             }
             RunRequest::Approve { run_id } => answer(
                 request::APPROVE,
@@ -108,11 +108,11 @@ impl RunService {
                 trust_project,
                 unconfined_checks,
                 orchestrator,
-                // Milestone 9.2: read by M9.2.12's preflight.
-                delivery: _,
+                delivery,
             } => {
                 let flags = (trust_project, unconfined_checks);
-                self.start_goal(goal, dir, flags, yes, orchestrator).await
+                self.start_goal(goal, dir, flags, yes, (orchestrator, delivery))
+                    .await
             }
             RunRequest::Promote {
                 run_id,
@@ -127,12 +127,14 @@ impl RunService {
             RunRequest::TaskDetail { run_id, task_id } => self.task_detail(&run_id, &task_id),
             // Milestone 9.0.6 decision 25 (`driver/settings.rs`).
             RunRequest::Settings(request) => self.settings(request).await,
-            // Milestone 9.2 decision 25: the engine's handling comes with M9.2.7.
-            RunRequest::Deliver { .. } => {
-                RunReply::refused(request::DELIVER, "run deliver is not available yet")
+            // Milestone 9.2 decision 25 (`driver/delivery.rs`).
+            RunRequest::Deliver { run_id, stage } => {
+                let req = DeliveryRequestOf::Deliver { run_id, stage };
+                self.delivery_request(req).await
             }
-            RunRequest::Watch { .. } => {
-                RunReply::refused(request::WATCH, "run watch is not available yet")
+            RunRequest::Watch { run_id, on } => {
+                let req = DeliveryRequestOf::Watch { run_id, on };
+                self.delivery_request(req).await
             }
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
@@ -166,15 +168,11 @@ impl RunService {
         &self,
         plan_toml: String,
         dir: PathBuf,
-        yes: bool,
-        trust_project: bool,
-        unconfined_checks: bool,
+        flags: (bool, bool, bool),
+        delivery: Option<proto::DeliveryMode>,
     ) -> RunReply {
         let refused = |message: String| RunReply::refused(request::START, message);
-        match self
-            .build(plan_toml, dir, yes, trust_project, unconfined_checks)
-            .await
-        {
+        match self.build(plan_toml, dir, flags, delivery).await {
             Ok(run) => {
                 let run_id = run.id.clone();
                 match self
@@ -206,21 +204,14 @@ impl RunService {
         &self,
         plan_toml: String,
         dir: PathBuf,
-        yes: bool,
-        trust_project: bool,
-        unconfined_checks: bool,
+        flags: (bool, bool, bool),
+        delivery: Option<proto::DeliveryMode>,
     ) -> Result<Run, String> {
         let plan = parse_plan(&plan_toml)?;
-        self.build_plan(
-            plan,
-            dir,
-            yes,
-            trust_project,
-            unconfined_checks,
-            Shape::PlanFile,
-        )
-        .await
-        .map_err(BuildError::text)
+        let delivery = DeliveryStart::Resolve(delivery);
+        self.build_delivered(plan, dir, flags, Shape::PlanFile, delivery)
+            .await
+            .map_err(BuildError::text)
     }
 
     /// `run edit`, with its [`Self::runtime_refusals`].

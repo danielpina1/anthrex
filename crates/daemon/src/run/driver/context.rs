@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use super::DONE_CHECK_GIT_TIMEOUT;
 use crate::headless::argv::CliCaps;
+use crate::host::CodeHost;
 use crate::live_config::{LiveSettings, SettingsIo};
 use crate::manager::{GitRoots, ManagerConfig};
 
@@ -38,6 +39,11 @@ pub struct RunContext {
     /// The git budget of `task_result`'s reads and of `ResolveTarget`: always
     /// [`GitBudget::DONE_CHECK`] in the daemon. A test seam only (M9.1 flake fix).
     pub read_git: GitBudget,
+    /// Milestone 9.2 decision 15: the daemon's one code host, built once from
+    /// `ManagerConfig.code_host` (`RunContext::new`); the profile service shares it.
+    pub host: Arc<dyn CodeHost>,
+    /// A test seam: caps every host op's bound (decision 9). `None` in the daemon.
+    pub host_cap: Option<Duration>,
 }
 
 /// One git read's budget: a deadline for all its calls, and a cap on each call's own
@@ -82,7 +88,15 @@ impl RunContext {
             testing: config::Testing::default(),
             delivery: config::Delivery::default(),
             read_git: GitBudget::DONE_CHECK,
+            host: crate::host::select::build(&manager.code_host),
+            host_cap: None,
         }
+    }
+
+    /// This context with `host` in place of the one `ManagerConfig` chose (tests).
+    pub fn with_host(mut self, host: Arc<dyn CodeHost>) -> Self {
+        self.host = host;
+        self
     }
 
     /// The daemon's context: `manager`'s, with the `[orchestrator]`, `[testing]` and

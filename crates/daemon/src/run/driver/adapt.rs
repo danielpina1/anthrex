@@ -66,6 +66,8 @@ pub(super) struct ProfileChoice {
     onboarding_report: Option<String>,
     /// M8b decision 33a: the stored profile's languages, for routing decisions.
     languages: Vec<String>,
+    /// Milestone 9.2 decision 3: the stored profile's `[delivery]` table.
+    pub(super) delivery: Option<proto::DeliveryProfile>,
 }
 
 /// Decision 6's refusal for a stored profile that does not parse.
@@ -332,6 +334,7 @@ impl RunService {
         // runs, in the background.
         self.detect_reverts_later(pre.root.clone(), &repo_dir);
         let languages = stored.as_ref().map(|p| p.languages.clone());
+        let delivery = stored.as_ref().and_then(|p| p.delivery.clone());
         let chosen = run_profile(stored.as_ref(), &path, &plan.profile, &config.profile);
         apply_to_plan(&chosen, &mut plan.profile, &mut config.profile);
         Ok(ProfileChoice {
@@ -344,6 +347,7 @@ impl RunService {
             notes: chosen.notes,
             onboarding_report,
             languages: languages.unwrap_or_default(),
+            delivery,
         })
     }
 }
@@ -504,6 +508,7 @@ mod tests {
             notes: vec!["note one".into(), "note two".into()],
             onboarding_report: Some("onboarding-7".into()),
             languages: vec!["rust".into()],
+            delivery: None,
         };
         apply_choice(&mut run, choice, 42);
         assert_eq!(run.profile_source, Some(ProfileSource::Stored));
