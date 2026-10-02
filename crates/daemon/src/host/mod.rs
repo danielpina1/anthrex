@@ -32,6 +32,8 @@ mod tests_git;
 mod tests_limits;
 #[cfg(test)]
 mod tests_parse;
+#[cfg(test)]
+mod tests_reply;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
