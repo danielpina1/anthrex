@@ -209,19 +209,27 @@ async fn an_idle_orchestrator_may_read_but_not_edit() {
 /// The long-poll test's shape (M9.11): no engine lock is held while a resolved
 /// `run_status` waits, so `run status` answers within its separation bound (2 s
 /// against the call's 10 s wait); the wait is on the current run, which an edit of
-/// that run ends.
+/// that run ends. Fix round 1, m5: the call is known to wait once it has subscribed to
+/// the snapshot pushes (`wait_digest`), which the rig's receiver count shows; nothing
+/// else in the rig subscribes.
 #[tokio::test(flavor = "multi_thread")]
 async fn resolution_holds_no_lock_across_the_read() {
     let rig = Arc::new(Rig::new(|_, _| {}).await);
     two_runs(&rig);
     let rev = crate::lock(&rig.runs.state).runs[NEXT].orch.digest_rev;
+    let receivers = rig.runs.pushes.receiver_count();
     let waiting = rig.clone();
     let first = rig.run_id.clone();
     let wait = tokio::spawn(async move {
         let args = json!({"since": rev, "wait_secs": 10});
         chained(&waiting, (&first, CHAIN), "run_status", args).await
     });
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    let deadline = Instant::now() + ANSWER;
+    while rig.runs.pushes.receiver_count() <= receivers {
+        assert!(!wait.is_finished(), "the resolved call did not wait");
+        assert!(Instant::now() < deadline, "the resolved call never waited");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert!(
         !wait.is_finished(),
         "the resolved call waits on the running run"
