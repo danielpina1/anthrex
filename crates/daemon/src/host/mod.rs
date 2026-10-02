@@ -12,6 +12,7 @@
 //! deadline), and every process starts in [`runner`].
 
 pub mod allow;
+pub mod fake;
 pub mod gh;
 mod gh_git;
 pub mod gh_parse;
