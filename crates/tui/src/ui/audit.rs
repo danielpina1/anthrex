@@ -124,6 +124,38 @@ pub(crate) fn accented_frames(buffer: &Buffer, p: Palette) -> usize {
     count
 }
 
+/// The Unicode box glyphs a frame's border or a rule joined to it is drawn with. ASCII
+/// `+ - |` are left out: accented hint keys (`C-b`) use `-`.
+const BOX_GLYPHS: &str = "╭╮╰╯┌┐└┘├┤┬┴┼─│";
+
+/// Final fix wave I2: the first accented Unicode box glyph, row by row, that is not on
+/// the border of one rectangle, the bounding box of every such glyph, nor on a rule
+/// joined to it (a row from `├` on its left side to `┤` on its right, the plan
+/// review's). `None` when every accented box glyph is one frame's. `accented_frames`
+/// reads a frame's left side, which a centred dialog crosses; this reads every cell,
+/// so a main-pane frame left accented under a dialog is seen wherever it shows.
+pub(crate) fn stray_accent(buffer: &Buffer, p: Palette) -> Option<(u16, u16, String)> {
+    let accent = role(Role::Accent, p).fg;
+    let area = buffer.area;
+    let lit: Vec<(u16, u16)> = (area.y..area.bottom())
+        .flat_map(|y| (area.x..area.right()).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let cell = &buffer[(x, y)];
+            Some(cell.fg) == accent
+                && !cell.symbol().is_empty()
+                && BOX_GLYPHS.contains(cell.symbol())
+        })
+        .collect();
+    let left = lit.iter().map(|c| c.0).min()?;
+    let right = lit.iter().map(|c| c.0).max()?;
+    let top = lit.iter().map(|c| c.1).min()?;
+    let bottom = lit.iter().map(|c| c.1).max()?;
+    let joined = |y: u16| buffer[(left, y)].symbol() == "├" && buffer[(right, y)].symbol() == "┤";
+    lit.into_iter()
+        .find(|&(x, y)| x != left && x != right && y != top && y != bottom && !joined(y))
+        .map(|(x, y)| (x, y, buffer[(x, y)].symbol().to_owned()))
+}
+
 /// The first cell, row by row, whose symbol is not ASCII: `(column, row, symbol)`.
 pub(crate) fn first_non_ascii(buffer: &Buffer) -> Option<(u16, u16, String)> {
     let area = buffer.area;

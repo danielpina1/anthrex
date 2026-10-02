@@ -270,15 +270,8 @@ fn the_view_is_the_one_accented_frame() {
             }
         }
     }
-    // Under the help the view mutes (its top-right corner: the full-height help, task
-    // 12, covers the top-left).
-    let mut app = view_on_blocked();
-    chord(&mut app, '?');
-    let (buffer, layout) = draw_at(&app, 120, 40);
-    assert_eq!(audit::accented_frames(&buffer, app.palette()), 1);
-    let corner = (layout.main.right() - 1, layout.main.y);
-    assert_eq!(buffer[corner].symbol(), "╮");
-    assert_eq!(Some(buffer[corner].fg), muted);
+    // Under the help the view mutes: the audit's `help over the alerts view` fixture
+    // and `every_accented_box_glyph_is_one_frames` (final fix wave I2) see it.
 }
 
 /// Review focus 5: the goal, the task's title and id, the question, the worker's

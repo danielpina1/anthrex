@@ -50,6 +50,56 @@ fn exactly_one_accented_frame_in_every_region() {
     }
 }
 
+/// Final fix wave I2: every accented Unicode box glyph is one frame's, so a frame left
+/// accented under a centred dialog (which `accented_frames` cannot see: the dialog
+/// crosses its left side) fails here.
+#[test]
+fn every_accented_box_glyph_is_one_frames() {
+    let mut strays = Vec::new();
+    for (name, app) in fixtures() {
+        for (w, h) in [(80, 24), (120, 40)] {
+            let buffer = audit::draw(&app, w, h);
+            if let Some(stray) = audit::stray_accent(&buffer, app.palette()) {
+                strays.push(format!("{name} at {w}x{h}: {stray:?}"));
+            }
+        }
+    }
+    assert!(strays.is_empty(), "{}", strays.join("\n"));
+}
+
+/// Pinning the helper: one frame with a joined rule is clean; a second frame crossed by
+/// a dialog, or an accented rule not joined to the frame, is a stray.
+#[test]
+fn stray_accent_sees_a_frame_under_a_dialog() {
+    let p = palette(false);
+    let pane = |t: &str, keys: bool| kit::pane_frame(Line::from(t.to_owned()), keys, p);
+    let draw = |under: bool| {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 40, 12));
+        pane("main", under).render(Rect::new(10, 0, 30, 12), &mut buffer);
+        Clear.render(Rect::new(4, 3, 24, 6), &mut buffer);
+        kit::dialog_frame("ask", true, p).render(Rect::new(4, 3, 24, 6), &mut buffer);
+        buffer
+    };
+    assert_eq!(audit::stray_accent(&draw(false), p), None);
+    let buffer = draw(true);
+    // The old count is blind to it: the dialog cuts the main frame's left side.
+    assert_eq!(audit::accented_frames(&buffer, p), 1);
+    assert!(audit::stray_accent(&buffer, p).is_some());
+    let mut ruled = Buffer::empty(Rect::new(0, 0, 12, 8));
+    pane("plan", true).render(Rect::new(0, 0, 12, 8), &mut ruled);
+    let accent = role(Role::Accent, p);
+    Paragraph::new(Line::styled(format!("├{}┤", "─".repeat(10)), accent))
+        .render(Rect::new(0, 3, 12, 1), &mut ruled);
+    assert_eq!(audit::stray_accent(&ruled, p), None);
+    Paragraph::new(Line::styled("──", accent)).render(Rect::new(3, 5, 2, 1), &mut ruled);
+    assert_eq!(audit::stray_accent(&ruled, p), Some((3, 5, "─".into())));
+    // ASCII `-` (an accented `C-b`) is never a box glyph.
+    let mut keys = Buffer::empty(Rect::new(0, 0, 12, 8));
+    pane("x", true).render(Rect::new(0, 0, 12, 8), &mut keys);
+    Paragraph::new(Line::styled("C-b", accent)).render(Rect::new(2, 3, 3, 1), &mut keys);
+    assert_eq!(audit::stray_accent(&keys, p), None);
+}
+
 /// Review focus 2.
 #[test]
 fn ascii_mode_emits_only_ascii_everywhere() {
@@ -253,9 +303,7 @@ fn count(p: Palette, width: u16, height: u16, frames: &[(Rect, Block<'static>)])
         Clear.render(*area, &mut buffer);
         block.clone().render(*area, &mut buffer);
     }
-    let n = audit::accented_frames(&buffer, p);
-    eprintln!("{n}:\n{}", audit::rows(&buffer).join("\n"));
-    n
+    audit::accented_frames(&buffer, p)
 }
 
 /// Fix round 1: the frames a top-row reading miscounted. Abutting frames, frames
@@ -295,14 +343,31 @@ fn accented_frames_counts_shared_and_filled_edges() {
         let both = pane("left", true, q).title(Line::from("right side").right_aligned());
         assert_eq!(count(q, 20, 6, &[(Rect::new(0, 0, 12, 4), both)]), 1);
     }
-    // The help at 80x24 sits on row 0, over an accented pane, and has a bottom title.
-    let modal = pane("keys", true, p).title_bottom(Line::from(" any key  close "));
-    let under = |keys| {
-        let base = (Rect::new(0, 0, 40, 12), pane("agents", keys, p));
-        [base, (Rect::new(10, 0, 20, 12), modal.clone())]
-    };
-    assert_eq!(count(p, 40, 12, &under(true)), 2, "two accents");
-    assert_eq!(count(p, 40, 12, &under(false)), 1, "the modal's only");
+    // The help at 80x24 sits on row 0, over an accented pane, and has a bottom title;
+    // in colour and (final fix wave, task 2's deferred minor) in ASCII. In ASCII the
+    // modal's top-right `+` on the pane's top border reads as a shared column (the
+    // `shared` case above), so two accents count three there: never one, which is
+    // what the audit asks.
+    for q in [p, ascii] {
+        let modal = pane("keys", true, q).title_bottom(Line::from(" any key  close "));
+        let under = |keys| {
+            let base = (Rect::new(0, 0, 40, 12), pane("agents", keys, q));
+            [base, (Rect::new(10, 0, 20, 12), modal.clone())]
+        };
+        let two = count(q, 40, 12, &under(true));
+        assert_eq!(
+            two,
+            if q.ascii { 3 } else { 2 },
+            "two accents, ascii {}",
+            q.ascii
+        );
+        assert_eq!(
+            count(q, 40, 12, &under(false)),
+            1,
+            "the modal's, ascii {}",
+            q.ascii
+        );
+    }
 }
 
 /// Fix round 1: a frame clipped at the screen's bottom edge counts once, whether
