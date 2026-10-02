@@ -186,6 +186,32 @@ async fn preflight_messages_are_exact() {
         refusal(rig.host(), rig.req(), b).await,
         "the base branch main does not exist on origin; push it first"
     );
+    // 7. The local base is ahead of the remote's (the final fix wave, A5): its stage
+    // PRs would carry the unpushed commits. One commit reads in the singular.
+    let rig = Rig::ready(true);
+    let ahead = |n: usize| {
+        let file = format!("ahead-{n}.txt");
+        std::fs::write(rig.work.join(&file), "x\n").unwrap();
+        git(&rig.work, &["add", "-A"]);
+        git(&rig.work, &["commit", "-q", "-m", &file]);
+        PreflightReq {
+            base_sha: git(&rig.work, &["rev-parse", "HEAD"]),
+            ..rig.req()
+        }
+    };
+    assert_eq!(
+        refusal(rig.host(), ahead(1), b).await,
+        "your main is 1 commit ahead of origin/main; push it first, or start from a pushed base"
+    );
+    assert_eq!(
+        refusal(rig.host(), ahead(2), b).await,
+        "your main is 2 commits ahead of origin/main; push it first, or start from a pushed base"
+    );
+    // Behind is fine: the remote's newer commits are not in the stage PRs' diffs.
+    git(&rig.work, &["push", "-q", "origin", "main"]);
+    preflight(rig.host(), rig.req(), b)
+        .await
+        .expect("a base behind the remote's passes");
     // A check that times out names itself.
     let rig = Rig::ready(true);
     let slow = GhHost::new(

@@ -76,13 +76,58 @@ impl<R: Runner> GhHost<R> {
             )));
         }
         let suffix = format!("\t{base_ref}");
-        if !listed.stdout_text().lines().any(|l| l.ends_with(&suffix)) {
+        let text = listed.stdout_text();
+        let Some(remote_sha) = text
+            .lines()
+            .find_map(|l| l.strip_suffix(&suffix))
+            .map(str::trim)
+        else {
             return Err(HostError::NotFound(format!(
                 "the base branch {} does not exist on {remote_name}; push it first",
                 req.base_branch
             )));
-        }
+        };
+        self.check_not_ahead(req, &ctx, &repo.root, remote_sha)?;
         Ok(repo)
+    }
+
+    /// The final fix wave (A5, review A M5): the run's stages start from the local base,
+    /// and their PRs from the remote's, so a local base with commits the remote's lacks
+    /// would put them in the first stage's PR. Counted locally; when the remote's commit
+    /// is not in this repository (never fetched), nothing can be counted without a
+    /// fetch, and preflight passes.
+    fn check_not_ahead(
+        &self,
+        req: &PreflightReq,
+        ctx: &AllowCtx<'_>,
+        root: &Path,
+        remote_sha: &str,
+    ) -> Result<(), HostError> {
+        if remote_sha == req.base_sha {
+            return Ok(());
+        }
+        let range = format!("{remote_sha}..{}", req.base_sha);
+        let counted = self
+            .git(
+                ctx,
+                root,
+                &NO_HOOKS,
+                &["rev-list", "--count", &range],
+                HOST_READ_TIMEOUT,
+            )
+            .map_err(|e| check_timeout(e, "git rev-list", HOST_READ_TIMEOUT))?;
+        let ahead: u64 = match counted.stdout_text().trim().parse() {
+            Ok(n) if counted.success => n,
+            _ => return Ok(()),
+        };
+        let (base, remote) = (&req.base_branch, &req.remote);
+        match ahead {
+            0 => Ok(()),
+            n => Err(HostError::Rejected(format!(
+                "your {base} is {n} commit{} ahead of {remote}/{base}; push it first, or start from a pushed base",
+                if n == 1 { "" } else { "s" }
+            ))),
+        }
     }
 
     /// [`super::CodeHost::remote_seal`]: the two reads through [`GhHost::git`] (so the

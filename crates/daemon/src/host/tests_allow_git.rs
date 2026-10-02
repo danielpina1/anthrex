@@ -372,3 +372,28 @@ fn allow_list_refuses_a_remote_named_like_an_option_and_the_old_push_shapes() {
         refused(Program::Git, &args);
     }
 }
+
+/// The final fix wave (A5): preflight counts the local base's commits the remote's base
+/// lacks with `rev-list --count <remote>..<local>`, two full object ids, read-only.
+#[test]
+fn allow_list_takes_only_the_ahead_count_read() {
+    let other = "b".repeat(40);
+    let range = format!("{other}..{SHA}");
+    accepted(
+        Program::Git,
+        &with(&NOHOOK, &["rev-list", "--count", &range]),
+    );
+    for args in [
+        with(&WRITE, &["rev-list", "--count", &range]),
+        with(&NOHOOK, &["rev-list", "--count", &format!("main..{SHA}")]),
+        with(
+            &NOHOOK,
+            &["rev-list", "--count", &format!("{other}...{SHA}")],
+        ),
+        with(&NOHOOK, &["rev-list", "--count", SHA]),
+        with(&NOHOOK, &["rev-list", "--count", "--all"]),
+        with(&NOHOOK, &["rev-list", "--count", &range, "--", "x"]),
+    ] {
+        refused(Program::Git, &args);
+    }
+}

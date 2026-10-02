@@ -130,6 +130,12 @@ fn git_allowed(args: &[&str], ctx: &AllowCtx<'_>) -> bool {
         ["merge-base", "--is-ancestor", a, b] => read && is_object_id(a) && is_object_id(b),
         // Ruling R-4: a merged PR's merge commit's parents, read locally.
         ["rev-list", "--parents", "-n", "1", oid] => read && is_object_id(oid),
+        // The final fix wave (A5): how far the local base is ahead of the remote's.
+        ["rev-list", "--count", range] => {
+            read && range
+                .split_once("..")
+                .is_some_and(|(a, b)| is_object_id(a) && is_object_id(b))
+        }
         _ => false,
     }
 }

@@ -132,4 +132,29 @@ fn e2e_pr_preflight_refuses_each_failure_with_its_text() {
     );
     left_nothing(&h, Some(&rig), "base missing");
     assert!(rig.remote_refs().is_empty(), "{:?}", rig.remote_refs());
+
+    // The final fix wave (A5): the local base has a commit the remote's lacks, which
+    // the stage PRs would carry.
+    let pushed = h.git(&["rev-parse", "main"]);
+    rig.bare_git(&["update-ref", "refs/heads/main", &pushed]);
+    std::fs::write(h.repo.join("unpushed.txt"), "unpushed\n").unwrap();
+    h.git(&["add", "unpushed.txt"]);
+    h.git(&[
+        "-c",
+        "user.name=anthrex test",
+        "-c",
+        "user.email=test@anthrex.invalid",
+        "-c",
+        "commit.gpgSign=false",
+        "commit",
+        "-q",
+        "-m",
+        "unpushed",
+    ]);
+    refused_with(
+        &start_out(&h, &toml, "pr"),
+        "your main is 1 commit ahead of origin/main; push it first, or start from a pushed base",
+    );
+    left_nothing(&h, Some(&rig), "base ahead");
+    assert_eq!(rig.remote_refs(), ["refs/heads/main"]);
 }
