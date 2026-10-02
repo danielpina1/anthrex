@@ -165,6 +165,10 @@ pub struct BisectRecord {
     pub infra: u8,
     #[serde(default)]
     pub retry_at: u64,
+    /// Milestone 9.2 decision 27: the stage and CI key of the red CI run this bisect
+    /// serves; its end then goes to `engine/delivery/ci.rs`. `None` for 9.1's own.
+    #[serde(default)]
+    pub ci: Option<(u16, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,7 +235,8 @@ pub struct PropagateSpec {
     pub tasks: BTreeSet<String>,
 }
 
-/// What a fix task fixes (decisions 37, 51). 9.2 appends `Ci`, `Review` and `Base`.
+/// What a fix task fixes (decisions 37, 51). Milestone 9.2 appends `Ci`, `Review` and
+/// `Base` (its decision 26).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FixOf {
@@ -244,6 +249,24 @@ pub enum FixOf {
         from: u16,
         to: u16,
         head: String,
+    },
+    /// Milestone 9.2 decision 27: a red CI run on stage `stage`'s PR at `head`.
+    Ci {
+        stage: u16,
+        head: String,
+        ci_runs: Vec<u64>,
+        key: String,
+    },
+    /// Milestone 9.2 decision 31: review threads (`<pr>:<key>`, decision 4).
+    Review {
+        stage: u16,
+        pr: u64,
+        threads: Vec<String>,
+    },
+    /// Milestone 9.2 decision 34: the base branch at `base_sha`, merged into the stage.
+    Base {
+        stage: u16,
+        base_sha: String,
     },
 }
 

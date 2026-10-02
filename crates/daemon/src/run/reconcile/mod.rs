@@ -235,7 +235,8 @@ fn check(
         | OpKind::VerifyRefs { .. }
         | OpKind::Discard { .. } => Ok(Reconciled::NotStarted),
         // Milestone 9.1 decision 29: a tier job and a bisect probe only read, as a check.
-        OpKind::Tier(_) | OpKind::TestAt(_) => Ok(Reconciled::NotStarted),
+        // Milestone 9.2 decision 10: a host op needs the network; it is re-issued.
+        OpKind::Tier(_) | OpKind::TestAt(_) | OpKind::Host { .. } => Ok(Reconciled::NotStarted),
         // M8b decision 18: a decider only reads its prompt; it is simply asked again.
         OpKind::Decide { .. } => Ok(Reconciled::NotStarted),
         // Milestone 9 decisions 11 and 20: a restored orchestrator window is the op's

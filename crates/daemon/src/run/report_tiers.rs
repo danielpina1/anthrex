@@ -95,7 +95,7 @@ pub(super) fn section(run: &Run, out: &mut String) {
     if !fixes.is_empty() {
         out.push_str("\n### Fix tasks\n\n");
         for t in fixes {
-            let what = t.fixes.as_ref().map(super::engine::fix_text);
+            let what = t.fixes.as_ref().map(|f| super::engine::fix_text(run, f));
             let prefix = format!("{} ({}): ", t.id(), what.unwrap_or_default());
             out.push_str(&format!("- {}\n", list_item_text(&prefix, t.state.label())));
         }

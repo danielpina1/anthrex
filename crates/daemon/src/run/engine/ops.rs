@@ -352,6 +352,13 @@ pub enum OpKind {
     /// Decision 50: a stage's head merged into the stage above, executed as a merge
     /// candidate (`driver/stage_ops.rs`). Results as `MergeCandidate`'s.
     Propagate(Box<crate::run::model::PropagateSpec>),
+    /// Milestone 9.2 decision 8: one host call (`driver/host_ops.rs`, on
+    /// `spawn_blocking`, never under a lock), reconciled `NotStarted` (decision 10).
+    /// The result is `OpResult::Host`.
+    Host {
+        repo: crate::host::HostRepo,
+        op: crate::run::delivery::ops::HostOp,
+    },
 }
 
 impl OpKind {
@@ -388,6 +395,7 @@ impl OpKind {
             OpKind::TestAt(_) => "TestAt",
             OpKind::CreateStageBranch { .. } => "CreateStageBranch",
             OpKind::Propagate(_) => "Propagate",
+            OpKind::Host { .. } => "Host",
         }
     }
 }

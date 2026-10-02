@@ -101,7 +101,7 @@ pub(crate) fn add_fix(
         .extend(protected_notes(&task.spec.owns, &run.protected_files));
     task.origin = spec.origin;
     task.sync = spec.sync;
-    let what = fix_text(&spec.fixes);
+    let what = fix_text(run, &spec.fixes);
     task.fixes = Some(spec.fixes);
     task.history.push(TaskEvent {
         at: now,
@@ -134,10 +134,15 @@ pub(crate) fn add_fix(
     Ok(id)
 }
 
-/// Decision 39's display text of what a fix task fixes (`TaskInfo.fixes`).
-pub(crate) fn fix_text(fixes: &FixOf) -> String {
+/// Decision 39's display text of what a fix task fixes (`TaskInfo.fixes`). Milestone
+/// 9.2's three (decision 41) are built in `run/delivery/snapshot.rs`; a review fix
+/// names its threads' authors, which only the run's delivery records.
+pub(crate) fn fix_text(run: &Run, fixes: &FixOf) -> String {
     match fixes {
         FixOf::Bisect { culprit, .. } => format!("bisect of {culprit}"),
         FixOf::Propagate { from, to, .. } => format!("propagate of stage {from} into stage {to}"),
+        FixOf::Ci { .. } | FixOf::Review { .. } | FixOf::Base { .. } => {
+            crate::run::delivery::snapshot::fix_text(run, fixes).unwrap_or_default()
+        }
     }
 }

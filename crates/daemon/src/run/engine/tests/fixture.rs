@@ -444,6 +444,7 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::TestAt(_) => "TestAt",
         OpKind::CreateStageBranch { .. } => "CreateStageBranch",
         OpKind::Propagate(_) => "Propagate",
+        OpKind::Host { .. } => "Host",
     }
 }
 

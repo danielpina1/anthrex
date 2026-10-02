@@ -54,6 +54,8 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
             let mut info = task_info(t, path.contains(&i), waves[i], now, text);
             // Milestone 9.0.6 decision 7: each node's actions, built by the daemon.
             info.actions = available(run, &ActionNode::Task(t.id()));
+            // Milestone 9.2 decision 41: a review fix's text names its threads' authors.
+            info.fixes = t.fixes.as_ref().map(|f| super::engine::fix_text(run, f));
             info
         })
         .collect();
@@ -137,11 +139,13 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
             .into_iter()
             .map(|mut s| {
                 s.actions = available(run, &ActionNode::Stage(s.n));
+                // Milestone 9.2 decision 41; here too, so the digest's stages stay 9.1's.
+                s.pr = super::delivery::snapshot::stage_pr_info(run, s.n);
                 s
             })
             .collect(),
         test_slots: run.test_slots,
-        delivery: None,
+        delivery: super::delivery::snapshot::delivery_info(run),
     }
 }
 
@@ -405,7 +409,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         // Milestone 9.1 decision 55: the last tier record of any check.
         stage: t.spec.stage,
         origin: t.origin,
-        fixes: t.fixes.as_ref().map(super::engine::fix_text),
+        // Set by `run_info`, which has the run (milestone 9.2 decision 41).
+        fixes: None,
         tier: t
             .checks
             .iter()

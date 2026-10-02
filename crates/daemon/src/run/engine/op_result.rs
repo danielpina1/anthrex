@@ -179,4 +179,6 @@ pub enum OpResult {
     },
     /// Decision 48: `CreateStageBranch` made the branch at its `from`.
     StageCreated,
+    /// Milestone 9.2 decision 8: an `OpKind::Host` call's answer.
+    Host(crate::run::delivery::ops::HostResult),
 }

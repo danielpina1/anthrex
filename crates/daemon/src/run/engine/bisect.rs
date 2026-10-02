@@ -136,6 +136,7 @@ pub(super) fn start(
         show: None,
         infra: 0,
         retry_at: 0,
+        ci: None,
     };
     if let Some(s) = stage_mut(run, stage) {
         s.bisect = Some(record);

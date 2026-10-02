@@ -143,7 +143,7 @@ pub(super) fn list_item_text(prefix: &str, text: &str) -> String {
 /// block's lines are the parser's lines), then wrapped in `fence_for`'s fence, with a
 /// trailing newline before the closing fence when the tail lacks one. The tail itself
 /// is never escaped — inside a fence nothing but a long-enough fence line is special.
-pub(super) fn fenced(tail: &str) -> String {
+pub(crate) fn fenced(tail: &str) -> String {
     let tail = normalize_line_endings(tail);
     let fence = fence_for(&tail);
     let mut out = format!("{fence}\n{tail}");
