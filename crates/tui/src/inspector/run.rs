@@ -348,6 +348,7 @@ pub(crate) fn scout_inspection(
             label: "question",
             value: clean(&scout.question),
             wrap: true,
+            marks: Vec::new(),
         },
         field("state", state_value),
         field("took", format_duration(took)),

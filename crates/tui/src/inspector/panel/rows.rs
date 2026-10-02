@@ -39,9 +39,10 @@ pub(super) fn lines(
             let rows = left.saturating_sub(later).max(1);
             let chunks = wrap_value(&field.value, value_width, rows, p.ascii);
             let taken = chunks.len().max(1);
-            out.push(row(field.label, label_width, chunks.first().cloned(), p));
-            for chunk in chunks.into_iter().skip(1) {
-                out.push(row("", label_width, Some(chunk), p));
+            let mut spans = marked(&chunks, &field.value, &field.marks, p).into_iter();
+            out.push(row_spans(field.label, label_width, spans.next(), p));
+            for chunk in spans {
+                out.push(row_spans("", label_width, Some(chunk), p));
             }
             left -= taken;
         } else {
@@ -137,6 +138,15 @@ fn name_width(inspection: &Inspection) -> usize {
 /// One field row: the muted label padded to the label column (cut with `…` when it
 /// would reach the value), then the value.
 fn row(label: &str, label_width: usize, value: Option<String>, p: Palette) -> Line<'static> {
+    row_spans(label, label_width, value.map(|v| vec![Span::raw(v)]), p)
+}
+
+fn row_spans(
+    label: &str,
+    label_width: usize,
+    value: Option<Vec<Span<'static>>>,
+    p: Palette,
+) -> Line<'static> {
     let label = if UnicodeWidthStr::width(label) >= label_width {
         truncate_in(label, label_width.saturating_sub(1), p.ascii)
     } else {
@@ -144,10 +154,63 @@ fn row(label: &str, label_width: usize, value: Option<String>, p: Palette) -> Li
     };
     let muted = theme::role(Role::Muted, p);
     let mut spans = vec![Span::styled(pad(&label, label_width), muted)];
-    if let Some(value) = value {
-        spans.push(Span::raw(value));
-    }
+    spans.extend(value.unwrap_or_default());
     Line::from(spans)
+}
+
+/// `chunks` (`value` wrapped) as spans, the words `marks` names in their roles (deferred
+/// from task 15). Each piece of a chunk is matched against `value`'s words in order; a
+/// word the wrap cut is never a mark, and at the first piece that does not follow
+/// (`wrap_value`'s closing ellipsis) the rest is drawn plain.
+fn marked(
+    chunks: &[String],
+    value: &str,
+    marks: &[(usize, Role)],
+    p: Palette,
+) -> Vec<Vec<Span<'static>>> {
+    if marks.is_empty() {
+        return chunks.iter().map(|c| vec![Span::raw(c.clone())]).collect();
+    }
+    let mut words = value.split_whitespace().enumerate();
+    let (mut index, mut rest) = (0, "");
+    let mut lost = false;
+    let mut out = Vec::new();
+    for chunk in chunks {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        for (n, piece) in chunk.split(' ').enumerate() {
+            if n > 0 {
+                spans.push(Span::raw(" "));
+            }
+            let mut role = None;
+            if !lost && !piece.is_empty() {
+                if rest.is_empty() {
+                    match words.next() {
+                        Some((i, word)) => (index, rest) = (i, word),
+                        None => lost = true,
+                    }
+                }
+                match rest.strip_prefix(piece) {
+                    Some("") if !lost && piece.len() == value_word_len(value, index) => {
+                        role = marks.iter().find(|(i, _)| *i == index).map(|(_, r)| *r);
+                        rest = "";
+                    }
+                    Some(left) if !lost => rest = left,
+                    _ => lost = true,
+                }
+            }
+            spans.push(match role {
+                Some(role) => Span::styled(piece.to_owned(), theme::role(role, p)),
+                None => Span::raw(piece.to_owned()),
+            });
+        }
+        out.push(spans);
+    }
+    out
+}
+
+/// The length of `value`'s `index`th word.
+fn value_word_len(value: &str, index: usize) -> usize {
+    value.split_whitespace().nth(index).map_or(0, str::len)
 }
 
 #[cfg(test)]
