@@ -377,6 +377,11 @@ pub struct CiRecord {
     pub retry_at: u64,
     #[serde(default)]
     pub command: Option<String>,
+    /// The final fix wave's I-2: the newest head a red with this record's key was seen on
+    /// while its fix task was unfinished. No second fix is added for it; when the fix
+    /// finishes, CI is judged again on the stage's newest head.
+    #[serde(default)]
+    pub newest: Option<String>,
 }
 
 impl CiRecord {
@@ -408,6 +413,7 @@ impl CiRecord {
             probe_failures: 0,
             retry_at: 0,
             command: None,
+            newest: None,
         }
     }
 }

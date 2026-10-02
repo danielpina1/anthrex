@@ -211,3 +211,29 @@ pub(super) fn viewed(run: &mut Run, n: u16, view: &PrView, now: u64) {
         log(run, now, text);
     }
 }
+
+/// The final fix wave's I-2 and I-3: CI is judged again on stage `n`'s pushed head (a
+/// fix some later red joined finished, the PR was reopened, the stage was unpaused).
+/// The red seen there is forgotten, with the finished records on that head, and the PR
+/// is due a view now, so a red raises its fix or its alert again. Nothing is forgotten
+/// while a record on that head is still being worked on.
+pub(super) fn rearm(run: &mut Run, n: u16, now: u64) {
+    let Some(pr) = run.delivery.pr(n).cloned() else {
+        return;
+    };
+    let head = pr.pushed_head.clone();
+    let done = |r: &CiRecord| matches!(r.phase, CiPhase::Tasked | CiPhase::ToUser);
+    let stage = stage_mut(run, n);
+    if stage.ci.iter().any(|r| r.head == head && !done(r)) {
+        return;
+    }
+    stage.ci.retain(|r| r.head != head);
+    let seen = super::watch::pr_mut(run, n).and_then(|p| {
+        p.next_poll_at = p.next_poll_at.min(now);
+        p.watermark.ci.remove(&head)
+    });
+    if seen.is_some() {
+        let text = format!("{}: CI at {} is judged again", named(n, &pr), sha7(&head));
+        log(run, now, text);
+    }
+}

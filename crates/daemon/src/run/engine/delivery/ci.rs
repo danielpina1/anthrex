@@ -15,7 +15,7 @@
 //! 5. **Tasked** or **ToUser** (decision 27 step 6's cap, or a fix task the plan rules
 //!    refuse). Pure (design decision 2).
 
-use proto::{CiCategory, DeciderSource, PrState};
+use proto::{CiCategory, DeciderSource, PrState, TaskState};
 
 use super::super::requests::log;
 use super::super::{Effect, OpKind, deciders};
@@ -29,7 +29,7 @@ use crate::run::contract::sha7;
 use crate::run::delivery::ops::HostOp;
 use crate::run::delivery::snapshot::stage_count;
 use crate::run::delivery::{CiPhase, CiRecord};
-use crate::run::model::Run;
+use crate::run::model::{FixOf, Run, Task};
 
 /// The text kept of the logs: what the decider reads (decision 18).
 const TEXT_MAX: usize = crate::decider::CI_SUMMARY_INPUT_BYTES;
@@ -101,9 +101,11 @@ fn bisect_serves(run: &Run, n: u16, rec: &CiRecord) -> bool {
     s.is_some_and(|b| b.ci.as_ref() == Some(&(n, rec.key.clone())) && b.head == rec.head)
 }
 
-/// The delivery pass's CI part: per stage, the active record's next step.
+/// The delivery pass's CI part: per stage, a finished fix's red judged again (I-2), then
+/// the active record's next step.
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     for n in 1..=stage_count(run) {
+        finished(run, n, now);
         let Some(i) = active(run, n) else {
             continue;
         };
@@ -338,11 +340,82 @@ fn key_of(rec: &CiRecord) -> String {
     names.join(", ")
 }
 
-/// The ci fix tasks of stage `n` with key `key`.
+/// The CI fix tasks of stage `n` with key `key`.
+fn ci_fixes<'a>(run: &'a Run, n: u16, key: &'a str) -> impl Iterator<Item = &'a Task> + 'a {
+    (run.tasks.iter()).filter(move |t| {
+        matches!(&t.fixes, Some(FixOf::Ci { stage, key: k, .. }) if *stage == n && k == key)
+    })
+}
+
+/// Decision 27 step 6 (the final fix wave's I-2): `ci_fix_max` counts the fixes made
+/// for the key, not its reds; a cancelled fix made nothing.
 fn fixes_of(run: &Run, n: u16, key: &str) -> usize {
-    (run.tasks.iter())
-        .filter(|t| matches!(&t.fixes, Some(crate::run::model::FixOf::Ci { stage, key: k, .. }) if *stage == n && k == key))
+    (ci_fixes(run, n, key))
+        .filter(|t| t.state != TaskState::Cancelled)
         .count()
+}
+
+/// I-2: the unfinished CI fix of stage `n` for `key`, when there is one.
+fn unfinished(run: &Run, n: u16, key: &str) -> Option<String> {
+    (ci_fixes(run, n, key))
+        .find(|t| !t.state.is_finished())
+        .map(|t| t.id().to_string())
+}
+
+/// I-2: record `i`'s red has the key of fix task `id`, still unfinished on the stage
+/// (a propagate, a review fix or a base sync pushed a new head before the fix landed):
+/// no second fix. The record goes, and the fix's record keeps its head as the newest,
+/// so CI is judged again there once the fix finishes ([`finished`]).
+fn joined(run: &mut Run, n: u16, i: usize, id: &str, now: u64) {
+    let stage = stage_mut(run, n);
+    if i >= stage.ci.len() {
+        return;
+    }
+    let mut rec = stage.ci.remove(i);
+    let head = rec.head.clone();
+    match stage
+        .ci
+        .iter_mut()
+        .rfind(|r| r.fix_task.as_deref() == Some(id))
+    {
+        Some(fixing) => fixing.newest = Some(head.clone()),
+        // Its record was trimmed: this one stands for it.
+        None => {
+            rec.phase = CiPhase::Tasked;
+            rec.fix_task = Some(id.to_string());
+            rec.text.clear();
+            rec.newest = Some(head.clone());
+            stage.ci.push(rec);
+        }
+    }
+    let text = format!(
+        "stage {n}: CI red at {} is the failure fix task {id} is still fixing; CI is judged again when it finishes",
+        sha7(&head)
+    );
+    log(run, now, text);
+}
+
+/// I-2: a fix task some later red joined has finished: CI is judged again on the
+/// stage's newest head ([`super::ci_trigger::rearm`]), unless the stage head moved
+/// past it (a new push is judged on its own).
+fn finished(run: &mut Run, n: u16, now: u64) {
+    let Some(stage) = run.delivery.stage(n) else {
+        return;
+    };
+    let done = |r: &CiRecord| {
+        let task = r.fix_task.as_deref().and_then(|id| run.task(id));
+        r.newest.is_some() && task.is_none_or(|t| t.state.is_finished())
+    };
+    let Some(i) = stage.ci.iter().position(done) else {
+        return;
+    };
+    if let Some(r) = record_mut(run, n, i) {
+        r.newest = None;
+    }
+    let pushed = run.delivery.pr(n).map(|p| p.pushed_head.clone());
+    if pushed.is_some() && run.stage_head(n) == pushed.as_deref() {
+        super::ci_trigger::rearm(run, n, now);
+    }
 }
 
 /// The summary is in: the cap (step 6), else an infra re-run (step 3), else the
@@ -363,6 +436,9 @@ fn classified(run: &mut Run, n: u16, i: usize, now: u64, fx: &mut Vec<Effect>) {
     r.category = Some(category);
     r.key = key_of(r);
     let key = r.key.clone();
+    if let Some(id) = unfinished(run, n, &key) {
+        return joined(run, n, i, &id, now);
+    }
     let made = fixes_of(run, n, &key);
     let max = run.delivery.limits.ci_fix_max as usize;
     if made >= max {

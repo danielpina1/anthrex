@@ -365,6 +365,7 @@ fn the_delivery_model_round_trips_through_run_json() {
             probe_failures: 1,
             retry_at: 5_000,
             command: Some("cargo test -- --exact 'a::b'".into()),
+            newest: None,
         }],
         threads: vec![thread(
             "t98765",

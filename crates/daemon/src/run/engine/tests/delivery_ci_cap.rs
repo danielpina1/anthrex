@@ -27,6 +27,14 @@ use crate::run::model::FixOf;
 /// green when one is asked for. The CI fix task it added, if any.
 pub(super) fn round(fx: &mut Fixture, k: u32, answer_with: Option<Decision>) -> Option<String> {
     let head = commit(k);
+    // The final fix wave's I-2: a red while the key's fix is unfinished joins it, so each
+    // round's fix has merged before the next red.
+    let now = fx.now;
+    for t in fx.run_mut().tasks.iter_mut() {
+        if t.origin == proto::TaskOrigin::Ci && !t.state.is_finished() {
+            crate::run::phases::set_state(t, proto::TaskState::Merged, now);
+        }
+    }
     if fx.run().stage_head(1) != Some(head.as_str()) {
         set_stage_head(fx.run_mut(), 1, &head);
         fx.run_mut().stages[0].full.green_at = Some(head.clone());
