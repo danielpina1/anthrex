@@ -153,11 +153,10 @@ fn bisect_lines(h: &RunHarness) -> Vec<Value> {
         .collect()
 }
 
-#[test]
-fn e2e_pr_ci_red_reproduced_bisects_fixes_pushes_and_propagates() {
-    let mut files = tier_repo_files();
-    files.push(("one.sh", ONE_SH));
-    let (h, rig) = pr_harness_with("", &files, "", Some("claude"));
+/// Stage 1's scenario of both bisect-path tests: CI is red while `mods/b/CI_FAIL`
+/// contains `bad`, which `t2` writes; the scripted `ci_summary` names `b::ci`; `fix1`
+/// removes the marker.
+fn marker_ci(h: &RunHarness, rig: &PrRig) {
     rig.ctl().set_ci(vec![
         CiRule::new("test", Conclusion::Failure)
             .when("mods/b/CI_FAIL", "bad")
@@ -169,10 +168,23 @@ fn e2e_pr_ci_red_reproduced_bisects_fixes_pushes_and_propagates() {
         1,
         json!({"answer": {"lines": ["b::ci failed on the PR head"], "failing_tests": ["b::ci"], "category": "test"}}),
     );
-    scripts(&h, "t1", &[commit("mods/a/src.txt", "a2\n"), done("a")]);
-    scripts(&h, "t2", &[commit("mods/b/CI_FAIL", "bad\n"), done("b")]);
+    scripts(h, "t1", &[commit("mods/a/src.txt", "a2\n"), done("a")]);
+    scripts(h, "t2", &[commit("mods/b/CI_FAIL", "bad\n"), done("b")]);
     let fix = sh("git rm -q mods/b/CI_FAIL && git commit -qm 'drop the CI marker'");
-    scripts(&h, "fix1", &[fix, done("fixed b::ci")]);
+    scripts(h, "fix1", &[fix, done("fixed b::ci")]);
+}
+
+/// The tiered repository's files, with `one.sh` for `single_test`.
+fn ci_files() -> Vec<(&'static str, &'static str)> {
+    let mut files = tier_repo_files();
+    files.push(("one.sh", ONE_SH));
+    files
+}
+
+#[test]
+fn e2e_pr_ci_red_reproduced_bisects_fixes_pushes_and_propagates() {
+    let (h, rig) = pr_harness_with("", &ci_files(), "", Some("claude"));
+    marker_ci(&h, &rig);
     // Stage 2's task waits until stage 1's fix is on its PR, so stage 2's PR opens on a
     // head that already holds the fix (propagated) and its CI is never red.
     let go = h.dir.path().join("go");
@@ -208,6 +220,13 @@ fn e2e_pr_ci_red_reproduced_bisects_fixes_pushes_and_propagates() {
     );
 
     let run = wait_fix(&h, &id, "fix1", PR_OPEN_WAIT.saturating_add(CI_FIX_WAIT));
+    // Fix round 1 (m1): t3 is already at work on stage 2's line, so the line predates
+    // the fix, and the fix can reach stage 2 only by a propagate.
+    let t3 = t(&run, "t3").state;
+    assert!(
+        matches!(t3, TaskState::Working | TaskState::Merged),
+        "t3 is {t3:?}"
+    );
     let summaries: Vec<Value> = (h.decider_calls().into_iter())
         .filter(|c| c["kind"] == "ci_summary")
         .collect();
@@ -258,9 +277,71 @@ fn e2e_pr_ci_red_reproduced_bisects_fixes_pushes_and_propagates() {
     assert!(rig.contains(&two.head_oid, &merged), "propagated: {two:#?}");
     rig.wait_stage_within(&h, &id, 2, "/ci", &json!("green"), VIEW_WAIT);
     let run = h.run(&id).unwrap();
+    // Stage 2's PR opened only with its merge queue quiet, so the propagate is done.
+    let propagated = format!("stage 2: propagated stage 1 at {}", &merged[..7]);
+    let log: Vec<String> = (run_json(&run)["log"].as_array().into_iter().flatten())
+        .filter_map(|l| l["text"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        log.iter().any(|l| l.starts_with(&propagated)),
+        "{propagated:?} in {log:#?}"
+    );
     assert_eq!(ci_fixes(&run).len(), 1, "one CI fix task in all");
     assert_eq!(bisect_lines(&h).len(), 1, "one bisect only");
     assert_eq!(run.state, RunState::Running, "{:?}", run.halted_reason);
+}
+
+/// Fix round 1 (m3): the same red under a profile WITH a `check`. Tier 3 was green on
+/// the head the PR opened with, so 9.1's bisect has no merge after it to probe, and the
+/// red becomes a stage fix with no bisect line.
+#[test]
+fn e2e_pr_ci_red_reproduced_under_a_check_is_a_stage_fix_without_a_bisect() {
+    let (h, rig) = pr_harness_with("", &ci_files(), "", Some("claude"));
+    marker_ci(&h, &rig);
+    let profile = tier_profile(&tier_log_path(&h), "").replace(
+        "single_test = \"sh test.sh --one {test}\"",
+        "single_test = \"sh one.sh {test}\"",
+    );
+    assert!(
+        profile.contains("sh one.sh {test}") && profile.contains("check.sh"),
+        "{profile}"
+    );
+    let tasks = [
+        task("t1", &["mods/a/src.txt"], ""),
+        task("t2", &["mods/b/CI_FAIL"], ""),
+    ];
+    let id = start(
+        &h,
+        &format!("goal = \"Add a\"\n\n{profile}\n{}", tasks.concat()),
+    );
+    let run = wait_fix(&h, &id, "fix1", PR_OPEN_WAIT.saturating_add(CI_FIX_WAIT));
+    let head = rig.wait_pr(1, |_| true).head_oid;
+    let h7 = &head[..7];
+    let log: Vec<String> = (run_json(&run)["log"].as_array().into_iter().flatten())
+        .filter_map(|l| l["text"].as_str().map(str::to_string))
+        .collect();
+    // RULING F1 (task M9.2.16): this is today's text; the final wave replaces it (the
+    // head is on the stage's line, the range after its green tier 3 is empty), and
+    // this pin moves with it.
+    let not_bisected = format!(
+        "stage 1: CI red at {h7} reproduces; not bisected: {h7} is not a merge recorded on the stage's line"
+    );
+    assert!(log.contains(&not_bisected), "{not_bisected:?} in {log:#?}");
+    let (fix, brief) = (t(&run, "fix1"), brief_of(&run, "fix1"));
+    assert_eq!(fix.origin, TaskOrigin::Ci);
+    assert_eq!(
+        fix.owns,
+        ["mods/a/src.txt", "mods/b/CI_FAIL"],
+        "the stage's owns, not a culprit's"
+    );
+    for text in [
+        "Category: test. It reproduces locally with: ",
+        "No single task's merge is the cause.\n",
+    ] {
+        assert!(brief.contains(text), "{text:?} in:\n{brief}");
+    }
+    assert!(bisect_lines(&h).is_empty(), "{:#?}", bisect_lines(&h));
+    assert_eq!(ci_fixes(&run).len(), 1);
 }
 
 /// A one-task `pr` run whose PR's CI is `rules`, with `fix1` scripted to commit to the

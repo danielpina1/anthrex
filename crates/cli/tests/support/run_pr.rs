@@ -22,7 +22,9 @@ use super::RunningCommand;
 use super::decider::{SPAWN_SLACK, TIMEOUT_SECS as DECIDER_TIMEOUT_SECS};
 use super::run_adapt::{GOAL_WAIT, with_deciders};
 use super::run_daemon::DAEMON_START_WAIT;
-use super::run_harness::{CHECK_TIMEOUT_SECS, REQUEST_WAIT, RUN_WAIT, RunHarness, git_in};
+use super::run_harness::{
+    CHECK_TIMEOUT_SECS, GIT_TIMEOUT_SECS, REQUEST_WAIT, RUN_WAIT, RunHarness, git_in,
+};
 use super::run_tiers::TIER_WAIT;
 
 /// How long a one-task `pr` run may take to open its stage PR and show it (ruling "task
@@ -45,8 +47,8 @@ pub const PR_OPEN_WAIT: Duration = RUN_WAIT
 /// `PREFLIGHT_BOUND`.
 pub const PR_START_WAIT: Duration = REQUEST_WAIT.saturating_add(PREFLIGHT_BOUND);
 
-/// The harness's `git_timeout_secs` (`run_harness.rs` writes 5).
-const GIT_SECS: u64 = 5;
+/// The harness's `git_timeout_secs`.
+const GIT_SECS: u64 = GIT_TIMEOUT_SECS;
 /// The executor's margin over each host op's commands (`host_ops::bound`, M9.2.12).
 const OP_MARGIN_SECS: u64 = 5;
 

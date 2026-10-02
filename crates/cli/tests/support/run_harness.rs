@@ -30,6 +30,9 @@ pub const RUN_WAIT: Duration = Duration::from_secs(300);
 /// The harness's `[orchestrator.profile] check_timeout_secs` (M9.2.14 fix round 1).
 pub const CHECK_TIMEOUT_SECS: u64 = 10;
 
+/// The harness's `[orchestrator] git_timeout_secs` (task M9.2.16 fix round 1, m2).
+pub const GIT_TIMEOUT_SECS: u64 = 5;
+
 pub const NO_DECIDER_BIN: &str = "/nonexistent/anthrex-test/decider";
 
 /// How long one raw request may take, `run accept` and `run discard` aside: `run
@@ -189,7 +192,7 @@ impl RunHarness {
         std::fs::write(
             &config,
             format!(
-                "[orchestrator]\ngit_timeout_secs = 5\n{orchestrator}\n\n                 [orchestrator.cache_dirs]\n{:?} = [{:?}]\n\n                 [orchestrator.profile]\ncheck_timeout_secs = {CHECK_TIMEOUT_SECS}\n",
+                "[orchestrator]\ngit_timeout_secs = {GIT_TIMEOUT_SECS}\n{orchestrator}\n\n                 [orchestrator.cache_dirs]\n{:?} = [{:?}]\n\n                 [orchestrator.profile]\ncheck_timeout_secs = {CHECK_TIMEOUT_SECS}\n",
                 repo_key.display().to_string(),
                 cache.display().to_string(),
             ),

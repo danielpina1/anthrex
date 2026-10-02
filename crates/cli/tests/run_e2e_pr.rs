@@ -10,7 +10,7 @@ use daemon::host::Conclusion;
 use daemon::host::fake::{CiRule, MergeMethodArg};
 use proto::{PrState, RunInfo, RunState};
 use serde_json::json;
-use support::run_harness::{FINISH_WAIT, RunHarness, git_in};
+use support::run_harness::{FINISH_WAIT, REQUEST_WAIT, RunHarness, git_in};
 use support::run_plans::*;
 use support::run_pr::*;
 
@@ -256,7 +256,9 @@ fn e2e_pr_preflight_refuses_each_failure_with_its_text() {
     let toml = one_task();
     // `gh` missing, on the real `GhHost`: `ANTHREX_CODE_HOST=gh` and the harness's pinned
     // `ANTHREX_GH_BIN`, a path that does not exist. No PATH lookup, never a real `gh`.
-    let h = RunHarness::new("");
+    // Fix round 1 (m5): a push or fetch could reach only `file://`, whatever order
+    // preflight's checks run in.
+    let h = RunHarness::with_env("", &[("GIT_ALLOW_PROTOCOL", "file")], true);
     assert!(!std::path::Path::new(daemon::manager::TEST_GH_BIN).exists());
     h.git(&["config", "remote.origin.url", URL]);
     refused_with(
@@ -369,7 +371,9 @@ fn e2e_pr_rewritten_remote_stage_branch_halts_without_forcing() {
         [rewritten.as_str(), pushed.as_str()],
         "newest first"
     );
-    // And no `gh` call pushed, forced or rewrote anything.
+    // `calls.jsonl` records `gh` argv only (fix round 1, m4): stage pushes are `git`
+    // into the bare repository, so the reflog above is the push proof; this scan can
+    // only catch a forced ref update through `gh api`.
     for argv in rig.ctl().calls() {
         assert!(
             !argv
@@ -489,17 +493,35 @@ fn run_long(h: &RunHarness, args: &[&str]) -> Out {
 }
 
 /// The check: in the tier-3 checkout (`.full`) it says it is waiting, then waits for
-/// `go` at most 7 s (inside the harness's 10 s `check_timeout_secs`) and passes either
-/// way; anywhere else it passes at once.
+/// `go` at most `$GATE_SECS` by the clock and passes either way (a deadline that only
+/// keeps a broken test from hanging); anywhere else it passes at once.
 const GATE_SH: &str = r#"case "$PWD" in
   */.full)
     : > "$GATE_DIR/waiting"
-    end=$(( $(date +%s) + 7 ))
+    end=$(( $(date +%s) + GATE_SECS ))
     while [ ! -e "$GATE_DIR/go" ] && [ "$(date +%s)" -lt "$end" ]; do sleep 0.1; done
     ;;
 esac
 exit 0
 "#;
+
+/// How long the gate holds tier 3 for the test (fix round 1, I1): the test's `run
+/// deliver` is one request within `REQUEST_WAIT`, sent after one 100 ms poll of the
+/// `waiting` marker; 30 s more covers that poll and the client's spawn and connect.
+const GATE_SECS: u64 = REQUEST_WAIT.as_secs() + 30;
+/// The plan's `check_timeout_secs` for the gated test: above the gate's own deadline,
+/// so a held tier 3 never times out red.
+const GATE_CHECK_TIMEOUT_SECS: u64 = GATE_SECS + 30;
+
+/// Writes `go` when dropped, so a test that fails before it opens the gate never
+/// leaves tier 3 waiting out its deadline.
+struct OpenGate(std::path::PathBuf);
+
+impl Drop for OpenGate {
+    fn drop(&mut self) {
+        let _ = std::fs::write(&self.0, "");
+    }
+}
 
 #[test]
 fn e2e_pr_run_deliver_requests_tier3_before_the_pr_opens() {
@@ -508,8 +530,9 @@ fn e2e_pr_run_deliver_requests_tier3_before_the_pr_opens() {
         .set_ci(vec![CiRule::new("build", Conclusion::Success)]);
     green_scripts(&h.repo);
     let gate = h.cache_dir();
+    let go = OpenGate(gate.join("go"));
     let toml = format!(
-        "goal = \"Add a\"\n\n[profile]\ncheck = \"sh gate.sh\"\nenv = {{ GATE_DIR = {:?} }}\n{}",
+        "goal = \"Add a\"\n\n[profile]\ncheck = \"sh gate.sh\"\ncheck_timeout_secs = {GATE_CHECK_TIMEOUT_SECS}\nenv = {{ GATE_DIR = {:?}, GATE_SECS = \"{GATE_SECS}\" }}\n{}",
         gate.display().to_string(),
         task("t1", &["a.txt"], "")
     );
@@ -518,7 +541,7 @@ fn e2e_pr_run_deliver_requests_tier3_before_the_pr_opens() {
         gate.join("waiting").exists().then_some(())
     });
     let out = run(&h, &["deliver", &id, "--stage", "1"]);
-    std::fs::write(gate.join("go"), "").unwrap();
+    drop(go);
     assert_eq!(
         ok(&out),
         "stage 1: tier 3 requested; its PR opens when tier 3 is green\n"
