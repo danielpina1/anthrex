@@ -79,6 +79,7 @@ fn hold_label(state: HoldState) -> &'static str {
         HoldState::Awaiting => "awaiting",
         HoldState::Approved => "approved",
         HoldState::Rejected => "rejected",
+        HoldState::Moot => "moot",
     }
 }
 

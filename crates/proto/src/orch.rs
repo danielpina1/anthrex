@@ -41,6 +41,9 @@ pub enum HoldState {
     Awaiting,
     Approved,
     Rejected,
+    /// Milestone 9.2's final fix wave (I-4): every task behind the hold ended cancelled
+    /// before anyone decided it, so there is nothing left to decide. Appended last.
+    Moot,
 }
 
 /// One approval hold (decision 28), as the run view shows it.

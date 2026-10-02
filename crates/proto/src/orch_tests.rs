@@ -89,6 +89,7 @@ fn orch_types_round_trip() {
         (HoldState::Awaiting, "awaiting"),
         (HoldState::Approved, "approved"),
         (HoldState::Rejected, "rejected"),
+        (HoldState::Moot, "moot"),
     ];
     for (state, text) in states {
         both_ways(&state);

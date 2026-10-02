@@ -15,6 +15,7 @@ fn hold_state_text(state: HoldState) -> &'static str {
         HoldState::Awaiting => "awaiting approval",
         HoldState::Approved => "approved",
         HoldState::Rejected => "rejected",
+        HoldState::Moot => "moot",
     }
 }
 

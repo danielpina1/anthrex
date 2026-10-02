@@ -166,6 +166,8 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         return;
     }
     open::pass(run, now, fx);
+    // The final fix wave's I-4: a fix hold whose tasks are all cancelled is moot.
+    review_fix::moot(run, now);
     ci::pass(run, now, fx);
     // Task M9.2.10: a due reply goes before the stage's views (see `review.rs`).
     review::pass(run, now, fx);

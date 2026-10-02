@@ -177,3 +177,31 @@ pub(in crate::run::engine) fn holds_for(
     }
     first
 }
+
+/// The final fix wave's I-4: a fix hold whose every task ended cancelled (or is gone)
+/// before anyone decided it resolves as `Moot`: there is nothing left to approve, its
+/// attention line clears, and completion, which waits only on `Drafting` and
+/// `Awaiting` holds, no longer waits on it.
+pub(super) fn moot(run: &mut Run, now: u64) {
+    let cancelled = |run: &Run, id: &str| {
+        run.task(id)
+            .is_none_or(|t| t.state == proto::TaskState::Cancelled)
+    };
+    let ids: Vec<String> = (run.orch.gate_holds.iter())
+        .filter(|h| h.state == HoldState::Awaiting && matches!(h.kind, HoldKind::Fix { .. }))
+        .filter(|h| h.tasks.iter().all(|t| cancelled(run, t)))
+        .map(|h| h.id.clone())
+        .collect();
+    for id in ids {
+        let Some(h) = run.orch.gate_holds.iter_mut().find(|h| h.id == id) else {
+            continue;
+        };
+        h.state = HoldState::Moot;
+        h.decided_at = Some(now);
+        h.decided_by = Some("anthrex".into());
+        let tasks = h.tasks.join(", ");
+        let line = format!("hold {id} is moot: its fix task {tasks} was cancelled");
+        log(run, now, line.clone());
+        wake::note(run, line);
+    }
+}

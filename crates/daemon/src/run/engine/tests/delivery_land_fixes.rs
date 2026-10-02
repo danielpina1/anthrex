@@ -22,7 +22,7 @@ use crate::run::engine::{OpKind, OpResult};
 
 /// The run settles and completes: its history lines are appended and the polls of its
 /// merged PRs answered with `views` (stage 1's first), then its refs check.
-fn completes(fx: &mut Fixture, views: &[PrView]) {
+pub(super) fn completes(fx: &mut Fixture, views: &[PrView]) {
     for _ in 0..10 {
         let appends: Vec<_> = (fx.run().pending_ops.values())
             .filter(|p| matches!(p.kind, OpKind::AppendHistory { .. }))

@@ -2,7 +2,8 @@
 //! a review fix lose no work. Whenever a task with `addresses` ends cancelled (a
 //! `cancel_task`, a rejected hold, a split, a close), the threads it had tasked are
 //! `new` again and are handed out through the normal path; a reopen re-arms the stage's
-//! CI judgement on its head. Cancelled fix tasks are never resurrected.
+//! CI judgement on its head. Cancelled fix tasks are never resurrected, and a fix hold
+//! whose tasks are all cancelled is moot (I-4).
 
 use proto::{PlanEdit, PrState, TaskState};
 
@@ -159,4 +160,42 @@ fn a_red_seen_while_paused_gets_a_fix_once_the_stage_below_reopens() {
         red(&mut fx, 2, 12, RUN_A).is_some(),
         "judged again once unpaused"
     );
+}
+
+/// I-4: a held review fix cancelled before anyone decided its hold leaves the hold
+/// `moot`: no attention line asks for an approval that means nothing, and a planned run
+/// completes once its PR lands.
+#[test]
+fn a_held_fix_cancelled_leaves_its_hold_moot_and_the_run_completes() {
+    let mut fx = by_alice();
+    let mut v = view(&commit(1));
+    v.threads = vec![on(
+        "Cargo.toml",
+        vec![noted(30, "alice", "bump the version")],
+    )];
+    batch(&mut fx, v);
+    super::bisect::with_orchestrator(&mut fx);
+    let hold = "fix task fix1 for stage 1 needs approval: it owns Cargo.toml, outside the stage; anthrex run approve engine-test-3f9a --hold hold-fix1";
+    assert!(attention(&fx).contains(&hold.to_string()));
+    let cancel = PlanEdit::CancelTask {
+        task_id: "fix1".into(),
+    };
+    assert!(replies(&edit(&mut fx, vec![cancel]))[0].is_ok());
+    fx.tick();
+    let h = (fx.run().orch.gate_holds.iter()).find(|h| h.id == "hold-fix1");
+    assert_eq!(h.map(|h| h.state), Some(proto::HoldState::Moot));
+    assert!(logged(
+        &fx,
+        "hold hold-fix1 is moot: its fix task fix1 was cancelled"
+    ));
+    assert!(
+        !attention(&fx).contains(&hold.to_string()),
+        "{:#?}",
+        attention(&fx)
+    );
+    // The user merges PR #7: the run completes.
+    let merged = super::delivery_land::merged_view(PR, &commit(1), &commit(70));
+    poll_with(&mut fx, merged.clone());
+    super::delivery_sync::fetched(&mut fx, &commit(71), Some(2));
+    super::delivery_land_fixes::completes(&mut fx, &[merged]);
 }
