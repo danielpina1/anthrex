@@ -16,13 +16,36 @@ use proto::{BudgetLimit, Runtime, SettingsDoc, Strength};
 use crate::orchestrator::MODEL_NOTE_MAX;
 
 /// Every reason `doc` cannot be saved, in a fixed order: the roster, the orchestrator
-/// default, then the limits in `SETTINGS_KEYS` order. Empty when it can.
+/// default, then the limits in `SETTINGS_KEYS` order. Empty when it can. The rules
+/// apply to what a save writes, [`cleaned`]`(doc)`: a hidden format character never
+/// refuses a save (M9.2.6 fix round 2), it is dropped.
 pub fn validate(doc: &SettingsDoc) -> Vec<String> {
+    let doc = &cleaned(doc);
     let mut problems = Vec::new();
     roster(doc, &mut problems);
     orchestrator(doc, &mut problems);
     limits(doc, &mut problems);
     problems
+}
+
+/// `doc` as a save writes it (M9.2.6 fix round 2): every hidden format character
+/// (`proto::safe_text::is_hidden_format`: a variation selector in `⚠️`, a soft hyphen,
+/// a bidi control) dropped from each model's name and note and from the orchestrator
+/// default's model, which names one of them. A control character is kept, for
+/// [`validate`] to refuse.
+pub fn cleaned(doc: &SettingsDoc) -> SettingsDoc {
+    let strip = |text: &str| -> String {
+        text.chars()
+            .filter(|c| !proto::safe_text::is_hidden_format(*c))
+            .collect()
+    };
+    let mut out = doc.clone();
+    for m in &mut out.models {
+        m.model = strip(&m.model);
+        m.note = strip(&m.note);
+    }
+    out.orchestrator.model = strip(&out.orchestrator.model);
+    out
 }
 
 /// Advice that never refuses a save: each strength with an enabled model on exactly one
@@ -189,9 +212,10 @@ fn in_range<T: PartialOrd + std::fmt::Display>(
 }
 
 /// A character a config line or a screen row must not hold: a control character
-/// (newline, tab, ESC), a line or paragraph separator, or a hidden format character.
+/// (newline, tab, ESC, C1) or a line or paragraph separator. A hidden format character
+/// is not refused: [`cleaned`] drops it before any rule runs.
 fn unsafe_char(c: char) -> bool {
-    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') || proto::safe_text::is_hidden_format(c)
+    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
 }
 
 /// How a model is named in a message: Codex's empty model is its configured default.

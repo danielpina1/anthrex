@@ -20,12 +20,15 @@ pub struct Saved {
     pub origin: BTreeMap<String, Origin>,
 }
 
-/// Blocking: [`super::validate`], read, [`super::edit_text`], temporary file, fsync,
+/// Blocking: [`super::cleaned`], [`super::validate`], read, [`super::edit_text`], temporary file, fsync,
 /// `cancel` check, rename, fsync the directory. The check swaps `cancel` to `true`, so
 /// exactly one of this save and a caller that swaps it later reads `false`. A missing
 /// file (and its directory) is created. On any refusal the file is untouched and no
 /// temporary file is left.
 pub fn save(path: &Path, doc: &SettingsDoc, cancel: &AtomicBool) -> Result<Saved, Vec<String>> {
+    // M9.2.6 fix round 2: what is written, validated and read back is the cleaned doc
+    // (no hidden format character), so a stored `⚠️` never blocks a save.
+    let doc = &super::cleaned(doc);
     let problems = super::validate(doc);
     if !problems.is_empty() {
         return Err(problems);

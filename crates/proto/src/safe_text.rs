@@ -17,16 +17,22 @@
 /// and the invisible operators), U+206A–U+206F (the deprecated format characters),
 /// U+00AD (soft hyphen), U+180E (Mongolian vowel separator), U+FFF9–U+FFFB (the
 /// interlinear annotation characters) and the Hangul fillers U+115F, U+1160, U+3164
-/// and U+FFA0. Dropping a variation selector or a joiner can change how an emoji is
-/// drawn (`❤️` becomes `❤`), never what the text says.
+/// and U+FFA0; and (fix round 2) U+034F (combining grapheme joiner), U+17B4–U+17B5
+/// (the Khmer inherent vowels), U+180B–U+180D and U+180F (the Mongolian free variation
+/// selectors) and U+1D173–U+1D17A (the musical symbol format characters). U+2800, the
+/// blank braille cell, is a visible character and kept. Dropping a variation selector
+/// or a joiner can change how an emoji is drawn (`❤️` becomes `❤`), never what the
+/// text says.
 pub fn is_hidden_format(c: char) -> bool {
     matches!(
         c,
         '\u{00AD}'
+            | '\u{034F}'
             | '\u{061C}'
             | '\u{115F}'
             | '\u{1160}'
-            | '\u{180E}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
             | '\u{200B}'..='\u{200F}'
             | '\u{202A}'..='\u{202E}'
             | '\u{2060}'..='\u{2064}'
@@ -36,6 +42,7 @@ pub fn is_hidden_format(c: char) -> bool {
             | '\u{FEFF}'
             | '\u{FFA0}'
             | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{1D173}'..='\u{1D17A}'
             | '\u{E0000}'..='\u{E007F}'
             | '\u{E0100}'..='\u{E01EF}'
     )
@@ -155,6 +162,14 @@ mod tests {
         (0x115F, 0x1160),
         (0x3164, 0x3164),
         (0xFFA0, 0xFFA0),
+        // Fix round 2: the combining grapheme joiner, the Khmer inherent vowels, the
+        // Mongolian free variation selectors and U+180F, the musical symbol format
+        // characters.
+        (0x034F, 0x034F),
+        (0x17B4, 0x17B5),
+        (0x180B, 0x180D),
+        (0x180F, 0x180F),
+        (0x1D173, 0x1D17A),
     ];
 
     fn invisible() -> Vec<char> {
@@ -168,14 +183,23 @@ mod tests {
     #[test]
     fn invisible_carriers_are_dropped() {
         let all = invisible();
-        assert_eq!(all.len(), 128 + 16 + 240 + 5 + 6 + 1 + 1 + 3 + 2 + 1 + 1);
+        assert_eq!(
+            all.len(),
+            128 + 16 + 240 + 5 + 6 + 1 + 1 + 3 + 2 + 1 + 1 + 1 + 2 + 3 + 1 + 8
+        );
         for c in &all {
             assert!(is_hidden_format(*c), "U+{:04X}", *c as u32);
             assert_eq!(one_line(&format!("a{c}b")), "ab", "U+{:04X}", *c as u32);
             assert_eq!(multi_line(&format!("a{c}b")), "ab", "U+{:04X}", *c as u32);
         }
-        // Their neighbours are ordinary text.
+        // Their neighbours are ordinary text, and so is U+2800, a visible braille cell.
         for c in [
+            '\u{E0080}',
+            '\u{E01F0}',
+            '\u{2800}',
+            '\u{034E}',
+            '\u{1D172}',
+            '\u{1D17B}',
             '\u{DFFFF}',
             '\u{FDFF}',
             '\u{FE10}',
