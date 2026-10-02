@@ -40,6 +40,13 @@ pub fn pane_frame(title: Line<'static>, keys_here: bool, p: Palette) -> Block<'s
     block.title(Line::from(spans).style(weight.patch(title.style)))
 }
 
+/// A selection bar's or focus mark's colour: the accent only where the keys are
+/// (decision 1), `Muted` otherwise, so a selection under a modal stays visible without a
+/// second accent.
+pub fn bar_role(keys_here: bool) -> Role {
+    if keys_here { Role::Accent } else { Role::Muted }
+}
+
 /// The selection bar (final fix wave M3: one idiom for every selectable row). A
 /// selected row is reversed, and `▌` (`>` in ASCII) stands in the column left of it: a
 /// frame's left border cell on that row, as a graph box's (milestone 9.0.7 decision
@@ -55,7 +62,6 @@ pub fn selection_bar(
 ) {
     if let Some(cell) = buf.cell_mut((x, y)) {
         cell.set_symbol(theme::glyph(theme::Glyph::Selection, p.ascii));
-        let colour = if keys_here { Role::Accent } else { Role::Muted };
-        cell.set_style(role(colour, p));
+        cell.set_style(role(bar_role(keys_here), p));
     }
 }

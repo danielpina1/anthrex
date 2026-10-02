@@ -80,15 +80,25 @@ fn accented_bars(app: &App, w: u16, h: u16) -> usize {
 
 /// Follow-up to the final fix wave's M3 (decisions 1 and 20): a selection bar or a
 /// focus mark wears the accent only where the keys are, so a frame holds at most one
-/// accented `▌`. (Unicode only: ASCII's `>` is also the accented prompt separator.)
+/// accented `▌`, and none with the help over any fixture (the help has no bar of its
+/// own). (Unicode only: ASCII's `>` is also the accented prompt separator.)
 #[test]
 fn at_most_one_accented_bar_in_every_frame() {
     let mut extra = Vec::new();
-    for (name, app) in fixtures() {
+    for (name, mut app) in fixtures() {
         for (w, h) in [(80, 24), (120, 40)] {
             let bars = accented_bars(&app, w, h);
             if bars > 1 {
                 extra.push(format!("{name} at {w}x{h}: {bars}"));
+            }
+        }
+        if app.modal.is_none() {
+            help_over(&mut app);
+            for (w, h) in [(80, 24), (120, 40)] {
+                let bars = accented_bars(&app, w, h);
+                if bars > 0 {
+                    extra.push(format!("help over {name} at {w}x{h}: {bars}"));
+                }
             }
         }
     }

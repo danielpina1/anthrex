@@ -14,7 +14,7 @@ mod text;
 
 pub use dialog::{choice, choice_in, dialog_area, dialog_frame};
 pub use hints::{Hint, destructive, hints, hints_joined};
-pub use pane::{pane_frame, selection_bar};
+pub use pane::{bar_role, pane_frame, selection_bar};
 pub use rows::{labelled_rows, run_name, run_name_in, scroll_marks};
 pub use screen::screen_frame;
 pub use scroll::window;

@@ -203,8 +203,16 @@ fn pad(text: &str, to: usize, ascii: bool) -> String {
 }
 
 /// One task's row: the bar or a space, `<id> <title>`, then the fitted columns; the
-/// selection reversed across the row, its bar in the accent (decision 20's idiom).
-fn task_line(cells: &Cells, fit: &Fit, width: usize, selected: bool, p: Palette) -> Line<'static> {
+/// selection reversed across the row, its bar in the accent while the review has the
+/// keys, `Muted` under a modal (decisions 1 and 20).
+fn task_line(
+    cells: &Cells,
+    fit: &Fit,
+    width: usize,
+    selected: bool,
+    keys: bool,
+    p: Palette,
+) -> Line<'static> {
     let muted = role(Role::Muted, p);
     let label = if cells.title.is_empty() {
         cells.id.clone()
@@ -240,7 +248,7 @@ fn task_line(cells: &Cells, fit: &Fit, width: usize, selected: bool, p: Palette)
     ));
     let bar = Span::styled(
         theme::glyph(Glyph::Selection, p.ascii),
-        role(Role::Accent, p),
+        role(kit::bar_role(keys), p),
     );
     let reversed = spans.into_iter().map(|span| {
         let style = span.style.add_modifier(Modifier::REVERSED);
@@ -257,6 +265,7 @@ fn render_list(
     run: &RunInfo,
     tasks: &[&TaskInfo],
     selected: Option<&str>,
+    keys: bool,
     p: Palette,
 ) {
     let width = usize::from(area.width);
@@ -268,7 +277,7 @@ fn render_list(
     let lines: Vec<Line<'static>> = cells
         .iter()
         .zip(tasks)
-        .map(|(c, task)| task_line(c, &fit, width, selected == Some(task.id.as_str()), p))
+        .map(|(c, task)| task_line(c, &fit, width, selected == Some(task.id.as_str()), keys, p))
         .collect();
     let shown = kit::window(lines, at, usize::from(area.height), p);
     for (n, mut line) in shown.into_iter().enumerate() {
@@ -324,7 +333,7 @@ pub(crate) fn placed(app: &App, body: Rect) -> Vec<Placed> {
     render_header(&mut out, &layout, run, &tasks, p);
     render_rules(&mut out, body, &layout, border, p);
     let selected = review.selected.as_deref();
-    render_list(&mut out, layout.list, run, &tasks, selected, p);
+    render_list(&mut out, layout.list, run, &tasks, selected, keys_here, p);
     if let Some(task) = selected.and_then(|id| tasks.iter().find(|task| task.id == id)) {
         render_detail(&mut out, app, layout.detail, run, task);
     }

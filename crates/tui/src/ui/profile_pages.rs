@@ -61,6 +61,7 @@ fn page_parts(
     s: &ProfileScreen,
     page: &ProfilePage,
     width: u16,
+    keys: bool,
     p: Palette,
 ) -> (String, bool, Vec<Line<'static>>, Line<'static>) {
     let w = usize::from(width.min(kit::WRAP)).max(1);
@@ -88,7 +89,7 @@ fn page_parts(
                     " "
                 };
                 Line::from(vec![
-                    Span::styled(format!("{mark} "), role(Role::Accent, p)),
+                    Span::styled(format!("{mark} "), role(kit::bar_role(keys), p)),
                     Span::styled(pad(label, 19), role(Role::Muted, p)),
                     Span::raw(kit::choice_in(if on { "on" } else { "off" }, p)),
                 ])
@@ -217,7 +218,8 @@ pub(crate) fn page_lines(
     page: &ProfilePage,
     width: u16,
 ) -> Vec<Line<'static>> {
-    let (_, _, mut body, hints) = page_parts(s, page, width, app.palette());
+    let keys = app.key_region() == crate::app::region::KeyRegion::Screen;
+    let (_, _, mut body, hints) = page_parts(s, page, width, keys, app.palette());
     body.push(Line::default());
     body.push(hints);
     body
@@ -228,10 +230,11 @@ pub(super) fn render_page(
     s: &ProfileScreen,
     page: &ProfilePage,
     area: Rect,
+    keys: bool,
     p: Palette,
 ) {
     let width = area.width.min(kit::DIALOG_MAX).saturating_sub(4);
-    let (title, destructive, body, hints) = page_parts(s, page, width, p);
+    let (title, destructive, body, hints) = page_parts(s, page, width, keys, p);
     // The page fits the area: a long TOML scrolls inside it.
     let room = usize::from(area.height.saturating_sub(4));
     let body = match page {

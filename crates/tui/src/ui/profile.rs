@@ -133,7 +133,8 @@ fn pad(text: &str, width: usize) -> String {
 }
 
 /// One key row: selection bar, mark, key, value, check cell.
-fn key_row(row: &Row, selected: bool, width: usize, p: Palette) -> Line<'static> {
+/// The bar is the accent only while the screen holds the keys (`keys`, decision 1).
+fn key_row(row: &Row, selected: bool, keys: bool, width: usize, p: Palette) -> Line<'static> {
     let sel = if selected {
         glyph(Glyph::Selection, p.ascii)
     } else {
@@ -161,7 +162,7 @@ fn key_row(row: &Row, selected: bool, width: usize, p: Palette) -> Line<'static>
         role(Role::Muted, p)
     };
     let mut spans = vec![
-        Span::styled(sel.to_string(), role(Role::Accent, p)),
+        Span::styled(sel.to_string(), role(kit::bar_role(keys), p)),
         Span::raw(format!("{mark} ")),
         Span::styled(key, key_style),
         Span::styled(value.clone(), value_style),
@@ -266,7 +267,8 @@ fn profile_rows(
         if i == s.selected {
             at = out.len();
         }
-        out.push(key_row(row, i == s.selected, w, p));
+        let keys = app.key_region() == KeyRegion::Screen;
+        out.push(key_row(row, i == s.selected, keys, w, p));
         if s.expanded.as_deref() == Some(row.key.as_str())
             && let Some(check) = &row.check
         {
@@ -387,7 +389,14 @@ pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
     all.extend(foot);
     frame.render_widget(Paragraph::new(all), inner);
     if let Some(page) = &s.page {
-        render_page(frame, s, page, area, p);
+        render_page(
+            frame,
+            s,
+            page,
+            area,
+            app.key_region() == KeyRegion::Screen,
+            p,
+        );
     }
 }
 
