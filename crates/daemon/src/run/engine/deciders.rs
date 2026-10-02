@@ -157,6 +157,10 @@ fn answers(answer: &DeciderAnswer, request: &DeciderRequest) -> bool {
                 DeciderAnswer::BlockedReason { .. },
                 DeciderRequest::BlockedReason(_)
             )
+            | (
+                DeciderAnswer::CiSummary { .. },
+                DeciderRequest::CiSummary(_)
+            )
     )
 }
 
@@ -283,6 +287,10 @@ fn apply(
         (&decision.answer, request)
     {
         return super::deciders_size::sized(run, decider_id, input, verdicts, &decision, now);
+    }
+    // Milestone 9.2 decision 27: a CI summary is for a stage PR's red run.
+    if let DeciderAnswer::CiSummary { .. } = &decision.answer {
+        return super::delivery::ci_summarised(run, decider_id, &decision, now, fx);
     }
     // Milestone 9.1 decision 37: a bisect's summary is for its stage, not a task.
     if let DeciderAnswer::CheckSummary { lines } = &decision.answer

@@ -84,10 +84,13 @@ fn schemas_match_the_brief() {
         .next()
         .unwrap();
     let brief: Value = serde_json::from_str(block).expect("the brief's schema JSON parses");
-    for kind in DeciderKind::ALL {
-        assert_eq!(schema(kind), brief[kind.label()], "{}", kind.label());
+    // M8b's four kinds; milestone 9.2's `ci_summary` is pinned against its own brief
+    // (`tests_ci.rs`).
+    let m8b = &DeciderKind::ALL[..4];
+    for kind in m8b {
+        assert_eq!(schema(*kind), brief[kind.label()], "{}", kind.label());
     }
-    assert_eq!(brief.as_object().unwrap().len(), DeciderKind::ALL.len());
+    assert_eq!(brief.as_object().unwrap().len(), m8b.len());
 }
 
 // ---- parsing ------------------------------------------------------------------------

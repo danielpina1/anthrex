@@ -48,6 +48,7 @@ pub fn render(request: &DeciderRequest) -> String {
         DeciderRequest::SizeCheck(input) => size_check(input),
         DeciderRequest::CheckSummary(input) => check_summary(input),
         DeciderRequest::BlockedReason(input) => blocked_reason(input),
+        DeciderRequest::CiSummary(input) => super::ci::prompt(input),
     };
     clamp(prompt)
 }

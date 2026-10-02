@@ -453,7 +453,11 @@ fn culprit(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
         }
         None => return end(run, n, "no merge is left to blame".to_string(), now, fx),
     };
-    let added = add_fix(run, n, &b, &id, now, fx);
+    // Milestone 9.2 decision 27: a CI red's culprit gets a `ci` fix (`ci_fix_max`, not ours).
+    let added = match b.ci {
+        Some(_) => super::delivery::ci_culprit(run, n, &b, &id, now, fx),
+        None => add_fix(run, n, &b, &id, now, fx),
+    };
     if let Some(s) = stage_mut(run, n) {
         s.bisect = None;
     }
@@ -466,7 +470,10 @@ fn culprit(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
                 reason: &reason,
             };
             record(run, n, &b, refused, now, fx);
-            return end_with(run, n, &b, reason, now);
+            if b.ci.is_some() {
+                return;
+            }
+            return end_with(run, n, &b, reason, now, fx);
         }
     };
     let found = BisectResult::Culprit {
@@ -474,6 +481,9 @@ fn culprit(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
         fix: &fix,
     };
     record(run, n, &b, found, now, fx);
+    if b.ci.is_some() {
+        return;
+    }
     if let Some(s) = stage_mut(run, n) {
         s.full.bisect_fixes = s.full.bisect_fixes.saturating_add(1);
     }

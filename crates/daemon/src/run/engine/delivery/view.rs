@@ -23,8 +23,8 @@ use crate::host::{
 };
 use crate::run::contract::sha7;
 use crate::run::delivery::{
-    CHECKS_MAX, CI_RECORDS_MAX, CheckSeen, CiSeen, PrRecord, REVIEWS_SEEN_MAX, SeenComment,
-    StageDelivery, ThreadRecord, ThreadState, Watermark,
+    CHECKS_MAX, CheckSeen, PrRecord, REVIEWS_SEEN_MAX, SeenComment, StageDelivery, ThreadRecord,
+    ThreadState, Watermark,
 };
 use crate::run::model::Run;
 
@@ -32,7 +32,7 @@ use crate::run::model::Run;
 const CHECK_NAME_CHARS: usize = 100;
 
 /// A check's state as the snapshot shows it (ruling R-5: unknown is pending).
-fn check_state(c: &CheckRun) -> CiState {
+pub(super) fn check_state(c: &CheckRun) -> CiState {
     match (c.status, c.conclusion) {
         (CheckStatus::Completed, Some(x)) if x.is_red() => CiState::Red,
         (CheckStatus::Completed, Some(_)) => CiState::Green,
@@ -41,7 +41,7 @@ fn check_state(c: &CheckRun) -> CiState {
 }
 
 /// A check name from the host, on one line and cut (decision 22: host text).
-fn check_name(c: &CheckRun) -> String {
+pub(super) fn check_name(c: &CheckRun) -> String {
     let name = proto::safe_text::one_line(&c.name);
     name.chars().take(CHECK_NAME_CHARS).collect()
 }
@@ -54,27 +54,6 @@ fn seen_checks(view: &PrView) -> Vec<CheckSeen> {
             ci_run: c.ci_run,
         })
         .collect()
-}
-
-/// Decision 27's trigger (rulings R-5): on the pushed head, every check completed and
-/// one red: the red checks' names, sorted. `None` for a stale head, a pending check or
-/// no red one.
-fn red_set(view: &PrView, pushed: &str) -> Option<Vec<String>> {
-    if view.head_oid != pushed
-        || view
-            .checks
-            .iter()
-            .any(|c| check_state(c) == CiState::Pending)
-    {
-        return None;
-    }
-    let mut red: Vec<String> = (view.checks.iter())
-        .filter(|c| check_state(c) == CiState::Red)
-        .map(check_name)
-        .collect();
-    red.sort();
-    red.dedup();
-    (!red.is_empty()).then_some(red)
 }
 
 /// What a view holds that was not processed before (the fix round's I1).
@@ -284,7 +263,7 @@ pub(super) fn viewed(run: &mut Run, n: u16, view: PrView, now: u64) {
     let added = record(run, n, &fresh, now);
     let reviewed: Vec<u64> = fresh.reviews.iter().map(|r| r.id).collect();
     pages(run, n, &wm, &view, now);
-    let red = red_set(&view, &pr.pushed_head);
+    let red = super::ci_trigger::red_of(&view, &pr.pushed_head);
     let k = if changed {
         0
     } else {
@@ -300,7 +279,8 @@ pub(super) fn viewed(run: &mut Run, n: u16, view: PrView, now: u64) {
         return;
     };
     apply(record, &view, checks, &reviewed);
-    let ci_line = red.and_then(|red| ci_seen(&mut record.watermark, &view.head_oid, red, now));
+    let ci_line = (red.as_ref())
+        .and_then(|red| super::ci_trigger::seen(&mut record.watermark, &view.head_oid, red, now));
     record.unchanged_views = k;
     record.last_view_at = Some(now);
     record.next_poll_at = now.saturating_add(wait);
@@ -311,14 +291,17 @@ pub(super) fn viewed(run: &mut Run, n: u16, view: PrView, now: u64) {
         let text = format!("{}: new threads {}", named(n, &pr), added.join(", "));
         log(run, now, text);
     }
-    if let Some(checks) = ci_line {
+    if let (Some(checks), Some(red)) = (ci_line, red) {
         let text = format!(
             "{}: CI red at {}: {checks}",
             named(n, &pr),
             sha7(&view.head_oid)
         );
         log(run, now, text);
+        // Task M9.2.9: decision 27 starts here.
+        super::ci_trigger::red(run, n, &view.head_oid, red, now);
     }
+    super::ci_trigger::viewed(run, n, &view, now);
 }
 
 /// The view's state, base (the host's: task M9.2.7's review m3), landing fields,
@@ -343,28 +326,4 @@ fn apply(record: &mut PrRecord, view: &PrView, checks: Vec<CheckSeen>, reviewed:
     while wm.reviews_seen.len() > REVIEWS_SEEN_MAX {
         wm.reviews_seen.pop_first();
     }
-}
-
-/// Decision 27's trigger, recorded once per set of failing checks of a head: the line
-/// to log when `red` is new there.
-fn ci_seen(wm: &mut Watermark, head: &str, red: Vec<String>, now: u64) -> Option<String> {
-    if wm.ci.get(head).is_some_and(|s| s.failing == red) {
-        return None;
-    }
-    let line = red.join(", ");
-    wm.ci.insert(
-        head.to_string(),
-        CiSeen {
-            failing: red,
-            at: now,
-        },
-    );
-    while wm.ci.len() > CI_RECORDS_MAX {
-        let oldest = (wm.ci.iter()).min_by_key(|(_, s)| s.at);
-        let Some(head) = oldest.map(|(h, _)| h.clone()) else {
-            break;
-        };
-        wm.ci.remove(&head);
-    }
-    Some(line)
 }

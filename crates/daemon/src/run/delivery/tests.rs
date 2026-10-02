@@ -313,6 +313,7 @@ fn the_delivery_model_round_trips_through_run_json() {
         CiSeen {
             failing: vec!["test".into()],
             at: 4_000,
+            jobs: vec!["28000000001/28000000002".into()],
         },
     );
     record.watermark.mergeable = Some(crate::host::Mergeable::Conflicting);
@@ -341,6 +342,19 @@ fn the_delivery_model_round_trips_through_run_json() {
             reruns: vec![28_000_000_001],
             key: "a::b".into(),
             fix_task: Some("fix2".into()),
+            checks: vec!["test".into()],
+            jobs: vec!["28000000001/28000000002".into()],
+            external: vec!["ci/ext: FAILURE (https://ci.example/1)".into()],
+            infra_only: true,
+            fetched: vec![28_000_000_001],
+            text: "--- FAIL: a::b".into(),
+            decider: Some(4),
+            source: Some("decider".into()),
+            reruns_answered: vec![28_000_000_001],
+            probe: Some(31),
+            probe_failures: 1,
+            retry_at: 5_000,
+            command: Some("cargo test -- --exact 'a::b'".into()),
         }],
         threads: vec![thread(
             "t98765",
@@ -497,6 +511,7 @@ fn host_ops_and_results_round_trip_through_the_journal() {
             path: "/tmp/l".into(),
             bytes: 9,
             truncated: true,
+            tail: "--- FAIL: t".into(),
         }),
         HostResult::Rerun,
         HostResult::Replied { comment_id: 11 },

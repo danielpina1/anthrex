@@ -5,7 +5,8 @@
 use super::DeciderKind;
 use serde_json::Value;
 
-/// The four schemas, keyed by the kind's label (the brief's "Decider schemas (exact)").
+/// The schemas, keyed by the kind's label (M8b's "Decider schemas (exact)", and 9.2's
+/// `ci_summary` from its Interfaces).
 const SCHEMAS: &str = r#"{"triage":{"type":"object","additionalProperties":false,"required":["kinds","scale","reason","task"],"properties":{
   "kinds":{"type":"array","minItems":1,"maxItems":4,"items":{"enum":["code","docs","research","review"]}},
   "scale":{"enum":["single","plan","large"]},
@@ -29,7 +30,11 @@ const SCHEMAS: &str = r#"{"triage":{"type":"object","additionalProperties":false
  "check_summary":{"type":"object","additionalProperties":false,"required":["lines"],"properties":{
   "lines":{"type":"array","minItems":1,"maxItems":40,"items":{"type":"string","maxLength":300}}}},
  "blocked_reason":{"type":"object","additionalProperties":false,"required":["kind","reason"],"properties":{
-  "kind":{"enum":["question","mis_sized","environment"]},"reason":{"type":"string","minLength":1,"maxLength":300}}}}"#;
+  "kind":{"enum":["question","mis_sized","environment"]},"reason":{"type":"string","minLength":1,"maxLength":300}}},
+ "ci_summary":{"type":"object","additionalProperties":false,"required":["lines","failing_tests","category"],"properties":{
+  "lines":{"type":"array","minItems":1,"maxItems":40,"items":{"type":"string","maxLength":300}},
+  "failing_tests":{"type":"array","maxItems":50,"items":{"type":"string","minLength":1,"maxLength":200}},
+  "category":{"enum":["test","build","lint","infra","unknown"]}}}}"#;
 
 /// The schema of `kind`'s answer.
 pub fn schema(kind: DeciderKind) -> Value {

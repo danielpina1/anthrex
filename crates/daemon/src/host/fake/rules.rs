@@ -217,7 +217,11 @@ pub fn rerun(
     }
     let (check, head) = (run.check.clone(), run.head.clone());
     let d = decide(state, bare, &check, &head)?;
+    // GitHub gives a re-run's jobs new ids (its `detailsUrl` changes), which is how the
+    // engine sees the red after a re-run (task M9.2.9).
+    let job = state.next_run();
     let run = &mut state.ci_runs[at];
+    run.job = job;
     run.attempt += 1;
     run.conclusion = d.conclusion;
     run.pending = d.pending;

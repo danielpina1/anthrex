@@ -48,6 +48,10 @@ pub(super) fn op_done(
         (OpKind::Tier(spec), None) if spec.tier == 3 => {
             full::full_done(run, op, &spec, result, now, fx)
         }
+        // Milestone 9.2 decision 27: a CI red's local reproduction.
+        (OpKind::TestAt(_) | OpKind::Tier(_), None) if delivery::reproducing(run, op) => {
+            delivery::reproduced(run, op, result, now, fx)
+        }
         // Decision 36: a bisect probe (task M9.1.15).
         (OpKind::TestAt(_), None) => bisect::probe_done(run, op, result, now, fx),
         (OpKind::VerifyRefs { .. }, _) => complete::refs_verified(run, result, now, fx),

@@ -181,6 +181,10 @@ pub struct LogFile {
     pub path: PathBuf,
     pub bytes: u64,
     pub truncated: bool,
+    /// Task M9.2.9: the file's last `CI_SUMMARY_INPUT_BYTES` as text, for the engine,
+    /// which reads no file: the decider's input (decision 18) and the fix task's quote.
+    #[serde(default)]
+    pub tail: String,
 }
 
 /// From the REST permission endpoint's `role_name` (ruling R-6).

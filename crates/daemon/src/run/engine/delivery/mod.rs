@@ -17,10 +17,17 @@ use crate::run::delivery::StageDelivery;
 use crate::run::delivery::ops::{HostOp, HostResult};
 use crate::run::model::Run;
 
+mod ci;
+mod ci_repro;
+mod ci_trigger;
+mod fix;
 mod open;
 mod view;
 mod watch;
 
+pub(crate) use ci::summarised as ci_summarised;
+pub(crate) use ci_repro::{reproduced, reproducing};
+pub(in crate::run::engine) use fix::{ci_culprit, ci_no_culprit};
 pub(crate) use watch::{attention, held, release, stage_busy, stage_paused};
 
 /// Decision 25: `run deliver` and `run watch`, as the driver hands them to the engine.
@@ -126,6 +133,7 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         return;
     }
     open::pass(run, now, fx);
+    ci::pass(run, now, fx);
     watch::pass(run, now, fx);
 }
 
@@ -169,6 +177,13 @@ pub(super) fn host_done(
             },
             HostResult::Fetched(outcome),
         ) => watch::fetched(run, n, outcome, now, fx),
+        // Decision 27 (task M9.2.9).
+        (HostOp::FailedLogs { stage, ci_run, .. }, HostResult::Logs(file)) => {
+            ci::logs(run, stage, ci_run, file)
+        }
+        (HostOp::RerunFailed { stage, ci_run }, HostResult::Rerun) => {
+            ci::rerun_done(run, stage, ci_run, true, now)
+        }
         _ => {}
     }
 }
@@ -193,6 +208,9 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
         .take(200)
         .collect();
     let rate_limited = matches!(error, HostError::RateLimited(_));
+    if let HostOp::RerunFailed { stage, ci_run } = op {
+        ci::rerun_done(run, *stage, *ci_run, false, now);
+    }
     match error {
         HostError::RateLimited(_) => watch::rate_limited(run),
         HostError::Auth(_) => watch::auth_lost(run),

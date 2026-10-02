@@ -60,6 +60,8 @@ fn fake_ci_rules_fail_on_file_content() {
         .unwrap();
     assert!(!log.truncated);
     let text = std::fs::read_to_string(&out).unwrap();
+    // Task M9.2.9: the answer carries the file's last 48 KiB for the engine.
+    assert_eq!(log.tail, text);
     // gh's `--log-failed` line shape (M9.2.1 check 4): `<job>\t<step>\t<time>Z <text>`,
     // a byte-order mark before the job's first timestamp.
     let first = text.lines().next().unwrap();
@@ -87,6 +89,7 @@ fn fake_ci_rules_fail_on_file_content() {
     let view = rig.host.view_pr(&rig.repo(), 1).unwrap();
     assert_eq!(view.checks[0].conclusion, Some(Conclusion::Cancelled));
     let flaky = view.checks[0].ci_run.unwrap();
+    let job = view.checks[0].url.clone();
     rig.host.rerun_failed(&rig.repo(), flaky).unwrap();
     let view = rig.host.view_pr(&rig.repo(), 1).unwrap();
     assert_eq!(view.checks[0].conclusion, Some(Conclusion::Success));
@@ -95,6 +98,12 @@ fn fake_ci_rules_fail_on_file_content() {
         Some(flaky),
         "a rerun keeps its run id"
     );
+    // Task M9.2.9: and gives its jobs new ids, as GitHub does.
+    assert!(
+        job.contains(&format!("/actions/runs/{flaky}/job/")),
+        "{job}"
+    );
+    assert_ne!(view.checks[0].url, job, "a rerun's job is a new one");
 
     // A check still running: pending, no logs yet, and a rerun of it is already
     // running (decision 10: success).

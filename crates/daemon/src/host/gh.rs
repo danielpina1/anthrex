@@ -290,10 +290,14 @@ impl<R: Runner> CodeHost for GhHost<R> {
         }
         write_private(out, &bytes)
             .map_err(|e| HostError::Failed(format!("cannot write {}: {e}", out.display())))?;
+        let from = bytes
+            .len()
+            .saturating_sub(crate::decider::CI_SUMMARY_INPUT_BYTES);
         Ok(LogFile {
             path: out.to_path_buf(),
             bytes: bytes.len() as u64,
             truncated: ran.cut.is_some(),
+            tail: String::from_utf8_lossy(&bytes[from..]).into_owned(),
         })
     }
 

@@ -16,7 +16,8 @@ pub const BLOCKED_FALLBACK_REASON: &str = "an unclassified block is a question";
 /// - triage: kinds `[code]`, scale `plan`, no task;
 /// - size check: every task keeps its size;
 /// - check summary: M8a's last 40 lines (`run::exec::summary`);
-/// - blocked reason: `question`.
+/// - blocked reason: `question`;
+/// - CI summary: the log's last 40 lines, no test names, `unknown` (9.2 decision 18).
 pub fn fallback(request: &DeciderRequest) -> DeciderAnswer {
     match request {
         DeciderRequest::Triage(_) => DeciderAnswer::Triage(TriageAnswer {
@@ -46,6 +47,7 @@ pub fn fallback(request: &DeciderRequest) -> DeciderAnswer {
             kind: BlockKind::Question,
             reason: BLOCKED_FALLBACK_REASON.into(),
         },
+        DeciderRequest::CiSummary(input) => super::ci::fallback(input),
     }
 }
 

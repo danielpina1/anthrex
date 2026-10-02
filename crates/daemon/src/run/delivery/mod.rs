@@ -191,6 +191,10 @@ pub struct Watermark {
 pub struct CiSeen {
     pub failing: Vec<String>,
     pub at: u64,
+    /// Task M9.2.9 (the controller's ruling): the red checks' Actions run and job ids
+    /// (`<run>/<job>`; a check without a job, its name), sorted. A re-run gives its jobs
+    /// new ids, so a second red on the same head is seen; names alone would hide it.
+    pub jobs: Vec<String>,
 }
 
 /// Decision 27's state machine for one red CI run on one head.
@@ -227,6 +231,76 @@ pub struct CiRecord {
     pub key: String,
     #[serde(default)]
     pub fix_task: Option<String>,
+    /// Task M9.2.9's working state (not in Interfaces' `CiRecord`), each
+    /// `#[serde(default)]`: the red checks' names, the job keys of the red (`CiSeen`),
+    /// the lines of checks with no Actions run (decision 27 step 1), whether every red
+    /// conclusion was a cancellation or a startup failure (step 2).
+    #[serde(default)]
+    pub checks: Vec<String>,
+    #[serde(default)]
+    pub jobs: Vec<String>,
+    #[serde(default)]
+    pub external: Vec<String>,
+    #[serde(default)]
+    pub infra_only: bool,
+    /// The runs whose failed logs came back, and their last 48 KiB as one text (the
+    /// engine reads no file); the text is dropped once the record is tasked or handed
+    /// to the user, whose brief or line keeps what it needs.
+    #[serde(default)]
+    pub fetched: Vec<u64>,
+    #[serde(default)]
+    pub text: String,
+    /// The `ci_summary` decider asked, and where its summary came from (`decider`, or
+    /// `fallback (<reason>)`).
+    #[serde(default)]
+    pub decider: Option<u64>,
+    #[serde(default)]
+    pub source: Option<String>,
+    /// The re-runs GitHub answered (`reruns` holds each from the step that issued it, so
+    /// a restart never issues one twice).
+    #[serde(default)]
+    pub reruns_answered: Vec<u64>,
+    /// The local reproduction in flight (it holds `Run.full_op`), its executor failures,
+    /// when it may be tried again, and the command that reproduced the red.
+    #[serde(default)]
+    pub probe: Option<u64>,
+    #[serde(default)]
+    pub probe_failures: u8,
+    #[serde(default)]
+    pub retry_at: u64,
+    #[serde(default)]
+    pub command: Option<String>,
+}
+
+impl CiRecord {
+    /// A new record of a red run on `head`, fetching its logs first.
+    pub fn new(head: &str) -> CiRecord {
+        CiRecord {
+            head: head.to_string(),
+            ci_runs: Vec::new(),
+            phase: CiPhase::Logs,
+            log: None,
+            category: None,
+            failing_tests: Vec::new(),
+            lines: Vec::new(),
+            reruns: Vec::new(),
+            key: String::new(),
+            fix_task: None,
+            checks: Vec::new(),
+            jobs: Vec::new(),
+            external: Vec::new(),
+            infra_only: false,
+            fetched: Vec::new(),
+            text: String::new(),
+            decider: None,
+            source: None,
+            reruns_answered: Vec::new(),
+            probe: None,
+            probe_failures: 0,
+            retry_at: 0,
+            command: None,
+        }
+    }
 }
 
 /// Decisions 29–31: one review thread, conversation comment or review body.

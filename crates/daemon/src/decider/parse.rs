@@ -136,6 +136,7 @@ pub fn parse(kind: DeciderKind, value: &Value) -> Result<DeciderAnswer, String> 
                 reason: string(&root["reason"], "reason", 1, 300)?,
             })
         }
+        DeciderKind::CiSummary => super::ci::parse(value),
     }
 }
 
@@ -244,7 +245,7 @@ fn problem(path: &str, problem: &str) -> String {
 }
 
 /// A closed object with exactly `keys`.
-fn object<'a>(
+pub(super) fn object<'a>(
     value: &'a Value,
     path: &str,
     keys: &[&str],
@@ -261,7 +262,12 @@ fn object<'a>(
     Ok(map)
 }
 
-fn array<'a>(value: &'a Value, path: &str, min: usize, max: usize) -> Result<&'a [Value], String> {
+pub(super) fn array<'a>(
+    value: &'a Value,
+    path: &str,
+    min: usize,
+    max: usize,
+) -> Result<&'a [Value], String> {
     let Value::Array(items) = value else {
         return Err(problem(path, "expected an array"));
     };
@@ -282,7 +288,7 @@ fn array<'a>(value: &'a Value, path: &str, min: usize, max: usize) -> Result<&'a
 }
 
 /// A string of `min..=max` characters (JSON Schema counts characters, not bytes).
-fn string(value: &Value, path: &str, min: usize, max: usize) -> Result<String, String> {
+pub(super) fn string(value: &Value, path: &str, min: usize, max: usize) -> Result<String, String> {
     let Value::String(s) = value else {
         return Err(problem(path, "expected a string"));
     };
@@ -305,7 +311,11 @@ fn nullable_string(value: &Value, path: &str, max: usize) -> Result<Option<Strin
 }
 
 /// One of `options`, returned as the option itself.
-fn one_of<'a>(value: &Value, path: &str, options: &[&'a str]) -> Result<&'a str, String> {
+pub(super) fn one_of<'a>(
+    value: &Value,
+    path: &str,
+    options: &[&'a str],
+) -> Result<&'a str, String> {
     value
         .as_str()
         .and_then(|s| options.iter().find(|o| **o == s).copied())

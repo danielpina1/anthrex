@@ -554,6 +554,9 @@ fn failed_logs_keeps_the_head_and_the_tail_under_the_cap() {
     );
     let head_end = text.find("\n… ").unwrap();
     assert_eq!(head_end, 64 * 1024);
+    // Task M9.2.9: the answer's `tail` is the file's last 48 KiB, for the engine.
+    let want = &bytes[bytes.len() - crate::decider::CI_SUMMARY_INPUT_BYTES..];
+    assert_eq!(file.tail, String::from_utf8_lossy(want));
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(
         std::fs::metadata(&out).unwrap().permissions().mode() & 0o777,
@@ -565,6 +568,11 @@ fn failed_logs_keeps_the_head_and_the_tail_under_the_cap() {
     let host = GhHost::new(SystemRunner::new(&gh, "git"), &gh, "git");
     let file = host.failed_logs(&repo, 1, cap, &out).unwrap();
     assert!(!file.truncated);
+    assert_eq!(
+        file.tail,
+        RUN_LOG_FAILED.repeat(3),
+        "a short log is its own tail"
+    );
     assert_eq!(
         std::fs::read_to_string(&out).unwrap(),
         RUN_LOG_FAILED.repeat(3)

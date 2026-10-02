@@ -109,16 +109,12 @@ fn stage_pr_info_counts_threads_and_ci() {
         },
     ];
     let ci = |head: &str, runs: Vec<u64>, fix: Option<&str>| CiRecord {
-        head: head.into(),
         ci_runs: runs,
         phase: CiPhase::Tasked,
-        log: None,
         category: Some(proto::CiCategory::Test),
-        failing_tests: Vec::new(),
-        lines: Vec::new(),
-        reruns: Vec::new(),
         key: "test".into(),
         fix_task: fix.map(str::to_string),
+        ..CiRecord::new(head)
     };
     run.delivery.stages[1] = StageDelivery {
         pr: Some(record),

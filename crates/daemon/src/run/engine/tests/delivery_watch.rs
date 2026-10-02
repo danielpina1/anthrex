@@ -144,6 +144,20 @@ pub(super) fn view_answer(fx: &mut Fixture, at: u64, result: HostResult) -> Vec<
 /// Polls PR #7 when it is due (or takes the view already out) and answers with `v` in
 /// the same second.
 pub(super) fn poll_with(fx: &mut Fixture, v: PrView) -> (u64, Vec<Effect>) {
+    // Task M9.2.9: a red view starts a CI log fetch, which takes the stage's one host
+    // op; it is answered first, with an empty log.
+    for (op, host) in host_ops(fx) {
+        if let HostOp::FailedLogs { .. } = host {
+            let path = format!("/tmp/data/delivery/ci-{op}.log");
+            let file = crate::host::LogFile {
+                path: path.into(),
+                bytes: 0,
+                truncated: false,
+                tail: String::new(),
+            };
+            answer(fx, op, HostResult::Logs(file));
+        }
+    }
     let out = (host_ops(fx).iter()).any(|(_, op)| matches!(op, HostOp::ViewPr { .. }));
     let at = if out {
         fx.now
