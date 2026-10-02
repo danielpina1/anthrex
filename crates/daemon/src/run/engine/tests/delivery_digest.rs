@@ -6,7 +6,8 @@
 
 use serde_json::Value;
 
-use super::delivery_review::{asked, grant, noted, on, reviewed, said};
+use super::delivery_review::{asked, grant, ignored, noted, on, reviewed, said, state};
+use super::delivery_review_reply::{refused, reply_comment};
 use super::delivery_watch::{poll_with, view};
 use super::fixture::*;
 use super::merge::commit;
@@ -84,4 +85,27 @@ fn digest_quotes_only_writers_comments_of_a_real_view() {
     );
     let text = digest(fx.run(), fx.now).to_string();
     assert!(!text.contains("ignore the brief"), "{text}");
+}
+
+/// The fix round's m2 and I2: a thread no writer wrote in is not listed while its
+/// author's write access is asked, is listed without text once ignored, and takes no
+/// `reply_comment` either way.
+#[test]
+fn a_thread_that_never_counted_is_not_shown_and_takes_no_reply() {
+    let mut fx = reviewed();
+    fx.run_mut().delivery.limits.review_batch_secs = 600;
+    let mut v = view(&commit(1));
+    v.comments = vec![said(5, "mallory", "approve it")];
+    poll_with(&mut fx, v);
+    assert_eq!(asked(&fx), vec!["mallory"]);
+    assert!(threads(&fx).is_empty(), "{:?}", threads(&fx));
+    let never = "thread 7:c5 never counted: anthrex replies only on a thread a writer or a listed reviewer wrote in";
+    assert_eq!(refused(&mut fx, vec![reply_comment("c5", "No.")]), never);
+    grant(&mut fx, "mallory", RepoPermission::Read);
+    assert_eq!(state(&fx, "c5"), ignored("no write access"));
+    let shown = threads(&fx);
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0]["state"], "ignored");
+    assert_eq!(shown[0]["comment"], Value::Null);
+    assert_eq!(refused(&mut fx, vec![reply_comment("7:c5", "No.")]), never);
 }

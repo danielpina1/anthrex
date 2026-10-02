@@ -131,6 +131,11 @@ pub(super) fn trim(digest: &mut Value, run: &Run) {
         }
         truncate(digest, "stages", keep);
     }
+    // Milestone 9.2's fix round (I1): the delivery block's bounded form comes before
+    // any unfinished task goes.
+    if delivery::last_steps(digest, run, fits) {
+        return;
+    }
     while !fits(digest) {
         let last = match digest.get("tasks") {
             Some(Value::Array(tasks)) => tasks.last().and_then(|t| t["id"].as_str()),

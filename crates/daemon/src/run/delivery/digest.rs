@@ -5,17 +5,18 @@
 //! Comment text is the only untrusted text here. It is quoted (`quote::comment`,
 //! decision 22), only from a writer or a listed reviewer (the controller's ruling: the
 //! same rule as the review intake, `RunDelivery::writes`), and only for a thread that
-//! counted and is `new` or in the stage's open batch. Everything else is counts, ids,
-//! logins (shown as decision 22 shows them), paths and states.
+//! counted and is `new` or in the stage's open batch. A thread that has not counted is
+//! not listed. Everything else is counts, ids, logins (shown as decision 22 shows
+//! them), paths and states.
 
-use proto::{CiCategory, DeliveryMode, PrState, TaskOrigin};
+use proto::{CiCategory, CiState, DeliveryMode, PrState, TaskOrigin};
 use serde_json::{Value, json};
 
 use super::snapshot::{ci_state, stage_count};
 use super::{CiPhase, CiRecord, PrRecord, StageDelivery, ThreadRecord, ThreadState, quote};
 use crate::run::contract::sha7;
 use crate::run::model::Run;
-use crate::run::orch::json::{fold_all, label};
+use crate::run::orch::json::{fold_all, label, shrink_strings};
 
 /// A thread's quoted comments, in characters, and what trimming leaves of them.
 pub const COMMENT_MAX: usize = 2000;
@@ -25,6 +26,12 @@ pub const THREADS_SHOWN: usize = 20;
 pub const THREADS_TRIMMED: usize = 10;
 /// A stage's fix task ids shown per origin, the newest (not in Interfaces).
 pub const FIX_TASKS_SHOWN: usize = 20;
+
+/// The fix round's last-resort cuts (the controller's ruling, I1): the threads and
+/// fix task ids a stage keeps, and every string's length.
+pub const THREADS_LAST: usize = 3;
+pub const FIX_TASKS_LAST: usize = 3;
+pub const STRINGS_LAST: usize = 40;
 
 /// How much of the block to build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +43,14 @@ pub struct Shape {
     pub threads: Option<usize>,
     /// Whether stages whose PR merged or closed are shown.
     pub resolved: bool,
+    /// Only the threads the orchestrator must decide on ([`current`]).
+    pub current_only: bool,
+    /// Every string of the block cut to this many characters.
+    pub strings: Option<usize>,
+    /// Fix task ids shown per origin, the newest.
+    pub fix_tasks: usize,
+    /// Each stage only as `stage`, `pr`, `state` and `ci`, with `threads_omitted`.
+    pub compact: bool,
 }
 
 impl Shape {
@@ -44,13 +59,17 @@ impl Shape {
         comment_max: Some(COMMENT_MAX),
         threads: Some(THREADS_SHOWN),
         resolved: true,
+        current_only: false,
+        strings: None,
+        fix_tasks: FIX_TASKS_SHOWN,
+        compact: false,
     };
     /// Milestone 9 decision 16's fingerprint reads every field but `comment`, so a new
     /// thread or a state change wakes a waiting `run_status`, a comment's text does not.
     pub const FINGERPRINT: Shape = Shape {
         comment_max: None,
         threads: None,
-        resolved: true,
+        ..Shape::FULL
     };
     /// The untrimmed digest's shape, or the fingerprint's.
     pub fn digest(for_fingerprint: bool) -> Shape {
@@ -71,21 +90,60 @@ impl Shape {
         Shape {
             comment_max: Some(COMMENT_TRIMMED),
             threads: Some(THREADS_TRIMMED),
-            resolved: true,
+            ..Shape::FULL
         },
         Shape {
             comment_max: Some(COMMENT_TRIMMED),
             threads: Some(THREADS_TRIMMED),
             resolved: false,
+            ..Shape::FULL
         },
     ];
-    /// The last step, taken only before the digest's general string cut, which would
-    /// cut a quote's closing fence off: no comments at all (not in Interfaces).
+    /// The step taken only before the digest's general string cut, which would cut a
+    /// quote's closing fence off: no comments at all (not in Interfaces).
     pub const NO_COMMENTS: Shape = Shape {
         comment_max: None,
         threads: Some(THREADS_TRIMMED),
         resolved: false,
+        ..Shape::FULL
     };
+    /// The fix round's steps before any unfinished task is dropped (the controller's
+    /// ruling, I1), in order: only the threads to decide on, then 3 a stage, then every
+    /// string cut to 40 characters, then 3 fix task ids per origin, and last each stage
+    /// as its PR, state and CI with a count of the threads left out. The last form is
+    /// bounded whatever the run holds: at most `STAGES_MAX` stages of a few numbers.
+    pub const LAST: [Shape; 5] = [
+        Shape {
+            current_only: true,
+            ..Shape::NO_COMMENTS
+        },
+        Shape {
+            current_only: true,
+            threads: Some(THREADS_LAST),
+            ..Shape::NO_COMMENTS
+        },
+        Shape {
+            current_only: true,
+            threads: Some(THREADS_LAST),
+            strings: Some(STRINGS_LAST),
+            ..Shape::NO_COMMENTS
+        },
+        Shape {
+            current_only: true,
+            threads: Some(THREADS_LAST),
+            strings: Some(STRINGS_LAST),
+            fix_tasks: FIX_TASKS_LAST,
+            ..Shape::NO_COMMENTS
+        },
+        Shape {
+            current_only: true,
+            threads: Some(0),
+            strings: Some(STRINGS_LAST),
+            fix_tasks: 0,
+            compact: true,
+            ..Shape::NO_COMMENTS
+        },
+    ];
 }
 
 /// The `delivery` block of `run`: `{"mode": "local"}` in local mode.
@@ -103,6 +161,9 @@ pub fn block(run: &Run, shape: Shape) -> Value {
         "delivering": d.delivering(count),
         "stages": stages,
     });
+    if let Some(max) = shape.strings {
+        shrink_strings(&mut block, max);
+    }
     fold_all(&mut block);
     block
 }
@@ -115,6 +176,17 @@ fn stage(run: &Run, n: u16, shape: Shape) -> Option<Value> {
     if resolved && !shape.resolved {
         return None;
     }
+    let ci = pr.map(|p| ci_state(&p.checks));
+    if shape.compact {
+        let listed = s.threads.iter().filter(|t| listed(t)).count();
+        return Some(json!({
+            "stage": n,
+            "pr": pr.map(|p| p.number),
+            "state": pr.map(|p| label(&p.state)),
+            "ci": ci.map(|c| label(&c)),
+            "threads_omitted": listed,
+        }));
+    }
     let threads = match pr {
         Some(pr) => threads(run, s, pr, shape),
         None => Vec::new(),
@@ -124,13 +196,14 @@ fn stage(run: &Run, n: u16, shape: Shape) -> Option<Value> {
         "pr": pr.map(|p| p.number),
         "url": pr.map(|p| p.url.as_str()),
         "state": pr.map(|p| label(&p.state)),
-        "ci": pr.map(|p| label(&ci_state(&p.checks))),
-        "ci_line": pr.and_then(|p| ci_line(run, s, p)),
+        "ci": ci.map(|c| label(&c)),
+        // The fix round's m3: a CI line only while the head's CI is red.
+        "ci_line": pr.filter(|_| ci == Some(CiState::Red)).and_then(|p| ci_line(run, s, p)),
         "threads": threads,
         "fix_tasks": {
-            "ci": fix_tasks(run, n, TaskOrigin::Ci),
-            "review": fix_tasks(run, n, TaskOrigin::Review),
-            "sync": fix_tasks(run, n, TaskOrigin::Sync),
+            "ci": fix_tasks(run, n, TaskOrigin::Ci, shape.fix_tasks),
+            "review": fix_tasks(run, n, TaskOrigin::Review, shape.fix_tasks),
+            "sync": fix_tasks(run, n, TaskOrigin::Sync, shape.fix_tasks),
         },
         "paused": s.paused_by.is_some(),
     }))
@@ -143,12 +216,20 @@ fn current(s: &StageDelivery, t: &ThreadRecord) -> bool {
     t.counted && (t.state == ThreadState::New || batched)
 }
 
-/// The stage's threads: the `new` and batched ones first, then the rest newest first,
-/// each group in the order the PR showed them.
+/// Whether thread `t` is listed at all: a `new` thread that has not counted (its
+/// authors' write access is still being asked) stays out until it counts (decision 29:
+/// what does not count never reaches an agent; the fix round's I2). An ignored thread
+/// is listed, never with text.
+fn listed(t: &ThreadRecord) -> bool {
+    t.counted || t.state != ThreadState::New
+}
+
+/// The stage's threads: the [`current`] ones first, in the order the PR showed them,
+/// then the other listed ones newest first (only the first with `current_only`).
 fn threads(run: &Run, s: &StageDelivery, pr: &PrRecord, shape: Shape) -> Vec<Value> {
-    let open = |t: &&ThreadRecord| t.state == ThreadState::New || current(s, t);
-    let first = s.threads.iter().filter(open);
-    let rest = s.threads.iter().rev().filter(|t| !open(t));
+    let first = s.threads.iter().filter(|t| current(s, t));
+    let rest =
+        (s.threads.iter().rev()).filter(|t| listed(t) && !current(s, t) && !shape.current_only);
     let all = first.chain(rest);
     let shown: Vec<&ThreadRecord> = match shape.threads {
         Some(max) => all.take(max).collect(),
@@ -248,14 +329,13 @@ fn doing(run: &Run, rec: &CiRecord) -> String {
     }
 }
 
-/// The ids of stage `n`'s tasks of `origin`, in plan order, the newest
-/// [`FIX_TASKS_SHOWN`].
-fn fix_tasks(run: &Run, n: u16, origin: TaskOrigin) -> Vec<String> {
+/// The ids of stage `n`'s tasks of `origin`, in plan order, the newest `keep`.
+fn fix_tasks(run: &Run, n: u16, origin: TaskOrigin, keep: usize) -> Vec<String> {
     let ids: Vec<String> = (run.tasks.iter())
         .filter(|t| t.stage() == n && t.origin == origin)
         .map(|t| t.id().to_string())
         .collect();
-    let skip = ids.len().saturating_sub(FIX_TASKS_SHOWN);
+    let skip = ids.len().saturating_sub(keep);
     ids.into_iter().skip(skip).collect()
 }
 
@@ -277,4 +357,16 @@ pub fn drop_comments(digest: &mut Value, run: &Run) {
     if run.delivery.mode != DeliveryMode::Local {
         digest["delivery"] = block(run, Shape::NO_COMMENTS);
     }
+}
+
+/// The fix round's [`Shape::LAST`] steps on the digest's `delivery` key, taken before
+/// any unfinished task is dropped; stops as soon as `fits`. True when it fits.
+pub fn last_steps(digest: &mut Value, run: &Run, fits: impl Fn(&Value) -> bool) -> bool {
+    for shape in Shape::LAST {
+        if fits(digest) || run.delivery.mode == DeliveryMode::Local {
+            break;
+        }
+        digest["delivery"] = block(run, shape);
+    }
+    fits(digest)
 }

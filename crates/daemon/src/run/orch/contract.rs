@@ -138,8 +138,8 @@ pub const NOTE_RECORDED: &str = "Note recorded. Keep working.";
 /// Decision 42f: the reply once a task has `note_max_per_task` notes.
 pub const NOTE_LIMIT: &str = "note limit reached; put the rest in your task_done summary";
 
-/// Decision 42: a `message` or `refresh` that shares its call with any other edit,
-/// `submit` or `summary`.
+/// Decision 42 (and milestone 9.2 decision 30): a `message`, `refresh` or
+/// `reply_comment` that shares its call with any other edit, `submit` or `summary`.
 pub const ONE_EDIT_RULE: &str =
     "message, refresh and reply_comment must be the only edit in their call";
 

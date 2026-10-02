@@ -183,7 +183,7 @@ fn local_digest_has_mode_local_only() {
 
 /// Decision 22 and the controller's ruling: the comment is quoted with its author's
 /// label, and only a writer's comment is quoted; a thread not new and not in the
-/// open batch shows none, and neither does one that has not counted yet.
+/// open batch shows none, and one that has not counted yet is not listed.
 #[test]
 fn digest_comment_is_quoted_with_the_author_label() {
     let mut run = delivered();
@@ -231,8 +231,8 @@ fn digest_comment_is_quoted_with_the_author_label() {
         threads[1]["comment"],
         json!(quote::comment("alice", "Done before."))
     );
-    assert_eq!(threads[2]["thread"], "142:c6");
-    assert_eq!(threads[2]["comment"], Value::Null);
+    // The fix round's I2: the uncounted c6 is not listed at all.
+    assert_eq!(threads.len(), 2, "{threads:?}");
     // A listed reviewer is quoted too; a bad login is shown as <unknown>.
     run.delivery.limits.reviewers = vec!["erin".into()];
     let d = delivery(&run);
@@ -426,3 +426,86 @@ fn get_context_reports_stage_target_lines() {
         assert_eq!(c["limits"]["stage_target_lines"], json!([200, 650]));
     }
 }
+
+/// The fix round's I2 (decision 29: what does not count never reaches an agent): a
+/// `new` thread whose author's write access is still being asked is not listed, and
+/// sorts nothing out of the shown threads; when it counts it appears, first, and the
+/// fingerprint moves, so a waiting `run_status` wakes. An ignored thread stays listed,
+/// without text.
+#[test]
+fn uncounted_threads_stay_out_until_they_count() {
+    let mut run = delivered();
+    {
+        let stage = &mut run.delivery.stages[0];
+        // 25 pending threads ahead of the writer's in the PR's order.
+        let pending: Vec<ThreadRecord> = (0..25)
+            .map(|i| {
+                let mut t = thread(&format!("c{}", 100 + i), "erin", ThreadState::New, "x");
+                t.counted = false;
+                t.candidates = vec!["erin".into()];
+                t
+            })
+            .collect();
+        stage.threads.splice(0..0, pending);
+        let mut ignored = thread(
+            "c7",
+            "mallory",
+            ThreadState::Ignored {
+                reason: "no write access".into(),
+            },
+            "",
+        );
+        ignored.counted = false;
+        ignored.comments[0].text.clear();
+        stage.threads.push(ignored);
+    }
+    let shown = |run: &Run| -> Vec<(String, Value)> {
+        (delivery(run)["stages"][0]["threads"]
+            .as_array()
+            .unwrap()
+            .iter())
+        .map(|t| {
+            (
+                t["thread"].as_str().unwrap().to_string(),
+                t["comment"].clone(),
+            )
+        })
+        .collect()
+    };
+    let keys = |run: &Run| -> Vec<String> { shown(run).into_iter().map(|(k, _)| k).collect() };
+    assert_eq!(keys(&run), ["142:t98765", "142:c7", "142:c5"]);
+    assert_eq!(
+        shown(&run)[1].1,
+        Value::Null,
+        "an ignored thread has no text"
+    );
+    let before = fingerprint(&run);
+    // c100 counts: it is listed, first in the PR's order, and the fingerprint moves.
+    let t = &mut run.delivery.stages[0].threads[0];
+    t.counted = true;
+    t.candidates.clear();
+    run.delivery.limits.reviewers = vec!["erin".into()];
+    assert_eq!(keys(&run)[..2], ["142:c100", "142:t98765"]);
+    assert_eq!(shown(&run)[0].1, json!(quote::comment("erin", "x")));
+    assert_ne!(fingerprint(&run), before);
+}
+
+/// The fix round's m3: `ci_line` only while the head's CI is red.
+#[test]
+fn ci_line_shows_only_while_ci_is_red() {
+    let mut run = delivered();
+    assert_eq!(
+        delivery(&run)["stages"][0]["ci_line"],
+        "test failed at 1a2b3c4: fix task fix3 working"
+    );
+    for state in [CiState::Green, CiState::Pending] {
+        let pr = run.delivery.stages[0].pr.as_mut().unwrap();
+        pr.checks[0].state = state;
+        let d = delivery(&run);
+        assert_eq!(d["stages"][0]["ci_line"], Value::Null, "{state:?}");
+        assert_ne!(d["stages"][0]["ci"], "red");
+    }
+}
+
+#[path = "tests_delivery_trim.rs"]
+mod trim;

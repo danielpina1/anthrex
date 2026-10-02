@@ -99,6 +99,15 @@ pub fn apply(
     if !known {
         return Err(error(format!("unknown thread {pr}:{key}")));
     }
+    // Task M9.2.13's fix round (m2): a thread no writer or listed reviewer wrote in
+    // never reached an agent, so nobody is answered on it.
+    let counted = (run.delivery.stage(n))
+        .is_some_and(|s| s.threads.iter().any(|t| t.key == key && t.counted));
+    if !counted {
+        return Err(error(format!(
+            "thread {pr}:{key} never counted: anthrex replies only on a thread a writer or a listed reviewer wrote in"
+        )));
+    }
     let count = body.chars().count();
     if body.trim().is_empty() || count > REPLY_BODY_MAX {
         return Err(error(format!(
