@@ -26,6 +26,7 @@ pub(super) mod land;
 mod open;
 mod reply;
 mod review;
+mod review_batch;
 mod review_fix;
 pub(super) mod sync;
 mod view;

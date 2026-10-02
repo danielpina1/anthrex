@@ -24,20 +24,21 @@
 //!    marker; a `reply_comment` is sent at once. Replies go before the stage's views,
 //!    so anthrex knows the id of every comment it posted before a view can show it.
 //!
-//! The template's fix task and the approval hold are `review_fix.rs`.
+//! Closing a batch (step 3) is `review_batch.rs`; the template's fix task and the
+//! approval hold are `review_fix.rs`.
 
 use proto::{DeliveryMode, HoldState, PrState};
 
 use super::super::requests::log;
-use super::super::{Effect, OpKind, wake};
+use super::super::{Effect, OpKind};
 use super::watch::named;
 use super::{emit, stage_mut};
 use crate::host::RepoPermission;
 use crate::run::delivery::ops::HostOp;
 use crate::run::delivery::quote;
 use crate::run::delivery::snapshot::stage_count;
-use crate::run::delivery::{Batch, PrRecord, ReplyDue, StageDelivery, ThreadRecord, ThreadState};
-use crate::run::model::{FixOf, Run};
+use crate::run::delivery::{Batch, ReplyDue, StageDelivery, ThreadRecord, ThreadState};
+use crate::run::model::Run;
 
 pub(crate) use crate::run::delivery::view_trim::{
     COMMENT_KEPT_CHARS, STAGE_TEXT_CHARS, THREAD_COMMENTS_KEPT,
@@ -158,7 +159,7 @@ pub(super) fn permission_failed(run: &mut Run, now: u64, wait: u64) {
     run.delivery.permission_retry_at = Some(now.saturating_add(wait));
 }
 
-fn thread_mut<'a>(run: &'a mut Run, n: u16, key: &str) -> Option<&'a mut ThreadRecord> {
+pub(super) fn thread_mut<'a>(run: &'a mut Run, n: u16, key: &str) -> Option<&'a mut ThreadRecord> {
     stage_mut(run, n).threads.iter_mut().find(|t| t.key == key)
 }
 
@@ -272,13 +273,7 @@ fn not_a_writer(run: &mut Run, n: u16, key: &str, logins: &[String], now: u64) {
     }
 }
 
-/// Whether the run's orchestrator window is live (M9 decision 13): a planned run's
-/// review batch is its to decide; otherwise the engine's template decides.
-fn orchestrator_live(run: &Run) -> bool {
-    run.orch.orchestrator.as_ref().is_some_and(|o| o.live)
-}
-
-fn plural(k: usize, one: &str, many: &str) -> String {
+pub(super) fn plural(k: usize, one: &str, many: &str) -> String {
     if k == 1 {
         format!("{k} {one}")
     } else {
@@ -286,154 +281,11 @@ fn plural(k: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// Step 3: stage `n`'s batch closes when quiet for `review_batch_secs`, and no thread
-/// of the stage still waits for its author's permission.
-fn close(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
-    let Some(stage) = run.delivery.stage(n) else {
-        return;
-    };
-    let Some(batch) = stage.batch.clone() else {
-        return;
-    };
-    // The fix round's m4: a login unanswered for `PERMISSION_WAIT_SECS` holds it no more.
-    // A thread that counts and is `new` is in the batch already, whatever the answer.
-    let asking = (stage.threads.iter()).any(|t| {
-        let in_batch = t.state == ThreadState::New && t.counted;
-        let due = t.waiting_since.saturating_add(PERMISSION_WAIT_SECS);
-        !t.candidates.is_empty() && !in_batch && now < due
-    });
-    let quiet_at = batch
-        .last_at
-        .saturating_add(run.delivery.limits.review_batch_secs);
-    if asking || now < quiet_at {
-        return;
-    }
-    let stage = stage_mut(run, n);
-    stage.batch = None;
-    stage.batches += 1;
-    let b = stage.batches;
-    let mut keys = Vec::new();
-    for t in stage.threads.iter_mut() {
-        let live = t.state == ThreadState::New && t.counted;
-        if live && batch.threads.contains(&t.key) {
-            t.batch = b;
-            keys.push(t.key.clone());
-        }
-    }
-    let Some(pr) = run.delivery.pr(n).cloned() else {
-        return;
-    };
-    let paused = run.delivery.stage(n).is_some_and(|s| s.paused_by.is_some());
-    if keys.is_empty() || pr.state != PrState::Open || paused {
-        return;
-    }
-    let rounds = run.delivery.stage(n).map_or(0, |s| s.review_rounds);
-    let max = run.delivery.limits.review_fix_max;
-    if rounds >= max {
-        return over_cap(run, n, &pr, &keys, rounds + 1, now);
-    }
-    let text = format!("{}: review batch {b}: {}", named(n, &pr), keys.join(", "));
-    log(run, now, text);
-    if orchestrator_live(run) {
-        let mut logins: Vec<String> = Vec::new();
-        for key in &keys {
-            let login = author(run, n, key);
-            if !logins.contains(&login) {
-                logins.push(login);
-            }
-        }
-        let from: Vec<String> = logins.iter().map(|l| format!("@{l}")).collect();
-        let threads = plural(keys.len(), "new review thread", "new review threads");
-        wake::note(
-            run,
-            format!(
-                "PR #{} (stage {n}) has {threads} from {}; read them in run_status and add fix tasks, reply, or escalate",
-                pr.number,
-                from.join(", ")
-            ),
-        );
-        return;
-    }
-    fast_path(run, n, &pr, &keys, b, now, fx);
-}
-
 /// The author of thread `key` as a label shows it (decision 22).
 pub(super) fn author(run: &Run, n: u16, key: &str) -> String {
     let stage = run.delivery.stage(n);
     let t = stage.and_then(|s| s.threads.iter().find(|t| t.key == key));
     quote::login(t.map_or("", |t| t.author.as_str())).to_string()
-}
-
-/// Decision 31's cap: `review_fix_max` rounds were had; each thread is the user's.
-fn over_cap(run: &mut Run, n: u16, pr: &PrRecord, keys: &[String], round: u32, now: u64) {
-    for key in keys {
-        let login = author(run, n, key);
-        let line = format!(
-            "PR #{}: review round {round} is over the cap; thread {}:{key} by @{login} is yours",
-            pr.number, pr.number
-        );
-        log(run, now, line.clone());
-        run.delivery.alerts.insert(format!("{n}/cap/{key}"), line);
-    }
-}
-
-/// Decision 31's fast path (and the fallback for a planned run whose orchestrator is
-/// not live): one fix task per thread from the template; a thread whose fix task
-/// already exists never gets a second one. A batch that made one is a review round.
-fn fast_path(
-    run: &mut Run,
-    n: u16,
-    pr: &PrRecord,
-    keys: &[String],
-    b: u32,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let mut made = false;
-    for key in keys {
-        let reference = format!("{}:{key}", pr.number);
-        let tasked = (run.tasks.iter())
-            .filter(|t| t.state != proto::TaskState::Cancelled)
-            .any(|t| matches!(&t.fixes, Some(FixOf::Review { threads, .. }) if threads.contains(&reference)));
-        let Some(thread) = (!tasked)
-            .then(|| {
-                run.delivery
-                    .stage(n)?
-                    .threads
-                    .iter()
-                    .find(|t| &t.key == key)
-            })
-            .flatten()
-            .cloned()
-        else {
-            continue;
-        };
-        match super::review_fix::add_review_fix(run, n, pr, &thread, now, fx) {
-            Ok(id) => {
-                made = true;
-                if let Some(t) = thread_mut(run, n, key) {
-                    t.state = ThreadState::Tasked { task: id.clone() };
-                }
-                super::review_fix::hold_outside(run, n, &id, now);
-            }
-            Err(message) => {
-                let login = author(run, n, key);
-                let line = format!(
-                    "PR #{}: thread {reference} by @{login} is yours; its fix task was refused: {message}",
-                    pr.number
-                );
-                log(run, now, line.clone());
-                run.delivery
-                    .alerts
-                    .insert(format!("{n}/review/{key}"), line);
-            }
-        }
-    }
-    let stage = stage_mut(run, n);
-    if made && b > stage.round_batch {
-        stage.round_batch = b;
-        stage.review_rounds += 1;
-    }
 }
 
 /// The cap's and a refused fix's attention lines last while their thread is `new`; a
@@ -503,7 +355,7 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         }
         settle(run, n);
-        close(run, n, now, fx);
+        super::review_batch::close(run, n, now, fx);
         super::reply::queue_replies(run, n);
         super::reply::send(run, n, now, fx);
     }
