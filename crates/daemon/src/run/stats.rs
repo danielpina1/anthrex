@@ -102,6 +102,8 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
             | HistoryLine::Flaky(_)
             | HistoryLine::Bisect(_)
             | HistoryLine::Stage(_) => {}
+            // Milestone 9.3: the `round` line is counted by task M9.3.4b.
+            HistoryLine::Round(_) => {}
             HistoryLine::Revert(r) => match &r.task_id {
                 Some(task) => {
                     task_reverts.insert((r.run_id.as_str(), task.as_str()));
@@ -152,6 +154,8 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
         flaky_proposals: Vec::new(),
         window_days: 0,
         quarantine_after: 0,
+        iterated_runs: 0,
+        rounds: 0,
     }
 }
 

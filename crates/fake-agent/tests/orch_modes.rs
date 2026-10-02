@@ -173,6 +173,7 @@ fn script_names_for_planners_integration_reviewers_and_run_scouts() {
         task_id: task.map(String::from),
         scout_id: scout.map(String::from),
         epic: epic.map(String::from),
+        chain: None,
     };
     let cases = [
         (

@@ -205,7 +205,7 @@ fn history_lines_are_tagged() {
         assert!(json.starts_with(&format!("{{\"type\":\"{tag}\"")), "{json}");
         assert_eq!(serde_json::from_str::<HistoryLine>(&json).unwrap(), line);
     }
-    assert_eq!(HISTORY_VERSION, 4);
+    assert_eq!(HISTORY_VERSION, 5);
 }
 
 #[test]
@@ -285,6 +285,7 @@ fn every_new_request_and_reply_round_trips() {
             unconfined_checks: false,
             orchestrator: None,
             delivery: None,
+            continue_from: None,
         },
         RunRequest::Promote {
             run_id: "run-a1b2".into(),
@@ -433,6 +434,7 @@ fn every_new_request_and_reply_round_trips() {
         runs: vec![run],
         now: 0,
         proposals: Vec::new(),
+        idle_orchestrators: Vec::new(),
     }));
     let packed = rmp_serde::to_vec_named(&msg).unwrap();
     assert_eq!(rmp_serde::from_slice::<DaemonMsg>(&packed).unwrap(), msg);

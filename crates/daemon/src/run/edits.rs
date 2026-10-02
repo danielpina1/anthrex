@@ -173,6 +173,14 @@ impl Batch {
                 let applied = reply_edit::apply(&mut self.run, edit, &self.source, self.now);
                 self.errors.extend(applied.err());
             }
+            // Milestone 9.3 decision 30: a round starts only from `run iterate` or
+            // `edit_plan`'s `iterate` (task M9.3.4a); never as a batch edit.
+            PlanEdit::Iterate { .. } => self.errors.push(PlanError::new(
+                None,
+                "",
+                "43",
+                "use anthrex run iterate to start a round",
+            )),
         }
     }
 

@@ -529,7 +529,7 @@ fn digest_lists_stages_with_heads_and_tier3_state() {
                     "at": at(12, 0), "secs": 2472, "commit": h1, "shards": 1,
                     "flaky": ["a::flaky"],
                 })),
-                "fix_tasks": [], "propagate_red": null,
+                "fix_tasks": [], "propagate_red": null, "round": 1,
             },
             {
                 "n": 2, "branch": format!("anthrex/{run_id}/stage-2"), "head": h2,
@@ -538,12 +538,12 @@ fn digest_lists_stages_with_heads_and_tier3_state() {
                     "at": at(12, 10), "secs": 60, "commit": h2, "shards": 1,
                     "failing": ["b::works"], "bisect_fixes": 1,
                 })),
-                "fix_tasks": ["fix1"], "propagate_red": null,
+                "fix_tasks": ["fix1"], "propagate_red": null, "round": 1,
             },
             {
                 "n": 3, "branch": format!("anthrex/{run_id}/stage-3"), "head": null,
                 "tasks": 1, "merged": 0, "full": full("none", json!({})),
-                "fix_tasks": [], "propagate_red": null,
+                "fix_tasks": [], "propagate_red": null, "round": 1,
             },
         ]),
         "{}",

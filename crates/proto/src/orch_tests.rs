@@ -338,6 +338,7 @@ fn appended_variants_keep_their_indices() {
             "message",
             "refresh",
             "reply_comment",
+            "iterate",
         ]
     );
 }
@@ -403,6 +404,7 @@ fn new_requests_round_trip() {
             unconfined_checks: false,
             orchestrator: None,
             delivery: None,
+            continue_from: None,
         },
         RunRequest::StartGoal {
             goal: "Add password reset".into(),
@@ -412,6 +414,7 @@ fn new_requests_round_trip() {
             unconfined_checks: true,
             orchestrator: Some(choice.clone()),
             delivery: None,
+            continue_from: None,
         },
         RunRequest::Promote {
             run_id: "run-a1b2".into(),

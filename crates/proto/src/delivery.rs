@@ -169,4 +169,4 @@ mod alert_tests;
 
 #[cfg(test)]
 #[path = "delivery_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -113,6 +113,7 @@ fn a_headless_spec_round_trips_through_json() {
             task_id: Some("t1".into()),
             scout_id: None,
             epic: None,
+            chain: None,
         }),
         allowed_tools: vec!["Bash".into()],
         claude_permission_mode: Some("acceptEdits".into()),
@@ -145,10 +146,35 @@ fn a_persisted_spec_without_an_epic_still_loads() {
         task_id: Some("t1".into()),
         scout_id: None,
         epic: None,
+        chain: None,
     };
     let mut json = serde_json::to_value(&target).unwrap();
     json.as_object_mut().unwrap().remove("epic");
     assert_eq!(serde_json::from_value::<McpTarget>(json).unwrap(), target);
+}
+
+/// Milestone 9.3 (KG §3.4): a target persisted before `McpTarget.chain` existed still
+/// loads, with no chain; one with a chain round-trips.
+#[test]
+fn persisted_mcp_target_without_chain_still_loads() {
+    let target = McpTarget {
+        role: AgentRole::Orchestrator,
+        run_id: "r-3f9a".into(),
+        task_id: None,
+        scout_id: None,
+        epic: None,
+        chain: None,
+    };
+    let mut json = serde_json::to_value(&target).unwrap();
+    json.as_object_mut().unwrap().remove("chain");
+    assert_eq!(serde_json::from_value::<McpTarget>(json).unwrap(), target);
+    let chained = McpTarget {
+        chain: Some("o-3f9a".into()),
+        ..target
+    };
+    let json = serde_json::to_value(&chained).unwrap();
+    assert_eq!(json["chain"], "o-3f9a");
+    assert_eq!(serde_json::from_value::<McpTarget>(json).unwrap(), chained);
 }
 
 /// Final fix batch F2 (review C, M2; round 2, N2): only a Claude `api_key` session keeps

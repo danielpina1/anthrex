@@ -377,6 +377,7 @@ fn m9_call(role: AgentRole, window: u32, tool: &str) -> proto::ToolCall {
         args: serde_json::json!({}),
         scout_id: None,
         epic: (role == AgentRole::Planner).then(|| "mail".to_string()),
+        chain: None,
     }
 }
 
@@ -460,6 +461,7 @@ fn a_task_note_before_the_window_is_recorded_after_binding() {
         args: serde_json::json!({"kind": "discovery", "text": "early"}),
         scout_id: None,
         epic: None,
+        chain: None,
     };
     let refusals = Vec::new();
     let event = crate::run::engine::OrchEvent::Tool {

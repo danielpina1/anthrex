@@ -89,6 +89,7 @@ pub(super) fn no_runs() -> RunsSnapshot {
         runs: vec![],
         now: 0,
         proposals: Vec::new(),
+        idle_orchestrators: Vec::new(),
     }
 }
 

@@ -225,6 +225,8 @@ pub(crate) fn check(run: &Run, node: &ActionNode, kind: &ActionKind) -> Result<(
         }
         // Client-only kinds change nothing in the daemon (decision 10).
         ReviewPlan | Stats | OpenConversation => None,
+        // Milestone 9.3: `rules::iterate` arrives with task M9.3.4a.
+        Iterate => Some("run iterate is not available yet".into()),
     };
     refusal.map_or(Ok(()), Err)
 }

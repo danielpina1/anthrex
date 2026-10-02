@@ -18,6 +18,7 @@ fn stage(n: u16, head: Option<&str>, (merged, tasks): (u32, u32), full: FullInfo
         fix_tasks: Vec::new(),
         propagate_red: None,
         pr: None,
+        round: 1,
     }
 }
 

@@ -89,6 +89,7 @@ fn area_scout_spec_is_read_only() {
             task_id: None,
             scout_id: Some("api-1".into()),
             epic: None,
+            chain: None,
         })
     );
     assert_eq!(
@@ -184,6 +185,7 @@ fn onboarding_scout_spec_is_read_only_too() {
             task_id: None,
             scout_id: Some("onboarding-1".into()),
             epic: None,
+            chain: None,
         })
     );
     assert_eq!(spec.output_filter, None);

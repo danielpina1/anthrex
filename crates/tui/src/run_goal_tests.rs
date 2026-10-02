@@ -62,6 +62,7 @@ fn codex_with_no_model_is_its_configured_default() {
                 model: None,
             }),
             delivery: None,
+            continue_from: None,
         })
     );
 }

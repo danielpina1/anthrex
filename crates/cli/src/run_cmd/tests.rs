@@ -125,6 +125,7 @@ fn run_start_outwaits_both_preflights() {
         unconfined_checks: false,
         orchestrator: None,
         delivery: None,
+        continue_from: None,
     };
     // The goal's own terms (the triage decider's 600 s and 30 s) on top.
     assert!(request_timeout(&goal) > preflights + Duration::from_secs(600 + 30));
@@ -148,6 +149,8 @@ fn stats_json_and_the_report_line_are_printable() {
         flaky_proposals: Vec::new(),
         window_days: 0,
         quarantine_after: 0,
+        iterated_runs: 0,
+        rounds: 0,
     };
     let json = super::adapt::stats_json(&stats).unwrap();
     // JSON escapes the control character itself; the bidi override and the ZWJ, which

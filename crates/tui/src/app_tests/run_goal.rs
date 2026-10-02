@@ -163,6 +163,7 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
                 model: Some("claude-opus-5".into()),
             }),
             delivery: Some(proto::DeliveryMode::Pr),
+            continue_from: None,
         }
     );
     assert!(goal_form(&app).submitting);

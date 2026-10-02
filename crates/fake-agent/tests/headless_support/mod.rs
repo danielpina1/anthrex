@@ -166,6 +166,7 @@ impl Mcp {
             task_id: self.task.map(String::from),
             scout_id: None,
             epic: None,
+            chain: None,
         }
     }
 }

@@ -27,6 +27,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
             task_id: Some("t1".into()),
             scout_id: None,
             epic: None,
+            chain: None,
         }),
         allowed_tools: [
             "mcp__anthrex__task_done",
@@ -73,6 +74,7 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
             task_id: Some("t2".into()),
             scout_id: None,
             epic: None,
+            chain: None,
         }),
         allowed_tools: [
             "mcp__anthrex__submit_review",
@@ -208,6 +210,7 @@ fn mcp_args_for_a_worker() {
         task_id: Some("t1".into()),
         scout_id: None,
         epic: None,
+        chain: None,
     };
     assert_eq!(
         mcp_args(&target, 7, Path::new("/tmp/a.sock")),
@@ -556,6 +559,8 @@ fn worker_settings_json_enables_the_sandbox() {
 
 #[path = "argv_caps_tests.rs"]
 mod caps;
+#[path = "argv_chain_tests.rs"]
+mod chain;
 #[path = "argv_filter_tests.rs"]
 mod filter;
 

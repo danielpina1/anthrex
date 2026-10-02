@@ -176,6 +176,7 @@ pub(crate) fn snapshot(now: u64, runs: Vec<RunInfo>) -> RunsSnapshot {
         runs,
         now,
         proposals: Vec::new(),
+        idle_orchestrators: Vec::new(),
     }
 }
 

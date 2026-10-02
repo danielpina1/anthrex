@@ -81,6 +81,7 @@ fn a_view_snapshot() -> RunsSnapshot {
         runs: vec![run],
         now: 1_700_001_000,
         proposals: Vec::new(),
+        idle_orchestrators: Vec::new(),
     }
 }
 

@@ -69,6 +69,9 @@ pub struct StageInfo {
     /// `None`, so a local run's stages (and the digest built from them) are 9.1's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr: Option<crate::delivery::StagePrInfo>,
+    /// Milestone 9.3: the round that added this stage; 1 for a stage from before.
+    #[serde(default = "crate::rounds::first_round")]
+    pub round: u32,
 }
 
 /// A task's last tier record (decision 55).

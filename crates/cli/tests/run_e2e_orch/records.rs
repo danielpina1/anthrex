@@ -31,6 +31,7 @@ fn e2e_goal_form_request_matches_the_cli() {
             model: None,
         }),
         delivery: None,
+        continue_from: None,
     };
     let RunReply::Triaged {
         triage,

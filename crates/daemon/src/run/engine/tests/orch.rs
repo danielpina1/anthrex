@@ -103,6 +103,7 @@ pub(super) fn orch_tool(fx: &mut Fixture, window: u32, tool: &str, args: Value) 
             args,
             scout_id: None,
             epic: None,
+            chain: None,
         },
         refusals: Vec::new(),
     }))

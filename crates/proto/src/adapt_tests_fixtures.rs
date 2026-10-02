@@ -161,6 +161,8 @@ pub(super) fn a_stats() -> HistoryStats {
         flaky_proposals: Vec::new(),
         window_days: 0,
         quarantine_after: 0,
+        iterated_runs: 0,
+        rounds: 0,
     }
 }
 

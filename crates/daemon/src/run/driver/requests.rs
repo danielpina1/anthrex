@@ -109,6 +109,8 @@ impl RunService {
                 unconfined_checks,
                 orchestrator,
                 delivery,
+                // Milestone 9.3: continuing a chain arrives with task M9.3.6b.
+                continue_from: _,
             } => {
                 let flags = (trust_project, unconfined_checks);
                 self.start_goal(goal, dir, flags, yes, (orchestrator, delivery))
@@ -135,6 +137,10 @@ impl RunService {
             RunRequest::Watch { run_id, on } => {
                 let req = DeliveryRequestOf::Watch { run_id, on };
                 self.delivery_request(req).await
+            }
+            // Milestone 9.3: rounds arrive with task M9.3.4a.
+            RunRequest::Iterate { .. } => {
+                RunReply::refused(request::ITERATE, "run iterate is not available yet")
             }
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")

@@ -25,6 +25,7 @@ fn role() -> RoleLaunch {
             task_id: None,
             scout_id: None,
             epic: None,
+            chain: None,
         },
         instructions: "THE CONTRACT".into(),
         effort: Effort::High,

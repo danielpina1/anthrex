@@ -97,6 +97,8 @@ fn event_for(fx: &mut Fixture, node: &ActionNode, kind: &ActionKind) -> EventKin
         ActionKind::ReviewPlan | ActionKind::Stats | ActionKind::OpenConversation => {
             unreachable!("client-only kinds are never request kinds")
         }
+        // Milestone 9.3: listed, and given `EventKind::Iterate`, from task M9.3.4a.
+        ActionKind::Iterate => unreachable!("iterate is not listed yet"),
     }
 }
 

@@ -383,6 +383,7 @@ impl GoalForm {
             unconfined_checks: self.unconfined_checks,
             orchestrator,
             delivery: self.delivery,
+            continue_from: None,
         })
     }
 }

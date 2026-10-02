@@ -57,6 +57,7 @@ pub(super) fn note(fx: &mut Fixture, window: u32, kind: &str, text: &str) -> Vec
             args: json!({"kind": kind, "text": text}),
             scout_id: None,
             epic: None,
+            chain: None,
         },
         refusals: Vec::new(),
     }))

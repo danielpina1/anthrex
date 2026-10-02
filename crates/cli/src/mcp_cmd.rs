@@ -22,6 +22,9 @@ pub struct McpArgs {
     /// A sub-planner's epic (milestone 9): required for `planner`, refused otherwise.
     #[arg(long = "epic")]
     epic: Option<String>,
+    /// A chained orchestrator's chain (milestone 9.3): refused for every other role.
+    #[arg(long = "chain")]
+    chain: Option<String>,
     #[arg(long = "window")]
     window_id: u32,
     /// Defaults to the daemon's usual socket
@@ -57,7 +60,8 @@ impl From<RoleArg> for proto::AgentRole {
 impl McpArgs {
     /// `default_socket` is used when `--socket` was not given. The checks clap cannot
     /// state per role are a usage error (exit code 2), as clap's own are: `--epic` is
-    /// required for `planner` and refused for every other role; `--role scout` takes
+    /// required for `planner` and refused for every other role; `--chain` is refused for
+    /// every role but `orchestrator` (milestone 9.3); `--role scout` takes
     /// exactly one of `--scout` and `--task` (milestone 9 decision 35, defect 19).
     pub fn into_options(self, default_socket: PathBuf) -> Result<mcp::McpOptions, clap::Error> {
         use clap::error::ErrorKind;
@@ -77,6 +81,12 @@ impl McpArgs {
                 );
             }
         }
+        if self.role != RoleArg::Orchestrator && self.chain.is_some() {
+            return usage(
+                ErrorKind::ArgumentConflict,
+                "--chain <c> is accepted only with --role orchestrator",
+            );
+        }
         if self.role == RoleArg::Scout && self.scout_id.is_some() == self.task_id.is_some() {
             return usage(
                 ErrorKind::ArgumentConflict,
@@ -89,6 +99,7 @@ impl McpArgs {
             task_id: self.task_id,
             scout_id: self.scout_id,
             epic: self.epic,
+            chain: self.chain,
             window_id: self.window_id,
             socket: self.socket.unwrap_or(default_socket),
         })

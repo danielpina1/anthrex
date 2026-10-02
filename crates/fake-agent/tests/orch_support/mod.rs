@@ -43,6 +43,7 @@ pub fn orch_argv(runtime: Runtime, exe: &Path, socket: &Path, cwd: &Path) -> Vec
             task_id: None,
             scout_id: None,
             epic: None,
+            chain: None,
         },
         instructions: "THE CONTRACT".into(),
         effort: Effort::High,

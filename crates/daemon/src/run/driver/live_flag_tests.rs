@@ -33,6 +33,7 @@ fn role(run_id: &str) -> RoleLaunch {
             task_id: None,
             scout_id: None,
             epic: None,
+            chain: None,
         },
         instructions: "the orchestrator contract".into(),
         effort: Effort::High,

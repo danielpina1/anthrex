@@ -259,6 +259,7 @@ async fn preflight_runs_before_triage_for_a_goal() {
         unconfined_checks: true,
         orchestrator: None,
         delivery: Some(DeliveryMode::Pr),
+        continue_from: None,
     };
 
     // Refused: no decider was called, and nothing is left behind.

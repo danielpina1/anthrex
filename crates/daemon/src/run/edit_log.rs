@@ -120,6 +120,8 @@ fn describe_one(edit: &PlanEdit) -> String {
             let key = thread.strip_prefix(&format!("{pr}:")).unwrap_or(thread);
             format!("reply to {pr}:{key}")
         }
+        // Milestone 9.3 decision 30.
+        PlanEdit::Iterate { .. } => "iterate".to_string(),
     }
 }
 

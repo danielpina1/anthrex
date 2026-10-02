@@ -149,6 +149,7 @@ fn stage(head: Option<&str>, state: FullState) -> StageInfo {
         fix_tasks: vec![],
         propagate_red: None,
         pr: None,
+        round: 1,
     }
 }
 

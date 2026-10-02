@@ -66,6 +66,7 @@ fn a_stage(head: Option<&str>) -> StageInfo {
         fix_tasks: vec!["fix1".into()],
         propagate_red: Some("bbbb2222".into()),
         pr: None,
+        round: 1,
     }
 }
 
@@ -412,6 +413,7 @@ fn old_run_info_still_decodes() {
         runs: vec![run],
         now: 1_700_001_000,
         proposals: Vec::new(),
+        idle_orchestrators: Vec::new(),
     };
     let msg = DaemonMsg::Run(RunReply::Snapshot(snapshot));
     both_ways(&msg);
@@ -496,7 +498,7 @@ fn a_bisect_line() -> BisectLine {
 
 #[test]
 fn history_v3_lines_round_trip() {
-    assert_eq!(HISTORY_VERSION, 4);
+    assert_eq!(HISTORY_VERSION, 5);
     for (line, tag) in [
         (HistoryLine::Tier(a_tier_record()), "tier"),
         (HistoryLine::Flaky(a_flaky_record()), "flaky"),

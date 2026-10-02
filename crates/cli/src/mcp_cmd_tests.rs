@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 #[test]
 fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
     let socket = Path::new("/tmp/anthrex-x/d.sock");
-    for (role, run, task, scout, epic) in [
+    for (index, (role, run, task, scout, epic)) in [
         (AgentRole::Worker, "add-reset-3f9a", Some("t1"), None, None),
         (
             AgentRole::Reviewer,
@@ -21,6 +21,8 @@ fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
             None,
             None,
         ),
+        (AgentRole::Orchestrator, "add-reset-3f9a", None, None, None),
+        // Milestone 9.3 (KG §3.4): a chained orchestrator.
         (AgentRole::Orchestrator, "add-reset-3f9a", None, None, None),
         (
             AgentRole::Planner,
@@ -39,13 +41,19 @@ fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
         (AgentRole::Scout, "", None, Some("onboarding-1"), None),
         // Milestone 9 decision 35: a research task's scout window names its task.
         (AgentRole::Scout, "add-reset-3f9a", Some("t3"), None, None),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // The second orchestrator row (index 3) is the chained one.
+        let chain = (index == 3).then(|| "o-3f9a".to_string());
         let target = McpTarget {
             role,
             run_id: run.into(),
             task_id: task.map(String::from),
             scout_id: scout.map(String::from),
             epic: epic.map(String::from),
+            chain: chain.clone(),
         };
         let mut argv = vec!["anthrex".to_string()];
         argv.extend(daemon::headless::argv::mcp_args(&target, 12, socket).expect("an mcp role"));
@@ -65,6 +73,7 @@ fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
                         task_id: task.map(String::from),
                         scout_id: scout.map(String::from),
                         epic: epic.map(String::from),
+                        chain: chain.clone(),
                         window_id: 12,
                         socket: socket.to_path_buf(),
                     }
@@ -163,6 +172,40 @@ fn options(argv: &[&str]) -> Result<mcp::McpOptions, String> {
             .into_options(PathBuf::from("/tmp/d.sock"))
             .map_err(|e| e.to_string()),
         other => panic!("expected Mcp, got {other:?}"),
+    }
+}
+
+/// Milestone 9.3 (KG §3.4): `--chain` names an orchestrator's chain; any other role
+/// given one is a usage error.
+#[test]
+fn chain_is_accepted_only_for_the_orchestrator() {
+    let opts = options(&[
+        "--role",
+        "orchestrator",
+        "--run",
+        "r1",
+        "--chain",
+        "o-3f9a",
+        "--window",
+        "3",
+    ])
+    .unwrap();
+    assert_eq!(opts.chain.as_deref(), Some("o-3f9a"));
+    let opts = options(&["--role", "orchestrator", "--run", "r1", "--window", "3"]).unwrap();
+    assert_eq!(opts.chain, None);
+    for argv in [
+        &["--role", "worker", "--run", "r1", "--task", "t1"][..],
+        &["--role", "reviewer", "--run", "r1", "--task", "t1"][..],
+        &["--role", "planner", "--run", "r1", "--epic", "mail"][..],
+        &["--role", "scout", "--scout", "s-1"][..],
+    ] {
+        let mut argv = argv.to_vec();
+        argv.extend(["--chain", "o-3f9a", "--window", "3"]);
+        let error = options(&argv).expect_err("--chain outside the orchestrator");
+        assert!(
+            error.contains("--chain <c> is accepted only with --role orchestrator"),
+            "{argv:?}: {error}"
+        );
     }
 }
 

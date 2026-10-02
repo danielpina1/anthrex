@@ -337,6 +337,11 @@ pub enum PlanEdit {
         thread: String,
         body: String,
     },
+    /// Milestone 9.3 decision 30: a new round of a settled run, only ever from
+    /// `edit_plan`'s `iterate`, alone in its call.
+    Iterate {
+        goal: String,
+    },
 }
 
 /// A batch of edits, the shape `anthrex run edit --file` reads.

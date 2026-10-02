@@ -147,6 +147,9 @@ pub fn request_for(
         (ActionKind::CancelTask, ActionTarget::Task(_)) => {
             Some(edit(vec![PlanEdit::CancelTask { task_id: task? }], false))
         }
+        // Milestone 9.3: the iterate dialog sends `RunRequest::Iterate` itself (task
+        // M9.3.10a); the menu entry only opens it.
+        (ActionKind::Iterate, _) => None,
         _ => None,
     }
 }

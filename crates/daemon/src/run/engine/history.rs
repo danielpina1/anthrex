@@ -52,6 +52,7 @@ pub(super) fn append(run: &mut Run, task: Option<&str>, line: HistoryLine, fx: &
         HistoryLine::Flaky(r) => r.record_id.clone(),
         HistoryLine::Bisect(r) => r.record_id.clone(),
         HistoryLine::Stage(r) => r.record_id.clone(),
+        HistoryLine::Round(r) => r.record_id.clone(),
     };
     let kind = OpKind::AppendHistory {
         path: run.repo_dir.join(HISTORY_FILE),

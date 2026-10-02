@@ -337,6 +337,7 @@ fn the_toggles_reach_the_request() {
             unconfined_checks: true,
             orchestrator: None,
             delivery: None,
+            continue_from: None,
         }
     );
 
@@ -353,6 +354,7 @@ fn the_toggles_reach_the_request() {
             unconfined_checks: false,
             orchestrator: None,
             delivery: None,
+            continue_from: None,
         }
     );
 }
@@ -398,6 +400,7 @@ fn the_model_picker_lists_the_runtimes_enabled_models_then_custom() {
                 model: Some("claude-opus-5-5".into()),
             }),
             delivery: None,
+            continue_from: None,
         }
     );
 }
@@ -435,6 +438,7 @@ fn custom_reveals_the_text_line_and_its_text_is_the_model_sent() {
                 model: Some("my model-2".into()),
             }),
             delivery: None,
+            continue_from: None,
         }
     );
 }

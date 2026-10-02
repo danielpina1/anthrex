@@ -41,6 +41,7 @@ pub(super) async fn start_goal(
             unconfined_checks,
             orchestrator,
             delivery,
+            continue_from: None,
         })
         .await?;
     match reply {
@@ -139,6 +140,7 @@ mod tests {
             unconfined_checks: false,
             orchestrator: None,
             delivery: None,
+            continue_from: None,
         };
         assert_eq!(request_timeout(&goal), GOAL_REQUEST_TIMEOUT);
         assert_eq!(

@@ -78,6 +78,7 @@ fn tool_authorization() {
             args: done_args(),
             scout_id: None,
             epic: None,
+            chain: None,
         },
     });
     refused(&mut fx, effects, "unknown run nope");

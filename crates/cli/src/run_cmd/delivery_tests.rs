@@ -21,6 +21,7 @@ fn stage(n: u16, pr: Option<StagePrInfo>) -> StageInfo {
         fix_tasks: Vec::new(),
         propagate_red: None,
         pr,
+        round: 1,
     }
 }
 

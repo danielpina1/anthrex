@@ -124,6 +124,7 @@ fn task(
         atomic: false,
         atomic_reason: None,
         interface_change: false,
+        round: 1,
     }
 }
 
@@ -238,6 +239,9 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         stages: Vec::new(),
         test_slots: 0,
         delivery: None,
+        chain: None,
+        round: 1,
+        rounds: Vec::new(),
     }
 }
 

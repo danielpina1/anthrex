@@ -15,8 +15,12 @@ pub enum ActionKind {
     Approve,
     Reject,
     Submit,
-    ApproveHold { hold: String },
-    RejectHold { hold: String },
+    ApproveHold {
+        hold: String,
+    },
+    RejectHold {
+        hold: String,
+    },
     Pause,
     Unpause,
     Resume,
@@ -25,7 +29,9 @@ pub enum ActionKind {
     Accept,
     Discard,
     Stats,
-    MessageStage { stage: u16 },
+    MessageStage {
+        stage: u16,
+    },
     Answer,
     Message,
     Refresh,
@@ -33,6 +39,8 @@ pub enum ActionKind {
     Override,
     CancelTask,
     OpenConversation,
+    /// Milestone 9.3 (KG §2.2): opens the iterate dialog.
+    Iterate,
 }
 
 /// Which input form an action opens.
@@ -81,7 +89,7 @@ impl ActionKind {
     pub fn needs(&self) -> ActionNeeds {
         use ActionKind::*;
         match self {
-            ReviewPlan | Stats | OpenConversation => ActionNeeds::Open,
+            ReviewPlan | Stats | OpenConversation | Iterate => ActionNeeds::Open,
             Answer => ActionNeeds::Input(InputKind::Answer),
             Message | MessageStage { .. } => ActionNeeds::Input(InputKind::Message),
             Override => ActionNeeds::Input(InputKind::Reason),
