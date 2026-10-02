@@ -191,6 +191,43 @@ fn saving_an_edit_sends_profile_edit() {
     assert!(editor(&app).error.is_some());
 }
 
+/// Milestone 9.2 decision 3 (task M9.2.15): the delivery rows edit through the screen,
+/// and send the bare value the daemon's `proposal_delivery::edit` reads.
+#[test]
+fn the_delivery_rows_send_the_bare_value() {
+    let (mut app, _) = ready_app();
+    select(&mut app, "delivery.mode");
+    tap(&mut app, KeyCode::Char('e'));
+    match &editor(&app).field {
+        EditorField::Choice { options, at } => {
+            assert_eq!(*options, ["local", "pr"]);
+            assert_eq!(options[*at], "local", "unset reads local");
+        }
+        other => panic!("{other:?}"),
+    }
+    tap(&mut app, KeyCode::Right);
+    let effects = tap(&mut app, KeyCode::Enter);
+    let edit = |key: &str, value: &str| ProfileRequest::Edit {
+        dir: dir(),
+        key: key.into(),
+        value: Some(value.into()),
+        yes: false,
+        unconfined_checks: false,
+    };
+    assert_eq!(
+        profile_requests(&effects),
+        vec![edit("delivery.mode", "pr")]
+    );
+    select(&mut app, "delivery.remote");
+    tap(&mut app, KeyCode::Char('e'));
+    typed(&mut app, "upstream");
+    let effects = tap(&mut app, KeyCode::Enter);
+    assert_eq!(
+        profile_requests(&effects),
+        vec![edit("delivery.remote", "upstream")]
+    );
+}
+
 /// Decision 35: `u` asks first; its page's `y` sends the unset.
 #[test]
 fn u_unsets_after_its_page() {

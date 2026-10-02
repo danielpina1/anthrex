@@ -231,7 +231,13 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             let detail = run.halted_reason.as_deref();
             push(3, AlertKey::Halted(id.clone()), text, None, detail, None);
         }
-        if run.state == RunState::Complete {
+        // Milestone 9.2 ruling R-13: a `pr` run's pull requests are merged on GitHub,
+        // never accepted, so a complete one is never "ready to accept".
+        let pr = run
+            .delivery
+            .as_ref()
+            .is_some_and(|d| d.mode == proto::DeliveryMode::Pr);
+        if run.state == RunState::Complete && !pr {
             let counted = run
                 .tasks
                 .iter()

@@ -565,6 +565,7 @@ mod state;
 pub(crate) mod alert_fixtures;
 pub(crate) mod orch_fixtures;
 pub(crate) mod plan_fixtures;
+pub(crate) mod pr_fixtures;
 pub(crate) mod run_fixtures;
 mod run_rows;
 mod run_status;

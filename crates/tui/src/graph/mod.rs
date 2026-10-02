@@ -15,6 +15,7 @@ use unicode_width::UnicodeWidthStr;
 
 pub mod paint;
 pub(crate) mod run_text;
+mod stage_pr;
 pub mod viewport;
 
 pub use viewport::Pan;
@@ -26,9 +27,12 @@ pub const MIN_NODE_WIDTH: u16 = 12;
 /// the painter rather than allowed to stretch its whole tier.
 pub const MAX_NODE_WIDTH: u16 = 30;
 /// A stage node's cap (milestone 9.0.7 decision 18): its whole text, the longest being
-/// `stage 99/99  tier 3 ✗ bisecting` (31 columns), plus the glyph, its space, the
-/// borders and the padding. Task, run and every other box keep [`MAX_NODE_WIDTH`].
-pub const MAX_STAGE_NODE_WIDTH: u16 = 37;
+/// `stage 99/99  tier 3 ✗ bisecting` (31 columns), then, in a `pr`-mode run, its pull
+/// request (milestone 9.2 decision 42) up to `  #9999  ci ✗  99 threads` (25), plus the
+/// glyph, its space, the borders and the padding. A local run's stage boxes are as
+/// wide as before: a box takes only what its text needs. Task, run and every other box
+/// keep [`MAX_NODE_WIDTH`].
+pub const MAX_STAGE_NODE_WIDTH: u16 = 62;
 /// Top border, content, bottom border.
 pub const NODE_HEIGHT: u16 = 3;
 /// Columns between a tier's right edge and the next tier's left edge. The

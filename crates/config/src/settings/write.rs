@@ -57,7 +57,7 @@ const FOREIGN_MODEL_KEY: &str = "orchestrator.models.{key} is a key the settings
 /// Pure: `text` with every owned key set as `doc` says (decision 30). Refuses with
 /// problems on an unsupported form, on invalid TOML, or on an output that does not read
 /// back as `doc` with every other key unchanged.
-pub fn edit_text(text: &str, doc: &SettingsDoc) -> Result<String, Vec<String>> {
+pub(crate) fn edit_text(text: &str, doc: &SettingsDoc) -> Result<String, Vec<String>> {
     let table: toml::Table = text
         .parse()
         .map_err(|e| vec![format!("config.toml is not valid TOML: {e}")])?;

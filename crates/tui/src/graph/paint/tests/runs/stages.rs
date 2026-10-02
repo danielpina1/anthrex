@@ -125,6 +125,42 @@ fn every_stage_form_draws_uncut_at_stage_10_of_10() {
     }
 }
 
+/// Milestone 9.2 decision 42: a `pr`-mode stage row draws whole, its pull request
+/// after its tier 3, up to `stage 10/10  tier 3 ✗ bisecting  #9999  ci ✗  99 threads`.
+#[test]
+fn a_pr_stage_row_draws_uncut() {
+    use crate::tree::pr_fixtures::{pr, pr_fixture};
+    use proto::{CiState, FullState, PrState};
+    let (mut snap, windows) = pr_fixture();
+    let stages = &mut snap.runs[0].stages;
+    for n in 4..=10 {
+        stages.push(stage(n, None, 0, 0));
+    }
+    stages[9].head = Some("a".repeat(40));
+    stages[9].full.state = FullState::Bisecting;
+    let mut last = pr(9999, PrState::Open, CiState::Red);
+    last.threads.new = 99;
+    stages[9].pr = Some(last);
+    let app = app_of((snap, windows));
+    let (layout, lines) = paint_view(&app);
+    for (n, text) in [
+        (2, "stage 2/10  tier 3 ✓ 38s  #142  ci ✗  3 threads"),
+        (
+            10,
+            "stage 10/10  tier 3 ✗ bisecting  #9999  ci ✗  99 threads",
+        ),
+    ] {
+        let rect = rect_of(&layout, &stage_key(n));
+        let drawn: String = lines_text(&lines)[usize::from(rect.y + 1)]
+            .chars()
+            .skip(usize::from(rect.x))
+            .take(usize::from(rect.width))
+            .collect();
+        assert!(drawn.contains(&format!("{text} ")), "{drawn}");
+        assert!(!drawn.contains('…'), "{drawn}");
+    }
+}
+
 /// The plan gate groups its tasks by stage node, and neither stage, uncreated before
 /// approval (C-24), is drawn as created.
 #[test]

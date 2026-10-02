@@ -409,6 +409,7 @@ pub(crate) mod run_format;
 mod run_orch;
 mod run_round;
 mod run_stage;
+mod run_stage_pr;
 mod run_task;
 mod run_task_outcome;
 mod run_task_sections;
@@ -424,6 +425,7 @@ pub use panel::render_in;
 #[cfg(test)]
 pub use run_format::progress_bar;
 pub use run_format::{format_duration, format_tokens, local_hhmm};
+pub(crate) use run_stage_pr::delivering;
 
 #[cfg(test)]
 mod tests;
@@ -445,6 +447,9 @@ mod run_orch_tests;
 
 #[cfg(test)]
 mod run_stage_tests;
+
+#[cfg(test)]
+mod run_stage_pr_tests;
 
 #[cfg(test)]
 mod run_task_sections_tests;

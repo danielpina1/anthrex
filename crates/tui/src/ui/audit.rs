@@ -6,6 +6,7 @@
 
 use crate::app::{App, Modal};
 use crate::theme::{Palette, Role, role};
+use crate::tree::pr_fixtures::{pr_fixture, single_pr_fixture};
 use crate::tree::run_fixtures::{PROJECT, RUN_ID, gate_fixture, pty, three_task_fixture};
 use crate::{settings::UiSettings, tree};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -215,6 +216,11 @@ pub(crate) fn shows(name: &str) -> Shows {
         // Decision 22: at 80x24 the two-stage run is the compact list; the task panel
         // below names `t2`'s state whole.
         "run view as a list" => row("in review · r1", Some("esc back"), &["j/k move"]),
+        // Milestone 9.2 decision 42: a `pr` run's stage with its pull request, and a
+        // single-stage one whose root shows it.
+        "run view delivering" | "run view delivering one stage" => {
+            row("RUN", Some("esc back"), &["j/k move"])
+        }
         "conversation" => row("CHAT", None, &["C-b ? help"]),
         // Milestone 9.0.7 decision 23: the framed review's right-hand title.
         "plan review" => row("awaiting approval", Some("esc back"), &["a approve"]),
@@ -403,6 +409,18 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
         (
             "run view as a list",
             crate::ui::run_list::tests::two_stage_run_selected("t2"),
+        ),
+        (
+            "run view delivering",
+            super::run_pr_tests::pr_view(pr_fixture(), false, super::run_pr_tests::stage_key(2)),
+        ),
+        (
+            "run view delivering one stage",
+            super::run_pr_tests::pr_view(
+                single_pr_fixture(),
+                false,
+                tree::NodeKey::Run(RUN_ID.into()),
+            ),
         ),
         ("conversation", with(gate(), |a| chord(a, 'm'))),
         // Decisions 23–26: `p` in the run view at the gate.

@@ -5,7 +5,7 @@
 use super::actions::tap;
 use super::orch::tagged;
 use super::settings_screen::{
-    current, names, open, opened, origin, puts, reply, sample, screen, select, set_limit,
+    cached, current, names, open, opened, origin, puts, reply, sample, screen, select, set_limit,
     settings_sent, w,
 };
 use super::*;
@@ -14,8 +14,8 @@ use crate::app::settings_screen::{
     DISCARD_ASK, LEAVE_SETTINGS_FIRST, LINK_LOST, NO_CHANGES, SAVED, SaveOutcome, SettingsPage,
     UNSAVED_FIRST,
 };
-use proto::SettingsReply;
 use proto::settings::key;
+use proto::{SettingsDoc, SettingsReply};
 
 #[test]
 fn w_sends_put_and_saved_shows_the_line() {
@@ -323,4 +323,83 @@ fn an_unsent_put_says_so_on_the_screen() {
     app.on_send_failed(&unsent(id, doc));
     assert!(!app.replies.contains(id));
     assert_eq!(app.toast_text(), Some("daemon is not responding"));
+}
+
+/// The sample with hidden format characters a save drops (milestone 9.2's M9.2.6 fix
+/// round 2): `⚠️`'s variation selector in `claude-x`'s note and a soft hyphen in the
+/// orchestrator default's model.
+fn with_hidden() -> SettingsDoc {
+    let mut doc = sample();
+    doc.models[1].note = "\u{26A0}\u{FE0F} careful".into();
+    doc.models[1].model = "claude-\u{AD}x".into();
+    doc.orchestrator.runtime = Some(Runtime::Claude);
+    doc.orchestrator.model = "claude-\u{AD}x".into();
+    doc
+}
+
+fn claude_x(app: &App) -> proto::ModelEntry {
+    let rows = screen(app).rows(Runtime::Claude);
+    let row = rows.iter().find(|r| r.custom).expect("the custom row");
+    row.entry.clone()
+}
+
+/// Ruling (M9.2.15, carried): the Settings screen adopts the `Saved` reply's doc, which
+/// the daemon cleaned (`config::settings::cleaned`), so what the screen holds is what
+/// was stored (`⚠` without its selector) and an unchanged screen is not dirty; edits
+/// made while the save was in flight are kept on top of it.
+#[test]
+fn the_saved_doc_is_adopted_as_the_daemon_cleaned_it() {
+    let stored = |sent: &SettingsDoc| config::settings::cleaned(sent);
+    // Nothing edited since the send.
+    let mut app = cached(with_hidden(), origin(&[]));
+    open(&mut app);
+    set_limit(&mut app, key::MAX_READERS, "4");
+    let (id, sent) = puts(&w(&mut app))[0].clone();
+    assert_ne!(stored(&sent), sent, "the save cleans something");
+    let saved = SettingsReply::Saved {
+        doc: stored(&sent),
+        origin: origin(&[]),
+    };
+    app.on_daemon(reply(saved, id));
+    assert_eq!(claude_x(&app).note, "\u{26A0} careful");
+    assert!(!screen(&app).dirty());
+    // An edit made while saving: kept, and the rest is the stored doc.
+    let mut app = cached(with_hidden(), origin(&[]));
+    open(&mut app);
+    set_limit(&mut app, key::MAX_READERS, "4");
+    let (id, sent) = puts(&w(&mut app))[0].clone();
+    set_limit(&mut app, key::MAX_WRITERS, "5");
+    let saved = SettingsReply::Saved {
+        doc: stored(&sent),
+        origin: origin(&[]),
+    };
+    app.on_daemon(reply(saved, id));
+    let s = screen(&app);
+    assert_eq!(s.base, stored(&sent));
+    let mut want = stored(&sent);
+    assert_ne!(want.limits.max_writers, 5);
+    want.limits.max_writers = 5;
+    assert_eq!(s.built(), want, "only the in-flight edit differs");
+    assert_eq!(claude_x(&app).model, "claude-x");
+    assert_eq!(s.model, "claude-x");
+    assert_eq!(s.outcome, Some(SaveOutcome::Saved));
+}
+
+/// A save that landed while its reply was lost: the next `Current` carries the cleaned
+/// doc, and the screen still knows it as its own and takes it (fix round 1, ruling 2).
+#[test]
+fn a_landed_save_is_known_by_its_cleaned_doc() {
+    let mut app = cached(with_hidden(), origin(&[]));
+    open(&mut app);
+    set_limit(&mut app, key::MAX_READERS, "4");
+    let (_, sent) = puts(&w(&mut app))[0].clone();
+    app.on_link_lost("gone");
+    app.screens_tick(std::time::Instant::now());
+    assert_eq!(screen(&app).outcome, Some(SaveOutcome::LinkLost));
+    let (id, _) = tagged(&[app.settings_fetch()]);
+    let landed = config::settings::cleaned(&sent);
+    app.on_daemon(reply(current(landed.clone(), origin(&[])), id));
+    assert!(!screen(&app).dirty());
+    assert_eq!(screen(&app).base, landed);
+    assert_eq!(screen(&app).outcome, None);
 }

@@ -117,7 +117,9 @@ pub(crate) fn stage_text_in(run: &RunInfo, stage: &StageInfo, ascii: bool) -> St
         FullState::Red => format!("{}{secs}", g(Glyph::Failed)),
         FullState::Bisecting => format!("{} bisecting", g(Glyph::Failed)),
     };
-    format!("stage {}/{}  tier 3 {tier}", stage.n, run.stages.len())
+    // Milestone 9.2 decision 42: the stage's pull request follows, in `pr` mode.
+    let pr = super::stage_pr::row_suffix(run, stage, ascii);
+    format!("stage {}/{}  tier 3 {tier}{pr}", stage.n, run.stages.len())
 }
 
 /// The tag after a task made by the engine rather than the plan: ` (bisect)`, ` (sync)`.
