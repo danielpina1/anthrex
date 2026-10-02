@@ -33,20 +33,33 @@ fn esc_back() -> Hint {
     hint("esc", "back", u8::MAX)
 }
 
-/// `true` while the action menu is open: it draws its own key line.
-fn menu_open(app: &App) -> bool {
-    matches!(app.modal, Some(crate::app::Modal::Action(_)))
+/// A modal's badge and its one hint (milestone 9.0.7 final fix wave I1, decision 31's
+/// rule for the action menu extended to every modal). A modal takes every key
+/// (`App::on_key`), so nothing of the mode underneath is named: ` HELP ` and
+/// `esc close` over the help, ` MENU ` and `esc back` over the action menu (it draws
+/// its own key line), ` DIALOG ` over every other dialog, `esc close` for the config
+/// notice and `esc back` for the rest (each draws its own keys).
+fn modal_bar(app: &App) -> Option<(&'static str, Hint)> {
+    use crate::app::Modal;
+    let close = || hint("esc", "close", u8::MAX);
+    Some(match app.modal.as_ref()? {
+        Modal::Help(_) => (" HELP ", close()),
+        Modal::Action(_) => (" MENU ", esc_back()),
+        Modal::Notice { .. } => (" DIALOG ", close()),
+        _ => (" DIALOG ", esc_back()),
+    })
 }
 
-/// The mode badge, in decision 6's precedence: ` PREFIX ` first, then ` MENU `, then
+/// The mode badge, in decision 6's precedence, a modal's first (it takes the next key,
+/// even with the prefix pending): ` HELP `, ` MENU ` or ` DIALOG `, then ` PREFIX `, then
 /// the screens' (` PROFILE `, ` SETTINGS `, ` STATS `), above ` PLAN `. Milestone 9.0.7
 /// decision 31: the run view wears ` RUN `, the project overview ` OVERVIEW ` and the
 /// sidebar tree ` TREE `.
 pub(super) fn badge(app: &App) -> Option<&'static str> {
-    if app.keymap.pending() {
+    if let Some((badge, _)) = modal_bar(app) {
+        Some(badge)
+    } else if app.keymap.pending() {
         Some(" PREFIX ")
-    } else if menu_open(app) {
-        Some(" MENU ")
     } else if matches!(app.screen, Some(Screen::Profile(_))) {
         Some(" PROFILE ")
     } else if matches!(app.screen, Some(Screen::Settings(_))) {
@@ -73,18 +86,19 @@ pub(super) fn badge(app: &App) -> Option<&'static str> {
 /// `true` while a filter is being typed: the bar shows `/text`, not hints.
 pub(super) fn filtering(app: &App) -> bool {
     !app.keymap.pending()
-        && !menu_open(app)
+        && app.modal.is_none()
         && app.screen.is_none()
         && app.plan_review.is_none()
         && app.alerts_focus.is_none()
         && app.tree_input == Some(TreeInput::Filter)
 }
 
-/// The hints to list. The pending prefix wins, then the action menu's `esc back` alone
-/// (decision 31), the screens, the review, the Alerts view, tree navigation, then the
-/// default bar.
+/// The hints to list. A modal's `esc` alone wins (I1), then the pending prefix, the
+/// screens, the review, the Alerts view, tree navigation, then the default bar.
 pub(super) fn body(app: &App) -> Body {
-    let (hints, git) = if app.keymap.pending() {
+    let (hints, git) = if let Some((_, esc)) = modal_bar(app) {
+        (vec![esc], false)
+    } else if app.keymap.pending() {
         let list = [
             ("a", "alerts", 8),
             ("g", "goal", 7),
@@ -105,8 +119,6 @@ pub(super) fn body(app: &App) -> Body {
             separator: " · ",
             git: git && app.tree_input.is_none(),
         };
-    } else if menu_open(app) {
-        (vec![esc_back()], false)
     } else if let Some(Screen::Profile(screen)) = &app.screen {
         (crate::ui::profile::hints(screen), false)
     } else if let Some(Screen::Settings(screen)) = &app.screen {
@@ -176,21 +188,23 @@ fn navigate_hints(app: &App) -> Vec<Hint> {
             hint("f", &filter, 3),
             esc_back(),
         ]
-    } else if state == Some(proto::RunState::Planning) {
-        // Task 7 note: `j/k` keeps the run view's 6; `p` has nothing to review yet.
+    } else if holds {
+        // Final fix wave (task 7's minor 1): an awaiting hold before planning, as
+        // `on_gate_key` tries the hold's `a`/`x` first.
         vec![
-            hint("s", "submit", 9),
-            hint("j/k", "move", 6),
+            hint("a", "approve hold", 9),
+            hint("x", "reject hold", 9),
+            hint("p", "review", 8),
             hint("⏎", "open", 4),
             hint(".", "actions", 7),
             hint("f", &filter, 3),
             esc_back(),
         ]
-    } else if holds {
+    } else if state == Some(proto::RunState::Planning) {
+        // Task 7 note: `j/k` keeps the run view's 6; `p` has nothing to review yet.
         vec![
-            hint("a", "approve hold", 9),
-            hint("x", "reject hold", 9),
-            hint("p", "review", 8),
+            hint("s", "submit", 9),
+            hint("j/k", "move", 6),
             hint("⏎", "open", 4),
             hint(".", "actions", 7),
             hint("f", &filter, 3),
@@ -202,13 +216,30 @@ fn navigate_hints(app: &App) -> Vec<Hint> {
             hint("h/l", "tier", 4),
             hint("⏎", "open", 8),
             hint(".", "actions", 7),
-            hint("PgDn", "panel", 5),
+        ]
+        .into_iter()
+        .chain(task_panel_shown(app).then(|| hint("PgDn", "panel", 5)))
+        .chain([
             hint("space", "fold", 3),
             hint("f", &filter, 2),
             hint("/", "find", 1),
             esc_back(),
-        ]
+        ])
+        .collect()
     }
+}
+
+/// M1 (final fix wave): PgDn scrolls the task panel only while a task is selected and
+/// its panel is drawn: the inspector on (`i`) and the main pane tall enough for a
+/// panel rather than the single line (`overview::areas` with the least panel; no
+/// frame drawn yet counts as tall enough).
+fn task_panel_shown(app: &App) -> bool {
+    let task = matches!(app.tree.selected, Some(crate::tree::NodeKey::Task { .. }));
+    let tall = app.graph_main.is_none_or(|main| {
+        let (_, footer) = crate::ui::overview::areas(main, true, Some(0));
+        footer.height >= crate::inspector::INSPECTOR_HEIGHT
+    });
+    task && app.inspector_visible && tall
 }
 
 /// Milestone 9.0.7 decision 11 and Interfaces "Hint priorities": the Alerts view's

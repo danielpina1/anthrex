@@ -28,12 +28,16 @@ fn open_menu_on_the_run(app: &mut App) {
     assert!(matches!(app.modal, Some(Modal::Action(_))));
 }
 
-/// The column where `text` starts on the bottom row (every cell one column wide).
+/// The column where `text` starts on the bottom row (every cell one column wide);
+/// `None` for an empty `text` (final fix wave, task 7's deferred minor 4).
 fn column_of(buffer: &Buffer, width: u16, height: u16, text: &str) -> Option<u16> {
     let row: Vec<String> = (0..width)
         .map(|x| buffer[(x, height - 1)].symbol().to_string())
         .collect();
     let len = text.chars().count();
+    if len == 0 {
+        return None;
+    }
     (0..row.len().saturating_sub(len - 1))
         .find_map(|x| (row[x..x + len].concat() == text).then_some(x as u16))
 }
@@ -378,6 +382,8 @@ fn every_mode_keeps_esc_at_40_columns() {
                 text.ends_with("esc back"),
                 "{name} (ascii {ascii}): {text:?}"
             );
+            // Final fix wave (task 7's deferred minor 3): ASCII mode's bar is ASCII.
+            assert!(!ascii || text.is_ascii(), "{name}: {text:?}");
         }
     }
 }
@@ -419,4 +425,17 @@ fn the_prefix_list_is_unchanged() {
         bar(&app, 60, 24),
         " PREFIX  C-b › a alerts · g goal · T run · ? help"
     );
+}
+
+/// Final fix wave (task 7's deferred minor 1): a planning run with an awaiting hold
+/// keeps the hold's keys; the hold is what waits on the user.
+#[test]
+fn a_planning_run_with_a_hold_shows_the_holds_keys() {
+    let app = run_view_app(Some(RunState::Planning), true, 160, 24);
+    let text = bar(&app, 160, 24);
+    assert!(
+        text.starts_with(" RUN  a approve hold  x reject hold  p review"),
+        "{text:?}"
+    );
+    assert_eq!(column_of(&draw(&app, 160, 24), 160, 24, ""), None);
 }

@@ -380,6 +380,11 @@ fn statusbar_shows_the_run_view_hints() {
         crossterm::event::KeyCode::Char('f'),
         crossterm::event::KeyModifiers::NONE,
     ));
+    // Final fix wave M1: `PgDn panel` only with a task's panel shown.
+    running.tree.selected = Some(crate::tree::NodeKey::Task {
+        run: crate::tree::run_fixtures::RUN_ID.into(),
+        id: "t1".into(),
+    });
     let text = row_text(&render_row(&running, 160));
     assert!(
         text.contains(

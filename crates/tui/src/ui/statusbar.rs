@@ -69,7 +69,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     // Decision 20, and milestone 9.0.7 decision 32: with the sidebar hidden,
     // `⚑ <n> <prefix> a` right after the mode badge, the mark and count in the top
     // alert's role, the key in the accent. It is measured before the hints, so no
-    // hint drop reaches it.
+    // hint drop reaches it. The final fix wave's M1: the key shows only where `C-b a`
+    // opens the view; under a modal, a screen, the plan review or the open view the
+    // count stays alone.
     if !app.sidebar_visible {
         let all = crate::app::alerts(app);
         if let Some(top) = all.first() {
@@ -81,14 +83,16 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 ),
                 theme::alert_style(top.priority, palette),
             ));
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                format!(
-                    "{} a",
-                    crate::safe_text::one_line(&app.settings.prefix_label)
-                ),
-                accent,
-            ));
+            if alerts_key_works(app) {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    format!(
+                        "{} a",
+                        crate::safe_text::one_line(&app.settings.prefix_label)
+                    ),
+                    accent,
+                ));
+            }
             spans.push(Span::raw("  "));
         }
     }
@@ -123,6 +127,16 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         let toast = Span::styled(text.to_string(), style);
         frame.render_widget(Paragraph::new(Line::from(toast)), right);
     }
+}
+
+/// `true` where `C-b a` opens the Alerts view: not under a modal (it takes the key),
+/// a screen or the plan review (both refuse it), nor while the view is open.
+fn alerts_key_works(app: &App) -> bool {
+    use crate::app::region::KeyRegion;
+    !matches!(
+        app.key_region(),
+        KeyRegion::Dialog | KeyRegion::Screen | KeyRegion::Review | KeyRegion::Alerts
+    )
 }
 
 /// The hint line and, in the default and prefix bars, the focused worktree's git
@@ -367,6 +381,9 @@ pub fn git_spans_in(state: &GitState, budget: usize, p: theme::Palette) -> Vec<S
 #[cfg(test)]
 #[path = "statusbar_kit_tests.rs"]
 mod kit_tests;
+#[cfg(test)]
+#[path = "statusbar_modal_tests.rs"]
+mod modal_tests;
 #[cfg(test)]
 #[path = "statusbar_polish_tests.rs"]
 mod polish_tests;
