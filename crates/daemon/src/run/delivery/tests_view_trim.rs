@@ -155,6 +155,43 @@ fn a_viewed_pr_is_journaled_within_run_jsons_caps() {
     assert_eq!(view.threads[0].comments[0].body, MARKER);
 }
 
+/// The final fix wave (task 10's deferred item): a kept marker tail is text too, and
+/// counts toward the stage's budget. A view whose every body ends in a fake marker
+/// (anyone can write one, up to 200 characters) stays within the budget, in bytes.
+#[test]
+fn fake_marker_tails_count_toward_the_budget() {
+    let mut view = huge();
+    let fake: String = std::iter::repeat_n('é', 170).collect();
+    let tail = format!("<!-- anthrex:reply {fake} -->");
+    assert!(tail.chars().count() <= 200);
+    let mut bodies = 0;
+    let mut tailed = |body: &mut String| {
+        body.push_str("\n\n");
+        body.push_str(&tail);
+        bodies += 1;
+    };
+    view.reviews.iter_mut().for_each(|r| tailed(&mut r.body));
+    view.comments.iter_mut().for_each(|c| tailed(&mut c.body));
+    (view.threads.iter_mut())
+        .flat_map(|t| &mut t.comments)
+        .for_each(|c| tailed(&mut c.body));
+    // anthrex's own marker on the newest thread's newest comment, which comes first.
+    view.threads[99].comments[49].body = format!("{}\n\n{MARKER}", "y".repeat(10));
+    let view = trimmed(view);
+    let bytes: usize = (view.reviews.iter().map(|r| r.body.len()))
+        .chain(view.comments.iter().map(|c| c.body.len()))
+        .chain(
+            (view.threads.iter())
+                .flat_map(|t| &t.comments)
+                .map(|c| c.body.len() + c.diff_hunk.len()),
+        )
+        .sum();
+    // Every character is at most 4 bytes; a cut body may add `\n\n` and `…`.
+    let bound = 4 * STAGE_TEXT_CHARS + bodies * (2 + CUT_MARK.len());
+    assert!(bytes <= bound, "{bytes} > {bound}");
+    assert!(view.threads[99].comments[49].body.ends_with(MARKER));
+}
+
 #[test]
 fn a_small_view_and_other_results_are_journaled_as_they_are() {
     let mut view = huge();

@@ -20,7 +20,7 @@ use crate::run::contract::sha7;
 use crate::run::delivery::ThreadState;
 use crate::run::delivery::ops::HostOp;
 use crate::run::delivery::reply_edit::{marker, target};
-use crate::run::delivery::{FAILURES_BEFORE_ATTENTION, ReplyDue};
+use crate::run::delivery::{FAILURES_BEFORE_ATTENTION, MAYBE_SENT_MAX, ReplyDue};
 use crate::run::model::{FixOf, Run};
 
 /// Step 4: each merged review fix of stage `n` queues one reply per thread, once
@@ -235,6 +235,11 @@ fn failing(run: &mut Run, n: u16, marker: &str, text: &str, now: u64) -> bool {
         return false;
     }
     let r = stage.replies.remove(i);
+    if r.sent {
+        stage.maybe_sent.push(r.marker.clone());
+        let over = stage.maybe_sent.len().saturating_sub(MAYBE_SENT_MAX);
+        stage.maybe_sent.drain(..over);
+    }
     let pr = run.delivery.pr(n).map_or(0, |p| p.number);
     // The final fix wave's B m-10: the host's text, in quotes.
     let line = format!(

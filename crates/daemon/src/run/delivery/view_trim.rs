@@ -54,16 +54,39 @@ pub fn journal_line(result: &OpResult) -> OpResult {
 
 fn trim_view(view: &mut PrView) {
     let mut budget = STAGE_TEXT_CHARS;
-    for r in view.reviews.iter_mut().rev() {
-        cut_body(&mut r.body, true, &mut budget);
+    // The final fix wave (task 10's deferred item): a marker tail kept after a cut is
+    // text too. Tails are paid for first, from the same budget, while it lasts: the
+    // newest thread comments first, then conversation comments, then reviews (where
+    // anthrex's replies are, in that order of likelihood); a body's tail that does not
+    // fit is cut with the body.
+    let mut paid = |body: &str| match marker_tail(body).map(|t| t.chars().count()) {
+        Some(n) if n <= budget => {
+            budget -= n;
+            true
+        }
+        _ => false,
+    };
+    let thread_tails: Vec<Vec<bool>> = (view.threads.iter().rev())
+        .map(|t| t.comments.iter().rev().map(|c| paid(&c.body)).collect())
+        .collect();
+    let comment_tails: Vec<bool> = view.comments.iter().rev().map(|c| paid(&c.body)).collect();
+    let review_tails: Vec<bool> = view.reviews.iter().rev().map(|r| paid(&r.body)).collect();
+    for (r, tail) in view.reviews.iter_mut().rev().zip(review_tails) {
+        cut_body(&mut r.body, true, tail, &mut budget);
     }
-    for c in view.comments.iter_mut().rev() {
-        cut_body(&mut c.body, true, &mut budget);
+    for (c, tail) in view.comments.iter_mut().rev().zip(comment_tails) {
+        cut_body(&mut c.body, true, tail, &mut budget);
     }
-    for t in view.threads.iter_mut().rev() {
+    for (t, tails) in view.threads.iter_mut().rev().zip(thread_tails) {
         let len = t.comments.len();
-        for (i, c) in t.comments.iter_mut().enumerate().rev() {
-            cut_body(&mut c.body, len - i <= THREAD_COMMENTS_KEPT, &mut budget);
+        let each = t.comments.iter_mut().enumerate().rev().zip(tails);
+        for ((i, c), tail) in each {
+            cut_body(
+                &mut c.body,
+                len - i <= THREAD_COMMENTS_KEPT,
+                tail,
+                &mut budget,
+            );
             if i == 0 {
                 cut_text(&mut c.diff_hunk, &mut budget);
             } else {
@@ -81,19 +104,23 @@ fn marker_tail(body: &str) -> Option<&str> {
 }
 
 /// Cuts a body: to the comment cap within the budget when `keep`, else to nothing; a
-/// kept body is never emptied, and a marker at its end is kept after the cut.
-fn cut_body(body: &mut String, keep: bool, budget: &mut usize) {
+/// kept body is never emptied, and a marker at its end whose room was `paid` is kept
+/// after the cut (its characters are not counted again).
+fn cut_body(body: &mut String, keep: bool, paid: bool, budget: &mut usize) {
     let max = if keep {
         COMMENT_KEPT_CHARS.min(*budget)
     } else {
         0
     };
+    let tail = paid
+        .then(|| marker_tail(body).map(str::to_string))
+        .flatten();
     let count = body.chars().count();
-    if count <= max {
-        *budget -= count;
+    let text = count - tail.as_ref().map_or(0, |t| t.chars().count());
+    if text <= max {
+        *budget -= text;
         return;
     }
-    let tail = marker_tail(body).map(str::to_string);
     let mut head: String = body.chars().take(max).collect();
     *budget -= head.chars().count();
     if keep && head.trim().is_empty() && !body.trim().is_empty() {

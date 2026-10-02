@@ -81,7 +81,10 @@ pub(super) fn intake(run: &mut Run, n: u16, intakes: Vec<Intake>, now: u64) {
         let mut quiet = Vec::new();
         for item in &intake.items {
             let sent = |r: &ReplyDue| r.sent && item.body.contains(&r.marker);
-            let own = stage.own_comments.contains(&item.id) || stage.replies.iter().any(sent);
+            let maybe = |m: &String| item.body.contains(m.as_str());
+            let own = stage.own_comments.contains(&item.id)
+                || stage.replies.iter().any(sent)
+                || stage.maybe_sent.iter().any(maybe);
             let why = if own {
                 stage.own_comments.insert(item.id);
                 Some(OWN)
@@ -395,10 +398,17 @@ pub(crate) fn attention(run: &Run) -> Vec<String> {
     lines
 }
 
+/// The final fix wave's B m-7: a stage keeps at most this many thread records.
+pub(crate) const THREADS_KEPT: usize = 500;
+/// The final fix wave's B m-7: a thread keeps the ids of its newest this many comments.
+pub(crate) const THREAD_IDS_KEPT: usize = 200;
+
 /// The ruling carried from task M9.2.8: a stage keeps the text of its `new` threads
 /// only, newest first, each thread its newest [`THREAD_COMMENTS_KEPT`] comments cut to
-/// [`COMMENT_KEPT_CHARS`], within [`STAGE_TEXT_CHARS`] in all. Ids are never dropped.
+/// [`COMMENT_KEPT_CHARS`], within [`STAGE_TEXT_CHARS`] in all. The final fix wave's
+/// B m-7 bounds the ids too: [`cap`].
 pub(super) fn trim(stage: &mut StageDelivery) {
+    cap(stage);
     let mut budget = STAGE_TEXT_CHARS;
     for t in stage.threads.iter_mut().rev() {
         let keep = t.state == ThreadState::New;
@@ -412,6 +422,40 @@ pub(super) fn trim(stage: &mut StageDelivery) {
             }
             cut(&mut c.text, room, &mut budget);
         }
+    }
+}
+
+/// B m-7: at most [`THREADS_KEPT`] records, the oldest resolved ones (replied or
+/// ignored) dropped first, then the oldest others no task holds and no open batch
+/// lists; each thread the ids of its newest [`THREAD_IDS_KEPT`] comments. A view shows
+/// a PR's newest 100 threads with their first 50 comments, so no view shows a dropped
+/// record, or a dropped id, again.
+fn cap(stage: &mut StageDelivery) {
+    for t in &mut stage.threads {
+        let over = t.comments.len().saturating_sub(THREAD_IDS_KEPT);
+        t.comments.drain(..over);
+    }
+    let resolved = |t: &ThreadRecord| {
+        matches!(
+            t.state,
+            ThreadState::Replied { .. } | ThreadState::Ignored { .. }
+        )
+    };
+    let batched = stage
+        .batch
+        .as_ref()
+        .map(|b| b.threads.clone())
+        .unwrap_or_default();
+    let free = |t: &ThreadRecord| {
+        !matches!(t.state, ThreadState::Tasked { .. }) && !batched.contains(&t.key)
+    };
+    for droppable in [&resolved as &dyn Fn(&ThreadRecord) -> bool, &free] {
+        let mut over = stage.threads.len().saturating_sub(THREADS_KEPT);
+        stage.threads.retain(|t| {
+            let drop = over > 0 && droppable(t);
+            over -= usize::from(drop);
+            !drop
+        });
     }
 }
 

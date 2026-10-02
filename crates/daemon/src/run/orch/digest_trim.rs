@@ -16,7 +16,7 @@ const ENTRIES_TRIMMED: usize = 10;
 const ENTRIES_TRIMMED_AGAIN: usize = 3;
 /// Every string's length after the general cut, and scouts' and planners' after the
 /// second one, in characters.
-const STRINGS_TRIMMED: usize = 120;
+const STRINGS_TRIMMED: usize = delivery::STRINGS_GENERAL;
 const ENTRY_STRINGS_TRIMMED: usize = 40;
 
 /// Decision 16's trimming past the cap, in order, after milestone 9.2's delivery steps

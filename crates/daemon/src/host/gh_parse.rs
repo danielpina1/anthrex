@@ -388,12 +388,18 @@ pub fn comment_url_id(url: &str) -> Option<u64> {
 /// Decision 10: the id of a comment by `author` (anthrex's own login; GitHub's logins
 /// match without case) whose body holds `marker`, in `gh api --paginate`'s output (one
 /// JSON array per page, printed one after another). A marker in anyone else's comment
-/// was pasted, and does not stop the reply (task M9.2.10's fix round).
+/// was pasted, and does not stop the reply (task M9.2.10's fix round). A comment whose
+/// author's account was deleted has `"user": null`: it is nobody's, and is skipped (the
+/// final fix wave).
 pub fn find_marker(text: &str, marker: &str, author: &str) -> Result<Option<u64>, HostError> {
     for page in serde_json::Deserializer::from_str(text).into_iter::<Vec<Value>>() {
         let page = page.map_err(|_| changed("comments"))?;
         for comment in &page {
-            let login = str_of(get(comment, "user")?, "login")?;
+            let user = get(comment, "user")?;
+            if user.is_null() {
+                continue;
+            }
+            let login = str_of(user, "login")?;
             if login.eq_ignore_ascii_case(author) && str_of(comment, "body")?.contains(marker) {
                 return u64_of(comment, "id").map(Some);
             }

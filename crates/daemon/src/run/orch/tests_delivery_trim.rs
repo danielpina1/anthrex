@@ -112,3 +112,17 @@ fn the_cap_holds_whatever_the_delivery_holds() {
     let file = strings["stages"][0]["threads"][0]["file"].as_str().unwrap();
     assert!(file.chars().count() <= STRINGS_LAST + 1, "{file}");
 }
+
+/// The final fix wave (task 13's deferred item): the digest's general string cut runs
+/// before the delivery block's last steps, so `LAST[0]` and `LAST[1]`, which rebuild the
+/// block, apply it too; without it they would bring the long strings back.
+#[test]
+fn the_first_last_steps_keep_the_general_string_cut() {
+    use crate::run::delivery::digest::{STRINGS_GENERAL, Shape, block};
+    let run = heavy(2, 1, THREADS_SHOWN, 400);
+    for shape in &Shape::LAST[..2] {
+        let b = block(&run, *shape);
+        let file = b["stages"][0]["threads"][0]["file"].as_str().unwrap();
+        assert!(file.chars().count() <= STRINGS_GENERAL + 1, "{file}");
+    }
+}

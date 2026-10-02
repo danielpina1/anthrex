@@ -185,7 +185,14 @@ pub struct StageDelivery {
     /// restart may have lost an adopt that moved it while the remote moved again, so it
     /// is judged only after a fresh view: the next adopt that finds it moved halts.
     pub local_moved: Option<String>,
+    /// The final fix wave (task 10's deferred item): the markers of replies dropped
+    /// after they were sent ([`MAYBE_SENT_MAX`], the newest): a failed post may still
+    /// have landed, so a comment carrying one is anthrex's own.
+    pub maybe_sent: Vec<String>,
 }
+
+/// The dropped replies' markers a stage keeps (`StageDelivery::maybe_sent`).
+pub const MAYBE_SENT_MAX: usize = 100;
 
 /// Decision 30: one reply due on a stage PR's thread (task M9.2.10; not in
 /// Interfaces). An automatic reply waits until a push carrying its fix task's merge

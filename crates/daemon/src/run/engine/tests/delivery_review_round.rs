@@ -223,12 +223,16 @@ fn a_reply_that_keeps_failing_is_dropped_and_the_next_one_goes() {
     answer(&mut fx, op, HostResult::Error(limited));
     let due = fx.run().delivery.stage(1).unwrap().retry_at.unwrap();
     fx.send(due, EventKind::Tick);
+    let mut sent_marker = String::new();
     for k in 1..=FAILURES_BEFORE_ATTENTION {
         let (op, reply) = one_reply(&fx);
         assert!(
             matches!(&reply, HostOp::Reply { thread, .. } if thread == "7:c5"),
             "{k}: {reply:?}"
         );
+        if let HostOp::Reply { marker, .. } = &reply {
+            sent_marker = marker.clone();
+        }
         let boom = HostResult::Error(HostError::Failed("boom".into()));
         answer(&mut fx, op, boom);
         let due = fx.run().delivery.stage(1).unwrap().retry_at.unwrap();
@@ -241,11 +245,20 @@ fn a_reply_that_keeps_failing_is_dropped_and_the_next_one_goes() {
         !lines.iter().any(|l| l.contains("keeps failing")),
         "{lines:#?}"
     );
-    let (_, reply) = one_reply(&fx);
+    let (op, reply) = one_reply(&fx);
     assert!(
         matches!(&reply, HostOp::Reply { thread, .. } if thread == "7:c6"),
         "no head-of-line block: {reply:?}"
     );
+    // The final fix wave (task 10's deferred item): a failure may still have posted
+    // it, so the dropped reply's marker stays anthrex's: a comment carrying it is
+    // anthrex's own, never review input.
+    answer(&mut fx, op, HostResult::Replied { comment_id: 950 });
+    fx.run_mut().delivery.watching = true;
+    let mut v = view(&commit(1));
+    v.comments = vec![said(9, "tester", &format!("Because.\n\n{sent_marker}"))];
+    poll_with(&mut fx, v);
+    assert_eq!(state(&fx, "c9"), ignored("anthrex's own"));
 }
 
 #[test]

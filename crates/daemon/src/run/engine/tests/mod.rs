@@ -39,6 +39,7 @@ mod delivery_open_host;
 mod delivery_requests;
 mod delivery_review;
 mod delivery_review_amend;
+mod delivery_review_cap;
 mod delivery_review_fix;
 mod delivery_review_reply;
 mod delivery_review_round;

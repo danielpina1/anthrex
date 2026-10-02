@@ -407,6 +407,7 @@ fn the_delivery_model_round_trips_through_run_json() {
         wait_from: Some(4_000),
         reopens: 1,
         local_moved: None,
+        maybe_sent: vec!["<!-- anthrex:reply r 7:c5 1a2b3c4 -->".into()],
     };
     run.delivery.permission_retry_at = Some(6_000);
     run.delivery.base_fetch_due = true;

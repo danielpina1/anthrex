@@ -42,6 +42,7 @@ pub(in crate::run::engine) use review_fix::holds_for as review_holds;
 pub(crate) mod review_limits {
     pub(crate) use super::review::{
         COMMENT_KEPT_CHARS, PERMISSION_WAIT_SECS, STAGE_TEXT_CHARS, THREAD_COMMENTS_KEPT,
+        THREAD_IDS_KEPT, THREADS_KEPT,
     };
     pub(crate) use crate::run::delivery::reply_edit::REPLIES_PER_THREAD;
 }

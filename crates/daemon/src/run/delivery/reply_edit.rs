@@ -95,14 +95,13 @@ pub fn apply(
         Some((p, key)) if p == pr.to_string() => key,
         _ => thread,
     };
-    let known = (run.delivery.stage(n)).is_some_and(|s| s.threads.iter().any(|t| t.key == key));
-    if !known {
+    // The final fix wave (task 13's deferred item): one record answers every check.
+    let record = (run.delivery.stage(n)).and_then(|s| s.threads.iter().find(|t| t.key == key));
+    let Some((counted, replies)) = record.map(|t| (t.counted, t.replies)) else {
         return Err(error(format!("unknown thread {pr}:{key}")));
-    }
+    };
     // Task M9.2.13's fix round (m2): a thread no writer or listed reviewer wrote in
     // never reached an agent, so nobody is answered on it.
-    let counted = (run.delivery.stage(n))
-        .is_some_and(|s| s.threads.iter().any(|t| t.key == key && t.counted));
     if !counted {
         return Err(error(format!(
             "thread {pr}:{key} never counted: anthrex replies only on a thread a writer or a listed reviewer wrote in"
@@ -119,9 +118,6 @@ pub fn apply(
             "replies are turned off ([delivery] reply_to_comments = false)".into(),
         ));
     }
-    let replies = (run.delivery.stage(n))
-        .and_then(|s| s.threads.iter().find(|t| t.key == key))
-        .map_or(0, |t| t.replies);
     if replies >= REPLIES_PER_THREAD {
         return Err(error(format!(
             "thread {pr}:{key} already has {REPLIES_PER_THREAD} replies; it gets more once its reviewer comments again"

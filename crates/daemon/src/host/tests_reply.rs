@@ -159,3 +159,33 @@ fn the_viewer_login_is_cached_per_host() {
     assert_eq!(hosts, ["github.com", "ghe.example.com"]);
     assert_eq!(h.runner().unanswered(), 0);
 }
+
+/// The final fix wave (task 10's deferred item): a comment whose author's account was
+/// deleted comes with `"user": null`. It is nobody's, so it is skipped, and the listing
+/// is still read: the reply is found by its marker after it.
+#[test]
+fn a_comment_by_a_deleted_user_is_skipped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let req = thread_req(tmp.path());
+    let mut comments: Value = serde_json::from_str(REST_REVIEW_COMMENTS).unwrap();
+    comments[0]["user"] = Value::Null;
+    comments[1]["user"] = Value::Null;
+    let h = host(
+        ScriptedRunner::new()
+            .ok(REST_USER)
+            .ok(&comments.to_string()),
+    );
+    assert_eq!(h.reply(&req).unwrap(), 3658444294);
+    assert_eq!(h.runner().calls().len(), 2, "found, not posted");
+    // A listing with no `user` at all is not GitHub's shape: nothing is guessed.
+    comments[1].as_object_mut().unwrap().remove("user");
+    let h = host(
+        ScriptedRunner::new()
+            .ok(REST_USER)
+            .ok(&comments.to_string()),
+    );
+    assert_eq!(
+        h.reply(&req),
+        Err(HostError::Rejected("gh output changed: user".to_string()))
+    );
+}

@@ -32,6 +32,11 @@ pub const FIX_TASKS_SHOWN: usize = 20;
 pub const THREADS_LAST: usize = 3;
 pub const FIX_TASKS_LAST: usize = 3;
 pub const STRINGS_LAST: usize = 40;
+/// The digest's general string cut (`orch::digest_trim`), which runs before the last
+/// steps: the first two of them, which rebuild the block, apply it too.
+pub const STRINGS_GENERAL: usize = 120;
+/// A thread's path in the block, in characters (the final fix wave's B m-8).
+pub const FILE_CHARS: usize = 200;
 
 /// How much of the block to build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,18 +113,21 @@ impl Shape {
         ..Shape::FULL
     };
     /// The fix round's steps before any unfinished task is dropped (the controller's
-    /// ruling, I1), in order: only the threads to decide on, then 3 a stage, then every
+    /// ruling, I1), in order: only the threads to decide on, then 3 a stage (both with
+    /// the general cut of [`STRINGS_GENERAL`], which ran before them), then every
     /// string cut to 40 characters, then 3 fix task ids per origin, and last each stage
     /// as its PR, state and CI with a count of the threads left out. The last form is
     /// bounded whatever the run holds: at most `STAGES_MAX` stages of a few numbers.
     pub const LAST: [Shape; 5] = [
         Shape {
             current_only: true,
+            strings: Some(STRINGS_GENERAL),
             ..Shape::NO_COMMENTS
         },
         Shape {
             current_only: true,
             threads: Some(THREADS_LAST),
+            strings: Some(STRINGS_GENERAL),
             ..Shape::NO_COMMENTS
         },
         Shape {
@@ -240,7 +248,10 @@ fn threads(run: &Run, s: &StageDelivery, pr: &PrRecord, shape: Shape) -> Vec<Val
         .map(|t| {
             let mut entry = json!({
                 "thread": format!("{}:{}", pr.number, t.key),
-                "file": t.path,
+                // B m-8: a path is host text.
+                "file": t.path.as_deref().map(|p| {
+                    proto::safe_text::one_line(p).chars().take(FILE_CHARS).collect::<String>()
+                }),
                 "line": t.line,
                 "author": quote::login(&t.author),
                 "state": state_label(&t.state),
