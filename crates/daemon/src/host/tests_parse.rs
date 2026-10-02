@@ -425,6 +425,8 @@ fn open_pr_returns_an_existing_pr_for_the_head() {
             url: "https://github.com/cli/cli/pull/13940".to_string(),
             state: PrState::Merged,
             existed: true,
+            // Fix wave A1: the base `pr list` reports, for the engine to retarget.
+            base: Some("trunk".to_string()),
         }
     );
     assert_eq!(h.runner().calls().len(), 1, "no gh pr create runs");
@@ -445,6 +447,10 @@ fn open_pr_returns_an_existing_pr_for_the_head() {
     );
     let made = h.open_pr(&req).unwrap();
     assert_eq!((made.number, made.existed), (14001, false));
+    assert_eq!(
+        made.base, None,
+        "a created PR has the base the engine asked for"
+    );
     assert_eq!(h.runner().argvs()[1][1], "create");
 
     // gh's answer without the owner fields (M9.2.1's recording predates R-10) is never

@@ -214,3 +214,64 @@ fn an_upper_stage_opens_only_once_no_lower_stage_is_held() {
     green(&mut fx, 2);
     assert_eq!(pushes(&fx, 2).len(), 1, "{:#?}", host_ops(&fx));
 }
+
+/// The final fix wave's A1 (the engine's side): a re-issued `OpenPr` that adopts an
+/// open PR on another base (an earlier create timed out after it succeeded, against a
+/// base that has moved since) records the host's base and retargets the PR onto the
+/// one it asked for; one on the asked base is left as it is.
+#[test]
+fn an_adopted_pr_on_another_base_is_retargeted() {
+    for (host_base, retargets) in [
+        (Some("anthrex/old/stage-1"), true),
+        (Some("main"), false),
+        (None, false),
+    ] {
+        let (mut fx, windows) = super::delivery_open::pr_on(PROFILE, &[doc_task("t1", "")]);
+        to_queue(&mut fx, "t1", window_of(&windows, "t1"));
+        merge(&mut fx, "t1", &commit(1));
+        green(&mut fx, 1);
+        let (op, _) = super::delivery_open::host_op(&fx);
+        answer(&mut fx, op, HostResult::Pushed(PushOutcome::UpToDate));
+        let (op, open) = super::delivery_open::host_op(&fx);
+        assert!(
+            matches!(&open, HostOp::OpenPr { base, .. } if base == "main"),
+            "{open:?}"
+        );
+        let adopted = crate::host::PrRef {
+            number: PR,
+            url: super::delivery_open::url(PR),
+            state: PrState::Open,
+            existed: true,
+            base: host_base.map(str::to_string),
+        };
+        answer(&mut fx, op, HostResult::PrOpened(adopted));
+        let pr = fx.run().delivery.pr(1).unwrap().clone();
+        let at = host_base.unwrap_or("main");
+        assert_eq!(
+            (pr.base.as_str(), pr.opened_base.as_deref()),
+            (at, Some(at))
+        );
+        park(&mut fx, 1);
+        fx.tick();
+        let ops: Vec<HostOp> = of_stage(&fx, 1).into_iter().map(|(_, o)| o).collect();
+        let want = HostOp::Retarget {
+            stage: 1,
+            number: PR,
+            base: "main".into(),
+        };
+        match retargets {
+            true => {
+                assert_eq!(ops, [want], "{host_base:?}");
+                let line = format!(
+                    "stage 1: PR #{PR} already existed on {at}, not main; it is retargeted onto main"
+                );
+                assert!(
+                    fx.run().log.iter().any(|l| l.text == line),
+                    "{:#?}",
+                    fx.run().log
+                );
+            }
+            false => assert!(ops.is_empty(), "{host_base:?}: {ops:?}"),
+        }
+    }
+}

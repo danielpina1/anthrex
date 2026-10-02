@@ -48,11 +48,13 @@ fn fake_pr_lifecycle_through_gh_host() {
             url: "https://github.com/anthrex-test/widgets/pull/1".to_string(),
             state: PrState::Open,
             existed: false,
+            base: None,
         }
     );
     let again = rig.open(1, "main", "Stage 1: one");
     assert!(again.existed);
     assert_eq!(again.number, 1);
+    assert_eq!(again.base.as_deref(), Some("main"));
 
     rig.ctl
         .set_ci(vec![CiRule::new("build", Conclusion::Success)]);

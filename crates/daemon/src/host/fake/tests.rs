@@ -352,3 +352,46 @@ fn fake_github_changes_are_serialized_by_the_lock() {
     assert_eq!(distinct.len(), 50);
     assert_eq!(rig.ctl.prs()[0].comments.len(), 50);
 }
+
+/// Fix wave A1 (review A, M1): a re-issued `OpenPr` adopts the open PR it finds for the
+/// head and answers the base GitHub reports for it, not the base it asked for, so the
+/// engine can retarget a PR whose create timed out after it succeeded.
+#[test]
+fn an_adopted_pr_reports_the_base_github_has() {
+    let rig = Rig::new();
+    let one = rig.commit(&rig.base, &[("one.txt", Some("1\n"))], "stage 1");
+    let two = rig.commit(&one, &[("two.txt", Some("2\n"))], "stage 2");
+    assert_eq!(rig.push(1, &one), PushOutcome::Pushed);
+    assert_eq!(rig.push(2, &two), PushOutcome::Pushed);
+    let stage_1 = format!("anthrex/{RUN}/stage-1");
+    let made = rig.open(2, &stage_1, "Stage 2: two");
+    assert_eq!((made.existed, made.base), (false, None));
+
+    // The retry asks for `main` (stage 1 merged meanwhile); GitHub still has stage 1.
+    let again = rig.open(2, "main", "Stage 2: two");
+    assert_eq!((again.number, again.existed), (made.number, true));
+    assert_eq!(again.base.as_deref(), Some(stage_1.as_str()));
+}
+
+/// Fix wave A1: a journal line written before `PrRef.base` existed still decodes, and a
+/// created PR's line carries no `base` key.
+#[test]
+fn a_pr_ref_without_a_base_round_trips() {
+    let created = PrRef {
+        number: 3,
+        url: "u".to_string(),
+        state: PrState::Open,
+        existed: false,
+        base: None,
+    };
+    let line = serde_json::to_string(&created).unwrap();
+    assert!(!line.contains("base"), "{line}");
+    assert_eq!(serde_json::from_str::<PrRef>(&line).unwrap(), created);
+    let adopted = PrRef {
+        existed: true,
+        base: Some("main".to_string()),
+        ..created
+    };
+    let line = serde_json::to_string(&adopted).unwrap();
+    assert_eq!(serde_json::from_str::<PrRef>(&line).unwrap(), adopted);
+}

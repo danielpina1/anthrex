@@ -238,7 +238,7 @@ pub(super) fn pushed(
 
 /// Decision 20, last step: the PR is recorded on stage `n`, with the head the opening
 /// push sent. A PR found already open for the head (a restart between its creation and
-/// this record, decision 10) is adopted as it is.
+/// this record, decision 10) is adopted as it is, on the base the host reports (A1).
 pub(super) fn opened(
     run: &mut Run,
     n: u16,
@@ -250,6 +250,13 @@ pub(super) fn opened(
     if run.delivery.pr(n).is_some() {
         return;
     }
+    // The final fix wave's A1: an adopted PR is on the base the host reports, which
+    // an earlier create may have given it before the base moved; `land::retarget`
+    // moves it onto the one asked for.
+    let asked = base;
+    let base = (pr.base.clone())
+        .filter(|_| pr.existed)
+        .unwrap_or_else(|| asked.clone());
     let head = run.stage_head(n).unwrap_or_default().to_string();
     let poll = now.saturating_add(super::watch::base_secs(run));
     let stage = stage_mut(run, n);
@@ -285,6 +292,13 @@ pub(super) fn opened(
         false => format!("stage {n}: PR #{} opened: {}", pr.number, pr.url),
     };
     log(run, now, text);
+    if base != asked {
+        let text = format!(
+            "stage {n}: PR #{} already existed on {base}, not {asked}; it is retargeted onto {asked}",
+            pr.number
+        );
+        log(run, now, text);
+    }
     // The final fix wave's B m-3: an open in flight at `run cancel` is recorded once its
     // answer comes, as the PRs open at the cancel were (decision 44's `open_at_cancel`).
     if run.cancelled {

@@ -196,6 +196,12 @@ pub struct PrRef {
     pub url: String,
     pub state: PrState,
     pub existed: bool,
+    /// Fix wave A1 (review A, M1): for an adopted PR (`existed`), the base branch the
+    /// host reports (`pr list`'s `baseRefName`), which can differ from the base asked
+    /// for when an earlier create timed out after it succeeded; the engine retargets it.
+    /// `None` for a PR this call created: its base is the one asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

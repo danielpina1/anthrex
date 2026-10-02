@@ -109,6 +109,7 @@ pub(super) fn opened(number: u64, existed: bool) -> HostResult {
         url: url(number),
         state: PrState::Open,
         existed,
+        base: None,
     })
 }
 

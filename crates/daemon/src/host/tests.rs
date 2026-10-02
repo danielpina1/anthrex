@@ -217,6 +217,7 @@ fn every_method(root: &Path) -> GhHost<ScriptedRunner> {
             url: "https://github.com/cli/cli/pull/14000".to_string(),
             state: PrState::Open,
             existed: false,
+            base: None,
         }
     );
     assert_eq!(host.view_pr(&repo, 13788).unwrap().number, 13788);
