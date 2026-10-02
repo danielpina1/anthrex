@@ -20,7 +20,7 @@ use serde_json::Value;
 
 use super::RunningCommand;
 use super::decider::{SPAWN_SLACK, TIMEOUT_SECS as DECIDER_TIMEOUT_SECS};
-use super::run_adapt::with_deciders;
+use super::run_adapt::{GOAL_WAIT, with_deciders};
 use super::run_daemon::DAEMON_START_WAIT;
 use super::run_harness::{CHECK_TIMEOUT_SECS, REQUEST_WAIT, RUN_WAIT, RunHarness, git_in};
 use super::run_tiers::TIER_WAIT;
@@ -95,6 +95,35 @@ pub const CI_FIX_WAIT: Duration = VIEW_WAIT
 pub const FIX_PUSH_WAIT: Duration = TIER_WAIT
     .saturating_add(PUSH_WAIT)
     .saturating_add(VIEW_WAIT);
+
+/// A writer's new comment to its fix task (task M9.2.17): the view that sees it
+/// ([`VIEW_WAIT`]), its author's `Permission` read (`HOST_READ_TIMEOUT`, plus the
+/// executor's margin), the batch's quiet (`review_batch_secs`, 1 s) and the 1 s tick
+/// whose pass closes it, and 2 s of scheduling.
+pub const COMMENT_WAIT: Duration = VIEW_WAIT
+    .saturating_add(HOST_READ_TIMEOUT)
+    .saturating_add(Duration::from_secs(OP_MARGIN_SECS + 1 + 1 + 2));
+
+/// One reply on a thread (`Reply`'s bound: the viewer's login and the thread's listing,
+/// two reads, then the post, one write, plus the margin).
+pub const REPLY_WAIT: Duration = HOST_WRITE_TIMEOUT.saturating_add(Duration::from_secs(
+    2 * HOST_READ_TIMEOUT.as_secs() + OP_MARGIN_SECS,
+));
+
+/// A stage's landing or a base move to its next push (task M9.2.17): the view that sees
+/// it ([`VIEW_WAIT`]), the base's fetch ([`FETCH_WAIT`]), the base sync, bounded as one
+/// task path with its tier commands (`TIER_WAIT`: it is a merge and tier 2 on it), the
+/// push ([`PUSH_WAIT`]), and a retarget (one write, plus the margin).
+pub const LAND_WAIT: Duration = VIEW_WAIT
+    .saturating_add(FETCH_WAIT)
+    .saturating_add(TIER_WAIT)
+    .saturating_add(PUSH_WAIT)
+    .saturating_add(RERUN_WAIT);
+
+/// How long `anthrex run start --goal … --delivery pr` may take: a goal start's reply
+/// (`GOAL_WAIT`) plus the host preflight a `pr` goal runs before triage
+/// (`PREFLIGHT_BOUND`).
+pub const PR_GOAL_WAIT: Duration = GOAL_WAIT.saturating_add(PREFLIGHT_BOUND);
 
 /// `anthrex <args>` (a `run start --delivery pr`), waiting at most [`PR_START_WAIT`].
 pub fn pr_start(harness: &RunHarness, args: &[&str]) -> Output {
@@ -345,4 +374,98 @@ fn build(
         panic!("the daemon did not start: {error}\n{}", harness.log_tail());
     }
     (harness, rig)
+}
+
+/// `run start --plan <toml> --delivery pr --yes` (task M9.2.17); the run id.
+pub fn pr_run(h: &RunHarness, toml: &str) -> String {
+    let plan = h.plan(toml).display().to_string();
+    let repo = h.repo.display().to_string();
+    let args = [
+        "run",
+        "start",
+        "--plan",
+        &plan,
+        "--dir",
+        &repo,
+        "--delivery",
+        "pr",
+        "--yes",
+    ];
+    let out = pr_start(h, &args);
+    assert!(
+        out.status.success(),
+        "start failed: {}{}",
+        String::from_utf8_lossy(&out.stderr),
+        h.log_tail()
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// A planned run's harness in `pr` mode (task M9.2.17): M9's orchestrator harness
+/// (`RunHarness::orch`: Claude deciders, a triage that answers `plan`, the stored
+/// profile) with the brief's `[delivery]` test configuration, its daemon restarted on
+/// this rig's fake GitHub. Only the harness's own daemon is restarted, through its own
+/// socket (`RunHarness::restart_daemon`).
+pub fn orch_pr_harness() -> (RunHarness, PrRig) {
+    let mut harness = RunHarness::orch("", &[]);
+    let config = harness.dir.path().join("config.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, format!("{text}\n{DELIVERY_TOML}\n")).unwrap();
+    let rig = PrRig::new(&harness);
+    let env = rig.env();
+    let extra: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    harness.restart_daemon(&extra);
+    (harness, rig)
+}
+
+/// `anthrex run start --goal <goal> --delivery pr` waited for as [`PR_GOAL_WAIT`]; the
+/// run id.
+pub fn pr_goal(h: &RunHarness, goal: &str) -> String {
+    let repo = h.repo.display().to_string();
+    let args = [
+        "run",
+        "start",
+        "--goal",
+        goal,
+        "--delivery",
+        "pr",
+        "--dir",
+        &repo,
+    ];
+    let out = RunningCommand::start(&mut h.command(&args)).finish(PR_GOAL_WAIT);
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert!(
+        out.status.success() && !stdout.is_empty() && !stdout.contains('\n'),
+        "exit {:?}\nstdout: {stdout}\nstderr: {}\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+        h.log_tail()
+    );
+    stdout
+}
+
+/// The run's engine log lines (`run.json`'s `log`).
+pub fn log_lines(h: &RunHarness, run: &str) -> Vec<String> {
+    let path = h.data().join("runs").join(run).join("run.json");
+    let all: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    (all["log"].as_array().into_iter().flatten())
+        .filter_map(|e| e["text"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// Waits until the run's log holds `line`; the log.
+pub fn wait_log_line(h: &RunHarness, run: &str, line: &str, wait: Duration) -> Vec<String> {
+    let deadline = Instant::now() + wait;
+    loop {
+        let lines = log_lines(h, run);
+        if lines.iter().any(|l| l == line) {
+            return lines;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no log line {line:?} within {wait:?}: {lines:#?}\n{}",
+            h.log_tail()
+        );
+        std::thread::sleep(Duration::from_millis(250));
+    }
 }

@@ -1818,3 +1818,7 @@ For M9.2 (the next milestone that touches the daemon and the config writer):
   - Fix direction:
     - Cancel a merged top stage's unfinished fix tasks, with a reason like `stage <n> PR merged`.
     - Or run `unpushed` again when such a task merges after its stage landed.
+
+## From M9.2.17 (2026-10-02), for M9.5
+
+- **An open PR's stage node reads `tier 3 ◌` once a fix moves its head.** In `pr` mode tier 3 runs only before a stage PR opens (decision 19); an update pushed after that runs tier 2 only, and CI is the authority (decision 28). So after a CI or review fix merges into an open stage, the stage node's tier-3 mark shows "no result on this head" for as long as the PR is open, which reads like a tier-3 job that never started. Seen in smoke stage 11i: `◌ stage 1/2  tier 3 ◌  #1  ci ✓` while stage 2 (opened on its final head) reads `tier 3 ✓`. Fix direction: on a `pr`-mode stage with an open PR, draw the tier-3 mark of the head the PR opened with (or `–`), so `ci` carries the current head's verdict; a render test with both stages.
