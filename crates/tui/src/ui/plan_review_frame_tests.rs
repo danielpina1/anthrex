@@ -57,15 +57,15 @@ fn want(width: usize, height: usize) -> Vec<String> {
         framed(" ⚠ t2 and t3 both own crates/c/src/lib.rs", width),
         rule(width),
         framed(
-            "▌t1 add mul() to a       cx gpt-6-so  S tdd   stage 1",
+            "▌t1 add mul() to a       cx gpt-6-sol  S tdd   stage 1",
             width,
         ),
         framed(
-            " t2 report_product in c  cl opus      M tdd   stage 2  after t1",
+            " t2 report_product in c  cl opus       M tdd   stage 2  after t1",
             width,
         ),
         framed(
-            " t3 docs                 cl haiku     S none  stage 2  after t1 (implied)",
+            " t3 docs                 cl haiku      S none  stage 2  after t1 (implied)",
             width,
         ),
         rule(width),
@@ -164,14 +164,14 @@ fn deps_survive_at_80_columns() {
     assert_eq!(
         got[4],
         framed(
-            "▌t1 a forty character title…  cx gpt-6-so  S tdd   stage 1",
+            "▌t1 a forty character titl…  cx gpt-6-sol  S tdd   stage 1",
             80
         )
     );
     assert_eq!(
         got[6],
         framed(
-            " t3 docs                      cl haiku     S none  stage 2  after t1 (implied)",
+            " t3 docs                     cl haiku      S none  stage 2  after t1 (implied)",
             80
         )
     );
@@ -210,7 +210,7 @@ fn the_detail_is_labelled_rows() {
     assert_eq!(got[11], ascii(" done when  . t2 works"));
     assert_eq!(
         got[15],
-        ascii(" route      claude - claude-opus-5-5 - standard - medium effort")
+        ascii(" route      claude - opus - standard - medium effort")
     );
 }
 
@@ -341,4 +341,90 @@ fn a_one_task_review_says_one_task() {
         got[1],
         format!("│{:<118}│", " 1 task · 1 epic · S · ~100 calls")
     );
+}
+
+/// Fix round 1 (I1): the frame's title is the Block's, not a placed row, so it is
+/// checked twice: the title text before ratatui sees it, and the exact top row. The
+/// hostile characters are visible ones (a zero-width joiner, a bidi override, a
+/// zero-width space) inside the drawn columns.
+#[test]
+fn the_frame_title_is_sanitised() {
+    let id = "epic:x\u{200D}y\u{202E}z".to_owned();
+    let mut snap = overlapping_plan();
+    let run = &mut snap.runs[0];
+    run.goal = "g\u{202E}\u{200B}oal".into();
+    run.state = RunState::Running;
+    run.tasks[1].hold = Some(id.clone());
+    run.holds = vec![hold(&id, HoldState::Awaiting, &["t2"])];
+    let mut app = app_with(snap, ReviewTarget::Hold(id));
+    let review = app.plan_review.clone().expect("open");
+    let (title, right) = super::frame_title(&app, &review, Some(&app.runs.runs[0]), 80);
+    assert_eq!(
+        crate::safe_text::tests::first_hostile(&title),
+        None,
+        "{title:?}"
+    );
+    assert_eq!(
+        (title.as_str(), right),
+        ("hold epic:xyz · goal · 0723", true)
+    );
+    let got = rows(&draw(&mut app, 80, 24));
+    assert_eq!(got[0], top(" hold epic:xyz · goal · 0723 ", 80));
+}
+
+/// Fix round 1 (m3): in ASCII the run name is folded before it is cut, so a goal's
+/// `…` (three columns once folded) cannot push the title into the right-hand one.
+#[test]
+fn an_ascii_title_folds_the_run_name_before_cutting_it() {
+    let goal = format!("Add mul… — x · y › z {}", "w".repeat(40));
+    let mut snap = overlapping_plan();
+    snap.runs[0].goal = goal.clone();
+    let mut app = app_with(snap, ReviewTarget::Gate);
+    app.settings.badges.ascii = true;
+    let got = rows(&draw(&mut app, 80, 24));
+    // ` plan - ` (8) and ` awaiting approval ` (19) leave the name 49 columns: the
+    // folded goal's first 39, `...`, ` - 0723`.
+    let folded = theme::fold(&goal, true);
+    let name = format!("{}... - 0723", &folded[..39]);
+    let left = format!("+ plan - {name} ");
+    let dashes = 80 - left.len() - " awaiting approval +".len();
+    assert_eq!(
+        got[0],
+        format!("{left}{} awaiting approval +", "-".repeat(dashes))
+    );
+    assert_eq!(audit::first_non_ascii(&draw(&mut app, 80, 24)), None);
+}
+
+/// Fix round 1 (m2): under a modal (the `a` confirm, the help) the review's frame and
+/// its `├─…─┤` rules are muted together; the modal's frame is the one accented.
+#[test]
+fn the_review_mutes_its_frame_and_rules_under_a_modal() {
+    let muted = theme::fg(Role::Muted);
+    let accent = theme::fg(Role::Accent);
+    let check = |app: &mut App, what: &str| {
+        let buffer = draw(app, 80, 24);
+        assert_eq!(audit::accented_frames(&buffer, app.palette()), 1, "{what}");
+        for (x, y) in [(0, 0), (0, 3), (79, 3), (0, 7), (79, 7)] {
+            assert_eq!(buffer[(x, y)].fg, muted, "{what}: ({x}, {y})");
+        }
+    };
+    let mut app = app_with(overlapping_plan(), ReviewTarget::Gate);
+    let buffer = draw(&mut app, 80, 24);
+    assert_eq!((buffer[(0, 3)].symbol(), buffer[(0, 3)].fg), ("├", accent));
+    press(&mut app, KeyCode::Char('a'));
+    assert!(matches!(app.modal, Some(crate::app::Modal::Confirm { .. })));
+    check(&mut app, "the approve confirm");
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, None);
+    let prefix = crossterm::event::KeyEvent::new(
+        KeyCode::Char('b'),
+        crossterm::event::KeyModifiers::CONTROL,
+    );
+    let _ = app.on_key(prefix);
+    let _ = app.on_key(crossterm::event::KeyEvent::new(
+        KeyCode::Char('?'),
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    assert!(app.modal.is_some(), "the help is open");
+    check(&mut app, "the help");
 }

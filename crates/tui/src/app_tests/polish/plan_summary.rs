@@ -44,13 +44,13 @@ fn overlaps_need_owners_that_can_run_together() {
     run.tasks[1].owns = vec!["crates/c/src/lib.rs".into()];
     run.tasks[2].owns = vec!["crates/c/src/".into()];
     assert!(
-        overlaps(&run.tasks.iter().collect::<Vec<_>>()).is_empty(),
+        overlaps(&run, &run.tasks.iter().collect::<Vec<_>>()).is_empty(),
         "t3 runs after t2"
     );
     run.tasks[2].deps.clear();
     run.tasks[2].implicit_deps.clear();
     assert_eq!(
-        overlaps(&run.tasks.iter().collect::<Vec<_>>()),
+        overlaps(&run, &run.tasks.iter().collect::<Vec<_>>()),
         vec![Overlap {
             a: "t2".into(),
             b: "t3".into(),
@@ -65,25 +65,56 @@ fn overlaps_follow_deps_transitively_and_stop_at_a_slash() {
     // t3 after t2 after t1: t1 and t3 never run together, through t2.
     run.tasks[0].owns = vec!["docs/".into()];
     run.tasks[2].owns = vec!["docs/guide.md".into()];
-    assert!(overlaps(&run.tasks.iter().collect::<Vec<_>>()).is_empty());
+    assert!(overlaps(&run, &run.tasks.iter().collect::<Vec<_>>()).is_empty());
     // An implicit dep orders them as well as an explicit one.
     run.tasks[2].deps.clear();
     run.tasks[2].implicit_deps = vec!["t1".into()];
-    assert!(overlaps(&run.tasks.iter().collect::<Vec<_>>()).is_empty());
+    assert!(overlaps(&run, &run.tasks.iter().collect::<Vec<_>>()).is_empty());
     // `crates/c` is not a directory of `crates/cli`; `crates/c` is one of `crates/c/x`.
     run.tasks[2].implicit_deps.clear();
     run.tasks[0].owns = vec!["crates/c".into()];
     run.tasks[2].owns = vec!["crates/cli/src/main.rs".into()];
-    assert!(overlaps(&run.tasks.iter().collect::<Vec<_>>()).is_empty());
+    assert!(overlaps(&run, &run.tasks.iter().collect::<Vec<_>>()).is_empty());
     run.tasks[2].owns = vec!["crates/c/x.rs".into()];
     assert_eq!(
-        overlaps(&run.tasks.iter().collect::<Vec<_>>()),
+        overlaps(&run, &run.tasks.iter().collect::<Vec<_>>()),
         vec![Overlap {
             a: "t1".into(),
             b: "t3".into(),
             path: "crates/c/x.rs".into()
         }]
     );
+    // Fix round 1 (C1): a path whose byte at the shorter one's end lies inside a
+    // multi-byte character neither panics nor overlaps; a directory still holds one.
+    run.tasks[0].owns = vec!["src/a".into()];
+    run.tasks[2].owns = vec!["src/é".into()];
+    assert!(overlaps(&run, &run.tasks.iter().collect::<Vec<_>>()).is_empty());
+    run.tasks[0].owns = vec!["docs/".into()];
+    run.tasks[2].owns = vec!["docs/é.md".into()];
+    assert_eq!(
+        overlaps(&run, &run.tasks.iter().collect::<Vec<_>>()),
+        vec![Overlap {
+            a: "t1".into(),
+            b: "t3".into(),
+            path: "docs/é.md".into()
+        }]
+    );
+}
+
+/// Fix round 1 (m1): a hold reviews `t1` and `t3`; `t3` is after `t2` after `t1`, and
+/// `t2` is outside the hold. The two never run together, so no warning.
+#[test]
+fn a_holds_overlaps_follow_deps_through_tasks_outside_it() {
+    let mut run = three_task_plan();
+    run.tasks[0].owns = vec!["src/lib.rs".into()];
+    run.tasks[2].owns = vec!["src/lib.rs".into()];
+    let hold = [&run.tasks[0], &run.tasks[2]];
+    assert!(overlaps(&run, &hold).is_empty());
+    // Once `t3` no longer waits on `t2`, the pair can run together.
+    let mut free = run.clone();
+    free.tasks[2].deps.clear();
+    let hold = [&free.tasks[0], &free.tasks[2]];
+    assert_eq!(overlaps(&free, &hold).len(), 1);
 }
 
 #[test]
@@ -140,10 +171,8 @@ fn implied_deps_are_marked() {
     assert_eq!(cells[1].deps, "after t1");
     assert_eq!(cells[0].deps, "");
     // The other cells, for the route tag and the stage column.
-    assert_eq!(
-        cells[0].route, "cx gpt-6-so",
-        "tree::short_model's eight columns"
-    );
+    // Fix round 1: the task panel footer's `<tag> <model>`, the model whole.
+    assert_eq!(cells[0].route, "cx gpt-6-sol");
     assert_eq!(cells[1].route, "cl opus");
     assert_eq!(cells[2].route, "cl haiku");
     assert_eq!(cells[2].size, "S none");
@@ -165,7 +194,7 @@ fn more_than_three_overlaps_are_summed() {
         .collect();
     let tasks = review_tasks(&run, &ReviewTarget::Gate);
     // Four tasks that all own the file, none ordered: six pairs.
-    let all = overlaps(&tasks);
+    let all = overlaps(&run, &tasks);
     assert_eq!(all.len(), 6);
     assert_eq!(
         overlap_lines(&all, false),

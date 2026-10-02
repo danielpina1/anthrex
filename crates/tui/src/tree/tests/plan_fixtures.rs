@@ -28,7 +28,8 @@ pub(crate) fn plan_task(id: &str, title: &str, size: Size, stage: u16, calls: u3
 
 /// §6.4's plan, at its gate: `t1` S (40 calls) stage 1 on `cx gpt-6-sol`; `t2` M (100)
 /// stage 2 after `t1` on `cl opus`; `t3` S (50) stage 2 after `t2`, test mode none, on
-/// `cl haiku`; the critical path `t1 › t2 › t3`.
+/// `cl haiku` (the Claude routes name their models by alias); the critical path
+/// `t1 › t2 › t3`.
 pub(crate) fn three_task_plan() -> RunInfo {
     let mut info = run(PLAN_RUN, PROJECT, RunState::AwaitingApproval);
     info.goal = PLAN_GOAL.into();
@@ -36,11 +37,11 @@ pub(crate) fn three_task_plan() -> RunInfo {
     t1.route = route(Runtime::Codex, "gpt-6-sol");
     let mut t2 = plan_task("t2", "report_product in c", Size::M, 2, 100);
     t2.deps = vec!["t1".into()];
-    t2.route = route(Runtime::Claude, "claude-opus-5-5");
+    t2.route = route(Runtime::Claude, "opus");
     let mut t3 = plan_task("t3", "docs", Size::S, 2, 50);
     t3.deps = vec!["t2".into()];
     t3.test_mode = TestMode::None;
-    t3.route = route(Runtime::Claude, "claude-haiku-4-5");
+    t3.route = route(Runtime::Claude, "haiku");
     info.tasks = vec![t1, t2, t3];
     info.critical_path = vec!["t1".into(), "t2".into(), "t3".into()];
     info

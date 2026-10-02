@@ -13,7 +13,7 @@
 use crate::app::App;
 use crate::app::plan_review::review_tasks;
 use crate::app::plan_review::{BAR, PlanReview, ReviewLayout, ReviewTarget, detail_lines};
-use crate::app::plan_summary::{Cells, columns, header_line, overlap_lines, overlaps};
+use crate::app::plan_summary::{Cells, Fit, GAP, columns, header_line};
 use crate::app::region::KeyRegion;
 use crate::theme::{self, Glyph, Palette, Role, role};
 use crate::ui::kit;
@@ -31,10 +31,6 @@ use unicode_width::UnicodeWidthStr;
 const RIGHT: &str = "awaiting approval";
 /// Below this many columns for the run name, the right-hand title goes.
 const MIN_NAME: usize = 16;
-/// The title columns a task keeps before the route tag goes (decision 24).
-const MIN_TITLE: usize = 8;
-/// The columns between two columns.
-const GAP: usize = 2;
 
 /// One row of the screen: where it goes and what it shows. The render is built as a
 /// list of these, so a test can read every span before the buffer does.
@@ -89,15 +85,16 @@ fn width_of(text: &str) -> usize {
     text.width()
 }
 
-/// Decision 23's frame: ` plan · <run name> ` or ` hold <h> · <run name> `, the name
-/// cut to what ` awaiting approval ` leaves, which goes first when it leaves under
-/// `MIN_NAME` columns. The border is in the accent while the review has the keys.
-fn frame_block(
+/// Decision 23's frame title, before the frame takes it: ` plan · <run name> ` or
+/// ` hold <h> · <run name> ` (spaces left to `pane_frame`), the name cut to what
+/// ` awaiting approval ` leaves, and whether that right-hand title shows: it goes first
+/// when it would leave the name under `MIN_NAME` columns.
+pub(crate) fn frame_title(
     app: &App,
     review: &PlanReview,
     run: Option<&RunInfo>,
-    body: Rect,
-) -> Block<'static> {
+    width: u16,
+) -> (String, bool) {
     let p = app.palette();
     let what = match &review.target {
         ReviewTarget::Gate => "plan · ".to_owned(),
@@ -105,7 +102,7 @@ fn frame_block(
     };
     let what = theme::fold(&crate::safe_text::one_line(&what), p.ascii);
     // The corners, each title's two spaces, and one `─` between the titles.
-    let room = usize::from(body.width).saturating_sub(4 + width_of(&what));
+    let room = usize::from(width).saturating_sub(4 + width_of(&what));
     let with_right = room.saturating_sub(RIGHT.len() + 3);
     let (room, right) = if with_right >= MIN_NAME {
         (with_right, true)
@@ -114,11 +111,25 @@ fn frame_block(
     };
     let room = u16::try_from(room).unwrap_or(u16::MAX);
     let name = match run {
-        Some(run) => kit::run_name_in(&run.goal, &run.run_id, room, p),
+        // Folded before it is cut, so the cut measures what is drawn (`…` is three
+        // columns in ASCII).
+        Some(run) => kit::run_name_in(&theme::fold(&run.goal, p.ascii), &run.run_id, room, p),
         None => crate::safe_text::one_line(&review.run_id),
     };
+    (format!("{what}{name}"), right)
+}
+
+/// Decision 23's frame: [`frame_title`] in the accent while the review has the keys.
+fn frame_block(
+    app: &App,
+    review: &PlanReview,
+    run: Option<&RunInfo>,
+    body: Rect,
+) -> Block<'static> {
+    let p = app.palette();
+    let (title, right) = frame_title(app, review, run, body.width);
     let keys_here = app.key_region() == KeyRegion::Review;
-    let block = kit::pane_frame(Line::from(format!("{what}{name}")), keys_here, p);
+    let block = kit::pane_frame(Line::from(title), keys_here, p);
     if !right {
         return block;
     }
@@ -126,23 +137,24 @@ fn frame_block(
     block.title_top(Line::from(Span::styled(format!(" {RIGHT} "), muted)).right_aligned())
 }
 
-/// The header (decision 23): the summary row, then the warnings in `Attention`, each
-/// indented by the bar's column and cut to the width.
+/// The header (decision 23): the summary row, then the layout's warnings in
+/// `Attention`, each indented by the bar's column and cut to the width.
 fn render_header(
     out: &mut Vec<Placed>,
-    area: Rect,
+    layout: &ReviewLayout,
     run: &RunInfo,
     tasks: &[&TaskInfo],
     p: Palette,
 ) {
-    let area = indented(area);
+    let area = indented(layout.header);
     let width = usize::from(area.width);
     let mut lines = vec![Line::raw(header_line(run, tasks, area.width, p.ascii))];
     let warn = role(Role::Attention, p);
     lines.extend(
-        overlap_lines(&overlaps(tasks), p.ascii)
-            .into_iter()
-            .map(|text| Line::styled(truncate_in(&text, width, p.ascii), warn)),
+        layout
+            .warnings
+            .iter()
+            .map(|text| Line::styled(truncate_in(text, width, p.ascii), warn)),
     );
     for (n, line) in lines.into_iter().enumerate() {
         let y = area.y.saturating_add(u16::try_from(n).unwrap_or(u16::MAX));
@@ -180,62 +192,6 @@ fn render_rules(
     let text = format!("{left}{}{right}", line.repeat(usize::from(body.width) - 2));
     for y in layout.rules.into_iter().flatten() {
         row(out, body, y, Line::styled(text.clone(), border));
-    }
-}
-
-/// Every column's width once the row is fitted to the list (decision 24): `None` for
-/// a dropped column.
-struct Fit {
-    label: usize,
-    route: Option<usize>,
-    size: usize,
-    stage: Option<usize>,
-    deps: usize,
-}
-
-impl Fit {
-    /// Each column as wide as its widest value; when the row does not fit, the title
-    /// shrinks to `MIN_TITLE` columns first, then the route tag goes, then the stage
-    /// column; the title takes back what those freed, and only then are the deps cut.
-    fn of(cells: &[Cells], width: usize) -> Self {
-        let max = |f: &dyn Fn(&Cells) -> usize| cells.iter().map(f).max().unwrap_or(0);
-        let label = |c: &Cells, title: usize| {
-            width_of(&c.id) + usize::from(!c.title.is_empty()) + title.min(width_of(&c.title))
-        };
-        let (want, least) = (
-            max(&|c| label(c, usize::MAX)),
-            max(&|c| label(c, MIN_TITLE)),
-        );
-        let deps = max(&|c| width_of(&c.deps));
-        let stage = cells
-            .iter()
-            .filter_map(|c| c.stage.as_deref().map(width_of))
-            .max();
-        let mut fit = Fit {
-            label: want,
-            route: Some(max(&|c| width_of(&c.route))),
-            size: max(&|c| width_of(&c.size)),
-            stage,
-            deps,
-        };
-        let rest = |f: &Fit, deps: usize| {
-            f.route.map_or(0, |w| GAP + w)
-                + GAP
-                + f.size
-                + f.stage.map_or(0, |w| GAP + w)
-                + if deps > 0 { GAP + deps } else { 0 }
-        };
-        let room = width.saturating_sub(usize::from(BAR));
-        if least + rest(&fit, deps) > room {
-            fit.route = None;
-        }
-        if least + rest(&fit, deps) > room {
-            fit.stage = None;
-        }
-        fit.label = room.saturating_sub(rest(&fit, deps)).clamp(least, want);
-        let used = fit.label + rest(&fit, 0) + GAP;
-        fit.deps = deps.min(room.saturating_sub(used));
-        fit
     }
 }
 
@@ -316,14 +272,26 @@ fn render_list(
         .collect();
     let shown = kit::window(lines, at, usize::from(area.height), p);
     for (n, mut line) in shown.into_iter().enumerate() {
-        // A mark is one span; a task row is the bar or its space and more.
-        if line.spans.len() == 1 {
+        // `kit::window`'s `↑`/`↓ n more` marks, by their text: a task row starts with
+        // the bar or its space.
+        if is_mark(&line) {
             line.spans
                 .insert(0, Span::raw(" ".repeat(usize::from(BAR))));
         }
         let y = area.y.saturating_add(u16::try_from(n).unwrap_or(u16::MAX));
         row(out, area, y, line);
     }
+}
+
+/// Whether `line` is one of `kit::scroll_marks`' `↑ n more` / `↓ n more` (`^`, `v` in
+/// ASCII).
+fn is_mark(line: &Line<'_>) -> bool {
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let count = ["↑ ", "↓ ", "^ ", "v "]
+        .iter()
+        .find_map(|glyph| text.strip_prefix(glyph))
+        .and_then(|rest| rest.strip_suffix(" more"));
+    count.is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Decision 25's detail: `detail_lines` from `scroll`, clamped to the content.
@@ -353,7 +321,7 @@ pub(crate) fn placed(app: &App, body: Rect) -> Vec<Placed> {
     let layout = app.review_layout(body);
     let keys_here = app.key_region() == KeyRegion::Review;
     let border = role(if keys_here { Role::Accent } else { Role::Muted }, p);
-    render_header(&mut out, layout.header, run, &tasks, p);
+    render_header(&mut out, &layout, run, &tasks, p);
     render_rules(&mut out, body, &layout, border, p);
     let selected = review.selected.as_deref();
     render_list(&mut out, layout.list, run, &tasks, selected, p);

@@ -1,14 +1,14 @@
 //! Milestone 9.0.7 decisions 23 and 24: the plan review's pure facts. The summary
 //! header (counts, sizes, the budget in tool calls, the critical path), the `owns`
-//! overlaps between tasks that can run at the same time, and each task's column cells.
-//! Every agent-written string is sanitised here (`safe_text::one_line`) and folded in
-//! ASCII; the renderer only aligns and cuts. Pure: no I/O.
+//! overlaps between tasks that can run at the same time, each task's column cells, and
+//! the columns' widths at a list width (`Fit`). Every agent-written string is sanitised
+//! here (`safe_text::one_line`) and folded in ASCII; the renderer only draws and cuts.
+//! Pure: no I/O.
 
-use super::plan_review::all_deps;
-use crate::inspector::run_format::{size_letter, test_mode_text};
+use super::plan_review::{BAR, all_deps};
+use crate::inspector::run_format::{route_tag, size_letter, test_mode_text};
 use crate::safe_text::one_line;
 use crate::theme::{self, Glyph};
-use crate::tree::short_model;
 use crate::ui::tree_view::truncate_in;
 use proto::{RunInfo, Size, TaskInfo};
 
@@ -16,6 +16,10 @@ use proto::{RunInfo, Size, TaskInfo};
 const SIZE_SEQUENCE_MAX: usize = 8;
 /// Overlap rows the header shows before `⚠ <k> more overlaps`.
 const OVERLAP_ROWS: usize = 3;
+/// The title columns a task keeps before the route tag goes (decision 24).
+const MIN_TITLE: usize = 8;
+/// The columns between two list columns.
+pub(crate) const GAP: usize = 2;
 
 /// `1 task`, `3 tasks`.
 fn count(n: usize, word: &str) -> String {
@@ -104,13 +108,15 @@ fn shared<'a>(a: &'a str, b: &'a str) -> Option<&'a str> {
         return Some(a);
     }
     let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-    let boundary = short.ends_with('/') || long[short.len()..].starts_with('/');
+    // `starts_with` first, and the boundary byte read, never sliced: `short.len()` can
+    // fall inside a multi-byte character of `long` (`src/a` against `src/é`).
+    let boundary = short.ends_with('/') || long.as_bytes().get(short.len()) == Some(&b'/');
     (long.starts_with(short) && boundary).then_some(long)
 }
 
 /// Whether `from` reaches `to` through deps and implicit deps, transitively, among
-/// `tasks`.
-fn reaches(tasks: &[&TaskInfo], from: &str, to: &str) -> bool {
+/// every task of the run (a hold's tasks can be ordered through tasks outside it).
+fn reaches(tasks: &[TaskInfo], from: &str, to: &str) -> bool {
     let mut seen: Vec<&str> = Vec::new();
     let mut stack = vec![from];
     while let Some(id) = stack.pop() {
@@ -130,10 +136,11 @@ fn reaches(tasks: &[&TaskInfo], from: &str, to: &str) -> bool {
     false
 }
 
-/// Decision 23's overlaps, one a pair of tasks in plan order (the first path they
-/// share): an `owns` entry equal to, or a directory of, one of the other's, between
-/// tasks neither of which reaches the other, so they can run at the same time.
-pub(crate) fn overlaps(tasks: &[&TaskInfo]) -> Vec<Overlap> {
+/// Decision 23's overlaps, one a pair of the reviewed `tasks` in plan order (the first
+/// path they share): an `owns` entry equal to, or a directory of, one of the other's,
+/// between tasks neither of which reaches the other through `run`'s tasks, so they can
+/// run at the same time.
+pub(crate) fn overlaps(run: &RunInfo, tasks: &[&TaskInfo]) -> Vec<Overlap> {
     let mut out = Vec::new();
     for (i, a) in tasks.iter().enumerate() {
         for b in &tasks[i + 1..] {
@@ -144,7 +151,7 @@ pub(crate) fn overlaps(tasks: &[&TaskInfo]) -> Vec<Overlap> {
             let Some(path) = path else {
                 continue;
             };
-            if reaches(tasks, &a.id, &b.id) || reaches(tasks, &b.id, &a.id) {
+            if reaches(&run.tasks, &a.id, &b.id) || reaches(&run.tasks, &b.id, &a.id) {
                 continue;
             }
             out.push(Overlap {
@@ -174,13 +181,6 @@ pub(crate) fn overlap_lines(overlaps: &[Overlap], ascii: bool) -> Vec<String> {
     out.into_iter().map(|l| theme::fold(&l, ascii)).collect()
 }
 
-/// The header's rows: its first row and the warning rows.
-pub(crate) fn header_rows(tasks: &[&TaskInfo]) -> u16 {
-    let n = overlaps(tasks).len();
-    let warnings = n.min(OVERLAP_ROWS) + usize::from(n > OVERLAP_ROWS);
-    1 + u16::try_from(warnings).unwrap_or(u16::MAX)
-}
-
 /// `after t1, t3 (implied)`: the explicit deps, then each implicit one marked; empty
 /// for a task with none (decisions 19 and 24).
 pub(crate) fn after_text(task: &TaskInfo) -> String {
@@ -208,7 +208,8 @@ pub(crate) fn after_text(task: &TaskInfo) -> String {
 pub(crate) struct Cells {
     pub id: String,
     pub title: String,
-    /// `<runtime tag> <short model>`, `default` for an empty model: `cl opus`.
+    /// `<runtime tag> <model>`, `default` for an empty model: `cl opus` (the task panel
+    /// footer's form, `run_format::route_tag`).
     pub route: String,
     /// `<S|M|L> <mode>`.
     pub size: String,
@@ -224,26 +225,77 @@ pub(crate) fn columns(run: &RunInfo, tasks: &[&TaskInfo], ascii: bool) -> Vec<Ce
     let text = |s: &str| theme::fold(&one_line(s), ascii);
     tasks
         .iter()
-        .map(|task| {
-            let route = &task.route;
-            let model = one_line(&route.model);
-            let model = if model.trim().is_empty() {
-                "default".to_owned()
-            } else {
-                short_model(route.runtime, model.trim())
-            };
-            Cells {
-                id: text(&task.id),
-                title: text(one_line(&task.title).trim()),
-                route: text(&format!("{} {model}", theme::runtime_tag(route.runtime))),
-                size: format!(
-                    "{} {}",
-                    size_letter(task.size),
-                    test_mode_text(task.test_mode)
-                ),
-                stage: multi.then(|| format!("stage {}", task.stage)),
-                deps: text(&after_text(task)),
-            }
+        .map(|task| Cells {
+            id: text(&task.id),
+            title: text(one_line(&task.title).trim()),
+            route: text(&route_tag(&task.route)),
+            size: format!(
+                "{} {}",
+                size_letter(task.size),
+                test_mode_text(task.test_mode)
+            ),
+            stage: multi.then(|| format!("stage {}", task.stage)),
+            deps: text(&after_text(task)),
         })
         .collect()
+}
+
+fn width_of(text: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(text)
+}
+
+/// Every column's width once the row is fitted to the list (decision 24): `None` for
+/// a dropped column.
+pub(crate) struct Fit {
+    pub label: usize,
+    pub route: Option<usize>,
+    pub size: usize,
+    pub stage: Option<usize>,
+    pub deps: usize,
+}
+
+impl Fit {
+    /// Each column as wide as its widest value; when the row does not fit, the title
+    /// shrinks to `MIN_TITLE` columns first, then the route tag goes, then the stage
+    /// column; the title takes back what those freed, and only then are the deps cut.
+    pub(crate) fn of(cells: &[Cells], width: usize) -> Self {
+        let max = |f: &dyn Fn(&Cells) -> usize| cells.iter().map(f).max().unwrap_or(0);
+        let label = |c: &Cells, title: usize| {
+            width_of(&c.id) + usize::from(!c.title.is_empty()) + title.min(width_of(&c.title))
+        };
+        let (want, least) = (
+            max(&|c| label(c, usize::MAX)),
+            max(&|c| label(c, MIN_TITLE)),
+        );
+        let deps = max(&|c| width_of(&c.deps));
+        let stage = cells
+            .iter()
+            .filter_map(|c| c.stage.as_deref().map(width_of))
+            .max();
+        let mut fit = Fit {
+            label: want,
+            route: Some(max(&|c| width_of(&c.route))),
+            size: max(&|c| width_of(&c.size)),
+            stage,
+            deps,
+        };
+        let rest = |f: &Fit, deps: usize| {
+            f.route.map_or(0, |w| GAP + w)
+                + GAP
+                + f.size
+                + f.stage.map_or(0, |w| GAP + w)
+                + if deps > 0 { GAP + deps } else { 0 }
+        };
+        let room = width.saturating_sub(usize::from(BAR));
+        if least + rest(&fit, deps) > room {
+            fit.route = None;
+        }
+        if least + rest(&fit, deps) > room {
+            fit.stage = None;
+        }
+        fit.label = room.saturating_sub(rest(&fit, deps)).clamp(least, want);
+        let used = fit.label + rest(&fit, 0) + GAP;
+        fit.deps = deps.min(room.saturating_sub(used));
+        fit
+    }
 }

@@ -4,7 +4,7 @@
 //! (decision 16). `Keymap::review_mode` is kept in step with `App.plan_review` here,
 //! in one place (Risks 1). Rendering is `ui/plan_review.rs`; this file does no I/O.
 
-use super::plan_summary::{after_text, header_rows, plan_stages};
+use super::plan_summary::{after_text, overlap_lines, overlaps, plan_stages};
 use super::{App, Effect};
 use crate::inspector::run_format::{effort_text, strength_text, test_mode_text};
 use crate::safe_text::{multi_line, one_line};
@@ -76,11 +76,14 @@ fn still_awaiting(run: &RunInfo, target: &ReviewTarget) -> bool {
 /// summary header, a rule, the task list (its rows, at most `max(3, interior / 2)`), a
 /// rule, and the detail in the rest. The renderer and the reducer both use it, so a
 /// page is the height the user sees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct ReviewLayout {
     /// The frame's interior.
     pub inner: Rect,
     pub header: Rect,
+    /// The header's `⚠` rows (`plan_summary::overlap_lines`), computed once a frame:
+    /// the header is the summary row and these.
+    pub warnings: Vec<String>,
     /// The rows of the two `├─…─┤` rules, below the header and below the list, while
     /// they fit.
     pub rules: [Option<u16>; 2],
@@ -92,8 +95,12 @@ pub(crate) struct ReviewLayout {
 /// so every text starts in one column.
 pub(crate) const BAR: u16 = 1;
 
-/// Decision 26's stacking of a header of `header_rows` and a list of `tasks` in `body`.
-pub(crate) fn stacked(body: Rect, header_rows: u16, tasks: usize) -> ReviewLayout {
+/// Decision 26's stacking of a header (the summary row and `warnings`) and a list of
+/// `tasks` in `body`.
+pub(crate) fn stacked(body: Rect, warnings: Vec<String>, tasks: usize) -> ReviewLayout {
+    let header_rows = u16::try_from(warnings.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(1);
     let inner = Rect {
         x: body.x.saturating_add(1),
         y: body.y.saturating_add(1),
@@ -119,6 +126,7 @@ pub(crate) fn stacked(body: Rect, header_rows: u16, tasks: usize) -> ReviewLayou
     ReviewLayout {
         inner,
         header,
+        warnings,
         rules: [rule(first), rule(second)],
         list,
         detail,
@@ -425,13 +433,14 @@ impl App {
         )
     }
 
-    /// Decision 26's geometry of the open review in the frame `body`: the header's rows
-    /// and the list's from the reviewed tasks (`stacked`).
+    /// Decision 26's geometry of the open review in the frame `body`: the header's
+    /// warnings and the list's rows from the reviewed tasks (`stacked`).
     pub(crate) fn review_layout(&self, body: Rect) -> ReviewLayout {
-        let (header, tasks) = self
-            .reviewed()
-            .map_or((1, 0), |(_, tasks)| (header_rows(&tasks), tasks.len()));
-        stacked(body, header, tasks)
+        let ascii = self.palette().ascii;
+        let (warnings, tasks) = self.reviewed().map_or((Vec::new(), 0), |(run, tasks)| {
+            (overlap_lines(&overlaps(run, &tasks), ascii), tasks.len())
+        });
+        stacked(body, warnings, tasks)
     }
 
     /// Decision 14's `p` in the run view on `run_id`: the gate while the run awaits

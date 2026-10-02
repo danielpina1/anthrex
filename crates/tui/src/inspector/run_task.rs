@@ -10,7 +10,6 @@ use super::run_task_outcome::{diff_text, pipeline_text, review_row};
 use super::{Inspection, field};
 use crate::actions_request::ActionTarget;
 use crate::app::App;
-use crate::safe_text::one_line;
 use crate::theme;
 use crate::tree::{NodeKey, RowKind};
 use proto::{DeciderSource, RunInfo, RunState, TaskInfo, TaskState};
@@ -85,20 +84,12 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
 /// Decision 12's footer: `stage <n> of <m> · <tag> <model> · <S|M|L> · <mode>`, the
 /// stage only in a multi-stage run, the model `default` when the route names none.
 fn footer_text(run: &RunInfo, task: &TaskInfo) -> String {
-    let model = one_line(&task.route.model);
-    let model = if model.trim().is_empty() {
-        "default".to_owned()
-    } else {
-        model
-    };
     let mut parts = Vec::new();
     if run.stages.len() > 1 {
         parts.push(format!("stage {} of {}", task.stage, run.stages.len()));
     }
-    parts.push(format!(
-        "{} {model}",
-        theme::runtime_tag(task.route.runtime)
-    ));
+    // One source with the plan review's route column (milestone 9.0.7 task 11).
+    parts.push(super::run_format::route_tag(&task.route));
     parts.push(size_letter(task.size).to_owned());
     parts.push(test_mode_text(task.test_mode).to_owned());
     parts.join(" · ")

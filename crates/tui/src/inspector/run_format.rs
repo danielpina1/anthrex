@@ -201,6 +201,16 @@ pub(super) fn session_text(window_id: Option<u32>, place: &str, app: &App) -> St
     }
 }
 
+/// A route as the task panel's footer and the plan review's list name it (milestone
+/// 9.0.7 decisions 12 and 24): `<runtime tag> <model>`, the model whole and sanitised,
+/// `default` when the route names none: `cx gpt-6-sol`, `cl opus`.
+pub(crate) fn route_tag(route: &proto::Route) -> String {
+    let model = crate::safe_text::one_line(&route.model);
+    let model = model.trim();
+    let model = if model.is_empty() { "default" } else { model };
+    format!("{} {model}", crate::theme::runtime_tag(route.runtime))
+}
+
 pub(crate) fn size_letter(size: Size) -> &'static str {
     match size {
         Size::S => "S",
