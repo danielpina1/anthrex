@@ -73,7 +73,6 @@ pub fn isolated_command(dir: &Path, args: &[&str]) -> Command {
     command
 }
 
-/// Capture output without making direct-child completion depend on inherited pipe handles.
 /// How long a spawn that fails with `ExecutableFileBusy` is retried: the write
 /// descriptor a concurrent fork's child inherited is closed when that child execs,
 /// within milliseconds, or after macOS's first-exec assessment of a new file (about
@@ -99,6 +98,7 @@ pub fn retry_busy<T>(
     }
 }
 
+/// Capture output without making direct-child completion depend on inherited pipe handles.
 pub struct RunningCommand {
     description: String,
     child: Child,

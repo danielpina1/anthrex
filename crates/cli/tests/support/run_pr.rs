@@ -283,9 +283,9 @@ impl PrRig {
     /// Two more views; the second has been answered once a third starts (one view of a
     /// PR is in flight at a time). [`BATCH_QUIET`] after that start, the next view a
     /// pass emits comes from a pass that has closed any batch the second view opened,
-    /// and its task, hold or wake is recorded in that same step. So: wait for the third view, then the quiet,
-    /// then one view that starts after it. A deadline loop on `calls.jsonl` (which
-    /// records a call when it starts), at most [`QUIET_VIEWS_WAIT`].
+    /// and its task, hold or wake is recorded in that same step. So: wait for the third
+    /// view, then the quiet, then one view that starts after it. A deadline loop on
+    /// `calls.jsonl` (which records a call when it starts), at most [`QUIET_VIEWS_WAIT`].
     pub fn quiet_views(&self) {
         let views = || self.calls_of(&["pr", "view"]).len();
         let deadline = Instant::now() + QUIET_VIEWS_WAIT;
