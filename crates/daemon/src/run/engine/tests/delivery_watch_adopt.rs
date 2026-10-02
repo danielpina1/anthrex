@@ -7,7 +7,7 @@
 //! (decision 28). A push the remote refuses holds only its stage until `run resume`
 //! (ruling R-11). A stage paused by a closed PR below starts no task (decision 37).
 
-use proto::{PlanEdit, RunState, TaskState};
+use proto::{PlanEdit, PrState, RunState, TaskState};
 
 use super::control::resume;
 use super::delivery_open::{
@@ -41,6 +41,7 @@ pub(super) fn fetch(n: u16, local_ref: String, expected: &str, also_integration:
             expected_local: expected.into(),
             also_integration,
         }),
+        parents_of: None,
     }
 }
 
@@ -419,16 +420,14 @@ fn a_paused_stage_starts_no_task() {
     let (mut fx, windows) = stages_on(&profile_with("max_writers = 2"), &tasks);
     pr_mode(fx.run_mut());
     assert_eq!(fx.task("t3").state, TaskState::Queued, "no writer free");
-    // Decision 37: stage 1's PR was closed without merging; stage 2 pauses (M9.2.11
-    // records it; set here).
-    fx.run_mut().delivery.stages = vec![
-        StageDelivery::default(),
-        StageDelivery {
-            paused_by: Some(1),
-            ..StageDelivery::default()
-        },
-    ];
+    // Decision 37: stage 1's PR was closed without merging; stage 2 pauses (task
+    // M9.2.11 records the pause from the PR's state).
+    fx.run_mut().delivery.stages = vec![StageDelivery {
+        pr: Some(super::delivery_land::pr_record(7, PrState::Closed)),
+        ..StageDelivery::default()
+    }];
     fx.tick();
+    assert_eq!(fx.run().delivery.stage(2).unwrap().paused_by, Some(1));
     assert_eq!(fx.task("t3").state, TaskState::Pending);
     let t2 = fx.task("t2").state;
     to_queue(&mut fx, "t1", window_of(&windows, "t1"));
@@ -436,8 +435,11 @@ fn a_paused_stage_starts_no_task() {
     fx.tick();
     assert_eq!(fx.task("t3").state, TaskState::Pending, "a writer is free");
     assert_eq!(fx.task("t2").state, t2, "a task already running goes on");
-    fx.run_mut().delivery.stages[1].paused_by = None;
+    // Reopened: stage 2 resumes.
+    let pr = fx.run_mut().delivery.stages[0].pr.as_mut().unwrap();
+    pr.state = PrState::Open;
     fx.tick();
+    assert_eq!(fx.run().delivery.stage(2).unwrap().paused_by, None);
     assert_ne!(fx.task("t3").state, TaskState::Pending);
 }
 
@@ -453,7 +455,9 @@ fn opening_waits_when_the_stage_is_no_longer_ready_after_its_push() {
     let effects = answer(&mut fx, op, HostResult::Pushed(PushOutcome::Pushed));
     assert!(host_ops_in(&effects).is_empty(), "{effects:#?}");
     assert!(host_ops(&fx).is_empty());
-    fx.run_mut().delivery.base_sync_due.clear();
+    // Task M9.2.11: the due base sync runs (the stage holds that base already).
+    let (sync, _) = super::delivery_sync::base_sync(&fx);
+    fx.done(sync, OpResult::AlreadyHeld);
     let (op, push) = {
         fx.tick();
         host_op(&fx)

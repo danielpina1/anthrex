@@ -90,9 +90,39 @@ impl<R: Runner> GhHost<R> {
             )));
         }
         match &req.adopt {
-            None => Ok(FetchOutcome::Fetched { sha }),
+            None => {
+                let parents = match &req.parents_of {
+                    Some(oid) => self.parents(&ctx, req, oid)?,
+                    None => None,
+                };
+                Ok(FetchOutcome::Fetched { sha, parents })
+            }
             Some(adopt) => self.adopt(req, &ctx, adopt, &sha),
         }
+    }
+
+    /// Ruling R-4: how many parents commit `oid` has, read locally after the fetch
+    /// (`None` when the repository does not have it).
+    fn parents(
+        &self,
+        ctx: &AllowCtx<'_>,
+        req: &FetchReq,
+        oid: &str,
+    ) -> Result<Option<u32>, HostError> {
+        let out = self.git(
+            ctx,
+            &req.repo.root,
+            &NO_HOOKS,
+            &["rev-list", "--parents", "-n", "1", oid],
+            HOST_READ_TIMEOUT,
+        )?;
+        if !out.success {
+            return Ok(None);
+        }
+        let text = out.stdout_text();
+        let mut words = text.split_whitespace();
+        let found = words.next() == Some(oid);
+        Ok(found.then(|| u32::try_from(words.count()).unwrap_or(u32::MAX)))
     }
 
     /// Decision 24: the remote head descends from `expected_local`; move the local ref

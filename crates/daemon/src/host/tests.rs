@@ -179,11 +179,13 @@ fn every_method(root: &Path) -> GhHost<ScriptedRunner> {
         branch: format!("anthrex/{RUN}/stage-1"),
         into: into.clone(),
         adopt: None,
+        parents_of: None,
     };
     assert_eq!(
         host.fetch(&fetch).unwrap(),
         FetchOutcome::Fetched {
-            sha: SHA.to_string()
+            sha: SHA.to_string(),
+            parents: None,
         }
     );
     let adopting = FetchReq {

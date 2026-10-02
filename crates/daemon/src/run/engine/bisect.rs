@@ -442,14 +442,13 @@ fn culprit(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
     let entry = b.hi.checked_sub(1).and_then(|k| b.candidates.get(k));
     let id = match entry {
         Some(StageMerge::Task { id, .. }) => id.clone(),
+        // Milestone 9.2 decision 33: `from: 0` is a base sync, the base branch's merge.
         Some(StageMerge::Propagate { from, .. }) => {
-            return end(
-                run,
-                n,
-                format!("the first red merge is the propagate of stage {from}"),
-                now,
-                fx,
-            );
+            let what = match from {
+                0 => "the merge of the base branch".to_string(),
+                k => format!("the propagate of stage {k}"),
+            };
+            return end(run, n, format!("the first red merge is {what}"), now, fx);
         }
         None => return end(run, n, "no merge is left to blame".to_string(), now, fx),
     };

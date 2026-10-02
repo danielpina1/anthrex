@@ -305,6 +305,27 @@ fn a_held_lower_stage_holds_the_push_above() {
     assert_eq!(pushes(&fx), vec![push]);
 }
 
+/// Task M9.2.11: a stage below that delivers with no PR yet (a task added to it after it
+/// was skipped) holds the push above, or its commits would ride in the upper PR.
+#[test]
+fn an_unopened_lower_stage_holds_the_push_above() {
+    let (mut fx, _) = two_stages(true);
+    fx.run_mut().delivery.watching = false;
+    fx.run_mut().delivery.stages[0].pr = None;
+    set_stage_head(fx.run_mut(), 2, &commit(7));
+    fx.tick();
+    let push = HostOp::Push {
+        stage: 2,
+        sha: commit(7),
+    };
+    let pushed = |fx: &Fixture| host_ops(fx).into_iter().any(|(_, op)| op == push);
+    assert!(!pushed(&fx), "stage 1's commits would ride in PR #12");
+    // A skipped stage delivers nothing: the push goes.
+    fx.run_mut().delivery.stages[0].skipped = true;
+    fx.tick();
+    assert!(pushed(&fx));
+}
+
 #[test]
 fn only_a_gh_answer_clears_a_lost_login() {
     let mut fx = watched();

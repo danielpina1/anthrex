@@ -65,6 +65,11 @@ pub struct RunDelivery {
     /// Task M9.2.10 (decision 29): a failed `Permission` op is not asked again before
     /// this time (decision 11's "retry when next due"; not in Interfaces).
     pub permission_retry_at: Option<u64>,
+    /// Task M9.2.11 (decision 33): a fetch of the remote base branch is due (a stage
+    /// merged, the lowest open PR conflicts, or `sync = "always"` polled it), and a
+    /// failed one is not retried before `base_fetch_retry_at` (not in Interfaces).
+    pub base_fetch_due: bool,
+    pub base_fetch_retry_at: Option<u64>,
 }
 
 impl RunDelivery {
@@ -137,6 +142,15 @@ pub struct StageDelivery {
     /// and the last one counted as a review round.
     pub batches: u32,
     pub round_batch: u32,
+    /// Task M9.2.11 (decisions 35 and 37): the PR state whose landing was processed
+    /// (`merged` or `closed`), so a restart never processes it twice; `None` while open.
+    pub landed: Option<PrState>,
+    /// Task M9.2.11 (decision 33): a base sync red on `(base sha, stage head)`; it is
+    /// not tried again until either moves.
+    pub sync_red: Option<(String, String)>,
+    /// Task M9.2.11 (decision 43): since when the open PR has been waiting on a person,
+    /// as of the last pass; `None` while anthrex has work on it.
+    pub wait_from: Option<u64>,
 }
 
 /// Decision 30: one reply due on a stage PR's thread (task M9.2.10; not in
@@ -199,6 +213,10 @@ pub struct PrRecord {
     pub checks: Vec<CheckSeen>,
     #[serde(default)]
     pub retargeted_to: Option<String>,
+    /// Task M9.2.11 (decision 35): the base the PR was opened against; `base` is the
+    /// host's latest, which proves nothing about what anthrex did (not in Interfaces).
+    #[serde(default)]
+    pub opened_base: Option<String>,
     #[serde(default)]
     pub branch_deleted: bool,
 }

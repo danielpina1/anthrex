@@ -42,7 +42,7 @@ fn in_flight(run: &Run, id: Option<&str>, append_only: bool) -> bool {
 }
 
 /// One line appended for `task` (`None`: the run's own).
-fn append(run: &mut Run, task: Option<&str>, line: HistoryLine, fx: &mut Vec<Effect>) {
+pub(super) fn append(run: &mut Run, task: Option<&str>, line: HistoryLine, fx: &mut Vec<Effect>) {
     let record_id = match &line {
         HistoryLine::Task(r) => r.record_id.clone(),
         HistoryLine::Run(r) => r.record_id.clone(),

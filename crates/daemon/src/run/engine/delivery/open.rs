@@ -225,7 +225,7 @@ pub(super) fn opened(run: &mut Run, n: u16, base: String, pr: PrRef, now: u64) {
     stage.pr = Some(PrRecord {
         number: pr.number,
         url: pr.url.clone(),
-        base,
+        base: base.clone(),
         opened_at: now,
         pushed_head,
         state: pr.state,
@@ -238,6 +238,7 @@ pub(super) fn opened(run: &mut Run, n: u16, base: String, pr: PrRef, now: u64) {
         watermark: Default::default(),
         checks: Vec::new(),
         retargeted_to: None,
+        opened_base: Some(base.clone()),
         branch_deleted: false,
     });
     let text = match pr.existed {

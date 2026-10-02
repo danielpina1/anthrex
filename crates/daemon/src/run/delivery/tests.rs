@@ -104,6 +104,7 @@ pub(super) fn pr(number: u64, state: PrState) -> PrRecord {
         watermark: Watermark::default(),
         checks: Vec::new(),
         retargeted_to: None,
+        opened_base: None,
         branch_deleted: false,
     }
 }
@@ -326,6 +327,7 @@ fn the_delivery_model_round_trips_through_run_json() {
         .watermark
         .reviews_seen
         .extend([5_000_000_010, 5_000_000_011]);
+    record.opened_base = Some(format!("anthrex/{RUN}/stage-1"));
     record.checks = vec![CheckSeen {
         name: "test".into(),
         state: CiState::Red,
@@ -397,8 +399,13 @@ fn the_delivery_model_round_trips_through_run_json() {
         own_comments: [5_000_000_099].into(),
         batches: 3,
         round_batch: 2,
+        landed: Some(PrState::Merged),
+        sync_red: Some((HEAD2.into(), HEAD2.into())),
+        wait_from: Some(4_000),
     };
     run.delivery.permission_retry_at = Some(6_000);
+    run.delivery.base_fetch_due = true;
+    run.delivery.base_fetch_retry_at = Some(7_000);
     let json = serde_json::to_value(&run.delivery).unwrap();
     assert_eq!(json["stages"][1]["ci"][0]["phase"], "to_user");
     assert_eq!(
@@ -441,6 +448,7 @@ fn host_ops_and_results_round_trip_through_the_journal() {
                 expected_local: HEAD2.into(),
                 also_integration: true,
             }),
+            parents_of: Some(HEAD2.into()),
         },
         HostOp::OpenPr {
             stage: 1,

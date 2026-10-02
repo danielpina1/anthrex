@@ -158,11 +158,19 @@ pub(super) fn interface_review_line(run: &Run, task: &Task) -> Option<String> {
     })
 }
 
-/// Controller ruling C-21 (6): a sync task's reviewer judges only the resolution.
-pub(super) fn sync_review_line(task: &Task) -> Option<String> {
-    task.sync.as_ref()?;
+/// Controller ruling C-21 (6): a sync task's reviewer judges only the resolution. A
+/// milestone 9.2 base sync task's names the base commit (invented).
+pub(super) fn sync_review_line(run: &Run, task: &Task) -> Option<String> {
+    let sync = task.sync.as_ref()?;
     let k = match &task.fixes {
         Some(crate::run::model::FixOf::Propagate { from, .. }) => *from,
+        Some(crate::run::model::FixOf::Base { .. }) => {
+            return Some(format!(
+                "This is a sync task: judge only how the conflicts were resolved; the changes {}@{} brought in are not this task's.",
+                shown(&run.base_branch),
+                super::sha7(&sync.onto)
+            ));
+        }
         _ => task.stage().saturating_sub(1),
     };
     Some(format!(

@@ -346,6 +346,8 @@ pub(super) fn viewed(run: &mut Run, n: u16, view: PrView, now: u64) {
         super::ci_trigger::red(run, n, &view.head_oid, red, now);
     }
     super::ci_trigger::viewed(run, n, &view, now);
+    // Task M9.2.11: decision 33's triggers.
+    super::sync::viewed(run, n);
     // Task M9.2.10: what run.json keeps of review text is bounded.
     super::review::trim(stage_mut(run, n));
 }

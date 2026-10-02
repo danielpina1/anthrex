@@ -17,12 +17,16 @@ use crate::host::{
 pub enum HostOp {
     /// Decisions 20 and 28: `sha` to `refs/heads/anthrex/<run>/stage-<stage>`.
     Push { stage: u16, sha: String },
-    /// Decisions 24 and 33; `stage` is `None` for the base.
+    /// Decisions 24 and 33; `stage` is `None` for the base. `parents_of` (task
+    /// M9.2.11, ruling R-4): a merged stage PR's merge commit whose parents the fetch
+    /// counts (`FetchReq.parents_of`).
     Fetch {
         stage: Option<u16>,
         branch: String,
         into: String,
         adopt: Option<Adopt>,
+        #[serde(default)]
+        parents_of: Option<String>,
     },
     /// Decision 20; `body` is [`super::body::pr_body`]'s text.
     OpenPr {

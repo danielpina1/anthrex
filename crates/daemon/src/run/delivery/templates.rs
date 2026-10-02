@@ -58,3 +58,34 @@ pub fn review_brief(
     ));
     out
 }
+
+/// Interfaces "Fix-task templates", `sync` after the base moved (task M9.2.11): 9.1's
+/// sync text names a stage where this one names `<base>@<sha7>`, so the brief's own
+/// fallback is used. `Sync stage <n> with <base>`.
+pub fn sync_title(n: u16, base: &str) -> String {
+    format!("Sync stage {n} with {}", crate::run::contract::shown(base))
+}
+
+pub fn sync_acceptance() -> Vec<String> {
+    vec!["The merge is committed with both parents, every conflict is resolved, and the stage builds and passes tier 1.".to_string()]
+}
+
+/// The `sync` brief: the base commit, the conflicted files (each made safe to show:
+/// the names come from the repository), then the two lines every fix brief ends with.
+/// A stage with no pull request yet (the one above a merged stage) says so instead of
+/// naming one (invented).
+pub fn sync_brief(n: u16, base: &str, sha7: &str, files: &[String], url: Option<&str>) -> String {
+    let files: Vec<String> = files
+        .iter()
+        .map(|f| crate::run::contract::shown(f))
+        .collect();
+    let pr = match url {
+        Some(url) => format!("Stage {n}'s pull request: {url}."),
+        None => format!("Stage {n} has no pull request yet."),
+    };
+    format!(
+        "Merging {}@{sha7} into stage {n}'s branch conflicted in: {}.\nThe merge is in progress in your worktree, with the conflict markers in those files. Resolve them, commit the merge (keep both parents: do not rebase, do not reset), and call task_done.\n{pr}\nYour commits reach the pull request after tier 1, tier 2 and the merge queue; do not push, open or merge anything yourself.",
+        crate::run::contract::shown(base),
+        files.join(", ")
+    )
+}

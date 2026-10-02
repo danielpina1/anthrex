@@ -123,6 +123,8 @@ fn git_allowed(args: &[&str], ctx: &AllowCtx<'_>) -> bool {
         ] => write && remote(r) && fetch_spec(spec, ctx.run_id),
         ["rev-parse", "--verify", r] => read && rev_ref(r, ctx.run_id),
         ["merge-base", "--is-ancestor", a, b] => read && is_object_id(a) && is_object_id(b),
+        // Ruling R-4: a merged PR's merge commit's parents, read locally.
+        ["rev-list", "--parents", "-n", "1", oid] => read && is_object_id(oid),
         _ => false,
     }
 }

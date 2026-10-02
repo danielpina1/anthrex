@@ -13,15 +13,17 @@ use super::stage_mut;
 use crate::run::contract::sha7;
 use crate::run::model::{FixOf, Run, Task};
 
-/// Controller ruling C-21 (5): a sync claim whose head dropped the lower stage's merge.
-pub(in crate::run::engine) fn lost_merge(task: &Task) -> String {
-    let k = match &task.fixes {
-        Some(FixOf::Propagate { from, .. }) => *from,
-        _ => task.stage().saturating_sub(1),
-    };
+/// Controller ruling C-21 (5): a sync claim whose head dropped the lower stage's merge
+/// (milestone 9.2: a base sync task's, the base commit's; invented).
+pub(in crate::run::engine) fn lost_merge(run: &Run, task: &Task) -> String {
     let onto = task.sync.as_ref().map_or("", |s| s.onto.as_str());
+    let what = match &task.fixes {
+        Some(FixOf::Propagate { from, .. }) => format!("stage {from}'s merge"),
+        Some(FixOf::Base { .. }) => format!("the merge of {}@{}", run.base_branch, sha7(onto)),
+        _ => format!("stage {}'s merge", task.stage().saturating_sub(1)),
+    };
     format!(
-        "task_done rejected: sync task must keep stage {k}'s merge: its head does not contain {}",
+        "task_done rejected: sync task must keep {what}: its head does not contain {}",
         sha7(onto)
     )
 }
@@ -150,6 +152,10 @@ pub(crate) fn sync_merged(run: &mut Run, n: u16, id: &str) {
     let Some(sync) = run.task(id).and_then(|t| t.sync.clone()) else {
         return;
     };
+    // Milestone 9.2 decision 34: a base sync task brings the base, not a lower stage.
+    if let Some(Some(FixOf::Base { base_sha, .. })) = run.task(id).map(|t| t.fixes.clone()) {
+        return super::super::delivery::sync::task_merged(run, n, &base_sha);
+    }
     if let Some(record) = stage_mut(run, n) {
         record.tasks_in.extend(sync.tasks);
         record.synced_from = Some(sync.onto);

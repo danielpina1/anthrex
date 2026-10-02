@@ -72,9 +72,11 @@ pub(crate) fn stage_busy(run: &Run, n: u16) -> bool {
 }
 
 /// Decision 37: stage `n` is paused by a lower stage's PR closed without merging; none
-/// of its tasks that has not started starts.
+/// of its tasks that has not started starts. Read from the PRs' states (task M9.2.11
+/// records it as `paused_by` in its pass, after 9.1's runnability check of the step).
 pub(crate) fn stage_paused(run: &Run, n: u16) -> bool {
-    pr(run) && run.delivery.stage(n).is_some_and(|s| s.paused_by.is_some())
+    let closed = |k: u16| (run.delivery.pr(k)).is_some_and(|p| p.state == PrState::Closed);
+    pr(run) && (1..n).any(closed)
 }
 
 /// Ruling R-11: a stage is held by a push the remote refused.
@@ -217,6 +219,7 @@ fn adopt(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) -> bool {
             expected_local: head,
             also_integration: multi && n >= highest(run),
         }),
+        parents_of: None,
     };
     let sent = emit(run, op, fx);
     if sent {
@@ -237,7 +240,8 @@ fn push(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) -> bool {
         .delivery
         .stage(n)
         .is_some_and(|s| s.remote_head.is_some());
-    if !moved || adopting || lower_held(run, n) || !free(run, n, now) {
+    let lower = lower_held(run, n) || super::land::lower_unopened(run, n);
+    if !moved || adopting || lower || !free(run, n, now) {
         return false;
     }
     let text = format!(

@@ -49,8 +49,10 @@ pub(super) fn start_merge(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         .cloned()
         .collect();
     run.merge_queue = queued;
-    // Milestone 9.1 decision 49: the lowest due propagate goes first.
-    if merging(run) || super::propagate::start(run, fx) {
+    // Milestone 9.1 decision 49: the lowest due propagate goes first; 9.2 decision 33:
+    // a due base sync before it.
+    let sync = super::delivery::sync::start;
+    if merging(run) || sync(run, now, fx) || super::propagate::start(run, fx) {
         return;
     }
     let Some(id) = run.merge_queue.first().cloned() else {

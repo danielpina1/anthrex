@@ -13,7 +13,7 @@ use super::fixture::*;
 use super::full::{full_jobs, merge_tiered, profile};
 use super::merge::{commit, doc_task, merge, pending, pending_one, start_on, to_queue, window_of};
 use super::propagate::land_propagates;
-use crate::run::delivery::ops::HostResult;
+use crate::run::delivery::ops::{HostOp, HostResult};
 use crate::run::engine::actions::{ActionNode, available, check};
 use crate::run::engine::delivery::{DeliveryRequest, cancel_outcome};
 use crate::run::engine::{AgentSignal, Effect, EventKind, OpKind, OpResult};
@@ -58,7 +58,9 @@ fn delivered() -> Fixture {
     fx
 }
 
-/// The user lands stage `n`'s PR on GitHub (what M9.2.11's watch will record).
+/// The user lands stage `n`'s PR on GitHub, as a view records it; task M9.2.11's
+/// landing follows: the base fetch (answered unmoved, a merge commit) and any retarget
+/// it leads to are answered.
 fn land(fx: &mut Fixture, n: u16, state: PrState) -> Vec<Effect> {
     let stage = fx
         .run_mut()
@@ -67,7 +69,24 @@ fn land(fx: &mut Fixture, n: u16, state: PrState) -> Vec<Effect> {
         .get_mut(usize::from(n) - 1)
         .unwrap();
     stage.pr.as_mut().unwrap().state = state;
-    fx.tick()
+    let mut effects = fx.tick();
+    let landing = |op: &HostOp| {
+        matches!(
+            op,
+            HostOp::Fetch { stage: None, .. } | HostOp::Retarget { .. }
+        )
+    };
+    while let Some((op, kind)) = host_ops(fx).into_iter().find(|(_, op)| landing(op)) {
+        let result = match kind {
+            HostOp::Fetch { .. } => HostResult::Fetched(crate::host::FetchOutcome::Fetched {
+                sha: BASE.into(),
+                parents: Some(2),
+            }),
+            _ => HostResult::Retargeted,
+        };
+        effects.extend(answer(fx, op, result));
+    }
+    effects
 }
 
 fn verify_ok(fx: &mut Fixture) -> Vec<Effect> {

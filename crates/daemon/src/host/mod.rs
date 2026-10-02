@@ -137,12 +137,20 @@ pub struct FetchReq {
     /// `refs/anthrex/<run>/remote/<name>`: anthrex's own ref, never a branch.
     pub into: String,
     pub adopt: Option<Adopt>,
+    /// Ruling R-4 (task M9.2.11): after the fetch, count this merge commit's parents
+    /// locally (`git rev-list --parents -n 1 <oid>`), for decision 44's merge method.
+    #[serde(default)]
+    pub parents_of: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FetchOutcome {
     Fetched {
         sha: String,
+        /// Ruling R-4: the parents of `FetchReq.parents_of`, when it was asked and is
+        /// known locally after the fetch.
+        #[serde(default)]
+        parents: Option<u32>,
     },
     Adopted {
         sha: String,

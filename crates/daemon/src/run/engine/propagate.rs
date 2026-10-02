@@ -179,7 +179,9 @@ pub(super) fn start(run: &mut Run, fx: &mut Vec<Effect>) -> bool {
         return false;
     }
     let all: Vec<u16> = run.stages.iter().map(|s| s.n).collect();
-    let free = |n: u16| startable(run, n) && !super::delivery::stage_busy(run, n);
+    // Milestone 9.2 decision 33: a due base sync of the stage goes first.
+    let base_due = |n: u16| run.delivery.base_sync_due.contains_key(&n);
+    let free = |n| startable(run, n) && !super::delivery::stage_busy(run, n) && !base_due(n);
     let Some(n) = all.into_iter().find(|&n| free(n)) else {
         return false;
     };
@@ -221,8 +223,8 @@ fn emit(run: &mut Run, n: u16, fx: &mut Vec<Effect>) {
     emit_op(run, op, None, OpKind::Propagate(Box::new(spec)), fx);
 }
 
-/// A `Propagate`'s result (decisions 50–53). `from: 0` is 9.2's base sync, whose
-/// handler 9.2 adds here.
+/// A `Propagate`'s result (decisions 50–53). `from: 0` is 9.2's base sync, handled by
+/// `delivery::sync` after its tier-2 records.
 pub(super) fn done(
     run: &mut Run,
     (op, spec): (OpId, &PropagateSpec),
@@ -230,9 +232,6 @@ pub(super) fn done(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
-    if spec.from == 0 {
-        return;
-    }
     if let OpResult::Merged {
         tier: Some(outcome),
         ..
@@ -245,6 +244,9 @@ pub(super) fn done(
         super::tiers::run_facts(run, outcome, now);
         // Ruling C-23: a propagate's tier 2 is a tier job (decisions 50 and 57).
         super::history::tier_job(run, (op, None, spec.to), outcome, now, fx);
+    }
+    if spec.from == 0 {
+        return super::delivery::sync::done(run, (op, spec), result, now, fx);
     }
     let (k, n) = (spec.from, spec.to);
     match result {
@@ -456,6 +458,10 @@ pub(crate) fn attention(run: &Run) -> Vec<String> {
 }
 
 /// A lost `Propagate` (reconciled `NotStarted`: it reached neither ref) is due again.
+/// A lost base sync (`from: 0`) is due again as a base sync (9.2 ruling R-7).
 pub(super) fn lost(run: &mut Run, spec: &PropagateSpec) {
+    if spec.from == 0 {
+        return super::delivery::sync::lost(run, spec);
+    }
     run.propagate_due.insert(spec.to);
 }

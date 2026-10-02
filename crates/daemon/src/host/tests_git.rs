@@ -230,6 +230,7 @@ fn fetch_adopts_only_a_descendant() {
                 expected_local: expected.to_string(),
                 also_integration,
             }),
+            parents_of: None,
         })
     };
 
@@ -286,6 +287,7 @@ fn fetch_adopts_only_a_descendant() {
             branch: "main".to_string(),
             into: format!("refs/anthrex/{RUN}/remote/base"),
             adopt: None,
+            parents_of: None,
         })
     };
     assert_eq!(base(), Ok(FetchOutcome::Missing));
@@ -293,7 +295,55 @@ fn fetch_adopts_only_a_descendant() {
         &rig.work,
         &["push", "-q", "origin", &format!("{a}:refs/heads/main")],
     );
-    assert_eq!(base(), Ok(FetchOutcome::Fetched { sha: a.clone() }));
+    let fetched = FetchOutcome::Fetched {
+        sha: a.clone(),
+        parents: None,
+    };
+    assert_eq!(base(), Ok(fetched));
     assert_eq!(rig.local("main"), main_before);
     assert_ne!(main_before, a);
+}
+
+/// Task M9.2.11, ruling R-4: a base fetch asked for a merged PR's merge commit counts
+/// its parents locally, after the fetch brought it: two for a merge commit, one for a
+/// squash (or rebase); a commit the repository does not have counts nothing.
+#[test]
+fn a_base_fetch_counts_the_merge_commits_parents() {
+    let rig = Rig::new();
+    let a = commit(&rig.work, "a");
+    git(&rig.work, &["checkout", "-q", "-b", "side"]);
+    let side = commit(&rig.work, "side");
+    git(&rig.work, &["checkout", "-q", "main"]);
+    let b = commit(&rig.work, "b");
+    git(&rig.work, &["merge", "-q", "--no-ff", "-m", "merge", &side]);
+    let merge = git(&rig.work, &["rev-parse", "HEAD"]);
+    let squash = commit(&rig.work, "squash of side");
+    git(
+        &rig.work,
+        &["push", "-q", "origin", &format!("{squash}:refs/heads/main")],
+    );
+    let main_before = rig.local("main");
+    let fetch = |oid: Option<&str>| {
+        rig.fetch(&FetchReq {
+            repo: rig.repo.clone(),
+            run_id: RUN.to_string(),
+            branch: "main".to_string(),
+            into: format!("refs/anthrex/{RUN}/remote/base"),
+            adopt: None,
+            parents_of: oid.map(str::to_string),
+        })
+    };
+    let fetched = |parents| {
+        Ok(FetchOutcome::Fetched {
+            sha: squash.clone(),
+            parents,
+        })
+    };
+    assert_eq!(fetch(Some(&merge)), fetched(Some(2)));
+    assert_eq!(fetch(Some(&squash)), fetched(Some(1)));
+    assert_eq!(fetch(Some(&b)), fetched(Some(1)));
+    assert_eq!(fetch(Some(&"e".repeat(40))), fetched(None));
+    assert_eq!(fetch(None), fetched(None));
+    assert_eq!(rig.local("main"), main_before, "the local base never moves");
+    assert_ne!(a, squash);
 }

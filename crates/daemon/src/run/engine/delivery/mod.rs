@@ -21,10 +21,12 @@ mod ci;
 mod ci_repro;
 mod ci_trigger;
 mod fix;
+pub(super) mod land;
 mod open;
 mod reply;
 mod review;
 mod review_fix;
+pub(super) mod sync;
 mod view;
 mod watch;
 
@@ -149,6 +151,9 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     ci::pass(run, now, fx);
     // Task M9.2.10: a due reply goes before the stage's views (see `review.rs`).
     review::pass(run, now, fx);
+    // Task M9.2.11: landing first, so a merge's base fetch goes out in the same pass.
+    land::pass(run, now, fx);
+    sync::pass(run, now, fx);
     watch::pass(run, now, fx);
 }
 
@@ -202,6 +207,19 @@ pub(super) fn host_done(
             },
             HostResult::Fetched(outcome),
         ) => watch::fetched(run, n, outcome, now, fx),
+        // Decisions 33 and 35 (task M9.2.11).
+        (
+            HostOp::Fetch {
+                stage: None,
+                parents_of,
+                ..
+            },
+            HostResult::Fetched(outcome),
+        ) => sync::fetched(run, parents_of, outcome, now),
+        (HostOp::Retarget { stage, base, .. }, HostResult::Retargeted) => {
+            land::retargeted(run, stage, base, now)
+        }
+        (HostOp::DeleteBranch { stage }, HostResult::Deleted) => land::deleted(run, stage, now),
         // Decision 27 (task M9.2.9).
         (HostOp::FailedLogs { stage, ci_run, .. }, HostResult::Logs(file)) => {
             ci::logs(run, stage, ci_run, file)
@@ -248,6 +266,7 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
         }
         HostOp::FailedLogs { stage, ci_run, .. } => ci::logs_failed(run, *stage, *ci_run, now),
         HostOp::Permission { .. } => review::permission_failed(run, now, retry_secs(run)),
+        HostOp::Fetch { stage: None, .. } => sync::fetch_failed(run, now, retry_secs(run)),
         HostOp::Reply { stage, marker, .. } => {
             dropped = reply::reply_failed(run, *stage, marker, (&error, &text), now);
         }
@@ -297,11 +316,13 @@ pub(super) fn may_complete(run: &Run) -> bool {
         return true;
     }
     let count = crate::run::delivery::snapshot::stage_count(run);
-    (1..=count).all(|n| {
+    let all = (1..=count).all(|n| {
         let skipped = run.delivery.stage(n).is_some_and(|s| s.skipped);
         let landed = |state| matches!(state, PrState::Merged | PrState::Closed);
         skipped || run.delivery.pr(n).is_some_and(|p| landed(p.state))
-    })
+    });
+    // Task M9.2.11: and each landing is processed (its history line out).
+    all && land::settled(run)
 }
 
 /// Decision 39: a cancelled `pr`-mode run completes with the PRs it leaves open,

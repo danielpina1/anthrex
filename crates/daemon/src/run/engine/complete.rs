@@ -37,7 +37,13 @@ pub(super) fn deferred_note(id: &str) -> String {
 
 /// Task `i` is cancelled as the run ends, or, while its `MergeCandidate` runs, marked to
 /// be once that merge does not land (ruling T14-I1). Returns whether it was deferred.
-fn cancel_task(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect>) -> bool {
+pub(super) fn cancel_task(
+    run: &mut Run,
+    i: usize,
+    why: &str,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> bool {
     if candidate_in_flight(run, i) {
         if !std::mem::replace(&mut run.tasks[i].cancel_deferred, true) {
             history(run, i, now, "cancel deferred: its merge is in flight");
@@ -320,8 +326,9 @@ pub(super) fn cancel(
         }
     }
     run.cancelled = true;
-    // Milestone 9.2 decision 39: nothing is closed; watching stops.
+    // Milestone 9.2 decision 39: nothing is closed; watching stops. Decision 44.
     run.delivery.watching = false;
+    super::delivery::land::cancelled(run, now, fx);
     super::planners::halt_all(run, super::planners::RUN_CANCELLED, now, fx);
     log(run, now, "cancelled by the user");
     let mut text = format!("run {run_id} cancelled; it completes once its sessions have ended");
