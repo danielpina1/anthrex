@@ -8,10 +8,12 @@ use proto::{RunReply, RunRequest};
 
 use super::{Runs, print_outcome};
 
-/// `run start --goal`'s reply bound (decision 22): [`super::RUN_REQUEST_TIMEOUT`] for
-/// M8a's start path, the largest configurable `deciders.timeout_secs` (600 s) for the
-/// triage call, and 30 s for the request's own preflight and `git ls-files`.
-pub const GOAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(810);
+/// `run start --goal`'s reply bound (decision 22): [`super::RUN_START_TIMEOUT`] for
+/// the start path (M8a's git preflight, and task M9.2.12's host preflight, which a `pr`
+/// goal runs before triage), the largest configurable `deciders.timeout_secs` (600 s) for
+/// the triage call, and 30 s for the request's own preflight and `git ls-files`.
+pub const GOAL_REQUEST_TIMEOUT: Duration =
+    super::RUN_START_TIMEOUT.saturating_add(Duration::from_secs(600 + 30));
 
 /// `run start --goal`: on the fast path the run id on stdout and triage's message on
 /// stderr, and so on the plan and large paths with the planned message (milestone 9
@@ -129,7 +131,7 @@ mod tests {
         assert_eq!(request_timeout(&goal), GOAL_REQUEST_TIMEOUT);
         assert_eq!(
             GOAL_REQUEST_TIMEOUT,
-            super::super::RUN_REQUEST_TIMEOUT + Duration::from_secs(600 + 30)
+            super::super::RUN_START_TIMEOUT + Duration::from_secs(600 + 30)
         );
         let promote = RunRequest::Promote {
             run_id: "r".into(),

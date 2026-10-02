@@ -90,3 +90,36 @@ fn printed_daemon_text_has_no_control_characters() {
     );
     assert_eq!(status::printable("plain\ntext"), "plain\ntext");
 }
+
+/// Task M9.2.12 fix round 1, I2: `run start` (plan or goal) outwaits M8a's git preflight
+/// plus pr mode's host preflight (the daemon's `PREFLIGHT_BOUND`), whatever it becomes,
+/// so a stalled `gh` or push is the daemon's refusal, never the CLI's timeout.
+#[test]
+fn run_start_outwaits_both_preflights() {
+    let preflights = RUN_REQUEST_TIMEOUT + daemon::host::PREFLIGHT_BOUND;
+    let start = RunRequest::Start {
+        plan_toml: String::new(),
+        dir: "/r".into(),
+        yes: false,
+        trust_project: false,
+        unconfined_checks: false,
+        delivery: None,
+    };
+    assert!(
+        request_timeout(&start) > preflights,
+        "{:?}",
+        request_timeout(&start)
+    );
+    assert_eq!(request_timeout(&start), super::RUN_START_TIMEOUT);
+    let goal = RunRequest::StartGoal {
+        goal: "g".into(),
+        dir: "/r".into(),
+        yes: false,
+        trust_project: false,
+        unconfined_checks: false,
+        orchestrator: None,
+        delivery: None,
+    };
+    // The goal's own terms (the triage decider's 600 s and 30 s) on top.
+    assert!(request_timeout(&goal) > preflights + Duration::from_secs(600 + 30));
+}

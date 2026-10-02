@@ -23,6 +23,15 @@ use std::time::Duration;
 /// daemon is still answering.
 pub const RUN_REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// `run start`'s reply bound (task M9.2.12 fix round 1, I2): M8a's git preflight
+/// ([`RUN_REQUEST_TIMEOUT`]'s term), then in `pr` mode the host preflight, bounded by the
+/// daemon's own `PREFLIGHT_BOUND` (not a copy), and a 30 s margin for the run's build
+/// after them. A CLI that gave up sooner would report a timeout for a run the daemon then
+/// starts.
+pub const RUN_START_TIMEOUT: Duration = RUN_REQUEST_TIMEOUT
+    .saturating_add(daemon::host::PREFLIGHT_BOUND)
+    .saturating_add(Duration::from_secs(30));
+
 /// `run accept` and `run discard`'s reply bound (ruling T23-I1): the daemon's merge runs
 /// under `ACCEPT_MERGE_TIMEOUT` and is never shortened (the user's hooks and signing run
 /// inside it); 60 s more covers the request's own git reads and the clean-up's first
@@ -35,6 +44,7 @@ pub const FINISH_REQUEST_TIMEOUT: Duration =
 fn request_timeout(request: &RunRequest) -> Duration {
     match request {
         RunRequest::Finish { .. } => FINISH_REQUEST_TIMEOUT,
+        RunRequest::Start { .. } => RUN_START_TIMEOUT,
         RunRequest::StartGoal { .. } => adapt::GOAL_REQUEST_TIMEOUT,
         _ => RUN_REQUEST_TIMEOUT,
     }
