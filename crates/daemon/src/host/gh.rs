@@ -213,6 +213,7 @@ impl<R: Runner> CodeHost for GhHost<R> {
                 url: pr.url.clone(),
                 state: pr.state,
                 existed: true,
+                base: Some(pr.base.clone()),
             });
         }
         let body_file = req.body_file.to_string_lossy();
@@ -243,6 +244,7 @@ impl<R: Runner> CodeHost for GhHost<R> {
             url,
             state: PrState::Open,
             existed: false,
+            base: None,
         })
     }
 

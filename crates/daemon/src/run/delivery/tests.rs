@@ -537,6 +537,7 @@ fn host_ops_and_results_round_trip_through_the_journal() {
             url: "u".into(),
             state: PrState::Open,
             existed: true,
+            base: None,
         }),
         HostResult::PrViewed(Box::new(view)),
         HostResult::Logs(LogFile {

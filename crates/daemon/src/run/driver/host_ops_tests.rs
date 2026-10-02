@@ -123,6 +123,7 @@ impl CodeHost for Stub {
             url: "https://github.com/fake/app/pull/7".into(),
             state: PrState::Open,
             existed: false,
+            base: None,
         })
     }
     fn view_pr(&self, _: &HostRepo, number: u64) -> Result<PrView, HostError> {
