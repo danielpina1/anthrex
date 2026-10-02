@@ -45,6 +45,7 @@ fn pr(number: u64, state: PrState) -> PrRecord {
         retargeted_to: None,
         opened_base: None,
         branch_deleted: false,
+        confirmed: None,
     }
 }
 

@@ -29,6 +29,7 @@ mod delivery_ci_repro;
 mod delivery_digest;
 mod delivery_land;
 mod delivery_land_fixes;
+mod delivery_land_race;
 mod delivery_open;
 mod delivery_open_host;
 mod delivery_requests;

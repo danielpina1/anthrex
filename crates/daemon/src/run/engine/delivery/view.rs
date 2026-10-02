@@ -328,9 +328,17 @@ pub(super) fn viewed(run: &mut Run, n: u16, view: PrView, now: u64) {
     record.unchanged_views = k;
     record.last_view_at = Some(now);
     record.next_poll_at = now.saturating_add(wait);
+    // I-1: the open PR carries the pushed head, so every push answered so far reached it.
+    let carries = open && !view.head_oid.is_empty() && view.head_oid == pr.pushed_head;
+    if carries {
+        record.confirmed = Some(view.head_oid.clone());
+    }
     // Decision 24: a head that is not the pushed one is adopted, while the PR is open.
     let foreign = open && !view.head_oid.is_empty() && view.head_oid != pr.pushed_head;
     stage_mut(run, n).remote_head = foreign.then(|| view.head_oid.clone());
+    if carries {
+        super::reply::confirmed(run, n);
+    }
     if !added.is_empty() {
         let text = format!("{}: new threads {}", named(n, &pr), added.join(", "));
         log(run, now, text);

@@ -139,6 +139,7 @@ pub fn apply(
         marker,
         task: None,
         push: None,
+        push_done: false,
         ready: true,
         sent: false,
         failures: 0,

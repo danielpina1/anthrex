@@ -14,8 +14,9 @@ use proto::DeliveryAlertKind::*;
 ///   [`super::super::OP_NAMES`]: a held host op;
 /// - attention lines only: `<n>/unlanded` (`land.rs`, the remedy is `run cancel`),
 ///   `<n>/sync` (`sync.rs`, a red base sync, the orchestrator's to fix),
-///   `<n>/reply/<thread>` (`reply.rs`), `<n>/review/<thread>` (`review.rs`) and
-///   `<n>/page/<key>` (`view.rs`);
+///   `<n>/reply/<thread>` (`reply.rs`), `<n>/review/<thread>` (`review.rs`),
+///   `<n>/page/<key>` (`view.rs`) and `<n>/missed` (`land.rs`, a fix that missed the
+///   merge, the final fix wave's I-1);
 /// - any other key, a future one included: none, never a guessed kind (ruling, task 15
 ///   fix round 2).
 #[test]
@@ -35,6 +36,7 @@ fn every_key_has_its_kind_and_stage() {
         ("1/reply/7:c5".to_owned(), (None, None)),
         ("1/review/7:c5".to_owned(), (None, None)),
         ("1/page/reviews".to_owned(), (None, None)),
+        ("1/missed".to_owned(), (None, None)),
         // Unknown, a future key's shape included.
         ("1/rebase".to_owned(), (None, None)),
         ("run/sync".to_owned(), (None, None)),

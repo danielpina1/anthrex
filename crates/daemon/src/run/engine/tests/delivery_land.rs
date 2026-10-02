@@ -67,6 +67,7 @@ pub(super) fn pr_record(number: u64, state: PrState) -> crate::run::delivery::Pr
         retargeted_to: None,
         opened_base: Some("main".into()),
         branch_deleted: false,
+        confirmed: None,
     }
 }
 
@@ -423,7 +424,7 @@ fn a_held_stage_lands_only_what_it_pushed() {
     land_propagates(&mut fx);
     poll_stage(&mut fx, 1, merged_view(11, &pushed, &commit(70)));
     let line = format!(
-        "stage 1 (PR #11): merged at {}; 80eeeee was never pushed, so its commits go up with stage 2",
+        "stage 1 (PR #11): merged at {}, without 80eeeee, so its commits go up with stage 2",
         &pushed[..7]
     );
     assert!(logged(&fx, &line), "{:#?}", fx.run().log);
@@ -446,7 +447,7 @@ fn a_held_stage_lands_only_what_it_pushed() {
     );
     fetched(&mut fx, &commit(71), Some(2));
     let line = format!(
-        "stage 1 PR #7 was merged at {}, without 80eeeee that anthrex never pushed; that work is not delivered (anthrex run cancel gives up)",
+        "stage 1 PR #7 was merged at {}, without 80eeeee; that work is not delivered (anthrex run cancel gives up)",
         &pushed[..7]
     );
     assert!(attention(&fx).contains(&line), "{:?}", attention(&fx));

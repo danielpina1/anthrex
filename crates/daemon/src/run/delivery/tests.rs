@@ -106,6 +106,7 @@ pub(super) fn pr(number: u64, state: PrState) -> PrRecord {
         retargeted_to: None,
         opened_base: None,
         branch_deleted: false,
+        confirmed: None,
     }
 }
 
@@ -391,6 +392,7 @@ fn the_delivery_model_round_trips_through_run_json() {
             marker: format!("<!-- anthrex:reply {RUN} 142:t98765 1a2b3c4 -->"),
             task: Some("fix2".into()),
             push: Some(HEAD2.into()),
+            push_done: true,
             ready: false,
             sent: true,
             failures: 2,

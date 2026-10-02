@@ -1,9 +1,12 @@
 //! Decision 30 (task M9.2.10): replies on a stage PR's threads. Once a push carrying
 //! a review fix's merge has landed on the remote (or the remote branch was adopted,
-//! which holds it), each thread the fix addressed gets `Addressed in <sha7> by task
+//! which holds it) and a view of the still-open PR shows that head (the final fix
+//! wave's I-1: GitHub accepts a push to a merged PR's branch, so an answered push alone
+//! proves nothing), each thread the fix addressed gets `Addressed in <sha7> by task
 //! <id>.` (a conversation thread's begins `@<login> `) with anthrex's marker; a
-//! `reply_comment` is sent at once. A stage's due reply goes before its views, and the
-//! posted comment's id is anthrex's own from its answer on. Pure.
+//! `reply_comment` is sent at once. A fix that missed the user's merge gets no reply
+//! ([`missed`]). A stage's due reply goes before its views, and the posted comment's id
+//! is anthrex's own from its answer on. Pure.
 
 use proto::TaskOrigin;
 
@@ -57,6 +60,7 @@ pub(super) fn queue_replies(run: &mut Run, n: u16) {
                 marker: marker(&run.id, number, key, sha7(&commit)),
                 task: Some(id.clone()),
                 push: None,
+                push_done: false,
                 ready: false,
                 sent: false,
                 failures: 0,
@@ -71,28 +75,61 @@ pub(super) fn queue_replies(run: &mut Run, n: u16) {
     }
 }
 
-/// A push of stage `n`'s `sha` goes out: the replies waiting for a push wait for it.
+/// A push of stage `n`'s `sha` goes out: the replies whose push has not landed wait
+/// for this one.
 pub(super) fn pushing(run: &mut Run, n: u16, sha: &str) {
-    for r in stage_mut(run, n).replies.iter_mut().filter(|r| !r.ready) {
+    let waiting = |r: &&mut ReplyDue| !r.ready && !r.push_done;
+    for r in stage_mut(run, n).replies.iter_mut().filter(waiting) {
         r.push = Some(sha.to_string());
     }
 }
 
-/// The push of `sha` landed: its replies are due.
+/// The push of `sha` was answered: the remote branch holds its replies' fixes. They wait
+/// for a view of the open PR to show it ([`confirmed`]).
 pub(super) fn pushed(run: &mut Run, n: u16, sha: &str) {
-    let landed = |r: &ReplyDue| r.push.as_deref() == Some(sha);
-    for r in stage_mut(run, n).replies.iter_mut().filter(|r| landed(r)) {
+    let landed = |r: &&mut ReplyDue| r.push.as_deref() == Some(sha);
+    for r in stage_mut(run, n).replies.iter_mut().filter(landed) {
+        r.push_done = true;
+    }
+}
+
+/// The remote stage branch was adopted at `sha`: it descends from the stage head, so
+/// every merge waiting for a push is on the remote already, and a view of the open PR
+/// confirms it as for a push.
+pub(super) fn adopted(run: &mut Run, n: u16, sha: &str) {
+    for r in stage_mut(run, n).replies.iter_mut().filter(|r| !r.ready) {
+        r.push = Some(sha.to_string());
+        r.push_done = true;
+    }
+}
+
+/// I-1: a view of the open PR shows the pushed head, so every push answered so far
+/// reached the PR (pushes only fast-forward): their replies are due.
+pub(super) fn confirmed(run: &mut Run, n: u16) {
+    for r in stage_mut(run, n).replies.iter_mut().filter(|r| r.push_done) {
         r.ready = true;
     }
 }
 
-/// The remote stage branch was adopted: it descends from the stage head, so every
-/// merge waiting for a push is on the remote already.
-pub(super) fn adopted(run: &mut Run, n: u16) {
-    stage_mut(run, n)
-        .replies
-        .iter_mut()
-        .for_each(|r| r.ready = true);
+/// I-1: stage `n`'s PR was merged at `head` (the host's). With `delivered` every fix
+/// the stage merged is in it, and its replies are due; otherwise a reply is due only
+/// when its push was that head, and every other automatic reply is dropped: its fix
+/// missed the merge. The dropped replies' tasks and threads, for the attention line.
+pub(super) fn landed(run: &mut Run, n: u16, head: &str, delivered: bool) -> Vec<(String, String)> {
+    let number = run.delivery.pr(n).map_or(0, |p| p.number);
+    let stage = stage_mut(run, n);
+    let mut missed = Vec::new();
+    stage.replies.retain_mut(|r| {
+        let reached = delivered || (r.push_done && r.push.as_deref() == Some(head));
+        if r.ready || reached {
+            r.ready = true;
+            return true;
+        }
+        let task = r.task.clone().unwrap_or_default();
+        missed.push((task, format!("{number}:{}", r.thread)));
+        false
+    });
+    missed
 }
 
 /// Sends stage `n`'s first due reply, before anything else of the stage (so its id is

@@ -91,11 +91,30 @@ pub(super) fn push_lands(fx: &mut Fixture, sha: &str) {
     answer(fx, ops[0].0, HostResult::Pushed(PushOutcome::Pushed));
 }
 
+/// The final fix wave's I-1: a view of the open PR #7 shows `sha`, the pushed head, so
+/// the replies of the push that carried it are due. Polling stays as it was.
+pub(super) fn shown(fx: &mut Fixture, sha: &str) {
+    assert!(
+        reply_ops(fx).is_empty(),
+        "no reply before a view shows the push"
+    );
+    let watching = fx.run().delivery.watching;
+    fx.run_mut().delivery.watching = true;
+    poll_with(fx, view(sha));
+    fx.run_mut().delivery.watching = watching;
+}
+
+/// The push of `sha` lands and a view of the open PR shows it.
+pub(super) fn push_shown(fx: &mut Fixture, sha: &str) {
+    push_lands(fx, sha);
+    shown(fx, sha);
+}
+
 #[test]
 fn reply_after_the_push_is_exact_and_marks_the_thread_replied() {
     let mut fx = by_alice();
     fixed(&mut fx);
-    push_lands(&mut fx, &commit(2));
+    push_shown(&mut fx, &commit(2));
     let (op, reply) = one_reply(&fx);
     assert_eq!(
         reply,
@@ -114,7 +133,7 @@ fn reply_after_the_push_is_exact_and_marks_the_thread_replied() {
     fx.tick();
     assert!(reply_ops(&fx).is_empty(), "fix2 has not merged");
     merge_fix(&mut fx, "fix2", &commit(3));
-    push_lands(&mut fx, &commit(3));
+    push_shown(&mut fx, &commit(3));
     let (op, reply) = one_reply(&fx);
     let marker = format!("<!-- anthrex:reply {RUN_ID} 7:t30 3eeeeee -->");
     assert_eq!(
@@ -183,7 +202,7 @@ fn reply_to_comments_false_sends_no_reply() {
 fn a_reply_whose_answer_was_lost_is_sent_again_and_is_never_review_input() {
     let mut fx = by_alice();
     fixed(&mut fx);
-    push_lands(&mut fx, &commit(2));
+    push_shown(&mut fx, &commit(2));
     let (_, first) = one_reply(&fx);
     // GitHub posted it (id 901), but the daemon restarted before the answer.
     let json = serde_json::to_string(fx.run()).unwrap();
@@ -488,7 +507,9 @@ fn an_adopted_remote_branch_carries_the_fix_and_its_reply_goes() {
     assert!(matches!(fetch, HostOp::Fetch { .. }), "{fetch:?}");
     let adopted = crate::host::FetchOutcome::Adopted { sha: commit(41) };
     answer(&mut fx, op, HostResult::Fetched(adopted));
-    // The remote branch descends from the stage head, which holds fix1's merge.
+    // The remote branch descends from the stage head, which holds fix1's merge; a view
+    // of the open PR shows it there (the final fix wave's I-1).
+    shown(&mut fx, &commit(41));
     let (_, reply) = one_reply(&fx);
     assert!(marker_of(&reply).ends_with("7:c5 2eeeeee -->"), "{reply:?}");
 }

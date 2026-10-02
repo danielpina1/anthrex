@@ -75,8 +75,9 @@ pub(crate) fn alerts(run: &Run) -> Vec<DeliveryAlert> {
 /// (`review.rs::over_cap`), and a failure key `<n|run>/<op>` (`failure_key`, past
 /// `FAILURES_BEFORE_ATTENTION`) whose `<op>` is one of [`super::OP_NAMES`]. An
 /// unlanded stage (`<n>/unlanded`), a red base sync (`<n>/sync`), a dropped reply
-/// (`<n>/reply/…`), a refused fix (`<n>/review/…`) and a full page (`<n>/page/…`) are
-/// attention lines only, and so is any key not listed here: R-13's five kinds are the
+/// (`<n>/reply/…`), a refused fix (`<n>/review/…`), a full page (`<n>/page/…`) and a
+/// fix that missed the merge (`<n>/missed`, the final fix wave's I-1) are attention
+/// lines only, and so is any key not listed here: R-13's five kinds are the
 /// whole list, never a guess (ruling, task 15 fix round 2).
 fn classify(key: &str) -> (Option<DeliveryAlertKind>, Option<u16>) {
     use DeliveryAlertKind::*;

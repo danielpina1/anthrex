@@ -193,9 +193,14 @@ pub struct ReplyDue {
     /// The fix task it reports; `None` for a `reply_comment`.
     #[serde(default)]
     pub task: Option<String>,
-    /// The head of the push in flight that carries the fix task's merge.
+    /// The head of the push that carries the fix task's merge.
     #[serde(default)]
     pub push: Option<String>,
+    /// The final fix wave's I-1: that push was answered, so the remote branch holds it;
+    /// the reply is `ready` once a view of the still-open PR shows the pushed head (a
+    /// push answered after the user's merge never reached the merged PR).
+    #[serde(default)]
+    pub push_done: bool,
     #[serde(default)]
     pub ready: bool,
     /// Sent at least once, unanswered: a comment with its marker may exist.
@@ -243,6 +248,11 @@ pub struct PrRecord {
     pub opened_base: Option<String>,
     #[serde(default)]
     pub branch_deleted: bool,
+    /// The final fix wave's I-1: the newest head the open PR was seen to carry (the head
+    /// it opened with, then each view of the open PR showing the pushed head). A local
+    /// head that is this one, or the head the host reports at the merge, was delivered.
+    #[serde(default)]
+    pub confirmed: Option<String>,
 }
 
 /// One check of a view's head, as the snapshot shows it.

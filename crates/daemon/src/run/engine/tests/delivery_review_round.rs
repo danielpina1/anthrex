@@ -13,7 +13,7 @@ use super::delivery_review::{
     asked, counted, grant, ignored, logged, noted, on, reviewed, said, state,
 };
 use super::delivery_review_reply::{
-    add, add_plan, by_alice, commented, merge_fix, one_reply, planned, push_lands, refused,
+    add, add_plan, by_alice, commented, merge_fix, one_reply, planned, push_shown, refused,
     reply_comment,
 };
 use super::delivery_watch::{poll_with, view};
@@ -108,7 +108,7 @@ fn a_non_writers_reply_never_lowers_a_tasked_thread() {
     poll_with(&mut fx, v);
     fx.run_mut().delivery.watching = false;
     merge_fix(&mut fx, "fix1", &commit(2));
-    push_lands(&mut fx, &commit(2));
+    push_shown(&mut fx, &commit(2));
     let (op, _) = one_reply(&fx);
     answer(&mut fx, op, HostResult::Replied { comment_id: 902 });
     assert_eq!(state(&fx, "t30"), ThreadState::Replied { comment_id: 902 });

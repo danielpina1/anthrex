@@ -402,7 +402,7 @@ fn adopted(run: &mut Run, n: u16, sha: String, now: u64, fx: &mut Vec<Effect>) {
     let head = run.stage_head(n).unwrap_or_default().to_string();
     let branch = remote_branch(run, n);
     stage_mut(run, n).remote_head = None;
-    super::reply::adopted(run, n);
+    super::reply::adopted(run, n, &sha);
     let Some(record) = pr_mut(run, n) else {
         return;
     };

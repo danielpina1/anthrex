@@ -8,9 +8,10 @@
 //!   next delivering stage absorbs the new base, is pushed, then **retargeted** onto the
 //!   base branch (`gh pr edit --base`, the one allow-listed edit); with
 //!   `delete_merged_branches`, its remote branch is deleted once no open PR is based on
-//!   it. Only what was pushed landed: a local head anthrex never pushed (a held stage,
-//!   ruling R-11) goes up with the next stage, and is an attention line when no stage
-//!   above can carry it;
+//!   it. Only what the host reports at the merge landed (the final fix wave's I-1): a
+//!   local head it does not hold (a held stage, ruling R-11, or a push answered after
+//!   the merge) goes up with the next stage, and is an attention line when no stage
+//!   above can carry it; a reply whose fix missed the merge is dropped with a line;
 //! - a **closed** stage: its unfinished fix tasks are cancelled and every stage above it
 //!   pauses (decision 37) until the PR is reopened; a paused stage whose tasks are all
 //!   cancelled counts as skipped (the controller's re-plan ruling), and a task added to
@@ -84,12 +85,17 @@ fn landing(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
 }
 
 /// Decision 35: the user merged stage `n`. The base is fetched (its merge commit's
-/// parents counted there), the next stage synced, pushed and retargeted. Only the head
-/// anthrex pushed landed (task M9.2.8's carried ruling).
+/// parents counted there), the next stage synced, pushed and retargeted. What landed is
+/// the head the host reports at the merge (the final fix wave's I-1), never what
+/// anthrex pushed: GitHub accepts a push to a merged PR's branch, so a push answered
+/// after the user's merge counts for nothing. The local head was delivered when it is
+/// that head, or when a view of the open PR showed it (`PrRecord.confirmed`; a PR head
+/// only fast-forwards). Otherwise it is not delivered ([`unpushed`]), and each reply
+/// whose fix missed the merge is dropped with an attention line.
 fn merged(run: &mut Run, n: u16, pr: &PrRecord, now: u64) {
     let stage = stage_mut(run, n);
     stage.landed = Some(PrState::Merged);
-    let held = stage.held.take().is_some();
+    stage.held = None;
     let commit = pr.merge_commit.as_deref().map_or("an unknown commit", sha7);
     log(
         run,
@@ -105,28 +111,38 @@ fn merged(run: &mut Run, n: u16, pr: &PrRecord, now: u64) {
     }
     run.delivery.base_fetch_due = true;
     let head = run.stage_head(n).unwrap_or_default().to_string();
-    if held || head != pr.pushed_head {
-        unpushed(run, n, pr, &head, now);
+    let at = match pr.watermark.head.as_str() {
+        "" => pr.pushed_head.clone(),
+        reported => reported.to_string(),
+    };
+    let delivered = head == at || pr.confirmed.as_deref() == Some(head.as_str());
+    let missed = super::reply::landed(run, n, &at, delivered);
+    if !delivered {
+        unpushed(run, n, pr, &head, &at, now);
+    }
+    if !missed.is_empty() {
+        missed_merge(run, n, pr, &at, &missed, now);
     }
 }
 
-/// Stage `n` was merged at its pushed head, while its local head `head` has commits
-/// anthrex never pushed: they did not land. The next stage that still delivers carries
-/// them up (9.1's propagate); with none, an attention line (invented).
-fn unpushed(run: &mut Run, n: u16, pr: &PrRecord, head: &str, now: u64) {
+/// Stage `n` was merged at `at`, the host's head, which does not hold its local head
+/// `head` (a held stage, a push after the merge, a fix merged since): that work did not
+/// land. The next stage that still delivers carries it up (9.1's propagate); with none,
+/// an attention line (invented).
+fn unpushed(run: &mut Run, n: u16, pr: &PrRecord, head: &str, at: &str, now: u64) {
     let above = (n + 1..=stage_count(run)).find(|&m| super::sync::live(run, m));
     let line = match above {
         Some(m) => format!(
-            "{}: merged at {}; {} was never pushed, so its commits go up with stage {m}",
+            "{}: merged at {}, without {}, so its commits go up with stage {m}",
             named(n, pr),
-            sha7(&pr.pushed_head),
+            sha7(at),
             sha7(head)
         ),
         None => {
             let line = format!(
-                "stage {n} PR #{} was merged at {}, without {} that anthrex never pushed; that work is not delivered (anthrex run cancel gives up)",
+                "stage {n} PR #{} was merged at {}, without {}; that work is not delivered (anthrex run cancel gives up)",
                 pr.number,
-                sha7(&pr.pushed_head),
+                sha7(at),
                 sha7(head)
             );
             run.delivery
@@ -137,6 +153,40 @@ fn unpushed(run: &mut Run, n: u16, pr: &PrRecord, head: &str, now: u64) {
         }
     };
     log(run, now, line);
+}
+
+/// I-1: the fix tasks whose replies were dropped because their fix missed the merge at
+/// `at`, as `(task, thread)`: one attention line for the stage (invented).
+fn missed_merge(
+    run: &mut Run,
+    n: u16,
+    pr: &PrRecord,
+    at: &str,
+    missed: &[(String, String)],
+    now: u64,
+) {
+    let mut tasks: Vec<&str> = Vec::new();
+    for (task, _) in missed {
+        if !tasks.contains(&task.as_str()) {
+            tasks.push(task);
+        }
+    }
+    let threads: Vec<&str> = missed.iter().map(|(_, t)| t.as_str()).collect();
+    let (tasks_word, threads_word, verb) = match (tasks.len(), threads.len()) {
+        (1, 1) => ("fix task", "thread", "gets"),
+        (1, _) => ("fix task", "threads", "get"),
+        (_, 1) => ("fix tasks", "thread", "gets"),
+        _ => ("fix tasks", "threads", "get"),
+    };
+    let line = format!(
+        "PR #{} was merged at {} before {tasks_word} {} reached it: the fix missed the merge, so {threads_word} {} {verb} no reply",
+        pr.number,
+        sha7(at),
+        tasks.join(", "),
+        threads.join(", ")
+    );
+    log(run, now, line.clone());
+    run.delivery.alerts.insert(format!("{n}/missed"), line);
 }
 
 /// Ruling R-4, decision 44: the base fetch counted merge commit `oid`'s parents; two or

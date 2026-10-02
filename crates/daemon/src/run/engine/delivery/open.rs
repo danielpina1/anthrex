@@ -221,6 +221,7 @@ pub(super) fn opened(run: &mut Run, n: u16, base: String, pr: PrRef, now: u64) {
     let poll = now.saturating_add(super::watch::base_secs(run));
     let stage = stage_mut(run, n);
     let pushed_head = stage.pushed.take().unwrap_or(head);
+    let confirmed = Some(pushed_head.clone());
     stage.retry_at = None;
     stage.pr = Some(PrRecord {
         number: pr.number,
@@ -240,6 +241,8 @@ pub(super) fn opened(run: &mut Run, n: u16, base: String, pr: PrRef, now: u64) {
         retargeted_to: None,
         opened_base: Some(base.clone()),
         branch_deleted: false,
+        // I-1: the PR was created from the branch holding the pushed head.
+        confirmed,
     });
     let text = match pr.existed {
         true => format!(
