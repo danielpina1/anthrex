@@ -258,10 +258,13 @@ fn row_line(
     let used: usize = spans.iter().map(|s| s.content.width()).sum();
     let fill = width.saturating_sub(indent.max(1) + used);
     spans.push(Span::raw(" ".repeat(fill)));
+    // In the accent only where the keys are (decision 1), `Muted` under a modal.
+    let keys_here = app.key_region() == crate::app::region::KeyRegion::Overview;
+    let colour = if keys_here { Role::Accent } else { Role::Muted };
     let mut out = vec![
         Span::styled(
             theme::glyph(Glyph::Selection, p.ascii),
-            theme::role(Role::Accent, p),
+            theme::role(colour, p),
         ),
         Span::raw(" ".repeat(indent.saturating_sub(1))),
     ];

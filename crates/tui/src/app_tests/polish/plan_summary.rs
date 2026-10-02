@@ -247,9 +247,11 @@ fn a_200_task_plans_layout_orders_its_tasks_once() {
     let steps = work::take();
     assert_eq!(layout.warnings.len(), 4);
     assert_eq!(layout.warnings[3], "⚠ 14997 more overlaps");
-    // 200 tasks: a closure of 200 walks over at most 50 tasks and 50 deps each
-    // (20,000), and one `owns` comparison for each of the 19,900 pairs that cannot
-    // be ordered or share `Cargo.toml` first. Two searches a pair cost millions.
+    // 200 tasks: the closure's 200 walks, a pop and a dep edge per ancestor (2i + 1
+    // for the i-th task of a chain: 2,500 a chain, 10,000 in all). Of the 19,900
+    // pairs, the 4,900 inside a chain are ordered and compare nothing; only the 15,000
+    // across chains pass the reach check and compare `owns`, one step each since both
+    // list `Cargo.toml` first: 25,000. Two searches a pair cost millions.
     assert!(steps <= 100_000, "{steps} steps");
 }
 

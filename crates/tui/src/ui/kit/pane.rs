@@ -41,12 +41,21 @@ pub fn pane_frame(title: Line<'static>, keys_here: bool, p: Palette) -> Block<'s
 }
 
 /// The selection bar (final fix wave M3: one idiom for every selectable row). A
-/// selected row is reversed, and `▌` (`>` in ASCII) in the accent stands in the column
-/// left of it: a frame's left border cell on that row, as a graph box's (milestone
-/// 9.0.7 decision 20). A cell off the buffer is left alone.
-pub fn selection_bar(buf: &mut ratatui::buffer::Buffer, x: u16, y: u16, p: Palette) {
+/// selected row is reversed, and `▌` (`>` in ASCII) stands in the column left of it: a
+/// frame's left border cell on that row, as a graph box's (milestone 9.0.7 decision
+/// 20). It wears the accent only where the keys are (`keys_here`, decision 1), `Muted`
+/// otherwise, so a selection under a modal stays visible without a second accent. A
+/// cell off the buffer is left alone.
+pub fn selection_bar(
+    buf: &mut ratatui::buffer::Buffer,
+    x: u16,
+    y: u16,
+    keys_here: bool,
+    p: Palette,
+) {
     if let Some(cell) = buf.cell_mut((x, y)) {
         cell.set_symbol(theme::glyph(theme::Glyph::Selection, p.ascii));
-        cell.set_style(role(Role::Accent, p));
+        let colour = if keys_here { Role::Accent } else { Role::Muted };
+        cell.set_style(role(colour, p));
     }
 }

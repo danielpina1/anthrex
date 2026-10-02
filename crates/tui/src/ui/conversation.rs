@@ -187,7 +187,8 @@ fn draw_rows(buf: &mut Buffer, inner: Rect, ctx: &Ctx, rows: &[Row], selected: O
             buf.set_style(area, Modifier::REVERSED);
             // Final fix wave M3: the bar on the frame's left border, beside the row.
             let x = inner.x.saturating_sub(1);
-            super::kit::selection_bar(buf, x, area.y, ctx.app.palette());
+            let keys_here = ctx.app.key_region() == KeyRegion::Conversation;
+            super::kit::selection_bar(buf, x, area.y, keys_here, ctx.app.palette());
         }
     }
 }

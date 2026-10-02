@@ -191,7 +191,7 @@ fn moved_base_body(
                 role(Role::Accent, p),
             ),
             Span::raw(one_line(&page.typed)),
-            kit::cursor_block(p),
+            kit::cursor_block(role(Role::Accent, p), p),
         ]),
     ];
     // A snapshot refused the accept meanwhile (decision 13): Enter only toasts it.

@@ -66,14 +66,21 @@ pub fn paint(
     }
     // Milestone 9.0.7 decision 20: the selection bar takes the selected box's left
     // border cell on its content row, after the edges so a junction cannot cover it.
+    // In the accent only where the keys are (decision 1), `Muted` under a modal.
     if let Some(rect) = selected {
         let p = app.palette();
         let bar = theme::glyph(theme::Glyph::Selection, p.ascii).to_owned();
+        let keys_here = app.key_region() == crate::app::region::KeyRegion::Overview;
+        let colour = if keys_here {
+            theme::Role::Accent
+        } else {
+            theme::Role::Muted
+        };
         grid.place(
             rect.x,
             rect.y.saturating_add(1),
             bar,
-            theme::role(theme::Role::Accent, p),
+            theme::role(colour, p),
         );
     }
     grid.into_lines()

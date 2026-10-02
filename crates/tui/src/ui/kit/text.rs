@@ -8,22 +8,23 @@ use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// `text` cut to `max` columns, ending in `ellipsis` when it was cut.
 /// A one-line prompt's cursor (final fix wave M5: one idiom for the rename box and
-/// the accept page): a solid block, or a reversed cell in ASCII. The text areas
-/// reverse the cell under the cursor instead (`text_area_focus`), the same look at the
-/// end of the text.
-pub fn cursor_block(p: Palette) -> Span<'static> {
+/// the accept page): a solid block drawn in `style` (the accept page's accent, the
+/// rename box's plain default), or a reversed cell in ASCII, whatever `style`. The
+/// text areas reverse the cell under the cursor instead (`text_area_focus`), the same
+/// look at the end of the text.
+pub fn cursor_block(style: ratatui::style::Style, p: Palette) -> Span<'static> {
     if p.ascii {
         Span::styled(
             " ",
             ratatui::style::Style::default().add_modifier(Modifier::REVERSED),
         )
     } else {
-        Span::raw("█")
+        Span::styled("█", style)
     }
 }
 
+/// `text` cut to `max` columns, ending in `ellipsis` when it was cut.
 pub(crate) fn cut(text: &str, max: usize, ellipsis: &str) -> String {
     if text.width() <= max {
         return text.to_string();

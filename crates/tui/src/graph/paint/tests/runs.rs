@@ -257,7 +257,8 @@ fn critical_path_tasks_have_a_bold_border() {
 #[test]
 fn selecting_a_task_lights_its_dependencies_and_dims_the_rest() {
     let mut app = app_of(three_task_fixture());
-    app.enter_tree();
+    // The overview, where the graph is drawn and holds the keys (decision 1).
+    app.enter_overview();
     app.tree.selected = Some(task_key("t1"));
     let (layout, lines) = paint_view(&app);
     // Milestone 9.0.7 decision 1: a lit box is bold on the muted border, never accented.

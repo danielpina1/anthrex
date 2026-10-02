@@ -347,6 +347,31 @@ fn the_selected_tree_row_wears_the_selection_bar() {
     }
 }
 
+/// Follow-up to the final fix wave's M3 (decision 1): under the help the tree keeps
+/// its selection, reversed, but its bar is `Muted`: the help has the keys.
+#[test]
+fn the_tree_bar_is_muted_under_the_help() {
+    let mut app = shells(3, 80, 24);
+    app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    app.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+    app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    app.on_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+    assert!(app.modal.is_some(), "`C-b ?` opened the help");
+    let (buffer, l) = frame(&mut app, 80, 24);
+    let list = l.sidebar_list;
+    let y = (list.y..list.bottom())
+        .find(|&y| buffer[(l.sidebar.x, y)].symbol() == "▌")
+        .expect("the tree's bar beside the help");
+    assert!(
+        buffer[(list.x + 2, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::REVERSED),
+        "the row stays reversed"
+    );
+    let muted = theme::role(Role::Muted, app.palette()).fg;
+    assert_eq!(Some(buffer[(l.sidebar.x, y)].fg), muted);
+}
+
 /// Task 4's deferred minor: beside a six-digit overflow mark at the least sidebar width
 /// the title keeps the mark whole and cuts `agents` with `…` (`...` in ASCII).
 #[test]

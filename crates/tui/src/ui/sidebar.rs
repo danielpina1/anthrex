@@ -108,7 +108,7 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
         && app.tree_input.is_some()
     {
         let y = geometry.list.y + u16::try_from(at).unwrap_or(u16::MAX);
-        kit::selection_bar(frame.buffer_mut(), layout.sidebar.x, y, p);
+        kit::selection_bar(frame.buffer_mut(), layout.sidebar.x, y, keys_here, p);
     }
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(

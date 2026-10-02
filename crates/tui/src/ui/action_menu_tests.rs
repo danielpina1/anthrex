@@ -298,6 +298,35 @@ fn confirm_page_renders_destructive_in_failed() {
     );
 }
 
+/// The cells drawing `█` in a whole frame.
+fn blocks(buffer: &Buffer) -> Vec<&ratatui::buffer::Cell> {
+    buffer
+        .content()
+        .iter()
+        .filter(|c| c.symbol() == "█")
+        .collect()
+}
+
+/// Follow-up to the final fix wave's M5: the accept page's block cursor keeps the
+/// accent it had before `kit::cursor_block`; the rename box's keeps its plain look.
+#[test]
+fn the_accept_cursor_wears_the_accent() {
+    let app = moved_base_app(1, 1, "072", true);
+    let buffer = draw(&app, 80, 24);
+    let cursor = blocks(&buffer);
+    assert_eq!(cursor.len(), 1);
+    assert_eq!(Some(cursor[0].fg), role(Role::Accent, app.palette()).fg);
+    let rename = crate::ui::audit::fixtures()
+        .into_iter()
+        .find(|(n, _)| *n == "rename over the pane")
+        .expect("the rename fixture")
+        .1;
+    let buffer = draw(&rename, 80, 24);
+    let cursor = blocks(&buffer);
+    assert_eq!(cursor.len(), 1);
+    assert_eq!(cursor[0].fg, ratatui::style::Color::Reset);
+}
+
 #[test]
 fn moved_base_page_renders() {
     let app = moved_base_app(1, 1, "072", true);

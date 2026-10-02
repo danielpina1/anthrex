@@ -67,6 +67,34 @@ fn every_accented_box_glyph_is_one_frames() {
     assert!(strays.is_empty(), "{}", strays.join("\n"));
 }
 
+/// The accented `▌` cells in `app`'s frame at `w`x`h`.
+fn accented_bars(app: &App, w: u16, h: u16) -> usize {
+    let accent = role(Role::Accent, app.palette()).fg;
+    let buffer = audit::draw(app, w, h);
+    buffer
+        .content()
+        .iter()
+        .filter(|c| c.symbol() == "▌" && Some(c.fg) == accent)
+        .count()
+}
+
+/// Follow-up to the final fix wave's M3 (decisions 1 and 20): a selection bar or a
+/// focus mark wears the accent only where the keys are, so a frame holds at most one
+/// accented `▌`. (Unicode only: ASCII's `>` is also the accented prompt separator.)
+#[test]
+fn at_most_one_accented_bar_in_every_frame() {
+    let mut extra = Vec::new();
+    for (name, app) in fixtures() {
+        for (w, h) in [(80, 24), (120, 40)] {
+            let bars = accented_bars(&app, w, h);
+            if bars > 1 {
+                extra.push(format!("{name} at {w}x{h}: {bars}"));
+            }
+        }
+    }
+    assert!(extra.is_empty(), "{}", extra.join("\n"));
+}
+
 /// Pinning the helper: one frame with a joined rule is clean; a second frame crossed by
 /// a dialog, or an accented rule not joined to the frame, is a stray.
 #[test]
@@ -346,8 +374,9 @@ fn accented_frames_counts_shared_and_filled_edges() {
     // The help at 80x24 sits on row 0, over an accented pane, and has a bottom title;
     // in colour and (final fix wave, task 2's deferred minor) in ASCII. In ASCII the
     // modal's top-right `+` on the pane's top border reads as a shared column (the
-    // `shared` case above), so two accents count three there: never one, which is
-    // what the audit asks.
+    // `shared` case above), so two accents may count three there. The exact count is
+    // an artifact; what is pinned is that two accented frames never count one, which
+    // is all the audit's `== 1` needs to catch them.
     for q in [p, ascii] {
         let modal = pane("keys", true, q).title_bottom(Line::from(" any key  close "));
         let under = |keys| {
@@ -355,12 +384,7 @@ fn accented_frames_counts_shared_and_filled_edges() {
             [base, (Rect::new(10, 0, 20, 12), modal.clone())]
         };
         let two = count(q, 40, 12, &under(true));
-        assert_eq!(
-            two,
-            if q.ascii { 3 } else { 2 },
-            "two accents, ascii {}",
-            q.ascii
-        );
+        assert!(two >= 2, "two accents count {two}, ascii {}", q.ascii);
         assert_eq!(
             count(q, 40, 12, &under(false)),
             1,

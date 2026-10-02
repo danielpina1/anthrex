@@ -20,7 +20,7 @@ fn rename_row(prompt: &RenamePrompt, width: u16, p: Palette) -> Line<'static> {
     let (visible, column) = prompt.input.visible(room);
     let graphemes: Vec<&str> = visible.graphemes(true).collect();
     let at = usize::from(column).min(graphemes.len());
-    let block = kit::cursor_block(p);
+    let block = kit::cursor_block(ratatui::style::Style::default(), p);
     Line::from(vec![
         Span::styled(LABEL, role(Role::Muted, p)),
         Span::raw(one_line(&graphemes[..at].concat())),

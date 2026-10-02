@@ -174,7 +174,6 @@ pub fn border_set(ascii: bool) -> ratatui::symbols::border::Set<'static> {
     }
 }
 
-/// New screens draw runtimes as text tags, not logos.
 /// `…`, or `...` in ASCII: decision 5's fold of the client's ellipsis, as a
 /// `&'static str` for the kit's cuts (final fix wave M5: one helper for the screens'
 /// six copies).
@@ -204,6 +203,7 @@ pub fn dot_sep(p: Palette) -> &'static str {
     if p.ascii { " - " } else { " · " }
 }
 
+/// New screens draw runtimes as text tags, not logos.
 pub fn runtime_tag(r: proto::Runtime) -> &'static str {
     match r {
         proto::Runtime::Claude => "cl",
