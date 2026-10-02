@@ -2,9 +2,13 @@
 //! retargeting when a merged head branch is deleted, and mergeability. The rig is in
 //! `tests.rs`.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
 use super::tests::{Rig, git, head};
 use super::*;
-use crate::host::{CheckStatus, CodeHost, Conclusion, DeleteBranchReq, Mergeable, PrState};
+use crate::host::{
+    CheckStatus, CodeHost, Conclusion, DeleteBranchReq, HostError, Mergeable, PrState,
+};
 
 fn parents(rig: &Rig, sha: &str) -> Vec<String> {
     let line = git(&rig.bare, &["rev-list", "--parents", "-n", "1", sha]);
@@ -240,4 +244,66 @@ fn fake_mergeable_is_conflicting_when_the_base_conflicts() {
     assert_ne!(rewritten, one);
     let ancestor = git(&rig.bare, &["merge-base", &rewritten, &one]);
     assert_ne!(ancestor, one);
+}
+
+#[test]
+fn fake_close_reopen_resolve_and_the_edit_refusals() {
+    let rig = Rig::new();
+    let one = rig.commit(&rig.base, &[("a.txt", Some("a\n"))], "stage 1");
+    rig.push(1, &one);
+    rig.open(1, "main", "Stage 1");
+    git(
+        &rig.work,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{}:refs/heads/dev", rig.base),
+        ],
+    );
+    let view = || rig.host.view_pr(&rig.repo(), 1).unwrap();
+
+    let first = rig.ctl.review_comment(1, "alice", "a.txt", 1, "Why a?");
+    assert!(!view().threads[0].resolved);
+    rig.ctl.resolve(1, first);
+    assert!(view().threads[0].resolved);
+
+    rig.ctl.close(1);
+    assert_eq!(view().state, PrState::Closed);
+    // Constructed texts (not observed), classified as `GhHost` reads them.
+    assert_eq!(
+        rig.host.retarget(&rig.repo(), 1, "dev"),
+        Err(HostError::Failed(
+            "GraphQL: Cannot change the base branch of a closed pull request. (updatePullRequest)"
+                .to_string()
+        ))
+    );
+    // Setting the base it already has is harmless, closed or not.
+    rig.host.retarget(&rig.repo(), 1, "main").unwrap();
+
+    rig.ctl.reopen(1);
+    assert_eq!(view().state, PrState::Open);
+    assert_eq!(
+        rig.host.retarget(&rig.repo(), 1, "nope"),
+        Err(HostError::NotFound(
+            "GraphQL: Could not resolve to a Ref with the name 'refs/heads/nope'. (updatePullRequest)"
+                .to_string()
+        ))
+    );
+    rig.host.retarget(&rig.repo(), 1, "dev").unwrap();
+    assert_eq!(view().base_ref, "dev");
+
+    // A PR whose head branch is gone was closed by GitHub and cannot be reopened.
+    rig.host
+        .delete_branch(&DeleteBranchReq {
+            repo: rig.repo(),
+            run_id: super::tests::RUN.to_string(),
+            stage: 1,
+        })
+        .unwrap();
+    assert_eq!(view().state, PrState::Closed);
+    let reopened = catch_unwind(AssertUnwindSafe(|| rig.ctl.reopen(1)));
+    assert!(reopened.is_err());
+    assert_eq!(rig.ctl.prs()[0].state, PrState::Closed);
+    assert!(rig.ctl.forbidden().is_empty());
 }

@@ -15,12 +15,15 @@ mod ctl;
 mod gh_api;
 mod gh_pr;
 mod github;
+mod landing;
 mod rules;
 
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_ci_merge;
+#[cfg(test)]
+mod tests_landing;
 #[cfg(test)]
 mod tests_lifecycle;
 
@@ -120,20 +123,31 @@ impl FakeGh {
         }
     }
 
-    fn gh(&self, argv: &[String], env: &[(String, String)]) -> Result<Answer, HostError> {
-        github::append(&self.dir, github::CALLS, argv).map_err(HostError::Failed)?;
+    fn gh(
+        &self,
+        dir: &Path,
+        argv: &[String],
+        env: &[(String, String)],
+    ) -> Result<Answer, HostError> {
         let args: Vec<&str> = argv.iter().map(String::as_str).collect();
-        if let Some(verb) = landing(&args) {
-            let recorded = github::append(&self.dir, github::FORBIDDEN, argv);
+        // The guard comes first, so a landing ask always panics: a failure to record
+        // it is named in the panic, never answered as an error.
+        if let Some(verb) = landing::landing(&args, dir) {
+            let recorded = [github::CALLS, github::FORBIDDEN]
+                .into_iter()
+                .filter_map(|file| github::append(&self.dir, file, argv).err())
+                .collect::<Vec<_>>();
             panic!(
                 "FakeHost: anthrex asked to {verb} gh {}; anthrex never lands anything{}",
                 argv.join(" "),
-                recorded
-                    .err()
-                    .map(|e| format!(" ({e})"))
-                    .unwrap_or_default()
+                if recorded.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", recorded.join("; "))
+                }
             );
         }
+        github::append(&self.dir, github::CALLS, argv).map_err(HostError::Failed)?;
         let Some(cmd) = gh_pr::parse(&args).or_else(|| gh_api::parse(&args)) else {
             return Ok(Answer::fail(format!(
                 "FakeGh: unsupported: gh {}\n",
@@ -164,7 +178,7 @@ impl Runner for FakeGh {
         if program == Program::Git {
             return self.system.run(program, dir, argv, env, timeout, cap);
         }
-        let answer = self.gh(argv, env)?;
+        let answer = self.gh(dir, argv, env)?;
         let mut out = RunOutput {
             success: answer.ok,
             stdout: answer.stdout.into_bytes(),
@@ -287,104 +301,6 @@ pub(super) enum Cmd {
         repo: String,
         user: String,
     },
-}
-
-/// Decision 14's panic list: `gh pr merge` (any flags; `--auto` is "enable
-/// auto-merge"), `gh pr review` (any form), and a `gh api` call whose path has a
-/// `merge`, `merges` or `reviews` segment, whose method is `PUT`, or whose GraphQL
-/// query is a mutation.
-fn landing(args: &[&str]) -> Option<&'static str> {
-    match args {
-        ["pr", "merge", rest @ ..] => Some(
-            if rest
-                .iter()
-                .any(|a| *a == "--auto" || a.starts_with("--auto="))
-            {
-                "enable auto-merge"
-            } else {
-                "merge"
-            },
-        ),
-        ["pr", "review", ..] => Some("approve"),
-        ["api", rest @ ..] => api_landing(rest),
-        _ => None,
-    }
-}
-
-/// `gh api`'s flags that take a value (the next argument, or `=`/glued forms).
-const API_VALUE_FLAGS: [&str; 12] = [
-    "-X",
-    "--method",
-    "-f",
-    "--raw-field",
-    "-F",
-    "--field",
-    "-H",
-    "--header",
-    "--input",
-    "-q",
-    "--jq",
-    "--hostname",
-];
-
-fn api_landing(rest: &[&str]) -> Option<&'static str> {
-    let mut method = String::new();
-    let mut paths = Vec::new();
-    let mut bodies = Vec::new();
-    let mut i = 0;
-    while i < rest.len() {
-        let arg = rest[i];
-        let (flag, glued) = match arg.split_once('=') {
-            Some((f, v)) if f.starts_with("--") => (f, Some(v.to_string())),
-            _ if arg.starts_with("-X") && arg.len() > 2 => ("-X", Some(arg[2..].to_string())),
-            _ => (arg, None),
-        };
-        if API_VALUE_FLAGS.contains(&flag) {
-            let value = glued.or_else(|| {
-                i += 1;
-                rest.get(i).map(|v| v.to_string())
-            });
-            let value = value.unwrap_or_default();
-            match flag {
-                "-X" | "--method" => method = value.to_ascii_uppercase(),
-                "-f" | "--raw-field" => bodies.push(value),
-                // `-F key=@file` and `--input file` read the body from a file.
-                "-F" | "--field" => bodies.push(match value.split_once("=@") {
-                    Some((_, file)) => std::fs::read_to_string(file).unwrap_or_default(),
-                    None => value,
-                }),
-                "--input" => bodies.push(std::fs::read_to_string(&value).unwrap_or_default()),
-                _ => {}
-            }
-        } else if !arg.starts_with('-') {
-            paths.push(arg);
-        }
-        i += 1;
-    }
-    let path = paths.first().copied().unwrap_or("");
-    let path = path.split('?').next().unwrap_or("");
-    let segments: Vec<&str> = path.split('/').collect();
-    if segments.iter().any(|s| *s == "merge" || *s == "merges") {
-        return Some("merge");
-    }
-    if segments.contains(&"reviews") {
-        return Some("approve");
-    }
-    if method == "PUT" {
-        return Some("merge");
-    }
-    let mutation = bodies.iter().find(|b| b.contains("mutation"))?;
-    if path != "graphql" {
-        return None;
-    }
-    let lower = mutation.to_ascii_lowercase();
-    Some(if lower.contains("automerge") {
-        "enable auto-merge"
-    } else if lower.contains("review") {
-        "approve"
-    } else {
-        "merge"
-    })
 }
 
 /// One `gh` answer: the login and rate-limit gates (`gh --version` asks GitHub

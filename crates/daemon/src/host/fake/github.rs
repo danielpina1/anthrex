@@ -211,8 +211,10 @@ pub fn append(dir: &Path, file: &str, argv: &[String]) -> Result<(), String> {
         .map_err(|e| format!("FakeGithub: cannot append to {}: {e}", path.display()))
 }
 
-/// Every line of `<dir>/<file>`; none when it does not exist.
+/// Every line of `<dir>/<file>`; none when it does not exist. Read under the lock, so
+/// a line being appended is never seen half written.
 pub fn read_lines(dir: &Path, file: &str) -> Result<Vec<Vec<String>>, String> {
+    let _lock = Lock::take(dir)?;
     let path = dir.join(file);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,

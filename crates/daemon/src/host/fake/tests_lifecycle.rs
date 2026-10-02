@@ -428,5 +428,31 @@ fn fake_answers_keep_the_recorded_shapes() {
             .map(fields)
             .collect::<Vec<_>>()
     );
+
+    // A rule concluding `Error` is a `StatusContext`, shaped as the recorded one.
+    rig.ctl.set_ci(vec![CiRule::new("lint", Conclusion::Error)]);
+    let view_args = ["pr", "view", "1", "--repo", FULL, "--json", PR_VIEW_FIELDS];
+    let view = fixture(&stdout(&rig, &view_args));
+    let recorded = fixture(include_str!(
+        "../fixtures/status_check_rollup_status_context.json"
+    ));
+    assert_eq!(view["statusCheckRollup"][0]["__typename"], "StatusContext");
+    assert_eq!(view["statusCheckRollup"][0]["state"], "ERROR");
+    assert_eq!(
+        shape(&view["statusCheckRollup"][0]),
+        shape(&recorded["statusCheckRollup"][0])
+    );
+
+    // A merged PR's view, shaped as the recorded merged one.
+    rig.ctl.merge(1, MergeMethodArg::Merge, false);
+    let view = fixture(&stdout(&rig, &view_args));
+    let recorded = fixture(include_str!("../fixtures/pr_view_merged.json"));
+    for field in ["state", "mergeable"] {
+        assert_eq!(view[field], recorded[field], "{field}");
+    }
+    for field in ["mergedAt", "mergeCommit"] {
+        assert_eq!(shape(&view[field]), shape(&recorded[field]), "{field}");
+    }
+    assert_eq!(view["mergeCommit"]["oid"], rig.remote("main").unwrap());
     assert!(rig.ctl.forbidden().is_empty());
 }
