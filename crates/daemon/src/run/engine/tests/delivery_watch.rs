@@ -125,12 +125,16 @@ pub(super) fn polls(fx: &mut Fixture, at: u64) -> bool {
 
 /// Answers the pending view of PR #7 at `at` with `result`.
 pub(super) fn view_answer(fx: &mut Fixture, at: u64, result: HostResult) -> Vec<Effect> {
-    let (op, pending) = host_op(fx);
     let want = HostOp::ViewPr {
         stage: 1,
         number: PR,
     };
-    assert_eq!(pending, want);
+    // Task M9.2.10: a run-level `Permission` op may be out beside it.
+    let views: Vec<_> = (host_ops(fx).into_iter())
+        .filter(|(_, o)| *o == want)
+        .collect();
+    assert_eq!(views.len(), 1, "one pending view: {:#?}", host_ops(fx));
+    let op = views[0].0;
     fx.send(
         at,
         EventKind::OpDone {

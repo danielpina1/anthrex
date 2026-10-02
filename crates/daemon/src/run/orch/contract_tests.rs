@@ -272,7 +272,7 @@ fn short_texts_are_exact() {
     );
     assert_eq!(
         ONE_EDIT_RULE,
-        "message and refresh must be the only edit in their call"
+        "message, refresh and reply_comment must be the only edit in their call"
     );
 }
 

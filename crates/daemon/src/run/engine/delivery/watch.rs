@@ -113,6 +113,7 @@ pub(crate) fn attention(run: &Run) -> Vec<String> {
             lines.push(hold_line(run, n, reason));
         }
     }
+    lines.extend(super::review::attention(run));
     lines
 }
 
@@ -248,12 +249,13 @@ fn push(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) -> bool {
         run,
         HostOp::Push {
             stage: n,
-            sha: head,
+            sha: head.clone(),
         },
         fx,
     );
     if sent {
         log(run, now, text);
+        super::reply::pushing(run, n, &head);
     }
     sent
 }
@@ -278,6 +280,7 @@ pub(super) fn pushed(run: &mut Run, n: u16, sha: String, outcome: PushOutcome, n
                 now,
                 format!("{}: pushed {}", named(n, &pr), sha7(&sha)),
             );
+            super::reply::pushed(run, n, &sha);
         }
         PushOutcome::Rejected { reason } => {
             let remote = run.delivery.repo.as_ref().map_or("", |r| r.remote.as_str());
@@ -411,6 +414,7 @@ fn adopted(run: &mut Run, n: u16, sha: String, now: u64, fx: &mut Vec<Effect>) {
     let head = run.stage_head(n).unwrap_or_default().to_string();
     let branch = remote_branch(run, n);
     stage_mut(run, n).remote_head = None;
+    super::reply::adopted(run, n);
     let Some(record) = pr_mut(run, n) else {
         return;
     };

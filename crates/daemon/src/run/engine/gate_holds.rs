@@ -358,8 +358,9 @@ fn fresh(run: &Run, base: &str, sep: char, rounds: usize) -> String {
 }
 
 /// A new `Drafting` hold `id`. Callers pass a free id ([`fresh`]), so no rejected or
-/// decided hold is ever handed back as the one to join.
-fn create(run: &mut Run, id: &str, kind: HoldKind, now: u64) -> String {
+/// decided hold is ever handed back as the one to join. Milestone 9.2's fix holds
+/// (decision 26) are made here too.
+pub(super) fn create(run: &mut Run, id: &str, kind: HoldKind, now: u64) -> String {
     debug_assert!(!run.orch.gate_holds.iter().any(|h| h.id == id), "{id}");
     run.orch.gate_holds.push(GateHoldRecord {
         id: id.to_string(),

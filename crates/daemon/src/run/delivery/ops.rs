@@ -42,13 +42,16 @@ pub enum HostOp {
     },
     /// Decision 27 step 3.
     RerunFailed { stage: u16, ci_run: u64 },
-    /// Decision 30; `body` is the reply without its marker.
+    /// Decision 30; `body` is the reply without its marker, which the engine builds
+    /// (task M9.2.10: its `<sha7>` is the engine's to know) and the host appends.
     Reply {
         stage: u16,
         number: u64,
         thread: String,
         target: ReplyTarget,
         body: String,
+        #[serde(default)]
+        marker: String,
     },
     /// Decision 35.
     Retarget {

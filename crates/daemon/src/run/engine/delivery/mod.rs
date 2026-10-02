@@ -22,12 +22,22 @@ mod ci_repro;
 mod ci_trigger;
 mod fix;
 mod open;
+mod reply;
+mod review;
+mod review_fix;
 mod view;
 mod watch;
 
 pub(crate) use ci::summarised as ci_summarised;
 pub(crate) use ci_repro::{reproduced, reproducing};
 pub(in crate::run::engine) use fix::{ci_culprit, ci_no_culprit};
+pub(in crate::run::engine) use review_fix::holds_for as review_holds;
+
+/// Task M9.2.10's bounds on kept review text, for the size test.
+#[cfg(test)]
+pub(crate) mod review_limits {
+    pub(crate) use super::review::{COMMENT_KEPT_CHARS, STAGE_TEXT_CHARS, THREAD_COMMENTS_KEPT};
+}
 pub(crate) use watch::{attention, held, release, stage_busy, stage_paused};
 
 /// Decision 25: `run deliver` and `run watch`, as the driver hands them to the engine.
@@ -134,6 +144,8 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
     open::pass(run, now, fx);
     ci::pass(run, now, fx);
+    // Task M9.2.10: a due reply goes before the stage's views (see `review.rs`).
+    review::pass(run, now, fx);
     watch::pass(run, now, fx);
 }
 
@@ -184,6 +196,13 @@ pub(super) fn host_done(
         (HostOp::RerunFailed { stage, ci_run }, HostResult::Rerun) => {
             ci::rerun_done(run, stage, ci_run, true, now)
         }
+        // Decisions 29–30 (task M9.2.10).
+        (HostOp::Permission { .. }, HostResult::Permission { user, permission }) => {
+            review::permission(run, &user, permission)
+        }
+        (HostOp::Reply { stage, marker, .. }, HostResult::Replied { comment_id }) => {
+            reply::replied(run, stage, &marker, comment_id, now)
+        }
         _ => {}
     }
 }
@@ -208,8 +227,13 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
         .take(200)
         .collect();
     let rate_limited = matches!(error, HostError::RateLimited(_));
-    if let HostOp::RerunFailed { stage, ci_run } = op {
-        ci::rerun_done(run, *stage, *ci_run, false, now);
+    match op {
+        HostOp::RerunFailed { stage, ci_run } => ci::rerun_done(run, *stage, *ci_run, false, now),
+        HostOp::Permission { .. } => review::permission_failed(run, now, retry_secs(run)),
+        HostOp::Reply { stage, marker, .. } => {
+            reply::reply_failed(run, *stage, marker, &error, now)
+        }
+        _ => {}
     }
     match error {
         HostError::RateLimited(_) => watch::rate_limited(run),

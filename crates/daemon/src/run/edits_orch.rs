@@ -33,7 +33,7 @@ pub struct MessageOutcome {
     pub text: String,
 }
 
-/// Decision 42: a `message` or `refresh` is the only edit of its call, with no
+/// Decision 42: a `message`, `refresh` or `reply_comment` is the only edit of its call, with no
 /// `submit` and no `summary`. Checked before anything else, so the refusal has no
 /// effect at all.
 pub(crate) fn one_edit_rule(
@@ -41,7 +41,13 @@ pub(crate) fn one_edit_rule(
     submit: bool,
     summary: bool,
 ) -> Result<(), PlanError> {
-    let special = |e: &PlanEdit| matches!(e, PlanEdit::Message { .. } | PlanEdit::Refresh { .. });
+    // Milestone 9.2 decision 30: `reply_comment` too.
+    let special = |e: &PlanEdit| {
+        matches!(
+            e,
+            PlanEdit::Message { .. } | PlanEdit::Refresh { .. } | PlanEdit::ReplyComment { .. }
+        )
+    };
     if edits.iter().any(special) && (edits.len() > 1 || submit || summary) {
         return Err(PlanError::new(None, "", "42", ONE_EDIT_RULE));
     }

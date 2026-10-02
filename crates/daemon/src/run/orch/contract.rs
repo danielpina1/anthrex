@@ -135,7 +135,8 @@ pub const NOTE_LIMIT: &str = "note limit reached; put the rest in your task_done
 
 /// Decision 42: a `message` or `refresh` that shares its call with any other edit,
 /// `submit` or `summary`.
-pub const ONE_EDIT_RULE: &str = "message and refresh must be the only edit in their call";
+pub const ONE_EDIT_RULE: &str =
+    "message, refresh and reply_comment must be the only edit in their call";
 
 /// Decision 39: a wake text's cap. Interfaces places it in `run/driver/wake.rs` (task
 /// M9.13), which reuses this one.

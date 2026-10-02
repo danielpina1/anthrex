@@ -4,19 +4,22 @@
 //! the host ops ([`ops`]), the PR title and body ([`body`]), the quoting of untrusted
 //! text ([`quote`]) and what the snapshot shows of it all ([`snapshot`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 use proto::{CiCategory, CiState, DeliveryMode, MergeMethod, PrState};
 
-use crate::host::{HostRepo, Mergeable, RepoPermission};
+use crate::host::{HostRepo, Mergeable, ReplyTarget, RepoPermission};
 
 pub mod body;
 pub mod ops;
 pub mod quote;
+pub mod reply_edit;
 pub mod snapshot;
+pub mod templates;
+pub mod validate;
 
 /// Decision 21: a PR body is cut to this many characters (GitHub's limit is 65 536).
 pub const BODY_MAX_CHARS: usize = 60_000;
@@ -58,6 +61,9 @@ pub struct RunDelivery {
     /// key once it reaches [`FAILURES_BEFORE_ATTENTION`]), each removed when what it
     /// reports clears (not in Interfaces' `RunDelivery`).
     pub alerts: BTreeMap<String, String>,
+    /// Task M9.2.10 (decision 29): a failed `Permission` op is not asked again before
+    /// this time (decision 11's "retry when next due"; not in Interfaces).
+    pub permission_retry_at: Option<u64>,
 }
 
 impl RunDelivery {
@@ -118,6 +124,44 @@ pub struct StageDelivery {
     /// Task M9.2.8 (ruling R-11): the remote refused this stage's push; the stage pushes
     /// nothing until `run resume` (the reason, as the host gave it).
     pub held: Option<String>,
+    /// Task M9.2.10 (decision 30): the replies due on the stage's PR, oldest first.
+    pub replies: Vec<ReplyDue>,
+    /// The automatic replies already queued, `"<task>/<thread key>"`, so a restart or
+    /// a later pass never queues one twice.
+    pub auto_replies: BTreeSet<String>,
+    /// The ids of the comments anthrex posted on the stage's PR: anthrex's own, known
+    /// by id (never by their text, which anyone can paste), never review input.
+    pub own_comments: BTreeSet<u64>,
+    /// Decision 31: the batches closed so far (each thread keeps its batch's number),
+    /// and the last one counted as a review round.
+    pub batches: u32,
+    pub round_batch: u32,
+}
+
+/// Decision 30: one reply due on a stage PR's thread (task M9.2.10; not in
+/// Interfaces). An automatic reply waits until a push carrying its fix task's merge
+/// has landed on the remote (`push`, then `ready`); a `reply_comment` is ready at once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplyDue {
+    /// The thread's key (`t<id>`, `c<id>`, `r<id>`).
+    pub thread: String,
+    pub target: ReplyTarget,
+    /// The reply without its marker (the host appends it).
+    pub body: String,
+    /// `<!-- anthrex:reply <run> <pr>:<key> <sha7> -->`: the host finds a reply it
+    /// already posted by it (decision 10).
+    pub marker: String,
+    /// The fix task it reports; `None` for a `reply_comment`.
+    #[serde(default)]
+    pub task: Option<String>,
+    /// The head of the push in flight that carries the fix task's merge.
+    #[serde(default)]
+    pub push: Option<String>,
+    #[serde(default)]
+    pub ready: bool,
+    /// Sent at least once, unanswered: a comment with its marker may exist.
+    #[serde(default)]
+    pub sent: bool,
 }
 
 /// A stage's pull request (decisions 20, 23, 35).
@@ -327,6 +371,17 @@ pub struct ThreadRecord {
     /// Empty for a `c<id>` or `r<id>` record, whose one text is `text`.
     #[serde(default)]
     pub comments: Vec<SeenComment>,
+    /// Task M9.2.10 (decision 29): the logins whose write access decides whether the
+    /// thread's fresh comments count (not bots, not anthrex's own), until it does.
+    #[serde(default)]
+    pub candidates: Vec<String>,
+    /// The thread counts: a writer's or a listed reviewer's, it joined its stage's
+    /// batch (decision 31).
+    #[serde(default)]
+    pub counted: bool,
+    /// The closed batch (1, 2, …) the thread was handed out in; 0 before.
+    #[serde(default)]
+    pub batch: u32,
 }
 
 /// One processed comment of a review thread (host text, quoted only when used).

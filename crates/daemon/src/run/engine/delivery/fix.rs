@@ -114,7 +114,7 @@ fn brief(run: &Run, n: u16, rec: &CiRecord, repro: &Repro, culprit: Option<&Culp
     out
 }
 
-fn route_spec(route: &Route) -> RouteSpec {
+pub(super) fn route_spec(route: &Route) -> RouteSpec {
     RouteSpec {
         runtime: Some(route.runtime),
         model: Some(route.model.clone()),
@@ -125,7 +125,7 @@ fn route_spec(route: &Route) -> RouteSpec {
 
 /// The stage's approved tasks (plan-approved, or released from their hold), not
 /// cancelled, in plan order.
-fn approved(run: &Run, n: u16) -> Vec<&Task> {
+pub(super) fn approved(run: &Run, n: u16) -> Vec<&Task> {
     (run.tasks.iter())
         .filter(|t| t.stage() == n && t.state != TaskState::Cancelled)
         .filter(|t| gate_holds::released(run, t))
@@ -133,7 +133,7 @@ fn approved(run: &Run, n: u16) -> Vec<&Task> {
 }
 
 /// The union of the stage's approved `owns`, in plan order.
-fn stage_owns(run: &Run, n: u16) -> Vec<String> {
+pub(super) fn stage_owns(run: &Run, n: u16) -> Vec<String> {
     let mut owns: Vec<String> = Vec::new();
     for glob in approved(run, n).into_iter().flat_map(|t| &t.spec.owns) {
         if !owns.contains(glob) {
@@ -145,7 +145,7 @@ fn stage_owns(run: &Run, n: u16) -> Vec<String> {
 
 /// The stage's strongest route: the highest strength, the first task in plan order on
 /// a tie (decision 26).
-fn strongest(run: &Run, n: u16) -> Option<Route> {
+pub(super) fn strongest(run: &Run, n: u16) -> Option<Route> {
     let mut best: Option<&Route> = None;
     for t in approved(run, n) {
         if best.is_none_or(|b| t.route.strength > b.strength) {
@@ -180,7 +180,7 @@ fn spec(n: u16, rec: &CiRecord, owns: Vec<String>, epic: Option<String>) -> fixe
 
 /// `add_fix` on each route in turn (decision 26: a route the plan rules refuse is
 /// followed by the next); the first message when every one is refused.
-fn add_on(
+pub(super) fn add_on(
     run: &mut Run,
     spec: fixes::FixSpec,
     routes: &[RouteSpec],

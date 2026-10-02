@@ -15,11 +15,12 @@
 use proto::{CiState, PrState};
 
 use super::super::requests::log;
+use super::review::{Intake, Item};
 use super::stage_mut;
 use super::watch::{cap_secs, interval, named, pr_mut};
 use crate::host::{
-    CheckRun, CheckStatus, IssueComment, PrView, Review, ReviewState, ReviewThread, THREAD_PAGE,
-    ThreadComment, VIEW_PAGE,
+    Author, CheckRun, CheckStatus, IssueComment, PrView, Review, ReviewState, ReviewThread,
+    THREAD_PAGE, ThreadComment, VIEW_PAGE,
 };
 use crate::run::contract::sha7;
 use crate::run::delivery::{
@@ -105,11 +106,24 @@ fn seen_comment(c: &ThreadComment) -> SeenComment {
     }
 }
 
+/// A fresh item's author, as task M9.2.10's intake reads it (decision 29).
+fn item(id: u64, author: &Author, body: &str) -> Item {
+    Item {
+        id,
+        login: author.login.clone(),
+        bot: author.bot,
+        body: body.to_string(),
+    }
+}
+
 /// The fresh items as thread records (decision 4's keys): a conversation comment
-/// `c<id>`, a changes-requested review's body `r<id>` (any other review is only marked
-/// processed), a review thread `t<id of its first comment>`, which each later comment
-/// in it extends (m5: every comment is kept). Returns the keys of the new records.
+/// `c<id>`, a changes-requested review's body `r<id>` (any other review, and one with
+/// an empty body, is only marked processed: task M9.2.10), a review thread `t<id of its
+/// first comment>`, which each later comment in it extends (m5: every comment is kept).
+/// Returns the keys of the new records; task M9.2.10's intake then decides, from the
+/// authors, whether each counts (decision 29).
 fn record(run: &mut Run, n: u16, fresh: &Fresh, now: u64) -> Vec<String> {
+    let mut intakes: Vec<Intake> = Vec::new();
     let mut records: Vec<ThreadRecord> = Vec::new();
     let new = |key: String, author: &str, text: &str, id: u64| ThreadRecord {
         key,
@@ -122,16 +136,31 @@ fn record(run: &mut Run, n: u16, fresh: &Fresh, now: u64) -> Vec<String> {
         seen_at: now,
         last_comment_id: id,
         comments: Vec::new(),
+        candidates: Vec::new(),
+        counted: false,
+        batch: 0,
+    };
+    let created = |key: String, items: Vec<Item>| Intake {
+        key,
+        created: true,
+        resolved: false,
+        items,
     };
     for c in &fresh.comments {
         records.push(new(format!("c{}", c.id), &c.author.login, &c.body, c.id));
+        intakes.push(created(
+            format!("c{}", c.id),
+            vec![item(c.id, &c.author, &c.body)],
+        ));
     }
-    let changes = fresh
-        .reviews
-        .iter()
-        .filter(|r| r.state == ReviewState::ChangesRequested);
+    let changes = (fresh.reviews.iter())
+        .filter(|r| r.state == ReviewState::ChangesRequested && !r.body.trim().is_empty());
     for r in changes {
         records.push(new(format!("r{}", r.id), &r.author.login, &r.body, r.id));
+        intakes.push(created(
+            format!("r{}", r.id),
+            vec![item(r.id, &r.author, &r.body)],
+        ));
     }
     let stage = stage_mut(run, n);
     for (t, comments) in &fresh.threads {
@@ -140,6 +169,14 @@ fn record(run: &mut Run, n: u16, fresh: &Fresh, now: u64) -> Vec<String> {
         };
         let last = comments.iter().map(|c| c.id).max().unwrap_or(0);
         let key = format!("t{}", first.id);
+        let items = (comments.iter()).map(|c| item(c.id, &c.author, &c.body));
+        let known = stage.threads.iter().any(|k| k.key == key);
+        intakes.push(Intake {
+            key: key.clone(),
+            created: !known,
+            resolved: t.resolved,
+            items: items.collect(),
+        });
         if let Some(known) = stage.threads.iter_mut().find(|k| k.key == key) {
             known.last_comment_id = known.last_comment_id.max(last);
             known.text = newest.body.clone();
@@ -162,6 +199,7 @@ fn record(run: &mut Run, n: u16, fresh: &Fresh, now: u64) -> Vec<String> {
             stage.threads.push(r);
         }
     }
+    super::review::intake(run, n, intakes, now);
     added
 }
 
@@ -302,6 +340,8 @@ pub(super) fn viewed(run: &mut Run, n: u16, view: PrView, now: u64) {
         super::ci_trigger::red(run, n, &view.head_oid, red, now);
     }
     super::ci_trigger::viewed(run, n, &view, now);
+    // Task M9.2.10: what run.json keeps of review text is bounded.
+    super::review::trim(stage_mut(run, n));
 }
 
 /// The view's state, base (the host's: task M9.2.7's review m3), landing fields,

@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 use proto::{BlockInfo, BlockReason, PlanEdit, PlanTask, Size, TaskState};
 
 use super::contract::{amend_message, answer_message};
+use super::delivery::{reply_edit, validate};
 use super::edits_state::{has_live_worker, is_live, is_paused};
 pub(super) use super::edits_state::{not_started, state_label};
 use super::engine::actions::rules;
@@ -166,13 +167,12 @@ impl Batch {
             PlanEdit::Pause => self.consequences.push(EditConsequence::Pause),
             PlanEdit::Resume => self.consequences.push(EditConsequence::Resume),
             PlanEdit::Finish => self.consequences.push(EditConsequence::Finish),
-            // Milestone 9.2 decision 30: accepted from task M9.2.10 on.
-            PlanEdit::ReplyComment { .. } => self.errors.push(PlanError::new(
-                None,
-                "op",
-                "30",
-                "reply_comment is not available yet",
-            )),
+            // Milestone 9.2 decision 30.
+            PlanEdit::ReplyComment { pr, thread, body } => {
+                let edit = (*pr, &thread[..], &body[..]);
+                let applied = reply_edit::apply(&mut self.run, edit, &self.source, self.now);
+                self.errors.extend(applied.err());
+            }
         }
     }
 
@@ -218,6 +218,9 @@ impl Batch {
         task.worktree = task_path(&run.wt_dir, &run.id, task.id());
         task.notes
             .extend(protected_notes(&task.spec.owns, &run.protected_files));
+        // Milestone 9.2 decision 31: `addresses` makes it a review fix.
+        let review = validate::apply(&mut self.run, &mut task, &self.source);
+        self.errors.extend(review);
         self.touched.insert(task.spec.id.clone());
         task
     }

@@ -223,6 +223,9 @@ pub(super) fn thread(key: &str, author: &str, state: ThreadState) -> ThreadRecor
             author: author.into(),
             text: "a comment that must never reach the snapshot".into(),
         }],
+        candidates: Vec::new(),
+        counted: true,
+        batch: 1,
     }
 }
 
@@ -375,7 +378,22 @@ fn the_delivery_model_round_trips_through_run_json() {
         retry_at: Some(3_000),
         remote_head: Some(HEAD2.into()),
         held: Some("the remote refused the push".into()),
+        replies: vec![super::ReplyDue {
+            thread: "t98765".into(),
+            target: ReplyTarget::Thread { comment_id: 98_765 },
+            body: "Addressed in 1a2b3c4 by task fix2.".into(),
+            marker: format!("<!-- anthrex:reply {RUN} 142:t98765 1a2b3c4 -->"),
+            task: Some("fix2".into()),
+            push: Some(HEAD2.into()),
+            ready: false,
+            sent: true,
+        }],
+        auto_replies: ["fix2/t98765".to_string()].into(),
+        own_comments: [5_000_000_099].into(),
+        batches: 3,
+        round_batch: 2,
     };
+    run.delivery.permission_retry_at = Some(6_000);
     let json = serde_json::to_value(&run.delivery).unwrap();
     assert_eq!(json["stages"][1]["ci"][0]["phase"], "to_user");
     assert_eq!(
@@ -445,6 +463,7 @@ fn host_ops_and_results_round_trip_through_the_journal() {
             thread: "142:t9".into(),
             target: ReplyTarget::Thread { comment_id: 9 },
             body: "Addressed".into(),
+            marker: format!("<!-- anthrex:reply {RUN} 142:t9 1a2b3c4 -->"),
         },
         HostOp::Retarget {
             stage: 2,
