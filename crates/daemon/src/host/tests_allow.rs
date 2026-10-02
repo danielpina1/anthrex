@@ -79,12 +79,34 @@ fn allow_list_refuses_merge_approve_and_auto_merge() {
     // A PR head that is not a stage branch of any run, and a base that reads as a flag.
     let open = OpenPrReq {
         repo: repo.clone(),
+        run_id: RUN.to_string(),
         base: "main".to_string(),
         head: "main".to_string(),
         title: "t".to_string(),
         body_file: tmp.path().join("b.md"),
     };
     assert!(matches!(host.open_pr(&open), Err(HostError::Forbidden(_))));
+    // Fix round 1 (m2): the run comes from the request, never from the head or the ref
+    // it is checked against, so a head or a fetch ref of another run is refused.
+    let other_head = OpenPrReq {
+        head: "anthrex/r9999/stage-1".to_string(),
+        ..open.clone()
+    };
+    assert!(matches!(
+        host.open_pr(&other_head),
+        Err(HostError::Forbidden(_))
+    ));
+    let other_ref = FetchReq {
+        repo: repo.clone(),
+        run_id: RUN.to_string(),
+        branch: "main".to_string(),
+        into: "refs/anthrex/r9999/remote/base".to_string(),
+        adopt: None,
+    };
+    assert!(matches!(
+        host.fetch(&other_ref),
+        Err(HostError::Forbidden(_))
+    ));
     assert!(matches!(
         host.retarget(&repo, 1, "--admin"),
         Err(HostError::Forbidden(_))
@@ -101,7 +123,12 @@ fn allow_list_refuses_force_and_foreign_destinations() {
     let stage = format!("refs/heads/anthrex/{RUN}/stage-1");
     let spec = format!("{SHA}:{stage}");
     let push = |extra: &[&str], spec: &str| {
-        let mut parts = vec!["push", "--porcelain"];
+        let mut parts = vec![
+            "push",
+            "--porcelain",
+            "--no-follow-tags",
+            "--recurse-submodules=no",
+        ];
         parts.extend_from_slice(extra);
         parts.extend(["origin", spec]);
         with(&WRITE, &parts)
@@ -141,27 +168,73 @@ fn allow_list_refuses_force_and_foreign_destinations() {
     // Two refspecs, or the push without anthrex's write flags.
     refused(
         Program::Git,
-        &with(&WRITE, &["push", "--porcelain", "origin", &spec, &spec]),
+        &with(
+            &WRITE,
+            &[
+                "push",
+                "--porcelain",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                "origin",
+                &spec,
+                &spec,
+            ],
+        ),
     );
     refused(
         Program::Git,
-        &argv(&["push", "--porcelain", "origin", &spec]),
+        &argv(&[
+            "push",
+            "--porcelain",
+            "--no-follow-tags",
+            "--recurse-submodules=no",
+            "origin",
+            &spec,
+        ]),
     );
     refused(
         Program::Git,
-        &with(&NOHOOK, &["push", "--porcelain", "origin", &spec]),
+        &with(
+            &NOHOOK,
+            &[
+                "push",
+                "--porcelain",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                "origin",
+                &spec,
+            ],
+        ),
     );
     // Another remote.
     refused(
         Program::Git,
-        &with(&WRITE, &["push", "--porcelain", "upstream", &spec]),
+        &with(
+            &WRITE,
+            &[
+                "push",
+                "--porcelain",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                "upstream",
+                &spec,
+            ],
+        ),
     );
     // Deletes: only this run's stage branches.
     accepted(
         Program::Git,
         &with(
             &WRITE,
-            &["push", "--porcelain", "origin", "--delete", &stage],
+            &[
+                "push",
+                "--porcelain",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                "origin",
+                "--delete",
+                &stage,
+            ],
         ),
     );
     for dst in [
@@ -172,14 +245,32 @@ fn allow_list_refuses_force_and_foreign_destinations() {
     ] {
         refused(
             Program::Git,
-            &with(&WRITE, &["push", "--porcelain", "origin", "--delete", dst]),
+            &with(
+                &WRITE,
+                &[
+                    "push",
+                    "--porcelain",
+                    "--no-follow-tags",
+                    "--recurse-submodules=no",
+                    "origin",
+                    "--delete",
+                    dst,
+                ],
+            ),
         );
     }
     refused(
         Program::Git,
         &with(
             &WRITE,
-            &["push", "--porcelain", "origin", &format!(":{stage}")],
+            &[
+                "push",
+                "--porcelain",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                "origin",
+                &format!(":{stage}"),
+            ],
         ),
     );
     // The dry run: only with --dry-run, only to anthrex/preflight-<8 hex>.
@@ -188,7 +279,15 @@ fn allow_list_refuses_force_and_foreign_destinations() {
         Program::Git,
         &with(
             &WRITE,
-            &["push", "--dry-run", "--porcelain", "origin", &dry],
+            &[
+                "push",
+                "--dry-run",
+                "--porcelain",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                "origin",
+                &dry,
+            ],
         ),
     );
     refused(Program::Git, &push(&[], &dry));
@@ -200,6 +299,8 @@ fn allow_list_refuses_force_and_foreign_destinations() {
                 "push",
                 "--dry-run",
                 "--porcelain",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
                 "origin",
                 &format!("{SHA}:refs/heads/main"),
             ],
@@ -212,6 +313,8 @@ fn allow_list_refuses_force_and_foreign_destinations() {
             &[
                 "fetch",
                 "--no-tags",
+                "--no-recurse-submodules",
+                "--no-auto-maintenance",
                 "--no-write-fetch-head",
                 "--refmap=",
                 "origin",
@@ -240,6 +343,8 @@ fn allow_list_refuses_force_and_foreign_destinations() {
             &[
                 "fetch",
                 "--no-tags",
+                "--no-recurse-submodules",
+                "--no-auto-maintenance",
                 "--no-write-fetch-head",
                 "--refmap=",
                 "--prune",
@@ -414,4 +519,60 @@ fn allow_list_refuses_any_other_api_call_or_mutation() {
             ],
         ),
     );
+}
+
+#[test]
+fn allow_list_refuses_a_remote_named_like_an_option_and_the_old_push_shapes() {
+    // Fix round 1 (m1): a remote that reads as an option is refused even when the
+    // context names it.
+    let option = AllowCtx {
+        remote: "--receive-pack=evil",
+        ..ctx()
+    };
+    let push = with(
+        &WRITE,
+        &[
+            "push",
+            "--porcelain",
+            "--no-follow-tags",
+            "--recurse-submodules=no",
+            "--receive-pack=evil",
+            &format!("{SHA}:refs/heads/anthrex/{RUN}/stage-1"),
+        ],
+    );
+    assert!(matches!(
+        check(Program::Git, &push, &option),
+        Err(HostError::Forbidden(_))
+    ));
+    let config = with(&NOHOOK, &["config", "--get", "remote.-x.url"]);
+    let dash = AllowCtx {
+        remote: "-x",
+        ..ctx()
+    };
+    assert!(matches!(
+        check(Program::Git, &config, &dash),
+        Err(HostError::Forbidden(_))
+    ));
+    // Ruling I1: a push or fetch without its no-tags and no-submodules flags.
+    let spec = format!("{SHA}:refs/heads/anthrex/{RUN}/stage-1");
+    for args in [
+        with(&WRITE, &["push", "--porcelain", "origin", &spec]),
+        with(
+            &WRITE,
+            &["push", "--porcelain", "--no-follow-tags", "origin", &spec],
+        ),
+        with(
+            &WRITE,
+            &[
+                "fetch",
+                "--no-tags",
+                "--no-write-fetch-head",
+                "--refmap=",
+                "origin",
+                &format!("+refs/heads/main:refs/anthrex/{RUN}/remote/base"),
+            ],
+        ),
+    ] {
+        refused(Program::Git, &args);
+    }
 }

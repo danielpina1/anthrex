@@ -234,14 +234,12 @@ pub(super) fn answer(state: &mut FakeGithub, cmd: &Cmd, host: &str) -> Result<An
     }
 }
 
-/// `THREADS_QUERY`'s answer: `reviewThreads(first: 100)` with `comments(first: 50)`,
+/// `THREADS_QUERY`'s answer: `reviewThreads(last: 100)` with `comments(first: 50)`,
 /// `reviews(last: 100)`, `comments(last: 100)`; ids as `fullDatabaseId` strings.
 fn threads(state: &FakeGithub, number: u64) -> Option<Value> {
     let pr = state.pr(number)?;
-    let threads: Vec<Value> = pr
-        .threads
+    let threads: Vec<Value> = last(&pr.threads, 100)
         .iter()
-        .take(100)
         .map(|t| {
             let comments: Vec<Value> = t
                 .comments

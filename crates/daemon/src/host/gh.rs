@@ -23,7 +23,7 @@ use super::{
 /// mutation) reading the review threads, the reviews and the conversation comments,
 /// each with `fullDatabaseId` (a string; `databaseId` is deprecated) and the author's
 /// `__typename` (ruling R-3).
-pub const THREADS_QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved path line comments(first: 50) { nodes { fullDatabaseId body diffHunk author { __typename login } } } } } reviews(last: 100) { nodes { fullDatabaseId state body author { __typename login } } } comments(last: 100) { nodes { fullDatabaseId body author { __typename login } } } } } }";
+pub const THREADS_QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(last: 100) { nodes { isResolved path line comments(first: 50) { nodes { fullDatabaseId body diffHunk author { __typename login } } } } } reviews(last: 100) { nodes { fullDatabaseId state body author { __typename login } } } comments(last: 100) { nodes { fullDatabaseId body author { __typename login } } } } } }";
 
 /// `gh pr view`'s fields: state, checks and mergeability (ruling R-2 moved reviews and
 /// comments to [`THREADS_QUERY`]).
@@ -45,7 +45,7 @@ pub(super) const GH_OUTPUT_MAX: usize = 32 * 1024 * 1024;
 const GIT_OUTPUT_MAX: usize = 1024 * 1024;
 
 /// Decision 12's variables, beside `GH_HOST`.
-const GH_ENV: [(&str, &str); 7] = [
+const GH_ENV: [(&str, &str); 8] = [
     ("GH_PROMPT_DISABLED", "1"),
     ("GH_NO_UPDATE_NOTIFIER", "1"),
     ("GH_NO_EXTENSION_UPDATE_NOTIFIER", "1"),
@@ -53,6 +53,8 @@ const GH_ENV: [(&str, &str); 7] = [
     ("GH_PAGER", "cat"),
     ("NO_COLOR", "1"),
     ("CLICOLOR", "0"),
+    // AGENTS.md rule 11: a git that gh runs in the checkout takes no optional lock.
+    ("GIT_OPTIONAL_LOCKS", "0"),
 ];
 
 pub struct GhHost<R: Runner> {
@@ -151,7 +153,7 @@ impl<R: Runner> CodeHost for GhHost<R> {
         let full = repo.full();
         let ctx = AllowCtx {
             repo: Some(&full),
-            ..run_ctx(repo, allow::stage_branch(&req.head))
+            ..run_ctx(repo, Some(&req.run_id))
         };
         let listed = self.gh_ok(
             repo,

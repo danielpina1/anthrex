@@ -35,15 +35,21 @@ impl<R: Runner> GhHost<R> {
             &ctx,
             &req.repo.root,
             &WRITE_FLAGS,
-            &["push", "--porcelain", &req.repo.remote, &spec],
+            &[
+                "push",
+                "--porcelain",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                &req.repo.remote,
+                &spec,
+            ],
             PUSH_TIMEOUT,
         )?;
         gh_parse::push_outcome(&out, &dst)
     }
 
     pub(super) fn fetch_ref(&self, req: &FetchReq) -> Result<FetchOutcome, HostError> {
-        let run = allow::private_ref_run(&req.into);
-        let ctx = run_ctx(&req.repo, run);
+        let ctx = run_ctx(&req.repo, Some(&req.run_id));
         let spec = format!("{FETCH_UPDATE}refs/heads/{}:{}", req.branch, req.into);
         let out = self.git(
             &ctx,
@@ -52,6 +58,8 @@ impl<R: Runner> GhHost<R> {
             &[
                 "fetch",
                 "--no-tags",
+                "--no-recurse-submodules",
+                "--no-auto-maintenance",
                 "--no-write-fetch-head",
                 "--refmap=",
                 &req.repo.remote,
@@ -166,7 +174,15 @@ impl<R: Runner> GhHost<R> {
             &ctx,
             &req.repo.root,
             &WRITE_FLAGS,
-            &["push", "--porcelain", &req.repo.remote, "--delete", &dst],
+            &[
+                "push",
+                "--porcelain",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                &req.repo.remote,
+                "--delete",
+                &dst,
+            ],
             PUSH_TIMEOUT,
         )?;
         // Decision 10: a branch already gone is success.

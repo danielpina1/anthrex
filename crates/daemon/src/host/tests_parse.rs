@@ -409,6 +409,7 @@ fn open_pr_returns_an_existing_pr_for_the_head() {
     let tmp = tempfile::tempdir().unwrap();
     let req = OpenPrReq {
         repo: repo(tmp.path()),
+        run_id: "r1a2b".to_string(),
         base: "trunk".to_string(),
         head: format!("anthrex/{RUN}/stage-1"),
         title: "[anthrex r1a2b 1/1] Add the parser".to_string(),

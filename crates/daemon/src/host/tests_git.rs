@@ -111,6 +111,26 @@ impl Rig {
         );
     }
 
+    /// Fix round 1 (I3): a fetch with every remote-tracking ref deleted first, then
+    /// checked to have written none, nor a `FETCH_HEAD` (decision 13). Deleting first
+    /// matters: `git push` writes the same tracking ref git's opportunistic update would.
+    fn fetch(&self, req: &FetchReq) -> Result<FetchOutcome, HostError> {
+        let tracking = || {
+            git(
+                &self.work,
+                &["for-each-ref", "--format=%(refname)", "refs/remotes"],
+            )
+        };
+        for refname in tracking().lines() {
+            git(&self.work, &["update-ref", "-d", refname]);
+        }
+        assert_eq!(tracking(), "");
+        let fetched = self.host.fetch(req);
+        assert_eq!(tracking(), "", "the fetch wrote a remote-tracking ref");
+        assert!(!self.work.join(".git/FETCH_HEAD").exists());
+        fetched
+    }
+
     fn local(&self, branch: &str) -> String {
         git(
             &self.work,
@@ -129,11 +149,24 @@ fn push_to_a_rewritten_remote_is_rejected_never_forced() {
     let rig = Rig::new();
     let a = commit(&rig.work, "a");
     let b = commit(&rig.work, "b");
+    // Ruling I1: the user's push.followTags and push.recurseSubmodules never apply.
+    git(&rig.work, &["config", "push.followTags", "true"]);
+    git(
+        &rig.work,
+        &["config", "push.recurseSubmodules", "on-demand"],
+    );
+    git(&rig.work, &["tag", "-a", "v1", "-m", "a release", &a]);
+    git(&rig.work, &["tag", "-a", "v2", "-m", "another", &b]);
     assert_eq!(rig.push(1, &a), Ok(PushOutcome::Pushed), "a new branch");
     assert_eq!(rig.remote_head(1), a);
     assert_eq!(rig.push(1, &a), Ok(PushOutcome::UpToDate));
     assert_eq!(rig.push(1, &b), Ok(PushOutcome::Pushed), "a fast-forward");
     assert_eq!(rig.remote_head(1), b);
+    let tags = git(
+        &rig.bare,
+        &["for-each-ref", "--format=%(refname)", "refs/tags"],
+    );
+    assert_eq!(tags, "", "no tag reaches the remote");
 
     // Someone rewrote the remote branch: a commit that is not a descendant of it is
     // rejected by git itself, and the remote ref does not move.
@@ -185,23 +218,11 @@ fn fetch_adopts_only_a_descendant() {
     git(&rig.work, &["branch", &integration, &a]);
     let b = commit(&rig.work, "b (the user's commit on the stage branch)");
     rig.push(1, &b).unwrap();
-    // `git push` itself updates `refs/remotes/origin/*` (git's own behaviour); the fetch
-    // below must add nothing there, nor a `FETCH_HEAD` (decision 13).
-    let tracking = || {
-        git(
-            &rig.work,
-            &[
-                "for-each-ref",
-                "--format=%(refname) %(objectname)",
-                "refs/remotes",
-            ],
-        )
-    };
-    let tracking_before = tracking();
     let into = format!("refs/anthrex/{RUN}/remote/stage-1");
     let fetch = |expected: &str, also_integration: bool| {
-        rig.host.fetch(&FetchReq {
+        rig.fetch(&FetchReq {
             repo: rig.repo.clone(),
+            run_id: RUN.to_string(),
             branch: stage.clone(),
             into: into.clone(),
             adopt: Some(Adopt {
@@ -221,8 +242,6 @@ fn fetch_adopts_only_a_descendant() {
     assert_eq!(rig.local(&stage), b);
     assert_eq!(rig.local(&integration), b);
     assert_eq!(git(&rig.work, &["rev-parse", &into]), b);
-    assert_eq!(tracking(), tracking_before);
-    assert!(!rig.work.join(".git/FETCH_HEAD").exists());
 
     // Not a descendant (a force-push left another commit): nothing moves.
     git(&rig.work, &["checkout", "-q", "--detach", &a]);
@@ -261,8 +280,9 @@ fn fetch_adopts_only_a_descendant() {
     // base branch never moves.
     let main_before = rig.local("main");
     let base = || {
-        rig.host.fetch(&FetchReq {
+        rig.fetch(&FetchReq {
             repo: rig.repo.clone(),
+            run_id: RUN.to_string(),
             branch: "main".to_string(),
             into: format!("refs/anthrex/{RUN}/remote/base"),
             adopt: None,

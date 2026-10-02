@@ -459,7 +459,12 @@ pub fn push_outcome(out: &RunOutput, dst: &str) -> Result<PushOutcome, HostError
         "!" if summary.starts_with("[remote rejected]") => Ok(PushOutcome::Refused {
             reason: format!("the remote refused the push of {branch}: {}", reason()),
         }),
-        "!" => Ok(PushOutcome::Rejected { reason: reason() }),
+        "!" if summary.starts_with("[rejected]") => Ok(PushOutcome::Rejected { reason: reason() }),
+        // Ruling I2: any other refusal (`[remote failure]`, …) says nothing about the
+        // remote branch; it is an error, retried when next due.
+        "!" => Err(HostError::Failed(format!(
+            "git push of {branch} failed: {summary}"
+        ))),
         _ => Err(HostError::Failed(format!(
             "git push reported {flag:?} for {branch}, which anthrex never asks for"
         ))),

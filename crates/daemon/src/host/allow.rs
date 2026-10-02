@@ -27,6 +27,11 @@ pub struct AllowCtx<'a> {
     pub repo: Option<&'a str>,
 }
 
+/// Ruling I1: a user's `push.followTags` must not send their tags, nor
+/// `push.recurseSubmodules` submodule commits, with anthrex's push.
+const NO_FOLLOW_TAGS: &str = "--no-follow-tags";
+const NO_SUBMODULES: &str = "--recurse-submodules=no";
+
 /// Refused outright wherever they appear in a `git` command.
 const GIT_REFUSED: [&str; 9] = [
     "--force",
@@ -69,23 +74,48 @@ fn git_allowed(args: &[&str], ctx: &AllowCtx<'_>) -> bool {
     } else {
         return false;
     };
-    let remote = |r: &str| r == ctx.remote && !ctx.remote.is_empty();
+    let remote = |r: &str| r == ctx.remote && !r.is_empty() && !r.starts_with('-');
     match rest {
-        ["config", "--get", key] => read && *key == format!("remote.{}.url", ctx.remote),
+        ["config", "--get", key] => {
+            read && remote(ctx.remote) && *key == format!("remote.{}.url", ctx.remote)
+        }
         ["ls-remote", "--heads", r, base] => {
             read && remote(r)
                 && ctx
                     .base_branch
                     .is_some_and(|b| branch_ok(b) && *base == format!("refs/heads/{b}"))
         }
-        ["push", "--dry-run", "--porcelain", r, spec] => write && remote(r) && preflight_spec(spec),
-        ["push", "--porcelain", r, "--delete", dst] => {
-            write && remote(r) && ctx.run_id.is_some_and(|run| is_stage_ref(dst, run))
-        }
-        ["push", "--porcelain", r, spec] => write && remote(r) && push_spec(spec, ctx.run_id),
+        [
+            "push",
+            "--dry-run",
+            "--porcelain",
+            NO_FOLLOW_TAGS,
+            NO_SUBMODULES,
+            r,
+            spec,
+        ] => write && remote(r) && preflight_spec(spec),
+        [
+            "push",
+            "--porcelain",
+            NO_FOLLOW_TAGS,
+            NO_SUBMODULES,
+            r,
+            "--delete",
+            dst,
+        ] => write && remote(r) && ctx.run_id.is_some_and(|run| is_stage_ref(dst, run)),
+        [
+            "push",
+            "--porcelain",
+            NO_FOLLOW_TAGS,
+            NO_SUBMODULES,
+            r,
+            spec,
+        ] => write && remote(r) && push_spec(spec, ctx.run_id),
         [
             "fetch",
             "--no-tags",
+            "--no-recurse-submodules",
+            "--no-auto-maintenance",
             "--no-write-fetch-head",
             "--refmap=",
             r,

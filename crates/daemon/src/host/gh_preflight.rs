@@ -110,7 +110,15 @@ impl<R: Runner> GhHost<R> {
                 &ctx,
                 &repo.root,
                 &WRITE_FLAGS,
-                &["push", "--dry-run", "--porcelain", remote_name, &dry],
+                &[
+                    "push",
+                    "--dry-run",
+                    "--porcelain",
+                    "--no-follow-tags",
+                    "--recurse-submodules=no",
+                    remote_name,
+                    &dry,
+                ],
                 PUSH_TIMEOUT,
             )
             .map_err(|e| check_timeout(e, "git push --dry-run", PUSH_TIMEOUT))?;

@@ -73,20 +73,31 @@ fn split_authority(rest: &str) -> Option<(&str, &str)> {
     Some((host, path))
 }
 
-/// A URL fit for a message: a scheme URL's user information becomes `***` (it can hold
-/// a token), and control characters are escaped.
+/// A URL fit for a message, as M9.2.3's `profile edit` redaction: a scheme URL's user
+/// information, and an scp-like address's when it holds a `:` (`user:tok@host:path`),
+/// become `***`; control characters are escaped.
 pub fn redact(url: &str) -> String {
-    let shown = match url.split_once("://") {
-        Some((scheme, rest)) => {
-            let authority_end = rest.find('/').unwrap_or(rest.len());
-            match rest[..authority_end].rfind('@') {
-                Some(at) => format!("{scheme}://***{}", &rest[at..]),
-                None => url.to_string(),
-            }
-        }
-        None => url.to_string(),
+    let (scheme, rest) = match url.find("://") {
+        Some(at) => url.split_at(at + 3),
+        None => ("", url),
     };
-    shown.chars().flat_map(char::escape_debug).collect()
+    let authority = &rest[..rest.find('/').unwrap_or(rest.len())];
+    let rest = match authority.rfind('@') {
+        Some(at) if !scheme.is_empty() || authority[..at].contains(':') => {
+            format!("***{}", &rest[at..])
+        }
+        _ => rest.to_string(),
+    };
+    format!("{scheme}{rest}")
+        .chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_debug().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn host_ok(host: &str) -> bool {

@@ -29,6 +29,8 @@ mod tests_allow;
 #[cfg(test)]
 mod tests_git;
 #[cfg(test)]
+mod tests_limits;
+#[cfg(test)]
 mod tests_parse;
 
 use std::fmt;
@@ -127,6 +129,8 @@ pub struct Adopt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchReq {
     pub repo: HostRepo,
+    /// The run whose private ref `into` is (fix round 1, m2: never read from `into`).
+    pub run_id: String,
     pub branch: String,
     /// `refs/anthrex/<run>/remote/<name>`: anthrex's own ref, never a branch.
     pub into: String,
@@ -156,6 +160,8 @@ pub enum FetchOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenPrReq {
     pub repo: HostRepo,
+    /// The run whose stage branch `head` must be (fix round 1, m2).
+    pub run_id: String,
     pub base: String,
     pub head: String,
     pub title: String,

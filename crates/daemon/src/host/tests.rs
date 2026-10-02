@@ -76,6 +76,7 @@ pub(super) fn gh_env(host: &str) -> Vec<(String, String)> {
         ("GH_PAGER", "cat"),
         ("NO_COLOR", "1"),
         ("CLICOLOR", "0"),
+        ("GIT_OPTIONAL_LOCKS", "0"),
     ]
     .iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -169,6 +170,7 @@ fn every_method(root: &Path) -> GhHost<ScriptedRunner> {
     let into = format!("refs/anthrex/{RUN}/remote/stage-1");
     let fetch = FetchReq {
         repo: repo.clone(),
+        run_id: RUN.to_string(),
         branch: format!("anthrex/{RUN}/stage-1"),
         into: into.clone(),
         adopt: None,
@@ -195,6 +197,7 @@ fn every_method(root: &Path) -> GhHost<ScriptedRunner> {
     );
     let open = OpenPrReq {
         repo: repo.clone(),
+        run_id: RUN.to_string(),
         base: "trunk".to_string(),
         head: format!("anthrex/{RUN}/stage-1"),
         title: "[anthrex r1a2b 1/2] Add the parser (+1 more)".to_string(),
@@ -264,7 +267,8 @@ fn every_method_builds_its_exact_argv() {
         "api".to_string(),
         "graphql".to_string(),
         "-f".to_string(),
-        format!("query={THREADS_QUERY}"),
+        // The query byte for byte (rulings R-2 and m4: the newest 100 threads).
+        "query=query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(last: 100) { nodes { isResolved path line comments(first: 50) { nodes { fullDatabaseId body diffHunk author { __typename login } } } } } reviews(last: 100) { nodes { fullDatabaseId state body author { __typename login } } } comments(last: 100) { nodes { fullDatabaseId body author { __typename login } } } } } }".to_string(),
         "-f".to_string(),
         "owner=cli".to_string(),
         "-f".to_string(),
@@ -306,6 +310,8 @@ fn every_method_builds_its_exact_argv() {
                     "push",
                     "--dry-run",
                     "--porcelain",
+                    "--no-follow-tags",
+                    "--recurse-submodules=no",
                     "origin",
                     &format!("{SHA}:refs/heads/anthrex/preflight-0a1b2c3d"),
                 ],
@@ -324,7 +330,14 @@ fn every_method_builds_its_exact_argv() {
             Program::Git,
             with(
                 &WRITE,
-                &["push", "--porcelain", "origin", &format!("{SHA}:{stage1}")],
+                &[
+                    "push",
+                    "--porcelain",
+                    "--no-follow-tags",
+                    "--recurse-submodules=no",
+                    "origin",
+                    &format!("{SHA}:{stage1}"),
+                ],
             ),
             p,
         ),
@@ -335,6 +348,8 @@ fn every_method_builds_its_exact_argv() {
                 &[
                     "fetch",
                     "--no-tags",
+                    "--no-recurse-submodules",
+                    "--no-auto-maintenance",
                     "--no-write-fetch-head",
                     "--refmap=",
                     "origin",
@@ -358,6 +373,8 @@ fn every_method_builds_its_exact_argv() {
                 &[
                     "fetch",
                     "--no-tags",
+                    "--no-recurse-submodules",
+                    "--no-auto-maintenance",
                     "--no-write-fetch-head",
                     "--refmap=",
                     "origin",
@@ -494,6 +511,8 @@ fn every_method_builds_its_exact_argv() {
                 &[
                     "push",
                     "--porcelain",
+                    "--no-follow-tags",
+                    "--recurse-submodules=no",
                     "origin",
                     "--delete",
                     &format!("refs/heads/anthrex/{RUN}/stage-2"),

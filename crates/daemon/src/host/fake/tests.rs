@@ -152,6 +152,7 @@ impl Rig {
         self.host
             .open_pr(&OpenPrReq {
                 repo: self.repo(),
+                run_id: RUN.to_string(),
                 base: base.to_string(),
                 head: head(stage),
                 title: title.to_string(),
