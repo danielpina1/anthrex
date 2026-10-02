@@ -160,7 +160,9 @@ def run_view_stage(pty_proc, bin_path, run_cmd, fail):
         print(f"ok: Enter on the worker round opened {name}'s conversation")
 
         proc.send(b"q")
-        proc.wait_for(f" run · View a · {h4} ", label="the run view after closing the conversation")
+        proc.wait_for(
+            f" run · View a · {h4} ", label="the run view after closing the conversation"
+        )
         proc.send(b"\x1b")
         proc.wait_for(" tree overview ", label="the project overview after leaving the run view")
         proc.send(b"\x1b")

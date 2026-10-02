@@ -105,4 +105,12 @@ fn an_empty_session_reaches_the_goal_form_and_shows_the_daemons_refusal() {
         app.on_daemon(DaemonMsg::Run(reply));
     }
     assert!(app.screen.is_some(), "the screen stays open on its refusal");
+    // Final fix wave (task 13b's minor): the refusal is the screen's error row, and
+    // both sides read it as absent. The screen's types are the client's own, so this
+    // reads them through their `Debug` form.
+    let screen = format!("{:?}", app.screen);
+    for field in ["error: Some", "stored: Absent", "proposal: Absent"] {
+        let want = format!("{field}({want:?})");
+        assert!(screen.contains(&want), "{want} in {screen}");
+    }
 }

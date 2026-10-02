@@ -175,7 +175,7 @@ fn an_older_briefs_expiry_leaves_the_newer_loading() {
     assert_eq!(
         app.toast_text(),
         None,
-        "a closed form's brief is not toasted"
+        "the closed first form's expired brief request toasts nothing"
     );
     app.on_run_reply(detail("second brief", second));
     assert_eq!(
