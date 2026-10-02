@@ -20,7 +20,7 @@ use crate::run::contract::sha7;
 use crate::run::delivery::ThreadState;
 use crate::run::delivery::ops::HostOp;
 use crate::run::delivery::reply_edit::{marker, target};
-use crate::run::delivery::{FAILURES_BEFORE_ATTENTION, MAYBE_SENT_MAX, ReplyDue};
+use crate::run::delivery::{FAILURES_BEFORE_ATTENTION, MAYBE_SENT_MAX, PUSHES_MAX, ReplyDue};
 use crate::run::model::{FixOf, Run};
 
 /// Step 4: each merged review fix of stage `n` queues one reply per thread, once
@@ -84,9 +84,21 @@ pub(super) fn pushing(run: &mut Run, n: u16, sha: &str) {
     }
 }
 
+/// Stage `n`'s PR branch now holds `sha` (opened, pushed or adopted): the next head of
+/// its push sequence (c1).
+pub(super) fn holds(run: &mut Run, n: u16, sha: &str) {
+    let pushes = &mut stage_mut(run, n).pushes;
+    if pushes.last().map(String::as_str) != Some(sha) {
+        pushes.push(sha.to_string());
+    }
+    let over = pushes.len().saturating_sub(PUSHES_MAX);
+    pushes.drain(..over);
+}
+
 /// The push of `sha` was answered: the remote branch holds its replies' fixes. They wait
 /// for a view of the open PR to show it ([`confirmed`]).
 pub(super) fn pushed(run: &mut Run, n: u16, sha: &str) {
+    holds(run, n, sha);
     let landed = |r: &&mut ReplyDue| r.push.as_deref() == Some(sha);
     for r in stage_mut(run, n).replies.iter_mut().filter(landed) {
         r.push_done = true;
@@ -97,6 +109,7 @@ pub(super) fn pushed(run: &mut Run, n: u16, sha: &str) {
 /// every merge waiting for a push is on the remote already, and a view of the open PR
 /// confirms it as for a push.
 pub(super) fn adopted(run: &mut Run, n: u16, sha: &str) {
+    holds(run, n, sha);
     for r in stage_mut(run, n).replies.iter_mut().filter(|r| !r.ready) {
         r.push = Some(sha.to_string());
         r.push_done = true;
@@ -113,14 +126,22 @@ pub(super) fn confirmed(run: &mut Run, n: u16) {
 
 /// I-1: stage `n`'s PR was merged at `head` (the host's). With `delivered` every fix
 /// the stage merged is in it, and its replies are due; otherwise a reply is due only
-/// when its push was that head, and every other automatic reply is dropped: its fix
-/// missed the merge. The dropped replies' tasks and threads, for the attention line.
+/// when its answered push came at or before that head in the stage's push sequence
+/// (c1: the branch only fast-forwards, so the head holds it), and every other automatic
+/// reply is dropped: its fix missed the merge. The dropped replies' tasks and threads,
+/// for the attention line.
 pub(super) fn landed(run: &mut Run, n: u16, head: &str, delivered: bool) -> Vec<(String, String)> {
     let number = run.delivery.pr(n).map_or(0, |p| p.number);
     let stage = stage_mut(run, n);
+    let seq = &stage.pushes;
+    let merged = seq.iter().rposition(|s| s == head);
+    let held = |push: &str| {
+        push == head
+            || matches!((seq.iter().position(|s| s == push), merged), (Some(i), Some(m)) if i <= m)
+    };
     let mut missed = Vec::new();
     stage.replies.retain_mut(|r| {
-        let reached = delivered || (r.push_done && r.push.as_deref() == Some(head));
+        let reached = delivered || (r.push_done && r.push.as_deref().is_some_and(held));
         if r.ready || reached {
             r.ready = true;
             return true;

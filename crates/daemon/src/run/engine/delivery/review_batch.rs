@@ -174,20 +174,32 @@ fn fast_path(
 /// The final fix wave's I-3: whenever a review fix ends cancelled (a `cancel_task`, a
 /// rejected hold, a split, its PR closed), each thread it had tasked is `new` again and
 /// joins the stage's open batch, so it is handed out again: to a live orchestrator, or
-/// to a new fix task (a cancelled task is never resurrected).
+/// to a new fix task (a cancelled task is never resurrected). Cleanup after the merge
+/// (c2): so is a thread an amend dropped from its fix task's `addresses`.
 pub(super) fn untask(run: &mut Run, n: u16, now: u64) {
     let Some(pr) = run.delivery.pr(n).cloned() else {
         return;
     };
     let ended = |run: &Run, id: &str| run.task(id).is_none_or(|t| t.state == TaskState::Cancelled);
-    let keys: Vec<(String, String)> = (run.delivery.stage(n).into_iter())
+    let dropped = |run: &Run, id: &str, key: &str| {
+        let reference = format!("{}:{key}", pr.number);
+        run.task(id).is_some_and(|t| {
+            matches!(&t.fixes, Some(FixOf::Review { threads, .. }) if !threads.contains(&reference))
+        })
+    };
+    let keys: Vec<(String, String, &str)> = (run.delivery.stage(n).into_iter())
         .flat_map(|s| s.threads.iter())
         .filter_map(|t| match &t.state {
-            ThreadState::Tasked { task } if ended(run, task) => Some((t.key.clone(), task.clone())),
+            ThreadState::Tasked { task } if ended(run, task) => {
+                Some((t.key.clone(), task.clone(), "was cancelled"))
+            }
+            ThreadState::Tasked { task } if dropped(run, task, &t.key) => {
+                Some((t.key.clone(), task.clone(), "no longer addresses it"))
+            }
             _ => None,
         })
         .collect();
-    for (key, task) in keys {
+    for (key, task, why) in keys {
         if let Some(t) = thread_mut(run, n, &key) {
             t.state = ThreadState::New;
             t.counted = true;
@@ -204,7 +216,7 @@ pub(super) fn untask(run: &mut Run, n: u16, now: u64) {
         }
         batch.last_at = now;
         let text = format!(
-            "{}: thread {key} is new again: its fix task {task} was cancelled",
+            "{}: thread {key} is new again: its fix task {task} {why}",
             named(n, &pr)
         );
         log(run, now, text);

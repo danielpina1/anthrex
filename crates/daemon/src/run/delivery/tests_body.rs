@@ -420,3 +420,20 @@ fn an_invalid_protected_pattern_is_reported() {
         "{body}"
     );
 }
+
+/// Cleanup after the merge (nit): `checks_ref` never names a check number past the
+/// [`super::quote::CHECKS_LISTED`] names the fence lists.
+#[test]
+fn checks_ref_never_names_a_check_the_fence_does_not_list() {
+    use super::quote::{CHECKS_LISTED, checks, checks_ref};
+    assert_eq!(checks_ref(0), "the CI checks");
+    assert_eq!(checks_ref(1), "CI check 1");
+    assert_eq!(checks_ref(3), "CI checks 1–3");
+    assert_eq!(checks_ref(CHECKS_LISTED), "CI checks 1–20");
+    assert_eq!(checks_ref(CHECKS_LISTED + 1), "CI checks 1–20 and 1 more");
+    assert_eq!(checks_ref(27), "CI checks 1–20 and 7 more");
+    let names: Vec<String> = (1..=27).map(|i| format!("job {i}")).collect();
+    let fence = checks(&names);
+    assert!(fence.contains("\n20. job 20\n… and 7 more"), "{fence}");
+    assert!(!fence.contains("21."), "{fence}");
+}

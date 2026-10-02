@@ -357,3 +357,94 @@ fn fake_host_panics_on_base_moving_and_disguised_gh_calls() {
     }
     assert_eq!(ctl.forbidden().len(), cases.len());
 }
+
+/// `git <global> <WRITE_FLAGS> push <FLAGS> <rest>`: a push behind global options.
+fn wrapped(global: &[&str], rest: &[&str]) -> Vec<String> {
+    let mut all = strings(global);
+    all.extend(flagged(rest));
+    all
+}
+
+#[test]
+fn fake_host_sees_a_push_behind_git_global_options() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("fake");
+    let gh = FakeGh::new(&dir);
+    let stage = format!("refs/heads/anthrex/{RUN}/stage-1");
+    let to_main = format!("{SHA}:refs/heads/main");
+    let forced = format!("+{SHA}:{stage}");
+    let globals: [&[&str]; 13] = [
+        &["--git-dir", "/nonexistent/.git"],
+        &["--git-dir=/nonexistent/.git"],
+        &["--work-tree", "/nonexistent"],
+        &["--work-tree=/nonexistent"],
+        &["--namespace", "ns"],
+        &["--namespace=ns"],
+        &["--attr-source", "HEAD"],
+        &["-c", "user.name=x"],
+        &["-c", "alias.p=log"],
+        &["-C", "/nonexistent"],
+        &["--bare"],
+        &["--git-dir", "push", "--work-tree", "push"],
+        &["-c", "alias.push=status", "-C", "push"],
+    ];
+    let mut cases: Vec<(Vec<String>, &str)> = Vec::new();
+    for global in globals {
+        cases.push((
+            wrapped(global, &["origin", &to_main]),
+            "push to refs/heads/main",
+        ));
+        cases.push((wrapped(global, &["origin", &forced]), "force-push"));
+    }
+    // A push spelled through an alias that `-c` defines, plain or as a shell alias.
+    let through_alias = |alias: &str, verb: &str, rest: &[&str]| {
+        let mut all = vec!["-c", alias];
+        all.extend_from_slice(&WRITE_FLAGS);
+        all.push(verb);
+        all.extend_from_slice(&FLAGS);
+        all.extend_from_slice(rest);
+        strings(&all)
+    };
+    cases.push((
+        through_alias("alias.p=push", "p", &["origin", &to_main]),
+        "push to refs/heads/main",
+    ));
+    cases.push((
+        through_alias("alias.P=push --force", "p", &["origin", &stage]),
+        "force-push",
+    ));
+    cases.push((
+        through_alias("alias.s=!git push", "s", &["origin", &to_main]),
+        "run a shell alias",
+    ));
+    for (args, verb) in &cases {
+        assert_eq!(
+            panic_text(&gh, Program::Git, tmp.path(), args),
+            format!(
+                "FakeHost: anthrex asked to {verb} git {}; anthrex never lands anything",
+                args.join(" ")
+            ),
+            "{args:?}"
+        );
+        assert_refused(Program::Git, args);
+    }
+    let ctl = FakeGithubCtl::open(&dir);
+    assert_eq!(ctl.forbidden().len(), cases.len());
+
+    // Not landings: a stage push behind the same options reaches git (which fails here,
+    // outside any repository) and records nothing.
+    let to_stage = format!("{SHA}:{stage}");
+    let outside = tempfile::tempdir().unwrap();
+    let mut not: Vec<Vec<String>> = globals
+        .iter()
+        .map(|global| wrapped(global, &["origin", &to_stage]))
+        .collect();
+    not.push(through_alias("alias.p=push", "p", &["origin", &to_stage]));
+    for args in &not {
+        assert!(
+            !run_in(&gh, Program::Git, outside.path(), args).success,
+            "{args:?}"
+        );
+    }
+    assert_eq!(ctl.forbidden().len(), cases.len());
+}

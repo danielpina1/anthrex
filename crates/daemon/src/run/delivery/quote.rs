@@ -105,11 +105,15 @@ pub const CHECKS_LISTED: usize = 20;
 pub const CHECK_NAME_CHARS: usize = 100;
 
 /// I-6: how every text anthrex writes refers to `count` failing checks, by number:
-/// `CI check 1`, `CI checks 1–3`. Their names appear only in [`checks`]'s fence.
+/// `CI check 1`, `CI checks 1–3`. Their names appear only in [`checks`]'s fence, so a
+/// range never runs past the [`CHECKS_LISTED`] it lists: `CI checks 1–20 and <k> more`.
 pub fn checks_ref(count: usize) -> String {
     match count {
         0 => "the CI checks".to_string(),
         1 => "CI check 1".to_string(),
+        k if k > CHECKS_LISTED => {
+            format!("CI checks 1–{CHECKS_LISTED} and {} more", k - CHECKS_LISTED)
+        }
         k => format!("CI checks 1–{k}"),
     }
 }

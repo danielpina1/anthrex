@@ -6,12 +6,26 @@
 //! (which covers the base branch, whatever it is called), a refspec with no
 //! destination, no refspec at all, or a delete of anything but a stage branch. A
 //! superset of what the allow-list refuses: `GhHost` only ever pushes a full object id
-//! to a stage branch, dry-runs to the preflight ref, and deletes a stage branch.
+//! to a stage branch, dry-runs to the preflight ref, and deletes a stage branch. The push
+//! is found behind any global option and its value (`--git-dir X`, `-c k=v`, `-C X`, …)
+//! and through an alias `-c alias.<name>=…` defines (cleanup after the W2 merge).
 
 use crate::host::allow::stage_branch;
 
-/// `git`'s global options that take the next argument as their value.
-const GLOBAL_VALUE: [&str; 2] = ["-c", "-C"];
+/// `git`'s global options that take the next argument as their value (git.c's
+/// `handle_options`). The long ones also have a glued `--name=value` spelling, which is
+/// one argument.
+const GLOBAL_VALUE: [&str; 6] = [
+    "-c",
+    "-C",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--attr-source",
+];
+
+/// How many aliases deep a command is followed (git refuses a loop itself).
+const ALIAS_DEPTH: usize = 8;
 
 /// `git push`'s long options that take the next argument as their value (when not
 /// glued with `=`).
@@ -19,7 +33,10 @@ const PUSH_VALUE: [&str; 4] = ["--push-option", "--repo", "--receive-pack", "--e
 
 /// The verb of the panic text, or `None` when `args` is not such a push.
 pub(super) fn landing(args: &[&str]) -> Option<String> {
-    let rest = push_args(args)?;
+    let rest = match push_args(args)? {
+        Ok(rest) => rest,
+        Err(verb) => return Some(verb),
+    };
     let mut delete = false;
     let mut positional = Vec::new();
     let mut i = 0;
@@ -92,16 +109,47 @@ pub(super) fn landing(args: &[&str]) -> Option<String> {
     None
 }
 
-/// The arguments after `push`, when `args` is a `git push`.
-fn push_args<'a>(args: &'a [&'a str]) -> Option<&'a [&'a str]> {
+/// The arguments after `push`, when `args` is a `git push`: past every global option
+/// and its value, and through an alias a `-c alias.<name>=<value>` defines. `Err` is the
+/// verb for a shell alias (`!…`), which could run any push.
+fn push_args<'a>(args: &[&'a str]) -> Option<Result<Vec<&'a str>, String>> {
+    let mut aliases: Vec<(&str, &str)> = Vec::new();
+    let mut args = args.to_vec();
+    let mut depth = 0;
     let mut i = 0;
-    while let Some(arg) = args.get(i) {
-        if GLOBAL_VALUE.contains(arg) {
+    while let Some(&arg) = args.get(i) {
+        if GLOBAL_VALUE.contains(&arg) {
+            let alias = args.get(i + 1).and_then(|kv| kv.split_once('='));
+            if arg == "-c"
+                && let Some((key, value)) = alias
+                && key
+                    .get(..6)
+                    .is_some_and(|p| p.eq_ignore_ascii_case("alias."))
+            {
+                aliases.push((&key[6..], value));
+            }
             i += 2;
         } else if arg.starts_with('-') {
             i += 1;
+        } else if arg == "push" {
+            return Some(Ok(args[i + 1..].to_vec()));
         } else {
-            return (*arg == "push").then(|| &args[i + 1..]);
+            // Config keys ignore case; the last definition wins.
+            let (_, value) = aliases
+                .iter()
+                .rev()
+                .find(|(name, _)| name.eq_ignore_ascii_case(arg))?;
+            if value.starts_with('!') {
+                return Some(Err("run a shell alias".into()));
+            }
+            depth += 1;
+            if depth > ALIAS_DEPTH {
+                return None;
+            }
+            let mut expanded: Vec<&str> = args[..i].to_vec();
+            expanded.extend(value.split_whitespace());
+            expanded.extend_from_slice(&args[i + 1..]);
+            args = expanded;
         }
     }
     None

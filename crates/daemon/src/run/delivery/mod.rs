@@ -189,10 +189,18 @@ pub struct StageDelivery {
     /// after they were sent ([`MAYBE_SENT_MAX`], the newest): a failed post may still
     /// have landed, so a comment carrying one is anthrex's own.
     pub maybe_sent: Vec<String>,
+    /// Cleanup after the merge (c1): the heads the stage's PR branch was given, oldest
+    /// first, by its opening, its answered pushes and its adoptions ([`PUSHES_MAX`],
+    /// the newest). The branch only fast-forwards, so a later head holds every earlier
+    /// one: a reply's push at or before the merged head reached the merge.
+    pub pushes: Vec<String>,
 }
 
 /// The dropped replies' markers a stage keeps (`StageDelivery::maybe_sent`).
 pub const MAYBE_SENT_MAX: usize = 100;
+
+/// The heads a stage keeps (`StageDelivery::pushes`).
+pub const PUSHES_MAX: usize = 256;
 
 /// Decision 30: one reply due on a stage PR's thread (task M9.2.10; not in
 /// Interfaces). An automatic reply waits until a push carrying its fix task's merge

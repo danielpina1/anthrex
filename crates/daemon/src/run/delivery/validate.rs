@@ -78,6 +78,14 @@ pub fn amended(
     if run.delivery.mode != DeliveryMode::Pr {
         return unknown_refs(&id, n, &task.spec.addresses);
     }
+    // Cleanup after the merge (c2): with none left, the task addresses no thread; the
+    // engine's `untask` returns the dropped ones to `new`.
+    if task.spec.addresses.is_empty() {
+        if let Some(FixOf::Review { threads, .. }) = task.fixes.as_mut() {
+            threads.clear();
+        }
+        return Vec::new();
+    }
     addresses(run, task, source, before)
 }
 

@@ -119,3 +119,45 @@ fn an_amend_that_adds_a_fresh_new_thread_succeeds() {
         [text]
     );
 }
+
+/// Cleanup after the merge (c2): an amend that drops a thread from a review fix's
+/// `addresses` returns that thread to `new` by the path a cancel takes (`untask`), so it
+/// is handed out again; the threads the task still addresses stay its own. Dropping the
+/// last one returns it too.
+#[test]
+fn an_amend_that_drops_a_thread_returns_it_to_new() {
+    let mut fx = planned();
+    let (ok, value) = add_plan(&mut fx, add("rev1", &["docs/t1/**"], &["7:c5", "7:c6"]));
+    assert!(ok, "{value}");
+    let tasked = ThreadState::Tasked {
+        task: "rev1".into(),
+    };
+    assert_eq!(
+        (state(&fx, "c5"), state(&fx, "c6")),
+        (tasked.clone(), tasked.clone())
+    );
+    let amend_to = |fx: &mut Fixture, addresses: &[&str]| {
+        let run = fx.run_mut();
+        let i = run.tasks.iter().position(|t| t.id() == "rev1").unwrap();
+        let mut task = run.tasks[i].clone();
+        let before = task.spec.addresses.clone();
+        task.spec.addresses = addresses.iter().map(|a| a.to_string()).collect();
+        let errors = validate::apply(run, &mut task, &EditSource::Orchestrator, Some(&before));
+        assert!(errors.is_empty(), "{errors:?}");
+        run.tasks[i] = task;
+        fx.tick();
+    };
+    amend_to(&mut fx, &["7:c5"]);
+    assert_eq!(
+        (state(&fx, "c5"), state(&fx, "c6")),
+        (tasked, ThreadState::New)
+    );
+    let line = "stage 1 (PR #7): thread c6 is new again: its fix task rev1 no longer addresses it";
+    assert!(
+        fx.run().log.iter().any(|l| l.text == line),
+        "{:#?}",
+        fx.run().log
+    );
+    amend_to(&mut fx, &[]);
+    assert_eq!(state(&fx, "c5"), ThreadState::New);
+}

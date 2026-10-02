@@ -401,3 +401,25 @@ fn errors_classify_rate_limit_auth_not_found_and_rejected() {
     );
     assert_eq!(gh_parse::gh_version(VERSION), Some((2, 92, 0)));
 }
+
+/// Cleanup after the W2 merge (task 9's deferred ruling): only the error `classify`
+/// makes of GitHub's 403 for a run already running is success. Any other kind whose
+/// text carries the phrase stays an error.
+#[test]
+fn rerun_already_running_is_success_only_as_the_expected_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    for stderr in [
+        "gh: API rate limit exceeded; This workflow is already running (HTTP 403)\n",
+        "To get started with GitHub CLI, please run: gh auth login (already running)\n",
+        "gh: Could not resolve to a Run: already running (HTTP 404)\n",
+    ] {
+        let h = host(ScriptedRunner::new().fails("", stderr));
+        let got = h.rerun_failed(&repo, 1);
+        assert!(got.is_err(), "{stderr}: {got:?}");
+        assert!(!matches!(got, Err(HostError::Failed(_))), "{stderr}");
+    }
+    let timed_out = HostError::TimedOut("gh run rerun 1: already running past 30s".into());
+    let h = host(ScriptedRunner::new().answer(Err(timed_out.clone())));
+    assert_eq!(h.rerun_failed(&repo, 1), Err(timed_out));
+}

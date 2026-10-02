@@ -262,6 +262,8 @@ pub(super) fn opened(
     let stage = stage_mut(run, n);
     let pushed_head = stage.pushed.take().unwrap_or(head);
     let confirmed = Some(pushed_head.clone());
+    super::reply::holds(run, n, &pushed_head);
+    let stage = stage_mut(run, n);
     stage.retry_at = None;
     stage.pr = Some(PrRecord {
         number: pr.number,

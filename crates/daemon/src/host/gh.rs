@@ -339,8 +339,9 @@ impl<R: Runner> CodeHost for GhHost<R> {
         let argv = strings(&["run", "rerun", &id, "--repo", &full, "--failed"]);
         match self.gh_ok(repo, &ctx, argv, HOST_WRITE_TIMEOUT) {
             Ok(_) => Ok(()),
-            // Decision 10: a run GitHub is already re-running needs nothing more.
-            Err(e) if e.text().contains("already running") => Ok(()),
+            // Decision 10: a run GitHub is already re-running needs nothing more. Only as
+            // the kind `classify` makes of GitHub's 403, as the engine reads it.
+            Err(HostError::Failed(text)) if text.contains("already running") => Ok(()),
             Err(e) => Err(e),
         }
     }

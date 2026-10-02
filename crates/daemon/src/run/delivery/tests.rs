@@ -408,6 +408,7 @@ fn the_delivery_model_round_trips_through_run_json() {
         reopens: 1,
         local_moved: None,
         maybe_sent: vec!["<!-- anthrex:reply r 7:c5 1a2b3c4 -->".into()],
+        pushes: vec![HEAD2.into()],
     };
     run.delivery.permission_retry_at = Some(6_000);
     run.delivery.base_fetch_due = true;
