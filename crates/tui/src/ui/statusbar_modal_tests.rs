@@ -26,7 +26,7 @@ fn expected(name: &str) -> &'static str {
         | "profile under the help"
         | "help over the run view"
         | "help over the alerts view" => " HELP  esc close",
-        "action menu over the run view" | "action menu on its answer form" => " MENU  esc back",
+        "action menu over the run view" | "action menu on its message form" => " MENU  esc back",
         "config notice over the pane" => " DIALOG  esc close",
         "confirm over the overview"
         | "new agent over the pane"
@@ -51,7 +51,7 @@ fn dialogs() -> Vec<(&'static str, App)> {
 #[test]
 fn every_modal_bar_names_only_esc() {
     let all = dialogs();
-    assert!(all.len() >= 12, "{} dialog fixtures", all.len());
+    assert!(all.len() >= 14, "{} dialog fixtures", all.len());
     for (name, app) in all {
         for (w, h) in [(80, 24), (120, 40)] {
             assert_eq!(bar(&app, w, h), expected(name), "{name} at {w}x{h}");

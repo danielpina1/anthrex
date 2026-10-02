@@ -243,6 +243,11 @@ pub(crate) fn shows(name: &str) -> Shows {
         "rename over the pane" => row("rename", Some("esc cancel"), &["⏎ rename"]),
         "config notice over the pane" => row("config", Some("esc close"), &["esc close"]),
         "edit form over the run view" => row("edit t1", Some("esc cancel"), &["⏎ save"]),
+        "goal form over the pane" => row("start a goal", Some("esc cancel"), &["⏎ start"]),
+        "action menu on its message form" => row("message", Some("esc back"), &["⏎ continue"]),
+        "settings discard page" => row("discard changes", Some("esc back"), &["y discard"]),
+        "profile confirm page" => row("confirm profile", Some("esc back"), &["y store"]),
+        "alerts view, empty" => row("no alerts", Some("esc back"), &[]),
         other => panic!("the audit fixture {other:?} names nothing it shows"),
     }
 }
@@ -484,6 +489,64 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             }),
         ),
         ("edit form over the run view", edit_form()),
+        // Final fix wave M6: the states decision 36's list left out.
+        (
+            "goal form over the pane",
+            with(gate(), |a| {
+                chord(a, 'g');
+                assert!(matches!(a.modal, Some(Modal::StartGoal(_))), "`C-b g`");
+            }),
+        ),
+        (
+            "action menu on its message form",
+            with(crate::ui::alerts::fixture::three_runs(), |a| {
+                chord(a, 'a');
+                tap(a, 'j');
+                tap(a, 'm');
+                a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                let Some(Modal::Action(flow)) = &a.modal else {
+                    panic!("the menu is open");
+                };
+                assert!(
+                    matches!(flow.step, crate::app::actions::ActionStep::Form(_)),
+                    "Enter on `message` opens its form"
+                );
+            }),
+        ),
+        (
+            "settings discard page",
+            with(
+                crate::ui::settings::tests::opened(false, crate::ui::settings::tests::sample()),
+                |a| {
+                    let Some(Screen::Settings(s)) = &mut a.screen else {
+                        panic!("the settings screen");
+                    };
+                    s.page = Some(crate::app::settings_screen::SettingsPage::Discard);
+                },
+            ),
+        ),
+        (
+            "profile confirm page",
+            with(profile(), |a| {
+                crate::ui::profile::tests::screen_mut(a).page = Some(ProfilePage::Confirm {
+                    toml: "check = \"cargo test\"".into(),
+                    scroll: 0,
+                });
+            }),
+        ),
+        (
+            "alerts view, empty",
+            with(
+                app_of(
+                    vec![pty(1, "shell", PROJECT, proto::Status::Idle)],
+                    crate::tree::run_fixtures::snapshot(1, vec![]),
+                ),
+                |a| {
+                    chord(a, 'a');
+                    assert!(a.alerts_focus.is_some(), "`C-b a` opens the view");
+                },
+            ),
+        ),
         (
             "stats",
             with(gate(), |a| {
