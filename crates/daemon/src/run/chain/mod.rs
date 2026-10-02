@@ -72,6 +72,20 @@ pub fn chain_id(run: &Run) -> String {
     format!("o-{}", run.short())
 }
 
+/// Task M9.3.6a fix round 1, m1: whether a run `id` would start a chain whose id is
+/// already a chain's in the table, or a run's own (a chain dropped from the table
+/// keeps its id on its runs, which a restart's [`rebuild`] would merge). `o-<h4>`
+/// keeps only the id's last four characters, so the run-id draw avoids these.
+pub fn suffix_taken(
+    chains: &BTreeMap<String, Chain>,
+    runs: &BTreeMap<String, Run>,
+    id: &str,
+) -> bool {
+    let cut = id.len().saturating_sub(4);
+    let chain = format!("o-{}", id.get(cut..).unwrap_or(id));
+    chains.contains_key(&chain) || runs.values().any(|r| r.chain.as_deref() == Some(&chain))
+}
+
 /// Decision 19, at `EventKind::Restore`: one chain per `Run.chain`, its runs oldest
 /// first. A chain whose last run failed is dropped; one whose last run was accepted or
 /// discarded is idle and ended (its window died with the daemon, KG §3.6), the

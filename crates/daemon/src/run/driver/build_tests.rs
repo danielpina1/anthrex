@@ -112,3 +112,65 @@ fn a_planner_runtime_found_only_through_a_tilde_entry_says_so() {
         "{refusal}"
     );
 }
+
+/// Task M9.3.6a fix round 1, m1: a chain id keeps only the run id's last four
+/// characters (`o-<h4>`), so a new id is redrawn while its suffix is a chain's in the
+/// table, or a run's own chain. With every suffix taken, no id can be drawn.
+#[test]
+fn a_run_id_never_takes_a_chains_suffix() {
+    use crate::manager::{GitRoots, ManagerConfig, WindowManager};
+    use crate::run::chain::{Chain, ChainState};
+    use crate::run::driver::RunService;
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    struct NoRoots;
+    impl GitRoots for NoRoots {
+        fn register(&self, _: PathBuf) {}
+        fn unregister(&self, _: &Path) {}
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let config = ManagerConfig::for_tests(dir.path().join("d.sock"), "/bin/sh".into());
+    let (manager, _events) = WindowManager::new(config);
+    let service = RunService::for_manager(&manager, dir.path().join("data"), Arc::new(NoRoots));
+    assert!(service.pick_id("add login", &[]).is_ok());
+
+    let chain = |id: String| Chain {
+        id,
+        project: dir.path().into(),
+        runs: Vec::new(),
+        window_id: 1,
+        runtime: proto::Runtime::Claude,
+        model: "m".into(),
+        state: ChainState::Idle,
+        ended: false,
+    };
+    {
+        let mut state = crate::lock(&service.state);
+        for n in 0..=u16::MAX {
+            let c = chain(format!("o-{n:04x}"));
+            state.chains.insert(c.id.clone(), c);
+        }
+    }
+    assert_eq!(
+        service.pick_id("add login", &[]),
+        Err("could not pick a free run id".to_string())
+    );
+
+    // A run's own chain counts too: a chain dropped from the table keeps its id on its
+    // runs, which a restart's rebuild would merge with a new run of the same suffix.
+    let mut state = crate::lock(&service.state);
+    state.chains.clear();
+    let base = crate::run::orch::test_support::run_of(1);
+    for n in 0..=u16::MAX {
+        let mut run = base.clone();
+        run.id = format!("old-{n:04x}");
+        run.chain = Some(format!("o-{n:04x}"));
+        state.runs.insert(run.id.clone(), run);
+    }
+    drop(state);
+    assert_eq!(
+        service.pick_id("add login", &[]),
+        Err("could not pick a free run id".to_string())
+    );
+}
