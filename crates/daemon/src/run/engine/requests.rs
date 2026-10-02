@@ -183,7 +183,7 @@ pub(super) fn reject(
         return reply(fx, id, Err(text));
     }
     // Milestone 9.3 decision 12: a later round's reject keeps the run.
-    if run.round() > 1 {
+    if super::goal_rounds_end::open_round(run) {
         let text = super::goal_rounds_end::reject_round(run, now, fx);
         return reply(fx, id, Ok(text));
     }

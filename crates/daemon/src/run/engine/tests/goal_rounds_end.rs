@@ -25,7 +25,7 @@ use crate::run::model::{StageLayout, StageRecord};
 
 /// [`complete`] with round 1 approved in stages (set in place, as
 /// `fix_layout_is_not_run_again_for_a_round` does): stage 1 holds `t1` at `C1`.
-fn complete_staged() -> Fixture {
+pub(super) fn complete_staged() -> Fixture {
     let mut fx = complete();
     let run = fx.run_mut();
     run.stage_layout = StageLayout::Multi;
@@ -36,7 +36,7 @@ fn complete_staged() -> Fixture {
 }
 
 /// The orchestrator plans round 2's `t2` in stage 2 and submits it.
-fn submit_round(fx: &mut Fixture) -> Vec<Effect> {
+pub(super) fn submit_round(fx: &mut Fixture) -> Vec<Effect> {
     let edits = json!([add_in("t2", "mail", 2, &[])]);
     let effects = edit_plan(fx, json!({"edits": edits, "submit": true}));
     assert!(answer(&effects).0, "{effects:#?}");
@@ -44,7 +44,7 @@ fn submit_round(fx: &mut Fixture) -> Vec<Effect> {
 }
 
 /// Every stage branch the running round needs, created.
-fn create_stages(fx: &mut Fixture) {
+pub(super) fn create_stages(fx: &mut Fixture) {
     for _ in 0..4 {
         let ops = creating(fx);
         let Some((op, ..)) = ops.first() else {
@@ -65,7 +65,7 @@ fn round_two_running() -> Fixture {
 }
 
 /// Every diff measure, history line and worktree removal in flight answered.
-fn settle_ops(fx: &mut Fixture) {
+pub(super) fn settle_ops(fx: &mut Fixture) {
     for _ in 0..8 {
         let ops: Vec<_> = fx
             .run()
@@ -92,7 +92,7 @@ fn settle_ops(fx: &mut Fixture) {
 }
 
 /// The ref guard after every task finished: the run completes.
-fn verify(fx: &mut Fixture) -> Vec<Effect> {
+pub(super) fn verify(fx: &mut Fixture) -> Vec<Effect> {
     settle_ops(fx);
     fx.tick();
     let (op, _) = pending_one(fx, "VerifyRefs", None);
@@ -520,6 +520,11 @@ fn each_round_counts_its_own_limits() {
     let third = json!({"edits": [add_in("t5", "web")]});
     assert_eq!(rejected(&edit_plan(&mut fx, third)), too_many);
     assert!(answer(&scout(&mut fx, "c")).0);
+    // Fix round 1 (m5): round 2's own second scout is refused.
+    assert_eq!(
+        error(&scout(&mut fx, "d")),
+        format!("run {RUN_ID} already has 1 scouts, the most max_scouts allows")
+    );
     assert!(answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true}))).0);
     fx.approve();
     create_stages(&mut fx);

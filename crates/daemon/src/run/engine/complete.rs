@@ -314,7 +314,7 @@ pub(super) fn cancel(
         return answer(fx, Err(text));
     }
     // Milestone 9.3 decision 16: a later round's cancel ends that round only.
-    if run.round() > 1 {
+    if super::goal_rounds_end::open_round(run) {
         let text = super::goal_rounds_end::cancel_round(run, now, fx);
         return answer(fx, Ok(text));
     }

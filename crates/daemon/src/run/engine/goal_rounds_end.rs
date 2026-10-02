@@ -27,6 +27,14 @@ pub(super) fn skips_gate(run: &Run) -> bool {
             .is_none_or(|r| r.origin == RoundOrigin::User)
 }
 
+/// Fix round 1 (I1): the current round is a later one that has not ended, so a
+/// reject or cancel is that round's; once it has ended (rejected, or a `pr` run back to
+/// delivering), they are the whole run's.
+pub(super) fn open_round(run: &Run) -> bool {
+    run.current_round()
+        .is_some_and(|r| r.n > 1 && r.ended_at.is_none())
+}
+
 /// The plan is approved, `by` the user or `--yes`: round 1's approval is the run's and
 /// fixes its layout (milestone 9.1 decision 46); a later round's leaves both as round 1
 /// set them (decision 12). A decider queued at the gate waits from now (task 12 review
@@ -42,10 +50,11 @@ pub(super) fn approved(run: &mut Run, by: &str, now: u64) {
     }
 }
 
-/// Decision 12: `run reject` on round 2 or later. Every task of the round is cancelled,
-/// the round ends `rejected` with its history line, its request and its sub-planners
-/// and run scouts are dropped, and the run goes back to `complete` (`running` in `pr`
-/// mode) with no summary wake. Earlier rounds are untouched; nothing is discarded.
+/// Decision 12: `run reject` on round 2 or later while it is open ([`open_round`]).
+/// Every task of the round is cancelled, the round ends `rejected` with its history
+/// line, its request and its sub-planners and run scouts are dropped, and the run goes
+/// back to `complete` (`running` in `pr` mode) with no summary wake. Earlier rounds are
+/// untouched; nothing is discarded.
 pub(super) fn reject_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> String {
     let n = run.round();
     let why = format!("run reject (round {n})");
@@ -73,12 +82,13 @@ pub(super) fn reject_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
     round_rejected(run.short(), n)
 }
 
-/// Decision 16: `run cancel` on round 2 or later cancels that round only. Its
-/// unfinished tasks are cancelled as `complete::cancel` cancels them, its sub-planners
-/// and run scouts are halted, and `finish_edit` keeps anything new from starting while
-/// its sessions end; the round's outcome is `cancelled`, and [`pass`] ends it once the
-/// run completes. `run.cancelled` stays false and the delivery keeps watching, so
-/// earlier rounds' pull requests are untouched.
+/// Decision 16: `run cancel` on round 2 or later while it is open ([`open_round`])
+/// cancels that round only. Its unfinished tasks are cancelled as `complete::cancel`
+/// cancels them, its request is dropped and the earlier rounds' plan stays submitted,
+/// its sub-planners and run scouts are halted, and `finish_edit` keeps anything new
+/// from starting while its sessions end; the round's outcome is `cancelled`, and
+/// [`pass`] ends it once the run completes. `run.cancelled` stays false and the
+/// delivery keeps watching, so earlier rounds' pull requests are untouched.
 pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> String {
     let n = run.round();
     if run.state == RunState::Paused {
@@ -95,12 +105,16 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
             merging.push(run.tasks[i].id().to_string());
         }
     }
-    if let Some(round) = run.rounds.last_mut() {
+    if let Some(round) = run.rounds.last_mut().filter(|r| r.ended_at.is_none()) {
         round.outcome = Some(RoundOutcome::Cancelled);
     }
     run.finish_edit = true;
-    // Fix round 1 (D13): a request of this round not yet delivered never is.
+    // Fix round 1 (D13, m1): a request of this round not yet delivered never is, and
+    // the earlier rounds' plan stays the submitted one, as a reject leaves it.
     wake::clear_request(run, n);
+    if let Some(o) = run.orch.orchestrator.as_mut() {
+        o.plan_submitted = true;
+    }
     planners::halt_all(run, ROUND_CANCELLED, now, fx);
     log(run, now, format!("round {n} cancelled by the user"));
     let mut text = round_cancelled(run.short(), n);
@@ -116,10 +130,7 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
 /// which a cancel set, is cleared. Round 1 ends when a second round starts
 /// (`goal_rounds::iterate`, decision 10).
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    let open = run
-        .current_round()
-        .is_some_and(|r| r.n > 1 && r.ended_at.is_none());
-    if !open || run.state != RunState::Complete {
+    if !open_round(run) || run.state != RunState::Complete {
         return;
     }
     end_round(run, RoundOutcome::Completed, now, fx);
