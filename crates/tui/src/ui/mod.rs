@@ -28,8 +28,6 @@ mod statusbar_modes;
 pub mod terminal;
 pub mod tree_view;
 
-use crate::app::App;
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as RLayout, Rect};
 
 pub const DEFAULT_SIDEBAR_WIDTH: u16 = 34;
@@ -152,64 +150,9 @@ pub fn layout_sized(area: Rect, sidebar_width: u16, sizing: SidebarSizing) -> La
     }
 }
 
-/// The layout the frame draws for `app` in `area`, and the one every mouse path
-/// hit-tests against (Review focus 3): the sidebar's width while it is shown, the
-/// Alerts box sized by the tree's rows and the alerts' lines at the box's own
-/// interior width (decision 9).
-pub fn layout_for(app: &App, area: Rect) -> Layout {
-    if !app.sidebar_visible {
-        return layout_sized(area, 0, SidebarSizing::default());
-    }
-    let width = app.sidebar_width;
-    // The column can be narrower than asked on a narrow terminal: measure the alerts
-    // at the interior the box gets.
-    let interior = layout_sized(area, width, SidebarSizing::default())
-        .alerts_inner
-        .width;
-    let sizing = SidebarSizing {
-        tree_rows: app.rows().len(),
-        alert_lines: alerts::content_lines(app, interior),
-    };
-    layout_sized(area, width, sizing)
-}
-
-/// Draws everything and returns the layout so the caller can size the PTY and hit-test the mouse.
-pub fn draw(frame: &mut Frame, app: &App) -> Layout {
-    let l = layout_for(app, frame.area());
-    use crate::app::screens::Screen;
-    if let Some(Screen::Profile(screen)) = &app.screen {
-        // Milestone 9.0.6 decision 33: a screen covers the body; the status bar stays.
-        profile::render(frame, app, screen, l.body);
-    } else if let Some(Screen::Settings(screen)) = &app.screen {
-        settings::render(frame, app, screen, l.body);
-    } else if let Some(Screen::Stats(screen)) = &app.screen {
-        stats::render(frame, app, screen, l.body);
-    } else if app.plan_review.is_some() {
-        // Milestone 9.0.5 decision 12: the review covers the body; the status bar stays.
-        plan_review::render(frame, app, l.body);
-    } else {
-        if app.sidebar_visible {
-            sidebar::render(frame, app, &l);
-            alerts::render(frame, app, &l);
-        }
-        if app.alerts_focus.is_some() {
-            // Milestone 9.0.7 decision 11: the Alerts view covers the main pane; what
-            // is under it is as it was when the view closes.
-            alerts_view::render(frame, app, l.main);
-        } else if app.conversation.is_open() {
-            conversation::render(frame, app, l.main);
-        } else if app.overview {
-            overview::render(frame, app, l.main);
-        } else {
-            terminal::render(frame, app, l.main);
-        }
-    }
-    statusbar::render(frame, app, l.statusbar);
-    if app.modal.is_some() {
-        modal::render(frame, app, frame.area());
-    }
-    l
-}
+/// `layout_for` and `draw`: `ui/frame.rs`.
+mod frame;
+pub use frame::{draw, layout_for};
 
 #[cfg(test)]
 mod tests;

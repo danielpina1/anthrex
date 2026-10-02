@@ -27,6 +27,11 @@ fn push_disconnected(spans: &mut Vec<Span<'static>>) {
 const GAP: u16 = 2;
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+    render_with(frame, app, area, &crate::app::alerts(app));
+}
+
+/// [`render`] with the frame's alerts (`ui::draw` builds them once).
+pub(crate) fn render_with(frame: &mut Frame, app: &App, area: Rect, all: &[crate::app::Alert]) {
     let palette = app.palette();
     // Milestone 9.0.7 (task 2 note 12): the `Accent` role, never the raw setting.
     let accent = role(Role::Accent, palette);
@@ -72,29 +77,28 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     // hint drop reaches it. The final fix wave's M1: the key shows only where `C-b a`
     // opens the view; under a modal, a screen, the plan review or the open view the
     // count stays alone.
-    if !app.sidebar_visible {
-        let all = crate::app::alerts(app);
-        if let Some(top) = all.first() {
+    if !app.sidebar_visible
+        && let Some(top) = all.first()
+    {
+        spans.push(Span::styled(
+            format!(
+                "{} {}",
+                theme::alert_glyph(top.priority, palette.ascii),
+                all.len()
+            ),
+            theme::alert_style(top.priority, palette),
+        ));
+        if alerts_key_works(app) {
+            spans.push(Span::raw(" "));
             spans.push(Span::styled(
                 format!(
-                    "{} {}",
-                    theme::alert_glyph(top.priority, palette.ascii),
-                    all.len()
+                    "{} a",
+                    crate::safe_text::one_line(&app.settings.prefix_label)
                 ),
-                theme::alert_style(top.priority, palette),
+                accent,
             ));
-            if alerts_key_works(app) {
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    format!(
-                        "{} a",
-                        crate::safe_text::one_line(&app.settings.prefix_label)
-                    ),
-                    accent,
-                ));
-            }
-            spans.push(Span::raw("  "));
         }
+        spans.push(Span::raw("  "));
     }
 
     let toast_width = app

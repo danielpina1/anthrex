@@ -3,7 +3,7 @@
 //! who it is for (`⚑ Add mul() · 0723 › t2  41s`), then what happened, wrapped; `no
 //! alerts` when there is none; `↓ <k> more` on the last row when they do not fit. The
 //! box grows into the column's free rows (`ui::layout_for`, decision 9). The alerts
-//! are `app::alerts`'s, recomputed here on every draw. The box is never focused:
+//! are `app::alerts`'s, built once a frame (`Shown`). The box is never focused:
 //! `C-b a` opens the Alerts view (`ui/alerts_view.rs`). Pure: rendering takes `&App`.
 
 use super::{Layout, kit};
@@ -125,34 +125,57 @@ pub(crate) fn fitted(parts: Vec<(String, Style)>, width: usize, ascii: bool) -> 
     Line::from(spans)
 }
 
-/// Every alert's line count at `width`, summed: decision 9's `C`.
-pub(crate) fn content_lines(app: &App, width: u16) -> usize {
-    alerts(app)
-        .iter()
-        .map(|alert| alert_lines(app, alert, width).len())
-        .sum()
+/// One frame's alerts and, while the box shows, each one's decision-10 lines at the
+/// box's interior width: built once by `ui::draw` and shared by the sidebar's sizing,
+/// the box, the Alerts view and the status bar's flag (final fix wave, task 5's
+/// deferred minor).
+pub(crate) struct Shown {
+    pub all: Vec<Alert>,
+    /// Each alert's lines, in `all`'s order; empty when `of` had no width.
+    blocks: Vec<Vec<Line<'static>>>,
 }
 
-/// Decision 10's rows for the box's interior, `width` × `rows`: whole alerts only.
-/// When they do not fit, the interior's last row is `↓ <k> more` (muted), the rows a
-/// whole alert would not fill left blank above it — unless no whole alert would then
-/// show and the first fits alone: it shows, the title has the count.
+impl Shown {
+    /// The alerts, and their lines at `width` when the box is drawn.
+    pub(crate) fn of(app: &App, width: Option<u16>) -> Self {
+        let all = alerts(app);
+        let blocks = width.map_or_else(Vec::new, |width| {
+            all.iter()
+                .map(|alert| alert_lines(app, alert, width))
+                .collect()
+        });
+        Shown { all, blocks }
+    }
+
+    /// Decision 9's `C`: every alert's line count, summed.
+    pub(crate) fn lines(&self) -> usize {
+        self.blocks.iter().map(Vec::len).sum()
+    }
+}
+
+/// `lines_of` for `app`'s alerts, for the tests.
+#[cfg(test)]
 pub(crate) fn lines(app: &App, width: u16, rows: u16) -> Vec<Line<'static>> {
+    lines_of(&Shown::of(app, Some(width)), width, rows, app.palette())
+}
+
+/// Decision 10's rows for the box's interior, `width` × `rows`, from a frame's
+/// [`Shown`] built at `width`: whole alerts only. When they do not fit, the interior's
+/// last row is `↓ <k> more` (muted), the rows a whole alert would not fill left blank
+/// above it — unless no whole alert would then show and the first fits alone: it
+/// shows, the title has the count.
+fn lines_of(shown: &Shown, width: u16, rows: u16, p: Palette) -> Vec<Line<'static>> {
     let rows = usize::from(rows);
     if width == 0 || rows == 0 {
         return Vec::new();
     }
-    let p = app.palette();
     let muted = theme::role(Role::Muted, p);
-    let all = alerts(app);
+    let all = &shown.all;
     if all.is_empty() {
         let text = truncate_in("no alerts", usize::from(width), p.ascii);
         return vec![Line::from(Span::styled(text, muted))];
     }
-    let blocks: Vec<Vec<Line<'static>>> = all
-        .iter()
-        .map(|alert| alert_lines(app, alert, width))
-        .collect();
+    let blocks = shown.blocks.clone();
     // How many alerts, from the first, fit `budget` rows whole.
     let fit = |budget: usize| {
         let mut used = 0;
@@ -178,11 +201,17 @@ pub(crate) fn lines(app: &App, width: u16, rows: u16) -> Vec<Line<'static>> {
 }
 
 pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
+    let shown = Shown::of(app, Some(layout.alerts_inner.width));
+    render_shown(frame, app, layout, &shown);
+}
+
+/// [`render`] with the frame's alerts, built at the box's interior width.
+pub(crate) fn render_shown(frame: &mut Frame, app: &App, layout: &Layout, shown: &Shown) {
     if layout.alerts.height == 0 || layout.alerts.width == 0 {
         return;
     }
     let p = app.palette();
-    let n = alerts(app).len();
+    let n = shown.all.len();
     // Decisions 1 and 11: the box is never focused and never accented; `C-b a` opens
     // the Alerts view in the main pane, which has the keys.
     let mut block = kit::pane_frame(title(n, p), false, p);
@@ -206,7 +235,8 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
     }
     frame.render_widget(block, layout.alerts);
     let inner = layout.alerts_inner;
-    frame.render_widget(Paragraph::new(lines(app, inner.width, inner.height)), inner);
+    let lines = lines_of(shown, inner.width, inner.height, p);
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 #[cfg(test)]
@@ -219,3 +249,6 @@ mod box_tests;
 #[cfg(test)]
 #[path = "alerts_fixture.rs"]
 pub(crate) mod fixture;
+#[cfg(test)]
+#[path = "alerts_frame_tests.rs"]
+mod frame_tests;

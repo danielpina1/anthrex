@@ -222,12 +222,16 @@ fn title(n: usize, p: Palette) -> Line<'static> {
 }
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+    render_with(frame, app, area, &alerts(app));
+}
+
+/// [`render`] with the frame's alerts (`ui::draw` builds them once).
+pub(crate) fn render_with(frame: &mut Frame, app: &App, area: Rect, all: &[Alert]) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     let p = app.palette();
-    let all = alerts(app);
-    let index = selected_index(app, &all);
+    let index = selected_index(app, all);
     let keys_here = app.key_region() == KeyRegion::Alerts;
     let mut block = kit::pane_frame(title(all.len(), p), keys_here, p);
     if let Some(i) = index {

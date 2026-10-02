@@ -165,6 +165,8 @@ fn orchestrator_lives(run: &RunInfo) -> bool {
 /// Decisions 17 and 18: every alert, most urgent first — by priority, then the run's
 /// `created_at` (the order `shown_runs` gives), then the order the rules list.
 pub fn alerts(app: &App) -> Vec<Alert> {
+    #[cfg(test)]
+    built::add();
     let mut out = Vec::new();
     for run in tree::shown_runs(&app.runs.runs) {
         let id = run.run_id.clone();
@@ -336,5 +338,22 @@ impl App {
                 focus.scroll = 0;
             }
         }
+    }
+}
+
+/// How many times `alerts` built the list on this thread, for the final fix wave's
+/// once-a-frame test (task 5's deferred minor).
+#[cfg(test)]
+pub(crate) mod built {
+    use std::cell::Cell;
+    thread_local! {
+        static BUILT: Cell<usize> = const { Cell::new(0) };
+    }
+    pub(crate) fn add() {
+        BUILT.with(|b| b.set(b.get() + 1));
+    }
+    /// The builds since the last `take`.
+    pub(crate) fn take() -> usize {
+        BUILT.with(|b| b.replace(0))
     }
 }
