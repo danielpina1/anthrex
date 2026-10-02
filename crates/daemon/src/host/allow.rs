@@ -141,7 +141,11 @@ fn seal_read(args: &[&str], ctx: &AllowCtx<'_>) -> bool {
     let Some(rest) = args.strip_prefix(&NO_HOOKS[..]) else {
         return false;
     };
-    let remote = |r: &str| r == ctx.remote && !r.is_empty() && !r.starts_with('-');
+    // A configured remote's name, never a location (deferred from task 12): no `:` (a
+    // URL or scp form) and no leading `/` (a path).
+    let remote = |r: &str| {
+        r == ctx.remote && !r.is_empty() && !r.starts_with(['-', '/']) && !r.contains(':')
+    };
     match rest {
         ["remote", "get-url", "--all", r] | ["remote", "get-url", "--push", "--all", r] => {
             remote(r)
