@@ -27,9 +27,10 @@ fn c_b_a_opens_the_view_and_leaves_the_sidebar_hidden() {
     focus(&mut empty);
     assert_eq!(selected(&empty), None);
     assert!(tap(&mut empty, KeyCode::Enter).is_empty());
-    assert_eq!(
-        empty.alerts_focus, None,
-        "Enter on nothing leaves the focus"
+    // Final fix wave M2 (decision 11: Esc only): Enter on nothing keeps the view.
+    assert!(
+        empty.alerts_focus.is_some(),
+        "Enter on nothing keeps the view"
     );
 }
 

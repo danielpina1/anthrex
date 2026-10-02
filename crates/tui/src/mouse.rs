@@ -255,6 +255,9 @@ impl App {
             self.graph_mouse.list_pick.clone_from(&hit);
             hit
         } else {
+            // Final fix wave (task 10's minor): a graph press ends any list gesture, so
+            // a resize back to the list never opens an older press's pick.
+            self.graph_mouse.list_pick = None;
             view.geometry().node_at(&view.layout, column, row)
         };
         let Some(key) = key else {

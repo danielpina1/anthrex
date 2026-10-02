@@ -219,3 +219,40 @@ fn the_wheel_moves_the_selection_three_rows() {
     let _ = app.on_scroll(false, footer.x + 2, footer.y + 1, &layout);
     assert_eq!(app.tree.selected, Some(NodeKey::Run(RUN_ID.into())));
 }
+
+/// Final fix wave (task 10's deferred minor): a press on the graph forgets the list's
+/// pick, so a resize from the graph to the list between two presses on one cell never
+/// opens the node an older list press picked.
+#[test]
+fn a_graph_press_forgets_the_lists_pick() {
+    let mut app = forty_selected("t30");
+    let (_, layout) = frame(&mut app, 80, 24);
+    let list = overview::view(&app, layout.main).canvas;
+    // A list press picks the row at row 2.
+    assert!(app.on_click(list.x + 6, list.y + 2, &layout).is_empty());
+    let picked = app.tree.selected.clone().expect("a pick");
+    assert_ne!(picked, task_key(RUN_ID, "t30"), "the press picked a row");
+    // The terminal grows to the graph; a press elsewhere on the canvas.
+    let (_, layout) = frame(&mut app, 120, 40);
+    let graph = overview::view(&app, layout.main);
+    assert!(!graph.list, "120x40 draws the graph");
+    let (x, y) = (graph.canvas.x + 6, graph.canvas.y + 1);
+    let _ = app.on_click(x, y, &layout);
+    // It shrinks back to the list; a second press on that cell is a double click.
+    let (_, layout) = frame(&mut app, 80, 24);
+    assert!(overview::view(&app, layout.main).list);
+    let _ = app.on_click(x, y, &layout);
+    let toast = format!("{} has no agent yet", node_id(&picked));
+    assert_ne!(
+        app.toast_text(),
+        Some(toast.as_str()),
+        "the stale pick opened"
+    );
+}
+
+fn node_id(key: &NodeKey) -> String {
+    match key {
+        NodeKey::Task { id, .. } => id.clone(),
+        other => format!("{other:?}"),
+    }
+}

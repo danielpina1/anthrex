@@ -142,9 +142,11 @@ impl App {
             KeyCode::PageDown => self.scroll_alert_detail(true),
             KeyCode::PageUp => self.scroll_alert_detail(false),
             KeyCode::Esc => self.leave_alerts(),
+            // Final fix wave M2: with no alert selected (an empty view) Enter does
+            // nothing; Esc alone leaves (decision 11).
             KeyCode::Enter => {
-                self.leave_alerts();
                 if let Some(key) = selected {
+                    self.leave_alerts();
                     return self.enter_alert(key);
                 }
             }
