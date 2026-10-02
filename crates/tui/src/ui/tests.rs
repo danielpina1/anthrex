@@ -160,7 +160,7 @@ fn help_lists_new_agent() {
         UiSettings::default(),
     );
     let _ = app.set_terminal_size(80, 24);
-    app.modal = Some(Modal::Help);
+    app.modal = Some(Modal::Help(Default::default()));
     let (out, _) = render(&app, 100, 30);
     assert!(out.contains("C-b c"), "{out}");
     assert!(out.contains("new agent"), "{out}");
@@ -267,11 +267,11 @@ fn modals_render_on_top() {
     let (out, _) = render(&app, 100, 20);
     assert!(out.contains("Kill 'a'?"));
     assert!(out.contains("y kill · esc back"));
-    app.modal = Some(Modal::Help);
+    app.modal = Some(Modal::Help(Default::default()));
     let (out, _) = render(&app, 100, 24);
-    assert!(out.contains("send a literal C-b"));
-    assert!(out.contains("tree mode"));
+    assert!(out.contains("C-b t        tree "), "{out}");
     assert!(out.contains("sidebar width"));
+    assert!(out.contains("↓ 76 more"), "send a literal: a scroll away");
 }
 
 /// Task M6.9 decision 38: every piece of help or hint text takes the prefix from
@@ -298,7 +298,7 @@ fn help_and_hints_use_the_configured_prefix() {
     );
     let _ = app.set_terminal_size(80, 24);
 
-    app.modal = Some(Modal::Help);
+    app.modal = Some(Modal::Help(Default::default()));
     let (out, _) = render(&app, 100, 30);
     assert!(out.contains("C-a c"), "{out}");
     assert!(out.contains("send a literal C-a"), "{out}");
@@ -537,7 +537,7 @@ fn a_click_on_a_row_focuses_toggles_or_focuses_the_parent() {
     assert_eq!(app.tree.sidebar.top, 0);
     assert!(app.on_click(0, 6, &l).is_empty());
     assert!(app.on_click(2, l.sidebar_footer.y, &l).is_empty());
-    app.modal = Some(Modal::Help);
+    app.modal = Some(Modal::Help(Default::default()));
     assert!(app.on_click(2, 6, &l).is_empty());
     assert_eq!(app.focused, Some(8));
 }
@@ -588,7 +588,7 @@ fn the_conversation_view_takes_the_main_area() {
     let (out, _) = render(&app, 120, 30);
     assert!(out.contains("waiting for the conversation"), "{out}");
 
-    app.modal = Some(Modal::Help);
+    app.modal = Some(Modal::Help(Default::default()));
     let (out, _) = render(&app, 120, 40);
     let line = out
         .lines()

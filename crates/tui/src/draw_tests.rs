@@ -107,7 +107,7 @@ async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
     let top = app.tree.sidebar.top;
     draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert_eq!(app.tree.sidebar.top, top);
-    app.modal = Some(app::Modal::Help);
+    app.modal = Some(app::Modal::Help(Default::default()));
     let layout = draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert!(
         app.on_click(layout.sidebar_list.x, layout.sidebar_list.y, &layout)

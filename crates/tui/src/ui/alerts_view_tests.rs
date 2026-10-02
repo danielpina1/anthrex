@@ -270,12 +270,15 @@ fn the_view_is_the_one_accented_frame() {
             }
         }
     }
-    // Under the help the view mutes.
+    // Under the help the view mutes (its top-right corner: the full-height help, task
+    // 12, covers the top-left).
     let mut app = view_on_blocked();
     chord(&mut app, '?');
     let (buffer, layout) = draw_at(&app, 120, 40);
     assert_eq!(audit::accented_frames(&buffer, app.palette()), 1);
-    assert_eq!(Some(buffer[(layout.main.x, layout.main.y)].fg), muted);
+    let corner = (layout.main.right() - 1, layout.main.y);
+    assert_eq!(buffer[corner].symbol(), "╮");
+    assert_eq!(Some(buffer[corner].fg), muted);
 }
 
 /// Review focus 5: the goal, the task's title and id, the question, the worker's

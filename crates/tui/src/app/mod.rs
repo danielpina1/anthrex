@@ -61,7 +61,7 @@ pub enum Modal {
         message: String,
         action: PendingAction,
     },
-    Help,
+    Help(help::HelpView), // Milestone 9.0.7 decision 34: the grouped, scrolled help.
     /// The new-agent form; keys are handled in `app/modal_keys.rs`.
     NewAgent(NewAgentForm),
     /// The remove-confirm dialog (task M5.10).
@@ -73,7 +73,7 @@ pub enum Modal {
         message: String,
     },
     /// Every config `Problem` the CLI found, already formatted, shown once at start
-    /// (decision 7). Dismissed by any key, like `Help`.
+    /// (decision 7). Dismissed by any key.
     Notice {
         title: String,
         lines: Vec<String>,
@@ -469,10 +469,7 @@ impl App {
             // one is already in flight (decision 39 keeps all of `stopping`'s logic in
             // `app/link.rs`).
             Command::StopDaemon => self.stop_daemon_command(),
-            Command::Help => {
-                self.modal = Some(Modal::Help);
-                vec![]
-            }
+            Command::Help => self.open_help(),
             // Decision 23: `C-b ,` opens the rename box prefilled with the focused
             // window's current name; the id travels with the modal itself
             // (`RenamePrompt::window_id`), not through `self.focused`.
@@ -557,6 +554,7 @@ mod conversation;
 mod daemon;
 mod goal;
 mod headless;
+pub(crate) mod help;
 mod lifecycle;
 mod link;
 mod modal_keys;

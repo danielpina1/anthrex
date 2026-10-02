@@ -15,6 +15,7 @@ pub use dialog::{choice, choice_in, dialog_area, dialog_frame};
 pub use hints::{Hint, hints, hints_joined};
 pub use pane::pane_frame;
 pub use rows::{labelled_rows, run_name, run_name_in, scroll_marks};
+pub(crate) use screen::{from_top, last_top};
 pub use screen::{screen_frame, window};
 pub(crate) use text::{cut, wrap_words};
 pub use text::{text_area, text_area_focus};

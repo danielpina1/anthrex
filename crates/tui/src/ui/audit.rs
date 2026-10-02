@@ -193,7 +193,11 @@ pub(crate) fn shows(name: &str) -> Shows {
         "sidebar tree over the alerts box" => {
             row("TREE", Some("esc back"), &["j/k move", "C-b a open"])
         }
-        "help over the sidebar tree" | "profile under the help" => row("keys", None, &["any key"]),
+        // Decision 34: the help's title, its close hint and its keys.
+        "help over the sidebar tree"
+        | "profile under the help"
+        | "help over the run view"
+        | "help over the alerts view" => row("keys", Some("esc close"), &["j/k scroll"]),
         "confirm over the overview" => row("Kill 'shell'?", Some("esc back"), &["y kill"]),
         "action menu over the run view" => row("review plan", Some("esc close"), &["j/k move"]),
         "profile with a page" => row("reject proposal", Some("esc back"), &["y reject"]),
@@ -371,6 +375,17 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             }),
         ),
         ("profile under the help", with(profile(), |a| chord(a, '?'))),
+        (
+            "help over the run view",
+            with(run_view(gate()), |a| chord(a, '?')),
+        ),
+        (
+            "help over the alerts view",
+            with(crate::ui::alerts::fixture::three_runs(), |a| {
+                chord(a, 'a');
+                chord(a, '?');
+            }),
+        ),
         (
             "settings",
             crate::ui::settings::tests::opened(false, crate::ui::settings::tests::sample()),

@@ -337,7 +337,7 @@ fn a_modal_mutes_the_screens_border() {
         draw(&app, 80, 24)[(0, 0)].style().fg,
         role(Role::Accent, p).fg
     );
-    app.modal = Some(crate::app::Modal::Help);
+    app.modal = Some(crate::app::Modal::Help(Default::default()));
     assert_eq!(
         draw(&app, 80, 24)[(0, 0)].style().fg,
         role(Role::Muted, p).fg
