@@ -44,23 +44,22 @@ fn task_fields_match_the_mockup() {
     let inspection = inspect_node(&app, &task_key("t2"));
     assert_eq!(inspection.glyph.content, "◐");
     assert_eq!(inspection.name, "t2  map Gemini hook events to status");
-    assert_eq!(
-        inspection.right.as_deref(),
-        Some("M · tdd · review round 2")
-    );
+    assert_eq!(inspection.right.as_deref(), Some("in review · r2"));
+    // Milestone 9.0.7 decision 12: size and test mode moved to the footer.
+    assert_eq!(inspection.footer.as_deref(), Some("cx default · M · tdd"));
     // Milestone 9.0.5: drawn as sections; the flat list below is kept.
     assert_eq!(inspection.layout, FieldLayout::Sections);
     assert_eq!(
         pairs(&inspection),
         [
-            ("stages", "done ✓ → proof ✓ → check ✓ → review ● → merge ·"),
+            ("pipeline", "done ✓ › proof ✓ › check ✓ › review › merge ◌"),
             (
                 "route",
                 "codex · standard · high effort  →  reviewer claude · frontier"
             ),
             (
                 "deps",
-                "waits on t0 ✓ t6 ✓ · unblocks t3, t7 · on critical path"
+                "after t0 ✓, t6 ✓ · unblocks t3, t7 · on critical path"
             ),
             (
                 "budget",
@@ -72,20 +71,17 @@ fn task_fields_match_the_mockup() {
             ),
             (
                 "diff",
-                "4 files · +212 −31 · test `status::gemini_stop_marks_idle` red a1b2c3d ✓"
+                "+212 −31 · 4 files · test `status::gemini_stop_marks_idle` red a1b2c3d ✓"
             ),
-            (
-                "review",
-                "r1 ✗ 1 critical, 2 minor: status.rs:118 \"SubagentStop not paired\""
-            ),
+            ("review", "in review · r2"),
             ("history", T2_HISTORY),
         ]
     );
 }
 
 fn stages(app: &App, id: &str) -> String {
-    value(&inspect_node(app, &task_key(id)), "stages")
-        .expect("a stages row")
+    value(&inspect_node(app, &task_key(id)), "pipeline")
+        .expect("a pipeline row")
         .to_owned()
 }
 
@@ -94,12 +90,12 @@ fn task_stage_marks() {
     let check_mode = with_task("t2", |task| task.test_mode = TestMode::Check);
     assert_eq!(
         stages(&check_mode, "t2"),
-        "done ✓ → proof – → check ✓ → review ● → merge ·"
+        "done ✓ › check ✓ › review › merge ◌"
     );
     let unverified = with_run(|run| run.unverified = true);
     assert_eq!(
         stages(&unverified, "t2"),
-        "done ✓ → proof ✓ → check – → review ● → merge ·"
+        "done ✓ › proof ✓ › review › merge ◌"
     );
     let unreviewed = with_task("t2", |task| {
         task.review_route = None;
@@ -108,7 +104,7 @@ fn task_stage_marks() {
     });
     assert_eq!(
         stages(&unreviewed, "t2"),
-        "done ✓ → proof ✓ → check ● → review – → merge ·"
+        "done ✓ › proof ✓ › check › merge ◌"
     );
     let queued = with_task("t2", |task| {
         task.state = TaskState::MergeQueue;
@@ -116,7 +112,7 @@ fn task_stage_marks() {
     });
     assert_eq!(
         stages(&queued, "t2"),
-        "done ✓ → proof ✓ → check ✓ → review ✓ → merge ●"
+        "done ✓ › proof ✓ › check ✓ › review ✓ › merge"
     );
     let working = with_task("t2", |task| {
         task.state = TaskState::Working;
@@ -126,7 +122,7 @@ fn task_stage_marks() {
     });
     assert_eq!(
         stages(&working, "t2"),
-        "done ● → proof · → check ✗ → review ✗ → merge ·"
+        "done › proof ◌ › check ✗ › review ✗ › merge ◌"
     );
     let proving = with_task("t2", |task| {
         task.state = TaskState::Proof;
@@ -134,7 +130,7 @@ fn task_stage_marks() {
     });
     assert_eq!(
         stages(&proving, "t2"),
-        "done ✓ → proof ● → check ✓ → review · → merge ·"
+        "done ✓ › proof › check ✓ › review ◌ › merge ◌"
     );
     let failed_proof = with_task("t2", |task| {
         task.last_proof.as_mut().expect("proof").ok = false;
@@ -142,7 +138,7 @@ fn task_stage_marks() {
     });
     assert_eq!(
         stages(&failed_proof, "t2"),
-        "done ✓ → proof ✗ → check ✓ → review ✗ → merge ✓"
+        "done ✓ › proof ✗ › check ✓ › review ✗ › merge ✓"
     );
 }
 
@@ -154,14 +150,15 @@ fn task_deps_include_implicit_ones_once() {
     let inspection = inspect_node(&app, &task_key("t3"));
     assert_eq!(
         value(&inspection, "deps"),
-        Some("waits on t2 ◐ t0 ✓ · on critical path")
+        // Final fix wave M4: an implicit dep is marked, as in the plan review.
+        Some("after t2 ◐, t0 ✓ (implied) · on critical path")
     );
     // Implicit dependents unblock too, once each.
     let app = with_task("t5", |task| task.implicit_deps = vec!["t2".into()]);
     let inspection = inspect_node(&app, &task_key("t2"));
     assert_eq!(
         value(&inspection, "deps"),
-        Some("waits on t0 ✓ t6 ✓ · unblocks t3, t5, t7 · on critical path")
+        Some("after t0 ✓, t6 ✓ · unblocks t3, t5, t7 · on critical path")
     );
     // A working dependency's glyph is a static `●`, never the spinner (controller
     // ruling), though its worker's window is `Working` and the spinner has moved on.
@@ -176,7 +173,7 @@ fn task_deps_include_implicit_ones_once() {
     let inspection = inspect_node(&app, &task_key("t3"));
     assert_eq!(
         value(&inspection, "deps"),
-        Some("waits on t2 ● · on critical path")
+        Some("after t2 ● · on critical path")
     );
     // No deps, no dependents, off the critical path: no row.
     let inspection = inspect_node(&app, &task_key("t8"));
@@ -192,11 +189,8 @@ fn task_fields_when_blocked() {
         });
     });
     let inspection = inspect_node(&app, &task_key("t5"));
-    assert_eq!(inspection.glyph.content, "⊘");
-    assert_eq!(
-        inspection.right.as_deref(),
-        Some("S · tdd · blocked: mis-sized")
-    );
+    assert_eq!(inspection.glyph.content, "⚑");
+    assert_eq!(inspection.right.as_deref(), Some("blocked: mis-sized"));
     let words = [
         (BlockReason::Human, "human"),
         (BlockReason::Conflict, "conflict"),
@@ -209,7 +203,7 @@ fn task_fields_when_blocked() {
             task.block.as_mut().expect("block").reason = reason;
         });
         let right = inspect_node(&app, &task_key("t5")).right;
-        assert_eq!(right, Some(format!("S · tdd · blocked: {word}")));
+        assert_eq!(right, Some(format!("blocked: {word}")));
     }
 }
 
@@ -232,11 +226,11 @@ fn task_stage_text_for_every_state() {
             task.test_mode = TestMode::None;
         });
         let right = inspect_node(&app, &task_key("t8")).right;
-        assert_eq!(right, Some(format!("S · none · {stage}")), "{state:?}");
+        assert_eq!(right, Some(stage.to_owned()), "{state:?}");
     }
     let gate = with_run(|run| run.state = proto::RunState::AwaitingApproval);
     let inspection = inspect_node(&gate, &task_key("t8"));
-    assert_eq!(inspection.right.as_deref(), Some("S · tdd · planned"));
+    assert_eq!(inspection.right.as_deref(), Some("planned"));
     assert_eq!(inspection.glyph.content, "○");
 }
 
@@ -245,11 +239,11 @@ fn task_without_diff_or_review_omits_them() {
     let app = app_of(gemini_fixture());
     let inspection = inspect_node(&app, &task_key("t0"));
     assert_eq!(inspection.name, "t0  t0 work");
-    assert_eq!(inspection.right.as_deref(), Some("S · tdd · merged"));
+    assert_eq!(inspection.right.as_deref(), Some("merged"));
     assert_eq!(
         pairs(&inspection),
         [
-            ("stages", "done · → proof · → check · → review – → merge ✓"),
+            ("pipeline", "done ◌ › proof ◌ › check ◌ › merge ✓"),
             ("route", "claude · standard · medium effort"),
             ("deps", "unblocks t2 · on critical path"),
             (
@@ -342,28 +336,32 @@ fn task_blocked_by_the_fallback() {
     });
     assert_eq!(
         inspect_node(&app, &task_key("t5")).right.as_deref(),
-        Some("S · tdd · blocked: question (fallback)")
+        Some("blocked: question (fallback)")
     );
     let app = with_task("t5", |task| {
         task.block_source = Some(DeciderSource::Decider)
     });
     assert_eq!(
         inspect_node(&app, &task_key("t5")).right.as_deref(),
-        Some("S · tdd · blocked: question")
+        Some("blocked: question")
     );
 }
 
 #[test]
 fn a_review_with_no_findings_and_a_finding_without_a_file() {
+    // Back with the worker, so the row reads the last verdict (milestone 9.0.7
+    // decision 12's forms).
     let app = with_task("t2", |task| {
+        task.state = TaskState::Working;
         task.reviews[0].findings.clear();
         task.reviews[0].blocking = false;
     });
     assert_eq!(
         value(&inspect_node(&app, &task_key("t2")), "review"),
-        Some("r1 ✓ no findings")
+        Some("r1 ✓ changes · one pairing bug")
     );
     let app = with_task("t2", |task| {
+        task.state = TaskState::Working;
         task.reviews[0].findings = vec![Finding {
             severity: Severity::Important,
             file: None,
@@ -374,7 +372,7 @@ fn a_review_with_no_findings_and_a_finding_without_a_file() {
     });
     assert_eq!(
         value(&inspect_node(&app, &task_key("t2")), "review"),
-        Some("r1 ✗ 1 important: the plan \"t4 overlaps\"")
+        Some("r1 ✗ changes · 1 important: the plan \"t4 overlaps\"")
     );
 }
 
@@ -409,12 +407,13 @@ fn a_long_history_shows_the_newest_ten() {
 #[test]
 fn a_minor_only_review_is_a_check_with_its_findings() {
     let app = with_task("t2", |task| {
+        task.state = TaskState::Working;
         task.reviews[0].blocking = false;
         task.reviews[0].findings.remove(1);
     });
     assert_eq!(
         value(&inspect_node(&app, &task_key("t2")), "review"),
-        Some("r1 ✓ 2 minor: hooks.rs:12 \"naming\"")
+        Some("r1 ✓ changes · 2 minor: hooks.rs:12 \"naming\"")
     );
 }
 

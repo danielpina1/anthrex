@@ -25,7 +25,7 @@ fn model(runtime: Runtime, name: &str, strength: Strength) -> ModelEntry {
     }
 }
 
-fn sample() -> SettingsDoc {
+pub(crate) fn sample() -> SettingsDoc {
     let budget = |tool_calls, minutes| BudgetLimit {
         tool_calls,
         minutes,

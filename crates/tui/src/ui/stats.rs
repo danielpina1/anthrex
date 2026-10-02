@@ -7,10 +7,10 @@
 //! border (decision 5). Every class, test name, problem, path and refusal passes
 //! `safe_text`. Pure: `&App` in.
 
-use crate::app::App;
 use crate::app::stats::{StatsScreen, StatsState};
+use crate::app::{App, region::KeyRegion};
 use crate::safe_text::{multi_line, one_line};
-use crate::theme::{Palette, Role, role};
+use crate::theme::{Palette, Role, dot, ellipsis, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
 use proto::HistoryStats;
 use ratatui::Frame;
@@ -24,14 +24,6 @@ use unicode_width::UnicodeWidthStr;
 const HEADER: [&str; 9] = [
     "class", "tasks", "merged", "lines", "calls", "tokens", "work", "bounces", "reverted",
 ];
-
-fn ellipsis(p: Palette) -> &'static str {
-    if p.ascii { "..." } else { "…" }
-}
-
-fn dot(p: Palette) -> &'static str {
-    if p.ascii { "-" } else { "·" }
-}
 
 /// A `None` median.
 fn none(p: Palette) -> &'static str {
@@ -222,18 +214,6 @@ pub(crate) fn body_lines(app: &App, s: &StatsScreen, width: u16) -> Vec<Line<'st
     }
 }
 
-/// The last first line `len` lines can show from in `rows` rows: at the bottom only
-/// the `↑` mark shows, so it leaves `rows - 1` lines (all `rows` under 3 rows).
-fn last_top(len: usize, rows: usize) -> usize {
-    if rows == 0 || len <= rows {
-        0
-    } else if rows < 3 {
-        len - rows
-    } else {
-        len - (rows - 1)
-    }
-}
-
 /// The interior of the screen's frame over `body` (the renderer's own block).
 fn interior(body: Rect, p: Palette) -> Rect {
     kit::screen_frame("", true, p).inner(body)
@@ -244,35 +224,14 @@ fn interior(body: Rect, p: Palette) -> Rect {
 pub(crate) fn max_scroll(app: &App, s: &StatsScreen, body: Rect) -> usize {
     let inner = interior(body, app.palette());
     let len = body_lines(app, s, inner.width).len();
-    last_top(len, usize::from(inner.height))
-}
-
-/// `lines` from `top` in `rows` rows; a cut above or below is marked with the kit's
-/// marks, and the view never scrolls past its last line.
-fn scrolled(lines: Vec<Line<'static>>, top: usize, rows: usize, p: Palette) -> Vec<Line<'static>> {
-    let len = lines.len();
-    let last_top = last_top(len, rows);
-    let top = top.min(last_top);
-    if len <= rows || rows < 3 {
-        return lines.into_iter().skip(top).take(rows).collect();
-    }
-    let room = if top == 0 || top == last_top {
-        rows - 1
-    } else {
-        rows - 2
-    };
-    let (up, down) = kit::scroll_marks(top, len - top - room, p.ascii);
-    let muted = role(Role::Muted, p);
-    let mut out: Vec<Line<'static>> = up.map(|m| Line::styled(m, muted)).into_iter().collect();
-    out.extend(lines.into_iter().skip(top).take(room));
-    out.extend(down.map(|m| Line::styled(m, muted)));
-    out
+    kit::last_top(len, usize::from(inner.height))
 }
 
 pub fn render(frame: &mut Frame, app: &App, s: &StatsScreen, area: Rect) {
     let p = app.palette();
     // Decision 5: the one accented border is the dialog's while one is open.
-    let block = kit::screen_frame(&title(s, p), app.modal.is_none(), p);
+    let keys_here = app.key_region() == KeyRegion::Screen;
+    let block = kit::screen_frame(&title(s, p), keys_here, p);
     let inner = interior(area, p);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -280,7 +239,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &StatsScreen, area: Rect) {
         return;
     }
     let lines = body_lines(app, s, inner.width);
-    let shown = scrolled(lines, s.scroll, usize::from(inner.height), p);
+    let shown = kit::from_top(lines, s.scroll, usize::from(inner.height), p);
     frame.render_widget(Paragraph::new(shown), inner);
 }
 

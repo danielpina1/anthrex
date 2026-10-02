@@ -19,21 +19,21 @@ fn stage_node_is_drawn_between_run_and_tasks_for_a_multi_run() {
         lines_text(&lines),
         padded(
             &[
-                "                                                  ╭──────────────────────────╮",
-                "                                                ┌─┤ ✓ t1 reset model S       │",
-                "                                                │ ╰──────────────────────────╯",
-                "                                                │",
-                "                      ╭───────────────────────╮ │ ╭──────────────────────────╮",
-                "                    ┌─┤ ⠋ stage 1/2  tier 3 … ├─┼─┤ ● t2 reset endpoint S    │",
-                "                    │ ╰───────────────────────╯ │ ╰──────────────────────────╯",
-                "                    │                           │",
-                "╭─────────────────╮ │                           │ ╭──────────────────────────╮",
-                "│ ◉ run 3f9a  1/4 ├─┤                           └─┤ ▫ fix1 fix t2 S (bisect) │",
-                "╰─────────────────╯ │                             ╰──────────────────────────╯",
+                "                                                            ╭──────────────────────────╮",
+                "                                                          ┌─┤ ✓ t1 reset model S       │",
+                "                                                          │ ╰──────────────────────────╯",
+                "                                                          │",
+                "                      ╭─────────────────────────────────╮ │ ╭──────────────────────────╮",
+                "                    ┌─┤ ✗ stage 1/2  tier 3 ✗ bisecting ├─┼─┤ ● t2 reset endpoint S    │",
+                "                    │ ╰─────────────────────────────────╯ │ ╰──────────────────────────╯",
+                "                    │                                     │",
+                "╭─────────────────╮ │                                     │ ╭──────────────────────────╮",
+                "│ ◉ run 3f9a  1/4 ├─┤                                     └─┤ ▫ fix1 fix t2 S (bisect) │",
+                "╰─────────────────╯ │                                       ╰──────────────────────────╯",
                 "                    │",
-                "                    │ ╭───────────────────────╮   ╭──────────────────────────╮",
-                "                    └─┤ ◌ stage 2/2  tier 3 · ├───┤ ◌ t3 reset view S        │",
-                "                      ╰───────────────────────╯   ╰──────────────────────────╯",
+                "                    │ ╭─────────────────────────────────╮   ╭──────────────────────────╮",
+                "                    └─┤ ◌ stage 2/2  tier 3 ◌           ├───┤ ◌ t3 reset view S        │",
+                "                      ╰─────────────────────────────────╯   ╰──────────────────────────╯",
             ],
             width
         )
@@ -41,34 +41,87 @@ fn stage_node_is_drawn_between_run_and_tasks_for_a_multi_run() {
     // A stage not created yet is `◌` in the starting colour, never a created stage's.
     let (glyph, style) = glyph_of(&lines, rect_of(&layout, &stage_key(2)));
     assert_eq!(glyph, "◌");
-    assert_eq!(style.fg, Some(theme::status_color(proto::Status::Starting)));
+    assert_eq!(style.fg, Some(theme::fg(theme::Role::Muted)));
 }
 
-/// Each tier-3 state's mark and glyph; a stage with no head is `◌` whatever it says.
+/// Each tier-3 state's text and glyph; a stage with no head is `◌` whatever it says.
+/// Milestone 9.0.7 decisions 3 and 18: a bisecting stage is `✗ bisecting` (it is red),
+/// never a spinner, one not yet run `◌`, and a finished job shows its time. The box
+/// draws the whole text (`MAX_STAGE_NODE_WIDTH`).
 #[test]
 fn each_tier3_state_has_its_mark_and_glyph() {
     use proto::FullState;
-    for (state, mark, glyph) in [
-        (FullState::Green, "✓", "✓"),
-        (FullState::Red, "✗", "✗"),
-        (FullState::Running, "…", "⠋"),
-        (FullState::None, "·", "○"),
+    for (state, text, glyph) in [
+        (FullState::Green, "stage 1/2  tier 3 ✓ 41m12s", "✓"),
+        (FullState::Red, "stage 1/2  tier 3 ✗ 41m12s", "✗"),
+        (FullState::Running, "stage 1/2  tier 3 running", "⠋"),
+        (FullState::Bisecting, "stage 1/2  tier 3 ✗ bisecting", "✗"),
+        (FullState::None, "stage 1/2  tier 3 ◌", "◌"),
     ] {
         let (mut snap, windows) = staged_fixture();
         snap.runs[0].stages[0].full.state = state;
         let app = app_of((snap, windows));
+        let rows = view_rows(&app);
+        let row = rows.iter().find(|row| row.key == stage_key(1)).unwrap();
+        assert_eq!(crate::graph::content_text(row), text, "{state:?}");
         let (layout, lines) = paint_view(&app);
         let rect = rect_of(&layout, &stage_key(1));
-        let text: String = lines_text(&lines)[usize::from(rect.y + 1)]
+        let drawn: String = lines_text(&lines)[usize::from(rect.y + 1)]
             .chars()
             .skip(usize::from(rect.x))
             .take(usize::from(rect.width))
             .collect();
-        assert!(
-            text.contains(&format!("stage 1/2  tier 3 {mark}")),
-            "{text}"
-        );
+        assert!(drawn.contains(text), "{state:?}: {drawn}");
         assert_eq!(glyph_of(&lines, rect).0, glyph, "{state:?}");
+    }
+}
+
+/// Controller ruling on decision 18: every stage form draws uncut, the widest at
+/// `stage 10/10` (`MAX_STAGE_NODE_WIDTH`), while task boxes keep `MAX_NODE_WIDTH`.
+#[test]
+fn every_stage_form_draws_uncut_at_stage_10_of_10() {
+    use proto::FullState;
+    for (state, secs, tier) in [
+        (FullState::Green, Some(64), "✓ 1m04s"),
+        (FullState::Red, Some(3720), "✗ 1h02m"),
+        (FullState::Running, None, "running"),
+        (FullState::Bisecting, Some(64), "✗ bisecting"),
+        (FullState::None, None, "◌"),
+    ] {
+        let (mut snap, windows) = staged_fixture();
+        let stages = &mut snap.runs[0].stages;
+        for n in 3..=10 {
+            stages.push(stage(n, None, 0, 0));
+        }
+        stages[9].head = Some("a".repeat(40));
+        stages[9].full.state = state;
+        stages[9].full.secs = secs;
+        let app = app_of((snap, windows));
+        let (layout, lines) = paint_view(&app);
+        let rect = rect_of(&layout, &stage_key(10));
+        let drawn: String = lines_text(&lines)[usize::from(rect.y + 1)]
+            .chars()
+            .skip(usize::from(rect.x))
+            .take(usize::from(rect.width))
+            .collect();
+        let text = format!("stage 10/10  tier 3 {tier}");
+        assert!(drawn.contains(&format!("{text} ")), "{state:?}: {drawn}");
+        assert!(!drawn.contains('…'), "{state:?}: {drawn}");
+        assert!(rect.width <= crate::graph::MAX_STAGE_NODE_WIDTH);
+        for (i, node) in layout.nodes.iter().enumerate() {
+            if matches!(node.key, NodeKey::Task { .. }) {
+                assert!(node.rect.width <= crate::graph::MAX_NODE_WIDTH);
+            }
+            // The wider stage tier pushes the next one right: no two boxes overlap.
+            for other in &layout.nodes[i + 1..] {
+                assert!(
+                    !node.rect.intersects(other.rect),
+                    "{:?} {:?}",
+                    node.key,
+                    other.key
+                );
+            }
+        }
     }
 }
 
@@ -93,7 +146,7 @@ fn the_gate_groups_tasks_by_uncreated_stages() {
     for n in [1, 2] {
         let (glyph, style) = glyph_of(&lines, rect_of(&layout, &stage_key(n)));
         assert_eq!(glyph, "◌", "stage {n}");
-        assert_eq!(style.fg, Some(theme::status_color(proto::Status::Starting)));
+        assert_eq!(style.fg, Some(theme::fg(theme::Role::Muted)));
     }
 }
 

@@ -367,7 +367,7 @@ fn the_footer_spells_a_project_out_with_its_root_and_counts() {
     // its most urgent window's.
     assert_eq!(
         footer_text(&app, &layout),
-        "◆ shop  /r/shop  attention  cl 4 · cx 3"
+        "⚑ shop  /r/shop  attention  cl 4 · cx 3"
     );
 
     // A project at the home directory reads `~`, not the bare `~/` that

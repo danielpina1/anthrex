@@ -9,15 +9,15 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::{ClientMsg, DaemonMsg, GitState, Head, RunReply, RunRequest, WindowInfo};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
-fn press(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Vec<crate::app::Effect> {
+pub(super) fn press(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Vec<crate::app::Effect> {
     app.on_key(KeyEvent::new(code, mods))
 }
 
-fn prefix(app: &mut App) {
+pub(super) fn prefix(app: &mut App) {
     press(app, KeyCode::Char('b'), KeyModifiers::CONTROL);
 }
 
-fn gate_app(width: u16, height: u16) -> App {
+pub(super) fn gate_app(width: u16, height: u16) -> App {
     let (snapshot, windows) = gate_fixture();
     let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
     app.set_terminal_size(width, height);
@@ -25,7 +25,7 @@ fn gate_app(width: u16, height: u16) -> App {
     app
 }
 
-fn draw(app: &App, width: u16, height: u16) -> Buffer {
+pub(super) fn draw(app: &App, width: u16, height: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|f| {
@@ -36,7 +36,7 @@ fn draw(app: &App, width: u16, height: u16) -> Buffer {
 }
 
 /// The bottom row, trailing spaces trimmed.
-fn bar(app: &App, width: u16, height: u16) -> String {
+pub(super) fn bar(app: &App, width: u16, height: u16) -> String {
     let buffer = draw(app, width, height);
     (0..width)
         .map(|x| buffer[(x, height - 1)].symbol())
@@ -238,10 +238,10 @@ fn a_warning_in_attention() {
     app.toast_at(ToastLevel::Warn, "careful");
     let attention = role(Role::Attention, app.palette());
     assert_eq!(toast_style(&app).fg, attention.fg);
-    // An info toast keeps the accent, and `toast()` means Info.
+    // An info toast keeps the `Accent` role, and `toast()` means Info.
     app.toast("fine");
     assert_eq!(app.toast_level(), Some(ToastLevel::Info));
-    assert_eq!(toast_style(&app).fg, Some(app.settings.accent));
+    assert_eq!(toast_style(&app).fg, role(Role::Accent, app.palette()).fg);
 }
 
 #[test]
@@ -402,101 +402,4 @@ fn the_enter_hint_has_an_ascii_twin() {
         .collect();
     assert!(screen.contains("enter submit"), "{screen}");
     assert!(!screen.contains('⏎'), "{screen}");
-}
-
-/// Preflight F10, task 10: ` MENU ` while the action menu is open, above ` PLAN `.
-#[test]
-fn the_menu_badge_sits_above_plan() {
-    for (w, h) in [(80, 24), (120, 40)] {
-        let mut app = gate_app(w, h);
-        app.open_plan_review(RUN_ID.into(), ReviewTarget::Gate);
-        assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
-        app.open_actions(
-            (RUN_ID.into(), crate::actions_request::ActionTarget::Run),
-            None,
-        );
-        assert!(matches!(app.modal, Some(Modal::Action(_))));
-        assert!(
-            bar(&app, w, h).starts_with(" MENU "),
-            "{w}: {}",
-            bar(&app, w, h)
-        );
-        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
-    }
-}
-
-/// Preflight F10, task 13: ` PROFILE ` while the Profile screen is open, above ` PLAN `
-/// and below ` MENU `; its hints are the screen's.
-#[test]
-fn the_profile_badge_sits_above_plan() {
-    for (w, h) in [(80, 24), (120, 40)] {
-        let mut app = gate_app(w, h);
-        app.open_plan_review(RUN_ID.into(), ReviewTarget::Gate);
-        assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
-        let _ = app.open_profile_on("/r/demo".into(), false);
-        let text = bar(&app, w, h);
-        assert!(text.starts_with(" PROFILE "), "{w}: {text}");
-        assert!(text.contains("d detect"), "{w}: {text}");
-        assert!(text.contains("esc back"), "{w}: {text}");
-        app.open_actions(
-            (RUN_ID.into(), crate::actions_request::ActionTarget::Run),
-            None,
-        );
-        assert!(bar(&app, w, h).starts_with(" MENU "), "{w}");
-        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        assert!(bar(&app, w, h).starts_with(" PROFILE "), "{w}");
-        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
-    }
-}
-
-/// Preflight F10, task 14: ` SETTINGS ` while the Settings screen is open, above ` PLAN `
-/// and below ` MENU `; its hints are the screen's.
-#[test]
-fn the_settings_badge_sits_above_plan() {
-    for (w, h) in [(80, 24), (120, 40)] {
-        let mut app = gate_app(w, h);
-        prefix(&mut app);
-        press(&mut app, KeyCode::Char('S'), KeyModifiers::SHIFT);
-        let text = bar(&app, w, h);
-        assert!(text.starts_with(" SETTINGS "), "{w}: {text}");
-        assert!(text.contains("esc back"), "{w}: {text}");
-        app.open_plan_review(RUN_ID.into(), ReviewTarget::Gate);
-        assert!(bar(&app, w, h).starts_with(" SETTINGS "), "{w}");
-        app.open_actions(
-            (RUN_ID.into(), crate::actions_request::ActionTarget::Run),
-            None,
-        );
-        assert!(bar(&app, w, h).starts_with(" MENU "), "{w}");
-        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        assert!(bar(&app, w, h).starts_with(" SETTINGS "), "{w}");
-        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
-    }
-}
-
-/// Preflight F10, task 15: ` STATS ` while the stats screen is open, above ` PLAN ` and
-/// below ` MENU `; its hints are the screen's.
-#[test]
-fn the_stats_badge_sits_above_plan() {
-    for (w, h) in [(80, 24), (120, 40)] {
-        let mut app = gate_app(w, h);
-        app.open_plan_review(RUN_ID.into(), ReviewTarget::Gate);
-        assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
-        let _ = app.open_stats("/r/demo".into());
-        let text = bar(&app, w, h);
-        assert!(text.starts_with(" STATS "), "{w}: {text}");
-        assert!(text.contains("j/k scroll"), "{w}: {text}");
-        assert!(text.contains("esc back"), "{w}: {text}");
-        app.open_actions(
-            (RUN_ID.into(), crate::actions_request::ActionTarget::Run),
-            None,
-        );
-        assert!(bar(&app, w, h).starts_with(" MENU "), "{w}");
-        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        assert!(bar(&app, w, h).starts_with(" STATS "), "{w}");
-        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        assert!(bar(&app, w, h).starts_with(" PLAN "), "{w}");
-    }
 }

@@ -457,7 +457,7 @@ fn the_brief_round_trips_its_newlines() {
     let mut app = gate();
     open_form(&mut app, "t1");
     focus(&mut app, EditField::Brief);
-    assert_eq!(form(&app).brief.text(), "Line one↵Line two");
+    assert_eq!(form(&app).brief.text(), "Line one\nLine two");
     assert!(press(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL).is_empty());
     typed(&mut app, "x");
     assert_eq!(

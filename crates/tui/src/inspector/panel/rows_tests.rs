@@ -3,7 +3,7 @@
 
 use super::super::render;
 use crate::inspector::run_tests::{app_of, inspect_node};
-use crate::inspector::{Field, FieldLayout, Inspection, RUN_INSPECTOR_HEIGHT};
+use crate::inspector::{Field, FieldLayout, Inspection};
 use crate::tree::NodeKey;
 use crate::tree::run_fixtures::{gemini_fixture, planner_fixture};
 use proto::AgentRole;
@@ -11,6 +11,10 @@ use ratatui::backend::TestBackend;
 use ratatui::text::Span;
 use ratatui::{Terminal, layout::Rect};
 use unicode_width::UnicodeWidthStr;
+
+/// M8c decision 28's twelve-row panel, the height these mockups are drawn at (milestone
+/// 9.0.7 decision 17 sizes the run view's panel to its node; the layout is the same).
+const M8C_PANEL_HEIGHT: u16 = 12;
 
 /// One string per row of the buffer, as a reader sees it: the cell a wide character
 /// spills into is skipped, so a correct row is exactly `width` columns wide.
@@ -129,32 +133,32 @@ const PLANNER: [&str; 12] = [
 
 const TASK: [&str; 12] = [
     "╭────────────────────────────────────────────────────────────────────────────────────╮",
-    "│ ◐ t2  map Gemini hook events to status                    M · tdd · review round 2 │",
-    "│ stages    done ✓ → proof ✓ → check ✓ → review ● → merge ·                          │",
+    "│ ◐ t2  map Gemini hook events to status                              in review · r2 │",
+    "│ pipeline  done ✓ › proof ✓ › check ✓ › review › merge ◌                            │",
     "│ route     codex · standard · high effort  →  reviewer claude · frontier            │",
-    "│ deps      waits on t0 ✓ t6 ✓ · unblocks t3, t7 · on critical path                  │",
+    "│ deps      after t0 ✓, t6 ✓ · unblocks t3, t7 · on critical path                    │",
     "│ budget    ███████░░░ 104/150 tool calls · 38/60 min · 410k tokens                  │",
     "│ tries     review 1/2 bounces · check 0/2 · escalation step 1                       │",
-    "│ diff      4 files · +212 −31 · test `status::gemini_stop_marks_idle` red a1b2c3d ✓ │",
-    "│ review    r1 ✗ 1 critical, 2 minor: status.rs:118 \"SubagentStop not paired\"        │",
+    "│ diff      +212 −31 · 4 files · test `status::gemini_stop_marks_idle` red a1b2c3d ✓ │",
+    "│ review    in review · r2                                                           │",
     "│ history   12:31 review r1 changes · 12:20 check passed · 12:02 started             │",
     "│                                                                                    │",
     "╰────────────────────────────────────────────────────────────────────────────────────╯",
 ];
 
 const TASK_NARROW: [&str; 12] = [
-    "╭──────────────────────────────────────────────────────────╮",
-    "│ ◐ t2  map Gemini hook events to status                   │",
-    "│ stages    done ✓ → proof ✓ → check ✓ → review ● → merge… │",
-    "│ route     codex · standard · high effort  →  reviewer c… │",
-    "│ deps      waits on t0 ✓ t6 ✓ · unblocks t3, t7 · on cri… │",
-    "│ budget    ███████░░░ 104/150 tool calls · 38/60 min · 4… │",
-    "│ tries     review 1/2 bounces · check 0/2 · escalation s… │",
-    "│ diff      4 files · +212 −31 · test `status::gemini_sto… │",
-    "│ review    r1 ✗ 1 critical, 2 minor: status.rs:118 \"Suba… │",
-    "│ history   12:31 review r1 changes · 12:20 check passed … │",
-    "│                                                          │",
-    "╰──────────────────────────────────────────────────────────╯",
+    "╭──────────────────────────────────────────────────╮",
+    "│ ◐ t2  map Gemini hook events to status           │",
+    "│ pipeline  done ✓ › proof ✓ › check ✓ › review ›… │",
+    "│ route     codex · standard · high effort  →  re… │",
+    "│ deps      after t0 ✓, t6 ✓ · unblocks t3, t7 · … │",
+    "│ budget    ███████░░░ 104/150 tool calls · 38/60… │",
+    "│ tries     review 1/2 bounces · check 0/2 · esca… │",
+    "│ diff      +212 −31 · 4 files · test `status::ge… │",
+    "│ review    in review · r2                         │",
+    "│ history   12:31 review r1 changes · 12:20 check… │",
+    "│                                                  │",
+    "╰──────────────────────────────────────────────────╯",
 ];
 
 const WORKER: [&str; 12] = [
@@ -205,7 +209,7 @@ const SCOUT: [&str; 12] = [
 #[test]
 fn run_panel_matches_the_mockup() {
     let inspection = node(gemini_fixture(), run_key("r1"));
-    assert_eq!(panel(&inspection, 86, RUN_INSPECTOR_HEIGHT), RUN);
+    assert_eq!(panel(&inspection, 86, M8C_PANEL_HEIGHT), RUN);
 }
 
 #[test]
@@ -215,7 +219,7 @@ fn planner_panel_matches_the_mockup() {
         epic: "A".into(),
     };
     let inspection = node(planner_fixture(), key);
-    assert_eq!(panel(&inspection, 86, RUN_INSPECTOR_HEIGHT), PLANNER);
+    assert_eq!(panel(&inspection, 86, M8C_PANEL_HEIGHT), PLANNER);
 }
 
 #[test]
@@ -224,32 +228,33 @@ fn task_panel_matches_the_mockup() {
     // still pin this layout on the task's flat field list.
     let mut inspection = node(gemini_fixture(), task_key("t2"));
     inspection.layout = FieldLayout::Rows;
-    assert_eq!(panel(&inspection, 86, RUN_INSPECTOR_HEIGHT), TASK);
+    assert_eq!(panel(&inspection, 86, M8C_PANEL_HEIGHT), TASK);
 }
 
 #[test]
 fn task_panel_drops_the_right_text_and_elides_values() {
     let mut inspection = node(gemini_fixture(), task_key("t2"));
     inspection.layout = FieldLayout::Rows;
-    assert_eq!(panel(&inspection, 60, RUN_INSPECTOR_HEIGHT), TASK_NARROW);
+    // Milestone 9.0.7: the state word is shorter, so the drop shows at 52 columns.
+    assert_eq!(panel(&inspection, 52, M8C_PANEL_HEIGHT), TASK_NARROW);
 }
 
 #[test]
 fn worker_round_panel_matches_the_mockup() {
     let inspection = node(gemini_fixture(), round_key(AgentRole::Worker, 1, 2));
-    assert_eq!(panel(&inspection, 86, RUN_INSPECTOR_HEIGHT), WORKER);
+    assert_eq!(panel(&inspection, 86, M8C_PANEL_HEIGHT), WORKER);
 }
 
 #[test]
 fn reviewer_round_panel_matches() {
     let inspection = node(gemini_fixture(), round_key(AgentRole::Reviewer, 1, 1));
-    assert_eq!(panel(&inspection, 86, RUN_INSPECTOR_HEIGHT), REVIEWER);
+    assert_eq!(panel(&inspection, 86, M8C_PANEL_HEIGHT), REVIEWER);
 }
 
 #[test]
 fn scout_panel_wraps_the_question() {
     let inspection = node(gemini_fixture(), scout_key());
-    assert_eq!(panel(&inspection, 60, RUN_INSPECTOR_HEIGHT), SCOUT);
+    assert_eq!(panel(&inspection, 60, M8C_PANEL_HEIGHT), SCOUT);
 }
 
 /// Milestone 4.7's eight rows: the title and five fields, `attention` dropped from the
@@ -272,7 +277,7 @@ fn the_wrapped_field_leaves_a_row_for_each_later_field() {
     let inspection = node((snapshot, windows), scout_key());
     let four = "abcdefghi abcdefghi abcdefghi abcdefghi";
     assert_eq!(
-        panel(&inspection, 60, RUN_INSPECTOR_HEIGHT),
+        panel(&inspection, 60, M8C_PANEL_HEIGHT),
         [
             SCOUT[0].to_owned(),
             SCOUT[1].to_owned(),
@@ -524,8 +529,11 @@ fn a_blank_wrapped_field_still_costs_its_row() {
         ],
     );
     for height in 0..=6 {
-        let lines = super::lines(&inspection, 40, height);
+        let lines = super::lines(&inspection, 40, height, crate::theme::Palette::PLAIN);
         assert!(lines.len() <= height.max(1), "{height}: {}", lines.len());
     }
-    assert_eq!(super::lines(&inspection, 40, 3).len(), 3);
+    assert_eq!(
+        super::lines(&inspection, 40, 3, crate::theme::Palette::PLAIN).len(),
+        3
+    );
 }

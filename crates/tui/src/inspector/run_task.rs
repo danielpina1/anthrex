@@ -2,42 +2,41 @@
 //! "Inspector contents, exact": Task). Pure, as `run.rs` is.
 
 use super::run_format::{
-    clean, counts_text, effort_text, format_tokens, kind_glyph, local_hhmm, location, most_severe,
-    progress_bar, reason_text, rows, size_letter, strength_text, test_mode_text,
+    clean, effort_text, format_tokens, kind_glyph, local_hhmm, progress_bar_in, reason_text, rows,
+    size_letter, strength_text, test_mode_text,
 };
 use super::run_orch::{messages_text, notes_text};
+use super::run_task_outcome::{diff_text, pipeline_text, review_row};
 use super::{Inspection, field};
+use crate::actions_request::ActionTarget;
 use crate::app::App;
 use crate::theme;
-use crate::tree::RowKind;
-use proto::{DeciderSource, ReviewInfo, RunInfo, RunState, TaskInfo, TaskState, TestMode};
+use crate::tree::{NodeKey, RowKind};
+use proto::{DeciderSource, RunInfo, RunState, TaskInfo, TaskState};
 
 /// The history entries shown: the snapshot sends at most this many, newest first, and
 /// the view never shows more whatever it is sent.
 const HISTORY_SHOWN: usize = 10;
-/// A task (Interfaces "Task").
+/// A task (Interfaces "Task"): the state word right of the title (milestone 9.0.7
+/// decision 12), size and test mode in the footer.
 pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Inspection {
-    let right = format!(
-        "{} · {} · {}",
-        size_letter(task.size),
-        test_mode_text(task.test_mode),
-        stage_text(run, task)
-    );
     let mut fields = vec![
-        field("stages", stages_text(run, task)),
+        field("pipeline", pipeline_text(run, task, false)),
         field("route", route_text(task)),
     ];
     fields.extend(super::run_stage::task_fields(run, task));
     if let Some(deps) = deps_text(run, task, app) {
         fields.push(field("deps", deps));
     }
-    fields.push(field("budget", budget_text(task)));
+    fields.push(field("budget", budget_text(task, app.palette().ascii)));
     fields.push(field("tries", tries_text(run, task)));
     if let Some(diff) = diff_text(task) {
         fields.push(field("diff", diff));
     }
-    if let Some(review) = review_text(task) {
-        fields.push(field("review", review));
+    if task.review_route.is_some() {
+        // One row in M8c's flat list: the review row's first line.
+        let review = review_row(task);
+        fields.push(field("review", review.lines().next().unwrap_or_default()));
     }
     if let Some(messages) = messages_text(task) {
         fields.push(field("messages", messages));
@@ -58,28 +57,47 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
         fields.push(field("history", history.join(" · ")));
     }
     let glyph = kind_glyph(RowKind::Task { run, task }, app);
-    // Milestone 9.0.5 decision 22: drawn as GOAL, STATUS and RESULT. `fields` keeps
-    // milestone 8c's flat list, which STATUS carries on and the single line reads.
+    // Milestone 9.0.7 decision 12: drawn as OUTCOME, EVIDENCE, INTENT and DETAIL.
+    // `fields` keeps milestone 8c's flat list, which DETAIL carries on.
     let sections = super::run_task_sections::sections(run, task, &fields, app);
-    let key = crate::tree::NodeKey::Task {
+    let key = NodeKey::Task {
         run: run.run_id.clone(),
         id: task.id.clone(),
     };
+    let actions = crate::app::actions::menu_items(run, &ActionTarget::Task(task.id.clone()))
+        .is_some_and(|items| !items.is_empty());
     Inspection {
         layout: super::FieldLayout::Sections,
         sections,
         scroll: app.inspector_scroll_for(&key),
+        footer: Some(footer_text(run, task)),
+        actions,
         ..rows(
             glyph,
             format!("{}  {}", task.id, clean(&task.title)),
-            right,
+            state_word(run, task),
             fields,
         )
     }
 }
 
-/// The stage, then ` · held` while the task waits in a hold (milestone 9 decision 28).
-fn stage_text(run: &RunInfo, task: &TaskInfo) -> String {
+/// Decision 12's footer: `stage <n> of <m> · <tag> <model> · <S|M|L> · <mode>`, the
+/// stage only in a multi-stage run, the model `default` when the route names none.
+fn footer_text(run: &RunInfo, task: &TaskInfo) -> String {
+    let mut parts = Vec::new();
+    if run.stages.len() > 1 {
+        parts.push(format!("stage {} of {}", task.stage, run.stages.len()));
+    }
+    // One source with the plan review's route column (milestone 9.0.7 task 11).
+    parts.push(super::run_format::route_tag(&task.route));
+    parts.push(size_letter(task.size).to_owned());
+    parts.push(test_mode_text(task.test_mode).to_owned());
+    parts.join(" · ")
+}
+
+/// The state word: the stage, then ` · held` while the task waits in a hold
+/// (milestone 9 decision 28); `planned` at the gate.
+pub(crate) fn state_word(run: &RunInfo, task: &TaskInfo) -> String {
     if run.state == RunState::AwaitingApproval {
         return "planned".to_owned();
     }
@@ -102,7 +120,7 @@ fn state_stage(task: &TaskInfo) -> String {
         TaskState::Working => "working".to_owned(),
         TaskState::Proof => "test proof".to_owned(),
         TaskState::Check => "check".to_owned(),
-        TaskState::Review => format!("review round {}", task.reviews.len()),
+        TaskState::Review => format!("in review · r{}", task.reviews.len()),
         TaskState::MergeQueue => "merge queue".to_owned(),
         TaskState::Merged => "merged".to_owned(),
         TaskState::Cancelled => "cancelled".to_owned(),
@@ -118,58 +136,6 @@ fn state_stage(task: &TaskInfo) -> String {
             text
         }
     }
-}
-
-fn outcome(ok: Option<bool>) -> &'static str {
-    match ok {
-        Some(true) => "✓",
-        Some(false) => "✗",
-        None => "·",
-    }
-}
-
-/// The last review with a verdict.
-fn last_verdict(task: &TaskInfo) -> Option<&ReviewInfo> {
-    task.reviews
-        .iter()
-        .rev()
-        .find(|review| review.verdict.is_some())
-}
-
-fn stages_text(run: &RunInfo, task: &TaskInfo) -> String {
-    let state = task.state;
-    let done = if state == TaskState::Working {
-        "●"
-    } else {
-        outcome(task.done_signal.map(|_| true))
-    };
-    let proof = if task.test_mode != TestMode::Tdd {
-        "–"
-    } else if state == TaskState::Proof {
-        "●"
-    } else {
-        outcome(task.last_proof.as_ref().map(|proof| proof.ok))
-    };
-    let check = if run.unverified {
-        "–"
-    } else if state == TaskState::Check {
-        "●"
-    } else {
-        outcome(task.last_check.as_ref().map(|check| check.ok))
-    };
-    let review = if task.review_route.is_none() {
-        "–"
-    } else if state == TaskState::Review {
-        "●"
-    } else {
-        outcome(last_verdict(task).map(|review| !review.blocking))
-    };
-    let merge = match state {
-        TaskState::Merged => "✓",
-        TaskState::MergeQueue => "●",
-        _ => "·",
-    };
-    format!("done {done} → proof {proof} → check {check} → review {review} → merge {merge}")
 }
 
 fn route_text(task: &TaskInfo) -> String {
@@ -198,27 +164,38 @@ fn deps_text(run: &RunInfo, task: &TaskInfo, app: &App) -> Option<String> {
         }
     }
     let gate_open = run.state == RunState::AwaitingApproval;
+    let ascii = app.palette().ascii;
+    // Final fix wave M4: an implicit dep reads `(implied)`, as in the plan review.
+    let implied = |dep: &String| {
+        if task.deps.contains(dep) {
+            ""
+        } else {
+            " (implied)"
+        }
+    };
     let waits: Vec<String> = deps
         .iter()
-        .map(
-            |dep| match run.tasks.iter().find(|other| other.id == **dep) {
-                Some(other) if other.state == TaskState::Merged => format!("{dep} ✓"),
+        .map(|dep| {
+            let wait = match run.tasks.iter().find(|other| other.id == **dep) {
+                Some(other) if other.state == TaskState::Merged => {
+                    format!("{dep} {}", theme::glyph(theme::Glyph::Passed, ascii))
+                }
                 Some(other) => {
-                    let held = crate::tree::task_held(run, other);
-                    let paused = crate::tree::is_paused(other);
-                    let (glyph, _) = theme::task_look(
-                        other.state,
+                    let look = theme::TaskLook {
+                        state: other.state,
                         gate_open,
-                        held,
-                        paused,
-                        false,
-                        app.spinner_frame,
-                    );
+                        held: crate::tree::task_held(run, other),
+                        paused: crate::tree::is_paused(other),
+                        animating: false,
+                        needs_you: crate::app::alerts::task_needs_you(run, other),
+                    };
+                    let (glyph, _) = theme::task_look(look, app.spinner_frame, ascii);
                     format!("{dep} {glyph}")
                 }
                 None => (*dep).clone(),
-            },
-        )
+            };
+            format!("{wait}{}", implied(dep))
+        })
         .collect();
     let unblocks: Vec<&str> = run
         .tasks
@@ -235,7 +212,7 @@ fn deps_text(run: &RunInfo, task: &TaskInfo, app: &App) -> Option<String> {
         .collect();
     let mut parts = Vec::new();
     if !waits.is_empty() {
-        parts.push(format!("waits on {}", waits.join(" ")));
+        parts.push(format!("after {}", waits.join(", ")));
     }
     if !unblocks.is_empty() {
         parts.push(format!("unblocks {}", unblocks.join(", ")));
@@ -246,7 +223,7 @@ fn deps_text(run: &RunInfo, task: &TaskInfo, app: &App) -> Option<String> {
     (!parts.is_empty()).then(|| clean(&parts.join(" · ")))
 }
 
-fn budget_text(task: &TaskInfo) -> String {
+fn budget_text(task: &TaskInfo, ascii: bool) -> String {
     let (budget, spent) = (&task.budget, &task.spent_session);
     let calls = (u64::from(spent.tool_calls), u64::from(budget.tool_calls));
     let secs = (spent.secs, u64::from(budget.minutes) * 60);
@@ -270,7 +247,7 @@ fn budget_text(task: &TaskInfo) -> String {
     }
     format!(
         "{} {}/{} tool calls · {}/{} min · {tokens} tokens",
-        progress_bar(done, total, super::PROGRESS_WIDTH),
+        progress_bar_in(done, total, super::PROGRESS_WIDTH, ascii),
         spent.tool_calls,
         budget.tool_calls,
         spent.secs / 60,
@@ -309,36 +286,34 @@ fn tries_text(run: &RunInfo, task: &TaskInfo) -> String {
     text
 }
 
-fn diff_text(task: &TaskInfo) -> Option<String> {
-    let mut parts = Vec::new();
-    if let Some(diff) = &task.diff {
-        parts.push(format!(
-            "{} files · +{} −{}",
-            diff.files, diff.added, diff.removed
-        ));
-    }
-    if let (Some(test), Some(red)) = (&task.test, &task.red) {
-        let red7: String = red.chars().take(7).collect();
-        let mut part = format!("test `{}` red {}", clean(test), clean(&red7));
-        if let Some(proof) = &task.last_proof {
-            part.push_str(if proof.ok { " ✓" } else { " ✗" });
-        }
-        parts.push(part);
-    }
-    (!parts.is_empty()).then(|| parts.join(" · "))
+/// The selected task's inspection in the run view, if a task is selected.
+fn selected_task(app: &App) -> Option<Inspection> {
+    let rows = app.nav_rows();
+    let key = app.tree.selected.as_ref()?;
+    let row = rows.iter().find(|row| &row.key == key)?;
+    matches!(row.kind, RowKind::Task { .. }).then(|| super::inspect(row, app))
 }
 
-fn review_text(task: &TaskInfo) -> Option<String> {
-    let review = last_verdict(task)?;
-    let Some(worst) = most_severe(&review.findings) else {
-        return Some(format!("r{} ✓ no findings", review.round));
-    };
-    let mark = if review.blocking { "✗" } else { "✓" };
-    let text = format!("\"{}\"", clean(&worst.text));
-    let place = location(worst).map_or(text.clone(), |place| format!("{place} {text}"));
-    Some(format!(
-        "r{} {mark} {}: {place}",
-        review.round,
-        counts_text(&review.findings)
-    ))
+/// Milestone 9.0.5 decision 25: the rows the selected task's sections take at `width`
+/// columns of panel interior, the title and the footer not counted; 0 when no task is
+/// selected. The reducer clamps the panel's scroll with it, as the renderer draws.
+pub fn task_panel_rows(app: &App, width: u16) -> usize {
+    selected_task(app).map_or(0, |inspection| {
+        super::panel::sections::body_lines(&inspection.sections, usize::from(width), app.palette())
+            .len()
+    })
+}
+
+/// The rows of a `width`×`height` interior the selected task's body is drawn in: the
+/// title row or rows and the pinned footer taken out (decision 12). A page is this.
+pub fn task_panel_room(app: &App, width: u16, height: u16) -> u16 {
+    let room = selected_task(app).map_or(usize::from(height.saturating_sub(1)), |inspection| {
+        super::panel::sections::room(
+            &inspection,
+            usize::from(width),
+            usize::from(height),
+            app.palette(),
+        )
+    });
+    u16::try_from(room).unwrap_or(u16::MAX)
 }

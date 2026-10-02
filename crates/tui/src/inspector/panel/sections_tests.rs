@@ -3,10 +3,7 @@
 use super::*;
 use crate::app::task_detail::{DetailState, TaskDetailCache, detail_key};
 use crate::inspector::run_tests::{app_of, inspect_node, value};
-use crate::inspector::{
-    INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_TALL_RUN_PANEL, RUN_INSPECTOR_HEIGHT,
-    RUN_INSPECTOR_TALL_HEIGHT,
-};
+use crate::inspector::{INSPECTOR_HEIGHT, RUN_CANVAS_MIN, panel_rows};
 use crate::tree::NodeKey;
 use crate::tree::run_fixtures::gemini_fixture;
 use proto::{AgentRole, TaskDetailInfo};
@@ -60,23 +57,23 @@ fn t2_with_brief(brief_lines: usize) -> crate::app::App {
 fn the_collapsed_brief_ends_with_more_in_muted() {
     let app = t2_with_brief(5);
     let inspection = inspect_node(&app, &t2_key());
-    let body = body_lines(&inspection.sections, 76);
+    let body = body_lines(&inspection.sections, 76, Palette::PLAIN);
     let rows = text(&body);
+    // Milestone 9.0.7 decision 12: INTENT's brief is one line until `b`.
+    let at = rows.iter().position(|row| row == "INTENT").unwrap();
     assert_eq!(
-        rows[1..5],
-        [
-            "brief     brief 1",
-            "          brief 2",
-            "          brief 3",
-            "          … (b: more)",
-        ]
+        rows[at + 1..at + 3],
+        ["brief     brief 1", "          … (b: more)"]
     );
-    let more = body[4].spans.last().unwrap();
+    let more = body[at + 2].spans.last().unwrap();
     assert_eq!(more.content, MORE);
-    assert_eq!(more.style, theme::muted());
+    assert_eq!(
+        more.style,
+        theme::role(theme::Role::Muted, theme::Palette::PLAIN)
+    );
     assert!(
         body[0].spans[0].style.add_modifier.contains(Modifier::BOLD),
-        "GOAL is bold"
+        "OUTCOME is bold"
     );
 }
 
@@ -85,24 +82,28 @@ fn task_panel_scrolls() {
     let mut app = t2_with_brief(12);
     app.brief_expanded = Some(t2_key());
     let mut inspection = inspect_node(&app, &t2_key());
-    let body = text(&body_lines(&inspection.sections, 76));
+    let body = text(&body_lines(&inspection.sections, 76, Palette::PLAIN));
     let height = 10;
-    let top = text(&lines(&inspection, 76, height));
+    let top = text(&lines(&inspection, 76, height, Palette::PLAIN));
     assert_eq!(top.len(), height);
     assert!(
         top[0].starts_with("◐ t2  map Gemini"),
         "the title row stays: {top:?}"
     );
-    assert_eq!(top[1..], body[..height - 1]);
+    // Milestone 9.0.7 decision 12: the footer is pinned to the last row.
+    let footer = "cx default · M · tdd";
+    assert_eq!(top[1..height - 1], body[..height - 2]);
+    assert_eq!(top[height - 1], footer);
     inspection.scroll = 5;
-    let scrolled = text(&lines(&inspection, 76, height));
+    let scrolled = text(&lines(&inspection, 76, height, Palette::PLAIN));
     assert!(scrolled[0].starts_with("◐ t2"), "the title row stays");
-    assert_eq!(scrolled[1..], body[5..5 + height - 1]);
-    // Past the end: clamped so the last body row is the last panel row.
+    assert_eq!(scrolled[1..height - 1], body[5..5 + height - 2]);
+    assert_eq!(scrolled[height - 1], footer, "the footer stays");
+    // Past the end: clamped so the last body row is the row above the footer.
     inspection.scroll = u16::MAX;
-    let end = text(&lines(&inspection, 76, height));
-    assert_eq!(end[1..], body[body.len() - (height - 1)..]);
-    assert_eq!(end.last(), body.last());
+    let end = text(&lines(&inspection, 76, height, Palette::PLAIN));
+    assert_eq!(end[1..height - 1], body[body.len() - (height - 2)..]);
+    assert_eq!(end.get(height - 2), body.last());
     // `task_panel_rows` counts exactly those body rows.
     assert_eq!(
         crate::inspector::task_panel_rows(&app, 76),
@@ -118,7 +119,7 @@ fn every_row_fits_the_width() {
     let inspection = inspect_node(&app, &t2_key());
     for width in [1, 9, 10, 11, 30, 76] {
         // The title row is M8c's (`rows::title`); the body is this renderer's.
-        for line in body_lines(&inspection.sections, width) {
+        for line in body_lines(&inspection.sections, width, Palette::PLAIN) {
             let row: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
             assert!(
                 unicode_width::UnicodeWidthStr::width(row.as_str()) <= width,
@@ -126,29 +127,39 @@ fn every_row_fits_the_width() {
             );
         }
     }
-    assert!(body_lines(&inspection.sections, 0).is_empty());
+    assert!(body_lines(&inspection.sections, 0, Palette::PLAIN).is_empty());
 }
 
-/// Pinning: M8c's 8 and 12 row steps are unchanged below 37 rows; the tall step
-/// starts at an interior of 34 (a 37-row terminal), and only in the run view.
+/// Milestone 9.0.7 decision 17, replacing M8c's fixed 8/12/18-row steps: a task's
+/// panel needs its title row or rows, every body row and the footer, and draws exactly
+/// that with nothing cut; the run view gives it those rows and its borders, at least
+/// milestone 4.7's eight and at most the interior less `RUN_CANVAS_MIN`.
 #[test]
-fn m8c_panel_heights_are_unchanged_below_37_rows() {
-    let footer = |interior: u16, run_view: bool| {
-        let main = Rect::new(0, 0, 120, interior + 2);
-        crate::ui::overview::areas(main, true, run_view).1.height
+fn run_panel_heights_follow_their_content() {
+    let app = t2_with_brief(5);
+    let inspection = inspect_node(&app, &t2_key());
+    let p = Palette::PLAIN;
+    for width in [24, 40, 76] {
+        let title = rows::title_lines(&inspection, width, p).len();
+        let body = body_lines(&inspection.sections, width, p).len();
+        let need = usize::from(panel_rows(&inspection, u16::try_from(width).unwrap()));
+        assert_eq!(need, title + body + 1, "{width}: title, body, footer");
+        assert_eq!(more(&inspection, width, need, p), (false, false), "{width}");
+        assert_eq!(
+            more(&inspection, width, need - 1, p),
+            (false, true),
+            "{width}"
+        );
+    }
+    let need = panel_rows(&inspection, 40);
+    let footer = |interior: u16, rows| {
+        let main = Rect::new(0, 0, 44 + 2, interior + 2);
+        crate::ui::overview::areas(main, true, Some(rows)).1.height
     };
-    assert_eq!(MIN_INTERIOR_FOR_TALL_RUN_PANEL, 34);
-    assert_eq!(RUN_INSPECTOR_TALL_HEIGHT, 18);
-    assert_eq!(footer(17, true), INSPECTOR_HEIGHT);
-    assert_eq!(footer(18, true), RUN_INSPECTOR_HEIGHT);
-    assert_eq!(footer(33, true), RUN_INSPECTOR_HEIGHT);
-    assert_eq!(footer(34, true), RUN_INSPECTOR_TALL_HEIGHT);
-    assert_eq!(footer(60, true), RUN_INSPECTOR_TALL_HEIGHT);
-    assert_eq!(
-        footer(34, false),
-        INSPECTOR_HEIGHT,
-        "the tree keeps its panel"
-    );
+    assert_eq!(footer(60, need), need + 2, "the rows it needs");
+    assert_eq!(footer(17, need), 17 - RUN_CANVAS_MIN, "cut");
+    assert_eq!(footer(17, 0), INSPECTOR_HEIGHT, "never below eight");
+    assert_eq!(footer(13, need), 1, "the single line");
 }
 
 /// Decision 26: the live round's `doing` reads `now: <activity>`.
@@ -216,17 +227,22 @@ fn round_doing_reads_now() {
 fn a_lone_carriage_return_breaks_the_line() {
     let app = t2_with_brief(0);
     let mut inspection = inspect_node(&app, &t2_key());
-    inspection.sections[0].fields[0].value = "first\rsecond\r\nthird".into();
-    let rows = text(&body_lines(&inspection.sections, 76));
+    let intent = inspection.sections.iter_mut().find(|s| s.title == "INTENT");
+    let brief = &mut intent.unwrap().fields[0];
+    brief.value = "first\rsecond\r\nthird".into();
+    brief.collapse = false;
+    let rows = text(&body_lines(&inspection.sections, 76, Palette::PLAIN));
+    let at = rows.iter().position(|row| row == "INTENT").unwrap();
     assert_eq!(
-        rows[1..4],
+        rows[at + 1..at + 4],
         ["brief     first", "          second", "          third"]
     );
 }
 
-/// Ruling D-2: the panel's borders say when there is more: ` ↓ PgDn ` right-aligned
-/// in the bottom border while rows lie below, ` ↑ PgUp ` in the top border once
-/// scrolled down, both muted, and neither when it does not fit.
+/// Ruling D-2, as milestone 9.0.7 decision 16 extends it: the panel's borders say when
+/// there is more: ` ↓ PgDn · . actions ` right-aligned in the bottom border while rows
+/// lie below, ` ↑ PgUp ` in the top border once scrolled down, the keys in the accent,
+/// ` . actions ` alone at the end, and none of them when they do not fit.
 #[test]
 fn the_borders_say_there_is_more() {
     use ratatui::{Terminal, backend::TestBackend};
@@ -244,18 +260,22 @@ fn the_borders_say_there_is_more() {
     };
     let app = t2_with_brief(3);
     let mut inspection = inspect_node(&app, &t2_key());
-    let rows = body_lines(&inspection.sections, 80).len();
-    // 84 x 18: an interior of 80 x 16, 15 body rows, more below.
+    let rows = body_lines(&inspection.sections, 80, Palette::PLAIN).len();
+    // 84 x 18: an interior of 80 x 16, 14 body rows between title and footer.
     let buffer = draw(&inspection, 84, 18);
     assert!(
-        row(&buffer, 17).ends_with(" ↓ PgDn ╯"),
+        row(&buffer, 17).ends_with(" ↓ PgDn · . actions ╯"),
         "{}",
         row(&buffer, 17)
     );
     assert!(!row(&buffer, 0).contains("PgUp"), "{}", row(&buffer, 0));
     let mark = row(&buffer, 17).find("↓").unwrap();
     let x = u16::try_from(row(&buffer, 17)[..mark].chars().count()).unwrap();
-    assert_eq!(buffer[(x, 17)].style().fg, theme::muted().fg, "muted");
+    assert_eq!(
+        buffer[(x, 17)].style().fg,
+        theme::role(theme::Role::Accent, theme::Palette::PLAIN).fg,
+        "the key in the accent"
+    );
     // Scrolled into the middle: both.
     inspection.scroll = 3;
     let buffer = draw(&inspection, 84, 18);
@@ -264,15 +284,20 @@ fn the_borders_say_there_is_more() {
         "{}",
         row(&buffer, 0)
     );
-    assert!(row(&buffer, 17).ends_with(" ↓ PgDn ╯"));
-    // At the end: only the top one.
+    assert!(row(&buffer, 17).ends_with(" ↓ PgDn · . actions ╯"));
+    // At the end: only the top one, and the actions.
     inspection.scroll = u16::try_from(rows).unwrap();
     let buffer = draw(&inspection, 84, 18);
     assert!(row(&buffer, 0).contains("↑ PgUp"));
     assert!(!row(&buffer, 17).contains("PgDn"), "{}", row(&buffer, 17));
-    // Everything fits: neither.
+    assert!(
+        row(&buffer, 17).ends_with("─ . actions ╯"),
+        "{}",
+        row(&buffer, 17)
+    );
+    // Everything fits: neither scroll mark.
     inspection.scroll = 0;
-    let buffer = draw(&inspection, 84, u16::try_from(rows).unwrap() + 3);
+    let buffer = draw(&inspection, 84, u16::try_from(rows).unwrap() + 4);
     let last = buffer.area.height - 1;
     assert!(!row(&buffer, 0).contains("PgUp") && !row(&buffer, last).contains("PgDn"));
     // Too narrow for the mark: dropped, the corners intact.

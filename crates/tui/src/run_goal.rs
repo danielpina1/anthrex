@@ -15,7 +15,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::{ModelEntry, OrchestratorChoice, RunRequest, Runtime};
 use std::path::PathBuf;
 
-/// The toast `C-b g` shows when no project is selected and no window is focused.
+/// The toast `C-b g` shows when no project is selected, no window is focused and the
+/// TUI's start directory is empty (milestone 9.0.7 decision 37's fallback).
 pub const NO_PROJECT: &str = "select a Git project to start a goal";
 /// The inline error of an `Enter` with a blank goal.
 pub const EMPTY_GOAL: &str = "type a goal first";
@@ -201,16 +202,25 @@ impl GoalForm {
         self.focus = FIELDS[next as usize];
     }
 
-    /// Decision 44's keys. While submitting, only `Esc` and `Ctrl-C` act, as in M8c's
-    /// edit form, so a second `Enter` sends nothing.
+    /// [`GoalForm::on_key_in`] with the goal unwrapped.
     pub fn on_key(&mut self, key: KeyEvent) -> GoalOutcome {
+        self.on_key_in(key, 0)
+    }
+
+    /// Decision 44's keys. While submitting, only `Esc` and `Ctrl-C` act, as in M8c's
+    /// edit form, so a second `Enter` sends nothing. In the goal, Up and Down move a
+    /// row of its text area drawn `goal_width` wide (`ui::run_goal::goal_width`), and
+    /// the focus only from its first or last row (milestone 9.0.7 decision 35).
+    pub fn on_key_in(&mut self, key: KeyEvent, goal_width: u16) -> GoalOutcome {
         if key.code == KeyCode::Esc || is_ctrl(&key, 'c') {
             return GoalOutcome::Cancel;
         }
         if self.submitting {
             return GoalOutcome::Stay;
         }
+        let in_goal = self.focus == GoalField::Goal;
         match key.code {
+            KeyCode::Up | KeyCode::Down if in_goal && self.goal.on_key_in(key, goal_width) => {}
             KeyCode::Tab | KeyCode::Down => self.move_focus(1),
             KeyCode::BackTab | KeyCode::Up => self.move_focus(-1),
             KeyCode::Enter => return self.submit(),

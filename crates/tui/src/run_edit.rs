@@ -1,23 +1,38 @@
 //! Milestone 8c decision 33: the plan gate's task edit form, pure (`AGENTS.md` hard
 //! rule 5). It edits a task's route (runtime, model, strength, effort), size, test mode
 //! and its reason, and brief, and sends one `PlanEdit::AmendTask` carrying only what
-//! changed. The route fields hold the plan's own `RouteSpec` values (`TaskInfo.route_spec`),
-//! where `None` is "policy"; the resolved `TaskInfo.route` is only shown beside them.
+//! changed. The route fields hold the plan's own `RouteSpec` values
+//! (`TaskInfo.route_spec`), where `None` is "policy"; the resolved `TaskInfo.route` is
+//! only shown beside them. The brief is a multi-line `TextArea` (milestone 9.0.7
+//! decision 35): Ctrl-J and a pasted newline are real `\n`s, sent as they are.
 //! Opening, submitting and the replies are `app/runs.rs`; rendering is `ui/run_edit.rs`.
 
 use crate::dialog::{TextInput, apply_text_key};
+use crate::text_area::TextArea;
+use crate::theme::Palette;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use cycle::{next_effort, next_runtime, next_size, next_strength, next_test_mode};
 use proto::{
     Effort, PlanEdit, Route, RouteSpec, RunInfo, Runtime, Size, Strength, TaskInfo, TaskState,
     TestMode,
 };
 
-/// Where a newline in the one-line brief is drawn, and restored from on submit.
-pub const NEWLINE_MARK: char = '↵';
-
 /// The most characters a text field takes, by typing or pasting: a 1 MB paste stops
 /// here rather than growing a request the daemon would carry into its plan.
 pub const TEXT_MAX_CHARS: usize = 16_384;
+
+/// The most characters the brief holds: one million (the final fix wave's ruling).
+/// The daemon checks a brief only for being blank (`daemon/src/run/validate.rs`); its
+/// one bound is the frame (`proto::MAX_FRAME`). A brief this long, at most 4 bytes a
+/// character, and the edit's other fields (each at most `TEXT_MAX_CHARS`) fit one frame
+/// (`the_largest_edit_fits_one_frame`), and the form's per-key draw and insert stay
+/// well inside the 100 ms tick (18–23 ms a pass in release at this size, 75–95 ms at
+/// the old 4.1 M). A longer brief opens refused, never cut and sent (decision 35).
+pub const BRIEF_MAX_CHARS: usize = 1_000_000;
+
+/// A brief past [`BRIEF_MAX_CHARS`] opens cut, says so, and an edit of it is refused,
+/// so a cut brief is never sent back.
+pub const BRIEF_TOO_LONG: &str = "the brief is too long to edit here; it is not sent";
 
 /// M8a decision 10, mirrored so the form says so before the engine does.
 pub const REASON_REQUIRED: &str = "a reason is required when test mode is check or none";
@@ -64,7 +79,7 @@ pub struct TaskEditForm {
     pub size: Size,
     pub test_mode: TestMode,
     pub reason: TextInput,
-    pub brief: TextInput,
+    pub brief: TextArea,
     /// Milestone 9.1 decision 55: the stage, and the highest it may cycle to; `None`
     /// hides the field (a task that started, or a form opened without its run).
     pub stage: u16,
@@ -88,72 +103,19 @@ pub enum EditOutcome {
     Unchanged,
 }
 
-/// Newlines become `newline` (or go, when `None`), a tab a space, and every other
-/// control character is dropped, so no field ever holds a byte the terminal would act on.
-fn clean(text: &str, newline: Option<char>) -> String {
+/// A one-line field's text: newlines and every other control character dropped, a tab
+/// a space, so no field ever holds a byte the terminal would act on. Invisible format
+/// characters are dropped by the renderer (`safe_text::one_line`), so an untouched
+/// field is the plan's own text.
+fn clean(text: &str) -> String {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
     text.chars()
         .filter_map(|c| match c {
-            '\n' => newline,
             '\t' => Some(' '),
             c if c.is_control() => None,
             c => Some(c),
         })
         .collect()
-}
-
-fn next_runtime(value: Option<Runtime>, forward: bool) -> Option<Runtime> {
-    let order = [None, Some(Runtime::Claude), Some(Runtime::Codex)];
-    step(&order, value, forward)
-}
-
-fn next_strength(value: Option<Strength>, forward: bool) -> Option<Strength> {
-    let order = [
-        None,
-        Some(Strength::Fast),
-        Some(Strength::Standard),
-        Some(Strength::Frontier),
-    ];
-    step(&order, value, forward)
-}
-
-fn next_effort(value: Option<Effort>, forward: bool) -> Option<Effort> {
-    let order = [
-        None,
-        Some(Effort::Low),
-        Some(Effort::Medium),
-        Some(Effort::High),
-    ];
-    step(&order, value, forward)
-}
-
-fn next_test_mode(value: TestMode, forward: bool) -> TestMode {
-    step(
-        &[TestMode::Tdd, TestMode::Check, TestMode::None],
-        value,
-        forward,
-    )
-}
-
-/// `S ↔ M`; an `L` the plan opened with steps into them (`S` forward, `M` back).
-fn next_size(value: Size, forward: bool) -> Size {
-    match (value, forward) {
-        (Size::S, _) => Size::M,
-        (Size::M, _) => Size::S,
-        (Size::L, true) => Size::S,
-        (Size::L, false) => Size::M,
-    }
-}
-
-/// The neighbour of `value` in `order`, wrapping; a value not in `order` (a `shell`
-/// runtime from a hand-written plan) steps to the first.
-fn step<T: Copy + PartialEq>(order: &[T], value: T, forward: bool) -> T {
-    let len = order.len();
-    match order.iter().position(|v| *v == value) {
-        Some(at) if forward => order[(at + 1) % len],
-        Some(at) => order[(at + len - 1) % len],
-        None => order[0],
-    }
 }
 
 pub fn runtime_word(runtime: Runtime) -> &'static str {
@@ -206,8 +168,9 @@ pub fn field_label(field: EditField) -> &'static str {
     }
 }
 
-fn choice(word: &str) -> String {
-    format!("‹ {word} ›")
+/// Whether a brief as opened reached [`BRIEF_MAX_CHARS`], so may have been cut.
+fn is_cut(brief: &str) -> bool {
+    brief.chars().count() >= BRIEF_MAX_CHARS
 }
 
 fn is_ctrl(key: &KeyEvent, c: char) -> bool {
@@ -228,10 +191,12 @@ fn insert_bounded(input: &mut TextInput, text: &str) {
 impl TaskEditForm {
     pub fn new(run_id: &str, task: &TaskInfo) -> Self {
         let spec = task.route_spec.clone();
-        // Invisible characters are dropped here, so an edited field is sent without them.
-        let model = clean(spec.model.as_deref().unwrap_or(""), None);
-        let reason = clean(task.test_mode_reason.as_deref().unwrap_or(""), None);
-        let brief = clean(&task.brief, Some(NEWLINE_MARK));
+        // Control characters are dropped here, so an edited field is sent without them.
+        let model = clean(spec.model.as_deref().unwrap_or(""));
+        let reason = clean(task.test_mode_reason.as_deref().unwrap_or(""));
+        // `TextArea` keeps newlines and drops control and invisible format characters.
+        let brief = TextArea::with_cap(&task.brief, BRIEF_MAX_CHARS);
+        let brief_cut = is_cut(brief.text());
         Self {
             run_id: run_id.to_string(),
             task_id: task.id.clone(),
@@ -242,11 +207,11 @@ impl TaskEditForm {
             size: task.size,
             test_mode: task.test_mode,
             reason: TextInput::new(&reason),
-            brief: TextInput::new(&brief),
+            brief: brief.clone(),
             stage: task.stage,
             stage_max: None,
             focus: EditField::Runtime,
-            error: None,
+            error: brief_cut.then(|| BRIEF_TOO_LONG.to_string()),
             submitting: false,
             request_id: None,
             resolved: task.route.clone(),
@@ -256,7 +221,7 @@ impl TaskEditForm {
                 size: task.size,
                 test_mode: task.test_mode,
                 reason,
-                brief,
+                brief: brief.text().to_string(),
                 raw_reason: task.test_mode_reason.clone(),
                 raw_brief: task.brief.clone(),
                 stage: task.stage,
@@ -330,7 +295,6 @@ impl TaskEditForm {
         match self.focus {
             EditField::Model => Some(&mut self.model),
             EditField::Reason => Some(&mut self.reason),
-            EditField::Brief => Some(&mut self.brief),
             _ => None,
         }
     }
@@ -359,21 +323,35 @@ impl TaskEditForm {
         }
     }
 
-    /// Interfaces "The task edit form" keys. While submitting, only `Esc` and `Ctrl-C`
-    /// do anything, so a second `Enter` sends nothing.
+    /// [`TaskEditForm::on_key_in`] with the brief unwrapped: Up and Down in it move a
+    /// logical line.
     pub fn on_key(&mut self, key: KeyEvent) -> EditOutcome {
+        self.on_key_in(key, 0)
+    }
+
+    /// Interfaces "The task edit form" keys. While submitting, only `Esc` and `Ctrl-C`
+    /// do anything, so a second `Enter` sends nothing. `brief_width` is the width the
+    /// brief's text area is drawn at (`ui::run_edit::brief_width`, 0: unwrapped): in the
+    /// brief, Up and Down move a drawn row, and leave the field from its first or last
+    /// (decision 35).
+    pub fn on_key_in(&mut self, key: KeyEvent, brief_width: u16) -> EditOutcome {
         if key.code == KeyCode::Esc || is_ctrl(&key, 'c') {
             return EditOutcome::Cancel;
         }
         if self.submitting {
             return EditOutcome::Stay;
         }
+        let in_brief = self.focus == EditField::Brief;
         match key.code {
+            KeyCode::Up | KeyCode::Down if in_brief && self.brief.on_key_in(key, brief_width) => {}
             KeyCode::Tab | KeyCode::Down => self.move_focus(1),
             KeyCode::BackTab | KeyCode::Up => self.move_focus(-1),
             KeyCode::Enter => return self.submit(),
+            _ if in_brief => {
+                self.brief.on_key_in(key, brief_width);
+            }
             _ => match self.focus {
-                EditField::Model | EditField::Reason | EditField::Brief => self.on_text_key(key),
+                EditField::Model | EditField::Reason => self.on_text_key(key),
                 _ => match key.code {
                     KeyCode::Right | KeyCode::Char(' ') => self.cycle(true),
                     KeyCode::Left => self.cycle(false),
@@ -385,14 +363,10 @@ impl TaskEditForm {
     }
 
     fn on_text_key(&mut self, key: KeyEvent) {
-        let brief = self.focus == EditField::Brief;
         let Some(input) = self.focused_text_mut() else {
             return;
         };
         if is_ctrl(&key, 'j') {
-            if brief {
-                insert_bounded(input, &NEWLINE_MARK.to_string());
-            }
             return;
         }
         let full = input.text().chars().count() >= TEXT_MAX_CHARS;
@@ -419,14 +393,17 @@ impl TaskEditForm {
         }
     }
 
-    /// A paste into the focused text field: newlines become `↵` in the brief and are
-    /// dropped elsewhere; control characters are dropped; the field stays bounded.
+    /// A paste into the focused text field: newlines kept in the brief and dropped
+    /// elsewhere; control characters are dropped; the field stays bounded.
     pub fn on_paste(&mut self, text: &str) {
         if self.submitting {
             return;
         }
-        let newline = (self.focus == EditField::Brief).then_some(NEWLINE_MARK);
-        let text = clean(text, newline);
+        if self.focus == EditField::Brief {
+            self.brief.on_paste(text);
+            return;
+        }
+        let text = clean(text);
         if let Some(input) = self.focused_text_mut() {
             insert_bounded(input, &text);
         }
@@ -467,10 +444,14 @@ impl TaskEditForm {
             return Err((EditField::Reason, REASON_REQUIRED.to_string()));
         }
         let brief_changed = self.brief.text() != original.brief;
+        // The brief opened cut at the cap: an edit of it is refused.
+        if brief_changed && is_cut(&original.brief) {
+            return Err((EditField::Brief, BRIEF_TOO_LONG.to_string()));
+        }
 
         let edit = PlanEdit::AmendTask {
             task_id: self.task_id.clone(),
-            brief: brief_changed.then(|| self.brief.text().replace(NEWLINE_MARK, "\n")),
+            brief: brief_changed.then(|| self.brief.text().to_string()),
             acceptance: None,
             route: route_changed.then_some(route),
             test_mode: mode_changed.then_some(self.test_mode),
@@ -490,10 +471,19 @@ impl TaskEditForm {
         Ok(if changed { vec![edit] } else { vec![] })
     }
 
+    /// [`TaskEditForm::value_parts_in`] in unicode, for tests.
+    #[cfg(test)]
+    pub fn value_parts(&self, field: EditField) -> (String, Option<String>) {
+        self.value_parts_in(field, Palette::PLAIN)
+    }
+
     /// A row's value as drawn: the text, and the resolved value shown muted after it
     /// when the field is `policy` (decision 33) — only while the runtime is the task's
-    /// current one, since a resolution names one runtime's values (review M4).
-    pub fn value_parts(&self, field: EditField) -> (String, Option<String>) {
+    /// current one, since a resolution names one runtime's values (review M4). A
+    /// choice is `theme::choice`'s (`kit::choice_in`'s), `< value >` in ASCII (decision
+    /// 35).
+    pub fn value_parts_in(&self, field: EditField, p: Palette) -> (String, Option<String>) {
+        let choice = |word: &str| crate::theme::choice(word, p);
         let current = self.runtime.unwrap_or(self.resolved.runtime) == self.resolved.runtime;
         let muted = |resolved: String| Some(resolved).filter(|r| current && !r.is_empty());
         let policy = |resolved: &str| (choice("policy"), muted(resolved.to_string()));
@@ -503,7 +493,7 @@ impl TaskEditForm {
                 None => policy(runtime_word(self.resolved.runtime)),
             },
             EditField::Model if self.model.text().is_empty() => {
-                let resolved = clean(&self.resolved.model, None);
+                let resolved = clean(&self.resolved.model);
                 ("policy".to_string(), muted(resolved))
             }
             EditField::Model => (self.model.text().to_string(), None),
@@ -523,6 +513,9 @@ impl TaskEditForm {
         }
     }
 }
+
+#[path = "run_edit_cycle.rs"]
+mod cycle;
 
 #[cfg(test)]
 #[path = "run_edit_tests.rs"]

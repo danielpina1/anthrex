@@ -444,7 +444,8 @@ fn alert_churn_keeps_a_wheel_scrolled_sidebar() {
         .map(|id| win(id, &format!("shell-{id}"), Status::Idle))
         .collect();
     let mut app = app_with(shells);
-    app.on_daemon(runs(1));
+    // No alert yet: the box is one row (decision 9).
+    app.on_daemon(runs(0));
     let frame = |app: &mut App, width: u16, height: u16| {
         let l = crate::ui::layout_for(app, ratatui::layout::Rect::new(0, 0, width, height));
         app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
@@ -461,7 +462,8 @@ fn alert_churn_keeps_a_wheel_scrolled_sidebar() {
     frame(&mut app, 120, 20);
     assert_eq!(app.tree.sidebar.top, 0);
 
-    // Two more halted runs: three alerts, a taller box, a shorter list.
+    // Three halted runs: three alerts, a taller box (the tree overflows, so decision
+    // 9's floor of three rows), a shorter list.
     app.on_daemon(runs(3));
     let after = frame(&mut app, 120, 20);
     assert!(
@@ -519,7 +521,7 @@ fn alert_churn_keeps_a_revealed_anchor_in_view() {
             .map(|id| win(id, &format!("shell-{id}"), Status::Idle))
             .collect();
         let mut app = app_with(shells);
-        app.on_daemon(runs(1));
+        app.on_daemon(runs(0));
         frame(&mut app);
         app.focus(20);
         let before = frame(&mut app);

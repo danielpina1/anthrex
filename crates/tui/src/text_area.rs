@@ -2,7 +2,10 @@
 //! The cursor is a grapheme index, as `dialog::TextInput`'s is. Characters are typed with
 //! `on_key`, pasted with `on_paste`; Ctrl-J inserts a newline and Enter is left to the
 //! form. Every way in drops control and invisible format characters (keeping `\n`), and
-//! the text never passes [`TEXT_MAX_CHARS`]. Rendering is `ui::kit::text_area`.
+//! the text never passes [`TEXT_MAX_CHARS`] (or the cap it was made with). Rendering is
+//! `ui::kit::text_area`. Up and Down move the cursor a row at the same column
+//! (milestone 9.0.7 decision 35): a row of the text as `ui::kit::text_area` wraps it at
+//! the width [`TextArea::on_key_in`] is given, or a logical line with none.
 
 use crate::run_edit::TEXT_MAX_CHARS;
 use crate::safe_text::is_hidden_format;
@@ -13,6 +16,8 @@ use unicode_segmentation::UnicodeSegmentation;
 pub struct TextArea {
     text: String,
     cursor: usize,
+    /// The most characters it holds; 0 is [`TEXT_MAX_CHARS`].
+    cap: usize,
 }
 
 /// Newlines kept (`\r\n` and `\r` become one), a tab a space, every other control and
@@ -38,6 +43,16 @@ impl TextArea {
     /// A text area holding `text` (cleaned, cut to the bound), the cursor at the end.
     pub fn from_text(text: &str) -> Self {
         let mut area = Self::new();
+        area.on_paste(text);
+        area
+    }
+
+    /// [`TextArea::from_text`] bounded at `cap` characters instead.
+    pub fn with_cap(text: &str, cap: usize) -> Self {
+        let mut area = Self {
+            cap,
+            ..Self::default()
+        };
         area.on_paste(text);
         area
     }
@@ -76,7 +91,12 @@ impl TextArea {
     }
 
     fn insert(&mut self, text: &str) {
-        let room = TEXT_MAX_CHARS.saturating_sub(self.text.chars().count());
+        let cap = if self.cap == 0 {
+            TEXT_MAX_CHARS
+        } else {
+            self.cap
+        };
+        let room = cap.saturating_sub(self.text.chars().count());
         let cut: String = clean(text).chars().take(room).collect();
         if cut.is_empty() {
             return;
@@ -97,8 +117,26 @@ impl TextArea {
         self.insert(text);
     }
 
-    /// Whether the key was the text area's; Enter, Tab, Esc and the rest are not.
+    /// Whether the key was the text area's; Enter, Tab, Esc and the rest are not. Up
+    /// and Down move a logical line: [`TextArea::on_key_in`] with no width.
     pub fn on_key(&mut self, key: KeyEvent) -> bool {
+        self.on_key_in(key, 0)
+    }
+
+    /// [`TextArea::on_key`] for an area drawn `width` columns wide by
+    /// `ui::kit::text_area` (0: unwrapped): Up and Down move the cursor one drawn row
+    /// up or down at the same column, clamped to that row, and are not the area's
+    /// (`false`, nothing moved) on the first or the last row, so a form can take them.
+    pub fn on_key_in(&mut self, key: KeyEvent, width: u16) -> bool {
+        match key.code {
+            KeyCode::Up => return self.move_row(false, width),
+            KeyCode::Down => return self.move_row(true, width),
+            _ => {}
+        }
+        self.edit_key(key)
+    }
+
+    fn edit_key(&mut self, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
@@ -148,6 +186,13 @@ impl TextArea {
     }
 }
 
+#[path = "text_area_rows.rs"]
+mod rows;
+
 #[cfg(test)]
 #[path = "text_area_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "text_area_polish_tests.rs"]
+mod polish_tests;

@@ -27,7 +27,7 @@ fn task_text_keeps_its_tail_when_the_title_is_long() {
         ),
         &["t0", "t6"],
     );
-    assert_eq!(task_text(&info), "t7 map Gemini … M  ⇠t0t6");
+    assert_eq!(task_text(&info), "t7 map … M  after t0, t6");
 }
 
 #[test]
@@ -45,49 +45,54 @@ fn task_text_drops_the_title_before_the_deps() {
         task("t1", "a title that has to go", Size::S, TaskState::Queued),
         &deps,
     );
-    assert_eq!(task_text(&info), "t1 S  ⇠d0d1d2d3d4d5d6d7…");
+    assert_eq!(task_text(&info), "t1 S  after d0, d1, d2,…");
 }
 
 #[test]
 fn task_text_short_title_and_deps() {
     let info = with_deps(task("t2", "status", Size::S, TaskState::Queued), &["t0"]);
-    assert_eq!(task_text(&info), "t2 status S  ⇠t0");
+    assert_eq!(task_text(&info), "t2 status S  after t0");
     let info = task("t1", "spawn", Size::L, TaskState::Working);
     assert_eq!(task_text(&info), "t1 spawn L");
 }
 
-/// Only declared deps are listed; implicit ones are the engine's inference.
+/// Final fix wave M4 (supersedes "declared deps only"): the box lists implicit deps as
+/// the plan review does, each marked `(implied)`; the title goes first, then the tail
+/// is cut.
 #[test]
-fn task_text_lists_declared_deps_only() {
+fn task_text_marks_implicit_deps() {
+    let mut info = task("t3", "x", Size::S, TaskState::Queued);
+    info.implicit_deps = vec!["t9".into()];
+    assert_eq!(task_text(&info), "t3 S  after t9 (implied)");
     let mut info = with_deps(task("t3", "x", Size::S, TaskState::Queued), &["t0"]);
     info.implicit_deps = vec!["t9".into()];
-    assert_eq!(task_text(&info), "t3 x S  ⇠t0");
+    assert_eq!(task_text(&info), "t3 S  after t0, t9 (imp…");
 }
 
 /// The fitting boundary: `width(id) + 1 + width(tail) + 2 ≤ 24` keeps a title,
-/// one column more drops it.
+/// one column more drops it (milestone 9.0.7 decision 19's `after` form).
 #[test]
 fn task_text_keeps_a_title_exactly_at_the_boundary() {
-    // The tail " S  ⇠" + 14 columns of deps is 19: 2 + 1 + 19 + 2 = 24, which
+    // The tail " S  after " + 9 columns of deps is 19: 2 + 1 + 19 + 2 = 24, which
     // leaves the title two columns.
     let info = with_deps(
         task("t1", "abcdef", Size::S, TaskState::Queued),
-        &["a0", "a1", "a2", "a3", "a4", "a5", "ab"],
+        &["a0", "a1", "a"],
     );
-    assert_eq!(task_text(&info), "t1 a… S  ⇠a0a1a2a3a4a5ab");
+    assert_eq!(task_text(&info), "t1 a… S  after a0, a1, a");
     // One more column of deps and the title goes.
     let info = with_deps(
         task("t1", "abcdef", Size::S, TaskState::Queued),
-        &["a0", "a1", "a2", "a3", "a4", "a5", "abc"],
+        &["a0", "a1", "ab"],
     );
-    assert_eq!(task_text(&info), "t1 S  ⇠a0a1a2a3a4a5abc");
+    assert_eq!(task_text(&info), "t1 S  after a0, a1, ab");
 }
 
 /// Hostile: an empty title leaves no double space behind.
 #[test]
 fn task_text_with_an_empty_title() {
     let info = with_deps(task("t1", "", Size::S, TaskState::Queued), &["t0"]);
-    assert_eq!(task_text(&info), "t1 S  ⇠t0");
+    assert_eq!(task_text(&info), "t1 S  after t0");
     let info = task("t1", "", Size::M, TaskState::Queued);
     assert_eq!(task_text(&info), "t1 M");
 }
@@ -116,14 +121,14 @@ fn task_text_cuts_wide_titles_by_display_width() {
     assert_eq!(UnicodeWidthStr::width(text.as_str()), 24);
 
     // A wide character that straddles the boundary is dropped, not split: the
-    // title's budget is 14, so 13 columns before the ellipsis hold six
-    // characters and the text is one column short of 24.
+    // title's budget is 10 (the tail " S  after t" is 11), so 9 columns before the
+    // ellipsis hold four characters and the text is one column short of 24.
     let info = with_deps(
         task("t1", "漢字漢字漢字漢字", Size::S, TaskState::Queued),
-        &["t0"],
+        &["t"],
     );
     let text = task_text(&info);
-    assert_eq!(text, "t1 漢字漢字漢字… S  ⇠t0");
+    assert_eq!(text, "t1 漢字漢字… S  after t");
     assert_eq!(UnicodeWidthStr::width(text.as_str()), 23);
 }
 
@@ -140,7 +145,7 @@ fn task_text_with_a_huge_id_or_fifty_deps_still_fits() {
     let deps: Vec<&str> = deps.iter().map(String::as_str).collect();
     let info = with_deps(task("t99", "fifty", Size::S, TaskState::Queued), &deps);
     let text = task_text(&info);
-    assert_eq!(text, "t99 S  ⇠t0t1t2t3t4t5t6t…");
+    assert_eq!(text, "t99 S  after t0, t1, t2…");
     assert_eq!(UnicodeWidthStr::width(text.as_str()), TASK_TEXT_MAX);
 }
 

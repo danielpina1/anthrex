@@ -6,7 +6,7 @@ use super::gate::{send, tap};
 use super::plan_review::{confirm, gate_app, gate_snapshot, held_app, review, two_holds};
 use super::runs::{app_with_runs, deliver};
 use super::*;
-use crate::app::plan_review::{detail_lines, panes};
+use crate::app::plan_review::detail_lines;
 use crate::app::{Modal, PendingAction, ReviewTarget};
 use crate::tree::run_fixtures::RUN_ID;
 use proto::RunRequest;
@@ -81,10 +81,12 @@ fn a_paste_into_a_modal_over_the_review_still_works() {
     assert!(app.plan_review.is_some());
 }
 
-/// The right pane's row count for the gate's `t1` at `body`.
+/// The detail's row count for the gate's `t1` at `body` (milestone 9.0.7 decision 26's
+/// stacked geometry).
 fn t1_rows(app: &App, body: Rect) -> u16 {
     let run = &app.runs.runs[0];
-    detail_lines(run, &run.tasks[0], panes(body).right.width).len() as u16
+    let width = app.review_layout(body).detail.width;
+    detail_lines(run, &run.tasks[0], width, app.palette()).len() as u16
 }
 
 /// Review finding 3: at 80×24, t1's 40-line brief scrolled to its end, then a snapshot
@@ -98,7 +100,7 @@ fn the_scroll_follows_content_that_shrank() {
     for _ in 0..10 {
         tap(&mut app, KeyCode::PageDown);
     }
-    let height = panes(body).right.height;
+    let height = app.review_layout(body).detail.height;
     assert_eq!(review(&app).scroll, t1_rows(&app, body) - height);
     let (mut snap, _) = gate_snapshot();
     snap.runs[0].tasks[0].brief = (1..=10)
@@ -125,7 +127,7 @@ fn page_up_after_the_body_grew_steps_from_the_new_end() {
     }
     let tall = Rect::new(0, 0, 80, 39);
     app.set_body_area(tall);
-    let height = panes(tall).right.height;
+    let height = app.review_layout(tall).detail.height;
     let max = t1_rows(&app, tall) - height;
     assert!(review(&app).scroll > max, "the stale end");
     assert!(tap(&mut app, KeyCode::PageUp).is_empty());
@@ -172,15 +174,25 @@ fn a_list_entry_with_a_line_break_stays_one_row() {
     task.owns = vec!["src/a.rs\nsrc/forged.rs".into()];
     task.notes = vec!["one\r\ntwo".into()];
     let run = &snapshot.runs[0];
-    let text: Vec<String> = detail_lines(run, &run.tasks[0], 200)
+    let palette = crate::theme::Palette::PLAIN;
+    let text: Vec<String> = detail_lines(run, &run.tasks[0], 200, palette)
         .into_iter()
-        .map(|line| line.text.trim().to_owned())
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        })
         .collect();
-    let criteria: Vec<&String> = text.iter().filter(|row| row.starts_with('☐')).collect();
-    assert_eq!(criteria, ["☐ real ☐ FORGED", "☐ x ☐ FORGED2"], "{text:?}");
+    // Milestone 9.0.7 decision 25: each criterion is a `◌` row under `done when`.
+    let criteria: Vec<&str> = text
+        .iter()
+        .filter_map(|row| row.find('◌').map(|at| row[at..].trim_end()))
+        .collect();
+    assert_eq!(criteria, ["◌ real ☐ FORGED", "◌ x ☐ FORGED2"], "{text:?}");
     assert!(
-        text.contains(&"src/a.rs src/forged.rs".to_owned()),
+        text.contains(&"owns       src/a.rs src/forged.rs".to_owned()),
         "{text:?}"
     );
-    assert!(text.contains(&"one two".to_owned()), "{text:?}");
+    assert!(text.contains(&"notes      one two".to_owned()), "{text:?}");
 }

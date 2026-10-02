@@ -156,7 +156,7 @@ fn keys_and_pastes_go_to_the_form_not_the_pty() {
     assert!(app.modal.is_none());
     prefix(&mut app);
     press(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
-    assert!(matches!(app.modal, Some(Modal::Help)));
+    assert!(matches!(app.modal, Some(Modal::Help(_))));
     assert!(app.on_paste("hello".into()).is_empty());
 }
 

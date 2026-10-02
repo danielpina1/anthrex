@@ -12,7 +12,8 @@ fn drawn_row(buf: &Buffer, marker: &str) -> String {
         .into_iter()
         .find(|r| r.contains(marker))
         .unwrap_or_else(|| panic!("no row with {marker:?}:\n{}", text_of(buf)));
-    row.trim_start_matches('│')
+    // The selected row's left border is the selection bar (final fix wave M3).
+    row.trim_start_matches(['│', '▌'])
         .trim_end_matches('│')
         .trim()
         .to_owned()
@@ -98,7 +99,7 @@ fn a_lone_control_character_leaves_an_empty_row() {
         }
     );
     let buf = draw(&app, 60, 10);
-    assert_eq!(row_text(&buf, 2).trim_matches(['│', ' ']), "");
+    assert_eq!(row_text(&buf, 2).trim_matches(['│', '▌', ' ']), "");
 }
 
 #[test]

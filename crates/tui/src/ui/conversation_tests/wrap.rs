@@ -63,7 +63,8 @@ fn assert_wrapped_inside(app: &App, width: u16, height: u16, wrap: usize) -> Buf
             "row {y} overran:\n{}",
             text_of(&buf)
         );
-        assert_eq!(buf[(0, y)].symbol(), "│");
+        // The selected row's left border is the selection bar (final fix wave M3).
+        assert!(matches!(buf[(0, y)].symbol(), "│" | "▌"), "row {y}");
     }
     let text_x = 1 + TEXT_INDENT as u16;
     let drawn: Vec<String> = (1..height - 1)

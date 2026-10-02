@@ -131,8 +131,8 @@ impl PendingReplies {
         self.by_id.clear();
     }
 
-    /// Drops every entry past its timeout at `now`; what each one was.
-    pub fn expire(&mut self, now: Instant) -> Vec<PendingWhat> {
+    /// Drops every entry past its timeout at `now`; each one's id and what it was.
+    pub fn expire(&mut self, now: Instant) -> Vec<(u64, PendingWhat)> {
         let mut gone = Vec::new();
         let quiet = &mut self.quiet;
         self.by_id.retain(|id, p| {
@@ -148,7 +148,7 @@ impl PendingReplies {
                 if view {
                     quiet.push((*id, p.what.clone()));
                 }
-                gone.push(p.what.clone());
+                gone.push((*id, p.what.clone()));
             }
             live
         });
@@ -293,29 +293,32 @@ impl App {
         let mut owned = usize::from(screens && !self.settings_saving())
             + usize::from(stats.is_some() && self.stats_awaited().is_none());
         self.stats_tick();
-        for what in &gone {
-            owned += usize::from(self.view_failed(what, NO_REPLY));
+        for (id, what) in &gone {
+            owned += usize::from(self.view_failed(*id, what, NO_REPLY));
         }
         if gone.len() > owned {
             self.toast_at(ToastLevel::Error, NO_REPLY);
         }
         // A save that went unanswered may still land: ask for the settings again, so a
         // late `Saved` does not leave the cache stale.
-        if gone.contains(&PendingWhat::SettingsPut) {
+        if gone
+            .iter()
+            .any(|(_, what)| *what == PendingWhat::SettingsPut)
+        {
             self.settings_screen_no_reply();
             return vec![self.settings_fetch()];
         }
         vec![]
     }
 
-    /// A form or screen still waiting on `what` shows `why` instead; `true` when one did
-    /// (the request was theirs, so no toast).
-    fn view_failed(&mut self, what: &PendingWhat, why: &str) -> bool {
+    /// A form or screen still waiting on `what` (request `id`) shows `why` instead;
+    /// `true` when one did (the request was theirs, so no toast).
+    fn view_failed(&mut self, id: u64, what: &PendingWhat, why: &str) -> bool {
         match what {
             PendingWhat::FormBrief { run_id, task_id } => {
-                self.fail_form_brief(run_id, task_id, why)
+                self.fail_form_brief(id, run_id, task_id, why)
             }
-            PendingWhat::Profile { dir, ask } => self.profile_view_failed(dir, *ask, why),
+            PendingWhat::Profile { dir, ask } => self.profile_view_failed(id, dir, *ask, why),
             _ => false,
         }
     }
@@ -338,20 +341,20 @@ impl App {
             RunRequest::TaskDetail { .. } => {
                 self.task_detail_not_sent(id);
                 if let Some(what) = &pending {
-                    self.view_failed(what, why);
+                    self.view_failed(id, what, why);
                 }
                 false
             }
             // Decision 34: a Profile view is the screen's; it asks again on its tick.
             RunRequest::Profile(ProfileRequest::Status { dir }) => {
-                self.profile_view_failed(dir, ProfileAsk::Status, why);
+                self.profile_view_failed(id, dir, ProfileAsk::Status, why);
                 false
             }
             RunRequest::Profile(ProfileRequest::Show { dir, proposed }) => {
                 let ask = ProfileAsk::Show {
                     proposed: *proposed,
                 };
-                self.profile_view_failed(dir, ask, why);
+                self.profile_view_failed(id, dir, ask, why);
                 false
             }
             // Decision 24: quiet; the cache stays as it was until the next connection.

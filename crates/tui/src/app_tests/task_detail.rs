@@ -259,7 +259,9 @@ fn a_refused_send_does_not_retry_every_tick() {
 fn page_keys_and_b_apply_only_to_the_selected_task() {
     let mut app = gemini_view();
     let id = ticks(&mut app, 1)[0].0;
-    let long = (1..=60).map(|n| format!("line {n}")).collect::<Vec<_>>();
+    // Milestone 9.0.7 decision 17: the panel takes up to the interior less six canvas
+    // rows, so the brief is long enough for three of its pages.
+    let long = (1..=120).map(|n| format!("line {n}")).collect::<Vec<_>>();
     let _ = reply(&mut app, "t2", &long.join("\n"), id);
     let none = KeyModifiers::NONE;
     assert!(!app.brief_expanded_for(&t("t2")));
@@ -268,11 +270,15 @@ fn page_keys_and_b_apply_only_to_the_selected_task() {
     assert!(press(&mut app, KeyCode::PageDown, none).is_empty());
     let scrolled = app.inspector_scroll_for(&t("t2"));
     assert!(scrolled > 0, "PageDown scrolled");
-    let (_, height) = app.task_panel_interior();
-    assert_eq!(scrolled, height - 1, "a page is the interior less one");
+    // Milestone 9.0.7 decision 12: a page is the body's rows, the interior less the
+    // title row and the pinned footer.
+    let (width, height) = app.task_panel_interior();
+    let room = crate::inspector::task_panel_room(&app, width, height);
+    assert_eq!(room, height - 2);
+    assert_eq!(scrolled, room, "a page is the body's rows");
     let _ = press(&mut app, KeyCode::PageDown, none);
     let _ = press(&mut app, KeyCode::PageUp, none);
-    assert_eq!(app.inspector_scroll_for(&t("t2")), height - 1, "and back");
+    assert_eq!(app.inspector_scroll_for(&t("t2")), room, "and back");
     // Many pages down stop at the end: the last body row is the panel's last row.
     for _ in 0..20 {
         let _ = press(&mut app, KeyCode::PageDown, none);
@@ -280,7 +286,8 @@ fn page_keys_and_b_apply_only_to_the_selected_task() {
     let end = app.inspector_scroll_for(&t("t2"));
     let (width, height) = app.task_panel_interior();
     let rows = crate::inspector::task_panel_rows(&app, width);
-    assert_eq!(usize::from(end), rows - usize::from(height - 1));
+    let room = crate::inspector::task_panel_room(&app, width, height);
+    assert_eq!(usize::from(end), rows - usize::from(room));
     // Another task starts at the top with its brief collapsed.
     select(&mut app, "t0");
     assert_eq!(app.inspector_scroll_for(&t("t0")), 0);
@@ -395,16 +402,14 @@ fn page_up_after_the_brief_collapsed_moves_from_the_drawn_end() {
     let _ = press(&mut app, KeyCode::Char('b'), none);
     let (width, height) = app.task_panel_interior();
     let rows = crate::inspector::task_panel_rows(&app, width);
-    let max = u16::try_from(rows).unwrap().saturating_sub(height - 1);
+    let room = crate::inspector::task_panel_room(&app, width, height);
+    let max = u16::try_from(rows).unwrap().saturating_sub(room);
     assert!(
         app.inspector_scroll_for(&t("t2")) > max,
         "the stored scroll is past the end"
     );
     let _ = press(&mut app, KeyCode::PageUp, none);
-    assert_eq!(
-        app.inspector_scroll_for(&t("t2")),
-        max.saturating_sub(height - 1)
-    );
+    assert_eq!(app.inspector_scroll_for(&t("t2")), max.saturating_sub(room));
 }
 
 /// Whole-branch review: the plan review covers the panel, so under it a key change

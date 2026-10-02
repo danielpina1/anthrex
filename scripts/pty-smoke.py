@@ -56,10 +56,10 @@ DATA_DIR = tempfile.mkdtemp(prefix="anthrex-smoke-", dir="/tmp")
 SOCKET = os.path.join(DATA_DIR, "daemon.sock")
 FAKE_AGENT_SCRIPT = os.path.join(DATA_DIR, "fake-agent.jsonl")
 ROWS, COLS = 40, 120
-# The new-agent form's top border: its rounded corner and padded title
+# The new-agent form's top border: its square corner and padded title
 # (`crates/tui/src/ui/dialog.rs`, `render_new_agent`). The help overlay's "new agent"
 # line has no corner before it.
-NEW_AGENT_FORM_TITLE = "╭ new agent "
+NEW_AGENT_FORM_TITLE = "┌ new agent "
 # W1 and W2 (the worktree stages) create linked checkouts against this repository.
 # Fixed rather than a `tempfile.mkdtemp`, per the acceptance check that
 # `/tmp/anthrex-smoke-repo-*` is gone once the script finishes.
@@ -103,10 +103,10 @@ ENV["ANTHREX_GIT"] = "off"
 # `DATA_DIR` is a `mkdtemp` and `SMOKE_REPO` already carries the pid, but this path
 # did not, so two suites started a few seconds apart both passed the startup check
 # above, then the second one's stage 12b (then the only stage that wrote a real file
-# here) overwrote the first's config with a path inside a temp dir the first cannot use, and
-# whichever finished first deleted the file out from under the other. Fixed the same
-# way `SMOKE_REPO` already is: the pid goes in the directory name, so two concurrent
-# runs on one host can no longer collide on this path by construction.
+# here) overwrote the first's config with a path inside a temp dir the first cannot
+# use, and whichever finished first deleted the file out from under the other. Fixed
+# the same way `SMOKE_REPO` already is: the pid goes in the directory name, so two
+# concurrent runs on one host can no longer collide on this path by construction.
 ENV["ANTHREX_CONFIG"] = f"/tmp/anthrex-smoke-data-{os.getpid()}/config.toml"
 
 
@@ -423,7 +423,7 @@ class PtyProc:
         every key. Ubuntu CI run 35792210390 typed `echo smoke-$((40+2))` into
         that gap and the shell ran `cho smoke-42`.
         """
-        title = f"{name} · shell"
+        title = f"sh {name} · "
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             screen = self.screen_text()
@@ -1310,9 +1310,17 @@ def main():
     proc.read_available(timeout=0.3)
     proc.send(b"\x02?")
     proc.wait_for("send a literal C-b", label="help overlay text")
-    proc.send(b" ")  # any key closes the help overlay
-    time.sleep(0.2)
-    proc.read_available(timeout=0.3)
+    # Esc closes the help; it must be gone before the next prefix key, or `C-b d`
+    # lands in the help (and an Esc and a C-b in one read decode as Alt+C-b).
+    proc.send(b"\x1b")
+    deadline = time.monotonic() + 10.0
+    while "send a literal C-b" in proc.screen_text():
+        if time.monotonic() >= deadline:
+            fail(
+                "the help overlay was still open 10s after its Esc\n"
+                f"--- rendered screen ---\n{proc.screen_text()}"
+            )
+        proc.read_available(timeout=0.2)
     print("ok: window switching and help overlay work")
 
     print("== stage 4: detach ==")

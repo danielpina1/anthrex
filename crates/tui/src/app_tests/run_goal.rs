@@ -87,7 +87,13 @@ fn filled_form(app: &mut App) {
 
 #[test]
 fn goal_form_requires_a_selected_project() {
+    // 9.0.7 decision 37: nothing selected and no window, the start directory.
     let mut app = app_with_runs(vec![], snapshot(1, 100, vec![]));
+    assert!(open_goal_form(&mut app).is_empty());
+    assert_eq!(goal_form(&app).project, std::path::PathBuf::from("/tmp"));
+    // With no start directory either, the toast.
+    let mut app = app_with_runs(vec![], snapshot(1, 100, vec![]));
+    app.default_dir = std::path::PathBuf::new();
     assert!(open_goal_form(&mut app).is_empty());
     assert_eq!(app.modal, None);
     assert_eq!(

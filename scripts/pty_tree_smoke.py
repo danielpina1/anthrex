@@ -136,7 +136,7 @@ def run_project_tree_stage(repo_root, pty_proc, run_cmd, fail):
         proc.send(b"\r")
         proc.wait_for(" TREE ", timeout=10.0, label="tree navigation after retaining filter")
         proc.send(b"\r")
-        proc.wait_for("tree-b · shell", timeout=10.0, label="tree-b focused title")
+        proc.wait_for("sh tree-b · ", timeout=10.0, label="tree-b focused title")
         proc.send(b"\x02T")
         proc.wait_for(" tree overview ", timeout=10.0, label="tree overview")
         # The overview draws a graph: a box carries a name, and the footer
@@ -145,11 +145,11 @@ def run_project_tree_stage(repo_root, pty_proc, run_cmd, fail):
         proc.send(b"/tree-")
         proc.wait_for(" FILTER ", timeout=10.0, label="overview filter mode")
         proc.send(b"\r")
-        proc.wait_for(" TREE ", timeout=10.0, label="overview navigation after filtering")
+        proc.wait_for(" OVERVIEW ", timeout=10.0, label="overview navigation after filtering")
         proc.send(b"kkkkk")
         proc.wait_for(canonical_repo, timeout=10.0, label="canonical repository in overview")
         proc.send(b"\x1b")
-        proc.wait_for("tree-b · shell", timeout=10.0, label="overview dismissed")
+        proc.wait_for("sh tree-b · ", timeout=10.0, label="overview dismissed")
         proc.send(b"\x02d")
         status = proc.wait_exit(timeout=5.0)
         if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
@@ -486,7 +486,7 @@ def run_inspector_stage(repo_root, pty_proc, run_cmd, fail, fake_agent_script):
         proc.send(b"/conn-alpha")
         proc.wait_for(" FILTER ", timeout=10.0, label="overview filter mode")
         proc.send(b"\r")
-        proc.wait_for(" TREE ", timeout=10.0, label="overview navigation after filtering")
+        proc.wait_for(" OVERVIEW ", timeout=10.0, label="overview navigation after filtering")
         proc.send(b"l")
 
         # The window's number is its position among the visible agents, which

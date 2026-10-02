@@ -116,6 +116,23 @@ fn every_glyph(app: &mut App) {
     unfold(app, 50, 0);
 }
 
+/// Milestone 9.0.7 ruling: a denied tool call is history, not a request: `⊘` muted.
+#[test]
+fn a_denied_tool_is_muted_history() {
+    let mut app = app_showing(
+        UiSettings::default(),
+        Runtime::Claude,
+        80,
+        30,
+        main_conversation(),
+    );
+    every_glyph(&mut app);
+    let buf = draw(&app, 80, 30);
+    let (x, y) = find(&buf, "⊘").unwrap_or_else(|| panic!("{}", text_of(&buf)));
+    assert!(row_text(&buf, y).contains("Bash"), "{}", row_text(&buf, y));
+    assert_eq!(buf[(x, y)].fg, crate::theme::fg(crate::theme::Role::Muted));
+}
+
 #[test]
 fn ascii_mode_uses_no_box_drawing_glyphs() {
     let mut unicode = app_showing(
@@ -156,11 +173,11 @@ fn ascii_mode_uses_no_box_drawing_glyphs() {
         "{out}"
     );
     assert!(out.contains("v Read  read lib.rs"), "{out}");
-    assert!(out.contains("ok 0.1s"), "{out}");
+    assert!(out.contains("+ 0.1s"), "{out}");
     assert!(out.contains("> Write  wrote out.rs"), "{out}");
     assert!(out.contains("x 0.2s"), "{out}");
     let bash = out.lines().find(|l| l.contains("rm -rf target")).unwrap();
-    assert!(bash.trim_end_matches(['|', ' ']).ends_with(" -"), "{bash}");
+    assert!(bash.trim_end_matches(['|', ' ']).ends_with(" #"), "{bash}");
     assert!(out.contains("! needs approval for Bash"), "{out}");
     assert!(out.contains("* spawned  Explore - Deeper"), "{out}");
     assert!(
@@ -169,18 +186,19 @@ fn ascii_mode_uses_no_box_drawing_glyphs() {
     );
 }
 
-/// Review N2: the view's border is `theme::border_focused(accent)`, with the configured
-/// accent, not the dimmed unfocused border.
+/// Review N2: the view's border is the `Accent` role, with the configured accent under
+/// truecolor (milestone 9.0.7 decision 2), not the dimmed unfocused border.
 #[test]
 fn the_border_uses_the_focused_accent() {
     let accent = Color::Rgb(0x12, 0x34, 0x56);
     let settings = UiSettings {
         accent,
+        truecolor: true,
         ..UiSettings::default()
     };
     let app = app_showing(settings, Runtime::Claude, 60, 12, main_conversation());
     let buf = draw(&app, 60, 12);
-    let expected = theme::border_focused(accent).fg;
+    let expected = theme::role(theme::Role::Accent, app.palette()).fg;
     assert_eq!(expected, Some(accent));
     for (x, y) in [(0, 0), (0, 5), (59, 5), (30, 11), (59, 11)] {
         assert_eq!(Some(buf[(x, y)].fg), expected, "cell ({x}, {y})");

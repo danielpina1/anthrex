@@ -6,7 +6,7 @@
 use crate::app::actions::forms::{ActionForm, Brief, kind_word};
 use crate::safe_text::{multi_line, one_line};
 use crate::text_area::TextArea;
-use crate::theme::{Palette, Role, role};
+use crate::theme::{Palette, Role, dot_sep, ellipsis, role};
 use crate::ui::kit::{self, Hint};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
@@ -25,14 +25,6 @@ fn hint(key: &str, word: &str, priority: u8) -> Hint {
         word: word.to_string(),
         priority,
     }
-}
-
-fn ellipsis(p: Palette) -> &'static str {
-    if p.ascii { "..." } else { "…" }
-}
-
-fn dot(p: Palette) -> &'static str {
-    if p.ascii { " - " } else { " · " }
 }
 
 /// The form's title: its action's label.
@@ -133,6 +125,16 @@ fn plural(n: u32) -> String {
 fn why_not(form: &ActionForm, blank: bool, lw: usize, p: Palette) -> Option<Line<'static>> {
     let why = form.input().err().filter(|_| blank)?;
     Some(indent(lw, vec![Span::styled(why, role(Role::Failed, p))]))
+}
+
+/// The answer, message and reason areas' width in a terminal `width` wide (the
+/// menu's interior less the 8-column label), which their Up and Down move by.
+pub fn area_width(width: u16) -> u16 {
+    width
+        .min(kit::DIALOG_MAX)
+        .saturating_sub(4)
+        .min(kit::WRAP)
+        .saturating_sub(8)
 }
 
 /// The form's rows, then a blank row and its hints, for a dialog `width` columns wide.
@@ -246,7 +248,7 @@ pub fn body(form: &ActionForm, width: u16, p: Palette) -> Vec<Line<'static>> {
     }
     keys.push(hint("esc", "back", 1));
     body.push(Line::raw(""));
-    body.push(kit::hints_joined(width, &keys, dot(p), p));
+    body.push(kit::hints_joined(width, &keys, dot_sep(p), p));
     body
 }
 

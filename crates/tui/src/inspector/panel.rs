@@ -6,13 +6,14 @@
 //! strings the way the graph's painter is (decision 13).
 
 use super::{Field, FieldLayout, Inspection};
-use crate::theme;
-use crate::ui::tree_view::{cut, truncate};
+use crate::theme::{self, Palette, Role};
+use crate::ui::kit::pane_frame;
+use crate::ui::tree_view::{cut, truncate_in};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph};
+use ratatui::widgets::{Block, Padding, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 /// The two spaces between a label and its value — spec §2's `model  opus`.
@@ -21,20 +22,24 @@ const LABEL_GAP: usize = 2;
 /// The two spaces between one column and the next (decision 4).
 const GUTTER: usize = 2;
 
-/// Lays an `Inspection` into a rounded panel: the title row, then the fields in
-/// columns below it, or one per row for a run-view node (`inspection.layout`).
+/// [`render_in`] with the default palette (no truecolor, unicode), for the panel's
+/// own tests, which draw an `Inspection` without an `App`.
+#[cfg(test)]
 pub fn render(frame: &mut Frame, inspection: &Inspection, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme::border())
-        // One column in from the border on each side, so the fields do not sit
-        // flush against it the way the graph's boxes never do.
-        .padding(Padding::horizontal(1));
+    render_in(frame, inspection, area, Palette::PLAIN);
+}
+
+/// Lays an `Inspection` into a rounded panel: the title row, then the fields in
+/// columns below it, or one per row for a run-view node (`inspection.layout`). The
+/// panel never has the keys, so its pane frame is muted (milestone 9.0.7 decision 1).
+pub fn render_in(frame: &mut Frame, inspection: &Inspection, area: Rect, p: Palette) {
+    // One column in from the border on each side, so the fields do not sit
+    // flush against it the way the graph's boxes never do.
+    let block = pane_frame(Line::default(), false, p).padding(Padding::horizontal(1));
     let inner = block.inner(area);
     let (width, height) = (usize::from(inner.width), usize::from(inner.height));
     let block = if inspection.layout == FieldLayout::Sections {
-        scroll_marks(block, inspection, area, width, height)
+        scroll_marks(block, inspection, area, (width, height), p)
     } else {
         block
     };
@@ -45,35 +50,53 @@ pub fn render(frame: &mut Frame, inspection: &Inspection, area: Rect) {
     // Milestone 8c decision 29: a run-view node is one field per row; every other
     // node keeps milestone 4.7's columns.
     let lines = match inspection.layout {
-        FieldLayout::Columns => lines(inspection, width, height),
-        FieldLayout::Rows => rows::lines(inspection, width, height),
-        FieldLayout::Sections => sections::lines(inspection, width, height),
+        FieldLayout::Columns => lines(inspection, width, height, p),
+        FieldLayout::Rows => rows::lines(inspection, width, height, p),
+        FieldLayout::Sections => sections::lines(inspection, width, height, p),
     };
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Ruling D-2: ` ↑ PgUp ` in the top border once scrolled down, ` ↓ PgDn ` in the
-/// bottom one while rows lie below, right-aligned and muted; dropped when a mark and
-/// the two corners do not fit.
+/// Milestone 9.0.7 decision 16 (after ruling D-2): ` ↑ PgUp ` right-aligned in the top
+/// border while body rows lie above; ` ↓ PgDn · . actions ` in the bottom one while rows
+/// lie below, ` . actions ` when none do and the node lists an action. Keys in the
+/// accent, words muted; a mark that does not fit beside the two corners is dropped
+/// (the bottom one first loses ` · . actions `).
 fn scroll_marks<'a>(
     block: Block<'a>,
     inspection: &Inspection,
     area: Rect,
-    width: usize,
-    height: usize,
+    (width, height): (usize, usize),
+    p: Palette,
 ) -> Block<'a> {
-    let fits = |mark: &str| usize::from(area.width) >= mark.chars().count() + 2;
-    let (above, below) = sections::more(inspection, width, height);
+    let (above, below) = sections::more(inspection, width, height, p);
+    let (key, word) = (theme::role(Role::Accent, p), theme::role(Role::Muted, p));
+    let mark = |parts: &[(&str, Style)]| {
+        let spans: Vec<Span<'static>> = parts
+            .iter()
+            .map(|(text, style)| Span::styled(theme::fold(text, p.ascii), *style))
+            .collect();
+        let line = Line::from(spans);
+        (line.width() + 2 <= usize::from(area.width)).then(|| line.right_aligned())
+    };
+    let (up, down, dot) = (
+        [(" ", word), ("↑ PgUp", key), (" ", word)],
+        ("↓ PgDn", key),
+        (".", key),
+    );
     let mut block = block;
-    if above && fits(sections::MORE_ABOVE) {
-        block = block.title_top(
-            Line::from(Span::styled(sections::MORE_ABOVE, theme::muted())).right_aligned(),
-        );
+    if let Some(line) = above.then(|| mark(&up)).flatten() {
+        block = block.title_top(line);
     }
-    if below && fits(sections::MORE_BELOW) {
-        block = block.title_bottom(
-            Line::from(Span::styled(sections::MORE_BELOW, theme::muted())).right_aligned(),
-        );
+    let both = [(" ", word), down, (" · ", word), dot, (" actions ", word)];
+    let bottom = match (below, inspection.actions) {
+        (true, true) => mark(&both).or_else(|| mark(&[(" ", word), down, (" ", word)])),
+        (true, false) => mark(&[(" ", word), down, (" ", word)]),
+        (false, true) => mark(&[(" ", word), dot, (" actions ", word)]),
+        (false, false) => None,
+    };
+    if let Some(line) = bottom {
+        block = block.title_bottom(line);
     }
     block
 }
@@ -83,8 +106,8 @@ fn scroll_marks<'a>(
 ///
 /// Never more than `height` lines: fields past the last slot are dropped from
 /// the end rather than spilling out of the panel (decision 2).
-fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec<Line<'static>> {
-    let name = fitted_name(inspection, width);
+fn lines(inspection: &Inspection, width: usize, height: usize, p: Palette) -> Vec<Line<'static>> {
+    let name = fitted_name(inspection, width, p.ascii);
     // Whether the title had to cut the name short is what decides below whether
     // the wrapping field is worth a row. It is known only here: the width is
     // the panel's business, and the projection is blind to it (decision 13).
@@ -134,10 +157,10 @@ fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec<Line<'stat
     let shown = &flow[..flow.len().min(flow_rows.saturating_mul(columns))];
     let used_rows = shown.len().div_ceil(columns);
     for row in 0..used_rows {
-        out.push(flow_line(shown, row, columns, &widths));
+        out.push(flow_line(shown, row, columns, &widths, p));
     }
     if let Some(field) = wrapping {
-        out.extend(wrap_lines(field, width, rows - used_rows));
+        out.extend(wrap_lines(field, width, rows - used_rows, p));
     }
     out
 }
@@ -145,9 +168,13 @@ fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec<Line<'stat
 /// As much of the node's name as the title row can hold, beside its glyph.
 /// Equal to the name itself when all of it fits, which is how the caller knows
 /// nothing was lost.
-fn fitted_name(inspection: &Inspection, width: usize) -> String {
+fn fitted_name(inspection: &Inspection, width: usize, ascii: bool) -> String {
     let glyph_width = UnicodeWidthStr::width(inspection.glyph.content.as_ref());
-    truncate(&inspection.name, width.saturating_sub(glyph_width + 1))
+    truncate_in(
+        &inspection.name,
+        width.saturating_sub(glyph_width + 1),
+        ascii,
+    )
 }
 
 /// The status glyph in its status colour, then the name in bold (decision 3).
@@ -273,7 +300,9 @@ fn flow_line(
     row: usize,
     columns: usize,
     widths: &[(usize, usize)],
+    p: Palette,
 ) -> Line<'static> {
+    let truncate = |text: &str, width| truncate_in(text, width, p.ascii);
     let mut spans = Vec::new();
     for (column, (label_width, value_width)) in widths.iter().copied().enumerate() {
         if column > 0 {
@@ -289,7 +318,7 @@ fn flow_line(
             Some(field) => {
                 spans.push(Span::styled(
                     pad(&truncate(field.label, label_width), label_width),
-                    theme::muted(),
+                    theme::role(theme::Role::Muted, p),
                 ));
                 if value_width > 0 {
                     spans.push(Span::raw(" ".repeat(LABEL_GAP)));
@@ -307,17 +336,17 @@ fn flow_line(
 
 /// The wrapping field across the rows the column flow left: its label on the
 /// first line, its value wrapped to the panel's width under it.
-fn wrap_lines(field: &Field, width: usize, rows: usize) -> Vec<Line<'static>> {
+fn wrap_lines(field: &Field, width: usize, rows: usize, p: Palette) -> Vec<Line<'static>> {
     let label_width = UnicodeWidthStr::width(field.label).min(width);
     let value_width = width.saturating_sub(label_width + LABEL_GAP);
-    wrap_value(&field.value, value_width, rows)
+    wrap_value(&field.value, value_width, rows, p.ascii)
         .into_iter()
         .enumerate()
         .map(|(index, chunk)| {
             let label = if index == 0 {
                 Span::styled(
-                    pad(&truncate(field.label, label_width), label_width),
-                    theme::muted(),
+                    pad(&truncate_in(field.label, label_width, p.ascii), label_width),
+                    theme::role(theme::Role::Muted, p),
                 )
             } else {
                 Span::raw(" ".repeat(label_width))
@@ -334,7 +363,7 @@ fn wrap_lines(field: &Field, width: usize, rows: usize) -> Vec<Line<'static>> {
 /// Greedy word wrap to `width` display columns over at most `rows` lines. A
 /// word longer than the width is broken; text past the last line is elided,
 /// because the panel's height is fixed whatever the field would rather do.
-fn wrap_value(text: &str, width: usize, rows: usize) -> Vec<String> {
+fn wrap_value(text: &str, width: usize, rows: usize, ascii: bool) -> Vec<String> {
     if width == 0 || rows == 0 {
         return Vec::new();
     }
@@ -363,7 +392,8 @@ fn wrap_value(text: &str, width: usize, rows: usize) -> Vec<String> {
     if lines.len() > rows {
         lines.truncate(rows);
         let last = lines.len() - 1;
-        lines[last] = truncate(&format!("{}…", lines[last]), width);
+        let mark = if ascii { "..." } else { "…" };
+        lines[last] = truncate_in(&format!("{}{mark}", lines[last]), width, ascii);
     }
     lines
 }
@@ -374,8 +404,13 @@ fn pad(text: &str, width: usize) -> String {
     format!("{text}{}", " ".repeat(width.saturating_sub(used)))
 }
 
+mod marks;
 mod rows;
+pub use rows::panel_rows;
 pub(super) mod sections;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod outcome_tests;

@@ -1,20 +1,18 @@
-//! Milestone 9.0.5 decisions 22–24: a task's inspection as GOAL, STATUS and RESULT.
-//! GOAL reads the on-demand detail (`app::task_detail`); STATUS the snapshot (the
-//! stage in plain words, the latest worker round, the live `now:` line, the last
-//! check and the review, then every milestone 8c field); RESULT the worker's summary,
-//! the verdict, the diff and the merge commit. Nothing the flat list showed is
-//! dropped. Pure: it reads `App` and returns sections; the panel sanitises and wraps.
+//! Milestone 9.0.7 decision 12 (spec §6.2): a task's inspection outcome first, as
+//! OUTCOME, EVIDENCE (both `run_task_outcome`), INTENT (the brief, one line until `b`,
+//! and what the task owns) and DETAIL (the phase in plain words, the latest worker
+//! round, the live `now:` line, then every milestone 8c field). Nothing the 9.0.5 panel
+//! showed is dropped (M9.0.5 decision 22's rule). Pure: it reads `App` and returns
+//! sections; the panel sanitises, wraps and colours.
 
 use super::run_format::{format_duration, reason_text};
-use super::{Field, Section, SectionField};
+use super::run_task_outcome::{evidence, outcome};
+use super::{Field, Marks, Section, SectionField};
 use crate::app::App;
 use crate::app::task_detail::DetailState;
-use crate::safe_text::{multi_line, one_line};
+use crate::safe_text::one_line;
 use crate::tree::{NodeKey, is_paused, round_label, task_held};
-use proto::{
-    AgentRole, AgentRoundInfo, DeciderSource, RunInfo, RunState, SummarySource, TaskInfo,
-    TaskState, Verdict,
-};
+use proto::{AgentRole, AgentRoundInfo, DeciderSource, RunInfo, RunState, TaskInfo, TaskState};
 
 fn plain(label: &'static str, value: impl Into<String>) -> SectionField {
     SectionField {
@@ -22,6 +20,7 @@ fn plain(label: &'static str, value: impl Into<String>) -> SectionField {
         note: None,
         value: value.into(),
         collapse: false,
+        marks: Marks::None,
     }
 }
 
@@ -114,7 +113,7 @@ pub(super) fn now_line(task: &TaskInfo) -> Option<String> {
 }
 
 /// The first non-blank line of `text`.
-fn first_line(text: &str) -> Option<&str> {
+pub(super) fn first_line(text: &str) -> Option<&str> {
     text.lines().map(str::trim).find(|line| !line.is_empty())
 }
 
@@ -153,148 +152,67 @@ pub(super) fn check_line(run: &RunInfo, task: &TaskInfo) -> String {
     text
 }
 
-/// STATUS's `review`.
-fn review_line(task: &TaskInfo, flat: &[Field]) -> String {
-    if task.review_route.is_none() {
-        return "–".to_owned();
-    }
-    if task.state == TaskState::Review {
-        return format!("in review · round {}", task.reviews.len());
-    }
-    old(flat, "review").unwrap_or_else(|| "not yet".to_owned())
-}
-
-fn old(flat: &[Field], label: &str) -> Option<String> {
-    flat.iter()
-        .find(|field| field.label == label)
-        .map(|field| field.value.clone())
-}
-
-fn goal(run: &RunInfo, task: &TaskInfo, app: &App) -> Section {
+/// INTENT: the brief, cut to one wrapped line until `b` expands it, and `owns`.
+fn intent(run: &RunInfo, task: &TaskInfo, app: &App) -> Section {
     let key = NodeKey::Task {
         run: run.run_id.clone(),
         id: task.id.clone(),
     };
-    let mut fields = Vec::new();
-    let (brief, acceptance) = match app.task_detail_for(&run.run_id, &task.id) {
-        Some(DetailState::Ready(detail)) => (detail.brief.clone(), detail.acceptance.clone()),
-        Some(DetailState::Failed(text)) => (text.clone(), Vec::new()),
-        Some(DetailState::InFlight(_)) | None => ("loading…".to_owned(), Vec::new()),
+    let brief = match app.task_detail_for(&run.run_id, &task.id) {
+        Some(DetailState::Ready(detail)) => detail.brief.clone(),
+        Some(DetailState::Failed(text)) => text.clone(),
+        Some(DetailState::InFlight(_)) | None => "loading…".to_owned(),
     };
-    fields.push(SectionField {
-        label: "brief",
-        note: None,
-        value: brief,
+    let mut fields = vec![SectionField {
         collapse: !app.brief_expanded_for(&key),
-    });
+        ..plain("brief", brief)
+    }];
     if !task.owns.is_empty() {
+        // One entry is one row's worth: a line break inside it must not forge another.
         let owns: Vec<String> = task.owns.iter().map(|o| one_line(o)).collect();
         fields.push(plain("owns", owns.join(", ")));
     }
-    if !acceptance.is_empty() {
-        // One criterion is one row: a line break inside it must not forge another.
-        let lines: Vec<String> = acceptance
-            .iter()
-            .map(|c| format!("☐ {}", one_line(c)))
-            .collect();
-        fields.push(plain("done when", lines.join("\n")));
-    }
     Section {
-        title: "GOAL",
+        title: "INTENT",
         fields,
     }
 }
 
-fn status(run: &RunInfo, task: &TaskInfo, flat: &[Field], app: &App) -> Section {
-    let mut fields = vec![plain("stage", stage_words(run, task))];
+/// DETAIL's milestone 8c rows, in decision 12's order.
+const DETAIL_ROWS: [&str; 10] = [
+    "deps", "budget", "tries", "stage", "origin", "tier", "route", "messages", "notes", "history",
+];
+
+/// DETAIL: `phase` (the lifecycle words), `worker`, `now`, then milestone 8c's rows
+/// from `flat` in `DETAIL_ROWS`' order (the pipeline, diff and review are OUTCOME's and
+/// EVIDENCE's).
+fn detail(run: &RunInfo, task: &TaskInfo, flat: &[Field], app: &App) -> Section {
+    let mut fields = vec![plain("phase", stage_words(run, task))];
     if let Some(worker) = worker_line(task, app) {
         fields.push(plain("worker", worker));
     }
     if let Some(now) = now_line(task) {
         fields.push(plain("now", now));
     }
-    fields.push(plain("check", check_line(run, task)));
-    fields.push(plain("review", review_line(task, flat)));
-    for field in flat {
-        if !matches!(field.label, "diff" | "review") {
+    for label in DETAIL_ROWS {
+        if let Some(field) = flat.iter().find(|field| field.label == label) {
             fields.push(plain(field.label, field.value.clone()));
         }
     }
     Section {
-        title: "STATUS",
+        title: "DETAIL",
         fields,
     }
 }
 
-fn result(run: &RunInfo, task: &TaskInfo, flat: &[Field], app: &App) -> Section {
-    let mut fields = Vec::new();
-    if let Some(DetailState::Ready(detail)) = app.task_detail_for(&run.run_id, &task.id)
-        && let Some(summary) = &detail.worker_summary
-    {
-        let note = match detail.summary_source {
-            Some(SummarySource::TaskDone) => Some("task_done"),
-            Some(SummarySource::LastMessage) => Some("last message"),
-            None => None,
-        };
-        fields.push(SectionField {
-            label: "summary",
-            note,
-            value: summary.clone(),
-            collapse: false,
-        });
-    }
-    if let Some(review) = task.reviews.iter().rev().find(|r| r.verdict.is_some()) {
-        let word = match review.verdict {
-            Some(Verdict::Approve) => "approve",
-            _ => "changes",
-        };
-        let text = match first_line(&review.summary) {
-            Some(line) => format!("{word} · {}", one_line(line)),
-            None => word.to_owned(),
-        };
-        fields.push(plain("verdict", text));
-    }
-    if let Some(diff) = old(flat, "diff") {
-        fields.push(plain("diff", diff));
-    }
-    if let Some(commit) = &task.merge_commit {
-        let mut text: String = one_line(commit).chars().take(7).collect();
-        if let Some(reason) = &task.merged_without_approval {
-            text.push_str(&format!(" · without approval: {}", one_line(reason)));
-        }
-        fields.push(plain("merged", text));
-    }
-    if fields.is_empty() {
-        fields.push(plain("", "nothing yet"));
-    }
-    Section {
-        title: "RESULT",
-        fields,
-    }
-}
-
-/// Decision 22's three sections. `flat` is milestone 8c's field list for the task,
-/// which STATUS carries on (and RESULT takes its `diff` from).
+/// Decision 12's four sections, in order. `flat` is milestone 8c's field list for the
+/// task, which DETAIL carries on.
 pub(super) fn sections(run: &RunInfo, task: &TaskInfo, flat: &[Field], app: &App) -> Vec<Section> {
-    let result = result(run, task, flat, app);
-    let mut status = status(run, task, flat, app);
-    if let Some(line) = outcome_line(task, &result) {
-        status.fields.insert(0, plain("result", line));
-    }
-    vec![goal(run, task, app), status, result]
-}
-
-/// Ruling D-2: a merged or reported task's outcome, for the head of STATUS, so it
-/// shows without scrolling. The first line of the worker's summary, else of RESULT's
-/// first field (the detail may not have landed); `None` while the task is unfinished
-/// or RESULT reads `nothing yet`.
-fn outcome_line(task: &TaskInfo, result: &Section) -> Option<String> {
-    if !matches!(task.state, TaskState::Merged | TaskState::Reported) {
-        return None;
-    }
-    let first = result
-        .fields
-        .first()
-        .filter(|field| !field.label.is_empty())?;
-    first_line(&multi_line(&first.value)).map(one_line)
+    let evidence = evidence(run, task, app);
+    vec![
+        outcome(run, task, app, &evidence),
+        evidence,
+        intent(run, task, app),
+        detail(run, task, flat, app),
+    ]
 }

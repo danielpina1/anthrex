@@ -26,30 +26,30 @@ fn new_agent_form_renders_fields_and_error() {
     form.branch = TextInput::new("feat/x");
     form.error = Some("not a git repository: /x".into());
     let out = draw(100, 30, |frame| {
-        render_new_agent(frame, &form, frame.area(), theme::DEFAULT_ACCENT);
+        render_new_agent(frame, &form, frame.area(), Palette::PLAIN);
     });
     for expected in [
         "new agent",
-        "Runtime",
-        "[claude]",
-        "Branch",
+        "runtime",
+        "‹ claude ›",
+        "branch",
         "feat/x",
-        "not a git repository: /x",
-        "Enter create",
+        "✗ not a git repository: /x",
+        "⏎ create",
     ] {
         assert!(out.contains(expected), "missing {expected:?} in:\n{out}");
     }
 
     form.runtime = Runtime::Shell;
     let out = draw(100, 30, |frame| {
-        render_new_agent(frame, &form, frame.area(), theme::DEFAULT_ACCENT);
+        render_new_agent(frame, &form, frame.area(), Palette::PLAIN);
     });
-    assert!(!out.contains("Model"), "{out}");
-    assert!(!out.contains("Prompt"), "{out}");
+    assert!(!out.contains("model"), "{out}");
+    assert!(!out.contains("prompt"), "{out}");
 
     form.submitting = true;
     let out = draw(100, 30, |frame| {
-        render_new_agent(frame, &form, frame.area(), theme::DEFAULT_ACCENT);
+        render_new_agent(frame, &form, frame.area(), Palette::PLAIN);
     });
     assert!(out.contains("creating the worktree"), "{out}");
 }
@@ -62,16 +62,15 @@ fn new_agent_form_places_the_cursor_in_the_focused_field() {
     let area = Rect::new(0, 0, 100, 30);
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
     terminal
-        .draw(|frame| render_new_agent(frame, &form, frame.area(), theme::DEFAULT_ACCENT))
+        .draw(|frame| render_new_agent(frame, &form, frame.area(), Palette::PLAIN))
         .unwrap();
     let cursor = terminal.get_cursor_position().unwrap();
 
-    let width = 66u16.min(area.width.saturating_sub(2)).max(4);
     let fields = form.visible_fields();
-    let height = (fields.len() + 1 + 1) as u16 + 2;
-    let rect = centered(area, width, height);
+    let rect = crate::ui::kit::dialog_area(area, (fields.len() + 1 + 1) as u16);
     let inner = Block::default()
         .borders(ratatui::widgets::Borders::ALL)
+        .padding(ratatui::widgets::Padding::horizontal(1))
         .inner(rect);
     let name_row = fields
         .iter()
@@ -90,16 +89,22 @@ fn remove_dialog_shows_the_checkbox_only_for_worktree_windows() {
         remove_worktree: false,
     };
     let out = draw(100, 30, |frame| {
-        render_remove_confirm(frame, &confirm, frame.area(), theme::DEFAULT_ACCENT);
+        render_remove_confirm(frame, &confirm, frame.area(), Palette::PLAIN);
     });
-    assert!(out.contains("[ ] also remove worktree feat/api"), "{out}");
+    assert!(
+        out.contains("also remove worktree feat/api  ‹ no ›"),
+        "{out}"
+    );
     assert!(out.contains("the branch is kept"), "{out}");
 
     confirm.remove_worktree = true;
     let out = draw(100, 30, |frame| {
-        render_remove_confirm(frame, &confirm, frame.area(), theme::DEFAULT_ACCENT);
+        render_remove_confirm(frame, &confirm, frame.area(), Palette::PLAIN);
     });
-    assert!(out.contains("[x] also remove worktree feat/api"), "{out}");
+    assert!(
+        out.contains("also remove worktree feat/api  ‹ yes ›"),
+        "{out}"
+    );
 
     let plain = RemoveConfirm {
         window_id: 2,
@@ -108,11 +113,11 @@ fn remove_dialog_shows_the_checkbox_only_for_worktree_windows() {
         remove_worktree: false,
     };
     let out = draw(100, 30, |frame| {
-        render_remove_confirm(frame, &plain, frame.area(), theme::DEFAULT_ACCENT);
+        render_remove_confirm(frame, &plain, frame.area(), Palette::PLAIN);
     });
     assert!(out.contains("Remove 'shell-1'?"), "{out}");
     assert!(!out.contains("also remove worktree"), "{out}");
-    assert!(!out.contains("Space toggle"), "{out}");
+    assert!(!out.contains("space toggle"), "{out}");
 }
 
 #[test]
@@ -123,7 +128,7 @@ fn force_prompt_lists_the_three_choices() {
             "api",
             "worktree /tmp/shop-abc/feat-api has uncommitted or untracked changes",
             frame.area(),
-            theme::DEFAULT_ACCENT,
+            Palette::PLAIN,
         );
     });
     assert!(out.contains("force"), "{out}");
@@ -143,7 +148,7 @@ fn force_prompt_names_the_window_it_targets() {
             "alpha",
             "worktree /tmp/shop-abc/feat-beta has uncommitted or untracked changes",
             frame.area(),
-            theme::DEFAULT_ACCENT,
+            Palette::PLAIN,
         );
     });
     assert!(
@@ -216,7 +221,7 @@ fn force_prompt_shows_every_dirty_reason_in_full_with_a_realistic_path() {
         let last_line = wrapped.last().expect("at least one wrapped line");
 
         let out = draw(100, 30, |frame| {
-            render_force_remove(frame, "api", &message, frame.area(), theme::DEFAULT_ACCENT);
+            render_force_remove(frame, "api", &message, frame.area(), Palette::PLAIN);
         });
         assert!(
             out.contains(branch_dir),

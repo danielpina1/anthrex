@@ -19,33 +19,78 @@
 //! which is true on every path.
 
 use crate::dialog::{FormField, NewAgentForm, RemoveConfirm, TextInput};
-use crate::theme;
-use proto::{Runtime, Status};
+use crate::safe_text::one_line;
+use crate::theme::{Glyph, Palette, Role, fold, glyph, role};
+use crate::ui::kit::{self, Hint};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 #[cfg(test)]
 #[path = "dialog_tests.rs"]
 mod tests;
 
-/// The label column's width, the milestone brief's `### Rendering:` section's "labels 11
-/// columns" — prose, not a numbered design decision.
+#[cfg(test)]
+#[path = "dialog_kit_tests.rs"]
+mod kit_tests;
+
+/// The label column's width: the longest label, `directory` (and the edit form's `test
+/// mode`), and two spaces.
 pub(crate) const LABEL_WIDTH: usize = 11;
-/// `"› "` or `"  "` ahead of the label.
+/// The focus marker's columns ahead of the label.
 pub(crate) const MARKER_WIDTH: usize = 2;
 
-pub(crate) fn centered(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(area.width);
-    let height = height.min(area.height);
-    Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
+pub(crate) fn hint(key: &str, word: &str, priority: u8) -> Hint {
+    Hint {
+        key: key.to_string(),
+        word: word.to_string(),
+        priority,
     }
+}
+
+/// The hint row while a dialog waits on the daemon: `<what>… · esc close`, the status
+/// dropped first when the row is too narrow for both, so `esc` stays (decision 33).
+pub(crate) fn busy_hint(what: &str, width: u16, p: Palette) -> Line<'static> {
+    let what = fold(what, p.ascii);
+    let separator = fold(" · ", p.ascii);
+    let esc = kit::hints_joined(width, &[hint("esc", "close", 1)], " · ", p);
+    if what.width() + separator.width() + esc.width() > usize::from(width) {
+        return esc;
+    }
+    let muted = role(Role::Muted, p);
+    let mut spans = vec![Span::styled(what, muted), Span::styled(separator, muted)];
+    spans.extend(esc.spans);
+    Line::from(spans)
+}
+
+/// The interior's width in an area `width` wide: the dialog's 64 columns less the
+/// borders and the padding, never past the 60 text wraps at.
+pub(crate) fn interior(width: u16) -> u16 {
+    width.min(kit::DIALOG_MAX).saturating_sub(4).min(kit::WRAP)
+}
+
+/// `body` in a `kit::dialog_frame` titled `title`, placed by `kit::dialog_area`.
+fn render_dialog(
+    frame: &mut Frame,
+    title: &str,
+    destructive: bool,
+    body: Vec<Line<'static>>,
+    area: Rect,
+    p: Palette,
+) -> Rect {
+    let rect = kit::dialog_area(area, body.len() as u16);
+    if rect.width == 0 || rect.height == 0 {
+        return rect;
+    }
+    frame.render_widget(Clear, rect);
+    let block = kit::dialog_frame(title, destructive, p);
+    let inner = block.inner(rect);
+    frame.render_widget(Paragraph::new(body).block(block), rect);
+    inner
 }
 
 /// Greedy word-wrap capped at `max_lines`. Used for the new-agent form's inline error
@@ -113,13 +158,13 @@ fn wrap(text: &str, width: usize, max_lines: usize) -> Vec<String> {
 
 fn field_label(field: FormField) -> &'static str {
     match field {
-        FormField::Runtime => "Runtime",
-        FormField::Name => "Name",
-        FormField::Directory => "Directory",
-        FormField::Worktree => "Worktree",
-        FormField::Branch => "Branch",
-        FormField::Model => "Model",
-        FormField::Prompt => "Prompt",
+        FormField::Runtime => "runtime",
+        FormField::Name => "name",
+        FormField::Directory => "directory",
+        FormField::Worktree => "worktree",
+        FormField::Branch => "branch",
+        FormField::Model => "model",
+        FormField::Prompt => "prompt",
     }
 }
 
@@ -136,197 +181,146 @@ fn text_input_for(form: &NewAgentForm, field: FormField) -> &TextInput {
     }
 }
 
-fn runtime_span(current: Runtime, candidate: Runtime, label: &'static str) -> Span<'static> {
-    if current == candidate {
-        Span::styled(
-            format!("[{label}]"),
-            Style::default().add_modifier(Modifier::BOLD),
+/// `marker label`: the focused field's label is accented and bold and led by the
+/// selection glyph, the others muted (the goal form's grammar).
+fn label(field: FormField, focused: bool, p: Palette) -> Vec<Span<'static>> {
+    let (mark, style) = if focused {
+        (
+            glyph(Glyph::Selection, p.ascii),
+            role(Role::Accent, p).add_modifier(Modifier::BOLD),
         )
     } else {
-        Span::raw(label)
-    }
+        (" ", role(Role::Muted, p))
+    };
+    vec![
+        Span::styled(format!("{mark:<MARKER_WIDTH$}"), style),
+        Span::styled(format!("{:<LABEL_WIDTH$}", field_label(field)), style),
+    ]
 }
 
-/// The milestone brief's `### Rendering:` section's new-agent block — prose, not a
-/// numbered design decision. Width `min(66, area.width - 2)`; the hardware cursor goes
-/// to the focused text field's cursor, and nothing else places it (`ui/terminal.rs`
-/// already suppresses the PTY cursor while a modal is open).
-pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, accent: Color) {
-    let fields = form.visible_fields();
-    let width = 66u16.min(area.width.saturating_sub(2)).max(4);
-    let content_width = width.saturating_sub(2) as usize;
-    let value_width = content_width.saturating_sub(MARKER_WIDTH + LABEL_WIDTH);
-
-    let error_lines = form
-        .error
-        .as_deref()
-        .map(|message| wrap(&format!("✕ {message}"), content_width, 3))
-        .unwrap_or_default();
-
-    let hint = if form.submitting {
-        if form.worktree {
-            "creating the worktree…"
-        } else {
-            "creating…"
-        }
-    } else {
-        "Tab next · Shift-Tab back · Enter create · Esc cancel"
-    };
-
-    let height = (fields.len() + 1 + error_lines.len() + 1) as u16 + 2;
-    let rect = centered(area, width, height);
-    frame.render_widget(Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme::border_focused(accent))
-        .title(Line::from(Span::styled(
-            " new agent ",
-            theme::title(accent),
-        )));
-    let inner = block.inner(rect);
-    frame.render_widget(block, rect);
-
-    let mut cursor: Option<(u16, u16)> = None;
-
-    for (row, field) in fields.iter().enumerate() {
-        let y = inner.y + row as u16;
-        if y >= inner.y + inner.height {
-            break;
-        }
-        let focused = form.focus == *field;
-        let marker = if focused { "› " } else { "  " };
-        let label_style = if focused {
-            Style::default().fg(accent)
+/// Milestone 9.0.7 decision 35: the new-agent form on the kit's grammar, `kit::
+/// dialog_area` wide (at most 64), titled `new agent`: one row a field, the error
+/// (`✗ <message>`, wrapped at 60, at most three lines), a blank row and the hints. The
+/// hardware cursor goes to the focused text field's cursor, and nothing else places it
+/// (`ui/terminal.rs` already suppresses the PTY cursor while a modal is open).
+pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect, p: Palette) {
+    let width = interior(area.width);
+    let value_w = usize::from(width).saturating_sub(MARKER_WIDTH + LABEL_WIDTH);
+    let mut body = Vec::new();
+    let mut cursor = None;
+    for field in form.visible_fields() {
+        let focused = form.focus == field && !form.submitting;
+        let mut spans = label(field, focused, p);
+        let chosen = if focused {
+            role(Role::Accent, p).add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
-        let mut spans = vec![
-            Span::styled(marker, label_style),
-            Span::styled(
-                format!("{:<width$}", field_label(*field), width = LABEL_WIDTH),
-                label_style,
-            ),
-        ];
         match field {
             FormField::Runtime => {
-                spans.push(runtime_span(form.runtime, Runtime::Claude, "claude"));
-                spans.push(Span::raw("  "));
-                spans.push(runtime_span(form.runtime, Runtime::Codex, "codex"));
-                spans.push(Span::raw("  "));
-                spans.push(runtime_span(form.runtime, Runtime::Shell, "shell"));
+                spans.push(Span::styled(
+                    kit::choice_in(form.runtime.label(), p),
+                    chosen,
+                ));
             }
             FormField::Worktree => {
-                spans.push(Span::raw(format!(
-                    "[{}] create a git worktree",
-                    if form.worktree { "x" } else { " " }
-                )));
+                let value = if form.worktree { "on" } else { "off" };
+                spans.push(Span::styled(kit::choice_in(value, p), chosen));
+                spans.push(Span::raw(" create a git worktree"));
             }
             _ => {
-                let input = text_input_for(form, *field);
-                let (visible, col) = input.visible(value_width as u16);
-                if *field == FormField::Name && input.text().is_empty() {
+                let input = text_input_for(form, field);
+                let (visible, column) = input.visible(value_w as u16);
+                // The column on the text as drawn, sanitised (a dropped character
+                // takes none).
+                let before: String = visible.graphemes(true).take(usize::from(column)).collect();
+                let column = one_line(&before).width() as u16;
+                if field == FormField::Name && input.text().is_empty() {
                     spans.push(Span::styled(
                         format!("automatic ({}-N)", form.runtime.label()),
-                        theme::muted(),
+                        role(Role::Muted, p),
                     ));
                 } else {
-                    spans.push(Span::raw(visible));
+                    spans.push(Span::raw(one_line(&visible)));
                 }
                 if focused {
-                    cursor = Some((inner.x + (MARKER_WIDTH + LABEL_WIDTH) as u16 + col, y));
+                    cursor = Some((body.len() as u16, column));
                 }
             }
         }
-        frame.render_widget(
-            Paragraph::new(Line::from(spans)),
-            Rect {
-                y,
-                height: 1,
-                ..inner
-            },
-        );
+        body.push(Line::from(spans));
     }
-
-    let mut y = inner.y + fields.len() as u16 + 1;
-    for line in &error_lines {
-        if y >= inner.y + inner.height {
-            break;
+    if let Some(message) = &form.error {
+        let text = format!("{} {}", glyph(Glyph::Failed, p.ascii), one_line(message));
+        for line in wrap(&text, usize::from(width), 3) {
+            body.push(Line::styled(line, role(Role::Failed, p)));
         }
-        frame.render_widget(
-            Paragraph::new(Line::styled(
-                line.clone(),
-                Style::default().fg(theme::status_color(Status::Attention)),
-            )),
-            Rect {
-                y,
-                height: 1,
-                ..inner
-            },
-        );
-        y += 1;
     }
-    if y < inner.y + inner.height {
-        frame.render_widget(
-            Paragraph::new(Line::styled(hint, theme::muted())),
-            Rect {
-                y,
-                height: 1,
-                ..inner
-            },
-        );
-    }
-
-    if let Some((x, y)) = cursor {
-        frame.set_cursor_position((x, y));
+    body.push(Line::raw(""));
+    body.push(if form.submitting {
+        let what = if form.worktree {
+            "creating the worktree…"
+        } else {
+            "creating…"
+        };
+        busy_hint(what, width, p)
+    } else {
+        let keys = [
+            hint("⏎", "create", 9),
+            hint("tab", "next", 5),
+            hint("esc", "cancel", 1),
+        ];
+        kit::hints_joined(width, &keys, " · ", p)
+    });
+    let inner = render_dialog(frame, "new agent", false, body, area, p);
+    if let Some((row, column)) = cursor
+        && row < inner.height
+        && value_w > 0
+    {
+        let x = inner.x + (MARKER_WIDTH + LABEL_WIDTH) as u16 + column;
+        frame.set_cursor_position((x, inner.y + row));
     }
 }
 
-fn render_box(frame: &mut Frame, title: &str, body: Vec<Line<'static>>, area: Rect, accent: Color) {
-    let width = body.iter().map(Line::width).max().unwrap_or(0).max(30) as u16 + 4;
-    let height = body.len() as u16 + 2;
-    let rect = centered(area, width, height);
-    frame.render_widget(Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme::border_focused(accent))
-        .title(Line::from(Span::styled(title, theme::title(accent))));
-    frame.render_widget(Paragraph::new(body).block(block), rect);
-}
-
-/// Decision 35's remove-confirm rendering. `confirm.branch` is `None` for a window this
-/// daemon made no worktree for, which drops the checkbox line and its hint entirely
-/// (the wireframe's "for a window without a worktree" case).
-pub fn render_remove_confirm(
-    frame: &mut Frame,
-    confirm: &RemoveConfirm,
-    area: Rect,
-    accent: Color,
-) {
-    let mut lines = vec![Line::raw(format!("Remove '{}'?", confirm.name))];
+/// Decision 35's remove confirm, destructive (milestone 9.0.7 decision 35: the title
+/// and the `y remove` hint in `Failed`, `y` only). `confirm.branch` is `None` for a
+/// window this daemon made no worktree for, which drops the worktree choice and its
+/// hint entirely.
+pub fn render_remove_confirm(frame: &mut Frame, confirm: &RemoveConfirm, area: Rect, p: Palette) {
+    let width = interior(area.width);
+    let muted = role(Role::Muted, p);
+    let question = format!("Remove '{}'?", one_line(&confirm.name));
+    let mut body: Vec<Line<'static>> = kit::wrap_words(&question, usize::from(width))
+        .into_iter()
+        .map(Line::raw)
+        .collect();
+    let mut keys = Vec::new();
     if let Some(branch) = &confirm.branch {
-        lines.push(Line::raw(""));
-        lines.push(Line::raw(format!(
-            "[{}] also remove worktree {branch}",
-            if confirm.remove_worktree { "x" } else { " " }
-        )));
+        let choice = kit::choice_in(if confirm.remove_worktree { "yes" } else { "no" }, p);
+        let lead = "also remove worktree ";
+        let room = usize::from(width).saturating_sub(lead.width() + 2 + choice.width());
+        let branch = crate::ui::tree_view::truncate_in(&one_line(branch), room, p.ascii);
+        body.push(Line::raw(""));
+        body.push(Line::raw(format!("{lead}{branch}  {choice}")));
         // Decision 12's M5.3 note: ignored files are deleted by a plain removal too,
         // same as tracked ones; only the branch survives. Nothing here claims anything
         // about the agent's process (see the module doc comment).
-        lines.push(Line::styled(
-            "    the branch is kept; ignored files go too",
-            theme::muted(),
+        body.push(Line::styled(
+            "the branch is kept; ignored files go too",
+            muted,
         ));
+        keys.push(hint("space", "toggle", 5));
     }
-    lines.push(Line::raw(""));
-    let hint = if confirm.branch.is_some() {
-        "Space toggle · y remove · n / Esc"
-    } else {
-        "y remove · n / Esc"
-    };
-    lines.push(Line::styled(hint, theme::muted()));
-    render_box(frame, " remove ", lines, area, accent);
+    body.push(Line::raw(""));
+    keys.push(hint("y", "remove", 9));
+    keys.push(hint("esc", "cancel", 1));
+    body.push(kit::destructive(
+        kit::hints_joined(width, &keys, " · ", p),
+        "y",
+        "remove",
+        p,
+    ));
+    render_dialog(frame, "remove", true, body, area, p);
 }
 
 const FORCE_WRAP_WIDTH: usize = 50;
@@ -354,40 +348,35 @@ const FORCE_MAX_LINES: usize = 6;
 /// prompt that named one window in its message while its `f` key targeted another; the
 /// wiring that made that possible is fixed in `app/modal_keys.rs`, and this line is what
 /// would have made it visible on screen rather than only in a test.
-pub fn render_force_remove(
-    frame: &mut Frame,
-    name: &str,
-    message: &str,
-    area: Rect,
-    accent: Color,
-) {
-    let mut lines: Vec<Line<'static>> = vec![Line::from(vec![
+pub fn render_force_remove(frame: &mut Frame, name: &str, message: &str, area: Rect, p: Palette) {
+    let width = usize::from(interior(area.width));
+    let mut body: Vec<Line<'static>> = vec![Line::from(vec![
         Span::raw("agent "),
         Span::styled(
-            format!("'{name}'"),
+            format!("'{}'", one_line(name)),
             Style::default().add_modifier(Modifier::BOLD),
         ),
     ])];
-    lines.extend(
-        wrap(message, FORCE_WRAP_WIDTH, FORCE_MAX_LINES)
-            .into_iter()
-            .map(Line::raw),
-    );
-    if lines.len() == 1 {
-        lines.push(Line::raw(message.to_string()));
+    let message = one_line(message);
+    let wrapped = wrap(&message, FORCE_WRAP_WIDTH.min(width), FORCE_MAX_LINES);
+    if wrapped.is_empty() {
+        body.push(Line::raw(message));
     }
-    lines.push(Line::raw(""));
-    lines.push(Line::from(vec![
-        Span::styled("f  ", Style::default().fg(accent)),
-        Span::raw("force: delete the worktree and everything in it"),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("k  ", Style::default().fg(accent)),
-        Span::raw("keep the worktree, remove the window"),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("n  ", Style::default().fg(accent)),
-        Span::raw("cancel"),
-    ]));
-    render_box(frame, " worktree holds work ", lines, area, accent);
+    body.extend(wrapped.into_iter().map(Line::raw));
+    body.push(Line::raw(""));
+    let key = |k: &'static str, r: Role, words: &'static str| {
+        Line::from(vec![Span::styled(k, role(r, p)), Span::raw(words)])
+    };
+    body.push(key(
+        "f  ",
+        Role::Failed,
+        "force: delete the worktree and everything in it",
+    ));
+    body.push(key(
+        "k  ",
+        Role::Accent,
+        "keep the worktree, remove the window",
+    ));
+    body.push(key("n  ", Role::Accent, "cancel"));
+    render_dialog(frame, "worktree holds work", true, body, area, p);
 }
