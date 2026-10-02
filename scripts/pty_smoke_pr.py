@@ -41,14 +41,18 @@ from pty_smoke_run import POLL, RUN_CMD_TIMEOUT, _git, _write_script, git_env
 # Rust derivation, change these (`docs/timing-budgets.md`, "Recorded, from M9.2.17").
 READ, WRITE, PUSH, LOG, MARGIN = 30.0, 60.0, 120.0, 120.0, 5.0
 RUN_WAIT, TIER_WAIT, CHECK, GIT = 300.0, 670.0, 10.0, 5.0
-# One task path, tier 3's two commands, the push, three reads and the create, the
-# first view after one poll, 3 s of scheduling: 625 s.
-PR_OPEN_WAIT = RUN_WAIT + 2 * CHECK + PUSH + 3 * READ + WRITE + READ + 2 + 3
 # One poll, then `ViewPr`'s two reads and the margin: 67 s.
 VIEW_WAIT = 2 + MARGIN + 2 * READ
 # The push and the seal's two reads: 185 s. A base fetch and its six reads: 305 s.
 PUSH_WAIT = PUSH + 2 * READ + MARGIN
 FETCH_WAIT = PUSH + 6 * READ + MARGIN
+# `OpenPr`: `pr list` (one read) and `pr create` (one write), and the margin: 95 s.
+OPEN_WAIT = READ + WRITE + MARGIN
+# One task path; tier 3's two commands and its own git calls (at most 10 at `GIT`);
+# then each op's own bound (the push, the open, the first view after one poll); 3 s
+# of scheduling: 720 s (the final fix wave, review C M3).
+TIER3_GIT_CALLS = 10
+PR_OPEN_WAIT = RUN_WAIT + 2 * CHECK + TIER3_GIT_CALLS * GIT + 3 + PUSH_WAIT + OPEN_WAIT + VIEW_WAIT
 # A red head to its fix task with deciders off: the view, the failed log, then one
 # reproduction of the stage's tier-2 steps (five git calls and one check): 227 s.
 CI_FIX_WAIT = VIEW_WAIT + LOG + MARGIN + 5 * GIT + CHECK
@@ -206,6 +210,11 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
             "GIT_ALLOW_PROTOCOL": "file",
             "GIT_CONFIG_GLOBAL": "/dev/null",
             "GIT_CONFIG_NOSYSTEM": "1",
+            # The stage's own fake-agent fallbacks (review C, M1): a session without a
+            # script of its own finds none, whichever way the smoke was started, and
+            # its hook payloads name a transcript of this stage.
+            "FAKE_AGENT_SCRIPT": os.path.join(root, "no-such-script.json"),
+            "FAKE_AGENT_TRANSCRIPT": os.path.join(root, "transcript.jsonl"),
         }
     )
     proc = None
@@ -291,6 +300,9 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         # harness starts its daemons), so the `finally` knows its pid and waits for it to
         # exit, whenever it binds its socket: a detached `daemon start` that fails or
         # times out can leave a daemon that binds only after the cleanup has looked.
+        # Its own session and process group (deferred from task 17; `run_daemon.rs`
+        # gives its daemons their own group), so a terminal's ^C or hang-up reaches the
+        # smoke, never the stage's daemon, which the `finally` stops through its socket.
         daemon = subprocess.Popen(
             [bin_path, "daemon", "start", "--foreground"],
             cwd=root,
@@ -298,6 +310,7 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
         _poll(
             "the stage's daemon binding its socket",
@@ -456,6 +469,15 @@ def _stop_daemon(run_cmd, env, socket, daemon):
     deadline = time.monotonic() + DAEMON_START_WAIT + DAEMON_STOP_WAIT
     while time.monotonic() < deadline:
         child_gone = daemon is None or daemon.poll() is not None
+        if child_gone and daemon is not None and os.path.exists(socket):
+            # Deferred from task 17: the child exited without removing its socket; no
+            # daemon of this stage answers there, so say so instead of stopping it.
+            print(
+                f"stage 11i: its daemon, pid {daemon.pid}, exited ({daemon.returncode}) "
+                f"and left a stale socket {socket}",
+                file=sys.stderr,
+            )
+            return
         if os.path.exists(socket):
             try:
                 run_cmd(["daemon", "stop"], expect_ok=False, timeout=DAEMON_STOP_WAIT, env=env)
