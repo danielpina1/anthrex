@@ -20,7 +20,7 @@ use super::orch_restore::restart;
 use super::run_scouts::{scout, scout_ended};
 use super::scenarios::halt_and_rebaseline;
 use super::wake_notes::clear;
-use crate::run::engine::{Effect, EventKind, OpKind, OpResult, ScoutEnd};
+use crate::run::engine::{Effect, EventKind, OpKind, OpResult, OrchEvent, ScoutEnd};
 use crate::run::model::{StageLayout, StageRecord};
 
 /// [`complete`] with round 1 approved in stages (set in place, as
@@ -236,6 +236,45 @@ fn rejecting_a_round_returns_to_complete_with_round_one_intact() {
         .filter(|l| l.round == 2)
         .collect();
     assert_eq!(lines, vec![line]);
+}
+
+/// Fix round 1 (I2): a request wake is its round's. Round 2's request is pasted, the user
+/// rejects round 2 and iterates round 3, and only then does round 2's
+/// `OrchestratorWoken` arrive: it leaves round 3's request waiting, which only round
+/// 3's own clears.
+#[test]
+fn a_late_woken_of_a_rejected_round_leaves_the_next_rounds_request() {
+    let mut fx = complete_staged();
+    assert_eq!(reply(&iterate(&mut fx, "more")), started(2));
+    clear(&mut fx);
+    submit_round(&mut fx);
+    let (revision, seq) = (fx.run().orch.digest_rev, super::super::notes_seq(fx.run()));
+    let reply_id = fx.reply();
+    fx.next(EventKind::Reject {
+        reply: reply_id,
+        run_id: RUN_ID.into(),
+    });
+    assert_eq!(
+        fx.run().orch.request_wake,
+        None,
+        "round 2's own reject clears it"
+    );
+    assert_eq!(reply(&iterate(&mut fx, "again")), started(3));
+    let woken = |fx: &mut Fixture, request| {
+        fx.next(EventKind::Orch(OrchEvent::OrchestratorWoken {
+            run_id: RUN_ID.into(),
+            digest_revision: revision,
+            notes_seq: seq,
+            request: Some(request),
+        }))
+    };
+    woken(&mut fx, 2);
+    assert!(
+        fx.run().orch.request_wake.is_some(),
+        "round 2's woken cleared round 3's"
+    );
+    woken(&mut fx, 3);
+    assert_eq!(fx.run().orch.request_wake, None);
 }
 
 /// Decision 12 (pinning): round 1's reject still discards the run.

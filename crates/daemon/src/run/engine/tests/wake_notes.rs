@@ -427,7 +427,7 @@ fn woken_clears_delivered_notes() {
         run_id: RUN_ID.into(),
         digest_revision: revision,
         notes_seq,
-        request: false,
+        request: None,
     }));
     let o = fx.run().orch.orchestrator.clone().unwrap();
     assert!(o.notes.is_empty());

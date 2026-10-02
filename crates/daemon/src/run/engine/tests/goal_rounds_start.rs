@@ -96,12 +96,14 @@ pub(super) fn round_lines(effects: &[Effect]) -> Vec<RoundLine> {
         .collect()
 }
 
-/// The step's wake-ups: (text, request).
+/// The step's wake-ups: (text, whether it carries a request).
 fn wakes(effects: &[Effect]) -> Vec<(String, bool)> {
     effects
         .iter()
         .filter_map(|e| match e {
-            Effect::WakeOrchestrator { text, request, .. } => Some((text.clone(), *request)),
+            Effect::WakeOrchestrator { text, request, .. } => {
+                Some((text.clone(), request.is_some()))
+            }
             _ => None,
         })
         .collect()
@@ -334,7 +336,7 @@ fn the_round_wake_survives_notes_and_is_cleared_once_delivered() {
             request,
         }))
     };
-    woken(&mut fx, false);
+    woken(&mut fx, None);
     assert_eq!(fx.run().orch.request_wake.as_deref(), Some(wake.as_str()));
     // A `run_status` read clears notes, never the request.
     fx.next(EventKind::Orch(OrchEvent::DigestRead {
@@ -343,7 +345,7 @@ fn the_round_wake_survives_notes_and_is_cleared_once_delivered() {
         notes_seq: seq,
     }));
     assert_eq!(fx.run().orch.request_wake.as_deref(), Some(wake.as_str()));
-    let effects = woken(&mut fx, true);
+    let effects = woken(&mut fx, Some(2));
     assert_eq!(fx.run().orch.request_wake, None);
     assert!(wakes(&effects).is_empty(), "{effects:#?}");
 }

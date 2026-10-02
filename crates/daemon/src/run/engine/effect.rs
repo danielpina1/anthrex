@@ -81,8 +81,9 @@ pub enum Effect {
         /// The highest note seq `text` holds (`OrchEvent::OrchestratorWoken` drops
         /// the notes up to it).
         notes_seq: u64,
-        /// Milestone 9.3 decision 11 (D13): `text` starts with the run's
-        /// `request_wake`, pasted whole and kept until delivered. Daemon-internal.
-        request: bool,
+        /// Milestone 9.3 decision 11 (D13, fix round 1): `Some(n)` when `text` starts
+        /// with the run's `request_wake`, round `n`'s, pasted whole and kept until
+        /// delivered. Daemon-internal: no wire field.
+        request: Option<u32>,
     },
 }

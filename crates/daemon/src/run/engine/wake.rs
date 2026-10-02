@@ -81,16 +81,25 @@ pub(super) fn digest_read(run: &mut Run, notes_seq: u64, now: u64) {
 }
 
 /// Decision 39: the driver pasted the wake-up of `revision`, which held the notes up
-/// to `notes_seq` and, with `request`, the run's request wake (milestone 9.3 decision
-/// 11: cleared only here).
-pub(super) fn woken(run: &mut Run, revision: u64, notes_seq: u64, request: bool) {
-    if request {
-        run.orch.request_wake = None;
+/// to `notes_seq` and, with `request: Some(n)`, round `n`'s request wake (milestone 9.3
+/// decision 11).
+pub(super) fn woken(run: &mut Run, revision: u64, notes_seq: u64, request: Option<u32>) {
+    if let Some(n) = request {
+        clear_request(run, n);
     }
     drop_up_to(run, notes_seq);
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.last_wake_rev = o.last_wake_rev.max(revision);
         o.wakes = o.wakes.saturating_add(1);
+    }
+}
+
+/// Milestone 9.3 (D13, fix round 1): round `n`'s request wake is dropped, and no later
+/// round's: a run holds one request, its current round's (`goal_rounds::iterate` sets
+/// it for the round it starts).
+pub(super) fn clear_request(run: &mut Run, n: u32) {
+    if run.round() == n {
+        run.orch.request_wake = None;
     }
 }
 
@@ -118,7 +127,7 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
             text,
             digest_revision: run.orch.digest_rev,
             notes_seq: notes_seq(run),
-            request: true,
+            request: Some(run.round()),
         });
     }
     let due = !o.notes.is_empty()
@@ -131,7 +140,7 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
         text: wake_text(&run.id, &o.notes),
         digest_revision: run.orch.digest_rev,
         notes_seq: notes_seq(run),
-        request: false,
+        request: None,
     })
 }
 

@@ -55,7 +55,7 @@ pub(super) fn reject_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
         }
     }
     end_round(run, RoundOutcome::Rejected, now, fx);
-    run.orch.request_wake = None;
+    wake::clear_request(run, n);
     planners::halt_all(run, ROUND_REJECTED, now, fx);
     // The earlier rounds' plan stays the submitted one (`rules::promoted_unsubmitted`).
     if let Some(o) = run.orch.orchestrator.as_mut() {
@@ -99,6 +99,8 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
         round.outcome = Some(RoundOutcome::Cancelled);
     }
     run.finish_edit = true;
+    // Fix round 1 (D13): a request of this round not yet delivered never is.
+    wake::clear_request(run, n);
     planners::halt_all(run, ROUND_CANCELLED, now, fx);
     log(run, now, format!("round {n} cancelled by the user"));
     let mut text = round_cancelled(run.short(), n);
