@@ -122,7 +122,7 @@ fn task_of<'a>(run: &'a RunInfo, id: &str) -> Option<&'a TaskInfo> {
 }
 
 /// The node's entries, or `None` when the node is gone.
-fn menu_items(run: &RunInfo, target: &ActionTarget) -> Option<Vec<ActionInfo>> {
+pub(crate) fn menu_items(run: &RunInfo, target: &ActionTarget) -> Option<Vec<ActionInfo>> {
     let daemon = match target {
         ActionTarget::Run => &run.actions,
         ActionTarget::Stage(n) => &run.stages.iter().find(|s| s.n == *n)?.actions,

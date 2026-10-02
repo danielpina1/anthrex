@@ -49,7 +49,7 @@ fn goal_form_renders_at_80x24_and_120x40() {
         let want = ascii_dialog(
             "start a goal in /p/a",
             &[
-                " > goal",
+                " > goal              what should the run achieve?",
                 "",
                 "",
                 "",

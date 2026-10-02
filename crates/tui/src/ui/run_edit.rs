@@ -1,130 +1,102 @@
-//! Milestone 8c decision 33: rendering for the plan gate's task edit form
-//! (`crate::run_edit`, the pure model). A 72-column box titled ` edit <task> `, one row
-//! per visible field, then a blank row, the error row when there is one, and the hint.
+//! Milestone 8c decision 33 and 9.0.7 decision 35: rendering for the plan gate's task
+//! edit form (`crate::run_edit`, the pure model), on the kit's dialog grammar: one
+//! accented frame titled `edit <task>` (`kit::dialog_frame`, at most 64 wide), lower-case
+//! labels, `‹ value ›` choices (`< value >` in ASCII), the brief in a four-row text area,
+//! then the error, a blank row and the hints `⏎ save · tab next · ←/→ change · ^J
+//! newline · esc cancel`, kept on a short terminal while the fields scroll. The plan's
+//! text passes `safe_text`.
 
-use crate::run_edit::{EditField, TaskEditForm, field_label};
-use crate::theme;
-use crate::ui::dialog::{LABEL_WIDTH, MARKER_WIDTH, centered};
-use crate::ui::tree_view::truncate;
-use proto::Status;
+use crate::run_edit::{EditField, TaskEditForm};
+use crate::safe_text::one_line;
+use crate::theme::{Palette, Role, role};
+use crate::ui::dialog::{LABEL_WIDTH, MARKER_WIDTH, busy_hint, hint, interior};
+use crate::ui::kit;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::text::Line;
+use ratatui::widgets::{Clear, Paragraph};
+
+#[path = "run_edit_rows.rs"]
+mod rows;
 
 #[cfg(test)]
 #[path = "run_edit_tests.rs"]
 mod tests;
 
-const FORM_WIDTH: u16 = 72;
-const HINT: &str = "⏎ save  tab next  ←/→ change  esc cancel";
-const SUBMITTING_HINT: &str = "saving…  esc close";
+/// Rows of the brief's text area (decision 35), as the goal field's.
+pub const BRIEF_ROWS: u16 = 4;
+pub(crate) const VALUE_X: usize = MARKER_WIDTH + LABEL_WIDTH;
 
-fn is_text(field: EditField) -> bool {
-    matches!(
-        field,
-        EditField::Model | EditField::Reason | EditField::Brief
-    )
+/// The width the brief's text area is drawn at in a terminal `width` wide, which its Up
+/// and Down move by (`TaskEditForm::on_key_in`); 0 for a terminal not yet drawn.
+pub fn brief_width(width: u16) -> u16 {
+    interior(width).saturating_sub(VALUE_X as u16)
 }
 
-fn one_row(frame: &mut Frame, inner: Rect, y: u16, line: Line) {
-    if y < inner.y + inner.height {
-        frame.render_widget(
-            Paragraph::new(line),
-            Rect {
-                y,
-                height: 1,
-                ..inner
-            },
-        );
-    }
-}
-
-pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, accent: Color) {
-    let fields = form.visible_fields();
-    let error_rows = usize::from(form.error.is_some());
-    let height = (fields.len() + 1 + error_rows + 1) as u16 + 2;
-    let rect = centered(area, FORM_WIDTH.min(area.width), height);
-    frame.render_widget(Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme::border_focused(accent))
-        .title(Line::from(Span::styled(
-            format!(" edit {} ", form.task_id),
-            theme::title(accent),
-        )));
-    let inner = block.inner(rect);
-    frame.render_widget(block, rect);
-    let width = inner.width as usize;
-    let value_width = width.saturating_sub(MARKER_WIDTH + LABEL_WIDTH);
-
-    let mut cursor = None;
-    for (row, field) in fields.iter().enumerate() {
-        let y = inner.y + row as u16;
-        let focused = form.focus == *field;
-        let label_style = if focused {
-            Style::default().fg(accent)
+pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, p: Palette) {
+    let width = interior(area.width);
+    let value_w = brief_width(area.width);
+    let (mut lines, mut at, mut cursor) = (Vec::new(), 0, None);
+    for field in form.visible_fields() {
+        let first = lines.len();
+        if field == EditField::Brief {
+            lines.extend(rows::brief_lines(form, value_w, p));
         } else {
-            Style::default()
-        };
-        let mut spans = vec![
-            Span::styled(if focused { "› " } else { "  " }, label_style),
-            Span::styled(
-                format!("{:<LABEL_WIDTH$}", field_label(*field)),
-                label_style,
-            ),
-        ];
-        let (value, resolved) = form.value_parts(*field);
-        let input = match field {
-            EditField::Model => Some(&form.model),
-            EditField::Reason => Some(&form.reason),
-            EditField::Brief => Some(&form.brief),
-            _ => None,
-        };
-        match input.filter(|input| !input.text().is_empty()) {
-            Some(input) => {
-                let (visible, column) = input.visible(value_width as u16);
-                spans.push(Span::raw(visible));
-                if focused {
-                    cursor = Some(column);
-                }
-            }
-            None => {
-                spans.push(Span::raw(truncate(&value, value_width)));
-                if let Some(resolved) = resolved {
-                    let room = value_width.saturating_sub(value.chars().count() + 2);
-                    if room > 0 {
-                        spans.push(Span::raw("  "));
-                        spans.push(Span::styled(truncate(&resolved, room), theme::muted()));
-                    }
-                }
-                if focused && is_text(*field) {
-                    cursor = Some(0);
-                }
-            }
+            let (line, column) = rows::field_line(form, field, usize::from(value_w), p);
+            cursor = column.map(|c| (first, c)).or(cursor);
+            lines.push(line);
         }
-        if let Some(column) = cursor.filter(|_| focused)
-            && y < inner.y + inner.height
-            && value_width > 0
-        {
-            let x = inner.x + (MARKER_WIDTH + LABEL_WIDTH) as u16 + column;
-            frame.set_cursor_position((x, y));
+        if form.focus == field {
+            // The brief's label row and its four text rows, when they fit.
+            at = (first + usize::from(BRIEF_ROWS) * usize::from(field == EditField::Brief))
+                .min(lines.len() - 1);
         }
-        one_row(frame, inner, y, Line::from(spans));
     }
-
-    let mut y = inner.y + fields.len() as u16 + 1;
+    let mut tail = Vec::new();
     if let Some(error) = &form.error {
-        let style = Style::default().fg(theme::status_color(Status::Attention));
-        one_row(frame, inner, y, Line::styled(truncate(error, width), style));
-        y += 1;
+        let ellipsis = crate::theme::ellipsis(p);
+        let text = kit::cut(&one_line(error), usize::from(width), ellipsis);
+        tail.push(Line::styled(text, role(Role::Failed, p)));
     }
-    let hint = if form.submitting {
-        SUBMITTING_HINT
+    tail.push(Line::raw(""));
+    tail.push(if form.submitting {
+        busy_hint("saving…", width, p)
     } else {
-        HINT
-    };
-    one_row(frame, inner, y, Line::styled(hint, theme::muted()));
+        let keys = [
+            hint("⏎", "save", 9),
+            hint("tab", "next", 6),
+            hint("←/→", "change", 5),
+            hint("^J", "newline", 4),
+            hint("esc", "cancel", 1),
+        ];
+        kit::hints_joined(width, &keys, " · ", p)
+    });
+    // A short terminal keeps the hints (then the error) and scrolls the fields, the
+    // focused one in view.
+    let rows = usize::from(area.height.saturating_sub(2));
+    while tail.len() > rows.max(1) {
+        tail.remove(tail.len() - 2);
+    }
+    let room = rows.saturating_sub(tail.len());
+    let (top, shown) = kit::window_span(lines.len(), at, room);
+    let shift = usize::from(top > 0 && room >= 3 && lines.len() > room);
+    let mut body = kit::window(lines, at, room, p);
+    body.extend(tail);
+
+    let rect = kit::dialog_area(area, body.len() as u16);
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+    frame.render_widget(Clear, rect);
+    let block = kit::dialog_frame(&format!("edit {}", form.task_id), false, p);
+    let inner = block.inner(rect);
+    frame.render_widget(Paragraph::new(body).block(block), rect);
+    if let Some((line, column)) = cursor
+        && line >= top
+        && line - top < shown
+        && value_w > 0
+    {
+        let row = (line + shift - top) as u16;
+        frame.set_cursor_position((inner.x + VALUE_X as u16 + column, inner.y + row));
+    }
 }

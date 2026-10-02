@@ -8,6 +8,22 @@ use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// A one-line prompt's cursor (final fix wave M5: one idiom for the rename box and
+/// the accept page): a solid block drawn in `style` (the accept page's accent, the
+/// rename box's plain default), or a reversed cell in ASCII, whatever `style`. The
+/// text areas reverse the cell under the cursor instead (`text_area_focus`), the same
+/// look at the end of the text.
+pub fn cursor_block(style: ratatui::style::Style, p: Palette) -> Span<'static> {
+    if p.ascii {
+        Span::styled(
+            " ",
+            ratatui::style::Style::default().add_modifier(Modifier::REVERSED),
+        )
+    } else {
+        Span::styled("█", style)
+    }
+}
+
 /// `text` cut to `max` columns, ending in `ellipsis` when it was cut.
 pub(crate) fn cut(text: &str, max: usize, ellipsis: &str) -> String {
     if text.width() <= max {
@@ -164,4 +180,13 @@ pub fn text_area_focus(
         out.push(Line::from(Span::styled(mark, muted)));
     }
     out
+}
+
+/// Whether the text area's first line is its `↑ n more` mark (`^ n more` in ASCII).
+pub(crate) fn starts_with_mark(lines: &[Line<'static>]) -> bool {
+    let first: String = lines
+        .first()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .unwrap_or_default();
+    (first.starts_with("↑ ") || first.starts_with("^ ")) && first.ends_with(" more")
 }

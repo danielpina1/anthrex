@@ -53,11 +53,14 @@ impl App {
         effects
     }
 
-    /// No reply will come for the screen's view `ask` on `dir` (expired, or not sent):
-    /// a side or a status still loading says `why`. `true` when the screen is open on
-    /// `dir` (the view was the screen's, so no toast).
+    /// No reply will come for the screen's view `ask` on `dir` (request `id`, expired or
+    /// not sent): a side or a status still loading says `why`; a side only for its
+    /// latest `Show` (9.0.7 decision 37: an older one's expiry leaves a re-fetch
+    /// loading). `true` when the screen is open on `dir` (the view was the screen's, so
+    /// no toast).
     pub(in crate::app) fn profile_view_failed(
         &mut self,
+        id: u64,
         dir: &std::path::Path,
         ask: ProfileAsk,
         why: &str,
@@ -67,8 +70,9 @@ impl App {
         };
         match ask {
             ProfileAsk::Show { proposed } => {
+                let latest = s.show_id[usize::from(proposed)] == Some(id);
                 let side = s.side_mut(proposed);
-                if !matches!(side, Side::Ready(_)) {
+                if latest && !matches!(side, Side::Ready(_)) {
                     *side = Side::Failed(why.into());
                 }
             }
@@ -79,19 +83,30 @@ impl App {
         true
     }
 
-    /// Decision 16: whether a late `ask` on `dir` still fills the open screen (its side,
-    /// or its status, never came).
-    pub(super) fn profile_awaits(&self, dir: &std::path::Path, ask: ProfileAsk) -> bool {
+    /// Decision 16: whether a late `ask` (request `id`) on `dir` still fills the open
+    /// screen (its side, or its status, never came). A `Show` fills its side only when
+    /// it is the side's latest request (9.0.7 decision 37): one sent before a detection
+    /// is dropped while the re-fetch is out.
+    pub(super) fn profile_awaits(&self, dir: &std::path::Path, ask: ProfileAsk, id: u64) -> bool {
         match &self.screen {
             Some(Screen::Profile(s)) if s.dir == dir => match ask {
                 ProfileAsk::Show { proposed } => {
                     let side = if proposed { &s.proposal } else { &s.stored };
-                    !matches!(side, Side::Ready(_))
+                    !matches!(side, Side::Ready(_)) && s.show_id[usize::from(proposed)] == Some(id)
                 }
                 ProfileAsk::Status => s.status.is_none(),
                 _ => false,
             },
             _ => false,
+        }
+    }
+
+    /// Whether `id` is the open screen's latest `Show` of the side `proposed`; a closed
+    /// screen has none, and its reply is dropped by the caller's directory check.
+    pub(super) fn profile_latest_show(&self, proposed: bool, id: Option<u64>) -> bool {
+        match &self.screen {
+            Some(Screen::Profile(s)) => id.is_some() && s.show_id[usize::from(proposed)] == id,
+            _ => true,
         }
     }
 }

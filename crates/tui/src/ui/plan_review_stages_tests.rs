@@ -21,15 +21,30 @@ fn staged(reason: &str) -> RunsSnapshot {
     snap
 }
 
-/// The right pane's rows below the title, at 120x40.
+/// The detail's rows at 120x40 (milestone 9.0.7 decision 26: the stacked geometry's
+/// last area), its title row first.
 fn detail(app: &mut App) -> Vec<String> {
     let buffer = draw(app, 120, 40);
-    (1..39).map(|y| right_of(&buffer, y)).collect()
+    let area = app.review_layout(Rect::new(0, 0, 120, 39)).detail;
+    (area.y..area.bottom())
+        .map(|y| right_of(app, &buffer, y))
+        .collect()
 }
 
-/// Whether `rows` holds `want` as consecutive rows.
-fn holds(rows: &[String], want: &[&str]) -> bool {
-    rows.windows(want.len()).any(|w| w == want)
+/// The value of the labelled row `label` (decision 25's `kit::labelled_rows`): the text
+/// after the label and its padding.
+fn value(rows: &[String], label: &str) -> Option<String> {
+    rows.iter().find_map(|row| {
+        let rest = row.strip_prefix(label)?;
+        rest.starts_with("  ").then(|| rest.trim().to_owned())
+    })
+}
+
+/// Where the labelled row `label` is.
+fn at(rows: &[String], label: &str) -> usize {
+    rows.iter()
+        .position(|row| row.strip_prefix(label).is_some_and(|r| r.starts_with("  ")))
+        .unwrap_or_else(|| panic!("no {label} row: {rows:#?}"))
 }
 
 #[test]
@@ -42,34 +57,23 @@ fn a_multi_plan_review_shows_the_stage_and_the_hub() {
     press(&mut app, KeyCode::Char('j'));
     let t2 = detail(&mut app);
     assert!(t2[0].starts_with("t2  reset endpoint"), "{t2:#?}");
-    assert!(holds(&t2, &["stage", "  1 of 2"]), "{t2:#?}");
-    assert!(
-        !t2.iter().any(|r| r == "atomic" || r == "interface change"),
-        "{t2:#?}"
-    );
+    assert_eq!(value(&t2, "stage").as_deref(), Some("1 of 2"), "{t2:#?}");
+    assert_eq!(value(&t2, "atomic"), None, "{t2:#?}");
+    assert_eq!(value(&t2, "interface change"), None, "{t2:#?}");
     press(&mut app, KeyCode::Char('j'));
     press(&mut app, KeyCode::Char('j'));
     let t4 = detail(&mut app);
     assert!(t4[0].starts_with("t4  mail sender"), "{t4:#?}");
-    assert!(
-        holds(
-            &t4,
-            &[
-                "stage",
-                "  2 of 2",
-                "",
-                "atomic",
-                "  the token type changes for every client",
-                "",
-                "interface change",
-                "  yes",
-            ]
-        ),
-        "{t4:#?}"
+    assert_eq!(value(&t4, "stage").as_deref(), Some("2 of 2"), "{t4:#?}");
+    assert_eq!(
+        value(&t4, "atomic").as_deref(),
+        Some("the token type changes for every client")
     );
-    // After the test mode, before the deps.
-    let at = |label: &str| t4.iter().position(|r| r == label).unwrap();
-    assert!(at("test mode") < at("stage") && at("interface change") < at("deps"));
+    assert_eq!(value(&t4, "interface change").as_deref(), Some("yes"));
+    // After the test mode, before the deps, in decision 25's order.
+    let order = ["test mode", "stage", "atomic", "interface change", "deps"];
+    let rows: Vec<usize> = order.iter().map(|label| at(&t4, label)).collect();
+    assert!(rows.windows(2).all(|w| w[0] + 1 == w[1]), "{t4:#?}");
 }
 
 #[test]
@@ -82,7 +86,11 @@ fn an_atomic_hub_without_a_reason_reads_yes() {
             press(&mut app, KeyCode::Char('j'));
         }
         let t4 = detail(&mut app);
-        assert!(holds(&t4, &["atomic", "  yes"]), "{reason:?}: {t4:#?}");
+        assert_eq!(
+            value(&t4, "atomic").as_deref(),
+            Some("yes"),
+            "{reason:?}: {t4:#?}"
+        );
     }
 }
 
@@ -107,11 +115,8 @@ fn the_stage_facts_are_sanitised() {
         press(&mut app, KeyCode::Char('j'));
     }
     let t4 = detail(&mut app);
-    let row = t4
-        .iter()
-        .position(|r| r == "atomic")
-        .expect("the atomic row");
-    assert!(t4[row + 1].starts_with("  hub "), "{:?}", t4[row + 1]);
+    let atomic = value(&t4, "atomic").expect("the atomic row");
+    assert!(atomic.starts_with("hub "), "{atomic:?}");
 }
 
 /// A Single plan shows no stage, atomic or interface row, even for a task that sets
@@ -134,10 +139,7 @@ fn a_single_plan_review_is_unchanged() {
         rows(&draw(&mut plain, 120, 40))
     );
     let rows = detail(&mut set);
-    assert!(
-        !rows
-            .iter()
-            .any(|r| ["stage", "atomic", "interface change"].contains(&r.as_str())),
-        "{rows:#?}"
-    );
+    for label in ["stage", "atomic", "interface change"] {
+        assert_eq!(value(&rows, label), None, "{rows:#?}");
+    }
 }

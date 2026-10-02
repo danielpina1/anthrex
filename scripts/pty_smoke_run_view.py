@@ -135,11 +135,11 @@ def run_view_stage(pty_proc, bin_path, run_cmd, fail):
         proc.wait_for(" FILTER ", label="overview filter mode")
         proc.send(h4.encode())
         proc.send(b"\r")
-        proc.wait_for(" TREE ", label="overview navigation after filtering")
+        proc.wait_for(" OVERVIEW ", label="overview navigation after filtering")
         proc.send(b"l")
         proc.wait_for(f"run {h4}  0/1", label="the run's node in the project overview")
         proc.send(b"l")
-        proc.wait_for(f" run {run_id} ", label="the run view's title")
+        proc.wait_for(f" run · View a · {h4} ", label="the run view's title")
         proc.wait_for("t1 add a S", label="t1's node on the run canvas")
         proc.wait_for("a approve", label="the plan gate's hint")
         print(f"ok: run {run_id} opened in the run view at its plan gate")
@@ -160,7 +160,9 @@ def run_view_stage(pty_proc, bin_path, run_cmd, fail):
         print(f"ok: Enter on the worker round opened {name}'s conversation")
 
         proc.send(b"q")
-        proc.wait_for(f" run {run_id} ", label="the run view after closing the conversation")
+        proc.wait_for(
+            f" run · View a · {h4} ", label="the run view after closing the conversation"
+        )
         proc.send(b"\x1b")
         proc.wait_for(" tree overview ", label="the project overview after leaving the run view")
         proc.send(b"\x1b")

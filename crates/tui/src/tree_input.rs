@@ -51,15 +51,14 @@ impl App {
     }
 
     /// Re-splits the last frame's overview area. The split is the frame's own, the run
-    /// view's tall panel included, or the reveal would aim at a viewport the frame
-    /// does not have; opening and leaving the run view call it at once, so the keys
-    /// that follow before the next frame reveal into the right canvas.
+    /// view's content-sized panel included, or the reveal would aim at a viewport the
+    /// frame does not have; opening and leaving the run view call it at once, so the
+    /// keys that follow before the next frame reveal into the right canvas.
     pub(crate) fn settle_graph_viewport(&mut self) {
         let Some(main) = self.graph_main else {
             return;
         };
-        let (canvas, _) =
-            crate::ui::overview::areas(main, self.inspector_visible, self.run_view.is_some());
+        let (canvas, _) = crate::ui::overview::areas_of(self, main);
         if self.graph_area != canvas {
             self.graph_area = canvas;
             self.reveal_graph_selection();
@@ -109,6 +108,11 @@ impl App {
     /// the one-dimensional rule it generalises, on the same three edges:
     /// a change of selection, rows or focus.
     pub(crate) fn reveal_graph_selection(&mut self) {
+        // Milestone 9.0.7 decision 17: the run view's panel follows the selection, so
+        // the canvas it reveals into is re-split for the node just selected.
+        if let Some(main) = self.graph_main.filter(|_| self.overview) {
+            self.graph_area = crate::ui::overview::areas_of(self, main).0;
+        }
         if !self.overview || self.graph_area.is_empty() {
             return;
         }
@@ -283,7 +287,7 @@ impl App {
         }
     }
 
-    fn move_tree_selection(&mut self, delta: isize) {
+    pub(crate) fn move_tree_selection(&mut self, delta: isize) {
         let rows = nav_rows_of(
             &self.windows,
             &self.runs.runs,

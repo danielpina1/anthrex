@@ -28,8 +28,10 @@ fn overview_replaces_the_terminal_with_the_graph() {
         " tree overview ",
         // Boxes: a project, a window and a sub-agent, each with its
         // glyph, between the borders only the graph draws.
-        "│ ◆ shop   ├",
-        "┤ ⠋ 1 api-worker ├",
+        "│ ⚑ shop   ├",
+        // The selected window: its left border on the content row is the bar
+        // (milestone 9.0.7 decision 20).
+        "▌ ⠋ 1 api-worker ├",
         "┤ ⠋ Explore: map routes      ├",
         // The inspector panel spells the selected window out below it.
         "│ model    claude-opus-5  sub-agents  3, 2 running",
@@ -93,11 +95,13 @@ fn hits_every_visible_box(app: &App, width: u16, height: u16) -> Pan {
             node.key
         );
         // The box's left border stands exactly where the layout put it,
-        // as a plain border or as the junction an edge turned it into.
+        // as a plain border or as the junction an edge turned it into, or as the
+        // selection bar (milestone 9.0.7 decision 20).
         let border = view.canvas.x + node.rect.x - view.pan.x;
         let symbol = terminal.backend().buffer()[(border, y)].symbol().to_owned();
+        let selected = app.tree.selected.as_ref() == Some(&node.key);
         assert!(
-            symbol == "│" || symbol == "┤",
+            symbol == "│" || symbol == "┤" || (selected && symbol == "▌"),
             "{:?}'s left border at ({border}, {y}) was {symbol:?}",
             node.key
         );
@@ -154,24 +158,19 @@ fn the_run_views_single_line_is_the_live_glyph_the_name_and_the_right_text() {
         let canvas = crate::graph::paint::style::node_glyph(row, &app);
         assert_eq!(
             (glyph.content.as_ref(), glyph.style.fg),
-            (canvas.0, Some(canvas.1)),
+            (canvas.0, Some(crate::theme::fg(canvas.1))),
             "the canvas's own glyph and colour"
         );
         (glyph.content.into_owned(), glyph.style.fg, label, right)
     };
-    let live = Some(crate::theme::status_color(Status::Working));
+    let live = Some(crate::theme::fg(crate::theme::Role::Working));
     let task = NodeKey::Task {
         run: RUN_ID.into(),
         id: "t1".into(),
     };
     assert_eq!(
         line(task),
-        (
-            "●".into(),
-            live,
-            "t1  spawn".into(),
-            "  M · tdd · working".into()
-        )
+        ("●".into(), live, "t1  spawn".into(), "  working".into())
     );
     let round = NodeKey::AgentRound {
         run: RUN_ID.into(),

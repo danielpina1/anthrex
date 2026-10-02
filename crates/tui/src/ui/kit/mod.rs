@@ -6,16 +6,21 @@
 
 mod dialog;
 mod hints;
+mod pane;
 mod rows;
 mod screen;
+mod scroll;
 mod text;
 
 pub use dialog::{choice, choice_in, dialog_area, dialog_frame};
-pub use hints::{Hint, hints, hints_joined};
+pub use hints::{Hint, destructive, hints, hints_joined};
+pub use pane::{bar_role, pane_frame, selection_bar};
 pub use rows::{labelled_rows, run_name, run_name_in, scroll_marks};
-pub use screen::{screen_frame, window};
-pub(crate) use text::{cut, wrap_words};
-pub use text::{text_area, text_area_focus};
+pub use screen::screen_frame;
+pub use scroll::window;
+pub(crate) use scroll::{from_top, from_top_until, last_top, window_span};
+pub use text::{cursor_block, text_area, text_area_focus};
+pub(crate) use text::{cut, starts_with_mark, wrap_words};
 
 /// Dialog text wraps at this many columns (decision 5).
 pub const WRAP: u16 = 60;

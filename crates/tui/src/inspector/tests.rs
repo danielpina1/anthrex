@@ -517,12 +517,12 @@ fn a_subagent_without_a_label_is_named_for_its_kind() {
 fn a_subagents_glyph_carries_its_own_status_colour() {
     // Nothing else in this file reads `.glyph` — every other test here reads
     // `.name` or `.fields` — so a sub-agent's glyph built with
-    // `theme::status_color` instead of `theme::subagent_color` (the pair
+    // `theme::status_look` instead of `theme::subagent_look` (the look
     // `ui/overview.rs` uses for the same sub-agent's box, three files away)
-    // would pass every test above unnoticed. `subagent_color` disagrees with
-    // `status_color` exactly on `Failed`: a plain status has no "failed", so
-    // `status_color` cannot tell a failure from anything else, and a sub-agent
-    // that failed would show its glyph in some other status's colour.
+    // would pass every test above unnoticed. `subagent_look` disagrees with
+    // `status_look` exactly on `Failed`: a plain status has no "failed", so
+    // `status_look` cannot tell a failure from anything else, and a sub-agent
+    // that failed would show its glyph in some other status's role.
     let mut info = window(1, "/r/shop", "api-worker", Runtime::Claude);
     let mut running = subagent("a1", "Explore", Some("map the routes"));
     running.state = SubagentState::Running;
@@ -557,6 +557,6 @@ fn a_subagents_glyph_carries_its_own_status_colour() {
         failed_glyph.style.fg,
         Some(Color::Red),
         "a failed sub-agent has no counterpart in `Status` at all, so only \
-         `subagent_color` — not `status_color` — can colour it right"
+         `subagent_look` — not `status_look` — can colour it right"
     );
 }

@@ -10,7 +10,6 @@ use proto::{
     BlockReason, Effort, Finding, Severity, Size, Strength, TaskInfo, TaskState, TestMode,
     TokenUsage, WindowKind,
 };
-use ratatui::style::Style;
 use ratatui::text::Span;
 use std::path::Path;
 
@@ -48,7 +47,14 @@ pub fn local_hhmm(at: u64, utc_offset_secs: i64) -> String {
 
 /// Decision 30: `filled = (width × done + total / 2) / total` cells of `█`, then `░`.
 /// A done count above the total fills the bar; a zero total leaves it empty.
+#[cfg(test)]
 pub fn progress_bar(done: u64, total: u64, width: usize) -> String {
+    progress_bar_in(done, total, width, false)
+}
+
+/// [`progress_bar`] through `theme::bar`: `#` and `.` in ASCII (milestone 9.0.7
+/// decision 5).
+pub fn progress_bar_in(done: u64, total: u64, width: usize, ascii: bool) -> String {
     let filled = if total == 0 {
         0
     } else {
@@ -56,7 +62,7 @@ pub fn progress_bar(done: u64, total: u64, width: usize) -> String {
         let filled = (width as u128 * done + total / 2) / total;
         usize::try_from(filled).unwrap_or(width).min(width)
     };
-    format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
+    crate::theme::bar(filled, width - filled, ascii)
 }
 
 /// `text` with every control character and line separator a space and every bidi
@@ -79,8 +85,7 @@ pub(super) fn kind_glyph(kind: RowKind<'_>, app: &App) -> Span<'static> {
         depth: 0,
         kind,
     };
-    let (glyph, color) = node_glyph(&row, app);
-    Span::styled(glyph, Style::default().fg(color))
+    super::look(node_glyph(&row, app), app)
 }
 
 pub(super) fn rows(
@@ -129,7 +134,11 @@ const CATEGORIES: [&str; 6] = [
 /// Decision 30's progress line over `tasks`: the bar, `{merged}/{total} merged`, each
 /// non-zero category, then the cancelled; `no tasks yet` when nothing counts. A
 /// `Reported` task is not counted at all.
-pub(super) fn progress_text<'a>(tasks: impl Iterator<Item = &'a TaskInfo>, width: usize) -> String {
+pub(super) fn progress_text<'a>(
+    tasks: impl Iterator<Item = &'a TaskInfo>,
+    width: usize,
+    ascii: bool,
+) -> String {
     let (mut merged, mut total, mut cancelled) = (0u64, 0u64, 0u64);
     let mut counts = [0u64; 6];
     for task in tasks {
@@ -148,7 +157,7 @@ pub(super) fn progress_text<'a>(tasks: impl Iterator<Item = &'a TaskInfo>, width
     }
     let mut text = format!(
         "{}  {merged}/{total} merged",
-        progress_bar(merged, total, width)
+        progress_bar_in(merged, total, width, ascii)
     );
     for (count, name) in counts.iter().zip(CATEGORIES) {
         if *count > 0 {
@@ -189,6 +198,39 @@ pub(super) fn session_text(window_id: Option<u32>, place: &str, app: &App) -> St
             };
             format!("#{id} · {kind} · {place} · Enter: conversation")
         }
+    }
+}
+
+/// A route as the task panel's footer and the plan review's list name it (milestone
+/// 9.0.7 decisions 12 and 24): `<runtime tag> <model>`, the model whole and sanitised,
+/// `default` when the route names none: `cx gpt-6-sol`, `cl opus`.
+pub(crate) fn route_tag(route: &proto::Route) -> String {
+    let model = crate::safe_text::one_line(&route.model);
+    let model = model.trim();
+    let model = if model.is_empty() { "default" } else { model };
+    format!("{} {model}", crate::theme::runtime_tag(route.runtime))
+}
+
+/// `after t1, t3 (implied)`: the explicit deps, then each implicit one marked; empty
+/// for a task with none (milestone 9.0.7 decisions 19 and 24). The final fix wave's
+/// M4: the one formatter of a task's deps, for the plan review, the compact list and
+/// the graph's boxes. Each id passes `safe_text::one_line`.
+pub(crate) fn after_text(task: &proto::TaskInfo) -> String {
+    let deps: Vec<String> = crate::app::plan_review::all_deps(task)
+        .into_iter()
+        .map(|dep| {
+            let id = crate::safe_text::one_line(dep);
+            if task.deps.iter().any(|d| d == dep) {
+                id
+            } else {
+                format!("{id} (implied)")
+            }
+        })
+        .collect();
+    if deps.is_empty() {
+        String::new()
+    } else {
+        format!("after {}", deps.join(", "))
     }
 }
 

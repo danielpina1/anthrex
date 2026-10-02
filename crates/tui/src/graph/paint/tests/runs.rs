@@ -123,9 +123,9 @@ fn project_overview_draws_the_run_node() {
         padded(
             &[
                 "               ╭─────────────────╮",
-                "             ┌─┤ ◉ run 3f9a  0/2 │",
+                "             ┌─┤ ⚑ run 3f9a  0/2 │",
                 "╭──────────╮ │ ╰─────────────────╯",
-                "│ ◆ demo   ├─┤",
+                "│ ⚑ demo   ├─┤",
                 "╰──────────╯ │ ╭─────────────────╮",
                 "             └─┤ ○ 1 shell       │",
                 "               ╰─────────────────╯",
@@ -143,7 +143,7 @@ fn run_view_draws_tiers_rounds_and_glyphs() {
     let layout = layout(&rows);
     let lines = paint(
         &layout,
-        Rect::new(0, 0, 73, 15),
+        Rect::new(0, 0, 78, 15),
         Pan::default(),
         &rows,
         &app,
@@ -152,23 +152,23 @@ fn run_view_draws_tiers_rounds_and_glyphs() {
         lines_text(&lines),
         padded(
             &[
-                "                                                   ╭────────────────────╮",
-                "                                                 ┌─┤ ✓ worker #1 claude │",
-                "                          ╭────────────────────╮ │ ╰────────────────────╯",
-                "                        ┌─┤ ✓ t0 proto M ◆     ├─┤",
-                "                        │ ╰────────────────────╯ │ ╭────────────────────╮",
-                "                        │                        └─┤ ✓ review #1 codex  │",
-                "                        │                          ╰────────────────────╯",
+                "                                                        ╭────────────────────╮",
+                "                                                      ┌─┤ ✓ worker #1 claude │",
+                "                          ╭─────────────────────────╮ │ ╰────────────────────╯",
+                "                        ┌─┤ ✓ t0 proto M ◆          ├─┤",
+                "                        │ ╰─────────────────────────╯ │ ╭────────────────────╮",
+                "                        │                             └─┤ ✓ review #1 codex  │",
+                "                        │                               ╰────────────────────╯",
                 "╭─────────────────────╮ │",
-                "│ ◉ orchestrator  1/3 ├─┤ ╭────────────────────╮   ╭────────────────────╮",
-                "╰─────────────────────╯ ├─┤ ● t1 spawn M  ⇠t0  ├───┤ ● worker #1 claude │",
-                "                        │ ╰────────────────────╯   ╰────────────────────╯",
+                "│ ◉ orchestrator  1/3 ├─┤ ╭─────────────────────────╮   ╭────────────────────╮",
+                "╰─────────────────────╯ ├─┤ ● t1 spawn M  after t0  ├───┤ ● worker #1 claude │",
+                "                        │ ╰─────────────────────────╯   ╰────────────────────╯",
                 "                        │",
-                "                        │ ╭────────────────────╮",
-                "                        └─┤ ▫ t2 status S  ⇠t0 │",
-                "                          ╰────────────────────╯",
+                "                        │ ╭─────────────────────────╮",
+                "                        └─┤ ▫ t2 status S  after t0 │",
+                "                          ╰─────────────────────────╯",
             ],
-            73
+            78
         )
     );
 }
@@ -184,7 +184,7 @@ fn the_gate_draws_every_task_as_planned() {
     for id in ["t1", "t2"] {
         let (glyph, style) = glyph_of(&lines, rect_of(&layout, &task_key(id)));
         assert_eq!(glyph, "○", "{id} is drawn as planned at the gate");
-        assert_eq!(style.fg, Some(theme::status_color(proto::Status::Idle)));
+        assert_eq!(style.fg, Some(theme::fg(theme::Role::Muted)));
     }
 
     // The same pending task outside the gate is `◌`.
@@ -194,7 +194,7 @@ fn the_gate_draws_every_task_as_planned() {
     let (layout, lines) = paint_view(&app);
     let (glyph, style) = glyph_of(&lines, rect_of(&layout, &task_key("t1")));
     assert_eq!(glyph, "◌");
-    assert_eq!(style.fg, Some(theme::status_color(proto::Status::Starting)));
+    assert_eq!(style.fg, Some(theme::fg(theme::Role::Muted)));
 }
 
 #[test]
@@ -207,7 +207,7 @@ fn a_working_task_animates_only_while_its_worker_works() {
     let (layout, lines) = paint_view(&app);
     let task = glyph_of(&lines, rect_of(&layout, &task_key("t1")));
     assert_eq!(task.0, theme::SPINNER[3]);
-    assert_eq!(task.1.fg, Some(theme::status_color(proto::Status::Working)));
+    assert_eq!(task.1.fg, Some(theme::fg(theme::Role::Working)));
     assert_eq!(
         glyph_of(&lines, rect_of(&layout, &worker_key)).0,
         theme::SPINNER[3]
@@ -257,10 +257,12 @@ fn critical_path_tasks_have_a_bold_border() {
 #[test]
 fn selecting_a_task_lights_its_dependencies_and_dims_the_rest() {
     let mut app = app_of(three_task_fixture());
-    app.enter_tree();
+    // The overview, where the graph is drawn and holds the keys (decision 1).
+    app.enter_overview();
     app.tree.selected = Some(task_key("t1"));
     let (layout, lines) = paint_view(&app);
-    let focused = theme::border_focused(app.settings.accent);
+    // Milestone 9.0.7 decision 1: a lit box is bold on the muted border, never accented.
+    let focused = theme::role(theme::Role::Muted, app.palette()).add_modifier(Modifier::BOLD);
 
     for (x, y) in border_cells(rect_of(&layout, &task_key("t0"))) {
         assert_eq!(style_at(&lines, x, y), focused, "t0 border ({x}, {y})");
@@ -280,7 +282,16 @@ fn selecting_a_task_lights_its_dependencies_and_dims_the_rest() {
             .add_modifier
             .contains(Modifier::DIM)
     );
-    for (x, y) in all_cells(rect_of(&layout, &task_key("t1"))) {
+    // Milestone 9.0.7 decision 20: the selection is reversed, but for the bar that
+    // takes its left border cell on the content row, in the accent.
+    let selected = rect_of(&layout, &task_key("t1"));
+    let bar = (selected.x, selected.y + 1);
+    assert_eq!(cell_at(&lines, bar.0, bar.1).0, "▌");
+    assert_eq!(
+        style_at(&lines, bar.0, bar.1),
+        theme::role(theme::Role::Accent, app.palette())
+    );
+    for (x, y) in all_cells(selected).into_iter().filter(|cell| *cell != bar) {
         let style = style_at(&lines, x, y);
         assert!(style.add_modifier.contains(Modifier::REVERSED));
         assert!(!style.add_modifier.contains(Modifier::DIM));
@@ -333,7 +344,10 @@ fn selecting_a_task_lights_its_dependencies_and_dims_the_rest() {
     app.tree.selected = Some(task_key("t1"));
     let (layout, lines) = paint_view(&app);
     let t2 = rect_of(&layout, &task_key("t2"));
-    assert_eq!(style_at(&lines, t2.x, t2.y), theme::border());
+    assert_eq!(
+        style_at(&lines, t2.x, t2.y),
+        theme::role(theme::Role::Muted, theme::Palette::PLAIN)
+    );
 }
 
 #[test]
@@ -381,7 +395,7 @@ fn a_row_that_disagrees_with_its_node_is_skipped() {
     // Every other node is still painted.
     let text = lines_text(&lines).join("\n");
     assert!(text.contains("orchestrator  1/3"), "{text}");
-    assert!(text.contains("t1 spawn M  ⇠t0"), "{text}");
+    assert!(text.contains("t1 spawn M  after t0"), "{text}");
 
     // Skip two of the root's three children: the edge is not drawn at all, so no
     // junction lands on the root's border (the M8c.5 review's M1).
@@ -493,59 +507,51 @@ fn hostile_run_data_paints_in_line() {
 
 #[test]
 fn every_task_state_has_its_glyph_and_colour() {
-    use proto::Status;
+    use theme::Role;
+    // Milestone 9.0.7 decisions 3 and 4: the merge queue is `»` (`▸` means
+    // collapsed only), and a blocked task no one else answers needs you.
     let cases = [
-        (
-            TaskState::Pending,
-            "◌",
-            theme::status_color(Status::Starting),
-        ),
-        (TaskState::Queued, "▫", theme::status_color(Status::Idle)),
-        (
-            TaskState::Preparing,
-            "●",
-            theme::status_color(Status::Working),
-        ),
-        (
-            TaskState::Working,
-            "●",
-            theme::status_color(Status::Working),
-        ),
-        (TaskState::Proof, "◇", theme::status_color(Status::Working)),
-        (TaskState::Check, "◇", theme::status_color(Status::Working)),
-        (TaskState::Review, "◐", theme::status_color(Status::Working)),
-        (
-            TaskState::MergeQueue,
-            "▸",
-            theme::status_color(Status::Working),
-        ),
-        (TaskState::Merged, "✓", theme::status_color(Status::Done)),
-        (
-            TaskState::Blocked,
-            "⊘",
-            theme::status_color(Status::Attention),
-        ),
-        (TaskState::Cancelled, "–", theme::DIM),
+        (TaskState::Pending, "◌", Role::Muted),
+        (TaskState::Queued, "▫", Role::Muted),
+        (TaskState::Preparing, "●", Role::Working),
+        (TaskState::Working, "●", Role::Working),
+        (TaskState::Proof, "◇", Role::Working),
+        (TaskState::Check, "◇", Role::Working),
+        (TaskState::Review, "◐", Role::Working),
+        (TaskState::MergeQueue, "»", Role::Working),
+        (TaskState::Merged, "✓", Role::Done),
+        (TaskState::Blocked, "⚑", Role::Attention),
+        (TaskState::Cancelled, "–", Role::Muted),
     ];
-    for (state, glyph, color) in cases {
+    let look = |state, gate_open, animating| theme::TaskLook {
+        state,
+        gate_open,
+        held: false,
+        paused: false,
+        animating,
+        needs_you: state == TaskState::Blocked,
+    };
+    for (state, glyph, role) in cases {
         assert_eq!(
-            theme::task_glyph(state, false, false, 0),
-            glyph,
+            theme::task_look(look(state, false, false), 0, false),
+            (glyph, role),
             "{state:?}"
         );
         assert_eq!(
-            theme::task_glyph(state, true, true, 0),
+            theme::task_look(look(state, true, true), 0, false).0,
             "○",
             "{state:?} at the gate"
         );
-        assert_eq!(theme::task_color(state), color, "{state:?}");
     }
     assert_eq!(
-        theme::task_glyph(TaskState::Working, false, true, 12),
+        theme::task_look(look(TaskState::Working, false, true), 12, false).0,
         theme::SPINNER[2]
     );
     // Only `working` animates.
-    assert_eq!(theme::task_glyph(TaskState::Preparing, false, true, 1), "●");
+    assert_eq!(
+        theme::task_look(look(TaskState::Preparing, false, true), 1, false).0,
+        "●"
+    );
 }
 
 /// Every task glyph is one column, like every status glyph (Risks 5).
@@ -562,8 +568,19 @@ fn task_glyphs_are_one_column() {
         TaskState::Blocked,
         TaskState::Cancelled,
     ] {
-        let glyph = theme::task_glyph(state, false, false, 0);
+        let look = theme::TaskLook {
+            state,
+            gate_open: false,
+            held: false,
+            paused: false,
+            animating: false,
+            needs_you: false,
+        };
+        let glyph = theme::task_look(look, 0, false).0;
         assert_eq!(UnicodeWidthStr::width(glyph), 1, "{glyph}");
     }
-    assert_eq!(UnicodeWidthStr::width(theme::RUN_GLYPH), 1);
+    assert_eq!(
+        UnicodeWidthStr::width(theme::glyph(theme::Glyph::Run, false)),
+        1
+    );
 }

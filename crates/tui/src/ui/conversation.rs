@@ -5,19 +5,17 @@
 
 pub mod diff;
 
-use crate::app::App;
+use crate::app::{App, region::KeyRegion};
 use crate::conversation::{DetailKind, Row, SUBAGENT_FOOTER, TEXT_INDENT, clean};
 use crate::conversation_label::user_turn_label;
-use crate::theme;
+use crate::theme::{self, Role::*, role};
 use crate::ui::badge::Badge;
-use proto::{Block as ConvBlock, DropCause, Role, Status, ToolState, Turn};
+use proto::{Block as ConvBlock, DropCause, Role, ToolState, Turn};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::symbols::border;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType};
 use std::collections::HashMap;
 
 /// Where rows other than prose start, in columns from the interior's left edge.
@@ -28,8 +26,6 @@ const DETAIL_INDENT: u16 = 6;
 /// The view's own glyphs, unicode or ASCII (decision A5 switches both together with the
 /// badges, so a screen is never half one and half the other).
 struct Glyphs {
-    /// Review M4: `None` draws the rounded unicode border.
-    border: Option<border::Set<'static>>,
     /// Between the window's name and its model, and a spawn's kind and label.
     sep: &'static str,
     /// Whether `punct` folds the unicode punctuation in the view's own text and the
@@ -46,44 +42,28 @@ struct Glyphs {
     denied: &'static str,
 }
 
-const UNICODE: Glyphs = Glyphs {
-    border: None,
-    sep: "·",
-    ascii: false,
-    folded: "▸",
-    unfolded: "▾",
-    spawn: "⟐",
-    warn: "⚠",
-    more: "⋯",
-    crumb: " › ",
-    ok: "✓",
-    failed: "✕",
-    denied: "⊘",
-};
+/// The view's glyphs, the theme's where they mean the same (final fix wave M5): fold
+/// marks, the warning, the tool verdicts. `spawn` and `more` are the view's own
+/// (decision 3's conversation glyphs).
+const fn glyphs(ascii: bool) -> Glyphs {
+    use theme::{Glyph as G, glyph as g};
+    Glyphs {
+        sep: if ascii { "-" } else { "·" },
+        ascii,
+        folded: g(G::Collapsed, ascii),
+        unfolded: g(G::Expanded, ascii),
+        spawn: if ascii { "*" } else { "⟐" },
+        warn: g(G::Warning, ascii),
+        more: if ascii { "..." } else { "⋯" },
+        crumb: if ascii { " > " } else { " › " },
+        ok: g(G::Passed, ascii),
+        failed: g(G::Failed, ascii),
+        denied: g(G::Blocked, ascii),
+    }
+}
 
-const ASCII: Glyphs = Glyphs {
-    border: Some(border::Set {
-        top_left: "+",
-        top_right: "+",
-        bottom_left: "+",
-        bottom_right: "+",
-        vertical_left: "|",
-        vertical_right: "|",
-        horizontal_top: "-",
-        horizontal_bottom: "-",
-    }),
-    sep: "-",
-    ascii: true,
-    folded: ">",
-    unfolded: "v",
-    spawn: "*",
-    warn: "!",
-    more: "...",
-    crumb: " > ",
-    ok: "ok",
-    failed: "x",
-    denied: "-",
-};
+const UNICODE: Glyphs = glyphs(false);
+const ASCII: Glyphs = glyphs(true);
 
 impl Glyphs {
     /// Review M4: in ASCII mode, the punctuation the view's own footers and the daemon's
@@ -117,6 +97,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     };
     let window = app.windows.iter().find(|w| w.id == window_id);
     let conversation = view.conversation();
+    let p = app.palette();
     // A sub-agent runs inside its parent's window, so the window's runtime is the badge
     // for every level of the trail.
     let runtime = window
@@ -133,27 +114,20 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         place.push_str(&clean(&crumb.label));
     }
     let mut title = vec![
-        Span::raw(" "),
         Span::styled(badge.text.clone(), Style::default().fg(badge.color)),
         Span::raw(" "),
-        Span::styled(place, theme::title(app.settings.accent)),
+        Span::raw(place),
     ];
     if let Some(model) = window.and_then(|w| w.model.as_deref()) {
         title.push(Span::raw(format!(" {} {}", glyphs.sep, clean(model))));
     }
-    title.push(Span::raw(" "));
-    let mut block = Block::bordered()
-        .border_style(theme::border_focused(app.settings.accent))
-        .title(Line::from(title));
-    block = match glyphs.border {
-        Some(set) => block.border_set(set),
-        None => block.border_type(BorderType::Rounded),
-    };
-    if let Some(rev) = view.rev() {
-        block = block.title(Line::from(format!(" rev {rev} ")).right_aligned());
-    }
+    let keys_here = app.key_region() == KeyRegion::Conversation;
+    // Milestone 9.0.7 decision 30: no ` rev N `; the revision is the daemon's, not the user's.
+    let mut block = super::kit::pane_frame(Line::from(title), keys_here, app.palette());
     if let Some(search) = view.search().filter(|s| s.typing) {
-        block = block.title_bottom(Line::from(format!(" /{} ", search.query)).centered());
+        // Final fix wave M7: muted, as every right or bottom title.
+        let query = format!(" /{} ", crate::safe_text::one_line(&search.query));
+        block = block.title_bottom(Line::styled(query, role(Muted, app.palette())).centered());
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -162,7 +136,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     }
     let buf = frame.buffer_mut();
     let Some(conversation) = conversation else {
-        let waiting = Line::styled("  waiting for the conversation", theme::muted());
+        let waiting = Line::styled("  waiting for the conversation", role(Muted, p));
         buf.set_line(inner.x, inner.y, &waiting, inner.width);
         return;
     };
@@ -211,6 +185,10 @@ fn draw_rows(buf: &mut Buffer, inner: Rect, ctx: &Ctx, rows: &[Row], selected: O
         draw_line(buf, area, indent, left, right);
         if selected == Some(index) {
             buf.set_style(area, Modifier::REVERSED);
+            // Final fix wave M3: the bar on the frame's left border, beside the row.
+            let x = inner.x.saturating_sub(1);
+            let keys_here = ctx.app.key_region() == KeyRegion::Conversation;
+            super::kit::selection_bar(buf, x, area.y, keys_here, ctx.app.palette());
         }
     }
 }
@@ -237,7 +215,8 @@ type Spans = Vec<Span<'static>>;
 /// A row's indent, left spans and right spans.
 fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
     let g = ctx.glyphs;
-    let attention = Style::default().fg(theme::status_color(Status::Attention));
+    let p = ctx.app.palette();
+    let (attention, muted) = (role(Attention, p), role(Muted, p));
     match row {
         Row::Dropped { count, cause } => {
             let key = match cause {
@@ -245,7 +224,7 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
                 DropCause::Bytes => "conversation.max_bytes",
             };
             let text = format!("{} {count} earlier turns dropped ({key})", g.more);
-            (ROW_INDENT, vec![Span::styled(text, theme::muted())], vec![])
+            (ROW_INDENT, vec![Span::styled(text, muted)], vec![])
         }
         Row::TurnHeader {
             role,
@@ -263,11 +242,13 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
                 Role::System => vec![Span::styled("system", bold)],
             };
             let time = clock(*at_unix_secs, ctx.app.utc_offset_secs);
-            (ROW_INDENT, left, vec![Span::styled(time, theme::muted())])
+            (ROW_INDENT, left, vec![Span::styled(time, muted)])
         }
         Row::Text { line, text, .. } => {
             if user_turn && *line == 0 {
-                let spans = vec![Span::raw(format!("{} ", g.folded)), Span::raw(text.clone())];
+                // Decision 30: the sequence separator `›`; `▸` means collapsed only.
+                let lead = theme::glyph(theme::Glyph::Separator, g.ascii);
+                let spans = vec![Span::raw(format!("{lead} ")), Span::raw(text.clone())];
                 return (TEXT_INDENT as u16 - 2, spans, vec![]);
             }
             (TEXT_INDENT as u16, vec![Span::raw(text.clone())], vec![])
@@ -275,7 +256,11 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
         Row::Tool { turn_id, block } => tool_spans(ctx, *turn_id, *block),
         Row::ToolDetail {
             text, kind, number, ..
-        } => (DETAIL_INDENT, detail_spans(g, text, *kind, *number), vec![]),
+        } => (
+            DETAIL_INDENT,
+            detail_spans(ctx, text, *kind, *number),
+            vec![],
+        ),
         Row::Spawn { turn_id, block, .. } => {
             let Some(ConvBlock::SubagentSpawn {
                 kind, label, model, ..
@@ -354,40 +339,43 @@ fn tool_spans(ctx: &Ctx, turn_id: u64, block: usize) -> (u16, Spans, Spans) {
         Span::styled(clean(name), Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(format!("  {}", g.punct(&clean(summary)))),
     ];
-    let (glyph, color) = match state {
-        ToolState::Pending => (
-            theme::SPINNER[ctx.app.spinner_frame % theme::SPINNER.len()],
-            theme::status_color(Status::Working),
-        ),
-        ToolState::Ok => (g.ok, theme::status_color(Status::Done)),
-        ToolState::Failed => (g.failed, Color::Red),
-        ToolState::Denied => (g.denied, theme::status_color(Status::Attention)),
+    let (glyph, r) = match state {
+        ToolState::Pending => (theme::spinner(ctx.app.spinner_frame, g.ascii), Working),
+        ToolState::Ok => (g.ok, Done),
+        ToolState::Failed => (g.failed, Failed),
+        // A denied call is history, not a request (milestone 9.0.7 ruling).
+        ToolState::Denied => (g.denied, Muted),
     };
-    let mut right = vec![Span::styled(glyph, Style::default().fg(color))];
-    if let Some(ms) = duration_ms {
-        right.push(Span::raw(format!(" {:.1}s", *ms as f64 / 1000.0)));
+    let mut right = vec![Span::styled(glyph, role(r, ctx.app.palette()))];
+    // Decision 30: a duration that would read `0.0s` (under 50 ms) says nothing.
+    if let Some(ms) = duration_ms.filter(|ms| *ms >= 50) {
+        right.push(Span::raw(format!(" {:.1}s", f64::from(ms) / 1000.0)));
     }
     (TEXT_INDENT as u16, left, right)
 }
 
 /// A diff line under a dimmed number column, tinted by its sign; anything else muted.
-fn detail_spans(g: &Glyphs, text: &str, kind: DetailKind, number: Option<usize>) -> Spans {
-    let tinted = |sign: &str, color: Color| {
+fn detail_spans(ctx: &Ctx, text: &str, kind: DetailKind, number: Option<usize>) -> Spans {
+    let p = ctx.app.palette();
+    let muted = role(Muted, p);
+    let tinted = |sign: &str, style: Style| {
         let number = number
             .map(|n| format!("{n:>3}"))
             .unwrap_or_else(|| "   ".into());
         vec![
-            Span::styled(number, theme::muted()),
+            Span::styled(number, muted),
             Span::raw("  "),
-            Span::styled(format!("{sign}{text}"), Style::default().fg(color)),
+            Span::styled(format!("{sign}{text}"), style),
         ]
     };
     match kind {
-        DetailKind::Removed => tinted("-", Color::Red),
-        DetailKind::Added => tinted("+", Color::Green),
-        DetailKind::Context => tinted(" ", Color::Reset),
-        DetailKind::Plain => vec![Span::styled(text.to_owned(), theme::muted())],
-        DetailKind::Truncated => vec![Span::styled(format!("{} {text}", g.more), theme::muted())],
+        DetailKind::Removed => tinted("-", role(Failed, p)),
+        DetailKind::Added => tinted("+", role(Done, p)),
+        DetailKind::Context => tinted(" ", Style::default()),
+        DetailKind::Plain => vec![Span::styled(text.to_owned(), muted)],
+        DetailKind::Truncated => {
+            vec![Span::styled(format!("{} {text}", ctx.glyphs.more), muted)]
+        }
     }
 }
 

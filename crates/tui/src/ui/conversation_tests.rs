@@ -28,7 +28,7 @@ const WINDOW: u32 = 7;
 const OLD: &str = "fn parse_all(src: &str) {";
 const NEW: &str = "fn parse_all(src: &str) -> Result<Ast> {";
 /// Every glyph ASCII mode must replace.
-const UNICODE_GLYPHS: [&str; 9] = ["▸", "▾", "⟐", "⚠", "⋯", "›", "✓", "✕", "⊘"];
+const UNICODE_GLYPHS: [&str; 9] = ["▸", "▾", "⟐", "⚠", "⋯", "›", "✓", "✗", "⊘"];
 
 fn window(runtime: Runtime) -> WindowInfo {
     WindowInfo {
@@ -281,7 +281,7 @@ fn a_folded_tool_call_is_one_line_with_its_state_and_duration() {
     assert!(grep.contains("▸ Grep  \"parse_\" → 34 matches"), "{grep}");
     assert!(grep.contains("✓ 0.3s"), "{grep}");
     let bash = rows.iter().find(|r| r.contains("Bash")).unwrap();
-    assert!(bash.contains("✕ 2.5s"), "{bash}");
+    assert!(bash.contains("✗ 2.5s"), "{bash}");
     let out = text_of(&buf);
     assert!(!out.contains("parse_needle"), "the input leaked:\n{out}");
     assert!(!out.contains("\"pattern\""), "the input leaked:\n{out}");
@@ -367,14 +367,15 @@ fn the_breadcrumb_shows_where_you_are() {
     );
     let title = row_text(&draw(&app, 80, 24), 0);
     assert!(title.contains("orchestrator · claude-opus-5"), "{title}");
-    assert!(title.contains("rev 214"), "{title}");
+    // Milestone 9.0.7 decision 30: no ` rev N `.
+    assert!(!title.contains("rev 214"), "{title}");
     assert!(!title.contains('›'), "{title}");
 
     descend_twice(&mut app);
     let buf = draw(&app, 80, 24);
     let title = row_text(&buf, 0);
     assert!(title.contains("orchestrator › Explore › Review"), "{title}");
-    assert!(title.contains("rev 52"), "{title}");
+    assert!(!title.contains("rev 52"), "{title}");
     assert!(text_of(&buf).contains("reviewing the split"));
 }
 
@@ -500,7 +501,8 @@ fn a_narrow_terminal_still_renders() {
             "{w}x{h}: {bottom}"
         );
         for y in 1..h - 1 {
-            assert_eq!(buf[(0, y)].symbol(), "│");
+            // The selected row's left border is the selection bar (final fix wave M3).
+            assert!(matches!(buf[(0, y)].symbol(), "│" | "▌"), "{w}x{h} row {y}");
             assert_eq!(buf[(w - 1, y)].symbol(), "│");
         }
     }
@@ -525,8 +527,9 @@ fn the_turn_header_shows_the_role_and_local_time() {
         assistant.trim_end_matches(['│', ' ']).ends_with("09:43"),
         "{assistant}"
     );
+    // Milestone 9.0.7 decision 30: a user turn leads with `›`, not the collapsed `▸`.
     assert!(
-        out.contains("▸ refactor the parser into its own module"),
+        out.contains("› refactor the parser into its own module"),
         "{out}"
     );
 
@@ -550,3 +553,6 @@ mod wrap;
 
 #[path = "conversation_tests/label.rs"]
 mod label;
+
+#[path = "conversation_tests/polish.rs"]
+mod polish;

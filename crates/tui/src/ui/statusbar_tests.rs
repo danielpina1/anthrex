@@ -238,16 +238,17 @@ fn no_segment_without_a_focused_worktree() {
 
 #[test]
 fn hints_drop_from_the_right_one_at_a_time() {
-    // Decision 20 drops key hints from the right *one at a time*. The other render
-    // tests only ever hit the ends of that range — no git segment at all, or a budget
-    // so tight that all five hints are gone at once — so this pins an intermediate
-    // width, where the first three hints survive and the last two do not.
+    // Decision 20 drops key hints *one at a time*. The other render tests only ever
+    // hit the ends of that range — no git segment at all, or a budget so tight that
+    // all five hints are gone at once — so this pins an intermediate width, where
+    // three hints survive and two do not. Milestone 9.0.7 decision 33: they drop by
+    // priority (help 9, detach 8, new shell 7, tree 6, switch 5), not from the right.
     let mut app = App::new(
         vec![window(1, Some("/repo".into()))],
         "/tmp".into(),
         UiSettings::default(),
     );
-    app.set_terminal_size(50, 24);
+    app.set_terminal_size(52, 24);
     let mut state = clean_state();
     state.dirty = 3;
     app.on_daemon(proto::DaemonMsg::Git {
@@ -255,19 +256,19 @@ fn hints_drop_from_the_right_one_at_a_time() {
         state: Some(state),
     });
 
-    let text = row_text(&render_row(&app, 50));
+    let text = row_text(&render_row(&app, 52));
 
     assert!(
         text.contains("main ●3"),
         "the git segment must survive whole while hints are still being dropped: {text:?}"
     );
-    for kept in ["C-b ?", "C-b c", "C-b t"] {
+    for kept in ["C-b ?", "C-b c", "C-b d"] {
         assert!(
             text.contains(kept),
             "hint {kept:?} still fits and must be rendered: {text:?}"
         );
     }
-    for dropped in ["C-b j/k", "C-b d"] {
+    for dropped in ["C-b j/k", "C-b t"] {
         assert!(
             !text.contains(dropped),
             "hint {dropped:?} does not fit and must be dropped: {text:?}"
@@ -367,7 +368,8 @@ fn statusbar_shows_the_run_view_hints() {
     let text = row_text(&render_row(&gate, 160));
     assert!(
         text.contains(
-            "a approve  x reject  e edit  d remove  p review  ⏎ open  f filter: all  esc back"
+            "a approve  x reject  e edit  d remove  p review  ⏎ open  . actions  f filter: all  \
+             esc back"
         ),
         "{text:?}"
     );
@@ -378,10 +380,16 @@ fn statusbar_shows_the_run_view_hints() {
         crossterm::event::KeyCode::Char('f'),
         crossterm::event::KeyModifiers::NONE,
     ));
+    // Final fix wave M1: `PgDn panel` only with a task's panel shown.
+    running.tree.selected = Some(crate::tree::NodeKey::Task {
+        run: crate::tree::run_fixtures::RUN_ID.into(),
+        id: "t1".into(),
+    });
     let text = row_text(&render_row(&running, 160));
     assert!(
         text.contains(
-            "j/k move  h/l tier  ⏎ open  space fold  f filter: running  / find  esc back"
+            "j/k move  h/l tier  ⏎ open  . actions  PgDn panel  space fold  f filter: running  \
+             / find  esc back"
         ),
         "{text:?}"
     );
@@ -393,6 +401,11 @@ fn statusbar_shows_the_run_view_hints() {
         })
         .unwrap();
     let screen = terminal.backend().to_string();
-    assert!(screen.contains(" run add-reset-3f9a "), "{screen}");
+    // Milestone 9.0.7 decision 21: the run's name, and its progress on the right.
+    assert!(
+        screen.contains(" run · Add password reset · 3f9a "),
+        "{screen}"
+    );
+    assert!(screen.contains(" 1/3 merged · 10m "), "{screen}");
     assert!(!screen.contains(" tree overview "), "{screen}");
 }

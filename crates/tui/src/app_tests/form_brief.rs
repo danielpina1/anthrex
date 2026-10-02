@@ -152,3 +152,70 @@ fn a_lost_link_fails_the_brief_and_a_reconnect_asks_again() {
     );
     assert!(matches!(form(&app), ActionForm::Answer(_)));
 }
+
+/// Decision 37: the brief fails only on the form's own request's expiry. Opened, closed
+/// and opened again, the form waits on its second brief: the first one's expiry leaves
+/// it `loading…`, and the second's reply fills it.
+#[test]
+fn an_older_briefs_expiry_leaves_the_newer_loading() {
+    let mut app = forms_app(false);
+    let first = answer_open(&mut app);
+    tap(&mut app, KeyCode::Esc);
+    tap(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, None, "closed");
+    let second = answer_open(&mut app);
+    assert_ne!(first, second);
+    assert_eq!(answer_form(&app).brief, Brief::Loading);
+    app.set_reply_sent_at(first, Instant::now() - Duration::from_secs(31));
+    app.on_tick();
+    assert!(!app.replies.contains(first), "the first expired");
+    assert!(app.replies.contains(second), "the second is still out");
+    assert_eq!(answer_form(&app).brief, Brief::Loading);
+    assert!(drawn(&app).contains("loading…"), "{}", drawn(&app));
+    assert_eq!(
+        app.toast_text(),
+        None,
+        "the closed first form's expired brief request toasts nothing"
+    );
+    app.on_run_reply(detail("second brief", second));
+    assert_eq!(
+        answer_form(&app).brief,
+        Brief::Ready(vec!["second brief".into()])
+    );
+}
+
+/// Decision 37: an answer form opened while disconnected says `not connected` at once
+/// (no request went out), and a reconnect asks for the brief and fills it. The menu's
+/// Enter refuses while disconnected (`not connected`), so the form is opened here the
+/// way the menu opens it, on a link lost while the menu was up.
+#[test]
+fn a_form_opened_disconnected_says_not_connected() {
+    let mut app = forms_app(false);
+    open(&mut app, task_t1(), ActionKind::Answer);
+    app.on_link_lost("gone");
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
+    assert_eq!(app.toast_text(), Some("not connected"), "the menu refuses");
+    let Some(Modal::Action(mut flow)) = app.modal.take() else {
+        panic!("the menu closed");
+    };
+    let info = flow.items[flow.selected].clone();
+    let proto::ActionNeeds::Input(kind) = info.needs else {
+        panic!("{info:?}");
+    };
+    let effects = app.open_form(&mut flow, info, kind);
+    assert!(effects.is_empty(), "{effects:?}");
+    app.modal = Some(Modal::Action(flow));
+    assert_eq!(
+        answer_form(&app).brief,
+        Brief::Failed("not connected".into())
+    );
+    assert!(drawn(&app).contains("not connected"), "{}", drawn(&app));
+    let windows = app.windows.clone();
+    let effects: Vec<Effect> = (app.on_reconnected(windows).into_iter())
+        .filter(|e| matches!(e, Effect::Send(ClientMsg::RunTagged { request, .. }) if *request == brief_request()))
+        .collect();
+    let id = sent_tagged_id(&effects, |r| *r == brief_request());
+    assert_eq!(answer_form(&app).brief, Brief::Loading);
+    app.on_run_reply(detail("filled", id));
+    assert_eq!(answer_form(&app).brief, Brief::Ready(vec!["filled".into()]));
+}

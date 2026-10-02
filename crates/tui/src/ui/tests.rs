@@ -64,7 +64,7 @@ fn sidebar_renders_the_example_tree_at_the_default_width() {
     let (out, _) = render(&app, 120, 30);
     assert!(out.contains(" agents "), "{out}");
     for golden in [
-        "▾ shop            ◆  cl 4 · cx 3",
+        "▾ shop            ⚑  cl 4 · cx 3",
         "├─▎ ⠋ 1 api-worker   cl opus  2m",
         "│ ├─⠋ Explore: map routes   Read",
         "▾ blog                   ○  cl 1",
@@ -72,7 +72,7 @@ fn sidebar_renders_the_example_tree_at_the_default_width() {
         assert!(out.contains(golden), "{golden:?}\n{out}");
     }
     assert!(out.contains("│ └─✓ tests: run unit suite"), "{out}");
-    assert!(out.contains(" ◆ 2 billing"), "{out}");
+    assert!(out.contains(" ⚑ 2 billing"), "{out}");
     assert!(out.contains("8 agents · 2 working"), "{out}");
 }
 
@@ -87,11 +87,11 @@ fn a_sub_agent_asking_for_permission_shows_a_diamond() {
         })
         .unwrap();
     let out = terminal.backend().to_string();
-    assert!(out.contains("│ ├─◆ Explore: map routes"), "{out}");
+    assert!(out.contains("│ ├─⚑ Explore: map routes"), "{out}");
     assert!(out.contains("│ └─✓ tests: run unit suite"), "{out}");
     assert_eq!(
         terminal.backend().buffer()[(5, 3)].fg,
-        crate::theme::status_color(Status::Attention)
+        crate::theme::fg(crate::theme::Role::Attention)
     );
     app.windows[0].subagents[0].needs_permission = false;
     let (out, _) = render(&app, 120, 30);
@@ -148,7 +148,7 @@ fn main_title_of_a_worktree_window_names_project_and_branch() {
     let mut app = App::new(vec![plain], "/tmp".into(), UiSettings::default());
     let _ = app.set_terminal_size(80, 24);
     let (out, _) = render(&app, 100, 20);
-    assert!(out.contains(" plain · shell · "), "{out}");
+    assert!(out.contains(" sh plain · /tmp/repo "), "{out}");
     assert!(!out.contains("worktree"), "{out}");
 }
 
@@ -160,7 +160,7 @@ fn help_lists_new_agent() {
         UiSettings::default(),
     );
     let _ = app.set_terminal_size(80, 24);
-    app.modal = Some(Modal::Help);
+    app.modal = Some(Modal::Help(Default::default()));
     let (out, _) = render(&app, 100, 30);
     assert!(out.contains("C-b c"), "{out}");
     assert!(out.contains("new agent"), "{out}");
@@ -242,8 +242,8 @@ fn rename_modal_renders() {
     let (out, _) = render(&app, 100, 20);
     assert!(out.contains(" rename "), "{out}");
     assert!(out.contains("api-worker█"), "{out}");
-    assert!(out.contains("Enter = rename"), "{out}");
-    assert!(out.contains("Esc = cancel"), "{out}");
+    assert!(out.contains("⏎ rename"), "{out}");
+    assert!(out.contains("esc cancel"), "{out}");
 
     if let Some(Modal::Rename(prompt)) = &mut app.modal {
         prompt.error = Some("a window named 'api' exists".to_string());
@@ -267,11 +267,11 @@ fn modals_render_on_top() {
     let (out, _) = render(&app, 100, 20);
     assert!(out.contains("Kill 'a'?"));
     assert!(out.contains("y kill · esc back"));
-    app.modal = Some(Modal::Help);
+    app.modal = Some(Modal::Help(Default::default()));
     let (out, _) = render(&app, 100, 24);
-    assert!(out.contains("send a literal C-b"));
-    assert!(out.contains("tree mode"));
+    assert!(out.contains("C-b t        tree "), "{out}");
     assert!(out.contains("sidebar width"));
+    assert!(out.contains("↓ 76 more"), "send a literal: a scroll away");
 }
 
 /// Task M6.9 decision 38: every piece of help or hint text takes the prefix from
@@ -298,7 +298,7 @@ fn help_and_hints_use_the_configured_prefix() {
     );
     let _ = app.set_terminal_size(80, 24);
 
-    app.modal = Some(Modal::Help);
+    app.modal = Some(Modal::Help(Default::default()));
     let (out, _) = render(&app, 100, 30);
     assert!(out.contains("C-a c"), "{out}");
     assert!(out.contains("send a literal C-a"), "{out}");
@@ -317,13 +317,13 @@ fn help_and_hints_use_the_configured_prefix() {
     assert!(!out.contains("C-b"), "{out}");
 }
 
-/// Task M6.9: `app.settings.accent` colours the focused main pane's border, not the
-/// built-in `theme::DEFAULT_ACCENT`.
+/// Task M6.9: under truecolor, `app.settings.accent` colours the focused pane's border.
 #[test]
 fn accent_colours_the_focused_border() {
     let accent = ratatui::style::Color::Rgb(0x11, 0x22, 0x33);
     let settings = UiSettings {
         accent,
+        truecolor: true,
         ..UiSettings::default()
     };
     let mut app = App::new(
@@ -372,7 +372,7 @@ fn layout_uses_the_sidebar_width() {
     let l = layout(Rect::new(0, 0, 120, 40), 34, 0);
     assert_eq!(l.sidebar.width, 34);
     assert_eq!(l.main.x, 34);
-    assert_eq!(l.sidebar_list, Rect::new(1, 1, 32, 32));
+    assert_eq!(l.sidebar_list, Rect::new(1, 1, 32, 33));
     assert_eq!(l.sidebar_footer, Rect::new(1, 34, 32, 1));
     assert_eq!(l.statusbar, Rect::new(0, 39, 120, 1));
     let hidden = layout(Rect::new(0, 0, 120, 40), 0, 0);
@@ -399,7 +399,7 @@ fn hit_test_uses_the_render_geometry() {
     let mut l = None;
     terminal.draw(|f| l = Some(draw(f, &app))).unwrap();
     let l = l.unwrap();
-    assert_eq!(l.sidebar_list.height, 10);
+    assert_eq!(l.sidebar_list.height, 11);
     let g = tree_view::geometry(l.sidebar_list, app.rows().len(), app.tree.sidebar.top);
     for (offset, expected) in [
         "tests: run unit suite",
@@ -412,6 +412,7 @@ fn hit_test_uses_the_render_geometry() {
         "5 docs",
         "6 infra",
         "7 perf",
+        "▾ blog",
     ]
     .iter()
     .enumerate()
@@ -424,7 +425,7 @@ fn hit_test_uses_the_render_geometry() {
             "{text:?} should contain {expected:?}"
         );
     }
-    for (x, y) in [(0, 1), (33, 1), (1, 0), (1, 11), (1, 12), (1, 13)] {
+    for (x, y) in [(0, 1), (33, 1), (1, 0), (1, 12), (1, 13), (1, 14)] {
         assert_eq!(g.index_at(x, y), None, "outside list ({x},{y})");
     }
     let short = tree_view::geometry(Rect::new(2, 3, 10, 8), 2, 99);
@@ -466,22 +467,20 @@ fn sidebar_scrolls_to_keep_the_focused_window_visible() {
     let (out, _) = render(&app, 120, 17);
     assert!(out.contains("20 shell-20"), "{out}");
     assert!(!out.contains(" 1 shell-1 "), "{out}");
-    assert_eq!(app.tree.sidebar.top, 12);
+    assert_eq!(app.tree.sidebar.top, 11);
     // Same-size draws must preserve wheel scrolling, not snap back to the anchor.
     app.on_scroll(true, 2, 2, &l);
     app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
-    assert_eq!(app.tree.sidebar.top, 9);
-    // Nor may a window list that changes nothing the view depends on: the
-    // daemon republishes one on every status flip and every output event.
+    assert_eq!(app.tree.sidebar.top, 8);
+    // Nor may an unchanged window list (the daemon republishes one on every event).
     let windows = app.windows.clone();
     app.on_daemon(proto::DaemonMsg::WindowsChanged { windows });
-    assert_eq!(app.tree.sidebar.top, 9);
-    // A list that really changed reveals the anchor again: with window 1
-    // gone the focused window 20 is row 19 of 20, and nine rows of list
-    // put its top at 11.
+    assert_eq!(app.tree.sidebar.top, 8);
+    // A list that really changed reveals the anchor again: without window 1, window
+    // 20 is row 19 of 20, and ten rows of list put its top at 10.
     let windows = app.windows[1..].to_vec();
     app.on_daemon(proto::DaemonMsg::WindowsChanged { windows });
-    assert_eq!(app.tree.sidebar.top, 11);
+    assert_eq!(app.tree.sidebar.top, 10);
 }
 
 #[test]
@@ -500,8 +499,9 @@ fn wheel_over_the_sidebar_scrolls_the_tree() {
             bytes: b"\x1b[<65;1;1M".to_vec()
         })]
     );
+    assert!(app.on_scroll(false, 2, 7, &l).is_empty()); // the former spacer row: the list's
     assert!(app.on_scroll(false, 2, l.sidebar_footer.y, &l).is_empty());
-    assert_eq!(app.tree.sidebar.top, 3);
+    assert_eq!(app.tree.sidebar.top, 6);
 }
 
 #[test]
@@ -537,7 +537,7 @@ fn a_click_on_a_row_focuses_toggles_or_focuses_the_parent() {
     assert_eq!(app.tree.sidebar.top, 0);
     assert!(app.on_click(0, 6, &l).is_empty());
     assert!(app.on_click(2, l.sidebar_footer.y, &l).is_empty());
-    app.modal = Some(Modal::Help);
+    app.modal = Some(Modal::Help(Default::default()));
     assert!(app.on_click(2, 6, &l).is_empty());
     assert_eq!(app.focused, Some(8));
 }
@@ -588,7 +588,7 @@ fn the_conversation_view_takes_the_main_area() {
     let (out, _) = render(&app, 120, 30);
     assert!(out.contains("waiting for the conversation"), "{out}");
 
-    app.modal = Some(Modal::Help);
+    app.modal = Some(Modal::Help(Default::default()));
     let (out, _) = render(&app, 120, 40);
     let line = out
         .lines()

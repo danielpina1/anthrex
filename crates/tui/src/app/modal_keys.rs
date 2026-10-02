@@ -128,8 +128,9 @@ impl App {
             return vec![];
         };
         match modal {
-            // Any key closes the help overlay or the config notice; nothing to restore.
-            Modal::Help | Modal::Notice { .. } => vec![],
+            // Any key closes the config notice; the help keeps its own keys (decision 34).
+            Modal::Notice { .. } => vec![],
+            Modal::Help(view) => self.on_help_key(view, key),
             Modal::Confirm { message, action } => match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => self.perform(action),
                 KeyCode::Enter if !action.destructive() => self.perform(action),

@@ -201,7 +201,7 @@ fn overview_clicks_ignore_modals_borders_and_the_sidebar_stays_live() {
     // guard load-bearing.
     assert!(app.on_click(x, y, &layout).is_empty());
     let selected = app.tree.selected.clone();
-    app.modal = Some(Modal::Help);
+    app.modal = Some(Modal::Help(Default::default()));
     assert!(app.on_click(x, y, &layout).is_empty());
     assert!(app.on_drag(x - 8, y - 5, &layout).is_empty());
     assert!(app.on_scroll(false, x, y, &layout).is_empty());

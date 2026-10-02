@@ -35,7 +35,7 @@ fn unfolding_an_edit_shows_a_tinted_diff() {
         .collect::<String>();
     assert!(number.trim_start_matches('│').trim() == "1", "{number:?}");
     let digit = number.chars().position(|c| c == '1').unwrap() as u16;
-    assert_eq!(buf[(digit, y)].fg, theme::DIM);
+    assert_eq!(buf[(digit, y)].fg, theme::fg(theme::Role::Muted));
 
     let added = format!("+{NEW}");
     let (x, y2) = find(&buf, &added).unwrap_or_else(|| panic!("no added row:\n{out}"));
@@ -45,7 +45,7 @@ fn unfolding_an_edit_shows_a_tinted_diff() {
     // The result still follows the diff, muted.
     let (x, y3) = find(&buf, "edited the parser").unwrap();
     assert_eq!(y3, y2 + 1);
-    assert_eq!(buf[(x, y3)].fg, theme::DIM);
+    assert_eq!(buf[(x, y3)].fg, theme::fg(theme::Role::Muted));
     assert!(
         !out.contains("\"old_string\""),
         "the JSON was drawn instead:\n{out}"
@@ -66,10 +66,10 @@ fn unfolding_a_non_edit_shows_input_and_result() {
     let out = text_of(&buf);
     assert!(out.contains("▾ Bash  cargo test -p parse"), "{out}");
     let (x, y) = find(&buf, "cargo test -p parse_bash_cmd").unwrap_or_else(|| panic!("{out}"));
-    assert_eq!(buf[(x, y)].fg, theme::DIM);
+    assert_eq!(buf[(x, y)].fg, theme::fg(theme::Role::Muted));
     let (x, y2) = find(&buf, "412 passed, 3 failed").unwrap_or_else(|| panic!("{out}"));
     assert!(y2 > y);
-    assert_eq!(buf[(x, y2)].fg, theme::DIM);
+    assert_eq!(buf[(x, y2)].fg, theme::fg(theme::Role::Muted));
     assert!(out.contains("failures: parse::nested"), "{out}");
     // Only the Bash call unfolded.
     assert!(!out.contains("parse_needle"), "{out}");
@@ -87,13 +87,10 @@ fn the_dropped_and_degraded_rows_say_which_key_and_why() {
     let dropped = "⋯ 12 earlier turns dropped (conversation.max_turns)";
     let (x, y) = find(&buf, dropped).unwrap_or_else(|| panic!("{out}"));
     assert_eq!(y, 1, "the dropped row is first");
-    assert_eq!(buf[(x, y)].fg, theme::DIM);
+    assert_eq!(buf[(x, y)].fg, theme::fg(theme::Role::Muted));
     let degraded = "⚠ transcript partly unreadable — timeline only";
     let (x, y) = find(&buf, degraded).unwrap_or_else(|| panic!("{out}"));
-    assert_eq!(
-        buf[(x, y)].fg,
-        theme::status_color(proto::Status::Attention)
-    );
+    assert_eq!(buf[(x, y)].fg, theme::fg(theme::Role::Attention));
     assert!(!out.contains("max_bytes"), "{out}");
 
     conv.dropped_turns = 9;
@@ -145,7 +142,7 @@ fn a_truncated_result_says_so_when_unfolded() {
     let out = text_of(&buf);
     let (x, y) = find(&buf, "⋯ truncated (conversation.max_result_bytes)")
         .unwrap_or_else(|| panic!("{out}"));
-    assert_eq!(buf[(x, y)].fg, theme::DIM);
+    assert_eq!(buf[(x, y)].fg, theme::fg(theme::Role::Muted));
     assert!(
         row_text(&buf, y - 1).contains("failures: parse::nested"),
         "{out}"

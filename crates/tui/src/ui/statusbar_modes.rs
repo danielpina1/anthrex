@@ -1,5 +1,9 @@
 //! Which badge the status bar wears and which hints it lists (milestone 9.0.6
 //! decision 6). Pure: both are read off `&App`; `statusbar.rs` only draws them.
+//!
+//! Milestone 9.0.7 decision 33: every hint carries its priority from the brief's
+//! Interfaces "Hint priorities" table (higher survives longer), and `esc` is never
+//! dropped (`kit::hints`).
 
 use crate::app::screens::Screen;
 use crate::app::{App, ReviewTarget, TreeInput};
@@ -24,13 +28,38 @@ fn hint(key: &str, word: &str, priority: u8) -> Hint {
     }
 }
 
-/// The mode badge, in decision 6's precedence: ` PREFIX ` first, then ` MENU `, then
-/// the screens' (` PROFILE `, ` SETTINGS `, ` STATS `), above ` PLAN `.
+/// `esc back`: `kit::hints` never drops it, so its priority is never compared.
+fn esc_back() -> Hint {
+    hint("esc", "back", u8::MAX)
+}
+
+/// A modal's badge and its one hint (milestone 9.0.7 final fix wave I1, decision 31's
+/// rule for the action menu extended to every modal). A modal takes every key
+/// (`App::on_key`), so nothing of the mode underneath is named: ` HELP ` and
+/// `esc close` over the help, ` MENU ` and `esc back` over the action menu (it draws
+/// its own key line), ` DIALOG ` over every other dialog, `esc close` for the config
+/// notice and `esc back` for the rest (each draws its own keys).
+fn modal_bar(app: &App) -> Option<(&'static str, Hint)> {
+    use crate::app::Modal;
+    let close = || hint("esc", "close", u8::MAX);
+    Some(match app.modal.as_ref()? {
+        Modal::Help(_) => (" HELP ", close()),
+        Modal::Action(_) => (" MENU ", esc_back()),
+        Modal::Notice { .. } => (" DIALOG ", close()),
+        _ => (" DIALOG ", esc_back()),
+    })
+}
+
+/// The mode badge, in decision 6's precedence, a modal's first (it takes the next key,
+/// even with the prefix pending): ` HELP `, ` MENU ` or ` DIALOG `, then ` PREFIX `, then
+/// the screens' (` PROFILE `, ` SETTINGS `, ` STATS `), above ` PLAN `. Milestone 9.0.7
+/// decision 31: the run view wears ` RUN `, the project overview ` OVERVIEW ` and the
+/// sidebar tree ` TREE `.
 pub(super) fn badge(app: &App) -> Option<&'static str> {
-    if app.keymap.pending() {
+    if let Some((badge, _)) = modal_bar(app) {
+        Some(badge)
+    } else if app.keymap.pending() {
         Some(" PREFIX ")
-    } else if matches!(app.modal, Some(crate::app::Modal::Action(_))) {
-        Some(" MENU ")
     } else if matches!(app.screen, Some(Screen::Profile(_))) {
         Some(" PROFILE ")
     } else if matches!(app.screen, Some(Screen::Settings(_))) {
@@ -46,6 +75,7 @@ pub(super) fn badge(app: &App) -> Option<&'static str> {
     } else {
         match app.tree_input {
             Some(TreeInput::Navigate) if app.run_view.is_some() => Some(" RUN "),
+            Some(TreeInput::Navigate) if app.overview => Some(" OVERVIEW "),
             Some(TreeInput::Navigate) => Some(" TREE "),
             Some(TreeInput::Filter) => Some(" FILTER "),
             None => None,
@@ -56,16 +86,19 @@ pub(super) fn badge(app: &App) -> Option<&'static str> {
 /// `true` while a filter is being typed: the bar shows `/text`, not hints.
 pub(super) fn filtering(app: &App) -> bool {
     !app.keymap.pending()
+        && app.modal.is_none()
         && app.screen.is_none()
         && app.plan_review.is_none()
         && app.alerts_focus.is_none()
         && app.tree_input == Some(TreeInput::Filter)
 }
 
-/// The hints to list. The pending prefix wins, then the review, the alerts box, tree
-/// navigation, then the default bar.
+/// The hints to list. A modal's `esc` alone wins (I1), then the pending prefix, the
+/// screens, the review, the Alerts view, tree navigation, then the default bar.
 pub(super) fn body(app: &App) -> Body {
-    let (hints, git) = if app.keymap.pending() {
+    let (hints, git) = if let Some((_, esc)) = modal_bar(app) {
+        (vec![esc], false)
+    } else if app.keymap.pending() {
         let list = [
             ("a", "alerts", 8),
             ("g", "goal", 7),
@@ -98,14 +131,7 @@ pub(super) fn body(app: &App) -> Body {
     } else if app.plan_review.is_some() {
         (review_hints(app), false)
     } else if app.alerts_focus.is_some() {
-        (
-            vec![
-                hint("j/k", "move", 5),
-                hint("⏎", "go", 5),
-                hint("esc", "back", 5),
-            ],
-            false,
-        )
+        (alerts_view_hints(app), false)
     } else if app.tree_input == Some(TreeInput::Navigate) {
         (navigate_hints(app), false)
     } else if app.tree_input.is_some() {
@@ -114,11 +140,11 @@ pub(super) fn body(app: &App) -> Body {
         let p = &app.settings.prefix_label;
         (
             vec![
-                hint(&format!("{p} ?"), "help", 5),
-                hint(&format!("{p} c"), "new shell", 5),
-                hint(&format!("{p} t"), "tree", 5),
+                hint(&format!("{p} ?"), "help", 9),
+                hint(&format!("{p} c"), "new shell", 7),
+                hint(&format!("{p} t"), "tree", 6),
                 hint(&format!("{p} j/k"), "switch", 5),
-                hint(&format!("{p} d"), "detach", 5),
+                hint(&format!("{p} d"), "detach", 8),
             ],
             true,
         )
@@ -135,14 +161,14 @@ pub(super) fn body(app: &App) -> Body {
 /// Interfaces "Status bar and overview title"), the plan gate's while the run awaits
 /// approval.
 fn navigate_hints(app: &App) -> Vec<Hint> {
-    let h = |k: &str, w: &str| hint(k, w, 5);
     let Some(view) = &app.run_view else {
         return vec![
-            h("j/k", "move"),
-            h("⏎", "focus"),
-            h("space", "fold"),
-            h("/", "filter"),
-            h("esc", "back"),
+            hint("j/k", "move", 6),
+            hint("⏎", "focus", 8),
+            hint(".", "actions", 7),
+            hint("space", "fold", 4),
+            hint("/", "filter", 5),
+            esc_back(),
         ];
     };
     let filter = format!("filter: {}", crate::app::filter_label(view.filter));
@@ -152,56 +178,107 @@ fn navigate_hints(app: &App) -> Vec<Hint> {
     let holds = run.is_some_and(|run| crate::tree::awaiting_holds(run).next().is_some());
     if state == Some(proto::RunState::AwaitingApproval) {
         vec![
-            h("a", "approve"),
-            h("x", "reject"),
-            h("e", "edit"),
-            h("d", "remove"),
-            h("p", "review"),
-            h("⏎", "open"),
-            h("f", &filter),
-            h("esc", "back"),
-        ]
-    } else if state == Some(proto::RunState::Planning) {
-        vec![
-            h("s", "submit"),
-            h("j/k", "move"),
-            h("⏎", "open"),
-            h("f", &filter),
-            h("esc", "back"),
+            hint("a", "approve", 9),
+            hint("x", "reject", 9),
+            hint("e", "edit", 6),
+            hint("d", "remove", 5),
+            hint("p", "review", 8),
+            hint("⏎", "open", 4),
+            hint(".", "actions", 7),
+            hint("f", &filter, 3),
+            esc_back(),
         ]
     } else if holds {
+        // Final fix wave (task 7's minor 1): an awaiting hold before planning, as
+        // `on_gate_key` tries the hold's `a`/`x` first.
         vec![
-            h("a", "approve hold"),
-            h("x", "reject hold"),
-            h("p", "review"),
-            h("⏎", "open"),
-            h("f", &filter),
-            h("esc", "back"),
+            hint("a", "approve hold", 9),
+            hint("x", "reject hold", 9),
+            hint("p", "review", 8),
+            hint("⏎", "open", 4),
+            hint(".", "actions", 7),
+            hint("f", &filter, 3),
+            esc_back(),
+        ]
+    } else if state == Some(proto::RunState::Planning) {
+        // Task 7 note: `j/k` keeps the run view's 6; `p` has nothing to review yet.
+        vec![
+            hint("s", "submit", 9),
+            hint("j/k", "move", 6),
+            hint("⏎", "open", 4),
+            hint(".", "actions", 7),
+            hint("f", &filter, 3),
+            esc_back(),
         ]
     } else {
         vec![
-            h("j/k", "move"),
-            h("h/l", "tier"),
-            h("⏎", "open"),
-            h("space", "fold"),
-            h("f", &filter),
-            h("/", "find"),
-            h("esc", "back"),
+            hint("j/k", "move", 6),
+            hint("h/l", "tier", 4),
+            hint("⏎", "open", 8),
+            hint(".", "actions", 7),
         ]
+        .into_iter()
+        .chain(task_panel_shown(app).then(|| hint("PgDn", "panel", 5)))
+        .chain([
+            hint("space", "fold", 3),
+            hint("f", &filter, 2),
+            hint("/", "find", 1),
+            esc_back(),
+        ])
+        .collect()
     }
+}
+
+/// M1 (final fix wave): PgDn scrolls the task panel only while a task is selected and
+/// its panel is drawn: the inspector on (`i`) and the main pane tall enough for a
+/// panel rather than the single line (`overview::areas` with the least panel; no
+/// frame drawn yet counts as tall enough).
+fn task_panel_shown(app: &App) -> bool {
+    let task = matches!(app.tree.selected, Some(crate::tree::NodeKey::Task { .. }));
+    let tall = app.graph_main.is_none_or(|main| {
+        let (_, footer) = crate::ui::overview::areas(main, true, Some(0));
+        footer.height >= crate::inspector::INSPECTOR_HEIGHT
+    });
+    task && app.inspector_visible && tall
+}
+
+/// Milestone 9.0.7 decision 11 and Interfaces "Hint priorities": the Alerts view's
+/// keys for the selected alert — Enter's entry, `.` where the alert has a node, `o`
+/// but on a proposal (Enter opens its screen) — or `esc` alone with none selected.
+fn alerts_view_hints(app: &App) -> Vec<Hint> {
+    use crate::app::AlertKey;
+    use crate::app::alerts_view::{alert_node, enter_label};
+    let back = esc_back();
+    let Some(key) = app.alerts_focus.as_ref().and_then(|f| f.selected.as_ref()) else {
+        return vec![back];
+    };
+    let mut hints = vec![hint("j/k", "move", 6), hint("⏎", &enter_label(app, key), 9)];
+    if alert_node(key).is_some() {
+        hints.push(hint(".", "actions", 8));
+    }
+    if !matches!(key, AlertKey::Proposal(_)) {
+        hints.push(hint("o", "open", 7));
+    }
+    hints.push(back);
+    hints
 }
 
 /// Milestone 9.0.5 decision 13: the plan review's keys, at the gate or for a hold.
 fn review_hints(app: &App) -> Vec<Hint> {
-    let h = |k: &str, w: &str| hint(k, w, 5);
-    let tail = [h("j/k", "task"), h("PgUp/PgDn", "scroll"), h("esc", "back")];
+    let tail = [
+        hint("j/k", "task", 4),
+        hint("PgUp/PgDn", "scroll", 3),
+        esc_back(),
+    ];
     let head = match app.plan_review.as_ref().map(|review| &review.target) {
-        Some(ReviewTarget::Hold(_)) => vec![h("a", "approve hold"), h("x", "reject hold")],
+        Some(ReviewTarget::Hold(_)) => {
+            vec![hint("a", "approve hold", 9), hint("x", "reject hold", 9)]
+        }
         _ => vec![
-            h("a", "approve"),
-            h("x", "reject"),
-            h("e", "edit"),
-            h("d", "drop"),
+            hint("a", "approve", 9),
+            hint("x", "reject", 9),
+            hint("e", "edit", 6),
+            hint("d", "drop", 5),
         ],
     };
     head.into_iter().chain(tail).collect()

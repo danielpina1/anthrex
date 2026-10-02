@@ -5,7 +5,7 @@
 //! Pure like the rest of `app`: a gesture reads the geometry the renderer
 //! would produce for the same frame and returns effects. Nothing here draws.
 
-use crate::app::{App, Effect};
+use crate::app::{App, Effect, nav_rows_of};
 use crate::graph::Pan;
 use crate::tree::{self, NodeKey};
 use crate::ui::{self, overview};
@@ -26,6 +26,9 @@ const WHEEL_ROWS: u16 = 3;
 pub struct MouseState {
     last_press: Option<(u16, u16, Instant)>,
     drag_from: Option<(u16, u16)>,
+    /// The node the last press on the compact list selected (milestone 9.0.7 decision
+    /// 22): what its double click opens, whatever row the re-centred list puts there.
+    list_pick: Option<NodeKey>,
 }
 
 impl MouseState {
@@ -65,6 +68,11 @@ impl App {
                 .scroll(if up { -3 } else { 3 }, self.rows().len());
             return vec![];
         }
+        // Milestone 9.0.7 decision 11: the Alerts view covers the main pane; the wheel
+        // reaches nothing under it, as a key or a paste does not.
+        if self.alerts_focus.is_some() {
+            return vec![];
+        }
         // Review M3: the conversation view covers the main area; the wheel moves its
         // cursor and reaches nothing underneath.
         if self.conversation.is_open() {
@@ -77,12 +85,7 @@ impl App {
             self.scroll_graph(up, column, row, layout.main);
             return vec![];
         }
-        // Milestone 9.0.5: while the Alerts box has the keys, the wheel reaches the
-        // terminal no more than a key or a paste does.
-        if self.tree_input.is_some()
-            || self.alerts_focus.is_some()
-            || !main_inner.contains((column, row).into())
-        {
+        if self.tree_input.is_some() || !main_inner.contains((column, row).into()) {
             return vec![];
         }
         if self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None {
@@ -110,9 +113,19 @@ impl App {
     /// The wheel over the graph canvas scrolls it vertically by three rows
     /// (decision 16). There are no panning keys, so this and a drag are the
     /// only ways to move the viewport by hand.
+    ///
+    /// Milestone 9.0.7 decision 22: over the compact list it moves the selection three
+    /// rows instead, stopping at the first and the last.
     fn scroll_graph(&mut self, up: bool, column: u16, row: u16, main: ratatui::layout::Rect) {
         let view = overview::view(self, main);
         if !view.canvas.contains((column, row).into()) {
+            return;
+        }
+        if view.list {
+            let delta = WHEEL_ROWS as isize;
+            self.move_tree_selection(if up { -delta } else { delta });
+            // Decision 25: a new selection's panel starts at the top.
+            self.forget_stale_panel_state();
             return;
         }
         let y = if up {
@@ -134,7 +147,10 @@ impl App {
         self.graph_mouse.drag_from = None;
         // Review M3: a press on the conversation view reaches nothing underneath it —
         // not the graph, not a double click's focus change.
-        if self.conversation.is_open() && layout.main.contains((column, row).into()) {
+        // Milestone 9.0.7 decision 11: nor one on the Alerts view.
+        if (self.conversation.is_open() || self.alerts_focus.is_some())
+            && layout.main.contains((column, row).into())
+        {
             self.graph_mouse.last_press = None;
             return vec![];
         }
@@ -153,6 +169,11 @@ impl App {
             return vec![];
         };
         let key = rows[index].key.clone();
+        // Fix round 1 ruling: a row clicked beside the Alerts view is something the
+        // user sees, so the view is left first and the click acts.
+        if self.alerts_focus.is_some() {
+            self.leave_alerts();
+        }
         // Review I1: the sidebar is the project tree. A click on any of its rows but a
         // run's leaves the run view first, so the selection it makes is a canvas row.
         if self.run_view.is_some() && !matches!(key, NodeKey::Run(_)) {
@@ -211,7 +232,7 @@ impl App {
         // One row build for the gesture: `overview::view` would otherwise
         // build its own, and the selection below needs the same list — the run
         // view's while it is open (milestone 8c decision 11).
-        let rows = crate::app::nav_rows_of(
+        let rows = nav_rows_of(
             &self.windows,
             &self.runs.runs,
             &self.tree,
@@ -222,7 +243,24 @@ impl App {
             return None;
         }
         let double = self.graph_mouse.press(column, row);
-        let Some(key) = view.geometry().node_at(&view.layout, column, row) else {
+        // Decision 22: the list hit-tests through the function its renderer windows by.
+        let key = if view.list && double {
+            // The first press re-centred the window on its row, so the second, on the
+            // same cell, may lie over another: it opens the row the first selected.
+            self.graph_mouse.list_pick.take()
+        } else if view.list {
+            let selected = self.tree.selected_index(&rows).unwrap_or(0);
+            let hit = ui::run_list::row_at(view.canvas, rows.len(), selected, column, row)
+                .map(|index| rows[index].key.clone());
+            self.graph_mouse.list_pick.clone_from(&hit);
+            hit
+        } else {
+            // Final fix wave (task 10's minor): a graph press ends any list gesture, so
+            // a resize back to the list never opens an older press's pick.
+            self.graph_mouse.list_pick = None;
+            view.geometry().node_at(&view.layout, column, row)
+        };
+        let Some(key) = key else {
             return Some(vec![]);
         };
         self.tree.select(&rows, key.clone());
@@ -243,6 +281,7 @@ impl App {
             || self.screen.is_some()
             || !self.overview
             || self.conversation.is_open()
+            || self.alerts_focus.is_some()
         {
             return vec![];
         }
@@ -251,6 +290,9 @@ impl App {
         };
         self.graph_mouse.drag_from = Some((column, row));
         let view = overview::view(self, layout.main);
+        if view.list {
+            return vec![];
+        }
         self.graph_pan = Pan {
             x: dragged(view.pan.x, from_x, column),
             y: dragged(view.pan.y, from_y, row),

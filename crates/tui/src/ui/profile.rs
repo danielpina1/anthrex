@@ -5,12 +5,12 @@
 //! screen's border is then muted (decision 5). Every string a profile, a check, the
 //! scout or the daemon wrote passes `safe_text` here or in the kit. Pure: `&App` in.
 
-use crate::app::App;
 use crate::app::profile_screen::{ProfileScreen, ProfileTab, Shown, Side};
+use crate::app::{App, region::KeyRegion};
 use crate::inspector::run_format::format_duration;
 use crate::profile_view::{ENV_ADD, Row, check_cell};
 use crate::safe_text::{multi_line, one_line};
-use crate::theme::{Glyph, Palette, Role, glyph, role};
+use crate::theme::{Glyph, Palette, Role, dot, ellipsis, glyph, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
 use proto::ProposalState;
 use ratatui::Frame;
@@ -22,14 +22,6 @@ use unicode_width::UnicodeWidthStr;
 
 /// The key column's width: the longest key (`check_timeout_secs`) and a space.
 const KEY_W: usize = 19;
-
-fn ellipsis(p: Palette) -> &'static str {
-    if p.ascii { "..." } else { "…" }
-}
-
-fn dot(p: Palette) -> &'static str {
-    if p.ascii { "-" } else { "·" }
-}
 
 fn hint(key: &str, word: &str, priority: u8) -> Hint {
     Hint {
@@ -141,7 +133,8 @@ fn pad(text: &str, width: usize) -> String {
 }
 
 /// One key row: selection bar, mark, key, value, check cell.
-fn key_row(row: &Row, selected: bool, width: usize, p: Palette) -> Line<'static> {
+/// The bar is the accent only while the screen holds the keys (`keys`, decision 1).
+fn key_row(row: &Row, selected: bool, keys: bool, width: usize, p: Palette) -> Line<'static> {
     let sel = if selected {
         glyph(Glyph::Selection, p.ascii)
     } else {
@@ -169,7 +162,7 @@ fn key_row(row: &Row, selected: bool, width: usize, p: Palette) -> Line<'static>
         role(Role::Muted, p)
     };
     let mut spans = vec![
-        Span::styled(sel.to_string(), role(Role::Accent, p)),
+        Span::styled(sel.to_string(), role(kit::bar_role(keys), p)),
         Span::raw(format!("{mark} ")),
         Span::styled(key, key_style),
         Span::styled(value.clone(), value_style),
@@ -274,7 +267,8 @@ fn profile_rows(
         if i == s.selected {
             at = out.len();
         }
-        out.push(key_row(row, i == s.selected, w, p));
+        let keys = app.key_region() == KeyRegion::Screen;
+        out.push(key_row(row, i == s.selected, keys, w, p));
         if s.expanded.as_deref() == Some(row.key.as_str())
             && let Some(check) = &row.check
         {
@@ -376,7 +370,8 @@ pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
     let p = app.palette();
     let title = format!("profile {} {}", dot(p), project_name(s));
     // Decision 5: a page or any modal over the screen has the one accented border.
-    let block = kit::screen_frame(&title, s.page.is_none() && app.modal.is_none(), p);
+    let keys_here = s.page.is_none() && app.key_region() == KeyRegion::Screen;
+    let block = kit::screen_frame(&title, keys_here, p);
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -394,16 +389,24 @@ pub fn render(frame: &mut Frame, app: &App, s: &ProfileScreen, area: Rect) {
     all.extend(foot);
     frame.render_widget(Paragraph::new(all), inner);
     if let Some(page) = &s.page {
-        render_page(frame, s, page, area, p);
+        render_page(
+            frame,
+            s,
+            page,
+            area,
+            app.key_region() == KeyRegion::Screen,
+            p,
+        );
     }
 }
 
 #[path = "profile_pages.rs"]
 mod pages;
+pub(crate) use pages::list_width;
 #[cfg(test)]
 pub(crate) use pages::page_lines;
 use pages::render_page;
 
 #[cfg(test)]
 #[path = "profile_tests.rs"]
-mod tests;
+pub(crate) mod tests;

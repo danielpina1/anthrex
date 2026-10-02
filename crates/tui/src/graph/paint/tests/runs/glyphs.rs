@@ -45,14 +45,15 @@ fn pending(round: &AgentRoundInfo) -> ReviewInfo {
     }
 }
 
-/// The glyph and its colour for the row with `key`.
+/// The glyph and its role's colour for the row with `key`.
 fn glyph(app: &App, key: &NodeKey) -> (&'static str, Color) {
     let rows = view_rows(app);
     let row = rows
         .iter()
         .find(|row| &row.key == key)
         .unwrap_or_else(|| panic!("{key:?} is a row"));
-    node_glyph(row, app)
+    let (glyph, role) = node_glyph(row, app);
+    (glyph, theme::fg(role))
 }
 
 fn verdict_app() -> App {
@@ -119,16 +120,16 @@ fn verdict_app() -> App {
 #[test]
 fn round_glyphs_follow_the_verdict() {
     let app = verdict_app();
-    let green = theme::status_color(proto::Status::Done);
-    let attention = theme::status_color(proto::Status::Attention);
-    let live = theme::status_color(proto::Status::Working);
+    let green = theme::fg(theme::Role::Done);
+    let attention = theme::fg(theme::Role::Attention);
+    let live = theme::fg(theme::Role::Working);
     let reviewer_key = |round| round_key("t1", AgentRole::Reviewer, round, round);
 
     assert_eq!(glyph(&app, &reviewer_key(1)), ("✗", Color::Red), "blocking");
     assert_eq!(glyph(&app, &reviewer_key(2)), ("✓", green), "minor only");
     assert_eq!(
         glyph(&app, &reviewer_key(3)),
-        ("–", theme::DIM),
+        ("–", theme::fg(theme::Role::Muted)),
         "no verdict"
     );
     assert_eq!(glyph(&app, &reviewer_key(4)), ("●", live), "live");
@@ -140,8 +141,8 @@ fn round_glyphs_follow_the_verdict() {
 
     assert_eq!(
         glyph(&app, &round_key("t2", AgentRole::Worker, 1, 1)),
-        ("◆", attention),
-        "rate-limited until after run_now()"
+        ("⊘", theme::fg(theme::Role::Paused)),
+        "rate-limited until after run_now(): waiting, not needs-you"
     );
     assert_eq!(
         glyph(&app, &round_key("t3", AgentRole::Worker, 1, 1)),
@@ -159,7 +160,7 @@ fn round_glyphs_follow_the_verdict() {
     );
     assert_eq!(
         glyph(&app, &round_key("t7", AgentRole::Worker, 1, 1)),
-        ("◆", attention),
+        ("⚑", attention),
         "the window asks for attention"
     );
 }
@@ -169,7 +170,7 @@ fn round_glyphs_follow_the_verdict() {
 #[test]
 fn only_the_last_sessions_last_piece_of_a_blocked_task_is_a_cross() {
     let app = verdict_app();
-    let green = theme::status_color(proto::Status::Done);
+    let green = theme::fg(theme::Role::Done);
     let worker_key = |session, round| round_key("t5", AgentRole::Worker, session, round);
     assert_eq!(glyph(&app, &worker_key(1, 1)), ("✓", green));
     assert_eq!(
@@ -222,9 +223,9 @@ fn scouts_and_planners_glyph_by_their_state() {
     let mut app = app_of((snapshot(NOW, vec![info]), vec![working, asking]));
     app.spinner_frame = 1;
 
-    let green = theme::status_color(proto::Status::Done);
-    let live = theme::status_color(proto::Status::Working);
-    let attention = theme::status_color(proto::Status::Attention);
+    let green = theme::fg(theme::Role::Done);
+    let live = theme::fg(theme::Role::Working);
+    let attention = theme::fg(theme::Role::Attention);
     let scout_key = |id: &str| NodeKey::Scout {
         run: RUN_ID.into(),
         id: id.into(),
@@ -237,7 +238,7 @@ fn scouts_and_planners_glyph_by_their_state() {
     assert_eq!(glyph(&app, &scout_key("s2")), (theme::SPINNER[1], live));
     assert_eq!(glyph(&app, &scout_key("s3")), ("✓", green));
     assert_eq!(glyph(&app, &scout_key("s4")), ("✗", Color::Red));
-    assert_eq!(glyph(&app, &planner_key("A")), ("◆", attention));
+    assert_eq!(glyph(&app, &planner_key("A")), ("⚑", attention));
     assert_eq!(glyph(&app, &planner_key("B")), ("✓", green));
     assert_eq!(glyph(&app, &planner_key("C")), ("✗", Color::Red));
     assert_eq!(glyph(&app, &planner_key("D")), ("●", live));
@@ -311,7 +312,7 @@ fn only_a_live_worker_round_animates_a_working_task() {
     ];
     let mut app = app_of((snapshot(NOW, vec![info]), windows));
     app.spinner_frame = 1;
-    let live = theme::status_color(proto::Status::Working);
+    let live = theme::fg(theme::Role::Working);
 
     assert_eq!(glyph(&app, &task_key("t1")), ("●", live), "a reviewer only");
     assert_eq!(

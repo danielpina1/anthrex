@@ -1,7 +1,7 @@
 //! The hint line: `key word  key word`, keys in the accent, words muted.
 
 use crate::safe_text::one_line;
-use crate::theme::{Palette, Role, role};
+use crate::theme::{Palette, Role, fold, role};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
@@ -29,15 +29,13 @@ pub fn hints_joined(width: u16, hints: &[Hint], separator: &str, p: Palette) -> 
     let mut kept: Vec<(String, String, u8)> = hints
         .iter()
         .map(|h| {
-            // `⏎` has an ASCII twin: `enter`.
-            let key = if p.ascii && h.key == "⏎" {
-                "enter".to_string()
-            } else {
-                one_line(&h.key)
-            };
-            (key, one_line(&h.word), h.priority)
+            // `⏎` has an ASCII twin, `enter`, as every mark `theme::fold` knows.
+            let key = fold(&one_line(&h.key), p.ascii);
+            (key, fold(&one_line(&h.word), p.ascii), h.priority)
         })
         .collect();
+    let separator = fold(separator, p.ascii);
+    let separator = separator.as_str();
     let total = |kept: &[(String, String, u8)]| -> usize {
         let words: usize = kept.iter().map(|(k, w, _)| k.width() + 1 + w.width()).sum();
         words + separator.width() * kept.len().saturating_sub(1)
@@ -68,4 +66,19 @@ pub fn hints_joined(width: u16, hints: &[Hint], separator: &str, p: Palette) -> 
         spans.push(Span::styled(word, word_style));
     }
     Line::from(spans)
+}
+
+/// Principle 9's destructive hint: in a hint `line`, the spans that are `key` or `word`
+/// (as `hints_joined` drew them, sanitised and folded) in `Failed`, styled by what they
+/// are, not where they sit. The final fix wave (task 13b's minor): one helper for the
+/// confirm, remove, Profile Reject, Settings discard and action-menu pages.
+pub fn destructive(mut line: Line<'static>, key: &str, word: &str, p: Palette) -> Line<'static> {
+    let key = fold(&one_line(key), p.ascii);
+    let word = fold(&one_line(word), p.ascii);
+    for span in line.spans.iter_mut() {
+        if span.content == key.as_str() || span.content == word.as_str() {
+            span.style = role(Role::Failed, p);
+        }
+    }
+    line
 }

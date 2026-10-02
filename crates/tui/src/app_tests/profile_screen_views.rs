@@ -9,7 +9,7 @@ use super::profile_screen::{
 };
 use super::*;
 use crate::app::profile_screen::{EditorField, ProfilePage, Side};
-use proto::{ProfileReply, ProfileRequest, ProposalState, RunRequest};
+use proto::{ProfileReply, ProfileRequest, ProposalState, RepoProfile, RunRequest};
 use std::time::{Duration, Instant};
 
 fn show(proposed: bool) -> ProfileRequest {
@@ -184,6 +184,56 @@ fn a_disconnected_page_keeps_its_edit() {
     tap(&mut app, KeyCode::Char('x'));
     assert!(tap(&mut app, KeyCode::Char('y')).is_empty());
     assert_eq!(screen(&app).page, Some(ProfilePage::Reject));
+}
+
+/// Decision 37: a proposal `Show` sent before a detection and answered after the
+/// detection left the running states is not the side's latest request: it is dropped,
+/// the side stays `loading…`, and the re-fetch's reply fills it. While the old request
+/// is still out, once it expired before the detection ended (its late reply), and when
+/// it expires after the re-fetch went out (its expiry fails nothing).
+#[test]
+fn a_late_pre_detection_show_is_dropped() {
+    // When the old request expires: never, before the detection ends, after the re-fetch.
+    for expired in ["never", "before", "after"] {
+        let mut app = open_app();
+        let ids = open(&mut app);
+        reply(&mut app, ids[0], status(Some(ProposalState::Scouting)));
+        reply(&mut app, ids[1], shown(&stored_profile(), vec![]));
+        if expired == "before" {
+            expire(&mut app, ids[2]);
+        }
+        let effects = app.screens_tick(Instant::now() + Duration::from_secs(2));
+        let poll_id = tagged(&effects)[0].0;
+        let effects = reply(&mut app, poll_id, status(Some(ProposalState::Ready)));
+        assert_eq!(shows(&effects, true), 1, "{effects:?}");
+        let refetch = tagged(&effects)[0].0;
+        assert_eq!(screen(&app).proposal, Side::Loading, "expired {expired}");
+        if expired == "after" {
+            expire(&mut app, ids[2]);
+            assert_eq!(
+                screen(&app).proposal,
+                Side::Loading,
+                "its expiry fails nothing"
+            );
+            assert_eq!(app.toast_text(), None, "the screen's own view");
+        }
+        let old = RepoProfile {
+            check: Some("old check".into()),
+            ..RepoProfile::default()
+        };
+        assert!(reply(&mut app, ids[2], shown(&old, vec![])).is_empty());
+        assert_eq!(
+            screen(&app).proposal,
+            Side::Loading,
+            "expired {expired}: dropped"
+        );
+        assert_eq!(app.toast_text(), None);
+        reply(&mut app, refetch, shown(&stored_profile(), vec![]));
+        match &screen(&app).proposal {
+            Side::Ready(shown) => assert!(shown.toml.contains("cargo test"), "{shown:?}"),
+            other => panic!("expired {expired}: {other:?}"),
+        }
+    }
 }
 
 fn render(app: &App) -> String {

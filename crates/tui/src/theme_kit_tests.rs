@@ -50,11 +50,41 @@ fn every_glyph_has_an_ascii_twin() {
         Glyph::Selection,
         Glyph::Separator,
         Glyph::Warning,
+        Glyph::Expanded,
+        Glyph::Live,
+        Glyph::Checking,
+        Glyph::Review,
+        Glyph::Queued,
+        Glyph::Merging,
+        Glyph::Blocked,
+        Glyph::Ended,
+        Glyph::Paused,
+        Glyph::Run,
+        Glyph::Hub,
+        Glyph::Focus,
     ] {
         assert!(glyph(g, true).is_ascii(), "{g:?}");
         assert!(!glyph(g, false).is_ascii(), "{g:?}");
     }
     assert_eq!(glyph(Glyph::Failed, false), "✗");
+    // Milestone 9.0.7 decision 6: the twelve marks appended to the table.
+    let grown = [
+        (Glyph::Expanded, "▾", "v"),
+        (Glyph::Live, "●", "*"),
+        (Glyph::Checking, "◇", "~"),
+        (Glyph::Review, "◐", "%"),
+        (Glyph::Queued, "▫", ":"),
+        (Glyph::Merging, "»", "="),
+        (Glyph::Blocked, "⊘", "#"),
+        (Glyph::Ended, "–", "_"),
+        (Glyph::Paused, "‖", "\""),
+        (Glyph::Run, "◉", "@"),
+        (Glyph::Hub, "◆", "H"),
+        (Glyph::Focus, "▎", "|"),
+    ];
+    for (g, uni, ascii) in grown {
+        assert_eq!((glyph(g, false), glyph(g, true)), (uni, ascii), "{g:?}");
+    }
     assert_eq!(
         (0..4)
             .map(|f| crate::theme::spinner(f, true))
@@ -85,7 +115,7 @@ fn truecolor_roles_use_the_configured_accent_and_the_decision_colours() {
     assert_eq!(role(Role::Done, p).fg, Some(Color::Rgb(0xa6, 0xe3, 0xa1)));
     assert_eq!(role(Role::Failed, p).fg, Some(Color::Rgb(0xf3, 0x8b, 0xa8)));
     assert_eq!(role(Role::Muted, p).fg, Some(Color::Rgb(0x6c, 0x70, 0x86)));
-    assert_eq!(role(Role::Paused, p).fg, Some(crate::theme::PAUSED_COLOR));
+    assert_eq!(role(Role::Paused, p).fg, Some(Color::Rgb(0xcb, 0xa6, 0xf7)));
     assert_ne!(role(Role::Working, p).fg, role(Role::Attention, p).fg);
 }
 

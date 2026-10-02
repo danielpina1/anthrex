@@ -8,7 +8,7 @@
 use crate::dialog::TextInput;
 use crate::run_goal::{GoalField, GoalForm, GoalModel, field_label};
 use crate::safe_text::one_line;
-use crate::theme::{Glyph, Palette, Role, glyph, role};
+use crate::theme::{Glyph, Palette, Role, dot_sep, ellipsis, glyph, role};
 use crate::ui::kit::{self, Hint};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -19,6 +19,8 @@ use unicode_segmentation::UnicodeSegmentation;
 
 /// Rows of the goal's text area.
 pub const GOAL_ROWS: u16 = 4;
+/// What the empty goal field shows, muted (milestone 9.0.7 decision 35).
+pub const PLACEHOLDER: &str = "what should the run achieve?";
 /// The focus marker's columns, then the label's.
 const MARK_W: usize = 2;
 const LABEL_W: usize = 18;
@@ -29,14 +31,6 @@ fn hint(key: &str, word: &str, priority: u8) -> Hint {
         word: word.to_string(),
         priority,
     }
-}
-
-fn ellipsis(p: Palette) -> &'static str {
-    if p.ascii { "..." } else { "…" }
-}
-
-fn dot(p: Palette) -> &'static str {
-    if p.ascii { " - " } else { " · " }
 }
 
 /// `marker label` for `field`: the focused field's label is accented and bold and led
@@ -55,15 +49,6 @@ fn label(form: &GoalForm, field: GoalField, p: Palette) -> Vec<Span<'static>> {
         Span::styled(format!("{mark:<MARK_W$}"), style),
         Span::styled(format!("{:<LABEL_W$}", field_label(field)), style),
     ]
-}
-
-/// Whether the text area's first line is its `↑ n more` mark (`^ n more` in ASCII).
-fn starts_with_mark(lines: &[Line<'static>]) -> bool {
-    let first: String = lines
-        .first()
-        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
-        .unwrap_or_default();
-    (first.starts_with("↑ ") || first.starts_with("^ ")) && first.ends_with(" more")
 }
 
 fn indent() -> Span<'static> {
@@ -106,6 +91,18 @@ fn input_line(input: &TextInput, width: usize, focused: bool) -> Line<'static> {
     Line::from(spans)
 }
 
+/// The empty goal's first row: [`PLACEHOLDER`] muted, cut to `width`, its first cell
+/// the cursor's (reversed) while focused (milestone 9.0.7 decision 35).
+fn placeholder(width: usize, focused: bool, p: Palette) -> Line<'static> {
+    let text = kit::cut(PLACEHOLDER, width.saturating_sub(1), ellipsis(p));
+    let at = (text.char_indices().nth(usize::from(focused))).map_or(text.len(), |(i, _)| i);
+    let reversed = ratatui::style::Style::default().add_modifier(Modifier::REVERSED);
+    Line::from(vec![
+        Span::styled(text[..at].to_string(), reversed),
+        Span::styled(text[at..].to_string(), role(Role::Muted, p)),
+    ])
+}
+
 /// The form's title: `start a goal in <project>`, the project cut to fit `width`.
 pub fn title(form: &GoalForm, width: u16, p: Palette) -> String {
     let project = one_line(&form.project.display().to_string());
@@ -114,6 +111,13 @@ pub fn title(form: &GoalForm, width: u16, p: Palette) -> String {
         usize::from(width),
         ellipsis(p),
     )
+}
+
+/// The goal's text area width in a terminal `width` wide (0: not yet drawn), which its
+/// Up and Down move by (`GoalForm::on_key_in`).
+pub fn goal_width(width: u16) -> u16 {
+    let width = width.min(kit::DIALOG_MAX).saturating_sub(4).min(kit::WRAP);
+    width.saturating_sub((MARK_W + LABEL_W) as u16)
 }
 
 /// The dialog's rows for `width` interior columns: the fields, the error, a blank row
@@ -127,9 +131,12 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
     // scroll mark appears.
     let focused = form.focus == GoalField::Goal && !form.submitting;
     let mut area = kit::text_area_focus(&form.goal, GOAL_ROWS, value_w as u16, focused, p);
+    if form.goal.is_empty() {
+        area[0] = placeholder(value_w, focused, p);
+    }
     area.resize(usize::from(GOAL_ROWS) + 2, Line::default());
     // The label sits on the first text row, below a leading `↑ n more` mark.
-    let first = usize::from(starts_with_mark(&area));
+    let first = usize::from(kit::starts_with_mark(&area));
     for (i, line) in area.into_iter().enumerate() {
         let mut spans = if i == first {
             label(form, GoalField::Goal, p)
@@ -191,7 +198,7 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
         body.push(kit::hints_joined(
             width,
             &[hint("esc", "close", 1)],
-            dot(p),
+            dot_sep(p),
             p,
         ));
     } else {
@@ -201,7 +208,7 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
             hint("^J", "newline", 3),
             hint("esc", "cancel", 1),
         ];
-        body.push(kit::hints_joined(width, &keys, dot(p), p));
+        body.push(kit::hints_joined(width, &keys, dot_sep(p), p));
     }
     body
 }

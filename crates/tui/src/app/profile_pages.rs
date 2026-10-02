@@ -38,11 +38,11 @@ pub(super) fn editor_for(key: &str, text: &str) -> Editor {
 }
 
 /// A one-line text area's key: its newline (Ctrl-J) is not taken.
-fn line_key(area: &mut TextArea, key: KeyEvent) {
+fn line_key(area: &mut TextArea, key: KeyEvent, width: u16) {
     let ctrl_j = key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(key.code, KeyCode::Char('j' | 'J'));
     if !ctrl_j {
-        area.on_key(key);
+        area.on_key_in(key, width);
     }
 }
 
@@ -70,6 +70,8 @@ fn edit_of(editor: &Editor) -> Result<(String, String), String> {
 
 impl App {
     pub(super) fn on_profile_page_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        // The editor's text areas as the page draws them over the whole terminal.
+        let width = crate::ui::profile::list_width(self.body_area.width);
         let Some(s) = self.profile_screen_mut() else {
             return vec![];
         };
@@ -169,7 +171,7 @@ impl App {
             },
             Some(ProfilePage::Edit(editor)) => {
                 if !enter {
-                    on_editor_key(editor, key);
+                    on_editor_key(editor, key, width);
                     return vec![];
                 }
                 match edit_of(editor) {
@@ -239,12 +241,12 @@ impl App {
 }
 
 /// An editor's key other than Enter and Esc.
-fn on_editor_key(editor: &mut Editor, key: KeyEvent) {
+fn on_editor_key(editor: &mut Editor, key: KeyEvent, width: u16) {
     editor.error = None;
     match &mut editor.field {
-        EditorField::Line(area) => line_key(area, key),
+        EditorField::Line(area) => line_key(area, key, width.saturating_sub(7)),
         EditorField::List(area) => {
-            area.on_key(key);
+            area.on_key_in(key, width);
         }
         EditorField::Digits(digits) => match key.code {
             KeyCode::Char(c) if c.is_ascii_digit() && digits.len() < 9 => digits.push(c),
@@ -269,8 +271,8 @@ fn on_editor_key(editor: &mut Editor, key: KeyEvent) {
             KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {
                 *on_value = !*on_value;
             }
-            _ if *on_value => line_key(value, key),
-            _ => line_key(name, key),
+            _ if *on_value => line_key(value, key, width.saturating_sub(7)),
+            _ => line_key(name, key, width.saturating_sub(7)),
         },
     }
 }

@@ -10,11 +10,10 @@
 use crate::app::App;
 use crate::theme;
 use crate::tree::{self, NodeKey, Row, RowKind, RuntimeCounts};
-use crate::ui::statusbar::{change_parts, git_spans, head_text};
+use crate::ui::statusbar::{change_parts, git_spans_in, head_text};
 use crate::ui::terminal::shorten_home;
 use crate::ui::tree_view::counts_text;
 use proto::{GitState, Status, SubagentInfo, SubagentState, WindowInfo};
-use ratatui::style::Style;
 use ratatui::text::Span;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -23,19 +22,13 @@ use std::path::Path;
 /// (decision 2).
 pub const INSPECTOR_HEIGHT: u16 = 8;
 
+/// Milestone 9.0.7 decision 17: the canvas rows the panel always leaves above it
+/// (milestone 4.7 decision 6's six), the run view's content-sized one included.
+pub const RUN_CANVAS_MIN: u16 = 6;
 /// Below this many rows of overview interior the panel gives way to milestone
 /// 4.6's single line, so a short terminal loses the inspector and never the
-/// canvas (decision 6).
-pub const MIN_INTERIOR_FOR_PANEL: u16 = INSPECTOR_HEIGHT + 6;
-
-/// Milestone 8c decision 28: the run view's panel — a border, the title, nine rows, a
-/// border — and the interior it needs before the panel takes that height.
-pub const RUN_INSPECTOR_HEIGHT: u16 = 12;
-pub const MIN_INTERIOR_FOR_RUN_PANEL: u16 = RUN_INSPECTOR_HEIGHT + 6;
-/// Milestone 9.0.5 decision 25: the run view's tall panel, and the overview interior
-/// it needs (a terminal of 37 rows or more).
-pub const RUN_INSPECTOR_TALL_HEIGHT: u16 = 18;
-pub const MIN_INTERIOR_FOR_TALL_RUN_PANEL: u16 = 34;
+/// canvas (decision 6). Derived, so the run view's clamp always has room.
+pub const MIN_INTERIOR_FOR_PANEL: u16 = INSPECTOR_HEIGHT + RUN_CANVAS_MIN;
 /// Decision 29: a run inspection's label column.
 pub const RUN_LABEL_WIDTH: usize = 10;
 /// Decision 30: the run's progress bar, and a planner's and a task budget's.
@@ -48,9 +41,9 @@ pub enum FieldLayout {
     #[default]
     Columns,
     Rows,
-    /// Milestone 9.0.5 decision 22: a task's GOAL, STATUS and RESULT, each a bold
-    /// title row and its fields, every value wrapping under itself, scrolled by
-    /// `Inspection.scroll`.
+    /// Milestone 9.0.7 decision 12: a task's OUTCOME, EVIDENCE, INTENT and DETAIL, each
+    /// a bold title row and its fields, every value wrapping under itself, scrolled by
+    /// `Inspection.scroll` between the title and the pinned `Inspection.footer`.
     Sections,
 }
 
@@ -64,18 +57,34 @@ pub struct Section {
 /// One labelled value of a section. `value` may hold several lines and any text an
 /// agent wrote: the panel sanitises and wraps it. `note` follows the label, muted
 /// (the summary's source); `collapse` cuts the value to its first `BRIEF_LINES`
-/// wrapped lines and `… (b: more)`. An empty label puts the value at the left edge
-/// (RESULT's `nothing yet`).
+/// wrapped lines and `… (b: more)`; `marks` says which of its glyphs the panel colours.
+/// An empty label puts the value at the left edge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionField {
     pub label: &'static str,
     pub note: Option<&'static str>,
     pub value: String,
     pub collapse: bool,
+    pub marks: Marks,
 }
 
-/// Decision 22: a collapsed brief's wrapped lines.
-pub const BRIEF_LINES: usize = 3;
+/// Milestone 9.0.7 decision 13: the marks a section value's glyphs carry (`✓` in
+/// `Done`, `✗` in `Failed`, `◌` in `Muted`), only where the client wrote them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Marks {
+    #[default]
+    None,
+    /// The first mark among the first two words of each line (`✓ passed`, `◌ <criterion>`,
+    /// `r2 ✓ approve`): what follows is agent text and never coloured.
+    Lead,
+    /// `Lead` on the value's first line only (the review row; its summary line follows).
+    First,
+    /// The pipeline: every step's mark, and the current step's word in `Working` bold.
+    Pipeline,
+}
+
+/// Milestone 9.0.7 decision 12: a collapsed brief's wrapped lines (INTENT's one line).
+pub const BRIEF_LINES: usize = 1;
 
 /// One labelled value. `wrap` marks the one field a column may not elide: the
 /// sub-agent's task, which the panel exists to show whole (decision 5).
@@ -99,6 +108,10 @@ pub struct Inspection {
     /// `Sections` only: the sections, and the first body row shown (decision 25).
     pub sections: Vec<Section>,
     pub scroll: u16,
+    /// `Sections` only: decision 12's footer, pinned to the last interior row.
+    pub footer: Option<String>,
+    /// `Sections` only: the node lists an action, so the border says ` . actions `.
+    pub actions: bool,
 }
 
 fn field(label: &'static str, value: impl Into<String>) -> Field {
@@ -110,8 +123,33 @@ fn field(label: &'static str, value: impl Into<String>) -> Field {
 }
 
 /// Everything anthrex knows about one node. Pure: it reads `app`, and computes
-/// strings (decision 13).
+/// strings (decision 13). In ASCII mode every string is folded here (milestone 9.0.7
+/// decision 5), so the panel lays out, and `task_panel_rows` counts, what is drawn.
 pub fn inspect(row: &Row<'_>, app: &App) -> Inspection {
+    let inspection = inspect_raw(row, app);
+    if app.palette().ascii {
+        fold_inspection(inspection)
+    } else {
+        inspection
+    }
+}
+
+/// `inspection` with every string `theme::fold`ed to ASCII, its glyphs their twins.
+fn fold_inspection(mut inspection: Inspection) -> Inspection {
+    let fold = |text: &str| theme::ascii_twins(&theme::fold(text, true));
+    inspection.name = fold(&inspection.name);
+    inspection.right = inspection.right.as_deref().map(fold);
+    inspection.footer = inspection.footer.as_deref().map(fold);
+    for field in &mut inspection.fields {
+        field.value = fold(&field.value);
+    }
+    for field in inspection.sections.iter_mut().flat_map(|s| &mut s.fields) {
+        field.value = fold(&field.value);
+    }
+    inspection
+}
+
+fn inspect_raw(row: &Row<'_>, app: &App) -> Inspection {
     match &row.kind {
         RowKind::Project {
             root,
@@ -132,9 +170,9 @@ pub fn inspect(row: &Row<'_>, app: &App) -> Inspection {
             ..Default::default()
         },
         RowKind::Subagent { info } => Inspection {
-            glyph: Span::styled(
-                theme::subagent_glyph(info, app.spinner_frame),
-                Style::default().fg(theme::subagent_color(info)),
+            glyph: look(
+                theme::subagent_look(info, app.spinner_frame, app.palette().ascii),
+                app,
             ),
             name: subagent_name(info),
             fields: subagent_fields(row, info, app),
@@ -154,10 +192,15 @@ pub fn inspect(row: &Row<'_>, app: &App) -> Inspection {
 }
 
 fn status_span(status: Status, app: &App) -> Span<'static> {
-    Span::styled(
-        theme::status_glyph(status, app.spinner_frame),
-        Style::default().fg(theme::status_color(status)),
+    look(
+        theme::status_look(status, app.spinner_frame, app.palette().ascii),
+        app,
     )
+}
+
+/// A look's glyph styled in its role (milestone 9.0.7 decision 3).
+pub(crate) fn look((glyph, role): (&'static str, theme::Role), app: &App) -> Span<'static> {
+    Span::styled(glyph, theme::role(role, app.palette()))
 }
 
 /// A project's path, status and runtime counts, and its git state only when
@@ -183,7 +226,7 @@ fn project_fields(root: &Path, status: Status, counts: RuntimeCounts, app: &App)
         1 if all_on_a_worktree => {
             if let Some(state) = worktrees.iter().next().and_then(|root| app.git.get(*root)) {
                 fields.push(field("branch", head_text(&state.head)));
-                fields.push(field("changes", changes_text(state)));
+                fields.push(field("changes", changes_text(state, app.palette())));
             }
         }
         // A count of the worktrees a project spans is true whether or not every
@@ -212,7 +255,7 @@ fn window_fields(info: &WindowInfo, app: &App) -> Vec<Field> {
     // Keyed by the worktree root, and absent state omits the field rather than
     // showing it empty (decision 12).
     if let Some(state) = info.worktree.as_deref().and_then(|root| app.git.get(root)) {
-        fields.push(field("branch", git_text(state)));
+        fields.push(field("branch", git_text(state, app.palette())));
     }
     if !info.subagents.is_empty() {
         let running = info
@@ -339,8 +382,8 @@ fn display_path(path: &Path) -> String {
 /// glyphs are the status bar's, joined rather than ranked — the panel has room
 /// for all three (spec §3 names dirty and untracked; a conflict outweighs
 /// either and is shown with them).
-fn changes_text(state: &GitState) -> String {
-    let parts = change_parts(state);
+fn changes_text(state: &GitState, p: theme::Palette) -> String {
+    let parts = change_parts(state, p);
     if parts.is_empty() {
         return "clean".to_owned();
     }
@@ -353,8 +396,8 @@ fn changes_text(state: &GitState) -> String {
 
 /// A window's branch with its dirty and ahead/behind counts, built by the one
 /// function that already decides what a worktree's git state reads as.
-fn git_text(state: &GitState) -> String {
-    git_spans(state, usize::MAX)
+fn git_text(state: &GitState, p: theme::Palette) -> String {
+    git_spans_in(state, usize::MAX, p)
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
@@ -367,30 +410,20 @@ mod run_orch;
 mod run_round;
 mod run_stage;
 mod run_task;
+mod run_task_outcome;
 mod run_task_sections;
 
-/// Decision 25: the rows the selected task's sections take at `width` columns of
-/// panel interior, the title row not counted; 0 when no task is selected. The
-/// reducer clamps the panel's scroll with it, as the renderer draws.
-pub fn task_panel_rows(app: &App, width: u16) -> usize {
-    let rows = app.nav_rows();
-    let Some(row) = app
-        .tree
-        .selected
-        .as_ref()
-        .and_then(|key| rows.iter().find(|row| &row.key == key))
-    else {
-        return 0;
-    };
-    if !matches!(row.kind, RowKind::Task { .. }) {
-        return 0;
-    }
-    let inspection = inspect(row, app);
-    panel::sections::body_lines(&inspection.sections, usize::from(width)).len()
-}
+pub use panel::panel_rows;
+pub(crate) use run_stage::tier_duration;
+pub(crate) use run_task::state_word;
+pub use run_task::{task_panel_room, task_panel_rows};
 
+#[cfg(test)]
 pub use panel::render;
-pub use run_format::{format_duration, format_tokens, local_hhmm, progress_bar};
+pub use panel::render_in;
+#[cfg(test)]
+pub use run_format::progress_bar;
+pub use run_format::{format_duration, format_tokens, local_hhmm};
 
 #[cfg(test)]
 mod tests;
@@ -415,3 +448,6 @@ mod run_stage_tests;
 
 #[cfg(test)]
 mod run_task_sections_tests;
+
+#[cfg(test)]
+mod run_task_outcome_tests;

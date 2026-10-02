@@ -227,7 +227,7 @@ fn a_second_enter_while_submitting_sends_nothing() {
         "keys do nothing while submitting"
     );
     form.on_paste("zzz");
-    assert_eq!(form.brief.text(), "Line one↵Line two");
+    assert_eq!(form.brief.text(), "Line one\nLine two");
 }
 
 #[test]
@@ -333,17 +333,23 @@ fn the_model_is_sent_trimmed_and_blank_is_policy() {
 
 #[test]
 fn a_paste_of_a_megabyte_is_bounded() {
+    // A one-line field stops at `TEXT_MAX_CHARS`, and takes no more typing.
     let mut form = edit_fixture_form();
-    focus(&mut form, EditField::Brief);
-    let huge = "word\n".repeat(200_000);
-    assert_eq!(huge.len(), 1_000_000);
-    form.on_paste(&huge);
-    assert_eq!(form.brief.text().chars().count(), TEXT_MAX_CHARS);
-    assert!(form.brief.text().starts_with("Line one↵Line twoword↵word↵"));
-    // A full field takes no more typing either.
+    focus(&mut form, EditField::Model);
+    form.on_paste(&"m".repeat(1_000_000));
+    assert_eq!(form.model.text().chars().count(), TEXT_MAX_CHARS);
     typed(&mut form, "xyz");
-    assert_eq!(form.brief.text().chars().count(), TEXT_MAX_CHARS);
-    assert!(!form.brief.text().ends_with('z'));
+    assert_eq!(form.model.text().chars().count(), TEXT_MAX_CHARS);
+    assert!(!form.model.text().ends_with('z'));
+    // The brief holds up to `BRIEF_MAX_CHARS` (decision 35; one million characters
+    // since the final fix wave): nearly a megabyte goes in whole, and no more after it.
+    focus(&mut form, EditField::Brief);
+    let huge = "word\n".repeat(199_000);
+    assert_eq!(huge.len(), 995_000);
+    form.on_paste(&huge);
+    assert_eq!(form.brief.text(), format!("Line one\nLine two{huge}"));
+    form.on_paste(&"z".repeat(10_000));
+    assert_eq!(form.brief.text().chars().count(), BRIEF_MAX_CHARS);
 }
 
 #[test]
@@ -355,7 +361,7 @@ fn control_characters_in_a_pasted_model_are_dropped() {
     focus(&mut form, EditField::Brief);
     form.on_key(key(KeyCode::End));
     form.on_paste("a\u{1b}b\r\nc\rd\te");
-    assert_eq!(form.brief.text(), "Line one↵Line twoab↵c↵d e");
+    assert_eq!(form.brief.text(), "Line one\nLine twoab\nc\nd e");
 }
 
 #[test]
@@ -371,7 +377,7 @@ fn hostile_briefs_open_cleaned_and_unchanged() {
     let mut t = edit_fixture_task();
     t.brief = "a\r\nb\u{1b}[2Jc\td".into();
     let form = TaskEditForm::new(RUN_ID, &t);
-    assert_eq!(form.brief.text(), "a↵b[2Jc d");
+    assert_eq!(form.brief.text(), "a\nb[2Jc d");
     assert_eq!(form.edits(), Ok(vec![]), "opening changes nothing");
 }
 
@@ -401,7 +407,7 @@ fn value_parts_show_policy_with_the_resolved_value() {
     );
     assert_eq!(
         form.value_parts(EditField::Brief),
-        ("Line one↵Line two".into(), None)
+        ("Line one\nLine two".into(), None)
     );
 }
 
@@ -537,4 +543,47 @@ fn after_a_runtime_change_policy_rows_show_no_stale_resolved_value() {
         form.value_parts(EditField::Strength),
         ("‹ policy ›".into(), Some("standard".into()))
     );
+}
+
+/// Final fix wave (the 13a ruling): the brief's cap is one million characters, which
+/// keeps the edit form's per-key draw and insert well inside the 100 ms tick; a longer
+/// brief still opens whole-or-refused, never cut and sent.
+#[test]
+fn the_brief_cap_is_a_million_characters() {
+    assert_eq!(BRIEF_MAX_CHARS, 1_000_000);
+}
+
+/// Final fix wave (the 13a ruling): the largest edit the form can send — a brief at
+/// the cap in 4-byte characters, and a model and a reason at `TEXT_MAX_CHARS` of them —
+/// encodes within one frame.
+#[test]
+fn the_largest_edit_fits_one_frame() {
+    let wide = |n: usize| "𝄞".repeat(n);
+    let edit = PlanEdit::AmendTask {
+        task_id: "t1".into(),
+        brief: Some(wide(BRIEF_MAX_CHARS)),
+        acceptance: None,
+        route: Some(proto::RouteSpec {
+            runtime: Some(proto::Runtime::Codex),
+            model: Some(wide(TEXT_MAX_CHARS)),
+            strength: Some(proto::Strength::Frontier),
+            effort: Some(proto::Effort::High),
+        }),
+        test_mode: Some(proto::TestMode::None),
+        test_mode_reason: Some(wide(TEXT_MAX_CHARS)),
+        priority: Some(i32::MAX),
+        size: Some(proto::Size::L),
+        deps: None,
+        stage: Some(u16::MAX),
+    };
+    let msg = proto::ClientMsg::RunTagged {
+        id: u64::MAX,
+        request: proto::RunRequest::Edit {
+            run_id: "r".repeat(64),
+            edits: vec![edit],
+            submit: false,
+        },
+    };
+    let frame = proto::encode(&msg).expect("the edit fits one frame");
+    assert!(frame.len() <= proto::MAX_FRAME + 4, "{} bytes", frame.len());
 }

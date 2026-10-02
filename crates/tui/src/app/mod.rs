@@ -4,7 +4,7 @@ use crate::dialog::{FormDefaults, NewAgentForm, RemoveConfirm};
 use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
-pub use alerts::{Alert, AlertKey, AlertsFocus, alerts};
+pub use alerts::{Alert, AlertKey, AlertWho, AlertsFocus, alerts};
 use crossterm::event::KeyEvent;
 pub use link::Link;
 pub use plan_review::{PlanReview, ReviewTarget};
@@ -61,7 +61,7 @@ pub enum Modal {
         message: String,
         action: PendingAction,
     },
-    Help,
+    Help(help::HelpView), // Milestone 9.0.7 decision 34: the grouped, scrolled help.
     /// The new-agent form; keys are handled in `app/modal_keys.rs`.
     NewAgent(NewAgentForm),
     /// The remove-confirm dialog (task M5.10).
@@ -73,7 +73,7 @@ pub enum Modal {
         message: String,
     },
     /// Every config `Problem` the CLI found, already formatted, shown once at start
-    /// (decision 7). Dismissed by any key, like `Help`.
+    /// (decision 7). Dismissed by any key.
     Notice {
         title: String,
         lines: Vec<String>,
@@ -83,7 +83,7 @@ pub enum Modal {
     /// `on_rename_key`, and rendering is `ui/modal.rs`.
     Rename(RenamePrompt),
     /// Milestone 8c decision 33: the plan gate's task edit form (`crate::run_edit`).
-    EditTask(crate::run_edit::TaskEditForm),
+    EditTask(Box<crate::run_edit::TaskEditForm>),
     /// Milestone 9 decision 44: the goal form (`crate::run_goal`).
     StartGoal(crate::run_goal::GoalForm),
     Action(Box<actions::ActionFlow>), // Milestone 9.0.6 decision 12: the action menu.
@@ -439,7 +439,7 @@ impl App {
     }
 
     fn run(&mut self, cmd: Command) -> Vec<Effect> {
-        if self.screen_refuses(cmd) {
+        if self.screen_refuses(cmd) || self.alerts_refuses(cmd) {
             return vec![];
         }
         match cmd {
@@ -461,6 +461,7 @@ impl App {
             Command::RemoveWindow => self.open_remove_confirm(),
             Command::ToggleSidebar => {
                 self.sidebar_visible = !self.sidebar_visible;
+                self.release_a_hidden_sidebar();
                 vec![]
             }
             Command::Detach => vec![Effect::Quit],
@@ -468,10 +469,7 @@ impl App {
             // one is already in flight (decision 39 keeps all of `stopping`'s logic in
             // `app/link.rs`).
             Command::StopDaemon => self.stop_daemon_command(),
-            Command::Help => {
-                self.modal = Some(Modal::Help);
-                vec![]
-            }
+            Command::Help => self.open_help(),
             // Decision 23: `C-b ,` opens the rename box prefilled with the focused
             // window's current name; the id travels with the modal itself
             // (`RenamePrompt::window_id`), not through `self.focused`.
@@ -550,18 +548,22 @@ impl App {
 
 pub(crate) mod actions;
 pub(crate) mod alerts;
+pub(crate) mod alerts_view;
 mod confirm;
 mod conversation;
 mod daemon;
 mod goal;
 mod headless;
+pub(crate) mod help;
 mod lifecycle;
 mod link;
 mod modal_keys;
 mod paste;
 pub(crate) mod plan_review;
+pub(crate) mod plan_summary;
 pub(crate) mod profile_screen;
 pub(crate) mod prompt;
+pub(crate) mod region;
 pub(crate) mod replies;
 mod run_enter;
 mod run_gate;

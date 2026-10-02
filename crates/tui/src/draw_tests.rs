@@ -53,7 +53,8 @@ async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
     let (_dir, conn, mut peer) = connection(&windows).await;
     let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
     // Three rows taller than before milestone 9.0.5: the Alerts box takes them from
-    // the sidebar column, so the list keeps its nine rows (and five after the resize).
+    // the sidebar column; milestone 9.0.7 decision 27's lost spacer gives the list ten
+    // rows (and six after the resize).
     let mut terminal = Terminal::new(TestBackend::new(120, 17)).unwrap();
     draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert_eq!(
@@ -72,12 +73,12 @@ async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
     );
     app.focus(20);
     draw(&mut terminal, &mut app, Some(&conn)).unwrap();
-    assert_eq!(app.tree.sidebar.top, 12);
+    assert_eq!(app.tree.sidebar.top, 11);
 
     terminal.backend_mut().resize(120, 13);
     let layout = draw(&mut terminal, &mut app, Some(&conn)).unwrap();
-    assert_eq!(layout.sidebar_list.height, 5);
-    assert_eq!(app.tree.sidebar.top, 16);
+    assert_eq!(layout.sidebar_list.height, 6);
+    assert_eq!(app.tree.sidebar.top, 15);
     let list = layout.sidebar_list;
     let first_row: String = (list.x..list.right())
         .map(|x| terminal.backend().buffer()[(x, list.y)].symbol())
@@ -106,7 +107,7 @@ async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
     let top = app.tree.sidebar.top;
     draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert_eq!(app.tree.sidebar.top, top);
-    app.modal = Some(app::Modal::Help);
+    app.modal = Some(app::Modal::Help(Default::default()));
     let layout = draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert!(
         app.on_click(layout.sidebar_list.x, layout.sidebar_list.y, &layout)

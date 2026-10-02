@@ -293,14 +293,19 @@ fn the_focused_windows_box_uses_the_focused_border_style() {
 
     let unfocused = paint(&layout, area, pan, &app.rows(), &app);
     assert_eq!(unfocused[0].spans.len(), 1, "one uniform border run");
-    assert_eq!(unfocused[0].spans[0].style, crate::theme::border());
+    assert_eq!(
+        unfocused[0].spans[0].style,
+        crate::theme::role(crate::theme::Role::Muted, crate::theme::Palette::PLAIN)
+    );
 
     app.focused = Some(1);
     let focused = paint(&layout, area, pan, &app.rows(), &app);
     assert_eq!(focused[0].spans.len(), 1);
+    // Milestone 9.0.7 decision 1: a box never wears the accent; bold on the muted border.
+    let muted = crate::theme::role(crate::theme::Role::Muted, app.palette());
     assert_eq!(
         focused[0].spans[0].style,
-        crate::theme::border_focused(crate::theme::DEFAULT_ACCENT)
+        muted.add_modifier(Modifier::BOLD)
     );
 }
 

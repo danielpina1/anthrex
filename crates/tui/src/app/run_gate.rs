@@ -74,7 +74,7 @@ impl App {
                 ),
                 PendingAction::RejectRun(run_id),
             ),
-            ('e', Some(task)) => Modal::EditTask(TaskEditForm::in_run(run, task)),
+            ('e', Some(task)) => Modal::EditTask(Box::new(TaskEditForm::in_run(run, task))),
             (_, Some(task)) => confirm(
                 format!("Remove {} from run {run_id}'s plan?", task.id),
                 PendingAction::RemoveTask {
@@ -94,10 +94,13 @@ impl App {
     /// Decision 33: the open edit form's keys. `Enter` sends the one `Edit` and leaves
     /// the form open, submitting, until its reply (decision 34).
     pub(crate) fn on_edit_task_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        // The brief's text area as the form draws it over the whole terminal, so Up
+        // and Down move a drawn row (decision 35).
+        let brief_width = crate::ui::run_edit::brief_width(self.body_area.width);
         let Some(Modal::EditTask(form)) = &mut self.modal else {
             return vec![];
         };
-        match form.on_key(key) {
+        match form.on_key_in(key, brief_width) {
             EditOutcome::Stay => vec![],
             EditOutcome::Cancel => {
                 self.modal = None;

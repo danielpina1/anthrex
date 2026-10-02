@@ -257,10 +257,9 @@ fn a_border_an_edge_meets_becomes_a_junction() {
         .iter()
         .find(|span| span.content.starts_with('┤'))
         .expect("the focused child's junction is its own span");
-    assert_eq!(
-        junction.style,
-        crate::theme::border_focused(crate::theme::DEFAULT_ACCENT)
-    );
+    // Milestone 9.0.7 decision 1: a box never wears the accent; bold on the muted border.
+    let muted = crate::theme::role(crate::theme::Role::Muted, app.palette());
+    assert_eq!(junction.style, muted.add_modifier(Modifier::BOLD));
 }
 
 #[test]

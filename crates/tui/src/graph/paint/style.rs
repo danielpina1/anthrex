@@ -7,13 +7,13 @@
 //! client's clock.
 
 use crate::app::App;
-use crate::theme;
+use crate::theme::{self, Glyph, Role, TaskLook};
 use crate::tree::{DisplayRound, NodeKey, Row, RowKind};
 use proto::{
-    AgentRole, FullState, PlannerInfo, PlannerState, RunState, ScoutInfo, ScoutState, StageInfo,
-    Status, TaskInfo, TaskState, WindowInfo,
+    AgentRole, FullState, PlannerInfo, PlannerState, RunState, ScoutInfo, ScoutState, Status,
+    TaskInfo, TaskState, WindowInfo,
 };
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use std::collections::HashSet;
 
 /// A node's border style and whether every one of its cells is dimmed.
@@ -86,20 +86,17 @@ impl Highlight {
     }
 }
 
-/// The border and dimming of one node. The focused window's box and a lit task's use
-/// the focused border colour; a critical-path task's border is bold; a finished
+/// The border and dimming of one node. Every box's border is muted: a box never has
+/// the keys, so it never wears the accent (milestone 9.0.7 decision 1). The focused
+/// window's box, a lit task's and a critical-path task's are bold instead; a finished
 /// agent node, and every node the highlight leaves out, is dim.
 pub(super) fn node_style(row: &Row<'_>, app: &App, highlight: &Highlight) -> NodeStyle {
     let focused = match &row.kind {
         RowKind::Window { info, .. } => app.focused == Some(info.id),
         _ => highlight.lights(&row.key),
     };
-    let mut border = if focused {
-        theme::border_focused(app.settings.accent)
-    } else {
-        theme::border()
-    };
-    if matches!(&row.kind, RowKind::Task { task, .. } if task.on_critical_path) {
+    let mut border = theme::role(theme::Role::Muted, app.palette());
+    if focused || matches!(&row.kind, RowKind::Task { task, .. } if task.on_critical_path) {
         border = border.add_modifier(Modifier::BOLD);
     }
     NodeStyle {
@@ -132,66 +129,63 @@ fn finished(kind: &RowKind<'_>) -> bool {
     }
 }
 
-/// A node's status glyph and its colour.
-pub(crate) fn node_glyph(row: &Row<'_>, app: &App) -> (&'static str, Color) {
+/// A node's status glyph and its role (milestone 9.0.7 decision 3), in ASCII when
+/// the palette says so.
+pub(crate) fn node_glyph(row: &Row<'_>, app: &App) -> (&'static str, Role) {
     let frame = app.spinner_frame;
+    let ascii = app.palette().ascii;
     match &row.kind {
-        RowKind::Project { status, .. } => status_pair(*status, frame),
-        RowKind::Window { info, .. } => status_pair(info.status, frame),
-        RowKind::Subagent { info } => (
-            theme::subagent_glyph(info, frame),
-            theme::subagent_color(info),
-        ),
-        RowKind::Run { run, .. } => (theme::RUN_GLYPH, theme::run_color(run.state)),
+        RowKind::Project { status, .. } => theme::status_look(*status, frame, ascii),
+        RowKind::Window { info, .. } => theme::status_look(info.status, frame, ascii),
+        RowKind::Subagent { info } => theme::subagent_look(info, frame, ascii),
+        RowKind::Run { run, .. } => theme::run_look(run.state, ascii),
         RowKind::Planner { planner, .. } => planner_glyph(planner, app),
-        RowKind::Scout { scout, window, .. } => scout_glyph(scout, *window, frame),
+        RowKind::Scout { scout, window, .. } => scout_glyph(scout, *window, app),
         RowKind::Task { run, task } => theme::task_look(
-            task.state,
-            run.state == RunState::AwaitingApproval,
-            crate::tree::task_held(run, task),
-            crate::tree::is_paused(task),
-            animating(task, app),
+            TaskLook {
+                state: task.state,
+                gate_open: run.state == RunState::AwaitingApproval,
+                held: crate::tree::task_held(run, task),
+                paused: crate::tree::is_paused(task),
+                animating: animating(task, app),
+                needs_you: crate::app::alerts::task_needs_you(run, task),
+            },
             frame,
+            ascii,
         ),
         RowKind::AgentRound { task, round, .. } => round_glyph(task, round, app),
-        RowKind::Stage { stage, .. } => stage_glyph(stage, frame),
+        RowKind::Stage { stage, .. } => theme::stage_look(stage, frame, ascii),
     }
 }
 
-/// Milestone 9.1 decision 55: a stage's tier 3, `◌` while its branch is not created.
-fn stage_glyph(stage: &StageInfo, frame: usize) -> (&'static str, Color) {
-    match stage.full.state {
-        _ if stage.head.is_none() => status_pair(Status::Starting, frame),
-        FullState::Green => check(),
-        FullState::Red => CROSS,
-        FullState::Running | FullState::Bisecting => status_pair(Status::Working, frame),
-        FullState::None => status_pair(Status::Idle, frame),
-    }
-}
-
-fn status_pair(status: Status, frame: usize) -> (&'static str, Color) {
+/// Rejected, blocking or failed (decision 3's review and agent-node row).
+fn cross(app: &App) -> (&'static str, Role) {
     (
-        theme::status_glyph(status, frame),
-        theme::status_color(status),
+        theme::glyph(Glyph::Failed, app.palette().ascii),
+        Role::Failed,
     )
 }
 
-/// Rejected, blocking or failed: red (decision 19).
-const CROSS: (&str, Color) = ("✗", Color::Red);
-
-/// Approved, reported or finished: the done colour, green.
-fn check() -> (&'static str, Color) {
-    ("✓", theme::status_color(Status::Done))
+/// Approved, reported or finished.
+fn check(app: &App) -> (&'static str, Role) {
+    (theme::glyph(Glyph::Passed, app.palette().ascii), Role::Done)
 }
 
-/// A live agent node: the spinner while its window is `Working`, `◆` while the window
-/// asks for attention or the round is rate-limited, else `●` (decision 19).
-fn live(window: Option<&WindowInfo>, rate_limited: bool, frame: usize) -> (&'static str, Color) {
+/// An ended node with nothing to show: `–` in `Muted`.
+fn ended(app: &App) -> (&'static str, Role) {
+    (theme::glyph(Glyph::Ended, app.palette().ascii), Role::Muted)
+}
+
+/// A live agent node: the spinner while its window is `Working`, `⚑` while the window
+/// asks for attention, `⊘` in `Paused` while the round is rate-limited (waiting on
+/// someone else, never "needs you": no alert is raised for it), else `●` (decision 19).
+fn live(window: Option<&WindowInfo>, rate_limited: bool, app: &App) -> (&'static str, Role) {
+    let (frame, ascii) = (app.spinner_frame, app.palette().ascii);
     match window.map(|window| window.status) {
-        Some(Status::Working) => status_pair(Status::Working, frame),
-        Some(Status::Attention) => status_pair(Status::Attention, frame),
-        _ if rate_limited => status_pair(Status::Attention, frame),
-        _ => ("●", theme::status_color(Status::Working)),
+        Some(Status::Working) => theme::status_look(Status::Working, frame, ascii),
+        Some(Status::Attention) => theme::status_look(Status::Attention, frame, ascii),
+        _ if rate_limited => (theme::glyph(Glyph::Blocked, ascii), Role::Paused),
+        _ => (theme::glyph(Glyph::Live, ascii), Role::Working),
     }
 }
 
@@ -210,7 +204,7 @@ fn animating(task: &TaskInfo, app: &App) -> bool {
         })
 }
 
-fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'static str, Color) {
+fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'static str, Role) {
     let info = round.info;
     let is_live = round.ended_at.is_none();
     match info.role {
@@ -220,23 +214,23 @@ fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'stati
                 .iter()
                 .find(|review| review.round == info.round && review.verdict.is_some());
             match review {
-                Some(review) if review.blocking => CROSS,
-                Some(_) => check(),
-                None if is_live => live(round.window, app.rate_limited(info), app.spinner_frame),
-                None => ("–", theme::DIM),
+                Some(review) if review.blocking => cross(app),
+                Some(_) => check(app),
+                None if is_live => live(round.window, app.rate_limited(info), app),
+                None => ended(app),
             }
         }
         AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout | AgentRole::Planner => {
             if is_live {
-                live(round.window, app.rate_limited(info), app.spinner_frame)
+                live(round.window, app.rate_limited(info), app)
             } else if task.state == TaskState::Blocked && last_worker_round(task, round) {
-                CROSS
+                cross(app)
             } else {
-                check()
+                check(app)
             }
         }
         // A decider has no rounds (decision 43); a stray one is drawn as ended.
-        AgentRole::Decider => ("–", theme::DIM),
+        AgentRole::Decider => ended(app),
     }
 }
 
@@ -255,22 +249,18 @@ fn last_worker_round(task: &TaskInfo, round: &DisplayRound<'_>) -> bool {
         })
 }
 
-fn scout_glyph(
-    scout: &ScoutInfo,
-    window: Option<&WindowInfo>,
-    frame: usize,
-) -> (&'static str, Color) {
+fn scout_glyph(scout: &ScoutInfo, window: Option<&WindowInfo>, app: &App) -> (&'static str, Role) {
     match scout.state {
-        ScoutState::Starting | ScoutState::Working => live(window, false, frame),
-        ScoutState::Reported => check(),
-        ScoutState::Failed => CROSS,
+        ScoutState::Starting | ScoutState::Working => live(window, false, app),
+        ScoutState::Reported => check(app),
+        ScoutState::Failed => cross(app),
     }
 }
 
-fn planner_glyph(planner: &PlannerInfo, app: &App) -> (&'static str, Color) {
+fn planner_glyph(planner: &PlannerInfo, app: &App) -> (&'static str, Role) {
     match planner.state {
-        PlannerState::Planning => live(listed(app, planner.window_id), false, app.spinner_frame),
-        PlannerState::Finished => check(),
-        PlannerState::Failed => CROSS,
+        PlannerState::Planning => live(listed(app, planner.window_id), false, app),
+        PlannerState::Finished => check(app),
+        PlannerState::Failed => cross(app),
     }
 }

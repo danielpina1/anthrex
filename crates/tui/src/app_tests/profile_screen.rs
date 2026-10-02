@@ -234,7 +234,10 @@ fn a_selected_project_is_the_screens_project() {
 
 #[test]
 fn no_project_toasts() {
+    // 9.0.7 decision 37: an empty session opens on the start directory, so the toast
+    // is for an empty one.
     let mut app = app_with(vec![]);
+    app.default_dir = std::path::PathBuf::new();
     prefix(&mut app);
     assert!(tap(&mut app, KeyCode::Char('P')).is_empty());
     assert!(app.screen.is_none());

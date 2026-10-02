@@ -193,8 +193,9 @@ impl App {
     }
 
     /// Decision 25's keys in the run view with a task selected: `PageUp`/`PageDown`
-    /// scroll the panel by its interior minus one, clamped by the renderer's own row
-    /// count; `b` expands or collapses the brief. `false`: no task is selected.
+    /// scroll the panel a page, the body rows between its title and its footer
+    /// (milestone 9.0.7 decision 12), clamped by the renderer's own row count; `b`
+    /// expands or collapses the brief. `false`: no task is selected.
     pub(super) fn on_task_panel_key(&mut self, code: crossterm::event::KeyCode) -> bool {
         use crossterm::event::KeyCode;
         let Some(key @ NodeKey::Task { .. }) = self.tree.selected.clone() else {
@@ -210,10 +211,10 @@ impl App {
             }
             KeyCode::PageUp | KeyCode::PageDown => {
                 let (width, height) = self.task_panel_interior();
-                let body = height.saturating_sub(1);
+                let body = crate::inspector::task_panel_room(self, width, height);
                 let rows = crate::inspector::task_panel_rows(self, width);
                 let max = u16::try_from(rows).unwrap_or(u16::MAX).saturating_sub(body);
-                let page = height.saturating_sub(1).max(1);
+                let page = body.max(1);
                 let from = self.inspector_scroll_for(&key).min(max);
                 let scroll = if code == KeyCode::PageDown {
                     from.saturating_add(page).min(max)
@@ -228,13 +229,13 @@ impl App {
     }
 
     /// The run view's panel interior (width, height), from the last frame's overview
-    /// area: the footer `ui::overview::areas` gives, less its border and padding.
-    pub(super) fn task_panel_interior(&self) -> (u16, u16) {
+    /// area: the footer `ui::overview::areas_of` gives (the panel sized by the selected
+    /// node, milestone 9.0.7 decision 17), less its border and padding.
+    pub(crate) fn task_panel_interior(&self) -> (u16, u16) {
         let Some(main) = self.graph_main else {
             return (0, 0);
         };
-        let (_, footer) =
-            crate::ui::overview::areas(main, self.inspector_visible, self.run_view.is_some());
+        let (_, footer) = crate::ui::overview::areas_of(self, main);
         (
             footer.width.saturating_sub(4),
             footer.height.saturating_sub(2),

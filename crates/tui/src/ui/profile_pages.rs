@@ -2,7 +2,7 @@
 //! toggles, the Reject, Unset and Confirm pages (the TOML shown exactly, scrolled), and
 //! the editors. Split from `ui/profile.rs` by responsibility (`AGENTS.md` hard rule 8).
 
-use super::{dot, hint, pad, store_line};
+use super::{hint, pad, store_line};
 use crate::app::profile_screen::{EditorField, ProfilePage, ProfileScreen};
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{Glyph, Palette, Role, glyph, role};
@@ -51,10 +51,17 @@ fn hard_wrap(line: &str, width: usize) -> Vec<String> {
 }
 
 /// A page's title, whether it is destructive, its body and its hint line.
+/// The editor's list area width in a terminal `width` wide, which its Up and Down
+/// move by; a one-line value is 7 columns narrower (milestone 9.0.7 decision 35).
+pub(crate) fn list_width(width: u16) -> u16 {
+    width.min(kit::DIALOG_MAX).saturating_sub(4)
+}
+
 fn page_parts(
     s: &ProfileScreen,
     page: &ProfilePage,
     width: u16,
+    keys: bool,
     p: Palette,
 ) -> (String, bool, Vec<Line<'static>>, Line<'static>) {
     let w = usize::from(width.min(kit::WRAP)).max(1);
@@ -66,7 +73,7 @@ fn page_parts(
     };
     let hints = |list: &[(&str, &str)]| {
         let list: Vec<Hint> = list.iter().map(|(k, v)| hint(k, v, 5)).collect();
-        kit::hints_joined(width, &list, &format!(" {} ", dot(p)), p)
+        kit::hints_joined(width, &list, crate::theme::dot_sep(p), p)
     };
     let dir = s.dir.display().to_string();
     match page {
@@ -82,7 +89,7 @@ fn page_parts(
                     " "
                 };
                 Line::from(vec![
-                    Span::styled(format!("{mark} "), role(Role::Accent, p)),
+                    Span::styled(format!("{mark} "), role(kit::bar_role(keys), p)),
                     Span::styled(pad(label, 19), role(Role::Muted, p)),
                     Span::raw(kit::choice_in(if on { "on" } else { "off" }, p)),
                 ])
@@ -105,14 +112,15 @@ fn page_parts(
             ]);
             ("detect".into(), false, body, h)
         }
-        ProfilePage::Reject => (
-            "reject proposal".into(),
-            true,
-            wrap(&format!(
+        ProfilePage::Reject => {
+            // Decision 37 (principle 9): a destructive page's key and word in `Failed`,
+            // as `ui/action_menu.rs::verb_hints` and the Settings discard page draw them.
+            let h = kit::destructive(hints(&[("y", "reject"), ("esc", "back")]), "y", "reject", p);
+            let body = wrap(&format!(
                 "the proposal for {dir} is deleted; a running scout or verification stops"
-            )),
-            hints(&[("y", "reject"), ("esc", "back")]),
-        ),
+            ));
+            ("reject proposal".into(), true, body, h)
+        }
         ProfilePage::Unset { key } => (
             format!("unset {key}"),
             false,
@@ -210,7 +218,8 @@ pub(crate) fn page_lines(
     page: &ProfilePage,
     width: u16,
 ) -> Vec<Line<'static>> {
-    let (_, _, mut body, hints) = page_parts(s, page, width, app.palette());
+    let keys = app.key_region() == crate::app::region::KeyRegion::Screen;
+    let (_, _, mut body, hints) = page_parts(s, page, width, keys, app.palette());
     body.push(Line::default());
     body.push(hints);
     body
@@ -221,10 +230,11 @@ pub(super) fn render_page(
     s: &ProfileScreen,
     page: &ProfilePage,
     area: Rect,
+    keys: bool,
     p: Palette,
 ) {
     let width = area.width.min(kit::DIALOG_MAX).saturating_sub(4);
-    let (title, destructive, body, hints) = page_parts(s, page, width, p);
+    let (title, destructive, body, hints) = page_parts(s, page, width, keys, p);
     // The page fits the area: a long TOML scrolls inside it.
     let room = usize::from(area.height.saturating_sub(4));
     let body = match page {
