@@ -5,24 +5,103 @@
 use super::classify;
 use proto::DeliveryAlertKind::*;
 
+/// Every key the engine files in `RunDelivery.alerts`, and its kind:
+/// - `auth` (`watch.rs`, decision 11): `gh` logged out;
+/// - `<n>/ci/<check>` (`fix.rs::to_user`): CI handed to the user;
+/// - `<n>/closed` (`land.rs::closed`): a PR closed without merging;
+/// - `<n>/cap/<thread>` (`review.rs::over_cap`): review rounds over the cap;
+/// - `<n|run>/<op>` (`failure_key`, `watch.rs::keeps_failing`), `<op>` one of
+///   [`super::super::OP_NAMES`]: a held host op;
+/// - attention lines only: `<n>/unlanded` (`land.rs`, the remedy is `run cancel`),
+///   `<n>/sync` (`sync.rs`, a red base sync, the orchestrator's to fix),
+///   `<n>/reply/<thread>` (`reply.rs`), `<n>/review/<thread>` (`review.rs`) and
+///   `<n>/page/<key>` (`view.rs`);
+/// - any other key, a future one included: none, never a guessed kind (ruling, task 15
+///   fix round 2).
 #[test]
 fn every_key_has_its_kind_and_stage() {
-    for (key, want) in [
-        ("auth", (Some(GhLoggedOut), None)),
-        ("2/closed", (Some(PrClosedUnmerged), Some(2))),
-        ("1/ci/test::a", (Some(CiHandedToUser), Some(1))),
-        ("3/cap/7:c5", (Some(ReviewRoundsOverCap), Some(3))),
-        ("1/push", (Some(HostOpHeld), Some(1))),
-        ("run/permission", (Some(HostOpHeld), None)),
+    let mut cases = vec![
+        ("auth".to_owned(), (Some(GhLoggedOut), None)),
+        ("2/closed".to_owned(), (Some(PrClosedUnmerged), Some(2))),
+        ("1/ci/test::a".to_owned(), (Some(CiHandedToUser), Some(1))),
+        (
+            "3/cap/7:c5".to_owned(),
+            (Some(ReviewRoundsOverCap), Some(3)),
+        ),
+        ("run/permission".to_owned(), (Some(HostOpHeld), None)),
         // Attention lines only.
-        ("1/reply/7:c5", (None, None)),
-        ("1/review/7:c5", (None, None)),
-        ("1/page/reviews", (None, None)),
-        ("odd", (None, None)),
-        ("x/push", (None, None)),
-    ] {
-        assert_eq!(classify(key), want, "{key}");
+        ("2/unlanded".to_owned(), (None, None)),
+        ("1/sync".to_owned(), (None, None)),
+        ("1/reply/7:c5".to_owned(), (None, None)),
+        ("1/review/7:c5".to_owned(), (None, None)),
+        ("1/page/reviews".to_owned(), (None, None)),
+        // Unknown, a future key's shape included.
+        ("1/rebase".to_owned(), (None, None)),
+        ("run/sync".to_owned(), (None, None)),
+        ("odd".to_owned(), (None, None)),
+        ("x/push".to_owned(), (None, None)),
+    ];
+    for op in super::super::OP_NAMES {
+        cases.push((format!("4/{op}"), (Some(HostOpHeld), Some(4))));
     }
+    for (key, want) in cases {
+        assert_eq!(classify(&key), want, "{key}");
+    }
+}
+
+/// `OP_NAMES` is every `op_name`, one per host op.
+#[test]
+fn op_names_are_every_ops_name() {
+    use crate::host::ReplyTarget;
+    use crate::run::delivery::ops::HostOp;
+    let s = String::new;
+    let ops = [
+        HostOp::Push { stage: 1, sha: s() },
+        HostOp::Fetch {
+            stage: None,
+            branch: s(),
+            into: s(),
+            adopt: None,
+            parents_of: None,
+        },
+        HostOp::OpenPr {
+            stage: 1,
+            base: s(),
+            head: s(),
+            title: s(),
+            body: s(),
+        },
+        HostOp::ViewPr {
+            stage: 1,
+            number: 1,
+        },
+        HostOp::FailedLogs {
+            stage: 1,
+            ci_run: 1,
+            max_bytes: 1,
+        },
+        HostOp::RerunFailed {
+            stage: 1,
+            ci_run: 1,
+        },
+        HostOp::Reply {
+            stage: 1,
+            number: 1,
+            thread: s(),
+            target: ReplyTarget::Conversation,
+            body: s(),
+            marker: s(),
+        },
+        HostOp::Retarget {
+            stage: 1,
+            number: 1,
+            base: s(),
+        },
+        HostOp::Permission { user: s() },
+        HostOp::DeleteBranch { stage: 1 },
+    ];
+    let names: Vec<&str> = ops.iter().map(super::super::op_name).collect();
+    assert_eq!(names, super::super::OP_NAMES);
 }
 
 /// The typed alert's text is one line with no hidden character, whatever the engine

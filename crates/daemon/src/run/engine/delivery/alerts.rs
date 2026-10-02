@@ -73,8 +73,11 @@ pub(crate) fn alerts(run: &Run) -> Vec<DeliveryAlert> {
 /// A `RunDelivery.alerts` key's kind and stage: `auth` (decision 11), `<n>/ci/<key>`
 /// (`fix.rs::to_user`), `<n>/closed` (`land.rs::closed`), `<n>/cap/<key>`
 /// (`review.rs::over_cap`), and a failure key `<n|run>/<op>` (`failure_key`, past
-/// `FAILURES_BEFORE_ATTENTION`). A dropped reply (`<n>/reply/…`), a refused fix
-/// (`<n>/review/…`) and a full page (`<n>/page/…`) are attention lines only.
+/// `FAILURES_BEFORE_ATTENTION`) whose `<op>` is one of [`super::OP_NAMES`]. An
+/// unlanded stage (`<n>/unlanded`), a red base sync (`<n>/sync`), a dropped reply
+/// (`<n>/reply/…`), a refused fix (`<n>/review/…`) and a full page (`<n>/page/…`) are
+/// attention lines only, and so is any key not listed here: R-13's five kinds are the
+/// whole list, never a guess (ruling, task 15 fix round 2).
 fn classify(key: &str) -> (Option<DeliveryAlertKind>, Option<u16>) {
     use DeliveryAlertKind::*;
     if key == super::watch::AUTH {
@@ -85,8 +88,10 @@ fn classify(key: &str) -> (Option<DeliveryAlertKind>, Option<u16>) {
     };
     let n = stage.parse::<u16>().ok();
     let kind = match rest.split_once('/') {
-        None if rest == "closed" => Some(PrClosedUnmerged),
-        None if stage == "run" || n.is_some() => Some(HostOpHeld),
+        None if rest == "closed" && n.is_some() => Some(PrClosedUnmerged),
+        None if super::OP_NAMES.contains(&rest) && (stage == "run" || n.is_some()) => {
+            Some(HostOpHeld)
+        }
         None => None,
         Some(("ci", _)) => Some(CiHandedToUser),
         Some(("cap", _)) => Some(ReviewRoundsOverCap),

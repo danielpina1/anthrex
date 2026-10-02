@@ -205,13 +205,12 @@ fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
     } else {
         let (merged, total) = tree::run_progress(run);
         let at = run.approved_at.unwrap_or(run.created_at);
-        let plain = format!("{merged}/{total} merged · {}", since(at));
         match crate::inspector::delivering(run) {
             true => vec![
                 format!("{merged}/{total} merged · delivering · {}", since(at)),
                 format!("delivering · {}", since(at)),
             ],
-            false => vec![plain],
+            false => vec![format!("{merged}/{total} merged · {}", since(at))],
         }
     };
     // The corners, the title's own spaces and `run · `, the right text's two spaces,

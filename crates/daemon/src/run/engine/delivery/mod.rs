@@ -103,6 +103,21 @@ pub(crate) fn stage_of(op: &HostOp) -> Option<u16> {
 }
 
 /// A host op's name in log lines and in `RunDelivery.failures` (decision 11).
+/// Every [`op_name`], in `HostOp`'s order: the `<op>` of a failure key, which
+/// `alerts::classify` reads as a held host op (`op_names_are_every_ops_name`).
+pub(crate) const OP_NAMES: [&str; 10] = [
+    "push",
+    "fetch",
+    "open_pr",
+    "view_pr",
+    "failed_logs",
+    "rerun_failed",
+    "reply",
+    "retarget",
+    "permission",
+    "delete_branch",
+];
+
 pub(crate) fn op_name(op: &HostOp) -> &'static str {
     match op {
         HostOp::Push { .. } => "push",
