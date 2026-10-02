@@ -1,8 +1,9 @@
 //! Milestone 9.2, task M9.2.16: stacked-PR delivery end to end, through the real binary
 //! and a real daemon on `/tmp` paths, against `FakeHost` (`PrRig`): stage PRs opening in
-//! order, preflight's refusals, the refusals of `pr` mode, cancel, and local mode making
-//! no host call. Nothing here can reach GitHub or run a real `gh`; every `PrRig` drop
-//! asserts `forbidden.jsonl` is empty. The CI scenarios are in `run_e2e_pr_ci.rs`.
+//! order, the refusals of `pr` mode, cancel, and local mode making no host call. Nothing
+//! here can reach GitHub or run a real `gh`; every `PrRig` drop asserts
+//! `forbidden.jsonl` is empty. The CI scenarios are in `run_e2e_pr_ci.rs`, preflight's
+//! refusals in `run_e2e_pr_preflight.rs`.
 
 mod support;
 
@@ -13,84 +14,7 @@ use serde_json::json;
 use support::run_harness::{FINISH_WAIT, REQUEST_WAIT, RunHarness, git_in};
 use support::run_plans::*;
 use support::run_pr::*;
-
-/// One `anthrex …` outcome.
-struct Out {
-    code: i32,
-    stdout: String,
-    stderr: String,
-}
-
-fn out(output: std::process::Output) -> Out {
-    Out {
-        code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    }
-}
-
-/// `anthrex run <args> --dir <repo>`.
-fn run(h: &RunHarness, args: &[&str]) -> Out {
-    let repo = h.repo.display().to_string();
-    let mut all = vec!["run"];
-    all.extend_from_slice(args);
-    all.extend_from_slice(&["--dir", &repo]);
-    out(h.anthrex(&all))
-}
-
-fn ok(out: &Out) -> &str {
-    assert_eq!(
-        out.code, 0,
-        "stdout: {}\nstderr: {}",
-        out.stdout, out.stderr
-    );
-    &out.stdout
-}
-
-/// Exit 1 with `message` as the whole of stderr's last line.
-fn refused_with(out: &Out, message: &str) {
-    assert_eq!(
-        out.code, 1,
-        "stdout: {}\nstderr: {}",
-        out.stdout, out.stderr
-    );
-    assert_eq!(out.stderr.lines().last(), Some(message), "{}", out.stderr);
-}
-
-/// `run start --plan <toml> --delivery <mode> --yes`, waited for as a `pr` start.
-fn start_out(h: &RunHarness, toml: &str, mode: &str) -> Out {
-    let plan = h.plan(toml).display().to_string();
-    let repo = h.repo.display().to_string();
-    let args = [
-        "run",
-        "start",
-        "--plan",
-        &plan,
-        "--dir",
-        &repo,
-        "--delivery",
-        mode,
-        "--yes",
-    ];
-    out(pr_start(h, &args))
-}
-
-/// [`start_out`] that must start; the run id.
-fn start(h: &RunHarness, toml: &str, mode: &str) -> String {
-    let started = start_out(h, toml, mode);
-    assert_eq!(
-        started.code,
-        0,
-        "start failed: {}{}",
-        started.stderr,
-        h.log_tail()
-    );
-    started.stdout.trim().to_string()
-}
-
-fn one_task() -> String {
-    plan("", &[task("t1", &["a.txt"], "")])
-}
+use support::run_pr_cli::*;
 
 /// A one-task `pr` run whose stage PR is open and green; its id and PR number.
 fn open_one(h: &RunHarness, rig: &PrRig) -> (String, u64) {
@@ -125,32 +49,6 @@ fn wait_complete(h: &RunHarness, id: &str, wait: std::time::Duration) -> RunInfo
         |r| r.state.is_terminal() || r.state == RunState::Complete,
         wait,
     )
-}
-
-#[test]
-fn e2e_pr_stage_dependency_on_a_later_stage_is_rejected() {
-    // Pinning: 9.1's validation, unchanged in `pr` mode.
-    let (h, rig) = pr_harness("");
-    let toml = plan(
-        "",
-        &[
-            task("t1", &["a.txt"], "deps = [\"t2\"]"),
-            task("t2", &["b.txt"], "stage = 2"),
-        ],
-    );
-    let refused = start_out(&h, &toml, "pr");
-    assert_eq!(refused.code, 1, "{}", refused.stderr);
-    assert!(
-        refused
-            .stderr
-            .contains("stage 1 cannot depend on t2 in stage 2"),
-        "{}",
-        refused.stderr
-    );
-    assert!(h.snapshot().runs.is_empty(), "no run");
-    assert!(no_run_branches(&h.repo));
-    assert_eq!(rig.remote_refs(), ["refs/heads/main"]);
-    assert!(rig.ctl().prs().is_empty());
 }
 
 #[test]
@@ -231,103 +129,6 @@ fn e2e_pr_stage_prs_open_in_order_with_the_right_bases() {
     expected.sort();
     assert_eq!(rig.remote_refs(), expected);
     assert!(rig.contains(&two.head_oid, &one.head_oid), "stacked");
-}
-
-/// No run, no local branch, nothing new on the remote and no PR after a refused start.
-fn left_nothing(h: &RunHarness, rig: Option<&PrRig>, case: &str) {
-    assert!(h.snapshot().runs.is_empty(), "{case}: a run was left");
-    assert!(no_run_branches(&h.repo), "{case}: a branch was left");
-    assert_eq!(
-        h.git(&["for-each-ref", "refs/anthrex/"]),
-        "",
-        "{case}: a private ref was left"
-    );
-    if let Some(rig) = rig {
-        let anthrex: Vec<String> = (rig.remote_refs().into_iter())
-            .filter(|r| r.starts_with("refs/heads/anthrex/"))
-            .collect();
-        assert!(anthrex.is_empty(), "{case}: pushed {anthrex:?}");
-        assert!(rig.ctl().prs().is_empty(), "{case}: a PR was opened");
-    }
-}
-
-#[test]
-fn e2e_pr_preflight_refuses_each_failure_with_its_text() {
-    let toml = one_task();
-    // `gh` missing, on the real `GhHost`: `ANTHREX_CODE_HOST=gh` and the harness's pinned
-    // `ANTHREX_GH_BIN`, a path that does not exist. No PATH lookup, never a real `gh`.
-    // Fix round 1 (m5): a push or fetch could reach only `file://`, whatever order
-    // preflight's checks run in.
-    let h = RunHarness::with_env("", &[("GIT_ALLOW_PROTOCOL", "file")], true);
-    assert!(!std::path::Path::new(daemon::manager::TEST_GH_BIN).exists());
-    h.git(&["config", "remote.origin.url", URL]);
-    refused_with(
-        &start_out(&h, &toml, "pr"),
-        &format!(
-            "gh is not installed (looked for {}); install it, or use --delivery local",
-            daemon::manager::TEST_GH_BIN
-        ),
-    );
-    left_nothing(&h, None, "gh missing");
-    drop(h);
-
-    // The rest on `FakeHost`, whose GitHub starts knowing nothing.
-    let (h, rig) = pr_harness_unscripted("");
-    h.git(&["config", "--unset", "remote.origin.url"]);
-    refused_with(
-        &start_out(&h, &toml, "pr"),
-        "remote origin is not set in this repository; use --delivery local",
-    );
-    left_nothing(&h, Some(&rig), "no remote");
-
-    let gitlab = "https://gitlab.example.com/fake/app.git";
-    h.git(&["config", "remote.origin.url", gitlab]);
-    refused_with(
-        &start_out(&h, &toml, "pr"),
-        &format!("remote origin is not a GitHub repository ({gitlab}); use --delivery local"),
-    );
-    left_nothing(&h, Some(&rig), "not GitHub");
-
-    h.git(&["config", "remote.origin.url", URL]);
-    refused_with(
-        &start_out(&h, &toml, "pr"),
-        "gh is not logged in to github.com; run gh auth login, or use --delivery local",
-    );
-    left_nothing(&h, Some(&rig), "logged out");
-
-    rig.ctl().log_in("github.com");
-    refused_with(
-        &start_out(&h, &toml, "pr"),
-        "gh cannot see fake/app: GraphQL: Could not resolve to a Repository with the name 'fake/app'. (repository)",
-    );
-    left_nothing(&h, Some(&rig), "repository missing");
-
-    // The push URL leads nowhere: git's own last line, quoted.
-    rig.ctl().create_repo("fake", "app", &rig.bare, "main");
-    let bare = rig.bare.display().to_string();
-    let nowhere = h
-        .dir
-        .path()
-        .join("no-such-remote.git")
-        .display()
-        .to_string();
-    h.git(&["config", "--unset", &format!("url.{bare}.pushInsteadOf")]);
-    h.git(&["config", &format!("url.{nowhere}.pushInsteadOf"), URL]);
-    refused_with(
-        &start_out(&h, &toml, "pr"),
-        "a dry-run push to origin was refused, so anthrex cannot push there; git said: \"and the repository exists.\"",
-    );
-    left_nothing(&h, Some(&rig), "dry-run push refused");
-    h.git(&["config", "--unset", &format!("url.{nowhere}.pushInsteadOf")]);
-    h.git(&["config", &format!("url.{bare}.pushInsteadOf"), URL]);
-
-    rig.bare_git(&["update-ref", "-d", "refs/heads/main"]);
-    refused_with(
-        &start_out(&h, &toml, "pr"),
-        "the base branch main does not exist on origin; push it first",
-    );
-    left_nothing(&h, Some(&rig), "base missing");
-    assert!(rig.remote_refs().is_empty(), "{:?}", rig.remote_refs());
 }
 
 #[test]
@@ -481,15 +282,6 @@ fn e2e_pr_run_accept_and_discard_are_refused() {
     );
     assert_eq!(rig.remote_refs(), remote_before, "the remote is untouched");
     assert_eq!(rig.wait_pr(number, |_| true).state, PrState::Merged);
-}
-
-/// `anthrex run <args> --dir <repo>`, waiting as `run accept` and `run discard` may.
-fn run_long(h: &RunHarness, args: &[&str]) -> Out {
-    let repo = h.repo.display().to_string();
-    let mut all = vec!["run"];
-    all.extend_from_slice(args);
-    all.extend_from_slice(&["--dir", &repo]);
-    out(h.anthrex_input(&all, ""))
 }
 
 /// The check: in the tier-3 checkout (`.full`) it says it is waiting, then waits for

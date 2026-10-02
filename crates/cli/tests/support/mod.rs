@@ -9,6 +9,7 @@ pub mod run_harness;
 pub mod run_orch;
 pub mod run_plans;
 pub mod run_pr;
+pub mod run_pr_cli;
 pub mod run_tiers;
 pub mod run_watcher;
 
