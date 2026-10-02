@@ -57,15 +57,22 @@ fn category(rec: &CiRecord) -> &'static str {
     category_label(rec.category.unwrap_or(CiCategory::Unknown))
 }
 
-/// `Fix CI on stage <n>: <first failing test, else first failing check>`.
+/// `Fix CI on stage <n>: <first failing test, else CI check 1>`. A test name passed
+/// decision 18's filter; a check's name never reaches a title (the final fix wave's I-6).
 fn title(n: u16, rec: &CiRecord) -> String {
-    let first = (rec.failing_tests.first().or(rec.checks.first())).map_or("CI", String::as_str);
-    format!("Fix CI on stage {n}: {first}")
+    match rec.failing_tests.first() {
+        Some(test) => format!("Fix CI on stage {n}: {test}"),
+        None => format!("Fix CI on stage {n}: {}", quote::checks_ref(1)),
+    }
 }
 
+/// I-6: the checks by number; their names are in the brief's fenced list.
 fn acceptance(rec: &CiRecord) -> Vec<String> {
     vec![
-        format!("The failing checks pass: {}.", rec.checks.join(", ")),
+        format!(
+            "The failing checks pass: {}.",
+            quote::checks_ref(rec.checks.len())
+        ),
         "No test is deleted or skipped to make them pass.".to_string(),
     ]
 }
@@ -78,7 +85,7 @@ fn last_lines(text: &str, k: usize) -> String {
 
 /// Interfaces' `ci` template, exactly, then the two lines every fix brief ends with.
 fn brief(run: &Run, n: u16, rec: &CiRecord, repro: &Repro, culprit: Option<&Culprit>) -> String {
-    let checks = rec.checks.join(", ");
+    let checks = quote::checks_ref(rec.checks.len());
     let repro = match repro {
         Repro::Reproduced(command) => format!("It reproduces locally with: {command}."),
         Repro::NotReproduced => NOT_REPRODUCED.to_string(),
@@ -92,9 +99,11 @@ fn brief(run: &Run, n: u16, rec: &CiRecord, repro: &Repro, culprit: Option<&Culp
         None => "No single task's merge is the cause.".to_string(),
     };
     let source = rec.source.as_deref().unwrap_or("none");
+    // I-6: the checks' names only inside their fenced list.
     let mut out = format!(
-        "CI failed on stage {n}'s pull request, at {}, in: {checks}.\nCategory: {}. {repro}\n{blame}\nSummary of the failure (a decider's summary of the log, {source}):\n",
+        "CI failed on stage {n}'s pull request, at {}, in: {checks}.\n{}Category: {}. {repro}\n{blame}\nSummary of the failure (a decider's summary of the log, {source}):\n",
         sha7(&rec.head),
+        quote::checks(&rec.checks),
         category(rec)
     );
     // Decision 22 (fix round 1): a decider's own lines (its words, one-lined and cut)

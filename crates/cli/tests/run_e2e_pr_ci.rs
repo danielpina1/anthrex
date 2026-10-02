@@ -363,7 +363,8 @@ fn e2e_pr_ci_red_not_reproduced_adds_an_environment_fix_task() {
     let run = wait_fix(&h, &id, "fix1", PR_OPEN_WAIT.saturating_add(CI_FIX_WAIT));
     let (fix, brief) = (t(&run, "fix1"), brief_of(&run, "fix1"));
     assert_eq!(fix.origin, TaskOrigin::Ci);
-    assert_eq!(fix.title, "Fix CI on stage 1: test");
+    // The final fix wave's I-6: a check is named by number outside its fenced list.
+    assert_eq!(fix.title, "Fix CI on stage 1: CI check 1");
     assert_eq!(fix.owns, ["a.txt"], "the stage's owns");
     // No decider: the fallback's summary, no test names, so the stage's tier-2 steps
     // reproduce it, green: TT's environment sentence.

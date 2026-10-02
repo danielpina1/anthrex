@@ -38,12 +38,15 @@ pub struct CiSummaryInput {
     pub log: String,
 }
 
-/// The prompt: the head, a blank line, then `quote::ci_log` of the checks and the
-/// log's last [`CI_SUMMARY_INPUT_BYTES`].
+/// The prompt: the head, a blank line, the failing checks' names in their fenced list
+/// (`quote::checks`), then `quote::ci_log` of the log's last [`CI_SUMMARY_INPUT_BYTES`],
+/// labelled with the checks by number: a check's name, which a workflow author chose,
+/// is never outside the fence (the final fix wave's I-6).
 pub fn prompt(input: &CiSummaryInput) -> String {
     let log = tail_bytes(&input.log, CI_SUMMARY_INPUT_BYTES);
-    let quoted = quote::ci_log(&input.checks.join(", "), log);
-    format!("{CI_SUMMARY_HEAD}\n\n{quoted}")
+    let names = quote::checks(&input.checks);
+    let quoted = quote::ci_log(&quote::checks_ref(input.checks.len()), log);
+    format!("{CI_SUMMARY_HEAD}\n\n{names}{quoted}")
 }
 
 /// The longest suffix of `s` of at most `max` bytes that starts on a character boundary.
