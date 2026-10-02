@@ -436,9 +436,13 @@ fn new_notes(before: &Run, after: &Run) -> Vec<String> {
 /// The report is rewritten at once (M9.16), so a `complete` run's opens with the summary
 /// before the user accepts or discards it.
 fn write_summary(run: &mut Run, summary: String, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.3 decision 17: the round's summary too. While a later round is still
+    // open, a summary is the previous round's, whose completion asked for it (task 4b
+    // fix round 1, m2).
+    let last = run.rounds.len().saturating_sub(1);
+    let k = last.saturating_sub(usize::from(super::goal_rounds_end::open_round(run)));
     if let Some(o) = run.orch.orchestrator.as_mut() {
-        // Milestone 9.3 decision 17: the current round's summary too.
-        if let Some(round) = run.rounds.last_mut() {
+        if let Some(round) = run.rounds.get_mut(k) {
             round.summary = Some(summary.clone());
         }
         o.summary = Some(summary);

@@ -17,7 +17,8 @@ pub const ROUND_REJECTED: &str = "the round was rejected";
 /// Decision 16's reason for the sub-planners and run scouts a cancelled round halts.
 pub const ROUND_CANCELLED: &str = "the round was cancelled";
 
-/// Decision 12 (KG §2.4 step 4): a submitted plan skips the gate only when the run was
+/// Decision 12 (KG §2.4 step 4): a submitted plan skips the gate, and a submitted hold
+/// is approved at once (`gate_holds::submitted`, fix round 1), only when the run was
 /// started with approve at once and the current round is the user's; a round the
 /// orchestrator started always waits for the user.
 pub(super) fn skips_gate(run: &Run) -> bool {

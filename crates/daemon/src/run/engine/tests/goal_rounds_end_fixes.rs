@@ -3,16 +3,21 @@
 //! run's reject (m5); a late summary of the previous round (m2); an orchestrator
 //! round's holds under `--yes`; and `max_tasks` counts the run's current round (m3).
 
-use proto::{RoundOutcome, RunState};
+use proto::{HoldState, RoundOrigin, RoundOutcome, RunState};
+use serde_json::json;
 
 use super::delivery_open::pr_mode;
 use super::fixture::*;
+use super::gate_holds::{hold_state, in_epic};
 use super::goal_rounds_end::{create_stages, submit_round};
 use super::goal_rounds_start::{complete, iterate, reply, round_lines, started};
 use super::kinds_cancel::{cancel, settle_all};
+use super::orch::{answer, edit_plan};
 use super::orch_restore::restart;
+use super::planners::spawn;
 use crate::run::engine::{Effect, EventKind};
 use crate::run::model::StageLayout;
+use crate::run::orch::PlannerPhase;
 
 fn reject(fx: &mut Fixture) -> Vec<Effect> {
     let reply_id = fx.reply();
@@ -113,4 +118,62 @@ fn rejecting_a_widened_runs_round_keeps_round_one() {
     assert_eq!(fx.task("t1"), &t1);
     assert_eq!(run.rounds[0].outcome, Some(RoundOutcome::Completed));
     assert_eq!(run.rounds[1].outcome, Some(RoundOutcome::Rejected));
+}
+
+/// m2: a summary written while round 2 is still open is the previous round's (its
+/// completion asked for it); once round 2 has ended, a summary is round 2's.
+#[test]
+fn a_late_summary_goes_to_the_previous_round() {
+    let mut fx = complete();
+    assert_eq!(reply(&iterate(&mut fx, "more")), started(2));
+    let summary = |fx: &mut Fixture, text: &str| {
+        let effects = edit_plan(fx, json!({"edits": [], "summary": text}));
+        assert!(answer(&effects).0, "{effects:#?}");
+    };
+    summary(&mut fx, "round one, late");
+    let run = fx.run();
+    assert_eq!(run.rounds[0].summary.as_deref(), Some("round one, late"));
+    assert_eq!(run.rounds[1].summary, None);
+    submit_round(&mut fx);
+    let effects = reject(&mut fx);
+    assert!(reply(&effects).is_ok());
+    summary(&mut fx, "round two");
+    let run = fx.run();
+    assert_eq!(run.rounds[0].summary.as_deref(), Some("round one, late"));
+    assert_eq!(run.rounds[1].summary.as_deref(), Some("round two"));
+}
+
+/// Decision 12 for holds: an epic the orchestrator adds inside a round it started
+/// waits for the user even with `--yes`; inside the user's round `--yes` approves it
+/// as before.
+#[test]
+fn an_orchestrator_rounds_holds_await_the_user_under_yes() {
+    for origin in [RoundOrigin::Orchestrator, RoundOrigin::User] {
+        let mut fx = complete();
+        fx.run_mut().orch.yes = true;
+        match origin {
+            RoundOrigin::User => assert_eq!(reply(&iterate(&mut fx, "more")), started(2)),
+            RoundOrigin::Orchestrator => {
+                assert!(answer(&edit_plan(&mut fx, json!({"iterate": "more"}))).0)
+            }
+        }
+        submit_round(&mut fx);
+        if fx.run().state == RunState::AwaitingApproval {
+            fx.approve();
+        }
+        assert_eq!(fx.run().state, RunState::Running, "{origin:?}");
+        assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail", "{origin:?}");
+        fx.run_mut().orch.epics[0].phase = PlannerPhase::Finished;
+        let mut task = in_epic("t3", "mail", "mail");
+        task["task"]["stage"] = json!(2);
+        let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [task]})));
+        assert!(ok, "{value}");
+        let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+        assert!(ok, "{value}");
+        let want = match origin {
+            RoundOrigin::Orchestrator => HoldState::Awaiting,
+            RoundOrigin::User => HoldState::Approved,
+        };
+        assert_eq!(hold_state(&fx, "epic:mail"), want, "{origin:?}");
+    }
 }

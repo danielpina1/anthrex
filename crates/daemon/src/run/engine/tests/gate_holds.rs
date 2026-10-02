@@ -13,7 +13,7 @@ use crate::run::engine::gate_holds::{PROMOTION, submitted};
 use crate::run::engine::{Effect, EventKind, OrchEvent};
 use crate::run::orch::PlannerPhase;
 
-fn in_epic(id: &str, module: &str, epic: &str) -> Value {
+pub(super) fn in_epic(id: &str, module: &str, epic: &str) -> Value {
     let mut edit = add(id, module);
     edit["task"]["epic"] = json!(epic);
     edit
