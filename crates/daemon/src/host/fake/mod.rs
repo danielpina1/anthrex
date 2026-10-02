@@ -7,7 +7,9 @@
 //! `gh` against `FakeGithub` (`github.rs`), whose state is `<dir>/github.json`; every
 //! `gh` argv is appended to `<dir>/calls.jsonl`. Asked to merge, approve or enable
 //! auto-merge, it appends the argv to `<dir>/forbidden.jsonl` and panics: the allow-list
-//! stops those first, so the panic is the last guard. Any other `gh` argv it does not
+//! stops those first, so the panic is the last guard. A `git` push that could move a
+//! branch other than the run's stages (`landing_git.rs`) is recorded there as `git …`
+//! and panics the same way, before git runs. Any other `gh` argv it does not
 //! know exits 1 with `FakeGh: unsupported: <argv>`. It never reaches the network.
 //! Blocking: call only from `spawn_blocking`.
 
@@ -16,12 +18,15 @@ mod gh_api;
 mod gh_pr;
 mod github;
 mod landing;
+mod landing_git;
 mod rules;
 
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_ci_merge;
+#[cfg(test)]
+mod tests_guard;
 #[cfg(test)]
 mod tests_landing;
 #[cfg(test)]
@@ -129,6 +134,31 @@ impl FakeGh {
         }
     }
 
+    /// Decision 14's panic: `record` appended to each of `files` first, and a failure
+    /// to record it named in the panic, never answered as an error.
+    fn forbid(
+        &self,
+        verb: &str,
+        program: &str,
+        argv: &[String],
+        files: &[&str],
+        record: &[String],
+    ) -> ! {
+        let recorded = files
+            .iter()
+            .filter_map(|file| github::append(&self.dir, file, record).err())
+            .collect::<Vec<_>>();
+        panic!(
+            "FakeHost: anthrex asked to {verb} {program} {}; anthrex never lands anything{}",
+            argv.join(" "),
+            if recorded.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", recorded.join("; "))
+            }
+        );
+    }
+
     fn gh(
         &self,
         dir: &Path,
@@ -139,19 +169,7 @@ impl FakeGh {
         // The guard comes first, so a landing ask always panics: a failure to record
         // it is named in the panic, never answered as an error.
         if let Some(verb) = landing::landing(&args, dir) {
-            let recorded = [github::CALLS, github::FORBIDDEN]
-                .into_iter()
-                .filter_map(|file| github::append(&self.dir, file, argv).err())
-                .collect::<Vec<_>>();
-            panic!(
-                "FakeHost: anthrex asked to {verb} gh {}; anthrex never lands anything{}",
-                argv.join(" "),
-                if recorded.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({})", recorded.join("; "))
-                }
-            );
+            self.forbid(verb, "gh", argv, &[github::CALLS, github::FORBIDDEN], argv);
         }
         github::append(&self.dir, github::CALLS, argv).map_err(HostError::Failed)?;
         let Some(cmd) = gh_pr::parse(&args).or_else(|| gh_api::parse(&args)) else {
@@ -182,6 +200,14 @@ impl Runner for FakeGh {
         cap: Capture,
     ) -> Result<RunOutput, HostError> {
         if program == Program::Git {
+            // A3: the same last guard for a push that could move a base branch,
+            // recorded as `git …` in `forbidden.jsonl` only (`calls.jsonl` is `gh`'s).
+            let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+            if let Some(verb) = landing_git::landing(&args) {
+                let mut line = vec!["git".to_string()];
+                line.extend(argv.iter().cloned());
+                self.forbid(&verb, "git", argv, &[github::FORBIDDEN], &line);
+            }
             return self.system.run(program, dir, argv, env, timeout, cap);
         }
         let answer = self.gh(dir, argv, env)?;
