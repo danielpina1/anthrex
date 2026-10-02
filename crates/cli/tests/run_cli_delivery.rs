@@ -9,9 +9,9 @@ use daemon::host::fake::{CiRule, FakeGithubCtl};
 use daemon::host::{Conclusion, RepoPermission};
 use proto::{DeliveryMode, RunInfo, RunState, StagePrInfo};
 use serde_json::{Value, json};
-use support::run_harness::{RUN_WAIT, RunHarness};
+use support::run_harness::RunHarness;
 use support::run_plans::*;
-use support::run_pr::{PrRig, pr_harness};
+use support::run_pr::{PR_OPEN_WAIT, PrRig, pr_harness, pr_start};
 
 /// One `anthrex …` outcome.
 struct Out {
@@ -20,18 +20,21 @@ struct Out {
     stderr: String,
 }
 
+fn out(output: std::process::Output) -> Out {
+    Out {
+        code: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
 /// `anthrex run <args> --dir <repo>`.
 fn run(h: &RunHarness, args: &[&str]) -> Out {
     let repo = h.repo.display().to_string();
     let mut all = vec!["run"];
     all.extend_from_slice(args);
     all.extend_from_slice(&["--dir", &repo]);
-    let output = h.anthrex(&all);
-    Out {
-        code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    }
+    out(h.anthrex(&all))
 }
 
 fn ok(out: &Out) -> &str {
@@ -63,11 +66,14 @@ fn one_task() -> String {
 }
 
 /// `run start --plan <one task>` plus `flags`; asserts it started and returns the id.
+/// Waited for as a `pr` start (`PR_START_WAIT`, its host preflight included) whatever
+/// the flags: the bound of the largest start.
 fn start(h: &RunHarness, flags: &[&str]) -> String {
-    let plan = h.plan(&one_task()).display().to_string();
-    let mut args = vec!["start", "--plan", plan.as_str()];
+    let (plan, repo) = (h.plan(&one_task()), h.repo.display().to_string());
+    let plan = plan.display().to_string();
+    let mut args = vec!["run", "start", "--plan", plan.as_str(), "--dir", &repo];
     args.extend_from_slice(flags);
-    let out = run(h, &args);
+    let out = out(pr_start(h, &args));
     assert_eq!(out.code, 0, "start failed: {}{}", out.stderr, h.log_tail());
     let id = out.stdout.trim().to_string();
     assert!(!id.is_empty() && !id.contains('\n'), "{:?}", out.stdout);
@@ -85,7 +91,7 @@ fn open_pr(h: &RunHarness, rig: &PrRig) -> (String, RunInfo) {
     let run = h.wait_run(
         &id,
         |r| r.delivery.as_ref().is_some_and(|d| d.delivering),
-        RUN_WAIT,
+        PR_OPEN_WAIT,
     );
     (id, run)
 }
@@ -278,7 +284,8 @@ fn run_watch_needs_exactly_one_of_off_and_on() {
         );
         assert!(out.stdout.is_empty(), "{}", out.stdout);
     }
-    // Neither reached the daemon: the run is still watched as it was (local, none).
+    // Exit code 2 is clap's usage error, which ends the process before it connects to
+    // the daemon (a refusal from the daemon exits 1); the run is untouched.
     assert_eq!(h.run(&id).unwrap().state, RunState::AwaitingApproval);
     let out = run(&h, &["deliver", &id]);
     assert_eq!(out.code, 2, "--stage is required: {}", out.stderr);
@@ -340,28 +347,36 @@ fn run_fake_github_is_hidden_from_help() {
     // It works on a fake GitHub's directory, and only there.
     let dir = h.dir.path().join("github");
     std::fs::create_dir_all(&dir).unwrap();
-    let bare = h.dir.path().join("remote.git");
-    support::run_harness::git_in(
-        &h.repo,
-        &["init", "-q", "--bare", &bare.display().to_string()],
-    );
+    let bare_in = |at: &std::path::Path| {
+        let path = at.display().to_string();
+        support::run_harness::git_in(&h.repo, &["init", "-q", "--bare", &path]);
+        path
+    };
+    let bare = bare_in(&dir.join("remote.git"));
     let fake = |args: &[&str]| {
         let d = dir.display().to_string();
         let mut all = vec!["run", "fake-github", "--dir", d.as_str()];
         all.extend_from_slice(args);
-        let output = h.anthrex(&all);
-        Out {
-            code: output.status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        }
+        out(h.anthrex(&all))
     };
-    ok(&fake(&[
-        "create-repo",
-        "fake",
-        "app",
-        &bare.display().to_string(),
-    ]));
+    // Ruling m2: only a bare repository under --dir backs the fake.
+    let outside = bare_in(&h.dir.path().join("outside.git"));
+    let plain = dir.join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let plain = plain.display().to_string();
+    let repo = h.repo.display().to_string();
+    let objects = format!("{bare}/objects");
+    for path in [&outside, &plain, &repo, &objects] {
+        let refused = fake(&["create-repo", "fake", "app", path]);
+        assert_eq!(refused.code, 1, "{path}: {}", refused.stderr);
+        assert!(
+            refused.stderr.contains("is not a bare repository under"),
+            "{path}: {}",
+            refused.stderr
+        );
+    }
+    assert!(!dir.join("github.json").exists(), "nothing was written");
+    ok(&fake(&["create-repo", "fake", "app", &bare]));
     ok(&fake(&["log-in", "github.com"]));
     ok(&fake(&["set-permission", "tester", "write"]));
     let rules = json!([{"check": "build", "fail_if": null, "conclusion": "failure",
@@ -414,4 +429,46 @@ fn run_fake_github_refuses_without_dir() {
         );
     }
     assert!(!missing.exists(), "nothing was created");
+}
+
+/// Task M9.2.14 fix round 1 (m1): what the CLI prints drops the hidden format
+/// characters a planted text carries: a goal with a bidi override and a zero-width
+/// joiner in `run status` (text and JSON), and a refusal that echoes the argument.
+#[test]
+fn run_output_drops_hidden_format_characters() {
+    let h = RunHarness::new("");
+    let toml = one_task().replace("goal = \"Add a\"", "goal = \"Add a\\u202Ecod.exe\\u200Dx\"");
+    let path = h.plan(&toml).display().to_string();
+    let id = out(pr_start(
+        &h,
+        &[
+            "run",
+            "start",
+            "--plan",
+            &path,
+            "--dir",
+            &h.repo.display().to_string(),
+        ],
+    ));
+    let id = ok(&id).trim().to_string();
+    let goal = h.run(&id).unwrap().goal;
+    assert!(
+        goal.contains('\u{202E}') && goal.contains('\u{200D}'),
+        "planted: {goal:?}"
+    );
+    let hidden = |text: &str| text.contains('\u{202E}') || text.contains('\u{200D}');
+    for args in [
+        vec!["status", id.as_str()],
+        vec!["status", id.as_str(), "--json"],
+    ] {
+        let text = run(&h, &args);
+        assert!(
+            ok(&text).contains("Add acod.exex"),
+            "{args:?}: {}",
+            text.stdout
+        );
+        assert!(!hidden(&text.stdout), "{args:?}: {:?}", text.stdout);
+    }
+    let echoed = run(&h, &["prs", "\u{202E}nope\u{200D}"]);
+    refused_with(&echoed, "no run matches 'nope'");
 }

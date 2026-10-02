@@ -86,9 +86,15 @@ fn resolve_run_by_id_suffix_and_prefix() {
 fn printed_daemon_text_has_no_control_characters() {
     assert_eq!(
         status::printable("no such task nope\x1b[2J\x07\r\nnot delivered: t\u{9b}2"),
-        "no such task nope [2J  \nnot delivered: t 2"
+        "no such task nope [2J \nnot delivered: t 2"
     );
     assert_eq!(status::printable("plain\ntext"), "plain\ntext");
+    // Task M9.2.14 fix round 1 (m1): the bidi override, the zero-width joiner and the
+    // byte-order mark are dropped, the line separator is a space.
+    assert_eq!(
+        status::printable("pr\u{202E}lmth.exe\u{200D}\u{FEFF} a\u{2028}b"),
+        "prlmth.exe a b"
+    );
 }
 
 /// Task M9.2.12 fix round 1, I2: `run start` (plan or goal) outwaits M8a's git preflight

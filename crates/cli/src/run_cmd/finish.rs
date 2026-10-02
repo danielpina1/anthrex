@@ -69,7 +69,8 @@ pub(super) async fn accept(
             return print_outcome(reply);
         };
         if let Some(moved) = &base_moved {
-            eprint!("{}", status::base_moved_listing(&info.base_branch, moved));
+            let listing = status::base_moved_listing(&info.base_branch, moved);
+            eprint!("{}", status::printable(&listing));
         }
         // Review E-M6 (F4): on a base that has not moved, `--base` must name the run's
         // own base, or "merge only if the base is at X" would merge onto another.
@@ -176,7 +177,7 @@ async fn read_answer(prompt: &str, hint: &str) -> anyhow::Result<String> {
     if !terminal && !HINTED.swap(true, Ordering::Relaxed) {
         eprintln!("{hint}");
     }
-    eprint!("{prompt}");
+    eprint!("{}", status::printable(prompt));
     let _ = std::io::stderr().flush();
     let (read, line) = tokio::task::spawn_blocking(|| {
         let mut line = String::new();

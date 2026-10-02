@@ -335,12 +335,12 @@ fn one_line(text: &str) -> String {
 }
 
 /// M9.14 review fixes, item 3: a daemon's reply or refusal, which may echo what the user
-/// typed, as the terminal is given it: every control character but the newline (an
-/// escape, a bell, a carriage return) shown as a space.
+/// typed, as the terminal is given it. Milestone 9.2 (task M9.2.14 fix round 1, m1):
+/// `proto::safe_text::multi_line`'s rules, the client's: lines kept (`\r\n` and a lone
+/// `\r` become `\n`), every other control character and U+2028/U+2029 a space, and
+/// every hidden format character (bidi controls, zero-width joiners) dropped.
 pub fn printable(text: &str) -> String {
-    text.chars()
-        .map(|c| if c.is_control() && c != '\n' { ' ' } else { c })
-        .collect()
+    proto::safe_text::multi_line(text)
 }
 
 #[cfg(test)]

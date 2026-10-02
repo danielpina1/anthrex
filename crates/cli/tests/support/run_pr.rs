@@ -8,14 +8,43 @@
 //! enable auto-merge (`forbidden.jsonl` stays empty).
 
 use std::path::PathBuf;
+use std::process::Output;
 use std::time::{Duration, Instant};
 
-use daemon::host::RepoPermission;
 use daemon::host::fake::{FakeGithubCtl, FakePr};
+use daemon::host::{
+    HOST_READ_TIMEOUT, HOST_WRITE_TIMEOUT, PREFLIGHT_BOUND, PUSH_TIMEOUT, RepoPermission,
+};
 use serde_json::Value;
 
+use super::RunningCommand;
 use super::run_daemon::DAEMON_START_WAIT;
-use super::run_harness::{RUN_WAIT, RunHarness, git_in};
+use super::run_harness::{CHECK_TIMEOUT_SECS, REQUEST_WAIT, RUN_WAIT, RunHarness, git_in};
+
+/// How long a one-task `pr` run may take to open its stage PR and show it (ruling "task
+/// 14 fix round 1", I1): one task path (`RUN_WAIT`), tier 3 on the stage head (two
+/// check commands at the harness's `check_timeout_secs`), the stage's push
+/// (`PUSH_TIMEOUT`), the three reads before the PR (`HOST_READ_TIMEOUT` each) and its
+/// create (`HOST_WRITE_TIMEOUT`), then the first view (one more read) after one poll at
+/// the test configuration's `poll_max_secs` (2 s) and 3 s of scheduling. Every term is
+/// the daemon's or the harness's own constant (`docs/timing-budgets.md`).
+pub const PR_OPEN_WAIT: Duration = RUN_WAIT
+    .saturating_add(Duration::from_secs(2 * CHECK_TIMEOUT_SECS))
+    .saturating_add(PUSH_TIMEOUT)
+    .saturating_add(Duration::from_secs(3 * HOST_READ_TIMEOUT.as_secs()))
+    .saturating_add(HOST_WRITE_TIMEOUT)
+    .saturating_add(HOST_READ_TIMEOUT)
+    .saturating_add(Duration::from_secs(2 + 3));
+
+/// How long `anthrex run start --delivery pr` may take: a local start's request
+/// (`REQUEST_WAIT`) plus the host preflight, bounded by the daemon's own
+/// `PREFLIGHT_BOUND`.
+pub const PR_START_WAIT: Duration = REQUEST_WAIT.saturating_add(PREFLIGHT_BOUND);
+
+/// `anthrex <args>` (a `run start --delivery pr`), waiting at most [`PR_START_WAIT`].
+pub fn pr_start(harness: &RunHarness, args: &[&str]) -> Output {
+    RunningCommand::start(&mut harness.command(args)).finish(PR_START_WAIT)
+}
 
 /// The URL the repository's `origin` names; `insteadOf` sends it to the bare remote.
 pub const URL: &str = "https://github.com/fake/app.git";
@@ -69,6 +98,9 @@ impl PrRig {
                 "ANTHREX_FAKE_HOST_DIR".into(),
                 self.github.display().to_string(),
             ),
+            // Ruling m4: a push or fetch that `insteadOf` did not rewrite to the bare
+            // repository fails outright instead of reaching the network.
+            ("GIT_ALLOW_PROTOCOL".into(), "file".into()),
         ]
     }
 
@@ -78,7 +110,7 @@ impl PrRig {
 
     /// Waits until pull request `number` satisfies `pred`.
     pub fn wait_pr(&self, number: u64, pred: impl Fn(&FakePr) -> bool) -> FakePr {
-        let deadline = Instant::now() + RUN_WAIT;
+        let deadline = Instant::now() + PR_OPEN_WAIT;
         loop {
             let prs = self.ctl.prs();
             if let Some(pr) = prs.iter().find(|p| p.number == number && pred(p)) {
@@ -86,7 +118,7 @@ impl PrRig {
             }
             assert!(
                 Instant::now() < deadline,
-                "PR #{number} did not get there within {RUN_WAIT:?}: {prs:#?}"
+                "PR #{number} did not get there within {PR_OPEN_WAIT:?}: {prs:#?}"
             );
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -94,7 +126,7 @@ impl PrRig {
 
     /// Waits until the fake GitHub holds `count` pull requests.
     pub fn wait_prs(&self, count: usize) -> Vec<FakePr> {
-        let deadline = Instant::now() + RUN_WAIT;
+        let deadline = Instant::now() + PR_OPEN_WAIT;
         loop {
             let prs = self.ctl.prs();
             if prs.len() >= count {
@@ -102,7 +134,7 @@ impl PrRig {
             }
             assert!(
                 Instant::now() < deadline,
-                "{count} PRs did not open within {RUN_WAIT:?}: {prs:#?}"
+                "{count} PRs did not open within {PR_OPEN_WAIT:?}: {prs:#?}"
             );
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -118,7 +150,7 @@ impl PrRig {
         pointer: &str,
         value: &Value,
     ) -> Value {
-        let deadline = Instant::now() + RUN_WAIT;
+        let deadline = Instant::now() + PR_OPEN_WAIT;
         loop {
             let out = harness.anthrex(&["run", "prs", run, "--json"]);
             let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -132,7 +164,7 @@ impl PrRig {
             }
             assert!(
                 Instant::now() < deadline,
-                "stage {stage}'s {pointer} is not {value} within {RUN_WAIT:?}: {stdout}\n{}",
+                "stage {stage}'s {pointer} is not {value} within {PR_OPEN_WAIT:?}: {stdout}\n{}",
                 harness.log_tail()
             );
             std::thread::sleep(Duration::from_millis(250));

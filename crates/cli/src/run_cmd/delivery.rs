@@ -4,7 +4,7 @@
 //! `run fake-github` (decision 14), which edits a fake GitHub's `github.json` and talks
 //! to no daemon and never to GitHub.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand, ValueEnum};
 use daemon::host::RepoPermission;
@@ -320,13 +320,18 @@ pub(super) fn fake_github(args: FakeGithubArgs) -> anyhow::Result<()> {
         ),
         _ => None,
     };
+    if let FakeVerb::CreateRepo { bare, .. } = &args.verb {
+        bare_under(&args.dir, bare)?;
+    }
+    // Ruling m3: the hook in place before is put back, not the default.
+    let before = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let ran =
         std::panic::catch_unwind(move || verb(&FakeGithubCtl::open(&args.dir), args.verb, rules));
-    let _ = std::panic::take_hook();
+    std::panic::set_hook(before);
     match ran {
         Ok(out) => {
-            print!("{out}");
+            print!("{}", super::status::printable(&out));
             Ok(())
         }
         Err(panic) => {
@@ -336,6 +341,53 @@ pub(super) fn fake_github(args: FakeGithubArgs) -> anyhow::Result<()> {
             anyhow::bail!("fake-github: {text}")
         }
     }
+}
+
+/// Ruling m2: `create-repo`'s `bare` must be a bare repository (its own git directory)
+/// inside `dir`, so the later verbs never write objects or move branches in a
+/// repository the fake does not own. A local `git rev-parse`, never a remote.
+fn bare_under(dir: &Path, bare: &Path) -> anyhow::Result<()> {
+    let refuse = || {
+        anyhow::anyhow!(
+            "fake-github: {} is not a bare repository under {}",
+            bare.display(),
+            dir.display()
+        )
+    };
+    let (Ok(dir), Ok(path)) = (dir.canonicalize(), bare.canonicalize()) else {
+        return Err(refuse());
+    };
+    if !path.starts_with(&dir) || path == dir {
+        return Err(refuse());
+    }
+    let mut git = std::process::Command::new("git");
+    git.arg("-C").arg(&path).args([
+        "--no-optional-locks",
+        "rev-parse",
+        "--is-bare-repository",
+        "--absolute-git-dir",
+    ]);
+    for var in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_PREFIX",
+    ] {
+        git.env_remove(var);
+    }
+    let output = git.output().map_err(|_| refuse())?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut lines = text.lines();
+    let bare_repo = lines.next() == Some("true");
+    let own = lines
+        .next()
+        .and_then(|d| Path::new(d).canonicalize().ok())
+        .is_some_and(|d| d == path);
+    if !(output.status.success() && bare_repo && own) {
+        return Err(refuse());
+    }
+    Ok(())
 }
 
 /// What the verb prints.

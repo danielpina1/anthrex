@@ -261,15 +261,15 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
                 let id = resolve_run(&snapshot.runs, &run).map_err(anyhow::Error::msg)?;
                 snapshot.runs.retain(|r| r.run_id == id);
             }
+            // Task M9.2.14 fix round 1 (m1): everything `run status` prints is sanitised.
             if json {
-                println!("{}", serde_json::to_string_pretty(&snapshot)?);
+                let text = serde_json::to_string_pretty(&snapshot)?;
+                println!("{}", status::printable(&text));
             } else if snapshot.runs.is_empty() {
                 eprintln!("no runs");
             } else {
-                print!(
-                    "{}",
-                    status::render(&snapshot.runs, tui::local_utc_offset_secs())
-                );
+                let text = status::render(&snapshot.runs, tui::local_utc_offset_secs());
+                print!("{}", status::printable(&text));
             }
             Ok(())
         }
@@ -403,7 +403,7 @@ async fn start(
             err.push_str(&status::run_block(run, tui::local_utc_offset_secs()));
         }
     }
-    eprint!("{err}");
+    eprint!("{}", status::printable(&err));
     Ok(())
 }
 

@@ -68,7 +68,8 @@ pub(super) async fn stats(runs: &mut Runs, dir: Option<PathBuf>, json: bool) -> 
             Ok(())
         }
         RunReply::Stats { stats, .. } => {
-            print!("{}", daemon::run::stats::render(&stats));
+            let text = daemon::run::stats::render(&stats);
+            print!("{}", super::status::printable(&text));
             Ok(())
         }
         other => print_outcome(other),
