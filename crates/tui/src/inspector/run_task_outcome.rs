@@ -236,6 +236,10 @@ pub(super) fn outcome(run: &RunInfo, task: &TaskInfo, app: &App, evidence: &Sect
         row("pipeline", pipeline_text(run, task, false), Marks::Pipeline),
         row("check", check_line(run, task), Marks::Lead),
     ];
+    // Ruling R-13: a `pr` run's task names its stage's PR and what it fixes.
+    for (label, value) in super::run_stage_pr::task_rows(run, task) {
+        fields.push(row(label, value, Marks::None));
+    }
     let criteria = match app.task_detail_for(&run.run_id, &task.id) {
         Some(DetailState::Ready(detail)) if detail.acceptance.is_empty() => None,
         Some(DetailState::Ready(detail)) => Some(

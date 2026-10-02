@@ -19,7 +19,8 @@ pub(crate) fn alert_node(key: &AlertKey) -> Option<(String, ActionTarget)> {
         | AlertKey::Gate(run)
         | AlertKey::Halted(run)
         | AlertKey::Accept(run)
-        | AlertKey::Hold { run, .. } => Some((run.clone(), ActionTarget::Run)),
+        | AlertKey::Hold { run, .. }
+        | AlertKey::Delivery { run, .. } => Some((run.clone(), ActionTarget::Run)),
         AlertKey::Blocked { run, task } => Some((run.clone(), ActionTarget::Task(task.clone()))),
         AlertKey::Proposal(_) => None,
     }
@@ -68,6 +69,11 @@ pub(crate) fn preselected(app: &App, key: &AlertKey) -> Option<ActionKind> {
         }
         AlertKey::Halted(_) => Some(ActionKind::Resume),
         AlertKey::Accept(_) => Some(ActionKind::Accept),
+        // Ruling R-13: a held stage or op resumes (`run resume` pushes it again); the
+        // rest are the user's to do on GitHub or with `gh`, so the menu's first entry.
+        AlertKey::Delivery { kind, .. } => {
+            (*kind == proto::DeliveryAlertKind::HostOpHeld).then_some(ActionKind::Resume)
+        }
     }
 }
 

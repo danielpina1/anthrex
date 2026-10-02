@@ -124,7 +124,7 @@ pub(super) fn open_form(app: &mut App) {
 }
 
 pub(super) fn focus(app: &mut App, field: GoalField) {
-    for _ in 0..6 {
+    for _ in 0..7 {
         if form(app).focus == field {
             return;
         }

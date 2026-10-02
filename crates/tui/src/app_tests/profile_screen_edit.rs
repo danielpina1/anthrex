@@ -228,6 +228,47 @@ fn the_delivery_rows_send_the_bare_value() {
     );
 }
 
+/// Review finding m4: the delivery rows drawn at 80×24, Unicode and ASCII: the group,
+/// both keys (unset reads `unset`), the selection bar on `delivery.mode`, and its
+/// editor's choice after a step from `local`: `< pr >` (`‹ pr ›` in Unicode).
+#[test]
+fn the_delivery_rows_draw_at_80x24() {
+    for ascii in [false, true] {
+        let (mut app, _) = ready_app();
+        app.settings.badges.ascii = ascii;
+        app.set_terminal_size(80, 24);
+        select(&mut app, "delivery.mode");
+        let rows = frame_rows(&app, 80, 24);
+        let (bar, choice) = if ascii {
+            (">", "< pr >")
+        } else {
+            ("▌", "‹ pr ›")
+        };
+        let mode = rows
+            .iter()
+            .find(|r| r.contains("delivery.mode"))
+            .expect("mode row");
+        assert!(mode.contains(&format!("{bar} ")), "{mode}");
+        assert!(mode.contains("unset"), "{mode}");
+        assert!(
+            rows.iter().any(|r| r.contains("delivery.remote")),
+            "{rows:#?}"
+        );
+        assert!(rows.iter().any(|r| r.contains("delivery")), "{rows:#?}");
+        tap(&mut app, KeyCode::Char('e'));
+        tap(&mut app, KeyCode::Right);
+        let rows = frame_rows(&app, 80, 24);
+        assert!(rows.iter().any(|r| r.contains(choice)), "{rows:#?}");
+        if ascii {
+            assert!(rows.iter().all(|r| r.is_ascii()), "{rows:#?}");
+        }
+    }
+}
+
+fn frame_rows(app: &App, w: u16, h: u16) -> Vec<String> {
+    crate::ui::audit::rows(&crate::ui::audit::draw(app, w, h))
+}
+
 /// Decision 35: `u` asks first; its page's `y` sends the unset.
 #[test]
 fn u_unsets_after_its_page() {

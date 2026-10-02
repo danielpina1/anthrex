@@ -92,6 +92,51 @@ fn a_pr_run_view_draws_its_prs_at_both_sizes() {
     }
 }
 
+/// The cell after `needle` (every character one column), and the one after that.
+fn after(buffer: &ratatui::buffer::Buffer, needle: &str) -> (ratatui::style::Color, String) {
+    let chars: Vec<String> = needle.chars().map(String::from).collect();
+    let area = buffer.area;
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right().saturating_sub(chars.len() as u16) {
+            let at = |dx: usize| &buffer[(x + dx as u16, y)];
+            if (0..chars.len()).all(|dx| at(dx).symbol() == chars[dx]) {
+                let mark = at(chars.len());
+                return (mark.fg, mark.symbol().to_owned());
+            }
+        }
+    }
+    panic!("{needle:?} is not drawn");
+}
+
+/// Review finding m2: a stage row's CI mark is drawn in `theme::ci_look`'s role, in
+/// the graph (120×40) and the compact list (80×24), Unicode and ASCII; the rest of the
+/// row keeps the plain foreground. Status roles, never the accent.
+#[test]
+fn a_stage_rows_ci_mark_wears_its_role() {
+    use crate::theme::{Role, role};
+    for ascii in [false, true] {
+        let app = pr_view(pr_fixture(), ascii, stage_key(1));
+        let fg = |r| role(r, app.palette()).fg.expect("a role has a foreground");
+        let (red, pending) = if ascii { ("x", ".") } else { ("✗", "…") };
+        for (w, h) in [(120, 40), (80, 24)] {
+            let buffer = audit::draw(&app, w, h);
+            assert_eq!(after(&buffer, "#142  ci "), (fg(Role::Failed), red.into()));
+            assert_eq!(
+                after(&buffer, "#143  ci "),
+                (fg(Role::Working), pending.into())
+            );
+            let (plain, _) = after(&buffer, "#142  ci ?  ".replace('?', red).as_str());
+            assert_eq!(plain, ratatui::style::Color::Reset, "{w}x{h} ascii {ascii}");
+            let (merged, _) = after(&buffer, "#141  ");
+            assert_eq!(
+                merged,
+                ratatui::style::Color::Reset,
+                "a merged PR has no mark"
+            );
+        }
+    }
+}
+
 /// The hostile-text rule, drawn: a check's name, the base and the URL come from the
 /// host, so the zero-width joiner, the bidi controls and the byte-order mark planted
 /// in them never reach a cell, at either size.
@@ -119,8 +164,9 @@ fn host_text_is_cleaned_where_it_is_drawn() {
 }
 
 /// Decision 36 in the run view's own header (milestone 9.0.7 decision 21's title):
-/// `delivering` where it fits; the shorter form where it does not, so the name keeps
-/// its room; a local run's title as before.
+/// the long form where it fits; `delivering · <age>` where it does not (review finding
+/// I1), no wider than the plain form, so the name keeps its room; a local run's title
+/// as before.
 #[test]
 fn the_run_view_title_says_delivering() {
     let top = |app: &App, w, h| audit::rows(&audit::draw(app, w, h))[0].clone();
@@ -128,7 +174,8 @@ fn the_run_view_title_says_delivering() {
     let wide = top(&app, 120, 40);
     assert!(wide.ends_with(" 4/5 merged · delivering · 2h ╮"), "{wide}");
     let narrow = top(&app, 80, 24);
-    assert!(narrow.ends_with(" 4/5 merged · 2h ╮"), "{narrow}");
+    assert!(narrow.ends_with(" delivering · 2h ╮"), "{narrow}");
+    assert!(narrow.contains("run · "), "{narrow}");
     let (mut snap, windows) = pr_fixture();
     if let Some(d) = snap.runs[0].delivery.as_mut() {
         d.delivering = false;

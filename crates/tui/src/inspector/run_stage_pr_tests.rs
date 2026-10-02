@@ -121,6 +121,23 @@ fn stage_inspector_cleans_host_text() {
     assert_eq!(value(&two, "fix tasks"), Some("ci: fix3 working"));
 }
 
+/// Review finding m1: the remote and the repo are the host's text too (the daemon's
+/// `remote_problem` refuses ASCII controls only, so bidi and ZWJ pass), cleaned in the
+/// run's `delivery` row.
+#[test]
+fn the_delivery_row_cleans_the_remote_and_the_repo() {
+    let (mut snap, windows) = pr_fixture();
+    let d = snap.runs[0].delivery.as_mut().expect("pr mode");
+    d.remote = "or\u{200D}ig\u{202E}in".into();
+    d.repo = "fa\u{2067}ke/a\u{FEFF}pp\u{2069}".into();
+    let app = app_of((snap, windows));
+    let run = inspect_node(&app, &run_key());
+    assert_eq!(
+        value(&run, "delivery"),
+        Some("pr to origin (fake/app) · watching every 60 s")
+    );
+}
+
 #[test]
 fn single_stage_run_shows_its_pr_in_the_run_inspector() {
     let app = app_of(single_pr_fixture());
@@ -203,4 +220,97 @@ fn local_run_renders_as_before() {
             ("fix tasks", "fix1 (bisect of t2)"),
         ]
     );
+}
+
+fn task_key(id: &str) -> NodeKey {
+    NodeKey::Task {
+        run: RUN_ID.into(),
+        id: id.into(),
+    }
+}
+
+/// OUTCOME's `(label, value)` rows of `id`.
+fn outcome(app: &App, id: &str) -> Vec<(&'static str, String)> {
+    let inspection = inspect_node(app, &task_key(id));
+    let section = (inspection.sections.iter())
+        .find(|s| s.title == "OUTCOME")
+        .expect("OUTCOME");
+    (section.fields.iter())
+        .map(|f| (f.label, f.value.clone()))
+        .collect()
+}
+
+fn outcome_value(app: &App, id: &str, label: &str) -> Option<String> {
+    (outcome(app, id).into_iter())
+        .find(|(l, _)| *l == label)
+        .map(|(_, v)| v)
+}
+
+/// Ruling R-13: a `pr` run's task panel names its stage's PR with its state, after the
+/// pipeline and the check, and what a fix task fixes; a local run's panel has neither.
+#[test]
+fn the_task_panel_names_its_pr_and_what_it_fixes() {
+    let app = app_of(pr_fixture());
+    let labels: Vec<&str> = outcome(&app, "fix3").iter().map(|(l, _)| *l).collect();
+    assert_eq!(labels[..4], ["pipeline", "check", "pr", "fixes"]);
+    for (id, pr, fixes) in [
+        ("t1", "#141 merged", None),
+        ("t2", "#142 open · ci red", None),
+        ("fix3", "#142 open · ci red", Some("CI run 77")),
+        ("fix4", "#142 open · ci red", Some("thread by @alice")),
+        ("t3", "#143 open · ci pending", None),
+    ] {
+        assert_eq!(outcome_value(&app, id, "pr").as_deref(), Some(pr), "{id}");
+        assert_eq!(outcome_value(&app, id, "fixes").as_deref(), fixes, "{id}");
+    }
+    // Before its PR opens, a skipped stage, a closed PR.
+    let (mut snap, windows) = pr_fixture();
+    snap.runs[0].stages[2].pr = None;
+    snap.runs[0].stages[0].pr.as_mut().expect("#141").state = proto::PrState::Closed;
+    let app = app_of((snap.clone(), windows.clone()));
+    assert_eq!(
+        outcome_value(&app, "t3", "pr").as_deref(),
+        Some("no PR yet")
+    );
+    assert_eq!(
+        outcome_value(&app, "t1", "pr").as_deref(),
+        Some("#141 closed")
+    );
+    if let Some(d) = snap.runs[0].delivery.as_mut() {
+        d.skipped_stages = vec![3];
+    }
+    let app = app_of((snap, windows));
+    assert_eq!(outcome_value(&app, "t3", "pr").as_deref(), Some("skipped"));
+    // A local run: neither row, whatever the task fixes.
+    let (mut snap, windows) = pr_fixture();
+    snap.runs[0].delivery = None;
+    let app = app_of((snap, windows));
+    assert_eq!(outcome_value(&app, "fix3", "pr"), None);
+    assert_eq!(outcome_value(&app, "fix3", "fixes"), None);
+}
+
+/// The hostile-text rule: `fixes` is the engine's text built from the host's (a CI
+/// run's or a thread author's name), cleaned where it is shown, and drawn without a
+/// hidden character at 80×24 in ASCII.
+#[test]
+fn the_task_panels_fixes_is_cleaned() {
+    let (mut snap, windows) = pr_fixture();
+    let fix3 = (snap.runs[0].tasks.iter_mut())
+        .find(|t| t.id == "fix3")
+        .expect("fix3");
+    fix3.fixes = Some("thread by @al\u{200D}ice\u{202E}\nnext\u{1b}[2J".into());
+    let app = app_of((snap.clone(), windows.clone()));
+    assert_eq!(
+        outcome_value(&app, "fix3", "fixes").as_deref(),
+        Some("thread by @alice next [2J")
+    );
+    let app = crate::ui::run_pr_tests::pr_view((snap, windows), true, task_key("fix3"));
+    let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 80, 24));
+    let text = rows.join("\n");
+    assert!(text.contains("thread by @alice next [2J"), "{text}");
+    assert!(text.contains("#142 open - ci red"), "{text}");
+    for row in &rows {
+        assert!(row.is_ascii(), "{row:?}");
+        assert_eq!(crate::safe_text::tests::first_hostile(row), None, "{row:?}");
+    }
 }

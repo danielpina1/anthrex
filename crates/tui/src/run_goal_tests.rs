@@ -106,10 +106,10 @@ fn space_toggles_trust_and_esc_cancels_even_while_submitting() {
 }
 
 #[test]
-fn tab_visits_the_six_fields_in_the_dialogs_order() {
+fn tab_visits_the_seven_fields_in_the_dialogs_order() {
     let mut form = form_with("add a");
     let mut seen = vec![form.focus];
-    for _ in 0..5 {
+    for _ in 0..6 {
         form.on_key(key(KeyCode::Tab));
         seen.push(form.focus);
     }
@@ -119,6 +119,7 @@ fn tab_visits_the_six_fields_in_the_dialogs_order() {
             GoalField::Goal,
             GoalField::Runtime,
             GoalField::Model,
+            GoalField::Delivery,
             GoalField::Trust,
             GoalField::Yes,
             GoalField::UnconfinedChecks,
@@ -132,9 +133,43 @@ fn tab_visits_the_six_fields_in_the_dialogs_order() {
             "goal",
             "runtime",
             "model",
+            "delivery",
             "trust",
             "approve at once",
             "unconfined checks"
+        ]
+    );
+}
+
+/// Milestone 9.2 ruling R-13: the delivery choice cycles `configured`, `local`, `pr`
+/// both ways, and the request carries it; `configured` sends none, so the daemon reads
+/// the repo profile.
+#[test]
+fn the_delivery_choice_cycles_and_is_sent() {
+    let mut form = form_with("add a");
+    form.focus = GoalField::Delivery;
+    let delivery = |form: &GoalForm| match form.request().unwrap() {
+        RunRequest::StartGoal { delivery, .. } => delivery,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(delivery(&form), None);
+    let mut seen = Vec::new();
+    for code in [
+        KeyCode::Right,
+        KeyCode::Char(' '),
+        KeyCode::Right,
+        KeyCode::Left,
+    ] {
+        form.on_key(key(code));
+        seen.push(delivery(&form));
+    }
+    assert_eq!(
+        seen,
+        [
+            Some(DeliveryMode::Local),
+            Some(DeliveryMode::Pr),
+            None,
+            Some(DeliveryMode::Pr),
         ]
     );
 }

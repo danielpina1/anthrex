@@ -11,7 +11,7 @@ use proto::settings::{
     BUDGET_MIN, MAX_BOUNCES_RANGE, MAX_READERS_RANGE, MAX_WRITERS_RANGE, STALL_AFTER_SECS_RANGE,
     key,
 };
-use proto::{BudgetLimit, Runtime, SettingsDoc, Strength};
+use proto::{BudgetLimit, ModelEntry, Runtime, SettingsDoc, Strength};
 
 use crate::orchestrator::MODEL_NOTE_MAX;
 
@@ -34,18 +34,27 @@ pub fn validate(doc: &SettingsDoc) -> Vec<String> {
 /// default's model, which names one of them. A control character is kept, for
 /// [`validate`] to refuse.
 pub fn cleaned(doc: &SettingsDoc) -> SettingsDoc {
-    let strip = |text: &str| -> String {
-        text.chars()
-            .filter(|c| !proto::safe_text::is_hidden_format(*c))
-            .collect()
-    };
     let mut out = doc.clone();
-    for m in &mut out.models {
-        m.model = strip(&m.model);
-        m.note = strip(&m.note);
-    }
-    out.orchestrator.model = strip(&out.orchestrator.model);
+    out.models.iter_mut().for_each(clean_entry);
+    out.orchestrator.model = strip_hidden(&out.orchestrator.model);
     out
+}
+
+/// `text` without its hidden format characters, as [`cleaned`] writes every text it
+/// keeps. The Settings screen strips its own rows with this (review finding m3), so the
+/// rule has one copy.
+pub fn strip_hidden(text: &str) -> String {
+    text.chars()
+        .filter(|c| !proto::safe_text::is_hidden_format(*c))
+        .collect()
+}
+
+/// One model entry as [`cleaned`] writes it: its name and note through
+/// [`strip_hidden`]. The one list of an entry's cleaned fields, which the Settings
+/// screen's rows use too.
+pub fn clean_entry(entry: &mut ModelEntry) {
+    entry.model = strip_hidden(&entry.model);
+    entry.note = strip_hidden(&entry.note);
 }
 
 /// Advice that never refuses a save: each strength with an enabled model on exactly one

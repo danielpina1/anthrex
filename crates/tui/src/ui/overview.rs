@@ -192,7 +192,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
 /// clock) or ` planning · <age> `. The name is cut to what the right text leaves; the
 /// right text goes first when even a short name would not fit beside it. Milestone 9.2
 /// decision 36: a delivering `pr` run's reads ` <m>/<n> merged · delivering · <age> `,
-/// or the shorter form where that does not fit.
+/// else ` delivering · <age> ` (review finding I1: never wider than the plain form,
+/// `delivering` being as wide as `<m>/<n> merged` with one-digit counts and narrower
+/// past them, so the state word shows wherever the plain form would).
 fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
     let Some(run) = app.runs.runs.iter().find(|run| run.run_id == run_id) else {
         return (format!("run {}", crate::safe_text::one_line(run_id)), None);
@@ -207,7 +209,7 @@ fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
         match crate::inspector::delivering(run) {
             true => vec![
                 format!("{merged}/{total} merged · delivering · {}", since(at)),
-                plain,
+                format!("delivering · {}", since(at)),
             ],
             false => vec![plain],
         }

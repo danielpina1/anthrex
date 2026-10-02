@@ -11,6 +11,7 @@ use crate::app::App;
 use crate::theme::ci_look;
 use proto::{
     CiState, DeliveryInfo, DeliveryMode, PrState, RunInfo, RunState, StageInfo, StagePrInfo,
+    TaskInfo,
 };
 
 /// The run's delivery, in `pr` mode only.
@@ -68,6 +69,45 @@ pub(super) fn state_text(run: &RunInfo) -> String {
     }
 }
 
+/// Ruling R-13 (task M9.2.15's fix round): a `pr`-mode task's OUTCOME rows, 9.0.7's
+/// heir to 9.0.5's STATUS and RESULT. `pr`: its stage's PR, `#142 open · ci red`,
+/// `#141 merged`, `#140 closed`, else `skipped` or `no PR yet`; then `fixes`, what a
+/// fix task fixes (the engine's text, cleaned). None in a local run.
+pub(super) fn task_rows(run: &RunInfo, task: &TaskInfo) -> Vec<(&'static str, String)> {
+    let Some(d) = delivery(run) else {
+        return Vec::new();
+    };
+    let pr = run
+        .stages
+        .iter()
+        .find(|s| s.n == task.stage)
+        .and_then(|s| s.pr.as_ref());
+    let text = match pr {
+        Some(pr) if pr.state == PrState::Open => {
+            format!("#{} open · ci {}", pr.number, ci_word(pr.ci))
+        }
+        Some(pr) if pr.state == PrState::Merged => format!("#{} merged", pr.number),
+        Some(pr) => format!("#{} closed", pr.number),
+        None if d.skipped_stages.contains(&task.stage) => "skipped".to_owned(),
+        None => "no PR yet".to_owned(),
+    };
+    let mut rows = vec![("pr", text)];
+    if let Some(fixes) = &task.fixes {
+        rows.push(("fixes", clean(fixes)));
+    }
+    rows
+}
+
+/// A PR's CI as a word.
+fn ci_word(ci: CiState) -> &'static str {
+    match ci {
+        CiState::None => "no checks",
+        CiState::Pending => "pending",
+        CiState::Green => "green",
+        CiState::Red => "red",
+    }
+}
+
 /// `pr`, `url`, `ci`, `threads` and `fix tasks`.
 fn pr_fields(pr: &StagePrInfo, app: &App) -> Vec<Field> {
     let ascii = app.palette().ascii;
@@ -116,13 +156,7 @@ fn pr_text(pr: &StagePrInfo, app: &App) -> String {
 /// with none, the PR's CI as a word.
 fn ci_text(pr: &StagePrInfo, ascii: bool) -> String {
     if pr.checks.is_empty() {
-        return match pr.ci {
-            CiState::None => "no checks",
-            CiState::Pending => "pending",
-            CiState::Green => "green",
-            CiState::Red => "red",
-        }
-        .to_owned();
+        return ci_word(pr.ci).to_owned();
     }
     let checks: Vec<String> = (pr.checks.iter())
         .map(|c| {

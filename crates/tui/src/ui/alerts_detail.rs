@@ -122,7 +122,8 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         | AlertKey::Halted(id)
         | AlertKey::Accept(id)
         | AlertKey::Hold { run: id, .. }
-        | AlertKey::Blocked { run: id, .. } => run_of(app, id),
+        | AlertKey::Blocked { run: id, .. }
+        | AlertKey::Delivery { run: id, .. } => run_of(app, id),
     };
     let counted = |run: &RunInfo| {
         run.tasks
@@ -195,6 +196,14 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
                 push(&mut rows, "orchestrator", format!("{route} · {status}"));
             }
         }
+        (AlertKey::Delivery { kind, stage, .. }, Some(run)) => {
+            push(&mut rows, "phase", delivery_phase(*kind).to_owned());
+            text_rows(&mut rows, "reason", &alert.detail);
+            if let Some(n) = stage {
+                push(&mut rows, "stage", format!("{n} of {}", run.stages.len()));
+            }
+            push(&mut rows, "run", run_name(run, p));
+        }
         (AlertKey::Proposal(project), _) => {
             push(&mut rows, "phase", "proposal ready".to_owned());
             push(&mut rows, "project", project.to_string_lossy().into_owned());
@@ -205,6 +214,18 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         push(&mut rows, "age", age_text(age));
     }
     rows
+}
+
+/// Ruling R-13: a delivery alert's phase word.
+fn delivery_phase(kind: proto::DeliveryAlertKind) -> &'static str {
+    use proto::DeliveryAlertKind::*;
+    match kind {
+        CiHandedToUser => "delivery · CI handed to you",
+        PrClosedUnmerged => "delivery · PR closed without merging",
+        GhLoggedOut => "delivery · gh logged out",
+        HostOpHeld => "delivery · held",
+        ReviewRoundsOverCap => "delivery · review rounds over the cap",
+    }
 }
 
 /// The header: `<t>  <title>` for a task alert, else the run's name (the project's

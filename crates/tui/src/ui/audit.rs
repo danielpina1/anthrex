@@ -218,8 +218,9 @@ pub(crate) fn shows(name: &str) -> Shows {
         "run view as a list" => row("in review · r1", Some("esc back"), &["j/k move"]),
         // Milestone 9.2 decision 42: a `pr` run's stage with its pull request, and a
         // single-stage one whose root shows it.
+        // Review finding I1: the title's `delivering` (decision 36) at both sizes.
         "run view delivering" | "run view delivering one stage" => {
-            row("RUN", Some("esc back"), &["j/k move"])
+            row("delivering", Some("esc back"), &["j/k move"])
         }
         "conversation" => row("CHAT", None, &["C-b ? help"]),
         // Milestone 9.0.7 decision 23: the framed review's right-hand title.

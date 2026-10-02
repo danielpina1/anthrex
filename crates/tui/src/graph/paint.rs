@@ -273,7 +273,9 @@ fn node_rows(
     bottom[width - 1] = cell(set.bottom_right);
 
     let glyph_style = theme::role(glyph_role, p);
-    let mut content = interior_slots(width - 2, glyph, glyph_style, &text, p.ascii);
+    let mark = super::stage_pr::ci_mark_span(row, &text, p.ascii)
+        .map(|(range, role)| (range.start, range.end, theme::role(role, p)));
+    let mut content = interior_slots(width - 2, glyph, glyph_style, &text, mark, p.ascii);
     content.insert(0, cell(set.vertical_left));
     content.push(cell(set.vertical_right));
 
@@ -297,9 +299,20 @@ fn interior_slots(
     glyph: &'static str,
     glyph_style: Style,
     text: &str,
+    mark: Option<(usize, usize, Style)>,
     ascii: bool,
 ) -> Vec<(String, Style)> {
     let plain = Style::default();
+    // A grapheme of `mark`'s range, where the cut text still has it (never the `…`).
+    let style_at = |at: usize, grapheme: &str| match mark {
+        Some((start, end, style))
+            if (start..end).contains(&at)
+                && text.get(at..at + grapheme.len()) == Some(grapheme) =>
+        {
+            style
+        }
+        _ => plain,
+    };
     let mut slots = vec![
         (" ".to_owned(), plain),
         (glyph.to_owned(), glyph_style),
@@ -308,8 +321,8 @@ fn interior_slots(
     // The pad, glyph and space above, plus one more space of padding held in
     // reserve on the right (decision 3), are never available to the text.
     let text_max = inner.saturating_sub(slots.len() + 1);
-    for grapheme in truncate_in(text, text_max, ascii).graphemes(true) {
-        slots.push((grapheme.to_owned(), plain));
+    for (at, grapheme) in truncate_in(text, text_max, ascii).grapheme_indices(true) {
+        slots.push((grapheme.to_owned(), style_at(at, grapheme)));
         if UnicodeWidthStr::width(grapheme) == 2 {
             slots.push((String::new(), plain));
         }

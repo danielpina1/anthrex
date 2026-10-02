@@ -15,7 +15,7 @@ use unicode_width::UnicodeWidthStr;
 
 pub mod paint;
 pub(crate) mod run_text;
-mod stage_pr;
+pub(crate) mod stage_pr;
 pub mod viewport;
 
 pub use viewport::Pan;

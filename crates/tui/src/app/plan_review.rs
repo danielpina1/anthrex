@@ -82,8 +82,11 @@ pub(crate) struct ReviewLayout {
     /// The frame's interior.
     pub inner: Rect,
     pub header: Rect,
+    /// Ruling R-13: a `pr` run's gate's `delivered as …` row
+    /// (`plan_summary::delivery_line`), under the summary row.
+    pub delivery: Option<String>,
     /// The header's `⚠` rows (`plan_summary::overlap_lines`), computed once a frame:
-    /// the header is the summary row and these.
+    /// the header is the summary row, the delivery row and these.
     pub warnings: Vec<String>,
     /// The rows of the two `├─…─┤` rules, below the header and below the list, while
     /// they fit.
@@ -98,8 +101,13 @@ pub(crate) const BAR: u16 = 1;
 
 /// Decision 26's stacking of a header (the summary row and `warnings`) and a list of
 /// `tasks` in `body`.
-pub(crate) fn stacked(body: Rect, warnings: Vec<String>, tasks: usize) -> ReviewLayout {
-    let header_rows = u16::try_from(warnings.len())
+pub(crate) fn stacked(
+    body: Rect,
+    delivery: Option<String>,
+    warnings: Vec<String>,
+    tasks: usize,
+) -> ReviewLayout {
+    let header_rows = u16::try_from(warnings.len() + usize::from(delivery.is_some()))
         .unwrap_or(u16::MAX)
         .saturating_add(1);
     let inner = Rect {
@@ -127,6 +135,7 @@ pub(crate) fn stacked(body: Rect, warnings: Vec<String>, tasks: usize) -> Review
     ReviewLayout {
         inner,
         header,
+        delivery,
         warnings,
         rules: [rule(first), rule(second)],
         list,
@@ -444,10 +453,17 @@ impl App {
     /// warnings and the list's rows from the reviewed tasks (`stacked`).
     pub(crate) fn review_layout(&self, body: Rect) -> ReviewLayout {
         let ascii = self.palette().ascii;
-        let (warnings, tasks) = self.reviewed().map_or((Vec::new(), 0), |(run, tasks)| {
-            (overlap_lines(&overlaps(run, &tasks), ascii), tasks.len())
-        });
-        stacked(body, warnings, tasks)
+        let gate = (self.plan_review.as_ref()).is_some_and(|r| r.target == ReviewTarget::Gate);
+        let (delivery, warnings, tasks) =
+            self.reviewed()
+                .map_or((None, Vec::new(), 0), |(run, tasks)| {
+                    (
+                        super::plan_summary::delivery_line(run, gate, ascii),
+                        overlap_lines(&overlaps(run, &tasks), ascii),
+                        tasks.len(),
+                    )
+                });
+        stacked(body, delivery, warnings, tasks)
     }
 
     /// Decision 14's `p` in the run view on `run_id`: the gate while the run awaits

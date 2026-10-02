@@ -3,8 +3,40 @@
 //! in it is agent or host text: a number, the CI mark (`theme::ci_look`, with its ASCII
 //! twin) and counts.
 
-use crate::theme::ci_look;
+use crate::theme::{Role, ci_look};
+use crate::tree::{Row, RowKind};
 use proto::{DeliveryMode, PrState, RunInfo, StageInfo};
+
+/// Where the suffix's CI mark starts: the text after it is client-written too, so
+/// `stage_text_in`'s one ` ci ` is this.
+pub(crate) const CI_LEAD: &str = "  ci ";
+
+/// The CI mark `row_suffix` writes and the role it is drawn in (review finding m2):
+/// an open PR's only, `None` otherwise.
+fn ci_mark(run: &RunInfo, stage: &StageInfo, ascii: bool) -> Option<(&'static str, Role)> {
+    run.delivery
+        .as_ref()
+        .filter(|d| d.mode == DeliveryMode::Pr)?;
+    let pr = stage.pr.as_ref().filter(|pr| pr.state == PrState::Open)?;
+    Some(ci_look(pr.ci, ascii))
+}
+
+/// A `pr`-mode stage row's CI mark in `text` (its content text, as both painters draw
+/// it), by byte range, with `theme::ci_look`'s role: the graph and the compact list
+/// colour it. A stage row carries no host or agent text, so its one `  ci ` is the
+/// suffix's and nothing on the row can forge the mark.
+pub(crate) fn ci_mark_span(
+    row: &Row<'_>,
+    text: &str,
+    ascii: bool,
+) -> Option<(std::ops::Range<usize>, Role)> {
+    let RowKind::Stage { run, stage } = &row.kind else {
+        return None;
+    };
+    let (mark, role) = ci_mark(run, stage, ascii)?;
+    let start = text.find(&format!("{CI_LEAD}{mark}"))? + CI_LEAD.len();
+    Some((start..start + mark.len(), role))
+}
 
 /// The suffix `stage`'s row carries in a `pr`-mode run, empty in a local one:
 /// `  #<n>  ci <mark>`, then `  <k> threads` (the new and tasked ones, the threads
@@ -28,7 +60,7 @@ pub(crate) fn row_suffix(run: &RunInfo, stage: &StageInfo, ascii: bool) -> Strin
         PrState::Merged => out.push_str("  merged"),
         PrState::Closed => out.push_str("  closed"),
         PrState::Open => {
-            out.push_str(&format!("  ci {}", ci_look(pr.ci, ascii).0));
+            out.push_str(&format!("{CI_LEAD}{}", ci_look(pr.ci, ascii).0));
             match pr.threads.new.saturating_add(pr.threads.tasked) {
                 0 => {}
                 1 => out.push_str("  1 thread"),

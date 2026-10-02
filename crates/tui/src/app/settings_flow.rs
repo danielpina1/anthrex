@@ -205,17 +205,13 @@ impl App {
 /// name) and from the orchestrator default's model. Everything else, a disabled custom
 /// row and the digits typed in a limit included, is kept as it is.
 fn drop_hidden(s: &mut SettingsScreen) {
-    let strip = |text: &str| -> String {
-        text.chars()
-            .filter(|c| !proto::safe_text::is_hidden_format(*c))
-            .collect()
-    };
+    use config::settings::{clean_entry, strip_hidden};
     for row in s.claude.iter_mut().chain(s.codex.iter_mut()) {
-        row.entry.model = strip(&row.entry.model);
-        row.entry.note = strip(&row.entry.note);
+        clean_entry(&mut row.entry);
         if row.custom {
-            row.label = strip(&row.label);
+            row.label = strip_hidden(&row.label);
         }
     }
-    s.model = strip(&s.model);
+    // The orchestrator default's model, `cleaned`'s `orchestrator.model`.
+    s.model = strip_hidden(&s.model);
 }

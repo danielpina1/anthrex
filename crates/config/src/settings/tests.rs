@@ -380,6 +380,26 @@ fn validate_refuses_control_characters_in_names_and_notes() {
     }
 }
 
+/// Task M9.2.15's fix round (review finding m3): `cleaned` is `clean_entry` on every
+/// model and `strip_hidden` on the orchestrator default's model, the helpers the
+/// Settings screen strips its own rows with, so the two cannot drift apart.
+#[test]
+fn cleaned_is_the_shared_helpers() {
+    let mut doc = default_doc();
+    for m in &mut doc.models {
+        m.model = format!("a\u{200D}{}\u{202E}", m.model);
+        m.note = "n\u{FE0F}o\u{E0041}te".into();
+    }
+    doc.orchestrator.model = "m\u{00AD}x".into();
+    let mut want = doc.clone();
+    want.models.iter_mut().for_each(clean_entry);
+    want.orchestrator.model = strip_hidden(&doc.orchestrator.model);
+    assert_eq!(cleaned(&doc), want);
+    assert_eq!(want.orchestrator.model, "mx");
+    assert_eq!(want.models[0].note, "note");
+    assert_ne!(want, doc);
+}
+
 /// M9.2.6 fix round 2: a hidden format character (a variation selector, a soft hyphen,
 /// a bidi override) never refuses a save; the save drops it (`cleaned`), and the length
 /// rule counts what is written.

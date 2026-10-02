@@ -142,6 +142,11 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
     assert!(tap(&mut app, KeyCode::Right).is_empty());
     typed(&mut app, "claude-opus-5");
     assert!(tap(&mut app, KeyCode::Tab).is_empty());
+    // Ruling R-13: configured, then local, then pr.
+    assert_eq!(goal_form(&app).focus, GoalField::Delivery);
+    assert!(tap(&mut app, KeyCode::Right).is_empty());
+    assert!(tap(&mut app, KeyCode::Right).is_empty());
+    assert!(tap(&mut app, KeyCode::Tab).is_empty());
     assert_eq!(goal_form(&app).focus, GoalField::Trust);
     assert!(tap(&mut app, KeyCode::Char(' ')).is_empty());
     let (id, request) = tagged(&tap(&mut app, KeyCode::Enter));
@@ -157,7 +162,7 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
                 runtime: proto::Runtime::Claude,
                 model: Some("claude-opus-5".into()),
             }),
-            delivery: None,
+            delivery: Some(proto::DeliveryMode::Pr),
         }
     );
     assert!(goal_form(&app).submitting);
