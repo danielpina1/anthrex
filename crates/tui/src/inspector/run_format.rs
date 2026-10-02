@@ -211,6 +211,29 @@ pub(crate) fn route_tag(route: &proto::Route) -> String {
     format!("{} {model}", crate::theme::runtime_tag(route.runtime))
 }
 
+/// `after t1, t3 (implied)`: the explicit deps, then each implicit one marked; empty
+/// for a task with none (milestone 9.0.7 decisions 19 and 24). The final fix wave's
+/// M4: the one formatter of a task's deps, for the plan review, the compact list and
+/// the graph's boxes. Each id passes `safe_text::one_line`.
+pub(crate) fn after_text(task: &proto::TaskInfo) -> String {
+    let deps: Vec<String> = crate::app::plan_review::all_deps(task)
+        .into_iter()
+        .map(|dep| {
+            let id = crate::safe_text::one_line(dep);
+            if task.deps.iter().any(|d| d == dep) {
+                id
+            } else {
+                format!("{id} (implied)")
+            }
+        })
+        .collect();
+    if deps.is_empty() {
+        String::new()
+    } else {
+        format!("after {}", deps.join(", "))
+    }
+}
+
 pub(crate) fn size_letter(size: Size) -> &'static str {
     match size {
         Size::S => "S",

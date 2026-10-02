@@ -411,3 +411,24 @@ fn no_panic_at_tiny_sizes() {
         }
     }
 }
+
+/// Final fix wave M4: the list's deps column is the plan review's formatter, so a task
+/// with only implicit deps reads `after t1 (implied)`, as the panel's DETAIL does.
+#[test]
+fn the_list_marks_implicit_deps() {
+    let mut app = two_stage_run_selected("t2");
+    let t3 = app.runs.runs[0]
+        .tasks
+        .iter_mut()
+        .find(|t| t.id == "t3")
+        .expect("t3");
+    t3.deps.clear();
+    t3.implicit_deps = vec!["t2".into()];
+    app.sidebar_visible = false;
+    let rows = canvas_rows(&app, 80, 24);
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("t3 docs") && r.ends_with("after t2 (implied)")),
+        "{rows:#?}"
+    );
+}

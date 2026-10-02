@@ -133,11 +133,8 @@ fn task_parts(row: &Row<'_>, ascii: bool) -> Option<TaskParts> {
     };
     let text = |s: &str| theme::fold(&one_line(s), ascii);
     let title = format!("{}{}", task.title.trim(), origin_tag(task.origin));
-    let deps = if task.deps.is_empty() {
-        String::new()
-    } else {
-        text(&format!("after {}", task.deps.join(", ")))
-    };
+    // Final fix wave M4: the plan review's formatter, implicit deps marked.
+    let deps = text(&crate::inspector::run_format::after_text(task));
     Some(TaskParts {
         indent: indent(row),
         id: text(&task.id),

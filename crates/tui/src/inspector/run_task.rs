@@ -165,10 +165,18 @@ fn deps_text(run: &RunInfo, task: &TaskInfo, app: &App) -> Option<String> {
     }
     let gate_open = run.state == RunState::AwaitingApproval;
     let ascii = app.palette().ascii;
+    // Final fix wave M4: an implicit dep reads `(implied)`, as in the plan review.
+    let implied = |dep: &String| {
+        if task.deps.contains(dep) {
+            ""
+        } else {
+            " (implied)"
+        }
+    };
     let waits: Vec<String> = deps
         .iter()
-        .map(
-            |dep| match run.tasks.iter().find(|other| other.id == **dep) {
+        .map(|dep| {
+            let wait = match run.tasks.iter().find(|other| other.id == **dep) {
                 Some(other) if other.state == TaskState::Merged => {
                     format!("{dep} {}", theme::glyph(theme::Glyph::Passed, ascii))
                 }
@@ -185,8 +193,9 @@ fn deps_text(run: &RunInfo, task: &TaskInfo, app: &App) -> Option<String> {
                     format!("{dep} {glyph}")
                 }
                 None => (*dep).clone(),
-            },
-        )
+            };
+            format!("{wait}{}", implied(dep))
+        })
         .collect();
     let unblocks: Vec<&str> = run
         .tasks

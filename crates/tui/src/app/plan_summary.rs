@@ -6,7 +6,7 @@
 //! Pure: no I/O.
 
 use super::plan_review::{BAR, all_deps};
-use crate::inspector::run_format::{route_tag, size_letter, test_mode_text};
+use crate::inspector::run_format::{after_text, route_tag, size_letter, test_mode_text};
 use crate::safe_text::one_line;
 use crate::theme::{self, Glyph};
 use crate::ui::tree_view::truncate_in;
@@ -246,27 +246,6 @@ pub(crate) fn overlap_lines(overlaps: &[Overlap<'_>], ascii: bool) -> Vec<String
         out.push(format!("{warn} {more} more overlap{s}"));
     }
     out.into_iter().map(|l| theme::fold(&l, ascii)).collect()
-}
-
-/// `after t1, t3 (implied)`: the explicit deps, then each implicit one marked; empty
-/// for a task with none (decisions 19 and 24).
-pub(crate) fn after_text(task: &TaskInfo) -> String {
-    let deps: Vec<String> = all_deps(task)
-        .into_iter()
-        .map(|dep| {
-            let id = one_line(dep);
-            if task.deps.iter().any(|d| d == dep) {
-                id
-            } else {
-                format!("{id} (implied)")
-            }
-        })
-        .collect();
-    if deps.is_empty() {
-        String::new()
-    } else {
-        format!("after {}", deps.join(", "))
-    }
 }
 
 /// One task's list cells (decision 24), sanitised and folded, before the renderer

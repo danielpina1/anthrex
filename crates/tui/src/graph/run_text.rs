@@ -76,9 +76,11 @@ pub(crate) fn task_text_in(task: &TaskInfo, ascii: bool) -> String {
         tail.push(' ');
         tail.push_str(glyph(Glyph::Hub, ascii));
     }
-    if !task.deps.is_empty() {
-        tail.push_str("  after ");
-        tail.push_str(&task.deps.join(", "));
+    // Final fix wave M4: the plan review's formatter, implicit deps marked.
+    let after = crate::inspector::run_format::after_text(task);
+    if !after.is_empty() {
+        tail.push_str("  ");
+        tail.push_str(&after);
     }
     let id_width = UnicodeWidthStr::width(task.id.as_str());
     let tail_width = UnicodeWidthStr::width(tail.as_str());

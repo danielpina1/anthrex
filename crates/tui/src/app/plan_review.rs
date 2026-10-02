@@ -4,8 +4,9 @@
 //! (decision 16). `Keymap::review_mode` is kept in step with `App.plan_review` here,
 //! in one place (Risks 1). Rendering is `ui/plan_review.rs`; this file does no I/O.
 
-use super::plan_summary::{after_text, overlap_lines, overlaps, plan_stages};
+use super::plan_summary::{overlap_lines, overlaps, plan_stages};
 use super::{App, Effect};
+use crate::inspector::run_format::after_text;
 use crate::inspector::run_format::{effort_text, strength_text, test_mode_text};
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{self, Glyph, Palette};

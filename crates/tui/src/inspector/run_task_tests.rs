@@ -150,7 +150,8 @@ fn task_deps_include_implicit_ones_once() {
     let inspection = inspect_node(&app, &task_key("t3"));
     assert_eq!(
         value(&inspection, "deps"),
-        Some("after t2 ◐, t0 ✓ · on critical path")
+        // Final fix wave M4: an implicit dep is marked, as in the plan review.
+        Some("after t2 ◐, t0 ✓ (implied) · on critical path")
     );
     // Implicit dependents unblock too, once each.
     let app = with_task("t5", |task| task.implicit_deps = vec!["t2".into()]);

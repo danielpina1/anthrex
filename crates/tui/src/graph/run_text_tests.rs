@@ -56,12 +56,17 @@ fn task_text_short_title_and_deps() {
     assert_eq!(task_text(&info), "t1 spawn L");
 }
 
-/// Only declared deps are listed; implicit ones are the engine's inference.
+/// Final fix wave M4 (supersedes "declared deps only"): the box lists implicit deps as
+/// the plan review does, each marked `(implied)`; the title goes first, then the tail
+/// is cut.
 #[test]
-fn task_text_lists_declared_deps_only() {
+fn task_text_marks_implicit_deps() {
+    let mut info = task("t3", "x", Size::S, TaskState::Queued);
+    info.implicit_deps = vec!["t9".into()];
+    assert_eq!(task_text(&info), "t3 S  after t9 (implied)");
     let mut info = with_deps(task("t3", "x", Size::S, TaskState::Queued), &["t0"]);
     info.implicit_deps = vec!["t9".into()];
-    assert_eq!(task_text(&info), "t3 x S  after t0");
+    assert_eq!(task_text(&info), "t3 S  after t0, t9 (imp…");
 }
 
 /// The fitting boundary: `width(id) + 1 + width(tail) + 2 ≤ 24` keeps a title,
