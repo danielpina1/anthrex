@@ -81,7 +81,9 @@
 /// is appended last (after 9.0.6's `Settings`), so a milestone-9.1 or 9.0.6 `run.json`,
 /// plan, profile, snapshot and history still load. Derivation: milestone 9.0.6 merged
 /// first and took 13 (above); `PROTO_VERSION` was 13 on `main` at the merge
-/// (`bdfe635`); 13 + 1 = 14.
+/// (`bdfe635`); 13 + 1 = 14. Task M9.2.15's fix round adds `DeliveryInfo.alerts`
+/// (`DeliveryAlert`, ruling R-13) within 14: the version is unreleased and this
+/// milestone's own, and the field is `#[serde(default)]` and left out when empty.
 pub const PROTO_VERSION: u32 = 14;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
@@ -123,8 +125,8 @@ pub use conversation::{
     TurnPatch, TurnState,
 };
 pub use delivery::{
-    CheckRunInfo, CiCategory, CiState, DeliveryInfo, DeliveryMode, DeliveryProfile, MergeMethod,
-    PrState, StageOutcome, StagePrInfo, ThreadCounts,
+    CheckRunInfo, CiCategory, CiState, DeliveryAlert, DeliveryAlertKind, DeliveryInfo,
+    DeliveryMode, DeliveryProfile, MergeMethod, PrState, StageOutcome, StagePrInfo, ThreadCounts,
 };
 pub use history::{
     BisectLine, FlakyProposal, FlakyRecord, GateTally, HISTORY_VERSION, HistoryLine, HistoryStats,

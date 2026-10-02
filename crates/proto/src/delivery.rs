@@ -111,6 +111,37 @@ pub struct DeliveryInfo {
     pub poll_secs: u64,
     /// Decision 19's empty stages.
     pub skipped_stages: Vec<u16>,
+    /// Ruling R-13 (task M9.2.15's fix round): what the user must act on for this
+    /// delivery, typed, so the client raises its alerts without reading attention text.
+    /// Left out when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alerts: Vec<DeliveryAlert>,
+}
+
+/// What a delivery alert is about (ruling R-13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryAlertKind {
+    /// Decision 27 step 6: a red CI the engine gave up fixing.
+    CiHandedToUser,
+    /// Decision 37: a stage PR closed without merging.
+    PrClosedUnmerged,
+    /// Decision 11: `gh` lost its login.
+    GhLoggedOut,
+    /// Decision 11 and ruling R-11: a host op that keeps failing, or a held stage.
+    HostOpHeld,
+    /// Decision 31: a review round over `review_fix_max`.
+    ReviewRoundsOverCap,
+}
+
+/// One delivery alert: its kind, its stage (`None`: the whole run) and the attention
+/// line the daemon wrote for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeliveryAlert {
+    pub kind: DeliveryAlertKind,
+    #[serde(default)]
+    pub stage: Option<u16>,
+    pub text: String,
 }
 
 /// How a stage PR ended, in its `stage` history line (decision 44).
@@ -131,6 +162,10 @@ pub enum MergeMethod {
     SquashOrRebase,
     None,
 }
+
+#[cfg(test)]
+#[path = "delivery_alert_tests.rs"]
+mod alert_tests;
 
 #[cfg(test)]
 #[path = "delivery_tests.rs"]

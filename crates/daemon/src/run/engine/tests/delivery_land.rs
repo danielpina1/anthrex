@@ -20,7 +20,7 @@ use super::delivery_watch::{check, fast, poll_with, view, watched};
 use super::delivery_watch_adopt::{poll_stage, stage_op, two_stages, view_of};
 use super::dispatch::{edit, replies};
 use super::fixture::*;
-use super::full::{attention, later, verify_ok};
+use super::full::{attention, delivery_alerts, later, verify_ok};
 use super::merge::{commit, doc_task, merge, pending, to_queue, window_of};
 use super::propagate::{land_propagates, merged_at};
 use super::wake_notes::notes;
@@ -317,6 +317,8 @@ fn closed_stage_pauses_the_stages_above_and_cancels_its_fixes() {
         attention(&fx)
     );
     assert_eq!(notes(&fx), [CLOSED]);
+    let closed = proto::DeliveryAlertKind::PrClosedUnmerged;
+    assert!(delivery_alerts(&fx).contains(&(closed, Some(1), CLOSED.to_string())));
     assert!(logged(
         &fx,
         "stage 2: paused (stage 1 PR closed without merging)"

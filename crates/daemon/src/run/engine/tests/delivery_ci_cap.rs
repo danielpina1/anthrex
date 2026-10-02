@@ -12,7 +12,7 @@ use super::delivery_ci::{
 };
 use super::delivery_watch::{poll_with, watched};
 use super::fixture::*;
-use super::full::{attention, outcome, tier};
+use super::full::{attention, delivery_alerts, outcome, tier};
 use super::merge::{commit, pending};
 use super::wake_notes::notes;
 use crate::decider::Decision;
@@ -78,6 +78,11 @@ fn ci_fix_max_sends_the_same_red_to_the_user() {
         attention(&fx)
     );
     assert!(notes(&fx).contains(&line.to_string()), "{:#?}", notes(&fx));
+    let kind = proto::DeliveryAlertKind::CiHandedToUser;
+    assert_eq!(
+        delivery_alerts(&fx),
+        vec![(kind, Some(1), line.to_string())]
+    );
     assert_eq!(ci_record(&fx).phase, CiPhase::ToUser);
     assert!(ops_in(&fx.log[ops_before..], "Tier").is_empty());
     assert_eq!(ci_fixes(&fx).len(), 2);

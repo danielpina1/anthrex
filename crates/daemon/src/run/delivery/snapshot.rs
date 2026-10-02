@@ -33,6 +33,8 @@ pub fn delivery_info(run: &Run) -> Option<DeliveryInfo> {
             .filter(|(_, s)| s.skipped)
             .map(|(n, _)| n)
             .collect(),
+        // Ruling R-13: from the same lines as the run's attention (one helper).
+        alerts: crate::run::engine::delivery::alerts(run),
     })
 }
 

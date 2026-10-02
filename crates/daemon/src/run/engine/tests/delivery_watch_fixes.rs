@@ -440,3 +440,25 @@ fn an_answer_for_another_pr_is_logged_and_polled_again() {
     assert!(pr.next_poll_at > at, "not due again at once");
     assert_eq!(pr.watermark.head, "", "nothing of it was taken");
 }
+
+/// Ruling R-13: an alert's text is one line of plain text (`safe_text::one_line`): a
+/// host error carrying a line break, a bidi override and a zero-width joiner reaches the
+/// snapshot's typed alert without them.
+#[test]
+fn a_typed_alert_is_one_clean_line() {
+    let mut fx = watched();
+    fx.run_mut().delivery.watching = false;
+    set_stage_head(fx.run_mut(), 1, &commit(5));
+    for _ in 0..5 {
+        fx.tick();
+        let (op, _) = host_op(&fx);
+        let error = HostError::Failed("bo\u{200D}om\nnext\u{202E}".into());
+        answer(&mut fx, op, HostResult::Error(error));
+    }
+    let kind = proto::DeliveryAlertKind::HostOpHeld;
+    let text = "PR #7: push keeps failing: boom next".to_string();
+    assert_eq!(
+        super::full::delivery_alerts(&fx),
+        vec![(kind, Some(1), text)]
+    );
+}

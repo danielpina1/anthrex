@@ -15,7 +15,7 @@
 //! A view is processed against the PR's watermark in the step that answers it
 //! (`view.rs`). A push the
 //! remote refuses holds its stage (ruling R-11) until `run resume`. The run's delivery
-//! attention lines are [`attention`]'s. Pure (design decision 2): the clock is the
+//! attention lines are `alerts.rs`'s. Pure (design decision 2): the clock is the
 //! event's `now`.
 
 use proto::PrState;
@@ -36,7 +36,7 @@ use crate::run::model::{Run, StageLayout};
 /// Decision 11: a rate limit doubles the poll interval base up to an hour.
 pub(crate) const POLL_BASE_MAX_SECS: u64 = 3_600;
 /// The alert key of a lost login (decision 11).
-const AUTH: &str = "auth";
+pub(super) const AUTH: &str = "auth";
 /// Fix round m4: a held stage keeps at most this many characters of the host's reason.
 const HOLD_REASON_CHARS: usize = 300;
 
@@ -103,24 +103,8 @@ pub(crate) fn release(run: &mut Run, now: u64) -> Vec<u16> {
     released
 }
 
-/// The run's delivery attention lines: a lost login, an op failing again and again
-/// (decision 11), and each held stage (ruling R-11).
-pub(crate) fn attention(run: &Run) -> Vec<String> {
-    if !pr(run) {
-        return Vec::new();
-    }
-    let mut lines: Vec<String> = run.delivery.alerts.values().cloned().collect();
-    for (n, s) in (1u16..).zip(&run.delivery.stages) {
-        if let Some(reason) = &s.held {
-            lines.push(hold_line(run, n, reason));
-        }
-    }
-    lines.extend(super::review::attention(run));
-    lines
-}
-
 /// Ruling R-11's attention line and wake note for a held stage.
-fn hold_line(run: &Run, n: u16, reason: &str) -> String {
+pub(super) fn hold_line(run: &Run, n: u16, reason: &str) -> String {
     format!(
         "stage {n} is held: {reason}; anthrex run resume {} pushes it again",
         run.id

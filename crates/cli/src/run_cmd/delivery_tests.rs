@@ -54,6 +54,7 @@ fn delivered(stages: Vec<StageInfo>) -> RunInfo {
         delivering: false,
         poll_secs: 60,
         skipped_stages: Vec::new(),
+        alerts: Vec::new(),
     });
     run
 }

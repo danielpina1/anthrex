@@ -12,7 +12,7 @@ use super::delivery_open::{green, open_stage, pr_on, url};
 use super::delivery_review::{noted, on, reviewed, said, state};
 use super::delivery_watch::{PR, fast, poll_with, view};
 use super::fixture::*;
-use super::full::attention;
+use super::full::{attention, delivery_alerts};
 use super::merge::{commit, doc_task, merge, pending, to_queue, window_of};
 use crate::run::delivery::ThreadState;
 use crate::run::engine::EventKind;
@@ -285,6 +285,8 @@ fn review_fix_max_hands_threads_to_the_user() {
         attention(&fx)
     );
     assert!(super::delivery_review::logged(&fx, line));
+    let kind = proto::DeliveryAlertKind::ReviewRoundsOverCap;
+    assert!(delivery_alerts(&fx).contains(&(kind, Some(1), line.to_string())));
     // `review_fix_max = 0` sends every comment to the user, and wakes no orchestrator.
     let mut fx = by_alice();
     super::bisect::with_orchestrator(&mut fx);

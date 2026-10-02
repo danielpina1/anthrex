@@ -66,6 +66,7 @@ fn a_delivery_info() -> DeliveryInfo {
         delivering: false,
         poll_secs: 60,
         skipped_stages: vec![2],
+        alerts: Vec::new(),
     }
 }
 

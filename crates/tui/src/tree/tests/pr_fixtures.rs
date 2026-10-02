@@ -19,6 +19,7 @@ pub(crate) fn delivery(delivering: bool) -> DeliveryInfo {
         delivering,
         poll_secs: 60,
         skipped_stages: Vec::new(),
+        alerts: Vec::new(),
     }
 }
 

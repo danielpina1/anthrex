@@ -121,6 +121,17 @@ pub(super) fn attention(fx: &Fixture) -> Vec<String> {
     snapshot(&fx.state, fx.now).runs[0].attention.clone()
 }
 
+/// Ruling R-13 (task M9.2.15's fix round): the snapshot's typed delivery alerts, each
+/// `(kind, stage, text)`.
+pub(super) fn delivery_alerts(
+    fx: &Fixture,
+) -> Vec<(proto::DeliveryAlertKind, Option<u16>, String)> {
+    let run = &snapshot(&fx.state, fx.now).runs[0];
+    (run.delivery.iter().flat_map(|d| &d.alerts))
+        .map(|a| (a.kind, a.stage, a.text.clone()))
+        .collect()
+}
+
 pub(super) fn verify_ok(fx: &mut Fixture) -> Vec<Effect> {
     let (op, _) = pending_one(fx, "VerifyRefs", None);
     fx.done(op, OpResult::RefsOk)

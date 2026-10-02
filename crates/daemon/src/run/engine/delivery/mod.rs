@@ -17,6 +17,7 @@ use crate::run::delivery::StageDelivery;
 use crate::run::delivery::ops::{HostOp, HostResult};
 use crate::run::model::Run;
 
+mod alerts;
 mod ci;
 mod ci_repro;
 mod ci_trigger;
@@ -43,7 +44,8 @@ pub(crate) mod review_limits {
     };
     pub(crate) use crate::run::delivery::reply_edit::REPLIES_PER_THREAD;
 }
-pub(crate) use watch::{attention, held, release, stage_busy, stage_paused};
+pub(crate) use alerts::{alerts, attention};
+pub(crate) use watch::{held, release, stage_busy, stage_paused};
 
 /// Decision 25: `run deliver` and `run watch`, as the driver hands them to the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]

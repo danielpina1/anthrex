@@ -17,7 +17,7 @@ use super::delivery_open::{
 use super::delivery_watch::{PR, fast, poll_with, view, watched, watched_on};
 use super::dispatch::{edit, replies};
 use super::fixture::*;
-use super::full::attention;
+use super::full::{attention, delivery_alerts};
 use super::merge::{commit, doc_task, merge, pending, to_queue, window_of};
 use super::propagate::{land_propagates, propagates, stages_on};
 use crate::host::{Adopt, FetchOutcome, PrView, PushOutcome};
@@ -372,6 +372,8 @@ fn a_refused_push_holds_its_stage_and_run_resume_pushes_again() {
     let line = refuse(&mut fx);
     assert_eq!(fx.run().state, RunState::Running);
     assert_eq!(attention(&fx), vec![line.clone()]);
+    let held = proto::DeliveryAlertKind::HostOpHeld;
+    assert_eq!(delivery_alerts(&fx), vec![(held, Some(1), line.clone())]);
     assert!(logged(&fx, &line));
     assert!(
         host_ops_in(&fx.tick()).is_empty(),

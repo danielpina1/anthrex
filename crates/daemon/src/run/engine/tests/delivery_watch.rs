@@ -13,7 +13,7 @@ use super::control_restore::restart;
 use super::delivery_open::{answer, green, host_op, host_ops, host_ops_in, open_stage, pr_on};
 use super::dispatch::replies;
 use super::fixture::*;
-use super::full::attention;
+use super::full::{attention, delivery_alerts};
 use super::merge::{commit, doc_task, merge, to_queue, window_of};
 use crate::host::{
     Author, CheckRun, CheckStatus, Conclusion, HostError, IssueComment, Mergeable, PrView, Review,
@@ -546,6 +546,9 @@ fn auth_lost_is_an_attention_line_and_polling_continues() {
         assert!(polls(&mut fx, at));
         view_answer(&mut fx, at, lost());
         assert_eq!(attention(&fx), vec![line.to_string()]);
+        // Ruling R-13: the same line, typed, in the snapshot.
+        let kind = proto::DeliveryAlertKind::GhLoggedOut;
+        assert_eq!(delivery_alerts(&fx), vec![(kind, None, line.to_string())]);
         assert_eq!(fx.run().state, RunState::Running, "nothing halts");
         assert_eq!(next_poll(&fx), at + gap, "polled again, backed off");
     }
@@ -571,8 +574,14 @@ fn five_failures_raise_an_attention_line() {
         assert_eq!(shown, k == 5, "after {k} failures: {:?}", attention(&fx));
     }
     assert!(logged(&fx, "stage 1: view_pr failed: HTTP 502"));
+    let kind = proto::DeliveryAlertKind::HostOpHeld;
+    assert_eq!(
+        delivery_alerts(&fx),
+        vec![(kind, Some(1), line.to_string())]
+    );
     assert_eq!(fx.run().state, RunState::Running);
     poll_with(&mut fx, view(&commit(1)));
     assert!(attention(&fx).is_empty(), "{:?}", attention(&fx));
+    assert!(delivery_alerts(&fx).is_empty());
     assert_eq!(fx.run().delivery.failures.get("1/view_pr"), None);
 }

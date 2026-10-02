@@ -278,6 +278,7 @@ fn stage_pr_info_counts_threads_and_ci() {
             delivering: true,
             poll_secs: 120,
             skipped_stages: vec![3],
+            alerts: Vec::new(),
         })
     );
     run.delivery.stages[0].pr.as_mut().unwrap().state = PrState::Merged;
