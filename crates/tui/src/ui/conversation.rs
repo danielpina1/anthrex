@@ -189,6 +189,9 @@ fn draw_rows(buf: &mut Buffer, inner: Rect, ctx: &Ctx, rows: &[Row], selected: O
         draw_line(buf, area, indent, left, right);
         if selected == Some(index) {
             buf.set_style(area, Modifier::REVERSED);
+            // Final fix wave M3: the bar on the frame's left border, beside the row.
+            let x = inner.x.saturating_sub(1);
+            super::kit::selection_bar(buf, x, area.y, ctx.app.palette());
         }
     }
 }

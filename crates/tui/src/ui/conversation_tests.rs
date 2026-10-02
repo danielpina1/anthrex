@@ -501,7 +501,8 @@ fn a_narrow_terminal_still_renders() {
             "{w}x{h}: {bottom}"
         );
         for y in 1..h - 1 {
-            assert_eq!(buf[(0, y)].symbol(), "│");
+            // The selected row's left border is the selection bar (final fix wave M3).
+            assert!(matches!(buf[(0, y)].symbol(), "│" | "▌"), "{w}x{h} row {y}");
             assert_eq!(buf[(w - 1, y)].symbol(), "│");
         }
     }

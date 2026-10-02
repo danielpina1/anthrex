@@ -65,10 +65,11 @@ pub(crate) fn find(buffer: &Buffer, text: &str) -> Vec<(u16, u16)> {
 const CORNERS: [&str; 3] = ["╭", "┌", "+"];
 const BOTTOM_LEFTS: [&str; 3] = ["╰", "└", "+"];
 const HORIZONTALS: [&str; 2] = ["─", "-"];
-/// A frame's left side: its verticals (`│`, `|`), and the `├` where a rule inside the
+/// A frame's left side: its verticals (`│`, `|`), the `├` where a rule inside the
 /// frame joins it (the plan review's header and list rules, milestone 9.0.7 decision
-/// 23).
-const SIDES: [&str; 3] = ["│", "|", "├"];
+/// 23), and the selection bar (`▌`, `>` in ASCII) a selected row puts on it (decision
+/// 20; the final fix wave's M3).
+const SIDES: [&str; 5] = ["│", "|", "├", "▌", ">"];
 /// Every glyph a border is drawn with, the junctions an edge leaves on a box included.
 const BORDER_GLYPHS: &str = "╭╮╰╯┌┐└┘├┤┬┴┼─│+-|";
 

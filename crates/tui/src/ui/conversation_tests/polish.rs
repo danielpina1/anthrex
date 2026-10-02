@@ -82,3 +82,25 @@ fn zero_durations_are_hidden() {
     let slow = read_row(1200);
     assert!(slow.contains("✓ 1.2s"), "{slow}");
 }
+
+/// Final fix wave M3: one selection idiom. The selected row is reversed and the `▌` bar
+/// (`>` in ASCII) in the accent stands in the column left of it, the frame's left
+/// border, as a graph box's (decision 20) and the compact list's.
+#[test]
+fn the_selected_row_wears_the_selection_bar() {
+    for settings in [UiSettings::default(), ascii_settings()] {
+        let ascii = settings.badges.ascii;
+        let app = app_showing(settings, Runtime::Claude, 80, 24, main_conversation());
+        let buf = draw(&app, 80, 24);
+        let reversed = |y: u16| buf[(5, y)].modifier.contains(Modifier::REVERSED);
+        let y = (1..23).find(|&y| reversed(y)).expect("a selected row");
+        let bar = if ascii { ">" } else { "▌" };
+        assert_eq!(buf[(0, y)].symbol(), bar, "ascii {ascii}");
+        let accent = theme::role(theme::Role::Accent, app.palette()).fg;
+        assert_eq!(Some(buf[(0, y)].fg), accent);
+        let side = if ascii { "|" } else { "│" };
+        for other in (1..23).filter(|&o| o != y) {
+            assert_eq!(buf[(0, other)].symbol(), side, "row {other}");
+        }
+    }
+}

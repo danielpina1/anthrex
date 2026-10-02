@@ -13,7 +13,7 @@ mod text;
 
 pub use dialog::{choice, choice_in, dialog_area, dialog_frame};
 pub use hints::{Hint, hints, hints_joined};
-pub use pane::pane_frame;
+pub use pane::{pane_frame, selection_bar};
 pub use rows::{labelled_rows, run_name, run_name_in, scroll_marks};
 pub(crate) use screen::{from_top, from_top_until, last_top, window_span};
 pub use screen::{screen_frame, window};

@@ -100,6 +100,16 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
         )));
     }
     frame.render_widget(Paragraph::new(lines), geometry.list);
+    // Final fix wave M3: the selected row's bar on the block's left border.
+    let shown = &rows[geometry.first..geometry.first + geometry.count];
+    if let Some(at) = shown
+        .iter()
+        .position(|row| app.tree.selected.as_ref() == Some(&row.key))
+        && app.tree_input.is_some()
+    {
+        let y = geometry.list.y + u16::try_from(at).unwrap_or(u16::MAX);
+        kit::selection_bar(frame.buffer_mut(), layout.sidebar.x, y, p);
+    }
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             summary(app, layout.sidebar_footer.width),

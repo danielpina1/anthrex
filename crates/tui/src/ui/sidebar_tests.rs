@@ -309,3 +309,55 @@ fn the_mark_never_cuts_the_title_mid_word() {
         }
     }
 }
+
+/// Final fix wave M3: one selection idiom. The tree's selected row is reversed and the
+/// `▌` bar (`>` in ASCII) in the accent stands in the column left of it, the agents
+/// block's left border, as a graph box's (decision 20) and the compact list's.
+#[test]
+fn the_selected_tree_row_wears_the_selection_bar() {
+    for ascii_mode in [false, true] {
+        let mut app = shells(3, 80, 24);
+        if ascii_mode {
+            ascii(&mut app);
+        }
+        app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        app.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+        let (buffer, l) = frame(&mut app, 80, 24);
+        let list = l.sidebar_list;
+        let reversed = |y: u16| {
+            buffer[(list.x + 2, y)]
+                .modifier
+                .contains(ratatui::style::Modifier::REVERSED)
+        };
+        let y = (list.y..list.bottom())
+            .find(|&y| reversed(y))
+            .expect("a selected row");
+        let bar = if ascii_mode { ">" } else { "▌" };
+        assert_eq!(buffer[(l.sidebar.x, y)].symbol(), bar, "ascii {ascii_mode}");
+        let accent = theme::role(Role::Accent, app.palette()).fg;
+        assert_eq!(Some(buffer[(l.sidebar.x, y)].fg), accent);
+        let side = if ascii_mode { "|" } else { "│" };
+        for other in (list.y..list.bottom()).filter(|&o| o != y) {
+            assert_eq!(buffer[(l.sidebar.x, other)].symbol(), side, "row {other}");
+        }
+        // Outside tree mode nothing is selected, and the border is whole.
+        app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let (buffer, _) = frame(&mut app, 80, 24);
+        assert_eq!(buffer[(l.sidebar.x, y)].symbol(), side);
+    }
+}
+
+/// Task 4's deferred minor: beside a six-digit overflow mark at the least sidebar width
+/// the title keeps the mark whole and cuts `agents` with `…` (`...` in ASCII).
+#[test]
+fn the_title_cuts_agents_beside_a_six_digit_mark() {
+    let mark = UnicodeWidthStr::width("↑ 123456 more");
+    let interior = ui::MIN_SIDEBAR_WIDTH - 2;
+    assert_eq!(super::title_beside(true, mark, interior, false), "agen…");
+    assert_eq!(super::title_beside(false, mark, interior, true), "ag...");
+    // One column wider still shows `agents` whole, ` · tree` gone first.
+    assert_eq!(
+        super::title_beside(true, mark, interior + 1, false),
+        "agents"
+    );
+}
