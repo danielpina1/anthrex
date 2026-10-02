@@ -101,6 +101,33 @@ fn new_tasks_only_in_new_stages() {
     // edit of the earlier task.
     let dep = json!({"op": "add_dep", "task_id": "t3", "dep": "t1"});
     assert!(answer(&edit_plan(&mut fx, json!({"edits": [dep]}))).0);
+    // Fix round 1, I3: nor may this round's task be moved into an earlier stage.
+    let amend = json!({"op": "amend_task", "task_id": "t3", "stage": 1});
+    assert_eq!(
+        rejected(&edit_plan(&mut fx, json!({"edits": [amend]}))),
+        vec![earlier(1, 1)]
+    );
+    assert_eq!(fx.task("t3").stage(), 2);
+    // Moving it within the round's stages is fine.
+    let amend = json!({"op": "amend_task", "task_id": "t3", "stage": 3});
+    let edits = json!([add_in("t5", "web", 2, &[]), amend]);
+    let effects = edit_plan(&mut fx, json!({ "edits": edits }));
+    assert!(answer(&effects).0, "{effects:#?}");
+    assert_eq!(fx.task("t3").stage(), 3);
+}
+
+/// Fix round 1, M2: only an earlier round's cancelled task is a met dependency; one
+/// cancelled in the same round is still refused (`validate_graph`'s rule).
+#[test]
+fn a_cancelled_dependency_of_the_same_round_is_still_refused() {
+    let mut fx = round_two();
+    let effects = edit_plan(&mut fx, json!({"edits": [add_in("t3", "mail", 2, &[])]}));
+    assert!(answer(&effects).0, "{effects:#?}");
+    let cancel = json!({"op": "cancel_task", "task_id": "t3"});
+    assert!(answer(&edit_plan(&mut fx, json!({"edits": [cancel]}))).0);
+    let effects = edit_plan(&mut fx, json!({"edits": [add_in("t4", "cli", 2, &["t3"])]}));
+    assert_eq!(rejected(&effects), vec!["t3 is cancelled".to_string()]);
+    assert!(fx.run().task("t4").is_none());
 }
 
 /// Decision 13: a dependency on an earlier round's task is met, merged or cancelled.

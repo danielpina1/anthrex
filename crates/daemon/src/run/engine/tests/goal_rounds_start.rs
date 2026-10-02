@@ -166,9 +166,23 @@ fn iterate_is_refused_with_each_states_text() {
     fx.run_mut().cancelled = true;
     refused(fx, "run 3f9a was cancelled; start a new goal for more work");
     // 7. A `pr` run still working: a stage's push is held.
-    let mut fx = pr_delivering();
-    fx.run_mut().delivery.stages[0].held = Some("push refused".into());
-    refused(fx, "run 3f9a is running; iterate it when it completes");
+    // Fix round 1, M2: and each other thing in progress (set in place).
+    let busy: [fn(&mut Run); 5] = [
+        |run| run.delivery.stages[0].held = Some("push refused".into()),
+        |run| run.tasks[0].state = proto::TaskState::Working,
+        |run| run.merge_queue.push("t1".into()),
+        |run| {
+            run.propagate_due.insert(2);
+        },
+        |run| {
+            run.delivery.base_sync_due.insert(1, "b1".into());
+        },
+    ];
+    for busy in busy {
+        let mut fx = pr_delivering();
+        busy(fx.run_mut());
+        refused(fx, "run 3f9a is running; iterate it when it completes");
+    }
     // 8. Every other state.
     for (state, label) in [
         (RunState::Running, "running"),

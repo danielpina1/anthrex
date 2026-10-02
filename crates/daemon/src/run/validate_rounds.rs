@@ -11,8 +11,8 @@ use super::orch::contract_rounds;
 use super::plan::PlanError;
 
 /// The first edit of `edits` that reaches into an earlier round of `run`: an
-/// `add_task` (or a `split_task` child) in a stage below the current round's first, or
-/// an edit naming a task of an earlier round. Every source is refused alike, with KG
+/// `add_task` (or a `split_task` child, or an `amend_task`'s new stage) in a stage below
+/// the current round's first, or an edit naming a task of an earlier round. Every source is refused alike, with KG
 /// §2.4's text naming the stage and its round.
 pub(super) fn earlier_round(run: &Run, edits: &[PlanEdit]) -> Option<PlanError> {
     if run.round() < 2 {
@@ -33,6 +33,12 @@ pub(super) fn earlier_round(run: &Run, edits: &[PlanEdit]) -> Option<PlanError> 
             PlanEdit::AddTask { task } if task.stage < first => {
                 return refuse(Some(&task.id), task.stage);
             }
+            // Fix round 1 (I3): nor is a task moved into an earlier round's stage.
+            PlanEdit::AmendTask {
+                task_id,
+                stage: Some(stage),
+                ..
+            } if *stage < first => return refuse(Some(task_id), *stage),
             PlanEdit::SplitTask { task_id, into } => {
                 if let Some(child) = into.iter().find(|c| c.stage > 1 && c.stage < first) {
                     return refuse(Some(&child.id), child.stage);
