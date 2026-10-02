@@ -396,6 +396,13 @@ Built in `crates/cli/tests/support/run_pr.rs` the way M9.2.16's are: from the da
 | A resume whose process exits before its message is written | `crates/daemon/src/manager/headless_turns.rs` (`headless_resume`) | `kill_grace + OUTPUT_GRACE + 1s` for the process's own reason | The process is killed at `kill_grace` at the latest and its output read for `OUTPUT_GRACE` after, `retire`'s own bound; the reason arrives with its exit. CI flake F-b; `a_resume_that_exits_before_its_message_reports_why` forces the order with the 1 s install pause (a lower bound on the gap, which load can only lengthen). | **Recorded.** |
 | `e2e_typed_steering_becomes_a_plan_edit`: the approval's wake read | `crates/cli/tests/run_e2e_orch/steer.rs` | `ORCH_WAIT` | The wake is pasted after `wake_quiet_secs` of idle; the script reads it instead of polling `run_status` (a digest read would clear the note). CI flake F-a. | **Recorded.** |
 
+### Recorded, from M9.3.6a (2026-10-02)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `resolution_holds_no_lock_across_the_read`: `run status` (a `List`) while a resolved call waits | `crates/daemon/src/run/driver/chain_tests.rs` | `< 2 s`; the call's `wait_secs` 10 s; `ANSWER` (10 s) for the wait's end after the edit | `long_poll_holds_no_engine_lock`'s derivation: one engine lock for the snapshot. Chain resolution takes the engine lock only for its lookup, in a function that is not async, so the waiting call holds none; a lock held across the wait would answer only after it (10 s). The wait's end is one edit step and one push. | **Recorded.** A separation: 2 s against 10 s. |
+| `an_idle_chains_closed_window_ends_it` | `crates/daemon/src/run/driver/chain_tests.rs` | `ANSWER` (10 s), a deadline loop polling every 20 ms | One `check_orchestrators` (called by the test, and by the driver's 1 s tick) and one engine step for `ChainWindowGone`. A hang guard, not a separation. | **Recorded.** |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |

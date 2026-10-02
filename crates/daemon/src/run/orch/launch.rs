@@ -136,7 +136,7 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
             task_id: None,
             scout_id: None,
             epic: None,
-            chain: None,
+            chain: run.chain.clone(),
         },
         instructions: ORCHESTRATOR_CONTRACT.to_string(),
         effort: route.effort,

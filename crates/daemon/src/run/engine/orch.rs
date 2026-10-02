@@ -92,6 +92,9 @@ pub(super) fn on_orch_event(
                 wake::woken(run, digest_revision, notes_seq, request);
             }
         }
+        OrchEvent::ChainWindowGone { chain, window_id } => {
+            super::chains::window_gone(state, &chain, window_id)
+        }
         OrchEvent::WakeHeld { run_id, held } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
                 run.orch.wake_held = held;

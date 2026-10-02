@@ -44,6 +44,7 @@ use super::validate::EditScope;
 pub(crate) mod actions;
 mod batch;
 mod bisect;
+mod chains;
 mod clock;
 mod complete;
 pub(crate) mod deciders;
@@ -125,6 +126,8 @@ pub struct EngineState {
     /// The run as the orchestrator's own tool call left it, before its handler's
     /// scheduler pass (`orch::settle_quiet`); taken by the step that set it.
     pub quiet_base: Option<Run>,
+    /// Milestone 9.3 decision 19: the chains, derived from `Run.chain` (`chains.rs`).
+    pub chains: BTreeMap<String, crate::run::chain::Chain>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -325,6 +328,7 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
     }
     let before = state.runs.clone();
     let before_revision = state.revision;
+    let chains_before = state.chains.clone();
     let now = event.now;
     // Milestone 9 decision 39: the orchestrator's own edits add no wake note.
     let quiet = matches!(&event.kind, EventKind::Orch(OrchEvent::Tool { call, .. })
@@ -456,24 +460,29 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         let since = applied.as_ref().unwrap_or(&before);
         wake::blocked_notes(since.get(id), run);
     }
+    // Milestone 9.3 decision 19: the chains follow their current runs.
+    chains::pass(&mut state);
     // Held events whose launches are over, or that waited too long (`early.rs`).
     early::sweep(&mut state, now, &mut fx);
-    finish(&mut state, &before, before_revision, fx)
+    let chains_moved = state.chains != chains_before;
+    finish(&mut state, &before, (before_revision, chains_moved), fx)
 }
 
 /// Decision 47: a run that changed gets its revision bumped, and the global one with it;
 /// a run new to the state keeps the revision it arrived with. A change to counters alone
 /// (`AgentRound::clear_counters`) is persisted lazily and published as a counter update
-/// (decisions 43, 47); any other is urgent and structural. `Persist` first, `Publish` last.
+/// (decisions 43, 47); any other is urgent and structural, and so is a change of the
+/// chain table alone (milestone 9.3: the snapshot's idle orchestrators). `Persist` first,
+/// `Publish` last.
 fn finish(
     state: &mut EngineState,
     before: &BTreeMap<String, Run>,
-    before_revision: u64,
+    (before_revision, chains_moved): (u64, bool),
     fx: Vec<Effect>,
 ) -> (EngineState, Vec<Effect>) {
     let mut persist = Vec::new();
     let mut wakes = Vec::new();
-    let mut structural = false;
+    let mut structural = chains_moved;
     for (id, run) in state.runs.iter_mut() {
         let urgent = match before.get(id) {
             Some(old) if old == run => continue,
@@ -498,6 +507,10 @@ fn finish(
             run_id: id.clone(),
             urgent,
         });
+    }
+    // A change of the chain table alone still moves the global revision, once.
+    if chains_moved && state.revision == before_revision {
+        state.revision += 1;
     }
     let changed = state.revision != before_revision;
     let mut out = persist;

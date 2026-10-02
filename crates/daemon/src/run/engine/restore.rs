@@ -90,6 +90,8 @@ pub(super) fn restore(
             crate::run::orch::digest::note_change(run);
         }
     }
+    // Milestone 9.3 decision 19: idle chains end with the old daemon (KG §3.6).
+    state.chains = crate::run::chain::rebuild(&state.runs);
 }
 
 /// Before the replay: the run's state, the waits that died with the old daemon, and the

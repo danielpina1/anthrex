@@ -9,6 +9,7 @@ mod activity;
 mod bisect;
 mod budgets;
 mod cancel_work;
+mod chains;
 mod control;
 mod control_clock;
 mod control_clock_props;

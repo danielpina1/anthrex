@@ -18,6 +18,7 @@ use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::{RunService, unix_now};
+use crate::run::chain::{idle_refusal, resolve};
 use crate::run::engine::early::{awaits_launch, holds_planner_call};
 use crate::run::engine::{EventKind, HOLD_LIMIT_SECS, OrchEvent, notes_seq};
 use crate::run::model::{Run, task_branch};
@@ -25,6 +26,8 @@ use crate::run::orch::context::Asker;
 use crate::run::orch::result::{TaskGit, task_result};
 use crate::run::orch::tools::{OrchCall, parse_call};
 
+#[path = "chain_ops.rs"]
+mod chain_ops;
 #[path = "orch_promote.rs"]
 mod promote;
 #[cfg(test)]
@@ -171,6 +174,13 @@ impl RunService {
     /// [`Self::orch_tool`], with an early call's launch wait bounded by `limit` (a test
     /// shortens it; production passes [`LAUNCH_WAIT`]).
     pub(super) async fn orch_tool_within(&self, call: ToolCall, limit: Duration) -> RunReply {
+        // Milestone 9.3 decisions 20 and 21, before any other check: a chained call
+        // reaches its chain's current run, and an idle chain's tools are limited. `read`
+        // is reached only from here, so its calls are resolved too.
+        let call = match self.resolved(call) {
+            Ok(call) => call,
+            Err(text) => return refused(text),
+        };
         let read = matches!(
             call.tool.as_str(),
             "get_context" | "run_status" | "task_result"
@@ -254,6 +264,26 @@ impl RunService {
             }
             tokio::time::sleep(LAUNCH_POLL).await;
         }
+    }
+
+    /// Decisions 20 and 21: `call` with its run resolved to its chain's current run
+    /// (`chain::resolve`), or the refusal of a run outside the chain or of a tool an
+    /// idle chain does not allow (`chain::idle_refusal`). The engine lock is taken only
+    /// for the lookup: this is not async, so it is never held across an await.
+    fn resolved(&self, mut call: ToolCall) -> Result<ToolCall, String> {
+        let state = crate::lock(&self.state); // lookup
+        let Some(current) = resolve(&state.chains, &call)? else {
+            return Ok(call);
+        };
+        let chain = call.chain.as_deref().and_then(|id| state.chains.get(id));
+        if let (Some(chain), Some(last)) = (chain, state.runs.get(&current))
+            && let Some(text) = idle_refusal(chain, last, &call.tool)
+        {
+            return Err(text);
+        }
+        drop(state);
+        call.run_id = current;
+        Ok(call)
     }
 
     /// `read(run)` of the caller's run under the engine lock, after decision 15's run
@@ -418,6 +448,10 @@ impl RunService {
 #[cfg(test)]
 #[path = "orch_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "chain_tests.rs"]
+mod chain_tests;
 
 #[cfg(test)]
 #[path = "orch_read_rig.rs"]

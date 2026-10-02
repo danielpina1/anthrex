@@ -61,6 +61,8 @@ pub(super) fn start(
     }
     // Milestone 9.3 decision 18: every run starts in round 1.
     super::goal_rounds::ensure_first(&mut run);
+    // Milestone 9.3 decision 19: a run with an orchestrator starts its chain.
+    super::chains::assign(&mut run);
     let fast = run.path == Some(RunPath::Fast);
     // Review I1: the engine's own barrier. A fast-path run is one task, neither hub nor
     // L, whatever its caller checked; any other is refused and nothing is created.

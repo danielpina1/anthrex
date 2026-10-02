@@ -409,6 +409,7 @@ impl RunService {
                 .map(|(id, _)| *id)
                 .collect()
         };
+        self.idle_windows(|id| window(id).is_none() || confirmed.contains(&id));
         for (s, (_, l)) in seen.iter().zip(&now) {
             let exited = *l == Listed::Gone || confirmed.contains(&s.window_id);
             let report = if s.live && exited {

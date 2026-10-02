@@ -101,6 +101,7 @@ fn perform(
         candidates: resolved.candidates,
     };
     run.orch.orchestrator = Some(record);
+    super::chains::assign(run);
     let first = promoted_first_prompt(run);
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.first_prompt = first;

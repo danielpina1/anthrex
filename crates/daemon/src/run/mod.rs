@@ -24,6 +24,7 @@
 //!   proof), and `confine.rs`, `confine_cache.rs` and `seatbelt.rs` (confinement of
 //!   checks and sandbox profiles).
 
+pub mod chain;
 pub mod confine;
 mod confine_cache;
 pub mod contract;

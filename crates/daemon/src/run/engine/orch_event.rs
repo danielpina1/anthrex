@@ -99,6 +99,9 @@ pub enum OrchEvent {
         outcome: RoleOutcome,
         result: Option<String>,
     },
+    /// Milestone 9.3 decision 19: an idle chain's window closed, or exited for
+    /// `EXIT_CONFIRM` (`driver/chain_ops.rs::idle_windows`).
+    ChainWindowGone { chain: String, window_id: u32 },
 }
 
 /// How a run scout's or sub-planner's session ended: its report or epic accepted, or
@@ -125,7 +128,8 @@ impl OrchEvent {
             | OrchEvent::OtlpToken { .. }
             | OrchEvent::WakeHeld { .. }
             | OrchEvent::Installed { .. }
-            | OrchEvent::RoleRouteEnded { .. } => None,
+            | OrchEvent::RoleRouteEnded { .. }
+            | OrchEvent::ChainWindowGone { .. } => None,
         }
     }
 }

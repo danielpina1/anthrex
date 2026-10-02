@@ -39,7 +39,7 @@ pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot {
         runs,
         now,
         proposals: Vec::new(),
-        idle_orchestrators: Vec::new(),
+        idle_orchestrators: super::chain::idle_list(&state.chains, &state.runs),
     }
 }
 
@@ -147,7 +147,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
             .collect(),
         test_slots: run.test_slots,
         delivery: super::delivery::snapshot::delivery_info(run),
-        chain: None,
+        chain: run.chain.clone(),
         round: run.round(),
         rounds: run.round_infos(),
     }
