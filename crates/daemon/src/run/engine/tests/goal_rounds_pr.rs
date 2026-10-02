@@ -473,6 +473,8 @@ fn a_round_cancel_keeps_watching_earlier_prs() {
     assert!(run.delivery.watching);
     assert_eq!(run.rounds[1].outcome, Some(RoundOutcome::Cancelled));
     assert_eq!(round_two_lines(&fx), vec![RoundOutcome::Cancelled]);
+    let said = |text: &str| run.log.iter().any(|l| l.text == text);
+    assert!(said("round 2 ended cancelled") && !said("round 2 is done"));
     assert!(stage_lines(&fx.log[logged..]).is_empty());
     assert!(run.delivery.delivering(stage_count(run)));
 }

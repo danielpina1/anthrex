@@ -161,15 +161,22 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     run.finish_edit = false;
     if pr_end {
         let n = run.round();
-        log(run, now, format!("round {n} is done"));
+        let cancelled =
+            run.current_round().and_then(|r| r.outcome) == Some(RoundOutcome::Cancelled);
+        let text = match cancelled {
+            true => format!("round {n} ended cancelled"),
+            false => format!("round {n} is done"),
+        };
+        log(run, now, text);
         wake::note(run, round_done(n));
     }
 }
 
 /// Decision 17's `pr` end of the current round: a `pr` run every task of which is
-/// finished, every stage of the round has its PR (in any state) or was skipped, and no
-/// merge, stage creation or propagate is queued, due or in flight.
-fn delivered(run: &Run) -> bool {
+/// finished, every stage of the round has its PR (in any state) or was skipped, no
+/// merge, stage creation, propagate or base sync is queued, due or in flight, and no
+/// stage is held (task 5 fix round 1, m5).
+pub(super) fn delivered(run: &Run) -> bool {
     let Some(first) = run.current_round().map(|r| r.first_stage) else {
         return false;
     };
@@ -180,6 +187,8 @@ fn delivered(run: &Run) -> bool {
         && (first..=stage_count(run)).all(covered)
         && run.merge_queue.is_empty()
         && run.propagate_due.is_empty()
+        && d.base_sync_due.is_empty()
+        && d.stages.iter().all(|s| s.held.is_none())
         && !merge::merging(run)
 }
 
