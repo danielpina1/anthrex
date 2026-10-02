@@ -124,7 +124,7 @@ def tui_stage(pty_proc, bin_path, run_cmd, fail, config_path):
         proc.send(b"j")
         proc.send(b".")
         proc.wait_for(" MENU ", timeout=SCREEN_WAIT, label="the action menu's badge")
-        proc.wait_for(f"Menu t · {h4}", timeout=SCREEN_WAIT, label="the menu's title")
+        proc.wait_for(f"┌ Menu t · {h4} ", timeout=SCREEN_WAIT, label="the menu's title")
         proc.wait_for("approve", timeout=SCREEN_WAIT, label="the menu's approve entry")
         print(f"ok: `.` on run {run_id} opened its action menu with approve")
         proc.send(b"\x1b")

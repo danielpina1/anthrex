@@ -177,7 +177,11 @@ def _start_in_the_form(proc, run_cmd, repo, fail):
     proc.wait_for(GOAL, label="the typed goal")
     proc.send(b"\r")
     run_id = _goal_run(run_cmd, fail, time.monotonic() + GOAL_CMD_TIMEOUT)
-    proc.wait_for(f" run {run_id} ", timeout=GOAL_CMD_TIMEOUT, label="the run view on the new run")
+    proc.wait_for(
+        f" run · {GOAL} · {run_id[-4:]} ",
+        timeout=GOAL_CMD_TIMEOUT,
+        label="the run view on the new run",
+    )
     return run_id
 
 
@@ -196,7 +200,7 @@ def _start_from_the_cli(proc, run_cmd, repo, fail):
     proc.wait_for(" FILTER ", label="overview filter mode")
     proc.send(h4.encode())
     proc.send(b"\r")
-    proc.wait_for(" TREE ", label="overview navigation after filtering")
+    proc.wait_for(" OVERVIEW ", label="overview navigation after filtering")
     proc.send(b"l")
     # The run's own node (its canvas text, `graph/run_text.rs::run_text`), not the
     # filter's echo of `h4`.
@@ -208,7 +212,7 @@ def _start_from_the_cli(proc, run_cmd, repo, fail):
         fail,
     )
     proc.send(b"l")
-    proc.wait_for(f" run {run_id} ", label="the run view's title")
+    proc.wait_for(f" run · {GOAL} · {h4} ", label="the run view's title")
     return run_id
 
 
