@@ -218,6 +218,7 @@ fn pr_delivering() -> Fixture {
 fn pad_rounds(run: &mut Run, n: u32) {
     let mut first = Round::first(run);
     first.outcome = Some(RoundOutcome::Completed);
+    first.ended_at = Some(first.started_at);
     run.rounds = (1..=n)
         .map(|k| Round {
             n: k,

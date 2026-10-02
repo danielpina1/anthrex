@@ -1,0 +1,125 @@
+//! Milestone 9.3's rounds, engine side II (KG §2.4, §2.6): a round's plan gate
+//! ([`skips_gate`], [`approved`], decision 12), its reject ([`reject_round`], decision
+//! 12) and cancel ([`cancel_round`], decision 16), and its end ([`pass`], decision 17),
+//! whose `round` history line `goal_rounds::end_round` writes. Pure (design decision 2).
+
+use proto::{RoundOrigin, RoundOutcome, RunState};
+
+use super::complete::{cancel_task, deferred_note};
+use super::goal_rounds::end_round;
+use super::requests::log;
+use super::{Effect, delivery, planners, stages, wake};
+use crate::run::model::Run;
+use crate::run::orch::contract_rounds::{round_cancelled, round_rejected};
+
+/// Decision 12's reason for the sub-planners and run scouts a rejected round halts.
+pub const ROUND_REJECTED: &str = "the round was rejected";
+/// Decision 16's reason for the sub-planners and run scouts a cancelled round halts.
+pub const ROUND_CANCELLED: &str = "the round was cancelled";
+
+/// Decision 12 (KG §2.4 step 4): a submitted plan skips the gate only when the run was
+/// started with approve at once and the current round is the user's; a round the
+/// orchestrator started always waits for the user.
+pub(super) fn skips_gate(run: &Run) -> bool {
+    run.orch.yes
+        && run
+            .current_round()
+            .is_none_or(|r| r.origin == RoundOrigin::User)
+}
+
+/// The plan is approved, `by` the user or `--yes`: round 1's approval is the run's and
+/// fixes its layout (milestone 9.1 decision 46); a later round's leaves both as round 1
+/// set them (decision 12). A decider queued at the gate waits from now (task 12 review
+/// m7).
+pub(super) fn approved(run: &mut Run, by: &str, now: u64) {
+    if run.round() <= 1 {
+        run.approved_by = Some(by.to_string());
+        run.approved_at = Some(now);
+        stages::fix_layout(run, now);
+    }
+    for q in &mut run.decider_queue {
+        q.queued_at = now;
+    }
+}
+
+/// Decision 12: `run reject` on round 2 or later. Every task of the round is cancelled,
+/// the round ends `rejected` with its history line, its request and its sub-planners
+/// and run scouts are dropped, and the run goes back to `complete` (`running` in `pr`
+/// mode) with no summary wake. Earlier rounds are untouched; nothing is discarded.
+pub(super) fn reject_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> String {
+    let n = run.round();
+    let why = format!("run reject (round {n})");
+    for i in 0..run.tasks.len() {
+        if run.tasks[i].round == n && !run.tasks[i].state.is_finished() {
+            cancel_task(run, i, &why, now, fx);
+        }
+    }
+    end_round(run, RoundOutcome::Rejected, now, fx);
+    run.orch.request_wake = None;
+    planners::halt_all(run, ROUND_REJECTED, now, fx);
+    // The earlier rounds' plan stays the submitted one (`rules::promoted_unsubmitted`).
+    if let Some(o) = run.orch.orchestrator.as_mut() {
+        o.plan_submitted = true;
+    }
+    run.paused_from = None;
+    run.state = if delivery::pr(run) {
+        RunState::Running
+    } else {
+        RunState::Complete
+    };
+    log(run, now, format!("round {n} rejected by the user"));
+    let text = format!("the user rejected round {n}; the earlier rounds are unchanged");
+    wake::note(run, text);
+    round_rejected(run.short(), n)
+}
+
+/// Decision 16: `run cancel` on round 2 or later cancels that round only. Its
+/// unfinished tasks are cancelled as `complete::cancel` cancels them, its sub-planners
+/// and run scouts are halted, and `finish_edit` keeps anything new from starting while
+/// its sessions end; the round's outcome is `cancelled`, and [`pass`] ends it once the
+/// run completes. `run.cancelled` stays false and the delivery keeps watching, so
+/// earlier rounds' pull requests are untouched.
+pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> String {
+    let n = run.round();
+    if run.state == RunState::Paused {
+        run.state = RunState::Running;
+        run.paused_from = None;
+    }
+    // T15-minors (M-4), as `complete::cancel`: nothing resumes the cancelled work.
+    run.restored = None;
+    let why = format!("run cancel (round {n})");
+    let mut merging = Vec::new();
+    for i in 0..run.tasks.len() {
+        let task = &run.tasks[i];
+        if task.round == n && !task.state.is_finished() && cancel_task(run, i, &why, now, fx) {
+            merging.push(run.tasks[i].id().to_string());
+        }
+    }
+    if let Some(round) = run.rounds.last_mut() {
+        round.outcome = Some(RoundOutcome::Cancelled);
+    }
+    run.finish_edit = true;
+    planners::halt_all(run, ROUND_CANCELLED, now, fx);
+    log(run, now, format!("round {n} cancelled by the user"));
+    let mut text = round_cancelled(run.short(), n);
+    for id in merging {
+        text.push_str(&deferred_note(&id));
+    }
+    text
+}
+
+/// Decision 17, every step for every run: a round after the first that has not ended
+/// ends once the run is `complete` (M8a's completion, whose summary wake asks for the
+/// round's summary), `completed` unless a cancel made it `cancelled`; `finish_edit`,
+/// which a cancel set, is cleared. Round 1 ends when a second round starts
+/// (`goal_rounds::iterate`, decision 10).
+pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    let open = run
+        .current_round()
+        .is_some_and(|r| r.n > 1 && r.ended_at.is_none());
+    if !open || run.state != RunState::Complete {
+        return;
+    }
+    end_round(run, RoundOutcome::Completed, now, fx);
+    run.finish_edit = false;
+}

@@ -268,7 +268,13 @@ pub(super) fn created(run: &mut Run, kind: &OpKind, result: OpResult, now: u64) 
                 .and_then(|(_, n)| n.parse::<u16>().ok())
                 .unwrap_or_else(|| highest(run) + 1);
             let parent = run.stage(n.saturating_sub(1));
-            let tasks_in = parent.map(|p| p.tasks_in.clone()).unwrap_or_default();
+            // Milestone 9.3 decision 13: a widened run's stage 1 starts at `run_head`,
+            // which holds every task merged before it.
+            let merged = || {
+                let merged = run.tasks.iter().filter(|t| t.state == TaskState::Merged);
+                merged.map(|t| t.id().to_string()).collect()
+            };
+            let tasks_in = parent.map_or_else(merged, |p| p.tasks_in.clone());
             let mut record = StageRecord::new(n, branch.clone(), from, tasks_in, now);
             record.synced_from = parent.map(|_| from.clone());
             // Milestone 9.3 decision 13: the round whose stages hold it.

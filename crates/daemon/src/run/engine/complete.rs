@@ -313,6 +313,11 @@ pub(super) fn cancel(
     if let Some(text) = rules::cancel(run) {
         return answer(fx, Err(text));
     }
+    // Milestone 9.3 decision 16: a later round's cancel ends that round only.
+    if run.round() > 1 {
+        let text = super::goal_rounds_end::cancel_round(run, now, fx);
+        return answer(fx, Ok(text));
+    }
     if run.state == RunState::Paused {
         run.state = RunState::Running;
         run.paused_from = None;

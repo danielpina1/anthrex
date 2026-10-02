@@ -60,6 +60,7 @@ pub(crate) mod full;
 mod gate_holds;
 mod gates;
 mod goal_rounds;
+mod goal_rounds_end;
 mod history;
 mod holds;
 mod integration;
@@ -445,6 +446,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
     });
     for (id, run) in state.runs.iter_mut() {
         dispatch::schedule(run, now, &mut fx);
+        // Milestone 9.3 decision 17: a round whose run completed ends.
+        goal_rounds_end::pass(run, now, &mut fx);
         orch_window::ended(run);
         gate_holds::drop_empty_rounds(run, now);
         // M8b decision 33: the history records that are due, whatever the run's state.

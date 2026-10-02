@@ -437,6 +437,10 @@ fn new_notes(before: &Run, after: &Run) -> Vec<String> {
 /// before the user accepts or discards it.
 fn write_summary(run: &mut Run, summary: String, now: u64, fx: &mut Vec<Effect>) {
     if let Some(o) = run.orch.orchestrator.as_mut() {
+        // Milestone 9.3 decision 17: the current round's summary too.
+        if let Some(round) = run.rounds.last_mut() {
+            round.summary = Some(summary.clone());
+        }
         o.summary = Some(summary);
         log(run, now, "the orchestrator wrote its summary");
         fx.push(Effect::WriteReport {
@@ -457,14 +461,10 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
     match run.state {
         RunState::Planning => {
             set_submitted(run);
-            if run.orch.yes {
+            // Milestone 9.3 decision 12: a round the orchestrator started never skips it.
+            if super::goal_rounds_end::skips_gate(run) {
                 run.state = RunState::Running;
-                run.approved_by = Some("--yes".into());
-                run.approved_at = Some(now);
-                super::stages::fix_layout(run, now);
-                for q in &mut run.decider_queue {
-                    q.queued_at = now;
-                }
+                super::goal_rounds_end::approved(run, "--yes", now);
                 log(
                     run,
                     now,

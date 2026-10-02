@@ -85,3 +85,13 @@ pub const ITERATE_IN_EDITS: &str = "iterate goes in edit_plan's iterate, alone i
 pub fn iterate_effect(n: u32) -> String {
     format!("plan round {n} of this run with its orchestrator")
 }
+
+/// Decision 12: the reply to a rejected round `n`.
+pub fn round_rejected(h4: &str, n: u32) -> String {
+    format!("run {h4} round {n} rejected; the earlier rounds are unchanged")
+}
+
+/// Decision 16: the reply to a cancelled round `n`.
+pub fn round_cancelled(h4: &str, n: u32) -> String {
+    format!("run {h4} round {n} cancelled; it ends once its sessions have ended")
+}

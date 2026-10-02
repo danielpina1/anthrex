@@ -179,14 +179,15 @@ pub(crate) fn dep_met(_run: &Run, task: &Task, dep: &Task) -> bool {
     dep.round < task.round
 }
 
-/// Decision 17: the current round ends with `outcome` at `now`, once; with history on,
-/// its `round` line (`<run>/round/<n>`) counts the round's tasks, those merged, their
-/// tool calls and the round's whole minutes.
+/// Decision 17: the current round ends at `now`, once, with `outcome` unless a cancel
+/// already set its own (decision 16); with history on, its `round` line
+/// (`<run>/round/<n>`) counts the round's tasks, those merged, their tool calls and the
+/// round's whole minutes.
 pub(super) fn end_round(run: &mut Run, outcome: RoundOutcome, now: u64, fx: &mut Vec<Effect>) {
-    let Some(round) = run.rounds.last_mut().filter(|r| r.outcome.is_none()) else {
+    let Some(round) = run.rounds.last_mut().filter(|r| r.ended_at.is_none()) else {
         return;
     };
-    round.outcome = Some(outcome);
+    let outcome = *round.outcome.get_or_insert(outcome);
     round.ended_at = Some(now);
     let (n, origin, started_at) = (round.n, round.origin, round.started_at);
     if !crate::run::history::enabled(run) {

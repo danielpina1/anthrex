@@ -156,15 +156,9 @@ pub(super) fn approve(
         return reply(fx, id, Err(text));
     }
     run.state = RunState::Running;
-    run.approved_by = Some("user".to_string());
-    run.approved_at = Some(now);
-    // Milestone 9.1 decision 46.
-    stages::fix_layout(run, now);
-    // Task 12 review m7: a decider queued at the gate (a size check) could not start
-    // there; its slot wait counts from now.
-    for q in &mut run.decider_queue {
-        q.queued_at = now;
-    }
+    // Milestone 9.1 decision 46 (the layout) and task 12 review m7 (a decider queued
+    // at the gate waits from now); milestone 9.3 decision 12: round 1's approval only.
+    super::goal_rounds_end::approved(run, "user", now);
     log(run, now, "approved by the user");
     // Milestone 9 decisions 30, 39.
     super::wake::note(run, "the user approved the plan".to_string());
@@ -187,6 +181,11 @@ pub(super) fn reject(
     // Milestone 9 decision 26: a run still being planned is discarded too.
     if let Some(text) = rules::reject(run) {
         return reply(fx, id, Err(text));
+    }
+    // Milestone 9.3 decision 12: a later round's reject keeps the run.
+    if run.round() > 1 {
+        let text = super::goal_rounds_end::reject_round(run, now, fx);
+        return reply(fx, id, Ok(text));
     }
     let mut worktrees: Vec<_> = run
         .tasks

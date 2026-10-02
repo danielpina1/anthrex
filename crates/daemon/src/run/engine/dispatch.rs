@@ -160,9 +160,10 @@ pub(super) fn block(run: &mut Run, i: usize, reason: BlockReason, text: String, 
 }
 
 /// Decision 16: every run window counts toward `max_windows`; a task that would pass it
-/// is `blocked(environment)`.
+/// is `blocked(environment)`. Milestone 9.3 decision 14: counted from the round's start.
 pub(super) fn window_limit_reached(run: &mut Run, i: usize, now: u64) -> bool {
-    if run.windows_created < run.limits.max_windows {
+    let before = run.current_round().map_or(0, |r| r.windows_before);
+    if run.windows_created.saturating_sub(before) < run.limits.max_windows {
         return false;
     }
     let text = format!("run window limit ({}) reached", run.limits.max_windows);

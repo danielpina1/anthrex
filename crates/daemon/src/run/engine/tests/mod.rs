@@ -71,6 +71,7 @@ mod gates_fixes;
 mod gates_review;
 mod gates_rounds;
 mod goal_rounds;
+mod goal_rounds_end;
 mod goal_rounds_stages;
 mod goal_rounds_start;
 mod history;

@@ -25,7 +25,7 @@ fn earlier(s: u16, r: u32) -> String {
 }
 
 /// An `add_task` of `id` in `stage`, depending on `deps`.
-fn add_in(id: &str, module: &str, stage: u16, deps: &[&str]) -> serde_json::Value {
+pub(super) fn add_in(id: &str, module: &str, stage: u16, deps: &[&str]) -> serde_json::Value {
     let mut edit = add(id, module);
     edit["task"]["stage"] = json!(stage);
     edit["task"]["deps"] = json!(deps);
@@ -52,7 +52,7 @@ fn round_two() -> Fixture {
 }
 
 /// The `CreateStageBranch` ops in flight: (op, branch, from).
-fn creating(fx: &Fixture) -> Vec<(u64, String, String)> {
+pub(super) fn creating(fx: &Fixture) -> Vec<(u64, String, String)> {
     pending(fx, "CreateStageBranch", None)
         .into_iter()
         .map(|(op, kind)| match kind {
@@ -68,7 +68,7 @@ fn stage_branch(n: u16) -> String {
 }
 
 /// Round 2's `edits` submitted and approved by the user.
-fn plan_round(fx: &mut Fixture, edits: serde_json::Value) {
+pub(super) fn plan_round(fx: &mut Fixture, edits: serde_json::Value) {
     let effects = edit_plan(fx, json!({"edits": edits, "submit": true}));
     assert!(answer(&effects).0, "{effects:#?}");
     assert_eq!(fx.run().state, RunState::AwaitingApproval);

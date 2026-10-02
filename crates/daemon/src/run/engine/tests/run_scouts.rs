@@ -38,7 +38,7 @@ pub(super) fn report(id: &str, summary: &str) -> ScoutReport {
     }
 }
 
-fn scout(fx: &mut Fixture, id: &str) -> Vec<Effect> {
+pub(super) fn scout(fx: &mut Fixture, id: &str) -> Vec<Effect> {
     let args = json!({"id": id, "question": format!("What is {id}?"), "area": ["crates/api/**"]});
     orch_tool(fx, ORCH, "spawn_scout", args)
 }
@@ -49,7 +49,7 @@ fn ok(effects: &[Effect]) -> Value {
     value
 }
 
-fn scout_ended(fx: &mut Fixture, id: &str, outcome: ScoutEnd) -> Vec<Effect> {
+pub(super) fn scout_ended(fx: &mut Fixture, id: &str, outcome: ScoutEnd) -> Vec<Effect> {
     fx.next(EventKind::Orch(OrchEvent::ScoutEnded {
         run_id: RUN_ID.into(),
         scout_id: id.into(),
