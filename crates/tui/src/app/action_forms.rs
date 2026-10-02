@@ -388,7 +388,7 @@ fn build_form(
 impl App {
     /// A menu entry that needs input: opens its form on `flow`. The answer form asks
     /// for its task's brief with one tagged `TaskDetail` (decision 15).
-    pub(super) fn open_form(
+    pub(in crate::app) fn open_form(
         &mut self,
         flow: &mut ActionFlow,
         info: ActionInfo,
@@ -405,10 +405,15 @@ impl App {
             return vec![];
         };
         let mut effects = vec![];
-        if let (ActionForm::Answer(f), true) = (&mut form, self.connected()) {
-            let (id, effect) = self.brief_request(&flow.run_id, &f.task_id);
-            f.brief_id = Some(id);
-            effects.push(effect);
+        if let ActionForm::Answer(f) = &mut form {
+            if self.connected() {
+                let (id, effect) = self.brief_request(&flow.run_id, &f.task_id);
+                f.brief_id = Some(id);
+                effects.push(effect);
+            } else {
+                // Decision 37: say why at once; `form_brief_reconnected` asks again.
+                f.brief = Brief::Failed(NOT_CONNECTED.into());
+            }
         }
         flow.step = ActionStep::Form(Box::new(form));
         effects
@@ -447,10 +452,13 @@ impl App {
         }
     }
 
-    /// No reply will come for the brief of `task_id` of `run_id` (final review I2): an
-    /// open form still loading it says `why`. `true` when the form was open on it.
+    /// No reply will come for the brief request `id`, of `task_id` of `run_id` (final
+    /// review I2): an open form still loading it says `why`. `true` when the form was
+    /// open on that task; only the form's own request fails it (9.0.7 decision 37), so
+    /// an earlier opening's expiry leaves a newer request loading.
     pub(in crate::app) fn fail_form_brief(
         &mut self,
+        id: u64,
         run_id: &str,
         task_id: &str,
         why: &str,
@@ -458,7 +466,7 @@ impl App {
         let Some(f) = self.open_form_mut(run_id, task_id) else {
             return false;
         };
-        if f.brief == Brief::Loading {
+        if f.brief == Brief::Loading && f.brief_id == Some(id) {
             f.brief = Brief::Failed(why.into());
         }
         true

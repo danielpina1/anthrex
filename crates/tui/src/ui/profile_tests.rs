@@ -460,3 +460,45 @@ fn a_cut_refusal_is_marked() {
     screen_mut(&mut app).error = Some("short refusal".into());
     assert!(!screen_text(&app, 80, 24).contains('…'));
 }
+
+/// Decision 37 (principle 9): the Reject page is destructive, so its `y reject` is drawn
+/// key and word in `Failed`, as the action menu's and the Settings discard page's are;
+/// the Confirm page's `y store` keeps the plain grammar (key in the accent).
+#[test]
+fn the_reject_page_is_destructive() {
+    use crate::theme::{Role, role};
+    use crate::ui::audit;
+    let mut app = app_with_profile(|_, _| {});
+    let (failed, accent) = (
+        role(Role::Failed, app.palette()).fg.expect("a colour"),
+        role(Role::Accent, app.palette()).fg.expect("a colour"),
+    );
+    for (w, h) in SIZES {
+        screen_mut(&mut app).page = Some(ProfilePage::Reject);
+        let buffer = audit::draw(&app, w, h);
+        let &(x, y) = audit::find(&buffer, "y reject · esc back")
+            .first()
+            .unwrap_or_else(|| panic!("{w}x{h}:\n{}", audit::rows(&buffer).join("\n")));
+        for dx in 0..8 {
+            if dx != 1 {
+                assert_eq!(buffer[(x + dx, y)].fg, failed, "{w}x{h} y reject +{dx}");
+            }
+        }
+        assert_ne!(
+            buffer[(x + 11, y)].fg,
+            failed,
+            "{w}x{h}: esc is not destructive"
+        );
+        let &(tx, ty) = audit::find(&buffer, "reject proposal").first().unwrap();
+        assert_eq!(buffer[(tx, ty)].fg, failed, "{w}x{h}: the title");
+
+        screen_mut(&mut app).page = Some(ProfilePage::Confirm {
+            toml: "check = \"cargo test\"".into(),
+            scroll: 0,
+        });
+        let buffer = audit::draw(&app, w, h);
+        let &(x, y) = audit::find(&buffer, "y store").first().unwrap();
+        assert_eq!(buffer[(x, y)].fg, accent, "{w}x{h}: confirm's key");
+        assert_ne!(buffer[(x + 2, y)].fg, failed, "{w}x{h}: confirm's word");
+    }
+}

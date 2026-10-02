@@ -11,7 +11,10 @@ use std::path::PathBuf;
 
 impl App {
     /// The project a goal starts in: the selected project, or the project of the
-    /// selected run (any node of it); else the focused window's. Never a guess.
+    /// selected run (any node of it); else the focused window's; else, on an empty
+    /// session (9.0.7 decision 37), the TUI's start directory when it has one. Whether
+    /// that is a Git repository is the daemon's to say (`not a git repository: …`); the
+    /// client probes nothing.
     pub(super) fn goal_project(&self) -> Option<PathBuf> {
         let run_project = |id: &String| {
             (self.runs.runs.iter())
@@ -30,10 +33,15 @@ impl App {
             ) => run_project(id),
             _ => None,
         };
-        selected.or_else(|| self.focused_window().map(|window| window.project.clone()))
+        selected
+            .or_else(|| self.focused_window().map(|window| window.project.clone()))
+            .or_else(|| {
+                (!self.default_dir.as_os_str().is_empty()).then(|| self.default_dir.clone())
+            })
     }
 
-    /// `C-b g`: the form on the chosen project, or the toast saying there is none.
+    /// `C-b g`: the form on the chosen project, or the toast saying there is none (an
+    /// empty start directory).
     pub(super) fn open_goal_form(&mut self) -> Vec<Effect> {
         match self.goal_project() {
             Some(project) => {

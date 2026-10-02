@@ -137,6 +137,9 @@ pub struct ProfileScreen {
     pub status_failed: Option<String>,
     /// When the last `Show` of each side (stored, proposal) left.
     pub(crate) show_sent_at: [Option<Instant>; 2],
+    /// The id of the last `Show` of each side: only its reply fills the side (9.0.7
+    /// decision 37), so one sent before a detection never draws the old proposal.
+    pub(crate) show_id: [Option<u64>; 2],
 }
 
 /// Interfaces-style refusal of `C-b a`, `C-b m` and `C-b t` over a full screen.
@@ -165,6 +168,7 @@ impl ProfileScreen {
             status_sent_at: None,
             status_failed: None,
             show_sent_at: [None; 2],
+            show_id: [None; 2],
         }
     }
 
@@ -300,10 +304,14 @@ impl App {
             dir: dir.clone(),
             proposed,
         };
-        if let Some(s) = self.profile_screen_mut() {
+        let effect = self.profile_send(dir, ProfileAsk::Show { proposed }, request);
+        if let (Some(s), Effect::Send(proto::ClientMsg::RunTagged { id, .. })) =
+            (self.profile_screen_mut(), &effect)
+        {
             s.show_sent_at[usize::from(proposed)] = Some(now);
+            s.show_id[usize::from(proposed)] = Some(*id);
         }
-        vec![self.profile_send(dir, ProfileAsk::Show { proposed }, request)]
+        vec![effect]
     }
 
     /// The status, the stored profile and the proposal, in that order.
@@ -330,8 +338,10 @@ impl App {
                 // A late view (its entry expired) fills the open screen still loading
                 // on it, else is dropped (decision 16, minor 2); a late outcome shown.
                 let late = request_id.and_then(|id| self.replies.expired_view(id).cloned());
-                match late {
-                    Some(PendingWhat::Profile { dir, ask }) if self.profile_awaits(&dir, ask) => {
+                match late.zip(*request_id) {
+                    Some((PendingWhat::Profile { dir, ask }, id))
+                        if self.profile_awaits(&dir, ask, id) =>
+                    {
                         return Some(self.apply_profile_reply(ask, reply));
                     }
                     Some(_) => {}
@@ -342,6 +352,13 @@ impl App {
             }
         };
         self.replies.take(*request_id);
+        // Decision 37: a `Show` that is no longer its side's latest (a re-fetch went
+        // out after it) describes an older state; the re-fetch's reply fills the side.
+        if let ProfileAsk::Show { proposed } = ask
+            && !self.profile_latest_show(proposed, *request_id)
+        {
+            return Some(vec![]);
+        }
         if self.profile_dir().as_ref() != Some(&dir) {
             if !matches!(ask, ProfileAsk::Status | ProfileAsk::Show { .. }) {
                 self.toast_profile_outcome(reply);

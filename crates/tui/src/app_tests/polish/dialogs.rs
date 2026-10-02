@@ -138,3 +138,200 @@ fn edit_choices_have_ascii_twins() {
         ("‹ M ›".to_string(), None)
     );
 }
+
+/// The one tagged request of `effects`.
+fn one_tagged(effects: &[Effect]) -> (u64, RunRequest) {
+    match effects {
+        [Effect::Send(proto::ClientMsg::RunTagged { id, request })] => (*id, request.clone()),
+        other => panic!("one tagged request: {other:?}"),
+    }
+}
+
+/// An empty session (no window, no run) started in `dir`.
+fn empty_session(dir: &str) -> App {
+    let mut app = App::new(vec![], dir.into(), UiSettings::default());
+    let _ = app.set_terminal_size(80, 24);
+    let snap = crate::tree::run_fixtures::snapshot(3_460, vec![]);
+    app.on_daemon(DaemonMsg::Run(proto::RunReply::Snapshot(snap)));
+    app
+}
+
+/// Decision 37 (the user's 9.0.6 try-out): with no selection and no focused window,
+/// `C-b g` and `C-b P` open on the TUI's start directory. The client probes nothing: the
+/// form's submit carries the directory and the daemon's own refusal (`not a git
+/// repository: …`) is the form's error row, as the Profile screen's error row shows its
+/// refused status. A selected project or a focused window still wins; an empty start
+/// directory still toasts `NO_PROJECT`.
+#[test]
+fn an_empty_session_uses_the_start_directory() {
+    let repo = std::path::PathBuf::from("/tmp/repo");
+    let mut app = empty_session("/tmp/repo");
+    assert!(app.windows.is_empty() && app.runs.runs.is_empty());
+    prefix(&mut app);
+    assert!(tap(&mut app, KeyCode::Char('g')).is_empty());
+    let Some(Modal::StartGoal(form)) = &app.modal else {
+        panic!("no goal form: {:?} {:?}", app.modal, app.toast_text());
+    };
+    assert_eq!(form.project, repo);
+    assert_eq!(app.toast_text(), None);
+    for c in "add a readme".chars() {
+        tap(&mut app, KeyCode::Char(c));
+    }
+    let (id, request) = one_tagged(&tap(&mut app, KeyCode::Enter));
+    let RunRequest::StartGoal { dir, goal, .. } = &request else {
+        panic!("{request:?}");
+    };
+    assert_eq!((dir, goal.as_str()), (&repo, "add a readme"));
+    let refusal = "not a git repository: /tmp/repo";
+    app.on_daemon(DaemonMsg::Run(proto::RunReply::Refused {
+        request: proto::run_wire::request::START_GOAL.into(),
+        message: refusal.into(),
+        request_id: Some(id),
+    }));
+    let Some(Modal::StartGoal(form)) = &app.modal else {
+        panic!("the form closed: {:?}", app.modal);
+    };
+    assert_eq!(form.error.as_deref(), Some(refusal));
+    assert!(!form.submitting);
+    let buffer = draw(&app, 80, 24);
+    assert!(
+        !audit::find(&buffer, refusal).is_empty(),
+        "{}",
+        audit::rows(&buffer).join("\n")
+    );
+    assert_eq!(app.toast_text(), None, "the form's row, not a toast");
+    tap(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, None);
+
+    // `C-b P`: the Profile screen on it, with its three requests.
+    prefix(&mut app);
+    let effects = tap(&mut app, KeyCode::Char('P'));
+    let asked: Vec<RunRequest> = (effects.iter())
+        .filter_map(|e| match e {
+            Effect::Send(proto::ClientMsg::RunTagged { request, .. }) => Some(request.clone()),
+            _ => None,
+        })
+        .collect();
+    let profile = |request| RunRequest::Profile(request);
+    assert_eq!(
+        asked,
+        vec![
+            profile(proto::ProfileRequest::Status { dir: repo.clone() }),
+            profile(proto::ProfileRequest::Show {
+                dir: repo.clone(),
+                proposed: false,
+            }),
+            profile(proto::ProfileRequest::Show {
+                dir: repo.clone(),
+                proposed: true,
+            }),
+        ]
+    );
+    let status_id = tagged_ids(&effects)[0];
+    app.on_daemon(DaemonMsg::Run(proto::RunReply::Profile {
+        reply: Box::new(proto::ProfileReply::Refused {
+            message: refusal.into(),
+        }),
+        request_id: Some(status_id),
+    }));
+    let buffer = draw(&app, 80, 24);
+    assert!(
+        !audit::find(&buffer, refusal).is_empty(),
+        "{}",
+        audit::rows(&buffer).join("\n")
+    );
+    tap(&mut app, KeyCode::Esc);
+    assert!(app.screen.is_none());
+
+    // A focused window's project still wins.
+    let mut app = App::new(
+        vec![project_win(1, "/p/a")],
+        "/tmp/repo".into(),
+        UiSettings::default(),
+    );
+    let _ = app.set_terminal_size(80, 24);
+    prefix(&mut app);
+    tap(&mut app, KeyCode::Char('g'));
+    let Some(Modal::StartGoal(form)) = &app.modal else {
+        panic!("no goal form");
+    };
+    assert_eq!(form.project, std::path::PathBuf::from("/p/a"));
+    // A selected project too, over the focused window's.
+    let mut app = App::new(project_windows(), "/tmp/repo".into(), UiSettings::default());
+    let _ = app.set_terminal_size(80, 24);
+    let focused = app
+        .focused_window()
+        .expect("a focused window")
+        .project
+        .clone();
+    let other = if focused == std::path::Path::new("/p/a") {
+        "/p/b"
+    } else {
+        "/p/a"
+    };
+    let rows = crate::tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
+    app.tree
+        .select(&rows, crate::tree::NodeKey::Project(other.into()));
+    prefix(&mut app);
+    tap(&mut app, KeyCode::Char('P'));
+    match &app.screen {
+        Some(crate::app::screens::Screen::Profile(s)) => {
+            assert_eq!(s.dir, std::path::PathBuf::from(other));
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // An empty start directory still says there is no project.
+    let mut app = empty_session("");
+    prefix(&mut app);
+    assert!(tap(&mut app, KeyCode::Char('g')).is_empty());
+    assert_eq!(app.modal, None);
+    assert_eq!(app.toast_text(), Some(crate::run_goal::NO_PROJECT));
+    prefix(&mut app);
+    assert!(tap(&mut app, KeyCode::Char('P')).is_empty());
+    assert!(app.screen.is_none());
+    assert_eq!(
+        app.toast_text(),
+        Some(crate::app::profile_screen::NO_PROJECT)
+    );
+}
+
+fn tagged_ids(effects: &[Effect]) -> Vec<u64> {
+    (effects.iter())
+        .filter_map(|e| match e {
+            Effect::Send(proto::ClientMsg::RunTagged { id, .. }) => Some(*id),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Decision 37 brings a new source of drawn text, the start directory (any path the
+/// user stood in): the goal form's title, the Profile screen's title and its Reject page
+/// draw it sanitised. The hostile characters sit inside the drawn columns.
+#[test]
+fn a_hostile_start_directory_is_drawn_sanitised() {
+    let hidden = |buffer: &ratatui::buffer::Buffer| {
+        audit::rows(buffer)
+            .iter()
+            .any(|r| r.contains(['\u{200D}', '\u{202E}']))
+    };
+    let mut app = empty_session("/tmp/x\u{200D}y\u{202E}z");
+    prefix(&mut app);
+    tap(&mut app, KeyCode::Char('g'));
+    let buffer = draw(&app, 80, 24);
+    let rows = audit::rows(&buffer).join("\n");
+    assert!(rows.contains("start a goal in /tmp/xyz"), "{rows}");
+    assert!(!hidden(&buffer), "{rows}");
+    tap(&mut app, KeyCode::Esc);
+    prefix(&mut app);
+    tap(&mut app, KeyCode::Char('P'));
+    let buffer = draw(&app, 80, 24);
+    let rows = audit::rows(&buffer).join("\n");
+    assert!(rows.contains("profile · xyz"), "{rows}");
+    assert!(!hidden(&buffer), "{rows}");
+    tap(&mut app, KeyCode::Char('x'));
+    let buffer = draw(&app, 80, 24);
+    let rows = audit::rows(&buffer).join("\n");
+    assert!(rows.contains("the proposal for /tmp/xyz is"), "{rows}");
+    assert!(!hidden(&buffer), "{rows}");
+}

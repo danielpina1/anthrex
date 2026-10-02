@@ -105,14 +105,20 @@ fn page_parts(
             ]);
             ("detect".into(), false, body, h)
         }
-        ProfilePage::Reject => (
-            "reject proposal".into(),
-            true,
-            wrap(&format!(
+        ProfilePage::Reject => {
+            // Decision 37 (principle 9): a destructive page's key and word in `Failed`,
+            // as `ui/action_menu.rs::verb_hints` and the Settings discard page draw them.
+            let mut h = hints(&[("y", "reject"), ("esc", "back")]);
+            for span in h.spans.iter_mut() {
+                if span.content == "y" || span.content == "reject" {
+                    span.style = role(Role::Failed, p);
+                }
+            }
+            let body = wrap(&format!(
                 "the proposal for {dir} is deleted; a running scout or verification stops"
-            )),
-            hints(&[("y", "reject"), ("esc", "back")]),
-        ),
+            ));
+            ("reject proposal".into(), true, body, h)
+        }
         ProfilePage::Unset { key } => (
             format!("unset {key}"),
             false,
