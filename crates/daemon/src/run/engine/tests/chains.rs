@@ -9,7 +9,7 @@ use super::fixture::*;
 use super::goal_rounds_start::complete;
 use super::orch::{ORCH, launched, planned};
 use super::promote::promoted;
-use crate::run::chain::ChainState;
+use crate::run::chain::{ChainState, terminal_at};
 use crate::run::engine::{Effect, EngineState, EventKind, OpKind, OpResult, OrchEvent};
 use crate::run::snapshot::snapshot;
 
@@ -113,12 +113,15 @@ fn an_accepted_runs_orchestrator_becomes_idle() {
     );
     // Its window is released as a finished run's is (decision 19).
     assert!(!fx.run().orch.orchestrator.as_ref().unwrap().live);
+    // Fix round 1, m3: the restart's "newer" reads the accept's own log entry.
+    assert_eq!(terminal_at(fx.run()), Some(fx.now));
 }
 
 #[test]
 fn a_discarded_one_too() {
     let fx = ended(FinishAction::Discard);
     assert_eq!(fx.run().state, RunState::Discarded);
+    assert_eq!(terminal_at(fx.run()), Some(fx.now));
     let chain = &fx.state.chains[CHAIN];
     assert_eq!(chain.state, ChainState::Idle);
     assert!(!chain.ended);

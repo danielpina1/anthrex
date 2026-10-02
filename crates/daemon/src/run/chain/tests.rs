@@ -312,6 +312,29 @@ fn one_idle_orchestrator_per_project() {
     );
 }
 
+/// Fix round 1, m3: at a restart the project's newer idle chain is the one whose last
+/// run was accepted or discarded later, whatever that run logged after its end.
+#[test]
+fn rebuild_keeps_the_chain_that_ended_last() {
+    let entry = |at: u64, text: &str| LogEntry {
+        at,
+        text: text.into(),
+    };
+    let mut early = run("early-1111", PROJECT, RunState::Accepted, 1, "o-1111");
+    early.log = vec![
+        entry(100, "accepted: merged into main"),
+        entry(500, "a note logged after the run ended"),
+    ];
+    let mut late = run("late-2222", PROJECT, RunState::Discarded, 2, "o-2222");
+    late.log = vec![entry(300, "discarded: discarded")];
+    let rebuilt = rebuild(&runs(vec![early, late]));
+    assert_eq!(
+        rebuilt.keys().collect::<Vec<_>>(),
+        ["o-2222"],
+        "{rebuilt:#?}"
+    );
+}
+
 #[test]
 fn idle_list_counts_runs() {
     let all = runs(vec![

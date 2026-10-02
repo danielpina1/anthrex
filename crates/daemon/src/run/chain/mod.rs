@@ -128,9 +128,22 @@ pub fn rebuild(runs: &BTreeMap<String, Run>) -> BTreeMap<String, Chain> {
     chains
 }
 
-/// When `run` ended, as near as the run says: its last log entry.
+/// When `run` ended (fix round 1, m3): when it was accepted or discarded, which
+/// `complete::finished` logs as `accepted: <outcome>` or `discarded: <outcome>` at that
+/// step; a run whose entry is gone (the log keeps 500) falls back to its last entry.
 fn ended_at(run: &Run) -> u64 {
-    run.log.last().map_or(run.created_at, |entry| entry.at)
+    terminal_at(run).unwrap_or_else(|| run.log.last().map_or(run.created_at, |entry| entry.at))
+}
+
+/// The time of an accepted or discarded run's `accepted: ` or `discarded: ` log entry.
+pub fn terminal_at(run: &Run) -> Option<u64> {
+    let prefix = match run.state {
+        RunState::Accepted => "accepted: ",
+        RunState::Discarded => "discarded: ",
+        _ => return None,
+    };
+    let entry = run.log.iter().rev().find(|e| e.text.starts_with(prefix))?;
+    Some(entry.at)
 }
 
 /// Decision 19: chain `id` becomes idle, and the project's other idle chain, if any,
