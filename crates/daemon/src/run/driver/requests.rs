@@ -109,13 +109,21 @@ impl RunService {
                 unconfined_checks,
                 orchestrator,
                 delivery,
-                // Milestone 9.3: continuing a chain arrives with task M9.3.6b.
-                continue_from: _,
+                continue_from: None,
             } => {
                 let flags = (trust_project, unconfined_checks);
                 self.start_goal(goal, dir, flags, yes, (orchestrator, delivery))
                     .await
             }
+            // Milestone 9.3: continuing a chain arrives with task M9.3.6b; until then it
+            // is refused, never started as a new run.
+            RunRequest::StartGoal {
+                continue_from: Some(_),
+                ..
+            } => RunReply::refused(
+                request::START_GOAL,
+                "continuing an orchestrator is not available yet",
+            ),
             RunRequest::Promote {
                 run_id,
                 orchestrator,
