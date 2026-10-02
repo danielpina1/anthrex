@@ -131,12 +131,15 @@ pub fn make_idle(chains: &mut BTreeMap<String, Chain>, id: &str) {
     chains.retain(|other, c| other == id || c.state != ChainState::Idle || c.project != project);
 }
 
-/// Decision 20 (KG §3.4): the run a chained orchestrator call reaches. `Ok(None)`: the
-/// call carries no chain, or is not the orchestrator's, and stays as it is. `Ok(Some)`:
-/// the chain's current run, for a call naming any run of the chain. Otherwise refused,
-/// never redirected.
+/// Decision 20 (KG §3.4), as D16 amends it: the run a chained orchestrator call
+/// reaches. `Ok(None)`: the call carries no chain, or is not the orchestrator's, or its
+/// chain has left the table (its run failed, or it was the project's older idle chain)
+/// and the run it names carries that chain; it stays as it is, as before 9.3 (KG §3.1,
+/// decision 19). `Ok(Some)`: the chain's current run, for a call naming any run of the
+/// chain. Otherwise refused, never redirected.
 pub fn resolve(
     chains: &BTreeMap<String, Chain>,
+    runs: &BTreeMap<String, Run>,
     call: &ToolCall,
 ) -> Result<Option<String>, String> {
     let Some(id) = call.chain.as_deref() else {
@@ -145,8 +148,13 @@ pub fn resolve(
     if call.role != AgentRole::Orchestrator {
         return Ok(None);
     }
+    let carries = || {
+        runs.get(&call.run_id)
+            .is_some_and(|r| r.chain.as_deref() == Some(id))
+    };
     match chains.get(id) {
         Some(chain) if chain.runs.contains(&call.run_id) => Ok(Some(chain.current().to_string())),
+        None if carries() => Ok(None),
         _ => Err(format!(
             "this window is the orchestrator of {id}; run {} is not one of its runs",
             call.run_id

@@ -107,8 +107,79 @@ async fn a_call_outside_the_chain_is_refused() {
         assert!(!ok, "{tool}: {answer}");
         assert_eq!(answer, json!({ "error": text }), "{tool}");
     }
+    // D16: a chain not in the table, named with a run that does not carry it.
+    let (ok, answer) = chained(&rig, (&first, "o-0000"), "run_status", json!({})).await;
+    let text =
+        format!("this window is the orchestrator of o-0000; run {first} is not one of its runs");
+    assert!(!ok);
+    assert_eq!(answer, json!({ "error": text }));
     // Nothing reached the rig's run.
     assert!(rig.run(|run| run.orch.digest_read_at.is_none()));
+}
+
+/// D16 (decision 20 amended): a failed run's chain leaves the table, and its window,
+/// released as today (KG §3.1), still reads its own run; a write is the engine's to
+/// refuse, as before 9.3.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_runs_window_reads_its_own_run() {
+    let rig = Rig::new(|run, _| run.chain = Some(CHAIN.into())).await;
+    {
+        let mut state = crate::lock(&rig.runs.state);
+        state.chains = rebuild(&state.runs);
+        state.runs.get_mut(&rig.run_id).unwrap().state = RunState::Failed;
+    }
+    rig.runs.send(EventKind::Tick);
+    let deadline = Instant::now() + ANSWER;
+    while !crate::lock(&rig.runs.state).chains.is_empty() {
+        assert!(Instant::now() < deadline, "the failed run's chain stayed");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let first = rig.run_id.clone();
+    let (ok, digest) = chained(&rig, (&first, CHAIN), "run_status", json!({})).await;
+    assert!(ok, "{digest}");
+    assert_eq!(digest["run"]["id"], json!(first), "{digest}");
+    assert_eq!(digest["run"]["state"], json!("failed"), "{digest}");
+    let args = json!({"edits": [], "submit": true});
+    let (ok, answer) = chained(&rig, (&first, CHAIN), "edit_plan", args).await;
+    assert!(!ok, "{answer}");
+    assert!(
+        !answer.to_string().contains("not one of its runs"),
+        "{answer}"
+    );
+}
+
+/// D16: the project's older idle chain, dropped when a newer one went idle (decision
+/// 19), keeps a plain window that still reads its own run.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dropped_idle_chains_window_reads_its_own_run() {
+    use crate::run::chain::{Chain, make_idle};
+    let rig = Rig::new(|run, _| {
+        run.chain = Some(CHAIN.into());
+        run.state = RunState::Accepted;
+    })
+    .await;
+    {
+        let mut state = crate::lock(&rig.runs.state);
+        state.chains = rebuild(&state.runs);
+        let mut newer = state.runs[&rig.run_id].clone();
+        newer.id = "newer-goal-4c1d".into();
+        newer.chain = Some("o-4c1d".into());
+        newer.state = RunState::Discarded;
+        let chain = Chain::new("o-4c1d".into(), &newer).unwrap();
+        state.runs.insert(newer.id.clone(), newer);
+        state.chains.insert(chain.id.clone(), chain);
+        make_idle(&mut state.chains, "o-4c1d");
+        assert!(
+            !state.chains.contains_key(CHAIN),
+            "the older idle chain is dropped"
+        );
+    }
+    let first = rig.run_id.clone();
+    let (ok, digest) = chained(&rig, (&first, CHAIN), "run_status", json!({})).await;
+    assert!(ok, "{digest}");
+    assert_eq!(digest["run"]["id"], json!(first), "{digest}");
+    let (ok, context) = chained(&rig, (&first, CHAIN), "get_context", json!({})).await;
+    assert!(ok, "{context}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

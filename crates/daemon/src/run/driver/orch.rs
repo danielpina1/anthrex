@@ -272,7 +272,7 @@ impl RunService {
     /// for the lookup: this is not async, so it is never held across an await.
     fn resolved(&self, mut call: ToolCall) -> Result<ToolCall, String> {
         let state = crate::lock(&self.state); // lookup
-        let Some(current) = resolve(&state.chains, &call)? else {
+        let Some(current) = resolve(&state.chains, &state.runs, &call)? else {
             return Ok(call);
         };
         let chain = call.chain.as_deref().and_then(|id| state.chains.get(id));

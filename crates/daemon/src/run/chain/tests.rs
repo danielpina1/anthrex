@@ -87,13 +87,13 @@ fn resolve_moves_an_earlier_run_forward() {
     )]);
     let earlier = call("goal-one-3f9a", Some("o-3f9a"), "run_status");
     assert_eq!(
-        resolve(&chains, &earlier),
+        resolve(&chains, &BTreeMap::new(), &earlier),
         Ok(Some("goal-two-4c1d".to_string()))
     );
     // The current run resolves to itself.
     let current = call("goal-two-4c1d", Some("o-3f9a"), "edit_plan");
     assert_eq!(
-        resolve(&chains, &current),
+        resolve(&chains, &BTreeMap::new(), &current),
         Ok(Some("goal-two-4c1d".to_string()))
     );
 }
@@ -106,13 +106,16 @@ fn resolve_refuses_a_run_outside_the_chain() {
     ]);
     let outside = call("other-77aa", Some("o-3f9a"), "run_status");
     let text = "this window is the orchestrator of o-3f9a; run other-77aa is not one of its runs";
-    assert_eq!(resolve(&chains, &outside), Err(text.to_string()));
+    assert_eq!(
+        resolve(&chains, &BTreeMap::new(), &outside),
+        Err(text.to_string())
+    );
     // Never redirected: the call keeps the run it named.
     assert_eq!(outside.run_id, "other-77aa");
     // An unknown chain is refused with the same text.
     let unknown = call("goal-one-3f9a", Some("o-0000"), "run_status");
     assert_eq!(
-        resolve(&chains, &unknown),
+        resolve(&chains, &BTreeMap::new(), &unknown),
         Err(
             "this window is the orchestrator of o-0000; run goal-one-3f9a is not one of its runs"
                 .to_string()
@@ -130,15 +133,69 @@ fn resolve_leaves_unchained_calls_alone() {
     )]);
     // No chain on the call.
     assert_eq!(
-        resolve(&chains, &call("goal-one-3f9a", None, "run_status")),
+        resolve(
+            &chains,
+            &BTreeMap::new(),
+            &call("goal-one-3f9a", None, "run_status")
+        ),
         Ok(None)
     );
     // A chain on a role other than the orchestrator's.
     for role in [AgentRole::Planner, AgentRole::Worker] {
         let mut other = call("goal-one-3f9a", Some("o-3f9a"), "get_context");
         other.role = role;
-        assert_eq!(resolve(&chains, &other), Ok(None), "{role:?}");
+        assert_eq!(
+            resolve(&chains, &BTreeMap::new(), &other),
+            Ok(None),
+            "{role:?}"
+        );
     }
+}
+
+/// D16 (decision 20 amended): a chain no longer in the table (its run failed, or it
+/// was the project's older idle chain) leaves its own run's calls as they are; a run
+/// that does not carry the chain is still refused.
+#[test]
+fn resolve_lets_a_chain_that_left_the_table_reach_its_own_run() {
+    let chains = table(vec![chain(
+        "o-4c1d",
+        PROJECT,
+        &["goal-two-4c1d"],
+        ChainState::Idle,
+    )]);
+    let mut stranger = run("stranger-5e5e", PROJECT, RunState::Running, 3, "x");
+    stranger.chain = None;
+    let all = runs(vec![
+        run("failed-3f9a", PROJECT, RunState::Failed, 1, "o-3f9a"),
+        run("other-6f6f", PROJECT, RunState::Accepted, 2, "o-6f6f"),
+        stranger,
+    ]);
+    let own = call("failed-3f9a", Some("o-3f9a"), "run_status");
+    assert_eq!(resolve(&chains, &all, &own), Ok(None));
+    let refused = |run_id: &str| {
+        format!("this window is the orchestrator of o-3f9a; run {run_id} is not one of its runs")
+    };
+    // A run of another chain, a run of none, and an unknown run.
+    for run_id in ["other-6f6f", "stranger-5e5e", "nowhere-0000"] {
+        let named = call(run_id, Some("o-3f9a"), "run_status");
+        assert_eq!(
+            resolve(&chains, &all, &named),
+            Err(refused(run_id)),
+            "{run_id}"
+        );
+    }
+    // A chain still in the table refuses a run outside it, whatever the run carries.
+    let mut carries = run("carries-7a7a", PROJECT, RunState::Running, 4, "o-4c1d");
+    carries.chain = Some("o-4c1d".into());
+    let all = runs(vec![carries]);
+    let named = call("carries-7a7a", Some("o-4c1d"), "run_status");
+    assert_eq!(
+        resolve(&chains, &all, &named),
+        Err(
+            "this window is the orchestrator of o-4c1d; run carries-7a7a is not one of its runs"
+                .to_string()
+        )
+    );
 }
 
 #[test]
