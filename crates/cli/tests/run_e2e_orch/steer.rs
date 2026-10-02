@@ -26,7 +26,10 @@ fn e2e_typed_steering_becomes_a_plan_edit() {
             vec![add(plan_task("t1", &["a.txt"], json!({}))), add(t2)],
             json!({"submit": true}),
         ),
-        until("/gate/state", json!("approved"), ORCH_WAIT),
+        // The approval's wake (CI flake F-a), read before the test types, so the typed
+        // line is read alone. No `run_status` call comes first: a digest read would
+        // clear the note and the wake would never be pasted.
+        read(Some("the user approved the plan")),
         read(Some("skip t2")),
         edit_plan(
             vec![json!({"op": "cancel_task", "task_id": "t2"})],
@@ -37,6 +40,9 @@ fn e2e_typed_steering_becomes_a_plan_edit() {
     ];
     let (run, window) = start(&h, &steps);
     approve_plan(&h, &run);
+    // CI flake F-a: the approval's wake was pasted while the test typed, and the two
+    // became one line. Type only once the orchestrator has read the wake and is idle.
+    h.wait_messages(ORCH, 1, ORCH_WAIT);
     h.wait_orchestrator_idle(window);
     h.type_into(window, b"skip t2\r");
     let info = wait_task(&h, &run, "t2", TaskState::Cancelled);
@@ -48,10 +54,13 @@ fn e2e_typed_steering_becomes_a_plan_edit() {
         .unwrap_or_else(|| panic!("{:#?}", info.plan_edits));
     assert_eq!(entry.source, "orchestrator");
     assert!(entry.accepted);
-    // What the orchestrator read was the typed line, and nothing else.
+    // The typed line was read as itself, whole and alone.
     let read = h.read_messages(ORCH);
-    assert_eq!(read.len(), 1, "{read:?}");
-    assert_eq!(read[0]["text"], "skip t2");
+    let typed: Vec<&serde_json::Value> = (read.iter())
+        .filter(|m| m["text"].as_str().is_some_and(|t| t.contains("skip t2")))
+        .collect();
+    assert_eq!(typed.len(), 1, "{read:?}");
+    assert_eq!(typed[0]["text"], "skip t2", "{read:?}");
 
     std::fs::write(&go, "").unwrap();
     let info = h.wait_run(&run, |r| r.state == RunState::Complete, RUN_WAIT);
