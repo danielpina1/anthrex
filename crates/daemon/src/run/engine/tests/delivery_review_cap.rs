@@ -12,7 +12,6 @@ use crate::run::engine::delivery::review_limits::{
 };
 
 use super::delivery_watch::{poll_with, view, watched};
-use super::fixture::*;
 use super::merge::commit;
 
 const LOGIN: &str = "a-login-of-the-longest-length-github-ok"; // 39 characters

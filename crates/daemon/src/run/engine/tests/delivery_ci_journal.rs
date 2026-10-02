@@ -15,7 +15,6 @@ use super::delivery_ci::{
 };
 use super::delivery_open::answer;
 use super::delivery_watch::{poll_with, watched};
-use super::fixture::*;
 use super::merge::commit;
 
 /// A `FailedLogs` answer as a replay of its journal line reads it: no text.
