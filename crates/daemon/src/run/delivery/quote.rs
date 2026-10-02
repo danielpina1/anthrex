@@ -36,6 +36,36 @@ pub fn comment(login: &str, text: &str) -> String {
     out
 }
 
+/// What [`comment_within`] adds after a quote it had to cut (task M9.2.13's wording).
+pub const CUT_NOTE: &str = "(cut; the whole comment is on the pull request)\n";
+
+/// [`comment`] in at most `max` characters (`run_status`'s `delivery` block, decision
+/// 29): when the whole quote is longer, the comment's text is cut so that the label,
+/// the fence and [`CUT_NOTE`] fit, so the block is always closed. `None` when not even
+/// one character of the text fits.
+pub fn comment_within(login: &str, text: &str, max: usize) -> Option<String> {
+    let whole = comment(login, text);
+    if whole.chars().count() <= max {
+        return Some(whole);
+    }
+    let text = clean(text);
+    // The fence of the whole text is at least as long as any prefix's.
+    let fence = fenced(&text)
+        .lines()
+        .next()
+        .map_or(3, |l| l.chars().count());
+    let label = comment(login, "")
+        .lines()
+        .next()
+        .map_or(0, |l| l.chars().count() + 1);
+    let overhead = label + 2 * (fence + 1) + 1 + CUT_NOTE.chars().count();
+    let keep = max.checked_sub(overhead).filter(|k| *k > 0)?;
+    let kept: String = text.chars().take(keep.min(COMMENT_MAX_CHARS)).collect();
+    let mut out = comment(login, &kept);
+    out.push_str(CUT_NOTE);
+    Some(out)
+}
+
 /// A comment's diff hunk (host text): cleaned as a comment is, cut to
 /// [`COMMENT_MAX_CHARS`], fenced (the review template, task M9.2.10).
 pub fn hunk(text: &str) -> String {

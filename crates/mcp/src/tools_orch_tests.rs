@@ -290,3 +290,43 @@ fn plan_task_and_plan_edit_take_stage_and_atomic() {
         );
     }
 }
+
+/// Milestone 9.2 decisions 30 and 31: `plan_edit` takes `reply_comment` with `pr`,
+/// `thread` and `body`, and `plan_task` takes `addresses` as a list of strings, for
+/// the orchestrator and (bounded the same way, refused by the daemon) the sub-planner.
+#[test]
+fn mcp_schema_has_reply_comment_and_addresses() {
+    for (role, tool, edits) in [
+        (AgentRole::Orchestrator, "edit_plan", 60),
+        (AgentRole::Planner, "submit_epic", 60),
+    ] {
+        let tools = tools_for(role);
+        let found = tools.iter().find(|t| t.name == tool).unwrap();
+        let schema = Value::Object((*found.input_schema).clone());
+        assert_eq!(schema["properties"]["edits"]["maxItems"], edits);
+        let edit = &schema["properties"]["edits"]["items"]["properties"];
+        let ops: Vec<&str> = (edit["op"]["enum"].as_array().unwrap().iter())
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(ops.last(), Some(&"reply_comment"), "{tool}: {ops:?}");
+        assert_eq!(edit["pr"], json!({"type": "integer", "minimum": 1}));
+        assert_eq!(
+            edit["thread"],
+            json!({"type": "string", "minLength": 1, "maxLength": 64})
+        );
+        assert_eq!(
+            edit["body"],
+            json!({"type": "string", "minLength": 1, "maxLength": 4000})
+        );
+        for task in [&edit["task"], &edit["into"]["items"]] {
+            assert_eq!(
+                task["properties"]["addresses"],
+                json!({"type": "array", "maxItems": 20,
+                       "items": {"type": "string", "minLength": 1, "maxLength": 64}}),
+                "{tool}"
+            );
+            let required = task["required"].as_array().unwrap();
+            assert!(!required.contains(&json!("addresses")));
+        }
+    }
+}

@@ -91,6 +91,8 @@ pub fn context(inputs: &ContextInputs<'_>) -> Value {
             "max_bounces": limits.max_bounces,
             "max_scouts": limits.orch.max_scouts,
             "sizes": {"S": SIZE_S, "M": SIZE_M, "L": SIZE_L},
+            // Milestone 9.2 decision 16: the frozen `[delivery] stage_target_lines`.
+            "stage_target_lines": run.delivery.limits.stage_target_lines,
         },
         "roster": run.roster.iter().map(|m| json!({
             "runtime": m.runtime.label(),

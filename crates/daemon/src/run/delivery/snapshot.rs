@@ -70,7 +70,7 @@ pub fn stage_pr_info(run: &Run, n: u16) -> Option<StagePrInfo> {
 
 /// What a head's checks add up to: red if one is red, else pending if one is,
 /// else green once there is one, else none.
-fn ci_state(checks: &[CheckSeen]) -> CiState {
+pub(crate) fn ci_state(checks: &[CheckSeen]) -> CiState {
     let any = |state: CiState| checks.iter().any(|c| c.state == state);
     if any(CiState::Red) {
         CiState::Red

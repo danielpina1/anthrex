@@ -14,6 +14,8 @@ use proto::{CiCategory, CiState, DeliveryMode, MergeMethod, PrState};
 use crate::host::{HostRepo, Mergeable, ReplyTarget, RepoPermission};
 
 pub mod body;
+pub mod contract;
+pub mod digest;
 pub mod ops;
 pub mod quote;
 pub mod reply_edit;
@@ -87,6 +89,22 @@ impl RunDelivery {
     /// Stage `n`'s pull request, when it has one.
     pub fn pr(&self, n: u16) -> Option<&PrRecord> {
         self.stage(n)?.pr.as_ref()
+    }
+
+    /// Decision 29: whether `login` may write: listed in `[delivery] reviewers`, or
+    /// GitHub's answer, cached; `None` while unknown. A login the allow-list would
+    /// refuse to ask about is not a writer (the task M9.2.4 review: never a halt). The
+    /// one rule for the review intake and for what the digest quotes (M9.2.13).
+    pub fn writes(&self, login: &str) -> Option<bool> {
+        let listed = &self.limits.reviewers;
+        if listed.iter().any(|r| r.eq_ignore_ascii_case(login)) {
+            return Some(true);
+        }
+        if !crate::host::remote::owner_ok(login) {
+            return Some(false);
+        }
+        let known = self.permissions.get(&login.to_ascii_lowercase());
+        known.map(|p| p.writes())
     }
 
     /// Decision 36: a `pr`-mode run is *delivering* when each of its `stage_count`

@@ -16,6 +16,9 @@
     "waiting": 1,
     "working": 1
   },
+  "delivery": {
+    "mode": "local"
+  },
   "edits": [
     {
       "accepted": true,

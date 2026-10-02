@@ -134,7 +134,8 @@
                     "resume",
                     "finish",
                     "message",
-                    "refresh"
+                    "refresh",
+                    "reply_comment"
                   ]
                 },
                 "task": {
@@ -290,6 +291,15 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 300
+                    },
+                    "addresses": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
                     }
                   },
                   "required": [
@@ -463,6 +473,15 @@
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 300
+                      },
+                      "addresses": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        }
                       }
                     },
                     "required": [
@@ -598,6 +617,20 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 32
+                },
+                "pr": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "thread": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "body": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4000
                 }
               },
               "required": [
@@ -707,7 +740,8 @@
                     "resume",
                     "finish",
                     "message",
-                    "refresh"
+                    "refresh",
+                    "reply_comment"
                   ]
                 },
                 "task": {
@@ -863,6 +897,15 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 300
+                    },
+                    "addresses": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
                     }
                   },
                   "required": [
@@ -1036,6 +1079,15 @@
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 300
+                      },
+                      "addresses": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        }
                       }
                     },
                     "required": [
@@ -1171,6 +1223,20 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 32
+                },
+                "pr": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "thread": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "body": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4000
                 }
               },
               "required": [

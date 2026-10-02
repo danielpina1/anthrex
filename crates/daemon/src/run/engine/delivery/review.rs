@@ -33,7 +33,6 @@ use super::super::{Effect, OpKind, wake};
 use super::watch::named;
 use super::{emit, stage_mut};
 use crate::host::RepoPermission;
-use crate::host::remote::owner_ok;
 use crate::run::delivery::ops::HostOp;
 use crate::run::delivery::quote;
 use crate::run::delivery::snapshot::stage_count;
@@ -144,19 +143,7 @@ pub(super) fn intake(run: &mut Run, n: u16, intakes: Vec<Intake>, now: u64) {
 /// cached; `None` while unknown. A login the allow-list would refuse to ask about is
 /// not a writer (the task M9.2.4 review: never a halt).
 pub(super) fn writes(run: &Run, login: &str) -> Option<bool> {
-    let d = &run.delivery;
-    if d.limits
-        .reviewers
-        .iter()
-        .any(|r| r.eq_ignore_ascii_case(login))
-    {
-        return Some(true);
-    }
-    if !owner_ok(login) {
-        return Some(false);
-    }
-    let known = d.permissions.get(&login.to_ascii_lowercase());
-    known.map(|p| p.writes())
+    run.delivery.writes(login)
 }
 
 /// A `Permission` answer: cached for the run, by login.
