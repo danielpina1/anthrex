@@ -7,19 +7,23 @@
 //! Dropping the rig asserts that nothing asked the fake GitHub to merge, approve or
 //! enable auto-merge (`forbidden.jsonl` stays empty).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::{Duration, Instant};
 
 use daemon::host::fake::{FakeGithubCtl, FakePr};
 use daemon::host::{
-    HOST_READ_TIMEOUT, HOST_WRITE_TIMEOUT, PREFLIGHT_BOUND, PUSH_TIMEOUT, RepoPermission,
+    HOST_READ_TIMEOUT, HOST_WRITE_TIMEOUT, LOG_TIMEOUT, PREFLIGHT_BOUND, PUSH_TIMEOUT,
+    RepoPermission,
 };
 use serde_json::Value;
 
 use super::RunningCommand;
+use super::decider::{SPAWN_SLACK, TIMEOUT_SECS as DECIDER_TIMEOUT_SECS};
+use super::run_adapt::with_deciders;
 use super::run_daemon::DAEMON_START_WAIT;
 use super::run_harness::{CHECK_TIMEOUT_SECS, REQUEST_WAIT, RUN_WAIT, RunHarness, git_in};
+use super::run_tiers::TIER_WAIT;
 
 /// How long a one-task `pr` run may take to open its stage PR and show it (ruling "task
 /// 14 fix round 1", I1): one task path (`RUN_WAIT`), tier 3 on the stage head (two
@@ -40,6 +44,57 @@ pub const PR_OPEN_WAIT: Duration = RUN_WAIT
 /// (`REQUEST_WAIT`) plus the host preflight, bounded by the daemon's own
 /// `PREFLIGHT_BOUND`.
 pub const PR_START_WAIT: Duration = REQUEST_WAIT.saturating_add(PREFLIGHT_BOUND);
+
+/// The harness's `git_timeout_secs` (`run_harness.rs` writes 5).
+const GIT_SECS: u64 = 5;
+/// The executor's margin over each host op's commands (`host_ops::bound`, M9.2.12).
+const OP_MARGIN_SECS: u64 = 5;
+
+/// One view of a PR after it changed (task M9.2.16): the poll at the test
+/// configuration's `poll_max_secs` (2 s), then the `ViewPr` op's own bound (two reads at
+/// `HOST_READ_TIMEOUT`, plus the executor's margin).
+pub const VIEW_WAIT: Duration = Duration::from_secs(2 + OP_MARGIN_SECS)
+    .saturating_add(HOST_READ_TIMEOUT)
+    .saturating_add(HOST_READ_TIMEOUT);
+
+/// A stage push (`Push`'s bound: `PUSH_TIMEOUT` and the seal's two reads, plus the
+/// margin).
+pub const PUSH_WAIT: Duration = PUSH_TIMEOUT.saturating_add(Duration::from_secs(
+    2 * HOST_READ_TIMEOUT.as_secs() + OP_MARGIN_SECS,
+));
+
+/// An adopt's fetch (`Fetch`'s bound: `PUSH_TIMEOUT` and six reads, plus the margin).
+pub const FETCH_WAIT: Duration = PUSH_TIMEOUT.saturating_add(Duration::from_secs(
+    6 * HOST_READ_TIMEOUT.as_secs() + OP_MARGIN_SECS,
+));
+
+/// A CI re-run (`RerunFailed`'s bound: one write, plus the margin).
+pub const RERUN_WAIT: Duration =
+    HOST_WRITE_TIMEOUT.saturating_add(Duration::from_secs(OP_MARGIN_SECS));
+
+/// The single-test runs a CI red may cost before its fix task: the reproduction, then
+/// 9.1's bisect of at most four merges (the base, the head and two halvings, each red
+/// probe run twice).
+const PROBES: u64 = 1 + 2 * 4;
+
+/// A red CI head to its fix task (task M9.2.16): the view that sees it
+/// ([`VIEW_WAIT`]), the failed log (`LOG_TIMEOUT`, plus the margin), the `ci_summary`
+/// decider (`with_deciders`'s 5 s timeout and 2 s slot wait, plus the spawn's
+/// `SPAWN_SLACK`), then [`PROBES`] single-test runs in the tier-3 checkout, each a
+/// checkout (five git calls at [`GIT_SECS`]) and one command at `CHECK_TIMEOUT_SECS`.
+pub const CI_FIX_WAIT: Duration = VIEW_WAIT
+    .saturating_add(LOG_TIMEOUT)
+    .saturating_add(Duration::from_secs(
+        OP_MARGIN_SECS + DECIDER_TIMEOUT_SECS + 2 + PROBES * (5 * GIT_SECS + CHECK_TIMEOUT_SECS),
+    ))
+    .saturating_add(SPAWN_SLACK);
+
+/// A fix task's path to the PR (task M9.2.16): one task path with its tier commands
+/// (`TIER_WAIT`), the push ([`PUSH_WAIT`]), and the view of the new head
+/// ([`VIEW_WAIT`]).
+pub const FIX_PUSH_WAIT: Duration = TIER_WAIT
+    .saturating_add(PUSH_WAIT)
+    .saturating_add(VIEW_WAIT);
 
 /// `anthrex <args>` (a `run start --delivery pr`), waiting at most [`PR_START_WAIT`].
 pub fn pr_start(harness: &RunHarness, args: &[&str]) -> Output {
@@ -64,6 +119,16 @@ impl PrRig {
     /// repository's `origin` pointed at it through [`URL`], and the fake GitHub's
     /// `fake/app` with `gh` logged in to github.com and `tester` a writer.
     pub fn new(harness: &RunHarness) -> PrRig {
+        let rig = PrRig::unscripted(harness);
+        rig.ctl.create_repo("fake", "app", &rig.bare, "main");
+        rig.ctl.log_in("github.com");
+        rig.ctl.set_permission("tester", RepoPermission::Write);
+        rig
+    }
+
+    /// [`PrRig::new`]'s bare remote and `origin`, with a fake GitHub that knows
+    /// nothing yet: no repository, no login (task M9.2.16's preflight cases).
+    pub fn unscripted(harness: &RunHarness) -> PrRig {
         let tmp = harness.dir.path();
         let bare = tmp.join("remote.git");
         std::fs::create_dir_all(&bare).unwrap();
@@ -84,9 +149,6 @@ impl PrRig {
         harness.git(&["push", "-q", "origin", "main"]);
         let github = tmp.join("github");
         let ctl = FakeGithubCtl::open(&github);
-        ctl.create_repo("fake", "app", &bare, "main");
-        ctl.log_in("github.com");
-        ctl.set_permission("tester", RepoPermission::Write);
         PrRig { bare, github, ctl }
     }
 
@@ -106,6 +168,44 @@ impl PrRig {
 
     pub fn ctl(&self) -> &FakeGithubCtl {
         &self.ctl
+    }
+
+    /// `git <args>` in the bare remote; its trimmed stdout.
+    pub fn bare_git(&self, args: &[&str]) -> String {
+        git_in(&self.bare, args)
+    }
+
+    /// Every branch the bare remote holds, `refs/heads/...`, sorted.
+    pub fn remote_refs(&self) -> Vec<String> {
+        let listed = self.bare_git(&["for-each-ref", "--format=%(refname)", "refs/heads/"]);
+        let mut refs: Vec<String> = listed.lines().map(str::to_string).collect();
+        refs.sort();
+        refs
+    }
+
+    /// The `gh` calls (`calls.jsonl`) whose argv starts with `prefix`.
+    pub fn calls_of(&self, prefix: &[&str]) -> Vec<Vec<String>> {
+        let calls = self.ctl.calls();
+        calls
+            .into_iter()
+            .filter(|argv| {
+                argv.len() >= prefix.len() && argv.iter().zip(prefix).all(|(a, p)| a == p)
+            })
+            .collect()
+    }
+
+    /// Whether `ancestor` is in the history of `commit`, in the bare remote.
+    pub fn contains(&self, commit: &str, ancestor: &str) -> bool {
+        std::process::Command::new("git")
+            .args(["merge-base", "--is-ancestor", ancestor, commit])
+            .current_dir(&self.bare)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
     }
 
     /// Waits until pull request `number` satisfies `pred`.
@@ -150,7 +250,20 @@ impl PrRig {
         pointer: &str,
         value: &Value,
     ) -> Value {
-        let deadline = Instant::now() + PR_OPEN_WAIT;
+        self.wait_stage_within(harness, run, stage, pointer, value, PR_OPEN_WAIT)
+    }
+
+    /// [`PrRig::wait_stage`] for at most `wait`.
+    pub fn wait_stage_within(
+        &self,
+        harness: &RunHarness,
+        run: &str,
+        stage: u16,
+        pointer: &str,
+        value: &Value,
+        wait: Duration,
+    ) -> Value {
+        let deadline = Instant::now() + wait;
         loop {
             let out = harness.anthrex(&["run", "prs", run, "--json"]);
             let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -164,7 +277,7 @@ impl PrRig {
             }
             assert!(
                 Instant::now() < deadline,
-                "stage {stage}'s {pointer} is not {value} within {PR_OPEN_WAIT:?}: {stdout}\n{}",
+                "stage {stage}'s {pointer} is not {value} within {wait:?}: {stdout}\n{}",
                 harness.log_tail()
             );
             std::thread::sleep(Duration::from_millis(250));
@@ -188,11 +301,45 @@ impl Drop for PrRig {
 /// A harness with the brief's `[delivery]` test configuration (and `extra_toml`) whose
 /// daemon starts on this rig's fake GitHub.
 pub fn pr_harness(extra_toml: &str) -> (RunHarness, PrRig) {
-    let mut harness = RunHarness::unstarted("", &[], true, &[]);
+    pr_harness_with("", &[], extra_toml, None)
+}
+
+/// [`pr_harness`] with `orchestrator` lines, `files` in the base commit and, with
+/// `deciders`, M8b's deciders in that mode (`with_deciders`: `fake-agent` answering from
+/// `<tmp>/deciders`, [`RunHarness::decider`]'s directory).
+pub fn pr_harness_with(
+    orchestrator: &str,
+    files: &[(&str, &str)],
+    extra_toml: &str,
+    deciders: Option<&str>,
+) -> (RunHarness, PrRig) {
+    build(orchestrator, files, extra_toml, deciders, PrRig::new)
+}
+
+/// [`pr_harness`] whose fake GitHub knows nothing yet ([`PrRig::unscripted`]).
+pub fn pr_harness_unscripted(extra_toml: &str) -> (RunHarness, PrRig) {
+    build("", &[], extra_toml, None, PrRig::unscripted)
+}
+
+fn build(
+    orchestrator: &str,
+    files: &[(&str, &str)],
+    extra_toml: &str,
+    deciders: Option<&str>,
+    rig: impl FnOnce(&RunHarness) -> PrRig,
+) -> (RunHarness, PrRig) {
+    // `with_deciders`'s lines do not depend on the directory; its environment does.
+    let lines = deciders.map_or(String::new(), |mode| with_deciders(mode, Path::new("/")).0);
+    let mut harness = RunHarness::unstarted(&format!("{lines}{orchestrator}"), &[], true, files);
     let config = harness.dir.path().join("config.toml");
     let text = std::fs::read_to_string(&config).unwrap();
     std::fs::write(&config, format!("{text}\n{DELIVERY_TOML}{extra_toml}\n")).unwrap();
-    let rig = PrRig::new(&harness);
+    if let Some(mode) = deciders {
+        let dir = harness.dir.path().join("deciders");
+        std::fs::create_dir_all(&dir).unwrap();
+        harness.env.extend(with_deciders(mode, &dir).1);
+    }
+    let rig = rig(&harness);
     harness.env.extend(rig.env());
     if let Err(error) = harness.start_daemon(DAEMON_START_WAIT) {
         panic!("the daemon did not start: {error}\n{}", harness.log_tail());
