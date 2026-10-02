@@ -22,8 +22,10 @@
 //! so a large output is read at pipe speed.
 
 mod head_tail;
+mod keep;
 
 pub use head_tail::{HeadTail, run_captured_head_tail};
+pub use keep::run_captured_keeping;
 
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;

@@ -1,0 +1,24 @@
+[
+  {
+    "baseRefName": "trunk",
+    "number": 13940,
+    "state": "MERGED",
+    "url": "https://github.com/cli/cli/pull/13940",
+    "headRepositoryOwner": {
+      "id": "MDEyOk9yZ2FuaXphdGlvbjU5NzA0NzEx",
+      "login": "cli"
+    },
+    "isCrossRepository": false
+  },
+  {
+    "baseRefName": "multi-account-two-rebase",
+    "number": 12785,
+    "state": "OPEN",
+    "url": "https://github.com/cli/cli/pull/12785",
+    "headRepositoryOwner": {
+      "id": "MDQ6VXNlcjE=",
+      "login": "alice"
+    },
+    "isCrossRepository": true
+  }
+]

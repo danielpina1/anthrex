@@ -263,6 +263,27 @@ pub fn run_git_with_cap(
     .map(|(output, _)| output)
 }
 
+/// As [`run_git_with_cap`], and [`GitOutput::stdout`] is kept when git exits non-zero.
+/// Milestone 9.2 (task M9.2.4): `git push --porcelain` says why a ref was refused on
+/// stdout, and exits 1.
+pub fn run_git_keeping_stdout(
+    git: &OsStr,
+    dir: &Path,
+    args: &[&OsStr],
+    deadline: Instant,
+    max_output_bytes: usize,
+) -> Result<GitOutput, WorktreeError> {
+    run_git_capturing(
+        git,
+        dir,
+        args,
+        deadline,
+        Capture::Keeping(max_output_bytes),
+        None,
+    )
+    .map(|(output, _)| output)
+}
+
 /// As [`run_git_with_cap`], with `input` on git's standard input (`update-index
 /// --index-info`, M8a final fix batch F1, fix round 5). The bytes go to an unlinked
 /// temporary file first, and that file becomes git's stdin, so git reads to its end
@@ -324,6 +345,8 @@ pub const NO_FSMONITOR: [&str; 2] = ["-c", "core.fsmonitor=false"];
 
 enum Capture {
     Capped(usize),
+    /// As `Capped`, and stdout is kept when git exits non-zero.
+    Keeping(usize),
     HeadTail(usize, usize),
 }
 
@@ -425,11 +448,29 @@ fn run_git_capturing(
         }
     }
 
+    let mut failed_stdout = Vec::new();
     let (outcome, kept, stderr, spawn_error) = match capture {
         Capture::Capped(max) => {
             let captured = subprocess::run_captured(&mut command, max, MAX_STDERR_BYTES, timeout);
             (
                 captured.outcome,
+                HeadTail::default(),
+                captured.stderr,
+                captured.spawn_error,
+            )
+        }
+        Capture::Keeping(max) => {
+            let (captured, stdout) =
+                subprocess::run_captured_keeping(&mut command, max, MAX_STDERR_BYTES, timeout);
+            let outcome = match captured.outcome {
+                Outcome::Complete(_) => Outcome::Complete(stdout),
+                other => {
+                    failed_stdout = stdout;
+                    other
+                }
+            };
+            (
+                outcome,
                 HeadTail::default(),
                 captured.stderr,
                 captured.spawn_error,
@@ -471,7 +512,7 @@ fn run_git_capturing(
         )),
         Outcome::Failed => Ok((
             GitOutput {
-                stdout: String::new(),
+                stdout: String::from_utf8_lossy(&failed_stdout).into_owned(),
                 stderr,
                 success: false,
             },

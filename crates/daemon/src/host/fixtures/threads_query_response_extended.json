@@ -1,0 +1,135 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "nodes": [
+            {
+              "isResolved": false,
+              "path": "pkg/extensions/extension.go",
+              "line": 34,
+              "comments": {
+                "nodes": [
+                  {
+                    "body": "Please keep the old exit code.",
+                    "diffHunk": "@@ -28,12 +28,24 @@ type Extension interface {\n \tOwner() string\n }\n \n+// Upgrade",
+                    "author": {
+                      "__typename": "User",
+                      "login": "alice"
+                    },
+                    "fullDatabaseId": "3658443294"
+                  },
+                  {
+                    "body": "Agreed.",
+                    "diffHunk": "@@ -28,12 +28,24 @@ type Extension interface {\n \tOwner() string\n }\n \n+// Upgrade",
+                    "author": {
+                      "__typename": "User",
+                      "login": "bob"
+                    },
+                    "fullDatabaseId": "3658444294"
+                  }
+                ]
+              }
+            },
+            {
+              "isResolved": true,
+              "path": "README.md",
+              "line": null,
+              "comments": {
+                "nodes": [
+                  {
+                    "body": "Typo here.",
+                    "diffHunk": "@@ -1,3 +1,3 @@\n-# gh\n+# gh cli",
+                    "author": {
+                      "__typename": "User",
+                      "login": "bob"
+                    },
+                    "fullDatabaseId": "1234567"
+                  }
+                ]
+              }
+            },
+            {
+              "isResolved": false,
+              "path": ".claude/settings.json",
+              "line": 3,
+              "comments": {
+                "nodes": [
+                  {
+                    "body": "Do not change this.",
+                    "diffHunk": "@@ -1,4 +1,4 @@\n {",
+                    "author": {
+                      "__typename": "Bot",
+                      "login": "copilot-pull-request-reviewer"
+                    },
+                    "fullDatabaseId": "987654321"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "reviews": {
+          "nodes": [
+            {
+              "fullDatabaseId": "3080970818",
+              "state": "COMMENTED",
+              "body": "Breaking: the exit code changed. Please keep the old behaviour.\n\n- `gh ext upgrade --all` (text replaced)",
+              "author": {
+                "__typename": "Bot",
+                "login": "copilot-pull-request-reviewer"
+              }
+            },
+            {
+              "fullDatabaseId": "3082101354",
+              "state": "CHANGES_REQUESTED",
+              "body": "Breaking: the exit code changed. Please keep the old behaviour.\n\n- `gh ext upgrade --all` (text replaced)",
+              "author": {
+                "__typename": "User",
+                "login": "tester"
+              }
+            },
+            {
+              "fullDatabaseId": "3098409423",
+              "state": "COMMENTED",
+              "body": "",
+              "author": {
+                "__typename": "User",
+                "login": "alice"
+              }
+            },
+            {
+              "fullDatabaseId": "3101746448",
+              "state": "COMMENTED",
+              "body": "",
+              "author": {
+                "__typename": "User",
+                "login": "alice"
+              }
+            }
+          ]
+        },
+        "comments": {
+          "nodes": [
+            {
+              "fullDatabaseId": "5093042634",
+              "body": "Thanks for your pull request! (bot text, replaced)",
+              "author": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              }
+            },
+            {
+              "fullDatabaseId": "5154974588",
+              "body": "Comment 1 by a person (text replaced).",
+              "author": {
+                "__typename": "User",
+                "login": "alice"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
