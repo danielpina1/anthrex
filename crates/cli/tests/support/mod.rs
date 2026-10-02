@@ -74,6 +74,31 @@ pub fn isolated_command(dir: &Path, args: &[&str]) -> Command {
 }
 
 /// Capture output without making direct-child completion depend on inherited pipe handles.
+/// How long a spawn that fails with `ExecutableFileBusy` is retried: the write
+/// descriptor a concurrent fork's child inherited is closed when that child execs,
+/// within milliseconds, or after macOS's first-exec assessment of a new file (about
+/// 0.44 s, measured in M9.2.12); 2 s covers it several times over.
+pub const SPAWN_BUSY_WAIT: Duration = Duration::from_secs(2);
+
+/// `spawn`, retried every 10 ms while it fails with `ExecutableFileBusy` and `deadline`
+/// has not passed; any other failure, or the last busy one, is returned.
+pub fn retry_busy<T>(
+    deadline: Instant,
+    mut spawn: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    loop {
+        match spawn() {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            other => return other,
+        }
+    }
+}
+
 pub struct RunningCommand {
     description: String,
     child: Child,
@@ -90,12 +115,14 @@ impl RunningCommand {
         );
         let stdout = NamedTempFile::new().unwrap();
         let stderr = NamedTempFile::new().unwrap();
-        let child = command
+        command
             .stdin(Stdio::piped())
             .stdout(stdout.reopen().unwrap())
-            .stderr(stderr.reopen().unwrap())
-            .spawn()
-            .unwrap();
+            .stderr(stderr.reopen().unwrap());
+        // ETXTBSY (the final fix wave): a script a test has just written can still be
+        // open for writing in the child of a concurrent fork in this multithreaded test
+        // binary, until that child execs; the spawn is retried for that long.
+        let child = retry_busy(Instant::now() + SPAWN_BUSY_WAIT, || command.spawn()).unwrap();
         Self {
             description,
             child,
