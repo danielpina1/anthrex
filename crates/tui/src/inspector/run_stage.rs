@@ -27,6 +27,7 @@ pub(crate) fn stage_inspection(run: &RunInfo, stage: &StageInfo, app: &App) -> I
             label: "failing",
             value: names.join(", "),
             wrap: true,
+            marks: Vec::new(),
         });
     }
     if let Some(bisect) = bisect_text(stage) {
@@ -39,7 +40,12 @@ pub(crate) fn stage_inspection(run: &RunInfo, stage: &StageInfo, app: &App) -> I
             format!("stage {below} at {} is red here", short(head)),
         ));
     }
-    if let Some(fixes) = fix_tasks_text(run, stage) {
+    // Milestone 9.2 decision 42: the stage's pull request; its fix tasks by origin
+    // then stand for 9.1's line.
+    let pr = super::run_stage_pr::stage_fields(run, stage, app);
+    let delivered = !pr.is_empty();
+    fields.extend(pr);
+    if !delivered && let Some(fixes) = fix_tasks_text(run, stage) {
         fields.push(field("fix tasks", fixes));
     }
     let glyph = kind_glyph(RowKind::Stage { run, stage }, app);

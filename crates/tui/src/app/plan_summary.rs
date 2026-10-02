@@ -90,6 +90,30 @@ pub(crate) fn header_line(run: &RunInfo, tasks: &[&TaskInfo], width: u16, ascii:
     truncate_in(&text, usize::from(width), ascii)
 }
 
+/// Ruling R-13: a `pr` run's gate says how it is delivered, `delivered as 3 pull
+/// requests to fake/app`, one per stage of the plan (`1 pull request` for an unstaged
+/// one); the repo is the host's text, cleaned and folded, and left out while unknown.
+/// `None` for a local run or a hold's review, whose tasks join PRs already planned.
+pub(crate) fn delivery_line(run: &RunInfo, gate: bool, ascii: bool) -> Option<String> {
+    let d = run
+        .delivery
+        .as_ref()
+        .filter(|d| gate && d.mode == proto::DeliveryMode::Pr)?;
+    let mut stages: Vec<u16> = run.tasks.iter().map(|t| t.stage).collect();
+    stages.sort_unstable();
+    stages.dedup();
+    let prs = match stages.len().max(1) {
+        1 => "1 pull request".to_owned(),
+        n => format!("{n} pull requests"),
+    };
+    let repo = one_line(&d.repo);
+    let text = match repo.trim() {
+        "" => format!("delivered as {prs}"),
+        repo => format!("delivered as {prs} to {repo}"),
+    };
+    Some(theme::fold(&text, ascii))
+}
+
 /// Two tasks that can run at the same time and both own `path` (decision 23), as the
 /// snapshot has them (unsanitised).
 #[derive(Debug, Clone, PartialEq, Eq)]

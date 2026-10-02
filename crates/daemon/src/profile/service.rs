@@ -114,6 +114,8 @@ pub struct ProfileService {
     next_generation: AtomicU64,
     /// Milestone 9.0.6 decision 37: the runs a profile edit waits for (`set_live_runs`).
     live_runs: Mutex<Option<LiveRuns>>,
+    /// Milestone 9.2 decision 15: the daemon's code host, for detection (`delivery.rs`).
+    pub(super) host: std::sync::OnceLock<Arc<dyn crate::host::CodeHost>>,
 }
 
 /// Decision 37: the ids of the runs live in a project (`RunService::live_runs_in`).
@@ -191,6 +193,7 @@ impl ProfileService {
             writes: tokio::sync::Mutex::new(()),
             next_generation: AtomicU64::new(1),
             live_runs: Mutex::new(None),
+            host: std::sync::OnceLock::new(),
         })
     }
 
@@ -428,6 +431,7 @@ pub fn wire(
             scheduler: runs.scheduler().clone(),
         },
     );
+    profiles.set_host(runs.host());
     // Decision 37: a weak handle, since the run service holds this one (`Adaptation`).
     let weak = Arc::downgrade(runs);
     profiles.set_live_runs(Arc::new(move |project: &Path| {

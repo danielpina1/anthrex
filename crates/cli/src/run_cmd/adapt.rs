@@ -8,21 +8,26 @@ use proto::{RunReply, RunRequest};
 
 use super::{Runs, print_outcome};
 
-/// `run start --goal`'s reply bound (decision 22): [`super::RUN_REQUEST_TIMEOUT`] for
-/// M8a's start path, the largest configurable `deciders.timeout_secs` (600 s) for the
-/// triage call, and 30 s for the request's own preflight and `git ls-files`.
-pub const GOAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(810);
+/// `run start --goal`'s reply bound (decision 22): [`super::RUN_START_TIMEOUT`] for
+/// the start path (M8a's git preflight, and task M9.2.12's host preflight, which a `pr`
+/// goal runs before triage), the largest configurable `deciders.timeout_secs` (600 s) for
+/// the triage call, and 30 s for the request's own preflight and `git ls-files`.
+pub const GOAL_REQUEST_TIMEOUT: Duration =
+    super::RUN_START_TIMEOUT.saturating_add(Duration::from_secs(600 + 30));
 
 /// `run start --goal`: on the fast path the run id on stdout and triage's message on
 /// stderr, and so on the plan and large paths with the planned message (milestone 9
 /// decision 26); any refusal is the command's error (exit 1). `orchestrator` is
-/// `--orchestrator`'s choice (decision 6).
+/// `--orchestrator`'s choice (decision 6), `delivery` `--delivery`'s (M9.2 decision 3).
 pub(super) async fn start_goal(
     socket: &Path,
     dir: Option<PathBuf>,
     goal: String,
     (yes, trust_project, unconfined_checks): (bool, bool, bool),
-    orchestrator: Option<proto::OrchestratorChoice>,
+    (orchestrator, delivery): (
+        Option<proto::OrchestratorChoice>,
+        Option<proto::DeliveryMode>,
+    ),
 ) -> anyhow::Result<()> {
     let dir = crate::resolve_dir(dir)?;
     tui::spawn::ensure_daemon(&std::env::current_exe()?, socket).await?;
@@ -35,6 +40,7 @@ pub(super) async fn start_goal(
             trust_project,
             unconfined_checks,
             orchestrator,
+            delivery,
         })
         .await?;
     match reply {
@@ -52,17 +58,26 @@ pub(super) async fn start_goal(
     }
 }
 
+/// `run stats --json`'s text, through `printable` like everything else the CLI prints
+/// of the daemon's (deferred from task 14: a history's path and problems are text).
+pub(super) fn stats_json(stats: &proto::HistoryStats) -> anyhow::Result<String> {
+    Ok(super::status::printable(&serde_json::to_string_pretty(
+        stats,
+    )?))
+}
+
 /// `run stats`: the daemon's summary of the history of `dir`'s repository, as
 /// `stats::render` lays it out, or with `--json` as `HistoryStats`.
 pub(super) async fn stats(runs: &mut Runs, dir: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
     let dir = crate::resolve_dir(dir)?;
     match runs.request(RunRequest::Stats { dir }).await? {
         RunReply::Stats { stats, .. } if json => {
-            println!("{}", serde_json::to_string_pretty(&stats)?);
+            println!("{}", stats_json(&stats)?);
             Ok(())
         }
         RunReply::Stats { stats, .. } => {
-            print!("{}", daemon::run::stats::render(&stats));
+            let text = daemon::run::stats::render(&stats);
+            print!("{}", super::status::printable(&text));
             Ok(())
         }
         other => print_outcome(other),
@@ -123,11 +138,12 @@ mod tests {
             trust_project: false,
             unconfined_checks: false,
             orchestrator: None,
+            delivery: None,
         };
         assert_eq!(request_timeout(&goal), GOAL_REQUEST_TIMEOUT);
         assert_eq!(
             GOAL_REQUEST_TIMEOUT,
-            super::super::RUN_REQUEST_TIMEOUT + Duration::from_secs(600 + 30)
+            super::super::RUN_START_TIMEOUT + Duration::from_secs(600 + 30)
         );
         let promote = RunRequest::Promote {
             run_id: "r".into(),

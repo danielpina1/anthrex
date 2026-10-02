@@ -168,6 +168,7 @@ fn run_appending(data: &Path, history: &Path) -> (Run, OpKind) {
         testing: &config::Testing::default(),
         now: 1_000,
         yes: true,
+        delivery: &config::Delivery::default(),
     };
     let mut run = build_run(plan, pre, ctx).unwrap();
     assert!(

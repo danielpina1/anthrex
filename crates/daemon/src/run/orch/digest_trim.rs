@@ -4,6 +4,7 @@
 use serde_json::{Value, json};
 
 use super::{BLOCK_TEXT_TRIMMED, DIGEST_MAX_BYTES, LISTS_TRIMMED, NOTES_TRIMMED};
+use crate::run::delivery::digest as delivery;
 use crate::run::model::Run;
 use crate::run::orch::json::{cut, shrink_strings, size};
 
@@ -15,10 +16,11 @@ const ENTRIES_TRIMMED: usize = 10;
 const ENTRIES_TRIMMED_AGAIN: usize = 3;
 /// Every string's length after the general cut, and scouts' and planners' after the
 /// second one, in characters.
-const STRINGS_TRIMMED: usize = 120;
+const STRINGS_TRIMMED: usize = delivery::STRINGS_GENERAL;
 const ENTRY_STRINGS_TRIMMED: usize = 40;
 
-/// Decision 16's trimming past the cap, in order: finished tasks dropped oldest first
+/// Decision 16's trimming past the cap, in order, after milestone 9.2's delivery steps
+/// (decision 29, `delivery::trim`): finished tasks dropped oldest first
 /// (counted in `omitted_tasks`), `edits` cut to 3, `task_notes` to 3, `block.text` to
 /// 200 characters (and the attention lines with it), `notes` to 5. Beyond the
 /// Interfaces, so the cap always holds, texts and lists are cut before an unfinished
@@ -28,10 +30,13 @@ const ENTRY_STRINGS_TRIMMED: usize = 40;
 /// scouts' and planners' strings cut to 40 characters and both lists to 3, then each
 /// stage's failing and flaky names and fix tasks cut to 3 and the stages to 10, then 3
 /// (ruling C-24); only then unfinished tasks dropped from the end of the plan (counted too), and the attention
-/// lines of the tasks dropped last removed with them.
+/// lines of the tasks dropped last removed with them. The delivery block's comments go
+/// before the general string cut, which would cut a quote's fence off.
 pub(super) fn trim(digest: &mut Value, run: &Run) {
     let fits = |d: &Value| size(d) <= DIGEST_MAX_BYTES;
-    if fits(digest) {
+    // Milestone 9.2 decision 29: the delivery block's comments, then its threads and
+    // its resolved stages, before anything else.
+    if delivery::trim(digest, run, fits) {
         return;
     }
     // Finished tasks, oldest first: by their newest history entry, then plan order.
@@ -88,6 +93,10 @@ pub(super) fn trim(digest: &mut Value, run: &Run) {
     if fits(digest) {
         return;
     }
+    delivery::drop_comments(digest, run);
+    if fits(digest) {
+        return;
+    }
     shrink_strings(digest, STRINGS_TRIMMED);
     for key in ["scouts", "planners", "integration", "notes"] {
         if fits(digest) {
@@ -121,6 +130,11 @@ pub(super) fn trim(digest: &mut Value, run: &Run) {
             return;
         }
         truncate(digest, "stages", keep);
+    }
+    // Milestone 9.2's fix round (I1): the delivery block's bounded form comes before
+    // any unfinished task goes.
+    if delivery::last_steps(digest, run, fits) {
+        return;
     }
     while !fits(digest) {
         let last = match digest.get("tasks") {

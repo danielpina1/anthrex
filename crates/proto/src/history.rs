@@ -16,11 +16,12 @@ use crate::tiers::TaskOrigin;
 
 /// The `v` every record written now carries. Milestone 9 (decision 43) raised it from
 /// 1 with the `role_route` line, milestone 9.1 (decision 57) to 3 with the `tier`,
-/// `flaky` and `bisect` lines; older lines still decode unchanged.
-pub const HISTORY_VERSION: u32 = 3;
+/// `flaky` and `bisect` lines, milestone 9.2 (decision 44) to 4 with the `stage` line;
+/// older lines still decode unchanged.
+pub const HISTORY_VERSION: u32 = 4;
 
 /// One line of `history.jsonl`, tagged `"type": "task" | "run" | "revert" |
-/// "role_route" | "tier" | "flaky" | "bisect"`.
+/// "role_route" | "tier" | "flaky" | "bisect" | "stage"`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HistoryLine {
@@ -33,6 +34,8 @@ pub enum HistoryLine {
     Tier(TierRunRecord),
     Flaky(FlakyRecord),
     Bisect(BisectLine),
+    /// Milestone 9.2 decision 44.
+    Stage(StageLine),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -360,4 +363,27 @@ pub struct FlakyProposal {
     pub test: String,
     pub runs: u32,
     pub last_at: u64,
+}
+
+/// One stage pull request's end (milestone 9.2 decision 44): appended once, when it is
+/// merged or closed, or when a `pr`-mode run is cancelled with it open, keyed
+/// `"<run>/stage/<n>"`. Named like [`BisectLine`]; the daemon's
+/// `run::model_stages::StageRecord` is a different type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StageLine {
+    pub v: u32,
+    pub record_id: String,
+    pub run_id: String,
+    pub stage: u16,
+    pub pr: u64,
+    /// From the stage's tasks all finishing to its PR opening.
+    pub time_to_open_secs: u64,
+    pub human_review_secs: u64,
+    /// The stage's `ci` fix tasks.
+    pub ci_rounds: u32,
+    pub review_rounds: u32,
+    pub sync_tasks: u32,
+    pub outcome: crate::delivery::StageOutcome,
+    pub merge_method: crate::delivery::MergeMethod,
+    pub at: u64,
 }

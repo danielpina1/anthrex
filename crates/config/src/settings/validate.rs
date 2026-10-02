@@ -11,18 +11,50 @@ use proto::settings::{
     BUDGET_MIN, MAX_BOUNCES_RANGE, MAX_READERS_RANGE, MAX_WRITERS_RANGE, STALL_AFTER_SECS_RANGE,
     key,
 };
-use proto::{BudgetLimit, Runtime, SettingsDoc, Strength};
+use proto::{BudgetLimit, ModelEntry, Runtime, SettingsDoc, Strength};
 
 use crate::orchestrator::MODEL_NOTE_MAX;
 
 /// Every reason `doc` cannot be saved, in a fixed order: the roster, the orchestrator
-/// default, then the limits in `SETTINGS_KEYS` order. Empty when it can.
+/// default, then the limits in `SETTINGS_KEYS` order. Empty when it can. The rules
+/// apply to what a save writes, [`cleaned`]`(doc)`: a hidden format character never
+/// refuses a save (M9.2.6 fix round 2), it is dropped.
 pub fn validate(doc: &SettingsDoc) -> Vec<String> {
+    let doc = &cleaned(doc);
     let mut problems = Vec::new();
     roster(doc, &mut problems);
     orchestrator(doc, &mut problems);
     limits(doc, &mut problems);
     problems
+}
+
+/// `doc` as a save writes it (M9.2.6 fix round 2): every hidden format character
+/// (`proto::safe_text::is_hidden_format`: a variation selector in `⚠️`, a soft hyphen,
+/// a bidi control) dropped from each model's name and note and from the orchestrator
+/// default's model, which names one of them. A control character is kept, for
+/// [`validate`] to refuse.
+pub fn cleaned(doc: &SettingsDoc) -> SettingsDoc {
+    let mut out = doc.clone();
+    out.models.iter_mut().for_each(clean_entry);
+    out.orchestrator.model = strip_hidden(&out.orchestrator.model);
+    out
+}
+
+/// `text` without its hidden format characters, as [`cleaned`] writes every text it
+/// keeps. The Settings screen strips its own rows with this (review finding m3), so the
+/// rule has one copy.
+pub fn strip_hidden(text: &str) -> String {
+    text.chars()
+        .filter(|c| !proto::safe_text::is_hidden_format(*c))
+        .collect()
+}
+
+/// One model entry as [`cleaned`] writes it: its name and note through
+/// [`strip_hidden`]. The one list of an entry's cleaned fields, which the Settings
+/// screen's rows use too.
+pub fn clean_entry(entry: &mut ModelEntry) {
+    entry.model = strip_hidden(&entry.model);
+    entry.note = strip_hidden(&entry.note);
 }
 
 /// Advice that never refuses a save: each strength with an enabled model on exactly one
@@ -189,9 +221,10 @@ fn in_range<T: PartialOrd + std::fmt::Display>(
 }
 
 /// A character a config line or a screen row must not hold: a control character
-/// (newline, tab, ESC), a line or paragraph separator, or a hidden format character.
+/// (newline, tab, ESC, C1) or a line or paragraph separator. A hidden format character
+/// is not refused: [`cleaned`] drops it before any rule runs.
 fn unsafe_char(c: char) -> bool {
-    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') || proto::safe_text::is_hidden_format(c)
+    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
 }
 
 /// How a model is named in a message: Codex's empty model is its configured default.

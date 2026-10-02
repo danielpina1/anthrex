@@ -61,10 +61,13 @@ fn is_test_source(path: &Path) -> bool {
         || name == "test_support.rs"
 }
 
-const AGENT_VARS: [&str; 3] = [
+/// Task M9.2.12's fix round (m1): `ANTHREX_GH_BIN` too, so a daemon a test starts never
+/// runs the user's `gh` at preflight or detection.
+const AGENT_VARS: [&str; 4] = [
     "ANTHREX_CLAUDE_BIN",
     "ANTHREX_CODEX_BIN",
     "ANTHREX_DECIDER_BIN",
+    "ANTHREX_GH_BIN",
 ];
 
 #[test]
@@ -93,11 +96,13 @@ fn every_test_that_starts_anthrex_or_reads_variables_pins_the_agents() {
             .copied()
             .filter(|v| !helper && !text.contains(v))
             .collect();
-        // `from_vars` needs the claude and codex variables in its map.
-        if text.contains(&from_vars) && missing.iter().any(|v| *v != "ANTHREX_DECIDER_BIN") {
+        // `from_vars` needs the claude and codex variables in its map (its `gh` is used
+        // only by a run's host, which no `from_vars` test builds).
+        let runtimes = |v: &&str| *v == "ANTHREX_CLAUDE_BIN" || *v == "ANTHREX_CODEX_BIN";
+        if text.contains(&from_vars) && missing.iter().any(runtimes) {
             offenders.push(format!("{rel}: from_vars without {missing:?}"));
         }
-        // A file that builds an `anthrex` command sets all three.
+        // A file that builds an `anthrex` command sets all four.
         if spawns.iter().any(|s| text.contains(s)) && !missing.is_empty() {
             offenders.push(format!("{rel}: starts anthrex without {missing:?}"));
         }

@@ -20,6 +20,7 @@ pub mod decider;
 pub mod git;
 pub mod headless;
 pub mod hooks;
+pub mod host;
 pub mod launch;
 pub mod lifecycle;
 pub mod live_config;

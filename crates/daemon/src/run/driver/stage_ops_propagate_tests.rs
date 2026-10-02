@@ -213,6 +213,73 @@ async fn a_propagate_stage_2_already_holds_writes_nothing() {
     }
 }
 
+/// Milestone 9.2 task M9.2.11 (decisions 33 and 35): after the user squash-merges stage
+/// 1, the base holds stage 1's changes as one new commit while stage 2 still has the
+/// originals. The base sync of stage 2 is 9.1's propagate with `from: 0` and the base
+/// commit as the other side: a merge with both parents (never a rebase), clean, that
+/// changes no file; the local base never moves.
+#[tokio::test(flavor = "multi_thread")]
+async fn squash_merged_stage_sync_is_clean_and_changes_no_file() {
+    let rig = Rig::new();
+    let one = rig.commit_on(STAGE_1, "s1.txt", "one\n");
+    git(
+        &rig.root,
+        &["update-ref", &format!("refs/heads/{STAGE_2}"), &one],
+    );
+    let two = rig.commit_on(STAGE_2, "s2.txt", "two\n");
+    git(
+        &rig.root,
+        &["update-ref", &format!("refs/heads/{INTEGRATION}"), &two],
+    );
+    git(
+        &rig.integration,
+        &["checkout", "-q", "--force", INTEGRATION],
+    );
+    // GitHub's squash: stage 1's tree as one commit on the base.
+    let tree = git(&rig.root, &["rev-parse", &format!("{one}^{{tree}}")]);
+    let squash = git(
+        &rig.root,
+        &["commit-tree", &tree, "-p", &rig.base, "-m", "stage 1 (#11)"],
+    );
+    let guarded = [STAGE_1, STAGE_2, INTEGRATION]
+        .map(|b| (b.to_string(), rig.head(b)))
+        .to_vec();
+    let kind = OpKind::Propagate(Box::new(PropagateSpec {
+        root: rig.root.clone(),
+        integration: rig.integration.clone(),
+        from: 0,
+        to: 2,
+        from_head: squash.clone(),
+        to_branch: STAGE_2.into(),
+        expected_to_head: two.clone(),
+        also_integration: true,
+        base_branch: "main".into(),
+        expected_base: rig.base.clone(),
+        guarded,
+        message: format!("anthrex: merge main@{} into stage-2", &squash[..7]),
+        tier: None,
+        check: Some("test -f s1.txt && test -f s2.txt".into()),
+        timeout_secs: 30,
+        env: Vec::new(),
+        tasks: BTreeSet::new(),
+    }));
+    let OpResult::Merged { commit, .. } = rig.run_propagate(kind).await else {
+        panic!("the squash is not merged cleanly")
+    };
+    let parents = git(&rig.root, &["rev-list", "--parents", "-n", "1", &commit]);
+    assert_eq!(parents, format!("{commit} {two} {squash}"), "two parents");
+    assert_eq!(git(&rig.root, &["diff", "--name-only", &two, &commit]), "");
+    assert_eq!(
+        git(&rig.root, &["rev-parse", &format!("{commit}^{{tree}}")]),
+        git(&rig.root, &["rev-parse", &format!("{two}^{{tree}}")]),
+        "no file changes"
+    );
+    assert_eq!(rig.head(STAGE_2), commit);
+    assert_eq!(rig.head(INTEGRATION), commit);
+    assert_eq!(rig.head("main"), rig.base, "the local base never moves");
+    rig.assert_on_integration();
+}
+
 // Controller ruling C-21: a sync task's claim and review, in a file of its own.
 #[path = "stage_ops_sync_tests.rs"]
 mod sync_tests;

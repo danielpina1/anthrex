@@ -14,11 +14,22 @@ const NAMES_SHOWN: usize = 20;
 /// order. A stage not created yet has no `head` and no tier 3, and shows the branch it
 /// will be created on (ruling C-24).
 pub(crate) fn stage_infos(run: &Run) -> Vec<StageInfo> {
-    let planned = run.tasks.iter().map(|t| t.stage()).max().unwrap_or(1);
-    let created = run.stages.iter().map(|s| s.n).max().unwrap_or(0);
-    (1..=planned.max(created).max(1))
+    let planned = planned(run);
+    (1..=stage_count(run))
         .map(|n| stage_info(run, n, planned))
         .collect()
+}
+
+/// The highest stage the plan names (1 for a plan without stages).
+fn planned(run: &Run) -> u16 {
+    run.tasks.iter().map(|t| t.stage()).max().unwrap_or(1)
+}
+
+/// The run's stages: the highest the plan names or the run created, at least 1. The
+/// one count of stages: the snapshot's, the digest's and a PR title's `<N>`.
+pub(crate) fn stage_count(run: &Run) -> u16 {
+    let created = run.stages.iter().map(|s| s.n).max().unwrap_or(0);
+    planned(run).max(created).max(1)
 }
 
 /// Stage `n`'s record, when the stage exists. Before approval a plan with more than
@@ -56,6 +67,7 @@ fn stage_info(run: &Run, n: u16, planned: u16) -> StageInfo {
             .collect(),
         propagate_red: record.and_then(|s| s.propagate_red.clone()),
         head,
+        pr: None,
     }
 }
 

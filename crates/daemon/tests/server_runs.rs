@@ -82,6 +82,7 @@ async fn a_disconnected_client_is_not_held_open_by_its_run_request() {
         trust_project: false,
         // Final fix batch F1c round 2: Linux cannot confine checks.
         unconfined_checks: !cfg!(target_os = "macos"),
+        delivery: None,
     });
     write_frame(&mut wr, &start).await.unwrap();
     wr.shutdown().await.unwrap();
@@ -137,6 +138,7 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
             trust_project: false,
             unconfined_checks: false,
             orchestrator: None,
+            delivery: None,
         })
         .await,
         proto::RunReply::Refused {
@@ -370,6 +372,7 @@ async fn a_tagged_goal_start_is_triaged_with_its_id() {
             trust_project: false,
             unconfined_checks: true,
             orchestrator: None,
+            delivery: None,
         },
     };
     write_frame(&mut wr, &msg).await.unwrap();
@@ -429,6 +432,7 @@ async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
             runtime: proto::Runtime::Codex,
             model: None,
         }),
+        delivery: None,
     });
     write_frame(&mut wr, &msg).await.unwrap();
     let reply = next_run_reply(&mut rd).await;

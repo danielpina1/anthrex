@@ -33,11 +33,11 @@ from pty_smoke_run import (
 DECIDER_DIR = f"/tmp/anthrex-smoke-adapt-deciders-{os.getpid()}"
 
 # `run start --goal`'s legal worst case: `ensure_daemon` (3.25 s) + `HANDSHAKE_TIMEOUT`
-# (5 s) + `GOAL_REQUEST_TIMEOUT` (810 s, `crates/cli/src/run_cmd/adapt.rs`: M8a's
-# 180 s start, the largest `deciders.timeout_secs` of 600 s, and 30 s of its own git
-# calls) = 818.25 s, rounded up to 900 s (about 10% over). Derived as `pty_smoke_run.py`
-# derives `RUN_CMD_TIMEOUT`; change the Rust constant, change this value.
-GOAL_CMD_TIMEOUT = 900.0
+# (5 s) + `GOAL_REQUEST_TIMEOUT` (1205 s, `crates/cli/src/run_cmd/adapt.rs`: the 575 s
+# `RUN_START_TIMEOUT`, the largest `deciders.timeout_secs` of 600 s, and 30 s of its own
+# git calls) = 1213.25 s, rounded up to 1300 s (about 7% over). Derived as
+# `pty_smoke_run.py` derives `RUN_CMD_TIMEOUT`; change the Rust constant, change this value.
+GOAL_CMD_TIMEOUT = 1300.0
 
 # The stored profile of `crates/cli/tests/support/run_adapt.rs` (`STORED_PROFILE`).
 STORED_PROFILE = """check = "sh check.sh"

@@ -81,6 +81,7 @@ fn assert_confirmable(kept: &RepoProfile) {
             testing: &config::Testing::default(),
             now: 1_000,
             yes: false,
+            delivery: &config::Delivery::default(),
         },
     );
     if let Err(errors) = built {

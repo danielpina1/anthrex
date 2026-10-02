@@ -40,15 +40,27 @@ pub(super) fn end(run: &mut Run, n: u16, reason: String, now: u64, fx: &mut Vec<
         run.full_op = None;
     }
     record(run, n, &b, BisectResult::None(&reason), now, fx);
-    end_with(run, n, &b, reason, now);
+    end_with(run, n, &b, reason, now, fx);
 }
 
-pub(super) fn end_with(run: &mut Run, n: u16, b: &BisectRecord, reason: String, now: u64) {
+/// Decision 38's end without a culprit; for a CI red (milestone 9.2 decision 27), the
+/// delivery's stage fix instead of 9.1's attention line and wake note.
+pub(super) fn end_with(
+    run: &mut Run,
+    n: u16,
+    b: &BisectRecord,
+    reason: String,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
     log(
         run,
         now,
         format!("stage {n}: bisect ended without a culprit: {reason}"),
     );
+    if b.ci.is_some() {
+        return super::super::delivery::ci_no_culprit(run, n, b, &reason, now, fx);
+    }
     full::no_culprit(run, n, &b.head, &b.tests, &reason);
 }
 

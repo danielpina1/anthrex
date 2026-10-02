@@ -22,8 +22,11 @@ mod write;
 pub use origin::{load_with_origin, origin_of};
 pub use save::{Saved, save};
 pub use shipped::{SHIPPED_CLAUDE, SHIPPED_CODEX, ShippedModel};
-pub use validate::{validate, warnings};
-pub use write::{UNSUPPORTED_FORM, edit_text};
+pub use validate::{clean_entry, cleaned, strip_hidden, validate, warnings};
+// Milestone 9.2 (M9.2.6 fix round 2's deferral, closed by M9.2.15): the writer takes a
+// doc as given, so only [`save`], which cleans first, may call it.
+pub use write::UNSUPPORTED_FORM;
+pub(crate) use write::edit_text;
 
 /// The settings `o` holds.
 pub fn doc_of(o: &Orchestrator) -> SettingsDoc {

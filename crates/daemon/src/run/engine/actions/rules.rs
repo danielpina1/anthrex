@@ -16,7 +16,7 @@ use crate::run::edits_orch::{one_edit_rule, plan_message, refresh_refusal};
 use crate::run::edits_state::state_label;
 use crate::run::engine::dispatch::finishing_as;
 use crate::run::engine::gates::{OVERRIDE_APPLIES, OVERRIDE_KINDS};
-use crate::run::engine::{full, orch_window, schedule, worker_messages};
+use crate::run::engine::{delivery, full, orch_window, schedule, worker_messages};
 use crate::run::model::Run;
 use crate::run::plan::PlanError;
 
@@ -156,7 +156,7 @@ pub(crate) fn unpause_in(id: &str, state: RunState) -> Option<String> {
 /// retryable (review m1).
 pub(crate) fn resume(run: &Run, rebaseline: bool) -> Option<String> {
     let retries = match run.state {
-        RunState::Running => full::retryable(run),
+        RunState::Running => full::retryable(run) || delivery::held(run),
         RunState::Paused => true,
         RunState::AwaitingApproval | RunState::Planning => orch_window::relaunchable(run),
         _ => false,
@@ -220,13 +220,23 @@ pub(crate) fn finish(run: &Run, action: FinishAction) -> Option<String> {
         && run.cancelled
         && run.tasks.iter().all(|t| t.state.is_finished())
         && run.pending_ops.is_empty();
-    (run.state != RunState::Complete && !discardable).then(|| {
+    let state = || {
         let label = run.state.label();
         format!(
             "run {} is {label}; {verb} applies only to a complete run",
             run.id
         )
-    })
+    };
+    // Milestone 9.2 decisions 38-39 and ruling R-1: delivered by pull request; an
+    // ended run's state comes first, and a discardable one is not refused (task
+    // M9.2.7's review m4).
+    if run.state.is_terminal() {
+        return Some(state());
+    }
+    if let Some(text) = delivery::finish_refusal(run, action).filter(|_| !discardable) {
+        return Some(text);
+    }
+    (run.state != RunState::Complete && !discardable).then(state)
 }
 
 /// `run approve --hold` and `run reject --hold` (`gate_holds::decide`).

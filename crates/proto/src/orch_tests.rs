@@ -89,6 +89,7 @@ fn orch_types_round_trip() {
         (HoldState::Awaiting, "awaiting"),
         (HoldState::Approved, "approved"),
         (HoldState::Rejected, "rejected"),
+        (HoldState::Moot, "moot"),
     ];
     for (state, text) in states {
         both_ways(&state);
@@ -336,6 +337,7 @@ fn appended_variants_keep_their_indices() {
             "finish",
             "message",
             "refresh",
+            "reply_comment",
         ]
     );
 }
@@ -400,6 +402,7 @@ fn new_requests_round_trip() {
             trust_project: true,
             unconfined_checks: false,
             orchestrator: None,
+            delivery: None,
         },
         RunRequest::StartGoal {
             goal: "Add password reset".into(),
@@ -408,6 +411,7 @@ fn new_requests_round_trip() {
             trust_project: false,
             unconfined_checks: true,
             orchestrator: Some(choice.clone()),
+            delivery: None,
         },
         RunRequest::Promote {
             run_id: "run-a1b2".into(),

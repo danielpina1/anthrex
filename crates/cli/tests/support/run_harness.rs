@@ -25,6 +25,12 @@ use super::{ANTHREX, RunningCommand, fake_agent_bin, runtime};
 /// task paths waits `k * RUN_WAIT` (`docs/timing-budgets.md`).
 pub const RUN_WAIT: Duration = Duration::from_secs(300);
 
+/// The harness's `[orchestrator.profile] check_timeout_secs` (M9.2.14 fix round 1).
+pub const CHECK_TIMEOUT_SECS: u64 = 10;
+
+/// The harness's `[orchestrator] git_timeout_secs` (task M9.2.16 fix round 1, m2).
+pub const GIT_TIMEOUT_SECS: u64 = 5;
+
 /// The harness's decider command: a path that does not exist, so a decider a test did
 /// not ask for falls back instead of running anything.
 pub const NO_DECIDER_BIN: &str = "/nonexistent/anthrex-test/decider";
@@ -186,7 +192,7 @@ impl RunHarness {
         std::fs::write(
             &config,
             format!(
-                "[orchestrator]\ngit_timeout_secs = 5\n{orchestrator}\n\n                 [orchestrator.cache_dirs]\n{:?} = [{:?}]\n\n                 [orchestrator.profile]\ncheck_timeout_secs = 10\n",
+                "[orchestrator]\ngit_timeout_secs = {GIT_TIMEOUT_SECS}\n{orchestrator}\n\n                 [orchestrator.cache_dirs]\n{:?} = [{:?}]\n\n                 [orchestrator.profile]\ncheck_timeout_secs = {CHECK_TIMEOUT_SECS}\n",
                 repo_key.display().to_string(),
                 cache.display().to_string(),
             ),
@@ -202,6 +208,10 @@ impl RunHarness {
             // M8b's safety rule: no decider can ever reach a real agent binary. A test
             // that runs deciders overrides this with `fake-agent` (`run_adapt.rs`).
             ("ANTHREX_DECIDER_BIN".into(), NO_DECIDER_BIN.into()),
+            // Task M9.2.12's fix round (m1): no preflight or detection can run the user's
+            // `gh`. A test of `pr` mode sets `ANTHREX_CODE_HOST=fake` in `env`.
+            ("ANTHREX_CODE_HOST".into(), "gh".into()),
+            ("ANTHREX_GH_BIN".into(), daemon::manager::TEST_GH_BIN.into()),
             ("FAKE_AGENT_ARGS_FILE".into(), path(&io)),
             ("FAKE_AGENT_STDIN_FILE".into(), path(&io)),
             // M9.16: every MCP call a `fake-agent` makes (`RunHarness::mcp_log`).
@@ -438,6 +448,7 @@ impl RunHarness {
             yes,
             trust_project: trust,
             unconfined_checks: false,
+            delivery: None,
         })
     }
 

@@ -117,9 +117,16 @@ pub(super) fn effect(run: &Run, node: &ActionNode, kind: &ActionKind) -> String 
             format!("accept: merge {} into {onto}", tasks(merged))
         }
         // Preflight F1: a salvage ref keeps only a dirty worktree's work.
-        Discard => format!(
-            "discard: remove the run's worktrees and anthrex/{id}/* branches (uncommitted work is kept under refs/anthrex/salvage/{id}/); {base} is unchanged"
-        ),
+        Discard => {
+            // Milestone 9.2 ruling R-1: a `pr`-mode discard is local only.
+            let (local, never) = match crate::run::engine::delivery::pr(run) {
+                true => ("local ", ", never a PR or a remote branch"),
+                false => ("", ""),
+            };
+            format!(
+                "discard: remove the run's {local}worktrees and anthrex/{id}/* branches{never} (uncommitted work is kept under refs/anthrex/salvage/{id}/); {base} is unchanged"
+            )
+        }
         MessageStage { stage } => {
             let k = unfinished(run).filter(|t| t.stage() == *stage).count();
             match k {

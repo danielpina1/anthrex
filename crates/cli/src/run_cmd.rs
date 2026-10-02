@@ -3,6 +3,7 @@
 //! waits [`RUN_REQUEST_TIMEOUT`] ([`FINISH_REQUEST_TIMEOUT`] for accept and discard); every `Refused` prints the daemon's message and exits 1.
 
 mod adapt;
+mod delivery;
 mod finish;
 mod orch;
 mod status;
@@ -23,6 +24,15 @@ use std::time::Duration;
 /// daemon is still answering.
 pub const RUN_REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// `run start`'s reply bound (task M9.2.12 fix round 1, I2): M8a's git preflight
+/// ([`RUN_REQUEST_TIMEOUT`]'s term), then in `pr` mode the host preflight, bounded by the
+/// daemon's own `PREFLIGHT_BOUND` (not a copy), and a 30 s margin for the run's build
+/// after them. A CLI that gave up sooner would report a timeout for a run the daemon then
+/// starts.
+pub const RUN_START_TIMEOUT: Duration = RUN_REQUEST_TIMEOUT
+    .saturating_add(daemon::host::PREFLIGHT_BOUND)
+    .saturating_add(Duration::from_secs(30));
+
 /// `run accept` and `run discard`'s reply bound (ruling T23-I1): the daemon's merge runs
 /// under `ACCEPT_MERGE_TIMEOUT` and is never shortened (the user's hooks and signing run
 /// inside it); 60 s more covers the request's own git reads and the clean-up's first
@@ -35,6 +45,7 @@ pub const FINISH_REQUEST_TIMEOUT: Duration =
 fn request_timeout(request: &RunRequest) -> Duration {
     match request {
         RunRequest::Finish { .. } => FINISH_REQUEST_TIMEOUT,
+        RunRequest::Start { .. } => RUN_START_TIMEOUT,
         RunRequest::StartGoal { .. } => adapt::GOAL_REQUEST_TIMEOUT,
         _ => RUN_REQUEST_TIMEOUT,
     }
@@ -69,7 +80,18 @@ enum RunCommand {
         /// A goal's orchestrator: claude or codex, optionally :<model>
         #[arg(long, value_name = "RUNTIME[:MODEL]")]
         orchestrator: Option<String>,
+        /// Deliver by pull request (pr) or by run accept (local); the profile's by default
+        #[arg(long, value_name = "pr|local")]
+        delivery: Option<String>,
     },
+    /// Show each stage's pull request: its state, CI, threads and fix tasks
+    Prs(delivery::PrsArgs),
+    /// Run tier 3 on a stage now, and open its pull request once it is green
+    Deliver(delivery::DeliverArgs),
+    /// Stop or resume watching a run's pull requests
+    Watch(delivery::WatchArgs),
+    #[command(hide = true)]
+    FakeGithub(delivery::FakeGithubArgs),
     /// Show every run, or one, newest first
     Status {
         run: Option<String>,
@@ -194,19 +216,23 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
         trust_project,
         unconfined_checks,
         orchestrator,
+        delivery,
     } = command
     {
+        let delivery = delivery::mode(delivery.as_deref())?;
         let choice = orch::start_orchestrator(plan.as_ref(), orchestrator.as_deref())?;
         let flags = (yes, trust_project, unconfined_checks);
         return match (plan, goal) {
-            (Some(plan), _) => {
-                start(socket, dir, &plan, yes, trust_project, unconfined_checks).await
-            }
+            (Some(plan), _) => start(socket, dir, &plan, flags, delivery).await,
             (None, goal) => {
                 let goal = goal.unwrap_or_default();
-                adapt::start_goal(socket, dir, goal, flags, choice).await
+                adapt::start_goal(socket, dir, goal, flags, (choice, delivery)).await
             }
         };
+    }
+    // Decision 14: the fake GitHub's control, which talks to no daemon.
+    if let RunCommand::FakeGithub(args) = command {
+        return delivery::fake_github(args);
     }
     // Every flag is checked before the daemon is asked anything.
     let promote_choice = match &command {
@@ -225,22 +251,25 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
     };
     let mut runs = Runs::connect(socket).await?;
     match command {
-        RunCommand::Start { .. } => unreachable!("handled above"),
+        RunCommand::Start { .. } | RunCommand::FakeGithub(_) => unreachable!("handled above"),
+        RunCommand::Prs(args) => delivery::prs(&mut runs, args).await,
+        RunCommand::Deliver(args) => delivery::deliver(&mut runs, args).await,
+        RunCommand::Watch(args) => delivery::watch(&mut runs, args).await,
         RunCommand::Status { run, json } => {
             let mut snapshot = runs.list().await?;
             if let Some(run) = run {
                 let id = resolve_run(&snapshot.runs, &run).map_err(anyhow::Error::msg)?;
                 snapshot.runs.retain(|r| r.run_id == id);
             }
+            // Task M9.2.14 fix round 1 (m1): everything `run status` prints is sanitised.
             if json {
-                println!("{}", serde_json::to_string_pretty(&snapshot)?);
+                let text = serde_json::to_string_pretty(&snapshot)?;
+                println!("{}", status::printable(&text));
             } else if snapshot.runs.is_empty() {
                 eprintln!("no runs");
             } else {
-                print!(
-                    "{}",
-                    status::render(&snapshot.runs, tui::local_utc_offset_secs())
-                );
+                let text = status::render(&snapshot.runs, tui::local_utc_offset_secs());
+                print!("{}", status::printable(&text));
             }
             Ok(())
         }
@@ -325,9 +354,8 @@ async fn start(
     socket: &Path,
     dir: Option<PathBuf>,
     plan: &Path,
-    yes: bool,
-    trust_project: bool,
-    unconfined_checks: bool,
+    (yes, trust_project, unconfined_checks): (bool, bool, bool),
+    delivery: Option<proto::DeliveryMode>,
 ) -> anyhow::Result<()> {
     let plan_toml = std::fs::read_to_string(plan)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", plan.display()))?;
@@ -341,6 +369,7 @@ async fn start(
             yes,
             trust_project,
             unconfined_checks,
+            delivery,
         })
         .await?;
     let run_id = match reply {
@@ -374,7 +403,7 @@ async fn start(
             err.push_str(&status::run_block(run, tui::local_utc_offset_secs()));
         }
     }
-    eprint!("{err}");
+    eprint!("{}", status::printable(&err));
     Ok(())
 }
 

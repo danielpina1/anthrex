@@ -1,0 +1,16 @@
+languages = []
+modules = []
+hub = []
+source = []
+generated = []
+protected = []
+check = "cargo test"
+output_filter = "failures-only"
+filter_prefixes = []
+conventions = []
+manifests = []
+full_triggers = []
+skip_markers = []
+test_paths = []
+
+[env]

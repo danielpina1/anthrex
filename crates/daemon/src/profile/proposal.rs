@@ -69,6 +69,9 @@ pub const EDIT_KEYS: &[&str] = &[
     "toolchain_id",
     "env",
     "env.<NAME>",
+    // Milestone 9.2 decision 3.
+    "delivery.mode",
+    "delivery.remote",
 ];
 
 /// M8a's range for `check_timeout_secs`.
@@ -150,6 +153,7 @@ pub fn validate(profile: &RepoProfile) -> Vec<String> {
             problems.push(format!("env: {problem}"));
         }
     }
+    problems.extend(super::proposal_delivery::problems(profile));
     problems.extend(super::proposal_tiers::problems(profile));
     problems
 }
@@ -208,6 +212,10 @@ pub fn apply_edit(
     key: &str,
     value: Option<&str>,
 ) -> Result<(RepoProfile, bool), String> {
+    // Milestone 9.2 decision 3: the `[delivery]` table changes no command.
+    if key.starts_with("delivery.") {
+        return super::proposal_delivery::edit(stored, key, value).map(|p| (p, false));
+    }
     let (field, env_name) = match key.strip_prefix("env.") {
         Some(name) if !name.is_empty() => ("env", Some(name)),
         _ => (key, None),

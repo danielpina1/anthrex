@@ -1,0 +1,9 @@
+{
+  "permission": "write",
+  "role_name": "write",
+  "user": {
+    "login": "tester",
+    "type": "User"
+  },
+  "source": "from the documentation: GET /repos/{o}/{r}/collaborators/{u}/permission; permission is one of admin, write, read, none (maintain reads as write, triage as read); role_name is admin, maintain, write, triage, read or a custom role"
+}

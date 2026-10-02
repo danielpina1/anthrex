@@ -35,6 +35,8 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
         .count();
     let state = match (run.state, run.paused_from) {
         (RunState::Paused, Some(from)) => format!("paused (from {})", from.label()),
+        // Milestone 9.2 decision 36.
+        _ if super::delivery::delivering(run) => "running (delivering)".to_string(),
         (state, _) => state.label().to_string(),
     };
     // M8b decision 24: ` fast path` after the state.
@@ -86,6 +88,7 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
         );
     }
     out.push_str(&orchestrator_lines(run));
+    out.push_str(&super::delivery::status_lines(run));
     // Milestone 9.1 (Interfaces "CLI"): a `Multi` run's stages, before its tasks.
     let multi = run.stages.len() > 1;
     if multi {
@@ -332,12 +335,12 @@ fn one_line(text: &str) -> String {
 }
 
 /// M9.14 review fixes, item 3: a daemon's reply or refusal, which may echo what the user
-/// typed, as the terminal is given it: every control character but the newline (an
-/// escape, a bell, a carriage return) shown as a space.
+/// typed, as the terminal is given it. Milestone 9.2 (task M9.2.14 fix round 1, m1):
+/// `proto::safe_text::multi_line`'s rules, the client's: lines kept (`\r\n` and a lone
+/// `\r` become `\n`), every other control character and U+2028/U+2029 a space, and
+/// every hidden format character (bidi controls, zero-width joiners) dropped.
 pub fn printable(text: &str) -> String {
-    text.chars()
-        .map(|c| if c.is_control() && c != '\n' { ' ' } else { c })
-        .collect()
+    proto::safe_text::multi_line(text)
 }
 
 #[cfg(test)]

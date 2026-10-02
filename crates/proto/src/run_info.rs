@@ -404,6 +404,10 @@ pub struct RunInfo {
     /// Milestone 9.0.6 decision 7: what this node can be asked to do now.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActionInfo>,
+    /// Milestone 9.2 decision 41: `None` in local mode, and then left out, so a local
+    /// run's snapshot is 9.1's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<crate::delivery::DeliveryInfo>,
 }
 
 /// Every run the daemon knows about, at one revision.

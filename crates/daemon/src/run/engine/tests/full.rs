@@ -121,6 +121,17 @@ pub(super) fn attention(fx: &Fixture) -> Vec<String> {
     snapshot(&fx.state, fx.now).runs[0].attention.clone()
 }
 
+/// Ruling R-13 (task M9.2.15's fix round): the snapshot's typed delivery alerts, each
+/// `(kind, stage, text)`.
+pub(super) fn delivery_alerts(
+    fx: &Fixture,
+) -> Vec<(proto::DeliveryAlertKind, Option<u16>, String)> {
+    let run = &snapshot(&fx.state, fx.now).runs[0];
+    (run.delivery.iter().flat_map(|d| &d.alerts))
+        .map(|a| (a.kind, a.stage, a.text.clone()))
+        .collect()
+}
+
 pub(super) fn verify_ok(fx: &mut Fixture) -> Vec<Effect> {
     let (op, _) = pending_one(fx, "VerifyRefs", None);
     fx.done(op, OpResult::RefsOk)
@@ -444,8 +455,11 @@ fn full_request_is_refused_while_one_runs_and_queued_for_deliver() {
     assert!(again.is_empty());
 }
 
+/// Milestone 9.2 decision 19 (task M9.2.7) changed this 9.1 pin for `Deliver` only: an
+/// untiered profile's tier 3 before a PR opens is its `check`, one step. Idle and
+/// completion still do nothing for it (9.1 decision 6).
 #[test]
-fn full_request_does_nothing_for_an_untiered_profile() {
+fn full_request_runs_only_check_for_an_untiered_profile_before_delivery() {
     let (mut fx, windows) = start(&[doc_task("t1", ""), doc_task("t2", "")]);
     block(&mut fx, "t2", window_of(&windows, "t2"));
     to_queue(&mut fx, "t1", window_of(&windows, "t1"));
@@ -453,15 +467,26 @@ fn full_request_does_nothing_for_an_untiered_profile() {
     let before = fx.run().clone();
     let mut effects = Vec::new();
     let now = fx.now;
-    assert!(!request(
+    for why in [FullWhy::Idle, FullWhy::Completion] {
+        assert!(!request(fx.run_mut(), 1, why, now, &mut effects));
+        assert!(effects.is_empty());
+        assert_eq!(fx.run(), &before);
+    }
+    assert!(request(
         fx.run_mut(),
         1,
         FullWhy::Deliver,
         now,
         &mut effects
     ));
-    assert!(effects.is_empty());
-    assert_eq!(fx.run(), &before);
+    let jobs = full_jobs(&effects);
+    assert_eq!(jobs.len(), 1, "{effects:#?}");
+    let spec = &jobs[0].1;
+    assert_eq!(
+        (spec.head.as_str(), spec.check.as_deref()),
+        (commit(1).as_str(), Some("cargo test"))
+    );
+    assert!(!spec.profile.is_tiered() && spec.cache.is_none());
 }
 
 #[test]
@@ -478,4 +503,42 @@ fn a_lost_tier3_is_issued_again_after_the_restart() {
     assert_eq!(jobs.len(), 1, "{effects:#?}");
     assert_ne!(jobs[0].0, lost);
     assert_eq!(fx.run().full_op, Some(jobs[0].0));
+}
+
+/// Milestone 9.2's M9.2.6 fix round 1: `StageFull.runs` counts every tier-3 run of the
+/// stage (the PR body's `tier 3 ×<c>`); an executor failure is not a run.
+#[test]
+fn the_stage_counts_every_tier3_run() {
+    let tasks = [doc_task("t1", ""), doc_task("t2", ""), doc_task("t3", "")];
+    let (mut fx, windows) = start_on(&profile(), &tasks);
+    block(&mut fx, "t3", window_of(&windows, "t3"));
+    assert_eq!(fx.run().stage(1).unwrap().full.runs, 0);
+    merge_tiered(&mut fx, "t1", window_of(&windows, "t1"), &commit(1));
+    let idle = fx.run().limits.testing.full_idle_secs;
+    let since = fx.run().queue_idle_since.unwrap();
+    let (op, _) = full_jobs(&fx.send(since + idle, EventKind::Tick))[0].clone();
+    fx.done(
+        op,
+        OpResult::Failed {
+            message: "no space left".into(),
+        },
+    );
+    assert_eq!(
+        fx.run().stage(1).unwrap().full.runs,
+        0,
+        "a failure is no run"
+    );
+    let jobs = full_jobs(&later(&mut fx, 600));
+    assert_eq!(jobs.len(), 1, "retried");
+    fx.done(jobs[0].0, tier(outcome(3, &[])));
+    assert_eq!(fx.run().stage(1).unwrap().full.runs, 1);
+    merge_tiered(&mut fx, "t2", window_of(&windows, "t2"), &commit(2));
+    let since = fx.run().queue_idle_since.unwrap();
+    let (op, _) = full_jobs(&fx.send(since + idle, EventKind::Tick))[0].clone();
+    fx.done(op, tier(outcome(3, &[])));
+    let stage = fx.run().stage(1).unwrap();
+    assert_eq!(
+        (stage.full.runs, stage.full.green_at.clone()),
+        (2, Some(commit(2)))
+    );
 }

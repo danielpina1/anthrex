@@ -46,6 +46,11 @@ const EDIT: &[(&str, Rule)] = &[
     // Milestone 9.1 decision 43: `amend_task` moves a task that has not started; its
     // range, 1 to `STAGES_MAX`, is the plan rules'.
     ("stage", Rule::Serde),
+    // Milestone 9.2 decision 30's `reply_comment`: its body's 1 to 4000 characters are
+    // `reply_edit`'s rule, with its own text; this only bounds what is read.
+    ("pr", Rule::Serde),
+    ("thread", Rule::Text(1, 64)),
+    ("body", Rule::Text(0, 16_000)),
 ];
 
 const TASK: &[(&str, Rule)] = &[
@@ -71,6 +76,8 @@ const TASK: &[(&str, Rule)] = &[
     ("stage", Rule::Serde),
     ("atomic", Rule::Serde),
     ("atomic_reason", Rule::Text(1, 300)),
+    // Milestone 9.2 decision 31: the review threads a fix task addresses.
+    ("addresses", Rule::List(0, 20, 64)),
     // Not in the schema (decision 23.1), but M8a's `PlanTask` reads it and rule 7.1
     // refuses it with its own text, which tells the model what to do.
     ("budget", Rule::Serde),
@@ -97,6 +104,7 @@ const OPS: &[&str] = &[
     "finish",
     "message",
     "refresh",
+    "reply_comment",
 ];
 
 /// One `plan_edit`: `Err` holds `<path>: <problem>`, the path relative to the edit.

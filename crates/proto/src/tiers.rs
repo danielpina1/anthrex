@@ -65,6 +65,10 @@ pub struct StageInfo {
     /// Milestone 9.0.6 decision 7: what this node can be asked to do now.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActionInfo>,
+    /// Milestone 9.2 decision 41: the stage's pull request, in `pr` mode. Left out when
+    /// `None`, so a local run's stages (and the digest built from them) are 9.1's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<crate::delivery::StagePrInfo>,
 }
 
 /// A task's last tier record (decision 55).

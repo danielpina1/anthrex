@@ -25,13 +25,15 @@ RUN_WAIT = 300.0
 # Every `anthrex run` command but accept: `run start`'s legal worst case is
 # `ensure_daemon` (`SPAWN_HANDOFF_GRACE` 0.25 s + `ENSURE_DAEMON_SOCKET_WAIT` 3 s,
 # `crates/tui/src/spawn.rs`) + `HANDSHAKE_TIMEOUT` (5 s, `crates/proto/src/lib.rs`) +
-# `RUN_REQUEST_TIMEOUT` (180 s, `crates/cli/src/run_cmd.rs`) = 188.25 s, above
-# `run_cmd`'s default of 28 s. 240 s clears it by about 27%.
-RUN_CMD_TIMEOUT = 240.0
+# `RUN_START_TIMEOUT` (575 s, `crates/cli/src/run_cmd.rs`: `RUN_REQUEST_TIMEOUT`'s
+# 180 s, the daemon's `PREFLIGHT_BOUND` of 365 s and 30 s, task M9.2.12 and the final
+# fix wave's ahead count) = 583.25 s, above `run_cmd`'s default of 28 s. 600 s clears
+# it by about 3%; every other run request waits only `RUN_REQUEST_TIMEOUT` (180 s).
+RUN_CMD_TIMEOUT = 600.0
 
 # `run accept` waits `FINISH_REQUEST_TIMEOUT` (`ACCEPT_MERGE_TIMEOUT` 600 s + 60 s,
 # `crates/cli/src/run_cmd.rs`) for its reply, so its legal worst case is 3.25 + 5 + 660
-# = 668.25 s, above `RUN_CMD_TIMEOUT`. 900 s clears it by about 35%.
+# = 668.25 s, above `RUN_CMD_TIMEOUT`'s 600 s. 900 s clears it by about 35%.
 ACCEPT_CMD_TIMEOUT = 900.0
 
 # How often the stage polls `anthrex run status --json`.
@@ -40,11 +42,19 @@ POLL = 0.5
 GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_PREFIX")
 
 
-def _git(args, cwd, fail):
+def git_env(extra=None):
+    """The environment every smoke `git` runs with: the location variables dropped, no
+    system or global config, never a prompt; plus `extra`."""
     env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = "/dev/null"
     env["GIT_TERMINAL_PROMPT"] = "0"
+    env.update(extra or {})
+    return env
+
+
+def _git(args, cwd, fail, extra_env=None):
+    env = git_env(extra_env)
     try:
         result = subprocess.run(
             ["git", *args],

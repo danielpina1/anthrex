@@ -48,6 +48,7 @@ mod clock;
 mod complete;
 pub(crate) mod deciders;
 mod deciders_size;
+pub mod delivery;
 mod dispatch;
 mod done;
 pub(crate) mod early;
@@ -64,6 +65,7 @@ mod integration;
 mod kinds;
 pub(crate) mod ladder;
 mod merge;
+mod op_result;
 mod ops;
 mod orch;
 mod orch_window;
@@ -96,7 +98,8 @@ pub(crate) use fixes::fix_text;
 pub(crate) use full::attention as full_attention;
 pub use history::HISTORY_FILE;
 pub(crate) use integration::attention as integration_attention;
-pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
+pub use op_result::OpResult;
+pub use ops::{OpKind, OverrideCount, ResolutionAt, ScratchAt};
 pub use orch::{OrchEvent, ScoutEnd};
 pub(crate) use propagate::{attention as propagate_attention, undelivered, undelivered_lines};
 pub use signals::INTERRUPT_GRACE_SECS;
@@ -233,6 +236,8 @@ pub enum EventKind {
     Tick,
     /// Milestone 9: the orchestrator's and sub-planners' events (`orch.rs`).
     Orch(OrchEvent),
+    /// Milestone 9.2 decision 25: `run deliver` and `run watch` (`delivery/`).
+    Delivery(delivery::DeliveryRequest),
 }
 
 /// The driver's translation of a window's session events (decision 27).
@@ -371,6 +376,7 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             orchestrator,
         } => promote::request(&mut state, reply, &run_id, orchestrator, now, &mut fx),
         EventKind::Orch(event) => orch::on_orch_event(&mut state, event, now, &mut fx),
+        EventKind::Delivery(request) => delivery::request(&mut state, request, now, &mut fx),
         EventKind::BaseAdvanced {
             run_id,
             to,

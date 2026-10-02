@@ -200,7 +200,7 @@ pub fn reviewer_prompt(
     // Decision 54 (ruling C-27, I-1): never for a `Single` untiered run (decision 6).
     lines.extend(tiers::interface_review_line(run, task));
     // Controller ruling C-21 (6).
-    lines.extend(tiers::sync_review_line(task));
+    lines.extend(tiers::sync_review_line(run, task));
     if task.test_mode == TestMode::Tdd {
         lines.push("Look first for tests that were weakened or made trivial to pass.".into());
     }

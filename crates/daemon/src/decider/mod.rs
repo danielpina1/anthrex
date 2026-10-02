@@ -7,12 +7,14 @@
 
 pub mod argv;
 pub mod call;
+pub mod ci;
 pub mod fallback;
 pub mod parse;
 pub mod prompt;
 pub mod schema;
 
 pub use argv::{AnswerSource, DECIDER_CAPS, DeciderCaps};
+pub use ci::{CI_SUMMARY_INPUT_BYTES, CiSummaryInput};
 
 use crate::headless::argv::CliCaps;
 use crate::manager::ManagerConfig;
@@ -24,7 +26,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// The four decider kinds (decision 17).
+/// The decider kinds (decision 17; milestone 9.2 decision 18 appends `CiSummary`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeciderKind {
@@ -32,15 +34,17 @@ pub enum DeciderKind {
     SizeCheck,
     CheckSummary,
     BlockedReason,
+    CiSummary,
 }
 
 impl DeciderKind {
-    /// Every kind, in the order the brief lists them.
-    pub const ALL: [DeciderKind; 4] = [
+    /// Every kind, in the order the briefs list them.
+    pub const ALL: [DeciderKind; 5] = [
         DeciderKind::Triage,
         DeciderKind::SizeCheck,
         DeciderKind::CheckSummary,
         DeciderKind::BlockedReason,
+        DeciderKind::CiSummary,
     ];
 
     /// The kind's name in prompts, schema file names and `fake-agent`'s scripts.
@@ -50,6 +54,7 @@ impl DeciderKind {
             DeciderKind::SizeCheck => "size_check",
             DeciderKind::CheckSummary => "check_summary",
             DeciderKind::BlockedReason => "blocked_reason",
+            DeciderKind::CiSummary => "ci_summary",
         }
     }
 }
@@ -129,6 +134,7 @@ pub enum DeciderRequest {
     SizeCheck(SizeCheckInput),
     CheckSummary(CheckSummaryInput),
     BlockedReason(BlockedReasonInput),
+    CiSummary(CiSummaryInput),
 }
 
 impl DeciderRequest {
@@ -138,6 +144,7 @@ impl DeciderRequest {
             DeciderRequest::SizeCheck(_) => DeciderKind::SizeCheck,
             DeciderRequest::CheckSummary(_) => DeciderKind::CheckSummary,
             DeciderRequest::BlockedReason(_) => DeciderKind::BlockedReason,
+            DeciderRequest::CiSummary(_) => DeciderKind::CiSummary,
         }
     }
 }
@@ -187,8 +194,18 @@ pub enum BlockKind {
 pub enum DeciderAnswer {
     Triage(TriageAnswer),
     SizeCheck(Vec<SizeVerdict>),
-    CheckSummary { lines: Vec<String> },
-    BlockedReason { kind: BlockKind, reason: String },
+    CheckSummary {
+        lines: Vec<String>,
+    },
+    BlockedReason {
+        kind: BlockKind,
+        reason: String,
+    },
+    CiSummary {
+        lines: Vec<String>,
+        failing_tests: Vec<String>,
+        category: proto::CiCategory,
+    },
 }
 
 /// A decider's result: always an answer, from the decider or from its fallback.
@@ -264,6 +281,8 @@ impl DeciderContext {
 mod tests;
 #[cfg(test)]
 mod tests_argv;
+#[cfg(test)]
+mod tests_ci;
 #[cfg(test)]
 mod tests_context;
 #[cfg(test)]

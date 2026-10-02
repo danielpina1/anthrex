@@ -45,6 +45,7 @@ from pty_smoke_run import run_engine_stage
 from pty_smoke_adapt import DECIDER_DIR, adapt_stage
 from pty_smoke_orch import orch_stage
 from pty_smoke_tiers import tiers_stage
+from pty_smoke_pr import pr_stage
 from pty_smoke_run_view import run_view_stage
 from pty_smoke_tui import tui_stage
 
@@ -71,6 +72,9 @@ ENV["ANTHREX_DATA_DIR"] = DATA_DIR
 ENV["ANTHREX_CLAUDE_BIN"] = FAKE_AGENT_BIN
 ENV["ANTHREX_CODEX_BIN"] = FAKE_AGENT_BIN
 ENV["ANTHREX_DECIDER_BIN"] = FAKE_AGENT_BIN
+# Task M9.2.12's fix round (m1): no preflight or detection runs the user's `gh`.
+ENV["ANTHREX_CODE_HOST"] = "gh"
+ENV["ANTHREX_GH_BIN"] = "/nonexistent/anthrex-test/gh"
 ENV["FAKE_AGENT_DECIDER_DIR"] = DECIDER_DIR
 ENV["FAKE_AGENT_SCRIPT"] = FAKE_AGENT_SCRIPT
 # Where fake-agent's `transcript` steps append, and the `transcript_path` it puts in every
@@ -351,13 +355,15 @@ class Screen:
 class PtyProc:
     """A process running under a PTY, with a reconstructed screen and wait-for-text helpers."""
 
-    def __init__(self, argv):
+    def __init__(self, argv, env=None):
+        # `env`: stage 11i's own daemon's environment (`scripts/pty_smoke_pr.py`); every
+        # other stage runs with the script's `ENV`.
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             # Child
             try:
                 os.chdir(REPO)
-                os.execvpe(argv[0], argv, ENV)
+                os.execvpe(argv[0], argv, env if env is not None else ENV)
             except Exception as e:  # pragma: no cover
                 os.write(2, f"exec failed: {e}\n".encode())
                 os._exit(127)
@@ -1734,6 +1740,7 @@ def main():
     run_view_stage(PtyProc, BIN, run_cmd, fail)
     orch_stage(PtyProc, BIN, run_cmd, fail)
     tiers_stage(PtyProc, BIN, run_cmd, fail)
+    pr_stage(PtyProc, BIN, run_cmd, fail, ENV)
     tui_stage(PtyProc, BIN, run_cmd, fail, ANTHREX_CONFIG_PATH)
 
     print("== stage 12: stop the daemon, verify status ==")
@@ -1791,9 +1798,24 @@ def main():
     print("\nALL SMOKE STAGES PASSED")
 
 
+def only(stage):
+    """`ANTHREX_SMOKE_ONLY=<stage>`: runs that one stage alone, for a stage that needs
+    nothing the stages before it set up. Only `11i` qualifies: it runs its own daemon
+    (`scripts/pty_smoke_pr.py`). The merge gate is the whole script, without it."""
+    stages = {"11i": lambda: pr_stage(PtyProc, BIN, run_cmd, fail, ENV)}
+    if stage not in stages:
+        fail(f"ANTHREX_SMOKE_ONLY={stage!r}: only {sorted(stages)} can run alone")
+    ensure_binary()
+    stages[stage]()
+    print(f"\nSMOKE STAGE {stage} PASSED (the other stages did not run)")
+
+
 if __name__ == "__main__":
     try:
-        main()
+        if os.environ.get("ANTHREX_SMOKE_ONLY"):
+            only(os.environ["ANTHREX_SMOKE_ONLY"])
+        else:
+            main()
     finally:
         # Always try to stop the daemon, even on failure, so nothing is left running.
         try:

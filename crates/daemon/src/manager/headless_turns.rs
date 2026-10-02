@@ -443,7 +443,23 @@ impl WindowManager {
         };
         let args = self.session_args(&spec, &session, &text, id);
         let line = (spec.runtime == Runtime::Claude).then(|| user_message(&text, Some(session_id)));
-        let handle = self.spawn_process(id, &spec, args, line).await?;
+        let handle = self.spawn_process(id, &spec, args, None).await?;
+        if let Some(line) = line
+            && let Err(error) = handle.send_line(line)
+        {
+            // CI flake F-b: the process can exit before its message is written (a
+            // resume of an unknown session does at once). Its own reason, when it gives
+            // one within the time its exit takes to arrive, is the error; else the write.
+            handle.kill(self.config.kill_grace);
+            let bound = self.config.kill_grace + OUTPUT_GRACE + Duration::from_secs(1);
+            if let Ok(Ok(Err(reason))) = tokio::time::timeout(bound, started).await {
+                if let Some(cancel) = *claim.cancel.borrow() {
+                    return Err(cancelled(id, cancel));
+                }
+                anyhow::bail!("could not resume session {session_id}: {reason}");
+            }
+            return Err(error.context("could not write the turn's message"));
+        }
         self.install(id, &handle)?;
         let timeout = self.config.resume_start_timeout;
         match tokio::time::timeout(timeout, started).await {

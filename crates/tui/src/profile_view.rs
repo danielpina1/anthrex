@@ -1,5 +1,6 @@
 //! Milestone 9.0.6 decision 35: the Profile screen's view of a `RepoProfile`, pure.
-//! The four groups (Interfaces "Profile groups"), one row per key with its value, its
+//! The groups (Interfaces "Profile groups", and milestone 9.2's `delivery`), one row per
+//! key with its value, its
 //! verification record and, on the proposal view, its mark against the stored profile;
 //! the check cell; each key's editor kind; and the TOML literal an edit sends, which
 //! `apply_edit`'s `parse_value` reads back exactly (`daemon/src/profile/proposal.rs:193`).
@@ -10,8 +11,9 @@ use proto::{CommandCheck, ProfileVerification, RepoProfile};
 use std::collections::BTreeSet;
 
 /// The groups and their keys, in order. The environment group's `env` is one row per
-/// `env.<NAME>` (preflight F28), then a row to add one.
-const GROUPS: [(&str, &[&str]); 4] = [
+/// `env.<NAME>` (preflight F28), then a row to add one. Milestone 9.2 decision 3's
+/// `delivery` group edits the `[delivery]` table's two keys (task M9.2.15).
+const GROUPS: [(&str, &[&str]); 5] = [
     (
         "commands",
         &[
@@ -55,6 +57,7 @@ const GROUPS: [(&str, &[&str]); 4] = [
             "conventions",
         ],
     ),
+    ("delivery", &["delivery.mode", "delivery.remote"]),
     ("environment", &["env"]),
 ];
 
@@ -122,6 +125,7 @@ pub fn kind_of(key: &str) -> Kind {
         k if k == ENV_ADD || k.starts_with("env.") => Kind::Env,
         "check_timeout_secs" | "full_shards" => Kind::Number,
         "module_names" => Kind::Choice(&["cargo", "dir"]),
+        "delivery.mode" => Kind::Choice(&["local", "pr"]),
         "output_filter" => Kind::Choice(&["failures-only", "tail", "none"]),
         k if LISTS.contains(&k) => Kind::List,
         _ => Kind::Text,
@@ -165,11 +169,16 @@ fn table_of(profile: &RepoProfile) -> toml::Table {
 }
 
 /// A key's value in `table`, `None` for an absent key or an empty list (as
-/// `profile_toml` leaves them out). `env.<NAME>` reads the environment table.
+/// `profile_toml` leaves them out). `env.<NAME>` reads the environment table, and
+/// `delivery.<sub>` the `[delivery]` table.
 fn value_in(table: &toml::Table, key: &str) -> Option<toml::Value> {
-    let value = match key.strip_prefix("env.") {
-        Some(name) => table.get("env")?.as_table()?.get(name)?,
-        None => table.get(key)?,
+    let nested = |table_name: &str, sub: &str| table.get(table_name)?.as_table()?.get(sub);
+    let value = if let Some(name) = key.strip_prefix("env.") {
+        nested("env", name)?
+    } else if let Some(sub) = key.strip_prefix("delivery.") {
+        nested("delivery", sub)?
+    } else {
+        table.get(key)?
     };
     match value {
         toml::Value::Array(items) if items.is_empty() => None,
@@ -275,8 +284,16 @@ pub fn edit_text(profile: &RepoProfile, key: &str) -> String {
 /// `toml::Value`'s `Display` (a string quoted and escaped, a list an array of its
 /// non-blank trimmed lines, a number an integer), which `parse_value` reads back as
 /// exactly that value. An environment value is sent as typed, since `apply_edit`
-/// stores it unparsed.
+/// stores it unparsed; a `delivery.*` value bare and trimmed (`pr`, not `"pr"`), since
+/// `proposal_delivery::edit` reads the text as `profile edit delivery.mode=pr` sends it.
 pub fn value_literal(key: &str, typed: &str) -> Result<String, String> {
+    if key.starts_with("delivery.") {
+        let text = typed.trim();
+        if text.is_empty() {
+            return Err("type a value first, or u to unset".to_string());
+        }
+        return Ok(text.to_string());
+    }
     let value = match kind_of(key) {
         Kind::Env => return Ok(typed.to_string()),
         Kind::List => toml::Value::Array(

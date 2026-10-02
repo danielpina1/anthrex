@@ -42,7 +42,7 @@ fn in_flight(run: &Run, id: Option<&str>, append_only: bool) -> bool {
 }
 
 /// One line appended for `task` (`None`: the run's own).
-fn append(run: &mut Run, task: Option<&str>, line: HistoryLine, fx: &mut Vec<Effect>) {
+pub(super) fn append(run: &mut Run, task: Option<&str>, line: HistoryLine, fx: &mut Vec<Effect>) {
     let record_id = match &line {
         HistoryLine::Task(r) => r.record_id.clone(),
         HistoryLine::Run(r) => r.record_id.clone(),
@@ -51,6 +51,7 @@ fn append(run: &mut Run, task: Option<&str>, line: HistoryLine, fx: &mut Vec<Eff
         HistoryLine::Tier(r) => r.record_id.clone(),
         HistoryLine::Flaky(r) => r.record_id.clone(),
         HistoryLine::Bisect(r) => r.record_id.clone(),
+        HistoryLine::Stage(r) => r.record_id.clone(),
     };
     let kind = OpKind::AppendHistory {
         path: run.repo_dir.join(HISTORY_FILE),

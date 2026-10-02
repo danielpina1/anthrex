@@ -72,7 +72,19 @@
 /// variants are appended last, so a milestone-9.1 `run.json` and snapshot still load.
 /// Derivation: `PROTO_VERSION` was 12 at `crates/proto/src/lib.rs:66` before this change
 /// (set by M9.1); 12 + 1 = 13.
-pub const PROTO_VERSION: u32 = 13;
+///
+/// Milestone 9.2 task 2 bumps this to 14: it adds `RunRequest::{Deliver, Watch}`, the
+/// `delivery` field of `RunRequest::{Start, StartGoal}`, `PlanEdit::ReplyComment`,
+/// `PlanTask.addresses`, `HoldKind::Fix`, the snapshot's `RunInfo.delivery` and
+/// `StageInfo.pr` (`proto::delivery`), the profile's `[delivery]` table and the
+/// `stage` history line. Every new field is `#[serde(default)]` and every new variant
+/// is appended last (after 9.0.6's `Settings`), so a milestone-9.1 or 9.0.6 `run.json`,
+/// plan, profile, snapshot and history still load. Derivation: milestone 9.0.6 merged
+/// first and took 13 (above); `PROTO_VERSION` was 13 on `main` at the merge
+/// (`bdfe635`); 13 + 1 = 14. Task M9.2.15's fix round adds `DeliveryInfo.alerts`
+/// (`DeliveryAlert`, ruling R-13) within 14: the version is unreleased and this
+/// milestone's own, and the field is `#[serde(default)]` and left out when empty.
+pub const PROTO_VERSION: u32 = 14;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -85,6 +97,7 @@ pub mod actions;
 pub mod adapt;
 pub mod codec;
 pub mod conversation;
+pub mod delivery;
 pub mod history;
 pub mod messages;
 pub mod orch;
@@ -111,11 +124,15 @@ pub use conversation::{
     Block, Conversation, DegradeReason, DropCause, NoticeKind, Role, ToolResult, ToolState, Turn,
     TurnPatch, TurnState,
 };
+pub use delivery::{
+    CheckRunInfo, CiCategory, CiState, DeliveryAlert, DeliveryAlertKind, DeliveryInfo,
+    DeliveryMode, DeliveryProfile, MergeMethod, PrState, StageOutcome, StagePrInfo, ThreadCounts,
+};
 pub use history::{
     BisectLine, FlakyProposal, FlakyRecord, GateTally, HISTORY_VERSION, HistoryLine, HistoryStats,
     RevertRecord, RoleOutcome, RoleRoutingDecision, RoleRoutingInput, RoutingCandidate,
-    RoutingDecision, RoutingInput, RunRecord, SeverityTally, StatsRow, TaskOutcome, TaskRecord,
-    TierRunRecord,
+    RoutingDecision, RoutingInput, RunRecord, SeverityTally, StageLine, StatsRow, TaskOutcome,
+    TaskRecord, TierRunRecord,
 };
 pub use messages::{ClientMsg, DaemonMsg, HookSource};
 pub use orch::{
@@ -163,6 +180,10 @@ mod actions_tests;
 mod settings_tests;
 
 #[cfg(test)]
+#[path = "delivery_actions_tests.rs"]
+mod delivery_actions_tests;
+
+#[cfg(test)]
 #[path = "adapt_tests.rs"]
 mod adapt_tests;
 
@@ -173,8 +194,8 @@ mod orch_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_thirteen() {
-        assert_eq!(super::PROTO_VERSION, 13);
+    fn proto_version_is_fourteen() {
+        assert_eq!(super::PROTO_VERSION, 14);
     }
 
     #[test]

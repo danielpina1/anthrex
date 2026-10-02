@@ -190,26 +190,44 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
 /// Milestone 9.0.7 decision 21: ` run · <run name> `, and right-aligned in the top border
 /// ` <m>/<n> merged · <age> ` (`<age>` since approval, else creation, on the daemon's
 /// clock) or ` planning · <age> `. The name is cut to what the right text leaves; the
-/// right text goes first when even a short name would not fit beside it.
+/// right text goes first when even a short name would not fit beside it. Milestone 9.2
+/// decision 36: a delivering `pr` run's reads ` <m>/<n> merged · delivering · <age> `,
+/// else ` delivering · <age> ` (review finding I1: never wider than the plain form,
+/// `delivering` being as wide as `<m>/<n> merged` with one-digit counts and narrower
+/// past them, so the state word shows wherever the plain form would).
 fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
     let Some(run) = app.runs.runs.iter().find(|run| run.run_id == run_id) else {
         return (format!("run {}", crate::safe_text::one_line(run_id)), None);
     };
     let since = |at: u64| tree::format_elapsed(app.run_age(at));
-    let right = if run.state == proto::RunState::Planning {
-        format!("planning · {}", since(run.created_at))
+    let rights = if run.state == proto::RunState::Planning {
+        vec![format!("planning · {}", since(run.created_at))]
     } else {
         let (merged, total) = tree::run_progress(run);
         let at = run.approved_at.unwrap_or(run.created_at);
-        format!("{merged}/{total} merged · {}", since(at))
+        match crate::inspector::delivering(run) {
+            true => vec![
+                format!("{merged}/{total} merged · delivering · {}", since(at)),
+                format!("delivering · {}", since(at)),
+            ],
+            false => vec![format!("{merged}/{total} merged · {}", since(at))],
+        }
     };
     // The corners, the title's own spaces and `run · `, the right text's two spaces,
     // and a column between the two.
     let chrome = 2 + 2 + 6 + 1;
-    let right_width = u16::try_from(right.width() + 2).unwrap_or(u16::MAX);
-    let (room, right) = match width.checked_sub(chrome + right_width) {
-        Some(room) if room >= MIN_NAME_ROOM => (room, Some(right)),
-        _ => (width.saturating_sub(chrome), None),
+    let fits = |right: &String| {
+        let right_width = u16::try_from(right.width() + 2).unwrap_or(u16::MAX);
+        width
+            .checked_sub(chrome + right_width)
+            .filter(|room| *room >= MIN_NAME_ROOM)
+    };
+    let (room, right) = match rights
+        .into_iter()
+        .find_map(|r| fits(&r).map(|room| (room, r)))
+    {
+        Some((room, right)) => (room, Some(right)),
+        None => (width.saturating_sub(chrome), None),
     };
     let name = super::kit::run_name_in(&run.goal, &run.run_id, room, app.palette());
     (format!("run · {name}"), right)

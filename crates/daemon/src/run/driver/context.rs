@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use super::DONE_CHECK_GIT_TIMEOUT;
 use crate::headless::argv::CliCaps;
+use crate::host::CodeHost;
 use crate::live_config::{LiveSettings, SettingsIo};
 use crate::manager::{GitRoots, ManagerConfig};
 
@@ -32,9 +33,17 @@ pub struct RunContext {
     /// Milestone 9.1 decision 3: the daemon's `[testing]` table, read once at start;
     /// each run freezes its run rules from it (`RunLimits.testing`).
     pub testing: config::Testing,
+    /// Milestone 9.2 decision 16: the daemon's `[delivery]` table, read once at start;
+    /// each run freezes it (`RunDelivery.limits`).
+    pub delivery: config::Delivery,
     /// The git budget of `task_result`'s reads and of `ResolveTarget`: always
     /// [`GitBudget::DONE_CHECK`] in the daemon. A test seam only (M9.1 flake fix).
     pub read_git: GitBudget,
+    /// Milestone 9.2 decision 15: the daemon's one code host, built once from
+    /// `ManagerConfig.code_host` (`RunContext::new`); the profile service shares it.
+    pub host: Arc<dyn CodeHost>,
+    /// A test seam: caps every host op's bound (decision 9). `None` in the daemon.
+    pub host_cap: Option<Duration>,
 }
 
 /// One git read's budget: a deadline for all its calls, and a cap on each call's own
@@ -77,8 +86,37 @@ impl RunContext {
             git: OsString::from("git"),
             cli_caps: manager.cli_caps,
             testing: config::Testing::default(),
+            delivery: config::Delivery::default(),
             read_git: GitBudget::DONE_CHECK,
+            host: crate::host::select::build(&manager.code_host),
+            host_cap: None,
         }
+    }
+
+    /// This context with `host` in place of the one `ManagerConfig` chose (tests).
+    pub fn with_host(mut self, host: Arc<dyn CodeHost>) -> Self {
+        self.host = host;
+        self
+    }
+
+    /// The daemon's context: `manager`'s, with the `[orchestrator]`, `[testing]` and
+    /// `[delivery]` tables of the loaded `config.toml`. `lifecycle` builds the daemon's
+    /// context with it, so a test covers the same wiring (M9.2.3's review fix 1).
+    pub fn from_config(
+        data_dir: PathBuf,
+        manager: &ManagerConfig,
+        config: &config::Config,
+        git_roots: Arc<dyn GitRoots>,
+    ) -> Self {
+        RunContext::new(data_dir, manager, config.orchestrator.clone(), git_roots)
+            .with_testing(config.testing.clone())
+            .with_delivery(config.delivery.clone())
+    }
+
+    /// This context with the daemon's `[delivery]` table (the defaults otherwise).
+    pub fn with_delivery(mut self, delivery: config::Delivery) -> Self {
+        self.delivery = delivery;
+        self
     }
 
     /// This context with the daemon's `[testing]` table (the defaults otherwise).

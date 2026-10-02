@@ -114,6 +114,12 @@ fn describe_one(edit: &PlanEdit) -> String {
         // Decision 40's wording: `message t1,t2 (change)`.
         PlanEdit::Message { to, kind, .. } => format!("message {to} ({})", kind_label(*kind)),
         PlanEdit::Refresh { task_id } => format!("refresh {task_id}"),
+        // Milestone 9.2 decision 30.
+        // Task M9.2.10: `thread` is a key (`t9`) or a ref (`142:t9`).
+        PlanEdit::ReplyComment { pr, thread, .. } => {
+            let key = thread.strip_prefix(&format!("{pr}:")).unwrap_or(thread);
+            format!("reply to {pr}:{key}")
+        }
     }
 }
 

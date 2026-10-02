@@ -1,0 +1,7 @@
+build (macos-latest)	UNKNOWN STEP	﻿2026-07-03T11:15:45.0380460Z Current runner version: '2.335.1'
+build (macos-latest)	UNKNOWN STEP	2026-07-03T11:15:45.0401120Z ##[group]Runner Image Provisioner
+build (macos-latest)	UNKNOWN STEP	2026-07-03T11:15:45.0401740Z Hosted Compute Agent
+build (macos-latest)	UNKNOWN STEP	2026-07-03T11:20:48.9942160Z --- FAIL: TestViewRun (0.02s)
+build (macos-latest)	UNKNOWN STEP	2026-07-03T11:20:49.0043730Z     --- FAIL: TestViewRun/web_with_yaml (0.00s)
+build (macos-latest)	UNKNOWN STEP	2026-07-03T11:20:49.0562290Z     --- FAIL: TestViewRun/web_with_yaml_and_ref (0.00s)
+build (windows-latest)	UNKNOWN STEP	2026-07-03T11:22:48.7834913Z --- FAIL: TestViewRun (0.02s)

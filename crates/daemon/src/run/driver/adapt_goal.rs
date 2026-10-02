@@ -11,11 +11,12 @@ use std::time::Duration;
 
 use proto::run_wire::request;
 use proto::{
-    DeciderMode, HistoryLine, OrchestratorChoice, Plan, ProfileSpec, ProposalOrigin, ProposalState,
-    RepoProfile, RoleRoutingInput, RunPath, RunReply, TriageInfo,
+    DeciderMode, DeliveryMode, HistoryLine, OrchestratorChoice, Plan, ProfileSpec, ProposalOrigin,
+    ProposalState, RepoProfile, RoleRoutingInput, RunPath, RunReply, TriageInfo,
 };
 
 use super::super::build::{Planned, Shape};
+use super::super::delivery::{DeliveryStart, Frozen};
 use super::super::{RunService, unix_now};
 use super::{Adaptation, read_evidence, unparseable};
 use crate::decider::call::decide;
@@ -106,7 +107,7 @@ impl RunService {
         dir: PathBuf,
         (trust_project, unconfined_checks): (bool, bool),
         yes: bool,
-        orchestrator: Option<OrchestratorChoice>,
+        (orchestrator, delivery): (Option<OrchestratorChoice>, Option<DeliveryMode>),
     ) -> RunReply {
         // Review m2: a blank goal never spends a triage call.
         if let Some(refusal) = triage::blank_goal(&goal) {
@@ -139,6 +140,15 @@ impl RunService {
                 return refused(no_profile(adaptation, &pre, proposal, flags).await);
             }
         };
+        // Milestone 9.2 decision 17: preflight before triage, so a refusal costs no
+        // decider call; the mode is resolved here, once.
+        let frozen = match self
+            .freeze_delivery(&pre, delivery, profile.delivery.as_ref())
+            .await
+        {
+            Ok(frozen) => frozen,
+            Err(message) => return refused(message),
+        };
         // 3. Triage.
         let decision = self
             .triage(
@@ -163,27 +173,23 @@ impl RunService {
         };
         let spec = profile.spec();
         let TriageRoute::Fast(task) = route else {
+            let p = (planned(info), frozen);
             return self
-                .start_planned(&goal, &spec, dir.clone(), flags, planned(info))
+                .start_planned(&goal, &spec, dir.clone(), flags, p)
                 .await;
         };
         // 5. The fast path: M8a's whole start path for a one-task plan.
         let plan = triage::fast_plan(&goal, *task, spec.clone());
+        let all = (true, trust_project, unconfined_checks);
+        let done = DeliveryStart::Done(frozen.clone());
         let built = match self
-            .build_plan(
-                plan,
-                dir.clone(),
-                true,
-                trust_project,
-                unconfined_checks,
-                Shape::Fast,
-            )
+            .build_delivered(plan, dir.clone(), all, Shape::Fast, done)
             .await
         {
             Ok(run) => Ok(run),
             Err(BuildError::Plan(errors)) => Err(errors),
             Err(BuildError::NotFast(reason)) => {
-                let p = planned(triage::not_fast(info, reason));
+                let p = (planned(triage::not_fast(info, reason)), frozen);
                 return self.start_planned(&goal, &spec, dir, flags, p).await;
             }
             Err(BuildError::Refused(message)) => return refused(message),
@@ -191,7 +197,7 @@ impl RunService {
         let mut run = match triage::check_fast(built) {
             Ok(run) => run,
             Err(reason) => {
-                let p = planned(triage::not_fast(info, reason));
+                let p = (planned(triage::not_fast(info, reason)), frozen);
                 return self.start_planned(&goal, &spec, dir, flags, p).await;
             }
         };
@@ -353,7 +359,7 @@ impl RunService {
         profile: &ProfileSpec,
         dir: PathBuf,
         (trust_project, unconfined_checks): (bool, bool),
-        planned: Planned,
+        (planned, frozen): (Planned, Frozen),
     ) -> RunReply {
         let info = planned.triage.clone();
         let plan = Plan {
@@ -365,10 +371,9 @@ impl RunService {
             tasks: Vec::new(),
         };
         let shape = Shape::Planned(Box::new(planned));
-        let run = match self
-            .build_plan(plan, dir, false, trust_project, unconfined_checks, shape)
-            .await
-        {
+        let flags = (false, trust_project, unconfined_checks);
+        let done = DeliveryStart::Done(frozen);
+        let run = match self.build_delivered(plan, dir, flags, shape, done).await {
             Ok(run) => run,
             Err(error) => return refused(error.text()),
         };

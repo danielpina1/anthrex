@@ -9,6 +9,7 @@ use serde_json::{Map, Value, json};
 use super::json::{cut, cut_opt, fnv1a, fold_all, hh_mm, label, route_text};
 use super::{PlannerPhase, RefreshState};
 use crate::run::contract::sha7;
+use crate::run::delivery::digest as delivery;
 use crate::run::engine::schedule::{readers_busy, writers_busy};
 use crate::run::model::{Run, Task};
 
@@ -132,6 +133,7 @@ fn build(run: &Run, now: u64, for_fingerprint: bool) -> Value {
         // Milestone 9.1 decision 58: the snapshot's stages, every string cut as the
         // other engine lines are (ruling C-24).
         "stages": stages(run),
+        "delivery": delivery::block(run, delivery::Shape::digest(for_fingerprint)),
         "attention": crate::run::snapshot::attention(run, now).iter().map(|l| cut(l, LINE_MAX)).collect::<Vec<_>>(),
         "notes": orch.map(|o| o.notes.iter().map(|n| cut(n, LINE_MAX)).collect::<Vec<_>>()).unwrap_or_default(),
         "task_notes": task_notes(run),
@@ -386,3 +388,7 @@ fn spend(run: &Run) -> Value {
 #[cfg(test)]
 #[path = "digest_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests_delivery.rs"]
+mod tests_delivery;

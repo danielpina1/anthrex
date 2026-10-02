@@ -20,7 +20,6 @@ use crate::run::tiers::{TierOutcome, TierSpec};
 /// Why a tier-3 job starts (decision 17): (b) the queue is idle, (c) completion, (a)
 /// before a stage PR opens (9.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum FullWhy {
     Idle,
     Completion,
@@ -47,6 +46,11 @@ const LINE_MAX: usize = 200;
 #[path = "full_ended.rs"]
 mod ended;
 pub(super) use ended::fix_ended_pass;
+
+// The run's tier-3 attention lines, split out to keep this file under 600 lines.
+#[path = "full_attention.rs"]
+mod attention_lines;
+pub(crate) use attention_lines::attention;
 
 /// Tier 3 runs at all: a tiered profile with a `check` (decision 20: without one the
 /// run is unverified and tier 3 runs nothing).
@@ -252,10 +256,10 @@ pub(super) fn retryable(run: &Run) -> bool {
 }
 
 /// Decision 17(a), 9.2's entry: tier 3 on stage `stage` at `FullStage` priority unless
-/// the profile is untiered, the run is not running, the stage is not created or its
+/// the profile has no tier 3, the run is not running, the stage is not created or its
 /// head is green already, or a tier-3 job or bisect is in flight. `true` when a job
-/// started.
-#[cfg_attr(not(test), allow(dead_code))]
+/// started. 9.2 decision 19: before a PR opens, an untiered profile's tier 3 is its
+/// `check`, one step (the executor runs it as written: no cache, no retry; no bisect).
 pub(crate) fn request(
     run: &mut Run,
     stage: u16,
@@ -263,7 +267,8 @@ pub(crate) fn request(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> bool {
-    if !active(run) || run.state != RunState::Running || in_flight(run) {
+    let untiered = why == FullWhy::Deliver && run.profile.check.is_some();
+    if !(active(run) || untiered) || run.state != RunState::Running || in_flight(run) {
         return false;
     }
     let Some(s) = run.stage(stage) else {
@@ -348,6 +353,7 @@ pub(super) fn full_done(
             let failing = record.failing.clone();
             if let Some(s) = stage_mut(run, n) {
                 s.full.last = Some(record);
+                s.full.runs = s.full.runs.saturating_add(1);
                 s.full.infra = None;
             }
             if outcome.ok {
@@ -403,7 +409,9 @@ fn red(
         mark_red(run, n, commit, text.clone());
         return wake_on_head(run, n, commit, text);
     }
-    let reason = if failing.is_empty() {
+    let reason = if !tiers::tiered(run) {
+        "the profile is untiered, so nothing is bisected".to_string()
+    } else if failing.is_empty() {
         "no failing test names to bisect with".to_string()
     } else if run.profile.single_test.is_none() {
         "the profile has no single_test to bisect with".to_string()
@@ -530,60 +538,4 @@ fn mark_red(run: &mut Run, n: u16, commit: &str, note: String) {
         s.full.red_at = Some(commit.to_string());
         s.full.note = Some(note);
     }
-}
-
-/// The run's tier-3 attention lines: while it runs, each stage red on its head with its
-/// note (decision 38's line); once it completed red (`final_check_failed`), decision
-/// 19's `tier 3 red on stage <n>: <tests>` in place of M8a's final-check line.
-pub(crate) fn attention(run: &Run) -> Vec<String> {
-    let mut lines = red_lines(run);
-    if run.final_check_failed || !run.state.is_terminal() {
-        // Ruling C-18: a stage held after the executor's failures.
-        for s in run
-            .stages
-            .iter()
-            .filter(|s| lacks_green(run, s) && infra_held(s))
-        {
-            if let Some(i) = infra_at_head(s) {
-                lines.push(format!(
-                    "stage {}: could not run tier 3 ({}); anthrex run resume retries",
-                    s.n, i.line
-                ));
-            }
-        }
-    }
-    lines
-}
-
-fn red_lines(run: &Run) -> Vec<String> {
-    let red = run
-        .stages
-        .iter()
-        .filter(|s| red_at_head(s) && lacks_green(run, s));
-    if run.final_check_failed {
-        return red
-            .map(|s| {
-                // Ruling C-18: only a record of the red commit itself names tests.
-                let failing = s
-                    .full
-                    .last
-                    .as_ref()
-                    .filter(|t| !t.ok && s.full.red_at.as_deref() == Some(t.commit.as_str()))
-                    .map(|t| t.failing.clone())
-                    .unwrap_or_default();
-                match (&s.full.note, failing.is_empty()) {
-                    (Some(note), true) => note.clone(),
-                    _ => format!(
-                        "tier 3 red on stage {}: {}",
-                        s.n,
-                        first(&failing, ATTENTION_TESTS)
-                    ),
-                }
-            })
-            .collect();
-    }
-    if run.state.is_terminal() {
-        return Vec::new();
-    }
-    red.filter_map(|s| s.full.note.clone()).collect()
 }

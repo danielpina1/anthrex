@@ -205,7 +205,7 @@ fn history_lines_are_tagged() {
         assert!(json.starts_with(&format!("{{\"type\":\"{tag}\"")), "{json}");
         assert_eq!(serde_json::from_str::<HistoryLine>(&json).unwrap(), line);
     }
-    assert_eq!(HISTORY_VERSION, 3);
+    assert_eq!(HISTORY_VERSION, 4);
 }
 
 #[test]
@@ -284,6 +284,7 @@ fn every_new_request_and_reply_round_trips() {
             trust_project: true,
             unconfined_checks: false,
             orchestrator: None,
+            delivery: None,
         },
         RunRequest::Promote {
             run_id: "run-a1b2".into(),

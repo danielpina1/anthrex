@@ -6,6 +6,12 @@ use proto::{FinishAction, RunInfo, RunReply, RunState};
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Accept's `research report: <path>` line, through `printable` (deferred from task
+/// 14: the path is the daemon's text).
+pub(super) fn report_line(report: &std::path::Path) -> String {
+    status::printable(&format!("research report: {}", report.display()))
+}
+
 /// The text a wrong typed or `--confirm` id gets.
 const CONFIRM_MISMATCH: &str = "confirmation does not match the run id";
 
@@ -42,6 +48,11 @@ pub(super) async fn accept(
     base: Option<&str>,
 ) -> anyhow::Result<()> {
     let run_id = &info.run_id;
+    // Milestone 9.2 decision 38: a `pr` run's accept is the daemon's refusal, whatever
+    // its state, printed as it is and exit 1.
+    if info.delivery.is_some() {
+        return print_outcome(runs.finish(run_id, FinishAction::Accept, None).await?);
+    }
     if info.state != RunState::Complete {
         anyhow::bail!(
             "run {run_id} is {}; accept applies only to a complete run",
@@ -49,7 +60,7 @@ pub(super) async fn accept(
         );
     }
     if let Some(report) = &info.research_report {
-        eprintln!("research report: {}", report.display());
+        eprintln!("{}", report_line(report));
     }
     let mut asked = yes;
     let mut confirm = None;
@@ -64,7 +75,8 @@ pub(super) async fn accept(
             return print_outcome(reply);
         };
         if let Some(moved) = &base_moved {
-            eprint!("{}", status::base_moved_listing(&info.base_branch, moved));
+            let listing = status::base_moved_listing(&info.base_branch, moved);
+            eprint!("{}", status::printable(&listing));
         }
         // Review E-M6 (F4): on a base that has not moved, `--base` must name the run's
         // own base, or "merge only if the base is at X" would merge onto another.
@@ -171,7 +183,7 @@ async fn read_answer(prompt: &str, hint: &str) -> anyhow::Result<String> {
     if !terminal && !HINTED.swap(true, Ordering::Relaxed) {
         eprintln!("{hint}");
     }
-    eprint!("{prompt}");
+    eprint!("{}", status::printable(prompt));
     let _ = std::io::stderr().flush();
     let (read, line) = tokio::task::spawn_blocking(|| {
         let mut line = String::new();

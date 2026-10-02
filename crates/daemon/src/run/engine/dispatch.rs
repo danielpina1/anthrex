@@ -54,6 +54,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 gates::start_gates(run, now, fx);
                 merge::start_due_hand_backs(run, now, fx);
                 merge::start_merge(run, now, fx);
+                // Milestone 9.2 decisions 19-20: stage pull requests, before 17(b).
+                super::delivery::pass(run, now, fx);
                 // Milestone 9.1 decision 17(b): tier 3 when the queue is idle.
                 super::full::idle_pass(run, now, fx);
                 // Decision 36: a lost or backed-off bisect probe (task M9.1.15).

@@ -1,0 +1,3054 @@
+{
+  "approved_at": 2001,
+  "approved_by": "--yes",
+  "base_branch": "main",
+  "base_moved": null,
+  "base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "cancelled": false,
+  "codex_config_base": [],
+  "codex_project_config": null,
+  "created_at": 1000,
+  "data_dir": "/tmp/data/runs/engine-test-3f9a",
+  "decider_calls": 0,
+  "decider_fallbacks": 0,
+  "decider_queue": [],
+  "decider_usage": {
+    "cache_read": 0,
+    "cache_write": 0,
+    "input": 0,
+    "output": 0
+  },
+  "filter_prefixes": [],
+  "final_check_failed": false,
+  "finish_edit": false,
+  "finish_reply": null,
+  "fix_seq": 2,
+  "full_op": null,
+  "git_common_dir": "/tmp/p/.git",
+  "goal": "Engine test",
+  "graph_note": null,
+  "halt_retryable": false,
+  "halted_reason": null,
+  "history": true,
+  "id": "engine-test-3f9a",
+  "last_green_candidate": "6eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "limits": {
+    "api_key_helper": null,
+    "budget_l": {
+      "minutes": 120,
+      "tokens": null,
+      "tool_calls": 300
+    },
+    "budget_m": {
+      "minutes": 60,
+      "tokens": null,
+      "tool_calls": 150
+    },
+    "budget_s": {
+      "minutes": 15,
+      "tokens": null,
+      "tool_calls": 40
+    },
+    "claude_auth": "login",
+    "decider_mode": "off",
+    "decider_slot_wait_secs": 30,
+    "default_runtime": "claude",
+    "denials_before_block": 3,
+    "git_timeout_secs": 60,
+    "max_bounces": 2,
+    "max_readers": 3,
+    "max_tasks": 50,
+    "max_windows": 60,
+    "max_writers": 3,
+    "orch": {
+      "agent": {
+        "effort": "high",
+        "model": "",
+        "runtime": null
+      },
+      "max_scouts": 12,
+      "message_max_per_turn": 3,
+      "note_max_per_task": 10,
+      "planner_task_cap": 12,
+      "planners": {
+        "effort": "high",
+        "max_rejections": 5,
+        "max_tool_calls": 200,
+        "runtime": null,
+        "strength": "frontier",
+        "timeout_secs": 2400
+      },
+      "scouts": {
+        "default_runtime": "claude",
+        "effort": "low",
+        "runtime": null,
+        "strength": "fast"
+      },
+      "wake_orchestrator": true,
+      "wake_quiet_secs": 5
+    },
+    "rate_limit_retry_secs": 300,
+    "review_small": false,
+    "stall_after_secs": 600,
+    "testing": {
+      "bisect_fix_max": 2,
+      "flaky_quarantine_after": 3,
+      "flaky_window_days": 14,
+      "full_idle_secs": 120
+    },
+    "unconfined_checks": false,
+    "worker_allowed_tools": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "Agent",
+      "TodoWrite"
+    ],
+    "worker_codex_sandbox": "workspace-write",
+    "worker_permission_mode": "acceptEdits",
+    "worker_sandbox": true
+  },
+  "log": [
+    {
+      "at": 2001,
+      "text": "started; approved by --yes"
+    },
+    {
+      "at": 2002,
+      "text": "integration worktree ready"
+    },
+    {
+      "at": 2013,
+      "text": "merged t1 at 1eeeeee"
+    },
+    {
+      "at": 2021,
+      "text": "merged t2 at 2eeeeee"
+    },
+    {
+      "at": 2029,
+      "text": "merged t3 at 3eeeeee"
+    },
+    {
+      "at": 2046,
+      "text": "merged t4 at 4eeeeee"
+    },
+    {
+      "at": 2054,
+      "text": "merged t5 at 5eeeeee"
+    },
+    {
+      "at": 2062,
+      "text": "merged t6 at 6eeeeee"
+    },
+    {
+      "at": 2065,
+      "text": "every task is finished; verifying the refs"
+    },
+    {
+      "at": 2066,
+      "text": "stage 1: running tier 3 at 6eeeeee (completion)"
+    },
+    {
+      "at": 2067,
+      "text": "stage 1: bisect probe at b0b0b0b"
+    },
+    {
+      "at": 2067,
+      "text": "stage 1: tier 3 red (a::works); bisecting 6 merges"
+    },
+    {
+      "at": 2068,
+      "text": "stage 1: probe at b0b0b0b green"
+    },
+    {
+      "at": 2068,
+      "text": "stage 1: bisect probe at 6eeeeee"
+    },
+    {
+      "at": 2069,
+      "text": "stage 1: probe at 6eeeeee red"
+    },
+    {
+      "at": 2069,
+      "text": "stage 1: bisect probe at 3eeeeee"
+    },
+    {
+      "at": 2070,
+      "text": "stage 1: probe at 3eeeeee green"
+    },
+    {
+      "at": 2070,
+      "text": "stage 1: bisect probe at 4eeeeee"
+    },
+    {
+      "at": 2071,
+      "text": "stage 1: probe at 4eeeeee red"
+    },
+    {
+      "at": 2071,
+      "text": "fix task fix1 added for the bisect of t4"
+    },
+    {
+      "at": 2071,
+      "text": "stage 1: bisected to t4 in 4 probes; added fix task fix1"
+    }
+  ],
+  "merge_queue": [],
+  "next_decider": 1,
+  "next_message": 1,
+  "next_op": 60,
+  "onboarding_report": null,
+  "orch": {
+    "digest_fp": 2440710276256937391,
+    "digest_read_at": null,
+    "digest_rev": 28,
+    "epics": [],
+    "gate_holds": [],
+    "installed": {},
+    "note_seq": 0,
+    "orchestrator": {
+      "exited_at": null,
+      "first_prompt": "[anthrex] You are the orchestrator of run engine-test-3f9a in /tmp/x.\nGoal: Engine test\nPath: plan (triage: code/plan, decider: several modules)\nPlan gate: the user approves your submitted plan in the run view\nStart with get_context, then scout, then plan.",
+      "last_note_seq": 1,
+      "last_wake_rev": 0,
+      "launch_op": null,
+      "launches": 1,
+      "live": true,
+      "note_seqs": [
+        1
+      ],
+      "notes": [
+        "stage 1 tier 3 red (a::works): bisected to t4; added fix task fix1"
+      ],
+      "otlp_token": "",
+      "plan_submitted": true,
+      "route": {
+        "effort": "high",
+        "model": "claude-opus-5-5",
+        "runtime": "claude",
+        "strength": "frontier"
+      },
+      "routing": {
+        "candidates": [
+          {
+            "route": {
+              "effort": "high",
+              "model": "claude-haiku-4-5",
+              "runtime": "claude",
+              "strength": "fast"
+            },
+            "skipped_reason": "an earlier candidate was taken"
+          },
+          {
+            "route": {
+              "effort": "high",
+              "model": "claude-sonnet-5",
+              "runtime": "claude",
+              "strength": "standard"
+            },
+            "skipped_reason": "an earlier candidate was taken"
+          },
+          {
+            "route": {
+              "effort": "high",
+              "model": "claude-opus-5-5",
+              "runtime": "claude",
+              "strength": "frontier"
+            },
+            "skipped_reason": null
+          }
+        ],
+        "source": "roster_default"
+      },
+      "session": 1,
+      "start_error": null,
+      "started_at": 1000,
+      "summary": null,
+      "wakes": 0,
+      "window_id": 90
+    },
+    "planner_usage": {
+      "cache_read": 0,
+      "cache_write": 0,
+      "input": 0,
+      "output": 0
+    },
+    "research_report": null,
+    "run_scouts": [],
+    "yes": false
+  },
+  "orchestrator_usage": {
+    "cache_read": 0,
+    "cache_write": 0,
+    "input": 0,
+    "output": 0
+  },
+  "outbox": [],
+  "outcome": null,
+  "output_filter": "failures-only",
+  "path": null,
+  "paused_from": null,
+  "pending_ops": {
+    "59": {
+      "kind": {
+        "PrepareWorktree": {
+          "branch": "anthrex/engine-test-3f9a/fix1",
+          "env": [
+            [
+              "TARGET",
+              "/tmp/wt/runs/engine-test-3f9a/fix1/target"
+            ]
+          ],
+          "from": "6eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "path": "/tmp/wt/runs/engine-test-3f9a/fix1",
+          "root": "/tmp/x",
+          "setup": "make deps"
+        }
+      },
+      "op": 59,
+      "task_id": "fix1"
+    }
+  },
+  "plan_edits": [],
+  "plan_edits_since_approval": 0,
+  "profile": {
+    "cache_dirs": [],
+    "check": "cargo test",
+    "check_timeout_secs": 1800,
+    "confined_localhost_ports": [],
+    "confined_network": false,
+    "confined_unix_sockets": [],
+    "env": {
+      "TARGET": "{worktree}/target"
+    },
+    "generated": [],
+    "hub": [
+      "crates/proto/**"
+    ],
+    "manifests": [],
+    "modules": [
+      "crates/*"
+    ],
+    "protected": [
+      ".claude/**",
+      ".mcp.json",
+      ".codex/**",
+      "**/CLAUDE.md",
+      "**/AGENTS.md"
+    ],
+    "setup": "make deps",
+    "single_test": "cargo test -- --exact {test}",
+    "source": [
+      "crates/*/src/**"
+    ],
+    "test_passed": null,
+    "tiers": {
+      "build_check": "cargo build",
+      "full_shards": 1,
+      "full_triggers": [],
+      "module_graph": {
+        "command": "sh graph.sh"
+      },
+      "module_names": "dir",
+      "module_test": "cargo test -p {module} {filter:-E %}",
+      "module_tests": null,
+      "skip_markers": [],
+      "slow_tests": "test(e2e)",
+      "test_paths": [],
+      "timing_tests": null,
+      "toolchain_id": null
+    }
+  },
+  "profile_hash": "23e6b8c986322908",
+  "profile_languages": [],
+  "profile_source": null,
+  "project": "/tmp/p",
+  "promote_requested_at": null,
+  "propagate_due": [],
+  "protected_files": [],
+  "queue_idle_since": 2062,
+  "rate_limits": {},
+  "repo_dir": "",
+  "restored": null,
+  "revision": 71,
+  "role_routing_decisions": [],
+  "root": "/tmp/x",
+  "roster": [
+    {
+      "model": "claude-haiku-4-5",
+      "note": "",
+      "runtime": "claude",
+      "strength": "fast"
+    },
+    {
+      "model": "claude-sonnet-5",
+      "note": "",
+      "runtime": "claude",
+      "strength": "standard"
+    },
+    {
+      "model": "claude-opus-5-5",
+      "note": "",
+      "runtime": "claude",
+      "strength": "frontier"
+    },
+    {
+      "model": "",
+      "note": "",
+      "runtime": "codex",
+      "strength": "standard"
+    }
+  ],
+  "run_head": "6eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "run_record_written": false,
+  "scout_reports": [],
+  "scout_usage": {
+    "cache_read": 0,
+    "cache_write": 0,
+    "input": 0,
+    "output": 0
+  },
+  "session_nonce": 0,
+  "stage_layout": "single",
+  "stages": [
+    {
+      "bisect": null,
+      "branch": "anthrex/engine-test-3f9a/integration",
+      "created_at": 1000,
+      "created_from": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "floor": null,
+      "full": {
+        "bisect_fixes": 1,
+        "bisects": 1,
+        "ended": [
+          {
+            "at": 2071,
+            "culprit": "t4",
+            "fix_task": "fix1",
+            "head": "6eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "probes": 4,
+            "range": 6,
+            "reason": null
+          }
+        ],
+        "green_at": null,
+        "infra": null,
+        "last": {
+          "affected": "full suite (full suite)",
+          "at": 2067,
+          "cached": 0,
+          "commit": "6eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "failing": [
+            "a::works"
+          ],
+          "flaky": [],
+          "ok": false,
+          "secs": 30,
+          "steps": 1,
+          "tier": 3
+        },
+        "note": null,
+        "red_at": "6eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "head": "6eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "last_green_candidate": "6eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "merges": [
+        {
+          "task": {
+            "commit": "1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "id": "t1"
+          }
+        },
+        {
+          "task": {
+            "commit": "2eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "id": "t2"
+          }
+        },
+        {
+          "task": {
+            "commit": "3eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "id": "t3"
+          }
+        },
+        {
+          "task": {
+            "commit": "4eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "id": "t4"
+          }
+        },
+        {
+          "task": {
+            "commit": "5eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "id": "t5"
+          }
+        },
+        {
+          "task": {
+            "commit": "6eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "id": "t6"
+          }
+        }
+      ],
+      "n": 1,
+      "propagate_note": null,
+      "propagate_red": null,
+      "synced_from": null,
+      "tasks_in": [
+        "t1",
+        "t2",
+        "t3",
+        "t4",
+        "t5",
+        "t6"
+      ]
+    }
+  ],
+  "stale_profile": [],
+  "state": "running",
+  "tasks": [
+    {
+      "awaiting_deps": false,
+      "block": null,
+      "block_source": null,
+      "bounces": {
+        "check": 0,
+        "done": 0,
+        "merge": 0,
+        "proof": 0,
+        "review": 0
+      },
+      "branch": "anthrex/engine-test-3f9a/t1",
+      "budget": {
+        "minutes": 15,
+        "tokens": null,
+        "tool_calls": 40
+      },
+      "budget_exceeded": 0,
+      "cancel_deferred": false,
+      "checks": [
+        {
+          "at": 2012,
+          "code": 0,
+          "ok": true,
+          "on_candidate": false,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2012,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 1
+          },
+          "timed_out": false
+        },
+        {
+          "at": 2013,
+          "code": 0,
+          "ok": true,
+          "on_candidate": true,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2013,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 2
+          },
+          "timed_out": false
+        }
+      ],
+      "claim": null,
+      "clock": {
+        "restarted": 0,
+        "stopped": null
+      },
+      "conflicts": 0,
+      "decider_usage": {
+        "cache_read": 0,
+        "cache_write": 0,
+        "input": 0,
+        "output": 0
+      },
+      "diff": null,
+      "done": {
+        "red": null,
+        "session": 1,
+        "signal": "task_done",
+        "summary": "done",
+        "test": null
+      },
+      "epoch": null,
+      "escalated_from": null,
+      "failure_log": [],
+      "failures": 0,
+      "fixes": null,
+      "fresh_session": null,
+      "gate_op": null,
+      "gates_after_handback": false,
+      "handback_due": false,
+      "handed_back": false,
+      "head": "t1cccccccccccccccccccccccccccccccccccccc",
+      "held_answered": false,
+      "history": [
+        {
+          "at": 2002,
+          "text": "dispatched"
+        },
+        {
+          "at": 2003,
+          "text": "worker session 1 starting"
+        },
+        {
+          "at": 2010,
+          "text": "done (task_done); next: check"
+        },
+        {
+          "at": 2010,
+          "text": "running tier 1"
+        },
+        {
+          "at": 2012,
+          "text": "tier 1: build only (no module affected)"
+        },
+        {
+          "at": 2012,
+          "text": "check passed; next: merge_queue"
+        },
+        {
+          "at": 2012,
+          "text": "merging into the run branch"
+        },
+        {
+          "at": 2013,
+          "text": "tier 2: build only (no module affected)"
+        },
+        {
+          "at": 2013,
+          "text": "merged at 1eeeeee"
+        },
+        {
+          "at": 2014,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2015,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2016,
+          "text": "worktree removed"
+        }
+      ],
+      "history_written": false,
+      "hub": false,
+      "implicit_deps": [],
+      "max_rung": 0,
+      "merge_commit": "1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "merge_op": null,
+      "merged_without_approval": null,
+      "notes": [],
+      "orch": {
+        "gate_hold": null,
+        "integration_of": null,
+        "messages": [],
+        "refresh": null,
+        "refresh_merges": [],
+        "refresh_targets": [],
+        "research": null,
+        "research_append": null,
+        "review_range": null,
+        "rewrite_restarts": 0,
+        "worker_notes": []
+      },
+      "origin": "plan",
+      "override_count": null,
+      "pending_classification": null,
+      "pending_failure": null,
+      "phase_since": 2013,
+      "phases": {
+        "blocked": 0,
+        "check": 2,
+        "merge": 1,
+        "preparing": 4,
+        "proof": 0,
+        "queued": 1,
+        "review": 0,
+        "working": 4
+      },
+      "prewarmed": false,
+      "proofs": [],
+      "raised_size": null,
+      "ready_from": null,
+      "resolution": null,
+      "resolving": false,
+      "review_level": null,
+      "review_misses": 0,
+      "review_route": null,
+      "reviews": [],
+      "rounds": [
+        {
+          "activity": null,
+          "carried": [],
+          "closed_pid": null,
+          "count_failures": 0,
+          "count_op": null,
+          "count_retry_at": null,
+          "count_turn": 0,
+          "deaths": 0,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "denials": 0,
+          "ended": false,
+          "ended_at": null,
+          "excused_secs": 0,
+          "exited_pid": null,
+          "failed_error": null,
+          "failed_turn": "None",
+          "fallback": "None",
+          "fallback_waiting": false,
+          "in_retry_streak": false,
+          "interrupted": false,
+          "last_denial": null,
+          "last_event": 2011,
+          "last_text": null,
+          "launch_op": 5,
+          "open_subagents": [],
+          "pid": null,
+          "rate_limited_since": null,
+          "rate_limited_until": null,
+          "relaunch": null,
+          "resume_op": null,
+          "retiring": true,
+          "review_nudged": false,
+          "role": "worker",
+          "round": 1,
+          "route": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "sent_back_at": [],
+          "session": 1,
+          "session_id": "8f22d921-c257-424b-9431-2190b0c79213",
+          "stall": "Watching",
+          "started_at": 2003,
+          "tool_calls": 0,
+          "turn_denied": [],
+          "turn_had_task_done": false,
+          "turn_open": false,
+          "turns": 1,
+          "usage": {
+            "cache_read": 0,
+            "cache_write": 0,
+            "input": 0,
+            "output": 0
+          },
+          "window_id": 1,
+          "wrap_up_sent": false
+        }
+      ],
+      "route": {
+        "effort": "low",
+        "model": "claude-sonnet-5",
+        "runtime": "claude",
+        "strength": "standard"
+      },
+      "routing_decisions": [
+        {
+          "at": 2003,
+          "candidates": [
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-haiku-4-5",
+                "runtime": "claude",
+                "strength": "fast"
+              },
+              "skipped_reason": "strength fast, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-sonnet-5",
+                "runtime": "claude",
+                "strength": "standard"
+              },
+              "skipped_reason": null
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-opus-5-5",
+                "runtime": "claude",
+                "strength": "frontier"
+              },
+              "skipped_reason": "strength frontier, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "",
+                "runtime": "codex",
+                "strength": "standard"
+              },
+              "skipped_reason": "runtime codex, the task runs on claude"
+            }
+          ],
+          "chosen": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "input": {
+            "acceptance": [
+              "Accept t1"
+            ],
+            "brief": "Brief t1",
+            "hub": false,
+            "interface_change": false,
+            "kind": "code",
+            "languages": [],
+            "owns": [
+              "docs/t1/**"
+            ],
+            "size": "S",
+            "test_mode": "check",
+            "title": "Title t1"
+          },
+          "lane": null,
+          "pick_policy": null,
+          "policy_version": "m8a-worker-v1",
+          "role": "worker",
+          "round": null,
+          "selected_index": 1,
+          "seq": 1,
+          "session": 1,
+          "source": "class_default",
+          "trigger": "initial"
+        }
+      ],
+      "rung": 0,
+      "salvage_refs": [],
+      "session": 1,
+      "signal_refusals": 0,
+      "signals": [],
+      "signals_more": 0,
+      "size": "S",
+      "size_check": null,
+      "spec": {
+        "acceptance": [
+          "Accept t1"
+        ],
+        "atomic": false,
+        "atomic_reason": null,
+        "brief": "Brief t1",
+        "budget": null,
+        "deps": [],
+        "epic": null,
+        "id": "t1",
+        "interface_change": false,
+        "kind": "code",
+        "owns": [
+          "docs/t1/**"
+        ],
+        "priority": 0,
+        "review_target": null,
+        "route": {
+          "effort": null,
+          "model": null,
+          "runtime": null,
+          "strength": null
+        },
+        "scout_refs": [],
+        "size": "S",
+        "stage": 1,
+        "test_mode": "check",
+        "test_mode_reason": "glue code",
+        "test_to_write": null,
+        "title": "Title t1"
+      },
+      "spent_total": {
+        "secs": 0,
+        "tokens": 0,
+        "tool_calls": 0
+      },
+      "stalls": 0,
+      "start_commit": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "state": "merged",
+      "sync": null,
+      "test_mode": "check",
+      "worktree": "/tmp/wt/runs/engine-test-3f9a/t1",
+      "worktree_live": false
+    },
+    {
+      "awaiting_deps": false,
+      "block": null,
+      "block_source": null,
+      "bounces": {
+        "check": 0,
+        "done": 0,
+        "merge": 0,
+        "proof": 0,
+        "review": 0
+      },
+      "branch": "anthrex/engine-test-3f9a/t2",
+      "budget": {
+        "minutes": 15,
+        "tokens": null,
+        "tool_calls": 40
+      },
+      "budget_exceeded": 0,
+      "cancel_deferred": false,
+      "checks": [
+        {
+          "at": 2020,
+          "code": 0,
+          "ok": true,
+          "on_candidate": false,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2020,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 1
+          },
+          "timed_out": false
+        },
+        {
+          "at": 2021,
+          "code": 0,
+          "ok": true,
+          "on_candidate": true,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2021,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 2
+          },
+          "timed_out": false
+        }
+      ],
+      "claim": null,
+      "clock": {
+        "restarted": 0,
+        "stopped": null
+      },
+      "conflicts": 0,
+      "decider_usage": {
+        "cache_read": 0,
+        "cache_write": 0,
+        "input": 0,
+        "output": 0
+      },
+      "diff": null,
+      "done": {
+        "red": null,
+        "session": 1,
+        "signal": "task_done",
+        "summary": "done",
+        "test": null
+      },
+      "epoch": null,
+      "escalated_from": null,
+      "failure_log": [],
+      "failures": 0,
+      "fixes": null,
+      "fresh_session": null,
+      "gate_op": null,
+      "gates_after_handback": false,
+      "handback_due": false,
+      "handed_back": false,
+      "head": "t2cccccccccccccccccccccccccccccccccccccc",
+      "held_answered": false,
+      "history": [
+        {
+          "at": 2002,
+          "text": "dispatched"
+        },
+        {
+          "at": 2004,
+          "text": "worker session 1 starting"
+        },
+        {
+          "at": 2018,
+          "text": "done (task_done); next: check"
+        },
+        {
+          "at": 2018,
+          "text": "running tier 1"
+        },
+        {
+          "at": 2020,
+          "text": "tier 1: build only (no module affected)"
+        },
+        {
+          "at": 2020,
+          "text": "check passed; next: merge_queue"
+        },
+        {
+          "at": 2020,
+          "text": "merging into the run branch"
+        },
+        {
+          "at": 2021,
+          "text": "tier 2: build only (no module affected)"
+        },
+        {
+          "at": 2021,
+          "text": "merged at 2eeeeee"
+        },
+        {
+          "at": 2022,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2023,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2024,
+          "text": "worktree removed"
+        }
+      ],
+      "history_written": false,
+      "hub": false,
+      "implicit_deps": [],
+      "max_rung": 0,
+      "merge_commit": "2eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "merge_op": null,
+      "merged_without_approval": null,
+      "notes": [],
+      "orch": {
+        "gate_hold": null,
+        "integration_of": null,
+        "messages": [],
+        "refresh": null,
+        "refresh_merges": [],
+        "refresh_targets": [],
+        "research": null,
+        "research_append": null,
+        "review_range": null,
+        "rewrite_restarts": 0,
+        "worker_notes": []
+      },
+      "origin": "plan",
+      "override_count": null,
+      "pending_classification": null,
+      "pending_failure": null,
+      "phase_since": 2021,
+      "phases": {
+        "blocked": 0,
+        "check": 2,
+        "merge": 1,
+        "preparing": 5,
+        "proof": 0,
+        "queued": 1,
+        "review": 0,
+        "working": 11
+      },
+      "prewarmed": false,
+      "proofs": [],
+      "raised_size": null,
+      "ready_from": null,
+      "resolution": null,
+      "resolving": false,
+      "review_level": null,
+      "review_misses": 0,
+      "review_route": null,
+      "reviews": [],
+      "rounds": [
+        {
+          "activity": null,
+          "carried": [],
+          "closed_pid": null,
+          "count_failures": 0,
+          "count_op": null,
+          "count_retry_at": null,
+          "count_turn": 0,
+          "deaths": 0,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "denials": 0,
+          "ended": false,
+          "ended_at": null,
+          "excused_secs": 0,
+          "exited_pid": null,
+          "failed_error": null,
+          "failed_turn": "None",
+          "fallback": "None",
+          "fallback_waiting": false,
+          "in_retry_streak": false,
+          "interrupted": false,
+          "last_denial": null,
+          "last_event": 2019,
+          "last_text": null,
+          "launch_op": 6,
+          "open_subagents": [],
+          "pid": null,
+          "rate_limited_since": null,
+          "rate_limited_until": null,
+          "relaunch": null,
+          "resume_op": null,
+          "retiring": true,
+          "review_nudged": false,
+          "role": "worker",
+          "round": 1,
+          "route": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "sent_back_at": [],
+          "session": 1,
+          "session_id": "fbb8c5c4-2dbc-4c5e-81a8-e88eb7ea1530",
+          "stall": "Watching",
+          "started_at": 2004,
+          "tool_calls": 0,
+          "turn_denied": [],
+          "turn_had_task_done": false,
+          "turn_open": false,
+          "turns": 1,
+          "usage": {
+            "cache_read": 0,
+            "cache_write": 0,
+            "input": 0,
+            "output": 0
+          },
+          "window_id": 2,
+          "wrap_up_sent": false
+        }
+      ],
+      "route": {
+        "effort": "low",
+        "model": "claude-sonnet-5",
+        "runtime": "claude",
+        "strength": "standard"
+      },
+      "routing_decisions": [
+        {
+          "at": 2004,
+          "candidates": [
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-haiku-4-5",
+                "runtime": "claude",
+                "strength": "fast"
+              },
+              "skipped_reason": "strength fast, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-sonnet-5",
+                "runtime": "claude",
+                "strength": "standard"
+              },
+              "skipped_reason": null
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-opus-5-5",
+                "runtime": "claude",
+                "strength": "frontier"
+              },
+              "skipped_reason": "strength frontier, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "",
+                "runtime": "codex",
+                "strength": "standard"
+              },
+              "skipped_reason": "runtime codex, the task runs on claude"
+            }
+          ],
+          "chosen": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "input": {
+            "acceptance": [
+              "Accept t2"
+            ],
+            "brief": "Brief t2",
+            "hub": false,
+            "interface_change": false,
+            "kind": "code",
+            "languages": [],
+            "owns": [
+              "docs/t2/**"
+            ],
+            "size": "S",
+            "test_mode": "check",
+            "title": "Title t2"
+          },
+          "lane": null,
+          "pick_policy": null,
+          "policy_version": "m8a-worker-v1",
+          "role": "worker",
+          "round": null,
+          "selected_index": 1,
+          "seq": 1,
+          "session": 1,
+          "source": "class_default",
+          "trigger": "initial"
+        }
+      ],
+      "rung": 0,
+      "salvage_refs": [],
+      "session": 1,
+      "signal_refusals": 0,
+      "signals": [],
+      "signals_more": 0,
+      "size": "S",
+      "size_check": null,
+      "spec": {
+        "acceptance": [
+          "Accept t2"
+        ],
+        "atomic": false,
+        "atomic_reason": null,
+        "brief": "Brief t2",
+        "budget": null,
+        "deps": [],
+        "epic": null,
+        "id": "t2",
+        "interface_change": false,
+        "kind": "code",
+        "owns": [
+          "docs/t2/**"
+        ],
+        "priority": 0,
+        "review_target": null,
+        "route": {
+          "effort": null,
+          "model": null,
+          "runtime": null,
+          "strength": null
+        },
+        "scout_refs": [],
+        "size": "S",
+        "stage": 1,
+        "test_mode": "check",
+        "test_mode_reason": "glue code",
+        "test_to_write": null,
+        "title": "Title t2"
+      },
+      "spent_total": {
+        "secs": 0,
+        "tokens": 0,
+        "tool_calls": 0
+      },
+      "stalls": 0,
+      "start_commit": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "state": "merged",
+      "sync": null,
+      "test_mode": "check",
+      "worktree": "/tmp/wt/runs/engine-test-3f9a/t2",
+      "worktree_live": false
+    },
+    {
+      "awaiting_deps": false,
+      "block": null,
+      "block_source": null,
+      "bounces": {
+        "check": 0,
+        "done": 0,
+        "merge": 0,
+        "proof": 0,
+        "review": 0
+      },
+      "branch": "anthrex/engine-test-3f9a/t3",
+      "budget": {
+        "minutes": 15,
+        "tokens": null,
+        "tool_calls": 40
+      },
+      "budget_exceeded": 0,
+      "cancel_deferred": false,
+      "checks": [
+        {
+          "at": 2028,
+          "code": 0,
+          "ok": true,
+          "on_candidate": false,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2028,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 1
+          },
+          "timed_out": false
+        },
+        {
+          "at": 2029,
+          "code": 0,
+          "ok": true,
+          "on_candidate": true,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2029,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 2
+          },
+          "timed_out": false
+        }
+      ],
+      "claim": null,
+      "clock": {
+        "restarted": 0,
+        "stopped": null
+      },
+      "conflicts": 0,
+      "decider_usage": {
+        "cache_read": 0,
+        "cache_write": 0,
+        "input": 0,
+        "output": 0
+      },
+      "diff": null,
+      "done": {
+        "red": null,
+        "session": 1,
+        "signal": "task_done",
+        "summary": "done",
+        "test": null
+      },
+      "epoch": null,
+      "escalated_from": null,
+      "failure_log": [],
+      "failures": 0,
+      "fixes": null,
+      "fresh_session": null,
+      "gate_op": null,
+      "gates_after_handback": false,
+      "handback_due": false,
+      "handed_back": false,
+      "head": "t3cccccccccccccccccccccccccccccccccccccc",
+      "held_answered": false,
+      "history": [
+        {
+          "at": 2002,
+          "text": "dispatched"
+        },
+        {
+          "at": 2005,
+          "text": "worker session 1 starting"
+        },
+        {
+          "at": 2026,
+          "text": "done (task_done); next: check"
+        },
+        {
+          "at": 2026,
+          "text": "running tier 1"
+        },
+        {
+          "at": 2028,
+          "text": "tier 1: build only (no module affected)"
+        },
+        {
+          "at": 2028,
+          "text": "check passed; next: merge_queue"
+        },
+        {
+          "at": 2028,
+          "text": "merging into the run branch"
+        },
+        {
+          "at": 2029,
+          "text": "tier 2: build only (no module affected)"
+        },
+        {
+          "at": 2029,
+          "text": "merged at 3eeeeee"
+        },
+        {
+          "at": 2030,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2031,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2032,
+          "text": "worktree removed"
+        }
+      ],
+      "history_written": false,
+      "hub": false,
+      "implicit_deps": [],
+      "max_rung": 0,
+      "merge_commit": "3eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "merge_op": null,
+      "merged_without_approval": null,
+      "notes": [],
+      "orch": {
+        "gate_hold": null,
+        "integration_of": null,
+        "messages": [],
+        "refresh": null,
+        "refresh_merges": [],
+        "refresh_targets": [],
+        "research": null,
+        "research_append": null,
+        "review_range": null,
+        "rewrite_restarts": 0,
+        "worker_notes": []
+      },
+      "origin": "plan",
+      "override_count": null,
+      "pending_classification": null,
+      "pending_failure": null,
+      "phase_since": 2029,
+      "phases": {
+        "blocked": 0,
+        "check": 2,
+        "merge": 1,
+        "preparing": 6,
+        "proof": 0,
+        "queued": 1,
+        "review": 0,
+        "working": 18
+      },
+      "prewarmed": false,
+      "proofs": [],
+      "raised_size": null,
+      "ready_from": null,
+      "resolution": null,
+      "resolving": false,
+      "review_level": null,
+      "review_misses": 0,
+      "review_route": null,
+      "reviews": [],
+      "rounds": [
+        {
+          "activity": null,
+          "carried": [],
+          "closed_pid": null,
+          "count_failures": 0,
+          "count_op": null,
+          "count_retry_at": null,
+          "count_turn": 0,
+          "deaths": 0,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "denials": 0,
+          "ended": false,
+          "ended_at": null,
+          "excused_secs": 0,
+          "exited_pid": null,
+          "failed_error": null,
+          "failed_turn": "None",
+          "fallback": "None",
+          "fallback_waiting": false,
+          "in_retry_streak": false,
+          "interrupted": false,
+          "last_denial": null,
+          "last_event": 2027,
+          "last_text": null,
+          "launch_op": 7,
+          "open_subagents": [],
+          "pid": null,
+          "rate_limited_since": null,
+          "rate_limited_until": null,
+          "relaunch": null,
+          "resume_op": null,
+          "retiring": true,
+          "review_nudged": false,
+          "role": "worker",
+          "round": 1,
+          "route": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "sent_back_at": [],
+          "session": 1,
+          "session_id": "684eb266-9922-4671-9609-fd29879efc05",
+          "stall": "Watching",
+          "started_at": 2005,
+          "tool_calls": 0,
+          "turn_denied": [],
+          "turn_had_task_done": false,
+          "turn_open": false,
+          "turns": 1,
+          "usage": {
+            "cache_read": 0,
+            "cache_write": 0,
+            "input": 0,
+            "output": 0
+          },
+          "window_id": 3,
+          "wrap_up_sent": false
+        }
+      ],
+      "route": {
+        "effort": "low",
+        "model": "claude-sonnet-5",
+        "runtime": "claude",
+        "strength": "standard"
+      },
+      "routing_decisions": [
+        {
+          "at": 2005,
+          "candidates": [
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-haiku-4-5",
+                "runtime": "claude",
+                "strength": "fast"
+              },
+              "skipped_reason": "strength fast, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-sonnet-5",
+                "runtime": "claude",
+                "strength": "standard"
+              },
+              "skipped_reason": null
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-opus-5-5",
+                "runtime": "claude",
+                "strength": "frontier"
+              },
+              "skipped_reason": "strength frontier, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "",
+                "runtime": "codex",
+                "strength": "standard"
+              },
+              "skipped_reason": "runtime codex, the task runs on claude"
+            }
+          ],
+          "chosen": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "input": {
+            "acceptance": [
+              "Accept t3"
+            ],
+            "brief": "Brief t3",
+            "hub": false,
+            "interface_change": false,
+            "kind": "code",
+            "languages": [],
+            "owns": [
+              "docs/t3/**"
+            ],
+            "size": "S",
+            "test_mode": "check",
+            "title": "Title t3"
+          },
+          "lane": null,
+          "pick_policy": null,
+          "policy_version": "m8a-worker-v1",
+          "role": "worker",
+          "round": null,
+          "selected_index": 1,
+          "seq": 1,
+          "session": 1,
+          "source": "class_default",
+          "trigger": "initial"
+        }
+      ],
+      "rung": 0,
+      "salvage_refs": [],
+      "session": 1,
+      "signal_refusals": 0,
+      "signals": [],
+      "signals_more": 0,
+      "size": "S",
+      "size_check": null,
+      "spec": {
+        "acceptance": [
+          "Accept t3"
+        ],
+        "atomic": false,
+        "atomic_reason": null,
+        "brief": "Brief t3",
+        "budget": null,
+        "deps": [],
+        "epic": null,
+        "id": "t3",
+        "interface_change": false,
+        "kind": "code",
+        "owns": [
+          "docs/t3/**"
+        ],
+        "priority": 0,
+        "review_target": null,
+        "route": {
+          "effort": null,
+          "model": null,
+          "runtime": null,
+          "strength": null
+        },
+        "scout_refs": [],
+        "size": "S",
+        "stage": 1,
+        "test_mode": "check",
+        "test_mode_reason": "glue code",
+        "test_to_write": null,
+        "title": "Title t3"
+      },
+      "spent_total": {
+        "secs": 0,
+        "tokens": 0,
+        "tool_calls": 0
+      },
+      "stalls": 0,
+      "start_commit": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "state": "merged",
+      "sync": null,
+      "test_mode": "check",
+      "worktree": "/tmp/wt/runs/engine-test-3f9a/t3",
+      "worktree_live": false
+    },
+    {
+      "awaiting_deps": false,
+      "block": null,
+      "block_source": null,
+      "bounces": {
+        "check": 0,
+        "done": 0,
+        "merge": 0,
+        "proof": 0,
+        "review": 0
+      },
+      "branch": "anthrex/engine-test-3f9a/t4",
+      "budget": {
+        "minutes": 15,
+        "tokens": null,
+        "tool_calls": 40
+      },
+      "budget_exceeded": 0,
+      "cancel_deferred": false,
+      "checks": [
+        {
+          "at": 2045,
+          "code": 0,
+          "ok": true,
+          "on_candidate": false,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2045,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 1
+          },
+          "timed_out": false
+        },
+        {
+          "at": 2046,
+          "code": 0,
+          "ok": true,
+          "on_candidate": true,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2046,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 2
+          },
+          "timed_out": false
+        }
+      ],
+      "claim": null,
+      "clock": {
+        "restarted": 0,
+        "stopped": null
+      },
+      "conflicts": 0,
+      "decider_usage": {
+        "cache_read": 0,
+        "cache_write": 0,
+        "input": 0,
+        "output": 0
+      },
+      "diff": null,
+      "done": {
+        "red": null,
+        "session": 1,
+        "signal": "task_done",
+        "summary": "done",
+        "test": null
+      },
+      "epoch": null,
+      "escalated_from": null,
+      "failure_log": [],
+      "failures": 0,
+      "fixes": null,
+      "fresh_session": null,
+      "gate_op": null,
+      "gates_after_handback": false,
+      "handback_due": false,
+      "handed_back": false,
+      "head": "t4cccccccccccccccccccccccccccccccccccccc",
+      "held_answered": false,
+      "history": [
+        {
+          "at": 2012,
+          "text": "dispatched"
+        },
+        {
+          "at": 2036,
+          "text": "worker session 1 starting"
+        },
+        {
+          "at": 2043,
+          "text": "done (task_done); next: check"
+        },
+        {
+          "at": 2043,
+          "text": "running tier 1"
+        },
+        {
+          "at": 2045,
+          "text": "tier 1: build only (no module affected)"
+        },
+        {
+          "at": 2045,
+          "text": "check passed; next: merge_queue"
+        },
+        {
+          "at": 2045,
+          "text": "merging into the run branch"
+        },
+        {
+          "at": 2046,
+          "text": "tier 2: build only (no module affected)"
+        },
+        {
+          "at": 2046,
+          "text": "merged at 4eeeeee"
+        },
+        {
+          "at": 2047,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2048,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2049,
+          "text": "worktree removed"
+        }
+      ],
+      "history_written": false,
+      "hub": false,
+      "implicit_deps": [],
+      "max_rung": 0,
+      "merge_commit": "4eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "merge_op": null,
+      "merged_without_approval": null,
+      "notes": [],
+      "orch": {
+        "gate_hold": null,
+        "integration_of": null,
+        "messages": [],
+        "refresh": null,
+        "refresh_merges": [],
+        "refresh_targets": [],
+        "research": null,
+        "research_append": null,
+        "review_range": null,
+        "rewrite_restarts": 0,
+        "worker_notes": []
+      },
+      "origin": "plan",
+      "override_count": null,
+      "pending_classification": null,
+      "pending_failure": null,
+      "phase_since": 2046,
+      "phases": {
+        "blocked": 0,
+        "check": 2,
+        "merge": 1,
+        "preparing": 27,
+        "proof": 0,
+        "queued": 11,
+        "review": 0,
+        "working": 4
+      },
+      "prewarmed": false,
+      "proofs": [],
+      "raised_size": null,
+      "ready_from": null,
+      "resolution": null,
+      "resolving": false,
+      "review_level": null,
+      "review_misses": 0,
+      "review_route": null,
+      "reviews": [],
+      "rounds": [
+        {
+          "activity": null,
+          "carried": [],
+          "closed_pid": null,
+          "count_failures": 0,
+          "count_op": null,
+          "count_retry_at": null,
+          "count_turn": 0,
+          "deaths": 0,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "denials": 0,
+          "ended": false,
+          "ended_at": null,
+          "excused_secs": 0,
+          "exited_pid": null,
+          "failed_error": null,
+          "failed_turn": "None",
+          "fallback": "None",
+          "fallback_waiting": false,
+          "in_retry_streak": false,
+          "interrupted": false,
+          "last_denial": null,
+          "last_event": 2044,
+          "last_text": null,
+          "launch_op": 32,
+          "open_subagents": [],
+          "pid": null,
+          "rate_limited_since": null,
+          "rate_limited_until": null,
+          "relaunch": null,
+          "resume_op": null,
+          "retiring": true,
+          "review_nudged": false,
+          "role": "worker",
+          "round": 1,
+          "route": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "sent_back_at": [],
+          "session": 1,
+          "session_id": "679a3356-7129-4ae4-8fea-7f144e9956c2",
+          "stall": "Watching",
+          "started_at": 2036,
+          "tool_calls": 0,
+          "turn_denied": [],
+          "turn_had_task_done": false,
+          "turn_open": false,
+          "turns": 1,
+          "usage": {
+            "cache_read": 0,
+            "cache_write": 0,
+            "input": 0,
+            "output": 0
+          },
+          "window_id": 4,
+          "wrap_up_sent": false
+        }
+      ],
+      "route": {
+        "effort": "low",
+        "model": "claude-sonnet-5",
+        "runtime": "claude",
+        "strength": "standard"
+      },
+      "routing_decisions": [
+        {
+          "at": 2036,
+          "candidates": [
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-haiku-4-5",
+                "runtime": "claude",
+                "strength": "fast"
+              },
+              "skipped_reason": "strength fast, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-sonnet-5",
+                "runtime": "claude",
+                "strength": "standard"
+              },
+              "skipped_reason": null
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-opus-5-5",
+                "runtime": "claude",
+                "strength": "frontier"
+              },
+              "skipped_reason": "strength frontier, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "",
+                "runtime": "codex",
+                "strength": "standard"
+              },
+              "skipped_reason": "runtime codex, the task runs on claude"
+            }
+          ],
+          "chosen": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "input": {
+            "acceptance": [
+              "Accept t4"
+            ],
+            "brief": "Brief t4",
+            "hub": false,
+            "interface_change": false,
+            "kind": "code",
+            "languages": [],
+            "owns": [
+              "docs/t4/**"
+            ],
+            "size": "S",
+            "test_mode": "check",
+            "title": "Title t4"
+          },
+          "lane": null,
+          "pick_policy": null,
+          "policy_version": "m8a-worker-v1",
+          "role": "worker",
+          "round": null,
+          "selected_index": 1,
+          "seq": 1,
+          "session": 1,
+          "source": "class_default",
+          "trigger": "initial"
+        }
+      ],
+      "rung": 0,
+      "salvage_refs": [],
+      "session": 1,
+      "signal_refusals": 0,
+      "signals": [],
+      "signals_more": 0,
+      "size": "S",
+      "size_check": null,
+      "spec": {
+        "acceptance": [
+          "Accept t4"
+        ],
+        "atomic": false,
+        "atomic_reason": null,
+        "brief": "Brief t4",
+        "budget": null,
+        "deps": [],
+        "epic": null,
+        "id": "t4",
+        "interface_change": false,
+        "kind": "code",
+        "owns": [
+          "docs/t4/**"
+        ],
+        "priority": 0,
+        "review_target": null,
+        "route": {
+          "effort": null,
+          "model": null,
+          "runtime": null,
+          "strength": null
+        },
+        "scout_refs": [],
+        "size": "S",
+        "stage": 1,
+        "test_mode": "check",
+        "test_mode_reason": "glue code",
+        "test_to_write": null,
+        "title": "Title t4"
+      },
+      "spent_total": {
+        "secs": 0,
+        "tokens": 0,
+        "tool_calls": 0
+      },
+      "stalls": 0,
+      "start_commit": "3eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "state": "merged",
+      "sync": null,
+      "test_mode": "check",
+      "worktree": "/tmp/wt/runs/engine-test-3f9a/t4",
+      "worktree_live": false
+    },
+    {
+      "awaiting_deps": false,
+      "block": null,
+      "block_source": null,
+      "bounces": {
+        "check": 0,
+        "done": 0,
+        "merge": 0,
+        "proof": 0,
+        "review": 0
+      },
+      "branch": "anthrex/engine-test-3f9a/t5",
+      "budget": {
+        "minutes": 15,
+        "tokens": null,
+        "tool_calls": 40
+      },
+      "budget_exceeded": 0,
+      "cancel_deferred": false,
+      "checks": [
+        {
+          "at": 2053,
+          "code": 0,
+          "ok": true,
+          "on_candidate": false,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2053,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 1
+          },
+          "timed_out": false
+        },
+        {
+          "at": 2054,
+          "code": 0,
+          "ok": true,
+          "on_candidate": true,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2054,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 2
+          },
+          "timed_out": false
+        }
+      ],
+      "claim": null,
+      "clock": {
+        "restarted": 0,
+        "stopped": null
+      },
+      "conflicts": 0,
+      "decider_usage": {
+        "cache_read": 0,
+        "cache_write": 0,
+        "input": 0,
+        "output": 0
+      },
+      "diff": null,
+      "done": {
+        "red": null,
+        "session": 1,
+        "signal": "task_done",
+        "summary": "done",
+        "test": null
+      },
+      "epoch": null,
+      "escalated_from": null,
+      "failure_log": [],
+      "failures": 0,
+      "fixes": null,
+      "fresh_session": null,
+      "gate_op": null,
+      "gates_after_handback": false,
+      "handback_due": false,
+      "handed_back": false,
+      "head": "t5cccccccccccccccccccccccccccccccccccccc",
+      "held_answered": false,
+      "history": [
+        {
+          "at": 2020,
+          "text": "dispatched"
+        },
+        {
+          "at": 2037,
+          "text": "worker session 1 starting"
+        },
+        {
+          "at": 2051,
+          "text": "done (task_done); next: check"
+        },
+        {
+          "at": 2051,
+          "text": "running tier 1"
+        },
+        {
+          "at": 2053,
+          "text": "tier 1: build only (no module affected)"
+        },
+        {
+          "at": 2053,
+          "text": "check passed; next: merge_queue"
+        },
+        {
+          "at": 2053,
+          "text": "merging into the run branch"
+        },
+        {
+          "at": 2054,
+          "text": "tier 2: build only (no module affected)"
+        },
+        {
+          "at": 2054,
+          "text": "merged at 5eeeeee"
+        },
+        {
+          "at": 2055,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2056,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2057,
+          "text": "worktree removed"
+        }
+      ],
+      "history_written": false,
+      "hub": false,
+      "implicit_deps": [],
+      "max_rung": 0,
+      "merge_commit": "5eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "merge_op": null,
+      "merged_without_approval": null,
+      "notes": [],
+      "orch": {
+        "gate_hold": null,
+        "integration_of": null,
+        "messages": [],
+        "refresh": null,
+        "refresh_merges": [],
+        "refresh_targets": [],
+        "research": null,
+        "research_append": null,
+        "review_range": null,
+        "rewrite_restarts": 0,
+        "worker_notes": []
+      },
+      "origin": "plan",
+      "override_count": null,
+      "pending_classification": null,
+      "pending_failure": null,
+      "phase_since": 2054,
+      "phases": {
+        "blocked": 0,
+        "check": 2,
+        "merge": 1,
+        "preparing": 20,
+        "proof": 0,
+        "queued": 19,
+        "review": 0,
+        "working": 11
+      },
+      "prewarmed": false,
+      "proofs": [],
+      "raised_size": null,
+      "ready_from": null,
+      "resolution": null,
+      "resolving": false,
+      "review_level": null,
+      "review_misses": 0,
+      "review_route": null,
+      "reviews": [],
+      "rounds": [
+        {
+          "activity": null,
+          "carried": [],
+          "closed_pid": null,
+          "count_failures": 0,
+          "count_op": null,
+          "count_retry_at": null,
+          "count_turn": 0,
+          "deaths": 0,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "denials": 0,
+          "ended": false,
+          "ended_at": null,
+          "excused_secs": 0,
+          "exited_pid": null,
+          "failed_error": null,
+          "failed_turn": "None",
+          "fallback": "None",
+          "fallback_waiting": false,
+          "in_retry_streak": false,
+          "interrupted": false,
+          "last_denial": null,
+          "last_event": 2052,
+          "last_text": null,
+          "launch_op": 33,
+          "open_subagents": [],
+          "pid": null,
+          "rate_limited_since": null,
+          "rate_limited_until": null,
+          "relaunch": null,
+          "resume_op": null,
+          "retiring": true,
+          "review_nudged": false,
+          "role": "worker",
+          "round": 1,
+          "route": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "sent_back_at": [],
+          "session": 1,
+          "session_id": "d4301ff8-dc8e-44f7-8f31-1625a989d31f",
+          "stall": "Watching",
+          "started_at": 2037,
+          "tool_calls": 0,
+          "turn_denied": [],
+          "turn_had_task_done": false,
+          "turn_open": false,
+          "turns": 1,
+          "usage": {
+            "cache_read": 0,
+            "cache_write": 0,
+            "input": 0,
+            "output": 0
+          },
+          "window_id": 5,
+          "wrap_up_sent": false
+        }
+      ],
+      "route": {
+        "effort": "low",
+        "model": "claude-sonnet-5",
+        "runtime": "claude",
+        "strength": "standard"
+      },
+      "routing_decisions": [
+        {
+          "at": 2037,
+          "candidates": [
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-haiku-4-5",
+                "runtime": "claude",
+                "strength": "fast"
+              },
+              "skipped_reason": "strength fast, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-sonnet-5",
+                "runtime": "claude",
+                "strength": "standard"
+              },
+              "skipped_reason": null
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-opus-5-5",
+                "runtime": "claude",
+                "strength": "frontier"
+              },
+              "skipped_reason": "strength frontier, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "",
+                "runtime": "codex",
+                "strength": "standard"
+              },
+              "skipped_reason": "runtime codex, the task runs on claude"
+            }
+          ],
+          "chosen": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "input": {
+            "acceptance": [
+              "Accept t5"
+            ],
+            "brief": "Brief t5",
+            "hub": false,
+            "interface_change": false,
+            "kind": "code",
+            "languages": [],
+            "owns": [
+              "docs/t5/**"
+            ],
+            "size": "S",
+            "test_mode": "check",
+            "title": "Title t5"
+          },
+          "lane": null,
+          "pick_policy": null,
+          "policy_version": "m8a-worker-v1",
+          "role": "worker",
+          "round": null,
+          "selected_index": 1,
+          "seq": 1,
+          "session": 1,
+          "source": "class_default",
+          "trigger": "initial"
+        }
+      ],
+      "rung": 0,
+      "salvage_refs": [],
+      "session": 1,
+      "signal_refusals": 0,
+      "signals": [],
+      "signals_more": 0,
+      "size": "S",
+      "size_check": null,
+      "spec": {
+        "acceptance": [
+          "Accept t5"
+        ],
+        "atomic": false,
+        "atomic_reason": null,
+        "brief": "Brief t5",
+        "budget": null,
+        "deps": [],
+        "epic": null,
+        "id": "t5",
+        "interface_change": false,
+        "kind": "code",
+        "owns": [
+          "docs/t5/**"
+        ],
+        "priority": 0,
+        "review_target": null,
+        "route": {
+          "effort": null,
+          "model": null,
+          "runtime": null,
+          "strength": null
+        },
+        "scout_refs": [],
+        "size": "S",
+        "stage": 1,
+        "test_mode": "check",
+        "test_mode_reason": "glue code",
+        "test_to_write": null,
+        "title": "Title t5"
+      },
+      "spent_total": {
+        "secs": 0,
+        "tokens": 0,
+        "tool_calls": 0
+      },
+      "stalls": 0,
+      "start_commit": "3eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "state": "merged",
+      "sync": null,
+      "test_mode": "check",
+      "worktree": "/tmp/wt/runs/engine-test-3f9a/t5",
+      "worktree_live": false
+    },
+    {
+      "awaiting_deps": false,
+      "block": null,
+      "block_source": null,
+      "bounces": {
+        "check": 0,
+        "done": 0,
+        "merge": 0,
+        "proof": 0,
+        "review": 0
+      },
+      "branch": "anthrex/engine-test-3f9a/t6",
+      "budget": {
+        "minutes": 15,
+        "tokens": null,
+        "tool_calls": 40
+      },
+      "budget_exceeded": 0,
+      "cancel_deferred": false,
+      "checks": [
+        {
+          "at": 2061,
+          "code": 0,
+          "ok": true,
+          "on_candidate": false,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2061,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 1
+          },
+          "timed_out": false
+        },
+        {
+          "at": 2062,
+          "code": 0,
+          "ok": true,
+          "on_candidate": true,
+          "secs": 30,
+          "summary": null,
+          "summary_source": null,
+          "tail": "",
+          "tier": {
+            "affected": "build only (no module affected)",
+            "at": 2062,
+            "cached": 0,
+            "commit": "",
+            "failing": [],
+            "flaky": [],
+            "ok": true,
+            "secs": 30,
+            "steps": 1,
+            "tier": 2
+          },
+          "timed_out": false
+        }
+      ],
+      "claim": null,
+      "clock": {
+        "restarted": 0,
+        "stopped": null
+      },
+      "conflicts": 0,
+      "decider_usage": {
+        "cache_read": 0,
+        "cache_write": 0,
+        "input": 0,
+        "output": 0
+      },
+      "diff": null,
+      "done": {
+        "red": null,
+        "session": 1,
+        "signal": "task_done",
+        "summary": "done",
+        "test": null
+      },
+      "epoch": null,
+      "escalated_from": null,
+      "failure_log": [],
+      "failures": 0,
+      "fixes": null,
+      "fresh_session": null,
+      "gate_op": null,
+      "gates_after_handback": false,
+      "handback_due": false,
+      "handed_back": false,
+      "head": "t6cccccccccccccccccccccccccccccccccccccc",
+      "held_answered": false,
+      "history": [
+        {
+          "at": 2028,
+          "text": "dispatched"
+        },
+        {
+          "at": 2038,
+          "text": "worker session 1 starting"
+        },
+        {
+          "at": 2059,
+          "text": "done (task_done); next: check"
+        },
+        {
+          "at": 2059,
+          "text": "running tier 1"
+        },
+        {
+          "at": 2061,
+          "text": "tier 1: build only (no module affected)"
+        },
+        {
+          "at": 2061,
+          "text": "check passed; next: merge_queue"
+        },
+        {
+          "at": 2061,
+          "text": "merging into the run branch"
+        },
+        {
+          "at": 2062,
+          "text": "tier 2: build only (no module affected)"
+        },
+        {
+          "at": 2062,
+          "text": "merged at 6eeeeee"
+        },
+        {
+          "at": 2063,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2064,
+          "text": "worktree removed"
+        },
+        {
+          "at": 2065,
+          "text": "worktree removed"
+        }
+      ],
+      "history_written": false,
+      "hub": false,
+      "implicit_deps": [],
+      "max_rung": 0,
+      "merge_commit": "6eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "merge_op": null,
+      "merged_without_approval": null,
+      "notes": [],
+      "orch": {
+        "gate_hold": null,
+        "integration_of": null,
+        "messages": [],
+        "refresh": null,
+        "refresh_merges": [],
+        "refresh_targets": [],
+        "research": null,
+        "research_append": null,
+        "review_range": null,
+        "rewrite_restarts": 0,
+        "worker_notes": []
+      },
+      "origin": "plan",
+      "override_count": null,
+      "pending_classification": null,
+      "pending_failure": null,
+      "phase_since": 2062,
+      "phases": {
+        "blocked": 0,
+        "check": 2,
+        "merge": 1,
+        "preparing": 13,
+        "proof": 0,
+        "queued": 27,
+        "review": 0,
+        "working": 18
+      },
+      "prewarmed": false,
+      "proofs": [],
+      "raised_size": null,
+      "ready_from": null,
+      "resolution": null,
+      "resolving": false,
+      "review_level": null,
+      "review_misses": 0,
+      "review_route": null,
+      "reviews": [],
+      "rounds": [
+        {
+          "activity": null,
+          "carried": [],
+          "closed_pid": null,
+          "count_failures": 0,
+          "count_op": null,
+          "count_retry_at": null,
+          "count_turn": 0,
+          "deaths": 0,
+          "delivery_failures": 0,
+          "delivery_retry_at": null,
+          "denials": 0,
+          "ended": false,
+          "ended_at": null,
+          "excused_secs": 0,
+          "exited_pid": null,
+          "failed_error": null,
+          "failed_turn": "None",
+          "fallback": "None",
+          "fallback_waiting": false,
+          "in_retry_streak": false,
+          "interrupted": false,
+          "last_denial": null,
+          "last_event": 2060,
+          "last_text": null,
+          "launch_op": 34,
+          "open_subagents": [],
+          "pid": null,
+          "rate_limited_since": null,
+          "rate_limited_until": null,
+          "relaunch": null,
+          "resume_op": null,
+          "retiring": true,
+          "review_nudged": false,
+          "role": "worker",
+          "round": 1,
+          "route": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "sent_back_at": [],
+          "session": 1,
+          "session_id": "40c60c9b-47f4-4f0a-ae45-e20996a6ac0c",
+          "stall": "Watching",
+          "started_at": 2038,
+          "tool_calls": 0,
+          "turn_denied": [],
+          "turn_had_task_done": false,
+          "turn_open": false,
+          "turns": 1,
+          "usage": {
+            "cache_read": 0,
+            "cache_write": 0,
+            "input": 0,
+            "output": 0
+          },
+          "window_id": 6,
+          "wrap_up_sent": false
+        }
+      ],
+      "route": {
+        "effort": "low",
+        "model": "claude-sonnet-5",
+        "runtime": "claude",
+        "strength": "standard"
+      },
+      "routing_decisions": [
+        {
+          "at": 2038,
+          "candidates": [
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-haiku-4-5",
+                "runtime": "claude",
+                "strength": "fast"
+              },
+              "skipped_reason": "strength fast, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-sonnet-5",
+                "runtime": "claude",
+                "strength": "standard"
+              },
+              "skipped_reason": null
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "claude-opus-5-5",
+                "runtime": "claude",
+                "strength": "frontier"
+              },
+              "skipped_reason": "strength frontier, the task needs standard"
+            },
+            {
+              "route": {
+                "effort": "low",
+                "model": "",
+                "runtime": "codex",
+                "strength": "standard"
+              },
+              "skipped_reason": "runtime codex, the task runs on claude"
+            }
+          ],
+          "chosen": {
+            "effort": "low",
+            "model": "claude-sonnet-5",
+            "runtime": "claude",
+            "strength": "standard"
+          },
+          "input": {
+            "acceptance": [
+              "Accept t6"
+            ],
+            "brief": "Brief t6",
+            "hub": false,
+            "interface_change": false,
+            "kind": "code",
+            "languages": [],
+            "owns": [
+              "docs/t6/**"
+            ],
+            "size": "S",
+            "test_mode": "check",
+            "title": "Title t6"
+          },
+          "lane": null,
+          "pick_policy": null,
+          "policy_version": "m8a-worker-v1",
+          "role": "worker",
+          "round": null,
+          "selected_index": 1,
+          "seq": 1,
+          "session": 1,
+          "source": "class_default",
+          "trigger": "initial"
+        }
+      ],
+      "rung": 0,
+      "salvage_refs": [],
+      "session": 1,
+      "signal_refusals": 0,
+      "signals": [],
+      "signals_more": 0,
+      "size": "S",
+      "size_check": null,
+      "spec": {
+        "acceptance": [
+          "Accept t6"
+        ],
+        "atomic": false,
+        "atomic_reason": null,
+        "brief": "Brief t6",
+        "budget": null,
+        "deps": [],
+        "epic": null,
+        "id": "t6",
+        "interface_change": false,
+        "kind": "code",
+        "owns": [
+          "docs/t6/**"
+        ],
+        "priority": 0,
+        "review_target": null,
+        "route": {
+          "effort": null,
+          "model": null,
+          "runtime": null,
+          "strength": null
+        },
+        "scout_refs": [],
+        "size": "S",
+        "stage": 1,
+        "test_mode": "check",
+        "test_mode_reason": "glue code",
+        "test_to_write": null,
+        "title": "Title t6"
+      },
+      "spent_total": {
+        "secs": 0,
+        "tokens": 0,
+        "tool_calls": 0
+      },
+      "stalls": 0,
+      "start_commit": "3eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "state": "merged",
+      "sync": null,
+      "test_mode": "check",
+      "worktree": "/tmp/wt/runs/engine-test-3f9a/t6",
+      "worktree_live": false
+    },
+    {
+      "awaiting_deps": false,
+      "block": null,
+      "block_source": null,
+      "bounces": {
+        "check": 0,
+        "done": 0,
+        "merge": 0,
+        "proof": 0,
+        "review": 0
+      },
+      "branch": "anthrex/engine-test-3f9a/fix1",
+      "budget": {
+        "minutes": 15,
+        "tokens": null,
+        "tool_calls": 40
+      },
+      "budget_exceeded": 0,
+      "cancel_deferred": false,
+      "checks": [],
+      "claim": null,
+      "clock": {
+        "restarted": 0,
+        "stopped": null
+      },
+      "conflicts": 0,
+      "decider_usage": {
+        "cache_read": 0,
+        "cache_write": 0,
+        "input": 0,
+        "output": 0
+      },
+      "diff": null,
+      "done": null,
+      "epoch": null,
+      "escalated_from": null,
+      "failure_log": [],
+      "failures": 0,
+      "fixes": {
+        "bisect": {
+          "culprit": "t4",
+          "stage": 1,
+          "tests": [
+            "a::works"
+          ]
+        }
+      },
+      "fresh_session": null,
+      "gate_op": null,
+      "gates_after_handback": false,
+      "handback_due": false,
+      "handed_back": false,
+      "head": null,
+      "held_answered": false,
+      "history": [
+        {
+          "at": 2071,
+          "text": "added by the engine: a fix task for the bisect of t4"
+        },
+        {
+          "at": 2071,
+          "text": "dispatched"
+        }
+      ],
+      "history_written": false,
+      "hub": false,
+      "implicit_deps": [],
+      "max_rung": 0,
+      "merge_commit": null,
+      "merge_op": null,
+      "merged_without_approval": null,
+      "notes": [],
+      "orch": {
+        "gate_hold": null,
+        "integration_of": null,
+        "messages": [],
+        "refresh": null,
+        "refresh_merges": [],
+        "refresh_targets": [],
+        "research": null,
+        "research_append": null,
+        "review_range": null,
+        "rewrite_restarts": 0,
+        "worker_notes": []
+      },
+      "origin": "bisect",
+      "override_count": null,
+      "pending_classification": null,
+      "pending_failure": null,
+      "phase_since": 2071,
+      "phases": {
+        "blocked": 0,
+        "check": 0,
+        "merge": 0,
+        "preparing": 0,
+        "proof": 0,
+        "queued": 0,
+        "review": 0,
+        "working": 0
+      },
+      "prewarmed": false,
+      "proofs": [],
+      "raised_size": null,
+      "ready_from": null,
+      "resolution": null,
+      "resolving": false,
+      "review_level": null,
+      "review_misses": 0,
+      "review_route": null,
+      "reviews": [],
+      "rounds": [],
+      "route": {
+        "effort": "medium",
+        "model": "claude-sonnet-5",
+        "runtime": "claude",
+        "strength": "standard"
+      },
+      "routing_decisions": [],
+      "rung": 0,
+      "salvage_refs": [],
+      "session": 0,
+      "signal_refusals": 0,
+      "signals": [],
+      "signals_more": 0,
+      "size": "S",
+      "size_check": null,
+      "spec": {
+        "acceptance": [
+          "a::works passes",
+          "no test is weakened, skipped or deleted"
+        ],
+        "atomic": false,
+        "atomic_reason": null,
+        "brief": "[anthrex] Fix task fix1: the full test suite of stage 1 fails, and bisecting the stage's merges found that it started failing with the merge of task t4 (\"Title t4\").\nFailing tests: a::works\nMake these tests pass without weakening them. t4's work stays merged; fix it here.\n\nSummary of the failure:\nFAILED\n\nThe merge that introduced it:\nshow 4\n\nThe brief of t4:\nBrief t4",
+        "budget": null,
+        "deps": [],
+        "epic": null,
+        "id": "fix1",
+        "interface_change": false,
+        "kind": "code",
+        "owns": [
+          "docs/t4/**"
+        ],
+        "priority": 100,
+        "review_target": null,
+        "route": {
+          "effort": "medium",
+          "model": "claude-sonnet-5",
+          "runtime": "claude",
+          "strength": "standard"
+        },
+        "scout_refs": [],
+        "size": "S",
+        "stage": 1,
+        "test_mode": "check",
+        "test_mode_reason": "the failing tests already exist; they must pass",
+        "test_to_write": null,
+        "title": "Fix a::works after t4"
+      },
+      "spent_total": {
+        "secs": 0,
+        "tokens": 0,
+        "tool_calls": 0
+      },
+      "stalls": 0,
+      "start_commit": null,
+      "state": "preparing",
+      "sync": null,
+      "test_mode": "check",
+      "worktree": "/tmp/wt/runs/engine-test-3f9a/fix1",
+      "worktree_live": false
+    }
+  ],
+  "test_slots": 0,
+  "toolchain": null,
+  "triage": null,
+  "triage_usage": {
+    "cache_read": 0,
+    "cache_write": 0,
+    "input": 0,
+    "output": 0
+  },
+  "trust_project": false,
+  "trusted_project": [],
+  "unverified": false,
+  "verify_failures": 0,
+  "windows_created": 6,
+  "wt_dir": "/tmp/wt"
+}

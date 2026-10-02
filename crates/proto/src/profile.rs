@@ -101,6 +101,10 @@ pub struct RepoProfile {
     pub toolchain_id: Option<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Milestone 9.2 decision 3: the `[delivery]` table; absent means `local`, and a
+    /// profile without it writes none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<crate::delivery::DeliveryProfile>,
 }
 
 impl RepoProfile {

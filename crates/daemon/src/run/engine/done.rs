@@ -318,7 +318,7 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
         "task_done rejected: this is a tdd task; name the test (test) and the commit where it was added and failed (red)".into()
     } else if *sync_kept == Some(false) {
         // Controller ruling C-21 (5).
-        super::propagate::lost_merge(task)
+        super::propagate::lost_merge(run, task)
     } else if *red_ok == Some(false) {
         format!(
             "task_done rejected: red {} is not a commit on this task's branch after its start commit",

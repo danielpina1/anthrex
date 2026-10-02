@@ -73,6 +73,7 @@ pub fn build(plan_toml: &str, config: &config::Orchestrator, yes: bool) -> Run {
             testing: &config::Testing::default(),
             now: 1_000,
             yes,
+            delivery: &config::Delivery::default(),
         },
     )
     .unwrap_or_else(|e| panic!("fixture run: {e:?}"))
@@ -443,6 +444,7 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::TestAt(_) => "TestAt",
         OpKind::CreateStageBranch { .. } => "CreateStageBranch",
         OpKind::Propagate(_) => "Propagate",
+        OpKind::Host { .. } => "Host",
     }
 }
 

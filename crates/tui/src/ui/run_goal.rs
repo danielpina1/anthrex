@@ -168,6 +168,13 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
         let focused = form.focus == GoalField::Model && !form.submitting;
         body.push(input_line(input, value_w, focused));
     }
+    // Milestone 9.2 ruling R-13: `configured` is the repo profile's `[delivery] mode`.
+    let delivery = match form.delivery {
+        None => "configured",
+        Some(proto::DeliveryMode::Local) => "local",
+        Some(proto::DeliveryMode::Pr) => "pr",
+    };
+    body.push(choice_line(form, GoalField::Delivery, delivery, p));
 
     body.push(choice_line(
         form,

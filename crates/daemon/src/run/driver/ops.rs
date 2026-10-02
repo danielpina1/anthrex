@@ -465,6 +465,8 @@ pub(super) async fn run(
             let (sched, queue) = (service.scheduler(), &service.queue);
             tier::run_test_at(ctx, sched, queue, &git, op, &spec).await
         }
+        // Milestone 9.2 decision 8 (`driver/host_ops.rs`).
+        OpKind::Host { repo, op } => service.host_op(ctx, repo, op).await,
     }
 }
 

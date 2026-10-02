@@ -549,3 +549,7 @@ fn a_shrunk_detail_draws_its_new_end() {
 
 #[path = "plan_review_stages_tests.rs"]
 mod stages;
+
+#[cfg(test)]
+#[path = "plan_review_delivery_tests.rs"]
+mod delivery;

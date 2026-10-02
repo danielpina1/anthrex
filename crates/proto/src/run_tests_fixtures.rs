@@ -252,6 +252,7 @@ pub(super) fn a_run_info() -> RunInfo {
         research_report: None,
         stages: Vec::new(),
         test_slots: 0,
+        delivery: None,
     }
 }
 

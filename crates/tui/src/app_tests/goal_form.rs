@@ -124,7 +124,7 @@ pub(super) fn open_form(app: &mut App) {
 }
 
 pub(super) fn focus(app: &mut App, field: GoalField) {
-    for _ in 0..6 {
+    for _ in 0..7 {
         if form(app).focus == field {
             return;
         }
@@ -336,6 +336,7 @@ fn the_toggles_reach_the_request() {
             trust_project: false,
             unconfined_checks: true,
             orchestrator: None,
+            delivery: None,
         }
     );
 
@@ -351,6 +352,7 @@ fn the_toggles_reach_the_request() {
             trust_project: false,
             unconfined_checks: false,
             orchestrator: None,
+            delivery: None,
         }
     );
 }
@@ -395,6 +397,7 @@ fn the_model_picker_lists_the_runtimes_enabled_models_then_custom() {
                 runtime: Runtime::Claude,
                 model: Some("claude-opus-5-5".into()),
             }),
+            delivery: None,
         }
     );
 }
@@ -431,6 +434,7 @@ fn custom_reveals_the_text_line_and_its_text_is_the_model_sent() {
                 runtime: Runtime::Claude,
                 model: Some("my model-2".into()),
             }),
+            delivery: None,
         }
     );
 }

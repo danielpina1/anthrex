@@ -65,6 +65,7 @@ fn a_stage(head: Option<&str>) -> StageInfo {
         full: a_full_info(),
         fix_tasks: vec!["fix1".into()],
         propagate_red: Some("bbbb2222".into()),
+        pr: None,
     }
 }
 
@@ -495,7 +496,7 @@ fn a_bisect_line() -> BisectLine {
 
 #[test]
 fn history_v3_lines_round_trip() {
-    assert_eq!(HISTORY_VERSION, 3);
+    assert_eq!(HISTORY_VERSION, 4);
     for (line, tag) in [
         (HistoryLine::Tier(a_tier_record()), "tier"),
         (HistoryLine::Flaky(a_flaky_record()), "flaky"),

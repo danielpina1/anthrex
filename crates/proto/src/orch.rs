@@ -30,6 +30,8 @@ pub enum HoldKind {
     Promotion,
     /// An epic added after the plan gate.
     Epic { epic: String },
+    /// Milestone 9.2 decision 26: a fix task whose `owns` lie outside its stage.
+    Fix { stage: u16, paths: Vec<String> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +41,9 @@ pub enum HoldState {
     Awaiting,
     Approved,
     Rejected,
+    /// Milestone 9.2's final fix wave (I-4): every task behind the hold ended cancelled
+    /// before anyone decided it, so there is nothing left to decide. Appended last.
+    Moot,
 }
 
 /// One approval hold (decision 28), as the run view shows it.

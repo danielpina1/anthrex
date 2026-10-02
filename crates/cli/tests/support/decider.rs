@@ -115,6 +115,9 @@ pub fn context_with(
     let var = move |key: &str| match key {
         "ANTHREX_CLAUDE_BIN" => Some(NO_CLAUDE_BIN.to_string()),
         "ANTHREX_CODEX_BIN" => Some(NO_CODEX_BIN.to_string()),
+        // Task M9.2.12's fix round (m1): never the user's `gh` either.
+        "ANTHREX_CODE_HOST" => Some("gh".to_string()),
+        "ANTHREX_GH_BIN" => Some(daemon::manager::TEST_GH_BIN.to_string()),
         _ => var(key),
     };
     let mut cfg = config::Orchestrator::default();

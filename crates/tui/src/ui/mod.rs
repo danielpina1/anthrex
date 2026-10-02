@@ -20,6 +20,8 @@ pub mod profile;
 pub mod run_edit;
 pub mod run_goal;
 pub mod run_list;
+#[cfg(test)]
+pub(crate) mod run_pr_tests;
 pub mod settings;
 pub mod sidebar;
 pub mod stats;

@@ -93,6 +93,10 @@ pub struct Field {
     pub label: &'static str,
     pub value: String,
     pub wrap: bool,
+    /// The words of `value` (`split_whitespace`'s, by index) the run view's row layout
+    /// draws in a role: marks the client wrote from structured state (the stage's `ci`
+    /// row, deferred from task 15), never found by reading the text.
+    pub marks: Vec<(usize, theme::Role)>,
 }
 
 /// One node, projected: its status glyph in its status colour, the name it is
@@ -119,6 +123,7 @@ fn field(label: &'static str, value: impl Into<String>) -> Field {
         label,
         value: value.into(),
         wrap: false,
+        marks: Vec::new(),
     }
 }
 
@@ -303,6 +308,7 @@ fn subagent_fields(row: &Row<'_>, info: &SubagentInfo, app: &App) -> Vec<Field> 
             label: "task",
             value: label.to_owned(),
             wrap: true,
+            marks: Vec::new(),
         });
     }
     fields.push(field("spawned by", spawned_by(row, info, app)));
@@ -409,6 +415,7 @@ pub(crate) mod run_format;
 mod run_orch;
 mod run_round;
 mod run_stage;
+mod run_stage_pr;
 mod run_task;
 mod run_task_outcome;
 mod run_task_sections;
@@ -424,6 +431,7 @@ pub use panel::render_in;
 #[cfg(test)]
 pub use run_format::progress_bar;
 pub use run_format::{format_duration, format_tokens, local_hhmm};
+pub(crate) use run_stage_pr::delivering;
 
 #[cfg(test)]
 mod tests;
@@ -445,6 +453,9 @@ mod run_orch_tests;
 
 #[cfg(test)]
 mod run_stage_tests;
+
+#[cfg(test)]
+mod run_stage_pr_tests;
 
 #[cfg(test)]
 mod run_task_sections_tests;

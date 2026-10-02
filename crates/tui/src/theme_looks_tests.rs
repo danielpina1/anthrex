@@ -4,7 +4,8 @@
 
 use crate::theme::*;
 use proto::{
-    FullInfo, FullState, RunState, StageInfo, Status, SubagentInfo, SubagentState, TaskState,
+    CiState, FullInfo, FullState, RunState, StageInfo, Status, SubagentInfo, SubagentState,
+    TaskState,
 };
 use ratatui::style::{Color, Modifier};
 
@@ -147,6 +148,7 @@ fn stage(head: Option<&str>, state: FullState) -> StageInfo {
         },
         fix_tasks: vec![],
         propagate_red: None,
+        pr: None,
     }
 }
 
@@ -214,7 +216,30 @@ fn every_look(ascii: bool) -> Vec<(String, &'static str, Role)> {
         let (g, r) = run_look(state, ascii);
         out.push((format!("{state:?}"), g, r));
     }
+    // Milestone 9.2 decision 42: a stage PR's CI.
+    for state in [
+        CiState::None,
+        CiState::Pending,
+        CiState::Green,
+        CiState::Red,
+    ] {
+        let (g, r) = ci_look(state, ascii);
+        out.push((format!("{state:?}"), g, r));
+    }
     out
+}
+
+/// Milestone 9.2 decision 42's CI marks, each with its role and ASCII twin.
+#[test]
+fn ci_looks_are_decision_42s() {
+    assert_eq!(ci_look(CiState::Green, false), ("✓", Role::Done));
+    assert_eq!(ci_look(CiState::Red, false), ("✗", Role::Failed));
+    assert_eq!(ci_look(CiState::Pending, false), ("…", Role::Working));
+    assert_eq!(ci_look(CiState::None, false), ("–", Role::Muted));
+    assert_eq!(ci_look(CiState::Green, true), ("+", Role::Done));
+    assert_eq!(ci_look(CiState::Red, true), ("x", Role::Failed));
+    assert_eq!(ci_look(CiState::Pending, true), ("...", Role::Working));
+    assert_eq!(ci_look(CiState::None, true), ("_", Role::Muted));
 }
 
 /// §6.9's theme test for the new looks: with truecolor off every look is one of the

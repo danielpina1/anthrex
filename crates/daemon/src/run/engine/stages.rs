@@ -170,6 +170,10 @@ fn dep_in(run: &Run, dep: &str, n: u16, record: &StageRecord) -> bool {
 /// one, once its stage branch exists and every merged dependency of an earlier stage
 /// is in that stage's head.
 pub(crate) fn ready_in_stage(run: &Run, i: usize) -> bool {
+    // Milestone 9.2 decision 37: a stage paused by a closed PR below starts nothing.
+    if super::delivery::stage_paused(run, run.tasks[i].stage()) {
+        return false;
+    }
     if run.stage_layout == StageLayout::Single {
         return true;
     }
@@ -315,6 +319,20 @@ pub(super) fn rebaseline(
 /// tier 3 on a commit no longer on the line is forgotten, so tier 3 is due for the new
 /// head by the ordinary rules.
 fn moved_line(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
+    forget_line(run, n, now, fx);
+    log(
+        run,
+        now,
+        format!(
+            "stage {n}: rebaselined to {}",
+            sha7(&run.stage(n).map(|s| s.head.clone()).unwrap_or_default())
+        ),
+    );
+}
+
+/// [`moved_line`] without its log line: also milestone 9.2's adoption of a user's
+/// commit (decision 24, ruling R-9), whose head the engine never wrote on the line.
+pub(super) fn forget_line(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
     super::bisect::rebaselined(run, n, now, fx);
     let Some(record) = run.stages.iter_mut().find(|s| s.n == n) else {
         return;
@@ -355,14 +373,6 @@ fn moved_line(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
         record.full.red_at = None;
         record.full.note = None;
     }
-    log(
-        run,
-        now,
-        format!(
-            "stage {n}: rebaselined to {}",
-            sha7(&run.stage(n).map(|s| s.head.clone()).unwrap_or_default())
-        ),
-    );
 }
 
 fn rebaseline_heads(run: &mut Run, read: &Rebaseline) {

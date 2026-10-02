@@ -329,7 +329,9 @@ fn outcome_text_is_sanitised() {
         (&merged, &["CRIT", "VERDICT", "SUMMARY"][..]),
     ] {
         let inspection = inspect_node(app, &t2_key());
-        for (w, h) in [(84, 60), (44, 60), (120, 80)] {
+        // Tall enough for every planted line: the hostile text names every hidden
+        // format character (milestone 9.2's M9.2.15 widened the list), so it wraps long.
+        for (w, h) in [(84, 200), (44, 400), (120, 200)] {
             let rows = draw(&inspection, w, h);
             for row in &rows {
                 assert_eq!(first_hostile(row), None, "{w}x{h}: {row:?}");

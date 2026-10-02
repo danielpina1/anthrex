@@ -136,6 +136,7 @@ pub(super) fn start(
         show: None,
         infra: 0,
         retry_at: 0,
+        ci: None,
     };
     if let Some(s) = stage_mut(run, stage) {
         s.bisect = Some(record);
@@ -441,17 +442,24 @@ fn culprit(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
     let entry = b.hi.checked_sub(1).and_then(|k| b.candidates.get(k));
     let id = match entry {
         Some(StageMerge::Task { id, .. }) => id.clone(),
+        // Milestone 9.2 decision 33: `from: 0` is a base sync, the base branch's merge.
         Some(StageMerge::Propagate { from, .. }) => {
-            return end(
-                run,
-                n,
-                format!("the first red merge is the propagate of stage {from}"),
-                now,
-                fx,
-            );
+            let what = match from {
+                0 => "the merge of the base branch".to_string(),
+                k => format!("the propagate of stage {k}"),
+            };
+            return end(run, n, format!("the first red merge is {what}"), now, fx);
         }
         None => return end(run, n, "no merge is left to blame".to_string(), now, fx),
     };
+    // Milestone 9.2 decision 27: a CI red's culprit gets a `ci` fix (`ci_fix_max`, not ours).
+    if b.ci.is_some() {
+        let handled = super::delivery::ci_culprit(run, n, &b, &id, now, fx);
+        if let Some(s) = stage_mut(run, n) {
+            s.bisect = None;
+        }
+        return record(run, n, &b, handled.result(&id), now, fx);
+    }
     let added = add_fix(run, n, &b, &id, now, fx);
     if let Some(s) = stage_mut(run, n) {
         s.bisect = None;
@@ -465,7 +473,7 @@ fn culprit(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
                 reason: &reason,
             };
             record(run, n, &b, refused, now, fx);
-            return end_with(run, n, &b, reason, now);
+            return end_with(run, n, &b, reason, now, fx);
         }
     };
     let found = BisectResult::Culprit {

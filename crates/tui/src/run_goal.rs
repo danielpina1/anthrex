@@ -12,7 +12,7 @@ use crate::dialog::{TextInput, apply_text_key};
 use crate::run_edit::TEXT_MAX_CHARS;
 use crate::text_area::TextArea;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{ModelEntry, OrchestratorChoice, RunRequest, Runtime};
+use proto::{DeliveryMode, ModelEntry, OrchestratorChoice, RunRequest, Runtime};
 use std::path::PathBuf;
 
 /// The toast `C-b g` shows when no project is selected, no window is focused and the
@@ -28,15 +28,18 @@ pub enum GoalField {
     Goal,
     Runtime,
     Model,
+    /// Milestone 9.2 ruling R-13: `run start --goal --delivery`.
+    Delivery,
     Trust,
     Yes,
     UnconfinedChecks,
 }
 
-const FIELDS: [GoalField; 6] = [
+const FIELDS: [GoalField; 7] = [
     GoalField::Goal,
     GoalField::Runtime,
     GoalField::Model,
+    GoalField::Delivery,
     GoalField::Trust,
     GoalField::Yes,
     GoalField::UnconfinedChecks,
@@ -61,6 +64,9 @@ pub struct GoalForm {
     /// `None` is the configured orchestrator (`[orchestrator.agent]`, then the default).
     pub runtime: Option<Runtime>,
     pub model: GoalModel,
+    /// Milestone 9.2 ruling R-13: `None` is the repo profile's `[delivery] mode`
+    /// (`configured`), else `local` or `pr` for this run (`RunRequest::StartGoal.delivery`).
+    pub delivery: Option<DeliveryMode>,
     /// The text typed after `custom…`; kept while the picker moves away and back.
     pub custom: TextInput,
     /// The settings cache's roster as of the last `set_roster` (decision 24); empty
@@ -89,6 +95,7 @@ pub fn field_label(field: GoalField) -> &'static str {
         GoalField::Goal => "goal",
         GoalField::Runtime => "runtime",
         GoalField::Model => "model",
+        GoalField::Delivery => "delivery",
         GoalField::Trust => "trust",
         GoalField::Yes => "approve at once",
         GoalField::UnconfinedChecks => "unconfined checks",
@@ -121,6 +128,18 @@ fn insert_bounded(input: &mut TextInput, text: &str) {
     input.insert(&cut);
 }
 
+/// `configured`, `local`, `pr`, round.
+fn next_delivery(value: Option<DeliveryMode>, forward: bool) -> Option<DeliveryMode> {
+    let order = [None, Some(DeliveryMode::Local), Some(DeliveryMode::Pr)];
+    let at = order.iter().position(|v| *v == value).unwrap_or(0);
+    let len = order.len();
+    order[if forward {
+        (at + 1) % len
+    } else {
+        (at + len - 1) % len
+    }]
+}
+
 fn next_runtime(value: Option<Runtime>, forward: bool) -> Option<Runtime> {
     let order = [None, Some(Runtime::Claude), Some(Runtime::Codex)];
     let at = order.iter().position(|v| *v == value).unwrap_or(0);
@@ -139,6 +158,7 @@ impl GoalForm {
             goal: TextArea::new(),
             runtime: None,
             model: GoalModel::Default,
+            delivery: None,
             custom: TextInput::default(),
             roster: Vec::new(),
             trust_project: false,
@@ -244,6 +264,13 @@ impl GoalForm {
                 _ => {}
             },
             GoalField::Model => self.on_model_key(key),
+            GoalField::Delivery => match key.code {
+                KeyCode::Right | KeyCode::Char(' ') => {
+                    self.delivery = next_delivery(self.delivery, true)
+                }
+                KeyCode::Left => self.delivery = next_delivery(self.delivery, false),
+                _ => {}
+            },
             GoalField::Trust if toggle => self.trust_project = !self.trust_project,
             GoalField::Yes if toggle => self.yes = !self.yes,
             GoalField::UnconfinedChecks if toggle => {
@@ -355,6 +382,7 @@ impl GoalForm {
             trust_project: self.trust_project,
             unconfined_checks: self.unconfined_checks,
             orchestrator,
+            delivery: self.delivery,
         })
     }
 }

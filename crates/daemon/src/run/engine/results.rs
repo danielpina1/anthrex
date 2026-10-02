@@ -2,9 +2,9 @@
 //! size limit milestone 9 would otherwise pass). Pure (design decision 2).
 
 use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, bisect, complete, deciders, dispatch, done, early,
-    fallback, full, gates, history, holds, kinds, ladder, merge, orch_window, outbox, planners,
-    propagate, requests, review, run_scouts, stages, tiers, worker_messages,
+    Effect, EngineState, OpId, OpKind, OpResult, bisect, complete, deciders, delivery, dispatch,
+    done, early, fallback, full, gates, history, holds, kinds, ladder, merge, orch_window, outbox,
+    planners, propagate, requests, review, run_scouts, stages, tiers, worker_messages,
 };
 
 /// Routes an op's result by the kind of the op it answers. A result for an op the run
@@ -47,6 +47,10 @@ pub(super) fn op_done(
         // Decisions 17-19: tier 3, a run-level job.
         (OpKind::Tier(spec), None) if spec.tier == 3 => {
             full::full_done(run, op, &spec, result, now, fx)
+        }
+        // Milestone 9.2 decision 27: a CI red's local reproduction.
+        (OpKind::TestAt(_) | OpKind::Tier(_), None) if delivery::reproducing(run, op) => {
+            delivery::reproduced(run, op, result, now, fx)
         }
         // Decision 36: a bisect probe (task M9.1.15).
         (OpKind::TestAt(_), None) => bisect::probe_done(run, op, result, now, fx),
@@ -109,6 +113,8 @@ pub(super) fn op_done(
         (OpKind::RestartOrchestrator { .. }, _) => orch_window::restarted(run, result, now, fx),
         // Decisions 20 and 32: a run scout's and a sub-planner's session.
         (kind @ OpKind::StartScout { .. }, _) => run_scouts::started(run, &kind, result, now, fx),
+        // Milestone 9.2 decision 8: a host call's answer.
+        (OpKind::Host { op: host, .. }, _) => delivery::host_done(run, host, result, now, fx),
         (kind @ OpKind::StartPlanner { .. }, _) => {
             bound = planners::started(run, &kind, result, now, fx);
         }

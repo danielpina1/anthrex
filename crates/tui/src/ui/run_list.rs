@@ -247,7 +247,20 @@ fn row_line(
         None => {
             let text = theme::fold(&content_text_in(row, p.ascii), p.ascii);
             let room = width.saturating_sub(indent + 2);
-            spans.push(Span::styled(truncate_in(&text, room, p.ascii), plain));
+            let cut = truncate_in(&text, room, p.ascii);
+            // Review finding m2: a stage row's CI mark in its role, where the cut kept it.
+            match crate::graph::stage_pr::ci_mark_span(row, &text, p.ascii) {
+                Some((range, role)) if cut.get(range.clone()) == text.get(range.clone()) => {
+                    spans.push(Span::raw(cut[..range.start].to_owned()));
+                    spans.push(Span::styled(
+                        cut[range.clone()].to_owned(),
+                        theme::role(role, p),
+                    ));
+                    spans.push(Span::raw(cut[range.end..].to_owned()));
+                    spans.retain(|span| !span.content.is_empty());
+                }
+                _ => spans.push(Span::styled(cut, plain)),
+            }
         }
     }
     if !selected {

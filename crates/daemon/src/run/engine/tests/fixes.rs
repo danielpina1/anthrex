@@ -111,3 +111,25 @@ fn a_fix_task_the_plan_rules_refuse_changes_nothing() {
     assert_eq!(fx.run(), &before);
     assert!(effects.is_empty());
 }
+
+/// Milestone 9.2 decision 41: a 9.2 fix task's text reads in its history and the
+/// run's log as 9.1's do (`a fix task for the <text>`).
+#[test]
+fn a_ci_fix_task_logs_its_text() {
+    let (mut fx, _) = start_on(&super::full::profile(), &[doc_task("t1", "")]);
+    let mut ci = spec(TaskOrigin::Ci, "docs/ci/**", RouteSpec::default());
+    ci.fixes = FixOf::Ci {
+        stage: 1,
+        head: BASE.into(),
+        ci_runs: vec![7, 8],
+        key: "a::works".into(),
+    };
+    let now = fx.now;
+    let id = add_fix(fx.run_mut(), ci, now, &mut Vec::new()).expect("added");
+    assert_eq!(
+        fx.task(&id).history.last().map(|e| e.text.as_str()),
+        Some("added by the engine: a fix task for the CI runs 7, 8")
+    );
+    let line = format!("fix task {id} added for the CI runs 7, 8");
+    assert!(fx.run().log.iter().any(|l| l.text == line), "{line}");
+}

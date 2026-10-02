@@ -171,3 +171,52 @@ fn a_symlinked_config_stays_a_link() {
     assert_eq!(entries(dir.path()), ["config.toml", "dotfiles"]);
     assert_eq!(entries(&real_dir), ["anthrex.toml"]);
 }
+
+/// M9.2.6 fix round 2: a stored note with `⚠️` (U+26A0 U+FE0F) no longer blocks every
+/// settings save. The save writes the note without the variation selector, keeps every
+/// comment, and reads back as the doc it wrote.
+#[test]
+fn a_note_with_a_variation_selector_saves_cleaned() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let text = "# my settings\n[orchestrator]\nmax_writers = 2 # mine\n\n[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-6-sol\"\nstrength = \"standard\"\nnote = \"\u{26A0}\u{FE0F} careful\"\n";
+    std::fs::write(&path, text).unwrap();
+    let mut doc = doc_of(&crate::load(&path).0.orchestrator);
+    let at = doc
+        .models
+        .iter()
+        .position(|m| m.model == "gpt-6-sol")
+        .unwrap();
+    assert_eq!(doc.models[at].note, "\u{26A0}\u{FE0F} careful");
+    doc.limits.max_writers = 3;
+    let saved = save(&path, &doc, &AtomicBool::new(false)).expect("the save goes through");
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert!(!on_disk.contains('\u{FE0F}'), "{on_disk}");
+    assert!(
+        on_disk.contains("# my settings\n") && on_disk.contains("# mine"),
+        "{on_disk}"
+    );
+    let read = doc_of(&crate::load(&path).0.orchestrator);
+    assert_eq!(read.models[at].note, "\u{26A0} careful");
+    assert_eq!(read.limits.max_writers, 3);
+    assert_eq!(doc_of(&saved.orchestrator), read);
+    assert_eq!(entries(dir.path()), ["config.toml"]);
+}
+
+/// …while a C0 control in a note still refuses, and the file is untouched.
+#[test]
+fn a_control_character_in_a_note_still_refuses() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let text = "[orchestrator]\nmax_writers = 2\n";
+    std::fs::write(&path, text).unwrap();
+    let mut doc = doc_of(&crate::load(&path).0.orchestrator);
+    doc.models[0].note = "a\x07b\u{FE0F}".into();
+    let problems = save(&path, &doc, &AtomicBool::new(false)).unwrap_err();
+    assert_eq!(
+        problems,
+        ["model 1 (claude): its note holds a control character"]
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), text.as_bytes());
+    assert_eq!(entries(dir.path()), ["config.toml"]);
+}

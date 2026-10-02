@@ -93,6 +93,7 @@ fn single_code_goal_takes_the_fast_path() {
             stage: 1,
             atomic: false,
             atomic_reason: None,
+            addresses: Vec::new(),
         }
     );
     // A docs goal is fast too, with the kind carried.
@@ -239,6 +240,7 @@ fn build_fast(decision: &Decision) -> Result<crate::run::model::Run, Vec<PlanErr
             testing: &config::Testing::default(),
             now: 1_000,
             yes: true,
+            delivery: &config::Delivery::default(),
         },
     )
 }

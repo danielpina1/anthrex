@@ -47,6 +47,7 @@ fn yes_records_the_approval() {
             testing: &config::Testing::default(),
             now: 1_000,
             yes: true,
+            delivery: &config::Delivery::default(),
         },
     )
     .unwrap_or_else(|e| panic!("{}", show(&e)));
@@ -196,6 +197,7 @@ fn run_limits_freeze_the_testing_limits() {
             testing: &testing,
             now: 1_000,
             yes: false,
+            delivery: &config::Delivery::default(),
         },
     )
     .unwrap_or_else(|e| panic!("{}", show(&e)));
@@ -225,4 +227,90 @@ fn run_limits_freeze_the_testing_limits() {
     assert!(limits.remove("testing").is_some());
     let old: crate::run::model::Run = serde_json::from_value(old).unwrap();
     assert_eq!(old.limits.testing, defaults);
+}
+
+/// Milestone 9.2 decision 16: `[delivery]` is frozen into the run at start
+/// (`RunDelivery.limits`); a restored run keeps its own, so a config edited after the
+/// start never reaches it, and a 9.1 `run.json` loads with `local` and the defaults.
+#[test]
+fn limits_are_frozen_at_run_start() {
+    use crate::run::delivery::{DeliveryLimits, SyncPolicy};
+    use crate::run::journal::{load_all, save_run};
+
+    let delivery = config::Delivery {
+        poll_secs: 5,
+        poll_max_secs: 9,
+        ci_log_max_bytes: 8192,
+        ci_fix_max: 1,
+        review_fix_max: 4,
+        review_batch_secs: 0,
+        reviewers: vec!["alice".into()],
+        reply_to_comments: false,
+        sync: config::SyncPolicy::Always,
+        delete_merged_branches: true,
+        stage_target_lines: (100, 400),
+    };
+    let frozen = DeliveryLimits {
+        poll_secs: 5,
+        poll_max_secs: 9,
+        ci_log_max_bytes: 8192,
+        ci_fix_max: 1,
+        review_fix_max: 4,
+        review_batch_secs: 0,
+        reviewers: vec!["alice".into()],
+        reply_to_comments: false,
+        sync: SyncPolicy::Always,
+        delete_merged_branches: true,
+        stage_target_lines: (100, 400),
+    };
+    let data = tempfile::tempdir().unwrap();
+    let config = config::Orchestrator::default();
+    let testing = config::Testing::default();
+    let run = build_run(
+        parse_plan(EXAMPLE_PLAN).unwrap(),
+        preflight(),
+        BuildContext {
+            id: RUN_ID.to_string(),
+            wt_dir: PathBuf::from("/tmp/wt"),
+            data_dir: crate::run::journal::runs_dir(data.path()).join(RUN_ID),
+            config: &config,
+            testing: &testing,
+            delivery: &delivery,
+            now: 1_000,
+            yes: false,
+        },
+    )
+    .unwrap_or_else(|e| panic!("{}", show(&e)));
+    assert_eq!(run.delivery.limits, frozen);
+    assert_eq!(run.delivery.mode, proto::DeliveryMode::Local);
+
+    // A default `[delivery]` freezes Interfaces "config"'s defaults.
+    let defaults = DeliveryLimits {
+        poll_secs: 60,
+        poll_max_secs: 300,
+        ci_log_max_bytes: 2_097_152,
+        ci_fix_max: 2,
+        review_fix_max: 3,
+        review_batch_secs: 120,
+        reviewers: Vec::new(),
+        reply_to_comments: true,
+        sync: SyncPolicy::OnConflict,
+        delete_merged_branches: false,
+        stage_target_lines: (300, 800),
+    };
+    assert_eq!(DeliveryLimits::default(), defaults);
+    assert_eq!(run_ok(EXAMPLE_PLAN).delivery.limits, defaults);
+
+    // A restored `run.json` keeps its own: restoring reads no config.
+    save_run(&run).unwrap();
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs[0].0.delivery.limits, frozen);
+
+    // A 9.1 `run.json`, written before the field existed, loads local with the defaults.
+    let mut old = serde_json::to_value(&run).unwrap();
+    assert!(old.as_object_mut().unwrap().remove("delivery").is_some());
+    let old: crate::run::model::Run = serde_json::from_value(old).unwrap();
+    assert_eq!(old.delivery.mode, proto::DeliveryMode::Local);
+    assert_eq!(old.delivery.limits, defaults);
 }

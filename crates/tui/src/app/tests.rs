@@ -122,6 +122,12 @@ mod profile_screen_views;
 #[path = "../app_tests/polish/mod.rs"]
 mod polish;
 
+#[path = "../app_tests/pr_delivery.rs"]
+mod pr_delivery;
+
+#[path = "../app_tests/pr_delivery_alerts.rs"]
+mod pr_delivery_alerts;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

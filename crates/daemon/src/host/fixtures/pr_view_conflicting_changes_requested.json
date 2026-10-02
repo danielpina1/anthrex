@@ -1,0 +1,104 @@
+{
+  "baseRefName": "trunk",
+  "comments": [
+    {
+      "id": "IC_kwDODKw3uc8AAAABL5Gpyg",
+      "author": {
+        "login": "github-actions"
+      },
+      "authorAssociation": "CONTRIBUTOR",
+      "body": "Thanks for your pull request! (bot text, replaced)",
+      "createdAt": "2026-07-27T15:06:43Z",
+      "includesCreatedEdit": false,
+      "isMinimized": true,
+      "minimizedReason": "OUTDATED",
+      "reactionGroups": [],
+      "url": "https://github.com/cli/cli/pull/13982#issuecomment-5093042634",
+      "viewerDidAuthor": false
+    },
+    {
+      "id": "IC_kwDODKw3uc8AAAABM0KrfA",
+      "author": {
+        "login": "alice"
+      },
+      "authorAssociation": "NONE",
+      "body": "Comment 1 by a person (text replaced).",
+      "createdAt": "2026-08-02T03:30:12Z",
+      "includesCreatedEdit": true,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "reactionGroups": [],
+      "url": "https://github.com/cli/cli/pull/13982#issuecomment-5154974588",
+      "viewerDidAuthor": false
+    }
+  ],
+  "headRefOid": "a560bea91b8cd58b3c0d78e5db98c7fdc8e5036b",
+  "mergeCommit": null,
+  "mergeable": "CONFLICTING",
+  "mergedAt": null,
+  "reviewDecision": "CHANGES_REQUESTED",
+  "reviews": [
+    {
+      "id": "PRR_kwDODKw3uc8AAAABHWryQg",
+      "author": {
+        "login": "copilot-pull-request-reviewer"
+      },
+      "authorAssociation": "CONTRIBUTOR",
+      "body": "Breaking: the exit code changed. Please keep the old behaviour.\n\n- `gh ext upgrade --all` (text replaced)",
+      "submittedAt": "2026-07-27T15:11:14Z",
+      "includesCreatedEdit": false,
+      "reactionGroups": [],
+      "state": "COMMENTED",
+      "commit": {
+        "oid": "65fb1e00b872328d96f97591bf4ddb36b2603489"
+      }
+    },
+    {
+      "id": "PRR_kwDODKw3uc8AAAABHcDQag",
+      "author": {
+        "login": "tester"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "Breaking: the exit code changed. Please keep the old behaviour.\n\n- `gh ext upgrade --all` (text replaced)",
+      "submittedAt": "2026-07-28T05:42:11Z",
+      "includesCreatedEdit": false,
+      "reactionGroups": [],
+      "state": "CHANGES_REQUESTED",
+      "commit": {
+        "oid": "65fb1e00b872328d96f97591bf4ddb36b2603489"
+      }
+    },
+    {
+      "id": "PRR_kwDODKw3uc8AAAABIFDZzw",
+      "author": {
+        "login": "alice"
+      },
+      "authorAssociation": "NONE",
+      "body": "",
+      "submittedAt": "2026-08-02T04:28:16Z",
+      "includesCreatedEdit": false,
+      "reactionGroups": [],
+      "state": "COMMENTED",
+      "commit": {
+        "oid": "65fb1e00b872328d96f97591bf4ddb36b2603489"
+      }
+    },
+    {
+      "id": "PRR_kwDODKw3uc8AAAABINmlEA",
+      "author": {
+        "login": "alice"
+      },
+      "authorAssociation": "NONE",
+      "body": "",
+      "submittedAt": "2026-08-03T15:58:40Z",
+      "includesCreatedEdit": false,
+      "reactionGroups": [],
+      "state": "COMMENTED",
+      "commit": {
+        "oid": "65fb1e00b872328d96f97591bf4ddb36b2603489"
+      }
+    }
+  ],
+  "state": "OPEN",
+  "statusCheckRollup": []
+}

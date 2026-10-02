@@ -3,7 +3,9 @@
 //! Callers style a look's role with `theme::role(r, app.palette())`.
 
 use super::{Glyph, Palette, Role, glyph, role, spinner};
-use proto::{FullState, RunState, StageInfo, Status, SubagentInfo, SubagentState, TaskState};
+use proto::{
+    CiState, FullState, RunState, StageInfo, Status, SubagentInfo, SubagentState, TaskState,
+};
 use ratatui::style::Style;
 
 /// Decision 3: a window's glyph and role. `frame` drives the spinner.
@@ -94,6 +96,18 @@ pub fn stage_look(stage: &StageInfo, frame: usize, ascii: bool) -> (&'static str
         FullState::Running => (spinner(frame, ascii), Role::Working),
         FullState::Green => (g(Glyph::Passed), Role::Done),
         FullState::Red | FullState::Bisecting => (g(Glyph::Failed), Role::Failed),
+    }
+}
+
+/// Milestone 9.2 decision 42: a stage PR's CI, or one of its checks: `✓` green, `✗`
+/// red, `…` pending (`...` in ASCII) and `–` with no checks.
+pub fn ci_look(state: CiState, ascii: bool) -> (&'static str, Role) {
+    match state {
+        CiState::Green => (glyph(Glyph::Passed, ascii), Role::Done),
+        CiState::Red => (glyph(Glyph::Failed, ascii), Role::Failed),
+        CiState::Pending if ascii => ("...", Role::Working),
+        CiState::Pending => ("…", Role::Working),
+        CiState::None => (glyph(Glyph::Ended, ascii), Role::Muted),
     }
 }
 

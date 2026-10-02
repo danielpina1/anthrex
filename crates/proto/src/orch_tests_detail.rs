@@ -158,6 +158,8 @@ fn appended_variants_keep_their_indices() {
     let mut expected: Vec<&str> = requests.to_vec();
     expected.push("TaskDetail");
     expected.push("Settings");
+    // Milestone 9.2 appends `Deliver` and `Watch` after 9.0.6's `Settings` (`delivery_tests.rs`).
+    expected.extend(["Deliver", "Watch"]);
     assert_eq!(variant_names::<RunRequest>(), expected);
     assert_eq!(
         variant_at::<RunRequest>(

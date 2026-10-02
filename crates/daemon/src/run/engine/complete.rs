@@ -37,7 +37,13 @@ pub(super) fn deferred_note(id: &str) -> String {
 
 /// Task `i` is cancelled as the run ends, or, while its `MergeCandidate` runs, marked to
 /// be once that merge does not land (ruling T14-I1). Returns whether it was deferred.
-fn cancel_task(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect>) -> bool {
+pub(super) fn cancel_task(
+    run: &mut Run,
+    i: usize,
+    why: &str,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> bool {
     if candidate_in_flight(run, i) {
         if !std::mem::replace(&mut run.tasks[i].cancel_deferred, true) {
             history(run, i, now, "cancel deferred: its merge is in flight");
@@ -132,10 +138,12 @@ pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 /// Decision 37: a running run whose tasks are all finished (`merged`, `cancelled` or,
 /// since milestone 9, `reported`), with an empty merge queue, no op pending and no
 /// cancelled task's session still ending, runs the ref guard first. With an
-/// orchestrator, milestone 9 decision 38's conditions hold too (`kinds::may_complete`).
+/// orchestrator, milestone 9 decision 38's conditions hold too (`kinds::may_complete`);
+/// in `pr` mode, every stage PR has landed (milestone 9.2 decision 37).
 pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    let finished =
-        run.tasks.iter().all(|t| t.state.is_finished()) && super::kinds::may_complete(run);
+    let finished = run.tasks.iter().all(|t| t.state.is_finished())
+        && super::kinds::may_complete(run)
+        && super::delivery::may_complete(run);
     let ending = run
         .tasks
         .iter()
@@ -144,8 +152,8 @@ pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         return;
     }
     // Milestone 9.1 decision 19: a stage red on its head waits for the head to move or
-    // for the `finish` edit.
-    if super::full::holds_completion(run, now) {
+    // for the `finish` edit; in `pr` mode CI on the PRs is the gate (9.2 ruling R-8).
+    if !super::delivery::pr(run) && super::full::holds_completion(run, now) {
         return;
     }
     // Decisions 50 and 52: every stage's work reaches `integration` first.
@@ -180,6 +188,11 @@ pub(super) fn refs_verified(run: &mut Run, result: OpResult, now: u64, fx: &mut 
         // M9.9 second review, C-1: every task is still finished (none came since the
         // guard started), else the next pass verifies again.
         OpResult::RefsOk if run.state == RunState::Running && !all_finished(run) => {}
+        // Milestone 9.2 ruling R-8: in `pr` mode every stage PR has landed; neither
+        // tier 3 nor the final check runs.
+        OpResult::RefsOk if run.state == RunState::Running && super::delivery::pr(run) => {
+            complete(run, now, fx)
+        }
         // Milestone 9.1 decision 19: a tiered profile runs tier 3 per stage instead.
         OpResult::RefsOk if run.state == RunState::Running && super::tiers::tiered(run) => {
             if super::full::completion(run, now, fx) {
@@ -270,6 +283,11 @@ fn complete(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         now,
         format!("complete: {merged} merged, {cancelled} cancelled{reported}"),
     );
+    // Milestone 9.2 decision 39: a cancelled `pr`-mode run names the PRs it left open.
+    if let Some(outcome) = super::delivery::cancel_outcome(run) {
+        log(run, now, outcome.clone());
+        run.outcome = Some(outcome);
+    }
     // Milestone 9 decision 38.
     let text = "the run is complete; write your summary with edit_plan summary";
     super::wake::note(run, text.to_string());
@@ -308,6 +326,9 @@ pub(super) fn cancel(
         }
     }
     run.cancelled = true;
+    // Milestone 9.2 decision 39: nothing is closed; watching stops. Decision 44.
+    run.delivery.watching = false;
+    super::delivery::land::cancelled(run, now, fx);
     super::planners::halt_all(run, super::planners::RUN_CANCELLED, now, fx);
     log(run, now, "cancelled by the user");
     let mut text = format!("run {run_id} cancelled; it completes once its sessions have ended");

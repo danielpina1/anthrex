@@ -149,6 +149,9 @@ fn render_header(
     let area = indented(layout.header);
     let width = usize::from(area.width);
     let mut lines = vec![Line::raw(header_line(run, tasks, area.width, p.ascii))];
+    if let Some(delivery) = &layout.delivery {
+        lines.push(Line::raw(truncate_in(delivery, width, p.ascii)));
+    }
     let warn = role(Role::Attention, p);
     lines.extend(
         layout

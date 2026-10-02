@@ -60,6 +60,7 @@ pub fn run_at(data_dir: &Path, root: &Path, wt_dir: &Path, base_sha: &str) -> Ru
         testing: &config::Testing::default(),
         now: 1_000,
         yes: true,
+        delivery: &config::Delivery::default(),
     };
     build_run(plan, pre, ctx).unwrap_or_else(|e| panic!("the fixture run builds: {e:?}"))
 }

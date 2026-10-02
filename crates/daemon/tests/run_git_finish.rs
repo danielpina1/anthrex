@@ -273,6 +273,59 @@ fn delete_branches_removes_every_run_branch_but_keeps_salvage_refs() {
     assert!(repo.branch_exists("main"));
 }
 
+/// Milestone 9.2 ruling R-1 (with R-12 and task 4's ruling): a `pr`-mode run's discard
+/// also deletes its private remote refs and the remote-tracking refs its pushes left,
+/// locally only; the remote's branch, which backs a pull request, is untouched.
+#[test]
+fn delete_branches_also_removes_the_runs_private_remote_refs_but_never_the_remotes() {
+    let repo = repo();
+    let base = head(&repo.root);
+    let remote = tempfile::tempdir().unwrap();
+    out(remote.path(), &["init", "-q", "--bare"]);
+    let bare = remote.path().to_string_lossy().into_owned();
+    let stage = "refs/heads/anthrex/pr01/stage-1";
+    out(
+        &repo.root,
+        &["push", "-q", &bare, &format!("{base}:{stage}")],
+    );
+    out(&repo.root, &["branch", "anthrex/pr01/stage-1", &base]);
+    for name in [
+        "refs/anthrex/pr01/remote/stage-1",
+        "refs/anthrex/pr01/remote/base",
+        "refs/remotes/origin/anthrex/pr01/stage-1",
+        "refs/remotes/fork/anthrex/pr01/stage-2",
+        // Kept: another run's, the remote's own branches, and the salvage refs.
+        "refs/anthrex/pr011/remote/stage-1",
+        "refs/remotes/origin/anthrex/pr011/stage-1",
+        "refs/remotes/origin/main",
+        "refs/remotes/origin/feature/anthrex/pr01/x",
+        "refs/anthrex/salvage/pr01/t1/1",
+    ] {
+        out(&repo.root, &["update-ref", name, &base]);
+    }
+
+    delete_branches(real_git(), &repo.root, "anthrex/pr01/", T).unwrap();
+    let refs = out(&repo.root, &["for-each-ref", "--format=%(refname)"]);
+    assert_eq!(
+        refs,
+        [
+            "refs/anthrex/pr011/remote/stage-1",
+            "refs/anthrex/salvage/pr01/t1/1",
+            "refs/heads/main",
+            "refs/remotes/origin/anthrex/pr011/stage-1",
+            "refs/remotes/origin/feature/anthrex/pr01/x",
+            "refs/remotes/origin/main",
+        ]
+        .join("\n")
+    );
+    // The remote's stage branch is where it was.
+    let remote_refs = out(
+        remote.path(),
+        &["for-each-ref", "--format=%(refname) %(objectname)"],
+    );
+    assert_eq!(remote_refs, format!("{stage} {base}"));
+}
+
 #[test]
 fn a_refused_salvage_leaves_the_index_untouched() {
     let repo = repo();

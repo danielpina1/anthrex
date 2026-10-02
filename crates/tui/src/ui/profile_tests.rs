@@ -225,10 +225,11 @@ fn profile_tab_renders_groups_checks_and_dropped() {
                 assert!(text.is_ascii(), "{w}x{h}\n{text}");
             }
         }
-        // The full height shows every group and the environment's rows.
+        // The full height shows every group and the environment's rows (44 rows since
+        // milestone 9.2's delivery group took three more).
         screen_mut(&mut app).expanded = None;
-        let text = screen_text(&app, 120, 40);
-        for want in ["paths", "environment", "env.RUST_LOG", "debug"] {
+        let text = screen_text(&app, 120, 44);
+        for want in ["paths", "delivery", "environment", "env.RUST_LOG", "debug"] {
             assert!(text.contains(want), "{want}\n{text}");
         }
         // The proposal view: its marks and its dropped commands with their reasons.

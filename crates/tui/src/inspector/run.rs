@@ -29,7 +29,8 @@ pub(crate) fn run_inspection(
 ) -> Inspection {
     let state = match (run.state, run.paused_from) {
         (RunState::Paused, Some(from)) => format!("paused (from {})", state_text(from)),
-        (state, _) => state_text(state).to_owned(),
+        // Milestone 9.2 decision 36: `running (delivering)`.
+        _ => super::run_stage_pr::state_text(run),
     };
     let right = format!("{state} · {}", format_duration(app.run_age(run.created_at)));
     let mut fields = vec![field(
@@ -46,6 +47,8 @@ pub(crate) fn run_inspection(
     fields.push(field("agents", agents_text(run, app)));
     fields.push(field("spend", spend_text(run)));
     fields.push(field("gate", gate_text(run, app)));
+    // Milestone 9.2 decision 42: the delivery, and a single-stage run's PR.
+    fields.extend(super::run_stage_pr::run_fields(run, app));
     if let Some(orchestrator) = &run.orchestrator {
         fields.push(field("orchestrator", orchestrator_text(orchestrator)));
         if let Some(summary) = &orchestrator.summary {
@@ -345,6 +348,7 @@ pub(crate) fn scout_inspection(
             label: "question",
             value: clean(&scout.question),
             wrap: true,
+            marks: Vec::new(),
         },
         field("state", state_value),
         field("took", format_duration(took)),

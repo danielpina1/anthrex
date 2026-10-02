@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Decision 18: a lock-file failure is retried up to five times, after these delays.
 pub const LOCK_RETRY_DELAYS_MS: [u64; 5] = [200, 400, 800, 1600, 3200];
@@ -46,11 +46,46 @@ impl GitQueue {
         T: Send + 'static,
         F: Fn() -> Result<T, String> + Send + Sync + 'static,
     {
+        let guard = self.take(repo).await;
+        Self::run_locked(guard, f).await
+    }
+
+    /// Fix wave A2 (review A, M2): [`write`](Self::write) bounded by `limit`, counted
+    /// from the moment the repository's lock is taken (the wait for it is not part of the
+    /// bound). `f` gets that deadline, to check before a step that must not land after
+    /// the caller stopped waiting. `None` when the bound ends first: the write then
+    /// finishes unobserved, holding the repository, as in `write`.
+    pub async fn write_within<T, F>(
+        &self,
+        repo: &Path,
+        limit: Duration,
+        f: F,
+    ) -> Option<Result<T, String>>
+    where
+        T: Send + 'static,
+        F: Fn(Instant) -> Result<T, String> + Send + Sync + 'static,
+    {
+        let guard = self.take(repo).await;
+        let deadline = Instant::now() + limit;
+        let write = Self::run_locked(guard, move || f(deadline));
+        tokio::time::timeout_at(deadline.into(), write).await.ok()
+    }
+
+    /// `repo`'s write lock, waited for.
+    async fn take(&self, repo: &Path) -> tokio::sync::OwnedMutexGuard<()> {
         let repo_lock = crate::lock(&self.repos)
             .entry(repo.to_path_buf())
             .or_default()
             .clone();
-        let guard = repo_lock.lock_owned().await;
+        repo_lock.lock_owned().await
+    }
+
+    /// `f` and its retries in a task that owns `guard` (see `write`'s cancellation note).
+    async fn run_locked<T, F>(guard: tokio::sync::OwnedMutexGuard<()>, f: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: Fn() -> Result<T, String> + Send + Sync + 'static,
+    {
         let task = tokio::spawn(async move {
             let _guard = guard;
             let f = Arc::new(f);

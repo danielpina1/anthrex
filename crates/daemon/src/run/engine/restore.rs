@@ -314,12 +314,11 @@ pub(super) fn resume(
     // Milestone 9.1 ruling C-18: a resume retries tier 3 after the executor's failures;
     // a running run whose stage was held needs nothing more. Ruling C-27 (5): a running
     // run with no held stage is refused below, and a refused resume changes nothing.
+    // Milestone 9.2 ruling R-11: a stage held by a refused push pushes again.
     if let Some(run) = state.runs.get_mut(run_id)
         && run.state == RunState::Running
-        && super::full::held(run)
-        && super::full::retry(run, now)
+        && let Some(text) = retry_held(run, now)
     {
-        let text = format!("run {run_id}: tier 3 retries");
         return fx.push(Effect::Reply {
             reply,
             result: Ok(text),
@@ -352,6 +351,7 @@ pub(super) fn resume(
             && run.state == RunState::Running
         {
             super::full::retry(run, now);
+            super::delivery::release(run, now);
             resumed(run, now, fx);
         }
         return;
@@ -365,11 +365,28 @@ pub(super) fn resume(
         text.push_str(&super::stages::rebaseline(run, &read, now, fx));
     }
     super::full::retry(run, now);
+    super::delivery::release(run, now);
     unpause(run, now, fx);
     fx.push(Effect::Reply {
         reply,
         result: Ok(text),
     });
+}
+
+/// What a running run's `run resume` retries: a stage's tier 3 held after executor
+/// failures (9.1 ruling C-18) and a stage's push the remote refused (9.2 ruling R-11).
+fn retry_held(run: &mut Run, now: u64) -> Option<String> {
+    let tier3 = super::full::held(run) && super::full::retry(run, now);
+    let pushes = super::delivery::release(run, now);
+    let mut parts = Vec::new();
+    if tier3 {
+        parts.push("tier 3 retries".to_string());
+    }
+    if !pushes.is_empty() {
+        let stages: Vec<String> = pushes.iter().map(u16::to_string).collect();
+        parts.push(format!("held pushes retry (stage {})", stages.join(", ")));
+    }
+    (!parts.is_empty()).then(|| format!("run {}: {}", run.id, parts.join("; ")))
 }
 
 /// A paused run returns to `paused_from` and resumes (the `resume` edit and `run

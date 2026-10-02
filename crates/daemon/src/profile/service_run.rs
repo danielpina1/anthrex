@@ -363,7 +363,12 @@ impl ProfileService {
         let verified = verify::verify(&self.ctx.git_queue, verify_job)
             .await
             .map_err(Stop::Failed)?;
-        let (profile, dropped) = apply_verification(&findings, &verified.verification, &pre.root);
+        let (mut profile, dropped) =
+            apply_verification(&findings, &verified.verification, &pre.root);
+        // Milestone 9.2 decision 3; an edit keeps the stored table the user chose.
+        if !matches!(job.record.origin, ProposalOrigin::Edit { .. }) {
+            profile.delivery = super::delivery::detected(self.code_host(), pre.root.clone()).await;
+        }
         job.record.profile = Some(profile);
         job.record.verification = Some(verified.verification);
         job.record.dropped = dropped;

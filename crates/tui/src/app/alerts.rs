@@ -10,7 +10,7 @@ use crate::inspector::run_format::reason_text;
 use crate::safe_text::one_line;
 use crate::tree::{self, awaiting_holds, is_paused};
 use crossterm::event::KeyEvent;
-use proto::{BlockReason, RunInfo, RunState, Runtime, Status, TaskState};
+use proto::{BlockReason, DeliveryAlertKind, RunInfo, RunState, Runtime, Status, TaskState};
 use std::path::PathBuf;
 
 /// What an alert is about: its identity, which the focus follows (decision 21).
@@ -18,11 +18,25 @@ use std::path::PathBuf;
 pub enum AlertKey {
     Orchestrator(String),
     Gate(String),
-    Hold { run: String, hold: String },
-    Blocked { run: String, task: String },
+    Hold {
+        run: String,
+        hold: String,
+    },
+    Blocked {
+        run: String,
+        task: String,
+    },
     Halted(String),
     Accept(String),
     Proposal(PathBuf),
+    /// Milestone 9.2 ruling R-13: one of a `pr` run's typed delivery alerts
+    /// (`DeliveryInfo.alerts`), the `n`-th of its kind and stage.
+    Delivery {
+        run: String,
+        kind: DeliveryAlertKind,
+        stage: Option<u16>,
+        n: usize,
+    },
 }
 
 /// Who an alert is for (milestone 9.0.7 decision 7): a run, by its goal (the id when
@@ -231,7 +245,18 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             let detail = run.halted_reason.as_deref();
             push(3, AlertKey::Halted(id.clone()), text, None, detail, None);
         }
-        if run.state == RunState::Complete {
+        // Milestone 9.2 ruling R-13: what the user must act on for the delivery, from
+        // the daemon's typed alerts (never its attention text), at priority 3.
+        for (key, alert) in delivery_alerts(run) {
+            push(3, key, alert.text.clone(), None, None, None);
+        }
+        // Milestone 9.2 ruling R-13: a `pr` run's pull requests are merged on GitHub,
+        // never accepted, so a complete one is never "ready to accept".
+        let pr = run
+            .delivery
+            .as_ref()
+            .is_some_and(|d| d.mode == proto::DeliveryMode::Pr);
+        if run.state == RunState::Complete && !pr {
             let counted = run
                 .tasks
                 .iter()
@@ -339,6 +364,32 @@ impl App {
             }
         }
     }
+}
+
+/// Ruling R-13: a `pr` run's delivery alerts with their keys, each the `n`-th of its
+/// kind and stage, so two over-the-cap threads of one stage are two alerts.
+pub(crate) fn delivery_alerts(run: &RunInfo) -> Vec<(AlertKey, &proto::DeliveryAlert)> {
+    let Some(d) = run
+        .delivery
+        .as_ref()
+        .filter(|d| d.mode == proto::DeliveryMode::Pr)
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<(AlertKey, &proto::DeliveryAlert)> = Vec::new();
+    for alert in &d.alerts {
+        let n = (out.iter())
+            .filter(|(_, a)| (a.kind, a.stage) == (alert.kind, alert.stage))
+            .count();
+        let key = AlertKey::Delivery {
+            run: run.run_id.clone(),
+            kind: alert.kind,
+            stage: alert.stage,
+            n,
+        };
+        out.push((key, alert));
+    }
+    out
 }
 
 /// How many times `alerts` built the list on this thread, for the final fix wave's

@@ -107,7 +107,9 @@ impl App {
         let Some(s) = self.settings_screen_mut() else {
             return;
         };
-        let landed = s.loaded && s.built() == cache.doc;
+        // A save stores its doc cleaned (`config::settings::cleaned`), so a landed save
+        // is known by its cleaned form (ruling M9.2.15, carried).
+        let landed = s.loaded && config::settings::cleaned(&s.built()) == cache.doc;
         if !s.loaded || landed || (!s.dirty() && !saving) {
             s.load(&cache.doc, &cache.origin);
             s.path = cache.path.display().to_string();
@@ -132,8 +134,12 @@ impl App {
                 if sent.as_ref() == Some(&s.built()) {
                     s.load(doc, origin);
                 } else {
+                    // Ruling (M9.2.15, carried): the screen adopts the saved doc, which
+                    // the daemon cleaned; the edits made since the send stay on top,
+                    // cleaned as the next save will store them.
                     s.base = doc.clone();
                     s.origin = origin.clone();
+                    drop_hidden(s);
                 }
                 s.outcome = Some(SaveOutcome::Saved);
             }
@@ -192,4 +198,20 @@ impl App {
         }
         vec![]
     }
+}
+
+/// `config::settings::cleaned`'s rule on the screen's own fields: every hidden format
+/// character dropped from each model's name and note (and a custom row's label, its
+/// name) and from the orchestrator default's model. Everything else, a disabled custom
+/// row and the digits typed in a limit included, is kept as it is.
+fn drop_hidden(s: &mut SettingsScreen) {
+    use config::settings::{clean_entry, strip_hidden};
+    for row in s.claude.iter_mut().chain(s.codex.iter_mut()) {
+        clean_entry(&mut row.entry);
+        if row.custom {
+            row.label = strip_hidden(&row.label);
+        }
+    }
+    // The orchestrator default's model, `cleaned`'s `orchestrator.model`.
+    s.model = strip_hidden(&s.model);
 }

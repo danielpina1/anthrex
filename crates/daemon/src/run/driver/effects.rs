@@ -368,13 +368,17 @@ impl RunService {
                 (false, Some(guard)) => (Some(guard), None),
                 (false, None) => (Some(order.read_owned().await), None),
             };
-            let result = service.run_op(&ctx, op, kind).await;
+            // Milestone 9.2 (task M9.2.10's fix round): a PR view is cut to what
+            // run.json keeps before it is journaled and handed to the engine.
+            let result =
+                crate::run::delivery::view_trim::journaled(service.run_op(&ctx, op, kind).await);
             if service.stopped.load(Ordering::SeqCst) {
                 return;
             }
+            // The final fix wave's A4: a CI log's text stays out of the journal.
             let line = JournalLine::Done {
                 op,
-                result: result.clone(),
+                result: crate::run::delivery::view_trim::journal_line(&result),
             };
             service.append_done(&ctx, line, hold).await;
             service.send(EventKind::OpDone {

@@ -10,14 +10,41 @@
 /// (isolates), U+061C (the Arabic letter mark) — and U+200B–U+200D (zero-width space,
 /// non-joiner, joiner) and U+FEFF (the byte-order mark). `char::is_control` (category
 /// `Cc`) lets them all through, because they are category `Cf`.
+///
+/// Milestone 9.2 (M9.2.6 fix round 1, ruling I1) adds every other invisible carrier a
+/// text can hide data or a second meaning in: the tag block U+E0000–U+E007F, the
+/// variation selectors U+FE00–U+FE0F and U+E0100–U+E01EF, U+2060–U+2064 (word joiner
+/// and the invisible operators), U+206A–U+206F (the deprecated format characters),
+/// U+00AD (soft hyphen), U+180E (Mongolian vowel separator), U+FFF9–U+FFFB (the
+/// interlinear annotation characters) and the Hangul fillers U+115F, U+1160, U+3164
+/// and U+FFA0; and (fix round 2) U+034F (combining grapheme joiner), U+17B4–U+17B5
+/// (the Khmer inherent vowels), U+180B–U+180D and U+180F (the Mongolian free variation
+/// selectors) and U+1D173–U+1D17A (the musical symbol format characters). U+2800, the
+/// blank braille cell, is a visible character and kept. Dropping a variation selector
+/// or a joiner can change how an emoji is drawn (`❤️` becomes `❤`), never what the
+/// text says.
 pub fn is_hidden_format(c: char) -> bool {
     matches!(
         c,
-        '\u{061C}'
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
             | '\u{200B}'..='\u{200F}'
             | '\u{202A}'..='\u{202E}'
-            | '\u{2066}'..='\u{2069}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
             | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E007F}'
+            | '\u{E0100}'..='\u{E01EF}'
     )
 }
 
@@ -115,6 +142,75 @@ mod tests {
         }
         assert_eq!(first_hostile(&one_line(&hostile_text())), None);
         assert_eq!(one_line("tab\there\nnext"), "tab here next");
+    }
+
+    /// Milestone 9.2's M9.2.6 fix round 1 (ruling I1): the invisible carriers a text can
+    /// hide data or a second meaning in, written out as ranges apart from the predicate
+    /// under test: the tag block, both variation-selector blocks, the invisible
+    /// operators and word joiner, the deprecated format characters, the soft hyphen, the
+    /// Mongolian vowel separator, the interlinear annotation characters and the Hangul
+    /// fillers.
+    const INVISIBLE: &[(u32, u32)] = &[
+        (0xE0000, 0xE007F),
+        (0xFE00, 0xFE0F),
+        (0xE0100, 0xE01EF),
+        (0x2060, 0x2064),
+        (0x206A, 0x206F),
+        (0x00AD, 0x00AD),
+        (0x180E, 0x180E),
+        (0xFFF9, 0xFFFB),
+        (0x115F, 0x1160),
+        (0x3164, 0x3164),
+        (0xFFA0, 0xFFA0),
+        // Fix round 2: the combining grapheme joiner, the Khmer inherent vowels, the
+        // Mongolian free variation selectors and U+180F, the musical symbol format
+        // characters.
+        (0x034F, 0x034F),
+        (0x17B4, 0x17B5),
+        (0x180B, 0x180D),
+        (0x180F, 0x180F),
+        (0x1D173, 0x1D17A),
+    ];
+
+    fn invisible() -> Vec<char> {
+        INVISIBLE
+            .iter()
+            .flat_map(|(a, b)| *a..=*b)
+            .filter_map(char::from_u32)
+            .collect()
+    }
+
+    #[test]
+    fn invisible_carriers_are_dropped() {
+        let all = invisible();
+        assert_eq!(
+            all.len(),
+            128 + 16 + 240 + 5 + 6 + 1 + 1 + 3 + 2 + 1 + 1 + 1 + 2 + 3 + 1 + 8
+        );
+        for c in &all {
+            assert!(is_hidden_format(*c), "U+{:04X}", *c as u32);
+            assert_eq!(one_line(&format!("a{c}b")), "ab", "U+{:04X}", *c as u32);
+            assert_eq!(multi_line(&format!("a{c}b")), "ab", "U+{:04X}", *c as u32);
+        }
+        // Their neighbours are ordinary text, and so is U+2800, a visible braille cell.
+        for c in [
+            '\u{E0080}',
+            '\u{E01F0}',
+            '\u{2800}',
+            '\u{034E}',
+            '\u{1D172}',
+            '\u{1D17B}',
+            '\u{DFFFF}',
+            '\u{FDFF}',
+            '\u{FE10}',
+            '\u{205F}',
+            '\u{2065}',
+            '\u{00AC}',
+            '\u{FFFC}',
+            '\u{3165}',
+        ] {
+            assert!(!is_hidden_format(c), "U+{:04X}", c as u32);
+        }
     }
 
     #[test]

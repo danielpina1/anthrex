@@ -252,7 +252,8 @@ fn history(path: &Path) -> (Vec<TaskRecord>, Vec<RunRecord>) {
             | HistoryLine::RoleRoute(_)
             | HistoryLine::Tier(_)
             | HistoryLine::Flaky(_)
-            | HistoryLine::Bisect(_) => {}
+            | HistoryLine::Bisect(_)
+            | HistoryLine::Stage(_) => {}
         }
     }
     (tasks, runs)

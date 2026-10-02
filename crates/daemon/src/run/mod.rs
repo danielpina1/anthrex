@@ -27,6 +27,7 @@
 pub mod confine;
 mod confine_cache;
 pub mod contract;
+pub mod delivery;
 pub mod driver;
 pub mod edit_log;
 pub mod edits;
