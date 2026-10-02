@@ -203,6 +203,13 @@ pub(crate) fn shows(name: &str) -> Shows {
         "profile with a page" => row("reject proposal", Some("esc back"), &["y reject"]),
         "settings" => row("SETTINGS", Some("esc back"), &["w save"]),
         "stats" => row("STATS", Some("esc back"), &["j/k scroll"]),
+        // Milestone 9.0.7 decision 35: the old dialogs on the kit's grammar.
+        "new agent over the pane" => row("new agent", Some("esc cancel"), &["⏎ create"]),
+        "remove over the pane" => row("remove", Some("esc cancel"), &["y remove", "space"]),
+        "force remove over the pane" => row("worktree holds work", None, &["f  force", "k  keep"]),
+        "rename over the pane" => row("rename", Some("esc cancel"), &["⏎ rename"]),
+        "config notice over the pane" => row("config", Some("esc close"), &["esc close"]),
+        "edit form over the run view" => row("edit t1", Some("esc cancel"), &["⏎ save"]),
         other => panic!("the audit fixture {other:?} names nothing it shows"),
     }
 }
@@ -284,6 +291,30 @@ fn in_review_r2(app: &mut App) {
     };
     t1.review_route = Some(route.clone());
     t1.reviews = vec![review(1, Some(proto::Verdict::Changes)), review(2, None)];
+}
+
+/// The run view at the gate on the edit form's `t1`, then `e`: the task edit form.
+fn edit_form() -> App {
+    let (mut snap, windows) = gate_fixture();
+    snap.runs[0].tasks[0] = crate::run_edit::tests::edit_fixture_task();
+    let mut app = run_view(app_of(windows, snap));
+    let key = tree::NodeKey::Task {
+        run: RUN_ID.into(),
+        id: "t1".into(),
+    };
+    let rows = crate::app::nav_rows_of(
+        &app.windows,
+        &app.runs.runs,
+        &app.tree,
+        app.run_view.as_ref(),
+    );
+    app.tree.select(&rows, key);
+    tap(&mut app, 'e');
+    assert!(
+        matches!(app.modal, Some(Modal::EditTask(_))),
+        "`e` opens the form"
+    );
+    app
 }
 
 fn with(mut app: App, change: impl FnOnce(&mut App)) -> App {
@@ -390,6 +421,36 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             "settings",
             crate::ui::settings::tests::opened(false, crate::ui::settings::tests::sample()),
         ),
+        // Decision 35: the old dialogs, each over the screen it opens from.
+        ("new agent over the pane", with(gate(), |a| chord(a, 'c'))),
+        (
+            "remove over the pane",
+            with(gate(), |a| {
+                chord(a, 'X');
+                let Some(Modal::Remove(confirm)) = &mut a.modal else {
+                    panic!("`C-b X` asks");
+                };
+                confirm.branch = Some("anthrex/wt".into());
+            }),
+        ),
+        (
+            "force remove over the pane",
+            with(gate(), |a| {
+                a.modal = Some(Modal::ForceRemove {
+                    window_id: a.windows[0].id,
+                    name: a.windows[0].name.clone(),
+                    message: "worktree /tmp/wt has uncommitted or untracked changes".into(),
+                });
+            }),
+        ),
+        ("rename over the pane", with(gate(), |a| chord(a, ','))),
+        (
+            "config notice over the pane",
+            with(gate(), |a| {
+                a.report_config_problems(vec!["config.toml: unknown key `x`".into()]);
+            }),
+        ),
+        ("edit form over the run view", edit_form()),
         (
             "stats",
             with(gate(), |a| {

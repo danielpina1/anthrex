@@ -3,6 +3,7 @@
 
 mod alerts_model;
 mod alerts_view;
+mod dialogs;
 mod help;
 mod plan_summary;
 mod region;

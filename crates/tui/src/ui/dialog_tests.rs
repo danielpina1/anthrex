@@ -30,12 +30,12 @@ fn new_agent_form_renders_fields_and_error() {
     });
     for expected in [
         "new agent",
-        "Runtime",
-        "[claude]",
-        "Branch",
+        "runtime",
+        "‹ claude ›",
+        "branch",
         "feat/x",
-        "not a git repository: /x",
-        "Enter create",
+        "✗ not a git repository: /x",
+        "⏎ create",
     ] {
         assert!(out.contains(expected), "missing {expected:?} in:\n{out}");
     }
@@ -44,8 +44,8 @@ fn new_agent_form_renders_fields_and_error() {
     let out = draw(100, 30, |frame| {
         render_new_agent(frame, &form, frame.area(), Palette::PLAIN);
     });
-    assert!(!out.contains("Model"), "{out}");
-    assert!(!out.contains("Prompt"), "{out}");
+    assert!(!out.contains("model"), "{out}");
+    assert!(!out.contains("prompt"), "{out}");
 
     form.submitting = true;
     let out = draw(100, 30, |frame| {
@@ -66,12 +66,11 @@ fn new_agent_form_places_the_cursor_in_the_focused_field() {
         .unwrap();
     let cursor = terminal.get_cursor_position().unwrap();
 
-    let width = 66u16.min(area.width.saturating_sub(2)).max(4);
     let fields = form.visible_fields();
-    let height = (fields.len() + 1 + 1) as u16 + 2;
-    let rect = centered(area, width, height);
+    let rect = crate::ui::kit::dialog_area(area, (fields.len() + 1 + 1) as u16);
     let inner = Block::default()
         .borders(ratatui::widgets::Borders::ALL)
+        .padding(ratatui::widgets::Padding::horizontal(1))
         .inner(rect);
     let name_row = fields
         .iter()
@@ -92,14 +91,20 @@ fn remove_dialog_shows_the_checkbox_only_for_worktree_windows() {
     let out = draw(100, 30, |frame| {
         render_remove_confirm(frame, &confirm, frame.area(), Palette::PLAIN);
     });
-    assert!(out.contains("[ ] also remove worktree feat/api"), "{out}");
+    assert!(
+        out.contains("also remove worktree feat/api  ‹ no ›"),
+        "{out}"
+    );
     assert!(out.contains("the branch is kept"), "{out}");
 
     confirm.remove_worktree = true;
     let out = draw(100, 30, |frame| {
         render_remove_confirm(frame, &confirm, frame.area(), Palette::PLAIN);
     });
-    assert!(out.contains("[x] also remove worktree feat/api"), "{out}");
+    assert!(
+        out.contains("also remove worktree feat/api  ‹ yes ›"),
+        "{out}"
+    );
 
     let plain = RemoveConfirm {
         window_id: 2,
@@ -112,7 +117,7 @@ fn remove_dialog_shows_the_checkbox_only_for_worktree_windows() {
     });
     assert!(out.contains("Remove 'shell-1'?"), "{out}");
     assert!(!out.contains("also remove worktree"), "{out}");
-    assert!(!out.contains("Space toggle"), "{out}");
+    assert!(!out.contains("space toggle"), "{out}");
 }
 
 #[test]

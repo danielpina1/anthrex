@@ -146,7 +146,10 @@ fn a_paste_goes_to_the_focused_text_field() {
     open_form(&mut app, "t1");
     focus(&mut app, EditField::Brief);
     assert!(app.on_paste(" three\r\nfour\nfive".into()).is_empty());
-    assert_eq!(form(&app).brief.text(), "Line one↵Line two three↵four↵five");
+    assert_eq!(
+        form(&app).brief.text(),
+        "Line one\nLine two three\nfour\nfive"
+    );
     focus(&mut app, EditField::Model);
     assert!(app.on_paste("gpt-\n5\r\n".into()).is_empty());
     assert_eq!(form(&app).model.text(), "gpt-5");

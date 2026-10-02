@@ -242,8 +242,8 @@ fn rename_modal_renders() {
     let (out, _) = render(&app, 100, 20);
     assert!(out.contains(" rename "), "{out}");
     assert!(out.contains("api-worker█"), "{out}");
-    assert!(out.contains("Enter = rename"), "{out}");
-    assert!(out.contains("Esc = cancel"), "{out}");
+    assert!(out.contains("⏎ rename"), "{out}");
+    assert!(out.contains("esc cancel"), "{out}");
 
     if let Some(Modal::Rename(prompt)) = &mut app.modal {
         prompt.error = Some("a window named 'api' exists".to_string());

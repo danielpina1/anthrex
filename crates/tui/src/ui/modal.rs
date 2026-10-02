@@ -1,28 +1,89 @@
-use crate::app::{App, Modal, PendingAction, region::KeyRegion};
-use crate::dialog::TextInput;
+use crate::app::prompt::RenamePrompt;
+use crate::app::{App, Modal, PendingAction};
+use crate::safe_text::one_line;
 use crate::theme::{Palette, Role, role};
-use crate::ui::dialog;
+use crate::ui::dialog::{self, hint};
 use crate::ui::kit::{self, Hint};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// `input`'s text with a solid block drawn at the cursor's grapheme position — the
-/// rename box's own way of showing a cursor (task M6.10 brief's mock), rather than the
-/// new-agent form's hardware cursor (`ui/dialog.rs`'s `render_new_agent`), because this
-/// box is a single line inside the generic (title, body) modal path below, which has
-/// nowhere to report a cursor position back to.
-fn text_with_cursor_block(input: &TextInput) -> String {
-    let graphemes: Vec<&str> = input.text().graphemes(true).collect();
-    let cursor = input.cursor().min(graphemes.len());
-    let mut out = String::with_capacity(input.text().len() + 3);
-    out.push_str(&graphemes[..cursor].concat());
-    out.push('█');
-    out.push_str(&graphemes[cursor..].concat());
-    out
+/// The rename row, `name  <text>█`: the input's text with a solid block at the
+/// cursor's grapheme position (a reversed cell in ASCII), the box's own way of showing
+/// a cursor (task M6.10 brief's mock), scrolled so the cursor stays in `width`.
+fn rename_row(prompt: &RenamePrompt, width: u16, p: Palette) -> Line<'static> {
+    const LABEL: &str = "name  ";
+    let room = width.saturating_sub(LABEL.width() as u16 + 1);
+    let (visible, column) = prompt.input.visible(room);
+    let graphemes: Vec<&str> = visible.graphemes(true).collect();
+    let at = usize::from(column).min(graphemes.len());
+    let block = if p.ascii {
+        Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED))
+    } else {
+        Span::raw("█")
+    };
+    Line::from(vec![
+        Span::styled(LABEL, role(Role::Muted, p)),
+        Span::raw(one_line(&graphemes[..at].concat())),
+        block,
+        Span::raw(one_line(&graphemes[at..].concat())),
+    ])
+}
+
+/// Milestone 9.0.7 decision 35: the rename box on the kit's grammar.
+fn render_rename(frame: &mut Frame, prompt: &RenamePrompt, area: Rect, p: Palette) {
+    let width = dialog::interior(area.width);
+    let ellipsis = if p.ascii { "..." } else { "…" };
+    let body = vec![
+        rename_row(prompt, width, p),
+        match &prompt.error {
+            Some(message) => Line::styled(
+                kit::cut(&one_line(message), usize::from(width), ellipsis),
+                role(Role::Failed, p),
+            ),
+            None => Line::raw(""),
+        },
+        kit::hints_joined(
+            width,
+            &[hint("⏎", "rename", 9), hint("esc", "cancel", 1)],
+            " · ",
+            p,
+        ),
+    ];
+    let rect = kit::dialog_area(area, body.len() as u16);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(
+        Paragraph::new(body).block(kit::dialog_frame("rename", false, p)),
+        rect,
+    );
+}
+
+/// Milestone 9.0.7 decision 35: the config notice on the kit's grammar, each problem
+/// wrapped at 60; any key closes it.
+fn render_notice(frame: &mut Frame, title: &str, lines: &[String], area: Rect, p: Palette) {
+    let width = dialog::interior(area.width);
+    let mut body: Vec<Line<'static>> = lines
+        .iter()
+        .flat_map(|line| kit::wrap_words(&one_line(line), usize::from(width)))
+        .map(Line::raw)
+        .collect();
+    body.push(Line::raw(""));
+    body.push(kit::hints_joined(
+        width,
+        &[hint("esc", "close", 1)],
+        " · ",
+        p,
+    ));
+    let rect = kit::dialog_area(area, body.len() as u16);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(
+        Paragraph::new(body).block(kit::dialog_frame(title.trim(), false, p)),
+        rect,
+    );
 }
 
 /// `text` as it fits `width` columns: one line when it fits, else broken at spaces
@@ -99,78 +160,25 @@ fn render_confirm(
     );
 }
 
-fn centered(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(area.width);
-    let height = height.min(area.height);
-    Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    }
-}
-
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let Some(modal) = &app.modal else {
         return;
     };
     let p = app.palette();
     match modal {
-        Modal::NewAgent(form) => return dialog::render_new_agent(frame, form, area, p),
-        Modal::Remove(confirm) => {
-            return dialog::render_remove_confirm(frame, confirm, area, p);
-        }
+        Modal::NewAgent(form) => dialog::render_new_agent(frame, form, area, p),
+        Modal::Remove(confirm) => dialog::render_remove_confirm(frame, confirm, area, p),
         Modal::ForceRemove { name, message, .. } => {
-            return dialog::render_force_remove(frame, name, message, area, p);
+            dialog::render_force_remove(frame, name, message, area, p);
         }
-        Modal::EditTask(form) => return crate::ui::run_edit::render(frame, form, area, p),
-        Modal::StartGoal(form) => {
-            return crate::ui::run_goal::render(frame, form, area, app.palette());
-        }
-        Modal::Confirm { message, action } => {
-            return render_confirm(frame, message, action, area, app.palette());
-        }
-        Modal::Action(flow) => return crate::ui::action_menu::render(frame, app, flow, area),
-        Modal::Help(view) => return crate::ui::help::render(frame, app, view, area),
-        Modal::Notice { .. } | Modal::Rename(_) => {}
+        Modal::EditTask(form) => crate::ui::run_edit::render(frame, form, area, p),
+        Modal::StartGoal(form) => crate::ui::run_goal::render(frame, form, area, p),
+        Modal::Confirm { message, action } => render_confirm(frame, message, action, area, p),
+        Modal::Action(flow) => crate::ui::action_menu::render(frame, app, flow, area),
+        Modal::Help(view) => crate::ui::help::render(frame, app, view, area),
+        Modal::Notice { title, lines } => render_notice(frame, title, lines, area, p),
+        Modal::Rename(prompt) => render_rename(frame, prompt, area, p),
     }
-    let (title, body): (String, Vec<Line>) = match modal {
-        Modal::Notice { title, lines } => (
-            title.clone(),
-            lines.iter().map(|line| Line::raw(line.clone())).collect(),
-        ),
-        // Task M6.10 brief's mock: the input line, then the error (or a blank line
-        // when there is none, keeping the box a constant three body lines whether or
-        // not `error` is set), then the hint.
-        Modal::Rename(prompt) => (
-            " rename ".to_string(),
-            vec![
-                Line::raw(text_with_cursor_block(&prompt.input)),
-                match &prompt.error {
-                    Some(message) => Line::styled(message.clone(), role(Role::Failed, p)),
-                    None => Line::raw(""),
-                },
-                Line::styled("Enter = rename    Esc = cancel", role(Role::Muted, p)),
-            ],
-        ),
-        Modal::Confirm { .. }
-        | Modal::NewAgent(_)
-        | Modal::Remove(_)
-        | Modal::ForceRemove { .. }
-        | Modal::EditTask(_)
-        | Modal::StartGoal(_)
-        | Modal::Help(_)
-        | Modal::Action(_) => {
-            unreachable!("handled and returned from above")
-        }
-    };
-    let width = body.iter().map(Line::width).max().unwrap_or(0).max(30) as u16 + 4;
-    let height = body.len() as u16 + 2;
-    let rect = centered(area, width, height);
-    frame.render_widget(Clear, rect);
-    let keys_here = app.key_region() == KeyRegion::Dialog;
-    let block = kit::pane_frame(Line::from(title.trim().to_owned()), keys_here, p);
-    frame.render_widget(Paragraph::new(body).block(block), rect);
 }
 
 #[cfg(test)]

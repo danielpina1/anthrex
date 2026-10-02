@@ -227,7 +227,7 @@ fn a_second_enter_while_submitting_sends_nothing() {
         "keys do nothing while submitting"
     );
     form.on_paste("zzz");
-    assert_eq!(form.brief.text(), "Line one↵Line two");
+    assert_eq!(form.brief.text(), "Line one\nLine two");
 }
 
 #[test]
@@ -339,7 +339,11 @@ fn a_paste_of_a_megabyte_is_bounded() {
     assert_eq!(huge.len(), 1_000_000);
     form.on_paste(&huge);
     assert_eq!(form.brief.text().chars().count(), TEXT_MAX_CHARS);
-    assert!(form.brief.text().starts_with("Line one↵Line twoword↵word↵"));
+    assert!(
+        form.brief
+            .text()
+            .starts_with("Line one\nLine twoword\nword\n")
+    );
     // A full field takes no more typing either.
     typed(&mut form, "xyz");
     assert_eq!(form.brief.text().chars().count(), TEXT_MAX_CHARS);
@@ -355,7 +359,7 @@ fn control_characters_in_a_pasted_model_are_dropped() {
     focus(&mut form, EditField::Brief);
     form.on_key(key(KeyCode::End));
     form.on_paste("a\u{1b}b\r\nc\rd\te");
-    assert_eq!(form.brief.text(), "Line one↵Line twoab↵c↵d e");
+    assert_eq!(form.brief.text(), "Line one\nLine twoab\nc\nd e");
 }
 
 #[test]
@@ -371,7 +375,7 @@ fn hostile_briefs_open_cleaned_and_unchanged() {
     let mut t = edit_fixture_task();
     t.brief = "a\r\nb\u{1b}[2Jc\td".into();
     let form = TaskEditForm::new(RUN_ID, &t);
-    assert_eq!(form.brief.text(), "a↵b[2Jc d");
+    assert_eq!(form.brief.text(), "a\nb[2Jc d");
     assert_eq!(form.edits(), Ok(vec![]), "opening changes nothing");
 }
 
@@ -401,7 +405,7 @@ fn value_parts_show_policy_with_the_resolved_value() {
     );
     assert_eq!(
         form.value_parts(EditField::Brief),
-        ("Line one↵Line two".into(), None)
+        ("Line one\nLine two".into(), None)
     );
 }
 
