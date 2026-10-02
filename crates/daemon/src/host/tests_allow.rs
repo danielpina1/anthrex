@@ -103,6 +103,7 @@ fn allow_list_refuses_merge_approve_and_auto_merge() {
         into: "refs/anthrex/r9999/remote/base".to_string(),
         adopt: None,
         parents_of: None,
+        deadline: None,
     };
     assert!(matches!(
         host.fetch(&other_ref),

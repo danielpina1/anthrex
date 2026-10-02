@@ -180,6 +180,7 @@ fn every_method(root: &Path) -> GhHost<ScriptedRunner> {
         into: into.clone(),
         adopt: None,
         parents_of: None,
+        deadline: None,
     };
     assert_eq!(
         host.fetch(&fetch).unwrap(),

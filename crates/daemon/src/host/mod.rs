@@ -153,6 +153,12 @@ pub struct FetchReq {
     /// locally (`git rev-list --parents -n 1 <oid>`), for decision 44's merge method.
     #[serde(default)]
     pub parents_of: Option<String>,
+    /// Fix wave A2 (review A, M2): when the op's bound ends, counted from the moment it
+    /// took the project's git queue. An adoption checks it just before its
+    /// compare-and-swap and answers `TimedOut` rather than move a ref after the op's
+    /// answer has gone. `None` outside the executor. Never serialized.
+    #[serde(skip)]
+    pub deadline: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
