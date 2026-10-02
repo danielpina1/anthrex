@@ -218,8 +218,10 @@ impl Batch {
         task.worktree = task_path(&run.wt_dir, &run.id, task.id());
         task.notes
             .extend(protected_notes(&task.spec.owns, &run.protected_files));
-        // Milestone 9.2 decision 31: `addresses` makes it a review fix.
-        let review = validate::apply(&mut self.run, &mut task, &self.source);
+        // Milestone 9.2 decision 31: `addresses` makes it a review fix; an amend's are
+        // re-checked only where they changed (the final fix wave's I-5).
+        let before = (self.run.task(&task.spec.id)).map(|t| t.spec.addresses.clone());
+        let review = validate::apply(&mut self.run, &mut task, &self.source, before.as_deref());
         self.errors.extend(review);
         self.touched.insert(task.spec.id.clone());
         task

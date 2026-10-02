@@ -25,8 +25,18 @@ fn parse(reference: &str) -> Option<(u64, &str)> {
 }
 
 /// Decision 31's checks for a task this batch adds, and its review fix when it names
-/// threads: the errors, or nothing (the task and its threads updated in place).
-pub fn apply(run: &mut Run, task: &mut Task, source: &EditSource) -> Vec<PlanError> {
+/// threads: the errors, or nothing (the task and its threads updated in place). For an
+/// amend, `before` is what the task addressed until now (the final fix wave's I-5): see
+/// [`amended`].
+pub fn apply(
+    run: &mut Run,
+    task: &mut Task,
+    source: &EditSource,
+    before: Option<&[String]>,
+) -> Vec<PlanError> {
+    if let Some(before) = before {
+        return amended(run, task, source, before);
+    }
     let id = task.spec.id.clone();
     let n = task.spec.stage;
     if run.delivery.mode != DeliveryMode::Pr {
@@ -40,6 +50,47 @@ pub fn apply(run: &mut Run, task: &mut Task, source: &EditSource) -> Vec<PlanErr
         let text = format!("stage {n}'s PR is {state}; add the task to a later stage");
         return vec![error(&id, text)];
     }
+    addresses(run, task, source, &[])
+}
+
+/// I-5: an amend is refused only when the task's stage has landed (its PR merged; a
+/// closed stage is not landed and stays amendable), and re-checks `addresses` only when
+/// it changed them, and then only for the threads the task has not already tasked. A
+/// review fix's brief, acceptance, priority or route can be amended.
+pub fn amended(
+    run: &mut Run,
+    task: &mut Task,
+    source: &EditSource,
+    before: &[String],
+) -> Vec<PlanError> {
+    let id = task.spec.id.clone();
+    let n = task.spec.stage;
+    let pr = run.delivery.pr(n);
+    if run.delivery.mode == DeliveryMode::Pr && pr.is_some_and(|p| p.state == PrState::Merged) {
+        let text = format!(
+            "task {id} is in stage {n}, whose PR is merged; a landed stage's tasks cannot be amended"
+        );
+        return vec![error(&id, text)];
+    }
+    if task.spec.addresses == before {
+        return Vec::new();
+    }
+    if run.delivery.mode != DeliveryMode::Pr {
+        return unknown_refs(&id, n, &task.spec.addresses);
+    }
+    addresses(run, task, source, before)
+}
+
+/// Each ref must be a `new` thread of the stage's open PR that counts, or one this
+/// task already tasked (an amend's `before`); the task becomes the review fix of them.
+fn addresses(
+    run: &mut Run,
+    task: &mut Task,
+    source: &EditSource,
+    before: &[String],
+) -> Vec<PlanError> {
+    let id = task.spec.id.clone();
+    let n = task.spec.stage;
     if task.spec.addresses.is_empty() {
         return Vec::new();
     }
@@ -53,15 +104,20 @@ pub fn apply(run: &mut Run, task: &mut Task, source: &EditSource) -> Vec<PlanErr
     let mut errors = Vec::new();
     let mut keys: Vec<&str> = Vec::new();
     for reference in &task.spec.addresses {
-        let new = |key: &str| {
+        let ok = |key: &str| {
             (run.delivery.stage(n)).is_some_and(|s| {
-                // The fix round's m1: a thread that counts (a writer's), not one
-                // still waiting for its author's permission.
-                (s.threads.iter()).any(|t| t.key == key && t.state == ThreadState::New && t.counted)
+                (s.threads.iter()).any(|t| {
+                    // The fix round's m1: a thread that counts (a writer's), not one
+                    // still waiting for its author's permission; or, for an amend, one
+                    // this task already tasked.
+                    let mine = matches!(&t.state, ThreadState::Tasked { task } if *task == id)
+                        && before.contains(reference);
+                    t.key == key && (mine || t.state == ThreadState::New && t.counted)
+                })
             })
         };
         match parse(reference) {
-            Some((p, key)) if p == pr && new(key) && !keys.contains(&key) => keys.push(key),
+            Some((p, key)) if p == pr && ok(key) && !keys.contains(&key) => keys.push(key),
             _ => errors.extend(unknown_refs(&id, n, std::slice::from_ref(reference))),
         }
     }
