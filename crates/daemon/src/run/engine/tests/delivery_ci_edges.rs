@@ -40,7 +40,7 @@ fn ticks(fx: &mut Fixture, secs: u64) {
 
 /// After a failed host op: the view it let out answered with `checks` again (seen
 /// already, so nothing new), then one pass past the retry wait.
-fn retry(fx: &mut Fixture, checks: &[crate::host::CheckRun]) {
+pub(super) fn retry(fx: &mut Fixture, checks: &[crate::host::CheckRun]) {
     let out = host_ops(fx)
         .iter()
         .any(|(_, h)| matches!(h, HostOp::ViewPr { .. }));

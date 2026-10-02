@@ -101,6 +101,69 @@ fn classify(key: &str) -> (Option<DeliveryAlertKind>, Option<u16>) {
     (kind, kind.and(n))
 }
 
+/// Fix round m3 of task M9.2.8, widened by the final fix wave's B m-1: an op that keeps
+/// failing is no longer due takes its failures in a row, and its attention line, with
+/// it. A failure key `<n|run>/<op>` is due while the delivery pass would still issue
+/// that op: `failed_logs`, which gives a log up after `FAILURES_BEFORE_ATTENTION`
+/// tries, is the one that always happens.
+pub(super) fn settle(run: &mut Run) {
+    let keys: Vec<String> = (run.delivery.failures.keys())
+        .chain(run.delivery.alerts.keys())
+        .filter(|k| !due(run, k))
+        .cloned()
+        .collect();
+    for key in keys {
+        run.delivery.failures.remove(&key);
+        run.delivery.alerts.remove(&key);
+    }
+}
+
+/// Whether failure key `key`'s op is still due; any key that is not a failure key is.
+fn due(run: &Run, key: &str) -> bool {
+    use proto::PrState::{Merged, Open};
+    let Some((stage, op)) = key.split_once('/') else {
+        return true;
+    };
+    if !super::OP_NAMES.contains(&op) {
+        return true;
+    }
+    let d = &run.delivery;
+    let Ok(n) = stage.parse::<u16>() else {
+        return match (stage, op) {
+            ("run", "permission") => (d.stages.iter())
+                .flat_map(|s| &s.threads)
+                .any(|t| !t.candidates.is_empty()),
+            ("run", "fetch") => d.base_fetch_due,
+            _ => true,
+        };
+    };
+    let Some(s) = d.stage(n) else {
+        return false;
+    };
+    let pr = s.pr.as_ref();
+    let open = pr.is_some_and(|p| p.state == Open);
+    let opening = pr.is_none() && !s.skipped;
+    let record = super::ci::active(run, n).and_then(|i| s.ci.get(i));
+    let phase = record.map(|r| r.phase);
+    match op {
+        "push" => opening || open && run.stage_head(n) != pr.map(|p| p.pushed_head.as_str()),
+        "fetch" => s.remote_head.is_some(),
+        "open_pr" => opening,
+        "failed_logs" => record.is_some_and(|r| {
+            r.phase == crate::run::delivery::CiPhase::Logs
+                && r.ci_runs.iter().any(|c| !r.fetched.contains(c))
+        }),
+        "rerun_failed" => phase == Some(crate::run::delivery::CiPhase::Rerunning),
+        "reply" => !s.replies.is_empty(),
+        "retarget" => open,
+        "delete_branch" => {
+            d.limits.delete_merged_branches
+                && pr.is_some_and(|p| p.state == Merged && !p.branch_deleted)
+        }
+        _ => pr.is_some(),
+    }
+}
+
 #[cfg(test)]
 #[path = "alerts_tests.rs"]
 mod tests;

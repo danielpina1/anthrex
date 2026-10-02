@@ -234,7 +234,7 @@ fn a_reply_that_keeps_failing_is_dropped_and_the_next_one_goes() {
         let due = fx.run().delivery.stage(1).unwrap().retry_at.unwrap();
         fx.send(due, EventKind::Tick);
     }
-    let line = "PR #7: the reply on thread 7:c5 was dropped after 5 failures: boom";
+    let line = "PR #7: the reply on thread 7:c5 was dropped after 5 failures: \"boom\"";
     let lines = attention(&fx);
     assert!(lines.contains(&line.to_string()), "{lines:#?}");
     assert!(

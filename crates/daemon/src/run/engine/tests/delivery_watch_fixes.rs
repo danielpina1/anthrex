@@ -351,7 +351,7 @@ fn a_push_no_longer_due_drops_its_failures_and_the_line_is_never_repeated() {
     let mut fx = watched();
     fx.run_mut().delivery.watching = false;
     set_stage_head(fx.run_mut(), 1, &commit(5));
-    let line = "PR #7: push keeps failing: boom".to_string();
+    let line = "PR #7: push keeps failing: \"boom\"".to_string();
     for k in 1..=7u32 {
         fx.tick();
         let (op, push) = host_op(&fx);
@@ -456,7 +456,7 @@ fn a_typed_alert_is_one_clean_line() {
         answer(&mut fx, op, HostResult::Error(error));
     }
     let kind = proto::DeliveryAlertKind::HostOpHeld;
-    let text = "PR #7: push keeps failing: boom next".to_string();
+    let text = "PR #7: push keeps failing: \"boom next\"".to_string();
     assert_eq!(
         super::full::delivery_alerts(&fx),
         vec![(kind, Some(1), text)]

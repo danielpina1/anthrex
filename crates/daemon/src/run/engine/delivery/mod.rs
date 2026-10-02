@@ -103,7 +103,6 @@ pub(crate) fn stage_of(op: &HostOp) -> Option<u16> {
     }
 }
 
-/// A host op's name in log lines and in `RunDelivery.failures` (decision 11).
 /// Every [`op_name`], in `HostOp`'s order: the `<op>` of a failure key, which
 /// `alerts::classify` reads as a held host op (`op_names_are_every_ops_name`).
 pub(crate) const OP_NAMES: [&str; 10] = [
@@ -119,6 +118,7 @@ pub(crate) const OP_NAMES: [&str; 10] = [
     "delete_branch",
 ];
 
+/// A host op's name in log lines and in `RunDelivery.failures` (decision 11).
 pub(crate) fn op_name(op: &HostOp) -> &'static str {
     match op {
         HostOp::Push { .. } => "push",
@@ -165,6 +165,8 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if !pr(run) || run.cancelled || run.state != RunState::Running {
         return;
     }
+    // The final fix wave's B m-1: an op no longer due takes its failures with it.
+    alerts::settle(run);
     open::pass(run, now, fx);
     // The final fix wave's I-4: a fix hold whose tasks are all cancelled is moot.
     review_fix::moot(run, now);
@@ -288,7 +290,7 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
         HostOp::Permission { .. } => review::permission_failed(run, now, retry_secs(run)),
         HostOp::Fetch { stage: None, .. } => sync::fetch_failed(run, now, retry_secs(run)),
         HostOp::Reply { stage, marker, .. } => {
-            dropped = reply::reply_failed(run, *stage, marker, (&error, &text), now);
+            dropped = reply::reply_failed(run, *stage, marker, &error, now);
         }
         _ => {}
     }
@@ -297,7 +299,7 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
         HostError::Auth(_) => watch::auth_lost(run),
         _ => {
             *run.delivery.failures.entry(failure_key(op)).or_default() += 1;
-            watch::keeps_failing(run, op, op_name(op), &text);
+            watch::keeps_failing(run, op, op_name(op), error.text());
         }
     }
     if dropped {

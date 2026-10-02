@@ -28,9 +28,9 @@ use super::open::{queue_busy, remote_branch};
 use super::{emit, failure_key, host_busy, pr, stage_mut};
 use crate::host::{Adopt, FetchOutcome, PushOutcome};
 use crate::run::contract::sha7;
-use crate::run::delivery::PrRecord;
 use crate::run::delivery::ops::HostOp;
 use crate::run::delivery::snapshot::stage_count;
+use crate::run::delivery::{PrRecord, quote};
 use crate::run::model::{Run, StageLayout};
 
 /// Decision 11: a rate limit doubles the poll interval base up to an hour.
@@ -103,11 +103,22 @@ pub(crate) fn release(run: &mut Run, now: u64) -> Vec<u16> {
     released
 }
 
-/// Ruling R-11's attention line and wake note for a held stage.
+/// Ruling R-11's attention line for a held stage; the remote's reason is host text, in
+/// quotes (the final fix wave's B m-10).
 pub(super) fn hold_line(run: &Run, n: u16, reason: &str) -> String {
     format!(
-        "stage {n} is held: {reason}; anthrex run resume {} pushes it again",
+        "stage {n} is held: {}; anthrex run resume {} pushes it again",
+        quote::host_text(reason),
         run.id
+    )
+}
+
+/// R-11's wake note for a held stage: the remote's reason fenced (B m-10).
+fn hold_note(run: &Run, n: u16, reason: &str) -> String {
+    format!(
+        "stage {n} is held: the remote refused its push; anthrex run resume {} pushes it again. The remote's reason {}",
+        run.id,
+        quote::host_fenced(reason)
     )
 }
 
@@ -126,7 +137,6 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         if run.delivery.pr(n).is_none() {
             continue;
         }
-        settle(run, n);
         let Some(pr) = run.delivery.pr(n) else {
             continue;
         };
@@ -141,25 +151,6 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         }
         if run.delivery.watching && due {
             emit(run, HostOp::ViewPr { stage: n, number }, fx);
-        }
-    }
-}
-
-/// Fix round m3: a push or adopt that is no longer due takes its failures in a row,
-/// and their attention line, with it.
-fn settle(run: &mut Run, n: u16) {
-    let head = run.stage_head(n).map(str::to_string);
-    let (Some(pr), Some(stage)) = (run.delivery.pr(n), run.delivery.stage(n)) else {
-        return;
-    };
-    let push_due = pr.state == PrState::Open && head.as_deref() != Some(pr.pushed_head.as_str());
-    let fetch_due = stage.remote_head.is_some();
-    let d = &mut run.delivery;
-    for (due, op) in [(push_due, "push"), (fetch_due, "fetch")] {
-        if !due {
-            let key = format!("{n}/{op}");
-            d.failures.remove(&key);
-            d.alerts.remove(&key);
         }
     }
 }
@@ -299,10 +290,10 @@ pub(super) fn refused(run: &mut Run, n: u16, reason: String, now: u64) {
         .chars()
         .take(HOLD_REASON_CHARS)
         .collect();
-    let line = hold_line(run, n, &reason);
+    let (line, note) = (hold_line(run, n, &reason), hold_note(run, n, &reason));
     stage_mut(run, n).held = Some(reason);
-    log(run, now, line.clone());
-    wake::note(run, line);
+    log(run, now, line);
+    wake::note(run, note);
 }
 
 /// Decision 24's halt, as the fix round's concern 3 words it: the remote stage branch
@@ -466,7 +457,8 @@ pub(super) fn keeps_failing(run: &mut Run, op: &HostOp, name: &str, error: &str)
         Some(pr) => format!("PR #{}", pr.number),
         None => stage.map_or_else(|| "the run".to_string(), |n| format!("stage {n}")),
     };
-    let line = format!("{what}: {name} keeps failing: {error}");
+    // The final fix wave's B m-10: the host's text, in quotes.
+    let line = format!("{what}: {name} keeps failing: {}", quote::host_text(error));
     run.delivery.alerts.insert(key, line);
 }
 

@@ -51,7 +51,27 @@ fn every_key_has_its_kind_and_stage() {
     }
 }
 
-/// `OP_NAMES` is every `op_name`, one per host op.
+/// Each host op's place in `HostOp`, by a `match` the compiler checks: a new op is a
+/// compile error here until `op_names_are_every_ops_name` lists it (the final fix
+/// wave's deferred task-15 item).
+fn place(op: &crate::run::delivery::ops::HostOp) -> usize {
+    use crate::run::delivery::ops::HostOp::*;
+    match op {
+        Push { .. } => 0,
+        Fetch { .. } => 1,
+        OpenPr { .. } => 2,
+        ViewPr { .. } => 3,
+        FailedLogs { .. } => 4,
+        RerunFailed { .. } => 5,
+        Reply { .. } => 6,
+        Retarget { .. } => 7,
+        Permission { .. } => 8,
+        DeleteBranch { .. } => 9,
+    }
+}
+
+/// `OP_NAMES` is every `op_name`, one per host op: the list below holds one op of
+/// each place [`place`] knows, and `OP_NAMES` has exactly that many names.
 #[test]
 fn op_names_are_every_ops_name() {
     use crate::host::ReplyTarget;
@@ -102,6 +122,11 @@ fn op_names_are_every_ops_name() {
         HostOp::Permission { user: s() },
         HostOp::DeleteBranch { stage: 1 },
     ];
+    let places: Vec<usize> = ops.iter().map(place).collect();
+    assert_eq!(
+        places,
+        (0..super::super::OP_NAMES.len()).collect::<Vec<_>>()
+    );
     let names: Vec<&str> = ops.iter().map(super::super::op_name).collect();
     assert_eq!(names, super::super::OP_NAMES);
 }

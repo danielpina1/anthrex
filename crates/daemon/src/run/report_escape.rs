@@ -159,7 +159,7 @@ pub(crate) fn fenced(tail: &str) -> String {
 /// shorter than 3: a check's tail is raw tool output and may itself contain a fenced
 /// block (a test that prints Markdown, another tool's own fenced output), which a
 /// fixed 3-backtick fence would let close the report's fence early.
-fn fence_for(content: &str) -> String {
+pub(crate) fn fence_for(content: &str) -> String {
     let mut longest = 0usize;
     let mut run = 0usize;
     for ch in content.chars() {

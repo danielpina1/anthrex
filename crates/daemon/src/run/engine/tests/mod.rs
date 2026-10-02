@@ -22,6 +22,7 @@ mod deciders_block;
 mod deciders_edges;
 mod deciders_size;
 mod deciders_size_guards;
+mod delivery_alerts_settle;
 mod delivery_ci;
 mod delivery_ci_cap;
 mod delivery_ci_dupes;

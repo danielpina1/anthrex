@@ -200,13 +200,13 @@ pub(super) fn reply_failed(
     run: &mut Run,
     n: u16,
     marker: &str,
-    (error, text): (&HostError, &str),
+    error: &HostError,
     now: u64,
 ) -> bool {
     match error {
         HostError::NotFound(_) => {}
         HostError::RateLimited(_) | HostError::Auth(_) => return false,
-        _ => return failing(run, n, marker, text, now),
+        _ => return failing(run, n, marker, error.text(), now),
     }
     let stage = stage_mut(run, n);
     let Some(i) = stage.replies.iter().position(|r| r.marker == marker) else {
@@ -236,9 +236,12 @@ fn failing(run: &mut Run, n: u16, marker: &str, text: &str, now: u64) -> bool {
     }
     let r = stage.replies.remove(i);
     let pr = run.delivery.pr(n).map_or(0, |p| p.number);
+    // The final fix wave's B m-10: the host's text, in quotes.
     let line = format!(
-        "PR #{pr}: the reply on thread {pr}:{} was dropped after {} failures: {text}",
-        r.thread, r.failures
+        "PR #{pr}: the reply on thread {pr}:{} was dropped after {} failures: {}",
+        r.thread,
+        r.failures,
+        crate::run::delivery::quote::host_text(text)
     );
     log(run, now, line.clone());
     let key = format!("{n}/reply/{}", r.thread);

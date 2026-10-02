@@ -288,13 +288,18 @@ pub(super) fn author(run: &Run, n: u16, key: &str) -> String {
     quote::login(t.map_or("", |t| t.author.as_str())).to_string()
 }
 
-/// The cap's and a refused fix's attention lines last while their thread is `new`; a
-/// dropped reply's while the PR is open (the fix round's m3).
+/// The cap's and a refused fix's attention lines last while their thread is `new` and
+/// their stage has not landed (the final fix wave's B m-2: a merged PR's threads are
+/// no one's to address); a dropped reply's while the PR is open (the fix round's m3).
 fn settle(run: &mut Run, n: u16) {
     let Some(stage) = run.delivery.stage(n) else {
         return;
     };
     let open = run.delivery.pr(n).is_some_and(|p| p.state == PrState::Open);
+    let landed = run
+        .delivery
+        .pr(n)
+        .is_some_and(|p| p.state == PrState::Merged);
     let new =
         |key: &str| (stage.threads.iter()).any(|t| t.key == key && t.state == ThreadState::New);
     let stale: Vec<String> = (run.delivery.alerts.keys())
@@ -302,7 +307,7 @@ fn settle(run: &mut Run, n: u16) {
             let rest = k.strip_prefix(&format!("{n}/"));
             let dropped = rest.is_some_and(|r| r.starts_with("reply/"));
             let key = rest.and_then(|r| r.strip_prefix("cap/").or(r.strip_prefix("review/")));
-            key.is_some_and(|key| !new(key)) || (dropped && !open)
+            key.is_some_and(|key| landed || !new(key)) || (dropped && !open)
         })
         .cloned()
         .collect();

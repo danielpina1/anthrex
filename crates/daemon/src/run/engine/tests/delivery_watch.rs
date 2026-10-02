@@ -560,7 +560,7 @@ fn auth_lost_is_an_attention_line_and_polling_continues() {
 #[test]
 fn five_failures_raise_an_attention_line() {
     let mut fx = watched();
-    let line = "PR #7: view_pr keeps failing: HTTP 502";
+    let line = "PR #7: view_pr keeps failing: \"HTTP 502\"";
     for k in 1..=5u32 {
         let at = next_poll(&fx).max(fx.now);
         assert!(polls(&mut fx, at));

@@ -366,7 +366,7 @@ fn a_refused_push_holds_its_stage_and_run_resume_pushes_again() {
             reason: reason.clone(),
         };
         answer(fx, op, HostResult::Pushed(refused));
-        format!("stage 1 is held: {reason}; anthrex run resume {RUN_ID} pushes it again")
+        format!("stage 1 is held: \"{reason}\"; anthrex run resume {RUN_ID} pushes it again")
     };
     // Ruling R-11: the opening push is refused; the stage is held, not the run.
     let line = refuse(&mut fx);
