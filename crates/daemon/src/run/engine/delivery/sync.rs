@@ -84,7 +84,8 @@ fn in_flight(run: &Run, n: u16, sha: &str) -> bool {
     )
 }
 
-pub(super) fn fetching(run: &Run) -> bool {
+/// A base fetch is in flight (also read by `goal_rounds::awaits_base`, milestone 9.3).
+pub(in crate::run::engine) fn fetching(run: &Run) -> bool {
     run.pending_ops.values().any(|p| {
         matches!(
             &p.kind,

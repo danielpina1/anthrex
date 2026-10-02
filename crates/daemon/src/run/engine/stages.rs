@@ -219,6 +219,10 @@ pub(super) fn create_pass(run: &mut Run, fx: &mut Vec<Effect>) {
     }
     let top = highest(run);
     let next = top + 1;
+    // Milestone 9.3 decision 13: a `pr` round above landed PRs fetches the base first.
+    if goal_rounds::awaits_base(run, next) {
+        return;
+    }
     let from = if top == 0 {
         run.run_head.clone()
     } else {

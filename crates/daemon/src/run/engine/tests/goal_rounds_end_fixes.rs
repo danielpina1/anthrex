@@ -6,11 +6,11 @@
 use proto::{HoldState, RoundOrigin, RoundOutcome, RunState};
 use serde_json::json;
 
-use super::delivery_open::pr_mode;
 use super::fixes::spec as fixes_spec;
 use super::fixture::*;
 use super::gate_holds::{hold_state, in_epic};
 use super::goal_rounds_end::{create_stages, submit_round};
+use super::goal_rounds_pr::delivering;
 use super::goal_rounds_stages::add_in;
 use super::goal_rounds_start::{complete, iterate, reply, round_lines, started};
 use super::kinds_cancel::{cancel, settle_all};
@@ -43,8 +43,9 @@ fn round_two_lines(fx: &Fixture) -> Vec<RoundOutcome> {
 /// cancels the run, not the ended round.
 #[test]
 fn a_cancel_after_a_rejected_pr_round_cancels_the_run() {
-    let mut fx = complete();
-    pr_mode(fx.run_mut());
+    // Task 5: delivering, stage 1's PR open (a `pr` run with no open PR goes back to
+    // `complete` on a reject).
+    let mut fx = delivering();
     assert_eq!(reply(&iterate(&mut fx, "more")), started(2));
     submit_round(&mut fx);
     let effects = reject(&mut fx);

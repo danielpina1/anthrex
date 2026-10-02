@@ -12,8 +12,8 @@ use super::plan::PlanError;
 
 /// The first edit of `edits` that reaches into an earlier round of `run`: an
 /// `add_task` (or a `split_task` child, or an `amend_task`'s new stage) in a stage below
-/// the current round's first, or an edit naming a task of an earlier round. Every source is refused alike, with KG
-/// §2.4's text naming the stage and its round.
+/// the current round's first, or an edit naming a task of an earlier round. Every
+/// source is refused alike, with KG §2.4's text naming the stage and its round.
 pub(super) fn earlier_round(run: &Run, edits: &[PlanEdit]) -> Option<PlanError> {
     if run.round() < 2 {
         return None;

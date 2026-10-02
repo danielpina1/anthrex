@@ -3,14 +3,15 @@
 //! 12) and cancel ([`cancel_round`], decision 16), and its end ([`pass`], decision 17),
 //! whose `round` history line `goal_rounds::end_round` writes. Pure (design decision 2).
 
-use proto::{RoundOrigin, RoundOutcome, RunState};
+use proto::{PrState, RoundOrigin, RoundOutcome, RunState};
 
 use super::complete::{cancel_task, deferred_note};
 use super::goal_rounds::end_round;
 use super::requests::log;
-use super::{Effect, delivery, planners, stages, wake};
+use super::{Effect, delivery, merge, planners, stages, wake};
 use crate::run::model::Run;
-use crate::run::orch::contract_rounds::{round_cancelled, round_rejected};
+use crate::run::orch::contract_rounds::{round_cancelled, round_done, round_rejected};
+use crate::run::snapshot_stages::stage_count;
 
 /// Decision 12's reason for the sub-planners and run scouts a rejected round halts.
 pub const ROUND_REJECTED: &str = "the round was rejected";
@@ -54,8 +55,9 @@ pub(super) fn approved(run: &mut Run, by: &str, now: u64) {
 /// Decision 12: `run reject` on round 2 or later while it is open ([`open_round`]).
 /// Every task of the round is cancelled, the round ends `rejected` with its history
 /// line, its request and its sub-planners and run scouts are dropped, and the run goes
-/// back to `complete` (`running` in `pr` mode) with no summary wake. Earlier rounds are
-/// untouched; nothing is discarded.
+/// back to `complete`, or in `pr` mode to `running` while a PR is open (delivering;
+/// task 5: a run every PR of which had landed was complete, and is again), with no
+/// summary wake. Earlier rounds are untouched; nothing is discarded.
 pub(super) fn reject_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> String {
     let n = run.round();
     let why = format!("run reject (round {n})");
@@ -72,7 +74,11 @@ pub(super) fn reject_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
         o.plan_submitted = true;
     }
     run.paused_from = None;
-    run.state = if delivery::pr(run) {
+    let open = |run: &Run| {
+        let mut prs = run.delivery.stages.iter().filter_map(|s| s.pr.as_ref());
+        prs.any(|p| p.state == PrState::Open)
+    };
+    run.state = if delivery::pr(run) && open(run) {
         RunState::Running
     } else {
         RunState::Complete
@@ -127,13 +133,42 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
 
 /// Decision 17, every step for every run: a round after the first that has not ended
 /// ends once the run is `complete` (M8a's completion, whose summary wake asks for the
-/// round's summary), `completed` unless a cancel made it `cancelled`; `finish_edit`,
-/// which a cancel set, is cleared. Round 1 ends when a second round starts
-/// (`goal_rounds::iterate`, decision 10).
+/// round's summary), or, in `pr` mode, once it is delivered while the run keeps
+/// delivering ([`delivered`]), with the note asking for its summary. It ends
+/// `completed` unless a cancel made it `cancelled`, and `finish_edit`, which a cancel
+/// set, is cleared. The round's `ended_at` is set in the step that asks for its summary,
+/// so a summary written after that note is the round's (`orch::write_summary`). Round 1
+/// ends when a second round starts (`goal_rounds::iterate`, decision 10).
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    if !open_round(run) || run.state != RunState::Complete {
+    if !open_round(run) {
+        return;
+    }
+    let pr_end = run.state == RunState::Running && delivered(run);
+    if run.state != RunState::Complete && !pr_end {
         return;
     }
     end_round(run, RoundOutcome::Completed, now, fx);
     run.finish_edit = false;
+    if pr_end {
+        let n = run.round();
+        log(run, now, format!("round {n} is done"));
+        wake::note(run, round_done(n));
+    }
+}
+
+/// Decision 17's `pr` end of the current round: a `pr` run every task of which is
+/// finished, every stage of the round has its PR (in any state) or was skipped, and no
+/// merge, stage creation or propagate is queued, due or in flight.
+fn delivered(run: &Run) -> bool {
+    let Some(first) = run.current_round().map(|r| r.first_stage) else {
+        return false;
+    };
+    let d = &run.delivery;
+    let covered = |n: u16| d.stage(n).is_some_and(|s| s.skipped) || d.pr(n).is_some();
+    delivery::pr(run)
+        && run.tasks.iter().all(|t| t.state.is_finished())
+        && (first..=stage_count(run)).all(covered)
+        && run.merge_queue.is_empty()
+        && run.propagate_due.is_empty()
+        && !merge::merging(run)
 }

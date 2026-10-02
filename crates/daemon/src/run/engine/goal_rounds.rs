@@ -5,8 +5,8 @@
 //! round that ends ([`end_round`], decision 17). Pure (design decision 2).
 
 use proto::{
-    GOAL_MAX_CHARS, HISTORY_VERSION, HistoryLine, RoundLine, RoundOrigin, RoundOutcome, RunState,
-    TaskState, safe_text,
+    GOAL_MAX_CHARS, HISTORY_VERSION, HistoryLine, PrState, RoundLine, RoundOrigin, RoundOutcome,
+    RunState, TaskState, safe_text,
 };
 
 use super::actions::rules;
@@ -106,6 +106,11 @@ pub(super) fn iterate(
         scouts_before: u32::try_from(run.orch.run_scouts.len()).unwrap_or(u32::MAX),
     };
     run.rounds.push(round);
+    // KG §2.5 (task 5): above landed PRs only, the round's first stage absorbs the
+    // remote base first, so a fetch of it is due before that stage is created.
+    if delivery::pr(run) && landed_below(run, first_stage) {
+        run.delivery.base_fetch_due = true;
+    }
     widen(run, now);
     run.state = RunState::Planning;
     run.cancelled = false;
@@ -171,6 +176,27 @@ pub(super) fn widen(run: &mut Run, now: u64) {
         run.id
     );
     log(run, now, text);
+}
+
+/// KG §2.5: every stage below `n` (at least one) has landed, its PR merged or closed,
+/// or was skipped; no open PR is left for stage `n`'s to stack on.
+pub(crate) fn landed_below(run: &Run, n: u16) -> bool {
+    let d = &run.delivery;
+    let landed = |m: u16| {
+        d.stage(m).is_some_and(|s| s.skipped) || d.pr(m).is_some_and(|p| p.state != PrState::Open)
+    };
+    n > 1 && (1..n).all(landed)
+}
+
+/// Decision 13, `pr` mode: stage `next`, the current round's first, waits while the
+/// base fetch its round made due ([`iterate`]) is due or in flight, when every stage
+/// below it has landed ([`landed_below`]).
+pub(crate) fn awaits_base(run: &Run, next: u16) -> bool {
+    let first = run
+        .current_round()
+        .is_some_and(|r| r.n > 1 && r.first_stage == next);
+    let fetch = run.delivery.base_fetch_due || delivery::sync::fetching(run);
+    delivery::pr(run) && first && fetch && landed_below(run, next)
 }
 
 /// Decision 13: a dependency of `task` on a task of an earlier round is met, whatever

@@ -95,3 +95,8 @@ pub fn round_rejected(h4: &str, n: u32) -> String {
 pub fn round_cancelled(h4: &str, n: u32) -> String {
     format!("run {h4} round {n} cancelled; it ends once its sessions have ended")
 }
+
+/// Decision 17: the note at the end of round `n` of a `pr` run, which keeps delivering.
+pub fn round_done(n: u32) -> String {
+    format!("round {n} is done; write its summary with edit_plan summary")
+}

@@ -489,7 +489,13 @@ fn a_dormant_orchestrator_is_relaunched_for_a_round() {
     let effects = fx.done(restarts[0].0, OpResult::Restarted);
     let woken = wakes(&effects);
     assert_eq!(woken.len(), 1, "{effects:#?}");
-    assert!(woken[0].0.starts_with(&wake) && woken[0].1);
+    assert!(woken[0].0.starts_with(&wake));
+    // The request keeps round 2's identity across the relaunch (D13, as amended).
+    let request = effects.iter().find_map(|e| match e {
+        Effect::WakeOrchestrator { request, .. } => Some(*request),
+        _ => None,
+    });
+    assert_eq!(request, Some(Some(2)), "{effects:#?}");
 }
 
 /// A `pr` run's `running` iterate leaves its delivery records as they are.
