@@ -264,6 +264,9 @@ fn reopened(run: &mut Run, n: u16, pr: &PrRecord, now: u64) {
         now,
         format!("{}: reopened; the stages above resume", named(n, pr)),
     );
+    // The final fix wave's I-3: its CI is judged again on its head (the fixes the close
+    // cancelled are not resurrected; a red raises its fix or its alert again).
+    super::ci_trigger::rearm(run, n, now);
 }
 
 /// Decision 37: each stage is paused by the lowest stage below it whose PR is closed
@@ -281,6 +284,11 @@ fn repause(run: &mut Run, now: u64) {
             continue;
         }
         stage_mut(run, m).paused_by = by;
+        // I-3: an unpaused stage's CI is judged again (a red seen while it was paused
+        // added nothing); its review batch, which waited, closes as usual.
+        if by.is_none() {
+            super::ci_trigger::rearm(run, m, now);
+        }
         let text = match by {
             Some(k) => format!("stage {m}: paused (stage {k} PR closed without merging)"),
             None => format!("stage {m}: no longer paused"),

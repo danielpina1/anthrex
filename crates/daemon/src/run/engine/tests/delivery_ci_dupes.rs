@@ -28,7 +28,7 @@ use crate::run::model::FixOf;
 /// A red of `test` (Actions run `run`) on stage `n`'s pushed head, PR `number`, taken
 /// through its log, the fallback summary (key `unknown`) and a green tier-2
 /// reproduction: the CI fix task it added, if any.
-fn red(fx: &mut Fixture, n: u16, number: u64, run: u64) -> Option<String> {
+pub(super) fn red(fx: &mut Fixture, n: u16, number: u64, run: u64) -> Option<String> {
     let now = fx.now;
     let pr = fx.run_mut().delivery.stages[usize::from(n) - 1].pr.as_mut();
     let pr = pr.unwrap();

@@ -355,6 +355,7 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         }
         settle(run, n);
+        super::review_batch::untask(run, n, now);
         super::review_batch::close(run, n, now, fx);
         super::reply::queue_replies(run, n);
         super::reply::send(run, n, now, fx);

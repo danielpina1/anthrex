@@ -3,16 +3,18 @@
 //! author's permission. Past `review_fix_max` rounds its threads go to the user; a live
 //! orchestrator is woken once; otherwise each thread gets a fix task from the template
 //! (the fast path), held for approval when it owns files outside the stage (decision
-//! 26). Pure.
+//! 26). A batch waits while its PR is closed or its stage paused (the final fix wave's
+//! I-3), and a thread whose fix task was cancelled joins the next batch ([`untask`]).
+//! Pure.
 
-use proto::PrState;
+use proto::{PrState, TaskState};
 
 use super::super::requests::log;
 use super::super::{Effect, wake};
 use super::review::{PERMISSION_WAIT_SECS, author, plural, thread_mut};
 use super::stage_mut;
 use super::watch::named;
-use crate::run::delivery::{PrRecord, ThreadState};
+use crate::run::delivery::{Batch, PrRecord, ThreadState};
 use crate::run::model::{FixOf, Run};
 
 /// Whether the run's orchestrator window is live (M9 decision 13): a planned run's
@@ -40,7 +42,13 @@ pub(super) fn close(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
     let quiet_at = batch
         .last_at
         .saturating_add(run.delivery.limits.review_batch_secs);
-    if asking || now < quiet_at {
+    // The final fix wave's I-3: a batch waits while its PR is closed or its stage is
+    // paused, so a reopen or an unpause hands its threads out then.
+    let closed = run
+        .delivery
+        .pr(n)
+        .is_some_and(|p| p.state == PrState::Closed);
+    if asking || now < quiet_at || closed || stage.paused_by.is_some() {
         return;
     }
     let stage = stage_mut(run, n);
@@ -58,8 +66,7 @@ pub(super) fn close(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
     let Some(pr) = run.delivery.pr(n).cloned() else {
         return;
     };
-    let paused = run.delivery.stage(n).is_some_and(|s| s.paused_by.is_some());
-    if keys.is_empty() || pr.state != PrState::Open || paused {
+    if keys.is_empty() || pr.state != PrState::Open {
         return;
     }
     let rounds = run.delivery.stage(n).map_or(0, |s| s.review_rounds);
@@ -161,5 +168,45 @@ fn fast_path(
     if made && b > stage.round_batch {
         stage.round_batch = b;
         stage.review_rounds += 1;
+    }
+}
+
+/// The final fix wave's I-3: whenever a review fix ends cancelled (a `cancel_task`, a
+/// rejected hold, a split, its PR closed), each thread it had tasked is `new` again and
+/// joins the stage's open batch, so it is handed out again: to a live orchestrator, or
+/// to a new fix task (a cancelled task is never resurrected).
+pub(super) fn untask(run: &mut Run, n: u16, now: u64) {
+    let Some(pr) = run.delivery.pr(n).cloned() else {
+        return;
+    };
+    let ended = |run: &Run, id: &str| run.task(id).is_none_or(|t| t.state == TaskState::Cancelled);
+    let keys: Vec<(String, String)> = (run.delivery.stage(n).into_iter())
+        .flat_map(|s| s.threads.iter())
+        .filter_map(|t| match &t.state {
+            ThreadState::Tasked { task } if ended(run, task) => Some((t.key.clone(), task.clone())),
+            _ => None,
+        })
+        .collect();
+    for (key, task) in keys {
+        if let Some(t) = thread_mut(run, n, &key) {
+            t.state = ThreadState::New;
+            t.counted = true;
+            t.batch = 0;
+        }
+        let stage = stage_mut(run, n);
+        let batch = stage.batch.get_or_insert_with(|| Batch {
+            started_at: now,
+            last_at: now,
+            threads: Vec::new(),
+        });
+        if !batch.threads.contains(&key) {
+            batch.threads.push(key.clone());
+        }
+        batch.last_at = now;
+        let text = format!(
+            "{}: thread {key} is new again: its fix task {task} was cancelled",
+            named(n, &pr)
+        );
+        log(run, now, text);
     }
 }
