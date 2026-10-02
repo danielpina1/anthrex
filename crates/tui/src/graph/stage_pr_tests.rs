@@ -131,3 +131,61 @@ fn the_stage_row_reads_tier_3_then_its_pr() {
         "stage 2/3  tier 3 + 38s  #142  ci x  3 threads"
     );
 }
+
+/// A `pr`-mode stage whose PR is `number`, open, red, `threads` to address, and paused,
+/// in a run of `stages` stages, its tier 3 bisecting: the widest stage row there is.
+fn widest(number: u64, stages: u16, threads_open: u32) -> (RunInfo, StageInfo) {
+    let mut run = pr_run();
+    run.stages = (1..=stages).map(|n| stage(n, None, 0, 0)).collect();
+    let mut s = with_pr({
+        let mut p = pr(number, PrState::Open, CiState::Red);
+        p.threads = threads(threads_open, 0);
+        p.paused = true;
+        Some(p)
+    });
+    s.n = stages;
+    s.full.state = proto::FullState::Bisecting;
+    (run, s)
+}
+
+/// Review C, M4: the stage box's cap fits the longest suffix, `paused` with a five-digit
+/// PR number included, after the longest tier-3 text, uncut in either form.
+#[test]
+fn the_longest_stage_row_fits_its_box() {
+    let (run, s) = widest(99_999, 99, 99);
+    let unicode = "stage 99/99  tier 3 ✗ bisecting  #99999  ci ✗  99 threads  paused";
+    assert_eq!(stage_text_in(&run, &s, false), unicode);
+    assert_eq!(
+        stage_text_in(&run, &s, true),
+        "stage 99/99  tier 3 x bisecting  #99999  ci x  99 threads  paused"
+    );
+    let room = usize::from(crate::graph::MAX_STAGE_NODE_WIDTH) - 4 - 2;
+    assert_eq!(unicode::width(unicode), room, "the cap is exactly this row");
+}
+
+/// Review C, M4: a row too wide for the box loses its PR number's digits first, never
+/// the state word at its end.
+#[test]
+fn a_longer_pr_number_is_cut_before_the_state_word() {
+    let (run, s) = widest(1_234_567, 99, 99);
+    assert_eq!(
+        stage_text_in(&run, &s, false),
+        "stage 99/99  tier 3 ✗ bisecting  #1234…  ci ✗  99 threads  paused"
+    );
+    assert_eq!(
+        stage_text_in(&run, &s, true),
+        "stage 99/99  tier 3 x bisecting  #12...  ci x  99 threads  paused"
+    );
+    // A narrower row keeps its whole number.
+    let (run, s) = widest(1_234_567, 9, 9);
+    assert_eq!(
+        stage_text_in(&run, &s, false),
+        "stage 9/9  tier 3 ✗ bisecting  #1234567  ci ✗  9 threads  paused"
+    );
+}
+
+mod unicode {
+    pub fn width(text: &str) -> usize {
+        unicode_width::UnicodeWidthStr::width(text)
+    }
+}

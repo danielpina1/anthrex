@@ -28,11 +28,17 @@ pub const MIN_NODE_WIDTH: u16 = 12;
 pub const MAX_NODE_WIDTH: u16 = 30;
 /// A stage node's cap (milestone 9.0.7 decision 18): its whole text, the longest being
 /// `stage 99/99  tier 3 ✗ bisecting` (31 columns), then, in a `pr`-mode run, its pull
-/// request (milestone 9.2 decision 42) up to `  #9999  ci ✗  99 threads` (25), plus the
-/// glyph, its space, the borders and the padding. A local run's stage boxes are as
-/// wide as before: a box takes only what its text needs. Task, run and every other box
-/// keep [`MAX_NODE_WIDTH`].
-pub const MAX_STAGE_NODE_WIDTH: u16 = 62;
+/// request (milestone 9.2 decision 42) up to `  #99999  ci ✗  99 threads  paused` (34;
+/// the final fix wave, review C M4: a five-digit number and the state word), plus the
+/// glyph, its space, the borders and the padding. A longer row loses its PR number's
+/// digits first (`stage_pr::row_suffix_within`), never its state word. A local run's
+/// stage boxes are as wide as before: a box takes only what its text needs. Task, run
+/// and every other box keep [`MAX_NODE_WIDTH`].
+pub const MAX_STAGE_NODE_WIDTH: u16 = 71;
+/// The display columns a stage box leaves its text: [`MAX_STAGE_NODE_WIDTH`] less the
+/// borders, the padding, the glyph and its space.
+pub(crate) const STAGE_TEXT_ROOM: usize =
+    (MAX_STAGE_NODE_WIDTH - BORDERS_AND_PADDING) as usize - GLYPH_COLUMNS;
 /// Top border, content, bottom border.
 pub const NODE_HEIGHT: u16 = 3;
 /// Columns between a tier's right edge and the next tier's left edge. The
