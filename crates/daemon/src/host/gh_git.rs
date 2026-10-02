@@ -53,6 +53,8 @@ impl<R: Runner> GhHost<R> {
     pub(super) fn fetch_ref(&self, req: &FetchReq) -> Result<FetchOutcome, HostError> {
         let ctx = run_ctx(&req.repo, Some(&req.run_id));
         let spec = format!("{FETCH_UPDATE}refs/heads/{}:{}", req.branch, req.into);
+        // `--no-prune --no-prune-tags` (deferred from task 4): a user's `fetch.prune`
+        // or `pruneTags` never makes anthrex's fetch delete a ref.
         let out = self.git(
             &ctx,
             &req.repo.root,
@@ -60,6 +62,8 @@ impl<R: Runner> GhHost<R> {
             &[
                 "fetch",
                 "--no-tags",
+                "--no-prune",
+                "--no-prune-tags",
                 "--no-recurse-submodules",
                 "--no-auto-maintenance",
                 "--no-write-fetch-head",

@@ -202,6 +202,8 @@ fn allow_list_refuses_force_and_foreign_destinations() {
             &[
                 "fetch",
                 "--no-tags",
+                "--no-prune",
+                "--no-prune-tags",
                 "--no-recurse-submodules",
                 "--no-auto-maintenance",
                 "--no-write-fetch-head",
@@ -232,6 +234,8 @@ fn allow_list_refuses_force_and_foreign_destinations() {
             &[
                 "fetch",
                 "--no-tags",
+                "--no-prune",
+                "--no-prune-tags",
                 "--no-recurse-submodules",
                 "--no-auto-maintenance",
                 "--no-write-fetch-head",
@@ -276,13 +280,82 @@ fn allow_list_refuses_a_remote_named_like_an_option_and_the_old_push_shapes() {
         check(Program::Git, &config, &dash),
         Err(HostError::Forbidden(_))
     ));
-    // Ruling I1: a push or fetch without its no-tags and no-submodules flags.
+    // Ruling I1: a push or fetch without its no-tags and no-submodules flags; the
+    // dry run and the delete too (deferred from task 4); and a fetch without
+    // `--no-prune --no-prune-tags`, which a user's `fetch.prune` would otherwise turn on.
     let spec = format!("{SHA}:refs/heads/anthrex/{RUN}/stage-1");
+    let dry = format!("{SHA}:refs/heads/anthrex/preflight-0a1b2c3d");
+    let stage = format!("refs/heads/anthrex/{RUN}/stage-1");
     for args in [
         with(&WRITE, &["push", "--porcelain", "origin", &spec]),
         with(
             &WRITE,
             &["push", "--porcelain", "--no-follow-tags", "origin", &spec],
+        ),
+        with(
+            &WRITE,
+            &["push", "--dry-run", "--porcelain", "origin", &dry],
+        ),
+        with(
+            &WRITE,
+            &[
+                "push",
+                "--dry-run",
+                "--porcelain",
+                "--no-follow-tags",
+                "origin",
+                &dry,
+            ],
+        ),
+        with(
+            &WRITE,
+            &[
+                "push",
+                "--dry-run",
+                "--porcelain",
+                "--recurse-submodules=no",
+                "origin",
+                &dry,
+            ],
+        ),
+        with(
+            &WRITE,
+            &["push", "--porcelain", "origin", "--delete", &stage],
+        ),
+        with(
+            &WRITE,
+            &[
+                "push",
+                "--porcelain",
+                "--no-follow-tags",
+                "origin",
+                "--delete",
+                &stage,
+            ],
+        ),
+        with(
+            &WRITE,
+            &[
+                "push",
+                "--porcelain",
+                "--recurse-submodules=no",
+                "origin",
+                "--delete",
+                &stage,
+            ],
+        ),
+        with(
+            &WRITE,
+            &[
+                "fetch",
+                "--no-tags",
+                "--no-recurse-submodules",
+                "--no-auto-maintenance",
+                "--no-write-fetch-head",
+                "--refmap=",
+                "origin",
+                &format!("+refs/heads/main:refs/anthrex/{RUN}/remote/base"),
+            ],
         ),
         with(
             &WRITE,

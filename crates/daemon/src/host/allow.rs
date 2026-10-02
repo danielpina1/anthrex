@@ -117,6 +117,8 @@ fn git_allowed(args: &[&str], ctx: &AllowCtx<'_>) -> bool {
         [
             "fetch",
             "--no-tags",
+            "--no-prune",
+            "--no-prune-tags",
             "--no-recurse-submodules",
             "--no-auto-maintenance",
             "--no-write-fetch-head",

@@ -357,6 +357,8 @@ fn every_method_builds_its_exact_argv() {
                 &[
                     "fetch",
                     "--no-tags",
+                    "--no-prune",
+                    "--no-prune-tags",
                     "--no-recurse-submodules",
                     "--no-auto-maintenance",
                     "--no-write-fetch-head",
@@ -382,6 +384,8 @@ fn every_method_builds_its_exact_argv() {
                 &[
                     "fetch",
                     "--no-tags",
+                    "--no-prune",
+                    "--no-prune-tags",
                     "--no-recurse-submodules",
                     "--no-auto-maintenance",
                     "--no-write-fetch-head",

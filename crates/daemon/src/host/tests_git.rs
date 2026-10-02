@@ -455,3 +455,41 @@ fn an_adoption_past_its_deadline_moves_nothing() {
     );
     assert_eq!(rig.local(&stage), b);
 }
+
+/// Deferred from task 4: a user's `fetch.prune` and `fetch.pruneTags` never reach
+/// anthrex's fetch, so it deletes neither their local tags nor anything under its own
+/// private refs that the remote lacks (`--no-prune --no-prune-tags`).
+#[test]
+fn a_users_prune_config_prunes_nothing() {
+    let rig = Rig::new();
+    let a = commit(&rig.work, "a");
+    git(&rig.work, &["push", "-q", "origin", "main"]);
+    git(&rig.work, &["tag", "local-only", &a]);
+    let gone = format!("refs/anthrex/{RUN}/remote/gone");
+    git(&rig.work, &["update-ref", &gone, &a]);
+    git(&rig.work, &["config", "fetch.prune", "true"]);
+    git(&rig.work, &["config", "fetch.pruneTags", "true"]);
+    git(&rig.work, &["config", "remote.origin.prune", "true"]);
+    git(&rig.work, &["config", "remote.origin.pruneTags", "true"]);
+    let fetched = rig.fetch(&FetchReq {
+        repo: rig.repo.clone(),
+        run_id: RUN.to_string(),
+        branch: "main".to_string(),
+        into: format!("refs/anthrex/{RUN}/remote/base"),
+        adopt: None,
+        parents_of: None,
+        deadline: None,
+    });
+    assert_eq!(
+        fetched,
+        Ok(FetchOutcome::Fetched {
+            sha: a.clone(),
+            parents: None
+        })
+    );
+    assert_eq!(
+        git(&rig.work, &["tag", "--list", "local-only"]),
+        "local-only"
+    );
+    assert_eq!(git(&rig.work, &["rev-parse", "--verify", &gone]), a);
+}
