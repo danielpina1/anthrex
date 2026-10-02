@@ -265,6 +265,7 @@ fn a_round_stage_is_stacked_on_the_open_pr_below() {
     fx.done(ops[0].0, crate::run::engine::OpResult::StageCreated);
     let s1 = fx.run().stage_head(1).unwrap().to_string();
     let ops = creating(&fx);
+    assert_eq!(ops.len(), 1, "{ops:?}");
     assert_eq!(
         (ops[0].1.clone(), ops[0].2.clone()),
         (format!("anthrex/{RUN_ID}/stage-2"), s1)
@@ -305,6 +306,8 @@ fn when_every_pr_landed_the_round_starts_from_the_fetched_base() {
     // The fetched base goes into stage 2 first (9.2's base sync).
     let (op, spec) = base_sync(&fx);
     assert_eq!((spec.to, spec.from_head.clone()), (2, base.clone()));
+    // Ruling D15: the base sync into the highest stage moves `integration` with it.
+    assert!(spec.also_integration);
     fx.done(op, merged_at(&commit(72)));
     assert_eq!(
         fx.run().delivery.base_synced.as_deref(),

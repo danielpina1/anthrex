@@ -1,14 +1,15 @@
 //! Milestone 9.3 task 5, fix round 1: a `pr` round's reject goes back to `complete`
 //! only when every earlier stage's landing is processed (I1), a later round above
-//! landed PRs still fetches the base first after a rejected one (m1), and the `pr`
-//! end of a round waits for a due base sync and a held stage (m5).
+//! landed PRs still fetches the base first after a rejected one (m1), a failing base
+//! fetch keeps the round's first stage waiting, visibly (m3), and the `pr` end of a
+//! round waits for a due base sync and a held stage (m5).
 
 use proto::{PrState, RunState};
 use serde_json::json;
 
 use super::delivery_land::{merged_view, stage_lines};
 use super::delivery_open::{answer as host_answer, host_ops, opened};
-use super::delivery_sync::{base_sync, fetched};
+use super::delivery_sync::{base_fetch, base_sync, fetched};
 use super::fixture::*;
 use super::goal_rounds_end::{create_stages, settle_ops, submit_round};
 use super::goal_rounds_pr::{delivering, landed, opening, reject, sessions_end};
@@ -17,10 +18,12 @@ use super::goal_rounds_start::{iterate, reply, started};
 use super::kinds_integration::{C3, merge_real};
 use super::merge::{commit, pending};
 use super::propagate::merged_at;
+use crate::host::HostError;
+use crate::run::delivery::FAILURES_BEFORE_ATTENTION;
 use crate::run::delivery::ops::{HostOp, HostResult};
-use crate::run::engine::OpResult;
 use crate::run::engine::goal_rounds::landed_below;
 use crate::run::engine::goal_rounds_end::delivered;
+use crate::run::engine::{EventKind, OpResult};
 
 /// The `complete: …` log lines of the run: one per completion.
 fn completions(fx: &Fixture) -> usize {
@@ -112,6 +115,39 @@ fn a_round_after_a_rejected_one_still_fetches_the_base_first() {
     fx.done(op, merged_at(&commit(72)));
     merge_real(&mut fx, "t3", C3);
     assert!(fx.run().stages[2].tasks_in.contains("t3"));
+}
+
+/// m3: the base fetch the round waits for fails: each failure is logged and retried a
+/// poll interval later, an attention line names it after repeated failures, and the
+/// round's first stage is not created until a fetch answers.
+#[test]
+fn a_failing_base_fetch_keeps_the_round_waiting_visibly() {
+    let mut fx = landed();
+    assert_eq!(reply(&iterate(&mut fx, "more")), started(2));
+    plan_round(&mut fx, json!([add_in("t2", "mail", 2, &[])]));
+    create_stages(&mut fx);
+    for k in 1..=FAILURES_BEFORE_ATTENTION {
+        let (op, _) = base_fetch(&fx);
+        let error = HostError::Failed("could not reach the remote".into());
+        host_answer(&mut fx, op, HostResult::Error(error));
+        let said = |t: &str| fx.run().log.iter().any(|l| l.text == t);
+        assert!(said("fetch failed: could not reach the remote"));
+        assert!(creating(&fx).is_empty(), "failure {k}");
+        assert!(fx.run().delivery.base_fetch_due);
+        let d = &fx.run().delivery;
+        let wait = d.poll_base_secs.max(d.limits.poll_secs).max(1);
+        fx.send(fx.now + wait, EventKind::Tick);
+    }
+    let alerts = &fx.run().delivery.alerts;
+    assert!(
+        alerts
+            .get("run/fetch")
+            .is_some_and(|l| l.contains("fetch keeps failing")),
+        "{alerts:?}"
+    );
+    fetched(&mut fx, &commit(71), None);
+    assert_eq!(creating(&fx).len(), 1);
+    assert!(!fx.run().delivery.alerts.contains_key("run/fetch"));
 }
 
 /// m5: the `pr` end of a round also waits for a held stage, and is not reached while a
