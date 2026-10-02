@@ -294,7 +294,7 @@ fn round_history_line_round_trips() {
         ..a_round_line()
     }));
 
-    // Version-1 to 4 lines still decode.
+    // Version-1 and 2 lines (the fixture) and a version-4 line (inline) still decode.
     for line in include_str!("m9_history_v2.jsonl").lines() {
         serde_json::from_str::<HistoryLine>(line).expect("a version-1 or 2 line decodes");
     }

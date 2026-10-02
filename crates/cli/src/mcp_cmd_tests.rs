@@ -12,24 +12,47 @@ use std::path::{Path, PathBuf};
 #[test]
 fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
     let socket = Path::new("/tmp/anthrex-x/d.sock");
-    for (index, (role, run, task, scout, epic)) in [
-        (AgentRole::Worker, "add-reset-3f9a", Some("t1"), None, None),
+    for (role, run, task, scout, epic, chain) in [
+        (
+            AgentRole::Worker,
+            "add-reset-3f9a",
+            Some("t1"),
+            None,
+            None,
+            None,
+        ),
         (
             AgentRole::Reviewer,
             "add-reset-3f9a",
             Some("t2"),
             None,
             None,
+            None,
         ),
-        (AgentRole::Orchestrator, "add-reset-3f9a", None, None, None),
+        (
+            AgentRole::Orchestrator,
+            "add-reset-3f9a",
+            None,
+            None,
+            None,
+            None,
+        ),
         // Milestone 9.3 (KG §3.4): a chained orchestrator.
-        (AgentRole::Orchestrator, "add-reset-3f9a", None, None, None),
+        (
+            AgentRole::Orchestrator,
+            "add-reset-3f9a",
+            None,
+            None,
+            None,
+            Some("o-3f9a"),
+        ),
         (
             AgentRole::Planner,
             "add-reset-3f9a",
             None,
             None,
             Some("mail"),
+            None,
         ),
         (
             AgentRole::Scout,
@@ -37,16 +60,20 @@ fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
             None,
             Some("api-1"),
             None,
+            None,
         ),
-        (AgentRole::Scout, "", None, Some("onboarding-1"), None),
+        (AgentRole::Scout, "", None, Some("onboarding-1"), None, None),
         // Milestone 9 decision 35: a research task's scout window names its task.
-        (AgentRole::Scout, "add-reset-3f9a", Some("t3"), None, None),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        // The second orchestrator row (index 3) is the chained one.
-        let chain = (index == 3).then(|| "o-3f9a".to_string());
+        (
+            AgentRole::Scout,
+            "add-reset-3f9a",
+            Some("t3"),
+            None,
+            None,
+            None,
+        ),
+    ] {
+        let chain: Option<String> = chain.map(String::from);
         let target = McpTarget {
             role,
             run_id: run.into(),

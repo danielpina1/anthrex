@@ -149,8 +149,8 @@ fn stats_json_and_the_report_line_are_printable() {
         flaky_proposals: Vec::new(),
         window_days: 0,
         quarantine_after: 0,
-        iterated_runs: 0,
         rounds: 0,
+        iterated_runs: 0,
     };
     let json = super::adapt::stats_json(&stats).unwrap();
     // JSON escapes the control character itself; the bidi override and the ZWJ, which

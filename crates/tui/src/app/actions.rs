@@ -437,7 +437,8 @@ impl App {
                 None => vec![],
             },
             // Milestone 9.3: `Iterate` opens the iterate dialog from task M9.3.10a; until
-            // then it is ignored here, as every kind without a local screen is.
+            // then it lands here, as every kind without a local screen does: a `not yet`
+            // toast, and the action menu stays open.
             _ => {
                 self.toast("not yet");
                 self.modal = Some(Modal::Action(Box::new(flow)));

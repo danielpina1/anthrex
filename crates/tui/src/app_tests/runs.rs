@@ -387,8 +387,8 @@ fn other_run_replies_change_nothing() {
         flaky_proposals: vec![],
         window_days: 0,
         quarantine_after: 0,
-        iterated_runs: 0,
         rounds: 0,
+        iterated_runs: 0,
     };
     let replies = vec![
         RunReply::Started {

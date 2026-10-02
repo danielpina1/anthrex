@@ -154,8 +154,8 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
         flaky_proposals: Vec::new(),
         window_days: 0,
         quarantine_after: 0,
-        iterated_runs: 0,
         rounds: 0,
+        iterated_runs: 0,
     }
 }
 
