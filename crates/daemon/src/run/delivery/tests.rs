@@ -405,6 +405,8 @@ fn the_delivery_model_round_trips_through_run_json() {
         landed: Some(PrState::Merged),
         sync_red: Some((HEAD2.into(), HEAD2.into())),
         wait_from: Some(4_000),
+        reopens: 1,
+        local_moved: None,
     };
     run.delivery.permission_retry_at = Some(6_000);
     run.delivery.base_fetch_due = true;

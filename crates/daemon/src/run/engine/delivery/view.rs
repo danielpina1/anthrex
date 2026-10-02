@@ -220,7 +220,7 @@ fn pages(run: &mut Run, n: u16, wm: &Watermark, view: &PrView, now: u64) {
     let mut class = |what: &str, ids: Vec<u64>, above: u64| {
         if full(&ids, above) {
             let line = format!(
-                "PR #{}: more than {VIEW_PAGE} new {what} since the last view; the older ones were not read",
+                "PR #{}: {VIEW_PAGE} or more new {what} since the last view; any older ones were not read",
                 pr.number
             );
             lines.push((format!("{n}/page/{what}"), line));

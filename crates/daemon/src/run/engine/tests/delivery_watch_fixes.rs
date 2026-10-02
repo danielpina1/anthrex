@@ -161,7 +161,7 @@ fn a_full_page_is_an_attention_line_until_a_view_is_not_full() {
     v.threads = vec![thread(long)];
     poll_with(&mut fx, v.clone());
     let comments =
-        "PR #7: more than 100 new comments since the last view; the older ones were not read";
+        "PR #7: 100 or more new comments since the last view; any older ones were not read";
     let long = "PR #7: thread t6000000000 has 50 comments or more; the newer ones were not read";
     assert_eq!(attention(&fx), vec![comments.to_string(), long.to_string()]);
     assert_eq!(count(&fx, &format!("stage 1 (PR #7): {comments}")), 1);
@@ -176,7 +176,7 @@ fn a_full_page_is_an_attention_line_until_a_view_is_not_full() {
         .collect();
     poll_with(&mut fx, v.clone());
     let reviews =
-        "PR #7: more than 100 new reviews since the last view; the older ones were not read";
+        "PR #7: 100 or more new reviews since the last view; any older ones were not read";
     assert!(
         attention(&fx).contains(&reviews.to_string()),
         "{:?}",
@@ -232,13 +232,20 @@ fn local_moved_is_an_adopt_when_it_is_the_remote_head_and_a_halt_otherwise() {
         .filter(|(_, op)| matches!(op, HostOp::Fetch { .. }));
     assert_eq!(fetches.count(), 0, "adopted once, not again every tick");
 
-    // Moved by something else: a retryable halt naming the ref; a view comes first.
+    // Moved by something else: judged after a fresh view (deferred from task 8), then a
+    // retryable halt naming the ref; a view comes first.
     for (local, at) in [
         (commit(9), format!("at {}", &commit(9)[..7])),
         (String::new(), "gone".into()),
     ] {
         let mut fx = adopting(&user);
-        fetched(&mut fx, FetchOutcome::LocalMoved { local });
+        let moved = FetchOutcome::LocalMoved {
+            local: local.clone(),
+        };
+        fetched(&mut fx, moved.clone());
+        assert_eq!(fx.run().state, RunState::Running, "a view first");
+        poll_with(&mut fx, view(&user));
+        fetched(&mut fx, moved);
         let run = fx.run();
         assert_eq!(run.state, RunState::Halted);
         let reason = format!(
@@ -258,6 +265,33 @@ fn local_moved_is_an_adopt_when_it_is_the_remote_head_and_a_halt_otherwise() {
             }
         );
     }
+}
+
+/// Deferred from task 8: an adopt re-issued after a restart finds the local ref moved
+/// to a later remote head than the view it was due for (the lost adopt moved it, and
+/// the user pushed again). It is judged after a fresh view, which shows that head: an
+/// adopt, not a halt.
+#[test]
+fn a_local_move_after_a_restart_is_judged_after_a_fresh_view() {
+    let (first, second) = (commit(41), commit(42));
+    let mut fx = adopting(&first);
+    let moved = FetchOutcome::LocalMoved {
+        local: second.clone(),
+    };
+    fetched(&mut fx, moved.clone());
+    assert_eq!(fx.run().state, RunState::Running);
+    let line = format!(
+        "stage 1: its branch anthrex/{RUN_ID}/integration is at {}; viewing PR #7 again before judging it",
+        &second[..7]
+    );
+    assert!(logged(&fx, &line), "{:#?}", fx.run().log);
+    poll_with(&mut fx, view(&second));
+    fetched(&mut fx, moved);
+    let run = fx.run();
+    assert_eq!(run.state, RunState::Running);
+    assert_eq!(run.stage_head(1), Some(second.as_str()));
+    assert_eq!(run.delivery.pr(1).unwrap().pushed_head, second);
+    assert_eq!(run.delivery.stage(1).unwrap().local_moved, None);
 }
 
 #[test]

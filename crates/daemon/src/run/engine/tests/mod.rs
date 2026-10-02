@@ -41,6 +41,7 @@ mod delivery_review_amend;
 mod delivery_review_fix;
 mod delivery_review_reply;
 mod delivery_review_round;
+mod delivery_stack_order;
 mod delivery_sync;
 mod delivery_watch;
 mod delivery_watch_adopt;

@@ -161,6 +161,16 @@ pub(super) fn lower_held(run: &Run, n: u16) -> bool {
     (1..n).any(|m| run.delivery.stage(m).is_some_and(|s| s.held.is_some()))
 }
 
+/// The final fix wave's B m-6: a lower stage with an open PR has a local head it has
+/// not pushed yet; stage `n`'s push would carry those commits into its own PR first.
+pub(super) fn lower_unpushed(run: &Run, n: u16) -> bool {
+    (1..n).any(|m| {
+        run.delivery.pr(m).is_some_and(|p| {
+            p.state == PrState::Open && run.stage_head(m) != Some(p.pushed_head.as_str())
+        })
+    })
+}
+
 /// Whether stage `n` may move or push: not paused, not held, the queue quiet, and not
 /// waiting for a failed op's retry.
 fn free(run: &Run, n: u16, now: u64) -> bool {
@@ -215,7 +225,7 @@ fn push(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) -> bool {
         .delivery
         .stage(n)
         .is_some_and(|s| s.remote_head.is_some());
-    let lower = lower_held(run, n) || super::land::lower_unopened(run, n);
+    let lower = lower_held(run, n) || lower_unpushed(run, n) || super::land::lower_unopened(run, n);
     if !moved || adopting || lower || !free(run, n, now) {
         return false;
     }
@@ -333,12 +343,33 @@ pub(super) fn fetched(
     let branch = remote_branch(run, n);
     let head = run.stage_head(n).unwrap_or_default().to_string();
     let due = run.delivery.stage(n).and_then(|s| s.remote_head.clone());
+    let moved_before = stage_mut(run, n).local_moved.take();
     let line = match outcome {
         FetchOutcome::Adopted { sha } => return adopted(run, n, sha, now, fx),
         // Fix round I3: the local ref is already at the remote head: an adopt that
         // moved it was re-issued (a restart lost its answer).
         FetchOutcome::LocalMoved { local } if due.as_deref() == Some(local.as_str()) => {
             return adopted(run, n, local, now, fx);
+        }
+        // Deferred from task 8: a move first seen is judged after a fresh view, since
+        // the view that made the adopt due may be older than a restart.
+        FetchOutcome::LocalMoved { local } if moved_before.is_none() => {
+            let stage = stage_mut(run, n);
+            stage.local_moved = Some(local.clone());
+            stage.remote_head = None;
+            if let Some(record) = pr_mut(run, n) {
+                record.next_poll_at = now;
+            }
+            let at = match local.is_empty() {
+                true => "gone".to_string(),
+                false => format!("at {}", sha7(&local)),
+            };
+            let text = format!(
+                "stage {n}: its branch {} is {at}; viewing PR #{} again before judging it",
+                run.stage_branch(n),
+                pr.number
+            );
+            return log(run, now, text);
         }
         FetchOutcome::LocalMoved { local } => {
             let local_ref = run.stage_branch(n);

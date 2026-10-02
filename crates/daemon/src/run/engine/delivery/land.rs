@@ -258,6 +258,7 @@ fn reopened(run: &mut Run, n: u16, pr: &PrRecord, now: u64) {
     let stage = stage_mut(run, n);
     stage.landed = None;
     stage.history_written = false;
+    stage.reopens = stage.reopens.saturating_add(1);
     run.delivery.alerts.remove(&format!("{n}/closed"));
     log(
         run,
@@ -507,7 +508,11 @@ fn append(run: &mut Run, n: u16, outcome: StageOutcome, now: u64, fx: &mut Vec<E
     };
     let line = StageLine {
         v: HISTORY_VERSION,
-        record_id: format!("{}/stage/{n}", run.id),
+        // B m-4: one record per landing outcome; a reopened stage's next one is its own.
+        record_id: match stage.reopens {
+            0 => format!("{}/stage/{n}", run.id),
+            k => format!("{}/stage/{n}-r{k}", run.id),
+        },
         run_id: run.id.clone(),
         stage: n,
         pr: pr.number,

@@ -175,6 +175,16 @@ pub struct StageDelivery {
     /// Task M9.2.11 (decision 43): since when the open PR has been waiting on a person,
     /// as of the last pass; `None` while anthrex has work on it.
     pub wait_from: Option<u64>,
+    /// The final fix wave's B m-4: the times the PR was reopened after it closed. Each
+    /// landing outcome gets its own history line: `<run>/stage/<n>`, then
+    /// `<run>/stage/<n>-r<k>` after the k-th reopen, so reconcile never takes one for
+    /// another.
+    pub reopens: u32,
+    /// The final fix wave's deferred task-8 item: an adopt found the local stage ref at
+    /// this commit, not where anthrex had it nor at the remote head a view showed. A
+    /// restart may have lost an adopt that moved it while the remote moved again, so it
+    /// is judged only after a fresh view: the next adopt that finds it moved halts.
+    pub local_moved: Option<String>,
 }
 
 /// Decision 30: one reply due on a stage PR's thread (task M9.2.10; not in

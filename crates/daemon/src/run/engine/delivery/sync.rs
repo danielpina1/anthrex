@@ -84,7 +84,7 @@ fn in_flight(run: &Run, n: u16, sha: &str) -> bool {
     )
 }
 
-fn fetching(run: &Run) -> bool {
+pub(super) fn fetching(run: &Run) -> bool {
     run.pending_ops.values().any(|p| {
         matches!(
             &p.kind,

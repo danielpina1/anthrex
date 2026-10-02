@@ -57,6 +57,11 @@ pub(super) fn ready(run: &Run, n: u16) -> Result<(), String> {
     if let Some(m) = (1..n).find(|&m| closed(m)) {
         return Err(format!("stage {m}'s PR was closed without merging"));
     }
+    // The final fix wave's B m-5: a stage above a merged one opens once it has absorbed
+    // the new base (decision 35), not on a head without it.
+    if absorbing(run, n) {
+        return Err("the base is being synced".to_string());
+    }
     let below = n - 1;
     let landed = |m: u16| {
         run.delivery.stage(m).is_some_and(|s| s.skipped)
@@ -67,6 +72,26 @@ pub(super) fn ready(run: &Run, n: u16) -> Result<(), String> {
         return Err(format!("stage {below}'s PR is not open"));
     }
     Ok(())
+}
+
+/// B m-5: a stage below `n` merged, and the new base is still on its way into `n`: the
+/// base fetch is due or in flight, a merge's method is not counted yet (its fetch is
+/// due), or a base sync or a propagate is due or in flight into `n` or a stage below.
+fn absorbing(run: &Run, n: u16) -> bool {
+    let d = &run.delivery;
+    let merged = |m: u16| d.pr(m).is_some_and(|p| p.state == PrState::Merged);
+    if !(1..n).any(merged) {
+        return false;
+    }
+    let uncounted = (1..n).any(|m| merged(m) && d.pr(m).is_some_and(|p| p.merge_method.is_none()));
+    let below = |k: u16| k <= n;
+    d.base_fetch_due
+        || uncounted
+        || super::sync::fetching(run)
+        || d.base_sync_due.keys().any(|k| below(*k))
+        || run.propagate_due.iter().any(|k| below(*k))
+        || (run.pending_ops.values())
+            .any(|p| matches!(&p.kind, OpKind::Propagate(spec) if below(spec.to)))
 }
 
 /// No merge-queue item targets stage `n`: no queued task of it, no due propagate or
@@ -100,7 +125,8 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             .is_some_and(|s| s.pr.is_some() || s.skipped);
         let waiting = run.delivery.stage(n).and_then(|s| s.retry_at) > Some(now)
             || run.delivery.stage(n).is_some_and(|s| s.held.is_some())
-            || super::watch::lower_held(run, n);
+            || super::watch::lower_held(run, n)
+            || super::watch::lower_unpushed(run, n);
         if done || waiting || host_busy(run, n) || ready(run, n).is_err() {
             continue;
         }
@@ -213,7 +239,14 @@ pub(super) fn pushed(
 /// Decision 20, last step: the PR is recorded on stage `n`, with the head the opening
 /// push sent. A PR found already open for the head (a restart between its creation and
 /// this record, decision 10) is adopted as it is.
-pub(super) fn opened(run: &mut Run, n: u16, base: String, pr: PrRef, now: u64) {
+pub(super) fn opened(
+    run: &mut Run,
+    n: u16,
+    base: String,
+    pr: PrRef,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
     if run.delivery.pr(n).is_some() {
         return;
     }
@@ -252,4 +285,9 @@ pub(super) fn opened(run: &mut Run, n: u16, base: String, pr: PrRef, now: u64) {
         false => format!("stage {n}: PR #{} opened: {}", pr.number, pr.url),
     };
     log(run, now, text);
+    // The final fix wave's B m-3: an open in flight at `run cancel` is recorded once its
+    // answer comes, as the PRs open at the cancel were (decision 44's `open_at_cancel`).
+    if run.cancelled {
+        super::land::cancelled(run, now, fx);
+    }
 }

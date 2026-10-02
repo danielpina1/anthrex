@@ -480,6 +480,11 @@ fn restore_replays_no_event_twice() {
         run.delivery.pr(1).unwrap().watermark,
         before.delivery.pr(1).unwrap().watermark
     );
+    // Deferred from task 8: this comparison cannot fail today, since processing a view
+    // adds no wake note in its own step (a red's note comes when its fix is added, a
+    // batch's when it closes). The threads, the watermark and the counted log line above
+    // and below are what catch a replayed event; this one stays for a note a future view
+    // might add.
     assert_eq!(notes(run), resumed, "no wake note");
     let replies_sent = host_ops_in(&fx.log[from..])
         .into_iter()

@@ -216,7 +216,7 @@ pub(super) fn host_done(
             watch::pushed(run, stage, sha, outcome, now)
         }
         (HostOp::OpenPr { stage, base, .. }, HostResult::PrOpened(pr)) => {
-            open::opened(run, stage, base, pr, now)
+            open::opened(run, stage, base, pr, now, fx)
         }
         (HostOp::ViewPr { stage, .. }, HostResult::PrViewed(view)) => {
             view::viewed(run, stage, *view, now)
