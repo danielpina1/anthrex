@@ -21,8 +21,6 @@ mod open;
 mod view;
 mod watch;
 
-#[cfg(test)]
-pub(crate) use open::REWRITTEN;
 pub(crate) use watch::{attention, held, release, stage_busy, stage_paused};
 
 /// Decision 25: `run deliver` and `run watch`, as the driver hands them to the engine.
@@ -190,7 +188,10 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
             now,
         );
     }
-    let text: String = error.text().chars().take(200).collect();
+    // Fix round m4: host text, on one line once, then cut.
+    let text: String = (proto::safe_text::one_line(error.text()).chars())
+        .take(200)
+        .collect();
     let rate_limited = matches!(error, HostError::RateLimited(_));
     match error {
         HostError::RateLimited(_) => watch::rate_limited(run),

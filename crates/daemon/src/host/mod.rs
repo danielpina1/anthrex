@@ -411,3 +411,8 @@ pub const LOG_TIMEOUT: Duration = Duration::from_secs(120);
 /// [`VIEW_ITEMS_MAX`] comments of each class, newest first.
 pub const VIEW_TEXT_MAX: usize = 8000;
 pub const VIEW_ITEMS_MAX: usize = 200;
+/// [`gh::THREADS_QUERY`]'s page: the newest this many review threads, reviews and
+/// conversation comments (task M9.2.8's fix round, I2: a full page may hide older ones).
+pub const VIEW_PAGE: usize = 100;
+/// [`gh::THREADS_QUERY`] reads a review thread's first this many comments.
+pub const THREAD_PAGE: usize = 50;

@@ -24,6 +24,8 @@ pub const BODY_MAX_CHARS: usize = 60_000;
 pub const FAILURES_BEFORE_ATTENTION: u32 = 5;
 /// Decision 27: a stage keeps at most this many CI records, newest last.
 pub const CI_RECORDS_MAX: usize = 20;
+/// Task M9.2.8's fix round, I1: a PR keeps this many processed review ids.
+pub const REVIEWS_SEEN_MAX: usize = 1_000;
 /// Decision 41: a stage PR's checks shown, of its most recent head.
 pub const CHECKS_MAX: usize = 20;
 
@@ -166,10 +168,17 @@ pub struct CheckSeen {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Watermark {
-    /// The highest `fullDatabaseId` processed per comment class (ruling R-2).
+    /// The highest `fullDatabaseId` seen per comment class (ruling R-2). A
+    /// conversation comment is new above `issue_comment` (its id is given when it is
+    /// posted, which is when it shows); reviews and review-thread comments are new by
+    /// key (task M9.2.8's fix round, I1: GitHub gives a review and its comments their
+    /// ids when the pending review is started, not when it is submitted), so for them
+    /// these are only what the page check reads.
     pub issue_comment: u64,
     pub review: u64,
     pub review_comment: u64,
+    /// I1: the reviews processed, by id, the newest [`REVIEWS_SEEN_MAX`].
+    pub reviews_seen: std::collections::BTreeSet<u64>,
     /// Head → the failing checks acted on there.
     pub ci: BTreeMap<String, CiSeen>,
     pub mergeable: Option<Mergeable>,
@@ -239,6 +248,20 @@ pub struct ThreadRecord {
     pub seen_at: u64,
     #[serde(default)]
     pub last_comment_id: u64,
+    /// A review thread's processed comments, in order (task M9.2.8's fix round, I1 and
+    /// m5): a comment is new when its id is not here, and each is kept for M9.2.10.
+    /// Empty for a `c<id>` or `r<id>` record, whose one text is `text`.
+    #[serde(default)]
+    pub comments: Vec<SeenComment>,
+}
+
+/// One processed comment of a review thread (host text, quoted only when used).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeenComment {
+    pub id: u64,
+    pub author: String,
+    #[serde(default)]
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

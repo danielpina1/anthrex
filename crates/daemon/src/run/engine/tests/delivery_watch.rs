@@ -70,14 +70,14 @@ pub(super) fn view(head: &str) -> PrView {
     }
 }
 
-fn author(login: &str) -> Author {
+pub(super) fn author(login: &str) -> Author {
     Author {
         login: login.into(),
         bot: false,
     }
 }
 
-fn comment(id: u64, body: &str) -> IssueComment {
+pub(super) fn comment(id: u64, body: &str) -> IssueComment {
     IssueComment {
         id,
         author: author("alice"),
@@ -85,7 +85,7 @@ fn comment(id: u64, body: &str) -> IssueComment {
     }
 }
 
-fn thread_comment(id: u64, body: &str) -> ThreadComment {
+pub(super) fn thread_comment(id: u64, body: &str) -> ThreadComment {
     ThreadComment {
         id,
         author: author("bob"),
@@ -315,7 +315,7 @@ fn busy_view() -> PrView {
     v
 }
 
-fn keys(fx: &Fixture) -> Vec<String> {
+pub(super) fn keys(fx: &Fixture) -> Vec<String> {
     let mut keys: Vec<String> = (fx.run().delivery.stage(1).unwrap().threads.iter())
         .map(|t| t.key.clone())
         .collect();
@@ -323,7 +323,7 @@ fn keys(fx: &Fixture) -> Vec<String> {
     keys
 }
 
-fn count(fx: &Fixture, text: &str) -> usize {
+pub(super) fn count(fx: &Fixture, text: &str) -> usize {
     fx.run().log.iter().filter(|l| l.text == text).count()
 }
 
@@ -430,6 +430,8 @@ fn watermark_processes_each_comment_and_check_once() {
 #[test]
 fn restore_replays_no_event_twice() {
     let mut fx = watched();
+    // Fix round m9: the run has an orchestrator, so a wake note would be kept.
+    super::bisect::with_orchestrator(&mut fx);
     poll_with(&mut fx, busy_view());
     let before = fx.run().clone();
     // Persisted as `run.json` is, then the daemon restarts: the run comes back paused.
@@ -439,6 +441,12 @@ fn restore_replays_no_event_twice() {
     assert_eq!(fx.run().state, RunState::Paused);
     let effects = resume(&mut fx);
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    let notes = |r: &Run| {
+        let o = r.orch.orchestrator.as_ref().expect("an orchestrator");
+        (o.notes.clone(), o.last_note_seq)
+    };
+    // The restart's own note is there; the replayed view must add none.
+    let resumed = notes(fx.run());
     let from = fx.log.len();
     poll_with(&mut fx, busy_view());
     let run = fx.run();
@@ -451,8 +459,7 @@ fn restore_replays_no_event_twice() {
         run.delivery.pr(1).unwrap().watermark,
         before.delivery.pr(1).unwrap().watermark
     );
-    let notes = |r: &Run| (r.orch.orchestrator.clone(), r.orch.note_seq);
-    assert_eq!(notes(run), notes(&before), "no wake note");
+    assert_eq!(notes(run), resumed, "no wake note");
     let replies_sent = host_ops_in(&fx.log[from..])
         .into_iter()
         .filter(|op| matches!(op, HostOp::Reply { .. }))

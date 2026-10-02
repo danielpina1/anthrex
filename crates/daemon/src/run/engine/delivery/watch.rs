@@ -24,7 +24,7 @@ use super::super::merge::halt;
 use super::super::requests::log;
 use super::super::stages::{forget_line, highest, set_stage_head};
 use super::super::{Effect, OpKind, wake};
-use super::open::{REWRITTEN, queue_busy, remote_branch};
+use super::open::{queue_busy, remote_branch};
 use super::{emit, failure_key, host_busy, pr, stage_mut};
 use crate::host::{Adopt, FetchOutcome, PushOutcome};
 use crate::run::contract::sha7;
@@ -37,6 +37,8 @@ use crate::run::model::{Run, StageLayout};
 pub(crate) const POLL_BASE_MAX_SECS: u64 = 3_600;
 /// The alert key of a lost login (decision 11).
 const AUTH: &str = "auth";
+/// Fix round m4: a held stage keeps at most this many characters of the host's reason.
+const HOLD_REASON_CHARS: usize = 300;
 
 /// Decision 11's interval base: `poll_base_secs` (from `poll_secs`, doubled by rate
 /// limits), at least one second.
@@ -134,6 +136,10 @@ pub(super) fn pr_mut(run: &mut Run, n: u16) -> Option<&mut PrRecord> {
 /// Every stage with a PR, lowest first: an adopt, else a push, else a view when due.
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     for n in 1..=stage_count(run) {
+        if run.delivery.pr(n).is_none() {
+            continue;
+        }
+        settle(run, n);
         let Some(pr) = run.delivery.pr(n) else {
             continue;
         };
@@ -150,6 +156,31 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             emit(run, HostOp::ViewPr { stage: n, number }, fx);
         }
     }
+}
+
+/// Fix round m3: a push or adopt that is no longer due takes its failures in a row,
+/// and their attention line, with it.
+fn settle(run: &mut Run, n: u16) {
+    let head = run.stage_head(n).map(str::to_string);
+    let (Some(pr), Some(stage)) = (run.delivery.pr(n), run.delivery.stage(n)) else {
+        return;
+    };
+    let push_due = pr.state == PrState::Open && head.as_deref() != Some(pr.pushed_head.as_str());
+    let fetch_due = stage.remote_head.is_some();
+    let d = &mut run.delivery;
+    for (due, op) in [(push_due, "push"), (fetch_due, "fetch")] {
+        if !due {
+            let key = format!("{n}/{op}");
+            d.failures.remove(&key);
+            d.alerts.remove(&key);
+        }
+    }
+}
+
+/// Fix round m1: a lower stage is held, so its unpushed commits would ride along in
+/// stage `n`'s push (and its PR's diff).
+pub(super) fn lower_held(run: &Run, n: u16) -> bool {
+    (1..n).any(|m| run.delivery.stage(m).is_some_and(|s| s.held.is_some()))
 }
 
 /// Whether stage `n` may move or push: not paused, not held, the queue quiet, and not
@@ -205,7 +236,7 @@ fn push(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) -> bool {
         .delivery
         .stage(n)
         .is_some_and(|s| s.remote_head.is_some());
-    if !moved || adopting || !free(run, n, now) {
+    if !moved || adopting || lower_held(run, n) || !free(run, n, now) {
         return false;
     }
     let text = format!(
@@ -257,7 +288,12 @@ pub(super) fn pushed(run: &mut Run, n: u16, sha: String, outcome: PushOutcome, n
                 sha7(&sha)
             );
             log(run, now, line);
-            rewritten(run, n, now);
+            let why = format!(
+                "stage {n} (PR #{}) could not fast-forward it to {}",
+                pr.number,
+                sha7(&sha)
+            );
+            moved(run, n, &why, now);
         }
         PushOutcome::Refused { reason } => refused(run, n, reason, now),
     }
@@ -267,16 +303,33 @@ pub(super) fn pushed(run: &mut Run, n: u16, sha: String, outcome: PushOutcome, n
 /// The stage is held, with an attention line and a wake note; the run's other work
 /// goes on, and `run resume` (or the next successful push) releases it.
 pub(super) fn refused(run: &mut Run, n: u16, reason: String, now: u64) {
+    // Fix round m4: host text, on one line and cut before it is kept.
+    let reason: String = proto::safe_text::one_line(&reason)
+        .chars()
+        .take(HOLD_REASON_CHARS)
+        .collect();
     let line = hold_line(run, n, &reason);
     stage_mut(run, n).held = Some(reason);
     log(run, now, line.clone());
     wake::note(run, line);
 }
 
-/// TT §6.2's halt: the remote stage branch was rewritten. `run resume` polls again
-/// (a view first, so a PR closed meanwhile is seen) and halts again while it is so.
-fn rewritten(run: &mut Run, n: u16, now: u64) {
-    halt(run, REWRITTEN.to_string(), now);
+/// Decision 24's halt, as the fix round's concern 3 words it: the remote stage branch
+/// moved under anthrex (someone pushed to it or rewrote it; anthrex cannot tell which),
+/// and anthrex never forces. `run resume` polls again (a view first, so a PR closed
+/// meanwhile is seen) and halts again while it is so.
+fn moved(run: &mut Run, n: u16, why: &str, now: u64) {
+    let branch = remote_branch(run, n);
+    let reason = format!(
+        "remote stage branch {branch} moved: someone else pushed to it or rewrote it; {why}, and anthrex never forces a push"
+    );
+    stopped(run, n, reason, now);
+}
+
+/// A retryable halt of stage `n`'s delivery: the adopt is dropped and the PR is viewed
+/// first on `run resume`.
+fn stopped(run: &mut Run, n: u16, reason: String, now: u64) {
+    halt(run, reason, now);
     run.halt_retryable = true;
     stage_mut(run, n).remote_head = None;
     if let Some(record) = pr_mut(run, n) {
@@ -297,20 +350,27 @@ pub(super) fn fetched(
     };
     let branch = remote_branch(run, n);
     let head = run.stage_head(n).unwrap_or_default().to_string();
+    let due = run.delivery.stage(n).and_then(|s| s.remote_head.clone());
     let line = match outcome {
-        FetchOutcome::Adopted { sha } => {
-            stage_mut(run, n).remote_head = None;
-            if let Some(record) = pr_mut(run, n) {
-                record.pushed_head = sha.clone();
-            }
-            if sha == head {
-                return;
-            }
-            // 9.1's one writer of stage heads: stage n + 1 is due its propagate. Ruling
-            // R-9: a commit the engine never wrote on the line is its floor.
-            set_stage_head(run, n, &sha);
-            forget_line(run, n, now, fx);
-            format!("{}: adopted {} from {branch}", named(n, &pr), sha7(&sha))
+        FetchOutcome::Adopted { sha } => return adopted(run, n, sha, now, fx),
+        // Fix round I3: the local ref is already at the remote head: an adopt that
+        // moved it was re-issued (a restart lost its answer).
+        FetchOutcome::LocalMoved { local } if due.as_deref() == Some(local.as_str()) => {
+            return adopted(run, n, local, now, fx);
+        }
+        FetchOutcome::LocalMoved { local } => {
+            let local_ref = run.stage_branch(n);
+            let at = if local.is_empty() {
+                "gone".to_string()
+            } else {
+                format!("at {}", sha7(&local))
+            };
+            let reason = format!(
+                "stage {n}'s branch {local_ref} moved outside anthrex: it is {at}, where anthrex had {}; check it, then anthrex run resume {}",
+                sha7(&head),
+                run.id
+            );
+            return stopped(run, n, reason, now);
         }
         FetchOutcome::NotDescendant { remote } if remote == pr.pushed_head => {
             // The view was behind the branch: it holds what anthrex pushed.
@@ -318,7 +378,7 @@ pub(super) fn fetched(
             format!("{}: {branch} is still at {}", named(n, &pr), sha7(&remote))
         }
         FetchOutcome::NotDescendant { remote } => {
-            let name = run.delivery.repo.as_ref().map_or("", |r| r.remote.as_str());
+            let name = (run.delivery.repo.as_ref()).map_or(String::new(), |r| r.remote.clone());
             let line = format!(
                 "{}: {name} has {}, which does not contain {}",
                 named(n, &pr),
@@ -326,16 +386,13 @@ pub(super) fn fetched(
                 sha7(&head)
             );
             log(run, now, line);
-            return rewritten(run, n, now);
-        }
-        FetchOutcome::LocalMoved { local } => {
-            // The stage moved meanwhile; the next pass adopts from where it is now.
-            format!(
-                "{}: {} moved to {}; adopting again",
-                named(n, &pr),
-                run.stage_branch(n),
-                sha7(&local)
-            )
+            let why = format!(
+                "stage {n} (PR #{}) is at {} on {name}, which does not contain {}",
+                pr.number,
+                sha7(&remote),
+                sha7(&head)
+            );
+            return moved(run, n, &why, now);
         }
         FetchOutcome::Missing => {
             stage_mut(run, n).remote_head = None;
@@ -349,6 +406,26 @@ pub(super) fn fetched(
     log(run, now, line);
 }
 
+/// Decision 24: the remote head `sha` is now stage `n`'s (or already was).
+fn adopted(run: &mut Run, n: u16, sha: String, now: u64, fx: &mut Vec<Effect>) {
+    let head = run.stage_head(n).unwrap_or_default().to_string();
+    let branch = remote_branch(run, n);
+    stage_mut(run, n).remote_head = None;
+    let Some(record) = pr_mut(run, n) else {
+        return;
+    };
+    record.pushed_head = sha.clone();
+    let line = format!("{}: adopted {} from {branch}", named(n, record), sha7(&sha));
+    if sha == head {
+        return;
+    }
+    // 9.1's one writer of stage heads: stage n + 1 is due its propagate. Ruling R-9: a
+    // commit the engine never wrote on the line is its floor.
+    set_stage_head(run, n, &sha);
+    forget_line(run, n, now, fx);
+    log(run, now, line);
+}
+
 /// A host op succeeded: its failures in a row end (decision 11), a lost login is back,
 /// and a rate-limited interval base returns to `poll_secs`.
 pub(super) fn succeeded(run: &mut Run, op: &HostOp) {
@@ -356,7 +433,14 @@ pub(super) fn succeeded(run: &mut Run, op: &HostOp) {
     let d = &mut run.delivery;
     d.failures.remove(&key);
     d.alerts.remove(&key);
-    d.alerts.remove(AUTH);
+    // Fix round m2: only `gh` answers say it is logged in; a push or fetch is `git`.
+    let git = matches!(
+        op,
+        HostOp::Push { .. } | HostOp::Fetch { .. } | HostOp::DeleteBranch { .. }
+    );
+    if !git {
+        d.alerts.remove(AUTH);
+    }
     if d.poll_base_secs != d.limits.poll_secs && d.poll_base_secs != 0 {
         d.poll_base_secs = d.limits.poll_secs;
     }

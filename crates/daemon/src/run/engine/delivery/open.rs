@@ -99,7 +99,8 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             .stage(n)
             .is_some_and(|s| s.pr.is_some() || s.skipped);
         let waiting = run.delivery.stage(n).and_then(|s| s.retry_at) > Some(now)
-            || run.delivery.stage(n).is_some_and(|s| s.held.is_some());
+            || run.delivery.stage(n).is_some_and(|s| s.held.is_some())
+            || super::watch::lower_held(run, n);
         if done || waiting || host_busy(run, n) || ready(run, n).is_err() {
             continue;
         }

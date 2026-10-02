@@ -23,16 +23,15 @@ use super::propagate::{land_propagates, propagates, stages_on};
 use crate::host::{Adopt, FetchOutcome, PrView, PushOutcome};
 use crate::run::delivery::StageDelivery;
 use crate::run::delivery::ops::{HostOp, HostResult};
-use crate::run::engine::delivery::REWRITTEN;
 use crate::run::engine::stages::set_stage_head;
 use crate::run::engine::{Effect, EventKind, OpResult};
 
 /// `refs/anthrex/<run>/remote/stage-<n>`, where an adopt fetches (decision 13).
-fn into(n: u16) -> String {
+pub(super) fn into(n: u16) -> String {
     format!("refs/anthrex/{RUN_ID}/remote/stage-{n}")
 }
 
-fn fetch(n: u16, local_ref: String, expected: &str, also_integration: bool) -> HostOp {
+pub(super) fn fetch(n: u16, local_ref: String, expected: &str, also_integration: bool) -> HostOp {
     HostOp::Fetch {
         stage: Some(n),
         branch: remote_branch(n),
@@ -50,7 +49,7 @@ fn logged(fx: &Fixture, text: &str) -> bool {
 }
 
 /// A view of stage PR `number` at `head`.
-fn view_of(number: u64, head: &str) -> PrView {
+pub(super) fn view_of(number: u64, head: &str) -> PrView {
     PrView {
         number,
         ..view(head)
@@ -58,7 +57,7 @@ fn view_of(number: u64, head: &str) -> PrView {
 }
 
 /// Polls stage `n`'s PR when it is due and answers with `v` in the same second.
-fn poll_stage(fx: &mut Fixture, n: u16, v: PrView) -> Vec<Effect> {
+pub(super) fn poll_stage(fx: &mut Fixture, n: u16, v: PrView) -> Vec<Effect> {
     let at = fx.run().delivery.pr(n).unwrap().next_poll_at.max(fx.now);
     fx.send(at, EventKind::Tick);
     let want = HostOp::ViewPr {
@@ -80,7 +79,7 @@ fn poll_stage(fx: &mut Fixture, n: u16, v: PrView) -> Vec<Effect> {
 }
 
 /// The pending host op of stage `n` (asserting there is one).
-fn stage_op(fx: &Fixture, n: u16) -> (crate::run::model::OpId, HostOp) {
+pub(super) fn stage_op(fx: &Fixture, n: u16) -> (crate::run::model::OpId, HostOp) {
     let of = |op: &HostOp| crate::run::engine::delivery::stage_of(op) == Some(n);
     let ops: Vec<_> = host_ops(fx).into_iter().filter(|(_, op)| of(op)).collect();
     assert_eq!(ops.len(), 1, "one host op of stage {n}: {ops:#?}");
@@ -90,7 +89,7 @@ fn stage_op(fx: &Fixture, n: u16) -> (crate::run::model::OpId, HostOp) {
 /// A `pr`-mode `Multi` run: `t1` (stage 1) merged with PR #11 open; `t2` (stage 2)
 /// still working, or, with `both`, merged with PR #12 open. Both PRs are polled every
 /// second from now on.
-fn two_stages(both: bool) -> (Fixture, Vec<(String, u32)>) {
+pub(super) fn two_stages(both: bool) -> (Fixture, Vec<(String, u32)>) {
     let tasks = [doc_task("t1", ""), doc_task("t2", "stage = 2")];
     let (mut fx, windows) = stages_on(PROFILE, &tasks);
     pr_mode(fx.run_mut());
@@ -118,7 +117,7 @@ fn two_stages(both: bool) -> (Fixture, Vec<(String, u32)>) {
 }
 
 /// Adds S doc tasks `ids` to stage 1 and launches them.
-fn add(fx: &mut Fixture, ids: &[&str]) -> Vec<(String, u32)> {
+pub(super) fn add(fx: &mut Fixture, ids: &[&str]) -> Vec<(String, u32)> {
     let edits = ids
         .iter()
         .map(|id| {
@@ -199,7 +198,15 @@ fn rewritten_remote_halts_with_the_exact_text() {
         let effects = answer(&mut fx, op, HostResult::Fetched(remote));
         let run = fx.run();
         assert_eq!(run.state, RunState::Halted);
-        assert_eq!(run.halted_reason.as_deref(), Some(REWRITTEN));
+        // Concern 3 of the review: the remote moved; anthrex cannot tell a push from a
+        // rewrite, and never forces.
+        let moved = format!(
+            "remote stage branch {} moved: someone else pushed to it or rewrote it; stage 1 (PR #7) is at {} on origin, which does not contain {}, and anthrex never forces a push",
+            remote_branch(1),
+            &user[..7],
+            &commit(1)[..7]
+        );
+        assert_eq!(run.halted_reason.as_deref(), Some(moved.as_str()));
         let line = format!(
             "stage 1 (PR #7): origin has {}, which does not contain {}",
             &user[..7],

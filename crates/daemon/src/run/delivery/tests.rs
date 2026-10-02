@@ -218,6 +218,11 @@ pub(super) fn thread(key: &str, author: &str, state: ThreadState) -> ThreadRecor
         state,
         seen_at: 4_000,
         last_comment_id: 1,
+        comments: vec![super::SeenComment {
+            id: 1,
+            author: author.into(),
+            text: "a comment that must never reach the snapshot".into(),
+        }],
     }
 }
 
@@ -311,6 +316,10 @@ fn the_delivery_model_round_trips_through_run_json() {
         },
     );
     record.watermark.mergeable = Some(crate::host::Mergeable::Conflicting);
+    record
+        .watermark
+        .reviews_seen
+        .extend([5_000_000_010, 5_000_000_011]);
     record.checks = vec![CheckSeen {
         name: "test".into(),
         state: CiState::Red,

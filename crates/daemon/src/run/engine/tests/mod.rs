@@ -27,6 +27,7 @@ mod delivery_open_host;
 mod delivery_requests;
 mod delivery_watch;
 mod delivery_watch_adopt;
+mod delivery_watch_fixes;
 mod detail_claims;
 mod digest;
 mod dispatch;
