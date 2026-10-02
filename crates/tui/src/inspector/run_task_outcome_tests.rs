@@ -186,6 +186,11 @@ fn the_pipeline_marks_each_step() {
     task.state = TaskState::Working;
     task.kind = proto::TaskKind::Research;
     assert!(!pipeline_text(&run, &task, false).contains("merge"));
+    // Final fix wave (task 8's minor): a review task is never merged either.
+    task.kind = proto::TaskKind::Review;
+    assert!(!pipeline_text(&run, &task, false).contains("merge"));
+    task.kind = proto::TaskKind::Code;
+    assert!(pipeline_text(&run, &task, false).contains("merge"));
 }
 
 /// Review focus 4: nothing ticks a criterion but an approving review.

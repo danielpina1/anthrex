@@ -254,3 +254,39 @@ fn destructive_recolours_the_key_and_the_word() {
         assert!(styled.contains(&("back".to_owned(), false)), "{styled:?}");
     }
 }
+
+/// Final fix wave (task 11's deferred minor): at the bottom, with nothing below, the
+/// window keeps no row for a `↓` mark: the `↑` mark and the last `rows - 1` lines.
+#[test]
+fn a_window_at_the_bottom_fills_its_rows() {
+    let lines: Vec<ratatui::text::Line<'static>> = (0..10)
+        .map(|i| ratatui::text::Line::raw(format!("l{i}")))
+        .collect();
+    let shown: Vec<String> = window(lines.clone(), 9, 5, P).iter().map(text).collect();
+    assert_eq!(shown, ["↑ 6 more", "l6", "l7", "l8", "l9"]);
+    let shown: Vec<String> = window(lines.clone(), 6, 5, P).iter().map(text).collect();
+    assert_eq!(shown, ["↑ 6 more", "l6", "l7", "l8", "l9"]);
+    // Above the last page both marks show, the selection in view.
+    let shown: Vec<String> = window(lines.clone(), 5, 5, P).iter().map(text).collect();
+    assert_eq!(shown, ["↑ 3 more", "l3", "l4", "l5", "↓ 4 more"]);
+    assert_eq!(window_span(10, 9, 5), (6, 4));
+}
+
+/// Final fix wave (task 12's deferred minor): a view whose lines all fit but which is
+/// held below its first line (the help opened on a later group) marks what it skipped.
+#[test]
+fn a_view_held_past_its_top_marks_the_lines_above() {
+    let lines: Vec<ratatui::text::Line<'static>> = (0..5)
+        .map(|i| ratatui::text::Line::raw(format!("l{i}")))
+        .collect();
+    let shown: Vec<String> = from_top_until(lines.clone(), 2, 2, 10, P)
+        .iter()
+        .map(text)
+        .collect();
+    assert_eq!(shown, ["↑ 2 more", "l2", "l3", "l4"]);
+    let shown: Vec<String> = from_top_until(lines, 0, 2, 10, P)
+        .iter()
+        .map(text)
+        .collect();
+    assert_eq!(shown, ["l0", "l1", "l2", "l3", "l4"]);
+}

@@ -457,6 +457,41 @@ fn a_mark_lookalike_in_agent_text_is_not_coloured() {
     }
 }
 
+/// Final fix wave (task 8's minor): with an approving review the client's own `✓`
+/// leads the criterion and is coloured; the agent's lookalike after it is not
+/// (`✓ ✓ fake`).
+#[test]
+fn an_approved_lookalike_colours_only_the_clients_mark() {
+    let done = theme::role(Role::Done, Palette::PLAIN);
+    for ascii in [false, true] {
+        let mut app = in_review();
+        app.settings.badges.ascii = ascii;
+        let fake = if ascii { "+ fake" } else { "✓ fake" };
+        if let Some(DetailState::Ready(detail)) = app.task_detail.as_mut().map(|c| &mut c.state) {
+            detail.acceptance = vec![fake.into()];
+        }
+        let task = app.runs.runs[0]
+            .tasks
+            .iter_mut()
+            .find(|t| t.id == "t2")
+            .unwrap();
+        task.state = TaskState::MergeQueue;
+        let latest = task.reviews.last_mut().unwrap();
+        latest.verdict = Some(proto::Verdict::Approve);
+        latest.blocking = false;
+        let inspection = inspect_node(&app, &t2_key());
+        let p = app.palette();
+        let mark = if ascii { "+" } else { "✓" };
+        let accept = styled(&inspection, "accept", 60, p, |s| s == done);
+        assert_eq!(accept, [mark], "ascii {ascii}");
+        let rows = text_rows(&inspection, 130);
+        assert!(
+            rows.iter().any(|r| r.ends_with(&format!("{mark} {fake}"))),
+            "ascii {ascii}: {rows:#?}"
+        );
+    }
+}
+
 fn text_rows(inspection: &Inspection, width: usize) -> Vec<String> {
     crate::inspector::panel::sections::body_lines(&inspection.sections, width, Palette::PLAIN)
         .iter()

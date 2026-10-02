@@ -234,10 +234,10 @@ fn the_list_scrolls_with_its_selection() {
         press(&mut app, KeyCode::Char('j'));
     }
     let got = rows(&draw(&mut app, 80, 24));
-    assert_eq!(got[3], framed(" ↑ 4 more", 80));
-    assert!(got[4].starts_with("│ t5 step"), "{got:#?}");
-    assert!(got[11].starts_with("│▌t12 step"), "{got:#?}");
-    assert_eq!(got[12], framed("", 80));
+    // Final fix wave (task 11's minor): at the bottom no row is kept for a `↓` mark.
+    assert_eq!(got[3], framed(" ↑ 3 more", 80));
+    assert!(got[4].starts_with("│ t4 step"), "{got:#?}");
+    assert!(got[12].starts_with("│▌t12 step"), "{got:#?}");
     assert_eq!(got[13], rule(80));
     assert_eq!(got[14], framed(" t12  step", 80));
 }
