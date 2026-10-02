@@ -308,6 +308,24 @@ fn stats_render_scrolls_with_marks() {
     assert_eq!((all[0].as_str(), all[6].as_str()), ("^ 3 more", "v 8 more"));
 }
 
+/// M9.0.7.12 fix round 1: the help's own limit (`kit::from_top_until`) leaves the stats
+/// screen's end where it was. A scroll past the bound draws the last page, its last
+/// line on the frame's last interior row, at 80×10 and at 80×14.
+#[test]
+fn the_stats_scroll_still_stops_at_its_last_page() {
+    for h in [10u16, 14] {
+        let body = ratatui::layout::Rect::new(0, 0, 80, h - 1);
+        let mut app = ready(false);
+        let max = super::max_scroll(&app, screen(&app), body);
+        assert_eq!(max, READY.len() - usize::from(h - 4), "{h} rows");
+        screen_mut(&mut app).scroll = max;
+        let bottom = rows(&app, 80, h);
+        screen_mut(&mut app).scroll = usize::MAX;
+        assert_eq!(rows(&app, 80, h), bottom, "{h} rows");
+        assert_eq!(bottom.last().map(String::as_str), READY.last().copied());
+    }
+}
+
 /// Nothing panics at any small size, in either mode, in any state.
 #[test]
 fn stats_render_survives_tiny_sizes() {

@@ -31,38 +31,44 @@ fn gate_app() -> App {
 
 fn scroll(app: &App) -> u16 {
     match &app.modal {
-        Some(Modal::Help(HelpView { scroll })) => *scroll,
+        Some(Modal::Help(HelpView { scroll, .. })) => *scroll,
         other => panic!("the help is not open: {other:?}"),
     }
 }
 
-/// The group names drawn inside the help's box at 80×24, top to bottom.
-fn drawn_headers(app: &App) -> Vec<String> {
+/// The group names drawn inside the help's box on a `w`×`h` terminal, top to bottom.
+fn drawn_headers(app: &App, w: u16, h: u16) -> Vec<String> {
     let names: Vec<&str> = help_groups("C-b").iter().map(|g| g.name).collect();
-    let buffer = crate::ui::audit::draw(app, 80, 24);
+    let buffer = crate::ui::audit::draw(app, w, h);
+    // Inside the 64-wide centred box, past its border and padding.
+    let left = usize::from((w - 64) / 2 + 2);
     crate::ui::audit::rows(&buffer)
         .iter()
         .map(|row| {
-            // Inside the 64-wide box at columns 8..72, past its border and padding.
-            let inside: String = row.chars().skip(10).take(60).collect();
-            inside.trim().to_string()
+            row.chars()
+                .skip(left)
+                .take(60)
+                .collect::<String>()
+                .trim()
+                .to_string()
         })
         .filter(|text| names.contains(&text.as_str()))
         .collect()
 }
 
+/// At 80×24 and 120×40 (fix round 1: at every size), the context's group is the first
+/// group drawn.
 fn opens_on(mut app: App, group: &str, how: &str) {
     chord(&mut app, '?');
     assert!(
         matches!(app.modal, Some(Modal::Help(_))),
         "{how}: the help opened"
     );
-    let headers = drawn_headers(&app);
-    assert_eq!(
-        headers.first().map(String::as_str),
-        Some(group),
-        "{how}: {headers:?}"
-    );
+    for (w, h) in [(80, 24), (120, 40)] {
+        let headers = drawn_headers(&app, w, h);
+        let first = headers.first().map(String::as_str);
+        assert_eq!(first, Some(group), "{how} at {w}x{h}: {headers:?}");
+    }
 }
 
 /// One assertion per row of decision 34's mapping.
@@ -247,4 +253,100 @@ fn the_help_over_the_alerts_view_gives_it_back() {
         app.alerts_focus.as_ref().and_then(|f| f.selected.clone()),
         selected
     );
+}
+
+/// Fix round 1: opened on a group whose name lies past the last page (`settings` at
+/// 120×40), the view holds it at the top: `j` and PgDn stop there, `k` leaves it, and
+/// the rows under the last group are blank.
+#[test]
+fn an_opened_group_past_the_end_holds_its_place() {
+    let mut app = gate_app();
+    app.set_body_area(Rect::new(0, 0, 120, 39));
+    chord(&mut app, 'S');
+    chord(&mut app, '?');
+    let settings = group_tops(&help_groups("C-b"))[8];
+    assert_eq!(usize::from(scroll(&app)), settings);
+    tap(&mut app, KeyCode::Char('j'));
+    tap(&mut app, KeyCode::PageDown);
+    assert_eq!(usize::from(scroll(&app)), settings, "j and PgDn stop there");
+    tap(&mut app, KeyCode::Char('k'));
+    assert_eq!(usize::from(scroll(&app)), settings - 1);
+    tap(&mut app, KeyCode::Char('j'));
+    assert_eq!(drawn_headers(&app, 120, 40), ["settings"]);
+    let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 120, 40));
+    assert!(rows[2].contains("│ settings "), "{rows:#?}");
+    assert!(rows[10].contains("esc          back (asks before discarding changes)"));
+    assert_eq!(
+        rows[11]
+            .chars()
+            .skip(29)
+            .take(62)
+            .collect::<String>()
+            .trim(),
+        ""
+    );
+    // Opened on `global`, the end is the last page's, as before.
+    let mut app = gate_app();
+    chord(&mut app, '?');
+    for _ in 0..12 {
+        tap(&mut app, KeyCode::Tab);
+    }
+    assert_eq!(scroll(&app), 76);
+}
+
+/// Minor 1: Shift+Tab goes back a group, whether it arrives as BackTab or as Tab with
+/// Shift held (`app/action_forms.rs`).
+#[test]
+fn shift_tab_goes_back_a_group() {
+    let tops = group_tops(&help_groups("C-b"));
+    for back in [
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT),
+    ] {
+        let mut app = gate_app();
+        chord(&mut app, '?');
+        tap(&mut app, KeyCode::Tab);
+        tap(&mut app, KeyCode::Tab);
+        assert_eq!(usize::from(scroll(&app)), tops[2]);
+        app.on_key(back);
+        assert_eq!(usize::from(scroll(&app)), tops[1], "{back:?}");
+    }
+}
+
+/// Minor 5: closing the help over the Profile screen, the Settings screen and the plan
+/// review gives each back as it was, with the keys.
+#[test]
+fn closing_the_help_gives_back_the_screens_and_the_review() {
+    let mut app = gate_app();
+    chord(&mut app, 'P');
+    tap(&mut app, KeyCode::Tab);
+    let before = app.screen.clone();
+    chord(&mut app, '?');
+    tap(&mut app, KeyCode::Char('j'));
+    tap(&mut app, KeyCode::Esc);
+    assert!(app.modal.is_none());
+    assert_eq!(app.screen, before, "the Profile screen, on its Profile tab");
+    assert_eq!(app.key_region(), KeyRegion::Screen);
+
+    let mut app = gate_app();
+    chord(&mut app, 'S');
+    let before = app.screen.clone();
+    assert!(matches!(before, Some(Screen::Settings(_))));
+    chord(&mut app, '?');
+    tap(&mut app, KeyCode::Char('q'));
+    assert_eq!(app.screen, before);
+    assert_eq!(app.key_region(), KeyRegion::Screen);
+
+    let mut app = gate_app();
+    open_run_view(&mut app, RUN_ID);
+    tap(&mut app, KeyCode::Char('p'));
+    tap(&mut app, KeyCode::Char('j'));
+    let before = app.plan_review.clone();
+    assert!(before.is_some());
+    chord(&mut app, '?');
+    tap(&mut app, KeyCode::PageDown);
+    tap(&mut app, KeyCode::Esc);
+    assert_eq!(app.plan_review, before, "the review, its selection kept");
+    assert_eq!(app.key_region(), KeyRegion::Review);
 }

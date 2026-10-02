@@ -12,7 +12,10 @@ fn app_with(prefix: &str, scroll: u16) -> App {
         ..UiSettings::default()
     };
     let mut app = App::new(vec![], "/tmp".into(), settings);
-    app.modal = Some(Modal::Help(HelpView { scroll }));
+    app.modal = Some(Modal::Help(HelpView {
+        scroll,
+        ..HelpView::default()
+    }));
     app
 }
 
@@ -261,9 +264,14 @@ fn help_in_ascii() {
     let mut app = app_with("C-b", 0);
     app.settings.badges.ascii = true;
     app.set_body_area(ratatui::layout::Rect::new(0, 0, 80, 23));
-    let top = max_scroll(&app, ratatui::layout::Rect::new(0, 0, 80, 24));
+    let groups = help_groups("C-b");
+    let area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    let top = max_scroll(&groups, &HelpView::default(), area, app.palette());
     for scroll in [0, 30, top as u16] {
-        app.modal = Some(Modal::Help(HelpView { scroll }));
+        app.modal = Some(Modal::Help(HelpView {
+            scroll,
+            ..HelpView::default()
+        }));
         let buffer = audit::draw(&app, 80, 24);
         assert_eq!(
             audit::first_non_ascii(&buffer),
@@ -316,7 +324,6 @@ fn the_help_keeps_esc_and_one_accent_at_40_columns() {
             let esc = audit::find(&buffer, "esc close");
             assert!(!esc.is_empty(), "{name} {w}x{h}\n{rows}");
         }
-        app.settings.badges.ascii = true;
         app.settings.badges =
             crate::ui::badge::BadgeSet::from_config(&app.settings.badges_config, true);
         for (w, h) in sizes {

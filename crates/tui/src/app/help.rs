@@ -4,7 +4,7 @@
 use super::region::KeyRegion;
 use super::screens::Screen;
 use super::{App, Effect, Modal};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 
 /// The open help: the line its view starts from. The renderer and the keys both stop
@@ -12,6 +12,9 @@ use ratatui::layout::Rect;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HelpView {
     pub scroll: u16,
+    /// The line `C-b ?` opened on (its context's group): the scroll may stop there
+    /// even past the last page, so that group's name is the first drawn (fix round 1).
+    pub opened: u16,
 }
 
 impl App {
@@ -24,8 +27,10 @@ impl App {
             .zip(&groups)
             .find(|(_, g)| g.name == group)
             .map_or(0, |(top, _)| top);
+        let top = u16::try_from(top).unwrap_or(u16::MAX);
         self.modal = Some(Modal::Help(HelpView {
-            scroll: u16::try_from(top).unwrap_or(u16::MAX),
+            scroll: top,
+            opened: top,
         }));
         vec![]
     }
@@ -58,7 +63,7 @@ impl App {
     }
 
     /// Decision 34's keys: `j`/`k`/Down/Up a line, PgUp/PgDn a page, Tab/BackTab the
-    /// next/previous group's header, Esc or `q` close. Every other key does nothing.
+    /// (or Shift+Tab) the next/previous group's header, Esc or `q` close. Every other key does nothing.
     /// The scroll is clamped first (a resize may have moved the end), then stops at
     /// the end the renderer draws.
     pub(super) fn on_help_key(&mut self, mut view: HelpView, key: KeyEvent) -> Vec<Effect> {
@@ -66,20 +71,24 @@ impl App {
             return vec![];
         }
         let area = self.help_area();
-        let last = crate::ui::help::max_scroll(self, area);
-        let page = crate::ui::help::view_rows(self, area)
+        let p = self.palette();
+        let groups = crate::ui::help::help_groups(&self.settings.prefix_label);
+        let last = crate::ui::help::max_scroll(&groups, &view, area, p);
+        let page = crate::ui::help::view_rows(&groups, area, p)
             .saturating_sub(2)
             .max(1);
         let from = usize::from(view.scroll).min(last);
-        let tops =
-            crate::ui::help::group_tops(&crate::ui::help::help_groups(&self.settings.prefix_label));
+        let tops = crate::ui::help::group_tops(&groups);
+        // Shift+Tab arrives as BackTab or as Tab with Shift (`app/action_forms.rs`).
+        let back = key.code == KeyCode::BackTab
+            || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT));
         let to = match key.code {
+            _ if back => tops.iter().rev().copied().find(|&t| t < from).unwrap_or(0),
             KeyCode::Char('j') | KeyCode::Down => from + 1,
             KeyCode::Char('k') | KeyCode::Up => from.saturating_sub(1),
             KeyCode::PageDown => from + page,
             KeyCode::PageUp => from.saturating_sub(page),
             KeyCode::Tab => tops.iter().copied().find(|&t| t > from).unwrap_or(from),
-            KeyCode::BackTab => tops.iter().rev().copied().find(|&t| t < from).unwrap_or(0),
             _ => from,
         };
         view.scroll = u16::try_from(to.min(last)).unwrap_or(u16::MAX);

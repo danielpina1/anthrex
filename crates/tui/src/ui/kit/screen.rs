@@ -54,18 +54,33 @@ pub(crate) fn from_top(
     rows: usize,
     p: Palette,
 ) -> Vec<Line<'static>> {
+    let limit = last_top(lines.len(), rows);
+    from_top_until(lines, top, limit, rows, p)
+}
+
+/// [`from_top`] with the top stopped at `limit` rather than at [`last_top`]: a `limit`
+/// past it leaves blank rows under the last line (the help's opened group, milestone
+/// 9.0.7 decision 34), never a negative count.
+pub(crate) fn from_top_until(
+    lines: Vec<Line<'static>>,
+    top: usize,
+    limit: usize,
+    rows: usize,
+    p: Palette,
+) -> Vec<Line<'static>> {
     let len = lines.len();
-    let last_top = last_top(len, rows);
-    let top = top.min(last_top);
+    let end = last_top(len, rows);
+    let top = top.min(limit.max(end)).min(len);
     if len <= rows || rows < 3 {
         return lines.into_iter().skip(top).take(rows).collect();
     }
-    let room = if top == 0 || top == last_top {
+    let room = if top == 0 || top >= end {
         rows - 1
     } else {
         rows - 2
     };
-    let (up, down) = scroll_marks(top, len - top - room, p.ascii);
+    let below = len.saturating_sub(top + room);
+    let (up, down) = scroll_marks(top, below, p.ascii);
     let muted = role(Role::Muted, p);
     let mut out: Vec<Line<'static>> = up.map(|m| Line::styled(m, muted)).into_iter().collect();
     out.extend(lines.into_iter().skip(top).take(room));

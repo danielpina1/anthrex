@@ -226,27 +226,31 @@ fn lines(groups: &[HelpGroup], width: usize, p: Palette) -> Vec<Line<'static>> {
     out
 }
 
+/// How many lines the groups take: each group's name and its rows.
+pub(crate) fn line_count(groups: &[HelpGroup]) -> usize {
+    groups.iter().map(|g| 1 + g.rows.len()).sum()
+}
+
 /// The box over `area` (the whole terminal) and its interior.
-fn boxed(app: &App, area: Rect) -> (Rect, Rect) {
-    let groups = help_groups(&app.settings.prefix_label);
-    let count: usize = groups.iter().map(|g| 1 + g.rows.len()).sum();
+fn boxed(groups: &[HelpGroup], area: Rect, p: Palette) -> (Rect, Rect) {
     // The lines and the hint row.
-    let content = u16::try_from(count + 1).unwrap_or(u16::MAX);
+    let content = u16::try_from(line_count(groups) + 1).unwrap_or(u16::MAX);
     let rect = kit::dialog_area(area, content);
-    let inner = kit::dialog_frame(TITLE, false, app.palette()).inner(rect);
+    let inner = kit::dialog_frame(TITLE, false, p).inner(rect);
     (rect, inner)
 }
 
 /// How many rows the help's lines get over `area`: the interior less the hint row.
-pub(crate) fn view_rows(app: &App, area: Rect) -> usize {
-    usize::from(boxed(app, area).1.height.saturating_sub(1))
+pub(crate) fn view_rows(groups: &[HelpGroup], area: Rect, p: Palette) -> usize {
+    usize::from(boxed(groups, area, p).1.height.saturating_sub(1))
 }
 
-/// The largest useful scroll over `area`: the stats screen's rule (`kit::last_top`).
-pub(crate) fn max_scroll(app: &App, area: Rect) -> usize {
-    let groups = help_groups(&app.settings.prefix_label);
-    let count: usize = groups.iter().map(|g| 1 + g.rows.len()).sum();
-    kit::last_top(count, view_rows(app, area))
+/// The largest scroll over `area`: the stats screen's end (`kit::last_top`), or the
+/// line the help opened on when that lies past it, so the context's group is the first
+/// drawn at every size (fix round 1 ruling on decision 34; blank rows may follow).
+pub(crate) fn max_scroll(groups: &[HelpGroup], view: &HelpView, area: Rect, p: Palette) -> usize {
+    let end = kit::last_top(line_count(groups), view_rows(groups, area, p));
+    end.max(usize::from(view.opened))
 }
 
 /// The hint row: `j/k scroll · tab group · esc close`, dropped by priority, `esc` kept.
@@ -266,16 +270,18 @@ fn hint_row(width: u16, p: Palette) -> Line<'static> {
 
 pub fn render(frame: &mut Frame, app: &App, view: &HelpView, area: Rect) {
     let p = app.palette();
-    let (rect, inner) = boxed(app, area);
+    let groups = help_groups(&app.settings.prefix_label);
+    let (rect, inner) = boxed(&groups, area, p);
     frame.render_widget(Clear, rect);
     frame.render_widget(kit::dialog_frame(TITLE, false, p), rect);
     if inner.height == 0 || inner.width == 0 {
         return;
     }
     let rows = inner.height - 1;
-    let groups = help_groups(&app.settings.prefix_label);
+    let limit = max_scroll(&groups, view, area, p);
     let all = lines(&groups, usize::from(inner.width), p);
-    let shown = kit::from_top(all, usize::from(view.scroll), usize::from(rows), p);
+    let top = usize::from(view.scroll);
+    let shown = kit::from_top_until(all, top, limit, usize::from(rows), p);
     frame.render_widget(
         Paragraph::new(shown),
         Rect {
