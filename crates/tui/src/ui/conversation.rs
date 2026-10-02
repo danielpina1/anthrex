@@ -42,34 +42,28 @@ struct Glyphs {
     denied: &'static str,
 }
 
-const UNICODE: Glyphs = Glyphs {
-    sep: "·",
-    ascii: false,
-    folded: "▸",
-    unfolded: "▾",
-    spawn: "⟐",
-    warn: "⚠",
-    more: "⋯",
-    crumb: " › ",
-    ok: "✓",
-    failed: "✗",
-    denied: "⊘",
-};
+/// The view's glyphs, the theme's where they mean the same (final fix wave M5): fold
+/// marks, the warning, the tool verdicts. `spawn` and `more` are the view's own
+/// (decision 3's conversation glyphs).
+const fn glyphs(ascii: bool) -> Glyphs {
+    use theme::{Glyph as G, glyph as g};
+    Glyphs {
+        sep: if ascii { "-" } else { "·" },
+        ascii,
+        folded: g(G::Collapsed, ascii),
+        unfolded: g(G::Expanded, ascii),
+        spawn: if ascii { "*" } else { "⟐" },
+        warn: g(G::Warning, ascii),
+        more: if ascii { "..." } else { "⋯" },
+        crumb: if ascii { " > " } else { " › " },
+        ok: g(G::Passed, ascii),
+        failed: g(G::Failed, ascii),
+        denied: g(G::Blocked, ascii),
+    }
+}
 
-const ASCII: Glyphs = Glyphs {
-    sep: "-",
-    ascii: true,
-    folded: ">",
-    unfolded: "v",
-    spawn: "*",
-    warn: "!",
-    more: "...",
-    crumb: " > ",
-    // Milestone 9.0.7 decision 6: the glyph table's twins.
-    ok: "+",
-    failed: "x",
-    denied: "#",
-};
+const UNICODE: Glyphs = glyphs(false);
+const ASCII: Glyphs = glyphs(true);
 
 impl Glyphs {
     /// Review M4: in ASCII mode, the punctuation the view's own footers and the daemon's

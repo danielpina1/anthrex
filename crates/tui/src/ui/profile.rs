@@ -10,7 +10,7 @@ use crate::app::{App, region::KeyRegion};
 use crate::inspector::run_format::format_duration;
 use crate::profile_view::{ENV_ADD, Row, check_cell};
 use crate::safe_text::{multi_line, one_line};
-use crate::theme::{Glyph, Palette, Role, glyph, role};
+use crate::theme::{Glyph, Palette, Role, dot, ellipsis, glyph, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
 use proto::ProposalState;
 use ratatui::Frame;
@@ -22,14 +22,6 @@ use unicode_width::UnicodeWidthStr;
 
 /// The key column's width: the longest key (`check_timeout_secs`) and a space.
 const KEY_W: usize = 19;
-
-fn ellipsis(p: Palette) -> &'static str {
-    if p.ascii { "..." } else { "…" }
-}
-
-fn dot(p: Palette) -> &'static str {
-    if p.ascii { "-" } else { "·" }
-}
 
 fn hint(key: &str, word: &str, priority: u8) -> Hint {
     Hint {

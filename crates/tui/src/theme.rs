@@ -115,7 +115,7 @@ pub enum Glyph {
 }
 
 /// A glyph, or its ASCII twin when `ascii` (`UiSettings.badges.ascii`).
-pub fn glyph(g: Glyph, ascii: bool) -> &'static str {
+pub const fn glyph(g: Glyph, ascii: bool) -> &'static str {
     let (unicode, plain) = match g {
         Glyph::Passed => ("✓", "+"),
         Glyph::Failed => ("✗", "x"),
@@ -175,6 +175,35 @@ pub fn border_set(ascii: bool) -> ratatui::symbols::border::Set<'static> {
 }
 
 /// New screens draw runtimes as text tags, not logos.
+/// `…`, or `...` in ASCII: decision 5's fold of the client's ellipsis, as a
+/// `&'static str` for the kit's cuts (final fix wave M5: one helper for the screens'
+/// six copies).
+pub fn ellipsis(p: Palette) -> &'static str {
+    if p.ascii { "..." } else { "…" }
+}
+
+/// `·`, or `-` in ASCII (decision 5).
+pub fn dot(p: Palette) -> &'static str {
+    if p.ascii { "-" } else { "·" }
+}
+
+/// A choice's value, `‹ value ›`, or `< value >` in ASCII, sanitised (milestone 9.0.6
+/// decision 5). Pure text, here so the model (`run_edit.rs`) and the kit both read it
+/// without the model depending on the UI kit (final fix wave, task 13a's m7).
+pub fn choice(value: &str, p: Palette) -> String {
+    let value = crate::safe_text::one_line(value);
+    if p.ascii {
+        format!("< {value} >")
+    } else {
+        format!("‹ {value} ›")
+    }
+}
+
+/// ` · `, or ` - ` in ASCII: the hint lines' separator.
+pub fn dot_sep(p: Palette) -> &'static str {
+    if p.ascii { " - " } else { " · " }
+}
+
 pub fn runtime_tag(r: proto::Runtime) -> &'static str {
     match r {
         proto::Runtime::Claude => "cl",

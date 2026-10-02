@@ -252,3 +252,36 @@ fn a_200_task_plans_layout_orders_its_tasks_once() {
     // be ordered or share `Cargo.toml` first. Two searches a pair cost millions.
     assert!(steps <= 100_000, "{steps} steps");
 }
+
+/// Final fix wave (task 11's deferred minor): a full Claude model id, not an alias,
+/// reads whole through the route tag, the list's route column and the ASCII detail's
+/// route row.
+#[test]
+fn a_full_claude_id_reads_whole() {
+    use crate::app::plan_review::detail_lines;
+    use crate::theme::Palette;
+    let mut run = three_task_plan();
+    run.tasks[1].route.model = "claude-opus-5-5".into();
+    let tasks = review_tasks(&run, &ReviewTarget::Gate);
+    for ascii in [false, true] {
+        assert_eq!(columns(&run, &tasks, ascii)[1].route, "cl claude-opus-5-5");
+    }
+    assert_eq!(
+        crate::inspector::run_format::route_tag(&run.tasks[1].route),
+        "cl claude-opus-5-5"
+    );
+    let p = Palette {
+        ascii: true,
+        ..Palette::PLAIN
+    };
+    let rows: Vec<String> = detail_lines(&run, &run.tasks[1], 100, p)
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
+    let route = rows
+        .iter()
+        .find(|r| r.trim_start().starts_with("route"))
+        .unwrap_or_else(|| panic!("{rows:#?}"));
+    assert!(route.contains("claude-opus-5-5"), "{route:?}");
+    assert!(route.is_ascii(), "{route:?}");
+}

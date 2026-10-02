@@ -10,7 +10,6 @@
 use crate::dialog::{TextInput, apply_text_key};
 use crate::text_area::TextArea;
 use crate::theme::Palette;
-use crate::ui::kit::choice_in;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cycle::{next_effort, next_runtime, next_size, next_strength, next_test_mode};
 use proto::{
@@ -479,9 +478,10 @@ impl TaskEditForm {
     /// A row's value as drawn: the text, and the resolved value shown muted after it
     /// when the field is `policy` (decision 33) — only while the runtime is the task's
     /// current one, since a resolution names one runtime's values (review M4). A
-    /// choice is `kit::choice_in`'s, `< value >` in ASCII (decision 35).
+    /// choice is `theme::choice`'s (`kit::choice_in`'s), `< value >` in ASCII (decision
+    /// 35).
     pub fn value_parts_in(&self, field: EditField, p: Palette) -> (String, Option<String>) {
-        let choice = |word: &str| choice_in(word, p);
+        let choice = |word: &str| crate::theme::choice(word, p);
         let current = self.runtime.unwrap_or(self.resolved.runtime) == self.resolved.runtime;
         let muted = |resolved: String| Some(resolved).filter(|r| current && !r.is_empty());
         let policy = |resolved: &str| (choice("policy"), muted(resolved.to_string()));

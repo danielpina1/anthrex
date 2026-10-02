@@ -13,7 +13,7 @@ use crate::app::settings_screen::{
 };
 use crate::app::{App, region::KeyRegion};
 use crate::safe_text::one_line;
-use crate::theme::{Glyph, Palette, Role, glyph, role};
+use crate::theme::{Glyph, Palette, Role, dot, dot_sep, ellipsis, glyph, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
 use proto::Runtime;
 use proto::settings::{
@@ -29,14 +29,6 @@ use unicode_width::UnicodeWidthStr;
 
 /// Interfaces "Settings default mark".
 const DEFAULT_MARK: &str = "(default)";
-
-fn ellipsis(p: Palette) -> &'static str {
-    if p.ascii { "..." } else { "…" }
-}
-
-fn dot(p: Palette) -> &'static str {
-    if p.ascii { "-" } else { "·" }
-}
 
 fn hint(key: &str, word: &str, priority: u8) -> Hint {
     Hint {
@@ -415,7 +407,7 @@ fn page_parts(
 ) -> (String, bool, Vec<Line<'static>>, Line<'static>) {
     let hints = |list: &[(&str, &str)]| {
         let list: Vec<Hint> = list.iter().map(|(k, v)| hint(k, v, 5)).collect();
-        kit::hints_joined(width, &list, &format!(" {} ", dot(p)), p)
+        kit::hints_joined(width, &list, dot_sep(p), p)
     };
     match page {
         SettingsPage::Discard => {
@@ -424,13 +416,13 @@ fn page_parts(
                 .into_iter()
                 .map(Line::raw)
                 .collect();
-            let mut h = hints(&[("y", "discard"), ("esc", "back")]);
             // Decision 5: a destructive dialog's action word is in `Failed`.
-            for span in h.spans.iter_mut() {
-                if span.content == "y" || span.content == "discard" {
-                    span.style = role(Role::Failed, p);
-                }
-            }
+            let h = kit::destructive(
+                hints(&[("y", "discard"), ("esc", "back")]),
+                "y",
+                "discard",
+                p,
+            );
             ("discard changes".into(), true, body, h)
         }
         SettingsPage::Custom(c) => {

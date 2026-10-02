@@ -8,7 +8,7 @@
 use crate::dialog::TextInput;
 use crate::run_goal::{GoalField, GoalForm, GoalModel, field_label};
 use crate::safe_text::one_line;
-use crate::theme::{Glyph, Palette, Role, glyph, role};
+use crate::theme::{Glyph, Palette, Role, dot_sep, ellipsis, glyph, role};
 use crate::ui::kit::{self, Hint};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -31,14 +31,6 @@ fn hint(key: &str, word: &str, priority: u8) -> Hint {
         word: word.to_string(),
         priority,
     }
-}
-
-fn ellipsis(p: Palette) -> &'static str {
-    if p.ascii { "..." } else { "…" }
-}
-
-fn dot(p: Palette) -> &'static str {
-    if p.ascii { " - " } else { " · " }
 }
 
 /// `marker label` for `field`: the focused field's label is accented and bold and led
@@ -206,7 +198,7 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
         body.push(kit::hints_joined(
             width,
             &[hint("esc", "close", 1)],
-            dot(p),
+            dot_sep(p),
             p,
         ));
     } else {
@@ -216,7 +208,7 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
             hint("^J", "newline", 3),
             hint("esc", "cancel", 1),
         ];
-        body.push(kit::hints_joined(width, &keys, dot(p), p));
+        body.push(kit::hints_joined(width, &keys, dot_sep(p), p));
     }
     body
 }

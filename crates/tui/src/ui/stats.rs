@@ -10,7 +10,7 @@
 use crate::app::stats::{StatsScreen, StatsState};
 use crate::app::{App, region::KeyRegion};
 use crate::safe_text::{multi_line, one_line};
-use crate::theme::{Palette, Role, role};
+use crate::theme::{Palette, Role, dot, ellipsis, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
 use proto::HistoryStats;
 use ratatui::Frame;
@@ -24,14 +24,6 @@ use unicode_width::UnicodeWidthStr;
 const HEADER: [&str; 9] = [
     "class", "tasks", "merged", "lines", "calls", "tokens", "work", "bounces", "reverted",
 ];
-
-fn ellipsis(p: Palette) -> &'static str {
-    if p.ascii { "..." } else { "…" }
-}
-
-fn dot(p: Palette) -> &'static str {
-    if p.ascii { "-" } else { "·" }
-}
 
 /// A `None` median.
 fn none(p: Palette) -> &'static str {

@@ -7,7 +7,7 @@ use crate::actions_request::{ActionTarget, short_id};
 use crate::app::App;
 use crate::app::actions::{ActionFlow, ActionStep, ConfirmPage, MovedBasePage};
 use crate::safe_text::one_line;
-use crate::theme::{Glyph, Palette, Role, glyph, role};
+use crate::theme::{Glyph, Palette, Role, dot_sep, ellipsis, glyph, role};
 use crate::ui::kit::{self, Hint};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -22,14 +22,6 @@ fn hint(key: &str, word: &str, priority: u8) -> Hint {
         word: word.to_string(),
         priority,
     }
-}
-
-fn dot(p: Palette) -> &'static str {
-    if p.ascii { " - " } else { " · " }
-}
-
-fn ellipsis(p: Palette) -> &'static str {
-    if p.ascii { "..." } else { "…" }
 }
 
 /// The interior's text width for a dialog in `area`.
@@ -81,7 +73,7 @@ fn menu_body(
     p: Palette,
 ) -> Vec<Line<'static>> {
     let muted = role(Role::Muted, p);
-    let hints_line = |hints: &[Hint]| kit::hints_joined(width, hints, dot(p), p);
+    let hints_line = |hints: &[Hint]| kit::hints_joined(width, hints, dot_sep(p), p);
     if !app.connected() {
         return vec![
             Line::styled("not connected", muted),
@@ -138,22 +130,17 @@ fn menu_body(
 /// The confirm or moved-base page's verb hint: `y` for a destructive-grade action,
 /// both drawn in `Failed` when it is destructive.
 fn verb_hints(verb: &str, key: &str, failed: bool, width: u16, p: Palette) -> Line<'static> {
-    let mut line = kit::hints_joined(
+    let line = kit::hints_joined(
         width,
         &[hint(key, verb, 9), hint("esc", "back", 1)],
-        dot(p),
+        dot_sep(p),
         p,
     );
     if failed {
-        let style = role(Role::Failed, p);
-        let verb = one_line(verb);
-        for span in line.spans.iter_mut() {
-            if span.content == key || span.content == verb.as_str() {
-                span.style = style;
-            }
-        }
+        kit::destructive(line, key, verb, p)
+    } else {
+        line
     }
-    line
 }
 
 /// Decision 14: the effect, the details, a refusal the snapshot brought, the hints.
@@ -204,7 +191,7 @@ fn moved_base_body(
                 role(Role::Accent, p),
             ),
             Span::raw(one_line(&page.typed)),
-            Span::styled(if p.ascii { "_" } else { "█" }, role(Role::Accent, p)),
+            kit::cursor_block(p),
         ]),
     ];
     // A snapshot refused the accept meanwhile (decision 13): Enter only toasts it.

@@ -67,3 +67,18 @@ pub fn hints_joined(width: u16, hints: &[Hint], separator: &str, p: Palette) -> 
     }
     Line::from(spans)
 }
+
+/// Principle 9's destructive hint: in a hint `line`, the spans that are `key` or `word`
+/// (as `hints_joined` drew them, sanitised and folded) in `Failed`, styled by what they
+/// are, not where they sit. The final fix wave (task 13b's minor): one helper for the
+/// confirm, remove, Profile Reject, Settings discard and action-menu pages.
+pub fn destructive(mut line: Line<'static>, key: &str, word: &str, p: Palette) -> Line<'static> {
+    let key = fold(&one_line(key), p.ascii);
+    let word = fold(&one_line(word), p.ascii);
+    for span in line.spans.iter_mut() {
+        if span.content == key.as_str() || span.content == word.as_str() {
+            span.style = role(Role::Failed, p);
+        }
+    }
+    line
+}

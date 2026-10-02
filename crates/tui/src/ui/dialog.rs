@@ -314,14 +314,12 @@ pub fn render_remove_confirm(frame: &mut Frame, confirm: &RemoveConfirm, area: R
     body.push(Line::raw(""));
     keys.push(hint("y", "remove", 9));
     keys.push(hint("esc", "cancel", 1));
-    let mut hints = kit::hints_joined(width, &keys, " · ", p);
-    // Style the key and the verb by what they are, not where they sit.
-    for span in hints.spans.iter_mut() {
-        if span.content == "y" || span.content == "remove" {
-            span.style = role(Role::Failed, p);
-        }
-    }
-    body.push(hints);
+    body.push(kit::destructive(
+        kit::hints_joined(width, &keys, " · ", p),
+        "y",
+        "remove",
+        p,
+    ));
     render_dialog(frame, "remove", true, body, area, p);
 }
 

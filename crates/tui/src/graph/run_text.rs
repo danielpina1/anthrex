@@ -7,7 +7,7 @@ use crate::theme::{Glyph, glyph};
 use crate::tree::{DisplayRound, round_label, run_progress};
 use crate::ui::tree_view::truncate_in;
 use proto::{
-    FullState, PlannerInfo, RunInfo, RunState, Size, StageInfo, TaskInfo, TaskOrigin, TaskState,
+    FullState, PlannerInfo, RunInfo, RunState, StageInfo, TaskInfo, TaskOrigin, TaskState,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -71,7 +71,11 @@ pub(crate) fn task_text(task: &TaskInfo) -> String {
 /// [`task_text`], its hub mark `◆` as `Glyph::Hub` in ASCII (milestone 9.0.7 decision
 /// 6), cut with `...`. Its declared deps read `  after t0, t6` (decision 19).
 pub(crate) fn task_text_in(task: &TaskInfo, ascii: bool) -> String {
-    let mut tail = format!(" {}{}", size_letter(task.size), origin_tag(task.origin));
+    let mut tail = format!(
+        " {}{}",
+        crate::inspector::run_format::size_letter(task.size),
+        origin_tag(task.origin)
+    );
     if task.hub {
         tail.push(' ');
         tail.push_str(glyph(Glyph::Hub, ascii));
@@ -91,14 +95,6 @@ pub(crate) fn task_text_in(task: &TaskInfo, ascii: bool) -> String {
         format!("{} {title}{tail}", task.id)
     } else {
         truncate_in(&format!("{}{tail}", task.id), TASK_TEXT_MAX, ascii)
-    }
-}
-
-fn size_letter(size: Size) -> &'static str {
-    match size {
-        Size::S => "S",
-        Size::M => "M",
-        Size::L => "L",
     }
 }
 

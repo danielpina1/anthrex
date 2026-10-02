@@ -46,14 +46,11 @@ pub fn dialog_frame(title: &str, destructive: bool, p: Palette) -> Block<'static
 
 /// A choice field's value: `‹ value ›`.
 pub fn choice(value: &str) -> String {
-    format!("‹ {} ›", one_line(value))
+    crate::theme::choice(value, Palette::PLAIN)
 }
 
-/// [`choice`] honouring the palette's `ascii` flag: `< value >` in ASCII.
+/// [`choice`] honouring the palette's `ascii` flag: `< value >` in ASCII
+/// (`theme::choice`).
 pub fn choice_in(value: &str, p: Palette) -> String {
-    if p.ascii {
-        format!("< {} >", one_line(value))
-    } else {
-        choice(value)
-    }
+    crate::theme::choice(value, p)
 }

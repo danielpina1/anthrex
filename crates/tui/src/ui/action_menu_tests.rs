@@ -346,7 +346,15 @@ fn moved_base_page_renders() {
         "{text}"
     );
     assert!(text.contains("  ... and 2 more"), "{text}");
-    assert!(text.contains("> 07_"), "{text}");
+    // Final fix wave M5: the rename box's cursor, a reversed cell in ASCII (was `_`).
+    let (y, line) = text
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("> 07 "))
+        .unwrap_or_else(|| panic!("{text}"));
+    let x = u16::try_from(line.find("> 07 ").unwrap() + 4).unwrap();
+    let cursor = &buffer[(x, u16::try_from(y).unwrap())];
+    assert!(cursor.modifier.contains(ratatui::style::Modifier::REVERSED));
     assert!(text.contains("enter accept - esc back"), "{text}");
     let dialog: Vec<String> = (0..24)
         .map(|y| (8..72).map(|x| buffer[(x, y)].symbol()).collect::<String>())

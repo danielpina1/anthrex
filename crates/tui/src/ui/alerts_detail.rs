@@ -10,6 +10,7 @@ use crate::app::alerts::tasks_text;
 use crate::app::alerts_view::{alert_actions, alert_node, can_message, enter_label, run_of};
 use crate::app::{Alert, AlertKey, AlertWho, App};
 use crate::inspector::run_format::reason_text;
+use crate::inspector::run_format::route_tag;
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{self, Palette, Role, fold};
 use crate::tree::{self, format_elapsed};
@@ -78,21 +79,12 @@ fn worker_text(app: &App, task: &TaskInfo) -> Option<String> {
         1 => "1 call".to_owned(),
         n => format!("{n} calls"),
     };
+    // Final fix wave M5: the route as the panel's footer and the plan review name it.
     Some(format!(
-        "{} {} · {calls} · {}",
-        theme::runtime_tag(round.route.runtime),
-        model_text(&round.route.model),
+        "{} · {calls} · {}",
+        route_tag(&round.route),
         format_elapsed(elapsed)
     ))
-}
-
-fn model_text(model: &str) -> String {
-    let model = one_line(model);
-    if model.trim().is_empty() {
-        "default".to_owned()
-    } else {
-        model
-    }
 }
 
 /// `label` on the first non-blank line of `text`, the rest under it.
@@ -199,14 +191,8 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
             if let (Some(orch), Some(window)) = (orch, window) {
                 let status = window.status.label();
                 push(&mut rows, "phase", status.to_owned());
-                let route = &orch.route;
-                let tag = theme::runtime_tag(route.runtime);
-                let model = model_text(&route.model);
-                push(
-                    &mut rows,
-                    "orchestrator",
-                    format!("{tag} {model} · {status}"),
-                );
+                let route = route_tag(&orch.route);
+                push(&mut rows, "orchestrator", format!("{route} · {status}"));
             }
         }
         (AlertKey::Proposal(project), _) => {

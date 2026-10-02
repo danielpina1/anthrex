@@ -98,7 +98,7 @@ pub(crate) fn alert_lines(app: &App, alert: &Alert, width: u16) -> Vec<Line<'sta
         // Its own text only — a word broken across lines never gains a space.
         wrapped.truncate(TEXT_LINES);
         let last = wrapped.pop().unwrap_or_default();
-        let mark = if p.ascii { "..." } else { "…" };
+        let mark = theme::ellipsis(p);
         wrapped.push(truncate_in(&format!("{last}{mark}"), text_width, p.ascii));
     }
     lines.extend(

@@ -2,7 +2,7 @@
 //! toggles, the Reject, Unset and Confirm pages (the TOML shown exactly, scrolled), and
 //! the editors. Split from `ui/profile.rs` by responsibility (`AGENTS.md` hard rule 8).
 
-use super::{dot, hint, pad, store_line};
+use super::{hint, pad, store_line};
 use crate::app::profile_screen::{EditorField, ProfilePage, ProfileScreen};
 use crate::safe_text::{multi_line, one_line};
 use crate::theme::{Glyph, Palette, Role, glyph, role};
@@ -72,7 +72,7 @@ fn page_parts(
     };
     let hints = |list: &[(&str, &str)]| {
         let list: Vec<Hint> = list.iter().map(|(k, v)| hint(k, v, 5)).collect();
-        kit::hints_joined(width, &list, &format!(" {} ", dot(p)), p)
+        kit::hints_joined(width, &list, crate::theme::dot_sep(p), p)
     };
     let dir = s.dir.display().to_string();
     match page {
@@ -114,12 +114,7 @@ fn page_parts(
         ProfilePage::Reject => {
             // Decision 37 (principle 9): a destructive page's key and word in `Failed`,
             // as `ui/action_menu.rs::verb_hints` and the Settings discard page draw them.
-            let mut h = hints(&[("y", "reject"), ("esc", "back")]);
-            for span in h.spans.iter_mut() {
-                if span.content == "y" || span.content == "reject" {
-                    span.style = role(Role::Failed, p);
-                }
-            }
+            let h = kit::destructive(hints(&[("y", "reject"), ("esc", "back")]), "y", "reject", p);
             let body = wrap(&format!(
                 "the proposal for {dir} is deleted; a running scout or verification stops"
             ));

@@ -495,13 +495,8 @@ pub fn urgency(status: Status) -> u8 {
     }
 }
 
-pub fn runtime_tag(runtime: Runtime) -> &'static str {
-    match runtime {
-        Runtime::Claude => "cl",
-        Runtime::Codex => "cx",
-        Runtime::Shell => "sh",
-    }
-}
+/// A runtime's two-letter tag: `theme::runtime_tag`, the one table (final fix wave M5).
+pub use crate::theme::runtime_tag;
 
 pub fn short_model(runtime: Runtime, model: &str) -> String {
     let model = match runtime {

@@ -54,7 +54,7 @@ pub fn render(frame: &mut Frame, form: &TaskEditForm, area: Rect, p: Palette) {
     }
     let mut tail = Vec::new();
     if let Some(error) = &form.error {
-        let ellipsis = if p.ascii { "..." } else { "…" };
+        let ellipsis = crate::theme::ellipsis(p);
         let text = kit::cut(&one_line(error), usize::from(width), ellipsis);
         tail.push(Line::styled(text, role(Role::Failed, p)));
     }

@@ -231,3 +231,26 @@ fn text_area_render_is_free_of_hostile_characters() {
         assert_eq!(crate::safe_text::tests::first_hostile(&text(&l)), None);
     }
 }
+
+/// Final fix wave (task 13b's minor): `destructive` recolours the hint's key and word
+/// `Failed`, as drawn (folded in ASCII), and leaves the rest of the line alone.
+#[test]
+fn destructive_recolours_the_key_and_the_word() {
+    use crate::theme::{Role, role};
+    let ascii = Palette { ascii: true, ..P };
+    for p in [P, ascii] {
+        let line = hints_joined(60, &[h("⏎", "drop", 9), h("esc", "back", 1)], " · ", p);
+        let line = destructive(line, "⏎", "drop", p);
+        let failed = role(Role::Failed, p);
+        let styled: Vec<(String, bool)> = line
+            .spans
+            .iter()
+            .map(|s| (s.content.to_string(), s.style == failed))
+            .collect();
+        let key = if p.ascii { "enter" } else { "⏎" };
+        assert!(styled.contains(&(key.to_owned(), true)), "{styled:?}");
+        assert!(styled.contains(&("drop".to_owned(), true)), "{styled:?}");
+        assert!(styled.contains(&("esc".to_owned(), false)), "{styled:?}");
+        assert!(styled.contains(&("back".to_owned(), false)), "{styled:?}");
+    }
+}

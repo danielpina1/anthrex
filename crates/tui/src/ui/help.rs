@@ -207,7 +207,7 @@ fn lines(groups: &[HelpGroup], width: usize, p: Palette) -> Vec<Line<'static>> {
         .max()
         .unwrap_or(0);
     let room = width.saturating_sub(INDENT + key_w + GAP);
-    let ellipsis = if p.ascii { "..." } else { "…" };
+    let ellipsis = crate::theme::ellipsis(p);
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let mut out = Vec::new();
     for g in groups {

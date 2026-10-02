@@ -6,7 +6,7 @@
 use crate::app::actions::forms::{ActionForm, Brief, kind_word};
 use crate::safe_text::{multi_line, one_line};
 use crate::text_area::TextArea;
-use crate::theme::{Palette, Role, role};
+use crate::theme::{Palette, Role, dot_sep, ellipsis, role};
 use crate::ui::kit::{self, Hint};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
@@ -25,14 +25,6 @@ fn hint(key: &str, word: &str, priority: u8) -> Hint {
         word: word.to_string(),
         priority,
     }
-}
-
-fn ellipsis(p: Palette) -> &'static str {
-    if p.ascii { "..." } else { "…" }
-}
-
-fn dot(p: Palette) -> &'static str {
-    if p.ascii { " - " } else { " · " }
 }
 
 /// The form's title: its action's label.
@@ -256,7 +248,7 @@ pub fn body(form: &ActionForm, width: u16, p: Palette) -> Vec<Line<'static>> {
     }
     keys.push(hint("esc", "back", 1));
     body.push(Line::raw(""));
-    body.push(kit::hints_joined(width, &keys, dot(p), p));
+    body.push(kit::hints_joined(width, &keys, dot_sep(p), p));
     body
 }
 

@@ -6,7 +6,6 @@ use crate::ui::dialog::{self, hint};
 use crate::ui::kit::{self, Hint};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
@@ -21,11 +20,7 @@ fn rename_row(prompt: &RenamePrompt, width: u16, p: Palette) -> Line<'static> {
     let (visible, column) = prompt.input.visible(room);
     let graphemes: Vec<&str> = visible.graphemes(true).collect();
     let at = usize::from(column).min(graphemes.len());
-    let block = if p.ascii {
-        Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED))
-    } else {
-        Span::raw("█")
-    };
+    let block = kit::cursor_block(p);
     Line::from(vec![
         Span::styled(LABEL, role(Role::Muted, p)),
         Span::raw(one_line(&graphemes[..at].concat())),
@@ -37,7 +32,7 @@ fn rename_row(prompt: &RenamePrompt, width: u16, p: Palette) -> Line<'static> {
 /// Milestone 9.0.7 decision 35: the rename box on the kit's grammar.
 fn render_rename(frame: &mut Frame, prompt: &RenamePrompt, area: Rect, p: Palette) {
     let width = dialog::interior(area.width);
-    let ellipsis = if p.ascii { "..." } else { "…" };
+    let ellipsis = crate::theme::ellipsis(p);
     let body = vec![
         rename_row(prompt, width, p),
         match &prompt.error {
@@ -136,17 +131,12 @@ fn render_confirm(
         word: "back".to_string(),
         priority: 1,
     };
-    let mut hints = kit::hints_joined(width as u16, &[verb, esc], " · ", p);
-    if destructive {
-        // Style the key and the verb by what they are, not where they sit.
-        let failed = role(Role::Failed, p);
-        for span in hints.spans.iter_mut() {
-            if span.content == "y" || span.content == action.verb() {
-                span.style = failed;
-            }
-        }
-    }
-    body.push(hints);
+    let hints = kit::hints_joined(width as u16, &[verb, esc], " · ", p);
+    body.push(if destructive {
+        kit::destructive(hints, "y", action.verb(), p)
+    } else {
+        hints
+    });
     let title = if destructive {
         action.verb()
     } else {
