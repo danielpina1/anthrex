@@ -125,7 +125,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     // Milestone 9.0.7 decision 30: no ` rev N `; the revision is the daemon's, not the user's.
     let mut block = super::kit::pane_frame(Line::from(title), keys_here, app.palette());
     if let Some(search) = view.search().filter(|s| s.typing) {
-        block = block.title_bottom(Line::from(format!(" /{} ", search.query)).centered());
+        // Final fix wave M7: muted, as every right or bottom title.
+        let query = format!(" /{} ", crate::safe_text::one_line(&search.query));
+        block = block.title_bottom(Line::styled(query, role(Muted, app.palette())).centered());
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);

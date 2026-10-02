@@ -81,3 +81,35 @@ fn a_long_pane_title_is_cut_with_a_mark() {
     assert!(title.ends_with("… ╮"), "{title:?}");
     assert!(!title.contains("worktree)"), "{title:?}");
 }
+
+/// Final fix wave (task 4's deferred minor): hostile and multi-byte text through the
+/// title's fit. The name's bidi and zero-width characters are dropped inside the drawn
+/// columns; a directory with line separators (a space each once sanitised) and wide
+/// characters is measured as drawn, so the cut title still ends at the corner.
+#[test]
+fn a_hostile_or_wide_title_is_measured_as_drawn() {
+    let dir = format!(
+        "/tmp/{}日本語の長いディレクトリ/x",
+        "\u{1b}\u{2028}\t".repeat(4)
+    );
+    let mut shell = pty(1, "x\u{200D}y\u{202E}z", "/tmp", Status::Idle);
+    shell.cwd = dir.into();
+    let title = title_at(vec![shell], false, 46);
+    // Twelve separators drawn as twelve spaces; a wide character's second cell reads
+    // as a space too, and a cut that cannot split one leaves a border cell.
+    let want = format!(
+        "╭ sh xyz · /tmp/{}日 本 語 の 長 い デ … ─╮",
+        " ".repeat(12)
+    );
+    assert_eq!(title, want);
+    // The fit's own text, before the frame: sanitised where it is measured, so the
+    // frame's own pass changes nothing (red without `fit_title`'s `one_line`).
+    let fitted = super::fit_title(
+        "sh x\u{200D}y\u{202E}z",
+        "/a\u{1b}b\u{2028}c",
+        "",
+        40,
+        false,
+    );
+    assert_eq!(fitted, "sh xyz · /a b c");
+}

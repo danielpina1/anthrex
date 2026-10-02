@@ -104,3 +104,25 @@ fn the_selected_row_wears_the_selection_bar() {
         }
     }
 }
+
+/// Final fix wave M7: the search's bottom title is muted, as every right or bottom
+/// title is, never the accented border's colour.
+#[test]
+fn the_search_title_is_muted() {
+    let mut app = app_showing(
+        UiSettings::default(),
+        Runtime::Claude,
+        80,
+        24,
+        main_conversation(),
+    );
+    press(&mut app, KeyCode::Char('/'));
+    press(&mut app, KeyCode::Char('q'));
+    let buf = draw(&app, 80, 24);
+    let (x, y) = find(&buf, "/q").expect("the search title");
+    assert_eq!(y, 23);
+    let muted = theme::role(theme::Role::Muted, app.palette()).fg;
+    for cx in x..x + 2 {
+        assert_eq!(Some(buf[(cx, y)].fg), muted, "column {cx}");
+    }
+}
