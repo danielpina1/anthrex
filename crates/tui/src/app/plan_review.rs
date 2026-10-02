@@ -405,7 +405,8 @@ impl App {
     /// from the end the user sees.
     fn scroll_review(&mut self, down: bool) {
         let detail = self.review_layout(self.body_area).detail;
-        let (Some(max), Some(review)) = (self.review_max_scroll(), self.plan_review.as_mut())
+        let (Some(max), Some(review)) =
+            (self.review_max_scroll_in(detail), self.plan_review.as_mut())
         else {
             return;
         };
@@ -421,7 +422,12 @@ impl App {
     /// The last first row of the selected task's detail at `body_area`: its rows, by
     /// the renderer's own count, less the detail's height.
     fn review_max_scroll(&self) -> Option<u16> {
-        let detail = self.review_layout(self.body_area).detail;
+        self.review_max_scroll_in(self.review_layout(self.body_area).detail)
+    }
+
+    /// [`Self::review_max_scroll`] for a `detail` area the caller already laid out, so a
+    /// page key lays the review out once (final fix wave I3).
+    fn review_max_scroll_in(&self, detail: Rect) -> Option<u16> {
         let (run, tasks) = self.reviewed()?;
         let selected = self.plan_review.as_ref()?.selected.as_ref()?;
         let task = tasks.into_iter().find(|task| task.id == *selected)?;

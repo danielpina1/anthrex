@@ -11,6 +11,7 @@ use crate::safe_text::one_line;
 use crate::theme::{self, Glyph};
 use crate::ui::tree_view::truncate_in;
 use proto::{RunInfo, Size, TaskInfo};
+use std::collections::HashMap;
 
 /// Sizes read as a sequence (`S+M+S`) up to this many tasks, else as counts.
 const SIZE_SEQUENCE_MAX: usize = 8;
@@ -89,12 +90,13 @@ pub(crate) fn header_line(run: &RunInfo, tasks: &[&TaskInfo], width: u16, ascii:
     truncate_in(&text, usize::from(width), ascii)
 }
 
-/// Two tasks that can run at the same time and both own `path` (decision 23).
+/// Two tasks that can run at the same time and both own `path` (decision 23), as the
+/// snapshot has them (unsanitised).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Overlap {
-    pub a: String,
-    pub b: String,
-    pub path: String,
+pub(crate) struct Overlap<'a> {
+    pub a: &'a str,
+    pub b: &'a str,
+    pub path: &'a str,
 }
 
 /// The path two `owns` entries share: the same entry, or the longer one when the
@@ -114,64 +116,129 @@ fn shared<'a>(a: &'a str, b: &'a str) -> Option<&'a str> {
     (long.starts_with(short) && boundary).then_some(long)
 }
 
-/// Whether `from` reaches `to` through deps and implicit deps, transitively, among
-/// every task of the run (a hold's tasks can be ordered through tasks outside it).
-fn reaches(tasks: &[TaskInfo], from: &str, to: &str) -> bool {
-    let mut seen: Vec<&str> = Vec::new();
-    let mut stack = vec![from];
-    while let Some(id) = stack.pop() {
-        let Some(task) = tasks.iter().find(|t| t.id == id) else {
-            continue;
-        };
-        for dep in all_deps(task) {
-            if dep == to {
-                return true;
-            }
-            if !seen.contains(&dep) {
-                seen.push(dep);
-                stack.push(dep);
-            }
+/// Final fix wave I3: the work `overlaps` does, counted in tests (a task visited or a
+/// dep followed while ordering tasks, an `owns` pair compared), so a test bounds the
+/// operations rather than the wall clock (`docs/timing-budgets.md`).
+#[cfg(test)]
+pub(crate) mod work {
+    use std::cell::Cell;
+    thread_local! {
+        static STEPS: Cell<usize> = const { Cell::new(0) };
+    }
+    pub(crate) fn add(n: usize) {
+        STEPS.with(|s| s.set(s.get().saturating_add(n)));
+    }
+    /// The steps since the last `take`, on this thread.
+    pub(crate) fn take() -> usize {
+        STEPS.with(|s| s.replace(0))
+    }
+}
+
+fn step() {
+    #[cfg(test)]
+    work::add(1);
+}
+
+/// Which tasks each task reaches through deps and implicit deps, transitively, among
+/// every task of the run (a hold's tasks can be ordered through tasks outside it):
+/// decision 23's "neither reaches the other". Built once per call to `overlaps` (final
+/// fix wave I3): one walk a task over an id map, into a bitset a task, so a pair is
+/// two bit reads instead of two searches of the run.
+struct Reach<'a> {
+    index: HashMap<&'a str, usize>,
+    /// `bits[i]`'s bit `j`: task `i` reaches task `j`.
+    bits: Vec<Vec<u64>>,
+}
+
+impl<'a> Reach<'a> {
+    fn of(tasks: &'a [TaskInfo]) -> Self {
+        let index: HashMap<&str, usize> = tasks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.id.as_str(), i))
+            .collect();
+        let deps: Vec<Vec<usize>> = tasks
+            .iter()
+            .map(|t| {
+                all_deps(t)
+                    .iter()
+                    .filter_map(|d| index.get(d).copied())
+                    .collect()
+            })
+            .collect();
+        let words = tasks.len().div_ceil(64);
+        let bits = (0..tasks.len())
+            .map(|from| {
+                let mut seen = vec![0u64; words];
+                let mut stack = vec![from];
+                while let Some(at) = stack.pop() {
+                    step();
+                    for &dep in &deps[at] {
+                        step();
+                        let (word, bit) = (dep / 64, 1u64 << (dep % 64));
+                        if seen[word] & bit == 0 {
+                            seen[word] |= bit;
+                            stack.push(dep);
+                        }
+                    }
+                }
+                seen
+            })
+            .collect();
+        Reach { index, bits }
+    }
+
+    fn reaches(&self, from: &str, to: &str) -> bool {
+        match (self.index.get(from), self.index.get(to)) {
+            (Some(&from), Some(&to)) => self.bits[from][to / 64] & (1u64 << (to % 64)) != 0,
+            _ => false,
         }
     }
-    false
 }
 
 /// Decision 23's overlaps, one a pair of the reviewed `tasks` in plan order (the first
 /// path they share): an `owns` entry equal to, or a directory of, one of the other's,
 /// between tasks neither of which reaches the other through `run`'s tasks, so they can
-/// run at the same time.
-pub(crate) fn overlaps(run: &RunInfo, tasks: &[&TaskInfo]) -> Vec<Overlap> {
+/// run at the same time. Borrowed from `run`, unsanitised: `overlap_lines` sanitises
+/// the few it draws (a plan can have thousands).
+pub(crate) fn overlaps<'a>(run: &'a RunInfo, tasks: &[&'a TaskInfo]) -> Vec<Overlap<'a>> {
+    let reach = Reach::of(&run.tasks);
     let mut out = Vec::new();
     for (i, a) in tasks.iter().enumerate() {
         for b in &tasks[i + 1..] {
-            let path = a
-                .owns
-                .iter()
-                .find_map(|x| b.owns.iter().find_map(|y| shared(x, y)));
-            let Some(path) = path else {
-                continue;
-            };
-            if reaches(&run.tasks, &a.id, &b.id) || reaches(&run.tasks, &b.id, &a.id) {
+            if reach.reaches(&a.id, &b.id) || reach.reaches(&b.id, &a.id) {
                 continue;
             }
-            out.push(Overlap {
-                a: one_line(&a.id),
-                b: one_line(&b.id),
-                path: one_line(path),
+            let path = a.owns.iter().find_map(|x| {
+                b.owns.iter().find_map(|y| {
+                    step();
+                    shared(x, y)
+                })
             });
+            if let Some(path) = path {
+                out.push(Overlap {
+                    a: &a.id,
+                    b: &b.id,
+                    path,
+                });
+            }
         }
     }
     out
 }
 
 /// The header's warning rows: `⚠ <a> and <b> both own <path>`, at most three, then
-/// `⚠ <k> more overlaps`. Folded in ASCII; the renderer cuts them to the width.
-pub(crate) fn overlap_lines(overlaps: &[Overlap], ascii: bool) -> Vec<String> {
+/// `⚠ <k> more overlaps`. Sanitised and folded in ASCII; the renderer cuts them to the
+/// width.
+pub(crate) fn overlap_lines(overlaps: &[Overlap<'_>], ascii: bool) -> Vec<String> {
     let warn = theme::glyph(Glyph::Warning, ascii);
     let mut out: Vec<String> = overlaps
         .iter()
         .take(OVERLAP_ROWS)
-        .map(|o| format!("{warn} {} and {} both own {}", o.a, o.b, o.path))
+        .map(|o| {
+            let (a, b, path) = (one_line(o.a), one_line(o.b), one_line(o.path));
+            format!("{warn} {a} and {b} both own {path}")
+        })
         .collect();
     let more = overlaps.len().saturating_sub(OVERLAP_ROWS);
     if more > 0 {

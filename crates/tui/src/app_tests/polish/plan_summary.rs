@@ -52,9 +52,9 @@ fn overlaps_need_owners_that_can_run_together() {
     assert_eq!(
         overlaps(&run, &run.tasks.iter().collect::<Vec<_>>()),
         vec![Overlap {
-            a: "t2".into(),
-            b: "t3".into(),
-            path: "crates/c/src/lib.rs".into()
+            a: "t2",
+            b: "t3",
+            path: "crates/c/src/lib.rs"
         }]
     );
 }
@@ -79,9 +79,9 @@ fn overlaps_follow_deps_transitively_and_stop_at_a_slash() {
     assert_eq!(
         overlaps(&run, &run.tasks.iter().collect::<Vec<_>>()),
         vec![Overlap {
-            a: "t1".into(),
-            b: "t3".into(),
-            path: "crates/c/x.rs".into()
+            a: "t1",
+            b: "t3",
+            path: "crates/c/x.rs"
         }]
     );
     // Fix round 1 (C1): a path whose byte at the shorter one's end lies inside a
@@ -94,9 +94,9 @@ fn overlaps_follow_deps_transitively_and_stop_at_a_slash() {
     assert_eq!(
         overlaps(&run, &run.tasks.iter().collect::<Vec<_>>()),
         vec![Overlap {
-            a: "t1".into(),
-            b: "t3".into(),
-            path: "docs/é.md".into()
+            a: "t1",
+            b: "t3",
+            path: "docs/é.md"
         }]
     );
 }
@@ -208,4 +208,47 @@ fn more_than_three_overlaps_are_summed() {
     assert_eq!(overlap_lines(&all[..5], true)[3], "! 2 more overlaps");
     assert_eq!(overlap_lines(&all[..4], false)[3], "⚠ 1 more overlap");
     assert_eq!(overlap_lines(&all[..3], false).len(), 3);
+}
+
+/// Final fix wave I3: a 200-task plan, four chains of fifty, every task owning
+/// `Cargo.toml` (15,000 overlapping pairs across the chains). The review's layout
+/// orders the tasks once (a closure over an id map), not with two searches a pair: its
+/// work is bounded by an operation count, not the wall clock.
+#[test]
+fn a_200_task_plans_layout_orders_its_tasks_once() {
+    use crate::app::plan_summary::work;
+    use crate::tree::run_fixtures::{RUN_ID, gate_fixture};
+    use proto::{DaemonMsg, RunReply};
+    let (mut snap, windows) = gate_fixture();
+    let run = &mut snap.runs[0];
+    run.tasks = (0..4)
+        .flat_map(|c| {
+            (0..50).map(move |i| {
+                let mut t = plan_task(&format!("c{c}t{i}"), "x", Size::S, 1, 10);
+                if i > 0 {
+                    t.deps = vec![format!("c{c}t{}", i - 1)];
+                }
+                t.owns = std::iter::once("Cargo.toml".to_owned())
+                    .chain((0..4).map(|k| format!("src/c{c}/t{i}/{k}.rs")))
+                    .collect();
+                t
+            })
+        })
+        .collect();
+    run.critical_path.clear();
+    let mut app = crate::app::App::new(windows, "/tmp".into(), Default::default());
+    let _ = app.set_terminal_size(120, 40);
+    let _ = app.run_subscription();
+    app.on_daemon(DaemonMsg::Run(RunReply::Snapshot(snap)));
+    let _ = app.open_plan_review(RUN_ID.into(), ReviewTarget::Gate);
+    assert!(app.plan_review.is_some());
+    let _ = work::take();
+    let layout = app.review_layout(ratatui::layout::Rect::new(0, 0, 120, 39));
+    let steps = work::take();
+    assert_eq!(layout.warnings.len(), 4);
+    assert_eq!(layout.warnings[3], "⚠ 14997 more overlaps");
+    // 200 tasks: a closure of 200 walks over at most 50 tasks and 50 deps each
+    // (20,000), and one `owns` comparison for each of the 19,900 pairs that cannot
+    // be ordered or share `Cargo.toml` first. Two searches a pair cost millions.
+    assert!(steps <= 100_000, "{steps} steps");
 }

@@ -13,11 +13,10 @@ use crate::app::{App, region::KeyRegion};
 use crate::graph::{self, Pan, paint::paint, viewport::GraphGeometry};
 use crate::inspector::{self, INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL, RUN_CANVAS_MIN};
 use crate::theme;
-use crate::tree::{self, Row, RowKind};
+use crate::tree::{self, Row};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -64,10 +63,16 @@ pub fn areas(main: Rect, inspector_visible: bool, panel: Option<u16>) -> (Rect, 
 /// outside the run view. With nothing selected the panel keeps its least height.
 fn panel_of(app: &App, main: Rect, rows: &[Row<'_>]) -> Option<u16> {
     app.run_view.as_ref()?;
+    let inspection = selected_row(app, rows).map(|row| inspector::inspect(row, app));
+    panel_for(app, main, inspection.as_ref())
+}
+
+/// [`panel_of`] for a selected node already inspected: the frame inspects it once and
+/// both sizes and draws the panel from that (final fix wave, task 9's deferred minor).
+fn panel_for(app: &App, main: Rect, inspection: Option<&inspector::Inspection>) -> Option<u16> {
+    app.run_view.as_ref()?;
     let width = super::inset(main).width.saturating_sub(4);
-    Some(selected_row(app, rows).map_or(0, |row| {
-        inspector::panel_rows(&inspector::inspect(row, app), width)
-    }))
+    Some(inspection.map_or(0, |i| inspector::panel_rows(i, width)))
 }
 
 /// [`areas`] as the frame splits it: the run view's panel sized by its selected node.
@@ -112,7 +117,12 @@ pub fn view(app: &App, main: Rect) -> View {
 /// `view` for a caller that has the visible rows in hand already, so one frame
 /// or one gesture builds that list once instead of once per reader.
 pub fn view_of(app: &App, main: Rect, rows: &[Row<'_>]) -> View {
-    let (canvas, footer) = areas(main, app.inspector_visible, panel_of(app, main, rows));
+    view_sized(app, main, rows, panel_of(app, main, rows))
+}
+
+/// [`view_of`] with the run view's panel rows in hand (`panel_for`).
+fn view_sized(app: &App, main: Rect, rows: &[Row<'_>], panel: Option<u16>) -> View {
+    let (canvas, footer) = areas(main, app.inspector_visible, panel);
     let layout = graph::layout(rows);
     // The stored pan can outlive the canvas it was clamped against — a
     // narrowed terminal, or rows that vanished — so it is clamped on the way
@@ -148,7 +158,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     // footer all read this list, and a frame is drawn at least ten times a
     // second. The run view's rows while it is open (milestone 8c decision 11).
     let rows = app.nav_rows();
-    let view = view_of(app, area, &rows);
+    let selected = selected_row(app, &rows);
+    let inspection = selected.map(|row| inspector::inspect(row, app));
+    let view = view_sized(app, area, &rows, panel_for(app, area, inspection.as_ref()));
     if view.list {
         super::run_list::render(frame, app, view.canvas, &rows);
     } else {
@@ -159,10 +171,11 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     // What stands below the canvas is whatever `areas` made room for: the
     // panel when it gave the rect the panel's height, and the single line
     // otherwise (decisions 1, 6 and 7).
-    match (view.panel, selected_row(app, &rows)) {
-        (true, Some(row)) => {
-            let inspection = inspector::inspect(row, app);
-            inspector::render_in(frame, &inspection, view.footer, app.palette());
+    match (view.panel, selected) {
+        (true, Some(_)) => {
+            if let Some(inspection) = &inspection {
+                inspector::render_in(frame, inspection, view.footer, app.palette());
+            }
         }
         // A panel with nothing to inspect is left blank rather than drawn as an
         // empty box: the panel is one node spelled out, and there is no node.
@@ -212,113 +225,11 @@ fn selected_row<'a, 'b>(app: &App, rows: &'a [Row<'b>]) -> Option<&'a Row<'b>> {
     rows.iter().find(|row| &row.key == key)
 }
 
-/// The selected node in full: its label untruncated, then its model, its state
-/// and how long it has been in it (decision 18).
-///
-/// Only the line's own width cuts anything here, which is why the box above can
-/// afford to elide: whatever a box hides, this line shows. The panel replaces
-/// it (decision 1); it is what `i` turns back on and what a short terminal
-/// keeps (decisions 6 and 7).
-fn footer_line(row: &Row<'_>, app: &App) -> Line<'static> {
-    let bold = Style::default().add_modifier(Modifier::BOLD);
-    let (glyph, label, fields) = footer_parts(row, app);
-    let p = app.palette();
-    Line::from(vec![
-        glyph,
-        Span::raw(" "),
-        Span::styled(theme::fold(&label, p.ascii), bold),
-        Span::styled(
-            theme::fold(&fields, p.ascii),
-            theme::role(theme::Role::Muted, p),
-        ),
-    ])
-}
-
-/// One node's footer: its status glyph in its status colour, the text it is
-/// known by, and the fields that follow it.
-pub(super) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, String) {
-    let (frame, ascii) = (app.spinner_frame, app.palette().ascii);
-    let look = |look| crate::inspector::look(look, app);
-    match &row.kind {
-        RowKind::Project {
-            root,
-            name,
-            status,
-            counts,
-            ..
-        } => {
-            let root = super::terminal::shorten_home(root);
-            let root = if root == "~/" { "~" } else { &root };
-            (
-                look(theme::status_look(*status, frame, ascii)),
-                name.clone(),
-                format!(
-                    "  {root}  {}  {}",
-                    status.label(),
-                    tree_view::counts_text(*counts)
-                ),
-            )
-        }
-        RowKind::Window { info, position, .. } => (
-            look(theme::status_look(info.status, frame, ascii)),
-            format!("{position} {}", info.name),
-            format!(
-                "  {}  {}  {}  {}{}",
-                info.runtime.label(),
-                info.model.as_deref().unwrap_or("-"),
-                info.status.label(),
-                tree::format_elapsed(app.elapsed_secs(info)),
-                info.tool
-                    .as_deref()
-                    .map(|tool| format!("  {tool}"))
-                    .unwrap_or_default()
-            ),
-        ),
-        RowKind::Subagent { info } => {
-            let (state, duration) = match info.state {
-                proto::SubagentState::Running => ("running", app.age_secs(info.started_secs)),
-                proto::SubagentState::Done => ("done", finished_secs(info)),
-                proto::SubagentState::Failed => ("failed", finished_secs(info)),
-            };
-            (
-                look(theme::subagent_look(info, frame, ascii)),
-                tree::subagent_label(info),
-                format!(
-                    "  {}  {state}  {}{}",
-                    info.model.as_deref().unwrap_or("-"),
-                    tree::format_elapsed(duration),
-                    info.tool
-                        .as_deref()
-                        .map(|tool| format!("  {tool}"))
-                        .unwrap_or_default()
-                ),
-            )
-        }
-        // Every run kind's single line is its inspection's title: the glyph, the
-        // name, then two spaces and the right-hand text (milestone 8c, Interfaces
-        // "The single line"). The glyph is the canvas's own, by construction.
-        RowKind::Run { .. }
-        | RowKind::Planner { .. }
-        | RowKind::Scout { .. }
-        | RowKind::Task { .. }
-        | RowKind::Stage { .. }
-        | RowKind::AgentRound { .. } => {
-            let inspection = inspector::inspect(row, app);
-            let right = inspection
-                .right
-                .map(|right| format!("  {right}"))
-                .unwrap_or_default();
-            (inspection.glyph, inspection.name, right)
-        }
-    }
-}
-
-/// How long a sub-agent that has stopped ran for. Both fields are ages, so the
-/// run is the difference between them, and a missing end reads as zero.
-fn finished_secs(info: &proto::SubagentInfo) -> u64 {
-    info.ended_secs
-        .map_or(0, |ended| info.started_secs.saturating_sub(ended))
-}
+#[path = "overview_footer.rs"]
+mod footer;
+use footer::footer_line;
+#[cfg(test)]
+pub(super) use footer::footer_parts;
 
 #[cfg(test)]
 #[path = "overview_polish_tests.rs"]
