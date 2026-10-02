@@ -202,6 +202,10 @@ impl RunHarness {
             // M8b's safety rule: no decider can ever reach a real agent binary. A test
             // that runs deciders overrides this with `fake-agent` (`run_adapt.rs`).
             ("ANTHREX_DECIDER_BIN".into(), NO_DECIDER_BIN.into()),
+            // Task M9.2.12's fix round (m1): no preflight or detection can run the user's
+            // `gh`. A test of `pr` mode sets `ANTHREX_CODE_HOST=fake` in `env`.
+            ("ANTHREX_CODE_HOST".into(), "gh".into()),
+            ("ANTHREX_GH_BIN".into(), daemon::manager::TEST_GH_BIN.into()),
             ("FAKE_AGENT_ARGS_FILE".into(), path(&io)),
             ("FAKE_AGENT_STDIN_FILE".into(), path(&io)),
             // M9.16: every MCP call a `fake-agent` makes (`RunHarness::mcp_log`).

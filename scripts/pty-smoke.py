@@ -71,6 +71,9 @@ ENV["ANTHREX_DATA_DIR"] = DATA_DIR
 ENV["ANTHREX_CLAUDE_BIN"] = FAKE_AGENT_BIN
 ENV["ANTHREX_CODEX_BIN"] = FAKE_AGENT_BIN
 ENV["ANTHREX_DECIDER_BIN"] = FAKE_AGENT_BIN
+# Task M9.2.12's fix round (m1): no preflight or detection runs the user's `gh`.
+ENV["ANTHREX_CODE_HOST"] = "gh"
+ENV["ANTHREX_GH_BIN"] = "/nonexistent/anthrex-test/gh"
 ENV["FAKE_AGENT_DECIDER_DIR"] = DECIDER_DIR
 ENV["FAKE_AGENT_SCRIPT"] = FAKE_AGENT_SCRIPT
 # Where fake-agent's `transcript` steps append, and the `transcript_path` it puts in every

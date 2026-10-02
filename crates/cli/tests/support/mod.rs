@@ -49,12 +49,16 @@ pub fn runtime() -> tokio::runtime::Runtime {
 /// M9.13 re-review: the three agent programs, pinned to paths that do not exist, so an
 /// `anthrex` process a test starts (or a daemon a client command starts for it) never
 /// runs a real `claude` or `codex`, not even `codex --version` at the daemon's start. A
-/// test that needs a stand-in sets its own value after this.
+/// test that needs a stand-in sets its own value after this. Task M9.2.12's fix round
+/// (m1): `gh` too, pinned the same way and `ANTHREX_CODE_HOST=gh`, so a daemon's
+/// preflight or detection never runs the user's `gh`.
 pub fn pin_agents(command: &mut Command) -> &mut Command {
     command
         .env("ANTHREX_CLAUDE_BIN", "/nonexistent/anthrex-test/claude")
         .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex")
         .env("ANTHREX_DECIDER_BIN", "/nonexistent/anthrex-test/decider")
+        .env("ANTHREX_CODE_HOST", "gh")
+        .env("ANTHREX_GH_BIN", daemon::manager::TEST_GH_BIN)
 }
 
 pub fn isolated_command(dir: &Path, args: &[&str]) -> Command {

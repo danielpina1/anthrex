@@ -17,7 +17,9 @@ fn anthrex() -> Command {
     command
         .env("ANTHREX_CLAUDE_BIN", "/nonexistent/anthrex-test/claude")
         .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex")
-        .env("ANTHREX_DECIDER_BIN", "/nonexistent/anthrex-test/decider");
+        .env("ANTHREX_DECIDER_BIN", "/nonexistent/anthrex-test/decider")
+        .env("ANTHREX_CODE_HOST", "gh")
+        .env("ANTHREX_GH_BIN", "/nonexistent/anthrex-test/gh");
     command
 }
 
