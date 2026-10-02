@@ -178,20 +178,33 @@ pub(super) fn widen(run: &mut Run, now: u64) {
     log(run, now, text);
 }
 
-/// KG §2.5: every stage below `n` (at least one) has landed, its PR merged or closed,
-/// or was skipped; no open PR is left for stage `n`'s to stack on.
-pub(crate) fn landed_below(run: &Run, n: u16) -> bool {
+/// KG §2.5: every stage below `n` (at least one) has landed ([`stage_landed`]); no
+/// open PR is left for stage `n`'s to stack on.
+pub(super) fn landed_below(run: &Run, n: u16) -> bool {
+    n > 1 && (1..n).all(|m| stage_landed(run, m))
+}
+
+/// Stage `m` has landed: skipped, or its PR merged or closed and that landing processed
+/// (`land::processed`, its `stage` line out; task 5 fix round 1, I1), or, with no PR,
+/// it merged nothing and nothing of it is left to run (it is skipped once delivery
+/// looks at it, as a rejected round's stage is).
+pub(super) fn stage_landed(run: &Run, m: u16) -> bool {
     let d = &run.delivery;
-    let landed = |m: u16| {
-        d.stage(m).is_some_and(|s| s.skipped) || d.pr(m).is_some_and(|p| p.state != PrState::Open)
+    let empty = || {
+        let mut of_stage = run.tasks.iter().filter(|t| t.stage() == m);
+        of_stage.all(|t| t.state.is_finished() && t.state != TaskState::Merged)
     };
-    n > 1 && (1..n).all(landed)
+    match d.pr(m) {
+        _ if d.stage(m).is_some_and(|s| s.skipped) => true,
+        Some(pr) => pr.state != PrState::Open && delivery::land::processed(run, m),
+        None => empty(),
+    }
 }
 
 /// Decision 13, `pr` mode: stage `next`, the current round's first, waits while the
 /// base fetch its round made due ([`iterate`]) is due or in flight, when every stage
 /// below it has landed ([`landed_below`]).
-pub(crate) fn awaits_base(run: &Run, next: u16) -> bool {
+pub(super) fn awaits_base(run: &Run, next: u16) -> bool {
     let first = run
         .current_round()
         .is_some_and(|r| r.n > 1 && r.first_stage == next);

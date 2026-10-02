@@ -3,10 +3,10 @@
 //! 12) and cancel ([`cancel_round`], decision 16), and its end ([`pass`], decision 17),
 //! whose `round` history line `goal_rounds::end_round` writes. Pure (design decision 2).
 
-use proto::{PrState, RoundOrigin, RoundOutcome, RunState};
+use proto::{RoundOrigin, RoundOutcome, RunState};
 
 use super::complete::{cancel_task, deferred_note};
-use super::goal_rounds::end_round;
+use super::goal_rounds::{end_round, landed_below};
 use super::requests::log;
 use super::{Effect, delivery, merge, planners, stages, wake};
 use crate::run::model::Run;
@@ -55,9 +55,10 @@ pub(super) fn approved(run: &mut Run, by: &str, now: u64) {
 /// Decision 12: `run reject` on round 2 or later while it is open ([`open_round`]).
 /// Every task of the round is cancelled, the round ends `rejected` with its history
 /// line, its request and its sub-planners and run scouts are dropped, and the run goes
-/// back to `complete`, or in `pr` mode to `running` while a PR is open (delivering;
-/// task 5: a run every PR of which had landed was complete, and is again), with no
-/// summary wake. Earlier rounds are untouched; nothing is discarded.
+/// back to `complete`, or in `pr` mode to `running` unless every earlier stage has
+/// landed and been processed (task 5 and its fix round 1, I1: that run was complete,
+/// and is again), with no summary wake; a `pr` round's stages are skipped. Earlier
+/// rounds are untouched; nothing is discarded.
 pub(super) fn reject_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> String {
     let n = run.round();
     let why = format!("run reject (round {n})");
@@ -74,15 +75,24 @@ pub(super) fn reject_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
         o.plan_submitted = true;
     }
     run.paused_from = None;
-    let open = |run: &Run| {
-        let mut prs = run.delivery.stages.iter().filter_map(|s| s.pr.as_ref());
-        prs.any(|p| p.state == PrState::Open)
-    };
-    run.state = if delivery::pr(run) && open(run) {
+    // Task 5 fix round 1 (I1): back to `complete` only when the run was, every earlier
+    // stage's landing processed; its round's fetch is dropped then. Otherwise
+    // delivery resumes, and processes a landing seen while the round was planned.
+    let first = run.current_round().map_or(1, |r| r.first_stage);
+    let landed = delivery::pr(run) && landed_below(run, first);
+    run.state = if delivery::pr(run) && !landed {
         RunState::Running
     } else {
         RunState::Complete
     };
+    if landed {
+        run.delivery.base_fetch_due = false;
+    }
+    // The round's stages merged nothing: they are skipped (m1), so no base sync targets
+    // them and a later round's first stage sits above landed stages only.
+    if delivery::pr(run) {
+        skip_stages(run, first, now);
+    }
     log(run, now, format!("round {n} rejected by the user"));
     let text = format!("the user rejected round {n}; the earlier rounds are unchanged");
     wake::note(run, text);
@@ -171,4 +181,16 @@ fn delivered(run: &Run) -> bool {
         && run.merge_queue.is_empty()
         && run.propagate_due.is_empty()
         && !merge::merging(run)
+}
+
+/// Every stage from `first` without a PR is skipped (a rejected round's, whose tasks
+/// all ended cancelled), logged as `open.rs` logs a skip.
+fn skip_stages(run: &mut Run, first: u16, now: u64) {
+    for n in first..=stage_count(run) {
+        if run.delivery.pr(n).is_some() || run.delivery.stage(n).is_some_and(|s| s.skipped) {
+            continue;
+        }
+        delivery::stage_mut(run, n).skipped = true;
+        log(run, now, format!("stage {n}: skipped (no changes)"));
+    }
 }

@@ -75,6 +75,7 @@ mod goal_rounds;
 mod goal_rounds_end;
 mod goal_rounds_end_fixes;
 mod goal_rounds_pr;
+mod goal_rounds_pr_fixes;
 mod goal_rounds_stages;
 mod goal_rounds_start;
 mod history;

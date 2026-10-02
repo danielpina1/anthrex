@@ -79,7 +79,7 @@ pub(crate) fn pr(run: &Run) -> bool {
 }
 
 /// Stage `n`'s delivery record, created (with every one below it) when missing.
-pub(super) fn stage_mut(run: &mut Run, n: u16) -> &mut StageDelivery {
+pub(in crate::run::engine) fn stage_mut(run: &mut Run, n: u16) -> &mut StageDelivery {
     let i = usize::from(n.max(1)) - 1;
     let stages = &mut run.delivery.stages;
     if stages.len() <= i {

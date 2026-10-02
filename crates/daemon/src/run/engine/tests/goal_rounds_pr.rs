@@ -56,7 +56,7 @@ pub(super) fn delivering() -> Fixture {
 }
 
 /// [`complete`] in `pr` mode with stage 1's PR #12 squash-merged: the run `complete`.
-fn landed() -> Fixture {
+pub(super) fn landed() -> Fixture {
     let mut fx = complete();
     let run = fx.run_mut();
     pr_mode(run);
@@ -73,7 +73,7 @@ fn landed() -> Fixture {
 }
 
 /// `run reject` of the fixture run.
-fn reject(fx: &mut Fixture) -> Vec<Effect> {
+pub(super) fn reject(fx: &mut Fixture) -> Vec<Effect> {
     let reply_id = fx.reply();
     fx.next(EventKind::Reject {
         reply: reply_id,
@@ -133,7 +133,7 @@ fn pushed(fx: &mut Fixture) -> (OpId, HostOp) {
 
 /// [`delivering`] iterated, round 2 planned with its stages created and its PR about
 /// to open.
-fn opening() -> (Fixture, OpId) {
+pub(super) fn opening() -> (Fixture, OpId) {
     let mut fx = delivering();
     assert_eq!(reply(&iterate(&mut fx, "more")), started(2));
     plan_round(&mut fx, json!([add_in("t2", "mail", 2, &[])]));
@@ -161,7 +161,7 @@ fn opens(fx: &Fixture) -> (OpId, HostOp) {
 }
 
 /// Every window the engine killed exits, and every op that follows is answered.
-fn sessions_end(fx: &mut Fixture) {
+pub(super) fn sessions_end(fx: &mut Fixture) {
     let killed: Vec<u32> = (fx.log.iter())
         .filter_map(|e| match e {
             Effect::KillWindow { window_id } => Some(*window_id),
