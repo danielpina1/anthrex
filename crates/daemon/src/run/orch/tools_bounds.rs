@@ -51,6 +51,9 @@ const EDIT: &[(&str, Rule)] = &[
     ("pr", Rule::Serde),
     ("thread", Rule::Text(1, 64)),
     ("body", Rule::Text(0, 16_000)),
+    // Milestone 9.3 decision 30: an `iterate` edit is bounded like `edit_plan`'s
+    // `iterate`, then refused by the batch in its source's words.
+    ("goal", Rule::Text(1, proto::GOAL_MAX_CHARS)),
 ];
 
 const TASK: &[(&str, Rule)] = &[
@@ -105,6 +108,7 @@ const OPS: &[&str] = &[
     "message",
     "refresh",
     "reply_comment",
+    "iterate",
 ];
 
 /// One `plan_edit`: `Err` holds `<path>: <problem>`, the path relative to the edit.

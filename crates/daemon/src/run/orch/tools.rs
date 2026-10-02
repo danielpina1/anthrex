@@ -37,6 +37,9 @@ pub enum OrchCall {
         edits: Vec<PlanEdit>,
         submit: bool,
         summary: Option<String>,
+        /// Milestone 9.3 decision 30: a round's request, alone in its call (the
+        /// engine's check).
+        iterate: Option<String>,
     },
     RunStatus {
         since: Option<u64>,
@@ -111,11 +114,18 @@ fn parse(tool: &str, args: &Value) -> Result<OrchCall, String> {
             })
         }
         "edit_plan" => {
-            let map = object(args, &["edits", "submit", "summary"])?;
+            let map = object(args, &["edits", "submit", "summary", "iterate"])?;
+            let iterate = text(map, "iterate", proto::GOAL_MAX_CHARS)?;
+            // Milestone 9.3 decision 30: an iterate needs no `edits` array.
+            let edits = match map.get("edits") {
+                None if iterate.is_some() => Vec::new(),
+                _ => edits(map, 0)?,
+            };
             Ok(OrchCall::EditPlan {
-                edits: edits(map, 0)?,
+                edits,
                 submit: flag(map, "submit")?,
                 summary: text(map, "summary", 8000)?,
+                iterate,
             })
         }
         "run_status" => {

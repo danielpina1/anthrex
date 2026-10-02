@@ -92,7 +92,12 @@ async fn wake_writes_happen_outside_every_lock() {
     let delivering = manager.clone();
     let started = Instant::now();
     let delivery = tokio::spawn(async move {
-        deliver_wake(&delivering, info.id, "[anthrex] run r1 changed").await
+        deliver_wake(
+            &delivering,
+            info.id,
+            &encode_paste("[anthrex] run r1 changed"),
+        )
+        .await
     });
     tokio::time::sleep(Duration::from_millis(60)).await;
     // Inside the delay: both locks answer at once.
@@ -132,6 +137,7 @@ fn a_digest_read_drops_the_wake_up_it_covered() {
         notes_seq,
         quiet: Duration::from_secs(1),
         generation: 0,
+        request: false,
     };
     wakes.insert("r1".into(), pending(3));
     wakes.insert("r2".into(), pending(3));
@@ -160,6 +166,7 @@ fn seen(live: bool, notes: bool, last_note_seq: u64) -> Seen {
         launches: 1,
         notes,
         last_note_seq,
+        request: false,
     }
 }
 
@@ -172,6 +179,7 @@ fn waiting(notes_seq: u64) -> Pending {
         notes_seq,
         quiet: Duration::from_secs(1),
         generation: 0,
+        request: false,
     }
 }
 
@@ -285,5 +293,173 @@ async fn a_check_reads_the_generations_before_the_engine() {
     assert!(
         crate::lock(&runs.wakes.pending).contains_key("r1"),
         "the wake-up queued during the check was dropped"
+    );
+}
+
+/// Milestone 9.3 decision 11 (D13): a round's wake for run `r1`'s window 1, holding the
+/// notes up to `notes_seq`, with a request of `chars` characters.
+fn request_wake(notes_seq: u64, chars: usize) -> Pending {
+    let request = "r".repeat(chars);
+    Pending {
+        text: crate::run::orch::contract_rounds::round_wake("3f9a", 2, 1, &request),
+        request: true,
+        ..waiting(notes_seq)
+    }
+}
+
+/// The engine holds `r1`'s request (`RunOrch.request_wake`) when `request`.
+fn seen_request(request: bool) -> Seen {
+    Seen {
+        request,
+        ..seen(true, false, 3)
+    }
+}
+
+/// D13: a round's wake is pasted whole, past the 2 KiB a notes-only wake is cut to, up
+/// to its own cap, which holds the longest request fenced, the fixed text and the notes.
+#[test]
+fn a_round_wake_over_2_kib_is_pasted_whole() {
+    use crate::run::orch::contract::wake_text;
+    use crate::run::orch::contract_rounds::{REQUEST_WAKE_MAX_BYTES, round_wake};
+    let wake = request_wake(3, 3 * 1024);
+    assert!(wake.text.len() > WAKE_MAX_BYTES);
+    let whole = wake.text.replace('\n', "\r");
+    assert_eq!(body(&wake.paste()), whole.as_bytes());
+    // The same text as a notes-only wake is cut, as before.
+    let notes_only = Pending {
+        request: false,
+        ..wake.clone()
+    };
+    assert!(body(&notes_only.paste()).len() <= WAKE_MAX_BYTES);
+    // The longest request (four-byte characters, or backticks, whose fence is longest)
+    // with the longest notes still fits the cap.
+    let notes: Vec<String> = (0..20)
+        .map(|i| format!("note {i} {}", "n".repeat(200)))
+        .collect();
+    for request in [
+        "\u{1D11E}".repeat(proto::GOAL_MAX_CHARS),
+        "`".repeat(proto::GOAL_MAX_CHARS),
+    ] {
+        let text = format!(
+            "{}\n{}",
+            round_wake("3f9a", 20, 32, &request),
+            wake_text("engine-test-3f9a", &notes)
+        );
+        assert!(text.len() <= REQUEST_WAKE_MAX_BYTES, "{}", text.len());
+        let pending = Pending {
+            text: text.clone(),
+            ..wake.clone()
+        };
+        assert_eq!(body(&pending.paste()), text.replace('\n', "\r").as_bytes());
+    }
+}
+
+/// D13: a `run_status` read covers notes, never a round's request: its wake waits.
+#[test]
+fn a_run_status_read_leaves_a_request_wake_waiting() {
+    let wakes = Wakes::default();
+    wakes.insert("r1".into(), request_wake(3, 10));
+    wakes.read("r1", 99);
+    assert!(crate::lock(&wakes.pending).contains_key("r1"));
+    // Judged on a snapshot with no notes left, the engine still holding the request.
+    wakes.keep_live(&[seen_request(true)], &wakes.generations());
+    assert!(crate::lock(&wakes.pending).contains_key("r1"));
+    // A notes-only paste holding every note does not remove it either.
+    wakes.pasted("r1", &waiting(99));
+    assert!(crate::lock(&wakes.pending).contains_key("r1"));
+    // Once the engine holds no request, it goes; and when the window is not live.
+    wakes.keep_live(&[seen_request(false)], &wakes.generations());
+    assert!(!crate::lock(&wakes.pending).contains_key("r1"));
+    wakes.insert("r1".into(), request_wake(3, 10));
+    let not_live = Seen {
+        live: false,
+        ..seen_request(true)
+    };
+    wakes.keep_live(&[not_live], &wakes.generations());
+    assert!(!crate::lock(&wakes.pending).contains_key("r1"));
+}
+
+/// D13 (amended): the engine re-emits a request with every change until it applies
+/// `OrchestratorWoken { request: true }`. A step between `deliver`'s removal and that
+/// event re-emits it; it is not pasted twice, whether it arrives while the paste is
+/// under way or after it, and a later request is pasted again.
+#[test]
+fn a_request_wake_is_pasted_once_across_the_woken_race() {
+    let wakes = Wakes::default();
+    let check = |wakes: &Wakes, engine_holds: bool| {
+        let (judged, epoch) = (wakes.generations(), wakes.epoch());
+        let seen = [seen_request(engine_holds)];
+        wakes.confirm(&seen, epoch);
+        wakes.keep_live(&seen, &judged);
+        wakes.take(wakes.deliverable(&judged))
+    };
+    // While the paste is under way.
+    wakes.insert("r1".into(), request_wake(3, 10));
+    let taken = check(&wakes, true);
+    assert_eq!(taken.len(), 1, "deliver's removal");
+    wakes.insert("r1".into(), request_wake(3, 10));
+    // `deliver` after its paste: the run's delivery is over, then `pasted`.
+    crate::lock(&wakes.delivering).remove("r1");
+    wakes.pasted("r1", &taken[0].1);
+    assert!(check(&wakes, true).is_empty(), "pasted twice");
+    // After the paste, before the engine applies `OrchestratorWoken`.
+    wakes.insert("r1".into(), request_wake(4, 10));
+    assert!(check(&wakes, true).is_empty(), "pasted twice");
+    assert!(!crate::lock(&wakes.pending).contains_key("r1"));
+    // The engine cleared it: a later round's request is pasted.
+    assert!(check(&wakes, false).is_empty());
+    wakes.insert("r1".into(), request_wake(5, 10));
+    assert_eq!(check(&wakes, true).len(), 1, "the next round's request");
+}
+
+/// D13 through `check_orchestrators`: the engine's `request_wake` is what a check
+/// reads, so a pasted request's re-emission is dropped while the engine still holds
+/// it, and the pasted mark goes once the engine no longer does.
+#[tokio::test]
+async fn a_check_drops_a_pasted_requests_re_emission() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = ManagerConfig::for_tests(dir.path().join("d.sock"), "/bin/sh".into());
+    let (manager, _events) = WindowManager::new(config);
+    let runs = RunService::for_manager(&manager, dir.path().join("data"), Arc::new(NoRoots));
+    let mut run = crate::run::orch::test_support::run_of(1);
+    run.id = "r1".into();
+    let mut o = crate::run::orch::test_support::orchestrator();
+    // A window no manager lists: nothing is delivered, whatever is kept.
+    o.window_id = Some(1);
+    o.launch_op = None;
+    o.live = true;
+    run.orch.orchestrator = Some(o);
+    run.orch.request_wake = Some("the round's wake".into());
+    crate::lock(&runs.state).runs.insert("r1".into(), run);
+    let pending = |runs: &RunService| crate::lock(&runs.wakes.pending).contains_key("r1");
+    runs.wakes.insert("r1".into(), request_wake(3, 10));
+    runs.check_orchestrators();
+    assert!(
+        pending(&runs),
+        "a request the engine holds waits for its window"
+    );
+    runs.wakes.pasted("r1", &request_wake(3, 10));
+    assert!(!pending(&runs), "the paste removed its duplicate");
+    runs.wakes.insert("r1".into(), request_wake(3, 10));
+    runs.check_orchestrators();
+    assert!(!pending(&runs), "a pasted request's re-emission was kept");
+    crate::lock(&runs.state)
+        .runs
+        .get_mut("r1")
+        .unwrap()
+        .orch
+        .request_wake = None;
+    runs.check_orchestrators();
+    crate::lock(&runs.state)
+        .runs
+        .get_mut("r1")
+        .unwrap()
+        .orch
+        .request_wake = Some("next".into());
+    runs.wakes.insert("r1".into(), request_wake(3, 10));
+    runs.check_orchestrators();
+    assert!(
+        pending(&runs),
+        "the next request is kept once the engine cleared the last"
     );
 }

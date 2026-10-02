@@ -314,3 +314,51 @@ fn stage_and_atomic_fields_are_accepted() {
         "invalid arguments: edits[0]: atomic: unknown field"
     );
 }
+
+/// Milestone 9.3 decision 30: `edit_plan`'s `iterate` is 1 to 16,384 characters, with
+/// or without an `edits` array; an `iterate` edit inside `edits` is bounded the same
+/// way and reaches the engine, which refuses it in the orchestrator's words.
+#[test]
+fn parse_call_bounds_iterate() {
+    let parse = |args: Value| parse_call(AgentRole::Orchestrator, "edit_plan", &args);
+    let at = "é".repeat(proto::GOAL_MAX_CHARS);
+    let over = "x".repeat(proto::GOAL_MAX_CHARS + 1);
+    assert_eq!(
+        parse(json!({"iterate": at})),
+        Ok(OrchCall::EditPlan {
+            edits: Vec::new(),
+            submit: false,
+            summary: None,
+            iterate: Some(at.clone()),
+        })
+    );
+    let Ok(OrchCall::EditPlan { edits, iterate, .. }) =
+        parse(json!({"iterate": "x", "edits": [], "submit": true}))
+    else {
+        panic!("edit_plan must parse");
+    };
+    assert_eq!((edits.len(), iterate.as_deref()), (0, Some("x")));
+    assert_eq!(
+        parse(json!({"iterate": over})),
+        Err("invalid arguments: iterate: must be 1 to 16384 characters".into())
+    );
+    assert_eq!(
+        parse(json!({"iterate": ""})),
+        Err("invalid arguments: iterate: must be 1 to 16384 characters".into())
+    );
+    assert_eq!(
+        parse(json!({"submit": true})),
+        Err("invalid arguments: edits: required".into()),
+        "edits stay required without iterate"
+    );
+    let Ok(OrchCall::EditPlan { edits, .. }) =
+        parse(json!({"edits": [{"op": "iterate", "goal": at}]}))
+    else {
+        panic!("an iterate edit parses");
+    };
+    assert_eq!(edits, vec![PlanEdit::Iterate { goal: at }]);
+    assert_eq!(
+        refusal(json!({"op": "iterate", "goal": over})),
+        "invalid arguments: edits[0]: goal: must be 1 to 16384 characters"
+    );
+}

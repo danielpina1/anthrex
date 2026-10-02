@@ -120,8 +120,11 @@ pub fn validate_tasks_with(
         for dep in &task.spec.deps {
             match by_id.get(dep.as_str()) {
                 None => errors.push(e("deps", "12.1", format!("{dep} is not a task"))),
+                // Milestone 9.3 decision 13: an earlier round's task is decided, so a
+                // cancelled one is still a met dependency.
                 Some(d)
                     if d.state == TaskState::Cancelled
+                        && d.round >= task.round
                         && match added_deps {
                             None => is_touched,
                             Some(added) => added.contains(&(id.to_string(), dep.clone())),

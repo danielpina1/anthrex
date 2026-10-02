@@ -239,6 +239,12 @@ pub enum EventKind {
     Orch(OrchEvent),
     /// Milestone 9.2 decision 25: `run deliver` and `run watch` (`delivery/`).
     Delivery(delivery::DeliveryRequest),
+    /// Milestone 9.3 decision 10: `run iterate` (`goal_rounds.rs`).
+    Iterate {
+        reply: ReplyId,
+        run_id: String,
+        goal: String,
+    },
 }
 
 /// The driver's translation of a window's session events (decision 27).
@@ -378,6 +384,11 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         } => promote::request(&mut state, reply, &run_id, orchestrator, now, &mut fx),
         EventKind::Orch(event) => orch::on_orch_event(&mut state, event, now, &mut fx),
         EventKind::Delivery(request) => delivery::request(&mut state, request, now, &mut fx),
+        EventKind::Iterate {
+            reply,
+            run_id,
+            goal,
+        } => goal_rounds::request(&mut state, reply, (&run_id, &goal), now, &mut fx),
         EventKind::BaseAdvanced {
             run_id,
             to,

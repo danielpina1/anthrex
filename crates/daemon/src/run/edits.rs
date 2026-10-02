@@ -21,6 +21,7 @@ pub(super) use super::edits_state::{not_started, state_label};
 use super::engine::actions::rules;
 use super::model::{Run, Task, TaskEvent, task_branch, task_path};
 use super::orch::EditSource;
+use super::orch::contract_rounds::{ITERATE_BY_PLANNER, ITERATE_BY_USER, ITERATE_IN_EDITS};
 use super::plan::PlanError;
 use super::validate::{
     EditScope, combined_cycles, implicit_deps, protected_notes, reserved_new_id,
@@ -63,6 +64,10 @@ pub fn apply_edits(
     source: &EditSource,
     now: u64,
 ) -> Result<(Run, Vec<EditConsequence>), Vec<PlanError>> {
+    // Milestone 9.3 decision 15: earlier rounds are read-only.
+    if let Some(error) = super::validate_rounds::earlier_round(run, edits) {
+        return Err(vec![error]);
+    }
     let mut batch = Batch {
         source: source.clone(),
         run: run.clone(),
@@ -122,11 +127,14 @@ fn requeue_waiting(run: &mut Run, now: u64) {
         .enumerate()
         .filter(|(_, t)| t.state == TaskState::Queued)
         .filter(|(_, t)| {
+            // Milestone 9.3 decision 13: an earlier round's task is a met dependency.
+            let earlier = |d: &String| run.tasks.iter().any(|x| x.id() == d && x.round < t.round);
             t.spec.deps.iter().any(|d| {
-                !matches!(
-                    state_of(&run.tasks, d),
-                    Some(TaskState::Merged | TaskState::Reported)
-                )
+                !earlier(d)
+                    && !matches!(
+                        state_of(&run.tasks, d),
+                        Some(TaskState::Merged | TaskState::Reported)
+                    )
             }) || t
                 .implicit_deps
                 .iter()
@@ -173,13 +181,15 @@ impl Batch {
                 self.errors.extend(applied.err());
             }
             // Milestone 9.3 decision 30: a round starts only from `run iterate` or
-            // `edit_plan`'s `iterate` (task M9.3.4a); never as a batch edit.
-            PlanEdit::Iterate { .. } => self.errors.push(PlanError::new(
-                None,
-                "",
-                "43",
-                "use anthrex run iterate to start a round",
-            )),
+            // `edit_plan`'s `iterate`; never as a batch edit.
+            PlanEdit::Iterate { .. } => {
+                let text = match self.source {
+                    EditSource::User => ITERATE_BY_USER,
+                    EditSource::Orchestrator => ITERATE_IN_EDITS,
+                    EditSource::Planner { .. } => ITERATE_BY_PLANNER,
+                };
+                self.errors.push(PlanError::new(None, "", "43", text));
+            }
         }
     }
 
@@ -230,6 +240,9 @@ impl Batch {
         let before = (self.run.task(&task.spec.id)).map(|t| t.spec.addresses.clone());
         let review = validate::apply(&mut self.run, &mut task, &self.source, before.as_deref());
         self.errors.extend(review);
+        // Milestone 9.3 decision 13: a new task is the current round's; an amended one
+        // keeps its own.
+        task.round = (self.run.task(&task.spec.id)).map_or(self.run.round(), |t| t.round);
         self.touched.insert(task.spec.id.clone());
         task
     }

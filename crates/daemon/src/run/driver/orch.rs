@@ -187,10 +187,11 @@ impl RunService {
             edits,
             submit,
             summary,
+            iterate,
         }) = parse_call(call.role, &call.tool, &call.args)
             && self.looked_up(&call, |_| ()).is_ok()
         {
-            let alone = !submit && summary.is_none();
+            let alone = !submit && summary.is_none() && iterate.is_none();
             if let Err(text) = self.refresh_precheck(&call.run_id, &edits, alone).await {
                 return refused(text);
             }

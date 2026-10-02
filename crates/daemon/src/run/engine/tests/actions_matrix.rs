@@ -97,8 +97,12 @@ fn event_for(fx: &mut Fixture, node: &ActionNode, kind: &ActionKind) -> EventKin
         ActionKind::ReviewPlan | ActionKind::Stats | ActionKind::OpenConversation => {
             unreachable!("client-only kinds are never request kinds")
         }
-        // Milestone 9.3: listed, and given `EventKind::Iterate`, from task M9.3.4a.
-        ActionKind::Iterate => unreachable!("iterate is not listed yet"),
+        // Milestone 9.3 decision 9: `run iterate`.
+        ActionKind::Iterate => EventKind::Iterate {
+            reply,
+            run_id,
+            goal: "more".into(),
+        },
     }
 }
 
@@ -249,6 +253,11 @@ fn listed_kinds_follow_decision_9() {
             "{complete}"
         );
     }
+    // Milestone 9.3 decision 9: a complete run with an orchestrator can be iterated.
+    assert_eq!(
+        kinds(&named("complete_orchestrated"), ActionNode::Run),
+        vec![Accept, Discard, Iterate]
+    );
     // The stage row: only a `Multi` run has stage nodes.
     let multi = named("multi_stage");
     for stage in [1, 2] {
@@ -307,4 +316,40 @@ fn client_only_kinds_are_never_listed() {
             assert!(requests.iter().all(|k| !k.is_local()), "{name}");
         }
     }
+}
+
+/// Milestone 9.3 decisions 9 and 32: in every fixture state, `iterate` is refused in
+/// exactly the handler's words, and listed (with no refusal) exactly when it is not.
+#[test]
+fn the_action_menu_refuses_iterate_in_the_handlers_words() {
+    let mut accepted = 0;
+    for (name, build) in FIXTURES {
+        let mut fx = build();
+        let kind = ActionKind::Iterate;
+        let check = actions::check(fx.run(), &ActionNode::Run, &kind);
+        let listed = actions::available(fx.run(), &ActionNode::Run)
+            .into_iter()
+            .find(|a| a.kind == kind);
+        assert_eq!(listed.is_some(), check.is_ok(), "{name}: {check:?}");
+        if let Some(action) = &listed {
+            assert_eq!(action.refused_why, None, "{name}");
+            assert_eq!(action.label, "iterate");
+            assert_eq!(
+                action.effect,
+                "plan round 2 of this run with its orchestrator"
+            );
+            assert_eq!(action.needs, proto::ActionNeeds::Open);
+        }
+        let event = event_for(&mut fx, &ActionNode::Run, &kind);
+        let got = replies(&fx.next(event));
+        match check {
+            Err(text) => assert_eq!(got, vec![Err(text)], "{name}"),
+            Ok(()) => {
+                assert_eq!(got.len(), 1, "{name}: {got:?}");
+                assert!(got[0].is_ok(), "{name}: {got:?}");
+                accepted += 1;
+            }
+        }
+    }
+    assert_eq!(accepted, 1, "only the complete run with an orchestrator");
 }

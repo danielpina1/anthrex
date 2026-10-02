@@ -9,7 +9,7 @@ use crate::run::engine::fixes::{FixSpec, add_fix, next_fix_id};
 use crate::run::model::FixOf;
 use crate::run::roster::peer;
 
-fn spec(origin: TaskOrigin, owns: &str, route: RouteSpec) -> FixSpec {
+pub(super) fn spec(origin: TaskOrigin, owns: &str, route: RouteSpec) -> FixSpec {
     let fixes = match origin {
         TaskOrigin::Sync => FixOf::Propagate {
             from: 1,

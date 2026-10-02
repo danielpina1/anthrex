@@ -36,7 +36,10 @@ pub(crate) fn request_kinds(run: &Run, node: &ActionNode) -> Vec<ActionKind> {
                 kinds.push(ApproveHold { hold: h.id.clone() });
                 kinds.push(RejectHold { hold: h.id.clone() });
             }
-            kinds.extend([Pause, Unpause, Resume, Cancel, Promote, Accept, Discard]);
+            // Milestone 9.3 decision 32: `iterate` last.
+            kinds.extend([
+                Pause, Unpause, Resume, Cancel, Promote, Accept, Discard, Iterate,
+            ]);
             kinds
         }
         ActionNode::Stage(stage) => vec![MessageStage { stage: *stage }],
@@ -104,6 +107,8 @@ fn relevant(run: &Run, node: &ActionNode, kind: &ActionKind) -> bool {
     );
     let complete = state == RunState::Complete;
     match (node, kind) {
+        // Milestone 9.3 decision 32: listed only when decision 9 lets the run iterate.
+        (ActionNode::Run, Iterate) => rules::iterate(run).is_none(),
         // Milestone 9.2 decisions 38-39 and ruling R-1: a `pr`-mode run never lists
         // accept (anthrex never merges), and discard only once it is complete.
         (ActionNode::Run, Accept | Discard) if delivery::pr(run) => complete && *kind == Discard,
@@ -225,8 +230,8 @@ pub(crate) fn check(run: &Run, node: &ActionNode, kind: &ActionKind) -> Result<(
         }
         // Client-only kinds change nothing in the daemon (decision 10).
         ReviewPlan | Stats | OpenConversation => None,
-        // Milestone 9.3: `rules::iterate` arrives with task M9.3.4a.
-        Iterate => Some("run iterate is not available yet".into()),
+        // Milestone 9.3 decision 9.
+        Iterate => rules::iterate(run),
     };
     refusal.map_or(Ok(()), Err)
 }

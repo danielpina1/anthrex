@@ -173,8 +173,8 @@ pub(super) fn effect(run: &Run, node: &ActionNode, kind: &ActionKind) -> String 
         ReviewPlan => "review plan: read every task before approving".into(),
         Stats => "stats: this project's run history".into(),
         OpenConversation => format!("open conversation: {t}'s conversation, read-only"),
-        // Milestone 9.3: never listed before task M9.3.4a, which names the round.
-        Iterate => "plan a new round of this run with its orchestrator".into(),
+        // Milestone 9.3 decision 32: the round it would start.
+        Iterate => crate::run::orch::contract_rounds::iterate_effect(run.round() + 1),
     }
 }
 

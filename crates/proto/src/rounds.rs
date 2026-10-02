@@ -45,7 +45,8 @@ pub enum RoundOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoundInfo {
     pub n: u32,
-    /// The request's first line, `one_line`, cut to [`ROUND_HEAD_CHARS`].
+    /// The whole request on one line (`safe_text::one_line`), cut to
+    /// [`ROUND_HEAD_CHARS`] characters.
     pub goal_head: String,
     pub origin: RoundOrigin,
     /// `None` while the round runs.

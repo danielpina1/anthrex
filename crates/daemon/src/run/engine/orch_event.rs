@@ -48,6 +48,9 @@ pub enum OrchEvent {
         run_id: String,
         digest_revision: u64,
         notes_seq: u64,
+        /// Milestone 9.3 decision 11 (D13): the wake carried the run's `request_wake`,
+        /// which only this clears.
+        request: bool,
     },
     /// Decisions 16 and 39: the orchestrator read the digest at `digest_revision`,
     /// whose answer included the wake notes up to `notes_seq` (`wake::notes_seq` of

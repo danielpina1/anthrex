@@ -46,6 +46,7 @@ pub(super) const FIXTURES: &[(&str, Build)] = &[
     ("finishing", finishing),
     ("complete", complete),
     ("complete_with_moved_base", complete_with_moved_base),
+    ("complete_orchestrated", complete_orchestrated),
     ("cancelled_halted", cancelled_halted),
     ("accepted", accepted),
     ("discarded", discarded),
@@ -326,6 +327,12 @@ pub(super) fn complete() -> Fixture {
     }
     assert_eq!(fx.run().state, RunState::Complete, "{:#?}", fx.run().log);
     fx
+}
+
+/// Milestone 9.3: a planned run whose orchestrator's task merged, complete: the one
+/// fixture state a round can start from (decision 9).
+fn complete_orchestrated() -> Fixture {
+    super::goal_rounds_start::complete()
 }
 
 /// The base head after an advance.

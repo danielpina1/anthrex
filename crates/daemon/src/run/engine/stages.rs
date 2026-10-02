@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use proto::{RunState, TaskState};
 
 use super::requests::log;
-use super::{Effect, OpKind, OpResult, emit_op, merge, next_op};
+use super::{Effect, OpKind, OpResult, emit_op, goal_rounds, merge, next_op};
 use crate::run::contract::sha7;
 use crate::run::model::{Run, StageLayout, StageMerge, StageRecord, Task};
 
@@ -127,6 +127,11 @@ pub(super) fn ensure_first(run: &mut Run) {
 /// created from `run_head` by the next running pass ([`create_pass`]), so no stage is
 /// recorded until its branch exists.
 pub(super) fn fix_layout(run: &mut Run, now: u64) {
+    // Milestone 9.3 decision 13: round 1's approval only; a later round's stages were
+    // laid out when it started (`goal_rounds::widen`).
+    if run.round() > 1 {
+        return;
+    }
     let multi = run.tasks.iter().any(|t| t.stage() > 1);
     if !multi {
         run.stage_layout = StageLayout::Single;
@@ -152,13 +157,17 @@ pub(super) fn creating(run: &Run) -> bool {
         .any(|p| matches!(p.kind, OpKind::CreateStageBranch { .. }))
 }
 
-/// Whether dependency `dep` of a task in stage `n` is in that stage's head: a reported
+/// Whether dependency `dep` of `task` in stage `n` is in that stage's head: a reported
 /// task merged nothing, a cancelled implicit one is no dependency, a merge of the same
-/// stage always is, and one of an earlier stage is when `n` holds it (decision 48).
-fn dep_in(run: &Run, dep: &str, n: u16, record: &StageRecord) -> bool {
+/// stage always is, and one of an earlier stage is when `n` holds it (decision 48). A
+/// task of an earlier round is met (milestone 9.3 decision 13).
+fn dep_in(run: &Run, task: &Task, dep: &str, n: u16, record: &StageRecord) -> bool {
     let Some(d) = run.task(dep) else {
         return true;
     };
+    if goal_rounds::dep_met(run, task, d) {
+        return true;
+    }
     match d.state {
         TaskState::Reported | TaskState::Cancelled => true,
         TaskState::Merged => d.stage() == n || record.tasks_in.contains(dep),
@@ -187,6 +196,8 @@ pub(crate) fn ready_in_stage(run: &Run, i: usize) -> bool {
         .iter()
         .chain(&task.implicit_deps)
         .all(|d| match run.task(d) {
+            // Milestone 9.3 decision 13: an earlier round's work is in every stage.
+            Some(dep) if goal_rounds::dep_met(run, task, dep) => true,
             Some(dep) if dep.state == TaskState::Merged => {
                 dep.stage() == n || record.tasks_in.contains(d)
             }
@@ -221,7 +232,7 @@ pub(super) fn create_pass(run: &mut Run, fx: &mut Vec<Effect>) {
                     .deps
                     .iter()
                     .chain(&t.implicit_deps)
-                    .all(|d| dep_in(run, d, next, record))
+                    .all(|d| dep_in(run, t, d, next, record))
         });
         // A stage whose tasks all finished unstarted (cancelled) is still created,
         // empty, when a later stage has work: stages stay contiguous (decision 44).
@@ -260,6 +271,8 @@ pub(super) fn created(run: &mut Run, kind: &OpKind, result: OpResult, now: u64) 
             let tasks_in = parent.map(|p| p.tasks_in.clone()).unwrap_or_default();
             let mut record = StageRecord::new(n, branch.clone(), from, tasks_in, now);
             record.synced_from = parent.map(|_| from.clone());
+            // Milestone 9.3 decision 13: the round whose stages hold it.
+            record.round = run.round_of_stage(n);
             run.stages.push(record);
             set_stage_head(run, n, from);
             log(run, now, format!("stage {n}: {branch} at {}", sha7(from)));

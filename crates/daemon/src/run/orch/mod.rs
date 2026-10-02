@@ -26,6 +26,7 @@ use crate::scout::report::ScoutReportArgs;
 
 pub mod context;
 pub mod contract;
+pub mod contract_rounds;
 pub mod digest;
 pub mod extract;
 pub mod installed;

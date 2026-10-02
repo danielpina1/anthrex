@@ -146,10 +146,16 @@ impl RunService {
                 let req = DeliveryRequestOf::Watch { run_id, on };
                 self.delivery_request(req).await
             }
-            // Milestone 9.3: rounds arrive with task M9.3.4a.
-            RunRequest::Iterate { .. } => {
-                RunReply::refused(request::ITERATE, "run iterate is not available yet")
-            }
+            // Milestone 9.3 decision 10: a round of a settled run.
+            RunRequest::Iterate { run, goal } => answer(
+                request::ITERATE,
+                self.ask(|reply| EventKind::Iterate {
+                    reply,
+                    run_id: run,
+                    goal,
+                })
+                .await,
+            ),
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }
@@ -442,3 +448,7 @@ impl RunService {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "requests_tests.rs"]
+mod tests;

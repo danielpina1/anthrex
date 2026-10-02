@@ -13,7 +13,9 @@ use serde_json::json;
 
 use super::batch::{Applied, Refused, apply_batch, record_rejected};
 use super::requests::log;
-use super::{Effect, EngineState, ReplyId, gate_holds, kinds, planners, run_scouts, wake};
+use super::{
+    Effect, EngineState, ReplyId, gate_holds, goal_rounds, kinds, planners, run_scouts, wake,
+};
 use crate::run::edits_orch::{MessageOutcome, one_edit_rule};
 use crate::run::model::Run;
 use crate::run::orch::tools::{OrchCall, parse_call};
@@ -83,10 +85,11 @@ pub(super) fn on_orch_event(
             run_id,
             digest_revision,
             notes_seq,
+            request,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
                 run.orch.wake_held = false;
-                wake::woken(run, digest_revision, notes_seq);
+                wake::woken(run, digest_revision, notes_seq, request);
             }
         }
         OrchEvent::WakeHeld { run_id, held } => {
@@ -218,10 +221,21 @@ pub(super) fn tool(
         OrchCall::SpawnSubplanner { .. } | OrchCall::SpawnScout { .. } if ending.is_some() => {
             refuse(fx, reply, ending.unwrap_or_default())
         }
+        // Milestone 9.3 decision 30: a round, alone in its call.
+        OrchCall::EditPlan {
+            iterate: Some(goal),
+            edits,
+            submit,
+            summary,
+        } => {
+            let alone = edits.is_empty() && !submit && summary.is_none();
+            goal_rounds::edit(run, reply, (&goal, alone), (now, quiet_base), fx)
+        }
         OrchCall::EditPlan {
             edits,
             submit,
             summary,
+            iterate: None,
         } => {
             let call = (&edits[..], submit, summary);
             edit_plan(run, reply, call, refusals, (now, quiet_base), fx)
@@ -343,7 +357,7 @@ pub(super) fn rejected(errors: &[crate::run::plan::PlanError]) -> String {
 /// Decision 19's accepted reply. `revision` is the digest's after this batch and the
 /// scheduler's pass over it (run here first, as a tick at the same time would), so it
 /// is the revision `run_status` then reports.
-fn accepted(
+pub(super) fn accepted(
     run: &mut Run,
     reply: ReplyId,
     (notes, held, message): (Vec<String>, Option<String>, Option<MessageOutcome>),

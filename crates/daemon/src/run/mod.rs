@@ -70,6 +70,7 @@ pub mod triage;
 pub mod validate;
 mod validate_graph;
 mod validate_kinds;
+mod validate_rounds;
 mod validate_stages;
 
 #[cfg(test)]

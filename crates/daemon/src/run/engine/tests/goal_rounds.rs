@@ -6,6 +6,7 @@ use proto::{ROUND_HEAD_CHARS, RoundOrigin, RoundOutcome, RunState};
 
 use super::control_restore::restart;
 use super::fixture::*;
+use crate::run::engine::OpResult;
 use crate::run::model::{Round, Run};
 use crate::run::snapshot::snapshot;
 
@@ -147,16 +148,31 @@ fn round_infos_are_cleaned_and_cut() {
     assert_eq!(info.rounds, infos);
 }
 
-/// A stage's round in the snapshot: its record's, or, before it is created, its tasks'.
+/// A stage's round in the snapshot: its created record's, or, before it is created, its
+/// tasks'. Task 3 review m1: the placeholder stage 1 of a plan not yet approved is not
+/// stage 1's record, so its round is not the stage's.
 #[test]
 fn a_stage_has_its_records_round_or_its_tasks() {
     let tasks = [task("t1", "S", "a", ""), task("t2", "S", "b", "stage = 2")];
     let mut fx = Fixture::new(&plan_with(PROFILE, &tasks));
-    fx.start(false);
+    fx.ready(false);
     fx.task_mut("t2").round = 2;
     fx.run_mut().stages[0].round = 3;
     assert_eq!(fx.run().stage(2), None, "stage 2 is not created yet");
-    let info = snapshot(&fx.state, fx.now).runs.remove(0);
-    let rounds: Vec<(u16, u32)> = info.stages.iter().map(|s| (s.n, s.round)).collect();
-    assert_eq!(rounds, [(1, 3), (2, 2)]);
+    let rounds = |fx: &Fixture| -> Vec<(u16, u32)> {
+        let info = snapshot(&fx.state, fx.now).runs.remove(0);
+        info.stages.iter().map(|s| (s.n, s.round)).collect()
+    };
+    assert_eq!(
+        rounds(&fx),
+        [(1, 1), (2, 2)],
+        "the placeholder's round is not used"
+    );
+    // Approved, stage 1 is created: its record's round is the stage's.
+    fx.approve();
+    let (op, _) = fx.op("CreateStageBranch");
+    fx.done(op, OpResult::StageCreated);
+    assert!(fx.run().stage(1).is_some());
+    fx.run_mut().stages[0].round = 3;
+    assert_eq!(rounds(&fx), [(1, 3), (2, 2)]);
 }

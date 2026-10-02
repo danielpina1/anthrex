@@ -68,7 +68,7 @@ fn stage_info(run: &Run, n: u16, planned: u16) -> StageInfo {
         propagate_red: record.and_then(|s| s.propagate_red.clone()),
         head,
         pr: None,
-        round: run.stage_round(n),
+        round: record.map_or_else(|| run.planned_stage_round(n), |s| s.round),
     }
 }
 

@@ -4,7 +4,8 @@
 //! `report_escape::fenced`, whose fence is one backtick longer than any run of
 //! backticks in the text, so nothing in it can close the block early and write
 //! outside it. Quoted text appears only in a fix task's brief, `run_status`'s
-//! `delivery` block and the `ci_summary` decider's prompt. Pure.
+//! `delivery` block, the `ci_summary` decider's prompt and (milestone 9.3, [`fence`])
+//! a round's wake. Pure.
 
 use proto::safe_text::{is_hidden_format, one_line};
 
@@ -71,6 +72,15 @@ pub fn comment_within(login: &str, text: &str, max: usize) -> Option<String> {
 pub fn hunk(text: &str) -> String {
     let text = clean(text);
     let kept: String = text.chars().take(COMMENT_MAX_CHARS).collect();
+    fenced(&kept)
+}
+
+/// Milestone 9.3 (D1): user text for the orchestrator (a round's request, a next goal),
+/// cleaned as a comment is, cut to `proto::GOAL_MAX_CHARS` characters, fenced one
+/// backtick longer than any run in it, so nothing in it can close the fence.
+pub fn fence(text: &str) -> String {
+    let text = clean(text);
+    let kept: String = text.chars().take(proto::GOAL_MAX_CHARS).collect();
     fenced(&kept)
 }
 

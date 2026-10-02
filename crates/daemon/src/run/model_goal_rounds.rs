@@ -80,19 +80,27 @@ impl Run {
         self.rounds.last()
     }
 
-    /// Stage `n`'s round: its record's, or for a stage not yet created its tasks'
-    /// lowest, 1 with neither.
-    pub fn stage_round(&self, n: u16) -> u32 {
-        match self.stage(n) {
-            Some(record) => record.round,
-            None => self
-                .tasks
-                .iter()
-                .filter(|t| t.stage() == n)
-                .map(|t| t.round)
-                .min()
-                .unwrap_or(1),
-        }
+    /// The round whose stages hold stage `n` (decision 13): the last round starting at
+    /// or below it, 1 with none. A stage a round creates carries it.
+    pub fn round_of_stage(&self, n: u16) -> u32 {
+        self.rounds
+            .iter()
+            .rev()
+            .find(|r| r.first_stage <= n)
+            .map_or(1, |r| r.n)
+    }
+
+    /// Stage `n`'s round while it has no record: its tasks' lowest, else
+    /// [`Run::round_of_stage`]. A created stage's round is its record's, which the
+    /// snapshot reads from the record `created` filtered, never from the placeholder
+    /// stage 1 of a plan not yet approved (task 3 review m1).
+    pub fn planned_stage_round(&self, n: u16) -> u32 {
+        self.tasks
+            .iter()
+            .filter(|t| t.stage() == n)
+            .map(|t| t.round)
+            .min()
+            .unwrap_or_else(|| self.round_of_stage(n))
     }
 
     /// `RunInfo.rounds`: one entry a round once the run has more than one, else none,
