@@ -364,12 +364,16 @@ fn allow_list_refuses_any_other_api_call_or_mutation() {
         ])
     };
     accepted(Program::Gh, &graphql(&query, "owner=o"));
+    // Task M9.2.10's fix round: the logged-in user, read bare (no path below it).
+    accepted(Program::Gh, &argv(&["api", "user"]));
     for args in [
         graphql(&format!("{query} mutation {{ x }}"), "owner=o"),
         graphql("query=query { viewer { login } }", "owner=o"),
         graphql(&query, "owner=other"),
         graphql(&query, "owner=@/etc/passwd"),
-        argv(&["api", "user"]),
+        argv(&["api", "user/repos"]),
+        argv(&["api", "user", "--paginate"]),
+        argv(&["api", "-X", "PATCH", "user", "-f", "name=x"]),
         argv(&["api", "repos/o/r"]),
         argv(&["api", "-X", "DELETE", "repos/o/r/git/refs/heads/main"]),
         argv(&[

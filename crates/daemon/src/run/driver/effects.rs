@@ -368,7 +368,10 @@ impl RunService {
                 (false, Some(guard)) => (Some(guard), None),
                 (false, None) => (Some(order.read_owned().await), None),
             };
-            let result = service.run_op(&ctx, op, kind).await;
+            // Milestone 9.2 (task M9.2.10's fix round): a PR view is cut to what
+            // run.json keeps before it is journaled and handed to the engine.
+            let result =
+                crate::run::delivery::view_trim::journaled(service.run_op(&ctx, op, kind).await);
             if service.stopped.load(Ordering::SeqCst) {
                 return;
             }

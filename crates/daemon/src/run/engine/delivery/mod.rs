@@ -36,7 +36,10 @@ pub(in crate::run::engine) use review_fix::holds_for as review_holds;
 /// Task M9.2.10's bounds on kept review text, for the size test.
 #[cfg(test)]
 pub(crate) mod review_limits {
-    pub(crate) use super::review::{COMMENT_KEPT_CHARS, STAGE_TEXT_CHARS, THREAD_COMMENTS_KEPT};
+    pub(crate) use super::review::{
+        COMMENT_KEPT_CHARS, PERMISSION_WAIT_SECS, STAGE_TEXT_CHARS, THREAD_COMMENTS_KEPT,
+    };
+    pub(crate) use crate::run::delivery::reply_edit::REPLIES_PER_THREAD;
 }
 pub(crate) use watch::{attention, held, release, stage_busy, stage_paused};
 
@@ -237,6 +240,7 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
         .take(200)
         .collect();
     let rate_limited = matches!(error, HostError::RateLimited(_));
+    let mut dropped = false;
     match op {
         HostOp::RerunFailed { stage, ci_run } => {
             let timed_out = matches!(error, HostError::TimedOut(_));
@@ -245,7 +249,7 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
         HostOp::FailedLogs { stage, ci_run, .. } => ci::logs_failed(run, *stage, *ci_run, now),
         HostOp::Permission { .. } => review::permission_failed(run, now, retry_secs(run)),
         HostOp::Reply { stage, marker, .. } => {
-            reply::reply_failed(run, *stage, marker, &error, now)
+            dropped = reply::reply_failed(run, *stage, marker, (&error, &text), now);
         }
         _ => {}
     }
@@ -256,6 +260,12 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
             *run.delivery.failures.entry(failure_key(op)).or_default() += 1;
             watch::keeps_failing(run, op, op_name(op), &text);
         }
+    }
+    if dropped {
+        // The dropped reply's own line says it; the stage's next reply starts afresh.
+        let key = failure_key(op);
+        run.delivery.failures.remove(&key);
+        run.delivery.alerts.remove(&key);
     }
     let Some(n) = stage_of(op) else {
         return log(run, now, format!("{} failed: {text}", op_name(op)));

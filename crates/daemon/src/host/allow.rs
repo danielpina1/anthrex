@@ -203,6 +203,8 @@ fn gh_allowed(args: &[&str], ctx: &AllowCtx<'_>) -> bool {
             number(n) && repo(r) && f.starts_with('/')
         }
         ["pr", "edit", n, "--repo", r, "--base", b] => number(n) && repo(r) && branch_ok(b),
+        // Task M9.2.10's fix round: the login anthrex posts with, to know its replies.
+        ["api", "user"] => true,
         ["api", p] => path_of(p, "collaborators/")
             .is_some_and(|rest| rest.strip_suffix("/permission").is_some_and(login_ok)),
         _ => false,

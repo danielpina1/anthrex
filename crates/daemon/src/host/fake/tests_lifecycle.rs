@@ -191,6 +191,7 @@ fn fake_pr_lifecycle_through_gh_host() {
             "-F",
             "number=1",
         ]),
+        strings(&["api", "user"]),
         strings(&[
             "api",
             &format!("repos/{FULL}/pulls/1/comments"),

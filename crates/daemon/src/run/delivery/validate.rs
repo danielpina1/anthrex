@@ -55,7 +55,9 @@ pub fn apply(run: &mut Run, task: &mut Task, source: &EditSource) -> Vec<PlanErr
     for reference in &task.spec.addresses {
         let new = |key: &str| {
             (run.delivery.stage(n)).is_some_and(|s| {
-                (s.threads.iter()).any(|t| t.key == key && t.state == ThreadState::New)
+                // The fix round's m1: a thread that counts (a writer's), not one
+                // still waiting for its author's permission.
+                (s.threads.iter()).any(|t| t.key == key && t.state == ThreadState::New && t.counted)
             })
         };
         match parse(reference) {

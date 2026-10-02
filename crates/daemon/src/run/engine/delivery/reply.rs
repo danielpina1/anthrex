@@ -14,10 +14,10 @@ use super::watch::named;
 use super::{emit, host_busy, stage_mut};
 use crate::host::HostError;
 use crate::run::contract::sha7;
-use crate::run::delivery::ReplyDue;
 use crate::run::delivery::ThreadState;
 use crate::run::delivery::ops::HostOp;
 use crate::run::delivery::reply_edit::{marker, target};
+use crate::run::delivery::{FAILURES_BEFORE_ATTENTION, ReplyDue};
 use crate::run::model::{FixOf, Run};
 
 /// Step 4: each merged review fix of stage `n` queues one reply per thread, once
@@ -59,8 +59,14 @@ pub(super) fn queue_replies(run: &mut Run, n: u16) {
                 push: None,
                 ready: false,
                 sent: false,
+                failures: 0,
             };
-            stage_mut(run, n).replies.push(reply);
+            let stage = stage_mut(run, n);
+            stage.replies.push(reply);
+            // Counted against the thread's replies (the fix round's m3), never refused.
+            if let Some(t) = stage.threads.iter_mut().find(|t| t.key == key) {
+                t.replies = t.replies.saturating_add(1);
+            }
         }
     }
 }
@@ -130,6 +136,10 @@ pub(super) fn replied(run: &mut Run, n: u16, marker: &str, comment_id: u64, now:
         return;
     };
     let r = stage.replies.remove(i);
+    run.delivery
+        .alerts
+        .remove(&format!("{n}/reply/{}", r.thread));
+    let stage = stage_mut(run, n);
     if let Some(t) = stage.threads.iter_mut().find(|t| t.key == r.thread) {
         let answers = match (&t.state, &r.task) {
             (ThreadState::Tasked { task }, Some(id)) => task == id,
@@ -145,14 +155,25 @@ pub(super) fn replied(run: &mut Run, n: u16, marker: &str, comment_id: u64, now:
 }
 
 /// A reply failed: one whose thread or PR is gone (`NotFound`) is dropped; any other
-/// is retried when next due (decision 11).
-pub(super) fn reply_failed(run: &mut Run, n: u16, marker: &str, error: &HostError, now: u64) {
-    if !matches!(error, HostError::NotFound(_)) {
-        return;
+/// is retried when next due (decision 11), and after [`FAILURES_BEFORE_ATTENTION`] in a
+/// row (a rate limit or a lost login is not the reply's) it is dropped with an
+/// attention line, so the stage's next reply goes (the fix round's m3). Whether it was
+/// dropped so.
+pub(super) fn reply_failed(
+    run: &mut Run,
+    n: u16,
+    marker: &str,
+    (error, text): (&HostError, &str),
+    now: u64,
+) -> bool {
+    match error {
+        HostError::NotFound(_) => {}
+        HostError::RateLimited(_) | HostError::Auth(_) => return false,
+        _ => return failing(run, n, marker, text, now),
     }
     let stage = stage_mut(run, n);
     let Some(i) = stage.replies.iter().position(|r| r.marker == marker) else {
-        return;
+        return false;
     };
     let r = stage.replies.remove(i);
     log(
@@ -163,4 +184,27 @@ pub(super) fn reply_failed(run: &mut Run, n: u16, marker: &str, error: &HostErro
             r.thread
         ),
     );
+    false
+}
+
+fn failing(run: &mut Run, n: u16, marker: &str, text: &str, now: u64) -> bool {
+    let stage = stage_mut(run, n);
+    let Some(i) = stage.replies.iter().position(|r| r.marker == marker) else {
+        return false;
+    };
+    let r = &mut stage.replies[i];
+    r.failures = r.failures.saturating_add(1);
+    if r.failures < FAILURES_BEFORE_ATTENTION {
+        return false;
+    }
+    let r = stage.replies.remove(i);
+    let pr = run.delivery.pr(n).map_or(0, |p| p.number);
+    let line = format!(
+        "PR #{pr}: the reply on thread {pr}:{} was dropped after {} failures: {text}",
+        r.thread, r.failures
+    );
+    log(run, now, line.clone());
+    let key = format!("{n}/reply/{}", r.thread);
+    run.delivery.alerts.insert(key, line);
+    true
 }

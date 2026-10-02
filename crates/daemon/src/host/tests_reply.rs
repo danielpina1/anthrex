@@ -1,6 +1,8 @@
 //! Task M9.2.4: `reply`'s behaviour through `ScriptedRunner`: a reply already posted is
 //! found by its marker and not posted again (decision 10). Split from `tests_parse.rs`
-//! for AGENTS.md rule 8.
+//! for AGENTS.md rule 8. Task M9.2.10's fix round: only a comment by the logged-in user
+//! (`gh api user`, the login anthrex posts with) is anthrex's reply; a marker pasted by
+//! anyone else does not stop the reply.
 
 use serde_json::Value;
 
@@ -8,27 +10,35 @@ use super::scripted::ScriptedRunner;
 use super::tests::*;
 use super::*;
 
-#[test]
-fn reply_skips_when_its_marker_is_there() {
-    let tmp = tempfile::tempdir().unwrap();
-    let req = ReplyReq {
-        repo: repo(tmp.path()),
+fn thread_req(root: &std::path::Path) -> ReplyReq {
+    ReplyReq {
+        repo: repo(root),
         number: 142,
         target: ReplyTarget::Thread {
             comment_id: 3658443294,
         },
         body: "Addressed in 1a2b3c4 by task fix4.".to_string(),
         marker: "<!-- anthrex:reply r1a2b 142:t3658443294 1a2b3c4 -->".to_string(),
-    };
-    let h = host(ScriptedRunner::new().ok(REST_REVIEW_COMMENTS));
+    }
+}
+
+fn listing(kind: &str) -> Vec<String> {
+    argv(&[
+        "api",
+        &format!("repos/cli/cli/{kind}/142/comments"),
+        "--paginate",
+    ])
+}
+
+#[test]
+fn reply_skips_when_its_marker_is_there() {
+    let tmp = tempfile::tempdir().unwrap();
+    let req = thread_req(tmp.path());
+    let h = host(ScriptedRunner::new().ok(REST_USER).ok(REST_REVIEW_COMMENTS));
     assert_eq!(h.reply(&req).unwrap(), 3658444294);
     assert_eq!(
         h.runner().argvs(),
-        vec![argv(&[
-            "api",
-            "repos/cli/cli/pulls/142/comments",
-            "--paginate"
-        ])]
+        vec![argv(&["api", "user"]), listing("pulls")]
     );
     // `--paginate` prints one array per page; the marker can be on any of them.
     let comments: Value = serde_json::from_str(REST_REVIEW_COMMENTS).unwrap();
@@ -38,19 +48,58 @@ fn reply_skips_when_its_marker_is_there() {
         Value::Array(rows[..2].to_vec()),
         Value::Array(rows[2..].to_vec())
     );
-    let h = host(ScriptedRunner::new().ok(&pages));
+    let h = host(ScriptedRunner::new().ok(REST_USER).ok(&pages));
     assert_eq!(h.reply(&req).unwrap(), 3658444294);
-    assert_eq!(h.runner().calls().len(), 1);
-    // A conversation whose listing has the marker posts nothing either.
+    assert_eq!(h.runner().calls().len(), 2);
+    // A conversation whose listing has the marker, in the user's comment, posts nothing
+    // either; GitHub's logins are matched without case.
     let mut issue: Value = serde_json::from_str(REST_ISSUE_COMMENTS).unwrap();
     let marker = "<!-- anthrex:reply r1a2b 142:c5154974588 1a2b3c4 -->";
     issue[1]["body"] = Value::String(format!("@alice Addressed.\n\n{marker}"));
-    let h = host(ScriptedRunner::new().ok(&issue.to_string()));
+    issue[1]["user"]["login"] = Value::String("Tester".to_string());
+    let h = host(ScriptedRunner::new().ok(REST_USER).ok(&issue.to_string()));
     let conversation = ReplyReq {
         target: ReplyTarget::Conversation,
         marker: marker.to_string(),
         ..req
     };
     assert_eq!(h.reply(&conversation).unwrap(), 5154974588);
+    assert_eq!(h.runner().calls().len(), 2);
+}
+
+#[test]
+fn a_marker_pasted_by_someone_else_does_not_stop_the_reply() {
+    let tmp = tempfile::tempdir().unwrap();
+    let req = thread_req(tmp.path());
+    // The fixture's reply (id 3658444294) carries the marker; alice pasted it.
+    let mut comments: Value = serde_json::from_str(REST_REVIEW_COMMENTS).unwrap();
+    comments[3]["user"]["login"] = Value::String("alice".to_string());
+    let created = comments[0].to_string();
+    let h = host(
+        ScriptedRunner::new()
+            .ok(REST_USER)
+            .ok(&comments.to_string())
+            .ok(&created),
+    );
+    assert_eq!(h.reply(&req).unwrap(), 3658443294, "posted, not found");
+    let body = format!("body={}\n\n{}", req.body, req.marker);
+    let post = argv(&[
+        "api",
+        "-X",
+        "POST",
+        "repos/cli/cli/pulls/142/comments/3658443294/replies",
+        "-f",
+        &body,
+    ]);
+    assert_eq!(
+        h.runner().argvs(),
+        vec![argv(&["api", "user"]), listing("pulls"), post]
+    );
+    // A user `gh api user` does not name is never guessed: nothing is posted.
+    let h = host(ScriptedRunner::new().ok("{\"id\": 1}"));
+    assert_eq!(
+        h.reply(&req),
+        Err(HostError::Rejected("gh output changed: login".to_string()))
+    );
     assert_eq!(h.runner().calls().len(), 1);
 }

@@ -43,6 +43,9 @@ pub(super) const THREADS_DEPRECATED_ID: &str = include_str!("fixtures/threads_qu
 pub(super) const THREADS_EXTENDED: &str =
     include_str!("fixtures/threads_query_response_extended.json");
 pub(super) const PERMISSION: &str = include_str!("fixtures/rest_collaborator_permission.json");
+/// Task M9.2.10's fix round: `gh api user`, hand-written in GitHub's `GET /user` shape
+/// (only `login` is read); not recorded, since recording would contact GitHub.
+pub(super) const REST_USER: &str = include_str!("fixtures/rest_user.json");
 
 pub(super) fn argv(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|p| p.to_string()).collect()
@@ -143,8 +146,10 @@ fn every_method(root: &Path) -> GhHost<ScriptedRunner> {
         .ok(RUN_LOG_FAILED)
         .ok("")
         // reply in a thread, then in the conversation (no marker in either listing)
+        .ok(REST_USER)
         .ok("[]")
         .ok(&created)
+        .ok(REST_USER)
         .ok(REST_ISSUE_COMMENTS)
         .ok("https://github.com/cli/cli/pull/13982#issuecomment-5200000001\n")
         // retarget, permission, delete_branch
@@ -468,6 +473,7 @@ fn every_method_builds_its_exact_argv() {
             ]),
             w,
         ),
+        (Program::Gh, argv(&["api", "user"]), r),
         (
             Program::Gh,
             argv(&["api", "repos/cli/cli/pulls/13982/comments", "--paginate"]),
@@ -485,6 +491,7 @@ fn every_method_builds_its_exact_argv() {
             ]),
             w,
         ),
+        (Program::Gh, argv(&["api", "user"]), r),
         (
             Program::Gh,
             argv(&["api", "repos/cli/cli/issues/13982/comments", "--paginate"]),
@@ -534,7 +541,7 @@ fn every_method_builds_its_exact_argv() {
             Program::Git => assert!(call.env.is_empty(), "call {i}: {:?}", call.env),
         }
     }
-    let comment = &calls[21].argv;
+    let comment = &calls[23].argv;
     assert_eq!(
         comment[..6],
         argv(&["pr", "comment", "13982", "--repo", "cli/cli", "--body-file"])[..]
@@ -557,7 +564,7 @@ fn allow_list_accepts_every_built_command() {
     let tmp = tempfile::tempdir().unwrap();
     let host = every_method(tmp.path());
     let calls: Vec<Call> = host.runner().calls();
-    assert_eq!(calls.len(), 25);
+    assert_eq!(calls.len(), 27);
     let ctx = allow::AllowCtx {
         run_id: Some(RUN),
         remote: "origin",

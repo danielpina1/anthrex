@@ -26,7 +26,7 @@ use crate::run::engine::EventKind;
 use crate::run::model::{FixOf, OpId};
 use crate::run::orch::EditSource;
 
-fn by_alice() -> Fixture {
+pub(super) fn by_alice() -> Fixture {
     let mut fx = reviewed();
     fx.run_mut().delivery.limits.reviewers = vec!["alice".into()];
     fx
@@ -46,7 +46,7 @@ fn fixed(fx: &mut Fixture) {
 }
 
 /// Fix task `id` launches, passes its gates and merges at `at`.
-fn merge_fix(fx: &mut Fixture, id: &str, at: &str) {
+pub(super) fn merge_fix(fx: &mut Fixture, id: &str, at: &str) {
     fx.tick();
     let windows = fx.launch_all();
     to_queue(fx, id, window_of(&windows, id));
@@ -54,14 +54,14 @@ fn merge_fix(fx: &mut Fixture, id: &str, at: &str) {
 }
 
 /// The pending host ops that are replies.
-fn reply_ops(fx: &Fixture) -> Vec<(OpId, HostOp)> {
+pub(super) fn reply_ops(fx: &Fixture) -> Vec<(OpId, HostOp)> {
     (host_ops(fx).into_iter())
         .filter(|(_, op)| matches!(op, HostOp::Reply { .. }))
         .collect()
 }
 
 /// The one pending reply.
-fn one_reply(fx: &Fixture) -> (OpId, HostOp) {
+pub(super) fn one_reply(fx: &Fixture) -> (OpId, HostOp) {
     let ops = reply_ops(fx);
     assert_eq!(ops.len(), 1, "one reply: {:#?}", host_ops(fx));
     ops[0].clone()
@@ -75,7 +75,7 @@ fn marker_of(op: &HostOp) -> String {
 }
 
 /// Answers the pending push of stage 1, which must push `sha`.
-fn push_lands(fx: &mut Fixture, sha: &str) {
+pub(super) fn push_lands(fx: &mut Fixture, sha: &str) {
     let ops: Vec<_> = (host_ops(fx).into_iter())
         .filter(|(_, op)| matches!(op, HostOp::Push { .. }))
         .collect();
@@ -232,7 +232,7 @@ fn a_reply_whose_answer_was_lost_is_sent_again_and_is_never_review_input() {
 }
 
 /// `reviewed()` with `c5` by alice, counted and still `new`.
-fn commented() -> Fixture {
+pub(super) fn commented() -> Fixture {
     let mut fx = by_alice();
     fx.run_mut().delivery.limits.review_batch_secs = 3_600;
     let mut v = view(&commit(1));
@@ -241,7 +241,7 @@ fn commented() -> Fixture {
     fx
 }
 
-fn reply_comment(thread: &str, body: &str) -> PlanEdit {
+pub(super) fn reply_comment(thread: &str, body: &str) -> PlanEdit {
     PlanEdit::ReplyComment {
         pr: PR,
         thread: thread.into(),
@@ -249,7 +249,7 @@ fn reply_comment(thread: &str, body: &str) -> PlanEdit {
     }
 }
 
-fn refused(fx: &mut Fixture, edits: Vec<PlanEdit>) -> String {
+pub(super) fn refused(fx: &mut Fixture, edits: Vec<PlanEdit>) -> String {
     let result = replies(&edit(fx, edits)).remove(0);
     result.expect_err("refused")
 }
@@ -357,7 +357,7 @@ fn reply_comment_queues_a_reply_with_the_marker() {
 }
 
 /// A planned run's batch of `c5`, `c6` and `c7` by alice, the orchestrator woken.
-fn planned() -> Fixture {
+pub(super) fn planned() -> Fixture {
     let mut fx = by_alice();
     super::bisect::with_orchestrator(&mut fx);
     let mut v = view(&commit(1));
@@ -371,7 +371,7 @@ fn planned() -> Fixture {
     fx
 }
 
-fn add(id: &str, owns: &[&str], addresses: &[&str]) -> Value {
+pub(super) fn add(id: &str, owns: &[&str], addresses: &[&str]) -> Value {
     json!({"op": "add_task", "task": {
         "id": id, "title": format!("Title {id}"), "size": "S", "stage": 1,
         "owns": owns, "test_mode": "check", "test_mode_reason": "docs",
@@ -380,7 +380,7 @@ fn add(id: &str, owns: &[&str], addresses: &[&str]) -> Value {
     }})
 }
 
-fn add_plan(fx: &mut Fixture, task: Value) -> (bool, Value) {
+pub(super) fn add_plan(fx: &mut Fixture, task: Value) -> (bool, Value) {
     orch_answer(&edit_plan(fx, json!({"edits": [task]})))
 }
 

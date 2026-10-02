@@ -329,13 +329,16 @@ impl<R: Runner> CodeHost for GhHost<R> {
             ReplyTarget::Thread { .. } => format!("repos/{full}/pulls/{n}/comments"),
             ReplyTarget::Conversation => format!("repos/{full}/issues/{n}/comments"),
         };
+        // Only the user's own comment is a reply anthrex posted (the fix round's ruling).
+        let user = self.gh_ok(repo, &ctx, strings(&["api", "user"]), HOST_READ_TIMEOUT)?;
+        let me = gh_parse::user_login(&user.stdout_text())?;
         let seen = self.gh_ok(
             repo,
             &ctx,
             strings(&["api", &listing, "--paginate"]),
             HOST_READ_TIMEOUT,
         )?;
-        if let Some(id) = gh_parse::find_marker(&seen.stdout_text(), &req.marker)? {
+        if let Some(id) = gh_parse::find_marker(&seen.stdout_text(), &req.marker, &me)? {
             return Ok(id);
         }
         let text = format!("{}\n\n{}", req.body, req.marker);

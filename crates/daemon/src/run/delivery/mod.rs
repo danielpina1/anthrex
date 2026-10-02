@@ -20,6 +20,7 @@ pub mod reply_edit;
 pub mod snapshot;
 pub mod templates;
 pub mod validate;
+pub mod view_trim;
 
 /// Decision 21: a PR body is cut to this many characters (GitHub's limit is 65 536).
 pub const BODY_MAX_CHARS: usize = 60_000;
@@ -162,6 +163,10 @@ pub struct ReplyDue {
     /// Sent at least once, unanswered: a comment with its marker may exist.
     #[serde(default)]
     pub sent: bool,
+    /// The fix round's m3: failures in a row; at `FAILURES_BEFORE_ATTENTION` the reply
+    /// is dropped with an attention line, so it never blocks the stage's next one.
+    #[serde(default)]
+    pub failures: u32,
 }
 
 /// A stage's pull request (decisions 20, 23, 35).
@@ -390,6 +395,14 @@ pub struct ThreadRecord {
     /// The closed batch (1, 2, …) the thread was handed out in; 0 before.
     #[serde(default)]
     pub batch: u32,
+    /// The fix round's m4: when the first of `candidates` was seen; past
+    /// `PERMISSION_WAIT_SECS` an unanswered login does not hold the stage's batch.
+    #[serde(default)]
+    pub waiting_since: u64,
+    /// The fix round's m3: replies queued on the thread since it last counted, at most
+    /// `reply_edit::REPLIES_PER_THREAD` of them from `reply_comment`.
+    #[serde(default)]
+    pub replies: u32,
 }
 
 /// One processed comment of a review thread (host text, quoted only when used).
@@ -485,3 +498,5 @@ mod tests;
 mod tests_body;
 #[cfg(test)]
 mod tests_snapshot;
+#[cfg(test)]
+mod tests_view_trim;

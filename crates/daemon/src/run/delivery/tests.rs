@@ -226,6 +226,8 @@ pub(super) fn thread(key: &str, author: &str, state: ThreadState) -> ThreadRecor
         candidates: Vec::new(),
         counted: true,
         batch: 1,
+        waiting_since: 3_900,
+        replies: 1,
     }
 }
 
@@ -389,6 +391,7 @@ fn the_delivery_model_round_trips_through_run_json() {
             push: Some(HEAD2.into()),
             ready: false,
             sent: true,
+            failures: 2,
         }],
         auto_replies: ["fix2/t98765".to_string()].into(),
         own_comments: [5_000_000_099].into(),

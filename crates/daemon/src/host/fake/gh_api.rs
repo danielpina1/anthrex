@@ -1,7 +1,7 @@
 //! `FakeGh`'s `gh api` calls: the one GraphQL query (`THREADS_QUERY`, ruling R-2), the
 //! two comment listings (`--paginate`: one JSON array per page of 30, printed one after
 //! another, as gh does without `--slurp`), the thread reply `POST` and the permission
-//! read. Parsed strictly; GitHub's REST and GraphQL shapes as M9.2.1 recorded them.
+//! read, and `gh api user` (task M9.2.10's fix round). Parsed strictly; GitHub's REST and GraphQL shapes as M9.2.1 recorded them.
 
 use serde_json::{Value, json};
 
@@ -39,6 +39,9 @@ pub(super) fn parse(args: &[&str]) -> Option<Cmd> {
         i += 1;
     }
     let [path] = paths[..] else { return None };
+    if path == "user" {
+        return (method.is_none() && !paginate && fields.is_empty()).then_some(Cmd::User);
+    }
     // gh's default method: GET, or POST once a field is given.
     let method = method.unwrap_or(if fields.is_empty() { "GET" } else { "POST" });
     let field = |key: &str| {
@@ -142,6 +145,10 @@ fn last<T>(items: &[T], n: usize) -> &[T] {
 }
 
 pub(super) fn answer(state: &mut FakeGithub, cmd: &Cmd, host: &str) -> Result<Answer, String> {
+    if let Cmd::User = cmd {
+        let user = json!({ "login": FAKE_LOGIN, "id": 1, "type": "User" });
+        return Ok(Answer::out(user.to_string() + "\n"));
+    }
     let named = match cmd {
         Cmd::Threads { owner, name, .. } => format!("{owner}/{name}"),
         Cmd::ListComments { repo, .. } | Cmd::Reply { repo, .. } | Cmd::Permission { repo, .. } => {

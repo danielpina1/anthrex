@@ -261,23 +261,32 @@ fn a_new_comment_in_an_unresolved_thread_counts() {
             task: "fix1".into()
         }
     );
-    // A writer's new comment in the same unresolved thread makes it count again.
+    // A writer's new comment in the same unresolved thread makes it count again, once
+    // the writer is known (task M9.2.10's fix round, I1: until then nothing changes).
     v.threads[0].comments.push(noted(31, "bob", "and the docs"));
     poll_with(&mut fx, v.clone());
-    assert_eq!(state(&fx, "t30"), ThreadState::New);
+    assert_eq!(
+        state(&fx, "t30"),
+        ThreadState::Tasked {
+            task: "fix1".into()
+        }
+    );
     assert_eq!(asked(&fx), vec!["bob"]);
     grant(&mut fx, "bob", RepoPermission::Maintain);
+    assert_eq!(state(&fx, "t30"), ThreadState::New);
     assert!(counted(&fx, "t30"));
     fx.tick();
     // Its fix task exists: the fast path never makes a second one; it is the user's.
     let fixes = (fx.run().tasks.iter()).filter(|t| t.id().starts_with("fix"));
     assert_eq!(fixes.count(), 1);
     assert!(attention(&fx).contains(&"PR #7: 1 thread not addressed".to_string()));
-    // A comment in a resolved thread does not.
+    // A comment in a resolved thread does not, and the resolved thread is no longer
+    // the run's to address (the fix round's m2).
     v.threads[0].comments.push(noted(32, "bob", "one more"));
     v.threads[0].resolved = true;
     poll_with(&mut fx, v);
-    assert!(counted(&fx, "t30") && state(&fx, "t30") == ThreadState::New);
+    assert_eq!(state(&fx, "t30"), ignored("a resolved thread"));
+    assert!(!attention(&fx).iter().any(|l| l.contains("not addressed")));
     assert!(asked(&fx).is_empty());
 }
 

@@ -6,12 +6,14 @@
 //!    anthrex's own (known by the id its reply was answered with, never by its text,
 //!    which anyone can paste; or the marker of a reply it sent and has no answer for),
 //!    a bot's, and one in a resolved thread do not count, and are logged as ignored. A
-//!    human's leaves the thread `new`, its authors the candidates.
+//!    human's makes its author a candidate; the thread keeps its state until then.
 //! 2. **Whose** ([`pass`]): a candidate counts when listed in `[delivery] reviewers` or
 //!    when GitHub says it may write (`Permission`, one op per run at a time, cached
 //!    per login). A login the allow-list would refuse is never asked: it does not
-//!    count. A thread with no writer is ignored; one with a writer joins the stage's
-//!    batch.
+//!    count. A writer makes the thread `new` and joins it to the stage's batch; a
+//!    non-writer's comments lose their text and lower nothing (the fix round's I1), and
+//!    a created thread no author may write in is ignored. A thread a view shows
+//!    resolved leaves its batch ([`resolved`]).
 //! 3. **Batches**: a batch closes `review_batch_secs` after its last thread, and never
 //!    while a thread waits for its author's permission. Past `review_fix_max` rounds
 //!    its threads go to the user; a live orchestrator is woken once; otherwise each
@@ -38,14 +40,13 @@ use crate::run::delivery::snapshot::stage_count;
 use crate::run::delivery::{Batch, PrRecord, ReplyDue, StageDelivery, ThreadRecord, ThreadState};
 use crate::run::model::{FixOf, Run};
 
-/// The ruling carried from task M9.2.8: what `run.json` keeps of review text. A thread
-/// keeps the text of its newest this many comments, each cut to
-/// [`COMMENT_KEPT_CHARS`]; every comment's id stays (newness is by id).
-pub(crate) const THREAD_COMMENTS_KEPT: usize = 20;
-pub(crate) const COMMENT_KEPT_CHARS: usize = 4_000;
-/// A stage keeps at most this many characters of review text in all, newest threads
-/// first; a thread that is no longer `new` keeps none (nothing quotes it again).
-pub(crate) const STAGE_TEXT_CHARS: usize = 200_000;
+pub(crate) use crate::run::delivery::view_trim::{
+    COMMENT_KEPT_CHARS, STAGE_TEXT_CHARS, THREAD_COMMENTS_KEPT,
+};
+
+/// The fix round's m4: a login GitHub has not answered about this long after its
+/// comment was seen does not hold its stage's batch (it still counts once answered).
+pub(crate) const PERMISSION_WAIT_SECS: u64 = 600;
 
 /// One fresh comment of a view, as the intake reads it: its id and author, and its
 /// body (only searched for the marker of a reply anthrex sent).
@@ -123,10 +124,16 @@ pub(super) fn intake(run: &mut Run, n: u16, intakes: Vec<Intake>, now: u64) {
             }
             continue;
         }
-        t.state = ThreadState::New;
-        t.candidates = humans;
-        t.counted = false;
-        t.batch = 0;
+        // The fix round's I1: the thread keeps what it was until a fresh author is known
+        // to write (`whose`); a created one is `new` and does not count yet.
+        if t.candidates.is_empty() {
+            t.waiting_since = now;
+        }
+        for login in humans {
+            if !t.candidates.contains(&login) {
+                t.candidates.push(login);
+            }
+        }
     }
     for line in lines {
         log(run, now, line);
@@ -168,8 +175,9 @@ fn thread_mut<'a>(run: &'a mut Run, n: u16, key: &str) -> Option<&'a mut ThreadR
     stage_mut(run, n).threads.iter_mut().find(|t| t.key == key)
 }
 
-/// Step 2 for every thread whose candidates are all known, and at most one
-/// `Permission` op for the first unknown login.
+/// Step 2 for each fresh author whose write access is known, and at most one
+/// `Permission` op for the first unknown login. A writer makes the thread count; a
+/// non-writer's comments lose their text, and lower nothing (the fix round's I1).
 fn whose(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let mut ask: Option<String> = None;
     for n in 1..=stage_count(run) {
@@ -177,17 +185,37 @@ fn whose(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         };
         let waiting: Vec<(String, Vec<String>)> = (stage.threads.iter())
-            .filter(|t| t.state == ThreadState::New && !t.counted && !t.candidates.is_empty())
+            .filter(|t| !t.candidates.is_empty())
             .map(|t| (t.key.clone(), t.candidates.clone()))
             .collect();
         for (key, candidates) in waiting {
-            let verdicts: Vec<Option<bool>> = candidates.iter().map(|c| writes(run, c)).collect();
-            if let Some(k) = verdicts.iter().position(|v| *v == Some(true)) {
-                counts(run, n, &key, &candidates[k], now);
-            } else if let Some(k) = verdicts.iter().position(Option::is_none) {
-                ask.get_or_insert_with(|| candidates[k].clone());
-            } else {
-                not_a_writer(run, n, &key, &candidates, now);
+            let verdict = |want: Option<bool>| -> Vec<String> {
+                (candidates.iter())
+                    .filter(|c| writes(run, c) == want)
+                    .cloned()
+                    .collect()
+            };
+            let (writers, others, unknown) =
+                (verdict(Some(true)), verdict(Some(false)), verdict(None));
+            if !others.is_empty() {
+                not_a_writer(run, n, &key, &others, now);
+            }
+            if let Some(login) = writers.first() {
+                counts(run, n, &key, login, now);
+            }
+            if let Some(login) = unknown.first() {
+                ask.get_or_insert_with(|| login.clone());
+            }
+            if let Some(t) = thread_mut(run, n, &key) {
+                t.candidates = unknown;
+                // A created thread no fresh author may write in is ignored.
+                if t.candidates.is_empty() && t.state == ThreadState::New && !t.counted {
+                    t.state = ThreadState::Ignored {
+                        reason: "no write access".into(),
+                    };
+                    t.comments.iter_mut().for_each(|c| c.text.clear());
+                    t.text.clear();
+                }
             }
         }
     }
@@ -207,11 +235,15 @@ fn whose(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 }
 
 /// The thread counts: `login` may write. It joins its stage's open batch (decision 31).
+/// A thread that had stopped being `new` (tasked, replied, ignored) is `new` again, and
+/// may be replied to again (the fix round's m3).
 fn counts(run: &mut Run, n: u16, key: &str, login: &str, now: u64) {
     if let Some(t) = thread_mut(run, n, key) {
+        t.state = ThreadState::New;
         t.counted = true;
         t.author = login.to_string();
-        t.candidates.clear();
+        t.batch = 0;
+        t.replies = 0;
     }
     let stage = stage_mut(run, n);
     let batch = stage.batch.get_or_insert_with(|| Batch {
@@ -225,20 +257,25 @@ fn counts(run: &mut Run, n: u16, key: &str, login: &str, now: u64) {
     batch.last_at = now;
 }
 
-/// No candidate may write: the thread is ignored, and each author logged.
-fn not_a_writer(run: &mut Run, n: u16, key: &str, candidates: &[String], now: u64) {
+/// `logins` may not write: their comments in the thread keep no text, and each is
+/// logged. The thread keeps its state and the text of everyone else.
+fn not_a_writer(run: &mut Run, n: u16, key: &str, logins: &[String], now: u64) {
     let Some(pr) = run.delivery.pr(n).cloned() else {
         return;
     };
     if let Some(t) = thread_mut(run, n, key) {
-        t.state = ThreadState::Ignored {
-            reason: "no write access".into(),
-        };
-        t.candidates.clear();
-        t.comments.iter_mut().for_each(|c| c.text.clear());
-        t.text.clear();
+        let theirs = |author: &str| logins.iter().any(|l| l.eq_ignore_ascii_case(author));
+        for c in t.comments.iter_mut().filter(|c| theirs(&c.author)) {
+            c.text.clear();
+        }
+        if !t.comments.is_empty() {
+            let newest = t.comments.iter().rev().find(|c| !c.text.is_empty());
+            t.text = newest.map(|c| c.text.clone()).unwrap_or_default();
+        } else if theirs(&t.author) {
+            t.text.clear();
+        }
     }
-    for login in candidates {
+    for login in logins {
         let who = quote::login(login);
         let line = format!(
             "{}: ignored a comment by @{who}: no write access",
@@ -271,8 +308,13 @@ fn close(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
     let Some(batch) = stage.batch.clone() else {
         return;
     };
-    let asking = (stage.threads.iter())
-        .any(|t| t.state == ThreadState::New && !t.counted && !t.candidates.is_empty());
+    // The fix round's m4: a login unanswered for `PERMISSION_WAIT_SECS` holds it no more.
+    // A thread that counts and is `new` is in the batch already, whatever the answer.
+    let asking = (stage.threads.iter()).any(|t| {
+        let in_batch = t.state == ThreadState::New && t.counted;
+        let due = t.waiting_since.saturating_add(PERMISSION_WAIT_SECS);
+        !t.candidates.is_empty() && !in_batch && now < due
+    });
     let quiet_at = batch
         .last_at
         .saturating_add(run.delivery.limits.review_batch_secs);
@@ -407,23 +449,59 @@ fn fast_path(
     }
 }
 
-/// The cap's and a refused fix's attention lines last while their thread is `new`.
+/// The cap's and a refused fix's attention lines last while their thread is `new`; a
+/// dropped reply's while the PR is open (the fix round's m3).
 fn settle(run: &mut Run, n: u16) {
     let Some(stage) = run.delivery.stage(n) else {
         return;
     };
+    let open = run.delivery.pr(n).is_some_and(|p| p.state == PrState::Open);
     let new =
         |key: &str| (stage.threads.iter()).any(|t| t.key == key && t.state == ThreadState::New);
     let stale: Vec<String> = (run.delivery.alerts.keys())
         .filter(|k| {
             let rest = k.strip_prefix(&format!("{n}/"));
+            let dropped = rest.is_some_and(|r| r.starts_with("reply/"));
             let key = rest.and_then(|r| r.strip_prefix("cap/").or(r.strip_prefix("review/")));
-            key.is_some_and(|key| !new(key))
+            key.is_some_and(|key| !new(key)) || (dropped && !open)
         })
         .cloned()
         .collect();
     for key in stale {
         run.delivery.alerts.remove(&key);
+    }
+}
+
+/// The fix round's m2: a `new` thread a view shows resolved is no longer the run's to
+/// address. It leaves its open batch (an emptied batch goes), and no longer counts as
+/// not addressed. `keys` are the view's resolved threads.
+pub(super) fn resolved(run: &mut Run, n: u16, keys: &[String], now: u64) {
+    let Some(pr) = run.delivery.pr(n).cloned() else {
+        return;
+    };
+    let stage = stage_mut(run, n);
+    let mut gone = Vec::new();
+    for t in (stage.threads.iter_mut()).filter(|t| t.state == ThreadState::New) {
+        if keys.contains(&t.key) {
+            t.state = ThreadState::Ignored {
+                reason: "a resolved thread".into(),
+            };
+            t.candidates.clear();
+            gone.push(t.key.clone());
+        }
+    }
+    if let Some(batch) = stage.batch.as_mut() {
+        batch.threads.retain(|k| !gone.contains(k));
+        if batch.threads.is_empty() {
+            stage.batch = None;
+        }
+    }
+    for key in gone {
+        log(
+            run,
+            now,
+            format!("{}: thread {key} was resolved", named(n, &pr)),
+        );
     }
 }
 

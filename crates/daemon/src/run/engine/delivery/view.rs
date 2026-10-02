@@ -139,6 +139,8 @@ fn record(run: &mut Run, n: u16, fresh: &Fresh, now: u64) -> Vec<String> {
         candidates: Vec::new(),
         counted: false,
         batch: 0,
+        waiting_since: 0,
+        replies: 0,
     };
     let created = |key: String, items: Vec<Item>| Intake {
         key,
@@ -299,6 +301,10 @@ pub(super) fn viewed(run: &mut Run, n: u16, view: PrView, now: u64) {
         || checks != pr.checks
         || !fresh.is_empty();
     let added = record(run, n, &fresh, now);
+    let resolved: Vec<String> = (view.threads.iter().filter(|t| t.resolved))
+        .filter_map(|t| t.comments.first().map(|c| format!("t{}", c.id)))
+        .collect();
+    super::review::resolved(run, n, &resolved, now);
     let reviewed: Vec<u64> = fresh.reviews.iter().map(|r| r.id).collect();
     pages(run, n, &wm, &view, now);
     let red = super::ci_trigger::red_of(&view, &pr.pushed_head);

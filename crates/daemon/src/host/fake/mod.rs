@@ -301,6 +301,8 @@ pub(super) enum Cmd {
         repo: String,
         user: String,
     },
+    /// `gh api user`: the logged-in user (task M9.2.10's fix round).
+    User,
 }
 
 /// One `gh` answer: the login and rate-limit gates (`gh --version` asks GitHub
@@ -328,6 +330,7 @@ fn answer(state: &mut FakeGithub, cmd: &Cmd, host: &str) -> Result<Answer, Strin
                 | Cmd::ListComments { .. }
                 | Cmd::Reply { .. }
                 | Cmd::Permission { .. }
+                | Cmd::User
         );
         return Ok(Answer::fail(if rest {
             "gh: API rate limit exceeded for user ID 1. (HTTP 403)\n".to_string()
@@ -340,7 +343,8 @@ fn answer(state: &mut FakeGithub, cmd: &Cmd, host: &str) -> Result<Answer, Strin
         Cmd::Threads { .. }
         | Cmd::ListComments { .. }
         | Cmd::Reply { .. }
-        | Cmd::Permission { .. } => gh_api::answer(state, cmd, host),
+        | Cmd::Permission { .. }
+        | Cmd::User => gh_api::answer(state, cmd, host),
         _ => gh_pr::answer(state, cmd, host),
     }
 }

@@ -385,18 +385,26 @@ pub fn comment_url_id(url: &str) -> Option<u64> {
     id.parse().ok()
 }
 
-/// Decision 10: the id of a comment whose body holds `marker`, in `gh api --paginate`'s
-/// output (one JSON array per page, printed one after another).
-pub fn find_marker(text: &str, marker: &str) -> Result<Option<u64>, HostError> {
+/// Decision 10: the id of a comment by `author` (anthrex's own login; GitHub's logins
+/// match without case) whose body holds `marker`, in `gh api --paginate`'s output (one
+/// JSON array per page, printed one after another). A marker in anyone else's comment
+/// was pasted, and does not stop the reply (task M9.2.10's fix round).
+pub fn find_marker(text: &str, marker: &str, author: &str) -> Result<Option<u64>, HostError> {
     for page in serde_json::Deserializer::from_str(text).into_iter::<Vec<Value>>() {
         let page = page.map_err(|_| changed("comments"))?;
         for comment in &page {
-            if str_of(comment, "body")?.contains(marker) {
+            let login = str_of(get(comment, "user")?, "login")?;
+            if login.eq_ignore_ascii_case(author) && str_of(comment, "body")?.contains(marker) {
                 return u64_of(comment, "id").map(Some);
             }
         }
     }
     Ok(None)
+}
+
+/// `gh api user`'s `login`: the user anthrex posts as.
+pub fn user_login(text: &str) -> Result<String, HostError> {
+    Ok(str_of(&json(text, "user")?, "login")?.to_string())
 }
 
 /// The `id` of the comment a REST `POST` created.

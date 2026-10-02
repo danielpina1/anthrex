@@ -32,6 +32,7 @@ mod delivery_requests;
 mod delivery_review;
 mod delivery_review_fix;
 mod delivery_review_reply;
+mod delivery_review_round;
 mod delivery_watch;
 mod delivery_watch_adopt;
 mod delivery_watch_fixes;

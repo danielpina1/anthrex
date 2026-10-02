@@ -19,6 +19,9 @@ use crate::run::plan::PlanError;
 
 /// Decision 30: a reply's body is 1 to this many characters.
 pub const REPLY_BODY_MAX: usize = 4000;
+/// The fix round's m3: replies anthrex posts on one thread before its reviewer comments
+/// again (each time the thread counts, the count starts over).
+pub const REPLIES_PER_THREAD: u32 = 3;
 
 /// `<!-- anthrex:reply <run> <pr>:<key> <sha7> -->` (Interfaces "Messages").
 pub fn marker(run_id: &str, pr: u64, key: &str, sha7: &str) -> String {
@@ -107,6 +110,14 @@ pub fn apply(
             "replies are turned off ([delivery] reply_to_comments = false)".into(),
         ));
     }
+    let replies = (run.delivery.stage(n))
+        .and_then(|s| s.threads.iter().find(|t| t.key == key))
+        .map_or(0, |t| t.replies);
+    if replies >= REPLIES_PER_THREAD {
+        return Err(error(format!(
+            "thread {pr}:{key} already has {REPLIES_PER_THREAD} replies; it gets more once its reviewer comments again"
+        )));
+    }
     let body = safe_body(body);
     let marker = marker(&run.id, pr, key, &token(key, now, &body));
     let Some(stage) = run.delivery.stages.get_mut(usize::from(n) - 1) else {
@@ -121,9 +132,11 @@ pub fn apply(
         push: None,
         ready: true,
         sent: false,
+        failures: 0,
     });
     if let Some(t) = stage.threads.iter_mut().find(|t| t.key == key) {
         t.state = ThreadState::Replied { comment_id: 0 };
+        t.replies = t.replies.saturating_add(1);
     }
     Ok(())
 }

@@ -314,8 +314,10 @@ fn edit_plan(
         }
     }
     let held = gate_holds::assign(&mut edited, edits, &added, now);
-    // Milestone 9.2 decision 31: a review fix outside its stage waits for the user.
-    let held = held.or_else(|| super::delivery::review_holds(&mut edited, &added, now));
+    // Milestone 9.2 decision 31: a review fix outside its stage waits for the user,
+    // whatever other task of the call an epic or the promotion holds (fix round, I2).
+    let review = super::delivery::review_holds(&mut edited, &added, now);
+    let held = held.or(review);
     if submit && let Err(text) = submit_plan(&mut edited, "the orchestrator", now) {
         record_rejected(run, edits, &source, text.clone(), now);
         return refuse(fx, reply, text);
