@@ -85,6 +85,9 @@ impl CodeHost for Unconfigured {
     fn detect(&self, _: &Path, _: &str) -> Result<HostRepo, HostError> {
         unconfigured()
     }
+    fn remote_seal(&self, _: &Path, _: &str) -> Result<String, HostError> {
+        unconfigured()
+    }
     fn push(&self, _: &PushReq) -> Result<PushOutcome, HostError> {
         unconfigured()
     }

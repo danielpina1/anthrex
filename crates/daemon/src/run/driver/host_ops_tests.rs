@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use proto::run_wire::request;
 use proto::{PrState, RunReply, RunRequest};
 
 use super::*;
@@ -164,6 +165,22 @@ impl CodeHost for Stub {
         self.write("delete_branch");
         Ok(())
     }
+    /// The real seal: `GhHost`'s two reads, through the allow-list, on real git.
+    fn remote_seal(&self, root: &Path, remote: &str) -> Result<String, HostError> {
+        real_host().remote_seal(root, remote)
+    }
+}
+
+/// `GhHost` over the system's git and a `gh` that does not exist.
+pub(in crate::run::driver) fn real_host() -> Arc<dyn CodeHost> {
+    crate::host::select::build(&crate::host::select::CodeHostChoice::Gh {
+        bin: crate::manager::TEST_GH_BIN.into(),
+    })
+}
+
+/// `root`'s `origin`, sealed as preflight seals it.
+pub(in crate::run::driver) fn sealed(root: &Path) -> String {
+    real_host().remote_seal(root, "origin").unwrap()
 }
 
 pub(in crate::run::driver) fn repo(root: &Path) -> HostRepo {
@@ -189,7 +206,6 @@ pub(in crate::run::driver) fn exec(host: Arc<dyn CodeHost>, queue: Arc<GitQueue>
     HostExec {
         host,
         queue,
-        git: "git".into(),
         cap: None,
     }
 }
@@ -317,10 +333,9 @@ async fn host_calls_run_off_the_engine_lock() {
         .await
         .expect("run edit answered while a host call blocks")
         .unwrap();
-    assert!(
-        matches!(edited, RunReply::Done { .. } | RunReply::Refused { .. }),
-        "{edited:?}"
-    );
+    // The engine's own answer (`run/engine/batch.rs`), so the edit reached the event
+    // loop, not a refusal before it.
+    assert_eq!(edited, RunReply::done(request::EDIT, "applied 0 edits"));
     assert!(
         crate::lock(&stub.calls).len() == 1,
         "the view is still in flight"

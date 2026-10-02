@@ -35,6 +35,8 @@ mod tests_limits;
 mod tests_parse;
 #[cfg(test)]
 mod tests_reply;
+#[cfg(test)]
+mod tests_seal;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -71,6 +73,11 @@ pub trait CodeHost: Send + Sync {
     fn retarget(&self, repo: &HostRepo, number: u64, base: &str) -> Result<(), HostError>;
     fn permission(&self, repo: &HostRepo, user: &str) -> Result<RepoPermission, HostError>;
     fn delete_branch(&self, req: &DeleteBranchReq) -> Result<(), HostError>;
+    /// The controller's ruling (task M9.2.12): a SHA-256 digest of `remote`'s fetch and
+    /// push URLs as git resolves them, after `insteadOf` and `pushInsteadOf` (`git remote
+    /// get-url --all`, and `--push --all`), read through the allow-list. A digest, never
+    /// the URLs: one may carry a token.
+    fn remote_seal(&self, root: &Path, remote: &str) -> Result<String, HostError>;
 }
 
 /// A GitHub repository as preflight found it (decision 17), frozen into the run.
@@ -424,6 +431,12 @@ pub const HOST_READ_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HOST_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Decision 9: `git push` (the dry run too), `git fetch`, a branch delete.
 pub const PUSH_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Preflight's whole bound (task M9.2.12): its six checks' own (decision 9), the seal's
+/// two reads, and a margin, so a host that ignores its per-command timeouts still
+/// answers. The CLI's `run start` reply bound is derived from it.
+pub const PREFLIGHT_BOUND: Duration =
+    Duration::from_secs(7 * HOST_READ_TIMEOUT.as_secs() + PUSH_TIMEOUT.as_secs() + 5);
 /// Decision 9: `gh run view --log-failed`.
 pub const LOG_TIMEOUT: Duration = Duration::from_secs(120);
 /// Each body kept from a view is cut to this many characters; a view keeps at most

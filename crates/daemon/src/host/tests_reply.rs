@@ -125,3 +125,37 @@ fn the_viewer_login_is_read_once_per_host() {
     assert_eq!(reads, 2, "{:?}", h.runner().argvs());
     assert_eq!(h.runner().unanswered(), 0);
 }
+
+/// Fix round 1, m8: the cache is keyed by host. A reply on a second host reads its own
+/// login (with that `GH_HOST`); the first host's stays cached. The cache lives as long as
+/// the host, which the daemon builds once: a `gh auth switch` while it runs is seen at
+/// the next daemon start (Implementation notes, task M9.2.12).
+#[test]
+fn the_viewer_login_is_cached_per_host() {
+    let tmp = tempfile::tempdir().unwrap();
+    let github = thread_req(tmp.path());
+    let mut enterprise = thread_req(tmp.path());
+    enterprise.repo.host = "ghe.example.com".to_string();
+    let h = host(
+        ScriptedRunner::new()
+            .ok(REST_USER)
+            .ok(REST_REVIEW_COMMENTS)
+            .ok(REST_USER)
+            .ok(REST_REVIEW_COMMENTS)
+            .ok(REST_REVIEW_COMMENTS)
+            .ok(REST_REVIEW_COMMENTS),
+    );
+    for req in [&github, &enterprise, &github, &enterprise] {
+        assert_eq!(h.reply(req).unwrap(), 3658444294);
+    }
+    let user = argv(&["api", "user"]);
+    let hosts: Vec<String> = (h.runner().calls().iter())
+        .filter(|c| c.argv == user)
+        .map(|c| {
+            let host = c.env.iter().find(|(k, _)| k == "GH_HOST");
+            host.map(|(_, v)| v.clone()).unwrap_or_default()
+        })
+        .collect();
+    assert_eq!(hosts, ["github.com", "ghe.example.com"]);
+    assert_eq!(h.runner().unanswered(), 0);
+}

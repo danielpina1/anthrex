@@ -63,6 +63,9 @@ pub(crate) fn forbidden_text(what: &str) -> HostError {
 }
 
 fn git_allowed(args: &[&str], ctx: &AllowCtx<'_>) -> bool {
+    if seal_read(args, ctx) {
+        return true;
+    }
     let refused = |a: &&str| GIT_REFUSED.contains(a) || a.starts_with("--force");
     if args.iter().any(refused) {
         return false;
@@ -125,6 +128,22 @@ fn git_allowed(args: &[&str], ctx: &AllowCtx<'_>) -> bool {
         ["merge-base", "--is-ancestor", a, b] => read && is_object_id(a) && is_object_id(b),
         // Ruling R-4: a merged PR's merge commit's parents, read locally.
         ["rev-list", "--parents", "-n", "1", oid] => read && is_object_id(oid),
+        _ => false,
+    }
+}
+
+/// Task M9.2.12's seal (fix round 1, I1): `git remote get-url --all <remote>` and
+/// `get-url --push --all <remote>`, the run's remote only, read-only (no write flags).
+/// Their `--all` lists every URL; it is not `push --all`, which stays refused.
+fn seal_read(args: &[&str], ctx: &AllowCtx<'_>) -> bool {
+    let Some(rest) = args.strip_prefix(&NO_HOOKS[..]) else {
+        return false;
+    };
+    let remote = |r: &str| r == ctx.remote && !r.is_empty() && !r.starts_with('-');
+    match rest {
+        ["remote", "get-url", "--all", r] | ["remote", "get-url", "--push", "--all", r] => {
+            remote(r)
+        }
         _ => false,
     }
 }

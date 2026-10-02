@@ -3,6 +3,7 @@
 //! remote; no network, no `gh`), and decision 3's resolution of the mode. The start
 //! paths are in `delivery_tests_start.rs`.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -112,7 +113,7 @@ impl Rig {
 
 /// `host`'s preflight from the driver, its refusal text.
 async fn refusal(host: Arc<dyn CodeHost>, req: PreflightReq, bound: Duration) -> String {
-    match preflight(host, "git".into(), req, bound).await {
+    match preflight(host, req, bound).await {
         Ok(frozen) => panic!("preflight passed: {frozen:?}"),
         Err(text) => text,
     }
@@ -173,7 +174,7 @@ async fn preflight_messages_are_exact() {
     // The last line of git's stderr, as the Messages table says.
     assert_eq!(
         refusal(rig.host(), rig.req(), b).await,
-        "a dry-run push to origin was refused: and the repository exists."
+        "a dry-run push to origin was refused, so anthrex cannot push there; git said: \"and the repository exists.\""
     );
     assert!(
         rig.ctl.calls().iter().all(|c| c[0] != "pr"),
@@ -211,7 +212,7 @@ async fn preflight_messages_are_exact() {
 #[tokio::test]
 async fn a_passing_preflight_freezes_the_repository_and_the_seal() {
     let rig = Rig::ready(true);
-    let frozen = preflight(rig.host(), "git".into(), rig.req(), PREFLIGHT_BOUND)
+    let frozen = preflight(rig.host(), rig.req(), PREFLIGHT_BOUND)
         .await
         .unwrap();
     assert_eq!(frozen.mode, DeliveryMode::Pr);
@@ -223,7 +224,7 @@ async fn a_passing_preflight_freezes_the_repository_and_the_seal() {
     assert_eq!(repo.root, rig.work);
     assert_eq!(
         frozen.seal,
-        Some(seal("git".as_ref(), &rig.work, "origin").unwrap())
+        Some(rig.host().remote_seal(&rig.work, "origin").unwrap())
     );
     // The dry run created nothing on the remote.
     assert_eq!(
@@ -253,5 +254,3 @@ fn the_mode_is_the_flag_then_the_profile_then_local() {
 
 #[path = "delivery_tests_start.rs"]
 mod start;
-
-use std::ffi::OsStr;

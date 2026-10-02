@@ -8,28 +8,19 @@
 //! exists yet. In `local` mode no host is called.
 
 use std::collections::hash_map::RandomState;
-use std::ffi::{OsStr, OsString};
 use std::hash::{BuildHasher, Hasher};
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use proto::run_wire::request;
 use proto::{DeliveryMode, DeliveryProfile, RunReply};
-use sha2::{Digest, Sha256};
 
 use super::RunService;
-use crate::host::{CodeHost, HOST_READ_TIMEOUT, HostRepo, PUSH_TIMEOUT, PreflightReq};
+use crate::host::{CodeHost, HostRepo, PREFLIGHT_BOUND, PreflightReq};
 use crate::run::engine::EventKind;
 use crate::run::engine::delivery::DeliveryRequest;
-use crate::run::git::{Git, os};
 use crate::run::model::Run;
 use crate::run::plan::Preflight;
-
-/// Preflight's whole bound: its six checks' own (decision 9), the seal's two reads, and a
-/// margin, so a host that ignores its per-command timeouts still answers.
-pub(crate) const PREFLIGHT_BOUND: Duration =
-    Duration::from_secs(7 * HOST_READ_TIMEOUT.as_secs() + PUSH_TIMEOUT.as_secs() + 5);
 
 /// What `run start` freezes into `RunDelivery` (decision 3): the mode, preflight's
 /// repository and the remote's seal; `local` has neither.
@@ -74,32 +65,6 @@ pub(crate) fn resolve(
     (mode, remote)
 }
 
-/// The controller's ruling: a digest of `remote`'s fetch and push URLs, after
-/// `insteadOf` and `pushInsteadOf` (`git remote get-url --all`, and `--push`). Blocking.
-pub(crate) fn seal(git: &OsStr, root: &Path, remote: &str) -> Result<String, String> {
-    let g = Git::new(git, HOST_READ_TIMEOUT);
-    let fetch = g.ok(
-        root,
-        &[os("remote"), os("get-url"), os("--all"), os(remote)],
-    )?;
-    let push = g.ok(
-        root,
-        &[
-            os("remote"),
-            os("get-url"),
-            os("--push"),
-            os("--all"),
-            os(remote),
-        ],
-    )?;
-    let mut hash = Sha256::new();
-    for part in ["fetch", &fetch, "push", &push] {
-        hash.update(part.as_bytes());
-        hash.update([0]);
-    }
-    Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
-}
-
 /// Decision 17's 8 random hexadecimal characters.
 fn nonce() -> String {
     let mut hasher = RandomState::new().build_hasher();
@@ -114,14 +79,14 @@ fn nonce() -> String {
 /// `bound`. The refusal is the failing check's exact text.
 pub(crate) async fn preflight(
     host: Arc<dyn CodeHost>,
-    git: OsString,
     req: PreflightReq,
     bound: Duration,
 ) -> Result<Frozen, String> {
     let work = tokio::task::spawn_blocking(move || {
         let repo = host.preflight(&req).map_err(|e| e.text().to_string())?;
-        let seal = seal(&git, &repo.root, &repo.remote)
-            .map_err(|e| format!("cannot read remote {}'s URLs: {e}", repo.remote))?;
+        let seal = host
+            .remote_seal(&repo.root, &repo.remote)
+            .map_err(|e| e.text().to_string())?;
         Ok(Frozen {
             mode: DeliveryMode::Pr,
             repo: Some(repo),
@@ -168,7 +133,7 @@ impl RunService {
             .ctx
             .host_cap
             .map_or(PREFLIGHT_BOUND, |cap| cap.min(PREFLIGHT_BOUND));
-        preflight(self.host(), self.ctx.git.clone(), req, bound).await
+        preflight(self.host(), req, bound).await
     }
 
     /// Decision 25: `run deliver` and `run watch`, answered by the engine.

@@ -162,6 +162,10 @@ impl<R: Runner> CodeHost for GhHost<R> {
         self.check_repo(root, remote, None).map(|(repo, _)| repo)
     }
 
+    fn remote_seal(&self, root: &Path, remote: &str) -> Result<String, HostError> {
+        self.seal_remote(root, remote)
+    }
+
     fn push(&self, req: &PushReq) -> Result<PushOutcome, HostError> {
         self.push_stage(req)
     }

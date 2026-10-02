@@ -114,7 +114,7 @@ async fn a_pr_run_freezes_its_delivery_at_start() {
     );
     assert_eq!(
         d.remote_seal,
-        Some(super::seal("git".as_ref(), &rig.work, "origin").unwrap())
+        Some(rig.host().remote_seal(&rig.work, "origin").unwrap())
     );
     assert!(d.watching);
     assert_eq!(d.poll_base_secs, d.limits.poll_secs);
@@ -162,19 +162,50 @@ async fn local_mode_calls_no_host() {
 }
 
 /// A decider stand-in that records each call in `marker` and fails (the triage falls
-/// back): never a real agent.
+/// back): never a real agent. Fix round 1, m3: it is written under another name, closed
+/// and renamed into place, then executed once (a guard makes that run exit at once),
+/// retrying while a concurrent fork still holds a writable copy of its descriptor
+/// (`ETXTBSY`), so the daemon's exec of it is never the first and never busy.
 fn decider_stand_in(dir: &Path) -> (String, std::path::PathBuf) {
     let marker = dir.join("decider-called");
     let script = dir.join("decider.sh");
+    let staged = dir.join("decider.sh.new");
     std::fs::write(
-        &script,
+        &staged,
         format!(
-            "#!/bin/sh\necho called >> '{}'\ncat > /dev/null\nexit 1\n",
+            "#!/bin/sh\n[ -n \"$ANTHREX_TEST_WARM_UP\" ] && exit 0\necho called >> '{}'\ncat > /dev/null\nexit 1\n",
             marker.display()
         ),
     )
     .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::rename(&staged, &script).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut child = loop {
+        match std::process::Command::new(&script)
+            .env("ANTHREX_TEST_WARM_UP", "1")
+            .stdin(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(child) => break child,
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                assert!(Instant::now() < deadline, "the stand-in stayed busy: {e}");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => panic!("the stand-in did not start: {e}"),
+        }
+    };
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the stand-in's warm-up never exited"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(status.success() && !marker.exists(), "warm-up: {status:?}");
     (script.display().to_string(), marker)
 }
 
@@ -250,6 +281,68 @@ async fn preflight_runs_before_triage_for_a_goal() {
         gh_calls(&rig, &["auth", "status"]),
         2,
         "one preflight per start"
+    );
+    s.stop().await;
+    handle.abort();
+}
+
+/// Fix round 1, m7: `run deliver` and `run watch` reach the engine as themselves, each
+/// answered under its own label.
+#[tokio::test(flavor = "multi_thread")]
+async fn deliver_and_watch_are_routed_to_the_engine() {
+    use crate::run::test_support::run_ok;
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let s = service_with(super::super::super::host_ops::tests::real_host(), &data);
+    let handle = s.spawn(tokio_util::sync::CancellationToken::new());
+    let (mut local, mut pr) = (run_ok(&plan()), run_ok(&plan()));
+    pr.id = format!("{}p", pr.id);
+    pr.delivery.mode = DeliveryMode::Pr;
+    pr.delivery.watching = true;
+    for run in [&mut local, &mut pr] {
+        run.data_dir = data.join("runs").join(&run.id);
+        crate::lock(&s.state)
+            .runs
+            .insert(run.id.clone(), run.clone());
+    }
+    let deliver = |run_id: &str| RunRequest::Deliver {
+        run_id: run_id.into(),
+        stage: 1,
+    };
+    let watch = |run_id: &str, on| RunRequest::Watch {
+        run_id: run_id.into(),
+        on,
+    };
+    let locally = format!(
+        "run {} delivers locally; run deliver and run watch apply to pr mode",
+        local.id
+    );
+    assert_eq!(
+        ask(&s, deliver(&local.id)).await,
+        RunReply::refused(request::DELIVER, &locally)
+    );
+    assert_eq!(
+        ask(&s, watch(&local.id, false)).await,
+        RunReply::refused(request::WATCH, &locally)
+    );
+    // In pr mode the two differ: watch --off stops the polling.
+    let stopped = ask(&s, watch(&pr.id, false)).await;
+    let RunReply::Done {
+        request, message, ..
+    } = &stopped
+    else {
+        panic!("{stopped:?}");
+    };
+    assert_eq!(request, request::WATCH);
+    assert!(message.starts_with("stopped watching run "), "{message}");
+    assert!(!crate::lock(&s.state).runs[&pr.id].delivery.watching);
+    // `run deliver` alone needs a running run (watch does not).
+    assert_eq!(
+        ask(&s, deliver(&pr.id)).await,
+        RunReply::refused(
+            request::DELIVER,
+            format!("run {} is awaiting_approval", pr.id)
+        )
     );
     s.stop().await;
     handle.abort();

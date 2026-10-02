@@ -74,6 +74,9 @@ impl CodeHost for FakeHost {
     fn detect(&self, root: &Path, remote: &str) -> Result<HostRepo, HostError> {
         self.inner.detect(root, remote)
     }
+    fn remote_seal(&self, root: &Path, remote: &str) -> Result<String, HostError> {
+        self.inner.remote_seal(root, remote)
+    }
     fn push(&self, req: &PushReq) -> Result<PushOutcome, HostError> {
         self.inner.push(req)
     }

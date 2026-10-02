@@ -135,18 +135,20 @@ async fn a_panicking_host_is_a_halt_never_a_retry() {
         ..Stub::default()
     });
     let e = exec(stub, Arc::new(GitQueue::new()));
-    for (op, verb) in [
+    for (op, name, verb) in [
         (
             HostOp::Push {
                 stage: 1,
                 sha: SHA.into(),
             },
+            "push",
             "merge",
         ),
         (
             HostOp::Permission {
                 user: "alice".into(),
             },
+            "permission",
             "approve",
         ),
     ] {
@@ -154,13 +156,38 @@ async fn a_panicking_host_is_a_halt_never_a_retry() {
         let HostResult::Error(HostError::Forbidden(text)) = answer else {
             panic!("not a halt: {answer:?}");
         };
+        // After the engine's `anthrex refused its own host command: ` it reads right.
         assert!(
             text.starts_with(&format!(
-                "the host call panicked: FakeHost: anthrex asked to {verb}"
+                "{name}, which panicked: FakeHost: anthrex asked to {verb}"
             )),
             "{text}"
         );
     }
+}
+
+/// Fix round 1, m4: only a panicked blocking task is a halt; a cancelled one (a
+/// shutdown) is an ordinary failure, retried when next due.
+#[tokio::test]
+async fn only_a_panicked_task_is_a_halt() {
+    let panicked = tokio::spawn(async { panic!("boom") }).await.unwrap_err();
+    assert!(panicked.is_panic());
+    let HostResult::Error(HostError::Forbidden(text)) =
+        crate::run::driver::host_ops::lost("view_pr", panicked)
+    else {
+        panic!("a panic is not a halt");
+    };
+    assert!(text.starts_with("view_pr, which panicked: "), "{text}");
+    let pending = tokio::spawn(std::future::pending::<()>());
+    pending.abort();
+    let cancelled = pending.await.unwrap_err();
+    assert!(cancelled.is_cancelled());
+    let HostResult::Error(HostError::Failed(text)) =
+        crate::run::driver::host_ops::lost("view_pr", cancelled)
+    else {
+        panic!("a cancelled task is not retryable");
+    };
+    assert!(text.starts_with("view_pr did not finish: "), "{text}");
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -188,7 +215,7 @@ async fn a_changed_remote_refuses_push_and_fetch() {
             "https://github.com/fake/app.git",
         ],
     );
-    let sealed = crate::run::driver::delivery::seal("git".as_ref(), &root, "origin").unwrap();
+    let sealed = super::sealed(&root);
     let push = || HostOp::Push {
         stage: 1,
         sha: SHA.into(),
@@ -231,19 +258,24 @@ async fn a_changed_remote_refuses_push_and_fetch() {
                 "https://github.com/fake/app.git",
             ],
         );
-        let sealed = crate::run::driver::delivery::seal("git".as_ref(), &fresh, "origin").unwrap();
+        let sealed = super::sealed(&fresh);
         git(&fresh, change);
         let stub = Arc::new(Stub::default());
         let e = exec(stub.clone(), Arc::new(GitQueue::new()));
         let here = at(tmp.path(), Some(sealed));
-        for op in [push(), HostOp::DeleteBranch { stage: 1 }] {
+        for (op, name) in [
+            (push(), "push"),
+            (HostOp::DeleteBranch { stage: 1 }, "delete_branch"),
+        ] {
             let answer = host_result(execute(&e, &here, repo(&fresh), op).await);
             let HostResult::Error(HostError::Forbidden(text)) = answer else {
                 panic!("{change:?}: not refused: {answer:?}");
             };
             assert_eq!(
                 text,
-                "remote origin's URLs changed since the run started; anthrex pushes and fetches only where preflight checked (restore remote.origin.url and pushurl, then anthrex run resume)"
+                format!(
+                    "{name} on remote origin, whose URLs changed since the run started; anthrex pushes and fetches only where preflight checked (restore remote.origin.url, remote.origin.pushurl and any url.<base>.insteadOf or pushInsteadOf rule, then run anthrex run resume)"
+                )
             );
         }
         assert!(
@@ -379,4 +411,20 @@ async fn a_large_view_is_trimmed_before_the_journal() {
         );
     }
     s.stop().await;
+}
+
+/// Fix round 1, m11: only the `delivery` directory is 0700; its missing parents get the
+/// default mode, and a `delivery` directory that already exists is tightened.
+#[test]
+fn only_the_delivery_directory_is_private() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let parent = tmp.path().join("runs").join(RUN_ID);
+    let dir = parent.join(DELIVERY_DIR);
+    crate::run::driver::host_ops::private_dir(&dir).unwrap();
+    assert_eq!(mode(&dir), 0o700);
+    assert_ne!(mode(&parent), 0o700, "a parent made private");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::run::driver::host_ops::private_dir(&dir).unwrap();
+    assert_eq!(mode(&dir), 0o700, "an existing directory is tightened");
 }

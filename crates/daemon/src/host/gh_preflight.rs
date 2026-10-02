@@ -5,6 +5,8 @@
 use std::path::Path;
 use std::time::Duration;
 
+use sha2::{Digest, Sha256};
+
 use super::allow::AllowCtx;
 use super::gh::{GH_OUTPUT_MAX, GhHost, MIN_GH_VERSION};
 use super::gh_parse::{self, last_line};
@@ -12,6 +14,7 @@ use super::remote;
 use super::runner::{Capture, Runner};
 use super::{HOST_READ_TIMEOUT, HostError, HostRepo, PUSH_TIMEOUT, PreflightReq};
 use crate::run::git::{NO_HOOKS, WRITE_FLAGS};
+use crate::run::messages::one_line;
 
 impl<R: Runner> GhHost<R> {
     pub(super) fn check_preflight(&self, req: &PreflightReq) -> Result<HostRepo, HostError> {
@@ -49,8 +52,11 @@ impl<R: Runner> GhHost<R> {
                 line if line.is_empty() => last_line(&pushed.stdout_text()),
                 line => line,
             };
+            // The controller's ruling on check 5: anthrex's own sentence, then git's
+            // last line quoted, on one line (`last_line` caps it at 300 characters).
             return Err(HostError::Rejected(format!(
-                "a dry-run push to {remote_name} was refused: {why}"
+                "a dry-run push to {remote_name} was refused, so anthrex cannot push there; git said: \"{}\"",
+                one_line(&why)
             )));
         }
         let base_ref = format!("refs/heads/{}", req.base_branch);
@@ -77,6 +83,34 @@ impl<R: Runner> GhHost<R> {
             )));
         }
         Ok(repo)
+    }
+
+    /// [`super::CodeHost::remote_seal`]: the two reads through [`GhHost::git`] (so the
+    /// allow-list), then their digest. A failure names the remote, never a URL.
+    pub(super) fn seal_remote(&self, root: &Path, remote: &str) -> Result<String, HostError> {
+        let ctx = AllowCtx {
+            remote,
+            ..AllowCtx::default()
+        };
+        let read = |args: &[&str]| -> Result<String, HostError> {
+            let out = self.git(&ctx, root, &NO_HOOKS, args, HOST_READ_TIMEOUT)?;
+            if out.success {
+                Ok(out.stdout_text())
+            } else {
+                Err(HostError::Failed(format!(
+                    "cannot read remote {remote}'s URLs: {}",
+                    last_line(&out.stderr)
+                )))
+            }
+        };
+        let fetch = read(&["remote", "get-url", "--all", remote])?;
+        let push = read(&["remote", "get-url", "--push", "--all", remote])?;
+        let mut hash = Sha256::new();
+        for part in ["fetch", &fetch, "push", &push] {
+            hash.update(part.as_bytes());
+            hash.update([0]);
+        }
+        Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
     }
 
     /// Preflight's checks 1 to 4 (decision 17), which detection also runs (decision 3):

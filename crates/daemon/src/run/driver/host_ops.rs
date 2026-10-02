@@ -12,7 +12,6 @@
 //! (0600) and answered by its path, and a PR body is written to
 //! `<data_dir>/delivery/pr-<stage>.md` (0600) before `gh pr create` reads it.
 
-use std::ffi::OsString;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -40,7 +39,6 @@ pub(crate) const DELIVERY_DIR: &str = "delivery";
 pub(crate) struct HostExec {
     pub host: Arc<dyn CodeHost>,
     pub queue: Arc<GitQueue>,
-    pub git: OsString,
     /// A test seam: caps every op's bound. `None` in the daemon.
     pub cap: Option<Duration>,
 }
@@ -96,7 +94,6 @@ impl RunService {
         let exec = HostExec {
             host: self.ctx.host.clone(),
             queue: self.queue.clone(),
-            git: self.ctx.git.clone(),
             cap: self.ctx.host_cap,
         };
         let at = HostAt {
@@ -113,25 +110,28 @@ impl RunService {
 pub(crate) async fn execute(exec: &HostExec, at: &HostAt, repo: HostRepo, op: HostOp) -> OpResult {
     let limit = exec.cap.map_or(bound(&op), |cap| cap.min(bound(&op)));
     let (name, queued) = (op_name(&op), writes(&op));
-    let (host, git) = (exec.host.clone(), exec.git.clone());
+    let host = exec.host.clone();
     let (run_id, data_dir, seal) = (at.run_id.clone(), at.data_dir.clone(), at.seal.clone());
     let work = move || {
-        if queued && let Err(error) = unchanged(&git, &repo, seal.as_deref()) {
-            return HostResult::Error(error);
-        }
-        guarded(|| call(&*host, &run_id, &data_dir, repo.clone(), op.clone()))
+        guarded(name, || {
+            if queued && let Err(error) = unchanged(&*host, name, &repo, seal.as_deref()) {
+                return HostResult::Error(error);
+            }
+            call(&*host, &run_id, &data_dir, repo.clone(), op.clone())
+        })
     };
-    let lost = |why: String| HostResult::Error(HostError::Forbidden(panicked(&why)));
     let answer = if queued {
         let (queue, project) = (exec.queue.clone(), at.project.clone());
         let write = async move { queue.write(&project, move || Ok(work())).await };
-        tokio::time::timeout(limit, write)
-            .await
-            .map(|r| r.unwrap_or_else(lost))
+        // The closure catches its own panic, so the queue's error is a lost task (a
+        // shutdown): retryable.
+        tokio::time::timeout(limit, write).await.map(|r| {
+            r.unwrap_or_else(|e| HostResult::Error(HostError::Failed(format!("{name}: {e}"))))
+        })
     } else {
         tokio::time::timeout(limit, tokio::task::spawn_blocking(work))
             .await
-            .map(|r| r.unwrap_or_else(|e| lost(e.to_string())))
+            .map(|r| r.unwrap_or_else(|e| lost(name, e)))
     };
     OpResult::Host(answer.unwrap_or_else(|_| {
         HostResult::Error(HostError::TimedOut(format!(
@@ -141,49 +141,74 @@ pub(crate) async fn execute(exec: &HostExec, at: &HostAt, repo: HostRepo, op: Ho
     }))
 }
 
-/// The text of a host call that did not return: a bug (the ruling: never retried).
-fn panicked(why: &str) -> String {
-    tracing::error!(%why, "a host call panicked");
-    format!("the host call panicked: {why}")
+/// The text of a host call that panicked: a bug (the ruling: never retried). It follows
+/// the engine's `anthrex refused its own host command: `.
+fn panicked(name: &str, why: &str) -> String {
+    tracing::error!(%why, "the host call {name} panicked");
+    format!("{name}, which panicked: {why}")
+}
+
+/// A blocking task that did not answer: a panic is `Forbidden` (a halt); a cancelled
+/// task (a shutdown) is an ordinary failure, retried when next due (fix round 1, m4).
+pub(crate) fn lost(name: &str, error: tokio::task::JoinError) -> HostResult {
+    HostResult::Error(if error.is_panic() {
+        HostError::Forbidden(panicked(name, &error.to_string()))
+    } else {
+        HostError::Failed(format!("{name} did not finish: {error}"))
+    })
 }
 
 /// `f`, its panic caught and answered `Forbidden` (see the module doc).
-fn guarded(f: impl FnOnce() -> HostResult) -> HostResult {
+fn guarded(name: &str, f: impl FnOnce() -> HostResult) -> HostResult {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|payload| {
         let why = payload
             .downcast_ref::<String>()
             .map(String::as_str)
             .or_else(|| payload.downcast_ref::<&str>().copied())
             .unwrap_or("a panic");
-        HostResult::Error(HostError::Forbidden(panicked(why)))
+        HostResult::Error(HostError::Forbidden(panicked(name, why)))
     })
 }
 
 /// The controller's ruling: the remote's URLs are still the ones preflight sealed. A run
 /// with no seal (none is recorded before `run start` preflights) is not checked.
-fn unchanged(git: &OsString, repo: &HostRepo, seal: Option<&str>) -> Result<(), HostError> {
+/// The refusal follows the engine's `anthrex refused its own host command: ` (fix round
+/// 1, m5), and names every setting the seal covers.
+fn unchanged(
+    host: &dyn CodeHost,
+    name: &str,
+    repo: &HostRepo,
+    seal: Option<&str>,
+) -> Result<(), HostError> {
     let Some(sealed) = seal else {
         return Ok(());
     };
-    let now = super::delivery::seal(git, &repo.root, &repo.remote).map_err(|e| {
-        HostError::Failed(format!("cannot read remote {}'s URLs: {e}", repo.remote))
-    })?;
-    if now == sealed {
+    if host.remote_seal(&repo.root, &repo.remote)? == sealed {
         return Ok(());
     }
+    let r = &repo.remote;
     Err(HostError::Forbidden(format!(
-        "remote {}'s URLs changed since the run started; anthrex pushes and fetches only where preflight checked (restore remote.{}.url and pushurl, then anthrex run resume)",
-        repo.remote, repo.remote
+        "{name} on remote {r}, whose URLs changed since the run started; anthrex pushes and fetches only where preflight checked (restore remote.{r}.url, remote.{r}.pushurl and any url.<base>.insteadOf or pushInsteadOf rule, then run anthrex run resume)"
     )))
 }
 
-/// The run's `delivery` directory, 0700.
+/// The run's `delivery` directory, 0700 (fix round 1, m11): its parents are made with
+/// the default mode, as the rest of the data directory is, and the directory itself is
+/// tightened to 0700 when it already exists.
 fn private_dir(dir: &Path) -> Result<(), HostError> {
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
-        .map_err(|e| HostError::Failed(format!("cannot create {}: {e}", dir.display())))
+    use std::os::unix::fs::PermissionsExt;
+    let failed =
+        |e: std::io::Error| HostError::Failed(format!("cannot create {}: {e}", dir.display()));
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent).map_err(failed)?;
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && dir.is_dir() => {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(failed)
+        }
+        Err(e) => Err(failed(e)),
+    }
 }
 
 /// Writes `bytes` to `path`, 0600, in its 0700 directory.
