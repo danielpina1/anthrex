@@ -43,6 +43,11 @@ pub use stages::*;
 mod task;
 pub use task::*;
 
+// Milestone 9.3's rounds (decision 18); `rounds` is the session rounds' module.
+#[path = "model_goal_rounds.rs"]
+mod goal_rounds;
+pub use goal_rounds::Round;
+
 /// How thoroughly a task is reviewed, decision 35: `S` tasks get `Small`, `M` tasks
 /// `Medium`, hub tasks `Frontier`, each possibly raised by the level rule (no `check` in
 /// the profile, or a non-`tdd` task whose `owns` touch `source`).
@@ -342,6 +347,13 @@ pub struct Run {
     /// Milestone 9.2 decisions 3 and 16: how the run is delivered, frozen at start.
     #[serde(default)]
     pub delivery: super::delivery::RunDelivery,
+    /// Milestone 9.3 decision 18: one record a round, oldest first. A run from before
+    /// rounds gets round 1 at restore (`engine::goal_rounds::ensure_first`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rounds: Vec<Round>,
+    /// Milestone 9.3 decision 19: the chain whose orchestrator session the run uses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<String>,
 }
 
 impl Run {

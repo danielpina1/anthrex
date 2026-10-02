@@ -57,6 +57,9 @@ pub struct StageRecord {
     /// Decision 52's attention line of that red propagate (task M9.1.17).
     #[serde(default)]
     pub propagate_note: Option<String>,
+    /// Milestone 9.3 decision 13: the round whose tasks the stage holds.
+    #[serde(default = "proto::first_round")]
+    pub round: u32,
 }
 
 impl StageRecord {
@@ -77,6 +80,7 @@ impl StageRecord {
             bisect: None,
             propagate_red: None,
             propagate_note: None,
+            round: proto::first_round(),
         }
     }
 }

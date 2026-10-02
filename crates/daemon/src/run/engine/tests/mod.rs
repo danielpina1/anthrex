@@ -70,6 +70,7 @@ mod gates_exits;
 mod gates_fixes;
 mod gates_review;
 mod gates_rounds;
+mod goal_rounds;
 mod history;
 mod history_tiers;
 mod history_tiers_c23;

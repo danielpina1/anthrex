@@ -96,6 +96,10 @@ pub struct RunOrch {
     /// In memory only: the driver reports it again after a restart.
     #[serde(skip)]
     pub wake_held: bool,
+    /// Milestone 9.3 decision 11: a round's (or a next goal's) wake, delivered whole,
+    /// held until the orchestrator is woken with it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_wake: Option<String>,
 }
 
 /// The attention line of a held wake-up ([`RunOrch::wake_held`]).

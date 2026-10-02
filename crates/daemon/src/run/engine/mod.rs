@@ -59,6 +59,7 @@ mod fixes;
 pub(crate) mod full;
 mod gate_holds;
 mod gates;
+mod goal_rounds;
 mod history;
 mod holds;
 mod integration;

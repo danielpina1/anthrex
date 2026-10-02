@@ -428,6 +428,8 @@ fn old_run_json_loads() {
         assert_eq!(task.remove("signals_more"), Some(serde_json::json!(0)));
         assert_eq!(task.remove("signal_refusals"), Some(serde_json::json!(0)));
         assert_eq!(task.remove("sync"), Some(serde_json::Value::Null));
+        // Milestone 9.3 decision 18: round 1.
+        assert_eq!(task.remove("round"), Some(serde_json::json!(1)));
         let spec = task["spec"].as_object_mut().unwrap();
         assert!(spec.remove("review_target").is_some(), "review_target");
         // Milestone 9.1 decisions 43 and 54: stage 1, not atomic.

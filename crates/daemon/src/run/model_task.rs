@@ -194,6 +194,9 @@ pub struct Task {
     /// worktree before its first session.
     #[serde(default)]
     pub sync: Option<super::SyncState>,
+    /// Milestone 9.3 decision 13: the round that added the task.
+    #[serde(default = "proto::first_round")]
+    pub round: u32,
 }
 
 impl Task {

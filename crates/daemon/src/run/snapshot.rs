@@ -148,8 +148,8 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         test_slots: run.test_slots,
         delivery: super::delivery::snapshot::delivery_info(run),
         chain: None,
-        round: 1,
-        rounds: Vec::new(),
+        round: run.round(),
+        rounds: run.round_infos(),
     }
 }
 
@@ -428,7 +428,7 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         atomic: t.spec.atomic,
         atomic_reason: t.spec.atomic_reason.clone(),
         interface_change: t.spec.interface_change,
-        round: 1,
+        round: t.round,
     }
 }
 

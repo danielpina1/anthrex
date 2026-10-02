@@ -423,6 +423,8 @@ async fn restoring_an_unchanged_finished_run_writes_nothing() {
     let mut run = poisoned_run("done", data.path());
     run.revision = 4;
     run.state = proto::RunState::Accepted;
+    // Milestone 9.3 decision 18: a run from 9.3 on has its round 1 stored.
+    run.rounds.push(crate::run::model::Round::first(&run));
     crate::run::journal::save_run(&run).unwrap();
     let file = run.data_dir.join(crate::run::journal::RUN_FILE);
     let journal = run.data_dir.join(crate::run::journal::JOURNAL_FILE);
