@@ -28,9 +28,13 @@ mod tests;
 #[cfg(test)]
 mod tests_allow;
 #[cfg(test)]
+mod tests_allow_git;
+#[cfg(test)]
 mod tests_git;
 #[cfg(test)]
 mod tests_limits;
+#[cfg(test)]
+mod tests_open_logs;
 #[cfg(test)]
 mod tests_parse;
 #[cfg(test)]
