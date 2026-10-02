@@ -33,6 +33,9 @@ use crate::run::model::Run;
 
 /// The text kept of the logs: what the decider reads (decision 18).
 const TEXT_MAX: usize = crate::decider::CI_SUMMARY_INPUT_BYTES;
+/// A summary line's bound, the schema's `maxLength` (the fallback's lines are the
+/// log's own, so they are cut too).
+const LINE_MAX: usize = 300;
 
 /// The record of stage `n` being worked on: the newest that is not tasked or handed to
 /// the user.
@@ -66,6 +69,13 @@ pub(super) fn stale(run: &Run, n: u16, rec: &CiRecord) -> Option<String> {
         return Some("the stage is paused".to_string());
     }
     (pr.pushed_head != rec.head).then(|| format!("{} was pushed since", sha7(&pr.pushed_head)))
+}
+
+/// [`stale`], or the run is ending (`finish` or a cancel): nothing more is added for
+/// the red (fix round 1: no fix task, no attention line that nothing would clear).
+pub(super) fn gone(run: &Run, n: u16, rec: &CiRecord) -> Option<String> {
+    stale(run, n, rec)
+        .or_else(|| super::super::full::ending(run).then(|| "the run is ending".to_string()))
 }
 
 /// Drops record `i` of stage `n` for `why`.
@@ -118,7 +128,7 @@ fn step(run: &mut Run, n: u16, i: usize, rec: CiRecord, now: u64, fx: &mut Vec<E
         }
     }
     let serving = rec.phase == CiPhase::Bisecting && bisect_serves(run, n, &rec);
-    if !serving && let Some(why) = stale(run, n, &rec) {
+    if !serving && let Some(why) = gone(run, n, &rec) {
         return drop_record(run, n, i, &why, now);
     }
     match rec.phase {
@@ -181,6 +191,7 @@ pub(super) fn logs(run: &mut Run, n: u16, ci_run: u64, file: LogFile) {
         return;
     }
     r.fetched.push(ci_run);
+    r.log_failures = 0;
     if r.log.is_none() {
         r.log = Some(file.path);
     }
@@ -194,6 +205,31 @@ pub(super) fn logs(run: &mut Run, n: u16, ci_run: u64, file: LogFile) {
         at += 1;
     }
     r.text.drain(..at);
+}
+
+/// `FailedLogs` of `ci_run` failed (fix round 1): after
+/// [`FAILURES_BEFORE_ATTENTION`] in a row the run is given up and the summary is made
+/// without its log, so the record never stalls in `Logs`.
+///
+/// [`FAILURES_BEFORE_ATTENTION`]: crate::run::delivery::FAILURES_BEFORE_ATTENTION
+pub(super) fn logs_failed(run: &mut Run, n: u16, ci_run: u64, now: u64) {
+    let max = crate::run::delivery::FAILURES_BEFORE_ATTENTION;
+    let Some(r) = active(run, n).and_then(|i| record_mut(run, n, i)) else {
+        return;
+    };
+    if r.phase != CiPhase::Logs || r.fetched.contains(&ci_run) {
+        return;
+    }
+    r.log_failures = r.log_failures.saturating_add(1);
+    if r.log_failures < max {
+        return;
+    }
+    r.log_failures = 0;
+    r.fetched.push(ci_run);
+    let text = format!(
+        "stage {n}: the failed log of CI run {ci_run} could not be fetched after {max} tries; summarising without it"
+    );
+    log(run, now, text);
 }
 
 /// The record's log as the decider and the fix task's quote read it: the failed logs,
@@ -256,6 +292,12 @@ pub(crate) fn summarised(
     let Some((n, i)) = found else {
         return;
     };
+    let Some(rec) = record(run, n, i).cloned() else {
+        return;
+    };
+    if let Some(why) = gone(run, n, &rec) {
+        return drop_record(run, n, i, &why, now);
+    }
     let (names, dropped) = safe_tests(failing_tests);
     let source = match (decision.source, decision.fallback_reason.as_deref()) {
         (DeciderSource::Decider, _) => "decider".to_string(),
@@ -263,7 +305,15 @@ pub(crate) fn summarised(
         (_, None) => "fallback".to_string(),
     };
     if let Some(r) = record_mut(run, n, i) {
-        r.lines = lines.clone();
+        // Fix round 1 (decision 22): every kept line is one line, at most 300 chars.
+        r.lines = (lines.iter())
+            .map(|l| {
+                proto::safe_text::one_line(l)
+                    .chars()
+                    .take(LINE_MAX)
+                    .collect()
+            })
+            .collect();
         r.failing_tests = names;
         r.category = Some(*category);
         r.source = Some(source);
@@ -360,10 +410,17 @@ fn rerun_step(run: &mut Run, n: u16, i: usize, rec: &CiRecord, now: u64, fx: &mu
         emit(run, HostOp::RerunFailed { stage: n, ci_run }, fx);
         return;
     }
-    let lost = rec.reruns.iter().any(|r| !rec.reruns_answered.contains(r));
-    if lost && !in_flight {
+    let lost: Vec<&u64> = (rec.reruns.iter())
+        .filter(|r| !rec.reruns_answered.contains(r))
+        .collect();
+    if !lost.is_empty() && !in_flight {
+        let why = if lost.iter().all(|r| rec.rerun_timeouts.contains(r)) {
+            "a re-run timed out twice"
+        } else {
+            "a re-run's answer was lost in a restart"
+        };
         let text = format!(
-            "stage {n}: a re-run's answer was lost in a restart; CI red at {} is unknown, not re-run again",
+            "stage {n}: {why}; CI red at {} is unknown, not re-run again",
             sha7(&rec.head)
         );
         log(run, now, text);
@@ -371,21 +428,30 @@ fn rerun_step(run: &mut Run, n: u16, i: usize, rec: &CiRecord, now: u64, fx: &mu
     }
 }
 
-/// `RerunFailed` answered (or failed: then it may be issued again).
-pub(super) fn rerun_done(run: &mut Run, n: u16, ci_run: u64, ok: bool, now: u64) {
-    let Some(i) = active(run, n) else {
+/// `RerunFailed` answered.
+pub(super) fn rerun_done(run: &mut Run, n: u16, ci_run: u64, now: u64) {
+    let Some(r) = active(run, n).and_then(|i| record_mut(run, n, i)) else {
         return;
     };
-    let Some(r) = record_mut(run, n, i) else {
-        return;
-    };
-    if ok {
-        if !r.reruns_answered.contains(&ci_run) {
-            r.reruns_answered.push(ci_run);
-        }
-        let text = format!("stage {n}: re-ran the failed jobs of CI run {ci_run}");
-        log(run, now, text);
-    } else {
-        r.reruns.retain(|x| *x != ci_run);
+    if !r.reruns_answered.contains(&ci_run) {
+        r.reruns_answered.push(ci_run);
     }
+    let text = format!("stage {n}: re-ran the failed jobs of CI run {ci_run}");
+    log(run, now, text);
+}
+
+/// `RerunFailed` failed: issued again, except that a re-run that timed out (GitHub may
+/// have started it) is issued again once; after a second timeout it stays issued and
+/// unanswered, and `rerun_step` handles the red as `unknown` (fix round 1).
+pub(super) fn rerun_failed(run: &mut Run, n: u16, ci_run: u64, timed_out: bool) {
+    let Some(r) = active(run, n).and_then(|i| record_mut(run, n, i)) else {
+        return;
+    };
+    if timed_out && r.rerun_timeouts.contains(&ci_run) {
+        return;
+    }
+    if timed_out {
+        r.rerun_timeouts.push(ci_run);
+    }
+    r.reruns.retain(|x| *x != ci_run);
 }

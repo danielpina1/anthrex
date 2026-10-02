@@ -9,7 +9,7 @@ use proto::CiCategory;
 
 use super::super::requests::log;
 use super::super::{Effect, OpId, OpKind, OpResult, ScratchAt, bisect, tiers};
-use super::ci::{drop_record, record, record_mut, stale};
+use super::ci::{drop_record, gone, record, record_mut};
 use super::fix::{self, Repro};
 use crate::run::contract::sha7;
 use crate::run::delivery::snapshot::stage_count;
@@ -159,7 +159,8 @@ pub(crate) fn reproduced(
     };
     r.probe = None;
     let rec = r.clone();
-    if let Some(why) = stale(run, n, &rec) {
+    // Fix round 1: a red that stopped mattering, or a run ending, adds nothing.
+    if let Some(why) = gone(run, n, &rec) {
         return drop_record(run, n, i, &why, now);
     }
     let (red, command) = match result {

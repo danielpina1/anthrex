@@ -162,6 +162,16 @@ pub(super) fn host_done(
     let OpResult::Host(result) = result else {
         return;
     };
+    // Decision 10, in the engine too (fix round 1): a run GitHub already re-runs is a
+    // re-run accepted, never issued again.
+    let result = match result {
+        HostResult::Error(e)
+            if matches!(op, HostOp::RerunFailed { .. }) && e.text().contains("already running") =>
+        {
+            HostResult::Rerun
+        }
+        result => result,
+    };
     if let HostResult::Error(error) = result {
         return failed(run, &op, error, now);
     }
@@ -194,7 +204,7 @@ pub(super) fn host_done(
             ci::logs(run, stage, ci_run, file)
         }
         (HostOp::RerunFailed { stage, ci_run }, HostResult::Rerun) => {
-            ci::rerun_done(run, stage, ci_run, true, now)
+            ci::rerun_done(run, stage, ci_run, now)
         }
         // Decisions 29–30 (task M9.2.10).
         (HostOp::Permission { .. }, HostResult::Permission { user, permission }) => {
@@ -228,7 +238,11 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
         .collect();
     let rate_limited = matches!(error, HostError::RateLimited(_));
     match op {
-        HostOp::RerunFailed { stage, ci_run } => ci::rerun_done(run, *stage, *ci_run, false, now),
+        HostOp::RerunFailed { stage, ci_run } => {
+            let timed_out = matches!(error, HostError::TimedOut(_));
+            ci::rerun_failed(run, *stage, *ci_run, timed_out)
+        }
+        HostOp::FailedLogs { stage, ci_run, .. } => ci::logs_failed(run, *stage, *ci_run, now),
         HostOp::Permission { .. } => review::permission_failed(run, now, retry_secs(run)),
         HostOp::Reply { stage, marker, .. } => {
             reply::reply_failed(run, *stage, marker, &error, now)

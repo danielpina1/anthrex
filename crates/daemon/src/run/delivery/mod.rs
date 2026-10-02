@@ -304,6 +304,12 @@ pub struct CiRecord {
     /// a restart never issues one twice).
     #[serde(default)]
     pub reruns_answered: Vec<u64>,
+    /// The re-runs that timed out once (issued again once, never a third time), and the
+    /// failures in a row of the failed log being fetched (fix round 1).
+    #[serde(default)]
+    pub rerun_timeouts: Vec<u64>,
+    #[serde(default)]
+    pub log_failures: u32,
     /// The local reproduction in flight (it holds `Run.full_op`), its executor failures,
     /// when it may be tried again, and the command that reproduced the red.
     #[serde(default)]
@@ -339,6 +345,8 @@ impl CiRecord {
             decider: None,
             source: None,
             reruns_answered: Vec::new(),
+            rerun_timeouts: Vec::new(),
+            log_failures: 0,
             probe: None,
             probe_failures: 0,
             retry_at: 0,

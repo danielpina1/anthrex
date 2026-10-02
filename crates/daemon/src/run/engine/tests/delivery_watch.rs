@@ -149,7 +149,10 @@ pub(super) fn view_answer(fx: &mut Fixture, at: u64, result: HostResult) -> Vec<
 /// the same second.
 pub(super) fn poll_with(fx: &mut Fixture, v: PrView) -> (u64, Vec<Effect>) {
     // Task M9.2.9: a red view starts a CI log fetch, which takes the stage's one host
-    // op; it is answered first, with an empty log.
+    // op (decision 8), so the next view could never go out. It is answered first, with
+    // an empty log: these watch tests are about views, not CI. A CI test that cares
+    // about a log answers it itself (`delivery_ci::answer_logs`) before polling again;
+    // one that does not loses only that log's text, never a view.
     for (op, host) in host_ops(fx) {
         if let HostOp::FailedLogs { .. } = host {
             let path = format!("/tmp/data/delivery/ci-{op}.log");

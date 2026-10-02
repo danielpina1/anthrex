@@ -354,6 +354,8 @@ fn the_delivery_model_round_trips_through_run_json() {
             decider: Some(4),
             source: Some("decider".into()),
             reruns_answered: vec![28_000_000_001],
+            rerun_timeouts: vec![28_000_000_001],
+            log_failures: 2,
             probe: Some(31),
             probe_failures: 1,
             retry_at: 5_000,

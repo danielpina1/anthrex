@@ -341,3 +341,58 @@ fn not_reproduced_adds_an_environment_fix_task_with_tts_sentence() {
     assert_eq!(ci_record(&fx).phase, CiPhase::Tasked);
     assert!(pending(&fx, "TestAt", None).is_empty());
 }
+
+/// Fix round 1 (m4): a CI bisect's end is recorded as what happened: a culprit that is
+/// not a task gets the stage fix (not a refused culprit), and a red that stopped
+/// mattering during the bisect has its own reason.
+#[test]
+fn a_ci_bisect_records_what_happened() {
+    let start = |fx: &mut Fixture| {
+        with_orchestrator(fx);
+        fx.run_mut().stages[0].full.green_at = Some(commit(1));
+        red_summarised(fx, &commit(4), &[TEST], CiCategory::Test);
+        let (op, spec) = reproduction(fx);
+        fx.done(op, red_probe(&spec.commands[0]));
+        assert!(fx.run().stage(1).unwrap().bisect.is_some());
+    };
+    let ended = |fx: &Fixture| {
+        fx.run()
+            .stage(1)
+            .unwrap()
+            .full
+            .ended
+            .last()
+            .cloned()
+            .unwrap()
+    };
+    // A culprit merge whose task is gone: the stage fix, recorded as no culprit.
+    let mut fx = tiered_watched(&["t1", "t2", "t3", "t4"]);
+    start(&mut fx);
+    let b = fx.run_mut().stages[0].bisect.as_mut().unwrap();
+    for c in &mut b.candidates {
+        if let crate::run::model::StageMerge::Task { id, .. } = c
+            && id == "t3"
+        {
+            *id = "ghost".into();
+        }
+    }
+    super::bisect::answer(&mut fx, 3);
+    assert_eq!(ci_fixes(&fx).len(), 1, "the stage fix");
+    let end = ended(&fx);
+    assert_eq!(
+        (end.culprit, end.fix_task, end.reason.as_deref()),
+        (None, None, Some("the culprit ghost is not a task"))
+    );
+    // The PR merged while the bisect ran: nothing is added, and the end says why.
+    let mut fx = tiered_watched(&["t1", "t2", "t3", "t4"]);
+    start(&mut fx);
+    fx.run_mut().delivery.stages[0].pr.as_mut().unwrap().state = proto::PrState::Merged;
+    super::bisect::answer(&mut fx, 3);
+    assert!(ci_fixes(&fx).is_empty());
+    let end = ended(&fx);
+    assert_eq!(
+        (end.culprit, end.fix_task, end.reason.as_deref()),
+        (None, None, Some("CI red not acted on: its PR is merged"))
+    );
+    assert!(fx.run().delivery.stage(1).unwrap().ci.is_empty());
+}

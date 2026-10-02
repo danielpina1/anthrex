@@ -10,6 +10,7 @@
 
 use proto::{CiCategory, Route, RouteSpec, Size, TaskOrigin, TaskState, TestMode};
 
+use super::super::history::BisectResult;
 use super::super::requests::log;
 use super::super::{Effect, fixes, gate_holds, wake};
 use super::ci::{log_text, record, record_mut};
@@ -29,6 +30,8 @@ pub(crate) const NOT_REPRODUCED: &str =
 /// to this many lines.
 const LOG_LINES: usize = 200;
 const STAT_LINES: usize = 60;
+/// The characters of a CI key an attention line shows.
+const KEY_SHOWN: usize = 120;
 
 /// Whether, and how, the red reproduced locally (decision 27 step 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,8 +97,16 @@ fn brief(run: &Run, n: u16, rec: &CiRecord, repro: &Repro, culprit: Option<&Culp
         sha7(&rec.head),
         category(rec)
     );
-    for line in &rec.lines {
-        out.push_str(&format!("  {}\n", proto::safe_text::one_line(line)));
+    // Decision 22 (fix round 1): a decider's own lines (its words, one-lined and cut)
+    // stand outside the fence by design; a fallback's are the log's own lines, which
+    // the quote below holds, so they are not repeated outside it.
+    if rec.source.as_deref() == Some("decider") {
+        for line in &rec.lines {
+            let line: String = proto::safe_text::one_line(line).chars().take(300).collect();
+            out.push_str(&format!("  {line}\n"));
+        }
+    } else if !rec.lines.is_empty() {
+        out.push_str("  (none: see the quoted log)\n");
     }
     out.push_str(&quote::ci_log(
         &checks,
@@ -233,10 +244,31 @@ fn bisected(run: &Run, n: u16, b: &BisectRecord) -> Option<usize> {
         .rposition(|r| r.phase == CiPhase::Bisecting && r.head == b.head)
 }
 
+/// How a CI bisect's culprit was handled: what its history line records (fix round 1).
+pub(in crate::run::engine) enum CiCulprit {
+    /// The culprit's fix task.
+    Fixed(String),
+    /// No culprit fix, for this reason: the red was not acted on, or a stage fix.
+    NoCulprit(String),
+    /// Every route refused the fix task: `fix task refused: <message>`.
+    Refused(String),
+}
+
+impl CiCulprit {
+    /// The bisect's history result, the culprit being `task`.
+    pub(in crate::run::engine) fn result<'a>(&'a self, task: &'a str) -> BisectResult<'a> {
+        match self {
+            CiCulprit::Fixed(fix) => BisectResult::Culprit { task, fix },
+            CiCulprit::NoCulprit(reason) => BisectResult::None(reason),
+            CiCulprit::Refused(reason) => BisectResult::Refused { task, reason },
+        }
+    }
+}
+
 /// 9.1's bisect of a CI red blamed task `culprit` (decision 27 step 4): its fix task
 /// owns the culprit's `owns` exactly, on its route one rung up, else its own route,
-/// else the policy's. `Ok(<fix id>)`; `Err` when it was not made (the red went to the
-/// user, or is no longer current), with the reason.
+/// else the policy's. A culprit that is not a task gets the stage fix; a red that
+/// stopped mattering gets nothing.
 pub(in crate::run::engine) fn ci_culprit(
     run: &mut Run,
     n: u16,
@@ -244,18 +276,20 @@ pub(in crate::run::engine) fn ci_culprit(
     culprit: &str,
     now: u64,
     fx: &mut Vec<Effect>,
-) -> Result<String, String> {
-    let Some(i) = bisected(run, n, b) else {
-        return Err("its CI record is gone".to_string());
+) -> CiCulprit {
+    let not_acted_on = |why: &str| CiCulprit::NoCulprit(format!("CI red not acted on: {why}"));
+    let Some((i, rec)) = bisected(run, n, b).and_then(|i| Some((i, record(run, n, i)?.clone())))
+    else {
+        return not_acted_on("its CI record is gone");
     };
-    let rec = record(run, n, i).cloned().ok_or("its CI record is gone")?;
-    if let Some(why) = super::ci::stale(run, n, &rec) {
+    if let Some(why) = super::ci::gone(run, n, &rec) {
         super::ci::drop_record(run, n, i, &why, now);
-        return Err(why);
+        return not_acted_on(&why);
     }
     let Some(task) = run.task(culprit).cloned() else {
-        no_culprit_at(run, n, i, "the culprit is not a task", now, fx);
-        return Err(format!("{culprit} is not a task"));
+        let why = format!("the culprit {culprit} is not a task");
+        no_culprit_at(run, n, i, &why, now, fx);
+        return CiCulprit::NoCulprit(why);
     };
     let blamed = Culprit {
         id: culprit,
@@ -275,11 +309,11 @@ pub(in crate::run::engine) fn ci_culprit(
     match add_on(run, spec, &routes, now, fx) {
         Ok(id) => {
             tasked(run, n, i, id.clone());
-            Ok(id)
+            CiCulprit::Fixed(id)
         }
         Err(message) => {
             refused(run, n, i, &message, now);
-            Err(message)
+            CiCulprit::Refused(format!("fix task refused: {message}"))
         }
     }
 }
@@ -312,9 +346,7 @@ pub(super) fn no_culprit_at(
     let Some(rec) = record(run, n, i).cloned() else {
         return;
     };
-    let gone = super::ci::stale(run, n, &rec)
-        .or_else(|| super::super::full::ending(run).then(|| "the run is ending".to_string()));
-    if let Some(gone) = gone {
+    if let Some(gone) = super::ci::gone(run, n, &rec) {
         return super::ci::drop_record(run, n, i, &gone, now);
     }
     log(
@@ -361,10 +393,12 @@ pub(super) fn capped(run: &mut Run, n: u16, i: usize, made: usize, now: u64) {
     let Some(rec) = record(run, n, i) else {
         return;
     };
-    let line = format!(
-        "stage {n} CI still red on {} after {made} fix tasks; over to you",
-        rec.key
-    );
+    // Fix round 1: the key (up to 50 names) is cut in the line; the record keeps it.
+    let mut key: String = rec.key.chars().take(KEY_SHOWN).collect();
+    if key.len() < rec.key.len() {
+        key.push('…');
+    }
+    let line = format!("stage {n} CI still red on {key} after {made} fix tasks; over to you");
     to_user(run, n, i, line.clone(), line, now);
 }
 

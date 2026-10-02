@@ -24,6 +24,7 @@ mod deciders_size;
 mod deciders_size_guards;
 mod delivery_ci;
 mod delivery_ci_cap;
+mod delivery_ci_edges;
 mod delivery_ci_repro;
 mod delivery_open;
 mod delivery_open_host;
