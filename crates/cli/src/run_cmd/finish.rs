@@ -42,6 +42,11 @@ pub(super) async fn accept(
     base: Option<&str>,
 ) -> anyhow::Result<()> {
     let run_id = &info.run_id;
+    // Milestone 9.2 decision 38: a `pr` run's accept is the daemon's refusal, whatever
+    // its state, printed as it is and exit 1.
+    if info.delivery.is_some() {
+        return print_outcome(runs.finish(run_id, FinishAction::Accept, None).await?);
+    }
     if info.state != RunState::Complete {
         anyhow::bail!(
             "run {run_id} is {}; accept applies only to a complete run",

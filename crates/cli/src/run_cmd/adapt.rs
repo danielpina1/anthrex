@@ -18,13 +18,16 @@ pub const GOAL_REQUEST_TIMEOUT: Duration =
 /// `run start --goal`: on the fast path the run id on stdout and triage's message on
 /// stderr, and so on the plan and large paths with the planned message (milestone 9
 /// decision 26); any refusal is the command's error (exit 1). `orchestrator` is
-/// `--orchestrator`'s choice (decision 6).
+/// `--orchestrator`'s choice (decision 6), `delivery` `--delivery`'s (M9.2 decision 3).
 pub(super) async fn start_goal(
     socket: &Path,
     dir: Option<PathBuf>,
     goal: String,
     (yes, trust_project, unconfined_checks): (bool, bool, bool),
-    orchestrator: Option<proto::OrchestratorChoice>,
+    (orchestrator, delivery): (
+        Option<proto::OrchestratorChoice>,
+        Option<proto::DeliveryMode>,
+    ),
 ) -> anyhow::Result<()> {
     let dir = crate::resolve_dir(dir)?;
     tui::spawn::ensure_daemon(&std::env::current_exe()?, socket).await?;
@@ -37,7 +40,7 @@ pub(super) async fn start_goal(
             trust_project,
             unconfined_checks,
             orchestrator,
-            delivery: None,
+            delivery,
         })
         .await?;
     match reply {

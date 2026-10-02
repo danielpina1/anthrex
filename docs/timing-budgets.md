@@ -347,6 +347,12 @@ wrote a fresh `#!/bin/sh` stand-in and let a product budget time its first exec.
 | The executor's and preflight's caps against `Sleepy` (a runner that sleeps 2 s and ignores its timeout) | `host_ops_tests.rs` (`host_cap` 300 ms), `delivery_tests.rs` (200 ms) | `300ms`; `200ms`; `!finished` at the answer | The cap is the bound under test: the answer is the timeout text, and `Sleepy` has not finished, so the answer came before its 2 s. The 2 s is the margin against a loaded machine's scheduling of a 300 ms timer. | **Recorded.** |
 | The decider stand-in's warm-up (fix round 1, m3) | `delivery_tests_start.rs` (`decider_stand_in`) | `10s` | One exec of a `#!/bin/sh` script that exits at its second line, retried on `ETXTBSY` while a concurrent fork still holds the script's write descriptor; on macOS the first exec's security assessment (about 0.44 s, serialised). | **Recorded.** |
 
+### Recorded, from M9.2.14 (2026-10-02)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `PrRig::wait_pr`, `wait_prs` and `wait_stage` (each a deadline loop, 200-250 ms between reads), and `run_cli_delivery.rs`'s `open_pr` | `crates/cli/tests/support/run_pr.rs`, `crates/cli/tests/run_cli_delivery.rs` | `RUN_WAIT` (`300s`) | One task path (`RUN_WAIT`'s own derivation), then tier 3 on the stage head (the plan's `check = "true"`, one check run), the stage's push and PR (decision 9: a push at `PUSH_TIMEOUT` 120 s, three reads at 30 s), and one view at `poll_secs = 1`: the PR's open state and CI arrive inside the task path's margin. `wait_stage` runs one `anthrex run prs --json` per read, each within `REQUEST_WAIT`. | **Recorded.** Measured: the four tests that open a PR, with the five others, took 10.3 s together. |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |

@@ -35,6 +35,8 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
         .count();
     let state = match (run.state, run.paused_from) {
         (RunState::Paused, Some(from)) => format!("paused (from {})", from.label()),
+        // Milestone 9.2 decision 36.
+        _ if super::delivery::delivering(run) => "running (delivering)".to_string(),
         (state, _) => state.label().to_string(),
     };
     // M8b decision 24: ` fast path` after the state.
@@ -86,6 +88,7 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
         );
     }
     out.push_str(&orchestrator_lines(run));
+    out.push_str(&super::delivery::status_lines(run));
     // Milestone 9.1 (Interfaces "CLI"): a `Multi` run's stages, before its tasks.
     let multi = run.stages.len() > 1;
     if multi {

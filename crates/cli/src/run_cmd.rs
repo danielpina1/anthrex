@@ -3,6 +3,7 @@
 //! waits [`RUN_REQUEST_TIMEOUT`] ([`FINISH_REQUEST_TIMEOUT`] for accept and discard); every `Refused` prints the daemon's message and exits 1.
 
 mod adapt;
+mod delivery;
 mod finish;
 mod orch;
 mod status;
@@ -79,7 +80,18 @@ enum RunCommand {
         /// A goal's orchestrator: claude or codex, optionally :<model>
         #[arg(long, value_name = "RUNTIME[:MODEL]")]
         orchestrator: Option<String>,
+        /// Deliver by pull request (pr) or by run accept (local); the profile's by default
+        #[arg(long, value_name = "pr|local")]
+        delivery: Option<String>,
     },
+    /// Show each stage's pull request: its state, CI, threads and fix tasks
+    Prs(delivery::PrsArgs),
+    /// Run tier 3 on a stage now, and open its pull request once it is green
+    Deliver(delivery::DeliverArgs),
+    /// Stop or resume watching a run's pull requests
+    Watch(delivery::WatchArgs),
+    #[command(hide = true)]
+    FakeGithub(delivery::FakeGithubArgs),
     /// Show every run, or one, newest first
     Status {
         run: Option<String>,
@@ -204,19 +216,23 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
         trust_project,
         unconfined_checks,
         orchestrator,
+        delivery,
     } = command
     {
+        let delivery = delivery::mode(delivery.as_deref())?;
         let choice = orch::start_orchestrator(plan.as_ref(), orchestrator.as_deref())?;
         let flags = (yes, trust_project, unconfined_checks);
         return match (plan, goal) {
-            (Some(plan), _) => {
-                start(socket, dir, &plan, yes, trust_project, unconfined_checks).await
-            }
+            (Some(plan), _) => start(socket, dir, &plan, flags, delivery).await,
             (None, goal) => {
                 let goal = goal.unwrap_or_default();
-                adapt::start_goal(socket, dir, goal, flags, choice).await
+                adapt::start_goal(socket, dir, goal, flags, (choice, delivery)).await
             }
         };
+    }
+    // Decision 14: the fake GitHub's control, which talks to no daemon.
+    if let RunCommand::FakeGithub(args) = command {
+        return delivery::fake_github(args);
     }
     // Every flag is checked before the daemon is asked anything.
     let promote_choice = match &command {
@@ -235,7 +251,10 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
     };
     let mut runs = Runs::connect(socket).await?;
     match command {
-        RunCommand::Start { .. } => unreachable!("handled above"),
+        RunCommand::Start { .. } | RunCommand::FakeGithub(_) => unreachable!("handled above"),
+        RunCommand::Prs(args) => delivery::prs(&mut runs, args).await,
+        RunCommand::Deliver(args) => delivery::deliver(&mut runs, args).await,
+        RunCommand::Watch(args) => delivery::watch(&mut runs, args).await,
         RunCommand::Status { run, json } => {
             let mut snapshot = runs.list().await?;
             if let Some(run) = run {
@@ -335,9 +354,8 @@ async fn start(
     socket: &Path,
     dir: Option<PathBuf>,
     plan: &Path,
-    yes: bool,
-    trust_project: bool,
-    unconfined_checks: bool,
+    (yes, trust_project, unconfined_checks): (bool, bool, bool),
+    delivery: Option<proto::DeliveryMode>,
 ) -> anyhow::Result<()> {
     let plan_toml = std::fs::read_to_string(plan)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", plan.display()))?;
@@ -351,7 +369,7 @@ async fn start(
             yes,
             trust_project,
             unconfined_checks,
-            delivery: None,
+            delivery,
         })
         .await?;
     let run_id = match reply {
