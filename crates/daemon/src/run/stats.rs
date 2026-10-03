@@ -8,22 +8,15 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use proto::{
-    DeciderSource, FlakyProposal, HistoryLine, HistoryStats, Size, StatsRow, TaskOutcome,
-    TaskRecord,
+    DeciderSource, FlakyProposal, HistoryLine, HistoryStats, StatsRow, TaskOutcome, TaskRecord,
 };
 
 /// The rows, in order.
 const CLASSES: [&str; 3] = ["S", "M", "hub"];
 
-/// The row a task belongs to: `hub` whatever its size, else its final size. A non-hub
-/// `L` task (blocked for a split, never merged) belongs to none.
+/// The row a task belongs to (`refit::class_of`, milestone 9.5 decision 4).
 fn class(task: &TaskRecord) -> Option<&'static str> {
-    match (task.hub, task.final_size) {
-        (true, _) => Some("hub"),
-        (false, Size::S) => Some("S"),
-        (false, Size::M) => Some("M"),
-        (false, Size::L) => None,
-    }
+    super::refit::class_of(task).map(super::refit::SizeClass::label)
 }
 
 fn is_merged(task: &TaskRecord) -> bool {

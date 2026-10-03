@@ -50,6 +50,8 @@ pub mod plan;
 pub mod proof;
 pub mod reach;
 pub mod reconcile;
+pub mod refit;
+pub mod refit_render;
 pub mod report;
 mod report_escape;
 mod report_orch;

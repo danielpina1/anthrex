@@ -8,7 +8,9 @@
 //! `PendingOp`) are `#[serde(default)]` and skipped while unset, so a run with no race,
 //! pair or cap writes the same `run.json` as milestone 9.3.
 
-use proto::{GateCounts, LaneState, PairPhase, RaceLane, Route, Spend};
+use proto::{
+    ClassRoute, Effort, GateCounts, LaneState, PairPhase, RaceLane, Route, Spend, Strength,
+};
 use serde::{Deserialize, Serialize};
 
 use super::DoneClaim;
@@ -82,6 +84,26 @@ pub struct Pair {
     /// The test writer's gate failures, moved here when the implementer starts.
     pub writer_failures: u8,
     pub writer_sessions: u32,
+}
+
+/// The class default routes a run is frozen with (decisions 9 and 12): M8a's defaults,
+/// or a route applied from `tuning.toml`. Hub is never proposed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClassRoutes {
+    pub s: ClassRoute,
+    pub m: ClassRoute,
+    pub hub: ClassRoute,
+}
+
+impl Default for ClassRoutes {
+    fn default() -> Self {
+        let route = |strength, effort| ClassRoute { strength, effort };
+        ClassRoutes {
+            s: route(Strength::Standard, Effort::Low),
+            m: route(Strength::Standard, Effort::Medium),
+            hub: route(Strength::Frontier, Effort::High),
+        }
+    }
 }
 
 #[cfg(test)]
