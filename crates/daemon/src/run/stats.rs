@@ -82,8 +82,9 @@ fn row(class: &str, tasks: &[&TaskRecord], reverted: &dyn Fn(&TaskRecord) -> boo
 /// `history_io::read_history` keeps them). A task record whose task never ran a session
 /// (`sessions == 0`, a plan rejected at the gate) says nothing about its class and is
 /// left out of the rows (controller ruling, M8b.16 review Q2); it is still one of the
-/// task records. A merged task is reverted when a `revert` record names it, or names
-/// its run's accept merge (`task_id: None`). `problems` is the caller's.
+/// task records. A merged task is reverted when a `revert` record in effect
+/// (`history_io::effective_reverts`) names it, or names its run's accept merge
+/// (`task_id: None`). `problems` is the caller's.
 pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
     let mut tasks = Vec::new();
     let mut runs = Vec::new();
@@ -111,15 +112,15 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
                     iterated.insert(r.run_id.as_str());
                 }
             }
-            HistoryLine::Revert(r) => match &r.task_id {
-                Some(task) => {
-                    task_reverts.insert((r.run_id.as_str(), task.as_str()));
-                }
-                None => {
-                    run_reverts.insert(r.run_id.as_str());
-                }
-            },
+            // Milestone 9.5 decision 33: only the reverts in effect, below.
+            HistoryLine::Revert(_) => {}
         }
+    }
+    for r in super::history_io::effective_reverts(lines) {
+        match &r.task_id {
+            Some(task) => task_reverts.insert((r.run_id.as_str(), task.as_str())),
+            None => run_reverts.insert(r.run_id.as_str()),
+        };
     }
     let reverted = |t: &TaskRecord| {
         run_reverts.contains(t.run_id.as_str())
@@ -175,16 +176,21 @@ const FUTURE_SECS: u64 = 300;
 
 /// Milestone 9.1 decision 34: every test recorded flaky in at least `after` distinct
 /// runs within the last `window_days` before `now` (a line exactly `window_days` old is
-/// inside), with its run count and its last time; the most runs first, then by name.
-/// A line more than [`FUTURE_SECS`] in the future is ignored (ruling C-23). Nothing is
-/// applied: `run stats` only prints them.
+/// inside), with its run count and its last time; the most runs first, then by name;
+/// none `slow_tests` already names. A line more than [`FUTURE_SECS`] in the future is
+/// ignored (ruling C-23). Nothing is applied: `run stats` only prints them.
 pub fn flaky_proposals(
     lines: &[HistoryLine],
     now: u64,
     window_days: u32,
     after: u32,
+    slow_tests: Option<&str>,
 ) -> Vec<FlakyProposal> {
     let window = u64::from(window_days).saturating_mul(DAY_SECS);
+    // Milestone 9.5 decision 35: a test `slow_tests` names as a whole token is not
+    // proposed again (the runner's filter semantics are not matched).
+    let split = |c: char| c.is_whitespace() || "|,()'\"".contains(c);
+    let quarantined: HashSet<&str> = slow_tests.unwrap_or("").split(split).collect();
     let mut tests: BTreeMap<&str, (HashSet<&str>, u64)> = BTreeMap::new();
     for line in lines {
         let HistoryLine::Flaky(f) = line else {
@@ -205,6 +211,7 @@ pub fn flaky_proposals(
             last_at,
         })
         .filter(|p| p.runs >= after)
+        .filter(|p| !quarantined.contains(p.test.as_str()))
         .collect();
     // Stable: equal counts stay in the map's name order.
     proposals.sort_by_key(|p| std::cmp::Reverse(p.runs));

@@ -81,6 +81,7 @@ mod goal_rounds;
 mod goal_rounds_cancel;
 mod goal_rounds_end;
 mod goal_rounds_end_fixes;
+mod goal_rounds_end_terminal;
 mod goal_rounds_pr;
 mod goal_rounds_pr_fixes;
 mod goal_rounds_stages;

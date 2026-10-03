@@ -164,10 +164,16 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
 /// `completed` unless a cancel made it `cancelled`, and `finish_edit`, when the cancel
 /// set it (`round_finish`), is cleared. The round's `ended_at` is set in the step that asks for its summary,
 /// so a summary written after that note is the round's (`orch::write_summary`). Round 1
-/// ends when a second round starts (`goal_rounds::iterate`, decision 10).
+/// ends when a second round starts (`goal_rounds::iterate`, decision 10). A run
+/// discarded or failed first ends it `cancelled` (milestone 9.5 decision 34).
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if !open_round(run) {
         return;
+    }
+    // Milestone 9.5 decision 34: a run that ended without completing ends its round
+    // `cancelled`, before `history::pass` writes the run's own line.
+    if matches!(run.state, RunState::Discarded | RunState::Failed) {
+        return end_round(run, RoundOutcome::Cancelled, now, fx);
     }
     let pr_end = run.state == RunState::Running && delivered(run);
     if run.state != RunState::Complete && !pr_end {

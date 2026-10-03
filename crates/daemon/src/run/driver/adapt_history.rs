@@ -8,10 +8,11 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use proto::RunReply;
 use proto::run_wire::request;
+use proto::{HistoryStats, RunReply};
 
 use super::super::{OpCtx, RunService, unix_now};
+use crate::profile::store::Stored;
 use crate::run::engine::HISTORY_FILE;
 use crate::run::engine::{OpKind, OpResult};
 use crate::run::history_io::{
@@ -83,6 +84,27 @@ fn checkout_of(
     }
 }
 
+/// `RunRequest::Stats`' blocking core for `dir` at `now`: its repository's history
+/// summarised, with the stored profile's `slow_tests` (milestone 9.5 decision 35).
+fn stats_of(
+    git: &std::ffi::OsStr,
+    dir: &Path,
+    data_dir: &Path,
+    testing: &config::Testing,
+    now: u64,
+    timeout: Duration,
+) -> Result<HistoryStats, String> {
+    let (root, project) = checkout_of(git, dir, timeout)?;
+    let repo_dir = crate::profile::repo_dir(data_dir, &project);
+    let slow = match crate::profile::store::load(&repo_dir) {
+        Stored::Found { profile, .. } => profile.slow_tests,
+        _ => None,
+    };
+    let path = repo_dir.join(HISTORY_FILE);
+    let slow = slow.as_deref();
+    Ok(summarise(git, &root, &path, now, timeout, testing, slow))
+}
+
 impl RunService {
     fn git_timeout_secs(&self) -> Duration {
         Duration::from_secs(self.ctx.settings.current().orchestrator.git_timeout_secs)
@@ -97,9 +119,7 @@ impl RunService {
         let data_dir = self.ctx.data_dir.clone();
         let testing = self.ctx.testing.clone();
         let result = tokio::task::spawn_blocking(move || {
-            let (root, project) = checkout_of(&git, &dir, timeout)?;
-            let path = crate::profile::repo_dir(&data_dir, &project).join(HISTORY_FILE);
-            Ok::<_, String>(summarise(&git, &root, &path, unix_now(), timeout, &testing))
+            stats_of(&git, &dir, &data_dir, &testing, unix_now(), timeout)
         })
         .await;
         match result {
@@ -121,3 +141,7 @@ impl RunService {
         }));
     }
 }
+
+#[cfg(test)]
+#[path = "adapt_history_tests.rs"]
+mod tests;

@@ -392,7 +392,7 @@ fn summarise_at(dir: &Path, path: &Path) -> HistoryStats {
     let git = std::ffi::OsStr::new("/nonexistent/anthrex-test/git");
     let testing = config::Testing::default();
     let timeout = std::time::Duration::from_secs(5);
-    crate::run::history_io::summarise(git, dir, path, 1_000, timeout, &testing)
+    crate::run::history_io::summarise(git, dir, path, 1_000, timeout, &testing, None)
 }
 
 /// M8b.17 review, m6: a history file that cannot be read is said as it is, never as

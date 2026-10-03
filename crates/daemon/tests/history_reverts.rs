@@ -101,20 +101,21 @@ fn summarise_appends_each_revert_once_and_counts_it() {
     ] {
         append_line(&path, &line).unwrap();
     }
+    let testing = config::Testing::default();
     let s_row = |stats: &proto::HistoryStats| {
         let row = stats.rows.iter().find(|r| r.class == "S").unwrap();
         (row.merged, row.reverted)
     };
-    let stats = summarise(real_git(), root, &path, NOW, T, &config::Testing::default());
+    let stats = summarise(real_git(), root, &path, NOW, T, &testing, None);
     assert_eq!(s_row(&stats), (2, 0));
     assert_eq!(file_lines(&path).len(), 3);
     out(root, &["revert", "-m", "1", "--no-edit", &accept]);
-    let stats = summarise(real_git(), root, &path, NOW, T, &config::Testing::default());
+    let stats = summarise(real_git(), root, &path, NOW, T, &testing, None);
     assert_eq!(s_row(&stats), (2, 2), "{stats:?}");
     assert!(stats.problems.is_empty(), "{:?}", stats.problems);
     assert_eq!(file_lines(&path).len(), 4);
     // A second `run stats` finds the same revert recorded and appends nothing.
-    let stats = summarise(real_git(), root, &path, NOW, T, &config::Testing::default());
+    let stats = summarise(real_git(), root, &path, NOW, T, &testing, None);
     assert_eq!(s_row(&stats), (2, 2));
     assert_eq!(file_lines(&path).len(), 4);
 }
@@ -265,5 +266,65 @@ fn an_abbreviated_sha_is_matched_only_when_it_is_unique() {
     assert_eq!(
         got,
         vec![(run, None, accept), (task, Some("t2".into()), t2)]
+    );
+}
+
+/// Milestone 9.5 decision 33 (FU-F2): a revert of a revert is recorded too, against
+/// the earlier revert commit with its run and task, and reinstates the task; a third
+/// revert reverts it again. `stats::aggregate` counts only the reverts in effect.
+#[test]
+fn a_revert_of_a_revert_reinstates_the_task() {
+    use daemon::run::history_io::effective_reverts;
+    let Accepted {
+        repo,
+        merges,
+        accept,
+        ..
+    } = accepted();
+    let root = &repo.root;
+    let mut history = vec![
+        merged_task("r1", "t1", &merges[0]),
+        merged_task("r1", "t2", &merges[1]),
+        accepted_run("r1", NOW - DAY, &accept),
+    ];
+    let reverted_s = |lines: &[HistoryLine]| {
+        let stats = daemon::run::stats::aggregate(lines, std::path::Path::new("h"));
+        stats.rows.iter().find(|r| r.class == "S").unwrap().reverted
+    };
+    let record = |revert_commit: &str, reverted: &str| RevertRecord {
+        v: HISTORY_VERSION,
+        record_id: format!("revert/{revert_commit}"),
+        at: NOW,
+        run_id: "r1".into(),
+        task_id: Some("t1".into()),
+        reverted: reverted.to_string(),
+        revert_commit: revert_commit.to_string(),
+    };
+    out(root, &["revert", "-m", "1", "--no-edit", &merges[0]]);
+    let first = head(root);
+    out(root, &["revert", "--no-edit", &first]);
+    let second = head(root);
+    // One read records both, the revert of the revert against the first revert.
+    let found = detect_reverts(real_git(), root, "main", &history, NOW, T).unwrap();
+    assert_eq!(
+        found,
+        vec![record(&first, &merges[0]), record(&second, &first)]
+    );
+    history.extend(found.into_iter().map(HistoryLine::Revert));
+    assert!(effective_reverts(&history).is_empty(), "{history:#?}");
+    assert_eq!(reverted_s(&history), 0);
+    // A third revert reverts the task again.
+    out(root, &["revert", "--no-edit", &second]);
+    let third = head(root);
+    let found = detect_reverts(real_git(), root, "main", &history, NOW, T).unwrap();
+    assert_eq!(found, vec![record(&third, &second)]);
+    history.extend(found.into_iter().map(HistoryLine::Revert));
+    let effective: Vec<&RevertRecord> = effective_reverts(&history);
+    assert_eq!(effective, vec![&record(&first, &merges[0])]);
+    assert_eq!(reverted_s(&history), 1);
+    // Nothing new on a later read.
+    assert_eq!(
+        detect_reverts(real_git(), root, "main", &history, NOW, T),
+        Ok(Vec::new())
     );
 }
