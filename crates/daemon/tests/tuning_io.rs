@@ -199,6 +199,7 @@ async fn an_unparseable_file_is_moved_aside_and_tuning_restarts() {
         dismissed: Vec::new(),
         orchestrator_list: None,
         parse_error: Some("expected an integer".into()),
+        project: None,
     };
     let text = render(&report);
     let line = format!(
@@ -328,4 +329,67 @@ async fn a_configured_class_start_line_shows_the_history_refit() {
         panic!("a tuning.toml (the weights)");
     };
     assert!(!file.budgets.contains_key("s"), "{file:?}");
+}
+
+/// Task M9.5.11's fix round (review m3): `run stats --apply` past its bound answers
+/// "busy" only when nothing was written; a write that had begun is answered with its
+/// own result. The bound is 0, so the deadline passes while the work runs, and either
+/// outcome may come: what is checked is that the answer matches the file, once the
+/// work has let go of the repository's lock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_stats_answer_never_hides_a_write() {
+    use daemon::run::driver::tuning::{StatsAsk, TUNING_STATS_BUSY, stats_within};
+    let apply = vec!["thresholds.s".to_string()];
+    let ask = StatsAsk {
+        apply: &apply,
+        dismiss: &[],
+        read_only: false,
+    };
+    let cfg = config::Orchestrator::default();
+    let (mut busy, mut applied) = (0, 0);
+    for _ in 0..40 {
+        let (_tmp, dir) = repo_dir(true);
+        let locks = TuningLocks::default();
+        let at = (dir.as_path(), Path::new("/r/demo"));
+        let answer = stats_within(&cfg, &locks, at, ask, NOW, std::time::Duration::ZERO).await;
+        // The work holds the lock until it ends, written or not.
+        drop(locks.lock(&dir).await);
+        let written = matches!(load(&dir, NOW).unwrap(), Loaded::File(f) if f.thresholds.is_some());
+        match answer {
+            Err(message) => {
+                assert_eq!(message, TUNING_STATS_BUSY);
+                assert!(!written, "answered busy, yet the threshold was written");
+                assert!(!dir.join(TUNING_FILE).exists(), "nothing at all is written");
+                busy += 1;
+            }
+            Ok(report) => {
+                assert!(written, "answered applied, yet nothing was written");
+                assert_eq!(report.applied, apply);
+                assert_eq!(report.project.as_deref(), Some(Path::new("/r/demo")));
+                applied += 1;
+            }
+        }
+    }
+    assert!(
+        busy > 0,
+        "the bound of 0 gives up at least once ({applied} applied)"
+    );
+
+    // A lock held past the bound: busy, and the file untouched.
+    let (_tmp, dir) = repo_dir(true);
+    let locks = TuningLocks::default();
+    let held = locks.lock(&dir).await;
+    let at = (dir.as_path(), Path::new("/r/demo"));
+    let answer = stats_within(
+        &cfg,
+        &locks,
+        at,
+        ask,
+        NOW,
+        std::time::Duration::from_millis(50),
+    )
+    .await;
+    assert_eq!(answer, Err(TUNING_STATS_BUSY.to_string()));
+    drop(held);
+    assert!(!dir.join(TUNING_FILE).exists());
 }

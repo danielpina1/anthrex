@@ -214,6 +214,7 @@ pub fn report(
         proposals: proposals(lines, file, cfg),
         moved_bad_file: None,
         parse_error: None,
+        project: None,
         applied: Vec::new(),
         dismissed: Vec::new(),
         orchestrator_list,

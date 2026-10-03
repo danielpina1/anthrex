@@ -125,6 +125,35 @@ pub struct TuningFlags {
     yes: bool,
 }
 
+/// `--apply` or `--dismiss` when the stats came without their tuning block (task
+/// M9.5.11's fix round, review I1): the daemon logs why.
+const TUNING_UNAVAILABLE: &str =
+    "tuning is not available right now (see the daemon's log); nothing applied or dismissed";
+
+/// What the daemon took, one line each, naming the repository the tuning belongs to
+/// (`dir` only from a daemon that does not say); a dismissed proposal's value is the
+/// one fetched before the request.
+fn taken(
+    report: Option<&proto::TuningReport>,
+    fetched: &[proto::TuningProposal],
+    dir: &Path,
+) -> Vec<String> {
+    let Some(report) = report else {
+        return Vec::new();
+    };
+    let project = report.project.as_deref().unwrap_or(dir);
+    let applied = (report.applied.iter())
+        .map(|id| format!("applied {id}: new runs in {} use it", project.display()));
+    let dismissed = (report.dismissed.iter()).filter_map(|id| {
+        let p = fetched.iter().find(|p| &p.id == id)?;
+        Some(format!(
+            "dismissed {id}: it is not proposed again while it would propose {}",
+            p.proposed
+        ))
+    });
+    applied.chain(dismissed).collect()
+}
+
 /// `--apply`'s question when stdin is not a terminal.
 const NOT_A_TERMINAL_APPLY: &str = "stdin is not a terminal; pass --yes";
 
@@ -154,38 +183,29 @@ pub(super) async fn stats(
         dismiss,
         yes,
     } = flags;
-    let mut said = Vec::new();
+    // The proposals as fetched before the ids are sent (`--dismiss`'s values).
+    let mut current = Vec::new();
     let reply = if apply.is_empty() && dismiss.is_empty() {
         runs.request(request(apply, dismiss)).await?
     } else {
-        let current = match runs.request(request(Vec::new(), Vec::new())).await? {
-            RunReply::Stats { stats, .. } => stats.tuning.map(|t| t.proposals),
+        // Review I1: with no tuning block, nothing can be confirmed, so nothing is sent.
+        current = match runs.request(request(Vec::new(), Vec::new())).await? {
+            RunReply::Stats { stats, .. } => match stats.tuning {
+                Some(tuning) => tuning.proposals,
+                None => anyhow::bail!(TUNING_UNAVAILABLE),
+            },
             other => return print_outcome(other),
-        }
-        .unwrap_or_default();
-        let find = |id: &str| current.iter().find(|p| p.id == id);
+        };
         let mut chosen = Vec::new();
         for id in apply {
             // An id not current is sent as it is: the daemon refuses it with its text.
-            if let Some(p) = find(&id).filter(|_| !yes) {
+            if let Some(p) = current.iter().find(|p| p.id == id).filter(|_| !yes) {
                 let question = format!("apply {id}: {}? [y/N] ", p.text);
                 if !super::finish::ask_yes(&question, NOT_A_TERMINAL_APPLY).await? {
                     continue;
                 }
             }
-            said.push(format!(
-                "applied {id}: new runs in {} use it",
-                dir.display()
-            ));
             chosen.push(id);
-        }
-        for id in &dismiss {
-            if let Some(p) = find(id) {
-                said.push(format!(
-                    "dismissed {id}: it is not proposed again while it would propose {}",
-                    p.proposed
-                ));
-            }
         }
         if chosen.is_empty() && dismiss.is_empty() {
             anyhow::bail!("nothing applied");
@@ -194,11 +214,11 @@ pub(super) async fn stats(
     };
     match reply {
         RunReply::Stats { stats, .. } => {
-            for line in &said {
+            for line in taken(stats.tuning.as_deref(), &current, &dir) {
                 if json {
-                    eprintln!("{}", super::status::printable(line));
+                    eprintln!("{}", super::status::printable(&line));
                 } else {
-                    println!("{}", super::status::printable(line));
+                    println!("{}", super::status::printable(&line));
                 }
             }
             if json {

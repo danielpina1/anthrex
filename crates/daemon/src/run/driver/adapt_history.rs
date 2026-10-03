@@ -13,6 +13,7 @@ use proto::{HistoryStats, RunReply};
 
 use super::super::{OpCtx, RunService, unix_now};
 use crate::profile::store::Stored;
+use crate::run::driver::tuning::{StatsAsk, stats_with_tuning};
 use crate::run::engine::HISTORY_FILE;
 use crate::run::engine::{OpKind, OpResult};
 use crate::run::history_io::{
@@ -88,7 +89,7 @@ fn checkout_of(
 }
 
 /// `RunRequest::Stats`' blocking core: the history with the profile's `slow_tests` (9.5
-/// D35), and the repository's data directory. `read_only` (9.5 decision 48) records no
+/// D35), the repository's data directory and its project (the main checkout). `read_only` (9.5 decision 48) records no
 /// revert: no git beyond finding the checkout, no write.
 fn stats_of(
     git: &std::ffi::OsStr,
@@ -97,7 +98,7 @@ fn stats_of(
     testing: &config::Testing,
     (now, read_only): (u64, bool),
     timeout: Duration,
-) -> Result<(HistoryStats, PathBuf), String> {
+) -> Result<(HistoryStats, PathBuf, PathBuf), String> {
     let (root, project) = checkout_of(git, dir, timeout)?;
     let repo_dir = crate::profile::repo_dir(data_dir, &project);
     let slow = match crate::profile::store::load(&repo_dir) {
@@ -115,7 +116,7 @@ fn stats_of(
     } else {
         summarise(git, &root, &path, now, timeout, testing, slow)
     };
-    Ok((stats, repo_dir))
+    Ok((stats, repo_dir, project))
 }
 
 impl RunService {
@@ -150,22 +151,19 @@ impl RunService {
             stats_of(&git, &dir, &data_dir, &testing, (now, read_only), timeout)
         })
         .await;
-        let (mut stats, repo_dir) = match result {
+        let (mut stats, repo_dir, project) = match result {
             Ok(Ok(found)) => found,
             Ok(Err(message)) => return refused(message),
             Err(error) => return refused(format!("a blocking step did not finish: {error}")),
         };
         let config = self.ctx.settings.current().orchestrator.clone();
-        let tuning = crate::run::driver::tuning::stats_with_tuning(
-            &config,
-            &self.tuning,
-            &repo_dir,
-            &apply,
-            &dismiss,
+        let ask = StatsAsk {
+            apply: &apply,
+            dismiss: &dismiss,
             read_only,
-            now,
-        )
-        .await;
+        };
+        let at = (repo_dir.as_path(), project.as_path());
+        let tuning = stats_with_tuning(&config, &self.tuning, at, ask, now).await;
         match tuning {
             Ok(report) => stats.tuning = Some(Box::new(report)),
             Err(message) if changes => return refused(message),

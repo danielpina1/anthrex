@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,7 +36,8 @@ pub const TUNING_BUSY: &str =
 
 /// `run stats`' refusal when the repository's tuning stayed busy past
 /// [`TUNING_START_BOUND`].
-pub const TUNING_STATS_BUSY: &str = "the tuning file stayed busy (a run is starting); try again";
+pub const TUNING_STATS_BUSY: &str =
+    "the tuning file stayed busy (a run is starting); nothing was applied or dismissed; try again";
 
 /// One `tokio::sync::Mutex` per repository data directory (decision 10), and how many
 /// tunings were asked of it (each start asks once).
@@ -185,49 +186,106 @@ fn tune_blocking(repo_dir: &Path, cfg: &config::Orchestrator, now: u64) -> Tuned
     tuned
 }
 
+/// What `run stats` asks of the tuning (decisions 11 and 48): the proposal ids to apply
+/// and to dismiss, and whether nothing may be recorded or written.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StatsAsk<'a> {
+    pub apply: &'a [String],
+    pub dismiss: &'a [String],
+    pub read_only: bool,
+}
+
+/// Where the blocking work stands, so a request that gave up at its bound is never
+/// answered "busy" while its write lands (task M9.5.11's fix round, review m3).
+const RUNNING: u8 = 0;
+const COMMITTING: u8 = 1;
+const ABANDONED: u8 = 2;
+
 /// Decisions 11 and 48: the tuning half of `run stats` for the repository whose data
-/// directory is `repo_dir`, under its tuning lock and within [`TUNING_START_BOUND`]
-/// (the lock's wait and the file work together, as a start's). The file is loaded (a
-/// bad one moved aside) and refitted from `history.jsonl`; `apply`'s and `dismiss`'s
-/// ids are taken against the proposals still current, an unknown id refusing the whole
-/// request with nothing written; then the file is saved when it changed. With
-/// `read_only` nothing is moved or written: the report shows the file as it is, and
-/// each class's `refit_budget` is the refit a plain `run stats` would write. `config`
-/// is the request's one read of the settings.
+/// directory is `repo_dir` and whose main checkout is `project`, under its tuning lock
+/// and within [`TUNING_START_BOUND`] (the lock's wait and the file work together, as a
+/// start's). The file is loaded (a bad one moved aside) and refitted from
+/// `history.jsonl`; `ask`'s ids are taken against the proposals still current, an
+/// unknown id refusing the whole request with nothing written; then the file is saved
+/// when it changed. With `read_only` nothing is moved or written: the report shows the
+/// file as it is, and each class's `refit_budget` is the refit a plain `run stats`
+/// would write. `config` is the request's one read of the settings.
 pub async fn stats_with_tuning(
     config: &config::Orchestrator,
     locks: &TuningLocks,
-    repo_dir: &Path,
-    apply: &[String],
-    dismiss: &[String],
-    read_only: bool,
+    (repo_dir, project): (&Path, &Path),
+    ask: StatsAsk<'_>,
     now: u64,
 ) -> Result<TuningReport, String> {
-    let work = async {
-        let guard = locks.lock(repo_dir).await;
-        let (dir, cfg) = (repo_dir.to_path_buf(), config.clone());
-        let (apply, dismiss) = (apply.to_vec(), dismiss.to_vec());
-        tokio::task::spawn_blocking(move || {
-            let report = stats_blocking(&dir, &cfg, (&apply, &dismiss), read_only, now);
-            drop(guard);
-            report
-        })
-        .await
+    stats_within(
+        config,
+        locks,
+        (repo_dir, project),
+        ask,
+        now,
+        TUNING_START_BOUND,
+    )
+    .await
+}
+
+/// [`stats_with_tuning`] with its bound given (a test's). Past the bound, the answer is
+/// [`TUNING_STATS_BUSY`] only when the file work is stopped before its write; once the
+/// write has begun, its own result is awaited and returned.
+pub async fn stats_within(
+    config: &config::Orchestrator,
+    locks: &TuningLocks,
+    (repo_dir, project): (&Path, &Path),
+    ask: StatsAsk<'_>,
+    now: u64,
+    bound: Duration,
+) -> Result<TuningReport, String> {
+    let busy = || Err(TUNING_STATS_BUSY.to_string());
+    let deadline = tokio::time::Instant::now() + bound;
+    let Ok(guard) = tokio::time::timeout_at(deadline, locks.lock(repo_dir)).await else {
+        return busy();
     };
-    match tokio::time::timeout(TUNING_START_BOUND, work).await {
-        Ok(Ok(report)) => report,
-        Ok(Err(error)) => Err(format!("tuning did not finish: {error}")),
-        Err(_) => Err(TUNING_STATS_BUSY.to_string()),
+    let state = Arc::new(AtomicU8::new(RUNNING));
+    let (dir, cfg, shared) = (repo_dir.to_path_buf(), config.clone(), state.clone());
+    let (apply, dismiss, read_only) = (ask.apply.to_vec(), ask.dismiss.to_vec(), ask.read_only);
+    let commit = move || {
+        (shared.compare_exchange(RUNNING, COMMITTING, Ordering::SeqCst, Ordering::SeqCst)).is_ok()
+    };
+    let mut work = tokio::task::spawn_blocking(move || {
+        let report = stats_blocking(&dir, &cfg, (&apply, &dismiss), read_only, now, commit);
+        drop(guard);
+        report
+    });
+    let done = match tokio::time::timeout_at(deadline, &mut work).await {
+        Ok(done) => done,
+        Err(_)
+            if state
+                .compare_exchange(RUNNING, ABANDONED, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok() =>
+        {
+            return busy();
+        }
+        // The write had begun: its result is the answer.
+        Err(_) => work.await,
+    };
+    match done {
+        Ok(report) => report.map(|mut r| {
+            r.project = Some(project.to_path_buf());
+            r
+        }),
+        Err(error) => Err(format!("tuning did not finish: {error}")),
     }
 }
 
-/// [`stats_with_tuning`]'s blocking core, under the repository's tuning lock.
+/// [`stats_with_tuning`]'s blocking core, under the repository's tuning lock. `commit`
+/// is asked once, just before the only write; `false` means the request gave up, so
+/// nothing is written and the answer is [`TUNING_STATS_BUSY`].
 fn stats_blocking(
     repo_dir: &Path,
     cfg: &config::Orchestrator,
     (apply, dismiss): (&[String], &[String]),
     read_only: bool,
     now: u64,
+    commit: impl FnOnce() -> bool,
 ) -> Result<TuningReport, String> {
     let unreadable = |e: std::io::Error| format!("tuning.toml could not be read: {e}");
     let (file, moved, parse_error) = if read_only {
@@ -261,6 +319,9 @@ fn stats_blocking(
         shown
     } else {
         if decided != file {
+            if !commit() {
+                return Err(TUNING_STATS_BUSY.to_string());
+            }
             tuning_io::save(repo_dir, &decided)
                 .map_err(|e| format!("tuning.toml could not be written: {e}"))?;
             for line in &written {

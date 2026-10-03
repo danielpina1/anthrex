@@ -100,7 +100,8 @@
 /// `RunRef.lane`, `ToolCall.lane`, `RunRequest::Stats.{apply, dismiss, read_only}`,
 /// `RunInfo.writer_caps`, `TaskInfo.{race, pair}`, `AgentRoundInfo.{lane,
 /// failed_error, failed_until}`, `ReviewInfo.lane`, `WindowInfo.placeholder`,
-/// `FullInfo.held`, `HistoryStats.tuning` and the `TaskRecord` fields `pattern`,
+/// `FullInfo.held`, `HistoryStats.tuning` (with `TuningReport.parse_error` and
+/// `.project`, added by tasks M9.5.9 and M9.5.11) and the `TaskRecord` fields `pattern`,
 /// `race_winner`, `race_adopted`, `writer_failures` and `round`. Every new field is
 /// `#[serde(default)]` and every new variant is appended last, so a protocol-15
 /// `run.json`, snapshot and history still load (`HISTORY_VERSION` stays 5).

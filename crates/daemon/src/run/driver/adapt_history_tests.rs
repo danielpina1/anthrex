@@ -63,7 +63,7 @@ fn a_quarantined_test_is_not_proposed() {
         };
         let text = toml::to_string(&profile).unwrap();
         write_atomic(&repo_dir.join(PROFILE_FILE), text.as_bytes()).unwrap();
-        let (stats, _) = stats_of(git, &repo, &data, &testing, (NOW, false), T).unwrap();
+        let (stats, ..) = stats_of(git, &repo, &data, &testing, (NOW, false), T).unwrap();
         let names = stats.flaky_proposals.iter().map(|p| p.test.clone());
         names.collect::<Vec<_>>()
     };

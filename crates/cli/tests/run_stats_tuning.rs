@@ -296,6 +296,7 @@ fn stats_json_carries_tuning() {
     let stats: HistoryStats = serde_json::from_str(&stdout(&out)).expect("HistoryStats");
     let tuning = stats.tuning.expect("the tuning report");
     assert_eq!(tuning.path, repo_dir(&h).join(TUNING_FILE));
+    assert_eq!(tuning.project, Some(project(&h)));
     let s = &tuning.classes[0];
     assert_eq!((s.class.as_str(), s.samples), ("S", 34));
     assert!(matches!(s.refit, RefitState::Written { .. }), "{s:?}");
@@ -457,4 +458,90 @@ fn a_moved_bad_file_says_why_in_stats() {
             )),
         "{line}"
     );
+}
+
+/// Fix round 1 (review I1): when the proposals cannot be fetched (the first `Stats`
+/// comes without its tuning block), `--apply` asks nothing, sends no id, and exits 1
+/// saying so. A `tuning.toml` that is a directory cannot be read, so every stats of
+/// this repository answers without the block.
+#[test]
+fn apply_without_a_tuning_block_refuses_and_sends_nothing() {
+    let h = RunHarness::new("");
+    seed(&h, &[]);
+    std::fs::create_dir(repo_dir(&h).join(TUNING_FILE)).unwrap();
+    for args in [
+        &["--apply", "thresholds.s"][..],
+        &["--apply", "thresholds.s", "--yes"],
+        &["--dismiss", "route.s"],
+    ] {
+        let out = stats(&h, args, "y\n");
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {}", stderr(&out));
+        let err = stderr(&out);
+        assert!(!err.contains("[y/N]"), "{args:?} asks nothing: {err}");
+        assert!(
+            err.contains(
+                "tuning is not available right now (see the daemon's log); nothing applied or dismissed"
+            ),
+            "{args:?}: {err}"
+        );
+        assert!(!stdout(&out).contains("applied"), "{}", stdout(&out));
+    }
+    // The plain stats still prints the history, without the block.
+    let plain = stats_plain(&h);
+    ok(&plain);
+    assert!(!stdout(&plain).contains("\ntuning: "), "{}", stdout(&plain));
+}
+
+/// Fix round 1: `applied …` names the repository the tuning belongs to (its main
+/// checkout), not the directory `--dir` was given.
+#[test]
+fn applied_names_the_repository_from_a_subdirectory() {
+    let h = RunHarness::new("");
+    seed(&h, &[]);
+    let sub = h.repo.join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    let sub = sub.display().to_string();
+    let out = h.anthrex_input(
+        &[
+            "run",
+            "stats",
+            "--dir",
+            &sub,
+            "--apply",
+            "thresholds.s",
+            "--yes",
+        ],
+        "",
+    );
+    ok(&out);
+    assert!(
+        stdout(&out).starts_with(&format!(
+            "applied thresholds.s: new runs in {} use it\n",
+            project(&h).display()
+        )),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// Fix round 1 (review m4): a request naming an unknown id beside a known one writes no
+/// `tuning.toml` at all, not even the refit (the CLI's own fetch is not in the way).
+#[test]
+fn a_refused_request_writes_no_tuning_file() {
+    let h = RunHarness::new("");
+    seed(&h, &[]);
+    let reply = h.request(RunRequest::Stats {
+        dir: h.repo.clone(),
+        apply: vec!["thresholds.s".into(), "thresholds.x".into()],
+        dismiss: Vec::new(),
+        read_only: false,
+    });
+    let RunReply::Refused { message, .. } = reply else {
+        panic!("not refused: {reply:?}");
+    };
+    assert_eq!(
+        message,
+        "no current proposal thresholds.x; run anthrex run stats to see the proposals"
+    );
+    assert!(!repo_dir(&h).join(TUNING_FILE).exists());
 }

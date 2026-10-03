@@ -98,8 +98,27 @@ pub(super) fn screen(app: &App) -> &SettingsScreen {
 /// The sample, open on the Settings screen.
 pub(super) fn opened() -> App {
     let mut app = cached(sample(), origin(&[]));
-    assert!(settings_sent(&open(&mut app)).is_empty());
+    let effects = open(&mut app);
+    only_the_tuning_ask(&app, &effects);
     app
+}
+
+/// Opening the screen sends exactly one effect: milestone 9.5 decision 48's tagged
+/// read-only `Stats` for the app's project (`ui/settings_tuning_tests.rs` has the rest).
+pub(super) fn only_the_tuning_ask(app: &App, effects: &[Effect]) {
+    let dir = app.goal_project().expect("the app has a project");
+    match effects {
+        [Effect::Send(ClientMsg::RunTagged { request, .. })] => assert_eq!(
+            *request,
+            RunRequest::Stats {
+                dir,
+                apply: Vec::new(),
+                dismiss: Vec::new(),
+                read_only: true,
+            }
+        ),
+        other => panic!("one read-only Stats, and nothing else: {other:?}"),
+    }
 }
 
 pub(super) fn to_section(app: &mut App, section: SettingsSection) {
@@ -165,12 +184,10 @@ pub(super) fn puts(effects: &[Effect]) -> Vec<(u64, SettingsDoc)> {
 #[test]
 fn c_b_s_opens_from_the_cache() {
     let mut app = cached(sample(), origin(&[]));
-    // Milestone 9.5 decision 48 adds a read-only `Stats` for the project's tuning
-    // (`ui/settings_tuning_tests.rs`); no settings request.
-    assert!(
-        settings_sent(&open(&mut app)).is_empty(),
-        "the cache is read, not asked for"
-    );
+    // The cache is read, not asked for: the one effect is milestone 9.5 decision 48's
+    // read-only `Stats` for the project's tuning.
+    let effects = open(&mut app);
+    only_the_tuning_ask(&app, &effects);
     assert!(screen(&app).loaded);
     assert_eq!(screen(&app).doc(), Ok(sample()));
     assert_eq!(screen(&app).path, "/cfg/config.toml");

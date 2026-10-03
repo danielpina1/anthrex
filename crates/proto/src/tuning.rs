@@ -254,6 +254,10 @@ pub struct TuningReport {
     /// Ruling T8-2: why the moved bad file did not parse (decision 10's `(<error>)`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_error: Option<String>,
+    /// Task M9.5.11's fix round: the repository the tuning belongs to (its main
+    /// checkout, the daemon's repository key), which `run stats --apply` names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<PathBuf>,
 }
 
 #[cfg(test)]

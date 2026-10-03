@@ -95,6 +95,7 @@ fn a_tuning_report() -> TuningReport {
         applied: vec!["route-m".into()],
         dismissed: vec!["threshold-s".into()],
         orchestrator_list: Some("codex/gpt-6.1-sol high".into()),
+        project: Some(PathBuf::from("/r/demo")),
     }
 }
 
@@ -395,5 +396,24 @@ fn a_tuning_report_without_its_parse_error_still_decodes() {
     };
     let json = serde_json::to_value(&unset).unwrap();
     assert!(json.get("parse_error").is_none(), "{json}");
+    both_ways(&unset);
+}
+
+/// Task M9.5.11's fix round: `TuningReport.project`, absent from what the daemon sent
+/// before, decodes as `None` and is not written while unset.
+#[test]
+fn a_tuning_report_without_its_project_still_decodes() {
+    let mut value = serde_json::to_value(a_tuning_report()).unwrap();
+    assert_eq!(value["project"], "/r/demo");
+    value.as_object_mut().unwrap().remove("project");
+    let report: TuningReport =
+        rmp_serde::from_slice(&p15_bytes(&value)).expect("a report without project");
+    assert_eq!(report.project, None);
+    let unset = TuningReport {
+        project: None,
+        ..a_tuning_report()
+    };
+    let json = serde_json::to_value(&unset).unwrap();
+    assert!(json.get("project").is_none(), "{json}");
     both_ways(&unset);
 }

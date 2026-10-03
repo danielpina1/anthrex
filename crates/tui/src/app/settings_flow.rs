@@ -42,8 +42,10 @@ impl App {
     }
 
     /// Milestone 9.5 decision 48: with a project, one tagged read-only `Stats` for its
-    /// tuning (no revert recorded, no file written), awaited by the open screen.
-    fn settings_tuning_ask(&mut self) -> Option<Effect> {
+    /// tuning (no revert recorded, no file written), awaited by the open screen, which
+    /// draws no note until it answers. Asked on opening and again after the screen's
+    /// own save, which can make a class's budget explicit (decision 3).
+    pub(in crate::app) fn settings_tuning_ask(&mut self) -> Option<Effect> {
         let dir = self.goal_project()?;
         let request = RunRequest::Stats {
             dir: dir.clone(),
@@ -54,7 +56,9 @@ impl App {
         let timeout = crate::app::replies::reply_timeout(&request);
         let (id, effect) = self.tagged_request(request);
         self.replies.insert(id, PendingWhat::Stats { dir }, timeout);
-        self.settings_screen_mut()?.tuning_request = Some(id);
+        let s = self.settings_screen_mut()?;
+        s.tuning_request = Some(id);
+        s.tuning = None;
         Some(effect)
     }
 

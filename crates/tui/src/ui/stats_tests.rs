@@ -456,6 +456,7 @@ pub(crate) fn tuning_report() -> proto::TuningReport {
         dismissed: Vec::new(),
         orchestrator_list: None,
         parse_error: None,
+        project: None,
     }
 }
 

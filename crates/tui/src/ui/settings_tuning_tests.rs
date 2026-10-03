@@ -104,8 +104,13 @@ fn refits() -> TuningReport {
 #[test]
 fn opening_settings_sends_a_read_only_stats() {
     let mut app = cached("/r/demo");
-    let sent = stats_sent(&open(&mut app));
-    assert_eq!(sent.len(), 1, "{sent:?}");
+    let effects = open(&mut app);
+    assert_eq!(
+        effects.len(),
+        1,
+        "the one Stats and nothing else: {effects:?}"
+    );
+    let sent = stats_sent(&effects);
     assert_eq!(
         sent[0].1,
         RunRequest::Stats {
@@ -116,10 +121,10 @@ fn opening_settings_sends_a_read_only_stats() {
         }
     );
     // Already open: nothing more.
-    assert!(stats_sent(&open(&mut app)).is_empty());
-    // No project: nothing asked.
+    assert!(open(&mut app).is_empty());
+    // No project: nothing at all (the cache is read).
     let mut none = cached("");
-    assert!(stats_sent(&open(&mut none)).is_empty());
+    assert!(open(&mut none).is_empty());
     assert!(matches!(none.screen, Some(Screen::Settings(_))));
     // The stats screen still sends a plain one (decision 48).
     let mut plain = App::new(vec![], "/r/demo".into(), UiSettings::default());
@@ -222,4 +227,63 @@ fn the_refit_note_leaves_the_selection_on_its_limit() {
             assert!(shown[0].contains(label), "80x{h}: {rows:#?}");
         }
     }
+}
+
+/// Fix round 1 (review m6): the screen's own save can make S's budget explicit
+/// (decision 3), so its note goes at once and the tuning is asked again; the new
+/// answer decides.
+#[test]
+fn a_save_asks_the_tuning_again() {
+    let mut app = with_report(Some(refits()), SettingsSection::Limits);
+    assert!(drawn(&app, 120, 40, "refit: 55").is_some());
+    if let Some(Screen::Settings(s)) = &mut app.screen {
+        s.limits[0].text = "41".into();
+    }
+    let effects = app.on_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE));
+    let put = effects
+        .iter()
+        .find_map(|e| match e {
+            Effect::Send(ClientMsg::RunTagged {
+                id,
+                request: RunRequest::Settings(proto::SettingsRequest::Put { settings }),
+            }) => Some((*id, settings.clone())),
+            _ => None,
+        })
+        .expect("w sends the Put");
+    assert!(
+        stats_sent(&effects).is_empty(),
+        "no Stats before the save lands"
+    );
+    let after = app.on_daemon(DaemonMsg::Run(RunReply::Settings {
+        reply: Box::new(proto::SettingsReply::Saved {
+            doc: put.1,
+            origin: Default::default(),
+        }),
+        request_id: Some(put.0),
+    }));
+    let asked = stats_sent(&after);
+    assert_eq!(asked.len(), 1, "{after:?}");
+    assert!(matches!(
+        asked[0].1,
+        RunRequest::Stats {
+            read_only: true,
+            ..
+        }
+    ));
+    assert_eq!(drawn(&app, 120, 40, "refit:"), None, "no stale note");
+    let mut configured = refits();
+    configured.classes[0].configured = true;
+    app.on_daemon(DaemonMsg::Run(RunReply::Stats {
+        stats: proto::HistoryStats {
+            tuning: Some(Box::new(configured)),
+            ..history()
+        },
+        request_id: Some(asked[0].0),
+    }));
+    assert!(matches!(app.screen, Some(Screen::Settings(_))));
+    assert_eq!(
+        drawn(&app, 120, 40, "refit: 55"),
+        None,
+        "S is configured now"
+    );
 }
