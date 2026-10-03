@@ -24,11 +24,13 @@ use super::orch::tools::{OrchCall, parse_call};
 /// delivery's host preflight, the build and the handoff's history read), for a goal
 /// from a request: the CLI's `--continue` and the TUI's goal dialog. `run start`'s
 /// terms, as the CLI's `RUN_START_TIMEOUT` counts them: M8a's git preflight (180 s),
-/// the host preflight (`PREFLIGHT_BOUND`) and 30 s for the build. Past it the start is
-/// refused and nothing was started (`contract_rounds::CONTINUE_TOO_SLOW`).
+/// the host preflight (`PREFLIGHT_BOUND`), 30 s for the build and its tuning
+/// (`TUNING_START_BOUND`, milestone 9.5 ruling T9-3). Past it the start is refused and
+/// nothing was started (`contract_rounds::CONTINUE_TOO_SLOW`).
 pub const CONTINUE_START_BOUND: Duration = Duration::from_secs(180)
     .saturating_add(crate::host::PREFLIGHT_BOUND)
-    .saturating_add(Duration::from_secs(30));
+    .saturating_add(Duration::from_secs(30))
+    .saturating_add(crate::run::driver::tuning::TUNING_START_BOUND);
 
 /// The same deadline for the orchestrator's `start_goal`: `anthrex mcp`'s
 /// `TOOL_REPLY_TIMEOUT` (100 s) less 10 s for the engine step and the round trip, so

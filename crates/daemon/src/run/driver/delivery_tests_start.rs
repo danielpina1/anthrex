@@ -101,7 +101,8 @@ async fn a_pr_run_freezes_its_delivery_at_start() {
     let flags = (false, false, true);
     let asked = super::DeliveryStart::Resolve(Some(DeliveryMode::Pr));
     let shape = super::super::super::build::Shape::PlanFile;
-    let built = s.build_delivered(plan, rig.work.clone(), flags, shape, asked);
+    let once = super::super::super::build::TuneOnce::new();
+    let built = s.build_delivered(plan, rig.work.clone(), flags, shape, asked, &once);
     let run: crate::run::model::Run = match built.await {
         Ok(run) => run,
         Err(error) => panic!("{}", error.text()),

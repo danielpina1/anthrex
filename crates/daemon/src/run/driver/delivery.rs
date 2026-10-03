@@ -192,7 +192,8 @@ mod build_plan {
         ) -> Result<Run, BuildError> {
             let flags = (yes, trust_project, unconfined_checks);
             let delivery = DeliveryStart::Resolve(None);
-            self.build_delivered(plan, dir, flags, shape, delivery)
+            let once = super::super::build::TuneOnce::new();
+            self.build_delivered(plan, dir, flags, shape, delivery, &once)
                 .await
         }
     }

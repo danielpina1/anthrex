@@ -258,7 +258,8 @@ impl RunService {
     ) -> Result<Run, String> {
         let plan = parse_plan(&plan_toml)?;
         let delivery = DeliveryStart::Resolve(delivery);
-        self.build_delivered(plan, dir, flags, Shape::PlanFile, delivery)
+        let once = super::build::TuneOnce::new();
+        self.build_delivered(plan, dir, flags, Shape::PlanFile, delivery, &once)
             .await
             .map_err(BuildError::text)
     }

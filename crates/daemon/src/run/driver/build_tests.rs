@@ -310,8 +310,10 @@ mod tuning {
     }
 
     /// Ruling RH-8: a plan start, a fast goal start, a planned goal start and a
-    /// continued run (an untriaged planned start, as `chain_goal.rs` builds it) each
-    /// tune once, through `build_delivered`; only the first one's refit wrote the file.
+    /// continued run each tune exactly once (the service's tuning count), through
+    /// `build_delivered`; only the first one's refit wrote the file. The continued run
+    /// is a stand-in: the untriaged `Shape::Planned` that `chain_goal.rs` passes to
+    /// `build_delivered`, built here through `build_plan`.
     #[tokio::test]
     async fn every_start_kind_is_tuned_once() {
         let tmp = tempfile::tempdir().unwrap();
@@ -323,7 +325,9 @@ mod tuning {
             ("continued run", false, planned(false)),
         ];
         for (n, (kind, task, shape)) in kinds.into_iter().enumerate() {
+            let before = service.tuning.tunings();
             let run = start(&service, &work, task, shape).await;
+            assert_eq!(service.tuning.tunings(), before + 1, "{kind}");
             let log = log(&run);
             let count = |line: &str| log.iter().filter(|l| **l == line).count();
             assert_eq!(count(BUDGET_S), 1, "{kind}: {log:?}");

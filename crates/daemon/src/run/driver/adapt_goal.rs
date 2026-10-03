@@ -15,7 +15,7 @@ use proto::{
     ProposalState, RepoProfile, RoleRoutingInput, RunPath, RunReply, TriageInfo,
 };
 
-use super::super::build::{Planned, Shape};
+use super::super::build::{Planned, Shape, TuneOnce};
 use super::super::delivery::{DeliveryStart, Frozen};
 use super::super::{RunService, unix_now};
 use super::{Adaptation, read_evidence, unparseable};
@@ -210,8 +210,10 @@ impl RunService {
             choice: orchestrator.clone(),
         };
         let spec = profile.spec();
+        // Milestone 9.5 decision 12: one tuning for the fast build and its fallback.
+        let once = TuneOnce::new();
         let TriageRoute::Fast(task) = route else {
-            let p = (planned(info), frozen);
+            let p = (planned(info), frozen, &once);
             return self
                 .start_planned(&goal, &spec, dir.clone(), flags, p)
                 .await;
@@ -221,13 +223,13 @@ impl RunService {
         let all = (true, trust_project, unconfined_checks);
         let done = DeliveryStart::Done(frozen.clone());
         let built = match self
-            .build_delivered(plan, dir.clone(), all, Shape::Fast, done)
+            .build_delivered(plan, dir.clone(), all, Shape::Fast, done, &once)
             .await
         {
             Ok(run) => Ok(run),
             Err(BuildError::Plan(errors)) => Err(errors),
             Err(BuildError::NotFast(reason)) => {
-                let p = (planned(triage::not_fast(info, reason)), frozen);
+                let p = (planned(triage::not_fast(info, reason)), frozen, &once);
                 return self.start_planned(&goal, &spec, dir, flags, p).await;
             }
             Err(BuildError::Refused(message)) => return refused(message),
@@ -235,7 +237,7 @@ impl RunService {
         let mut run = match triage::check_fast(built) {
             Ok(run) => run,
             Err(reason) => {
-                let p = (planned(triage::not_fast(info, reason)), frozen);
+                let p = (planned(triage::not_fast(info, reason)), frozen, &once);
                 return self.start_planned(&goal, &spec, dir, flags, p).await;
             }
         };
@@ -401,7 +403,7 @@ impl RunService {
         profile: &ProfileSpec,
         dir: PathBuf,
         (trust_project, unconfined_checks): (bool, bool),
-        (planned, frozen): (Planned, Frozen),
+        (planned, frozen, once): (Planned, Frozen, &TuneOnce),
     ) -> RunReply {
         // D14: only a continued goal (`chain_goal.rs`) builds an untriaged planned run.
         let Some(info) = planned.triage.clone() else {
@@ -418,7 +420,10 @@ impl RunService {
         let shape = Shape::Planned(Box::new(planned));
         let flags = (false, trust_project, unconfined_checks);
         let done = DeliveryStart::Done(frozen);
-        let run = match self.build_delivered(plan, dir, flags, shape, done).await {
+        let run = match self
+            .build_delivered(plan, dir, flags, shape, done, once)
+            .await
+        {
             Ok(run) => run,
             Err(error) => return refused(error.text()),
         };

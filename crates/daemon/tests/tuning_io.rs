@@ -6,7 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use daemon::run::driver::tuning::{TuningLocks, tune_for_start};
+use daemon::run::driver::tuning::{
+    TUNING_BUSY, TUNING_START_BOUND, TuningLocks, tune_for_start, tune_within,
+};
 use daemon::run::refit_render::render;
 use daemon::run::tuning_io::{Loaded, TUNING_FILE, load, save, thresholds};
 use proto::{
@@ -254,4 +256,52 @@ async fn a_run_with_history_off_touches_no_file() {
         !cwd.join(TUNING_FILE).exists(),
         "nothing written beside the process"
     );
+}
+
+/// Ruling T9-3: one bound covers the wait for the repository's tuning lock and the file
+/// work. A start whose lock another start holds gives up at the bound and starts
+/// untuned, and its run log says so. The bound here is 50 ms; the test's own guard is
+/// 100 times that (`docs/timing-budgets.md`).
+#[tokio::test]
+async fn a_busy_tuning_file_starts_untuned_at_the_bound() {
+    assert_eq!(TUNING_START_BOUND, std::time::Duration::from_secs(10));
+    let (_tmp, dir) = repo_dir(true);
+    let cfg = config::Orchestrator::default();
+    let locks = TuningLocks::default();
+    let held = locks.lock(&dir).await;
+    let bound = std::time::Duration::from_millis(50);
+    let start = tune_within(&cfg, &locks, &dir, NOW, bound);
+    let tuned = tokio::time::timeout(bound * 100, start)
+        .await
+        .expect("the start returns at its bound");
+    assert_eq!(tuned.log, vec![TUNING_BUSY.to_string()]);
+    assert_eq!(
+        TUNING_BUSY,
+        "tuning: none (the tuning file was busy; started without what history taught)"
+    );
+    assert_eq!(tuned.budget_s, None);
+    assert!(!dir.join(TUNING_FILE).exists(), "nothing written");
+    drop(held);
+    // Free again, the next start tunes.
+    let tuned = tune_within(&cfg, &locks, &dir, NOW, bound * 100).await;
+    assert_eq!(tuned.budget_s.map(|b| b.tool_calls), Some(55));
+}
+
+/// A `tuning.toml` that cannot be read (here a directory) is neither moved nor
+/// overwritten; the start runs untuned and its log says why.
+#[tokio::test]
+async fn an_unreadable_file_is_kept_and_the_log_says_so() {
+    let (_tmp, dir) = repo_dir(true);
+    std::fs::create_dir(dir.join(TUNING_FILE)).unwrap();
+    let cfg = config::Orchestrator::default();
+    let tuned = tune_for_start(&cfg, &TuningLocks::default(), &dir, NOW).await;
+    assert_eq!(tuned.log.len(), 1, "{:?}", tuned.log);
+    let line = &tuned.log[0];
+    assert!(
+        line.starts_with("tuning: none (tuning.toml could not be read: ")
+            && line.ends_with("; started without what history taught)"),
+        "{line}"
+    );
+    assert_eq!(tuned.budget_s, None);
+    assert!(dir.join(TUNING_FILE).is_dir(), "left as it was");
 }

@@ -91,6 +91,10 @@ fn run_refs(git: &OsString, root: &Path, timeout: Duration) -> Result<Vec<String
     Ok(listing.lines().map(str::to_string).collect())
 }
 
+/// Milestone 9.5 decision 12: one start's tuning, shared by a goal's fast build and the
+/// planned build it may fall back to, so the start tunes once.
+pub(super) type TuneOnce = tokio::sync::OnceCell<crate::run::refit::Tuned>;
+
 /// What [`RunService::build_plan`] builds: a plan file's run, the fast path's one-task
 /// run, or a goal's planned run.
 pub(super) enum Shape {
@@ -261,6 +265,7 @@ impl RunService {
     /// its sub-planners'); decision 6's profile choice right after preflight. Milestone
     /// 9.2 (decisions 3, 17): the delivery resolved and preflighted right after the
     /// profile choice, or already done before triage (`run start --goal`), and frozen.
+    /// Milestone 9.5 decision 12: tuned once per `once`.
     pub(super) async fn build_delivered(
         &self,
         mut plan: Plan,
@@ -268,6 +273,7 @@ impl RunService {
         (yes, trust_project, unconfined_checks): (bool, bool, bool),
         shape: Shape,
         delivery: DeliveryStart,
+        once: &TuneOnce,
     ) -> Result<Run, BuildError> {
         let fast = matches!(shape, Shape::Fast);
         let mut config = self.ctx.settings.current().orchestrator.clone();
@@ -304,9 +310,11 @@ impl RunService {
         let id = self.pick_id(&plan.goal, &refs)?;
         let wt_dir = repo_worktrees_dir(&self.ctx.worktrees_root, &pre.project);
         let now = unix_now();
-        // Milestone 9.5 decision 12 (ruling RH-8): every start kind tunes here, once.
+        // Milestone 9.5 decision 12 (ruling RH-8): every start kind tunes here, once; a
+        // goal whose fast build fell back reuses the first build's (`once`).
         let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);
-        let tuning = super::tuning::tune_for_start(&config, &self.tuning, &repo_dir, now).await;
+        let tune = super::tuning::tune_for_start(&config, &self.tuning, &repo_dir, now);
+        let tuning = once.get_or_init(|| tune).await.clone();
         let ctx = BuildContext {
             id: id.clone(),
             wt_dir,

@@ -115,13 +115,17 @@ async fn a_stuck_continue_past_the_tool_deadline_starts_nothing() {
     rig.stop().await;
 }
 
-/// The two deadlines: the request's has `run start`'s terms; the tool's leaves
-/// `anthrex mcp`'s 100 s reply bound 10 s for the step and the round trip.
+/// The two deadlines: the request's has `run start`'s terms (with milestone 9.5's
+/// `TUNING_START_BOUND`, ruling T9-3); the tool's leaves `anthrex mcp`'s 100 s reply
+/// bound 10 s for the step and the round trip.
 #[test]
 fn the_continue_deadlines_are_run_starts_and_the_tools() {
     assert_eq!(
         CONTINUE_START_BOUND,
-        Duration::from_secs(180) + crate::host::PREFLIGHT_BOUND + Duration::from_secs(30)
+        Duration::from_secs(180)
+            + crate::host::PREFLIGHT_BOUND
+            + Duration::from_secs(30)
+            + crate::run::driver::tuning::TUNING_START_BOUND
     );
     assert_eq!(
         START_GOAL_TOOL_BOUND + Duration::from_secs(10),

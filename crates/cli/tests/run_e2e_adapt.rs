@@ -174,6 +174,39 @@ fn e2e_goal_touching_a_hub_file_takes_the_plan_path() {
     planned(&h, &out, Scale::Single, DeciderSource::Decider, reason);
 }
 
+/// Milestone 9.5 task 9 fix round 1: a goal whose fast build falls back to the plan
+/// path tunes once. The planned run keeps the refit-write line of the refit its start
+/// wrote, then its start lines, each once (decision 12).
+#[test]
+fn e2e_a_goal_that_falls_back_to_the_plan_path_is_tuned_once() {
+    let h = harness("claude", "hub = [\"core/**\"]\n", &[], &[]);
+    let history = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../daemon/tests/fixtures/history/refit.jsonl"
+    );
+    std::fs::copy(history, h.repo_dir().join("history.jsonl")).unwrap();
+    h.decider("triage", 1, triage_single(&["core/x.txt"]));
+    let out = h.start_goal("change the core", &[]);
+    let reason = "the fast path does not apply: task t1 touches a hub file";
+    planned(&h, &out, Scale::Single, DeciderSource::Decider, reason);
+    let run = h.run(&started(&h, &out)).expect("the run is listed");
+    let json = run_json(&run);
+    let log: Vec<&str> = (json["log"].as_array().expect("a log").iter())
+        .filter_map(|e| e["text"].as_str())
+        .filter(|t| t.starts_with("tuning: "))
+        .collect();
+    let weights = "tuning: path weights S 550s, M 1650s (derived), hub 1650s (derived)";
+    assert_eq!(
+        log,
+        [
+            "tuning: budget S 40 calls 15m → 55 calls 18m from 34 samples",
+            weights,
+            "tuning: budget S 55 calls 18m from 34 samples",
+            weights,
+        ]
+    );
+}
+
 /// Whole-branch review I1: a fast-path task that owns a protected agent-config file
 /// would get decision 56's grant with no plan the user approves, so the goal takes the
 /// planned path, whose plan gate the user approves (milestone 9 decision 26).

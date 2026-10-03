@@ -20,7 +20,7 @@ use proto::{DeliveryMode, OrchestratorChoice, Plan, RunReply, RunState};
 
 use super::super::RunService;
 use super::super::adapt::GoalReady;
-use super::super::build::{Planned, Shape};
+use super::super::build::{Planned, Shape, TuneOnce};
 use super::super::delivery::DeliveryStart;
 use crate::run::chain::{CONTINUE_START_BOUND, START_GOAL_TOOL_BOUND, continuable};
 use crate::run::contract::sha7;
@@ -238,7 +238,7 @@ impl RunService {
         let all = (false, next.trust_project, next.unconfined_checks);
         let done = DeliveryStart::Done(frozen);
         let mut run = self
-            .build_delivered(plan, next.dir, all, shape, done)
+            .build_delivered(plan, next.dir, all, shape, done, &TuneOnce::new())
             .await
             .map_err(|error| error.text())?;
         run.chain = Some(joined.chain.clone());

@@ -33,8 +33,9 @@ pub const PROFILE_LINES: &str =
 /// --goal`'s reply in a test. `REQUEST_WAIT` (60 s, `build_plan`'s git calls) + the
 /// harness's `deciders.timeout_secs` (5 s) + the kill grace (2 s) + `StartGoal`'s own
 /// preflight and `git ls-files` (the brief's seven calls at 5 s, 35 s) = 102 s, rounded
-/// up. As landed they are nine (M8b.14's count), 112 s in all: still under.
-pub const GOAL_WAIT: Duration = Duration::from_secs(120);
+/// up. As landed they are nine (M8b.14's count), 112 s in all; milestone 9.5's start
+/// tuning adds up to `TUNING_START_BOUND` (10 s, ruling T9-3): 122 s, so 130 s.
+pub const GOAL_WAIT: Duration = Duration::from_secs(130);
 
 /// The brief's stored profile for M8b.18 and M8b.19 (the default `protected`), with
 /// `check_timeout_secs = 10` so every check keeps `RUN_WAIT`'s derivation (a stored

@@ -167,8 +167,9 @@ fn class_routes_fill_the_policy() {
 fn default_tuning_reproduces_today() {
     let config = config::Orchestrator::default();
     let today = build_with(EXAMPLE_PLAN, &config).unwrap_or_else(|e| panic!("{}", show(&e)));
+    // `build_with` builds with `Tuned::default()` too, so the pin is the limits below,
+    // `none == today` and `the_brief_example_builds_a_run`, not a comparison of the two.
     let run = built(EXAMPLE_PLAN, &config, Tuned::default());
-    assert_eq!(run, today);
     assert!(run.log.is_empty());
     // What a start with nothing learned freezes is the same run, but for its log line.
     let mut none = built(
