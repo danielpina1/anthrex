@@ -10,7 +10,7 @@ mod support;
 use proto::{RoundOutcome, RunState, TaskState};
 use serde_json::json;
 use support::orch_script::*;
-use support::run_harness::{RUN_WAIT, RunHarness};
+use support::run_harness::{REQUEST_WAIT, RUN_WAIT, RunHarness};
 use support::run_orch::ORCH_WAIT;
 use support::run_rounds::*;
 
@@ -21,16 +21,11 @@ fn e2e_two_rounds_then_accept_lands_both_rounds() {
     steps.push(read(None));
     let (run, _) = h.two_rounds_accepted(&steps);
 
-    // The orchestrator read the round wake: its first line exact, the request fenced.
+    // The orchestrator read the round wake, whole: its first line, the request fenced.
     let texts = texts(&h);
     assert_eq!(texts.len(), 1, "{texts:#?}");
-    let mut lines = texts[0].lines();
-    assert_eq!(lines.next(), Some(round_wake_head(&run, 2, 1).as_str()));
-    assert!(
-        texts[0].contains(&format!("\n{}", fenced(REQUEST))),
-        "{}",
-        texts[0]
-    );
+    let wake = format!("{}\n{}", round_wake_head(&run, 2, 1), fenced(REQUEST));
+    assert_eq!(texts[0], wake);
 
     // The base branch has both rounds' files.
     let info = h.wait_run(&run, |r| r.state == RunState::Accepted, RUN_WAIT);
@@ -48,10 +43,18 @@ fn e2e_two_rounds_then_accept_lands_both_rounds() {
             (2, Some(RoundOutcome::Completed))
         ]
     );
-    let lines = support::run_plans::until("the run line", RUN_WAIT, || {
-        let lines = h.history_lines("run");
-        (!lines.is_empty()).then_some(lines)
+    // The run line is counted once the history has settled: both round lines and a run
+    // line written, then the chain idle after the run (the accept's last step), so a
+    // second line the accept wrote late is seen (final fix wave, task 11 m2).
+    support::run_plans::until("the history lines", RUN_WAIT, || {
+        let rounds = h.history_lines("round").len();
+        (rounds == 2 && !h.history_lines("run").is_empty()).then_some(())
     });
+    support::run_plans::until("the idle orchestrator", REQUEST_WAIT, || {
+        let idle = h.snapshot().idle_orchestrators;
+        idle.iter().any(|c| c.after_run == run).then_some(())
+    });
+    let lines = h.history_lines("run");
     assert_eq!(lines.len(), 1, "{lines:#?}");
     assert_eq!(lines[0]["outcome"], json!("accepted"), "{}", lines[0]);
     let rounds: Vec<_> = (h.history_lines("round").iter())
@@ -65,6 +68,15 @@ fn e2e_two_rounds_then_accept_lands_both_rounds() {
         ]
     );
 }
+
+/// The stdin test's script poll for `complete`, which starts at the gate's approval
+/// (final fix wave, task 11 m4; `docs/timing-budgets.md`): the test's wait for t1's
+/// worker to be working (`RUN_WAIT`), the refused iterate (one engine step,
+/// `REQUEST_WAIT`) while the worker holds its turn, then t1's path after the hold
+/// (`RUN_WAIT`).
+const HELD_PATH_WAIT: std::time::Duration = RUN_WAIT
+    .saturating_add(REQUEST_WAIT)
+    .saturating_add(RUN_WAIT);
 
 #[test]
 fn e2e_iterate_from_stdin_and_its_refusal_while_running() {
@@ -84,7 +96,7 @@ fn e2e_iterate_from_stdin_and_its_refusal_while_running() {
         prompt(),
         edit_plan(vec![staged("t1", "a.txt", 1)], json!({"submit": true})),
         until("/gate/state", json!("approved"), ORCH_WAIT),
-        until("/run/complete", json!(true), RUN_WAIT),
+        until("/run/complete", json!(true), HELD_PATH_WAIT),
         edit_plan(vec![], json!({"summary": SUMMARY_1})),
         until("/run/round", json!(2), ITERATE_WAIT),
         read(Some("the user asks for round 2 of run ")),
@@ -130,11 +142,9 @@ fn e2e_iterate_from_stdin_and_its_refusal_while_running() {
     );
     let texts = texts(&h);
     assert_eq!(texts.len(), 1, "{texts:#?}");
-    assert_eq!(
-        texts[0].lines().next(),
-        Some(round_wake_head(&run, 2, 1).as_str())
-    );
-    assert!(texts[0].contains(&fenced(REQUEST)), "{}", texts[0]);
+    // Whole: the request read from stdin, its line end trimmed, fenced.
+    let wake = format!("{}\n{}", round_wake_head(&run, 2, 1), fenced(REQUEST));
+    assert_eq!(texts[0], wake);
     let info = h.run(&run).unwrap();
     assert_eq!((info.round, info.state), (2, RunState::Planning));
 }
