@@ -92,8 +92,27 @@ fn run_refs(git: &OsString, root: &Path, timeout: Duration) -> Result<Vec<String
 }
 
 /// Milestone 9.5 decision 12: one start's tuning, shared by a goal's fast build and the
-/// planned build it may fall back to, so the start tunes once.
-pub(super) type TuneOnce = tokio::sync::OnceCell<crate::run::refit::Tuned>;
+/// planned build it may fall back to, so the start tunes once; and (ruling T9-5) its one
+/// read of the settings, so both builds use the same.
+#[derive(Default)]
+pub(super) struct TuneOnce {
+    config: std::sync::OnceLock<config::Orchestrator>,
+    tuned: tokio::sync::OnceCell<crate::run::refit::Tuned>,
+}
+
+impl TuneOnce {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    /// A start's settings read, `config`, already made (a goal's).
+    pub(super) fn with_config(config: config::Orchestrator) -> Self {
+        TuneOnce {
+            config: config.into(),
+            ..Self::default()
+        }
+    }
+}
 
 /// What [`RunService::build_plan`] builds: a plan file's run, the fast path's one-task
 /// run, or a goal's planned run.
@@ -265,7 +284,7 @@ impl RunService {
     /// its sub-planners'); decision 6's profile choice right after preflight. Milestone
     /// 9.2 (decisions 3, 17): the delivery resolved and preflighted right after the
     /// profile choice, or already done before triage (`run start --goal`), and frozen.
-    /// Milestone 9.5 decision 12: tuned once per `once`.
+    /// Milestone 9.5 decision 12: tuned once per `once`, with its settings read.
     pub(super) async fn build_delivered(
         &self,
         mut plan: Plan,
@@ -276,7 +295,8 @@ impl RunService {
         once: &TuneOnce,
     ) -> Result<Run, BuildError> {
         let fast = matches!(shape, Shape::Fast);
-        let mut config = self.ctx.settings.current().orchestrator.clone();
+        let read = || self.ctx.settings.current().orchestrator.clone();
+        let mut config = once.config.get_or_init(read).clone();
         // Final fix batch F1c round 2: never run worker-written code unconfined unless
         // the user said so, on the command line or in their own config.
         let available = confine::available();
@@ -314,7 +334,7 @@ impl RunService {
         // goal whose fast build fell back reuses the first build's (`once`).
         let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);
         let tune = super::tuning::tune_for_start(&config, &self.tuning, &repo_dir, now);
-        let tuning = once.get_or_init(|| tune).await.clone();
+        let tuning = once.tuned.get_or_init(|| tune).await.clone();
         let ctx = BuildContext {
             id: id.clone(),
             wt_dir,

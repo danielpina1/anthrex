@@ -78,7 +78,7 @@ fn none_because(why: impl std::fmt::Display) -> Option<String> {
 /// file loaded (a bad one moved aside), refitted from `history.jsonl` and written when
 /// the refit changed it, then frozen. `Tuned.log` is the run log's tuning lines in
 /// order: the moved file's line, the refit-write lines (also to the daemon log), then
-/// the start lines. A run with history off (an empty `repo_dir`) reads and writes no
+/// the start lines, each text once. A run with history off (an empty `repo_dir`) reads and writes no
 /// tuning. `config` is the start's one read of the settings.
 pub async fn tune_for_start(
     config: &config::Orchestrator,
@@ -170,7 +170,13 @@ fn tune_blocking(repo_dir: &Path, cfg: &config::Orchestrator, now: u64) -> Tuned
         }
     };
     let mut tuned = refit::tuned_with(&lines, &used, cfg);
-    log.append(&mut tuned.log);
+    // Ruling T9-5: a start line the refit already wrote (the weights' two lines are one
+    // text) is written once.
+    for line in tuned.log.drain(..) {
+        if !log.contains(&line) {
+            log.push(line);
+        }
+    }
     tuned.log = log;
     tuned
 }

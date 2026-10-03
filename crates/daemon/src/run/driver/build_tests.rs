@@ -297,7 +297,9 @@ mod tuning {
         let run = start(&service, &work, false, planned(true)).await;
         assert_eq!(run.state, proto::RunState::Planning);
         assert_eq!(run.repo_dir, repo_dir);
-        assert_eq!(log(&run)[..4], [REFIT_S, WEIGHTS, BUDGET_S, WEIGHTS]);
+        // Ruling T9-5: the weights' refit-write and start lines are one text, written once.
+        assert_eq!(log(&run)[..3], [REFIT_S, WEIGHTS, BUDGET_S]);
+        assert_eq!(log(&run).iter().filter(|l| **l == WEIGHTS).count(), 1);
         assert_eq!(
             (run.limits.budget_s.tool_calls, run.limits.budget_s.minutes),
             (55, 18)
@@ -307,6 +309,49 @@ mod tuning {
             Some(550)
         );
         assert!(repo_dir.join("tuning.toml").exists());
+    }
+
+    /// Ruling T9-5: a build given a start's settings read (`TuneOnce::with_config`, a
+    /// goal's, shared by its fast build and its fallback) builds and tunes with it, not
+    /// with a second read of the live settings.
+    #[tokio::test]
+    async fn a_shared_settings_read_is_the_builds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, _repo_dir, service) = rig(tmp.path());
+        let read = config::Orchestrator {
+            budget_s: proto::Budget {
+                tool_calls: 33,
+                minutes: 11,
+                tokens: None,
+            },
+            ..Default::default()
+        };
+        let mut configured = read.clone();
+        configured.tuning.configured.s = true;
+        let once = super::super::TuneOnce::with_config(configured);
+        let delivery = crate::run::driver::delivery::DeliveryStart::Resolve(None);
+        let flags = (false, false, true);
+        let built = service
+            .build_delivered(
+                plan(true),
+                work.clone(),
+                flags,
+                Shape::PlanFile,
+                delivery,
+                &once,
+            )
+            .await;
+        let run = built.unwrap_or_else(|e| panic!("{}", e.text()));
+        let t1 = run.task("t1").unwrap();
+        assert_eq!((t1.budget.tool_calls, t1.budget.minutes), (33, 11));
+        assert!(run.limits.budget_configured.s);
+        assert!(
+            log(&run).contains(
+                &"tuning: budget S 33 calls 11m configured (refit would be 55 calls 18m)"
+            ),
+            "{:?}",
+            log(&run)
+        );
     }
 
     /// Ruling RH-8: a plan start, a fast goal start, a planned goal start and a

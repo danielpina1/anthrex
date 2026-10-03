@@ -210,8 +210,9 @@ impl RunService {
             choice: orchestrator.clone(),
         };
         let spec = profile.spec();
-        // Milestone 9.5 decision 12: one tuning for the fast build and its fallback.
-        let once = TuneOnce::new();
+        // Milestone 9.5 decision 12 (ruling T9-5): one settings read and one tuning for
+        // the fast build and its fallback.
+        let once = TuneOnce::with_config(config.clone());
         let TriageRoute::Fast(task) = route else {
             let p = (planned(info), frozen, &once);
             return self

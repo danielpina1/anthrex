@@ -176,7 +176,8 @@ fn e2e_goal_touching_a_hub_file_takes_the_plan_path() {
 
 /// Milestone 9.5 task 9 fix round 1: a goal whose fast build falls back to the plan
 /// path tunes once. The planned run keeps the refit-write line of the refit its start
-/// wrote, then its start lines, each once (decision 12).
+/// wrote, then its start lines; a line both would write (`path weights`) is written
+/// once (decision 12, ruling T9-5).
 #[test]
 fn e2e_a_goal_that_falls_back_to_the_plan_path_is_tuned_once() {
     let h = harness("claude", "hub = [\"core/**\"]\n", &[], &[]);
@@ -202,8 +203,8 @@ fn e2e_a_goal_that_falls_back_to_the_plan_path_is_tuned_once() {
             "tuning: budget S 40 calls 15m → 55 calls 18m from 34 samples",
             weights,
             "tuning: budget S 55 calls 18m from 34 samples",
-            weights,
-        ]
+        ],
+        "each line once (ruling T9-5)"
     );
 }
 
