@@ -23,6 +23,12 @@ pub(crate) use tiers::{
     sync_fix_acceptance, sync_fix_brief, sync_fix_title,
 };
 
+// The diff clamp (decision 35, ruling Q4).
+#[path = "contract_clamp.rs"]
+mod clamp;
+pub(crate) use clamp::floor_boundary;
+pub use clamp::{DIFF_CUT_MARKER, REVIEW_DIFF_MAX, clamp_diff, clamp_with};
+
 /// The worker's system prompt (decision 30, exact). It never varies, so the cached
 /// prefix is stable (spec §14.2).
 pub const WORKER_CONTRACT: &str = "You are a worker in an anthrex orchestration run.
@@ -541,54 +547,6 @@ pub const REVIEWER_STOPPED_TWICE: &str = "the reviewer stopped twice without a v
 /// Decision 35 (invented text): a reviewer whose process died mid-turn is resumed with
 /// this, the reviewer's form of `RESUME_AFTER_EXIT`.
 pub const REVIEWER_RESUME_AFTER_EXIT: &str = "[anthrex] Your session's process stopped in the middle of a turn and has been resumed. Finish your review and call submit_review, exactly once.";
-
-/// Decision 35 and ruling Q4: the reviewer's diff, and decision 30's hand-over diff, are
-/// clamped to this many bytes.
-pub const REVIEW_DIFF_MAX: usize = 16 * 1024;
-
-/// The line [`clamp_diff`] puts where it cut the middle out of a diff.
-pub const DIFF_CUT_MARKER: &str = "\n[anthrex: the middle of this diff was cut to fit]\n";
-
-/// A head-and-tail clamp on character boundaries: `text` itself when it is at most
-/// `max` bytes, else its first part, [`DIFF_CUT_MARKER`] and its last part, together at
-/// most `max` bytes and never more than 3 bytes short of it (the most a UTF-8 cut can
-/// cost, since the tail takes whatever the head's cut left over).
-pub fn clamp_diff(text: &str, max: usize) -> String {
-    clamp_with(text, max, DIFF_CUT_MARKER)
-}
-
-/// [`clamp_diff`] with another marker line; `messages::clamp` uses it (decision 29).
-pub fn clamp_with(text: &str, max: usize, marker: &str) -> String {
-    if text.len() <= max {
-        return text.to_string();
-    }
-    if max <= marker.len() {
-        return text[..floor_boundary(text, max)].to_string();
-    }
-    let budget = max - marker.len();
-    let head_end = floor_boundary(text, budget / 2);
-    let tail_len = budget - head_end;
-    let tail_start = ceil_boundary(text, text.len() - tail_len);
-    let mut out = String::with_capacity(max);
-    out.push_str(&text[..head_end]);
-    out.push_str(marker);
-    out.push_str(&text[tail_start..]);
-    out
-}
-
-pub(crate) fn floor_boundary(text: &str, mut index: usize) -> usize {
-    while !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn ceil_boundary(text: &str, mut index: usize) -> usize {
-    while !text.is_char_boundary(index) {
-        index += 1;
-    }
-    index
-}
 
 #[cfg(test)]
 #[path = "contract_tests.rs"]
