@@ -15,10 +15,18 @@ use super::parse::{STRUCTURED_OUTPUT_TOOL, answer_from_events, json_from_text, p
 use super::{DeciderAnswer, DeciderContext, DeciderRequest, Decision, prompt, schema};
 use crate::headless::session::HeadlessHandle;
 use crate::headless::{SessionEvent, TurnOutcome, claude_stream, credential_scrub_for};
+use crate::manager::ManagerConfig;
+use crate::run::driver::build::installed::installed_now;
+use crate::run::model::FrozenList;
+use crate::run::roster::{lowest_at_or_above, peer};
+use crate::run::route_pick::{Installed, RolePick, role};
 use anyhow::Context;
-use proto::{DeciderMode, DeciderSource, Runtime, TokenUsage};
+use proto::{DeciderMode, DeciderSource, Effort, ModelEntry, Route, Runtime, Strength, TokenUsage};
 use serde_json::Value;
+use std::ffi::OsString;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
@@ -31,6 +39,122 @@ pub const KILL_GRACE: Duration = Duration::from_secs(2);
 /// (M8b.1: the real CLI exits 0.4 to 0.8 s after its `result` line). Never past the
 /// call's own deadline.
 pub const EXIT_WAIT: Duration = Duration::from_secs(2);
+
+/// Milestone 9.5 (rulings RL-2, I6; decision 9a): what a decider call routes over,
+/// fixed at daemon start: the `decider` list against the roster, the roster and
+/// `[orchestrator.deciders] strength` for a route on the other runtime, the two binaries
+/// the probe stats and each runtime's program, and the list's per-daemon rotation.
+#[derive(Debug, Clone, Default)]
+pub struct Routing {
+    pub list: FrozenList,
+    pub models: Vec<ModelEntry>,
+    pub strength: Option<Strength>,
+    pub bins: (String, String),
+    pub decider_bin: Option<String>,
+    pub rotation: Arc<AtomicU32>,
+}
+
+impl Routing {
+    pub fn new(cfg: &config::Orchestrator, manager: &ManagerConfig) -> Routing {
+        Routing {
+            list: FrozenList::freeze(&cfg.tuning.routes.decider, &cfg.models),
+            models: cfg.models.clone(),
+            strength: Some(cfg.deciders.strength),
+            bins: (manager.claude_bin.clone(), manager.codex_bin.clone()),
+            decider_bin: manager.decider_bin.clone(),
+            rotation: Arc::default(),
+        }
+    }
+
+    /// `ANTHREX_DECIDER_BIN`, else `runtime`'s command.
+    pub fn program(&self, runtime: Runtime) -> OsString {
+        let command = match runtime {
+            Runtime::Codex => &self.bins.1,
+            _ => &self.bins.0,
+        };
+        OsString::from(self.decider_bin.as_ref().unwrap_or(command))
+    }
+}
+
+/// Decision 16's route on `runtime`: the first roster entry at the lowest strength at or
+/// above `strength`, else the runtime's first entry, else no model (the CLI's default).
+pub fn ladder_route(
+    models: &[ModelEntry],
+    runtime: Runtime,
+    strength: Strength,
+    effort: Effort,
+) -> Route {
+    let entry = lowest_at_or_above(models, runtime, strength, None)
+        .or_else(|| models.iter().find(|e| e.runtime == runtime));
+    Route {
+        runtime,
+        model: entry.map(|e| e.model.clone()).unwrap_or_default(),
+        strength: entry.map_or(strength, |e| e.strength),
+        effort,
+    }
+}
+
+/// One call's context, routed, and the `decider` list's pick it came from (`None`: no
+/// list, or the deciders are off).
+#[derive(Debug, Clone)]
+pub struct Routed {
+    pub ctx: DeciderContext,
+    pub pick: Option<RolePick>,
+}
+
+/// Rulings RL-2 and I6: the context of one decider call, routed over what is installed
+/// now. The probe (`driver::build::installed`) runs at each call, on `spawn_blocking`
+/// and bounded, never under a lock; deciders that are off are left as they are.
+pub async fn routed(ctx: &DeciderContext) -> Routed {
+    if ctx.mode == DeciderMode::Off {
+        return Routed {
+            ctx: ctx.clone(),
+            pick: None,
+        };
+    }
+    let (claude, codex) = ctx.routing.bins.clone();
+    route_over(ctx, &installed_now(claude, codex).await)
+}
+
+/// [`routed`]'s pure half. A `decider` list takes the place of the mode's runtime
+/// choice: its pick over `installed`, rotating per daemon. With no list, or every
+/// candidate skipped, the mode's route, on the other runtime when the probe found the
+/// mode's not installed and the other one installed. `installed` empty: as before.
+pub fn route_over(ctx: &DeciderContext, installed: &Installed) -> Routed {
+    let r = &ctx.routing;
+    let rotation = match r.list.is_empty() {
+        true => 0,
+        false => r.rotation.fetch_add(1, Ordering::Relaxed),
+    };
+    let pick = role(&r.list, rotation, ctx.route.effort, installed);
+    let missing = |rt: Runtime| installed.get(rt.label()) == Some(&false);
+    let today = || match (missing(ctx.route.runtime), missing(peer(ctx.route.runtime))) {
+        (true, false) => {
+            let strength = r.strength.unwrap_or(ctx.route.strength);
+            ladder_route(
+                &r.models,
+                peer(ctx.route.runtime),
+                strength,
+                ctx.route.effort,
+            )
+        }
+        _ => ctx.route.clone(),
+    };
+    let route = pick
+        .as_ref()
+        .and_then(|p| p.route.clone())
+        .unwrap_or_else(today);
+    let mut routed = ctx.clone();
+    if route.runtime != ctx.route.runtime {
+        routed.mode = match route.runtime {
+            Runtime::Codex => DeciderMode::Codex,
+            _ => DeciderMode::Claude,
+        };
+        routed.program = r.program(route.runtime);
+    }
+    routed.route = route;
+    Routed { ctx: routed, pick }
+}
 
 /// Asks `request`'s decider (decision 16). Always returns a decision: the decider's
 /// validated answer, or the fallback with its reason. `usage` is the turn's, whenever a

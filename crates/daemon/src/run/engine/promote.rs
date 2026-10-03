@@ -12,7 +12,7 @@ use super::{Effect, EngineState, ReplyId, orch_window};
 use crate::run::model::Run;
 use crate::run::orch::OrchestratorRecord;
 use crate::run::orch::contract::promoted_first_prompt;
-use crate::run::orch::launch::resolve_orchestrator;
+use crate::run::orch::installed::resolve_promoted;
 use crate::run::orch::roles::RoleSnapshot;
 
 /// `EventKind::Promote`.
@@ -87,12 +87,8 @@ fn perform(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Result<(), String> {
-    let resolved = resolve_orchestrator(
-        choice,
-        &run.limits.orch.agent.config(),
-        run.limits.default_runtime,
-        &run.roster,
-    )?;
+    // Milestone 9.5 rulings RH-5, RL-3: the choice, then the list, then decision 6.
+    let resolved = resolve_promoted(run, choice, &run.orch.installed)?;
     run.path = Some(RunPath::Plan);
     run.promote_requested_at.get_or_insert(now);
     let mut record = OrchestratorRecord::new(resolved.route, now);

@@ -326,6 +326,7 @@ fn failed_turn(
     match kind {
         FailureKind::SandboxUnavailable => {
             kill_worker(run, i, fx);
+            run.tasks[i].rounds[r].environment_failed = true;
             block(
                 run,
                 i,
@@ -336,6 +337,7 @@ fn failed_turn(
         }
         // Ruling F-1: a client error is as final as a failed login.
         FailureKind::Authentication | FailureKind::Billing | FailureKind::ClientError => {
+            run.tasks[i].rounds[r].environment_failed = true;
             block(run, i, BlockReason::Environment, error, now);
         }
         FailureKind::RateLimit => {
@@ -358,6 +360,7 @@ fn failed_turn(
                 round.failed_turn,
                 FailedTurn::ContinueSent { rate_limit: false }
             ) {
+                round.environment_failed = true;
                 return block(run, i, BlockReason::Environment, error, now);
             }
             round.failed_turn = FailedTurn::WaitingContinue {

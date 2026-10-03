@@ -106,6 +106,8 @@ mod tests;
 #[cfg(test)]
 mod tests_delivery;
 #[cfg(test)]
+mod tests_installed;
+#[cfg(test)]
 mod tests_live_runs;
 #[cfg(test)]
 mod tests_ready;

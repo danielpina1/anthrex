@@ -188,15 +188,16 @@ pub fn scout_routing(run: &Run) -> crate::scout::spec::ScoutRouting {
     })
 }
 
-/// A run scout's route: [`crate::scout::spec::run_scout_route`] on [`scout_routing`]
-/// and the run's roster, over its installed runtimes.
-pub fn scout_route_of(run: &Run) -> Route {
-    crate::scout::spec::run_scout_route(&run.roster, &scout_routing(run), &run.orch.installed)
+/// Run scout `scout_id`'s route: the run's `scout` list's pick (milestone 9.5 decision
+/// 9a), else [`frozen_scout_route`].
+pub fn scout_route_of(run: &Run, scout_id: &str) -> Route {
+    let pick = super::roles::lists::scout_pick(run, scout_id).and_then(|p| p.route);
+    pick.unwrap_or_else(|| frozen_scout_route(run))
 }
 
-/// The run scouts' route as `reach::reachable_runtimes` counts it: [`scout_route_of`].
+/// The run scouts' route with no `scout` list, as `reach::reachable_runtimes` counts it.
 pub fn frozen_scout_route(run: &Run) -> Route {
-    scout_route_of(run)
+    crate::scout::spec::run_scout_route(&run.roster, &scout_routing(run), &run.orch.installed)
 }
 
 /// Decision 31: a sub-planner's route, `[orchestrator.planners]` as the run was built
@@ -206,6 +207,11 @@ pub fn frozen_scout_route(run: &Run) -> Route {
 /// planner stays on Codex instead of naming an uninstalled Claude model.
 pub fn planner_route(run: &Run) -> Option<Route> {
     let orchestrator = run.orch.orchestrator.as_ref()?;
+    // Milestone 9.5 decision 9a: the next epic's pick from the run's `planner` list.
+    let k = run.orch.epics.len();
+    if let Some(route) = super::roles::lists::planner_pick(run, k).and_then(|p| p.route) {
+        return Some(route);
+    }
     let p = &run.limits.orch.planners;
     let runtime = p.runtime.unwrap_or(orchestrator.route.runtime);
     let peer = crate::run::roster::peer(runtime);

@@ -147,6 +147,10 @@ pub struct AgentRound {
     /// Milestone 9.5 decision 20: the race lane it belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lane: Option<proto::RaceLane>,
+    /// Milestone 9.5 ruling RL-1: the session ended for an environment reason (its own
+    /// failed turn blocked the task), so rung 2 and `run retry` skip its route.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub environment_failed: bool,
 }
 
 impl AgentRound {

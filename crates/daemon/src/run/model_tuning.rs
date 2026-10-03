@@ -189,7 +189,8 @@ impl FrozenList {
         self.candidates.is_empty()
     }
 
-    fn freeze(list: &config::RouteList, roster: &[ModelEntry]) -> Self {
+    /// `list` with each candidate's roster strength (one the roster lacks left out).
+    pub fn freeze(list: &config::RouteList, roster: &[ModelEntry]) -> Self {
         let candidates = (list.candidates.iter())
             .filter_map(|c| {
                 let entry = crate::run::roster::find(roster, c.runtime, &c.model)?;

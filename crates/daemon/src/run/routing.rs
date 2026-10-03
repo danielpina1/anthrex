@@ -242,6 +242,17 @@ pub fn reviewer_pool(roster: &[ModelEntry], author: &Route, level: ReviewLevel) 
     raw
 }
 
+/// Milestone 9.5 ruling RL-1: each pool entry whose route failed in this task says so.
+fn mark_failed(mut raw: Vec<Raw>, task: &Task) -> Vec<Raw> {
+    let failed = super::route_pick::failed_routes(task);
+    for (route, reason) in raw.iter_mut() {
+        if super::route_pick::failed_in(&failed, route) {
+            *reason = Some(super::route_pick::FAILED_IN_TASK.to_string());
+        }
+    }
+    raw
+}
+
 /// Appends `decision` to the task unless one with its identity `(role, session, round,
 /// lane)` is there already (a restored or repeated launch); numbers it.
 pub fn push(task: &mut Task, mut decision: RoutingDecision) {
@@ -314,7 +325,7 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
             id,
             ("escalation", "escalation_policy", ESCALATE_POLICY),
             &chosen,
-            escalation_pool(&run.roster, &from),
+            mark_failed(escalation_pool(&run.roster, &from), task),
             now,
         ),
         None if first => {
@@ -359,7 +370,7 @@ pub fn record_reviewer(
         (AgentRole::Reviewer, round, Some(round)),
         ("review", "review_policy", REVIEW_POLICY),
         chosen,
-        reviewer_pool(&run.roster, author, level),
+        mark_failed(reviewer_pool(&run.roster, author, level), task),
         now,
     );
     push(&mut run.tasks[i], decision);

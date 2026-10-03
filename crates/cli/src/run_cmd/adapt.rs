@@ -11,9 +11,11 @@ use super::{Runs, print_outcome};
 /// `run start --goal`'s reply bound (decision 22): [`super::RUN_START_TIMEOUT`] for
 /// the start path (M8a's git preflight, and task M9.2.12's host preflight, which a `pr`
 /// goal runs before triage), the largest configurable `deciders.timeout_secs` (600 s) for
-/// the triage call, and 30 s for the request's own preflight and `git ls-files`.
-pub const GOAL_REQUEST_TIMEOUT: Duration =
-    super::RUN_START_TIMEOUT.saturating_add(Duration::from_secs(600 + 30));
+/// the triage call, and 30 s for the request's own preflight and `git ls-files`; and
+/// (milestone 9.5 ruling I6) the installed probe the triage call routes over first.
+pub const GOAL_REQUEST_TIMEOUT: Duration = super::RUN_START_TIMEOUT
+    .saturating_add(Duration::from_secs(600 + 30))
+    .saturating_add(daemon::run::driver::INSTALLED_PROBE_TIMEOUT);
 
 /// `run start --goal … --continue`'s reply bound (milestone 9.3's final fix wave, B-I1):
 /// the daemon's own deadline on a continued start's steps before `Start`
@@ -195,8 +197,9 @@ mod tests {
         assert_eq!(request_timeout(&goal), GOAL_REQUEST_TIMEOUT);
         assert_eq!(
             GOAL_REQUEST_TIMEOUT,
-            super::super::RUN_START_TIMEOUT + Duration::from_secs(600 + 30)
+            super::super::RUN_START_TIMEOUT + Duration::from_secs(600 + 30 + 5)
         );
+        assert_eq!(GOAL_REQUEST_TIMEOUT, Duration::from_secs(1220));
         let promote = RunRequest::Promote {
             run_id: "r".into(),
             orchestrator: None,

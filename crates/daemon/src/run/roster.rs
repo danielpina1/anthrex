@@ -5,6 +5,7 @@
 use proto::{Effort, ModelEntry, Route, Runtime, Strength};
 
 use super::model::ReviewLevel;
+use super::route_pick::failed_in;
 
 /// The roster's entry for one `(runtime, model)`, if any. *(Decision 23.)*
 pub fn find<'a>(roster: &'a [ModelEntry], runtime: Runtime, model: &str) -> Option<&'a ModelEntry> {
@@ -148,6 +149,32 @@ pub fn escalate(roster: &[ModelEntry], route: &Route) -> Route {
         return route_from(entry, Effort::High);
     }
     route.clone()
+}
+
+/// Milestone 9.5 ruling RL-1: [`pick_reviewer`] and [`escalate`] with no roster entry
+/// that failed in this task (`failed`, by runtime and model). A route that failed
+/// itself is not given more effort: it steps on as a `high` one.
+pub fn pick_reviewer_skipping(
+    roster: &[ModelEntry],
+    author: &Route,
+    level: ReviewLevel,
+    failed: &[Route],
+) -> Route {
+    pick_reviewer(&without(roster, failed), author, level)
+}
+
+/// See [`pick_reviewer_skipping`].
+pub fn escalate_skipping(roster: &[ModelEntry], route: &Route, failed: &[Route]) -> Route {
+    let mut from = route.clone();
+    if failed_in(failed, route) {
+        from.effort = Effort::High;
+    }
+    escalate(&without(roster, failed), &from)
+}
+
+fn without(roster: &[ModelEntry], failed: &[Route]) -> Vec<ModelEntry> {
+    let kept = |e: &&ModelEntry| !failed_in(failed, &route_from(e, Effort::Low));
+    roster.iter().filter(kept).cloned().collect()
 }
 
 #[cfg(test)]

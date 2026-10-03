@@ -17,7 +17,7 @@ use proto::{Route, Runtime, Size};
 
 use super::model::{ReviewLevel, Run, Task};
 use super::roster::{escalate, pick_reviewer};
-use super::route_pick::class_list;
+use super::route_pick::task_list;
 use super::validate::resolve_task_lenient;
 
 /// Whether `edits` can widen [`reachable_runtimes`] (T22-P2, F4): only a task added,
@@ -40,8 +40,8 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
     for t in &run.tasks {
         let levels = review_levels(run, t);
         found.extend(t.review_route.as_ref().map(|r| r.runtime));
-        // Milestone 9.5 decision 9a: rung 2 can take any candidate of its class's list.
-        let listed = (class_list(&run.limits.route_lists, t).candidates.iter())
+        // Milestone 9.5 decision 9a: rung 2 can take any candidate of its list.
+        let listed = (task_list(&run.limits.route_lists, t).candidates.iter())
             .map(|c| c.route(t.route.effort));
         let starts: Vec<Route> = std::iter::once(t.route.clone()).chain(listed).collect();
         for route in starts.iter().flat_map(|r| escalations(run, r)) {
@@ -57,6 +57,10 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
         found.push(o.route.runtime);
         found.extend(super::orch::launch::planner_route(run).map(|r| r.runtime));
         found.push(super::orch::launch::frozen_scout_route(run).runtime);
+        // Milestone 9.5 decision 9a: a role list's every candidate can be taken.
+        let lists = &run.limits.route_lists;
+        found.extend((lists.scout.candidates.iter()).map(|c| c.runtime));
+        found.extend((lists.planner.candidates.iter()).map(|c| c.runtime));
     }
     [Runtime::Claude, Runtime::Codex]
         .into_iter()

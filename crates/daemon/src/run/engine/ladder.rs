@@ -10,8 +10,7 @@ use super::dispatch::{block, history, launch_fresh};
 use super::schedule::op_in_flight;
 use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox};
 use crate::run::model::{AgentRound, FreshSession, Run, Task};
-use crate::run::roster::escalate;
-use crate::run::route_pick::{next_candidate, review_route};
+use crate::run::route_pick::{review_route, rung2_route};
 use crate::run::validate::resolve_task_lenient;
 
 pub(super) use super::ladder_budget::{breached, ceiling, check_budget, reached};
@@ -264,7 +263,8 @@ pub(super) fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut V
 
 /// Rung 2: the session killed; a fresh one on `roster::escalate(route)` starts in the
 /// same worktree once the old one has exited ([`start_fresh_sessions`]). Milestone 9.5
-/// decision 9a: a class with a model list takes its next candidate instead.
+/// decision 9a: a task with a model list takes its next candidate instead, and ruling
+/// RL-1 skips a route that failed in this task (`route_pick::rung2_route`).
 pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
     done::drop_claim(
         run,
@@ -274,11 +274,7 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     );
     kill_worker(run, i, fx);
     drop_queued(run, i);
-    let listed = next_candidate(&run.limits, &run.tasks, i, &run.orch.installed);
-    let (route, step) = match listed {
-        Some((route, step)) => (route, Some(step)),
-        None => (escalate(&run.roster, &run.tasks[i].route), None),
-    };
+    let (route, step) = rung2_route(run, i);
     let task = &mut run.tasks[i];
     task.list_escalation = step;
     task.rung = 2;

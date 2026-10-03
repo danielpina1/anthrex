@@ -23,8 +23,7 @@ use crate::run::git::{self, Git, os};
 use crate::run::globs::ProtectedMatcher;
 use crate::run::journal::runs_dir;
 use crate::run::model::{ClaudeAuth, Run};
-use crate::run::orch::installed::{Missing, not_installed, resolve_installed};
-use crate::run::orch::launch::resolve_orchestrator;
+use crate::run::orch::installed::{Missing, not_installed, resolve_planned, resolve_promoted};
 use crate::run::orch::make_planned;
 use crate::run::plan::{BuildContext, random_suffix, resolve_profile, run_id_taken, slug};
 use crate::run::reach::{edits_may_widen, reachable_runtimes};
@@ -136,13 +135,13 @@ pub(super) struct Planned {
 /// `window` is for the orchestrator, whose window starts the agent through
 /// `/bin/sh -c 'exec "$0" "$@"'`; `headless` for the sub-planners and scouts, spawned
 /// directly, and it is the map a run records (`run.orch.installed`).
-pub(super) struct Found {
+pub(crate) struct Found {
     pub window: BTreeMap<String, bool>,
     pub headless: BTreeMap<String, bool>,
 }
 
 /// [`Found`] from the daemon's `PATH` and `HOME` (blocking: it stats files).
-fn found(claude: &str, codex: &str) -> Found {
+pub(crate) fn found(claude: &str, codex: &str) -> Found {
     let (path, home) = (std::env::var_os("PATH"), std::env::var_os("HOME"));
     let macos = cfg!(target_os = "macos");
     found_in((claude, codex), path.as_deref(), home.as_deref(), macos)
@@ -252,13 +251,8 @@ impl RunService {
             Ok((found(&claude, &codex), token))
         })
         .await?;
-        let resolved = resolve_installed(
-            planned.choice.as_ref(),
-            &run.limits.orch.agent.config(),
-            run.limits.default_runtime,
-            &run.roster,
-            &missing_in(&found.window, &bins),
-        )?;
+        let window = missing_in(&found.window, &bins);
+        let resolved = resolve_planned(run, planned.choice.as_ref(), &found.window, &window)?;
         make_planned(
             run,
             planned.triage,
@@ -446,18 +440,14 @@ impl RunService {
         }) else {
             return Ok(None);
         };
-        let Ok(resolved) = resolve_orchestrator(
-            choice,
-            &run.limits.orch.agent.config(),
-            run.limits.default_runtime,
-            &run.roster,
-        ) else {
-            return Ok(None);
-        };
         let config = self.manager.config();
         let bins = (config.claude_bin.clone(), config.codex_bin.clone());
         let (claude, codex) = bins.clone();
         let found = blocking(move || Ok(found(&claude, &codex))).await?;
+        // Milestone 9.5: over the map the engine resolves the promotion with.
+        let Ok(resolved) = resolve_promoted(&run, choice, &found.headless) else {
+            return Ok(None);
+        };
         let window = missing_in(&found.window, &bins);
         let runtime = resolved.route.runtime;
         let hint = "choose another runtime with --orchestrator";
@@ -556,6 +546,9 @@ impl RunService {
         Err("could not pick a free run id".to_string())
     }
 }
+
+#[path = "build_installed.rs"]
+pub(crate) mod installed;
 
 #[cfg(test)]
 #[path = "build_tests.rs"]

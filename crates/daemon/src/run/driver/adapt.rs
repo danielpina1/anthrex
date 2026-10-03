@@ -40,6 +40,7 @@ use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent};
 use crate::run::model::{LogEntry, OpId, Run};
 use crate::run::orch::roles;
 use crate::run::plan::Preflight;
+use crate::run::route_pick::RolePick;
 use crate::scout::service::ScoutService;
 
 // M8b.14: `run start --goal` (decision 22).
@@ -126,12 +127,14 @@ impl RunService {
         }
         let decision = match self.adaptation.get() {
             Some(adaptation) => {
-                let deciders = &adaptation.deciders;
+                // Milestone 9.5 rulings RL-2, I6: routed over what is installed now.
+                let routed = crate::decider::call::routed(&adaptation.deciders).await;
+                let deciders = &routed.ctx;
                 let id = match record {
                     Some((op, tasks)) if deciders.mode != proto::DeciderMode::Off => {
                         let at = (op, tasks.as_slice());
-                        self.decider_dispatched(ctx, at, &deciders.route, &request)
-                            .await
+                        let route = (&deciders.route, routed.pick.as_ref());
+                        self.decider_dispatched(ctx, at, route, &request).await
                     }
                     _ => None,
                 };
@@ -147,7 +150,7 @@ impl RunService {
                     }));
                     return OpResult::Decided(Box::new(fallback_decision(&request, reason)));
                 }
-                let decision = decide(&adaptation.deciders, &request).await;
+                let decision = decide(deciders, &request).await;
                 if let Some((record_id, _)) = id {
                     let (outcome, result) = roles::decider_outcome(&decision);
                     self.send(EventKind::Orch(OrchEvent::RoleRouteEnded {
@@ -174,7 +177,7 @@ impl RunService {
         &self,
         ctx: &OpCtx,
         (op, tasks): (OpId, &[String]),
-        route: &proto::Route,
+        (route, pick): (&proto::Route, Option<&RolePick>),
         request: &DeciderRequest,
     ) -> Option<(String, Result<(), String>)> {
         let strength = self.ctx.settings.current().orchestrator.deciders.strength;
@@ -184,7 +187,8 @@ impl RunService {
             let candidates = roles::decider_candidates(&run.roster, route, strength);
             let at = super::unix_now();
             let chosen = (route, candidates);
-            roles::decider_record(Some(run), (&session.0, session.1), tasks, chosen, input, at)
+            let session = (session.0.as_str(), session.1);
+            roles::decider_listed(Some(run), session, tasks, chosen, pick, (input, at))
         })?;
         let record_id = decision.record_id.clone();
         let kept = self.keep_record(&ctx.run_id, decision).await;

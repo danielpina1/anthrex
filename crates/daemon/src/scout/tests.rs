@@ -301,6 +301,7 @@ fn decider_ctx(caps: CliCaps) -> crate::decider::DeciderContext {
         cwd: PathBuf::from("/data/deciders/cwd"),
         schema_dir: PathBuf::from("/data/deciders/schemas"),
         caps,
+        routing: Default::default(),
     }
 }
 

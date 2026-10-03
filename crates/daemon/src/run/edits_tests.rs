@@ -437,6 +437,7 @@ fn open_round() -> AgentRound {
         activity: None,
         last_text: None,
         lane: None,
+        environment_failed: false,
     }
 }
 

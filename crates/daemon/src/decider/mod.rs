@@ -244,6 +244,8 @@ pub struct DeciderContext {
     /// `<data_dir>/deciders/schemas`, where Codex's schema files go.
     pub schema_dir: PathBuf,
     pub caps: CliCaps,
+    /// Milestone 9.5 (rulings RL-2, I6; decision 9a): what each call routes over.
+    pub routing: call::Routing,
 }
 
 impl DeciderContext {
@@ -261,29 +263,18 @@ impl DeciderContext {
             DeciderMode::Codex => Runtime::Codex,
             DeciderMode::Claude | DeciderMode::Off => Runtime::Claude,
         };
-        let command = match runtime {
-            Runtime::Codex => &manager.codex_bin,
-            _ => &manager.claude_bin,
-        };
-        let program = manager.decider_bin.as_ref().unwrap_or(command);
-        let entry =
-            crate::run::roster::lowest_at_or_above(&cfg.models, runtime, deciders.strength, None)
-                .or_else(|| cfg.models.iter().find(|e| e.runtime == runtime));
-        let route = Route {
-            runtime,
-            model: entry.map(|e| e.model.clone()).unwrap_or_default(),
-            strength: entry.map_or(deciders.strength, |e| e.strength),
-            effort: deciders.effort,
-        };
+        let routing = call::Routing::new(cfg, manager);
+        let route = call::ladder_route(&cfg.models, runtime, deciders.strength, deciders.effort);
         let root = data_dir.join("deciders");
         DeciderContext {
             mode: deciders.mode,
-            program: OsString::from(program),
+            program: routing.program(runtime),
             route,
             timeout: Duration::from_secs(deciders.timeout_secs),
             cwd: root.join("cwd"),
             schema_dir: root.join("schemas"),
             caps: manager.cli_caps,
+            routing,
         }
     }
 }
@@ -298,5 +289,7 @@ mod tests_ci;
 mod tests_context;
 #[cfg(test)]
 mod tests_prompt;
+#[cfg(test)]
+mod tests_route;
 #[cfg(test)]
 mod tests_thresholds;

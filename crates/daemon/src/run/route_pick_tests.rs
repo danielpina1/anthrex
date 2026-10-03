@@ -380,13 +380,13 @@ fn the_reviewer_is_the_first_qualifying_candidate() {
     let none = Installed::new();
     let codex_author = sol(Effort::Medium);
     let (chosen, candidates) =
-        reviewer(&lists, &codex_author, ReviewLevel::Medium, &none).expect("a list");
+        reviewer(&lists, &codex_author, ReviewLevel::Medium, &none, &[]).expect("a list");
     assert_eq!(chosen, Some(opus(Effort::High)));
     assert_eq!(reasons(&candidates)[0], Some(BELOW_STRENGTH));
 
     let claude_author = route(Runtime::Claude, SONNET, Strength::Standard, Effort::Medium);
     let (chosen, candidates) =
-        reviewer(&lists, &claude_author, ReviewLevel::Medium, &none).expect("a list");
+        reviewer(&lists, &claude_author, ReviewLevel::Medium, &none, &[]).expect("a list");
     // No effort in the list: the review level's (medium).
     assert_eq!(chosen, Some(sol(Effort::Medium)));
     assert_eq!(
@@ -403,7 +403,7 @@ fn the_reviewer_is_the_first_qualifying_candidate() {
         &config().models,
     );
     let (chosen, _) =
-        reviewer(&haiku_only, &codex_author, ReviewLevel::Medium, &none).expect("a list");
+        reviewer(&haiku_only, &codex_author, ReviewLevel::Medium, &none, &[]).expect("a list");
     assert_eq!(chosen, None);
     let roster = config().models;
     assert_eq!(
@@ -419,7 +419,7 @@ fn the_reviewer_is_the_first_qualifying_candidate() {
     // No list at all.
     let empty = RouteListsFrozen::default();
     assert_eq!(
-        reviewer(&empty, &codex_author, ReviewLevel::Medium, &none),
+        reviewer(&empty, &codex_author, ReviewLevel::Medium, &none, &[]),
         None
     );
 }
@@ -480,6 +480,7 @@ fn a_candidate_not_installed_is_skipped() {
         &author,
         ReviewLevel::Medium,
         installed,
+        &[],
     )
     .expect("list");
     assert_eq!(chosen, None);
@@ -545,3 +546,6 @@ fn task_routing_history_keeps_the_list_and_choice() {
 
 #[path = "route_pick_tests_frozen.rs"]
 mod frozen;
+
+#[path = "route_pick_tests_roles.rs"]
+mod roles;

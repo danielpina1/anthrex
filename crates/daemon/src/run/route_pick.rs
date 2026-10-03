@@ -3,19 +3,21 @@
 //! or re-routes), the candidate rung 2 moves it to ([`next_candidate`]), and a reviewer
 //! from the `review` list ([`reviewer`]). The lists are the run's frozen copy
 //! (`RunLimits.route_lists`). Every choice is snapshotted with the entire list and why
-//! each candidate was skipped, for the routing history (`routing.rs`). Pure (design
-//! decision 1).
+//! each candidate was skipped, for the routing history (`routing.rs`). Task M9.5.10b:
+//! research and review tasks take the `scout` and `review` lists (ruling RL-4), a role's
+//! session takes [`role`], and rung 2, `run retry` and the reviewer skip a route that
+//! failed in this task ([`failed_routes`], ruling RL-1). Pure (design decision 1).
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use proto::{Effort, ModelEntry, Route, RoutingCandidate, Runtime, Size, Strength};
+use proto::{Effort, ModelEntry, Route, RoutingCandidate, Runtime, Size, Strength, TaskKind};
 
 use super::globs::any_intersect;
 use super::model::{
     FrozenList, ListPick, ListPolicy, ReviewLevel, RouteListsFrozen, Run, RunLimits, Task,
 };
-use super::roster::pick_reviewer;
-use super::validate_kinds::is_reader;
+use super::orch::roles::EARLIER_TAKEN;
+use super::roster::{escalate_skipping, pick_reviewer};
 
 /// Decision 9a's policy version for a list's choice.
 pub const LIST_POLICY: &str = "m9.5-list-v1";
@@ -27,6 +29,8 @@ pub const BELOW_STRENGTH: &str = "below the author's strength";
 pub const NOT_INSTALLED: &str = super::orch::roles::NOT_INSTALLED;
 pub const AUTHOR_RUNTIME: &str = "the author's runtime";
 pub const CURRENT_ROUTE: &str = "the current route";
+/// Ruling RL-1: the route of a session of this task that ended for an environment reason.
+pub const FAILED_IN_TASK: &str = "failed in this task";
 
 /// What a run's start found installed (`run.orch.installed`, by runtime label). A
 /// runtime it does not name (a plan-file run records nothing) counts as installed.
@@ -34,6 +38,98 @@ pub type Installed = BTreeMap<String, bool>;
 
 fn missing(installed: &Installed, runtime: Runtime) -> bool {
     installed.get(runtime.label()) == Some(&false)
+}
+
+/// Ruling RL-1: the routes of this task's sessions that ended for an environment reason
+/// (`AgentRound::environment_failed`), which rung 2 and `run retry` skip.
+pub fn failed_routes(task: &Task) -> Vec<Route> {
+    (task.rounds.iter())
+        .filter(|r| r.environment_failed)
+        .map(|r| r.route.clone())
+        .collect()
+}
+
+/// Whether `route` is, by runtime and model, one of `failed` (an effort changes nothing
+/// about a model that cannot run).
+pub fn failed_in(failed: &[Route], route: &Route) -> bool {
+    (failed.iter()).any(|f| f.runtime == route.runtime && f.model == route.model)
+}
+
+/// The list a task takes (decision 9a, ruling RL-4): research by `scout`, review by
+/// `review`, any other task by its class's.
+pub fn task_list<'a>(lists: &'a RouteListsFrozen, task: &Task) -> &'a FrozenList {
+    match task.spec.kind {
+        TaskKind::Research => &lists.scout,
+        TaskKind::Review => &lists.review,
+        _ => class_list(lists, task),
+    }
+}
+
+/// The rotation a task's pick belongs to: its class's (0 S, 1 M, 2 hub), else 3 for
+/// research and 4 for review tasks.
+fn list_key(task: &Task) -> usize {
+    match task.spec.kind {
+        TaskKind::Research => 3,
+        TaskKind::Review => 4,
+        _ => class(task),
+    }
+}
+
+/// A list's `pick` for `task`: a review task takes the first unskipped candidate.
+fn policy(list: &FrozenList, task: &Task) -> ListPolicy {
+    match task.spec.kind {
+        TaskKind::Review => ListPolicy::First,
+        _ => list.pick,
+    }
+}
+
+/// Decision 9a for a role: the list's snapshot (each candidate's skip reason beside
+/// it), the route chosen (`None`: every candidate was skipped, so today's resolution
+/// holds), the list's `pick` and the session's rotation position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RolePick {
+    pub route: Option<Route>,
+    pub candidates: Vec<RoutingCandidate>,
+    pub pick: ListPolicy,
+    pub rotation: u32,
+}
+
+/// Decision 9a for a role (`scout`, `decider`, `planner`, `orchestrator`): session
+/// `rotation`'s candidate (0-based, in start order). `first` takes the first one
+/// installed, `spread` the first installed from `rotation % n` on, cycling; a
+/// candidate without an effort takes `effort`. `None` with no list.
+pub fn role(
+    list: &FrozenList,
+    rotation: u32,
+    effort: Effort,
+    installed: &Installed,
+) -> Option<RolePick> {
+    let n = list.candidates.len();
+    if n == 0 {
+        return None;
+    }
+    let start = match list.pick {
+        ListPolicy::First => 0,
+        ListPolicy::Spread => rotation as usize % n,
+    };
+    let usable = |k: usize| !missing(installed, list.candidates[k].runtime);
+    let chosen = (0..n).map(|d| (start + d) % n).find(|&k| usable(k));
+    let candidates: Vec<RoutingCandidate> = (0..n)
+        .map(|k| RoutingCandidate {
+            route: list.candidates[k].route(effort),
+            skipped_reason: match (usable(k), Some(k) == chosen) {
+                (false, _) => Some(NOT_INSTALLED.to_string()),
+                (true, false) => Some(EARLIER_TAKEN.to_string()),
+                (true, true) => None,
+            },
+        })
+        .collect();
+    Some(RolePick {
+        route: chosen.map(|k| candidates[k].route.clone()),
+        candidates,
+        pick: list.pick,
+        rotation,
+    })
 }
 
 /// The list of the task's class: hub, S, else M (a task rung 3 raised to L too).
@@ -113,7 +209,8 @@ fn groups(tasks: &[Task], pending: &BTreeSet<usize>) -> Vec<Vec<usize>> {
         let joins: Vec<usize> = (groups.iter().enumerate())
             .filter(|(_, g)| {
                 let first = &tasks[g[0]];
-                class(first) == class(&tasks[i]) && g.iter().any(|&j| overlap(&tasks[j], &tasks[i]))
+                list_key(first) == list_key(&tasks[i])
+                    && g.iter().any(|&j| overlap(&tasks[j], &tasks[i]))
             })
             .map(|(k, _)| k)
             .collect();
@@ -155,9 +252,9 @@ fn skip(
 /// list already routed and that overlaps a member gives its candidate and slot (an
 /// added task joins its overlap group); otherwise the class's next slot.
 fn joined(tasks: &[Task], pending: &BTreeSet<usize>, group: &[usize]) -> Option<(usize, u32)> {
-    let c = class(&tasks[group[0]]);
+    let c = list_key(&tasks[group[0]]);
     (tasks.iter().enumerate())
-        .filter(|(j, t)| !pending.contains(j) && !t.state.is_finished() && class(t) == c)
+        .filter(|(j, t)| !pending.contains(j) && !t.state.is_finished() && list_key(t) == c)
         .filter(|(_, t)| group.iter().any(|&i| overlap(&tasks[i], t)))
         .find_map(|(_, t)| {
             let p = t.list_pick.as_ref()?;
@@ -165,7 +262,8 @@ fn joined(tasks: &[Task], pending: &BTreeSet<usize>, group: &[usize]) -> Option<
         })
 }
 
-/// Decision 9a: routes the `targets` by their class lists. A target whose plan names a
+/// Decision 9a: routes the `targets` by their lists ([`task_list`]: research and review
+/// tasks by the role lists, review tasks always `first`). A target whose plan names a
 /// model or a strength keeps its route, with the list snapshotted for the history; the
 /// others, grouped by overlapping `owns`, take per group the first unskipped candidate
 /// (`first`), or round-robin from their rotation slot (`spread`). The chosen candidate
@@ -183,9 +281,9 @@ pub fn pick(
     let mut pending = BTreeSet::new();
     for &i in targets {
         tasks[i].list_pick = None;
-        let list = class_list(lists, &tasks[i]);
-        // Research and review tasks route by the role lists (task M9.5.10b).
-        if list.is_empty() || is_reader(tasks[i].spec.kind) {
+        // Research and review tasks route by the role lists (ruling RL-4).
+        let list = task_list(lists, &tasks[i]);
+        if list.is_empty() {
             continue;
         }
         if takes_list(&tasks[i]) {
@@ -198,26 +296,27 @@ pub fn pick(
         tasks[i].list_pick = Some(ListPick {
             candidates: snapshot(limits, &tasks[i], list, &reasons),
             chosen: None,
-            pick: list.pick,
+            pick: policy(list, &tasks[i]),
             slot: None,
         });
     }
-    let mut next_slot = [0u32; 3];
+    let mut next_slot = [0u32; 5];
     for t in tasks.iter() {
         if let Some(slot) = t.list_pick.as_ref().and_then(|p| p.slot) {
-            next_slot[class(t)] = next_slot[class(t)].max(slot + 1);
+            next_slot[list_key(t)] = next_slot[list_key(t)].max(slot + 1);
         }
     }
     for group in groups(tasks, &pending) {
-        let list = class_list(lists, &tasks[group[0]]);
+        let list = task_list(lists, &tasks[group[0]]);
         let n = list.candidates.len();
-        let (start, slot) = match list.pick {
+        let key = list_key(&tasks[group[0]]);
+        let (start, slot) = match policy(list, &tasks[group[0]]) {
             ListPolicy::First => (0, None),
             ListPolicy::Spread => match joined(tasks, &pending, &group) {
                 Some((k, slot)) => (k, Some(slot)),
                 None => {
-                    let slot = next_slot[class(&tasks[group[0]])];
-                    next_slot[class(&tasks[group[0]])] += 1;
+                    let slot = next_slot[key];
+                    next_slot[key] += 1;
                     (slot as usize % n, Some(slot))
                 }
             },
@@ -240,7 +339,7 @@ pub fn pick(
             task.list_pick = Some(ListPick {
                 candidates,
                 chosen: chosen.map(|k| k as u32),
-                pick: list.pick,
+                pick: policy(list, task),
                 slot,
             });
         }
@@ -296,11 +395,12 @@ pub fn context_routes(lists: &RouteListsFrozen) -> Option<serde_json::Value> {
     (!entries.is_empty()).then_some(serde_json::Value::Object(entries))
 }
 
-/// Decision 9a's rung 2 for task `i` of a class with a list of two or more: the next
-/// unskipped candidate after the task's current one, cycling. Skipped: a candidate
-/// identical to the current route, one not installed, and one on the other runtime
-/// while an unfinished task on the current runtime overlaps the task's `owns`. `None`
-/// (a list of one, or nothing left) leaves rung 2 to `roster::escalate`.
+/// Decision 9a's rung 2 (and `run retry`'s) for task `i` whose list has two or more
+/// candidates: the next unskipped candidate after the task's current one, cycling.
+/// Skipped: a candidate identical to the current route, one not installed, one that
+/// failed in this task (RL-1), and one on the other runtime while an unfinished task on
+/// the current runtime overlaps the task's `owns`. `None` (a list of one, or nothing
+/// left) leaves rung 2 to `roster::escalate`.
 pub fn next_candidate(
     limits: &RunLimits,
     tasks: &[Task],
@@ -308,11 +408,12 @@ pub fn next_candidate(
     installed: &Installed,
 ) -> Option<(Route, ListPick)> {
     let task = &tasks[i];
-    let list = class_list(&limits.route_lists, task);
-    if list.candidates.len() < 2 || is_reader(task.spec.kind) {
+    let list = task_list(&limits.route_lists, task);
+    if list.candidates.len() < 2 {
         return None;
     }
     let current = &task.route;
+    let failed = failed_routes(task);
     let routes: Vec<Route> = (list.candidates.iter())
         .map(|c| c.route(class_effort(limits, task)))
         .collect();
@@ -325,6 +426,8 @@ pub fn next_candidate(
                 Some(CURRENT_ROUTE)
             } else if missing(installed, route.runtime) {
                 Some(NOT_INSTALLED)
+            } else if failed_in(&failed, route) {
+                Some(FAILED_IN_TASK)
             } else if route.runtime != current.runtime && held {
                 Some(OVERLAPPING_OWNS)
             } else {
@@ -350,14 +453,29 @@ pub fn next_candidate(
     let step = ListPick {
         candidates,
         chosen: Some(k as u32),
-        pick: list.pick,
+        pick: policy(list, task),
         slot,
     };
     Some((routes[k].clone(), step))
 }
 
+/// The route rung 2 and `run retry` give task `i` (decision 9a, ruling RL-1): its
+/// list's [`next_candidate`], else `roster::escalate`, each skipping a route that failed
+/// in this task; with the list's step for the routing history.
+pub fn rung2_route(run: &Run, i: usize) -> (Route, Option<ListPick>) {
+    let (task, installed) = (&run.tasks[i], &run.orch.installed);
+    if let Some((route, step)) = next_candidate(&run.limits, &run.tasks, i, installed) {
+        return (route, Some(step));
+    }
+    (
+        escalate_skipping(&run.roster, &task.route, &failed_routes(task)),
+        None,
+    )
+}
+
 /// Decision 9a's reviewer from the `review` list, `None` with no list: the first
-/// candidate that is installed, on the other runtime than `author`, and at or above
+/// candidate that is installed, did not fail in this task (`failed`, ruling RL-1), is
+/// on the other runtime than `author`, and at or above
 /// both the author's strength and the level's, at its own effort or else the level's;
 /// with the whole list, each candidate's skip reason beside it. The route is `None`
 /// when none qualifies (the caller takes `pick_reviewer`).
@@ -366,6 +484,7 @@ pub fn reviewer(
     author: &Route,
     level: ReviewLevel,
     installed: &Installed,
+    failed: &[Route],
 ) -> Option<(Option<Route>, Vec<RoutingCandidate>)> {
     let list = &lists.review;
     if list.is_empty() {
@@ -383,6 +502,8 @@ pub fn reviewer(
             let route = c.route(effort);
             let reason = if missing(installed, c.runtime) {
                 Some(NOT_INSTALLED)
+            } else if failed_in(failed, &route) {
+                Some(FAILED_IN_TASK)
             } else if c.runtime == author.runtime {
                 Some(AUTHOR_RUNTIME)
             } else if c.strength < required {
@@ -411,7 +532,7 @@ pub fn review_route(
     level: ReviewLevel,
     installed: &Installed,
 ) -> Route {
-    reviewer(lists, author, level, installed)
+    reviewer(lists, author, level, installed, &[])
         .and_then(|(route, _)| route)
         .unwrap_or_else(|| pick_reviewer(roster, author, level))
 }

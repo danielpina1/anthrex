@@ -10,7 +10,6 @@ use crate::run::engine::full;
 use crate::run::engine::goal_rounds_end::open_round;
 use crate::run::model::{Run, Task};
 use crate::run::orch::contract_rounds as rounds;
-use crate::run::roster::escalate;
 
 /// The menu's label for `kind`.
 pub(crate) fn label(kind: &ActionKind) -> String {
@@ -163,7 +162,8 @@ pub(super) fn effect(run: &Run, node: &ActionNode, kind: &ActionKind) -> String 
             )
         }
         Retry => {
-            let route = task.map(|task| escalate(&run.roster, &task.route));
+            let i = task.and_then(|task| run.tasks.iter().position(|x| x.id() == task.id()));
+            let route = i.map(|i| crate::run::route_pick::rung2_route(run, i).0);
             let (runtime, model, effort) = route.map_or_else(Default::default, |r| {
                 let model = if r.model.is_empty() { "default".to_string() } else { r.model };
                 (r.runtime.label(), model, effort_label(r.effort))

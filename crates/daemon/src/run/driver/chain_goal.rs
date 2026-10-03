@@ -335,3 +335,7 @@ pub(in crate::run::driver) mod tests;
 #[cfg(test)]
 #[path = "chain_goal_deadline_tests.rs"]
 mod deadline_tests;
+
+#[cfg(test)]
+#[path = "chain_goal_list_tests.rs"]
+mod list_tests;

@@ -304,8 +304,10 @@ impl RunService {
                 }
                 input.files = files;
                 input.files_total = total;
-                let decision = decide(&adaptation.deciders, &DeciderRequest::Triage(input)).await;
-                self.record_triage(adaptation, pre, (goal, profile), &decision)
+                // Milestone 9.5 rulings RL-2, I6: routed over what is installed now.
+                let routed = crate::decider::call::routed(&adaptation.deciders).await;
+                let decision = decide(&routed.ctx, &DeciderRequest::Triage(input)).await;
+                self.record_triage(adaptation, pre, (goal, profile), (&routed, &decision))
                     .await;
                 decision
             }
@@ -334,7 +336,7 @@ impl RunService {
         adaptation: &Adaptation,
         pre: &Preflight,
         (goal, profile): (&str, &RepoProfile),
-        decision: &Decision,
+        (routed, decision): (&crate::decider::call::Routed, &Decision),
     ) {
         let n = TRIAGE_SEQ.fetch_add(1, Ordering::Relaxed);
         let nanos = std::time::SystemTime::now()
@@ -346,12 +348,13 @@ impl RunService {
             ..RoleRoutingInput::default()
         };
         let session = format!("{nanos}/{n}");
-        let route = &adaptation.deciders.route;
+        let route = &routed.ctx.route;
         let roster = &adaptation.scouts.context().roster.current();
         let strength = self.ctx.settings.current().orchestrator.deciders.strength;
         let chosen = (route, roles::decider_candidates(roster, route, strength));
-        let at = unix_now();
-        let mut record = roles::decider_record(None, (&session, "triage"), &[], chosen, input, at);
+        let (session, pick) = ((session.as_str(), "triage"), routed.pick.as_ref());
+        let at = (input, unix_now());
+        let mut record = roles::decider_listed(None, session, &[], chosen, pick, at);
         let (outcome, result) = roles::decider_outcome(decision);
         roles::finish(&mut record, outcome, result);
         let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);

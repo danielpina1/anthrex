@@ -79,6 +79,7 @@ fn failed_turn(
         }
         _ => {
             stop_reviewers(run, i, now, fx);
+            run.tasks[i].rounds[r].environment_failed = true;
             return block(run, i, BlockReason::Environment, error, now);
         }
     };

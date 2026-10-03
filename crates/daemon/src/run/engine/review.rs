@@ -21,8 +21,8 @@ use crate::run::contract::{
 use crate::run::model::{AgentRound, ReviewLevel, ReviewRecord, Run};
 use crate::run::orch::contract::worker_messages_for_review;
 use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid_of};
-use crate::run::roster::pick_reviewer;
-use crate::run::route_pick::reviewer;
+use crate::run::roster::pick_reviewer_skipping;
+use crate::run::route_pick::{failed_routes, reviewer};
 use crate::run::routing;
 
 pub(super) use super::review_session::{exited, resume_failed, turn_ended, watch};
@@ -141,9 +141,15 @@ pub(super) fn review_ready(
         "task {} is in review with no review level",
         task.id()
     );
-    let mut listed = None;
+    let listed;
     let (author, level, route) = if reader {
-        // Milestone 9 decisions 36, 37: a review task's own route and level.
+        // Milestone 9 decisions 36, 37: a review task's own route and level; milestone
+        // 9.5 ruling RL-4: a route the `review` list gave it records that list.
+        let picked = task
+            .list_pick
+            .as_ref()
+            .filter(|p| p.chosen_route() == Some(&task.route));
+        listed = picked.map(|p| (Some(task.route.clone()), p.candidates.clone()));
         super::kinds::review_route(task)
     } else {
         let level = task.review_level.unwrap_or(ReviewLevel::Medium);
@@ -158,9 +164,12 @@ pub(super) fn review_ready(
             .map_or(&task.route, |r| &r.route)
             .clone();
         // Milestone 9.5 decision 9a: the `review` list's first qualifying candidate.
-        listed = reviewer(&run.limits.route_lists, &author, level, &run.orch.installed);
+        let failed = failed_routes(task);
+        let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
+        listed = reviewer(lists, &author, level, installed, &failed);
         let first = listed.as_ref().and_then(|(route, _)| route.clone());
-        let route = first.unwrap_or_else(|| pick_reviewer(&run.roster, &author, level));
+        let route =
+            first.unwrap_or_else(|| pick_reviewer_skipping(&run.roster, &author, level, &failed));
         (author, level, route)
     };
     let spec = if reader {

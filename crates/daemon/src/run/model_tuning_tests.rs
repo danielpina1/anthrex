@@ -15,7 +15,7 @@ const M93_RUN: &str = include_str!("../../tests/fixtures/run/m93-run.json");
 
 /// Every key milestone 9.5 adds to the persisted run. `lane` is also an older key, a
 /// routing decision's (milestone 9), so it is counted rather than looked for.
-const NEW_KEYS: [&str; 7] = [
+const NEW_KEYS: [&str; 8] = [
     "race",
     "pair",
     "race_wait_since",
@@ -23,6 +23,7 @@ const NEW_KEYS: [&str; 7] = [
     "route_lists",
     "list_pick",
     "list_escalation",
+    "environment_failed",
 ];
 
 fn old_run() -> Run {
@@ -195,6 +196,8 @@ fn a_run_with_race_pair_and_caps_round_trips() {
     };
     run.tasks[0].list_pick = Some(pick.clone());
     run.tasks[0].list_escalation = Some(pick);
+    // Task M9.5.10b (ruling RL-1): a session that failed for an environment reason.
+    run.tasks[0].rounds[0].environment_failed = true;
 
     let dir = tmp();
     let (loaded, text) = save_and_load(&mut run, dir.path());

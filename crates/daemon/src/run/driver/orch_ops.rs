@@ -380,7 +380,7 @@ impl RunService {
             let run = state.runs.get(&ctx.run_id);
             let record =
                 run.map(|run| crate::run::orch::roles::scout_record(run, &scout_id, unix_now()));
-            let route = run.map(crate::run::orch::launch::scout_route_of);
+            let route = run.map(|run| crate::run::orch::launch::scout_route_of(run, &scout_id));
             (record, route)
         };
         // Fix round 3, item 2: a run scout is routed from its run alone; with the run

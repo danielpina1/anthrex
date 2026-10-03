@@ -272,6 +272,7 @@ pub(super) fn turn_ended(
                 | FailureKind::SandboxUnavailable
                 | FailureKind::ClientError,
         } => {
+            run.tasks[i].rounds[r].environment_failed = true;
             return give_up(run, i, error, now, fx);
         }
         TurnOutcome::Failed {
@@ -300,6 +301,7 @@ pub(super) fn turn_ended(
                 round.failed_turn,
                 FailedTurn::ContinueSent { rate_limit: false }
             ) {
+                round.environment_failed = true;
                 return give_up(run, i, error, now, fx);
             }
             round.failed_turn = FailedTurn::WaitingContinue {

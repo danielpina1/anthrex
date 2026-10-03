@@ -19,7 +19,7 @@
 
 mod adapt;
 mod book;
-mod build;
+pub(crate) mod build;
 mod cleanup;
 mod context;
 mod delivery;
@@ -67,6 +67,7 @@ use crate::manager::{GitRoots, WindowManager, WindowSignal};
 use book::{Book, Retiring};
 
 pub use adapt::Adaptation;
+pub use build::installed::INSTALLED_PROBE_TIMEOUT;
 pub(crate) use context::OpCtx;
 pub use context::{GitBudget, RunContext};
 pub use observe::{ACTIVITY_EVERY, translate};

@@ -153,6 +153,9 @@ pub struct RoleRoutingDecision {
     /// `None` until milestone 9.5's role lists apply.
     #[serde(default)]
     pub pick_policy: Option<String>,
+    /// Milestone 9.5 decision 9a: a `spread` list's rotation position for this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<u32>,
     pub input: RoleRoutingInput,
     pub chosen: Route,
     pub selected_index: u32,

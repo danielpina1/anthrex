@@ -73,6 +73,7 @@ pub(super) fn new_round(
         activity: None,
         last_text: None,
         lane: None,
+        environment_failed: false,
     }
 }
 

@@ -144,6 +144,7 @@ pub fn round(
         activity: None,
         last_text: None,
         lane: None,
+        environment_failed: false,
     }
 }
 

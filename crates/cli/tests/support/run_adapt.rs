@@ -36,8 +36,9 @@ pub const PROFILE_LINES: &str =
 /// at 5 s, 35 s) = 102 s, rounded up. As landed they are nine (M8b.14's count), 112 s in
 /// all; milestone 9.5's start tuning adds up to `TUNING_START_BOUND` (10 s, ruling T9-3):
 /// 122 s, so 130 s. In today's terms, `REQUEST_WAIT` (75 s, ruling T9-4, the tuning in
-/// it) + 5 + 2 + 45 = 127 s, still under it.
-pub const GOAL_WAIT: Duration = Duration::from_secs(130);
+/// it) + 5 + 2 + 45 = 127 s; milestone 9.5's installed probe before the triage call
+/// (`INSTALLED_PROBE_TIMEOUT`, 5 s, ruling I6) makes it 132 s, so 140 s.
+pub const GOAL_WAIT: Duration = Duration::from_secs(140);
 
 /// The brief's stored profile for M8b.18 and M8b.19 (the default `protected`), with
 /// `check_timeout_secs = 10` so every check keeps `RUN_WAIT`'s derivation (a stored

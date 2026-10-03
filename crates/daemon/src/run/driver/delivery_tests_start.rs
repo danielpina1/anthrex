@@ -74,13 +74,15 @@ const GOAL_START_GIT_CALLS: u32 = 8 + 1 + 2 * 15;
 /// `pr` goal start's legal worst case on these rigs, the largest request here. Its
 /// [`GOAL_START_GIT_CALLS`] at [`RIG_GIT_TIMEOUT_SECS`] (195 s), the host preflight
 /// (`PREFLIGHT_BOUND`, 365 s), triage (the default `deciders.timeout_secs`, 90 s, and
-/// the decider's `KILL_GRACE`, 2 s), the triage record's write (`TRIAGE_WRITE_TIMEOUT`,
+/// the decider's `KILL_GRACE`, 2 s, after the installed probe it routes over,
+/// `INSTALLED_PROBE_TIMEOUT`, 5 s), the triage record's write (`TRIAGE_WRITE_TIMEOUT`,
 /// 10 s), the build's tuning (`TUNING_START_BOUND`, 10 s), and 30 s for the engine step
-/// that starts the run and the scheduling: 702 s.
+/// that starts the run and the scheduling: 707 s.
 fn ask_wait() -> Duration {
     let git = Duration::from_secs(RIG_GIT_TIMEOUT_SECS) * GOAL_START_GIT_CALLS;
-    let triage =
-        Duration::from_secs(rig_config().deciders.timeout_secs) + crate::decider::call::KILL_GRACE;
+    let triage = Duration::from_secs(rig_config().deciders.timeout_secs)
+        + crate::decider::call::KILL_GRACE
+        + crate::run::driver::INSTALLED_PROBE_TIMEOUT;
     git + crate::host::PREFLIGHT_BOUND
         + triage
         + super::super::super::adapt::TRIAGE_WRITE_TIMEOUT

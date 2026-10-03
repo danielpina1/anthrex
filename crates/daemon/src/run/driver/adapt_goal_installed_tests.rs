@@ -468,3 +468,6 @@ async fn an_edit_of_a_run_started_with_trust_project_is_not_refused() {
     assert!(refused[0].1.contains(".codex/config.toml"), "{refused:?}");
     assert_eq!(refusals(true).await.unwrap(), Vec::new());
 }
+
+#[path = "adapt_goal_list_tests.rs"]
+mod lists;

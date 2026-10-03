@@ -129,6 +129,7 @@ mod role_history;
 mod role_history_ends;
 mod rounds_limits;
 mod route_lists;
+mod route_lists_failed;
 mod run_scouts;
 mod scenarios;
 mod scenarios_c27;
