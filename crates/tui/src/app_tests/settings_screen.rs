@@ -98,7 +98,7 @@ pub(super) fn screen(app: &App) -> &SettingsScreen {
 /// The sample, open on the Settings screen.
 pub(super) fn opened() -> App {
     let mut app = cached(sample(), origin(&[]));
-    assert!(open(&mut app).is_empty());
+    assert!(settings_sent(&open(&mut app)).is_empty());
     app
 }
 
@@ -165,8 +165,10 @@ pub(super) fn puts(effects: &[Effect]) -> Vec<(u64, SettingsDoc)> {
 #[test]
 fn c_b_s_opens_from_the_cache() {
     let mut app = cached(sample(), origin(&[]));
+    // Milestone 9.5 decision 48 adds a read-only `Stats` for the project's tuning
+    // (`ui/settings_tuning_tests.rs`); no settings request.
     assert!(
-        open(&mut app).is_empty(),
+        settings_sent(&open(&mut app)).is_empty(),
         "the cache is read, not asked for"
     );
     assert!(screen(&app).loaded);

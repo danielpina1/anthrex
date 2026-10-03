@@ -241,7 +241,9 @@ pub(crate) fn shows(name: &str) -> Shows {
         "confirm over the overview" => row("Kill 'shell'?", Some("esc back"), &["y kill"]),
         "action menu over the run view" => row("review plan", Some("esc close"), &["j/k move"]),
         "profile with a page" => row("reject proposal", Some("esc back"), &["y reject"]),
-        "settings" => row("SETTINGS", Some("esc back"), &["w save"]),
+        "settings" | "settings limits with a refit" => {
+            row("SETTINGS", Some("esc back"), &["w save"])
+        }
         "stats" => row("STATS", Some("esc back"), &["j/k scroll"]),
         // Milestone 9.0.7 decision 35: the old dialogs on the kit's grammar.
         "new agent over the pane" => row("new agent", Some("esc cancel"), &["⏎ create"]),

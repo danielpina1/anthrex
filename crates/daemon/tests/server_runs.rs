@@ -174,10 +174,11 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
 }
 
 /// Milestone 9.5 task 2: `McpReady` from a window that is no run's orchestrator is
-/// answered `Done` and changes nothing (task M9.5.5a's caller check), and `Stats`'
-/// `apply`, `dismiss` and `read_only` are ignored until task M9.5.11.
+/// answered `Done` and changes nothing (task M9.5.5a's caller check). Task M9.5.11: a
+/// read-only `Stats` (decision 48) naming ids is refused before anything is read; one
+/// with none goes on as a plain one would.
 #[tokio::test(flavor = "multi_thread")]
-async fn mcp_ready_is_answered_and_new_stats_fields_are_ignored() {
+async fn mcp_ready_is_answered_and_a_read_only_stats_takes_no_ids() {
     use proto::run_wire::request;
     let dir = tempfile::Builder::new()
         .prefix("ax-runs95")
@@ -208,6 +209,20 @@ async fn mcp_ready_is_answered_and_new_stats_fields_are_ignored() {
             dir: here.clone(),
             apply: vec!["threshold-s".into()],
             dismiss: vec!["route-m".into()],
+            read_only: true,
+        })
+        .await,
+        proto::RunReply::Refused {
+            request: request::STATS.to_string(),
+            message: "a read-only stats request cannot apply or dismiss a proposal".into(),
+            request_id: None,
+        }
+    );
+    assert_eq!(
+        runs.request(RunRequest::Stats {
+            dir: here.clone(),
+            apply: Vec::new(),
+            dismiss: Vec::new(),
             read_only: true,
         })
         .await,

@@ -14,7 +14,7 @@ use config::settings::{SHIPPED_CLAUDE, SHIPPED_CODEX, ShippedModel, validate, wa
 use proto::settings::key;
 use proto::{
     BudgetLimit, ModelEntry, OrchestratorDefault, Origin, Runtime, SettingsDoc, SettingsLimits,
-    Strength,
+    Strength, TuningReport,
 };
 use std::collections::BTreeMap;
 
@@ -172,6 +172,11 @@ pub struct SettingsScreen {
     /// edited since.
     pub sent: Option<SettingsDoc>,
     pub outcome: Option<SaveOutcome>,
+    /// Milestone 9.5 decision 48: the read-only `Stats` sent on opening, while its reply
+    /// is due, and the project's tuning it brought (the notes beside the budgets and the
+    /// orchestrator default; none before it, or with no project).
+    pub tuning_request: Option<u64>,
+    pub tuning: Option<Box<TuningReport>>,
 }
 
 fn row_of(s: &ShippedModel, doc: &SettingsDoc) -> ModelRow {
@@ -322,6 +327,8 @@ impl SettingsScreen {
             put_id: None,
             sent: None,
             outcome: None,
+            tuning_request: None,
+            tuning: None,
         };
         s.load(&empty, &BTreeMap::new());
         s.loaded = false;
@@ -478,6 +485,22 @@ impl SettingsScreen {
             key::AGENT_MODEL => now.orchestrator.model == base.orchestrator.model,
             k => limit_value(&now.limits, k) == limit_value(&base.limits, k),
         }
+    }
+
+    /// Ruling RH-5: `refit: <budget>` beside the budget of `class` (`"S"` or `"M"`) when
+    /// the project's tuning has a refit for it and config does not set it explicitly.
+    pub fn refit_note(&self, class: &str) -> Option<String> {
+        let c = (self.tuning.as_ref()?.classes.iter()).find(|c| c.class == class)?;
+        let budget = c.refit_budget.as_ref().filter(|_| !c.configured)?;
+        Some(format!(
+            "refit: {}",
+            daemon::run::refit::budget_text(budget)
+        ))
+    }
+
+    /// Ruling RH-5: the orchestrator default is overridden by a model list.
+    pub fn orchestrator_overridden(&self) -> bool {
+        (self.tuning.as_ref()).is_some_and(|t| t.orchestrator_list.is_some())
     }
 
     /// An edit makes the last outcome stale.

@@ -84,6 +84,15 @@ pub fn load(repo_dir: &Path, now: u64) -> io::Result<Loaded> {
     Ok(Loaded::MovedBad { error, moved_to })
 }
 
+/// The file as [`load`] reads it, never moved (milestone 9.5 decision 48's read-only
+/// `Stats`): `Ok(None)` when absent, the one-line parse error when it does not parse.
+pub fn peek(repo_dir: &Path) -> io::Result<Result<Option<TuningFile>, String>> {
+    Ok(match read(&repo_dir.join(TUNING_FILE))? {
+        None => Ok(None),
+        Some(text) => parse(&text).map(Some),
+    })
+}
+
 /// Writes `file` as `<repo_dir>/tuning.toml`, atomically.
 pub fn save(repo_dir: &Path, file: &TuningFile) -> io::Result<()> {
     let text = toml::to_string(file).map_err(io::Error::other)?;

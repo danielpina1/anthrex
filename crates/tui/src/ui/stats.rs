@@ -10,7 +10,7 @@
 use crate::app::stats::{StatsScreen, StatsState};
 use crate::app::{App, region::KeyRegion};
 use crate::safe_text::{multi_line, one_line};
-use crate::theme::{Palette, Role, dot, ellipsis, role};
+use crate::theme::{Palette, Role, dot, ellipsis, fold, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
 use proto::HistoryStats;
 use ratatui::Frame;
@@ -183,6 +183,12 @@ fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'stat
     if names.is_empty() {
         out.push(line("  none".into(), muted));
     }
+    if let Some(tuning) = &stats.tuning {
+        out.push(Line::default());
+        for (text, style) in tuning_lines(tuning, p) {
+            out.push(line(text, style));
+        }
+    }
     if !stats.problems.is_empty() {
         out.push(Line::default());
         out.push(line("problems".into(), role(Role::Attention, p)));
@@ -195,6 +201,37 @@ fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'stat
     out.push(line(path, muted));
     out
 }
+
+/// Milestone 9.5 decision 48 (ruling RH-6): the tuning block read-only, as `anthrex
+/// run stats` prints it (`refit_render::render`), each line sanitised and in the
+/// palette's punctuation; its `*` note and `budget <C>: configured …` lines muted, the
+/// `tuning proposals:` heading bold, and the CLI's `apply with …` line replaced by the
+/// hint [`APPLY_HINT`]: proposals are applied from the CLI only.
+fn tuning_lines(report: &proto::TuningReport, p: Palette) -> Vec<(String, Style)> {
+    let text = daemon::run::refit_render::render(report);
+    let muted = role(Role::Muted, p);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    text.lines()
+        .map(|l| {
+            let style = if l.starts_with("  * ") || l.starts_with("  budget ") {
+                muted
+            } else if l.starts_with("tuning proposals:") || l.starts_with("  CLASS ") {
+                bold
+            } else {
+                Style::default()
+            };
+            let l = if l.starts_with("apply with ") {
+                APPLY_HINT
+            } else {
+                l
+            };
+            (fold(&one_line(l), p.ascii), style)
+        })
+        .collect()
+}
+
+/// Ruling RH-6's hint, in place of the CLI's `apply with …` line.
+pub(crate) const APPLY_HINT: &str = "apply: anthrex run stats --apply <id>";
 
 /// Everything the screen shows under its title, before scrolling.
 pub(crate) fn body_lines(app: &App, s: &StatsScreen, width: u16) -> Vec<Line<'static>> {

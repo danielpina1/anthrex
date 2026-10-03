@@ -460,6 +460,17 @@ pub fn summarise(
     for warning in record_reverts(git, root, path, now, timeout) {
         tracing::warn!(path = %path.display(), %warning, "revert detection");
     }
+    summarise_read(path, now, testing, slow_tests)
+}
+
+/// [`summarise`] without recording reverts: no git, no write (milestone 9.5 decision
+/// 48's read-only `Stats`).
+pub fn summarise_read(
+    path: &Path,
+    now: u64,
+    testing: &config::Testing,
+    slow_tests: Option<&str>,
+) -> HistoryStats {
     let (lines, problems) = read_history(path);
     let mut stats = super::stats::aggregate(&lines, path);
     stats.problems = problems;

@@ -395,3 +395,141 @@ fn stats_screen_text_is_sanitised() {
     assert!(seen.contains("a b"), "the text is drawn: {seen}");
     assert_eq!(crate::safe_text::tests::first_hostile(&seen), None);
 }
+
+fn class(
+    name: &str,
+    samples: u32,
+    (calls, minutes): (u32, u32),
+    refit: proto::RefitState,
+    weight: (u64, bool),
+) -> proto::ClassTuning {
+    proto::ClassTuning {
+        class: name.into(),
+        samples,
+        budget: proto::Budget {
+            tool_calls: calls,
+            minutes,
+            tokens: None,
+        },
+        refit,
+        configured: false,
+        refit_budget: None,
+        weight_secs: Some(weight.0),
+        weight_derived: weight.1,
+        route: "standard/medium".into(),
+    }
+}
+
+/// Milestone 9.5 decision 11's report for `refit.jsonl` with S configured (ruling
+/// RH-5): its `budget S: configured …` line, the derived weights' `*` note, one
+/// proposal. The Settings and audit tests share it.
+pub(crate) fn tuning_report() -> proto::TuningReport {
+    use proto::RefitState::{Configured, NotYet};
+    let mut s = class("S", 34, (40, 15), Configured, (540, false));
+    s.configured = true;
+    s.refit_budget = Some(proto::Budget {
+        tool_calls: 55,
+        minutes: 18,
+        tokens: None,
+    });
+    proto::TuningReport {
+        path: "/r/demo/tuning.toml".into(),
+        min_samples: 30,
+        refit_budgets: true,
+        classes: vec![
+            s,
+            class("M", 12, (150, 60), NotYet, (1620, true)),
+            class("hub", 3, (150, 60), NotYet, (1620, true)),
+        ],
+        proposals: vec![proto::TuningProposal {
+            id: "thresholds.s".into(),
+            text: "S line threshold 20 → 35 (p90 of 34 merged S tasks)".into(),
+            current: "20".into(),
+            proposed: "35".into(),
+            change: proto::TuningChange::Threshold {
+                class: "s".into(),
+                lines: 35,
+            },
+        }],
+        moved_bad_file: None,
+        applied: Vec::new(),
+        dismissed: Vec::new(),
+        orchestrator_list: None,
+        parse_error: None,
+    }
+}
+
+/// `history()` with [`tuning_report`].
+pub(crate) fn history_with_tuning() -> HistoryStats {
+    HistoryStats {
+        tuning: Some(Box::new(tuning_report())),
+        ..history()
+    }
+}
+
+/// Milestone 9.5 decision 48 and ruling RH-6: after the flaky block, the lines
+/// `anthrex run stats` prints of the tuning block, its `*` note and `budget S:
+/// configured …` line muted, and the hint `apply: anthrex run stats --apply <id>` in
+/// place of the CLI's `apply with …` line; no new key, hint or action.
+#[test]
+fn the_stats_screen_shows_the_tuning_block_read_only() {
+    let block = [
+        "tuning: /r/demo/tuning.toml  (refit after 30 samples per class)",
+        "  CLASS  SAMPLES  BUDGET          WEIGHT  REFIT",
+        "  S      34       40 calls 15m    9m      configured",
+        "  M      12/30    150 calls 60m   27m*    not yet",
+        "  hub    3/30     150 calls 60m   27m*    not yet",
+        "  * derived from another class's median",
+        "  budget S: configured 40 calls 15m (refit would be 55 calls 18m)",
+        "tuning proposals:",
+        "  thresholds.s  S line threshold 20 → 35 (p90 of 34 merged S tasks)",
+        "apply: anthrex run stats --apply <id>",
+    ];
+    for ascii in [false, true] {
+        let mut app = app_with(ascii, StatsState::Ready(Box::new(history_with_tuning())));
+        let p = app.palette();
+        let lines = super::body_lines(&app, screen(&app), 120);
+        let texts: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        let flaky = texts
+            .iter()
+            .position(|t| t == "  api::slow_ping        1 run");
+        let at = flaky.expect("the flaky block") + 2;
+        let want: Vec<String> = block
+            .iter()
+            .map(|t| {
+                if ascii {
+                    t.replace('→', "->")
+                } else {
+                    t.to_string()
+                }
+            })
+            .collect();
+        assert_eq!(texts[at - 1], "", "a blank line before the block");
+        assert_eq!(texts[at..at + block.len()], want, "ascii {ascii}");
+        assert_eq!(texts[at + block.len()], "", "then the problems");
+        assert!(!texts.iter().any(|t| t.contains("apply with")), "{texts:?}");
+        assert!(!texts.iter().any(|t| t.contains("dismiss")), "{texts:?}");
+        let muted = role(Role::Muted, p);
+        for (i, line) in lines[at..at + block.len()].iter().enumerate() {
+            let is_muted = line.style == muted;
+            assert_eq!(is_muted, i == 5 || i == 6, "{:?}", texts[at + i]);
+        }
+        // Read-only: the same hints, and no key acts on a proposal.
+        let words: Vec<String> = super::hints().into_iter().map(|h| h.word).collect();
+        assert_eq!(words, ["scroll", "page", "back"]);
+        let before = app.screen.clone();
+        for key in ['a', 'd', 'y', 'x'] {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(key),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            assert!(app.on_key(key).is_empty(), "{key:?} sends nothing");
+        }
+        assert_eq!(app.screen, before);
+        if ascii {
+            for (w, h) in SIZES {
+                assert_eq!(crate::ui::audit::first_non_ascii(&draw(&app, w, h)), None);
+            }
+        }
+    }
+}

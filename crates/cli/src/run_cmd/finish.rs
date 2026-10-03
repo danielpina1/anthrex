@@ -164,7 +164,7 @@ pub(super) async fn confirm_id(
     Ok(())
 }
 
-async fn ask_yes(question: &str, hint: &str) -> anyhow::Result<bool> {
+pub(super) async fn ask_yes(question: &str, hint: &str) -> anyhow::Result<bool> {
     let answer = read_answer(question, hint).await?;
     Ok(matches!(
         answer.trim().to_ascii_lowercase().as_str(),

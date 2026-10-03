@@ -141,9 +141,13 @@ impl RunService {
                 run_id,
                 orchestrator,
             } => self.promote(run_id, orchestrator).await,
-            // Milestone 9.5: `apply`, `dismiss` and `read_only` are ignored until tasks
-            // M9.5.11 (decisions 11, 48).
-            RunRequest::Stats { dir, .. } => self.stats(dir).await,
+            // Milestone 9.5 decisions 11 and 48.
+            RunRequest::Stats {
+                dir,
+                apply,
+                dismiss,
+                read_only,
+            } => self.stats(dir, apply, dismiss, read_only).await,
             RunRequest::Profile(profile) => self.profile(profile).await,
             // Milestone 9 decision 28's approval holds: only the user's requests decide.
             RunRequest::ApproveHold { run_id, hold } => self.hold_verdict(run_id, hold, true).await,

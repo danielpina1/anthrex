@@ -94,6 +94,10 @@ impl App {
     /// ruling R-b); a reply to any other stats request of ours (a closed screen, an
     /// older request), pending or expired, is dropped.
     pub(super) fn route_stats_reply(&mut self, reply: &RunReply) -> Option<Vec<Effect>> {
+        // Milestone 9.5 decision 48: the Settings screen's read-only one is its own.
+        if let Some(effects) = self.route_settings_tuning(reply) {
+            return Some(effects);
+        }
         let (id, state) = match reply {
             RunReply::Stats { stats, request_id } => {
                 (*request_id, StatsState::Ready(Box::new(stats.clone())))

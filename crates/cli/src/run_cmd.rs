@@ -195,6 +195,8 @@ enum RunCommand {
         /// Print the summary as pretty JSON
         #[arg(long)]
         json: bool,
+        #[command(flatten)]
+        tuning: adapt::TuningFlags,
     },
     /// Resume a paused or halted run
     Resume {
@@ -352,7 +354,7 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             let goal = request.expect("read above");
             rounds::iterate(&mut runs, &run, goal).await
         }
-        RunCommand::Stats { json } => adapt::stats(&mut runs, dir, json).await,
+        RunCommand::Stats { json, tuning } => adapt::stats(&mut runs, dir, json, tuning).await,
         RunCommand::Resume { run, rebaseline } => {
             let run_id = runs.resolve(&run).await?;
             runs.done(RunRequest::Resume { run_id, rebaseline }).await

@@ -29,6 +29,9 @@ use unicode_width::UnicodeWidthStr;
 
 /// Interfaces "Settings default mark".
 const DEFAULT_MARK: &str = "(default)";
+/// Ruling RH-5: beside the orchestrator default when `[orchestrator.routes.orchestrator]`
+/// is set.
+const OVERRIDDEN: &str = "overridden by [orchestrator.routes.orchestrator]";
 
 fn hint(key: &str, word: &str, priority: u8) -> Hint {
     Hint {
@@ -176,10 +179,16 @@ fn orchestrator_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'
         spans.extend(default_span(default, p));
         Line::from(spans)
     };
-    let lines = vec![
+    let mut lines = vec![
         row(0, "runtime", runtime, s.is_default(key::AGENT_RUNTIME)),
         row(1, "model", &model, s.is_default(key::AGENT_MODEL)),
     ];
+    // Ruling RH-5: a model list wins over this default; said under it, in the value
+    // column (beside `runtime ‹ configured ›  (default)` it would be cut at 80 columns).
+    if s.orchestrator_overridden() {
+        let text = format!("{}{OVERRIDDEN}", " ".repeat(2 + 9));
+        lines.push(Line::styled(text, role(Role::Muted, p)));
+    }
     (lines, s.selected)
 }
 
@@ -225,7 +234,7 @@ fn limit_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>
         .max()
         .unwrap_or(0)
         + 2;
-    let mut out = Vec::new();
+    let (mut out, mut selected) = (Vec::new(), 0);
     for (i, f) in s.limits.iter().enumerate() {
         let refused = problems
             .iter()
@@ -269,8 +278,24 @@ fn limit_lines(s: &SettingsScreen, keys: bool, p: Palette) -> (Vec<Line<'static>
             role(Role::Muted, p),
         ));
         out.push(Line::from(spans));
+        if i == s.selected {
+            selected = out.len() - 1;
+        }
+        // Ruling RH-5: a class's refit, unless config sets it, on a line of its own under
+        // the class's budget (its rows have no room left at 80 columns), in the value
+        // column; it is not a row the keys select.
+        let class = match f.key {
+            key::BUDGET_S_MINUTES => s.refit_note("S"),
+            key::BUDGET_M_MINUTES => s.refit_note("M"),
+            _ => None,
+        };
+        if let Some(note) = class {
+            // Past the selection mark (2) and the label (18).
+            let text = format!("{}{note}", " ".repeat(2 + 18));
+            out.push(Line::styled(text, role(Role::Muted, p)));
+        }
     }
-    (out, s.selected)
+    (out, selected)
 }
 
 /// The section's lines and the selected line's index; `loading…` before the first doc.
@@ -502,3 +527,7 @@ fn render_page(frame: &mut Frame, page: &SettingsPage, area: Rect, keys: bool, p
 #[cfg(test)]
 #[path = "settings_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "settings_tuning_tests.rs"]
+mod tuning_tests;

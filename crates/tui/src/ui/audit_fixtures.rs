@@ -115,6 +115,23 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             "settings",
             crate::ui::settings::tests::opened(false, crate::ui::settings::tests::sample()),
         ),
+        // Milestone 9.5 decision 48: the limits with S's refit under its budget.
+        (
+            "settings limits with a refit",
+            with(
+                crate::ui::settings::tests::opened(false, crate::ui::settings::tests::sample()),
+                |a| {
+                    let Some(Screen::Settings(s)) = &mut a.screen else {
+                        panic!("the settings screen");
+                    };
+                    let mut report = crate::ui::stats::tests::tuning_report();
+                    report.classes[0].configured = false;
+                    report.orchestrator_list = Some("claude/claude-opus-5-5 high".into());
+                    s.tuning = Some(Box::new(report));
+                    s.section = crate::app::settings_screen::SettingsSection::Limits;
+                },
+            ),
+        ),
         // Decision 35: the old dialogs, each over the screen it opens from.
         ("new agent over the pane", with(gate(), |a| chord(a, 'c'))),
         (
@@ -262,7 +279,9 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             with(gate(), |a| {
                 a.screen = Some(Screen::Stats(Box::new(StatsScreen {
                     project: "/r/demo".into(),
-                    state: StatsState::Ready(Box::new(crate::ui::stats::tests::history())),
+                    state: StatsState::Ready(Box::new(
+                        crate::ui::stats::tests::history_with_tuning(),
+                    )),
                     scroll: 0,
                     request: 4,
                 })));

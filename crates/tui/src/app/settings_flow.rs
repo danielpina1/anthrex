@@ -9,7 +9,7 @@ use super::{NO_CHANGES, SaveOutcome, SettingsScreen};
 use crate::app::replies::PendingWhat;
 use crate::app::screens::Screen;
 use crate::app::{App, Effect, ToastLevel};
-use proto::SettingsReply;
+use proto::{RunReply, RunRequest, SettingsReply};
 
 impl App {
     /// `C-b S` (decision 36): the screen from the cache, or a loading screen and one
@@ -36,6 +36,51 @@ impl App {
         };
         self.set_screen(Some(Screen::Settings(Box::new(screen))));
         effects
+            .into_iter()
+            .chain(self.settings_tuning_ask())
+            .collect()
+    }
+
+    /// Milestone 9.5 decision 48: with a project, one tagged read-only `Stats` for its
+    /// tuning (no revert recorded, no file written), awaited by the open screen.
+    fn settings_tuning_ask(&mut self) -> Option<Effect> {
+        let dir = self.goal_project()?;
+        let request = RunRequest::Stats {
+            dir: dir.clone(),
+            apply: Vec::new(),
+            dismiss: Vec::new(),
+            read_only: true,
+        };
+        let timeout = crate::app::replies::reply_timeout(&request);
+        let (id, effect) = self.tagged_request(request);
+        self.replies.insert(id, PendingWhat::Stats { dir }, timeout);
+        self.settings_screen_mut()?.tuning_request = Some(id);
+        Some(effect)
+    }
+
+    /// The reply to the open screen's read-only `Stats`: its tuning, or (refused)
+    /// nothing drawn. `None` when the reply is not that request's.
+    pub(in crate::app) fn route_settings_tuning(
+        &mut self,
+        reply: &RunReply,
+    ) -> Option<Vec<Effect>> {
+        let (id, tuning) = match reply {
+            RunReply::Stats { stats, request_id } => (*request_id, stats.tuning.clone()),
+            RunReply::Refused { request_id, .. } => (*request_id, None),
+            _ => return None,
+        };
+        let s = self
+            .settings_screen_mut()
+            .filter(|s| s.tuning_request == id && id.is_some())?;
+        s.tuning_request = None;
+        s.tuning = tuning;
+        self.replies.take(id);
+        Some(vec![])
+    }
+
+    /// Whether `id` is the open screen's read-only `Stats` (its send failing is quiet).
+    pub(in crate::app) fn settings_tuning_is(&self, id: u64) -> bool {
+        matches!(&self.screen, Some(Screen::Settings(s)) if s.tuning_request == Some(id))
     }
 
     pub(crate) fn settings_screen_mut(&mut self) -> Option<&mut SettingsScreen> {

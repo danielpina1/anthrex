@@ -111,26 +111,105 @@ pub(super) fn stats_json(stats: &proto::HistoryStats) -> anyhow::Result<String> 
     )?))
 }
 
+/// `run stats`' tuning flags (milestone 9.5 decision 11).
+#[derive(clap::Args, Debug, Default)]
+pub struct TuningFlags {
+    /// Apply these tuning proposals, after asking
+    #[arg(long, value_name = "ID", num_args = 1..)]
+    apply: Vec<String>,
+    /// Stop proposing these tuning proposals at their proposed values
+    #[arg(long, value_name = "ID", num_args = 1..)]
+    dismiss: Vec<String>,
+    /// Apply without asking
+    #[arg(long)]
+    yes: bool,
+}
+
+/// `--apply`'s question when stdin is not a terminal.
+const NOT_A_TERMINAL_APPLY: &str = "stdin is not a terminal; pass --yes";
+
 /// `run stats`: the daemon's summary of the history of `dir`'s repository, as
-/// `stats::render` lays it out, or with `--json` as `HistoryStats`.
-pub(super) async fn stats(runs: &mut Runs, dir: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
+/// `stats::render` lays it out and then the tuning block (`refit_render::render`), or
+/// with `--json` as `HistoryStats`. With `--apply` or `--dismiss` (milestone 9.5
+/// decision 11) the current proposals are fetched first; each applied one is asked
+/// `apply <id>: <text>? [y/N]` unless `--yes`, and the ids answered yes, with every
+/// dismissed one, go to the daemon, which takes only proposals still current and
+/// refuses the whole request over an unknown id. What was applied or dismissed is
+/// printed before the stats.
+pub(super) async fn stats(
+    runs: &mut Runs,
+    dir: Option<PathBuf>,
+    json: bool,
+    flags: TuningFlags,
+) -> anyhow::Result<()> {
     let dir = crate::resolve_dir(dir)?;
-    match runs
-        .request(RunRequest::Stats {
-            dir,
-            apply: Vec::new(),
-            dismiss: Vec::new(),
-            read_only: false,
-        })
-        .await?
-    {
-        RunReply::Stats { stats, .. } if json => {
-            println!("{}", stats_json(&stats)?);
-            Ok(())
+    let request = |apply: Vec<String>, dismiss: Vec<String>| RunRequest::Stats {
+        dir: dir.clone(),
+        apply,
+        dismiss,
+        read_only: false,
+    };
+    let TuningFlags {
+        apply,
+        dismiss,
+        yes,
+    } = flags;
+    let mut said = Vec::new();
+    let reply = if apply.is_empty() && dismiss.is_empty() {
+        runs.request(request(apply, dismiss)).await?
+    } else {
+        let current = match runs.request(request(Vec::new(), Vec::new())).await? {
+            RunReply::Stats { stats, .. } => stats.tuning.map(|t| t.proposals),
+            other => return print_outcome(other),
         }
+        .unwrap_or_default();
+        let find = |id: &str| current.iter().find(|p| p.id == id);
+        let mut chosen = Vec::new();
+        for id in apply {
+            // An id not current is sent as it is: the daemon refuses it with its text.
+            if let Some(p) = find(&id).filter(|_| !yes) {
+                let question = format!("apply {id}: {}? [y/N] ", p.text);
+                if !super::finish::ask_yes(&question, NOT_A_TERMINAL_APPLY).await? {
+                    continue;
+                }
+            }
+            said.push(format!(
+                "applied {id}: new runs in {} use it",
+                dir.display()
+            ));
+            chosen.push(id);
+        }
+        for id in &dismiss {
+            if let Some(p) = find(id) {
+                said.push(format!(
+                    "dismissed {id}: it is not proposed again while it would propose {}",
+                    p.proposed
+                ));
+            }
+        }
+        if chosen.is_empty() && dismiss.is_empty() {
+            anyhow::bail!("nothing applied");
+        }
+        runs.request(request(chosen, dismiss)).await?
+    };
+    match reply {
         RunReply::Stats { stats, .. } => {
-            let text = daemon::run::stats::render(&stats);
-            print!("{}", super::status::printable(&text));
+            for line in &said {
+                if json {
+                    eprintln!("{}", super::status::printable(line));
+                } else {
+                    println!("{}", super::status::printable(line));
+                }
+            }
+            if json {
+                println!("{}", stats_json(&stats)?);
+            } else {
+                let mut text = daemon::run::stats::render(&stats);
+                if let Some(tuning) = &stats.tuning {
+                    text.push_str(&daemon::run::refit_render::render(tuning));
+                }
+                print!("{}", super::status::printable(&text));
+            }
             Ok(())
         }
         other => print_outcome(other),
@@ -230,5 +309,46 @@ mod tests {
             read_only: false,
         };
         assert_eq!(request_timeout(&stats), super::super::RUN_REQUEST_TIMEOUT);
+    }
+
+    /// Milestone 9.5 decision 11: `run stats` takes `--apply <id>…`, `--dismiss <id>…`
+    /// and `--yes`, and its help lists them.
+    #[test]
+    fn run_help_lists_the_stats_flags() {
+        use clap::CommandFactory;
+        let mut cli = Cli::command();
+        let help = cli
+            .find_subcommand_mut("stats")
+            .expect("stats")
+            .render_long_help()
+            .to_string();
+        for flag in ["--apply <ID>", "--dismiss <ID>", "--yes"] {
+            assert!(help.contains(flag), "{flag} in:\n{help}");
+        }
+        let both = format!(
+            "{:?}",
+            parse(&[
+                "stats",
+                "--apply",
+                "a",
+                "b",
+                "--apply",
+                "c",
+                "--dismiss",
+                "d",
+                "--yes"
+            ])
+        );
+        assert!(
+            both.contains(r#"apply: ["a", "b", "c"]"#)
+                && both.contains(r#"dismiss: ["d"]"#)
+                && both.contains("yes: true"),
+            "{both}"
+        );
+        let plain = format!("{:?}", parse(&["stats"]));
+        assert!(
+            plain.contains("apply: []") && plain.contains("yes: false"),
+            "{plain}"
+        );
     }
 }

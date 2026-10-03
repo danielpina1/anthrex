@@ -15,14 +15,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use proto::TuningFile;
+use proto::{TuningFile, TuningReport};
 use tokio::sync::OwnedMutexGuard;
 
 use crate::run::engine::HISTORY_FILE;
 use crate::run::history_io::read_history;
 use crate::run::refit::{self, Tuned};
 use crate::run::refit_render::moved_bad_line;
-use crate::run::tuning_io::{self, Loaded};
+use crate::run::tuning_io::{self, Loaded, TUNING_FILE};
 
 /// Ruling T9-3: how long a start waits for its tuning, the repository's tuning lock and
 /// the file work together (one history read and one small write); past it the run
@@ -33,6 +33,10 @@ pub const TUNING_START_BOUND: Duration = Duration::from_secs(10);
 /// The run log's line for a start that gave up at [`TUNING_START_BOUND`].
 pub const TUNING_BUSY: &str =
     "tuning: none (the tuning file was busy; started without what history taught)";
+
+/// `run stats`' refusal when the repository's tuning stayed busy past
+/// [`TUNING_START_BOUND`].
+pub const TUNING_STATS_BUSY: &str = "the tuning file stayed busy (a run is starting); try again";
 
 /// One `tokio::sync::Mutex` per repository data directory (decision 10), and how many
 /// tunings were asked of it (each start asks once).
@@ -179,4 +183,95 @@ fn tune_blocking(repo_dir: &Path, cfg: &config::Orchestrator, now: u64) -> Tuned
     }
     tuned.log = log;
     tuned
+}
+
+/// Decisions 11 and 48: the tuning half of `run stats` for the repository whose data
+/// directory is `repo_dir`, under its tuning lock and within [`TUNING_START_BOUND`]
+/// (the lock's wait and the file work together, as a start's). The file is loaded (a
+/// bad one moved aside) and refitted from `history.jsonl`; `apply`'s and `dismiss`'s
+/// ids are taken against the proposals still current, an unknown id refusing the whole
+/// request with nothing written; then the file is saved when it changed. With
+/// `read_only` nothing is moved or written: the report shows the file as it is, and
+/// each class's `refit_budget` is the refit a plain `run stats` would write. `config`
+/// is the request's one read of the settings.
+pub async fn stats_with_tuning(
+    config: &config::Orchestrator,
+    locks: &TuningLocks,
+    repo_dir: &Path,
+    apply: &[String],
+    dismiss: &[String],
+    read_only: bool,
+    now: u64,
+) -> Result<TuningReport, String> {
+    let work = async {
+        let guard = locks.lock(repo_dir).await;
+        let (dir, cfg) = (repo_dir.to_path_buf(), config.clone());
+        let (apply, dismiss) = (apply.to_vec(), dismiss.to_vec());
+        tokio::task::spawn_blocking(move || {
+            let report = stats_blocking(&dir, &cfg, (&apply, &dismiss), read_only, now);
+            drop(guard);
+            report
+        })
+        .await
+    };
+    match tokio::time::timeout(TUNING_START_BOUND, work).await {
+        Ok(Ok(report)) => report,
+        Ok(Err(error)) => Err(format!("tuning did not finish: {error}")),
+        Err(_) => Err(TUNING_STATS_BUSY.to_string()),
+    }
+}
+
+/// [`stats_with_tuning`]'s blocking core, under the repository's tuning lock.
+fn stats_blocking(
+    repo_dir: &Path,
+    cfg: &config::Orchestrator,
+    (apply, dismiss): (&[String], &[String]),
+    read_only: bool,
+    now: u64,
+) -> Result<TuningReport, String> {
+    let unreadable = |e: std::io::Error| format!("tuning.toml could not be read: {e}");
+    let (file, moved, parse_error) = if read_only {
+        match tuning_io::peek(repo_dir).map_err(unreadable)? {
+            Ok(file) => (file.unwrap_or_default(), None, None),
+            Err(error) => (TuningFile::default(), None, Some(error)),
+        }
+    } else {
+        match tuning_io::load(repo_dir, now).map_err(unreadable)? {
+            Loaded::File(file) => (file, None, None),
+            Loaded::Absent => (TuningFile::default(), None, None),
+            Loaded::MovedBad { error, moved_to } => {
+                let line = moved_bad_line(Some(&error), &moved_to);
+                tracing::warn!(repo = %repo_dir.display(), "{line}");
+                (TuningFile::default(), Some(moved_to), Some(error))
+            }
+        }
+    };
+    let (lines, _) = read_history(&repo_dir.join(HISTORY_FILE));
+    let (refitted, written) = refit::refit(&lines, &file, cfg, now);
+    let current = refit::proposals(&lines, &refitted, cfg);
+    let decided = refit::apply(&refitted, &current, apply)?;
+    let decided = refit::dismiss(&decided, &current, dismiss)?;
+    let path = repo_dir.join(TUNING_FILE);
+    let mut report = if read_only {
+        let mut shown = refit::report(&lines, &file, cfg, &path);
+        let would = refit::report(&lines, &refitted, cfg, &path);
+        for (class, would) in shown.classes.iter_mut().zip(would.classes) {
+            class.refit_budget = would.refit_budget;
+        }
+        shown
+    } else {
+        if decided != file {
+            tuning_io::save(repo_dir, &decided)
+                .map_err(|e| format!("tuning.toml could not be written: {e}"))?;
+            for line in &written {
+                tracing::info!(repo = %repo_dir.display(), "{line}");
+            }
+        }
+        refit::report(&lines, &decided, cfg, &path)
+    };
+    report.moved_bad_file = moved;
+    report.parse_error = parse_error;
+    report.applied = apply.to_vec();
+    report.dismissed = dismiss.to_vec();
+    Ok(report)
 }

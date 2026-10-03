@@ -490,6 +490,10 @@ The installed probe of an onboarding start and of each decider call (review ruli
 |---|---|---|---|---|
 | The probe gives up | `daemon/src/run/driver/build_installed_tests.rs` (`the_installed_probe_gives_up_after_its_timeout`) | the test's own timeout (50 ms); it asserts the call returned before the probe's block (500 ms, ten times it) ended | `within` is `tokio::time::timeout` over `spawn_blocking`: it returns at the timeout whatever the probe does, so only a scheduler stall of 450 ms could fail it. The abandoned probe ends on its own after its block, holding no lock. | **Recorded.** RED: with the timeout removed the call waited the full 500 ms and the assertion failed. |
 
+### Recorded, from M9.5.11 (2026-10-03)
+
+`run stats`' tuning (decisions 11 and 48): `driver/tuning.rs::stats_with_tuning` waits for the repository's tuning lock and does its file work within `TUNING_START_BOUND` (10 s, the start's bound, reused; not a test bound), and past it the request answers without its tuning block (`TUNING_STATS_BUSY` refuses a request that names `--apply` or `--dismiss` ids). The CLI's wait for `run stats` stays `RUN_REQUEST_TIMEOUT` (180 s): the request's own git (finding the checkout, and, unless `read_only`, the revert detection's calls at `git_timeout_secs`) plus these 10 s; `RUN_REQUEST_TIMEOUT`'s under-count at the default 60 s git timeout is the one already filed for 9.6. `run stats --apply` sends two requests one after the other (the proposals first, then the ids), each under its own `RUN_REQUEST_TIMEOUT`. The tests in `crates/cli/tests/run_stats_tuning.rs` wait through the harness (`REQUEST_WAIT`, 75 s, for a raw `Stats`: the checkout's git at 5 s and the 10 s bound; `FINISH_WAIT` for each CLI call) and add no bound of their own. The Settings screen's read-only `Stats` waits under the TUI's `reply_timeout` for `Stats`, as the stats screen's does; past it the screen simply draws no notes.
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |
