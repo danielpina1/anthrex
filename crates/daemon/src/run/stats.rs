@@ -89,6 +89,7 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
     let mut runs = Vec::new();
     let mut task_reverts: HashSet<(&str, &str)> = HashSet::new();
     let mut run_reverts: HashSet<&str> = HashSet::new();
+    let (mut rounds, mut iterated) = (0u32, HashSet::new());
     for line in lines {
         match line {
             HistoryLine::Task(t) => tasks.push(t),
@@ -102,8 +103,14 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
             | HistoryLine::Flaky(_)
             | HistoryLine::Bisect(_)
             | HistoryLine::Stage(_) => {}
-            // Milestone 9.3: the `round` line is counted by task M9.3.4b.
-            HistoryLine::Round(_) => {}
+            // Milestone 9.3 (KG §2.6): every round line, and the runs whose round after
+            // the first has ended (round 1's line is written when round 2 starts).
+            HistoryLine::Round(r) => {
+                rounds += 1;
+                if r.round > 1 {
+                    iterated.insert(r.run_id.as_str());
+                }
+            }
             HistoryLine::Revert(r) => match &r.task_id {
                 Some(task) => {
                     task_reverts.insert((r.run_id.as_str(), task.as_str()));
@@ -154,8 +161,8 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
         flaky_proposals: Vec::new(),
         window_days: 0,
         quarantine_after: 0,
-        rounds: 0,
-        iterated_runs: 0,
+        rounds,
+        iterated_runs: iterated.len() as u32,
     }
 }
 
@@ -282,6 +289,11 @@ pub fn render(stats: &HistoryStats) -> String {
         stats.size_checked,
         stats.size_raised
     ));
+    // Milestone 9.3 (KG §2.6): only once a run has been iterated.
+    if stats.rounds > 0 {
+        let (total, runs) = (stats.rounds, stats.iterated_runs);
+        out.push_str(&format!("rounds: {total} · {runs}\n"));
+    }
     // A file that could not be read is said as it is (M8b.17 review, m6).
     match stats.problems.first() {
         Some(first) if first.starts_with(super::history_io::UNREADABLE) => {

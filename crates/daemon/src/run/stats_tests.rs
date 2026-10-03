@@ -459,3 +459,69 @@ fn stats_ignores_role_route_lines() {
     assert_eq!((with.task_records, with.run_records), (1, 1));
     assert_eq!((with.decider_calls, with.decider_fallbacks), (3, 1));
 }
+
+fn round(run: &str, n: u32, outcome: proto::RoundOutcome) -> HistoryLine {
+    HistoryLine::Round(proto::RoundLine {
+        v: HISTORY_VERSION,
+        record_id: format!("{run}/round/{n}"),
+        at: 1_700_000_000 + u64::from(n),
+        run_id: run.into(),
+        round: n,
+        origin: proto::RoundOrigin::User,
+        outcome,
+        tasks: 1,
+        merged: 1,
+        calls: 9,
+        minutes: 3,
+    })
+}
+
+/// Milestone 9.3 (KG §2.6, design decision 31): `rounds: <total> · <iterated runs>`, after
+/// the deciders' line. `<total>` is the `round` lines read; a run is iterated once a round
+/// after its first has ended. Round 1's line is written when round 2 starts (task M9.3.4b's
+/// ruling), so `r2`, whose round 2 is still open, has one line and is not yet counted. A
+/// history with no `round` line (no run ever iterated) prints no line. The rows are
+/// unchanged by round lines.
+#[test]
+fn stats_counts_rounds_and_iterated_runs() {
+    use proto::RoundOutcome::{Completed, Rejected};
+    let mut lines = vec![
+        HistoryLine::Task(merged("r1", "a1", Size::S, (8, 5, 1_500, 60))),
+        HistoryLine::Run(run("r1", 3, 1)),
+    ];
+    let without = aggregate(&lines, Path::new(PATH));
+    assert_eq!((without.rounds, without.iterated_runs), (0, 0));
+    let text = render(&without);
+    assert!(!text.contains("rounds:"), "{text}");
+
+    lines.extend([
+        round("r1", 1, Completed),
+        round("r1", 2, Rejected),
+        round("r2", 1, Completed),
+    ]);
+    let with = aggregate(&lines, Path::new(PATH));
+    assert_eq!((with.rounds, with.iterated_runs), (3, 1));
+    assert_eq!(with.rows, without.rows);
+    assert_eq!(
+        (with.task_records, with.run_records),
+        (without.task_records, without.run_records)
+    );
+    let text = render(&with);
+    let deciders = text
+        .lines()
+        .position(|l| l.starts_with("deciders: "))
+        .expect("the deciders' line");
+    assert_eq!(
+        text.lines().nth(deciders + 1),
+        Some("rounds: 3 · 1"),
+        "{text}"
+    );
+    assert_eq!(text.matches("rounds:").count(), 1, "{text}");
+    assert_eq!(render(&without).lines().count() + 1, text.lines().count());
+
+    // A second iterated run, and one with three rounds, count once each.
+    lines.extend([round("r2", 2, Completed), round("r1", 3, Completed)]);
+    let more = aggregate(&lines, Path::new(PATH));
+    assert_eq!((more.rounds, more.iterated_runs), (5, 2));
+    assert!(render(&more).contains("\nrounds: 5 · 2\n"));
+}

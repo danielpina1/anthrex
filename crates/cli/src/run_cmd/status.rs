@@ -65,6 +65,7 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
         out.push_str(&format!("  halted: {reason}\n"));
     }
     out.push_str(&format!("  goal: {}\n", run.goal));
+    out.push_str(&super::rounds::status_lines(run));
     if let Some(t) = &run.triage {
         let (triage, source) = (kinds_scale(&t.kinds, t.scale), source_label(t.source));
         // Whole-branch review I1: the fast-path task's test mode, which triage chose.

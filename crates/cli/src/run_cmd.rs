@@ -6,6 +6,7 @@ mod adapt;
 mod delivery;
 mod finish;
 mod orch;
+mod rounds;
 mod status;
 mod status_orch;
 
@@ -83,6 +84,10 @@ enum RunCommand {
         /// Deliver by pull request (pr) or by run accept (local); the profile's by default
         #[arg(long, value_name = "pr|local")]
         delivery: Option<String>,
+        /// Plan the goal with the orchestrator of RUN, the last run of its idle chain
+        #[arg(long = "continue", value_name = "RUN", requires = "goal",
+            conflicts_with_all = ["plan", "orchestrator"])]
+        continue_from: Option<String>,
     },
     /// Show each stage's pull request: its state, CI, threads and fix tasks
     Prs(delivery::PrsArgs),
@@ -160,6 +165,16 @@ enum RunCommand {
     },
     /// Cancel a run
     Cancel { run: String },
+    /// Start a new round of a complete run, which its orchestrator plans
+    #[command(group(clap::ArgGroup::new("request").required(true).args(["text", "file"])))]
+    Iterate {
+        run: String,
+        /// The request, or - to read it from stdin
+        text: Option<String>,
+        /// Read the request from this file
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
     /// Promote a fast-path run to a planned run with an orchestrator
     Promote {
         run: String,
@@ -217,6 +232,7 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
         unconfined_checks,
         orchestrator,
         delivery,
+        continue_from,
     } = command
     {
         let delivery = delivery::mode(delivery.as_deref())?;
@@ -226,7 +242,8 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             (Some(plan), _) => start(socket, dir, &plan, flags, delivery).await,
             (None, goal) => {
                 let goal = goal.unwrap_or_default();
-                adapt::start_goal(socket, dir, goal, flags, (choice, delivery)).await
+                let options = (choice, delivery, continue_from);
+                adapt::start_goal(socket, dir, goal, flags, options).await
             }
         };
     }
@@ -247,6 +264,10 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             *kind,
             &to_and_text[1..],
         )?),
+        _ => None,
+    };
+    let request = match &command {
+        RunCommand::Iterate { text, file, .. } => Some(rounds::request_text(text, file)?),
         _ => None,
     };
     let mut runs = Runs::connect(socket).await?;
@@ -319,6 +340,10 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             runs.done(RunRequest::Cancel { run_id }).await
         }
         RunCommand::Promote { run, .. } => orch::promote(&mut runs, &run, promote_choice).await,
+        RunCommand::Iterate { run, .. } => {
+            let goal = request.expect("read above");
+            rounds::iterate(&mut runs, &run, goal).await
+        }
         RunCommand::Stats { json } => adapt::stats(&mut runs, dir, json).await,
         RunCommand::Resume { run, rebaseline } => {
             let run_id = runs.resolve(&run).await?;
@@ -442,6 +467,11 @@ pub fn resolve_run(runs: &[RunInfo], run: &str) -> Result<String, String> {
             many.join(", ")
         )),
     }
+}
+
+/// The runs snapshot over `client`, for `anthrex ls` (milestone 9.3).
+pub(crate) async fn list_runs(client: CliClient) -> anyhow::Result<RunsSnapshot> {
+    Runs { client }.list().await
 }
 
 /// One connection to the daemon for one command.

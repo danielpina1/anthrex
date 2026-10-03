@@ -307,7 +307,8 @@ pub struct HistoryStats {
     pub window_days: u32,
     #[serde(default)]
     pub quarantine_after: u32,
-    /// Milestone 9.3 (KG §2.6): the `round` lines read, and the runs they belong to.
+    /// Milestone 9.3 (KG §2.6): the `round` lines read, and the runs with a round after
+    /// their first ended (`iterated_runs`).
     #[serde(default)]
     pub rounds: u32,
     #[serde(default)]
