@@ -271,10 +271,12 @@ A chain drives at most one live run.
 **Rule 33 changes** to: "When run_status reports complete, write a summary with edit_plan summary. The user accepts or discards the run, or iterates it; you never accept or discard."
 
 **New rules** are appended after 9.2's rule 42:
-- **43.** When the user asks you in chat for more work on the goal of a complete run (or of a settled pr run), call `edit_plan` with `iterate` and a restatement of their request. The run stops at the plan gate for the user. Never iterate on your own initiative.
+- **43.** When the user asks you in chat for more work on the goal of your current run while it is complete (or a settled pr run), call `edit_plan` with `iterate` and a restatement of their request, and nothing else in that call. The round's plan stops at the plan gate for the user, and so does a new epic added after its approval, even if the run was started with --yes. Never iterate on your own initiative, and never an earlier run once a new goal has started.
 - **44.** In a round, plan only the new work. Earlier rounds' tasks are done and read-only, and new tasks go in new stages after the last one. A new task may depend on an earlier task.
-- **45.** After the user accepts or discards your run, you stay as the project's orchestrator. When the user gives you a new goal in chat, call `start_goal` with it. Never start a goal on your own initiative, and only one goal at a time.
+- **45.** After the user accepts or discards your run, or every pull request of your pr run has landed, you stay as the project's orchestrator. When the user gives you a new goal in chat, call `start_goal` (in Claude: `mcp__anthrex__start_goal`) with it. Its plan always stops at the plan gate for the user, even if an earlier run's did not. Never start a goal on your own initiative, and only one goal at a time.
 - **46.** For a new goal, `run_status` describes the new run. What you remember from earlier runs is context: plan from the new goal, and check facts against the repository.
+
+Rules 43 and 45 were amended on 2026-10-03 to the text milestone 9.3 built (task 7, recorded in its brief's Implementation notes). Rule 43 now says the iterate is alone in its call (decision 30), that the gate holds whatever "approve at once" (§2.4 step 4, §8), and that an earlier run cannot be iterated once a next goal started (ruling D17). Rule 45 now names D17's delivered `pr` run, and says a goal it starts always stops at the gate (§3.3). Rules 44 and 46 are unchanged.
 
 The **MCP schema** gains:
 - `edit_plan`'s `iterate` (string, ≤ 16,384 characters);
