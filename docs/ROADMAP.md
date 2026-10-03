@@ -14,7 +14,7 @@ The design is layered, newest first:
 7. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
 8. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
-The protocol version is **10** once milestone 9 merges, raised from 9 (milestone 8c's) by milestone 9, **11** once milestone 9.0.5 merges, raised from 10 by milestone 9.0.5, **12** once milestone 9.1 merges, raised from 11 by milestone 9.1, **13** once milestone 9.0.6 merges, raised from 12 by milestone 9.0.6, and **14** once milestone 9.2 merges, raised from 13 by milestone 9.2 (`crates/proto/src/lib.rs`). Milestone 9.0.7 changes no message and stays at 13. Protocol numbers written in the milestone 9.2 to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 9.2's brief says 12, and becomes **14**.
+The protocol version is **10** once milestone 9 merges, raised from 9 (milestone 8c's) by milestone 9, **11** once milestone 9.0.5 merges, raised from 10 by milestone 9.0.5, **12** once milestone 9.1 merges, raised from 11 by milestone 9.1, **13** once milestone 9.0.6 merges, raised from 12 by milestone 9.0.6, **14** once milestone 9.2 merges, raised from 13 by milestone 9.2, and **15** once milestone 9.3 merges, raised from 14 by milestone 9.3 (`crates/proto/src/lib.rs`). Milestone 9.0.7 changes no message and stays at 13. Protocol numbers written in the milestone 9.2 to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 9.2's brief says 12, and becomes **14**.
 
 ## What anthrex does when all milestones are done
 
@@ -51,7 +51,7 @@ The protocol version is **10** once milestone 9 merges, raised from 9 (milestone
 | 9.0.6 | TUI end to end: design kit, daemon-computed action menu with forms and confirmation pages, Profile and Settings screens, run stats, settings protocol and live reload | `docs/milestones/M9.0.6-tui-end-to-end.md` | 9.1 | `done` |
 | 9.0.7 | TUI polish: every existing screen moved to the 9.0.6 design kit (alerts, task panel, run view, plan review, sidebar, status bar, help, dialogs) | `docs/milestones/M9.0.7-tui-polish.md` (written 2026-10-01; refreshed by its task 1) | 9.0.6 | `done` |
 | 9.2 | Stacked-PR delivery: CI and review comments become fix tasks; anthrex never merges | `docs/milestones/M9.2-pr-delivery.md` | 9.0.7 | `done` |
-| 9.3 | Keep going: a nano-like goal editor, rounds that iterate a complete run, and next goals on the same orchestrator | `docs/milestones/M9.3-keep-going.md` (not written yet; written from spec `2026-10-02-keep-going-design.md` after 9.2 merges) | 9.2 | `ready` |
+| 9.3 | Keep going: a nano-like goal editor, rounds that iterate a complete run, and next goals on the same orchestrator | `docs/milestones/M9.3-keep-going.md` | 9.2 | `done` |
 | 9.5 | Tuning: adaptive concurrency, threshold and budget refit, race and test-writer patterns | `docs/milestones/M9.5-tuning.md` | 9.3 | `blocked` |
 
 Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.0.5 → 9.1 → 9.0.6 → 9.0.7 → 9.2 → 9.3 → 9.5**, then 7. Milestones 9.0.6 and 9.0.7 go before the rest of 9.2 by the user's choice (spec `2026-10-01-tui-end-to-end-design.md` §0). Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
@@ -81,7 +81,8 @@ flowchart LR
   M91 --> M906[9.0.6 TUI end to end]
   M906 --> M907[9.0.7 TUI polish]
   M907 --> M92[9.2 Stacked-PR delivery]
-  M92 --> M95[9.5 Tuning]
+  M92 --> M93[9.3 Keep going]
+  M93 --> M95[9.5 Tuning]
 ```
 
 ## Why this order
