@@ -54,8 +54,8 @@ pub const OPEN_WAIT: Duration = HOST_READ_TIMEOUT
     .saturating_add(Duration::from_secs(OP_MARGIN_SECS));
 
 /// How long `anthrex run start --delivery pr` may take: a local start's request
-/// (`REQUEST_WAIT`) plus the host preflight, bounded by the daemon's own
-/// `PREFLIGHT_BOUND`.
+/// (`REQUEST_WAIT`, 75 s with the start's tuning) plus the host preflight, bounded by the
+/// daemon's own `PREFLIGHT_BOUND`: 440 s.
 pub const PR_START_WAIT: Duration = REQUEST_WAIT.saturating_add(PREFLIGHT_BOUND);
 
 /// The harness's `git_timeout_secs`.

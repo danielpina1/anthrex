@@ -30,11 +30,13 @@ pub const PROFILE_LINES: &str =
     "onboarding.auto = true\nonboarding.verify_timeout_secs = 10\nscouts.timeout_secs = 60\n";
 
 /// `GOAL_WAIT` (brief, "Shared test conventions"; `docs/timing-budgets.md`): `run start
-/// --goal`'s reply in a test. `REQUEST_WAIT` (60 s, `build_plan`'s git calls) + the
-/// harness's `deciders.timeout_secs` (5 s) + the kill grace (2 s) + `StartGoal`'s own
-/// preflight and `git ls-files` (the brief's seven calls at 5 s, 35 s) = 102 s, rounded
-/// up. As landed they are nine (M8b.14's count), 112 s in all; milestone 9.5's start
-/// tuning adds up to `TUNING_START_BOUND` (10 s, ruling T9-3): 122 s, so 130 s.
+/// --goal`'s reply in a test. `REQUEST_WAIT` (60 s when the brief was written,
+/// `build_plan`'s git calls) + the harness's `deciders.timeout_secs` (5 s) + the kill
+/// grace (2 s) + `StartGoal`'s own preflight and `git ls-files` (the brief's seven calls
+/// at 5 s, 35 s) = 102 s, rounded up. As landed they are nine (M8b.14's count), 112 s in
+/// all; milestone 9.5's start tuning adds up to `TUNING_START_BOUND` (10 s, ruling T9-3):
+/// 122 s, so 130 s. In today's terms, `REQUEST_WAIT` (75 s, ruling T9-4, the tuning in
+/// it) + 5 + 2 + 45 = 127 s, still under it.
 pub const GOAL_WAIT: Duration = Duration::from_secs(130);
 
 /// The brief's stored profile for M8b.18 and M8b.19 (the default `protected`), with

@@ -49,12 +49,24 @@ fn run_refs(dir: &Path) -> String {
     )
 }
 
-/// `s`'s answer to `req`, within a deadline: a start that wrongly reaches the (here
+/// `ask`'s bound (milestone 9.5 ruling T9-4; `docs/timing-budgets.md`): a goal start's
+/// legal worst case under the default config, in the CLI's `GOAL_REQUEST_TIMEOUT` terms:
+/// `run start`'s (`CONTINUE_START_BOUND`: M8a's git preflight 180 s, the host preflight
+/// `PREFLIGHT_BOUND`, 30 s for the build and `TUNING_START_BOUND`), the default
+/// `deciders.timeout_secs` (90 s) for triage, and 30 s for the goal's own git calls:
+/// 705 s. Every other request here is less.
+fn ask_wait() -> Duration {
+    let triage = Duration::from_secs(config::Orchestrator::default().deciders.timeout_secs);
+    crate::run::chain::CONTINUE_START_BOUND + triage + Duration::from_secs(30)
+}
+
+/// `s`'s answer to `req`, within [`ask_wait`]: a start that wrongly reaches the (here
 /// unspawned) engine fails the test instead of hanging it.
 async fn ask(s: &RunService, req: RunRequest) -> RunReply {
-    match tokio::time::timeout(Duration::from_secs(60), s.request(req)).await {
+    let bound = ask_wait();
+    match tokio::time::timeout(bound, s.request(req)).await {
         Ok(reply) => reply,
-        Err(_) => panic!("no answer within 60 s"),
+        Err(_) => panic!("no answer within {} s", bound.as_secs()),
     }
 }
 

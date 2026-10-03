@@ -35,8 +35,10 @@ const CONTINUE_GIT_CALLS: u64 = 24;
 
 /// `run start --goal … --continue <run>`'s reply (`docs/timing-budgets.md`, "Recorded,
 /// from M9.3.11", corrected by the final fix wave): every git call of a continued
-/// start at the harness's `git_timeout_secs`, then one engine step and the request's
-/// round trip (`REQUEST_WAIT`). A local continue runs no host preflight; a `pr` one
+/// start at the harness's `git_timeout_secs`, then the build's tuning
+/// (`TUNING_START_BOUND`, 10 s, milestone 9.5 ruling T9-4) and one engine step and the
+/// request's round trip, both inside `REQUEST_WAIT` (75 s, whose own derivation counts
+/// the tuning term): 195 s. A local continue runs no host preflight; a `pr` one
 /// would add `PREFLIGHT_BOUND` (no test continues in `pr` mode). Both stay under the
 /// daemon's deadline on a request's continue, `CONTINUE_START_BOUND`, so the daemon
 /// answers with the run.

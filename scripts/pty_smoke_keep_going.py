@@ -42,26 +42,27 @@ from pty_smoke_run import (
 )
 
 # The bounds, restated across the language boundary from `crates/cli/tests/support`
-# (`docs/timing-budgets.md`, "Recorded, from M9.3.12"): `REQUEST_WAIT` (60 s, one
-# request), `GIT_TIMEOUT_SECS` (5 s, set below as the harness sets it) and M9.3.11's
+# (`docs/timing-budgets.md`, "Recorded, from M9.3.12"): `REQUEST_WAIT` (75 s since
+# M9.5's ruling T9-4, one request with a run start's tuning), `GIT_TIMEOUT_SECS` (5 s, set below as the harness sets it) and M9.3.11's
 # `CONTINUE_GIT_CALLS` (24, a continued start's git calls).
-REQUEST_WAIT, GIT_TIMEOUT_SECS, CONTINUE_GIT_CALLS = 60.0, 5.0, 24
+REQUEST_WAIT, GIT_TIMEOUT_SECS, CONTINUE_GIT_CALLS = 75.0, 5.0, 24
 # `run start --goal`'s legal worst case (stage 11d's `GOAL_CMD_TIMEOUT`,
 # `scripts/pty_smoke_adapt.py`, imported so the two cannot drift): the first goal's start
 # through the form, and the run view opening on it.
 GOAL_WAIT = GOAL_CMD_TIMEOUT
 # A continued start (`CONTINUE_WAIT` of `support/run_rounds.rs`): every git call at
-# `GIT_TIMEOUT_SECS`, then one engine step and the request's round trip: 180 s.
+# `GIT_TIMEOUT_SECS`, then the build's tuning (`TUNING_START_BOUND`, 10 s), one engine
+# step and the request's round trip, inside `REQUEST_WAIT`: 195 s.
 CONTINUE_WAIT = CONTINUE_GIT_CALLS * GIT_TIMEOUT_SECS + REQUEST_WAIT
 # A round's completion with its summary (`SUMMARY_WAIT`): one task path, then the
-# scripted orchestrator's poll that sees it and its `summary` edit: 360 s.
+# scripted orchestrator's poll that sees it and its `summary` edit: 375 s.
 SUMMARY_WAIT = RUN_WAIT + REQUEST_WAIT
 # Every screen this stage waits for (`PtyProc.wait_for`'s default, as 11f and 11i).
 SCREEN_WAIT = 10.0
 # The scripted orchestrator's poll for round 2, from its summary: the stage's snapshot
 # that sees the summary (one request), its steps in the TUI (the action menu, at most
 # `MENU_STEPS` moves of its selection, the iterate dialog and its text, each one screen
-# wait) and the iterate (one request): 2 * 60 + 12 * 10 = 240 s.
+# wait) and the iterate (one request): 2 * 75 + 12 * 10 = 270 s.
 MENU_STEPS = 8
 ITERATE_WAIT = 2 * REQUEST_WAIT + (MENU_STEPS + 4) * SCREEN_WAIT
 # The scripted orchestrator's poll for the accept: `run accept`'s own bound
