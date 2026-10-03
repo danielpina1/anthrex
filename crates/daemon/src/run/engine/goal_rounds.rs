@@ -115,6 +115,7 @@ pub(super) fn iterate(
     run.state = RunState::Planning;
     run.cancelled = false;
     run.finish_edit = false;
+    run.round_finish = false;
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.plan_submitted = false;
     }

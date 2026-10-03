@@ -445,6 +445,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         log: Vec::new(),
         created_at: ctx.now,
         finish_edit: false,
+        round_finish: false,
         finish_reply: None,
         cancelled: false,
         verify_failures: 0,

@@ -128,6 +128,7 @@ fn a_round_cancel_leaves_an_earlier_stages_bisect_going() {
     round.summary = None;
     run.rounds.push(round);
     run.finish_edit = true;
+    run.round_finish = true;
     fx.done(op, probe_result(false, &spec.commit));
     let ended = |fx: &Fixture| {
         (fx.run().log.iter()).any(|e| e.text.contains("the run ended before the bisect did"))

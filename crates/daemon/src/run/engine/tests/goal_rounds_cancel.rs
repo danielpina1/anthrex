@@ -204,3 +204,37 @@ fn the_orchestrator_answers_an_earlier_rounds_fix_while_a_round_is_cancelled() {
     let add = json!({"edits": [add_in("t3", "mail", 2, &[])]});
     assert!(!answer(&super::orch::edit_plan(&mut fx, add)).0);
 }
+
+/// W1 fix round 2 (item 6): the user's run-wide `finish` while a cancelled round winds
+/// down (an earlier round's fix still going) is the run's: the round's end does not clear
+/// it.
+#[test]
+fn a_finish_during_a_cancelled_rounds_wind_down_stays_the_runs() {
+    let mut fx = delivering();
+    assert_eq!(reply(&iterate(&mut fx, "more")), started(2));
+    plan_round(&mut fx, json!([add_in("t2", "mail", 2, &[])]));
+    create_stages(&mut fx);
+    let fix = stage_one_fix(&mut fx);
+    assert!(reply(&cancel(&mut fx)).is_ok());
+    fx.tick();
+    assert_eq!(
+        fx.run().rounds[1].ended_at,
+        None,
+        "the round waits for {fix}"
+    );
+    let finished = super::dispatch::edit(&mut fx, vec![proto::PlanEdit::Finish]);
+    assert!(
+        super::dispatch::replies(&finished)[0].is_ok(),
+        "{finished:#?}"
+    );
+    fx.force(&fix, TaskState::Cancelled);
+    for _ in 0..6 {
+        create_stages(&mut fx);
+        settle_ops(&mut fx);
+        sessions_end(&mut fx);
+        fx.tick();
+    }
+    let run = fx.run();
+    assert!(run.rounds[1].ended_at.is_some(), "{:#?}", run.log);
+    assert!(run.finish_edit, "the user's finish stays: {:#?}", run.log);
+}

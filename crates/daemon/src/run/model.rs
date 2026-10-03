@@ -199,6 +199,11 @@ pub struct Run {
     /// M8a.14: decision 37's `finish` edit: nothing new starts; done once live tasks end.
     #[serde(default)]
     pub finish_edit: bool,
+    /// W1 fix round 2 of milestone 9.3's final fix wave: `finish_edit` was set by a
+    /// round's cancel (decision 16), not by the user's `finish`; the round's end
+    /// clears it, and only such a finish is the round's alone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub round_finish: bool,
     /// M8a.14: the accept or discard request its in-flight op answers; a restore clears it.
     #[serde(default)]
     pub finish_reply: Option<u64>,

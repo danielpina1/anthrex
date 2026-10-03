@@ -44,7 +44,8 @@ pub(super) fn open_round(run: &Run) -> bool {
 pub(super) fn cancelling_round(run: &Run) -> Option<u32> {
     let round = run.current_round()?;
     let cancelled = round.outcome == Some(RoundOutcome::Cancelled);
-    (!run.cancelled && run.finish_edit && open_round(run) && cancelled).then_some(round.n)
+    let ours = run.finish_edit && run.round_finish;
+    (!run.cancelled && ours && open_round(run) && cancelled).then_some(round.n)
 }
 
 /// The plan is approved, `by` the user or `--yes`: round 1's approval is the run's and
@@ -135,6 +136,8 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
     if let Some(round) = run.rounds.last_mut().filter(|r| r.ended_at.is_none()) {
         round.outcome = Some(RoundOutcome::Cancelled);
     }
+    // W1 fix round 2: a finish the user gave first stays the run's.
+    run.round_finish = run.round_finish || !run.finish_edit;
     run.finish_edit = true;
     // Fix round 1 (D13, m1): a request of this round not yet delivered never is, and
     // the earlier rounds' plan stays the submitted one, as a reject leaves it.
@@ -158,8 +161,8 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
 /// ends once the run is `complete` (M8a's completion, whose summary wake asks for the
 /// round's summary), or, in `pr` mode, once it is delivered while the run keeps
 /// delivering ([`delivered`]), with the note asking for its summary. It ends
-/// `completed` unless a cancel made it `cancelled`, and `finish_edit`, which a cancel
-/// set, is cleared. The round's `ended_at` is set in the step that asks for its summary,
+/// `completed` unless a cancel made it `cancelled`, and `finish_edit`, when the cancel
+/// set it (`round_finish`), is cleared. The round's `ended_at` is set in the step that asks for its summary,
 /// so a summary written after that note is the round's (`orch::write_summary`). Round 1
 /// ends when a second round starts (`goal_rounds::iterate`, decision 10).
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
@@ -171,7 +174,12 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         return;
     }
     end_round(run, RoundOutcome::Completed, now, fx);
-    run.finish_edit = false;
+    // W1 fix round 2: only the round cancel's finish ends with the round; the user's
+    // run-wide `finish` stays.
+    if run.round_finish {
+        run.finish_edit = false;
+    }
+    run.round_finish = false;
     if pr_end {
         let n = run.round();
         let cancelled =
