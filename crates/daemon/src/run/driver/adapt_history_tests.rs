@@ -34,11 +34,17 @@ fn a_quarantined_test_is_not_proposed() {
     let (repo, data) = (tmp.path().join("repo"), tmp.path().join("data"));
     std::fs::create_dir_all(&repo).unwrap();
     let git = std::ffi::OsStr::new("git");
+    // The scrubbed environment of the other driver tests' `git` (`adapt_goal_tests.rs`).
     let init = std::process::Command::new(git)
-        .args(["init", "-q"])
+        .args(["--no-optional-locks", "init", "-q"])
         .current_dir(&repo)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_PREFIX")
         .status()
         .unwrap();
     assert!(init.success());

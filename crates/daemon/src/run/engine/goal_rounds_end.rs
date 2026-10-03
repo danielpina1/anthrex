@@ -173,6 +173,12 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     // Milestone 9.5 decision 34: a run that ended without completing ends its round
     // `cancelled`, before `history::pass` writes the run's own line.
     if matches!(run.state, RunState::Discarded | RunState::Failed) {
+        let (n, state) = (run.round(), run.state.label());
+        log(
+            run,
+            now,
+            format!("round {n} ended cancelled: the run is {state}"),
+        );
         return end_round(run, RoundOutcome::Cancelled, now, fx);
     }
     let pr_end = run.state == RunState::Running && delivered(run);

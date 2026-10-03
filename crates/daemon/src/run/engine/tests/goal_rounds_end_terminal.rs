@@ -27,6 +27,12 @@ fn history(fx: &Fixture) -> Vec<String> {
         .collect()
 }
 
+/// The run's log entries that start with `start`.
+fn logged(fx: &Fixture, start: &str) -> Vec<String> {
+    let entries = fx.run().log.iter().map(|e| e.text.clone());
+    entries.filter(|t| t.starts_with(start)).collect()
+}
+
 /// Round 2 of a halted run, then `run discard`: round 2's line, `cancelled`, comes
 /// before the run's line.
 #[test]
@@ -53,6 +59,8 @@ fn a_discarded_later_round_writes_its_round_line() {
         history(&fx),
         ["round 1 Completed", "round 2 Cancelled", "run discarded"]
     );
+    let ended = "round 2 ended cancelled: the run is discarded";
+    assert_eq!(logged(&fx, "round 2 ended"), [ended]);
 
     // A run that fails in round 2 likewise (only a run's start fails it today: set in
     // place), its open round's outcome unset until then.
@@ -68,6 +76,8 @@ fn a_discarded_later_round_writes_its_round_line() {
         history(&fx),
         ["round 1 Completed", "round 2 Cancelled", "run failed"]
     );
+    let ended = "round 2 ended cancelled: the run is failed";
+    assert_eq!(logged(&fx, "round 2 ended"), [ended]);
 
     // Round 1 alone writes no round line (unchanged).
     let mut fx = complete();
@@ -77,4 +87,5 @@ fn a_discarded_later_round_writes_its_round_line() {
     settle_ops(&mut fx);
     assert_eq!(fx.run().state, RunState::Discarded);
     assert_eq!(history(&fx), ["run discarded"]);
+    assert!(logged(&fx, "round").is_empty());
 }

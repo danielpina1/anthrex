@@ -84,8 +84,7 @@ fn checkout_of(
     }
 }
 
-/// `RunRequest::Stats`' blocking core for `dir` at `now`: its repository's history
-/// summarised, with the stored profile's `slow_tests` (milestone 9.5 decision 35).
+/// `RunRequest::Stats`' blocking core: the history with the profile's `slow_tests` (9.5 D35).
 fn stats_of(
     git: &std::ffi::OsStr,
     dir: &Path,
@@ -98,7 +97,11 @@ fn stats_of(
     let repo_dir = crate::profile::repo_dir(data_dir, &project);
     let slow = match crate::profile::store::load(&repo_dir) {
         Stored::Found { profile, .. } => profile.slow_tests,
-        _ => None,
+        Stored::Unparseable { path, error } => {
+            tracing::warn!(path = %path.display(), %error, "stats: stored profile unreadable");
+            None
+        }
+        Stored::Absent => None,
     };
     let path = repo_dir.join(HISTORY_FILE);
     let slow = slow.as_deref();

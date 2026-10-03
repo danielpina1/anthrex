@@ -15,6 +15,7 @@ use crate::run::git;
 use crate::run::journal;
 use crate::run::model::{LogEntry, OpId, Run};
 use crate::run::reconcile;
+use crate::run::test_cache::CACHE_FILE;
 use crate::worktree::pinned::PinAs;
 use proto::RunState;
 
@@ -44,12 +45,34 @@ pub(super) struct AcceptCleanUp {
     branch_prefix: String,
 }
 
+/// Milestone 9.5 decision 36 (fix round 1): the temp leftovers of the files runs write
+/// with `write_atomic` (the tier caches and the tuning file) in every repository data
+/// directory, swept before any restored op is spawned, so no op's write in flight can
+/// lose its temp file. Blocking; a failure is a warning.
+fn sweep_run_leftovers(data_dir: &std::path::Path) {
+    let files = [CACHE_FILE, super::graph::GRAPH_CACHE_FILE, "tuning.toml"];
+    let entries = match std::fs::read_dir(data_dir.join("repos")) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => return tracing::warn!(%error, "could not sweep the repositories"),
+    };
+    for dir in entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
+        if let Err(error) = crate::profile::store::sweep_named(&dir, &files) {
+            tracing::warn!(dir = %dir.display(), %error, "could not sweep the temp files");
+        }
+    }
+}
+
 impl RunService {
     /// Restores the runs of an earlier daemon. Called once, before the socket is bound
     /// and before [`RunService::spawn`]; the effects of the restore run here.
     pub async fn restore(self: &Arc<Self>) {
         let data_dir = self.ctx.data_dir.clone();
-        let loaded = tokio::task::spawn_blocking(move || journal::load_all(&data_dir)).await;
+        let loaded = tokio::task::spawn_blocking(move || {
+            sweep_run_leftovers(&data_dir);
+            journal::load_all(&data_dir)
+        })
+        .await;
         let (loaded, problems) = match loaded {
             Ok(loaded) => loaded,
             Err(error) => {
@@ -406,6 +429,10 @@ fn replayed_accept(run: &Run, answers: &[(String, u64, OpResult)]) -> Option<Acc
         })
     })
 }
+
+#[cfg(test)]
+#[path = "restore_sweep_tests.rs"]
+mod sweep_tests;
 
 #[cfg(test)]
 mod tests {

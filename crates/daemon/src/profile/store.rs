@@ -117,15 +117,21 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     sync_dir(dir)
 }
 
-/// Milestone 9.5 decision 36: the other files written here with [`write_atomic`]: the
-/// tier caches (`run::test_cache`, `driver/graph.rs`) and the tuning file.
-const WRITTEN_ELSEWHERE: [&str; 3] = ["test-cache.jsonl", "module-graph.json", "tuning.toml"];
-
 /// Removes every leftover temp file of this module's files in `repo_dir` (a crashed
 /// write's). Only where no writer can run: a concurrent write's temp file looks the
 /// same. `ProfileService::restore` calls it at daemon start (M8b.11). A missing
 /// directory has nothing to sweep.
 pub fn sweep_leftovers(repo_dir: &Path) -> io::Result<()> {
+    sweep_named(
+        repo_dir,
+        &[PROFILE_FILE, META_FILE, PROPOSAL_FILE, DETECTION_FILE],
+    )
+}
+
+/// [`sweep_leftovers`] for `files`' temp files (`<file>.<pid>.<n>.tmp`). Milestone 9.5
+/// decision 36: the run restore sweeps the files the runs write before any restored op
+/// can start a write (`run::driver::restore`).
+pub fn sweep_named(repo_dir: &Path, files: &[&str]) -> io::Result<()> {
     let entries = match std::fs::read_dir(repo_dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -136,10 +142,7 @@ pub fn sweep_leftovers(repo_dir: &Path) -> io::Result<()> {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        let ours = [PROFILE_FILE, META_FILE, PROPOSAL_FILE, DETECTION_FILE]
-            .iter()
-            .chain(&WRITTEN_ELSEWHERE)
-            .any(|file| name.starts_with(&format!("{file}.")));
+        let ours = (files.iter()).any(|file| name.starts_with(&format!("{file}.")));
         if ours && name.ends_with(".tmp") {
             match std::fs::remove_file(entry.path()) {
                 Ok(()) => removed = true,
@@ -383,10 +386,6 @@ pub fn stale(project: &Path, meta: &ProfileMeta) -> Vec<String> {
         .map(|(path, _)| path.clone())
         .collect()
 }
-
-#[cfg(test)]
-#[path = "store_tests.rs"]
-mod sweep_tests;
 
 #[cfg(test)]
 mod tests {
