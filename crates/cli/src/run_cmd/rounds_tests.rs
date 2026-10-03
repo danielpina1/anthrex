@@ -292,6 +292,7 @@ fn info(
         origin,
         outcome,
         summary_head: summary.map(str::to_string),
+        ended: outcome.is_some(),
     }
 }
 

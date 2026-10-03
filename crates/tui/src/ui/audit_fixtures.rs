@@ -308,6 +308,7 @@ fn round_two_gate() -> App {
         origin: proto::RoundOrigin::User,
         outcome,
         summary_head: None,
+        ended: outcome.is_some(),
     };
     run.round = 2;
     run.rounds = vec![

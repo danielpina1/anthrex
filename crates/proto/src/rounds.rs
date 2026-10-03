@@ -54,6 +54,11 @@ pub struct RoundInfo {
     pub outcome: Option<RoundOutcome>,
     #[serde(default)]
     pub summary_head: Option<String>,
+    /// The round has ended (the daemon's `ended_at` is set). A cancelled round has its
+    /// outcome at once but runs until its sessions end (decision 16), so a client
+    /// reads a round as open by this, never by `outcome` (final fix wave C-m3).
+    #[serde(default)]
+    pub ended: bool,
 }
 
 /// A project's idle orchestrator: the head of a chain whose last run was accepted or

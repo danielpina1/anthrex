@@ -31,6 +31,7 @@ fn round(n: u32, head: &str, outcome: Option<RoundOutcome>) -> RoundInfo {
         origin: RoundOrigin::User,
         outcome,
         summary_head: None,
+        ended: outcome.is_some(),
     }
 }
 

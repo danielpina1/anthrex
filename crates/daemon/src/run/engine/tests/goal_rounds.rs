@@ -148,6 +148,35 @@ fn round_infos_are_cleaned_and_cut() {
     assert_eq!(info.rounds, infos);
 }
 
+/// Final fix wave C-m3: a round is `ended` in the snapshot once its `ended_at` is set,
+/// not when its outcome is: a cancelled round keeps running until its sessions end
+/// (decision 16), and `goal_rounds_end::open_round` still reads it open.
+#[test]
+fn a_round_is_ended_once_its_end_is_recorded() {
+    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "auth", "")]));
+    fx.start(false);
+    let run = fx.run_mut();
+    let mut cancelling = round(2, "more", None);
+    (cancelling.ended_at, cancelling.outcome) = (None, Some(RoundOutcome::Cancelled));
+    run.rounds = vec![round(1, "first", None), cancelling];
+    let info = snapshot(&fx.state, fx.now).runs.remove(0);
+    let ended: Vec<_> = info
+        .rounds
+        .iter()
+        .map(|r| (r.n, r.outcome, r.ended))
+        .collect();
+    assert_eq!(
+        ended,
+        vec![
+            (1, Some(RoundOutcome::Completed), true),
+            (2, Some(RoundOutcome::Cancelled), false)
+        ]
+    );
+    fx.run_mut().rounds[1].ended_at = Some(7);
+    let info = snapshot(&fx.state, fx.now).runs.remove(0);
+    assert!(info.rounds[1].ended);
+}
+
 /// A stage's round in the snapshot: its created record's, or, before it is created, its
 /// tasks'. Task 3 review m1: the placeholder stage 1 of a plan not yet approved is not
 /// stage 1's record, so its round is not the stage's.

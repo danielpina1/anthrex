@@ -279,6 +279,7 @@ fn a_later_rounds_reject_page_names_the_round() {
         origin: RoundOrigin::User,
         outcome,
         summary_head: None,
+        ended: outcome.is_some(),
     };
     run.round = 2;
     run.rounds = vec![round(1, Some(RoundOutcome::Completed)), round(2, None)];
