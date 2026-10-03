@@ -108,12 +108,13 @@ impl RunService {
             state.runs.get(run_id).and_then(|run| {
                 let chain = run.chain.as_deref()?;
                 let prev = newest(&state.runs, chain, Some(run_id))?;
-                let mut runs: Vec<&crate::run::model::Run> = state
+                let runs: Vec<&crate::run::model::Run> = state
                     .runs
                     .values()
                     .filter(|r| r.chain.as_deref() == Some(chain))
                     .collect();
-                runs.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+                // The final fix wave (A-M2): the continue order, as `rebuild`'s.
+                let runs = crate::run::chain::in_order(runs);
                 let ids = runs.iter().map(|r| r.id.clone()).collect();
                 let bound = Duration::from_secs(run.limits.git_timeout_secs);
                 Some((

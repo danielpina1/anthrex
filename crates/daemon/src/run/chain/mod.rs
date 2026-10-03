@@ -134,20 +134,47 @@ pub fn suffix_taken(
             .any(|r| r.chain.as_deref() == Some(&chain) || r.short() == suffix)
 }
 
-/// The newest run carrying `chain` (`Run.chain`), but `except`: the latest created,
-/// the id breaking a tie, as [`rebuild`] orders a chain's runs.
+/// The newest run carrying `chain` (`Run.chain`), but `except`: the last in
+/// [`in_order`]'s order, as [`rebuild`] orders a chain's runs.
 pub fn newest<'a>(
     runs: &'a BTreeMap<String, Run>,
     chain: &str,
     except: Option<&str>,
 ) -> Option<&'a Run> {
-    runs.values()
-        .filter(|r| r.chain.as_deref() == Some(chain) && Some(r.id.as_str()) != except)
-        .max_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)))
+    let of_chain = runs
+        .values()
+        .filter(|r| r.chain.as_deref() == Some(chain) && Some(r.id.as_str()) != except);
+    in_order(of_chain.collect()).pop()
 }
 
-/// Decision 19, at `EventKind::Restore`: one chain per `Run.chain`, its runs oldest
-/// first. A chain whose last run failed, or which the live table had dropped
+/// The final fix wave (review A, M2): `list`, one chain's runs, in their continue
+/// order. Each run a continue linked (`Run.continued_by`, D17) follows the run it
+/// continues, whatever their clocks say; runs no link orders (none in a chain made
+/// since 9.3) fall back to creation time, then id. Unlinked runs start a sequence each,
+/// the earliest first.
+pub fn in_order(mut list: Vec<&Run>) -> Vec<&Run> {
+    list.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+    let linked = |id: &str| list.iter().any(|r| r.continued_by.as_deref() == Some(id));
+    let mut out: Vec<&Run> = Vec::with_capacity(list.len());
+    for start in list.iter().filter(|r| !linked(&r.id)) {
+        let mut next = Some(*start);
+        while let Some(run) = next.filter(|r| !out.iter().any(|o| o.id == r.id)) {
+            out.push(run);
+            let to = run.continued_by.as_deref();
+            next = to.and_then(|id| list.iter().copied().find(|r| r.id == id));
+        }
+    }
+    // A cycle (never written) leaves runs unvisited: they follow, in time order.
+    for run in &list {
+        if !out.iter().any(|o| o.id == run.id) {
+            out.push(run);
+        }
+    }
+    out
+}
+
+/// Decision 19, at `EventKind::Restore`: one chain per `Run.chain`, its runs in their
+/// continue order ([`in_order`]). A chain whose last run failed, or which the live table had dropped
 /// (`Run.chain_left`), is left out; one whose last run is finished
 /// (accepted, discarded, or delivered, D17) is idle and ended (its window died with the daemon, KG §3.6), the
 /// project's newest only; any other is active.
@@ -160,8 +187,8 @@ pub fn rebuild(runs: &BTreeMap<String, Run>) -> BTreeMap<String, Chain> {
     }
     let mut chains = BTreeMap::new();
     let mut idle = Vec::new();
-    for (id, mut list) in members {
-        list.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+    for (id, list) in members {
+        let list = in_order(list);
         let Some(&last) = list.last() else {
             continue;
         };

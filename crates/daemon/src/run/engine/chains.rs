@@ -11,7 +11,7 @@
 
 use super::requests::log;
 use super::{Effect, EngineState};
-use crate::run::chain::{Chain, ChainState, finished, make_idle, newest, outcome};
+use crate::run::chain::{Chain, ChainState, finished, in_order, make_idle, newest, outcome};
 use crate::run::model::Run;
 use crate::run::orch::contract_rounds::{next_goal_wake, no_chain_to_continue, still_going};
 use proto::RunState;
@@ -246,15 +246,14 @@ pub(super) fn pass(state: &mut EngineState) {
     }
 }
 
-/// Every run carrying chain `id`, oldest first (`rebuild`'s order: created, then id),
-/// with `current` last.
+/// Every run carrying chain `id`, in `rebuild`'s order (`chain::in_order`: the
+/// continue links, the final fix wave's A-M2), with `current` last.
 fn members(runs: &std::collections::BTreeMap<String, Run>, id: &str, current: &str) -> Vec<String> {
-    let mut list: Vec<&Run> = runs
+    let list: Vec<&Run> = runs
         .values()
         .filter(|r| r.chain.as_deref() == Some(id) && r.id != current)
         .collect();
-    list.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
-    let mut ids: Vec<String> = list.into_iter().map(|r| r.id.clone()).collect();
+    let mut ids: Vec<String> = in_order(list).into_iter().map(|r| r.id.clone()).collect();
     ids.push(current.to_string());
     ids
 }

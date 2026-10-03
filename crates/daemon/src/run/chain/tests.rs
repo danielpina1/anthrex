@@ -391,3 +391,37 @@ fn idle_list_counts_runs() {
     };
     assert_eq!(idle_list(&chains, &all), vec![fresh]);
 }
+
+/// The final fix wave (review A, M2): a chain's runs are in the order their continues
+/// linked them (`Run.continued_by`), whatever their clocks say. Here the clock stepped
+/// back: each continued run was created before the one it continues. `rebuild` keeps
+/// the chain active on its last run, and `newest` names that run.
+#[test]
+fn a_chains_order_follows_its_continue_links_not_its_clock() {
+    let mut first = run("goal-one-3f9a", PROJECT, RunState::Accepted, 300, "o-3f9a");
+    first.continued_by = Some("goal-two-4c1d".into());
+    let mut second = run("goal-two-4c1d", PROJECT, RunState::Accepted, 299, "o-3f9a");
+    second.continued_by = Some("goal-three-5e5e".into());
+    let third = run(
+        "goal-three-5e5e",
+        PROJECT,
+        RunState::Planning,
+        298,
+        "o-3f9a",
+    );
+    let all = runs(vec![first, second, third]);
+    let chains = rebuild(&all);
+    let chain = &chains["o-3f9a"];
+    assert_eq!(
+        chain.runs,
+        ["goal-one-3f9a", "goal-two-4c1d", "goal-three-5e5e"]
+    );
+    assert_eq!(chain.state, ChainState::Active);
+    assert!(!chain.ended);
+    let newest_id = |except| newest(&all, "o-3f9a", except).map(|r| r.id.clone());
+    assert_eq!(newest_id(None).as_deref(), Some("goal-three-5e5e"));
+    assert_eq!(
+        newest_id(Some("goal-three-5e5e")).as_deref(),
+        Some("goal-two-4c1d")
+    );
+}

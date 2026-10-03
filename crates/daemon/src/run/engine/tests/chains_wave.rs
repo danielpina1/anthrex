@@ -1,12 +1,15 @@
 //! Milestone 9.3's final fix wave (W1), the chain table: a restart keeps the chains the
 //! live table kept. An idle chain the table dropped (the project's older idle one,
 //! evicted when a newer chain went idle), ended by a closed window or not, stays out
-//! (review A, M1).
+//! (review A, M1); a chain's runs keep their continue order whatever the clock did
+//! (review A, M2).
 
 use proto::{FinishAction, RunState};
 
 use super::chains::{ended, gone};
 use super::fixture::*;
+use super::goal_rounds_pr::landed;
+use super::goal_rounds_start::{iterate, reply, started};
 use super::orch::ORCH;
 use super::orch_restore::restart;
 use crate::run::chain::ChainState;
@@ -93,4 +96,40 @@ fn an_evicted_idle_chain_stays_out_after_a_restart() {
 #[test]
 fn an_evicted_ended_chain_stays_out_after_a_restart() {
     a_dropped_chain_stays_out_after_a_restart(true);
+}
+
+/// M2, the live table: a delivered run whose chain left the table, iterated, puts the
+/// chain back with its runs in their continue order, though the clock stepped back
+/// between them (`chains::members`).
+#[test]
+fn a_chain_back_on_an_iterate_keeps_its_continue_order() {
+    let mut fx = landed();
+    fx.tick();
+    let current = fx.run().clone();
+    let mut first = another(
+        &current,
+        ("engine-test-1111", A),
+        RunState::Accepted,
+        0,
+        "x",
+    );
+    first.created_at = current.created_at + 20;
+    first.continued_by = Some("engine-test-2222".into());
+    let mut second = another(
+        &current,
+        ("engine-test-2222", A),
+        RunState::Accepted,
+        0,
+        "x",
+    );
+    second.created_at = current.created_at + 10;
+    second.continued_by = Some(RUN_ID.into());
+    fx.state.runs.insert(first.id.clone(), first);
+    fx.state.runs.insert(second.id.clone(), second);
+    fx.state.chains.clear();
+    fx.run_mut().chain_left = true;
+    assert_eq!(reply(&iterate(&mut fx, "more")), started(2));
+    let chain = &fx.state.chains[A];
+    assert_eq!(chain.runs, ["engine-test-1111", "engine-test-2222", RUN_ID]);
+    assert!(!fx.run().chain_left, "the chain is back");
 }
