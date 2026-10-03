@@ -352,9 +352,14 @@ impl RunService {
         let roster = &adaptation.scouts.context().roster.current();
         let strength = self.ctx.settings.current().orchestrator.deciders.strength;
         let chosen = (route, roles::decider_candidates(roster, route, strength));
-        let (session, pick) = ((session.as_str(), "triage"), routed.pick.as_ref());
+        let session = (session.as_str(), "triage");
+        let pick = (routed.pick.as_ref(), routed.moved.as_ref());
         let at = (input, unix_now());
         let mut record = roles::decider_listed(None, session, &[], chosen, pick, at);
+        // Ruling T10b-1: a triage has no run log yet; the daemon's log says it.
+        if let Some(line) = routed.moved_line() {
+            tracing::info!("{line}");
+        }
         let (outcome, result) = roles::decider_outcome(decision);
         roles::finish(&mut record, outcome, result);
         let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);

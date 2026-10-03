@@ -391,7 +391,7 @@ impl RunService {
         // Review M-2: kept, and saved, before the session starts; a refusal (the scout
         // was stopped meanwhile, or the save failed) starts none (re-review 2, 3).
         if let Some(decision) = record
-            && let Err(why) = self.keep_record(&ctx.run_id, decision).await
+            && let Err(why) = self.keep_record(&ctx.run_id, decision, None).await
         {
             return failed(format!("the scout was not started: {why}"));
         }

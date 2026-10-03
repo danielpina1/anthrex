@@ -145,8 +145,8 @@ pub struct RoleRoutingDecision {
     pub session_id: String,
     /// `start`, `restart`, `replan`, `retry`, `triage`, `size_check`, …
     pub trigger: String,
-    /// `explicit_choice`, `agent_config`, `planner_config`, `roster_default`,
-    /// `scout_config` or `decider_config`.
+    /// `explicit_choice`, `continued_chain`, `configured_list`, `agent_config`,
+    /// `planner_config`, `roster_default`, `scout_config` or `decider_config`.
     pub source: String,
     /// `m9-orchestrator-v1`, `m9-planner-v1`, `m9-scout-v1` or `m9-decider-v1`.
     pub policy_version: String,

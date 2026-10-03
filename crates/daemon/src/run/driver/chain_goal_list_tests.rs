@@ -44,6 +44,6 @@ async fn a_continued_chain_keeps_its_route_over_the_orchestrator_list() {
         (o.route.runtime, o.route.model.as_str()),
         (chain_route.runtime, chain_route.model.as_str())
     );
-    assert_eq!(o.routing.source, "explicit_choice");
+    assert_eq!(o.routing.source, "continued_chain");
     rig.stop().await;
 }

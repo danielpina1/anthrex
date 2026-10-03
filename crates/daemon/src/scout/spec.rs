@@ -187,23 +187,6 @@ pub fn run_scout_route(
     )
 }
 
-/// Milestone 9.5 (decision 9a, rulings RL-2, I6): the onboarding scout's route over
-/// what its start found `installed` (empty: everything counts as installed): the
-/// `scout` list's pick for session `rotation`, else [`run_scout_route`]'s rule on the
-/// service's scout keys, which is [`scout_route`] when everything is installed.
-pub fn onboarding_route(
-    ctx: &ScoutContext,
-    list: &config::RouteList,
-    rotation: u32,
-    installed: &crate::run::route_pick::Installed,
-) -> Route {
-    let roster = ctx.roster.current();
-    let list = crate::run::model::FrozenList::freeze(list, &roster);
-    let pick = crate::run::route_pick::role(&list, rotation, ctx.scouts.effort, installed);
-    let today = || run_scout_route(&roster, &ScoutRouting::of(ctx), installed);
-    pick.and_then(|p| p.route).unwrap_or_else(today)
-}
-
 /// Decision 12's read-only session for `scout`, on [`scout_route`].
 pub fn headless_spec(scout: &ScoutSpec, ctx: &ScoutContext) -> HeadlessSpec {
     headless_spec_on(scout, ctx, &scout_route(ctx))

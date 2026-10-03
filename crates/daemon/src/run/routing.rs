@@ -242,11 +242,16 @@ pub fn reviewer_pool(roster: &[ModelEntry], author: &Route, level: ReviewLevel) 
     raw
 }
 
-/// Milestone 9.5 ruling RL-1: each pool entry whose route failed in this task says so.
-fn mark_failed(mut raw: Vec<Raw>, task: &Task) -> Vec<Raw> {
-    let failed = super::route_pick::failed_routes(task);
+/// Milestone 9.5 ruling RL-1: each pool entry whose route failed in this task says so,
+/// except at the `chosen` model (every entry failed: the selector fell back to it, and
+/// the record must not call its own choice skipped).
+fn mark_failed(mut raw: Vec<Raw>, task: &Task, chosen: &Route) -> Vec<Raw> {
+    use super::route_pick::{failed_in, failed_routes};
+    let failed = (failed_routes(task).into_iter())
+        .filter(|f| !failed_in(std::slice::from_ref(chosen), f))
+        .collect::<Vec<_>>();
     for (route, reason) in raw.iter_mut() {
-        if super::route_pick::failed_in(&failed, route) {
+        if failed_in(&failed, route) {
             *reason = Some(super::route_pick::FAILED_IN_TASK.to_string());
         }
     }
@@ -325,7 +330,7 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
             id,
             ("escalation", "escalation_policy", ESCALATE_POLICY),
             &chosen,
-            mark_failed(escalation_pool(&run.roster, &from), task),
+            mark_failed(escalation_pool(&run.roster, &from), task, &chosen),
             now,
         ),
         None if first => {
@@ -370,7 +375,7 @@ pub fn record_reviewer(
         (AgentRole::Reviewer, round, Some(round)),
         ("review", "review_policy", REVIEW_POLICY),
         chosen,
-        mark_failed(reviewer_pool(&run.roster, author, level), task),
+        mark_failed(reviewer_pool(&run.roster, author, level), task, chosen),
         now,
     );
     push(&mut run.tasks[i], decision);

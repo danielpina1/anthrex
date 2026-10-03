@@ -142,8 +142,15 @@ async fn deciders_route_over_what_is_installed_at_each_call() {
         Runtime::Claude,
         "the mode's, as configured"
     );
-    // Only Codex is installed: a Codex decider.
-    let first = routed(&ctx).await.ctx;
+    // Only Codex is installed: a Codex decider, an explicit `mode` notwithstanding
+    // (ruling T10b-1), moved from the mode's route, which the log line names.
+    let moved = routed(&ctx).await;
+    assert_eq!(moved.moved.as_ref(), Some(&ctx.route));
+    assert_eq!(
+        moved.moved_line().as_deref(),
+        Some("decider: claude is not installed; using codex")
+    );
+    let first = moved.ctx;
     assert_eq!(
         (first.route.runtime, first.mode),
         (Runtime::Codex, DeciderMode::Codex)
@@ -151,7 +158,9 @@ async fn deciders_route_over_what_is_installed_at_each_call() {
     // The binary removed between two calls: the second probes again and, with nothing
     // installed, resolves exactly as before.
     std::fs::remove_file(&codex).unwrap();
-    let second = routed(&ctx).await.ctx;
+    let second = routed(&ctx).await;
+    assert_eq!((second.moved_line(), &second.moved), (None, &None));
+    let second = second.ctx;
     assert_eq!(
         (second.route, second.mode),
         (ctx.route.clone(), DeciderMode::Claude)
@@ -174,6 +183,7 @@ async fn deciders_route_over_what_is_installed_at_each_call() {
     );
     let r = routed(&listed).await;
     assert_eq!(r.ctx.route.model, "gpt-6-luna");
+    assert_eq!(r.moved, None, "the list chose; nothing moved");
     let skipped = r.pick.expect("a pick").candidates[0].skipped_reason.clone();
     assert_eq!(skipped.as_deref(), Some("not installed"));
 }

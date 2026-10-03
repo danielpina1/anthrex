@@ -40,7 +40,6 @@ use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent};
 use crate::run::model::{LogEntry, OpId, Run};
 use crate::run::orch::roles;
 use crate::run::plan::Preflight;
-use crate::run::route_pick::RolePick;
 use crate::scout::service::ScoutService;
 
 // M8b.14: `run start --goal` (decision 22).
@@ -133,8 +132,7 @@ impl RunService {
                 let id = match record {
                     Some((op, tasks)) if deciders.mode != proto::DeciderMode::Off => {
                         let at = (op, tasks.as_slice());
-                        let route = (&deciders.route, routed.pick.as_ref());
-                        self.decider_dispatched(ctx, at, route, &request).await
+                        self.decider_dispatched(ctx, at, &routed, &request).await
                     }
                     _ => None,
                 };
@@ -177,10 +175,11 @@ impl RunService {
         &self,
         ctx: &OpCtx,
         (op, tasks): (OpId, &[String]),
-        (route, pick): (&proto::Route, Option<&RolePick>),
+        routed: &crate::decider::call::Routed,
         request: &DeciderRequest,
     ) -> Option<(String, Result<(), String>)> {
         let strength = self.ctx.settings.current().orchestrator.deciders.strength;
+        let (route, pick) = (&routed.ctx.route, routed.pick.as_ref());
         let decision = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
             let session = (op.to_string(), request.kind().label());
             let input = roles::input_of(run);
@@ -188,10 +187,11 @@ impl RunService {
             let at = super::unix_now();
             let chosen = (route, candidates);
             let session = (session.0.as_str(), session.1);
-            roles::decider_listed(Some(run), session, tasks, chosen, pick, (input, at))
+            let picked = (pick, routed.moved.as_ref());
+            roles::decider_listed(Some(run), session, tasks, chosen, picked, (input, at))
         })?;
         let record_id = decision.record_id.clone();
-        let kept = self.keep_record(&ctx.run_id, decision).await;
+        let kept = (self.keep_record(&ctx.run_id, decision, routed.moved_line())).await;
         Some((record_id, kept))
     }
 
@@ -202,6 +202,7 @@ impl RunService {
         &self,
         run_id: &str,
         decision: proto::RoleRoutingDecision,
+        log: Option<String>,
     ) -> Result<(), String> {
         let kept = self
             .ask(|reply| {
@@ -210,6 +211,7 @@ impl RunService {
                     reply,
                     run_id: run_id.to_string(),
                     decision: Box::new(decision),
+                    log,
                 })
             })
             .await;

@@ -47,8 +47,8 @@ const GOAL_CHARS: usize = 200;
 /// configuration says later.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoleSnapshot {
-    /// `explicit_choice`, `agent_config` or `roster_default`; empty on a record made
-    /// before milestone 9's task M9.13b.
+    /// `explicit_choice`, `continued_chain`, `configured_list`, `agent_config` or
+    /// `roster_default`; empty on a record made before milestone 9's task M9.13b.
     pub source: String,
     pub candidates: Vec<RoutingCandidate>,
 }
@@ -377,14 +377,21 @@ pub fn decider_record(
 
 /// Milestone 9.5 decision 9a: [`decider_record`] for a call routed over the `decider`
 /// list's `pick` (`None`: no list): the list's snapshot first, and the list marked.
+/// `moved`: the mode's route the probe found not installed (ruling T10b-1), recorded
+/// skipped as [`NOT_INSTALLED`] ahead of the peer runtime's candidates.
 pub fn decider_listed(
     run: Option<&Run>,
     session: (&str, &str),
     task_ids: &[String],
     (route, candidates): (&Route, Vec<RoutingCandidate>),
-    pick: Option<&crate::run::route_pick::RolePick>,
+    (pick, moved): (Option<&crate::run::route_pick::RolePick>, Option<&Route>),
     (input, now): (RoleRoutingInput, u64),
 ) -> RoleRoutingDecision {
+    let skipped = moved.map(|m| RoutingCandidate {
+        route: m.clone(),
+        skipped_reason: Some(NOT_INSTALLED.to_string()),
+    });
+    let candidates: Vec<_> = skipped.into_iter().chain(candidates).collect();
     let candidates = match pick {
         Some(p) => lists::candidates(p, candidates),
         None => candidates,

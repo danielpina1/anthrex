@@ -269,9 +269,11 @@ pub(in crate::run::engine) fn session_stopped(
 /// `OrchEvent::RoleRoute`: the record is kept, unless it is a run scout's whose scout
 /// is no longer running (stopped when the run ended, re-review 2): that session will
 /// not start, so nothing is recorded, and the refusal tells the driver not to start it.
+/// A kept record's `log` line goes to the run log (ruling T10b-1).
 pub(in crate::run::engine) fn keep(
     run: &mut Run,
     decision: RoleRoutingDecision,
+    (log, now): (Option<String>, u64),
 ) -> Result<String, String> {
     if decision.role == AgentRole::Scout {
         let id = decision.session_id.as_str();
@@ -290,5 +292,8 @@ pub(in crate::run::engine) fn keep(
         }
     }
     open(run, decision);
+    if let Some(line) = log {
+        crate::run::engine::requests::log(run, now, line);
+    }
     Ok("recorded".to_string())
 }

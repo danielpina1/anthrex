@@ -241,6 +241,38 @@ fn escalation_and_review_history_keep_skips() {
         .find(|c| c.route.model == OPUS)
         .and_then(|c| c.skipped_reason.as_deref());
     assert_eq!(opus_reason, Some(FAILED_IN_TASK));
+    // Every entry failed, so the selector fell back to the failed model: the record
+    // never calls its own choice's model skipped for it (review 10b, minor 2).
+    let pooled = (d.candidates.iter())
+        .find(|c| c.route.model == OPUS)
+        .map(|c| c.route.clone())
+        .expect("opus is pooled");
+    let effort = match pooled.effort {
+        Effort::High => Effort::Low,
+        _ => Effort::High,
+    };
+    let fell_back = route(pooled.runtime, OPUS, pooled.strength, effort);
+    record_reviewer(
+        &mut run,
+        0,
+        (&author, ReviewLevel::Medium),
+        &fell_back,
+        3,
+        450,
+    );
+    let d = task(&run, "t1")
+        .routing_decisions
+        .last()
+        .expect("it")
+        .clone();
+    let opus_reasons: Vec<Option<&str>> = (d.candidates.iter())
+        .filter(|c| c.route.model == OPUS)
+        .map(|c| c.skipped_reason.as_deref())
+        .collect();
+    assert!(
+        !opus_reasons.contains(&Some(FAILED_IN_TASK)),
+        "{opus_reasons:?}"
+    );
 
     // Unchanged after the run is reloaded (decisions are never recomputed).
     let decisions = task(&run, "t1").routing_decisions.clone();

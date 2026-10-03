@@ -164,9 +164,10 @@ pub(super) fn on_orch_event(
             reply,
             run_id,
             decision,
+            log,
         } => {
             let result = match state.runs.get_mut(&run_id) {
-                Some(run) => super::history::keep(run, *decision),
+                Some(run) => super::history::keep(run, *decision, (log, now)),
                 None => Err(format!("unknown run {run_id}")),
             };
             fx.push(Effect::Reply { reply, result });

@@ -43,7 +43,9 @@ pub const EXIT_WAIT: Duration = Duration::from_secs(2);
 /// Milestone 9.5 (rulings RL-2, I6; decision 9a): what a decider call routes over,
 /// fixed at daemon start: the `decider` list against the roster, the roster and
 /// `[orchestrator.deciders] strength` for a route on the other runtime, the two binaries
-/// the probe stats and each runtime's program, and the list's per-daemon rotation.
+/// the probe stats and each runtime's program, and the list's per-daemon rotation. The
+/// list and roster are fixed together, as the deciders' own route always was (review
+/// 10b, minor 6: never a live roster against a fixed list).
 #[derive(Debug, Clone, Default)]
 pub struct Routing {
     pub list: FrozenList,
@@ -94,12 +96,27 @@ pub fn ladder_route(
     }
 }
 
-/// One call's context, routed, and the `decider` list's pick it came from (`None`: no
-/// list, or the deciders are off).
+/// One call's context, routed; the `decider` list's pick it came from (`None`: no
+/// list, or the deciders are off); and, when the probe moved the call to the peer
+/// runtime, the mode's route it moved from (ruling T10b-1).
 #[derive(Debug, Clone)]
 pub struct Routed {
     pub ctx: DeciderContext,
     pub pick: Option<RolePick>,
+    pub moved: Option<Route>,
+}
+
+impl Routed {
+    /// Ruling T10b-1: the run log's line for a call the probe moved to the peer
+    /// runtime, `decider: <runtime> is not installed; using <peer>`.
+    pub fn moved_line(&self) -> Option<String> {
+        let (from, to) = (self.moved.as_ref()?.runtime, self.ctx.route.runtime);
+        Some(format!(
+            "decider: {} is not installed; using {}",
+            from.label(),
+            to.label()
+        ))
+    }
 }
 
 /// Rulings RL-2 and I6: the context of one decider call, routed over what is installed
@@ -110,6 +127,7 @@ pub async fn routed(ctx: &DeciderContext) -> Routed {
         return Routed {
             ctx: ctx.clone(),
             pick: None,
+            moved: None,
         };
     }
     let (claude, codex) = ctx.routing.bins.clone();
@@ -119,7 +137,9 @@ pub async fn routed(ctx: &DeciderContext) -> Routed {
 /// [`routed`]'s pure half. A `decider` list takes the place of the mode's runtime
 /// choice: its pick over `installed`, rotating per daemon. With no list, or every
 /// candidate skipped, the mode's route, on the other runtime when the probe found the
-/// mode's not installed and the other one installed. `installed` empty: as before.
+/// mode's not installed and the other one installed, an explicit `mode` included
+/// (ruling T10b-1: a decider that cannot launch helps no one). `installed` empty: as
+/// before.
 pub fn route_over(ctx: &DeciderContext, installed: &Installed) -> Routed {
     let r = &ctx.routing;
     let rotation = match r.list.is_empty() {
@@ -128,22 +148,14 @@ pub fn route_over(ctx: &DeciderContext, installed: &Installed) -> Routed {
     };
     let pick = role(&r.list, rotation, ctx.route.effort, installed);
     let missing = |rt: Runtime| installed.get(rt.label()) == Some(&false);
-    let today = || match (missing(ctx.route.runtime), missing(peer(ctx.route.runtime))) {
-        (true, false) => {
-            let strength = r.strength.unwrap_or(ctx.route.strength);
-            ladder_route(
-                &r.models,
-                peer(ctx.route.runtime),
-                strength,
-                ctx.route.effort,
-            )
-        }
-        _ => ctx.route.clone(),
-    };
-    let route = pick
-        .as_ref()
-        .and_then(|p| p.route.clone())
-        .unwrap_or_else(today);
+    let (runtime, other) = (ctx.route.runtime, peer(ctx.route.runtime));
+    let peer_route = (missing(runtime) && !missing(other)).then(|| {
+        let strength = r.strength.unwrap_or(ctx.route.strength);
+        ladder_route(&r.models, other, strength, ctx.route.effort)
+    });
+    let listed = pick.as_ref().and_then(|p| p.route.clone());
+    let moved = (listed.is_none() && peer_route.is_some()).then(|| ctx.route.clone());
+    let route = (listed.or(peer_route)).unwrap_or_else(|| ctx.route.clone());
     let mut routed = ctx.clone();
     if route.runtime != ctx.route.runtime {
         routed.mode = match route.runtime {
@@ -153,7 +165,11 @@ pub fn route_over(ctx: &DeciderContext, installed: &Installed) -> Routed {
         routed.program = r.program(route.runtime);
     }
     routed.route = route;
-    Routed { ctx: routed, pick }
+    Routed {
+        ctx: routed,
+        pick,
+        moved,
+    }
 }
 
 /// Asks `request`'s decider (decision 16). Always returns a decision: the decider's

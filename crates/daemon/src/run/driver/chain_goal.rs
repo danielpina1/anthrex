@@ -242,6 +242,12 @@ impl RunService {
             .await
             .map_err(|error| error.text())?;
         run.chain = Some(joined.chain.clone());
+        // Ruling RH-5: the chain's route was passed as the choice; its record says why.
+        if let Some(o) = run.orch.orchestrator.as_mut()
+            && o.routing.source == "explicit_choice"
+        {
+            o.routing.source = crate::run::orch::roles::lists::CHAIN_SOURCE.to_string();
+        }
         let based = format!("based on {} at {}", run.base_branch, sha7(&run.base_sha));
         run.log.insert(
             0,

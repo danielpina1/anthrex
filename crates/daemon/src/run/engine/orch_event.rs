@@ -97,6 +97,9 @@ pub enum OrchEvent {
         reply: ReplyId,
         run_id: String,
         decision: Box<RoleRoutingDecision>,
+        /// A line for the run log once the record is kept (ruling T10b-1: a decider the
+        /// probe moved to the peer runtime).
+        log: Option<String>,
     },
     /// Decision 43: that session ended.
     RoleRouteEnded {
