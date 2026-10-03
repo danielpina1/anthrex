@@ -87,6 +87,19 @@ fn the_fingerprint_moves_when_the_round_does() {
     let recorded = fingerprint(&fresh);
     fresh.rounds.clear();
     assert_eq!(fingerprint(&fresh), recorded);
+}
 
+/// Fix round 1 (review m1): `note_change` bumps `digest_rev` for a round's start alone.
+/// The first call on a run always bumps (its stored fingerprint starts at 0), so the
+/// run is settled first and a second call shows nothing else moved.
+#[test]
+fn a_rounds_start_bumps_digest_rev() {
+    let mut run = complete_run();
+    run.state = RunState::Planning;
+    note_change(&mut run);
+    assert!(!note_change(&mut run), "nothing moved yet");
+    let rev = run.orch.digest_rev;
+    add_round(&mut run, 2, 2);
     assert!(note_change(&mut run), "a round's start bumps digest_rev");
+    assert_eq!(run.orch.digest_rev, rev + 1);
 }
