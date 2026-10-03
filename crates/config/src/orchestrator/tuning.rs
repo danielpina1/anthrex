@@ -10,10 +10,12 @@ use proto::ModelEntry;
 use super::read_u32_in_range;
 use crate::{Problem, not_a_table_problem, read_bool_key, read_u64_in_range};
 
+// `routes.rs` sits beside this file but is this module's child, so `orchestrator.rs`
+// gains one `mod` line for both (decision 3's +4).
 #[path = "routes.rs"]
 mod routes;
-use routes::RouteLists;
 pub(crate) use routes::report_unknown_routes;
+pub use routes::{Candidate, Pick, RouteList, RouteLists};
 
 pub(crate) const KNOWN_TUNING_KEYS: &[&str] = &[
     "min_samples",

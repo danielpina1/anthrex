@@ -3,7 +3,6 @@
 
 use proto::{Effort, Runtime, Strength};
 
-use super::routes::{Candidate, Pick, RouteList};
 use super::*;
 use crate::settings::SHIPPED_CODEX;
 use crate::{Problem, parse};
@@ -352,6 +351,11 @@ candidates = [{{ runtime = "claude", model = "claude-sonnet-5" }}]
             problem("orchestrator.routes.xl", "unknown key, ignored", "nothing"),
         ]
     );
+    // Decision 9a's exact text.
+    assert_eq!(
+        problems[0].to_string(),
+        "orchestrator.routes.m.candidates[1]: claude/claude-opus-9 is not in the roster (entry skipped)"
+    );
 }
 
 #[test]
@@ -394,5 +398,113 @@ planner = 3
                 "table of defaults",
             ),
         ]
+    );
+}
+
+#[test]
+fn a_bad_candidate_model_or_entry_says_what_is_wrong() {
+    let (t, problems) = tuning_of(
+        r#"
+[orchestrator.routes.s]
+candidates = [
+  { runtime = "claude", model = 5 },
+  { runtime = "claude" },
+  "claude-sonnet-5",
+  { runtime = "claude", model = "claude-haiku-4-5" },
+]
+"#,
+    );
+    assert_eq!(
+        t.routes.s.candidates,
+        vec![candidate(Runtime::Claude, "claude-haiku-4-5", None)]
+    );
+    assert_eq!(
+        problems,
+        vec![
+            problem(
+                "orchestrator.routes.s.candidates[0].model",
+                "must be a string",
+                "entry skipped",
+            ),
+            problem(
+                "orchestrator.routes.s.candidates[1].model",
+                "is required",
+                "entry skipped",
+            ),
+            problem(
+                "orchestrator.routes.s.candidates[2]",
+                "expected a table",
+                "entry skipped",
+            ),
+        ]
+    );
+}
+
+#[test]
+fn bad_table_shapes_and_types_keep_defaults() {
+    let (t, problems) = tuning_of("[orchestrator]\ntuning = 3\n");
+    assert_eq!(t.table, Tuning::default());
+    assert_eq!(
+        problems,
+        vec![problem(
+            "orchestrator.tuning",
+            "expected a table",
+            "table of defaults",
+        )]
+    );
+
+    let (t, problems) = tuning_of("[orchestrator.tuning]\nrefit_budgets = \"no\"\n");
+    assert!(t.table.refit_budgets);
+    assert_eq!(
+        problems,
+        vec![problem(
+            "orchestrator.tuning.refit_budgets",
+            "expected a boolean",
+            "true",
+        )]
+    );
+}
+
+#[test]
+fn the_u64_keys_have_upper_bounds() {
+    for (key, value, message, default) in [
+        ("recover_after_mins", 241, "must be between 1 and 240", "10"),
+        ("halve_hold_secs", 3601, "must be between 0 and 3600", "60"),
+        (
+            "race_slot_wait_secs",
+            3601,
+            "must be between 0 and 3600",
+            "120",
+        ),
+    ] {
+        let (t, problems) = tuning_of(&format!("[orchestrator.tuning]\n{key} = {value}\n"));
+        assert_eq!(t.table, Tuning::default(), "{key}");
+        assert_eq!(
+            problems,
+            vec![problem(
+                &format!("orchestrator.tuning.{key}"),
+                message,
+                default
+            )]
+        );
+    }
+    let (t, problems) =
+        tuning_of("[orchestrator.tuning]\nrecover_after_mins = 240\nhalve_hold_secs = 3600\n");
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(
+        (t.table.recover_after_mins, t.table.halve_hold_secs),
+        (240, 3600)
+    );
+}
+
+/// Deliberate (fix round 1 of M9.5.7): a `min_samples` above the default window raises
+/// the window too, with a problem, although the file never names `window`.
+#[test]
+fn min_samples_alone_above_the_default_window_raises_it() {
+    let (t, problems) = tuning_of("[orchestrator.tuning]\nmin_samples = 500\n");
+    assert_eq!((t.table.min_samples, t.table.window), (500, 500));
+    assert_eq!(
+        problems.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
+        vec!["orchestrator.tuning.window: must be at least min_samples (500) (using 500)"]
     );
 }

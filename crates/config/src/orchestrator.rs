@@ -26,6 +26,7 @@ mod budget;
 mod profile;
 mod roster;
 mod tuning;
+pub use tuning::{Candidate, ConfiguredBudgets, Pick, RouteList, RouteLists, Tuning, TuningConfig};
 
 pub use adapt::{Deciders, Metering, Onboarding, Scouts};
 pub use agent::AgentConfig;
@@ -102,7 +103,8 @@ pub struct Orchestrator {
     pub metering: Metering,
     /// Milestone 9: the orchestrator agent, planner, wake, message and note settings.
     pub agent: agent::AgentSettings,
-    pub tuning: tuning::TuningConfig, // 9.5: [orchestrator.tuning] and the model lists
+    /// Milestone 9.5: `[orchestrator.tuning]`, the model lists and the explicit budgets.
+    pub tuning: TuningConfig,
 }
 
 /// `[orchestrator.claude] auth`, decision 50: whether a headless Claude session reads
@@ -172,7 +174,7 @@ impl Default for Orchestrator {
             onboarding: Onboarding::default(),
             metering: Metering::default(),
             agent: agent::AgentSettings::default(),
-            tuning: tuning::TuningConfig::default(),
+            tuning: TuningConfig::default(),
         }
     }
 }

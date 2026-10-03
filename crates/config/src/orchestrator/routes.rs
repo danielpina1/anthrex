@@ -136,7 +136,7 @@ fn read_list(
                     Err((key, message)) => problems.push(Problem {
                         key,
                         message,
-                        default: "entry skipped".to_string(),
+                        default: crate::ENTRY_SKIPPED.to_string(),
                     }),
                 }
             }
@@ -176,8 +176,10 @@ fn read_candidate(
         _ => return fail(".runtime", "must be claude or codex"),
     };
     let model = match t.get("model").and_then(|v| v.as_str()) {
-        Some(m) if !m.is_empty() => m.to_string(),
-        _ => return fail(".model", "must not be empty"),
+        Some("") => return fail(".model", "must not be empty"),
+        Some(m) => m.to_string(),
+        None if t.contains_key("model") => return fail(".model", "must be a string"),
+        None => return fail(".model", "is required"),
     };
     let effort = match t.get("effort").map(|v| v.as_str()) {
         None => None,
