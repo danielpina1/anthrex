@@ -480,7 +480,8 @@ async fn a_continued_run_is_based_on_the_checkout() {
 /// there), within a deadline; past it, it opens it `O_RDWR`, which never blocks, so a
 /// read that comes late opens it too. It holds the FIFO, so the read's open completes
 /// and its read waits, until the test has measured the read (its signal) or for `HOLD`
-/// at most; then it unlinks the FIFO and closes it, which ends the abandoned read (EOF)
+/// at most, and for `GRACE` after its own open at least (the final fix wave, task 6b
+/// m1); then it unlinks the FIFO and closes it, which ends the abandoned read (EOF)
 /// and leaves no file for a read that comes later still. Before fix round 3, the
 /// writer opened and closed at once, after the bound, and on macOS the reader blocked
 /// in `open` could miss that writer and wait for good (about one run in three).
@@ -490,6 +491,9 @@ async fn the_handoff_history_read_is_bounded() {
     // test from measuring): past the bound plus the 5 s slack below, so such a read
     // would end (EOF) only after the slack, and fail.
     const HOLD: Duration = Duration::from_secs(9);
+    // The writer's least hold after its own open: a read that starts after the bound
+    // (the blocking pool can start its thread late) still opens against a writer.
+    const GRACE: Duration = Duration::from_secs(1);
     let dir = tempfile::tempdir().unwrap();
     let mut run = run_of(1);
     run.limits.git_timeout_secs = 1;
@@ -521,7 +525,12 @@ async fn the_handoff_history_read_is_bounded() {
                 }
             }
         };
+        // The final fix wave (task 6b m1): at least `GRACE` after its own open, even when
+        // the signal came first, so a read that reaches `open` late still finds the
+        // writer there rather than an open-then-close it can miss.
+        let open_at = Instant::now();
         let _ = released.recv_timeout(HOLD);
+        std::thread::sleep(GRACE.saturating_sub(open_at.elapsed()));
         let _ = std::fs::remove_file(&held);
         drop(file);
         opened
