@@ -84,8 +84,10 @@ fn its_window_is_not_listed_twice() {
         panic!("the idle row");
     };
     assert_eq!((idle.chain.as_str(), window.id), (CHAIN, 7));
-    // Not numbered: the shell keeps `1`, and `C-b j`/`k` cycle the plain windows.
-    assert_eq!(tree::agent_order(&rows), [1]);
+    // Not numbered: the shell keeps `1` (fix round 1: `C-b j`/`k` still reach the idle
+    // window, after its project's windows; `C-b <n>` counts the numbered ones only).
+    assert_eq!(tree::agent_order(&rows), [1, 7]);
+    assert_eq!(tree::numbered_order(&rows), [1]);
     // The project's counts still name the window.
     let RowKind::Project { counts, .. } = &rows[0].kind else {
         panic!("the project row");
@@ -264,5 +266,131 @@ fn a_delivered_runs_window_is_its_idle_row_only() {
     assert_eq!(
         (after.label, after.value.as_str()),
         ("after", "run add-reset-3f9a · delivered")
+    );
+}
+
+fn chord(app: &mut App, c: char) -> Vec<Effect> {
+    app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    tap(app, KeyCode::Char(c))
+}
+
+/// Fix round 1 (ruling on concern 3): `C-b j`/`k` cycle through the idle row's window,
+/// after its project's windows; `C-b <n>` still counts only the numbered windows.
+#[test]
+fn ctrl_b_j_and_k_cycle_through_the_idle_window() {
+    let (snap, mut windows) = idle_fixture(1);
+    windows.push(pty(2, "shell-2", PROJECT, Status::Idle));
+    let mut app = app_of((snap, windows), false);
+    assert_eq!(tree::agent_order(&app.rows()), [1, 2, 7]);
+    let _ = app.focus(2);
+    chord(&mut app, 'j');
+    assert_eq!(app.focused, Some(7), "j from the last numbered window");
+    chord(&mut app, 'k');
+    assert_eq!(app.focused, Some(2), "k back from the idle window");
+    chord(&mut app, 'j');
+    chord(&mut app, 'j');
+    assert_eq!(app.focused, Some(1), "j from the idle window wraps");
+    chord(&mut app, 'k');
+    assert_eq!(app.focused, Some(7), "k from the first wraps to it");
+    chord(&mut app, '2');
+    assert_eq!(
+        app.focused,
+        Some(2),
+        "`C-b 2` is the second numbered window"
+    );
+    chord(&mut app, '3');
+    assert_eq!(
+        app.focused,
+        Some(2),
+        "`C-b 3` names no window: two are numbered"
+    );
+}
+
+/// Fix round 1, m1: with the idle window focused, `C-b t` selects its row.
+#[test]
+fn ctrl_b_t_selects_the_focused_idle_row() {
+    let mut app = on_idle_row(app_of(idle_fixture(1), false));
+    tap(&mut app, KeyCode::Enter);
+    assert_eq!(app.focused, Some(7));
+    chord(&mut app, 't');
+    assert_eq!(app.tree.selected, Some(NodeKey::Chain(CHAIN.into())));
+}
+
+/// Fix round 1, m2 (D17): a chain idle while `Complete` is a delivered `pr` run's, even
+/// once the snapshot no longer lists the run.
+#[test]
+fn a_complete_outcome_reads_delivered_without_its_run() {
+    let (mut snap, _) = delivered_fixture();
+    snap.runs.clear();
+    assert_eq!(
+        tree::idle_outcome(&snap.idle_orchestrators[0], &snap.runs),
+        "delivered"
+    );
+    let (snap, _) = idle_fixture(1);
+    assert_eq!(
+        tree::idle_outcome(&snap.idle_orchestrators[0], &snap.runs),
+        "accepted"
+    );
+}
+
+/// Fix round 1, m3: the `no longer idle` toast names a carried chain id cleaned.
+#[test]
+fn the_no_longer_idle_toast_is_sanitised() {
+    let (mut snap, windows) = idle_fixture(1);
+    snap.idle_orchestrators[0].chain = "o-3f\u{200D}9\u{202E}a".into();
+    let mut app = app_of((snap, windows), false);
+    app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    tap(&mut app, KeyCode::Char('t'));
+    let rows = tree::build_from(&app.windows, &app.runs, &app.tree);
+    app.tree
+        .select(&rows, NodeKey::Chain("o-3f\u{200D}9\u{202E}a".into()));
+    tap(&mut app, KeyCode::Char('.'));
+    let (mut snap, _) = idle_fixture(1);
+    snap.revision = 2;
+    snap.idle_orchestrators.clear();
+    app.on_daemon(DaemonMsg::Run(RunReply::Snapshot(snap)));
+    tap(&mut app, KeyCode::Enter);
+    let toast = app.toast.as_ref().map(|toast| toast.text.as_str());
+    assert_eq!(toast, Some("o-3f9a is no longer idle"));
+}
+
+/// Fix round 1: with a second project after the idle one, the idle window comes after
+/// its own project's windows, and the numbers (`C-b <n>`, a sub-agent's `spawned by`)
+/// count past it as the rows show them.
+#[test]
+fn an_idle_window_takes_no_number_from_a_later_project() {
+    let (snap, mut windows) = idle_fixture(1);
+    let mut other = pty(3, "zeta-shell", "/r/zeta", Status::Idle);
+    other.subagents = vec![proto::SubagentInfo {
+        id: "s1".into(),
+        parent_id: None,
+        kind: "Explore".into(),
+        label: None,
+        model: None,
+        state: proto::SubagentState::Running,
+        tool: None,
+        started_secs: 0,
+        ended_secs: None,
+        needs_permission: false,
+    }];
+    windows.push(other);
+    let mut app = app_of((snap, windows), false);
+    let rows = app.rows();
+    assert_eq!(tree::agent_order(&rows), [1, 7, 3]);
+    assert_eq!(tree::numbered_order(&rows), [1, 3]);
+    let sub = (rows.iter())
+        .find(|row| matches!(row.kind, RowKind::Subagent { .. }))
+        .expect("the sub-agent's row");
+    let spawned = crate::inspector::inspect(sub, &app);
+    let by = (spawned.fields.iter())
+        .find(|field| field.label == "spawned by")
+        .map(|field| field.value.clone());
+    assert_eq!(by.as_deref(), Some("2 zeta-shell"), "{:?}", spawned.fields);
+    drop(rows);
+    chord(&mut app, '2');
+    assert_eq!(
+        app.focused,
+        Some(3),
+        "`C-b 2` is the second numbered window"
     );
 }

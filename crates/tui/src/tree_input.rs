@@ -72,7 +72,7 @@ impl App {
             self.tree.selected_index(rows)
         } else {
             self.focused_window().and_then(|window| {
-                tree::row_index(rows, &NodeKey::Window(window.id))
+                tree::window_row(rows, window.id)
                     .or_else(|| tree::row_index(rows, &NodeKey::Project(window.project.clone())))
             })
         }
@@ -144,10 +144,9 @@ impl App {
         self.keymap.set_tree_mode(true);
 
         let rows = tree::build_from(&self.windows, &self.runs, &self.tree);
-        let selected = self
-            .focused
-            .map(NodeKey::Window)
-            .filter(|key| tree::row_index(&rows, key).is_some())
+        // Milestone 9.3: a focused idle orchestrator's window is its idle row.
+        let selected = (self.focused.and_then(|id| tree::window_row(&rows, id)))
+            .map(|index| rows[index].key.clone())
             .or_else(|| rows.first().map(|row| row.key.clone()));
         self.tree.selected = None;
         if let Some(selected) = selected {

@@ -20,7 +20,7 @@ pub use run_rows::{RunFilter, display_rounds, round_label, run_rows};
 use runs::{ShownRun, group_projects, idle_matches_filter, run_matches_filter};
 pub use runs::{
     awaiting_holds, idle_outcome, idle_text, is_paused, run_progress, run_status, run_title,
-    shown_runs, task_held,
+    shown_runs, task_held, window_row,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -503,23 +503,41 @@ fn matches_filter(text: &str, filter: &str) -> bool {
     text.to_lowercase().contains(filter)
 }
 
+/// The order `C-b j`/`k` cycle: the numbered windows in tree order, each project's idle
+/// orchestrator window after that project's windows (milestone 9.3 decision 32; its row
+/// has no number, so it comes after every number its project shows).
 pub fn agent_order(rows: &[Row<'_>]) -> Vec<u32> {
-    rows.iter()
-        .filter_map(|row| match &row.kind {
-            RowKind::Window { info, .. } => Some(info.id),
-            RowKind::Run { orchestrator, .. } => orchestrator.map(|window| window.id),
-            RowKind::Project { .. }
-            | RowKind::Subagent { .. }
+    let (mut order, mut idle) = (Vec::new(), Vec::new());
+    for row in rows {
+        match &row.kind {
+            RowKind::Project { .. } => order.append(&mut idle),
+            RowKind::Window { info, .. } => order.push(info.id),
+            RowKind::Run { orchestrator, .. } => order.extend(orchestrator.map(|w| w.id)),
+            RowKind::IdleOrchestrator { window, .. } => idle.push(window.id),
+            RowKind::Subagent { .. }
             | RowKind::Planner { .. }
             | RowKind::Scout { .. }
             | RowKind::Task { .. }
             | RowKind::Stage { .. }
             | RowKind::Round { .. }
-            // Not numbered: Enter on its row focuses it (milestone 9.3 decision 32).
-            | RowKind::IdleOrchestrator { .. }
-            | RowKind::AgentRound { .. } => None,
+            | RowKind::AgentRound { .. } => {}
+        }
+    }
+    order.append(&mut idle);
+    order
+}
+
+/// The numbered windows only: what `C-b <n>` and the shown numbers count (an idle
+/// orchestrator's row has none).
+pub fn numbered_order(rows: &[Row<'_>]) -> Vec<u32> {
+    let order = agent_order(rows);
+    let idle: Vec<u32> = (rows.iter())
+        .filter_map(|row| match &row.kind {
+            RowKind::IdleOrchestrator { window, .. } => Some(window.id),
+            _ => None,
         })
-        .collect()
+        .collect();
+    order.into_iter().filter(|id| !idle.contains(id)).collect()
 }
 
 pub fn row_index(rows: &[Row<'_>], key: &NodeKey) -> Option<usize> {

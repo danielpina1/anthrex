@@ -1,10 +1,11 @@
 //! Milestone 9.3 decision 32 (KG §6): the idle orchestrator's menu on the kit's dialog
 //! grammar, as the action menu draws its entries: the title `orchestrator <chain>`, the
 //! two entries (`close` in `Failed`, its confirm page being destructive), a blank row
-//! and the key hints. The chain id is the daemon's: `kit::dialog_frame` cleans the
-//! title (decision 33's "a kit widget that does it"). Pure: rendering reads the menu.
+//! and the key hints. The chain id is the daemon's, so it is cleaned before it is cut
+//! (`kit::dialog_frame` cleans the title again). Pure: rendering reads the menu.
 
 use crate::app::idle_menu::{ENTRIES, IdleMenu};
+use crate::safe_text::one_line;
 use crate::theme::{Glyph, Palette, Role, dot_sep, ellipsis, glyph, role};
 use crate::ui::kit::{self, Hint};
 use ratatui::Frame;
@@ -21,9 +22,9 @@ fn hint(key: &str, word: &str, priority: u8) -> Hint {
     }
 }
 
-/// The title, cut to `width` columns (`kit::dialog_frame` cleans it).
+/// The title, cleaned, then cut to `width` columns.
 pub(crate) fn title(menu: &IdleMenu, width: u16, p: Palette) -> String {
-    let text = format!("orchestrator {}", menu.chain);
+    let text = format!("orchestrator {}", one_line(&menu.chain));
     kit::cut(&text, usize::from(width), ellipsis(p))
 }
 

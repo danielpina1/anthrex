@@ -429,7 +429,7 @@ impl App {
         match cmd {
             Command::NextWindow => self.focus_relative(1),
             Command::PrevWindow => self.focus_relative(-1),
-            Command::FocusIndex(i) => match tree::agent_order(&self.rows()).get(i).copied() {
+            Command::FocusIndex(i) => match tree::numbered_order(&self.rows()).get(i).copied() {
                 Some(id) => self.focus(id),
                 None => vec![],
             },

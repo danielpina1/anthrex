@@ -262,3 +262,50 @@ fn the_audit_holds_with_rounds_and_an_idle_row() {
         }
     }
 }
+
+/// Fix round 1, m3: the idle inspection's run id and a round inspection's request carry
+/// no hidden character.
+#[test]
+fn the_idle_and_round_inspections_are_sanitised() {
+    let (mut snap, windows) = idle_fixture(1);
+    snap.idle_orchestrators[0].after_run = format!("add-reset-{CARRIED}");
+    let app = app_of((snap, windows), false);
+    let rows = tree::build_from(&app.windows, &app.runs, &app.tree);
+    let row = (rows.iter())
+        .find(|row| matches!(row.key, NodeKey::Chain(_)))
+        .expect("the idle row");
+    let after = &crate::inspector::inspect(row, &app).fields[0];
+    assert_eq!(
+        (after.label, after.value.as_str()),
+        ("after", "run add-reset-3f9a · accepted")
+    );
+
+    let mut app = crate::ui::run_list::rounds_tests::rounds_view(false, 80, 24);
+    app.runs.runs[0].rounds[1].goal_head = format!("also {CARRIED}");
+    let run = &app.runs.runs[0];
+    let rows = tree::run_rows(run, &app.windows, &app.tree, tree::RunFilter::All);
+    let key = NodeKey::Round {
+        run: run.run_id.clone(),
+        n: 2,
+    };
+    let row = rows.iter().find(|row| row.key == key).expect("round 2");
+    let request = &crate::inspector::inspect(row, &app).fields[0];
+    assert_eq!(
+        (request.label, request.value.as_str()),
+        ("request", "also 3f9a")
+    );
+}
+
+/// Fix round 1, m4: the menu's title is cleaned before it is cut, so a hidden character
+/// of width two (U+115F) takes no room: the title fits exactly, uncut.
+#[test]
+fn the_menu_title_is_cleaned_before_it_is_cut() {
+    let menu = crate::app::idle_menu::IdleMenu {
+        chain: "o-3f9a\u{115F}".into(),
+        project: "/r/demo".into(),
+        window_id: 7,
+        selected: 0,
+    };
+    let p = crate::theme::Palette::PLAIN;
+    assert_eq!(super::title(&menu, 19, p), "orchestrator o-3f9a");
+}

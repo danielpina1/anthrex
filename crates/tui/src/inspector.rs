@@ -348,7 +348,7 @@ fn spawned_by(row: &Row<'_>, info: &SubagentInfo, app: &App) -> String {
     }
     // The same number the window's own box and the sidebar show, so the two
     // can be matched up by eye.
-    match tree::agent_order(&app.rows())
+    match tree::numbered_order(&app.rows())
         .iter()
         .position(|id| *id == window.id)
     {

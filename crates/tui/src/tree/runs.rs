@@ -4,8 +4,8 @@
 //! of its own, in its window's place.
 
 use super::{
-    NodeKey, ProjectChild, ProjectGroup, RuntimeCounts, TreeState, display_names, matches_filter,
-    urgency,
+    NodeKey, ProjectChild, ProjectGroup, Row, RowKind, RuntimeCounts, TreeState, display_names,
+    matches_filter, urgency,
 };
 use crate::safe_text::one_line;
 use proto::{
@@ -131,10 +131,22 @@ pub fn idle_outcome(idle: &IdleOrchestrator, runs: &[RunInfo]) -> &'static str {
     let pr = (runs.iter().find(|run| run.run_id == idle.after_run))
         .and_then(|run| run.delivery.as_ref())
         .is_some_and(|delivery| delivery.mode == DeliveryMode::Pr);
+    // D17: a chain is idle while its run is `Complete` only for a delivered `pr` run, so
+    // a run the snapshot no longer lists reads `delivered` too.
+    let missing = !runs.iter().any(|run| run.run_id == idle.after_run);
     match idle.outcome {
-        RunState::Complete if pr => "delivered",
+        RunState::Complete if pr || missing => "delivered",
         state => crate::app::state_text(state),
     }
+}
+
+/// Window `id`'s row: its own, or the idle row whose window it is (decision 32).
+pub fn window_row(rows: &[Row<'_>], id: u32) -> Option<usize> {
+    rows.iter().position(|row| match &row.kind {
+        RowKind::Window { info, .. } => info.id == id,
+        RowKind::IdleOrchestrator { window, .. } => window.id == id,
+        _ => false,
+    })
 }
 
 /// The project-tree filter on an idle row: its text or its chain id.
