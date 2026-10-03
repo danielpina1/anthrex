@@ -61,8 +61,8 @@ pub struct Chain {
     pub ended: bool,
 }
 
-/// `Active` while its current run is not terminal; `Idle` once it is accepted or
-/// discarded.
+/// `Active` while its current run is not finished; `Idle` once it is finished:
+/// accepted, discarded, or delivered (D17, [`delivered`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChainState {
     Active,
