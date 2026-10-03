@@ -26,7 +26,7 @@ use crate::run::chain::{CONTINUE_START_BOUND, START_GOAL_TOOL_BOUND, continuable
 use crate::run::contract::sha7;
 use crate::run::engine::{EventKind, HISTORY_FILE};
 use crate::run::model::{LogEntry, Run};
-use crate::run::orch::contract::orchestrator_first_prompt;
+use crate::run::orch::contract::fresh_first_prompt;
 use crate::run::orch::contract_rounds::{
     CONTINUE_TOO_SLOW, GOAL_TOO_LONG, NO_CHAIN_FOR_TOOL, goal_started, handoff_prompt,
     other_project,
@@ -254,10 +254,7 @@ impl RunService {
         // chain that ended before the step launches with the summary alone.
         let bound = Duration::from_secs(run.limits.git_timeout_secs);
         let read = (!joined.adopt).then_some(bound);
-        let prompt = joined
-            .handoff
-            .prompt(&orchestrator_first_prompt(&run), read)
-            .await;
+        let prompt = joined.handoff.prompt(&fresh_first_prompt(&run), read).await;
         if let Some(o) = run.orch.orchestrator.as_mut() {
             o.first_prompt = prompt;
         }

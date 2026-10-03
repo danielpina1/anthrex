@@ -204,6 +204,20 @@ fn bullets<'a>(lines: &mut Vec<String>, items: impl IntoIterator<Item = &'a Stri
 
 /// The orchestrator's first turn on the plan or large path.
 pub fn orchestrator_first_prompt(run: &Run) -> String {
+    first_prompt(run, format!("Goal: {}", run.goal))
+}
+
+/// Milestone 9.3's final fix wave (review B, M6): [`orchestrator_first_prompt`] for a
+/// chained run's fresh session (decision 24's handoff, an adoption lost, a window gone
+/// at a restart), whose goal may be the orchestrator's own `start_goal` text: the goal
+/// fenced as data, as the next-goal wake fences it (D1).
+pub fn fresh_first_prompt(run: &Run) -> String {
+    let goal = crate::run::delivery::quote::fence(&run.goal);
+    first_prompt(run, format!("Goal:\n{}", goal.trim_end_matches('\n')))
+}
+
+/// The first turn's lines, with `goal_line` for the goal.
+fn first_prompt(run: &Run, goal_line: String) -> String {
     let path = path_label(run.path.unwrap_or(RunPath::Plan));
     let path = match &run.triage {
         Some(t) => format!(
@@ -226,7 +240,7 @@ pub fn orchestrator_first_prompt(run: &Run) -> String {
             run.id,
             run.root.display()
         ),
-        format!("Goal: {}", run.goal),
+        goal_line,
         format!("Path: {path}"),
         format!("Plan gate: {gate}"),
         "Start with get_context, then scout, then plan.".into(),
@@ -490,3 +504,7 @@ mod tests;
 #[cfg(test)]
 #[path = "contract_tests_prompts.rs"]
 mod tests_prompts;
+
+#[cfg(test)]
+#[path = "contract_tests_fresh.rs"]
+mod tests_fresh;

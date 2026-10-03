@@ -14,7 +14,7 @@ use super::super::RunService;
 use super::chain_goal::{Handoff, history_lines};
 use crate::run::chain::{ChainState, newest};
 use crate::run::engine::{EventKind, OrchEvent};
-use crate::run::orch::contract::orchestrator_first_prompt;
+use crate::run::orch::contract::fresh_first_prompt;
 use crate::run::orch::contract_rounds::session_lost_prompt;
 
 impl RunService {
@@ -132,7 +132,7 @@ impl RunService {
                 let bound = Duration::from_secs(run.limits.git_timeout_secs);
                 Some((
                     Handoff::of(chain, ids, prev),
-                    orchestrator_first_prompt(run),
+                    fresh_first_prompt(run),
                     bound,
                 ))
             })
@@ -159,7 +159,7 @@ impl RunService {
         let found = {
             let state = crate::lock(&self.state); // lookup
             state.runs.get(run_id).map(|run| {
-                let first = orchestrator_first_prompt(run);
+                let first = fresh_first_prompt(run);
                 let chain = run.chain.clone().map(|chain| {
                     let of_chain = state.runs.values();
                     let of_chain = of_chain.filter(|r| r.chain.as_deref() == Some(&chain));
