@@ -27,7 +27,7 @@ fn is_merged(task: &TaskRecord) -> bool {
 }
 
 /// The lower middle value (decision 35); `None` for no values.
-fn median<T: Ord + Copy>(mut values: Vec<T>) -> Option<T> {
+pub(super) fn median<T: Ord + Copy>(mut values: Vec<T>) -> Option<T> {
     values.sort_unstable();
     values.get(values.len().checked_sub(1)? / 2).copied()
 }

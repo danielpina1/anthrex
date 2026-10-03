@@ -13,8 +13,8 @@ use proto::{
 use super::super::model::ClassRoutes;
 use super::propose::{current_route, effort_label, list_of, list_text, route_text, thresholds_of};
 use super::{
-    SizeClass, as_budget, budget_samples, budget_text, default_budget, proposals, qualifies,
-    weights_text,
+    SizeClass, as_budget, budget_samples, budget_text, configured, default_budget, proposals,
+    qualifies, weights_text,
 };
 
 /// What a run freezes at start (decision 12); `Tuned::default()` is today exactly.
@@ -45,13 +45,6 @@ impl Tuned {
             SizeClass::M => m,
             SizeClass::Hub => self.budget_hub.unwrap_or(m),
         }
-    }
-}
-
-fn configured(c: ConfiguredBudgets, class: SizeClass) -> bool {
-    match class {
-        SizeClass::S => c.s,
-        SizeClass::M | SizeClass::Hub => c.m,
     }
 }
 

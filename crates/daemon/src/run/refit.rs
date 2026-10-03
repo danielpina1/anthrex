@@ -9,10 +9,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use config::Tuning;
+use config::{ConfiguredBudgets, Tuning};
 use proto::{
     Budget, ClassBudget, ClassRoute, Effort, HistoryLine, PathWeights, PhaseSecs, Size, Strength,
-    TaskKind, TaskOrigin, TaskOutcome, TaskPattern, TaskRecord, TuningFile,
+    TaskKind, TaskOrigin, TaskOutcome, TaskPattern, TaskRecord, TokenUsage, TuningFile,
 };
 
 use super::history_io::effective_reverts;
@@ -191,30 +191,55 @@ pub fn route_samples<'a>(
 /// task of its run and stage exists (such a fix task names a stage, never a task, so it
 /// counts against every plan task of that stage, the conservative reading).
 pub fn failed_on_quality(record: &TaskRecord, lines: &[HistoryLine]) -> bool {
-    let run = record.run_id.as_str();
-    let reverted = effective_reverts(lines)
-        .into_iter()
-        .any(|r| r.run_id == run && r.task_id.as_deref().is_none_or(|t| t == record.task_id));
-    reverted
-        || lines.iter().any(|line| match line {
-            HistoryLine::Bisect(b) => {
-                b.run_id == run && b.culprit.as_deref() == Some(record.task_id.as_str())
+    Quality::of(lines).fails(record)
+}
+
+/// [`failed_on_quality`]'s evidence, read once per pass over the history.
+pub(super) struct Quality<'a> {
+    reverted: Reverted<'a>,
+    /// `(run, task)` a bisect named as its culprit.
+    culprits: HashSet<(&'a str, &'a str)>,
+    /// `(run, stage)` with a CI or review fix task.
+    fixed_stages: HashSet<(&'a str, u16)>,
+}
+
+impl<'a> Quality<'a> {
+    pub(super) fn of(lines: &'a [HistoryLine]) -> Self {
+        let mut q = Quality {
+            reverted: Reverted::of(lines),
+            culprits: HashSet::new(),
+            fixed_stages: HashSet::new(),
+        };
+        for line in lines {
+            match line {
+                HistoryLine::Bisect(b) => {
+                    if let Some(culprit) = &b.culprit {
+                        q.culprits.insert((b.run_id.as_str(), culprit.as_str()));
+                    }
+                }
+                HistoryLine::Task(t) if matches!(t.origin, TaskOrigin::Ci | TaskOrigin::Review) => {
+                    q.fixed_stages.insert((t.run_id.as_str(), t.stage));
+                }
+                _ => {}
             }
-            HistoryLine::Task(t) => {
-                matches!(t.origin, TaskOrigin::Ci | TaskOrigin::Review)
-                    && t.run_id == run
-                    && t.stage == record.stage
-            }
-            _ => false,
-        })
+        }
+        q
+    }
+
+    pub(super) fn fails(&self, record: &TaskRecord) -> bool {
+        let run = record.run_id.as_str();
+        self.reverted.names(record)
+            || self.culprits.contains(&(run, record.task_id.as_str()))
+            || self.fixed_stages.contains(&(run, record.stage))
+    }
 }
 
 // ---- statistics (decision 5) ----
 
 /// The value at index `(n - 1) / 2` of the sorted values; `None` for none.
+/// M8b's `stats::median`, reused (decision 4).
 pub fn lower_median(values: &mut [u64]) -> Option<u64> {
-    values.sort_unstable();
-    values.get(values.len().checked_sub(1)? / 2).copied()
+    super::stats::median(values.to_vec())
 }
 
 /// Nearest rank: the value at index `ceil(p × n / 100) - 1` of the sorted values;
@@ -248,9 +273,9 @@ fn qualifies(samples: &[&TaskRecord], t: &Tuning) -> bool {
     samples.len() as u64 >= u64::from(t.min_samples)
 }
 
-/// `|new − cur| × 100 >= pct × cur`.
+/// `new != cur` and `|new − cur| × 100 >= pct × cur` (0 → 0 is no change).
 fn moved(new: u64, cur: u64, pct: u32) -> bool {
-    new.abs_diff(cur).saturating_mul(100) >= u64::from(pct).saturating_mul(cur)
+    new != cur && new.abs_diff(cur).saturating_mul(100) >= u64::from(pct).saturating_mul(cur)
 }
 
 // ---- budgets (decision 6) ----
@@ -263,9 +288,16 @@ fn fit_budget(samples: &[&TaskRecord], t: &Tuning, now: u64) -> Option<ClassBudg
     let f = u64::from(t.budget_factor_percent);
     let calls = median_of(samples, |r| u64::from(r.tool_calls))?;
     let working = median_of(samples, |r| r.phases.working)?;
-    let tokens = (t.refit_tokens)
-        .then(|| median_of(samples, |r| r.worker_usage.billable()))
+    // Ruling T8-5: only samples that recorded worker usage, and only when they qualify
+    // on their own and their lower median is above 0; else no token refit (the
+    // configured token budget, or none, stays).
+    let recorded: Vec<&TaskRecord> = (samples.iter().copied())
+        .filter(|r| r.worker_usage != TokenUsage::default())
+        .collect();
+    let tokens = (t.refit_tokens && qualifies(&recorded, t))
+        .then(|| median_of(&recorded, |r| r.worker_usage.billable()))
         .flatten()
+        .filter(|&m| m > 0)
         .map(|m| m.saturating_mul(f).div_ceil(100));
     let clamp = |v: u64, lo: u64, hi: u64| v.clamp(lo, hi) as u32;
     Some(ClassBudget {
@@ -304,6 +336,15 @@ fn budget_moved(new: &Budget, cur: &Budget, pct: u32) -> bool {
         || tokens
 }
 
+/// Whether config sets the class's budget explicitly (ruling RH-5); explicit M also
+/// holds hub.
+fn configured(c: ConfiguredBudgets, class: SizeClass) -> bool {
+    match class {
+        SizeClass::S => c.s,
+        SizeClass::M | SizeClass::Hub => c.m,
+    }
+}
+
 /// `<calls> calls <minutes>m`, then ` <tokens> tok` (M8b's `k`/`M` notation) when set.
 pub fn budget_text(b: &Budget) -> String {
     let mut text = format!("{} calls {}m", b.tool_calls, b.minutes);
@@ -314,8 +355,8 @@ pub fn budget_text(b: &Budget) -> String {
 }
 
 /// Rung 4's ceiling (ruling RH-4), per axis: for S, the effective M budget; for M or
-/// hub, the larger of L's budget and twice the effective M budget. No token ceiling
-/// when either side has none.
+/// hub, the larger of L's budget and twice the effective M budget. On the token axis
+/// (ruling T9-1), M without a token budget leaves L's, and L without one leaves none.
 pub fn ceiling(class: SizeClass, effective_m: Budget, budget_l: Budget) -> Budget {
     if class == SizeClass::S {
         return effective_m;
@@ -325,10 +366,8 @@ pub fn ceiling(class: SizeClass, effective_m: Budget, budget_l: Budget) -> Budge
             .tool_calls
             .max(effective_m.tool_calls.saturating_mul(2)),
         minutes: budget_l.minutes.max(effective_m.minutes.saturating_mul(2)),
-        tokens: budget_l
-            .tokens
-            .zip(effective_m.tokens)
-            .map(|(l, m)| l.max(m.saturating_mul(2))),
+        tokens: (budget_l.tokens)
+            .map(|l| effective_m.tokens.map_or(l, |m| l.max(m.saturating_mul(2)))),
     }
 }
 
@@ -363,8 +402,10 @@ fn fit_weights(lines: &[HistoryLine], t: &Tuning, now: u64) -> Option<PathWeight
     })
 }
 
+/// A weight moved by `pct`, or which classes are derived changed.
 fn weights_moved(new: &PathWeights, cur: &PathWeights, pct: u32) -> bool {
-    moved(new.s_secs, cur.s_secs, pct)
+    new.derived != cur.derived
+        || moved(new.s_secs, cur.s_secs, pct)
         || moved(new.m_secs, cur.m_secs, pct)
         || moved(new.hub_secs, cur.hub_secs, pct)
 }
@@ -384,8 +425,8 @@ fn weights_text(w: &PathWeights) -> String {
 
 /// Decisions 6 and 7: the budgets and weights history supports, written into `file`
 /// only where they moved by `min_change_percent` (or were absent), with one refit-write
-/// line each (decision 12). A configured class is refitted too; [`tuned`] decides
-/// whether its refit is used (ruling RH-5).
+/// line each (decision 12). A configured class is refitted too, on any change; [`tuned`]
+/// decides whether its refit is used (ruling RH-5).
 pub fn refit(
     lines: &[HistoryLine],
     file: &TuningFile,
@@ -402,7 +443,14 @@ pub fn refit(
         let default = default_budget(cfg, class);
         let cur = (file.budgets.get(class.key())).map_or(default, |b| as_budget(b, default));
         let new_budget = as_budget(&new, default);
-        if budget_moved(&new_budget, &cur, t.min_change_percent) {
+        // A configured class's refit is only shown (ruling RH-5), so it is kept current
+        // with no change gate: any change is written.
+        let write = if configured(cfg.tuning.configured, class) {
+            new_budget != cur
+        } else {
+            budget_moved(&new_budget, &cur, t.min_change_percent)
+        };
+        if write {
             log.push(format!(
                 "tuning: budget {} {} → {} from {} samples",
                 class.label(),
@@ -442,3 +490,7 @@ mod quality_tests;
 #[cfg(test)]
 #[path = "refit_tests_text.rs"]
 mod text_tests;
+
+#[cfg(test)]
+#[path = "refit_tests_edges.rs"]
+mod edge_tests;

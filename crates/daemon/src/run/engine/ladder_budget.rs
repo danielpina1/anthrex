@@ -74,25 +74,15 @@ pub(super) fn breached(spend: Spend, budget: Budget) -> Option<String> {
     }
 }
 
-/// Rung 4's ceiling (milestone 9.5 ruling RH-4), from the run's frozen budgets: S's is
-/// the effective M budget; M's or hub's, per axis, the larger of L's and twice the
-/// effective M budget. A token axis only M sets has no ceiling, and one only L sets
-/// stays L's, as before 9.5.
+/// Rung 4's ceiling (milestone 9.5 rulings RH-4 and T9-1), from the run's frozen
+/// budgets: `refit::ceiling`, the one rule.
 pub(super) fn ceiling(run: &Run, task: &Task) -> Budget {
     let class = match (task.hub, task.size) {
         (true, _) => SizeClass::Hub,
         (false, Size::S) => SizeClass::S,
         _ => SizeClass::M,
     };
-    let (m, l) = (run.limits.budget_m, run.limits.budget_l);
-    let next = refit::ceiling(class, m, l);
-    match class {
-        SizeClass::S => next,
-        _ => Budget {
-            tokens: next.tokens.or(l.tokens),
-            ..next
-        },
-    }
+    refit::ceiling(class, run.limits.budget_m, run.limits.budget_l)
 }
 
 /// Decisions 38 and 40 for task `i`'s live worker session, in order: rung 4 on the

@@ -10,7 +10,7 @@ use proto::{
 use super::super::model::ClassRoutes;
 use super::super::validate::strength_label;
 use super::{
-    M_ROUTE_LADDER, S_ROUTE_LADDER, SizeClass, failed_on_quality, moved, percentile, qualifies,
+    M_ROUTE_LADDER, Quality, S_ROUTE_LADDER, SizeClass, moved, percentile, qualifies,
     route_samples, threshold_samples,
 };
 
@@ -111,6 +111,7 @@ fn route_proposal(
     file: &TuningFile,
     cfg: &config::Orchestrator,
     class: SizeClass,
+    quality: &Quality,
 ) -> Option<TuningProposal> {
     let t = &cfg.tuning.table;
     let ladder = match class {
@@ -134,7 +135,7 @@ fn route_proposal(
         let pct = escalated * 100 / n;
         let why = format!("{escalated} of {n} {c} tasks, {pct}%, reached rung 2 or higher");
         (ladder.get(at + 1)?, why)
-    } else if escalated == 0 && !samples.iter().any(|r| failed_on_quality(r, lines)) {
+    } else if escalated == 0 && !samples.iter().any(|r| quality.fails(r)) {
         let why = format!("none of {n} {c} tasks reached rung 2 or higher or failed on quality");
         (ladder.get(at.checked_sub(1)?)?, why)
     } else {
@@ -165,7 +166,8 @@ pub fn proposals(
 ) -> Vec<TuningProposal> {
     let classes = [SizeClass::S, SizeClass::M];
     let thresholds = classes.map(|c| threshold_proposal(lines, file, cfg, c));
-    let routes = classes.map(|c| route_proposal(lines, file, cfg, c));
+    let quality = Quality::of(lines);
+    let routes = classes.map(|c| route_proposal(lines, file, cfg, c, &quality));
     (thresholds.into_iter().chain(routes))
         .flatten()
         .filter(|p| file.dismissed.get(&p.id) != Some(&p.proposed))
