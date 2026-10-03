@@ -310,6 +310,32 @@ fn the_large_text_area_keeps_a_row() {
     assert!(kit::editor(&TextArea::editor("hello"), 0, 40, true).is_empty());
 }
 
+/// Final fix wave C-m1 (carried N1): at 60×16 with `custom…` and an error the body is
+/// one row too tall, so the position row goes and the footer stays: `^S start` is still
+/// the hint for retrying. One row taller, both are drawn.
+#[test]
+fn the_footer_outlasts_the_position_row() {
+    let mut f = form();
+    f.runtime = Some(Runtime::Claude);
+    f.model = crate::run_goal::GoalModel::Custom;
+    f.error = Some("type a goal first".into());
+    f.goal = TextArea::editor("hello");
+    let footer = "^S start  Tab options  ^K cut  ^U paste  Esc cancel";
+    let position = "ln 1, col 6";
+    for ascii in [false, true] {
+        let rows = large_rows(&app_with(f.clone(), ascii), 60, 16);
+        let interior = &rows[1..rows.len() - 1];
+        assert_eq!(interior.len(), 12);
+        assert!(interior[11].contains(footer), "{rows:?}");
+        assert!(interior[10].contains("type a goal first"), "{rows:?}");
+        assert!(!rows.iter().any(|r| r.contains(position)), "{rows:?}");
+        let rows = large_rows(&app_with(f.clone(), ascii), 60, 17);
+        let interior = &rows[1..rows.len() - 1];
+        assert!(interior[12].contains(footer), "{rows:?}");
+        assert!(interior[11].contains(position), "{rows:?}");
+    }
+}
+
 /// Review m6: the continued chain's model, daemon text, is drawn cleaned.
 #[test]
 fn a_continued_models_carriers_are_drawn_cleaned() {
