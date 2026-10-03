@@ -29,8 +29,8 @@ import sys
 import tempfile
 import time
 
-from pty_smoke_adapt import STORED_PROFILE
-from pty_smoke_pr import DAEMON_START_WAIT, _stop_daemon
+from pty_smoke_adapt import GOAL_CMD_TIMEOUT, STORED_PROFILE
+from pty_smoke_pr import DAEMON_START_WAIT, _reap, _stop_daemon
 from pty_smoke_run import (
     ACCEPT_CMD_TIMEOUT,
     POLL,
@@ -47,9 +47,9 @@ from pty_smoke_run import (
 # `CONTINUE_GIT_CALLS` (24, a continued start's git calls).
 REQUEST_WAIT, GIT_TIMEOUT_SECS, CONTINUE_GIT_CALLS = 60.0, 5.0, 24
 # `run start --goal`'s legal worst case (stage 11d's `GOAL_CMD_TIMEOUT`,
-# `scripts/pty_smoke_adapt.py`): the first goal's start through the form, and the run
-# view opening on it.
-GOAL_WAIT = 1300.0
+# `scripts/pty_smoke_adapt.py`, imported so the two cannot drift): the first goal's start
+# through the form, and the run view opening on it.
+GOAL_WAIT = GOAL_CMD_TIMEOUT
 # A continued start (`CONTINUE_WAIT` of `support/run_rounds.rs`): every git call at
 # `GIT_TIMEOUT_SECS`, then one engine step and the request's round trip: 180 s.
 CONTINUE_WAIT = CONTINUE_GIT_CALLS * GIT_TIMEOUT_SECS + REQUEST_WAIT
@@ -203,26 +203,24 @@ def _mcp_calls(path):
 
 def _menu_selection(screen):
     """The label of the action menu's selected item (`ui/action_menu.rs`: a row `│ ▌
-    <label>` inside the menu's frame), or `None` while no menu row is selected."""
-    for line in screen.splitlines():
-        at = line.find("│ ▌ ")
-        if at >= 0:
-            return line[at + 4 :].split("│")[0].strip()
+    <label>` inside the menu's frame), or `None` while no menu row is selected. Only the
+    rows inside the menu's frame are read (task 12 review m4): its top border is the
+    screen's first `┌ ` (a dialog's square corner, then its padded title; the panes'
+    corners are rounded, and the graph's connectors run `┌─`), and its rows are the ones
+    whose cell under that corner is `│`, down to its bottom `└`."""
+    lines = screen.splitlines()
+    for top, line in enumerate(lines):
+        col = line.find("┌ ")
+        if col >= 0:
+            break
+    else:
+        return None
+    for line in lines[top + 1 :]:
+        if line[col : col + 1] != "│":
+            break
+        if line[col : col + 4] == "│ ▌ ":
+            return line[col + 4 :].split("│")[0].strip()
     return None
-
-
-def _reap(proc):
-    """Closes the client this stage spawned and reaps its exact pid."""
-    proc.close()
-    deadline = time.monotonic() + 5.0
-    while time.monotonic() < deadline:
-        try:
-            pid, _ = os.waitpid(proc.pid, os.WNOHANG)
-        except ChildProcessError:
-            break
-        if pid == proc.pid:
-            break
-        time.sleep(0.1)
 
 
 def keep_going_stage(pty_proc, bin_path, run_cmd, fail, base_env):

@@ -71,6 +71,9 @@ LAND_WAIT = VIEW_WAIT + FETCH_WAIT + TIER_WAIT + PUSH_WAIT + WRITE + MARGIN
 # daemon binding its socket, and `DAEMON_STOP_CMD_TIMEOUT` (40 s) of
 # `scripts/pty-smoke.py`, `daemon stop`'s 19 s worst case with margin.
 DAEMON_START_WAIT, DAEMON_STOP_WAIT = 60.0, 40.0
+# A closed client's exit, reaped by its pid (`_reap`): it exits as soon as its pty hangs
+# up; a hang guard, not a cost (`docs/timing-budgets.md`).
+REAP_WAIT = 5.0
 
 URL = "https://github.com/fake/app.git"
 
@@ -442,21 +445,25 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         print(f"ok: run {run_id} completed once the user had merged both PRs; nothing asked to land")
     finally:
         if proc is not None:
-            proc.close()
-            # Reap the client this stage spawned (its exact pid only); closing its pty
-            # hangs it up.
-            deadline = time.monotonic() + 5.0
-            while time.monotonic() < deadline:
-                try:
-                    pid, _ = os.waitpid(proc.pid, os.WNOHANG)
-                except ChildProcessError:
-                    break
-                if pid == proc.pid:
-                    break
-                time.sleep(0.1)
+            _reap(proc)
         _stop_daemon(run_cmd, env, socket, daemon)
         if not os.environ.get("ANTHREX_SMOKE_KEEP"):
             shutil.rmtree(root, ignore_errors=True)
+
+
+def _reap(proc):
+    """Closes a client a stage spawned, which hangs up its pty, and reaps its exact pid
+    only, for at most `REAP_WAIT` (stages 11i and 11j, task 12 review m2)."""
+    proc.close()
+    deadline = time.monotonic() + REAP_WAIT
+    while time.monotonic() < deadline:
+        try:
+            pid, _ = os.waitpid(proc.pid, os.WNOHANG)
+        except ChildProcessError:
+            break
+        if pid == proc.pid:
+            break
+        time.sleep(0.1)
 
 
 def _stop_daemon(run_cmd, env, socket, daemon, stage="11i"):
