@@ -1,13 +1,34 @@
 //! Milestone 9.3 (keep going), the orchestrator's side of rounds: the round wake (KG
 //! §2.4, decision 11) and every refusal and reply text of a round's start (decision 9,
 //! 10 and 30; the brief texts of D10); and of next goals (task 6b): the next-goal wake,
-//! the handoff prompt and the continue refusals (decisions 22–24). Task 7 adds rules
-//! 43–46. Pure (design decision 2).
+//! the handoff prompt and the continue refusals (decisions 22–24); and the contract's
+//! rules 43–46 (decision 27, task 7). Pure (design decision 2).
 
 use proto::GOAL_MAX_CHARS;
 
 use super::contract::WAKE_MAX_BYTES;
 use crate::run::delivery::quote::fence;
+
+/// Decision 27: rules 43 to 46 (KG §4), appended to `ORCHESTRATOR_CONTRACT` after
+/// 9.2's rule 42, which ends with no newline. One literal, so `orch/contract.rs` can
+/// `concat!` it (a `const` cannot be). Beyond KG's words (task M9.3.7): rule 43 says
+/// the iterate is alone in its call (decision 30) and stops at the gate whatever
+/// `--yes`, its epics too (decision 12), and that an earlier run cannot be iterated
+/// once a next goal started (D17); rule 45 names D17's delivered run and says a goal
+/// it starts always stops at the gate (KG §3.3, `start_goal`'s `yes = false`).
+macro_rules! round_rules {
+    () => {
+        "
+43. When the user asks you in chat for more work on the goal of your current run while it is complete (or a settled pr run), call edit_plan with iterate and a restatement of their request, and nothing else in that call. The round's plan stops at the plan gate for the user, and so does a new epic added after its approval, even if the run was started with --yes. Never iterate on your own initiative, and never an earlier run once a new goal has started.
+44. In a round, plan only the new work. Earlier rounds' tasks are done and read-only, and new tasks go in new stages after the last one. A new task may depend on an earlier task.
+45. After the user accepts or discards your run, or every pull request of your pr run has landed, you stay as the project's orchestrator. When the user gives you a new goal in chat, call start_goal (in Claude: mcp__anthrex__start_goal) with it. Its plan always stops at the plan gate for the user, even if an earlier run's did not. Never start a goal on your own initiative, and only one goal at a time.
+46. For a new goal, run_status describes the new run. What you remember from earlier runs is context: plan from the new goal, and check facts against the repository."
+    };
+}
+pub(crate) use round_rules;
+
+/// Decision 27's rules 43 to 46, as appended.
+pub const ROUND_RULES: &str = round_rules!();
 
 /// D13: a request wake's own paste cap. A wake carries the fixed text (under 512 bytes
 /// with every number at its widest), the request fenced and the notes' `wake_text`

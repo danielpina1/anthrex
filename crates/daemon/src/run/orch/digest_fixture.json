@@ -71,10 +71,12 @@
     "approved_by": "user",
     "base": "main@bbbbbbb",
     "complete": false,
+    "first_stage": 1,
     "goal": "Test goal",
     "halted_reason": null,
     "id": "add-password-reset-3f9a",
     "path": "large",
+    "round": 1,
     "state": "running",
     "summary_written": false
   },
