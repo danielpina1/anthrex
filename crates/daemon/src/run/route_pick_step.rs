@@ -5,7 +5,7 @@
 use proto::{Route, RoutingCandidate};
 
 use super::*;
-use crate::run::roster::escalate_skipping;
+use crate::run::roster::{escalate_skipping, peer};
 
 /// Decision 9a's rung 2 (and `run retry`'s) for task `i` whose list has two or more
 /// candidates: the next unskipped candidate after the task's current one, cycling. The
@@ -15,8 +15,8 @@ use crate::run::roster::escalate_skipping;
 /// that failed in this task (RL-1), one on the other runtime while an unfinished task on
 /// the current runtime overlaps the task's `owns`, and one below the current route —
 /// unless the current route failed in this task, when the step is a substitution and
-/// any strength will do (ruling T10a-3). `None` (a list of one, a current route the list does not hold, or nothing left)
-/// leaves rung 2 to `roster::escalate`.
+/// any strength will do (ruling T10a-3). `None` (a list of one, a current route the
+/// list does not hold, or nothing left) leaves rung 2 to the roster ([`rung2_route`]).
 pub fn next_candidate(
     limits: &RunLimits,
     tasks: &[Task],
@@ -83,8 +83,9 @@ fn below(to: &Route, from: &Route) -> bool {
 
 /// The route rung 2 and `run retry` give task `i` (decision 9a, ruling RL-1): its
 /// list's [`next_candidate`], else `roster::escalate`, each skipping a route that failed
-/// in this task; with the list's step for the routing history. Ruling T10a-3: when
-/// nothing is left but a failed route, the task's own route is retried
+/// in this task; with the list's step for the routing history. Ruling T10a-5: when the
+/// current route failed in this task and the list has no step, the roster substitutes
+/// for it ([`roster_substitute`]); with nothing left, the task's own route is retried
 /// ([`every_route_failed`] says so).
 pub fn rung2_route(run: &Run, i: usize) -> (Route, Option<ListPick>) {
     let (task, installed) = (&run.tasks[i], &run.orch.installed);
@@ -92,16 +93,48 @@ pub fn rung2_route(run: &Run, i: usize) -> (Route, Option<ListPick>) {
         return (route, Some(step));
     }
     let failed = failed_routes(task);
-    let route = escalate_skipping(&run.roster, &task.route, &failed);
-    if failed_in(&failed, &route) {
-        return (task.route.clone(), None);
+    if failed_in(&failed, &task.route) {
+        let route = roster_substitute(&run.roster, &task.route, &failed, installed);
+        return (route.unwrap_or_else(|| task.route.clone()), None);
     }
-    (route, None)
+    (escalate_skipping(&run.roster, &task.route, &failed), None)
 }
 
-/// Ruling T10a-3: the run-log line when task `i`'s next route, `route` (from
-/// [`rung2_route`]), failed in this task too: every route did, and the original is
-/// retried.
+/// Ruling T10a-5: a substitute for `current`, which failed in this task, from the
+/// roster entries that have not failed in it and whose runtime is installed: the peer
+/// runtime's first at the same strength, else the strongest left (the peer runtime's
+/// first, else the roster's first, on a tie). At `high` effort, as
+/// `roster::escalate_skipping` steps on from a failed route. `None` when every roster
+/// route has failed.
+fn roster_substitute(
+    roster: &[ModelEntry],
+    current: &Route,
+    failed: &[Route],
+    installed: &Installed,
+) -> Option<Route> {
+    let route = |e: &ModelEntry| Route {
+        runtime: e.runtime,
+        model: e.model.clone(),
+        strength: e.strength,
+        effort: Effort::High,
+    };
+    let left: Vec<&ModelEntry> = (roster.iter())
+        .filter(|e| !missing(installed, e.runtime) && !failed_in(failed, &route(e)))
+        .collect();
+    let peer = peer(current.runtime);
+    let strongest = left.iter().map(|e| e.strength).max()?;
+    let at = |runtime: Option<Runtime>, strength: Strength| {
+        (left.iter()).find(|e| e.strength == strength && runtime.is_none_or(|r| e.runtime == r))
+    };
+    let entry = (at(Some(peer), current.strength))
+        .or_else(|| at(Some(peer), strongest))
+        .or_else(|| at(None, strongest))?;
+    Some(route(entry))
+}
+
+/// Rulings T10a-3, T10a-5: the run-log line when task `i`'s next route, `route` (from
+/// [`rung2_route`]), failed in this task too: every list and roster route did, and the
+/// original is retried.
 pub fn every_route_failed(run: &Run, i: usize, route: &Route) -> Option<String> {
     let task = &run.tasks[i];
     failed_in(&failed_routes(task), route).then(|| {

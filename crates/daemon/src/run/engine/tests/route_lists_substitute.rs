@@ -128,3 +128,85 @@ fn with_every_route_failed_a_retry_takes_the_original_and_logs_it() {
         fx.run().log
     );
 }
+
+/// A working `t1` on opus with no list and the default roster (codex holds only its
+/// Standard default); its window.
+fn working_unlisted() -> (Fixture, u32) {
+    let plan = plan_with(PROFILE, &[task("t1", "S", "a", CHECK_MODE)]);
+    let mut fx = Fixture::with_config(&plan, config::Orchestrator::default());
+    fx.start_with(true, |run| run.tasks[0].route = opus());
+    let (op, _) = fx.op("CreateRunBranch");
+    fx.done(
+        op,
+        crate::run::engine::OpResult::Worktree { head: BASE.into() },
+    );
+    let window = fx.launch_all()[0].1;
+    assert_eq!(fx.task("t1").route, opus());
+    (fx, window)
+}
+
+fn opus() -> Route {
+    Route {
+        runtime: Runtime::Claude,
+        model: "claude-opus-5-5".into(),
+        strength: Strength::Frontier,
+        effort: Effort::Medium,
+    }
+}
+
+/// Ruling T10a-5: Codex's Standard default, the strongest route left, on the peer runtime.
+fn codex_default() -> Route {
+    Route {
+        runtime: Runtime::Codex,
+        model: String::new(),
+        strength: Strength::Standard,
+        effort: Effort::High,
+    }
+}
+
+#[test]
+fn with_no_list_run_retry_substitutes_a_failed_route_from_the_roster() {
+    let (mut fx, window) = working_unlisted();
+    client_error(&mut fx, window);
+    retry(&mut fx, "t1");
+    assert_eq!(fx.task("t1").route, codex_default());
+    assert!(
+        !fx.run()
+            .log
+            .iter()
+            .any(|e| e.text.starts_with("every route"))
+    );
+}
+
+#[test]
+fn with_no_list_rung_2_substitutes_a_failed_route_from_the_roster() {
+    let (mut fx, _) = working_unlisted();
+    let t1 = fx.task_mut("t1");
+    let k = t1.rounds.len() - 1;
+    t1.rounds[k].environment_failed = true;
+    let mut effects = Vec::new();
+    let now = fx.now;
+    super::super::ladder::rung2(fx.run_mut(), 0, "a test".into(), now, &mut effects);
+    assert_eq!(fx.task("t1").route, codex_default());
+}
+
+#[test]
+fn with_every_roster_route_failed_a_retry_takes_the_original_and_logs_it() {
+    let (mut fx, window) = working_unlisted();
+    client_error(&mut fx, window);
+    let k = fx.task("t1").rounds.len() - 1;
+    for e in fx.run().roster.clone() {
+        let mut earlier = fx.task("t1").rounds[k].clone();
+        earlier.route = Route {
+            runtime: e.runtime,
+            model: e.model.clone(),
+            strength: e.strength,
+            effort: Effort::Low,
+        };
+        fx.task_mut("t1").rounds.push(earlier);
+    }
+    retry(&mut fx, "t1");
+    assert_eq!(fx.task("t1").route, opus());
+    let line = "every route for task t1 failed in this task; retrying claude/claude-opus-5-5";
+    assert!(fx.run().log.iter().any(|e| e.text == line));
+}

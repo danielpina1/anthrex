@@ -274,3 +274,56 @@ fn with_every_route_failed_the_original_is_retried_and_said() {
         Some("every route for task t1 failed in this task; retrying claude/claude-opus-5-5")
     );
 }
+
+/// Ruling T10a-5: with no list (and for an explicit route the list does not hold), a
+/// route that failed in this task is substituted from the roster: the peer runtime at
+/// the same strength, else the strongest route left (the peer runtime first on a tie);
+/// only when every route has failed is the original retried, and said.
+#[test]
+fn with_no_list_a_failed_route_is_substituted_from_the_roster() {
+    let mut run = built(&[m("t1", "[\"crates/a/**\"]", "")], RouteLists::default());
+    run.tasks[0].route = opus(Effort::Medium);
+    // Not failed: rung 2 escalates, never weaker.
+    assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
+    // Failed: the peer runtime at the same strength.
+    run.tasks[0].rounds = vec![failed_round(opus(Effort::Medium))];
+    assert_eq!(rung2_route(&run, 0), (sol(Effort::High), None));
+    // That failed too: the strongest left, the peer runtime's (Codex's default) first.
+    run.tasks[0].rounds.push(failed_round(sol(Effort::High)));
+    let codex_default = route(Runtime::Codex, "", Strength::Standard, Effort::High);
+    let (next, _) = rung2_route(&run, 0);
+    assert_eq!(next, codex_default);
+    assert_eq!(every_route_failed(&run, 0, &next), None);
+    // Every roster route failed: the original, said.
+    for e in run.roster.clone() {
+        let r = route(e.runtime, &e.model, e.strength, Effort::Low);
+        run.tasks[0].rounds.push(failed_round(r));
+    }
+    let (next, _) = rung2_route(&run, 0);
+    assert_eq!(next, opus(Effort::Medium));
+    assert_eq!(
+        every_route_failed(&run, 0, &next).as_deref(),
+        Some("every route for task t1 failed in this task; retrying claude/claude-opus-5-5")
+    );
+}
+
+/// Ruling T10a-5: an explicit route the list does not hold is substituted from the
+/// roster too.
+#[test]
+fn a_failed_unlisted_explicit_route_is_substituted_from_the_roster() {
+    let lists = RouteLists {
+        m: list(
+            Pick::First,
+            vec![
+                cand(Runtime::Claude, SONNET, None),
+                cand(Runtime::Codex, LUNA, None),
+            ],
+        ),
+        ..Default::default()
+    };
+    let extra = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-opus-5-5\"";
+    let mut run = built(&[m("t1", "[\"crates/a/**\"]", extra)], lists);
+    assert_eq!(task(&run, "t1").route.model, OPUS);
+    run.tasks[0].rounds = vec![failed_round(task(&run, "t1").route.clone())];
+    assert_eq!(rung2_route(&run, 0), (sol(Effort::High), None));
+}
