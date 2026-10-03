@@ -3,7 +3,8 @@
 //! stand-in that sleeps): an idle chain's window that exited before its chain was seen
 //! ended is not adopted; the adoption is lost (review B, M1). A delivered run iterated after its window was closed starts a
 //! fresh session with its handoff (review A, M3); and an adopted window still reaches
-//! its chain after an evicted chain iterates (task 6b fix round 4, on a real window).
+//! its chain after an evicted chain iterates (task 6b fix round 4, on a real window);
+//! `start_goal` from an unchained orchestrator is refused in its words (review B, M5).
 //! No agent runs; the tests kill only the windows the rig and its runs made.
 
 use std::time::{Duration, Instant};
@@ -195,5 +196,37 @@ async fn an_adopted_window_reaches_its_chain_after_an_evicted_chain_iterates() {
     assert!(ok, "{context}");
     let (ok, answer) = call("edit_plan", json!({})).await;
     assert!(ok, "{answer}");
+    rig.stop().await;
+}
+
+/// B-M5: an orchestrator whose run has no chain (one restored from before 9.3, A-M4,
+/// accepted) calls `start_goal`: the refusal is worded for the orchestrator, naming
+/// no CLI flag.
+#[tokio::test(flavor = "multi_thread")]
+async fn start_goal_from_an_unchained_orchestrator_is_refused_in_its_words() {
+    let rig = ChainRig::new(|prev| prev.chain = None).await;
+    assert!(crate::lock(&rig.s.state).chains.is_empty());
+    let opts = mcp::McpOptions {
+        role: AgentRole::Orchestrator,
+        run_id: PREV.into(),
+        task_id: None,
+        scout_id: None,
+        epic: None,
+        window_id: rig.window,
+        socket: rig.socket.clone(),
+        chain: None,
+    };
+    let (ok, text) = tokio::time::timeout(
+        ANSWER,
+        mcp::forward(&opts, "start_goal", json!({"goal": "Add a logout button"})),
+    )
+    .await
+    .expect("answered");
+    assert!(!ok, "{text}");
+    let refusal = "this orchestrator has no chain to continue; the user starts the next goal \
+                   with a new orchestrator";
+    let answer: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(answer, json!({ "error": refusal }));
+    assert!(rig.new_runs().is_empty());
     rig.stop().await;
 }

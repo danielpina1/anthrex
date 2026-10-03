@@ -28,7 +28,7 @@ use crate::run::engine::{EventKind, HISTORY_FILE};
 use crate::run::model::{LogEntry, Run};
 use crate::run::orch::contract::orchestrator_first_prompt;
 use crate::run::orch::contract_rounds::{
-    CONTINUE_TOO_SLOW, goal_started, handoff_prompt, other_project,
+    CONTINUE_TOO_SLOW, NO_CHAIN_FOR_TOOL, goal_started, handoff_prompt, other_project,
 };
 
 /// Decision 24: how many of the chain's history lines a fresh session's first prompt
@@ -151,6 +151,14 @@ impl RunService {
                 .runs
                 .get(last)
                 .ok_or_else(|| format!("unknown run {last}"))?;
+            // The final fix wave (B-M5): no chain, in the orchestrator's words.
+            let chained = prev
+                .chain
+                .as_deref()
+                .is_some_and(|c| state.chains.contains_key(c));
+            if !chained {
+                return Err(NO_CHAIN_FOR_TOOL.to_string());
+            }
             Next::inherited(prev, goal)
         };
         let run_id = self

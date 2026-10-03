@@ -240,6 +240,11 @@ pub fn goal_started(run_id: &str) -> String {
     format!("run {run_id} started")
 }
 
+/// The final fix wave (review B, M5): `start_goal` from an orchestrator whose run has no
+/// chain in the table (a run from before 9.3, A-M4), worded for the orchestrator; the
+/// CLI's own refusal is [`no_chain_to_continue`].
+pub const NO_CHAIN_FOR_TOOL: &str = "this orchestrator has no chain to continue; the user starts the next goal with a new orchestrator";
+
 /// Task 6b (6a re-review): `start_goal` from the window of a chain that left the table
 /// (D16), a plain window since (decision 19).
 pub fn chain_left(chain: &str) -> String {

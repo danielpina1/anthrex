@@ -184,7 +184,9 @@ impl ChainRig {
             let mut state = crate::lock(&s.state);
             state.runs.insert(PREV.into(), prev);
             state.chains = rebuild(&state.runs);
-            state.chains.get_mut(CHAIN).unwrap().ended = false;
+            if let Some(chain) = state.chains.get_mut(CHAIN) {
+                chain.ended = false;
+            }
         }
         let shutdown = CancellationToken::new();
         s.spawn(shutdown.clone());
