@@ -1,4 +1,5 @@
 mod forest;
+mod labels;
 mod names;
 mod rows;
 mod run_rows;
@@ -6,9 +7,10 @@ mod runs;
 mod types;
 
 pub use forest::{SubagentNode, subagent_forest};
+pub use labels::{format_elapsed, short_model, subagent_label};
 pub use names::display_names;
 use proto::{
-    AgentRole, PlannerInfo, RunInfo, Runtime, ScoutInfo, StageInfo, Status, SubagentInfo, TaskInfo,
+    AgentRole, PlannerInfo, RunInfo, ScoutInfo, StageInfo, Status, SubagentInfo, TaskInfo,
     WindowInfo,
 };
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
@@ -20,8 +22,6 @@ pub use runs::{
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 pub use types::{DisplayRound, RuntimeCounts};
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NodeKey {
@@ -480,60 +480,6 @@ pub fn urgency(status: Status) -> u8 {
 
 /// A runtime's two-letter tag: `theme::runtime_tag`, the one table (final fix wave M5).
 pub use crate::theme::runtime_tag;
-
-pub fn short_model(runtime: Runtime, model: &str) -> String {
-    let model = match runtime {
-        Runtime::Claude => {
-            let stripped = model.strip_prefix("claude-").unwrap_or(model);
-            let numeric_suffix = stripped.char_indices().find_map(|(index, character)| {
-                (character == '-'
-                    && stripped[index + character.len_utf8()..]
-                        .chars()
-                        .next()
-                        .is_some_and(|next| next.is_ascii_digit()))
-                .then_some(index)
-            });
-            &stripped[..numeric_suffix.unwrap_or(stripped.len())]
-        }
-        Runtime::Codex | Runtime::Shell => model,
-    };
-    cut_to_width(model, 8)
-}
-
-fn cut_to_width(text: &str, max_width: usize) -> String {
-    let mut end = 0;
-    for (index, grapheme) in text.grapheme_indices(true) {
-        let candidate_end = index + grapheme.len();
-        if UnicodeWidthStr::width(&text[..candidate_end]) > max_width {
-            break;
-        }
-        end = candidate_end;
-    }
-    text[..end].to_owned()
-}
-
-/// The text a sub-agent row shows in its name column: `kind: label` when a
-/// label was set, `kind` alone otherwise.
-///
-/// Shared by the sidebar and the graph overview's layout and painter, so the
-/// string a tier is sized to and the string drawn inside it can never drift
-/// apart into two definitions.
-pub fn subagent_label(info: &SubagentInfo) -> String {
-    match info.label.as_deref() {
-        Some(label) => format!("{}: {label}", info.kind),
-        None => info.kind.clone(),
-    }
-}
-
-pub fn format_elapsed(secs: u64) -> String {
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else {
-        format!("{}h", secs / 3600)
-    }
-}
 
 #[cfg(test)]
 mod tests;
