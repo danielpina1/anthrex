@@ -61,7 +61,9 @@ pub(super) fn start(
     }
     // Milestone 9.3 decision 18: every run starts in round 1.
     super::goal_rounds::ensure_first(&mut run);
-    // Milestone 9.3 decision 19: a run with an orchestrator starts its chain.
+    // Milestone 9.3 decision 19: a run with an orchestrator starts its chain, unless it
+    // continues one (decisions 23, 24: it joins it, or is refused).
+    let continued = run.chain.is_some();
     super::chains::assign(&mut run);
     let fast = run.path == Some(RunPath::Fast);
     // Review I1: the engine's own barrier. A fast-path run is one task, neither hub nor
@@ -69,6 +71,10 @@ pub(super) fn start(
     if let Some(reason) = fast.then(|| fast_refusal(&run)).flatten() {
         return reply(fx, id, Err(reason));
     }
+    let join = match super::chains::join(state, &mut run, continued, now, fx) {
+        Ok(join) => join,
+        Err(text) => return reply(fx, id, Err(text)),
+    };
     if fast {
         // M8b decision 24: a fast-path run has no plan gate.
         run.state = RunState::Running;
@@ -97,7 +103,7 @@ pub(super) fn start(
         env: profile_env(&run.profile, &path),
     };
     emit_op(&mut run, op, None, kind, fx);
-    if run.state == RunState::Planning {
+    if run.state == RunState::Planning && join != super::chains::Join::Adopted {
         super::orch_window::launch(&mut run, now, fx);
     }
     // M8b decision 19: every task is cross-checked; one waiting is not runnable. The

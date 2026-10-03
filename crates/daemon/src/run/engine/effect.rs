@@ -86,4 +86,12 @@ pub enum Effect {
         /// delivered. Daemon-internal: no wire field.
         request: Option<u32>,
     },
+    /// Milestone 9.3 decision 23: a continued run takes its idle chain's orchestrator
+    /// window, renamed `name` and rebound to `run_id`, its session never restarted
+    /// (`driver/chain_ops.rs`, off every lock).
+    AdoptOrchestrator {
+        run_id: String,
+        window_id: u32,
+        name: String,
+    },
 }

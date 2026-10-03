@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use proto::{AgentRole, IdleOrchestrator, RunState, Runtime, ToolCall};
 
 use super::model::Run;
+use super::orch::contract_rounds::{chain_left, no_chain_to_continue, not_last, still_going};
 
 /// The tools an idle orchestrator may call (decision 21): its last run's two reads and
 /// `start_goal`.
@@ -75,15 +76,33 @@ pub fn chain_id(run: &Run) -> String {
 /// Task M9.3.6a fix round 1, m1: whether a run `id` would start a chain whose id is
 /// already a chain's in the table, or a run's own (a chain dropped from the table
 /// keeps its id on its runs, which a restart's [`rebuild`] would merge). `o-<h4>`
-/// keeps only the id's last four characters, so the run-id draw avoids these.
+/// keeps only the id's last four characters, so the run-id draw avoids these. Task
+/// 6b (6a re-review N1): also any run's own suffix, since a plain run can be promoted
+/// later and then starts `o-<its suffix>` (`engine/chains.rs::assign`).
 pub fn suffix_taken(
     chains: &BTreeMap<String, Chain>,
     runs: &BTreeMap<String, Run>,
     id: &str,
 ) -> bool {
     let cut = id.len().saturating_sub(4);
-    let chain = format!("o-{}", id.get(cut..).unwrap_or(id));
-    chains.contains_key(&chain) || runs.values().any(|r| r.chain.as_deref() == Some(&chain))
+    let suffix = id.get(cut..).unwrap_or(id);
+    let chain = format!("o-{suffix}");
+    chains.contains_key(&chain)
+        || runs
+            .values()
+            .any(|r| r.chain.as_deref() == Some(&chain) || r.short() == suffix)
+}
+
+/// The newest run carrying `chain` (`Run.chain`), but `except`: the latest created,
+/// the id breaking a tie, as [`rebuild`] orders a chain's runs.
+pub fn newest<'a>(
+    runs: &'a BTreeMap<String, Run>,
+    chain: &str,
+    except: Option<&str>,
+) -> Option<&'a Run> {
+    runs.values()
+        .filter(|r| r.chain.as_deref() == Some(chain) && Some(r.id.as_str()) != except)
+        .max_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)))
 }
 
 /// Decision 19, at `EventKind::Restore`: one chain per `Run.chain`, its runs oldest
@@ -154,16 +173,21 @@ pub fn make_idle(chains: &mut BTreeMap<String, Chain>, id: &str) {
         return;
     };
     chain.state = ChainState::Idle;
+    // Task 6b (6a review m2): an orchestrator that never launched has no session to
+    // adopt, so its chain is ended (a continue launches a fresh one).
+    chain.ended |= chain.window_id == 0;
     let project = chain.project.clone();
     chains.retain(|other, c| other == id || c.state != ChainState::Idle || c.project != project);
 }
 
 /// Decision 20 (KG §3.4), as D16 amends it: the run a chained orchestrator call
-/// reaches. `Ok(None)`: the call carries no chain, or is not the orchestrator's, or its
-/// chain has left the table (its run failed, or it was the project's older idle chain)
-/// and the run it names carries that chain; it stays as it is, as before 9.3 (KG §3.1,
-/// decision 19). `Ok(Some)`: the chain's current run, for a call naming any run of the
-/// chain. Otherwise refused, never redirected.
+/// reaches. `Ok(None)`: the call carries no chain, or is not the orchestrator's; it
+/// stays as it is. `Ok(Some)`: the chain's current run, for a call naming any run of
+/// the chain; or, when its chain has left the table (its run failed, or it was the
+/// project's older idle chain) and the run it names carries that chain, the newest run
+/// carrying it (task 6b: an adopted window's MCP target still names the chain's first
+/// run), whose window stays a plain one (KG §3.1, decision 19), so its `start_goal` is
+/// refused. Otherwise refused, never redirected.
 pub fn resolve(
     chains: &BTreeMap<String, Chain>,
     runs: &BTreeMap<String, Run>,
@@ -181,7 +205,8 @@ pub fn resolve(
     };
     match chains.get(id) {
         Some(chain) if chain.runs.contains(&call.run_id) => Ok(Some(chain.current().to_string())),
-        None if carries() => Ok(None),
+        None if carries() && call.tool == "start_goal" => Err(chain_left(id)),
+        None if carries() => Ok(newest(runs, id, None).map(|r| r.id.clone())),
         _ => Err(format!(
             "this window is the orchestrator of {id}; run {} is not one of its runs",
             call.run_id
@@ -198,6 +223,37 @@ pub fn idle_refusal(chain: &Chain, last: &Run, tool: &str) -> Option<String> {
             last.short()
         )
     })
+}
+
+/// Decision 22, step 1 (KG §3.3, §3.5): the chain a goal continuing from run `after`
+/// joins, and that run, or the refusal: an unknown run, a run whose chain is not in the
+/// table, an earlier run of its chain, or a chain whose current run has not ended. The
+/// project's check needs the goal's directory resolved, so it is the driver's.
+pub fn continuable<'a>(
+    chains: &'a BTreeMap<String, Chain>,
+    runs: &'a BTreeMap<String, Run>,
+    after: &str,
+) -> Result<(&'a Chain, &'a Run), String> {
+    let run = runs
+        .get(after)
+        .ok_or_else(|| format!("unknown run {after}"))?;
+    let chain = run
+        .chain
+        .as_deref()
+        .and_then(|id| chains.get(id))
+        .ok_or_else(|| no_chain_to_continue(run.short()))?;
+    let current = chain.current();
+    let h4 = |id: &str| {
+        runs.get(id)
+            .map_or(id.to_string(), |r| r.short().to_string())
+    };
+    if current != after {
+        return Err(not_last(run.short(), &chain.id, &h4(current)));
+    }
+    if chain.state == ChainState::Active {
+        return Err(still_going(&h4(current)));
+    }
+    Ok((chain, run))
 }
 
 /// `RunsSnapshot.idle_orchestrators`: every idle chain whose last run is known.
@@ -227,3 +283,7 @@ pub fn idle_list(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "continue_tests.rs"]
+mod continue_tests;

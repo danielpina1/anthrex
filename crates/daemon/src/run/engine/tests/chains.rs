@@ -17,7 +17,7 @@ use crate::run::snapshot::snapshot;
 const CHAIN: &str = "o-3f9a";
 
 /// `run accept` or `run discard` of the fixture run, its op answered.
-fn finished(fx: &mut Fixture, action: FinishAction) {
+pub(super) fn finished(fx: &mut Fixture, action: FinishAction) {
     let reply = fx.reply();
     fx.next(EventKind::Finish {
         reply,
@@ -39,14 +39,14 @@ fn finished(fx: &mut Fixture, action: FinishAction) {
 }
 
 /// [`complete`], then finished with `action`.
-fn ended(action: FinishAction) -> Fixture {
+pub(super) fn ended(action: FinishAction) -> Fixture {
     let mut fx = complete();
     assert_eq!(fx.state.chains[CHAIN].state, ChainState::Active);
     finished(&mut fx, action);
     fx
 }
 
-fn gone(fx: &mut Fixture, window_id: u32) -> Vec<Effect> {
+pub(super) fn gone(fx: &mut Fixture, window_id: u32) -> Vec<Effect> {
     fx.next(EventKind::Orch(OrchEvent::ChainWindowGone {
         chain: CHAIN.into(),
         window_id,

@@ -271,7 +271,7 @@ impl RunService {
     }
 
     /// Decision 11: window `id` is the orchestrator of a run that has not ended.
-    fn mark_live(&self, run_id: &str, id: u32) {
+    pub(in crate::run::driver) fn mark_live(&self, run_id: &str, id: u32) {
         let ended = crate::lock(&self.state)
             .runs
             .get(run_id)

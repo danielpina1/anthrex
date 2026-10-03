@@ -153,8 +153,9 @@ fn resolve_leaves_unchained_calls_alone() {
 }
 
 /// D16 (decision 20 amended): a chain no longer in the table (its run failed, or it
-/// was the project's older idle chain) leaves its own run's calls as they are; a run
-/// that does not carry the chain is still refused.
+/// was the project's older idle chain) reaches its own runs, the newest of them (task
+/// 6b's ruling; here its only one); a run that does not carry the chain is still
+/// refused.
 #[test]
 fn resolve_lets_a_chain_that_left_the_table_reach_its_own_run() {
     let chains = table(vec![chain(
@@ -171,7 +172,10 @@ fn resolve_lets_a_chain_that_left_the_table_reach_its_own_run() {
         stranger,
     ]);
     let own = call("failed-3f9a", Some("o-3f9a"), "run_status");
-    assert_eq!(resolve(&chains, &all, &own), Ok(None));
+    assert_eq!(
+        resolve(&chains, &all, &own),
+        Ok(Some("failed-3f9a".to_string()))
+    );
     let refused = |run_id: &str| {
         format!("this window is the orchestrator of o-3f9a; run {run_id} is not one of its runs")
     };

@@ -60,7 +60,7 @@ pub(super) fn planned(yes: bool) -> Fixture {
         resolve_orchestrator(None, &agent, run.limits.default_runtime, &run.roster).unwrap();
     make_planned(
         &mut run,
-        triage(RunPath::Plan),
+        Some(triage(RunPath::Plan)),
         resolved,
         yes,
         BTreeMap::new(),

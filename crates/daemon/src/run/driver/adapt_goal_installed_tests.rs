@@ -59,7 +59,7 @@ fn empty_plan() -> proto::Plan {
 
 fn planned(choice: Option<Runtime>) -> Shape {
     Shape::Planned(Box::new(Planned {
-        triage: proto::TriageInfo {
+        triage: Some(proto::TriageInfo {
             kinds: vec![proto::TaskKind::Code],
             scale: proto::Scale::Plan,
             path: proto::RunPath::Plan,
@@ -67,7 +67,7 @@ fn planned(choice: Option<Runtime>) -> Shape {
             source: proto::DeciderSource::Decider,
             fallback_reason: None,
             at: 1,
-        },
+        }),
         usage: None,
         yes: false,
         choice: choice.map(|runtime| OrchestratorChoice {

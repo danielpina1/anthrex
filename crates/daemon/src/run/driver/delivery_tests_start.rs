@@ -166,7 +166,7 @@ async fn local_mode_calls_no_host() {
 /// and renamed into place, then executed once (a guard makes that run exit at once),
 /// retrying while a concurrent fork still holds a writable copy of its descriptor
 /// (`ETXTBSY`), so the daemon's exec of it is never the first and never busy.
-fn decider_stand_in(dir: &Path) -> (String, std::path::PathBuf) {
+pub(in crate::run::driver) fn decider_stand_in(dir: &Path) -> (String, std::path::PathBuf) {
     let marker = dir.join("decider-called");
     let script = dir.join("decider.sh");
     let staged = dir.join("decider.sh.new");
@@ -304,11 +304,14 @@ async fn preflight_runs_before_triage_for_a_goal() {
     handle.abort();
 }
 
-/// Milestone 9.3 (task M9.3.2 fix round 1, I1): a goal that continues a chain is
-/// refused until M9.3.6b, never started as a new run: no decider call, no run, no ref,
-/// no host call. The same goal without `continue_from` reaches triage on this rig.
+/// Milestone 9.3 (task M9.3.2 fix round 1, I1; task 6b): a goal continuing a run is
+/// routed to `chain_goal.rs`, never started as a new run, and one naming a run that
+/// does not exist is refused by the chain lookup, before preflight: no decider call, no
+/// run, no ref, no host call. The same goal without `continue_from` reaches triage on
+/// this rig. (Changed expectation: task 2's placeholder refusal `continuing an
+/// orchestrator is not available yet` is gone.)
 #[tokio::test(flavor = "multi_thread")]
-async fn a_continued_goal_is_refused_until_chains_exist() {
+async fn a_continued_goal_of_an_unknown_run_is_refused_before_preflight() {
     let rig = Rig::new(true);
     rig.ctl.create_repo("fake", "app", &rig.bare, "main");
     rig.ctl.log_in("github.com");
@@ -317,10 +320,7 @@ async fn a_continued_goal_is_refused_until_chains_exist() {
     let reply = ask(&s, pr_goal(&rig, Some("run-x"))).await;
     assert_eq!(
         reply,
-        RunReply::refused(
-            request::START_GOAL,
-            "continuing an orchestrator is not available yet"
-        )
+        RunReply::refused(request::START_GOAL, "unknown run run-x")
     );
     assert!(!marker.exists(), "a continued goal reached triage");
     assert!(s.current().runs.is_empty());

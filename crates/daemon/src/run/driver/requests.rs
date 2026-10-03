@@ -115,15 +115,28 @@ impl RunService {
                 self.start_goal(goal, dir, flags, yes, (orchestrator, delivery))
                     .await
             }
-            // Milestone 9.3: continuing a chain arrives with task M9.3.6b; until then it
-            // is refused, never started as a new run.
+            // Milestone 9.3 decision 22: a next goal on a chain's orchestrator, which
+            // keeps its runtime and model (`orchestrator` is ignored).
             RunRequest::StartGoal {
-                continue_from: Some(_),
+                goal,
+                dir,
+                yes,
+                trust_project,
+                unconfined_checks,
+                delivery,
+                continue_from: Some(after),
                 ..
-            } => RunReply::refused(
-                request::START_GOAL,
-                "continuing an orchestrator is not available yet",
-            ),
+            } => {
+                let next = super::orch::Next {
+                    goal,
+                    dir,
+                    trust_project,
+                    unconfined_checks,
+                    yes,
+                    delivery,
+                };
+                self.continue_request(&after, next).await
+            }
             RunRequest::Promote {
                 run_id,
                 orchestrator,

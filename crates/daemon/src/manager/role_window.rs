@@ -206,6 +206,27 @@ impl WindowManager {
         true
     }
 
+    /// Milestone 9.3 decision 23: run window `id` becomes `run_ref`'s, a continued run
+    /// adopting its chain's orchestrator, in the persisted record too (as
+    /// [`Self::update_role_env`] keeps it), so a restart restores it as that run's. The
+    /// live flag stays as it is and now guards `run_ref`'s run: the ended run's
+    /// `end_run_window` no longer reaches it. Under the lock, no I/O.
+    pub fn rebind_run_window(&self, id: u32, run_ref: RunRef) -> anyhow::Result<()> {
+        let mut inner = crate::lock(&self.inner);
+        let entry = inner
+            .entries
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        let role = entry
+            .role
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("window {id} is not a run window"))?;
+        role.run_ref = run_ref;
+        entry.run = Some(role_record(role));
+        self.publish(&inner);
+        Ok(())
+    }
+
     /// Tests only: holds (or releases) `id`'s `restarting` flag as a restart in flight
     /// would, so the driver's exit check can be seen during one.
     #[cfg(test)]
@@ -284,3 +305,7 @@ impl WindowManager {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "role_window_tests.rs"]
+mod tests;

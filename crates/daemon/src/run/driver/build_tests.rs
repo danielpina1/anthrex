@@ -173,4 +173,20 @@ fn a_run_id_never_takes_a_chains_suffix() {
         service.pick_id("add login", &[]),
         Err("could not pick a free run id".to_string())
     );
+
+    // Task 6b (6a re-review N1): an unchained run's own suffix counts too, since a
+    // promotion would start `o-<its suffix>` (`engine/chains.rs::assign`).
+    let mut state = crate::lock(&service.state);
+    state.runs.clear();
+    for n in 0..=u16::MAX {
+        let mut run = base.clone();
+        run.id = format!("plain-{n:04x}");
+        run.chain = None;
+        state.runs.insert(run.id.clone(), run);
+    }
+    drop(state);
+    assert_eq!(
+        service.pick_id("add login", &[]),
+        Err("could not pick a free run id".to_string())
+    );
 }

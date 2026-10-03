@@ -26,8 +26,11 @@ use crate::run::orch::context::Asker;
 use crate::run::orch::result::{TaskGit, task_result};
 use crate::run::orch::tools::{OrchCall, parse_call};
 
+#[path = "chain_goal.rs"]
+mod chain_goal;
 #[path = "chain_ops.rs"]
 mod chain_ops;
+pub(super) use chain_goal::Next;
 #[path = "orch_promote.rs"]
 mod promote;
 #[cfg(test)]
@@ -196,6 +199,16 @@ impl RunService {
         if call.role == AgentRole::Orchestrator && !self.await_launch(&call, limit).await {
             return refused(ORCHESTRATOR_LAUNCH_PENDING);
         }
+        // Milestone 9.3 decision 22: `start_goal` is the driver's (`chain_goal.rs`).
+        if let Ok(OrchCall::StartGoal { goal }) = parse_call(call.role, &call.tool, &call.args) {
+            return match self.looked_up(&call, |_| ()) {
+                Ok(()) => match self.start_goal_tool(&call.run_id, goal).await {
+                    Ok(text) => RunReply::tool_result(true, json!({ "message": text }).to_string()),
+                    Err(text) => refused(text),
+                },
+                Err(text) => refused(text),
+            };
+        }
         // Decision 42e: a refresh's clean-tree check, for a caller that passes decision
         // 15's check, before the engine sees the call.
         if let Ok(OrchCall::EditPlan {
@@ -313,6 +326,9 @@ impl RunService {
                     let wait = Duration::from_secs(wait_secs);
                     self.wait_digest(&call.run_id, since, wait).await;
                 }
+                // Task 6b (6a review m4): a next goal may have moved the chain on during
+                // the wait; the answer is its current run's.
+                let call = self.resolved(call.clone()).unwrap_or(call);
                 self.run_status(&call).await
             }
             OrchCall::GetContext { scouts } => {

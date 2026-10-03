@@ -279,4 +279,4 @@ fn the_mode_is_the_flag_then_the_profile_then_local() {
 }
 
 #[path = "delivery_tests_start.rs"]
-mod start;
+pub(in crate::run::driver) mod start;

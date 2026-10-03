@@ -259,3 +259,81 @@ async fn an_idle_chains_closed_window_ends_it() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
+
+/// Task 6b (6a review m4): a `run_status` long-poll resolved to the idle chain's last
+/// run just before a next goal adopted the window answers for the new run. Here the
+/// adopt lands between the resolution and the read (the call reaches `read` already
+/// resolved): the answer is the chain's current run's, at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_long_poll_resolved_before_an_adopt_answers_for_the_new_run() {
+    let rig = Rig::new(|_, _| {}).await;
+    idle(&rig);
+    let first = rig.run_id.clone();
+    let rev = rig.digest_rev();
+    let call = proto::ToolCall {
+        run_id: first.clone(),
+        task_id: None,
+        role: AgentRole::Orchestrator,
+        window_id: ORCH,
+        tool: "run_status".into(),
+        args: json!({"since": rev, "wait_secs": 10}),
+        scout_id: None,
+        epic: None,
+        chain: Some(CHAIN.into()),
+    };
+    // Resolved while idle: the chain's last run.
+    let resolved = rig.runs.resolved(call).unwrap();
+    assert_eq!(resolved.run_id, first);
+    // The next goal adopts the window.
+    {
+        let mut state = crate::lock(&rig.runs.state);
+        let mut next = state.runs[&first].clone();
+        next.id = NEXT.into();
+        next.state = RunState::Planning;
+        next.created_at += 1;
+        next.orch.digest_fp = crate::run::orch::digest::fingerprint(&next);
+        state.runs.insert(NEXT.into(), next);
+        let chain = state.chains.get_mut(CHAIN).unwrap();
+        chain.runs.push(NEXT.into());
+        chain.state = crate::run::chain::ChainState::Active;
+    }
+    let started = Instant::now();
+    let reply = tokio::time::timeout(ANSWER, rig.runs.read(resolved, ANSWER))
+        .await
+        .expect("the read answers");
+    let RunReply::ToolResult { ok, text, .. } = reply else {
+        panic!("{reply:?}");
+    };
+    let digest: Value = serde_json::from_str(&text).unwrap();
+    assert!(ok, "{digest}");
+    assert_eq!(digest["run"]["id"], json!(NEXT), "{digest}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+/// Task 6b (6a re-review, D16): a window adopted by a later run keeps an MCP target
+/// naming the chain's first run. Once that chain has left the table (here its newest
+/// run failed), the window reads the newest run carrying the chain, not the first; its
+/// `start_goal` is refused, the window being a plain one (decision 19).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dropped_chains_window_reads_its_newest_run_and_starts_no_goal() {
+    let rig = Rig::new(|_, _| {}).await;
+    two_runs(&rig);
+    {
+        let mut state = crate::lock(&rig.runs.state);
+        state.runs.get_mut(NEXT).unwrap().state = RunState::Failed;
+        state.chains.clear();
+    }
+    let first = rig.run_id.clone();
+    let (ok, digest) = chained(&rig, (&first, CHAIN), "run_status", json!({})).await;
+    assert!(ok, "{digest}");
+    assert_eq!(digest["run"]["id"], json!(NEXT), "{digest}");
+    let (ok, answer) = chained(&rig, (&first, CHAIN), "start_goal", json!({"goal": "more"})).await;
+    assert!(!ok, "{answer}");
+    let text = "o-3f9a has ended; this window cannot start a goal, and the user starts the next one with a new orchestrator";
+    assert_eq!(answer, json!({ "error": text }));
+    assert_eq!(crate::lock(&rig.runs.state).runs.len(), 2, "no run started");
+}

@@ -444,17 +444,18 @@ impl EpicRecord {
 /// Decision 26: a run `RunService::build_plan` built from an empty plan becomes a
 /// planned run, `planning` with its orchestrator (decision 6's resolution, kept for
 /// decision 43's records) not yet launched. `yes` applies at submit (decision 27), so
-/// the build's own `yes` is false.
+/// the build's own `yes` is false. Milestone 9.3 (D14): a continued goal has no triage
+/// and is on the plan path.
 pub fn make_planned(
     run: &mut super::model::Run,
-    triage: proto::TriageInfo,
+    triage: Option<proto::TriageInfo>,
     resolved: launch::Resolved,
     yes: bool,
     installed: BTreeMap<String, bool>,
 ) {
     run.state = proto::RunState::Planning;
-    run.path = Some(triage.path);
-    run.triage = Some(triage);
+    run.path = Some(triage.as_ref().map_or(proto::RunPath::Plan, |t| t.path));
+    run.triage = triage;
     run.orch.yes = yes;
     run.orch.installed = installed;
     let mut record = OrchestratorRecord::new(resolved.route, run.created_at);

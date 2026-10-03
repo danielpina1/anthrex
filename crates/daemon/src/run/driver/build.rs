@@ -99,9 +99,10 @@ pub(super) enum Shape {
     Planned(Box<Planned>),
 }
 
-/// Decision 26: what makes a built run a planned one.
+/// Decision 26: what makes a built run a planned one. Milestone 9.3 (D14): a continued
+/// goal is not triaged, so its `triage` is `None`.
 pub(super) struct Planned {
-    pub triage: proto::TriageInfo,
+    pub triage: Option<proto::TriageInfo>,
     pub usage: Option<proto::TokenUsage>,
     pub yes: bool,
     pub choice: Option<proto::OrchestratorChoice>,
