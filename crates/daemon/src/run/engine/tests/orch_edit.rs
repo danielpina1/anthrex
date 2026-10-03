@@ -392,8 +392,6 @@ fn a_fast_orchestrator_is_reported_below_the_frontier() {
     assert!(report.contains(&line), "{report}");
 }
 
-/// `run` without what a rejected batch still changes (task M9.9, decision 40): its
-/// edit-log record, and the revisions that record moves.
 /// Milestone 9.3 task M9.3.7 fix round 1 (ruling: option (b)): an `edit_plan` with no
 /// `edits` is an empty batch. `{}` changes nothing but the edit log, as `{"edits": []}`
 /// does; `{"submit": true}` is refused on an empty plan and submits one that has
@@ -431,6 +429,8 @@ fn an_edit_plan_without_edits_is_an_empty_batch() {
     assert_eq!(o.summary.as_deref(), Some("All done."));
 }
 
+/// `run` without what a rejected batch still changes (task M9.9, decision 40): its
+/// edit-log record, and the revisions that record moves.
 fn but_the_log(run: &crate::run::model::Run) -> crate::run::model::Run {
     let mut run = run.clone();
     run.plan_edits.clear();
