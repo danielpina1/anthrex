@@ -3,7 +3,7 @@
 //! 12) and cancel ([`cancel_round`], decision 16), and its end ([`pass`], decision 17),
 //! whose `round` history line `goal_rounds::end_round` writes. Pure (design decision 2).
 
-use proto::{RoundOrigin, RoundOutcome, RunState};
+use proto::{RoundOrigin, RoundOutcome, RunState, TaskState};
 
 use super::complete::{cancel_task, deferred_note};
 use super::goal_rounds::{end_round, landed_below};
@@ -133,6 +133,9 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
         o.plan_submitted = true;
     }
     planners::halt_all(run, ROUND_CANCELLED, now, fx);
+    if delivery::pr(run) {
+        unused_stages(run, now);
+    }
     log(run, now, format!("round {n} cancelled by the user"));
     let mut text = round_cancelled(run.short(), n);
     for id in merging {
@@ -190,6 +193,32 @@ pub(super) fn delivered(run: &Run) -> bool {
         && d.base_sync_due.is_empty()
         && d.stages.iter().all(|s| s.held.is_none())
         && !merge::merging(run)
+}
+
+/// The final fix wave (review A, C1): once a `pr` round's unfinished tasks are
+/// cancelled, each of its stages that has no PR and nothing merged or still merging
+/// (a deferred merge keeps its stage) is skipped, as a reject skips them. Above landed
+/// PRs with every stage of the round skipped, the round's base fetch is dropped: no
+/// stage is left to absorb the base, and a sync due into a stage never created would
+/// keep the round from ending.
+fn unused_stages(run: &mut Run, now: u64) {
+    let first = run.current_round().map_or(1, |r| r.first_stage);
+    for n in first..=stage_count(run) {
+        let d = &run.delivery;
+        let used = (run.tasks.iter())
+            .any(|t| t.stage() == n && (!t.state.is_finished() || t.state == TaskState::Merged));
+        if used || d.pr(n).is_some() || d.stage(n).is_some_and(|s| s.skipped) {
+            continue;
+        }
+        delivery::stage_mut(run, n).skipped = true;
+        log(run, now, format!("stage {n}: skipped (no changes)"));
+    }
+    let skipped = |n: u16| run.delivery.stage(n).is_some_and(|s| s.skipped);
+    if landed_below(run, first) && (first..=stage_count(run)).all(skipped) {
+        run.delivery.base_fetch_due = false;
+        let d = &mut run.delivery;
+        d.base_sync_due.retain(|k, _| *k < first);
+    }
 }
 
 /// Every stage from `first` without a PR is skipped (a rejected round's, whose tasks
