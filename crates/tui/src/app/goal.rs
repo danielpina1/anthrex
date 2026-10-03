@@ -61,10 +61,9 @@ impl App {
             .filter(|run| run.project == project && !run.state.is_terminal())
             .find_map(|run| {
                 let chain = run.chain.clone()?;
-                Some((
-                    chain,
-                    crate::actions_request::short_id(&run.run_id).to_string(),
-                ))
+                // Final fix wave C-m8: cleaned before it is cut, as the idle row does.
+                let id = crate::safe_text::one_line(&run.run_id);
+                Some((chain, crate::actions_request::short_id(&id).to_string()))
             });
         (idle, busy)
     }

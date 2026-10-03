@@ -238,7 +238,8 @@ impl GoalForm {
     }
 
     /// Decision 25's row (KG §3.3, §3.5, §3.6), its text unsanitised: the renderer
-    /// cleans it.
+    /// cleans it. The run's short id is cleaned before it is cut (final fix wave C-m8),
+    /// so a carrier never shortens the drawn `<h4>`.
     pub fn orchestrator_row(&self) -> OrchestratorRow {
         match (&self.idle, &self.busy) {
             (Some(idle), _) if self.continuing && idle.fresh => {
@@ -247,7 +248,7 @@ impl GoalForm {
             (Some(idle), _) if self.continuing => OrchestratorRow::Choice(format!(
                 "continue {} (after {})",
                 idle.chain,
-                crate::actions_request::short_id(&idle.after_run)
+                crate::actions_request::short_id(&crate::safe_text::one_line(&idle.after_run))
             )),
             (None, Some((chain, run))) => OrchestratorRow::Busy(format!(
                 "{chain} is working on run {run}; this goal gets a new orchestrator"

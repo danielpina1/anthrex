@@ -294,6 +294,38 @@ fn goal_dialog_text_is_sanitised() {
     }
 }
 
+/// Final fix wave C-m8: a short id is cleaned before it is cut, as the idle row cleans
+/// it, so a carrier among a run id's last four characters never shortens the drawn
+/// `<h4>`: the continue row's `after` and the active chain's run.
+#[test]
+fn short_ids_are_cleaned_before_they_are_cut() {
+    let mut f = form();
+    f.set_chains(
+        Some(IdleOrchestrator {
+            after_run: "r-20261001-3f\u{200D}9\u{202E}a".into(),
+            ..idle(false)
+        }),
+        None,
+    );
+    let rows = large_rows(&app_with(f, false), 120, 40);
+    let choice = "  orchestrator      ‹ continue o-3f9a (after 3f9a) ›";
+    assert!(rows.contains(&format!("│ {choice:<112} │")), "{rows:?}");
+
+    let mut app = app_with(form(), false);
+    let mut run = crate::tree::run_fixtures::run(
+        "r-20261003-77\u{200D}b\u{202E}2",
+        "/p/a",
+        RunState::Running,
+    );
+    run.chain = Some("o-3f9a".into());
+    let snap = crate::tree::run_fixtures::snapshot(100, vec![run]);
+    app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot(snap)));
+    let rows = large_rows(&app, 120, 40);
+    let busy =
+        "  orchestrator      o-3f9a is working on run 77b2; this goal gets a new orchestrator";
+    assert!(rows.contains(&format!("│ {busy:<112} │")), "{rows:?}");
+}
+
 /// Review m2: at the 16-row minimum, with `custom…`'s row and an error showing, the
 /// large editor still keeps one text row (the options take the rest).
 #[test]
