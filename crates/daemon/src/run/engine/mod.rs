@@ -67,6 +67,7 @@ mod holds;
 mod integration;
 mod kinds;
 pub(crate) mod ladder;
+mod ladder_budget;
 mod merge;
 mod op_result;
 mod ops;
