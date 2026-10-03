@@ -201,6 +201,20 @@ fn the_status_bar_says_widen_the_terminal() {
     assert_eq!(bar(60, 16), " DIALOG  esc back");
 }
 
+/// Review m1: the note goes before `esc back` does; `esc` never drops.
+#[test]
+fn the_widen_note_never_costs_esc() {
+    let app = app_with(form(), false);
+    let bar = |w: u16| audit::rows(&audit::draw(&app, w, 24))[23].clone();
+    for w in 44..=51 {
+        assert_eq!(bar(w), " DIALOG  esc back", "{w} columns");
+    }
+    assert_eq!(
+        bar(52),
+        " DIALOG  widen the terminal for the editor  esc back"
+    );
+}
+
 #[test]
 fn the_footer_drops_entries_from_the_right() {
     let text = |width| footer(&FOOTER, width, Palette::PLAIN).to_string();

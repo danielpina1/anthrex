@@ -155,8 +155,16 @@ fn body_spans(
     let mut out = Vec::new();
     let mut remaining = available;
     if let Some(note) = body.note {
+        // The note goes before `esc` does (task 9b fix round 1): it shows only when the
+        // `esc` hints still fit after it.
+        let esc: usize = (body.hints.iter())
+            .filter(|h| h.key == "esc")
+            .map(|h| {
+                UnicodeWidthStr::width(h.key.as_str()) + 1 + UnicodeWidthStr::width(h.word.as_str())
+            })
+            .sum();
         let width = UnicodeWidthStr::width(note) as u16 + GAP;
-        if width <= remaining {
+        if usize::from(width) + esc <= usize::from(remaining) {
             remaining -= width;
             out.push(Span::styled(note, role(Role::Muted, palette)));
             out.push(Span::raw(" ".repeat(usize::from(GAP))));
