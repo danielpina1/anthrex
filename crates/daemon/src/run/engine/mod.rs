@@ -49,6 +49,7 @@ mod deciders_size;
 pub mod delivery;
 mod dispatch;
 mod done;
+mod done_checked;
 pub(crate) mod early;
 mod effect;
 mod event;
