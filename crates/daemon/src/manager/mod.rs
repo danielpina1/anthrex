@@ -350,11 +350,16 @@ impl WindowManager {
             }
             // Milestone 9.5 decision 40 (review ruling I11): a Codex orchestrator's
             // question footer, whatever the status; a copy of the screen, no I/O.
-            let asks = entry.role.is_some()
-                && entry.spec.runtime == proto::Runtime::Codex
-                && matches!(&entry.process, Process::Live(window)
-                    if crate::status_codex::screen_asks(&window.screen_text()));
-            if asks && !entry.codex_question {
+            // A higher count than the last tick's is a new question (review m6).
+            let asks = match &entry.process {
+                Process::Live(window)
+                    if entry.role.is_some() && entry.spec.runtime == proto::Runtime::Codex =>
+                {
+                    crate::status_codex::screen_questions(&window.screen_text())
+                }
+                _ => None,
+            };
+            if asks.unwrap_or(0) > entry.codex_question.unwrap_or(0) {
                 changed |= entry.apply(StatusEvent::CodexQuestion);
             }
             entry.codex_question = asks;

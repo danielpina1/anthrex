@@ -57,6 +57,8 @@ pub struct StatusContext {
     pub focused: bool,
     pub signals_seen: bool,
     pub hooks_seen: bool,
+    /// Milestone 9.5 ruling T5b-1: a Codex question's footer is on screen.
+    pub codex_question: bool,
 }
 
 /// Computes one status transition without performing I/O or mutating other state.
@@ -67,6 +69,7 @@ pub struct StatusContext {
 /// |---|---|---|
 /// | exit | all | `Exited` is terminal |
 /// | question footer | a Codex orchestrator (M9.5 decision 40) | `Attention` |
+/// | any but input | Codex `Attention` while the footer shows (ruling T5b-1) | unchanged |
 /// | bell | Claude after hooks / all others | unchanged / `Attention` |
 /// | focus, input | all | clear `Done`, or clear `Attention` |
 /// | output, quiet | Shell or agent before its first signal | fallback activity transitions |
@@ -82,6 +85,8 @@ pub fn next(current: Status, event: StatusEvent, runtime: Runtime, ctx: StatusCo
     match (runtime, current, event) {
         (_, Exited, _) | (_, _, E::Exited) => Exited,
         (_, _, E::CodexQuestion) => Attention,
+        // Ruling T5b-1: while the question's footer shows, only input answers it.
+        (Runtime::Codex, Attention, e) if ctx.codex_question && e != E::InputSent => Attention,
         (Runtime::Claude, status, E::Bell) if ctx.hooks_seen => status,
         (_, _, E::Bell) => Attention,
         (_, Done, E::Focused) => Idle,
@@ -149,6 +154,7 @@ mod tests {
         focused: false,
         signals_seen: false,
         hooks_seen: false,
+        codex_question: false,
     };
 
     #[test]

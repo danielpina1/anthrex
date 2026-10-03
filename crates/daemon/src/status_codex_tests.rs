@@ -3,29 +3,17 @@
 //! `codex` is a stand-in shell script (never an agent) drawing what a control file
 //! holds. Each test kills only the windows it made.
 
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use proto::{AgentRole, Effort, HookSource, RunRef, Runtime, Status, WindowSpec};
+use proto::{HookSource, Runtime, Status};
 use serde_json::json;
 
+use super::rig::{SLACK, draw, fixture_screen, role, screen, shown, spec, stand_in};
 use super::*;
-use crate::headless::McpTarget;
 use crate::launch::LaunchGate;
-use crate::launch::role::RoleLaunch;
 use crate::manager::{ManagerConfig, WindowManager};
-
-const FIXTURE: &str = include_str!("../tests/fixtures/screens/codex-question-footer.txt");
-
-/// The fixture's screen: every line but its `# ` notes.
-fn fixture_screen() -> String {
-    FIXTURE
-        .lines()
-        .filter(|l| !l.starts_with("# "))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+use crate::status::{CodexTitle, StatusContext, StatusEvent, next};
 
 #[test]
 fn the_fixtures_footer_matches() {
@@ -46,6 +34,10 @@ fn the_footer_pattern() {
     assert!(!codex_question_footer(&["? 1 questionnaire"]));
     assert!(!codex_question_footer(&["?1 question", "? question"]));
     assert!(!codex_question_footer(&[]));
+    // The count (review m6): the highest match; none counted is no footer.
+    assert_eq!(question_count(&["? 2 questions", "? 3 questions"]), Some(3));
+    assert_eq!(question_count(&["? 1 question"]), Some(1));
+    assert_eq!(question_count(&["? 0 questions"]), None);
 }
 
 /// Only the last three non-empty rows count: a question further up is the transcript,
@@ -59,7 +51,6 @@ fn only_the_last_three_rows_are_the_footer() {
 
 #[test]
 fn a_codex_question_is_attention_from_any_status_but_exited() {
-    use crate::status::{StatusContext, StatusEvent, next};
     for status in [
         Status::Starting,
         Status::Working,
@@ -85,24 +76,80 @@ fn a_codex_question_is_attention_from_any_status_but_exited() {
     );
 }
 
-/// Slack on top of each derived bound below (a process start, a few 20 ms polls).
-const SLACK: Duration = Duration::from_secs(5);
-
-/// `codex` as a stand-in: `--version` answered at once (`docs/timing-budgets.md`), no
-/// echo, a `Ready` title (its signal, as a Codex session with no hooks gives), then the
-/// screen redrawn each time the control file in its directory changes: the one its
-/// environment's `ANTHREX_TEST_CTL` names (the role's `env`), else `plain.ctl`.
-fn stand_in(dir: &Path) -> String {
-    let codex = dir.join("codex");
-    let script = format!(
-        "#!/bin/sh\n[ \"$1\" = --version ] && {{ echo codex-cli 0.0.0; exit 0; }}\nstty -echo 2>/dev/null\nprintf '\\033]0;Ready\\007'\nctl={dir}/\"${{ANTHREX_TEST_CTL:-plain.ctl}}\"\n\
-         last=''\nwhile :; do\n  c=$(cat \"$ctl\" 2>/dev/null)\n  if [ \"$c\" != \"$last\" ]; then\n    \
-         printf '\\033[2J\\033[H%s' \"$c\"\n    last=$c\n  fi\n  sleep 0.05\ndone\n",
-        dir = dir.display()
+/// Ruling T5b-1: while the footer shows (`StatusContext::codex_question`), a Codex
+/// window's `Attention` holds against every event but client input and its exit; with
+/// the footer gone, the same events move it as before.
+#[test]
+fn a_codex_question_holds_attention_against_all_but_input_and_exit() {
+    use StatusEvent as E;
+    let events = [
+        E::Output,
+        E::Quiet,
+        E::Bell,
+        E::Focused,
+        E::SessionStart,
+        E::UserPromptSubmit,
+        E::PreToolUse,
+        E::PostToolUse,
+        E::PermissionRequest,
+        E::PermissionPrompt,
+        E::IdlePrompt,
+        E::Stop,
+        E::CodexNotify,
+        E::CodexQuestion,
+        E::Title(CodexTitle::Starting),
+        E::Title(CodexTitle::Working),
+        E::Title(CodexTitle::Thinking),
+        E::Title(CodexTitle::Waiting),
+        E::Title(CodexTitle::Ready),
+    ];
+    for hooks_seen in [false, true] {
+        for focused in [false, true] {
+            let held = StatusContext {
+                focused,
+                signals_seen: true,
+                hooks_seen,
+                codex_question: true,
+            };
+            for event in events {
+                assert_eq!(
+                    next(Status::Attention, event, Runtime::Codex, held),
+                    Status::Attention,
+                    "{event:?} hooks {hooks_seen} focused {focused}"
+                );
+            }
+            let input = next(Status::Attention, E::InputSent, Runtime::Codex, held);
+            assert_eq!(input, Status::Working);
+            let exit = next(Status::Attention, E::Exited, Runtime::Codex, held);
+            assert_eq!(exit, Status::Exited);
+            // Only `Attention` is held: a title still moves an `Idle` window.
+            let idle = next(Status::Idle, E::Stop, Runtime::Codex, held);
+            assert_eq!(idle, if focused { Status::Idle } else { Status::Done });
+        }
+    }
+    // The footer gone: released, with nothing forced.
+    let free = StatusContext {
+        signals_seen: true,
+        ..StatusContext::default()
+    };
+    let title = E::Title(CodexTitle::Working);
+    assert_eq!(
+        next(Status::Attention, title, Runtime::Codex, free),
+        Status::Working
     );
-    std::fs::write(&codex, script).unwrap();
-    std::fs::set_permissions(&codex, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-    codex.to_str().unwrap().into()
+    assert_eq!(
+        next(Status::Attention, E::Stop, Runtime::Codex, free),
+        Status::Done
+    );
+    // A Claude window is never held.
+    let held = StatusContext {
+        codex_question: true,
+        ..free
+    };
+    assert_eq!(
+        next(Status::Attention, E::Stop, Runtime::Claude, held),
+        Status::Done
+    );
 }
 
 struct Rig {
@@ -130,54 +177,7 @@ fn rig() -> Rig {
     Rig { dir, manager }
 }
 
-/// Run `r1`'s orchestrator role, as the engine launches it; `ctl` names the control
-/// file its stand-in draws.
-fn role(ctl: &str) -> RoleLaunch {
-    RoleLaunch {
-        run_ref: RunRef {
-            run_id: "r1".into(),
-            task_id: None,
-            role: AgentRole::Orchestrator,
-            session: 1,
-            lane: None,
-        },
-        mcp: McpTarget {
-            role: AgentRole::Orchestrator,
-            run_id: "r1".into(),
-            task_id: None,
-            scout_id: None,
-            epic: None,
-            chain: None,
-            lane: None,
-        },
-        instructions: "the orchestrator contract".into(),
-        effort: Effort::High,
-        claude_allowed_tools: Vec::new(),
-        claude_disallowed_tools: Vec::new(),
-        env: vec![("ANTHREX_TEST_CTL".into(), ctl.into())],
-        remove_env: Vec::new(),
-    }
-}
-
-fn spec(dir: &Path, name: &str) -> WindowSpec {
-    WindowSpec {
-        name: Some(name.into()),
-        runtime: Runtime::Codex,
-        cwd: dir.to_path_buf(),
-        worktree_branch: None,
-        model: None,
-        initial_prompt: None,
-    }
-}
-
 impl Rig {
-    fn draw(&self, ctl: &str, screen: &str) {
-        let path = self.dir.path().join(ctl);
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, screen).unwrap();
-        std::fs::rename(tmp, path).unwrap();
-    }
-
     fn status(&self, window: u32) -> (Status, bool) {
         let w = self
             .manager
@@ -201,30 +201,36 @@ impl Rig {
         }
     }
 
-    /// Waits until `window`'s screen shows the footer (`asks`) or does not.
-    async fn shown(&self, window: u32, asks: bool) {
-        let deadline = Instant::now() + SLACK;
-        loop {
-            let (bytes, _, _) = self.manager.snapshot(window).unwrap();
-            let text = String::from_utf8_lossy(&bytes).into_owned();
-            if text.contains("? 1 question") == asks && text.contains("the screen") {
-                return;
-            }
-            assert!(Instant::now() < deadline, "screen never {asks}: {text:?}");
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+    /// Draws [`screen`]`(questions)`, waits until it shows, then ticks the manager once.
+    async fn tick_with(&self, window: u32, ctl: &str, questions: Option<u32>) {
+        draw(self.dir.path(), ctl, &screen(questions));
+        shown(&self.manager, window, questions).await;
+        self.manager.tick();
     }
 
-    /// Draws the fixture (`asks`) or a screen with no footer, waits until it shows, then
-    /// ticks the manager once.
-    async fn tick_with(&self, window: u32, ctl: &str, asks: bool) {
-        let screen = match asks {
-            true => format!("the screen\n{}", fixture_screen()),
-            false => "the screen\n\n› Explain this codebase\n  gpt-6.1-sol high".to_string(),
-        };
-        self.draw(ctl, &screen);
-        self.shown(window, asks).await;
+    /// A Codex orchestrator window for run `r1` drawing `orch.ctl`, signalled and
+    /// `Idle` with no footer.
+    async fn orchestrator(&self) -> u32 {
+        draw(self.dir.path(), "orch.ctl", &screen(None));
+        let window = self
+            .manager
+            .create_run_window(
+                spec(self.dir.path(), "r1/orchestrator"),
+                self.dir.path().to_path_buf(),
+                role("r1", "orch.ctl"),
+            )
+            .await
+            .expect("the stand-in's window")
+            .id;
+        self.signalled(window).await;
+        // Its title ends the start's output as `Idle`, or as `Done` when the output came
+        // first; a look and its end make it `Idle` either way.
+        self.manager.focus(window);
+        self.manager.unfocus(window);
+        shown(&self.manager, window, None).await;
         self.manager.tick();
+        assert_eq!(self.status(window).0, Status::Idle);
+        window
     }
 }
 
@@ -234,27 +240,9 @@ impl Rig {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_codex_question_footer_is_attention() {
     let rig = rig();
-    rig.draw("orch.ctl", "the screen\n");
-    let window = rig
-        .manager
-        .create_run_window(
-            spec(rig.dir.path(), "r1/orchestrator"),
-            rig.dir.path().to_path_buf(),
-            role("orch.ctl"),
-        )
-        .await
-        .expect("the stand-in's window")
-        .id;
-    rig.signalled(window).await;
-    // Its title ends the start's output as `Idle`, or as `Done` when the output came
-    // first; a look and its end make it `Idle` either way.
-    rig.manager.focus(window);
-    rig.manager.unfocus(window);
-    rig.shown(window, false).await;
-    rig.manager.tick();
-    assert_eq!(rig.status(window).0, Status::Idle);
+    let window = rig.orchestrator().await;
     // From `Idle`.
-    rig.tick_with(window, "orch.ctl", true).await;
+    rig.tick_with(window, "orch.ctl", Some(1)).await;
     assert_eq!(rig.status(window).0, Status::Attention);
     // Input clears it; the same footer, still there, raises nothing.
     rig.manager.write_client_input(window, b"x").unwrap();
@@ -263,9 +251,9 @@ async fn a_codex_question_footer_is_attention() {
     rig.manager.tick();
     assert_eq!(rig.status(window).0, Status::Working);
     // From `Working`: gone for one tick, then back.
-    rig.tick_with(window, "orch.ctl", false).await;
+    rig.tick_with(window, "orch.ctl", None).await;
     assert_eq!(rig.status(window).0, Status::Working);
-    rig.tick_with(window, "orch.ctl", true).await;
+    rig.tick_with(window, "orch.ctl", Some(1)).await;
     assert_eq!(rig.status(window).0, Status::Attention);
     // From `Done`.
     rig.manager.write_client_input(window, b"x").unwrap();
@@ -273,9 +261,9 @@ async fn a_codex_question_footer_is_attention() {
     rig.manager
         .handle_hook(window, HookSource::CodexHook, &stop)
         .unwrap();
-    rig.tick_with(window, "orch.ctl", false).await;
+    rig.tick_with(window, "orch.ctl", None).await;
     assert_eq!(rig.status(window).0, Status::Done);
-    rig.tick_with(window, "orch.ctl", true).await;
+    rig.tick_with(window, "orch.ctl", Some(1)).await;
     assert_eq!(rig.status(window).0, Status::Attention);
     let _ = rig.manager.kill(window);
 }
@@ -284,7 +272,7 @@ async fn a_codex_question_footer_is_attention() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_plain_codex_window_with_the_footer_is_not_attention() {
     let rig = rig();
-    rig.draw("plain.ctl", "the screen\n");
+    draw(rig.dir.path(), "plain.ctl", &screen(None));
     let plain = rig
         .manager
         .create(
@@ -298,8 +286,26 @@ async fn a_plain_codex_window_with_the_footer_is_not_attention() {
         .expect("a plain stand-in window")
         .id;
     let before = rig.signalled(plain).await;
-    rig.tick_with(plain, "plain.ctl", true).await;
+    rig.tick_with(plain, "plain.ctl", Some(1)).await;
     rig.manager.tick();
     assert_eq!(rig.status(plain).0, before);
     let _ = rig.manager.kill(plain);
+}
+
+/// Review m6: after input, the same count on screen raises nothing, one answered (a
+/// lower count) raises nothing, and a further question (a higher count) raises it
+/// again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_further_question_raises_it_again() {
+    let rig = rig();
+    let window = rig.orchestrator().await;
+    rig.tick_with(window, "orch.ctl", Some(2)).await;
+    assert_eq!(rig.status(window).0, Status::Attention);
+    rig.manager.write_client_input(window, b"x").unwrap();
+    assert_eq!(rig.status(window).0, Status::Working);
+    rig.tick_with(window, "orch.ctl", Some(1)).await;
+    assert_eq!(rig.status(window).0, Status::Working);
+    rig.tick_with(window, "orch.ctl", Some(3)).await;
+    assert_eq!(rig.status(window).0, Status::Attention);
+    let _ = rig.manager.kill(window);
 }

@@ -322,7 +322,7 @@ impl WindowManager {
             last_client_input: None,
             attention_open: false,
             prompt_since: None,
-            codex_question: false,
+            codex_question: None,
         };
         let info = entry.info(now);
         tracing::info!(

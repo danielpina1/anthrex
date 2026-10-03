@@ -347,12 +347,13 @@ struct Seen {
 /// Whether `window` takes a paste now: `Idle` or `Done`, no client input for `quiet`,
 /// and (whole-branch review, item 2) no `Attention` left unanswered by a turn end: a
 /// paste's `\r` must never confirm a permission dialog's highlighted choice. If not,
-/// why (decision 41).
+/// why (decision 41), an input's age read at `now`, the check's own clock.
 fn ready(
     window: &WindowInfo,
     last_input: Option<Instant>,
     quiet: Duration,
     attention_open: bool,
+    now: Instant,
 ) -> Result<(), WaitReason> {
     match window.status {
         Status::Working => return Err(WaitReason::Working),
@@ -361,7 +362,7 @@ fn ready(
         Status::Idle | Status::Done if attention_open => return Err(WaitReason::Attention),
         Status::Idle | Status::Done => {}
     }
-    match last_input.map(|at| at.elapsed()) {
+    match last_input.map(|at| now.saturating_duration_since(at)) {
         Some(ago) if ago < quiet => Err(WaitReason::Input {
             secs: ago.as_secs(),
         }),
@@ -462,13 +463,15 @@ impl RunService {
             self.wakes.forget_waits();
             self.wakes.deliverable(&judged)
         };
+        // One `now` for the check (ruling T5b-2): each input's age is read against it.
+        let now = Instant::now();
         let takes: Vec<Waiting> = waiting
             .into_iter()
             .filter(|w| {
                 window(w.window_id).is_some_and(|win| {
                     let input = self.manager.last_client_input(w.window_id);
                     let open = self.manager.attention_open(w.window_id);
-                    let wait = ready(win, input, w.quiet, open).err();
+                    let wait = ready(win, input, w.quiet, open, now).err();
                     let wait = wait.or_else(|| self.wakes.unsignalled(&w.run_id, win));
                     self.wakes.log_wait(&w.run_id, wait);
                     wait.is_none()

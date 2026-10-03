@@ -82,6 +82,8 @@ pub(in crate::run::driver::wake) fn rig() -> Rig {
         .unwrap();
     let mut config = ManagerConfig::for_tests(dir.path().join("d.sock"), "/bin/sh".into());
     config.claude_bin = stand_in(dir.path());
+    // Milestone 9.5 task M9.5.5b: a Codex orchestrator's tests draw screens with it.
+    config.codex_bin = crate::status_codex::rig::stand_in(dir.path());
     config.worktrees_root = dir.path().join("worktrees");
     config.launch_gate = LaunchGate::open_already();
     let (manager, mut pumped) = WindowManager::new(config);
