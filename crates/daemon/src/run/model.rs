@@ -354,6 +354,10 @@ pub struct Run {
     /// Milestone 9.3 decision 19: the chain whose orchestrator session the run uses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<String>,
+    /// Milestone 9.3 D17: the run a next goal started from this run's chain, its
+    /// orchestrator's current run since; this run iterates no more (decision 9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continued_by: Option<String>,
 }
 
 impl Run {

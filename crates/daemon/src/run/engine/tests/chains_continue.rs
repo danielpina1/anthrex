@@ -1,7 +1,7 @@
 //! Milestone 9.3 task 6b: a next goal joins its chain in `requests::start` (decisions
 //! 23 and 24). An idle chain's window is adopted, with the exact next-goal wake as
 //! round 1's request of the new run; a second continue is refused while the first is
-//! active (KG §3.5); in `pr` mode the wake names the earlier runs' open PRs; an ended
+//! active (KG §3.5); the wake names no open PRs (D17); an ended
 //! chain launches a fresh session with the handoff prompt; an orchestrator that never
 //! launched leaves its chain ended (6a review m2).
 
@@ -67,7 +67,7 @@ fn continued(fx: &Fixture, id: &str, prompt: Option<&str>) -> Run {
 }
 
 /// [`continued`], started.
-fn continue_as(fx: &mut Fixture, id: &str, prompt: Option<&str>) -> Vec<Effect> {
+pub(super) fn continue_as(fx: &mut Fixture, id: &str, prompt: Option<&str>) -> Vec<Effect> {
     let run = continued(fx, id, prompt);
     start(fx, run)
 }
@@ -98,7 +98,7 @@ fn next_done(fx: &mut Fixture, name: &str, result: OpResult) -> Vec<Effect> {
     })
 }
 
-fn adopted(effects: &[Effect]) -> Vec<(String, u32, String)> {
+pub(super) fn adopted(effects: &[Effect]) -> Vec<(String, u32, String)> {
     effects
         .iter()
         .filter_map(|e| match e {
@@ -112,7 +112,7 @@ fn adopted(effects: &[Effect]) -> Vec<(String, u32, String)> {
         .collect()
 }
 
-fn wakes(effects: &[Effect], run: &str) -> Vec<(String, Option<u32>)> {
+pub(super) fn wakes(effects: &[Effect], run: &str) -> Vec<(String, Option<u32>)> {
     effects
         .iter()
         .filter_map(|e| match e {
@@ -216,8 +216,12 @@ fn a_second_continue_is_refused_while_the_first_is_active() {
     assert_eq!(fx.state.chains, before);
 }
 
+/// D17 (changed expectation): the wake names no open PRs. A chain's earlier `pr` run is
+/// finished for it only once delivered (every PR landed) or discarded, so the line
+/// "open pull requests from earlier runs" could never be non-empty and is dropped; a
+/// cancelled run's PRs left open are not named.
 #[test]
-fn the_next_goal_wake_names_open_prs_in_pr_mode() {
+fn the_next_goal_wake_names_no_open_prs() {
     let mut fx = ended(FinishAction::Discard);
     let run = fx.run_mut();
     pr_mode(run);
@@ -236,7 +240,7 @@ fn the_next_goal_wake_names_open_prs_in_pr_mode() {
     let wake = fx.state.runs[NEXT].orch.request_wake.clone().unwrap();
     assert_eq!(
         wake,
-        "a new goal, run 4c1d (your previous run 3f9a was discarded):\n```\nAdd a logout button\n```\nopen pull requests from earlier runs: #12, #13"
+        "a new goal, run 4c1d (your previous run 3f9a was discarded):\n```\nAdd a logout button\n```\n"
     );
 }
 

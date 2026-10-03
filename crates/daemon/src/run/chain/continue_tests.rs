@@ -175,3 +175,77 @@ fn a_runs_own_suffix_is_taken() {
     assert!(suffix_taken(&BTreeMap::new(), &all, "another-goal-3f9a"));
     assert!(!suffix_taken(&BTreeMap::new(), &all, "another-goal-4c1d"));
 }
+
+/// D17 at a restart: a delivered `pr` run's chain follows the rule for idle chains
+/// (idle and ended, the project's newest only, by when the run completed: its last
+/// `complete: ` entry, not a later one); a `pr` run still delivering, and a cancelled
+/// one complete with its PRs open, keep theirs active.
+#[test]
+fn a_restart_treats_a_delivered_pr_runs_chain_as_idle() {
+    use crate::run::model::LogEntry;
+    let entry = |at: u64, text: &str| LogEntry {
+        at,
+        text: text.into(),
+    };
+    let pr = |mut r: Run, project: &str, log: Vec<LogEntry>| {
+        r.delivery.mode = proto::DeliveryMode::Pr;
+        r.project = project.into();
+        r.log = log;
+        r
+    };
+    let shared = "/tmp/anthrex-chain-tests/shared";
+    // Completed at 3, a later entry at 10; the accepted run of its project ended at 5.
+    let early = pr(
+        run("goal-one-3f9a", RunState::Complete, 1, Some("o-3f9a")),
+        shared,
+        vec![
+            entry(3, "complete: 1 merged, 0 cancelled"),
+            entry(10, "a note"),
+        ],
+    );
+    let mut accepted = run("goal-two-1b2c", RunState::Accepted, 2, Some("o-1b2c"));
+    accepted.project = shared.into();
+    accepted.log = vec![entry(5, "accepted: merged")];
+    let alone = pr(
+        run("goal-three-6a6a", RunState::Complete, 3, Some("o-6a6a")),
+        "/tmp/anthrex-chain-tests/alone",
+        vec![entry(4, "complete: 1 merged, 0 cancelled")],
+    );
+    let mut cancelled = pr(
+        run("goal-four-4c1d", RunState::Complete, 4, Some("o-4c1d")),
+        "/tmp/anthrex-chain-tests/other",
+        Vec::new(),
+    );
+    cancelled.cancelled = true;
+    let running = pr(
+        run("goal-five-5e5e", RunState::Running, 5, Some("o-5e5e")),
+        "/tmp/anthrex-chain-tests/third",
+        Vec::new(),
+    );
+    let all = runs(vec![early, accepted, alone, cancelled, running]);
+    let chains = rebuild(&all);
+    let state = |id: &str| chains.get(id).map(|c| (c.state, c.ended));
+    assert_eq!(state("o-1b2c"), Some((ChainState::Idle, true)));
+    assert_eq!(state("o-3f9a"), None, "the older idle chain left the table");
+    assert_eq!(state("o-6a6a"), Some((ChainState::Idle, true)));
+    assert_eq!(state("o-4c1d"), Some((ChainState::Active, false)));
+    assert_eq!(state("o-5e5e"), Some((ChainState::Active, false)));
+}
+
+/// D17: a delivered run's idle orchestrator may still call `edit_plan` (its summary,
+/// decision 38, and an iterate, which makes the chain active again); an accepted run's
+/// may not.
+#[test]
+fn a_delivered_runs_idle_orchestrator_may_still_edit_its_plan() {
+    let idle = chain("o-3f9a", &["goal-one-3f9a"], ChainState::Idle);
+    let mut delivered = run("goal-one-3f9a", RunState::Complete, 1, Some("o-3f9a"));
+    delivered.delivery.mode = proto::DeliveryMode::Pr;
+    assert_eq!(idle_refusal(&idle, &delivered, "edit_plan"), None);
+    let refused = Some(
+        "run 3f9a has ended; start a new goal with start_goal when the user gives you one"
+            .to_string(),
+    );
+    assert_eq!(idle_refusal(&idle, &delivered, "task_result"), refused);
+    let accepted = run("goal-one-3f9a", RunState::Accepted, 1, Some("o-3f9a"));
+    assert_eq!(idle_refusal(&idle, &accepted, "edit_plan"), refused);
+}

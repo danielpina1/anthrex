@@ -242,7 +242,8 @@ pub(crate) fn finish(run: &Run, action: FinishAction) -> Option<String> {
 
 /// Milestone 9.3 decision 9: `run iterate` and `edit_plan`'s `iterate`
 /// (`goal_rounds::iterate`), in order: a run being finished, one with no orchestrator,
-/// `ROUNDS_MAX` reached, halted, ended, then a settled run passes; a cancelled `pr`
+/// `ROUNDS_MAX` reached, halted, ended, one whose chain started a next goal since (D17),
+/// then a settled run passes; a cancelled `pr`
 /// run (D7) and every other state are refused.
 pub(crate) fn iterate(run: &Run) -> Option<String> {
     if let Some(text) = being_finished(run) {
@@ -260,6 +261,8 @@ pub(crate) fn iterate(run: &Run) -> Option<String> {
         RunState::Accepted | RunState::Discarded | RunState::Failed => {
             Some(rounds::ended(h4, run.state.label()))
         }
+        // D17: a next goal started from its chain since.
+        _ if run.continued_by.is_some() => Some(rounds::superseded(h4)),
         _ if goal_rounds::settled(run) => None,
         RunState::Complete if delivery::pr(run) && run.cancelled => Some(rounds::cancelled(h4)),
         _ => Some(rounds::not_settled(h4, run.state.label())),

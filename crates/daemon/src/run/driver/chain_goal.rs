@@ -68,7 +68,8 @@ struct Joined {
     choice: OrchestratorChoice,
     runs: Vec<String>,
     prev_h4: String,
-    outcome: RunState,
+    /// KG §3.3's `accepted`, `discarded` or `delivered` (D17).
+    outcome: &'static str,
     summary: Option<String>,
     history: PathBuf,
 }
@@ -167,7 +168,7 @@ impl RunService {
         let lines = history_lines(joined.history.clone(), joined.runs.clone(), bound).await;
         let prompt = handoff_prompt(
             &orchestrator_first_prompt(&run),
-            (&joined.chain, &joined.prev_h4, joined.outcome.label()),
+            (&joined.chain, &joined.prev_h4, joined.outcome),
             joined.summary.as_deref(),
             lines.as_deref(),
         );
@@ -197,7 +198,7 @@ impl RunService {
             },
             runs: chain.runs.clone(),
             prev_h4: prev.short().to_string(),
-            outcome: prev.state,
+            outcome: crate::run::chain::outcome(prev),
             summary: prev
                 .orch
                 .orchestrator

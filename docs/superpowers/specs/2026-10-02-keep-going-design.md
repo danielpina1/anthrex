@@ -183,7 +183,7 @@ A round's stages become new stacked PRs, following 9.2's rules unchanged.
 
 ### 3.1 The chain
 
-The orchestrator of a run that ends (accepted or discarded) is no longer released as a plain window. It becomes the project's **idle orchestrator**: the head of a **chain** of runs that share one session. A chain is identified by `o-<h4 of its first run>`:
+The orchestrator of a run that ends (accepted or discarded), or of a `pr` run delivered (complete with every PR landed; milestone 9.3 ruling D17), is no longer released as a plain window. It becomes the project's **idle orchestrator**: the head of a **chain** of runs that share one session. A chain is identified by `o-<h4 of its first run>`:
 
 ```rust
 pub struct Chain {
@@ -238,8 +238,8 @@ The next goal can be started two ways:
 **The new run** gets a new id, and its own branches and plan gate. It is based on the branch the user has checked out, which holds the accepted work if the user accepted into it. The preflight line says `based on <branch> at <sha7>`.
 
 The orchestrator is woken with this exact text, the goal fenced as user input:
-`a new goal, run <h4> (your previous run <h4> was <accepted|discarded>):` followed by the fenced goal.
-- In pr mode it adds `open pull requests from earlier runs: #12, #13`.
+`a new goal, run <h4> (your previous run <h4> was <accepted|discarded|delivered>):` followed by the fenced goal.
+- `delivered` names a `pr` run complete with every PR landed, which is finished for its chain (milestone 9.3 ruling D17). The `pr`-mode line naming open PRs was dropped by D17: a chain's earlier `pr` run is finished only once its PRs have landed, so the line could never be non-empty.
 
 The window is renamed `<new h4>/orchestrator`. The chain records the new run, and its state becomes `Active`.
 

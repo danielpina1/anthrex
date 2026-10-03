@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use proto::{AgentRole, IdleOrchestrator, RunState, Runtime, ToolCall};
+use proto::{AgentRole, DeliveryMode, IdleOrchestrator, RunState, Runtime, ToolCall};
 
 use super::model::Run;
 use super::orch::contract_rounds::{chain_left, no_chain_to_continue, not_last, still_going};
@@ -18,6 +18,26 @@ use super::orch::contract_rounds::{chain_left, no_chain_to_continue, not_last, s
 /// The tools an idle orchestrator may call (decision 21): its last run's two reads and
 /// `start_goal`.
 pub const IDLE_TOOLS: [&str; 3] = ["get_context", "run_status", "start_goal"];
+
+/// D17: whether `run` is finished for its chain: accepted, discarded, or delivered.
+pub fn finished(run: &Run) -> bool {
+    matches!(run.state, RunState::Accepted | RunState::Discarded) || delivered(run)
+}
+
+/// D17: a `pr` run complete and not cancelled, so every PR has landed; it has not
+/// ended (it may still iterate, decision 9).
+pub fn delivered(run: &Run) -> bool {
+    run.state == RunState::Complete && run.delivery.mode == DeliveryMode::Pr && !run.cancelled
+}
+
+/// KG §3.3's `<accepted|discarded|delivered>`: how a finished run's outcome is named.
+pub fn outcome(run: &Run) -> &'static str {
+    if delivered(run) {
+        "delivered"
+    } else {
+        run.state.label()
+    }
+}
 
 /// KG §3.1's chain, plus D8's `ended`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,8 +126,8 @@ pub fn newest<'a>(
 }
 
 /// Decision 19, at `EventKind::Restore`: one chain per `Run.chain`, its runs oldest
-/// first. A chain whose last run failed is dropped; one whose last run was accepted or
-/// discarded is idle and ended (its window died with the daemon, KG §3.6), the
+/// first. A chain whose last run failed is dropped; one whose last run is finished
+/// (accepted, discarded, or delivered, D17) is idle and ended (its window died with the daemon, KG §3.6), the
 /// project's newest only; any other is active.
 pub fn rebuild(runs: &BTreeMap<String, Run>) -> BTreeMap<String, Chain> {
     let mut members: BTreeMap<&str, Vec<&Run>> = BTreeMap::new();
@@ -129,9 +149,7 @@ pub fn rebuild(runs: &BTreeMap<String, Run>) -> BTreeMap<String, Chain> {
         chain.runs = list.iter().map(|r| r.id.clone()).collect();
         match last.state {
             RunState::Failed => continue,
-            RunState::Accepted | RunState::Discarded => {
-                idle.push((ended_at(last), chain.id.clone()))
-            }
+            _ if finished(last) => idle.push((ended_at(last), chain.id.clone())),
             _ => {}
         }
         chains.insert(chain.id.clone(), chain);
@@ -154,11 +172,13 @@ fn ended_at(run: &Run) -> u64 {
     terminal_at(run).unwrap_or_else(|| run.log.last().map_or(run.created_at, |entry| entry.at))
 }
 
-/// The time of an accepted or discarded run's `accepted: ` or `discarded: ` log entry.
+/// The time of an accepted or discarded run's `accepted: ` or `discarded: ` log entry,
+/// or of a delivered run's last `complete: ` (D17; `complete::complete` logs it).
 pub fn terminal_at(run: &Run) -> Option<u64> {
     let prefix = match run.state {
         RunState::Accepted => "accepted: ",
         RunState::Discarded => "discarded: ",
+        _ if delivered(run) => "complete: ",
         _ => return None,
     };
     let entry = run.log.iter().rev().find(|e| e.text.starts_with(prefix))?;
@@ -215,9 +235,12 @@ pub fn resolve(
 }
 
 /// Decision 21 (KG §3.2): while `chain` is idle, every tool but [`IDLE_TOOLS`] is
-/// refused, naming `last`, its last run.
+/// refused, naming `last`, its last run. D17: a delivered `last` has not ended, so its
+/// `edit_plan` passes too (decision 38's summary, and decision 30's iterate, which
+/// makes the chain active again); the engine answers it as for any complete run.
 pub fn idle_refusal(chain: &Chain, last: &Run, tool: &str) -> Option<String> {
-    (chain.state == ChainState::Idle && !IDLE_TOOLS.contains(&tool)).then(|| {
+    let allowed = IDLE_TOOLS.contains(&tool) || (tool == "edit_plan" && delivered(last));
+    (chain.state == ChainState::Idle && !allowed).then(|| {
         format!(
             "run {} has ended; start a new goal with start_goal when the user gives you one",
             last.short()

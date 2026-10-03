@@ -500,6 +500,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         // Milestone 9.3 decision 18: round 1 is recorded when the run starts.
         rounds: Vec::new(),
         chain: None,
+        continued_by: None,
     })
 }
 

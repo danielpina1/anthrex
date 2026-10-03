@@ -3,17 +3,18 @@
 //!
 //! A run that gets an orchestrator carries its chain (`requests::start`,
 //! `promote::perform`); [`pass`], after every event, puts a new chain in the table,
-//! follows its current run's window, makes it idle once that run is accepted or
-//! discarded, and drops it once that run fails. [`window_gone`] ends an idle chain.
+//! follows its current run's window, makes it idle once that run is finished (accepted,
+//! discarded, or delivered, D17), makes it active again when that run iterates (D17),
+//! and drops it once that run fails. [`window_gone`] ends an idle chain.
 //! Task 6b: a continued run [`join`]s its idle chain, adopting its window (decision
 //! 23) or, once the chain has ended, with a fresh session (decision 24).
 
 use super::requests::log;
 use super::{Effect, EngineState};
-use crate::run::chain::{Chain, ChainState, make_idle, newest};
+use crate::run::chain::{Chain, ChainState, finished, make_idle, newest, outcome};
 use crate::run::model::Run;
 use crate::run::orch::contract_rounds::{next_goal_wake, no_chain_to_continue, still_going};
-use proto::{PrState, RunState};
+use proto::RunState;
 
 /// How a run started by `requests::start` joins a chain.
 #[derive(Debug, PartialEq, Eq)]
@@ -33,7 +34,10 @@ pub(super) enum Join {
 /// predecessor's session (route, window, OTLP token, session and routing), marked
 /// live; its next-goal wake waits on it, round 1's request (decision 11's identity);
 /// and `Effect::AdoptOrchestrator` renames and rebinds the window. An ended chain's run
-/// launches as any planned run, with the first prompt the driver set.
+/// launches as any planned run, with the first prompt the driver set. D17: the chain's
+/// previous run records the new run (`Run.continued_by`, so it iterates no more), and
+/// its orchestrator record is no longer live (a delivered run has not ended, so nothing
+/// else releases it).
 pub(super) fn join(
     state: &mut EngineState,
     run: &mut Run,
@@ -60,13 +64,20 @@ pub(super) fn join(
         .runs
         .get(chain.current())
         .filter(|_| !chain.ended && window_id != 0);
+    let prev_id = chain.current().to_string();
     let join = match prev {
         Some(prev) => {
-            adopt(run, prev, open_prs(state, &chain.runs), window_id, now, fx);
+            adopt(run, prev, window_id, now, fx);
             Join::Adopted
         }
         None => Join::Fresh,
     };
+    if let Some(prev) = state.runs.get_mut(&prev_id) {
+        prev.continued_by = Some(run.id.clone());
+        if let Some(o) = prev.orch.orchestrator.as_mut() {
+            o.live = false;
+        }
+    }
     if let Some(chain) = state.chains.get_mut(&id) {
         chain.runs.push(run.id.clone());
         chain.state = ChainState::Active;
@@ -79,7 +90,7 @@ pub(super) fn join(
 }
 
 /// Decision 23: `run` takes `prev`'s orchestrator session in `window_id`.
-fn adopt(run: &mut Run, prev: &Run, prs: Vec<u64>, window_id: u32, now: u64, fx: &mut Vec<Effect>) {
+fn adopt(run: &mut Run, prev: &Run, window_id: u32, now: u64, fx: &mut Vec<Effect>) {
     if let (Some(o), Some(p)) = (
         run.orch.orchestrator.as_mut(),
         prev.orch.orchestrator.as_ref(),
@@ -94,8 +105,8 @@ fn adopt(run: &mut Run, prev: &Run, prs: Vec<u64>, window_id: u32, now: u64, fx:
         o.live = true;
         o.exited_at = None;
     }
-    let ended = (prev.short(), prev.state.label());
-    run.orch.request_wake = Some(next_goal_wake(run.short(), ended, &run.goal, &prs));
+    let ended = (prev.short(), outcome(prev));
+    run.orch.request_wake = Some(next_goal_wake(run.short(), ended, &run.goal));
     log(
         run,
         now,
@@ -109,18 +120,6 @@ fn adopt(run: &mut Run, prev: &Run, prs: Vec<u64>, window_id: u32, now: u64, fx:
         window_id,
         name: format!("{}/orchestrator", run.short()),
     });
-}
-
-/// KG §3.3: the open PRs of a chain's earlier runs delivered by pull request, in order.
-fn open_prs(state: &EngineState, runs: &[String]) -> Vec<u64> {
-    runs.iter()
-        .filter_map(|id| state.runs.get(id))
-        .filter(|run| super::delivery::pr(run))
-        .flat_map(|run| run.delivery.stages.iter())
-        .filter_map(|stage| stage.pr.as_ref())
-        .filter(|pr| pr.state == PrState::Open)
-        .map(|pr| pr.number)
-        .collect()
 }
 
 /// A run that gets an orchestrator starts its own chain, unless it continues one.
@@ -155,8 +154,12 @@ pub(super) fn pass(state: &mut EngineState) {
         }
         match run.state {
             RunState::Failed => failed.push(chain.id.clone()),
-            RunState::Accepted | RunState::Discarded if chain.state == ChainState::Active => {
-                idle.push(chain.id.clone())
+            _ if finished(run) && chain.state == ChainState::Active => idle.push(chain.id.clone()),
+            // D17: an idle chain's delivered run iterated (back in `planning`): the
+            // chain is active again, its session the run's own.
+            _ if !finished(run) && !run.state.is_terminal() && chain.state == ChainState::Idle => {
+                chain.state = ChainState::Active;
+                chain.ended = false;
             }
             _ => {}
         }

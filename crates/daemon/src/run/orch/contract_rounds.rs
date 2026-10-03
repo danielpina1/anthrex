@@ -103,21 +103,14 @@ pub fn round_done(n: u32) -> String {
 }
 
 /// KG §3.3's next-goal wake (decision 23): run `h4`'s goal, fenced as user input (D1),
-/// after the chain's previous run `prev` and its `outcome` (`accepted` or `discarded`);
-/// in `pr` mode a last line naming the earlier runs' open PRs, when there are any.
-pub fn next_goal_wake(h4: &str, (prev, outcome): (&str, &str), goal: &str, prs: &[u64]) -> String {
-    let mut text = format!(
+/// after the chain's previous run `prev` and its `outcome` (`accepted`, `discarded` or,
+/// D17, `delivered`). D17 dropped the spec's open-PRs line: a chain's earlier `pr` run
+/// is finished for it only once every PR has landed, so it could never name one.
+pub fn next_goal_wake(h4: &str, (prev, outcome): (&str, &str), goal: &str) -> String {
+    format!(
         "a new goal, run {h4} (your previous run {prev} was {outcome}):\n{}",
         fence(goal)
-    );
-    if !prs.is_empty() {
-        let list: Vec<String> = prs.iter().map(|n| format!("#{n}")).collect();
-        text.push_str(&format!(
-            "open pull requests from earlier runs: {}",
-            list.join(", ")
-        ));
-    }
-    text
+    )
 }
 
 /// Decision 24's history block when the read failed, timed out or found no line.
@@ -175,4 +168,9 @@ pub fn chain_left(chain: &str) -> String {
     format!(
         "{chain} has ended; this window cannot start a goal, and the user starts the next one with a new orchestrator"
     )
+}
+
+/// D17: an iterate of a run whose chain has started a next goal since (decision 9).
+pub fn superseded(h4: &str) -> String {
+    format!("run {h4} is no longer its orchestrator's current run; start a new goal instead")
 }
