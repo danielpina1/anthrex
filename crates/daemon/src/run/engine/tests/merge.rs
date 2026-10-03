@@ -531,6 +531,7 @@ fn red_candidate_is_a_merge_failure() {
         summary: None,
         summary_source: Some(DeciderSource::Fallback),
         tier: None,
+        lane: None,
     };
     let t1 = fx.task("t1");
     assert_eq!(t1.state, TaskState::Working);

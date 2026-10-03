@@ -216,6 +216,7 @@ fn task_facts(
         summary: None,
         summary_source: None,
         tier: Some(record(outcome, now)),
+        lane: None,
     });
     command
 }

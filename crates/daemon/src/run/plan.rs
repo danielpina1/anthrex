@@ -503,6 +503,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         chain: None,
         continued_by: None,
         chain_left: false,
+        concurrency: Default::default(),
     })
 }
 

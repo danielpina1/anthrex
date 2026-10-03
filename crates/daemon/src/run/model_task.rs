@@ -197,6 +197,15 @@ pub struct Task {
     /// Milestone 9.3 decision 13: the round that added the task.
     #[serde(default = "proto::first_round")]
     pub round: u32,
+    /// Milestone 9.5 decision 19: the race, once the task races.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race: Option<super::Race>,
+    /// Decision 25: the test writer and its red commit, once a paired task starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pair: Option<super::Pair>,
+    /// Decision 18: since when the racing task has waited for its second writer slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race_wait_since: Option<u64>,
 }
 
 impl Task {

@@ -159,6 +159,7 @@ pub fn review(round: u32, verdict: Option<Verdict>, findings: &[(Severity, &str)
                 text: text.to_string(),
             })
             .collect(),
+        lane: None,
     }
 }
 
@@ -214,6 +215,7 @@ pub fn round(session: u32, tool_calls: u32, usage: TokenUsage) -> AgentRound {
         exited_pid: None,
         activity: None,
         last_text: None,
+        lane: None,
     }
 }
 

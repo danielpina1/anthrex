@@ -37,6 +37,7 @@ fn check(tier: TierRecord) -> CheckRecord {
         summary: None,
         summary_source: None,
         tier: Some(tier),
+        lane: None,
     }
 }
 
@@ -113,6 +114,7 @@ fn staged_run() -> Run {
             input: None,
             text: "W1 accepted: the tests moved to tests/new.rs".into(),
         }],
+        lane: None,
     }];
     let mut fix = run.tasks[1].clone();
     fix.spec.id = "fix1".into();

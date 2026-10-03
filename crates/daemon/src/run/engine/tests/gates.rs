@@ -289,6 +289,7 @@ fn turn_end_fallback_on_a_tdd_task_fails_the_proof_with_the_missing_names_messag
         matched: false,
         red_tail: String::new(),
         head_tail: String::new(),
+        lane: None,
     };
     assert_eq!(t1.proofs, vec![record.clone()]);
     let text = proof_failed_message("cargo test -- --exact {test}", &record, "{test}");
@@ -332,6 +333,7 @@ fn check_failure_goes_up_the_ladder() {
         summary: None,
         summary_source: Some(DeciderSource::Fallback),
         tier: None,
+        lane: None,
     };
     assert_eq!(t1.checks, vec![record.clone()]);
     let first = check_failed_message("cargo test", &record);
@@ -426,6 +428,7 @@ fn a_timed_out_check_says_so() {
         summary: None,
         summary_source: None,
         tier: None,
+        lane: None,
     };
     assert_eq!(
         check_failed_message("make test", &record),

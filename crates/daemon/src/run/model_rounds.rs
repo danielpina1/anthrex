@@ -144,6 +144,9 @@ pub struct AgentRound {
     /// its line breaks kept, cut at `proto::WORKER_SUMMARY_MAX`. A counter (decision 6).
     #[serde(default)]
     pub last_text: Option<String>,
+    /// Milestone 9.5 decision 20: the race lane it belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<proto::RaceLane>,
 }
 
 impl AgentRound {
@@ -189,6 +192,9 @@ pub struct CheckRecord {
     /// a tiered profile); `None` for M8a's check.
     #[serde(default)]
     pub tier: Option<TierRecord>,
+    /// Milestone 9.5 decision 20: the race lane it belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<proto::RaceLane>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,6 +210,9 @@ pub struct ProofRecord {
     pub matched: bool,
     pub red_tail: String,
     pub head_tail: String,
+    /// Milestone 9.5 decision 20: the race lane it belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<proto::RaceLane>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,6 +224,9 @@ pub struct ReviewRecord {
     pub verdict: Option<Verdict>,
     pub summary: String,
     pub findings: Vec<Finding>,
+    /// Milestone 9.5 decision 20: the race lane it belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<proto::RaceLane>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

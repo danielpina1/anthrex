@@ -372,6 +372,7 @@ pub(crate) fn emit_op(
             op,
             task_id: task_id.map(str::to_string),
             kind: kind.clone(),
+            lane: None,
         },
     );
     fx.push(Effect::Op {

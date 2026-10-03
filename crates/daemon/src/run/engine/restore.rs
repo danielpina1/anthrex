@@ -169,7 +169,7 @@ fn is_history(kind: &OpKind) -> bool {
 
 /// Decision 44: an op dropped as `NotStarted`, and what its task needs instead.
 fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
-    let PendingOp { op, task_id, kind } = pending;
+    let (op, task_id, kind) = (pending.op, pending.task_id, pending.kind);
     let i = task_id
         .as_deref()
         .and_then(|id| run.tasks.iter().position(|t| t.id() == id));

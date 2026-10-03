@@ -48,6 +48,11 @@ pub use task::*;
 mod goal_rounds;
 pub use goal_rounds::Round;
 
+// Milestone 9.5's race, pair and writer caps (decisions 16, 19, 20, 25; ruling I3).
+#[path = "model_tuning.rs"]
+mod tuning;
+pub use tuning::*;
+
 /// How thoroughly a task is reviewed, decision 35: `S` tasks get `Small`, `M` tasks
 /// `Medium`, hub tasks `Frontier`, each possibly raised by the level rule (no `check` in
 /// the profile, or a non-`tdd` task whose `owns` touch `source`).
@@ -122,6 +127,9 @@ pub struct PendingOp {
     pub op: OpId,
     pub task_id: Option<String>,
     pub kind: OpKind,
+    /// Milestone 9.5 decision 20: the race lane the op is for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<proto::RaceLane>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -369,6 +377,9 @@ pub struct Run {
     /// Cleared when the chain comes back (an iterate, D17).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub chain_left: bool,
+    /// Milestone 9.5 decision 16: the writer cap per runtime label, once one is tracked.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub concurrency: BTreeMap<String, RuntimeConcurrency>,
 }
 
 impl Run {

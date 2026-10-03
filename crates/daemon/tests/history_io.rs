@@ -186,6 +186,7 @@ fn run_appending(data: &Path, history: &Path) -> (Run, OpKind) {
             op: 7,
             task_id: Some("t1".into()),
             kind: kind.clone(),
+            lane: None,
         },
     );
     (run, kind)
@@ -336,6 +337,7 @@ fn role_route_append_is_idempotent_by_record_id() {
             op: 7,
             task_id: None,
             kind: kind.clone(),
+            lane: None,
         },
     );
     let journal = vec![JournalLine::Intent { op: 7, kind }];

@@ -142,6 +142,7 @@ pub fn round(
         exited_pid: None,
         activity: None,
         last_text: None,
+        lane: None,
     }
 }
 
@@ -200,6 +201,7 @@ pub fn pend(run: &mut Run, op: OpId, task: Option<&str>, kind: OpKind) {
             op,
             task_id: task.map(str::to_string),
             kind,
+            lane: None,
         },
     );
     run.next_op = run.next_op.max(op + 1);
@@ -375,6 +377,7 @@ pub fn full_run(data_dir: &Path) -> Run {
             input: None,
             text: "wrong".into(),
         }],
+        lane: None,
     });
     task.checks.push(CheckRecord {
         at: 1_250,
@@ -387,6 +390,7 @@ pub fn full_run(data_dir: &Path) -> Run {
         summary: Some("the decider's summary".into()),
         summary_source: Some(proto::DeciderSource::Decider),
         tier: None,
+        lane: None,
     });
     task.proofs.push(ProofRecord {
         at: 1_260,
@@ -398,6 +402,7 @@ pub fn full_run(data_dir: &Path) -> Run {
         matched: true,
         red_tail: "red".into(),
         head_tail: "green".into(),
+        lane: None,
     });
     task.salvage_refs = vec!["refs/anthrex/salvage/x".into()];
     task.failure_log = vec!["a failure".into()];

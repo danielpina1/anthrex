@@ -495,6 +495,9 @@ fn new_task(
         signal_refusals: 0,
         sync: None,
         round: proto::first_round(),
+        race: None,
+        pair: None,
+        race_wait_since: None,
     }
 }
 

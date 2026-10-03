@@ -127,6 +127,7 @@ fn check_tail_with_a_backtick_fence_uses_a_longer_fence() {
         summary: None,
         summary_source: None,
         tier: None,
+        lane: None,
     });
     let out = render(&run, 2_000);
 
@@ -177,6 +178,7 @@ fn notes_findings_and_history_do_not_forge_real_markdown_structure() {
             input: None,
             text: format!("finding first line\n{HOSTILE_LINES}"),
         }],
+        lane: None,
     });
     t.history.push(TaskEvent {
         at: 1_800,
@@ -235,6 +237,7 @@ fn proof_test_field_with_a_newline_does_not_split_its_line_n2() {
         matched: true,
         red_tail: String::new(),
         head_tail: String::new(),
+        lane: None,
     });
     let out = render(&run, 2_000);
     let proof_line = out
@@ -264,6 +267,7 @@ fn finding_file_with_a_leading_hash_does_not_forge_a_heading_n3() {
             input: None,
             text: "unrelated finding text".to_string(),
         }],
+        lane: None,
     });
     let out = render(&run, 2_000);
     let counts = node_counts(&out);
@@ -372,6 +376,7 @@ fn review_summary_first_line_does_not_setext_promote_the_round_header_nb1() {
         verdict: Some(Verdict::Changes),
         summary: "===\nrest of summary".to_string(),
         findings: vec![],
+        lane: None,
     });
     let out = render(&run, 2_000);
     assert_eq!(

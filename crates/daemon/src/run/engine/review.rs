@@ -198,6 +198,7 @@ pub(super) fn review_ready(
         verdict: None,
         summary: String::new(),
         findings: Vec::new(),
+        lane: None,
     });
     run.windows_created += 1;
     history(run, i, now, format!("review round {round_no} starting"));
@@ -323,6 +324,7 @@ pub(super) fn submit(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: 
                 verdict: None,
                 summary: String::new(),
                 findings: Vec::new(),
+                lane: None,
             });
             task.reviews.len() - 1
         }

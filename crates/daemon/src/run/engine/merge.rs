@@ -225,6 +225,7 @@ pub(super) fn candidate_done(
                 summary: None,
                 summary_source: None,
                 tier: None,
+                lane: None,
             };
             let command = run.profile.check.clone().unwrap_or_default();
             run.tasks[i].checks.push(record);

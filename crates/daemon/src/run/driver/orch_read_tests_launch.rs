@@ -60,6 +60,7 @@ fn pending(run: &mut Run, op: u64, kind: OpKind) {
         op,
         task_id: None,
         kind,
+        lane: None,
     };
     run.pending_ops.insert(op, entry);
 }

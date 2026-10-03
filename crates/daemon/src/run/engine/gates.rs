@@ -124,6 +124,7 @@ fn start_proof(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
             matched: false,
             red_tail: String::new(),
             head_tail: String::new(),
+            lane: None,
         };
         let text = proof_failed_message(&single, &record, NAME_ONLY);
         run.tasks[i].proofs.push(record);
@@ -239,6 +240,7 @@ pub(super) fn proof_done(
                 matched,
                 red_tail,
                 head_tail,
+                lane: None,
             };
             let ok = red_failed && head_passed && matched;
             let text = proof_failed_message(command, &record, pattern);
@@ -298,6 +300,7 @@ pub(super) fn check_done(
                 summary: None,
                 summary_source: None,
                 tier: None,
+                lane: None,
             };
             run.tasks[i].checks.push(record);
             if ok {

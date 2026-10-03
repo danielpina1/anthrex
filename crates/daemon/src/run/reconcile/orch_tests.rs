@@ -59,6 +59,7 @@ fn intent_only(kind: OpKind) -> (Run, Vec<JournalLine>) {
             op: 4,
             task_id: None,
             kind: kind.clone(),
+            lane: None,
         },
     );
     (run, vec![JournalLine::Intent { op: 4, kind }])

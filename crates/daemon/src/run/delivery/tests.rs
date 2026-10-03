@@ -72,6 +72,7 @@ pub(super) fn check_with(record: TierRecord) -> CheckRecord {
         summary: None,
         summary_source: None,
         tier: Some(record),
+        lane: None,
     }
 }
 
@@ -84,6 +85,7 @@ pub(super) fn review(task: &Task, round: u32, verdict: Verdict) -> ReviewRecord 
         verdict: Some(verdict),
         summary: String::new(),
         findings: Vec::new(),
+        lane: None,
     }
 }
 

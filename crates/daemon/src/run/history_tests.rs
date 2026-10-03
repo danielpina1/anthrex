@@ -9,7 +9,7 @@ use proto::{
 
 use super::{due, run_outcome, run_record, run_record_due, task_record, task_record_id};
 use crate::run::contract::generated_files_message;
-use crate::run::model::{DoneClaim, ProofRecord, ReviewLevel, Run, SizeCheckState};
+use crate::run::model::{DoneClaim, ReviewLevel, Run, SizeCheckState};
 use crate::run::phases::set_state;
 use crate::run::roster::{escalate, pick_reviewer};
 use crate::run::routing::{record_reviewer, record_worker};
@@ -109,17 +109,7 @@ fn task_record_from_a_merged_task() {
         review(2, Verdict::Approve, vec![finding(Severity::Minor)]),
     ];
     task.checks = vec![check(false, false), check(true, false), check(true, true)];
-    task.proofs = vec![ProofRecord {
-        at: 1_100,
-        test: "t".into(),
-        red: "r".into(),
-        head: "h".into(),
-        red_failed: true,
-        head_passed: true,
-        matched: true,
-        red_tail: String::new(),
-        head_tail: String::new(),
-    }];
+    task.proofs = vec![passed_proof(1_100)];
     task.failure_log = vec![
         generated_files_message(&["Cargo.lock".to_string()]),
         "the check failed".into(),

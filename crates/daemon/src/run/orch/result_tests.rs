@@ -26,6 +26,7 @@ fn check(at: u64, ok: bool) -> CheckRecord {
         summary: None,
         summary_source: None,
         tier: None,
+        lane: None,
     }
 }
 
@@ -72,6 +73,7 @@ fn full_run() -> Run {
         matched: true,
         red_tail: String::new(),
         head_tail: String::new(),
+        lane: None,
     }];
     t.reviews = vec![review(
         1,
@@ -342,6 +344,7 @@ fn the_cap_holds_at_the_schema_maxima() {
                 matched: true,
                 red_tail: text(4000),
                 head_tail: text(4000),
+                lane: None,
             })
             .collect();
         t.orch.messages = (0..50)

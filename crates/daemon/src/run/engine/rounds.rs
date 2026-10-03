@@ -72,6 +72,7 @@ pub(super) fn new_round(
         exited_pid: None,
         activity: None,
         last_text: None,
+        lane: None,
     }
 }
 

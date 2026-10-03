@@ -107,6 +107,7 @@ fn record(at: u64, on_candidate: bool, source: Option<DeciderSource>) -> CheckRe
         summary: None,
         summary_source: source,
         tier: None,
+        lane: None,
     }
 }
 

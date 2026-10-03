@@ -75,6 +75,7 @@ fn round(role: AgentRole, session: u32, turns: u32, tool_calls: u32, denials: u3
         exited_pid: None,
         activity: None,
         last_text: None,
+        lane: None,
     }
 }
 
@@ -103,6 +104,7 @@ fn report_has_every_section() {
             matched: true,
             red_tail: "red tail".to_string(),
             head_tail: "head tail".to_string(),
+            lane: None,
         });
         t.checks.push(CheckRecord {
             at: 1_700,
@@ -115,6 +117,7 @@ fn report_has_every_section() {
             summary: None,
             summary_source: None,
             tier: None,
+            lane: None,
         });
         t.reviews.push(ReviewRecord {
             round: 1,
@@ -130,6 +133,7 @@ fn report_has_every_section() {
                 input: None,
                 text: "Missing expiry test".to_string(),
             }],
+            lane: None,
         });
         t.salvage_refs
             .push("refs/anthrex/salvage/add-password-reset-3f9a/t1/1".to_string());
@@ -209,6 +213,7 @@ fn minor_findings_are_listed_even_when_approved() {
             input: None,
             text: "nit: rename this".to_string(),
         }],
+        lane: None,
     });
     let out = render(&run, 2_000);
     assert!(out.contains("verdict=approve"));
@@ -446,6 +451,7 @@ fn a_check_summary_names_its_source() {
         summary: summary.map(str::to_string),
         summary_source: source,
         tier: None,
+        lane: None,
     };
     run.tasks[0].checks = vec![
         record(Some("error: a failed"), Some(proto::DeciderSource::Decider)),

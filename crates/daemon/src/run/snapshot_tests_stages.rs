@@ -66,6 +66,7 @@ fn staged_run() -> Run {
         summary: None,
         summary_source: None,
         tier,
+        lane: None,
     };
     t1.checks = vec![check(Some(tier_record(1, true))), check(None)];
     t1.signals = vec![
@@ -102,6 +103,7 @@ fn staged_run() -> Run {
                 "W3 (src/a.rs:40) was not justified by the review",
             ),
         ],
+        lane: None,
     }];
     let mut fix = run.tasks[1].clone();
     fix.spec.id = "fix1".into();

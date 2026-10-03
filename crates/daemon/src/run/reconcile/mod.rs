@@ -310,6 +310,7 @@ mod tests {
                 op,
                 task_id: Some("t1".into()),
                 kind,
+                lane: None,
             };
             run.pending_ops.insert(op, pending);
         }
@@ -389,6 +390,7 @@ mod tests {
                 op,
                 task_id: None,
                 kind,
+                lane: None,
             };
             run.pending_ops.insert(op, pending);
         }

@@ -279,6 +279,7 @@ fn integration_review_prompt_is_exact() {
             finding(Severity::Critical, "the token never expires"),
             finding(Severity::Minor, "a name"),
         ],
+        lane: None,
     });
     run.tasks.push(review);
     let prompt = integration_review_prompt(&run, epic(&run), 2, BASE, HEAD);
