@@ -252,6 +252,13 @@ impl WindowManager {
         Some(role.run_ref.clone())
     }
 
+    /// Milestone 9.3 task 6b fix round 1 (m1): the run window `id`'s run, live or not;
+    /// `None` for no window or one that is not a run's. Under the lock, no I/O.
+    pub fn run_window_run(&self, id: u32) -> Option<RunRef> {
+        let inner = crate::lock(&self.inner);
+        Some(inner.entries.get(&id)?.role.as_ref()?.run_ref.clone())
+    }
+
     /// Records a client's `Input` for `id`. Under the lock, no I/O.
     pub fn note_client_input(&self, id: u32) {
         let mut inner = crate::lock(&self.inner);

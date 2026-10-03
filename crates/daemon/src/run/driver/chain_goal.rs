@@ -66,12 +66,56 @@ struct Joined {
     chain: String,
     project: PathBuf,
     choice: OrchestratorChoice,
-    runs: Vec<String>,
+    handoff: Handoff,
+    /// The lookup found the chain's window to adopt (fix round 1, m5: no history read).
+    adopt: bool,
+}
+
+/// Decision 24: what a fresh session's first prompt says of its chain, copied out of
+/// the engine state: the chain, its previous run's short id, outcome (KG §3.3's
+/// `accepted`, `discarded` or, D17, `delivered`) and summary, and the history file
+/// with the chain's runs.
+pub(in crate::run::driver) struct Handoff {
+    chain: String,
     prev_h4: String,
-    /// KG §3.3's `accepted`, `discarded` or `delivered` (D17).
     outcome: &'static str,
     summary: Option<String>,
     history: PathBuf,
+    runs: Vec<String>,
+}
+
+impl Handoff {
+    /// The handoff of `chain` (with runs `runs`) after its run `prev`.
+    pub(in crate::run::driver) fn of(chain: &str, runs: Vec<String>, prev: &Run) -> Handoff {
+        Handoff {
+            chain: chain.to_string(),
+            prev_h4: prev.short().to_string(),
+            outcome: crate::run::chain::outcome(prev),
+            summary: prev
+                .orch
+                .orchestrator
+                .as_ref()
+                .and_then(|o| o.summary.clone()),
+            history: prev.repo_dir.join(HISTORY_FILE),
+            runs,
+        }
+    }
+
+    /// The prompt after `first` (the run's own first prompt), with the chain's last
+    /// history lines read within `read` ([`history_lines`]); none read when `read` is
+    /// `None`.
+    pub(in crate::run::driver) async fn prompt(
+        &self,
+        first: &str,
+        read: Option<Duration>,
+    ) -> String {
+        let lines = match read {
+            Some(bound) => history_lines(self.history.clone(), self.runs.clone(), bound).await,
+            None => None,
+        };
+        let ended = (self.chain.as_str(), self.prev_h4.as_str(), self.outcome);
+        handoff_prompt(first, ended, self.summary.as_deref(), lines.as_deref())
+    }
 }
 
 impl RunService {
@@ -163,15 +207,15 @@ impl RunService {
             },
         );
         // Decision 24: the first prompt of a fresh session, should the chain have
-        // ended; the engine keeps the adopted session's own when it adopts.
+        // ended; the engine keeps the adopted session's own when it adopts. Fix round
+        // 1 (m5): when the lookup found a window to adopt, the history is not read; a
+        // chain that ended before the step launches with the summary alone.
         let bound = Duration::from_secs(run.limits.git_timeout_secs);
-        let lines = history_lines(joined.history.clone(), joined.runs.clone(), bound).await;
-        let prompt = handoff_prompt(
-            &orchestrator_first_prompt(&run),
-            (&joined.chain, &joined.prev_h4, joined.outcome),
-            joined.summary.as_deref(),
-            lines.as_deref(),
-        );
+        let read = (!joined.adopt).then_some(bound);
+        let prompt = joined
+            .handoff
+            .prompt(&orchestrator_first_prompt(&run), read)
+            .await;
         if let Some(o) = run.orch.orchestrator.as_mut() {
             o.first_prompt = prompt;
         }
@@ -196,15 +240,8 @@ impl RunService {
                 runtime: chain.runtime,
                 model: (!chain.model.is_empty()).then(|| chain.model.clone()),
             },
-            runs: chain.runs.clone(),
-            prev_h4: prev.short().to_string(),
-            outcome: crate::run::chain::outcome(prev),
-            summary: prev
-                .orch
-                .orchestrator
-                .as_ref()
-                .and_then(|o| o.summary.clone()),
-            history: prev.repo_dir.join(HISTORY_FILE),
+            handoff: Handoff::of(&chain.id, chain.runs.clone(), prev),
+            adopt: !chain.ended && chain.window_id != 0,
         })
     }
 }
@@ -219,6 +256,8 @@ pub(in crate::run::driver) async fn history_lines(
     runs: Vec<String>,
     bound: Duration,
 ) -> Option<String> {
+    #[cfg(test)]
+    crate::lock(&HISTORY_READS).push(path.clone());
     let read = tokio::task::spawn_blocking(move || -> std::io::Result<String> {
         let text = std::fs::read_to_string(&path)?;
         let ours = |line: &&str| {
@@ -236,6 +275,12 @@ pub(in crate::run::driver) async fn history_lines(
         _ => None,
     }
 }
+
+/// Fix round 1 (m5), tests only: the path of every history read, so a test can tell an
+/// adopt read none.
+#[cfg(test)]
+pub(in crate::run::driver) static HISTORY_READS: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
 
 #[cfg(test)]
 #[path = "chain_goal_tests.rs"]

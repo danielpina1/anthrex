@@ -95,6 +95,11 @@ pub(super) fn on_orch_event(
         OrchEvent::ChainWindowGone { chain, window_id } => {
             super::chains::window_gone(state, &chain, window_id)
         }
+        OrchEvent::AdoptLost {
+            run_id,
+            window_id,
+            first_prompt,
+        } => super::chains::adopt_lost(state, &run_id, window_id, first_prompt, now),
         OrchEvent::WakeHeld { run_id, held } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
                 run.orch.wake_held = held;

@@ -102,6 +102,14 @@ pub enum OrchEvent {
     /// Milestone 9.3 decision 19: an idle chain's window closed, or exited for
     /// `EXIT_CONFIRM` (`driver/chain_ops.rs::idle_windows`).
     ChainWindowGone { chain: String, window_id: u32 },
+    /// Task 6b fix round 1 (m1): run `run_id` never took window `window_id`, gone
+    /// before the adoption rebound it, or still the previous run's after a restart
+    /// (`driver/chain_ops.rs`); `first_prompt` is the run's handoff for a fresh session.
+    AdoptLost {
+        run_id: String,
+        window_id: u32,
+        first_prompt: String,
+    },
 }
 
 /// How a run scout's or sub-planner's session ended: its report or epic accepted, or
@@ -129,7 +137,8 @@ impl OrchEvent {
             | OrchEvent::WakeHeld { .. }
             | OrchEvent::Installed { .. }
             | OrchEvent::RoleRouteEnded { .. }
-            | OrchEvent::ChainWindowGone { .. } => None,
+            | OrchEvent::ChainWindowGone { .. }
+            | OrchEvent::AdoptLost { .. } => None,
         }
     }
 }

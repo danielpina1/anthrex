@@ -133,6 +133,8 @@ impl RunService {
         self.execute(prepared, now).await;
         self.compact_after_restore(&quiet).await;
         self.watch_live_worktrees();
+        // Milestone 9.3 task 6b fix round 1 (m1): an adoption the stop cut short.
+        self.lost_adoptions().await;
         self.mark_restored_orchestrators_live();
         self.remove_stale_windows(&skipped);
     }

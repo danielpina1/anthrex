@@ -345,3 +345,52 @@ fn an_orchestrator_that_never_launched_leaves_an_ended_chain() {
     assert!(adopted(&effects).is_empty());
     assert_eq!(ops_in(&effects, "CreateOrchestrator").len(), 1);
 }
+
+/// Fix round 1 (m1): the adopted window was gone before the driver rebound it, so the
+/// driver sends `OrchEvent::AdoptLost` with the new run's handoff prompt. The run's
+/// orchestrator has no window and is not live, and `run resume` launches a fresh
+/// session with that prompt, never the predecessor's copied one.
+#[test]
+fn an_adoption_lost_launches_a_fresh_session_at_resume() {
+    let mut fx = ended(FinishAction::Accept);
+    continue_as(&mut fx, NEXT, None);
+    fx.next(EventKind::Orch(OrchEvent::AdoptLost {
+        run_id: NEXT.into(),
+        window_id: ORCH,
+        first_prompt: "the handoff of 4c1d".into(),
+    }));
+    let run = &fx.state.runs[NEXT];
+    let o = run.orch.orchestrator.as_ref().unwrap();
+    assert_eq!((o.window_id, o.live), (None, false));
+    assert_eq!(o.first_prompt, "the handoff of 4c1d");
+    assert!(
+        run.log.iter().any(|e| e.text
+            == "window 90 was gone before run 4c1d took it; run resume launches a fresh session"),
+        "{:#?}",
+        run.log
+    );
+    assert_eq!(fx.state.chains[CHAIN].window_id, 0);
+    // A stale report for another window, or for an ended run, changes nothing.
+    let before = fx.state.runs[NEXT].clone();
+    fx.next(EventKind::Orch(OrchEvent::AdoptLost {
+        run_id: NEXT.into(),
+        window_id: ORCH + 1,
+        first_prompt: "other".into(),
+    }));
+    assert_eq!(
+        fx.state.runs[NEXT].orch.orchestrator,
+        before.orch.orchestrator
+    );
+    let reply = fx.reply();
+    let effects = fx.next(EventKind::Resume {
+        reply,
+        run_id: NEXT.into(),
+        rebaseline: None,
+    });
+    let launches = ops_in(&effects, "CreateOrchestrator");
+    assert_eq!(launches.len(), 1, "{effects:#?}");
+    let OpKind::CreateOrchestrator { spec, .. } = &launches[0].1 else {
+        unreachable!()
+    };
+    assert_eq!(spec.initial_prompt.as_deref(), Some("the handoff of 4c1d"));
+}

@@ -33,16 +33,16 @@ use crate::server::{GitWiring, serve};
 
 /// The previous run, accepted, and its chain.
 pub(in crate::run::driver) const PREV: &str = "first-goal-3f9a";
-const CHAIN: &str = "o-3f9a";
+pub(in crate::run::driver) const CHAIN: &str = "o-3f9a";
 /// The rig's `git_timeout_secs` (the run harness's) and its host calls' cap.
-const GIT_TIMEOUT_SECS: u64 = 5;
+pub(in crate::run::driver) const GIT_TIMEOUT_SECS: u64 = 5;
 const HOST_CAP: Duration = Duration::from_secs(10);
 /// How long one continued start may take (`docs/timing-budgets.md`): at most 24 git
 /// calls at `GIT_TIMEOUT_SECS` (the roots' detection, `goal_ready`'s preflight, the
 /// build's preflight, protected files, run refs, `.codex` tree and settings reads) and
 /// the history read's own bound, 120 s; the delivery's preflight under `HOST_CAP`; one
 /// engine step.
-const ANSWER: Duration = Duration::from_secs(150);
+pub(in crate::run::driver) const ANSWER: Duration = Duration::from_secs(150);
 
 pub(in crate::run::driver) fn role(run_id: &str) -> RoleLaunch {
     RoleLaunch {
@@ -77,15 +77,15 @@ pub(in crate::run::driver) fn sleeping_claude(dir: &Path) -> String {
     claude.to_str().unwrap().into()
 }
 
-struct ChainRig {
-    checkout: Checkout,
+pub(in crate::run::driver) struct ChainRig {
+    pub checkout: Checkout,
     _sock: tempfile::TempDir,
     socket: PathBuf,
-    s: Arc<RunService>,
-    manager: Arc<WindowManager>,
+    pub s: Arc<RunService>,
+    pub manager: Arc<WindowManager>,
     shutdown: CancellationToken,
     marker: PathBuf,
-    window: u32,
+    pub window: u32,
     project: PathBuf,
     root: PathBuf,
 }
@@ -94,7 +94,7 @@ impl ChainRig {
     /// A daemon over a checkout with a stored profile, and [`PREV`] accepted as its
     /// chain's last run, its orchestrator's window open: an idle, unended chain.
     /// `prepare` changes the previous run first.
-    async fn new(prepare: impl FnOnce(&mut Run)) -> ChainRig {
+    pub(in crate::run::driver) async fn new(prepare: impl FnOnce(&mut Run)) -> ChainRig {
         let checkout = Checkout::ready(true);
         let tmp = checkout.tmp.path().to_path_buf();
         let sock = tempfile::Builder::new()
@@ -115,19 +115,7 @@ impl ChainRig {
             ..config::Git::default()
         });
         let data = tmp.join("data");
-        let orch_config = config::Orchestrator {
-            git_timeout_secs: GIT_TIMEOUT_SECS,
-            ..config::Orchestrator::default()
-        };
-        let mut ctx = RunContext::new(
-            data.clone(),
-            manager.config(),
-            orch_config,
-            wiring.registry.clone(),
-        )
-        .with_host(checkout.host());
-        ctx.host_cap = Some(HOST_CAP);
-        let s = RunService::new(manager.clone(), ctx);
+        let s = RunService::new(manager.clone(), context(&checkout, &manager, &wiring));
         crate::profile::service::wire(
             &manager,
             &s,
@@ -212,7 +200,7 @@ impl ChainRig {
     }
 
     /// A goal continuing `after` from `dir`, as the TUI and `--continue` send it.
-    async fn continued(&self, after: &str, dir: &Path) -> RunReply {
+    pub(in crate::run::driver) async fn continued(&self, after: &str, dir: &Path) -> RunReply {
         let req = RunRequest::StartGoal {
             goal: "Add a logout button".into(),
             dir: dir.to_path_buf(),
@@ -237,7 +225,7 @@ impl ChainRig {
             .collect()
     }
 
-    async fn stop(self) {
+    pub(in crate::run::driver) async fn stop(self) {
         self.shutdown.cancel();
         self.s.stop().await;
     }
@@ -251,7 +239,24 @@ impl Drop for ChainRig {
     }
 }
 
-fn started(reply: &RunReply) -> String {
+/// The rig's run context over `checkout`'s data directory (a restarted daemon's too).
+pub(in crate::run::driver) fn context(
+    checkout: &Checkout,
+    manager: &Arc<WindowManager>,
+    wiring: &GitWiring,
+) -> RunContext {
+    let orch_config = config::Orchestrator {
+        git_timeout_secs: GIT_TIMEOUT_SECS,
+        ..config::Orchestrator::default()
+    };
+    let data = checkout.tmp.path().join("data");
+    let mut ctx = RunContext::new(data, manager.config(), orch_config, wiring.registry.clone())
+        .with_host(checkout.host());
+    ctx.host_cap = Some(HOST_CAP);
+    ctx
+}
+
+pub(in crate::run::driver) fn started(reply: &RunReply) -> String {
     match reply {
         RunReply::Started {
             run_id,
@@ -389,6 +394,11 @@ async fn start_goal_inherits_delivery_trust_and_checks_but_not_approve_at_once()
     );
     assert_eq!(run.delivery.mode, DeliveryMode::Pr);
     assert!(run.trust_project);
+    // Fix round 1 (m3): the inherited permission is consumed at the start
+    // (`confine::start_refusal`, which passed); the built run records whether its
+    // checks do run unconfined, which they do only where the sandbox is missing.
+    let unconfined = run.limits.worker_sandbox && !crate::run::confine::available();
+    assert_eq!(run.limits.unconfined_checks, unconfined);
     assert!(!run.orch.yes, "its plan stops at the gate");
     assert_eq!(run.state, RunState::Planning);
 

@@ -122,6 +122,49 @@ fn adopt(run: &mut Run, prev: &Run, window_id: u32, now: u64, fx: &mut Vec<Effec
     });
 }
 
+/// Task 6b fix round 1 (m1), `OrchEvent::AdoptLost`: run `run_id` never took window
+/// `window_id` (gone before the driver rebound it, or still the previous run's after a
+/// restart). Its orchestrator keeps no window and is not live, with the driver's
+/// handoff as its first prompt, so `run resume` launches a fresh session
+/// (`orch_window::relaunch`); the chain follows no window until then. A report for
+/// another window, or for a run that has ended, changes nothing.
+pub(super) fn adopt_lost(
+    state: &mut EngineState,
+    run_id: &str,
+    window_id: u32,
+    first_prompt: String,
+    now: u64,
+) {
+    let Some(run) = state
+        .runs
+        .get_mut(run_id)
+        .filter(|r| !r.state.is_terminal())
+    else {
+        return;
+    };
+    let Some(o) = run
+        .orch
+        .orchestrator
+        .as_mut()
+        .filter(|o| o.window_id == Some(window_id))
+    else {
+        return;
+    };
+    o.window_id = None;
+    o.live = false;
+    o.first_prompt = first_prompt;
+    let text = format!(
+        "window {window_id} was gone before run {} took it; run resume launches a fresh session",
+        run.short()
+    );
+    log(run, now, text);
+    if let Some(chain) = run.chain.as_deref().and_then(|id| state.chains.get_mut(id))
+        && chain.current() == run_id
+    {
+        chain.window_id = 0;
+    }
+}
+
 /// A run that gets an orchestrator starts its own chain, unless it continues one.
 pub(super) fn assign(run: &mut Run) {
     if run.orch.orchestrator.is_some() && run.chain.is_none() {
