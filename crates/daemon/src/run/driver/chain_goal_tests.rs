@@ -463,17 +463,20 @@ async fn a_continued_run_is_based_on_the_checkout() {
 /// slack (`docs/timing-budgets.md`). A readable file gives the chain's last ten lines
 /// as written.
 ///
-/// Task 6b fix round 3: no thread can wait for good. The writer opens the FIFO only
-/// once the read has (a non-blocking open fails with `ENXIO` until a reader is there),
-/// within a deadline; it holds it for `HOLD`, past the bound and its slack, so the
-/// read's open completes and its read waits; then it closes it, which ends the
-/// abandoned read (EOF). Before, the
-/// test's writer opened and closed at once, after the bound, and on macOS the reader
-/// blocked in `open` could miss that writer and wait for good (about one run in three).
+/// Task 6b fix rounds 3 and 4: no thread can wait for good. The writer opens the FIFO
+/// only once the read has (a non-blocking open fails with `ENXIO` until a reader is
+/// there), within a deadline; past it, it opens it `O_RDWR`, which never blocks, so a
+/// read that comes late opens it too. It holds the FIFO, so the read's open completes
+/// and its read waits, until the test has measured the read (its signal) or for `HOLD`
+/// at most; then it unlinks the FIFO and closes it, which ends the abandoned read (EOF)
+/// and leaves no file for a read that comes later still. Before fix round 3, the
+/// writer opened and closed at once, after the bound, and on macOS the reader blocked
+/// in `open` could miss that writer and wait for good (about one run in three).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_handoff_history_read_is_bounded() {
-    // How long the writer holds the FIFO open: past the bound plus the 5 s slack below,
-    // so a read that were not bounded would end (EOF) only after the slack, and fail.
+    // The writer's hold when no signal comes (a read that were not bounded keeps the
+    // test from measuring): past the bound plus the 5 s slack below, so such a read
+    // would end (EOF) only after the slack, and fail.
     const HOLD: Duration = Duration::from_secs(9);
     let dir = tempfile::tempdir().unwrap();
     let mut run = run_of(1);
@@ -485,25 +488,31 @@ async fn the_handoff_history_read_is_bounded() {
     let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
     assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
     let held = fifo.clone();
+    let (release, released) = std::sync::mpsc::channel::<()>();
     let writer = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
+        let (file, opened) = loop {
             let opened = std::fs::OpenOptions::new()
                 .write(true)
                 .custom_flags(libc::O_NONBLOCK)
                 .open(&held);
             match opened {
-                Ok(file) => {
-                    std::thread::sleep(HOLD);
-                    drop(file);
-                    return true;
-                }
+                Ok(file) => break (file, true),
                 Err(_) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(5));
                 }
-                Err(_) => return false,
+                // Fix round 4 (M1): never blocks, and releases a read that comes late.
+                Err(_) => {
+                    let mut rdwr = std::fs::OpenOptions::new();
+                    rdwr.read(true).write(true);
+                    break (rdwr.open(&held).expect("a FIFO opens O_RDWR"), false);
+                }
             }
-        }
+        };
+        let _ = released.recv_timeout(HOLD);
+        let _ = std::fs::remove_file(&held);
+        drop(file);
+        opened
     });
     let started = Instant::now();
     let read = history_lines(fifo.clone(), chain.clone(), bound);
@@ -511,6 +520,7 @@ async fn the_handoff_history_read_is_bounded() {
         .await
         .expect("the read is bounded");
     let took = started.elapsed();
+    let _ = release.send(());
     let opened = tokio::task::spawn_blocking(move || writer.join().unwrap())
         .await
         .unwrap();
