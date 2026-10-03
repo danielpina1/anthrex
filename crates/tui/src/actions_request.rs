@@ -22,17 +22,10 @@ pub enum ActionTarget {
 pub enum ActionInput {
     None,
     Answer(String),
-    Message {
-        kind: MessageKind,
-        text: String,
-    },
+    Message { kind: MessageKind, text: String },
     Reason(String),
-    Resume {
-        rebaseline: bool,
-    },
+    Resume { rebaseline: bool },
     Promote(Option<OrchestratorChoice>),
-    /// Milestone 9.3 decision 32: the iterate dialog's request text.
-    Iterate(String),
 }
 
 /// The request `kind` on `target` of `run` sends, given `input`. `None` for the kinds
@@ -154,12 +147,8 @@ pub fn request_for(
         (ActionKind::CancelTask, ActionTarget::Task(_)) => {
             Some(edit(vec![PlanEdit::CancelTask { task_id: task? }], false))
         }
-        // Milestone 9.3 decision 32: the menu entry opens the iterate dialog, whose
-        // Ctrl-S sends its text.
-        (ActionKind::Iterate, ActionTarget::Run) => match input {
-            ActionInput::Iterate(goal) => Some(iterate(&run.run_id, goal)),
-            _ => None,
-        },
+        // Milestone 9.3 decision 32: `iterate` is local here; the menu entry opens the
+        // iterate dialog, whose Ctrl-S sends [`iterate`] itself.
         _ => None,
     }
 }
