@@ -65,6 +65,7 @@ mod done_tools;
 mod driver_carries;
 mod early_events;
 mod ending_scope;
+mod estimate;
 mod exit_duplicates;
 mod fast_path;
 mod first_turn;

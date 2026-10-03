@@ -36,6 +36,7 @@ mod edits_orch;
 mod edits_state;
 pub mod engine;
 pub mod env;
+pub mod estimate;
 pub mod exec;
 pub mod git;
 pub mod globs;

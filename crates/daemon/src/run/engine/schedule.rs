@@ -8,7 +8,7 @@ use std::cmp::Reverse;
 use proto::{AgentRole, Size, TaskKind, TaskState};
 
 use super::{OpKind, goal_rounds};
-use crate::run::model::{Run, Task};
+use crate::run::model::{Run, RunLimits, Task};
 
 /// Decision 41: a writer slot is held from `preparing` through `check` (a handed-back
 /// task is `working` again, so it holds one too). `review` and `merge_queue` hold none.
@@ -208,12 +208,17 @@ pub fn size_check_pending(task: &Task) -> bool {
     )
 }
 
-/// Decision 41's weights until M9.5's history exists: S = 1, M = 3. An L task never
-/// runs (rule 7.2.4), so its weight only orders the snapshot; it counts as M.
-pub fn weight(task: &Task) -> u32 {
-    match task.size {
-        Size::S => 1,
-        Size::M | Size::L => 3,
+/// A task's weight on the critical path. Milestone 9.5 decision 7: its class's seconds
+/// when the run froze history's weights (a hub task the hub's), else decision 41's
+/// S = 1, M = 3. An L task never runs (rule 7.2.4), so its weight only orders the
+/// snapshot; it counts as M. The one weight function: `run::estimate` calls it too.
+pub fn weight(limits: &RunLimits, task: &Task) -> u64 {
+    match (&limits.path_weights, task.size) {
+        (Some(w), _) if task.hub => w.hub_secs,
+        (Some(w), Size::S) => w.s_secs,
+        (Some(w), Size::M | Size::L) => w.m_secs,
+        (None, Size::S) => 1,
+        (None, Size::M | Size::L) => 3,
     }
 }
 
@@ -242,17 +247,17 @@ fn dependents(run: &Run) -> Vec<Vec<usize>> {
 /// `critical_len(t) = weight(t) + max(critical_len(d))` over the unfinished tasks that
 /// depend on `t`; 0 for a finished task. The combined graph is acyclic (M8a.5's
 /// backstop), and a task on a cycle anyway counts its own weight only.
-pub fn critical_lens(run: &Run) -> Vec<u32> {
+pub fn critical_lens(run: &Run) -> Vec<u64> {
     let deps = dependents(run);
-    let mut memo: Vec<Option<u32>> = vec![None; run.tasks.len()];
+    let mut memo: Vec<Option<u64>> = vec![None; run.tasks.len()];
     let mut visiting = vec![false; run.tasks.len()];
     fn visit(
         i: usize,
         run: &Run,
         deps: &[Vec<usize>],
-        memo: &mut [Option<u32>],
+        memo: &mut [Option<u64>],
         visiting: &mut [bool],
-    ) -> u32 {
+    ) -> u64 {
         if let Some(v) = memo[i] {
             return v;
         }
@@ -266,7 +271,7 @@ pub fn critical_lens(run: &Run) -> Vec<u32> {
             .max()
             .unwrap_or(0);
         visiting[i] = false;
-        let v = weight(&run.tasks[i]) + tail;
+        let v = weight(&run.limits, &run.tasks[i]).saturating_add(tail);
         memo[i] = Some(v);
         v
     }

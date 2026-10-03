@@ -50,14 +50,19 @@ pub(super) fn cancelling_round(run: &Run) -> Option<u32> {
 
 /// The plan is approved, `by` the user or `--yes`: round 1's approval is the run's and
 /// fixes its layout (milestone 9.1 decision 46); a later round's leaves both as round 1
-/// set them (decision 12). A decider queued at the gate waits from now (task 12 review
-/// m7).
+/// set them (decision 12), and its own time is the round's (milestone 9.5 ruling RE-1).
+/// A decider queued at the gate waits from now (task 12 review m7).
 pub(super) fn approved(run: &mut Run, by: &str, now: u64) {
     if run.round() <= 1 {
         run.approved_by = Some(by.to_string());
         run.approved_at = Some(now);
         stages::fix_layout(run, now);
+    } else if let Some(round) = run.rounds.last_mut() {
+        // Milestone 9.5 ruling RE-1: a later round's estimate runs from its approval.
+        round.approved_at = Some(now);
     }
+    // Decision 15: the estimate's paused time counts from the round's approval.
+    run.paused_secs = 0;
     for q in &mut run.decider_queue {
         q.queued_at = now;
     }

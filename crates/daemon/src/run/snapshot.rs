@@ -45,6 +45,8 @@ pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot {
 
 fn run_info(run: &Run, now: u64) -> RunInfo {
     let path: Vec<usize> = critical_path(run);
+    // Milestone 9.5 decision 14: the round's estimate and bound ratio.
+    let estimate = super::estimate::estimate(run, now);
     let waves = waves(run);
     let tasks = run
         .tasks
@@ -106,7 +108,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         profile_source: run.profile_source,
         usage: Some(run_usage(run)),
         scouts: Vec::new(),
-        // Milestone 8c; the estimates (M9.5) are placeholders.
+        // Milestone 8c.
         approved_at: run.approved_at,
         plan_edits: run
             .plan_edits
@@ -125,8 +127,8 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
             .collect(),
         plan_edits_since_approval: run.plan_edits_since_approval,
         planners: super::snapshot_orch::planners(run),
-        estimate_left_secs: None,
-        bound_ratio_permille: None,
+        estimate_left_secs: estimate.map(|e| e.left_secs),
+        bound_ratio_permille: estimate.and_then(|e| e.bound_ratio_permille),
         // Milestone 9: the orchestrator and holds (task M9.7), the integration reviews
         // and the research report (task M9.9).
         orchestrator: super::snapshot_orch::orchestrator(run),

@@ -36,6 +36,8 @@
 
 use std::collections::BTreeMap;
 
+use proto::RunState;
+
 use super::model::{AgentRound, OpId, PendingOp, Run};
 
 pub(crate) mod actions;
@@ -301,7 +303,13 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
     // Held events whose launches are over, or that waited too long (`early.rs`).
     early::sweep(&mut state, now, &mut fx);
     let chains_moved = state.chains != chains_before;
-    finish(&mut state, &before, (before_revision, chains_moved), fx)
+    finish(
+        &mut state,
+        &before,
+        (before_revision, chains_moved),
+        now,
+        fx,
+    )
 }
 
 /// Decision 47: a run that changed gets its revision bumped, and the global one with it;
@@ -309,11 +317,13 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
 /// (`AgentRound::clear_counters`) is persisted lazily and published as a counter update
 /// (decisions 43, 47); any other is urgent and structural, and so is a change of the
 /// chain table alone (milestone 9.3: the snapshot's idle orchestrators). `Persist` first,
-/// `Publish` last.
+/// `Publish` last. Milestone 9.5 decision 15: a run that changed records the step's
+/// time, and its pause accounting.
 fn finish(
     state: &mut EngineState,
     before: &BTreeMap<String, Run>,
     (before_revision, chains_moved): (u64, bool),
+    now: u64,
     fx: Vec<Effect>,
 ) -> (EngineState, Vec<Effect>) {
     let mut persist = Vec::new();
@@ -325,6 +335,7 @@ fn finish(
             Some(old) => {
                 run.revision += 1;
                 let urgent = without_counters(old) != without_counters(run);
+                paused(old.state, run, now);
                 // Decision 16: the digest's revision moves only with its fingerprint. A
                 // run new to the state (a restore) is left as loaded (final review B-5).
                 if urgent {
@@ -356,6 +367,21 @@ fn finish(
         out.push(Effect::Publish { structural });
     }
     (std::mem::take(state), out)
+}
+
+/// Decision 15: a run entering `paused` or `halted` records when; leaving them, it adds
+/// the span to `paused_secs`. Every change records the step's time (`last_step_at`).
+fn paused(was: RunState, run: &mut Run, now: u64) {
+    let stopped = |s: RunState| matches!(s, RunState::Paused | RunState::Halted);
+    match (stopped(was), stopped(run.state)) {
+        (false, true) => run.paused_at = Some(now),
+        (true, false) => {
+            let since = run.paused_at.take().unwrap_or(now);
+            run.paused_secs = run.paused_secs.saturating_add(now.saturating_sub(since));
+        }
+        _ => {}
+    }
+    run.last_step_at = now;
 }
 
 /// `run` with every round's and task's counters zeroed and its revision fixed, to tell

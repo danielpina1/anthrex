@@ -387,4 +387,17 @@ pub struct Run {
     /// Milestone 9.5 decision 16: the writer cap per runtime label, once one is tracked.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub concurrency: BTreeMap<String, RuntimeConcurrency>,
+    /// Milestone 9.5 decision 15: since when the run is `paused` or `halted`, while it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused_at: Option<u64>,
+    /// Decision 15: seconds paused or halted since the current round's approval.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub paused_secs: u64,
+    /// Decision 15: the time of the last step that changed the run.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub last_step_at: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }

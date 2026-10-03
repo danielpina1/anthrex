@@ -272,6 +272,7 @@ fn iterate_on_a_complete_run_starts_round_two() {
             first_stage: 2,
             windows_before: windows,
             scouts_before: 0,
+            approved_at: None,
         }
     );
     let wake = round_wake(2, 1, "add a --json flag\nto every command");

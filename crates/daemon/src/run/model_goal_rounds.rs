@@ -29,6 +29,10 @@ pub struct Round {
     /// D5: the run scouts started before the round; `max_scouts` counts from it.
     #[serde(default)]
     pub scouts_before: u32,
+    /// Milestone 9.5 decision 14 (ruling RE-1): when the round's plan was approved;
+    /// round 1's is `Run.approved_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<u64>,
 }
 
 impl Round {
@@ -46,6 +50,7 @@ impl Round {
             first_stage: 1,
             windows_before: 0,
             scouts_before: 0,
+            approved_at: None,
         }
     }
 
