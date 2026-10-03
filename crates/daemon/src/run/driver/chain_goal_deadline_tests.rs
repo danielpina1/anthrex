@@ -127,3 +127,15 @@ fn the_continue_deadlines_are_run_starts_and_the_tools() {
         mcp::TOOL_REPLY_TIMEOUT
     );
 }
+
+/// W1 fix round 2 (item 5): a refusal the CLI words (`no_chain_to_continue`, from the
+/// steps after the tool's own lookup) reaches the orchestrator in the tool's words;
+/// every other refusal is as it was.
+#[test]
+fn the_tools_lost_chain_refusal_is_in_its_words() {
+    use crate::run::orch::contract_rounds::{NO_CHAIN_FOR_TOOL, no_chain_to_continue};
+    let lost = no_chain_to_continue("3f9a");
+    assert_eq!(super::tool_refusal(lost, "3f9a"), NO_CHAIN_FOR_TOOL);
+    let other = CONTINUE_TOO_SLOW.to_string();
+    assert_eq!(super::tool_refusal(other.clone(), "3f9a"), other);
+}

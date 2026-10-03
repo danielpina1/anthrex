@@ -29,7 +29,7 @@ use crate::run::model::{LogEntry, Run};
 use crate::run::orch::contract::fresh_first_prompt;
 use crate::run::orch::contract_rounds::{
     CONTINUE_TOO_SLOW, GOAL_TOO_LONG, NO_CHAIN_FOR_TOOL, goal_started, handoff_prompt,
-    other_project,
+    no_chain_to_continue, other_project,
 };
 
 /// Decision 24: how many of the chain's history lines a fresh session's first prompt
@@ -162,9 +162,11 @@ impl RunService {
             }
             Next::inherited(prev, goal)
         };
+        let h4 = &last[last.len().saturating_sub(4)..];
         let run_id = self
             .continue_goal(last, next, START_GOAL_TOOL_BOUND)
-            .await?;
+            .await
+            .map_err(|message| tool_refusal(message, h4))?;
         Ok(goal_started(&run_id))
     }
 
@@ -314,6 +316,17 @@ pub(in crate::run::driver) async fn history_lines(
 #[cfg(test)]
 pub(in crate::run::driver) static HISTORY_READS: std::sync::Mutex<Vec<PathBuf>> =
     std::sync::Mutex::new(Vec::new());
+
+/// W1 fix round 2 (item 5): a chain that left the table after `start_goal_tool`'s
+/// lookup (another chain of the project went idle and evicted it, or its run failed)
+/// is refused in the tool's words, as the lookup refuses it, not with the CLI's
+/// `--continue` text.
+fn tool_refusal(message: String, h4: &str) -> String {
+    if message == no_chain_to_continue(h4) {
+        return NO_CHAIN_FOR_TOOL.to_string();
+    }
+    message
+}
 
 #[cfg(test)]
 #[path = "chain_goal_tests.rs"]
