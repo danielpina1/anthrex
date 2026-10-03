@@ -12,17 +12,23 @@ fn the_header_counts_sizes_budget_and_the_critical_path() {
     // critical_path [t1, t2, t3].
     let run = three_task_plan();
     assert_eq!(
-        header_line(&run, &review_tasks(&run, &ReviewTarget::Gate), 200, false),
+        header_line(
+            &run,
+            &review_tasks(&run, &ReviewTarget::Gate),
+            true,
+            200,
+            false
+        ),
         "3 tasks · 2 stages · S+M+S · ~190 calls · critical t1 › t2 › t3"
     );
     // Cut with `…` to the width, the critical path first; folded in ASCII.
     let tasks = review_tasks(&run, &ReviewTarget::Gate);
     assert_eq!(
-        header_line(&run, &tasks, 50, false),
+        header_line(&run, &tasks, true, 50, false),
         "3 tasks · 2 stages · S+M+S · ~190 calls · critica…"
     );
     assert_eq!(
-        header_line(&run, &tasks, 200, true),
+        header_line(&run, &tasks, true, 200, true),
         "3 tasks - 2 stages - S+M+S - ~190 calls - critical t1 > t2 > t3"
     );
     // One stage, no critical path: neither part shows.
@@ -33,7 +39,7 @@ fn the_header_counts_sizes_budget_and_the_critical_path() {
     single.critical_path.clear();
     let tasks = review_tasks(&single, &ReviewTarget::Gate);
     assert_eq!(
-        header_line(&single, &tasks[..1], 200, false),
+        header_line(&single, &tasks[..1], true, 200, false),
         "1 task · S · ~40 calls"
     );
 }
@@ -129,12 +135,12 @@ fn more_than_eight_tasks_count_sizes() {
     run.critical_path.clear();
     let tasks = review_tasks(&run, &ReviewTarget::Gate);
     assert_eq!(
-        header_line(&run, &tasks, 200, false),
+        header_line(&run, &tasks, true, 200, false),
         "9 tasks · 5S 4M · ~90 calls"
     );
     // Eight are still a sequence.
     assert_eq!(
-        header_line(&run, &tasks[..8], 200, false),
+        header_line(&run, &tasks[..8], true, 200, false),
         "8 tasks · S+M+S+M+S+M+S+M · ~80 calls"
     );
 }
@@ -147,13 +153,15 @@ fn epics_are_counted_when_present() {
     run.tasks[2].epic = Some("docs".into());
     let tasks = review_tasks(&run, &ReviewTarget::Gate);
     assert!(
-        header_line(&run, &tasks, 200, false).starts_with("3 tasks · 2 epics · 2 stages · "),
+        header_line(&run, &tasks, true, 200, false).starts_with("3 tasks · 2 epics · 2 stages · "),
         "{}",
-        header_line(&run, &tasks, 200, false)
+        header_line(&run, &tasks, true, 200, false)
     );
     run.tasks[2].epic = None;
     let tasks = review_tasks(&run, &ReviewTarget::Gate);
-    assert!(header_line(&run, &tasks, 200, false).starts_with("3 tasks · 1 epic · 2 stages · "));
+    assert!(
+        header_line(&run, &tasks, true, 200, false).starts_with("3 tasks · 1 epic · 2 stages · ")
+    );
 }
 
 #[test]

@@ -159,7 +159,13 @@ fn render_header(
     let mut lines: Vec<Line<'static>> = (layout.round.iter())
         .map(|round| Line::raw(truncate_in(round, width, p.ascii)))
         .collect();
-    lines.push(Line::raw(header_line(run, tasks, area.width, p.ascii)));
+    lines.push(Line::raw(header_line(
+        run,
+        tasks,
+        layout.gate,
+        area.width,
+        p.ascii,
+    )));
     if let Some(delivery) = &layout.delivery {
         lines.push(Line::raw(truncate_in(delivery, width, p.ascii)));
     }

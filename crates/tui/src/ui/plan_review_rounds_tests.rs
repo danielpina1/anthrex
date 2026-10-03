@@ -285,3 +285,26 @@ fn a_rounds_gate_alert_counts_its_round() {
     let app = app_with(overlapping_plan(), ReviewTarget::Gate);
     assert_eq!(plan_row(&app), "plan   3 tasks · 2 stages");
 }
+
+/// Final fix wave C-m4 (10a m2): only the gate's review cuts the critical path to the
+/// round's tasks; a hold's review in a later round names the whole path, as in round 1
+/// (the brief's task 10a note).
+#[test]
+fn a_later_rounds_hold_review_keeps_the_whole_critical_path() {
+    let mut snap = round_two();
+    let run = &mut snap.runs[0];
+    run.state = proto::RunState::Running;
+    run.tasks[1].hold = Some("epic:ui".into());
+    run.holds = vec![crate::tree::orch_fixtures::hold(
+        "epic:ui",
+        proto::HoldState::Awaiting,
+        &["t2"],
+    )];
+    let mut app = app_with(snap, ReviewTarget::Hold("epic:ui".into()));
+    let got = rows(&draw(&mut app, 80, 24));
+    assert_eq!(
+        got[1],
+        framed(" 1 task · M · ~100 calls · critical t1 › t2 › t3", 80),
+        "{got:#?}"
+    );
+}
