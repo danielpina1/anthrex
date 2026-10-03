@@ -56,8 +56,8 @@ pub struct RoundInfo {
     pub summary_head: Option<String>,
 }
 
-/// A project's idle orchestrator: the head of a chain whose last run was accepted or
-/// discarded (KG §3.1).
+/// A project's idle orchestrator: the head of a chain whose last run was accepted,
+/// discarded or delivered (KG §3.1; D17).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdleOrchestrator {
     /// `"o-<h4>"`, after the chain's first run.
@@ -65,7 +65,8 @@ pub struct IdleOrchestrator {
     pub project: PathBuf,
     /// The chain's last run id.
     pub after_run: String,
-    /// `Accepted` or `Discarded`.
+    /// `Accepted`, `Discarded`, or `Complete` for a delivered `pr` run (D17): the raw
+    /// state, which `run status --json` shows as it is.
     pub outcome: RunState,
     pub runtime: Runtime,
     pub model: String,
