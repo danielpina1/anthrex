@@ -73,6 +73,16 @@ pub fn rounds_max(h4: &str) -> String {
     )
 }
 
+/// The final fix wave (review A, M5; D6): a run whose stages already reach
+/// `STAGES_MAX`, so a round could add none.
+pub fn stages_max(h4: &str) -> String {
+    format!(
+        "run {h4} has {} stages, the most a run can have; accept or discard it and start a \
+         new goal",
+        proto::STAGES_MAX
+    )
+}
+
 /// KG §2.3: a halted run.
 pub fn halted(h4: &str) -> String {
     format!("run {h4} is halted; resume or cancel it first")
