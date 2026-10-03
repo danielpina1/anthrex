@@ -9,7 +9,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 impl App {
     pub fn rows(&self) -> Vec<tree::Row<'_>> {
-        tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree)
+        tree::build_from(&self.windows, &self.runs, &self.tree)
     }
 
     /// A new height reveals the anchor, except (milestone 9.0.5) when only the
@@ -143,7 +143,7 @@ impl App {
         self.tree_input = Some(TreeInput::Navigate);
         self.keymap.set_tree_mode(true);
 
-        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
+        let rows = tree::build_from(&self.windows, &self.runs, &self.tree);
         let selected = self
             .focused
             .map(NodeKey::Window)
@@ -242,7 +242,11 @@ impl App {
             }
             KeyCode::Char('/') => self.tree_input = Some(TreeInput::Filter),
             // Milestone 9.0.6 decision 12: the action menu on a run, stage or task.
-            KeyCode::Char('.') => return self.open_selected_actions(),
+            KeyCode::Char('.') => match self.tree.selected.clone() {
+                // Milestone 9.3 decision 32: the idle orchestrator's own menu.
+                Some(NodeKey::Chain(chain)) => return self.open_idle_menu(&chain),
+                _ => return self.open_selected_actions(),
+            },
             KeyCode::Esc => self.exit_tree(),
             _ => {}
         }
@@ -269,11 +273,21 @@ impl App {
                 self.exit_tree();
                 effects
             }
+            // Milestone 9.3 decision 32: an idle orchestrator's row focuses its window.
+            NodeKey::Chain(chain) => match self.idle_window(&chain) {
+                Some(id) => {
+                    let effects = self.focus(id);
+                    self.exit_tree();
+                    effects
+                }
+                None => vec![],
+            },
             key @ (NodeKey::Run(_)
             | NodeKey::Planner { .. }
             | NodeKey::Scout { .. }
             | NodeKey::Task { .. }
             | NodeKey::Stage { .. }
+            | NodeKey::Round { .. }
             | NodeKey::AgentRound { .. }) => self.activate_run_node(key),
         }
     }
@@ -290,7 +304,7 @@ impl App {
     pub(crate) fn move_tree_selection(&mut self, delta: isize) {
         let rows = nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         );
@@ -304,7 +318,7 @@ impl App {
     fn select_tree_parent(&mut self) {
         let rows = nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         );
@@ -328,7 +342,7 @@ impl App {
     fn select_first_visible_child(&mut self) {
         let rows = nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         );
@@ -348,7 +362,7 @@ impl App {
         if self.tree.toggle(key) {
             let rows = nav_rows_of(
                 &self.windows,
-                &self.runs.runs,
+                &self.runs,
                 &self.tree,
                 self.run_view.as_ref(),
             );
@@ -388,7 +402,7 @@ impl App {
     fn repair_filtered_selection(&mut self) {
         let rows = nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         );

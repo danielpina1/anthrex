@@ -28,7 +28,9 @@ fn expected(name: &str) -> &'static str {
         | "profile under the help"
         | "help over the run view"
         | "help over the alerts view" => " HELP  esc close",
-        "action menu over the run view" | "action menu on its message form" => " MENU  esc back",
+        "action menu over the run view"
+        | "action menu on its message form"
+        | "idle menu over the sidebar" => " MENU  esc back",
         "config notice over the pane" => " DIALOG  esc close",
         "confirm over the overview"
         | "new agent over the pane"

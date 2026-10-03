@@ -13,6 +13,7 @@ pub mod conversation;
 pub mod dialog;
 pub mod goal_editor;
 pub mod help;
+pub mod idle_menu;
 pub mod kit;
 pub mod modal;
 pub mod overview;

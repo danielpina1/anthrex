@@ -30,9 +30,9 @@ impl App {
         } else {
             // Every fold open (milestone 8c decision 10): the orchestrator's place in
             // the order holds even while its project is folded.
-            let expanded = tree::agent_order(&tree::build_with_runs(
+            let expanded = tree::agent_order(&tree::build_from(
                 &self.windows,
-                &self.runs.runs,
+                &self.runs,
                 &crate::tree::TreeState::default(),
             ));
             let current = self
@@ -122,7 +122,7 @@ impl App {
         self.tree.prune(&self.windows);
         let rows = super::nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         );

@@ -47,7 +47,7 @@ fn modal_bar(app: &App) -> Option<(&'static str, Hint)> {
     let close = || hint("esc", "close", u8::MAX);
     Some(match app.modal.as_ref()? {
         Modal::Help(_) => (" HELP ", close()),
-        Modal::Action(_) => (" MENU ", esc_back()),
+        Modal::Action(_) | Modal::IdleMenu(_) => (" MENU ", esc_back()),
         Modal::Notice { .. } => (" DIALOG ", close()),
         _ => (" DIALOG ", esc_back()),
     })

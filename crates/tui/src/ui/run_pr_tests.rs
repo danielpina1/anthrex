@@ -34,12 +34,7 @@ pub(crate) fn pr_view(
     app.tree.select(&rows, NodeKey::Run(RUN_ID.into()));
     key(&mut app, KeyCode::Char('l'));
     assert!(app.run_view.is_some(), "the run view opened");
-    let rows = crate::app::nav_rows_of(
-        &app.windows,
-        &app.runs.runs,
-        &app.tree,
-        app.run_view.as_ref(),
-    );
+    let rows = crate::app::nav_rows_of(&app.windows, &app.runs, &app.tree, app.run_view.as_ref());
     assert!(rows.iter().any(|row| row.key == selected), "{selected:?}");
     app.tree.select(&rows, selected);
     app

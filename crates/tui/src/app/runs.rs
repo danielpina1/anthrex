@@ -11,8 +11,7 @@ use super::{App, Effect, TreeInput};
 use crate::tree::{self, NodeKey, Row, RunFilter, TreeState};
 use crossterm::event::{KeyCode, KeyEvent};
 use proto::{
-    AgentRoundInfo, ClientMsg, RunInfo, RunReply, RunRequest, RunState, RunsSnapshot, Runtime,
-    WindowInfo,
+    AgentRoundInfo, ClientMsg, RunReply, RunRequest, RunState, RunsSnapshot, Runtime, WindowInfo,
 };
 use std::time::Instant;
 
@@ -28,18 +27,18 @@ pub struct RunView {
 /// run, the project tree's otherwise.
 pub fn nav_rows_of<'a>(
     windows: &'a [WindowInfo],
-    runs: &'a [RunInfo],
+    snapshot: &'a RunsSnapshot,
     state: &TreeState,
     view: Option<&RunView>,
 ) -> Vec<Row<'a>> {
     let shown = view.and_then(|view| {
-        tree::shown_runs(runs)
+        tree::shown_runs(&snapshot.runs)
             .find(|run| run.run_id == view.run_id)
             .map(|run| (run, view.filter))
     });
     match shown {
         Some((run, filter)) => tree::run_rows(run, windows, state, filter),
-        None => tree::build_with_runs(windows, runs, state),
+        None => tree::build_from(windows, snapshot, state),
     }
 }
 
@@ -281,7 +280,7 @@ impl App {
         self.refresh_goal_chains();
         let rows = nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         );
@@ -318,7 +317,7 @@ impl App {
     pub fn nav_rows(&self) -> Vec<Row<'_>> {
         nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         )
@@ -344,7 +343,7 @@ impl App {
         self.settle_graph_viewport();
         let rows = nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         );
@@ -369,7 +368,7 @@ impl App {
         if self.tree_input.is_some() {
             self.tree_input = Some(TreeInput::Navigate);
         }
-        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
+        let rows = tree::build_from(&self.windows, &self.runs, &self.tree);
         let run = NodeKey::Run(view.run_id);
         let key = match (tree::row_index(&rows, &run), run_row) {
             (None, Some(at)) if !rows.is_empty() => rows[at.min(rows.len() - 1)].key.clone(),
@@ -410,7 +409,7 @@ impl App {
                 view.filter = next_filter(view.filter);
                 let rows = nav_rows_of(
                     &self.windows,
-                    &self.runs.runs,
+                    &self.runs,
                     &self.tree,
                     self.run_view.as_ref(),
                 );

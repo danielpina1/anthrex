@@ -261,6 +261,14 @@ pub(crate) fn shows(name: &str) -> Shows {
             row("iterate run 3f9a", Some("Esc cancel"), &["^S start"])
         }
         "plan review of round 2" => row("round 2", Some("esc back"), &["a approve"]),
+        // Milestone 9.3 task 10b: the separators, the idle row, its menu.
+        "run view with rounds" => row("round 2", Some("esc back"), &["j/k move"]),
+        "sidebar idle orchestrator" => row("orchestrator", Some("esc back"), &["j/k move"]),
+        "idle menu over the sidebar" => row(
+            "new goal here",
+            Some("esc close"),
+            &["⏎ choose", "j/k move"],
+        ),
         "action menu on its message form" => row("message", Some("esc back"), &["⏎ continue"]),
         "settings discard page" => row("discard changes", Some("esc back"), &["y discard"]),
         "profile confirm page" => row("confirm profile", Some("esc back"), &["y store"]),
@@ -357,12 +365,7 @@ fn edit_form() -> App {
         run: RUN_ID.into(),
         id: "t1".into(),
     };
-    let rows = crate::app::nav_rows_of(
-        &app.windows,
-        &app.runs.runs,
-        &app.tree,
-        app.run_view.as_ref(),
-    );
+    let rows = crate::app::nav_rows_of(&app.windows, &app.runs, &app.tree, app.run_view.as_ref());
     app.tree.select(&rows, key);
     tap(&mut app, 'e');
     assert!(

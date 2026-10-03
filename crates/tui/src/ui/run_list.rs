@@ -263,6 +263,12 @@ fn row_line(
             }
         }
     }
+    // Milestone 9.3 decision 32: an earlier round's rows are muted whole.
+    if crate::tree::muted_row(&row.kind) {
+        for span in &mut spans {
+            span.style = span.style.patch(muted);
+        }
+    }
     if !selected {
         spans.insert(0, Span::raw(" ".repeat(indent)));
         return Line::from(spans);
@@ -294,3 +300,7 @@ pub(crate) mod tests;
 #[cfg(test)]
 #[path = "run_list_mouse_tests.rs"]
 mod mouse_tests;
+
+#[cfg(test)]
+#[path = "run_rounds_tests.rs"]
+pub(crate) mod rounds_tests;

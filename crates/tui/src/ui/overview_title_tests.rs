@@ -138,3 +138,45 @@ fn moving_to_a_stage_resplits_the_canvas_before_the_next_frame() {
     assert_ne!(canvas, before, "the stage's panel is not the task's");
     assert_eq!(app.graph_area, canvas, "no frame drawn in between");
 }
+
+/// `add-mul-0723` as round `n` of `n` rounds (2 and over), else as it is.
+fn rounds_of(n: u32) -> App {
+    let (mut snap, windows) = add_mul(RunState::Running);
+    if n > 1 {
+        let run = &mut snap.runs[0];
+        run.round = n;
+        run.rounds = (1..=n)
+            .map(|k| proto::RoundInfo {
+                n: k,
+                goal_head: format!("request {k}"),
+                origin: proto::RoundOrigin::User,
+                outcome: None,
+                summary_head: None,
+            })
+            .collect();
+    }
+    run_view(app_of((snap, windows), false), "add-mul-0723")
+}
+
+/// Milestone 9.3 decision 32: ` · round <n>` after the name for a run of several
+/// rounds; a one-round run's title is unchanged (pinning, with the tests above). At 40
+/// columns the round is kept and the goal is cut.
+#[test]
+fn the_run_title_adds_the_round() {
+    let (_, top) = top_at(&rounds_of(1), 120);
+    assert!(top.starts_with("╭ run · Add mul() · 0723 ─"), "{top}");
+    assert!(top.ends_with(" 2/3 merged · 14m ╮"), "{top}");
+    let (_, top) = top_at(&rounds_of(2), 120);
+    assert!(
+        top.starts_with("╭ run · Add mul() · 0723 · round 2 ─"),
+        "{top}"
+    );
+    assert!(top.ends_with(" 2/3 merged · 14m ╮"), "{top}");
+    let mut app = rounds_of(12);
+    app.runs.runs[0].goal = "Add a multiply function to crate a".into();
+    let (_, top) = top_at(&app, 40);
+    assert!(
+        top.starts_with("╭ run · Add a mult… · 0723 · round 12 ─╮"),
+        "{top}"
+    );
+}

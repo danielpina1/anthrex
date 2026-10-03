@@ -280,6 +280,12 @@ fn node_rows(
     content.push(cell(set.vertical_right));
 
     let mut rows = [top, content, bottom];
+    // Milestone 9.3 decision 32: an earlier round's node and an idle orchestrator's.
+    if crate::tree::muted_row(&row.kind) {
+        for (_, style) in rows.iter_mut().flatten() {
+            *style = style.patch(theme::role(theme::Role::Muted, p));
+        }
+    }
     if node.dim {
         for (_, style) in rows.iter_mut().flatten() {
             *style = style.add_modifier(Modifier::DIM);

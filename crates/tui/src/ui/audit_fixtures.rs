@@ -193,6 +193,20 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             "plan review of round 2",
             with(run_view(round_two_gate()), |a| tap(a, 'p')),
         ),
+        // Milestone 9.3 task 10b: a run of two rounds, and the sidebar's idle
+        // orchestrator with its menu.
+        (
+            "run view with rounds",
+            crate::ui::run_list::rounds_tests::rounds_view(false, 80, 24),
+        ),
+        ("sidebar idle orchestrator", idle_row()),
+        (
+            "idle menu over the sidebar",
+            with(idle_row(), |a| {
+                tap(a, '.');
+                assert!(matches!(a.modal, Some(Modal::IdleMenu(_))), "`.`");
+            }),
+        ),
         (
             "action menu on its message form",
             with(crate::ui::alerts::fixture::three_runs(), |a| {
@@ -255,6 +269,12 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             }),
         ),
     ]
+}
+
+/// The sidebar tree on `o-3f9a`'s idle row (four runs), its window `7`.
+fn idle_row() -> App {
+    use crate::app::idle_menu::tests::{app_of, idle_fixture, on_idle_row};
+    on_idle_row(app_of(idle_fixture(4), false))
 }
 
 /// The gate fixture's run as a `pr` run, complete (every PR landed, so no `ready to

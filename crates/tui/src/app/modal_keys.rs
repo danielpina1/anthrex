@@ -170,6 +170,7 @@ impl App {
                 self.modal = Some(Modal::Iterate(form));
                 self.on_iterate_key(key)
             }
+            Modal::IdleMenu(menu) => self.on_idle_menu_key(menu, key),
         }
     }
 

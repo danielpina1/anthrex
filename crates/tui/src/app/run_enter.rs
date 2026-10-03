@@ -33,8 +33,9 @@ impl App {
                     return vec![];
                 }
             },
-            // Milestone 9.1 decision 55: a stage has no agent; Enter folds it.
-            key @ NodeKey::Stage { .. } => {
+            // Milestone 9.1 decision 55: a stage has no agent; Enter folds it, and a
+            // round's separator too (milestone 9.3 decision 32).
+            key @ (NodeKey::Stage { .. } | NodeKey::Round { .. }) => {
                 self.toggle_tree_node(&key);
                 return vec![];
             }
@@ -94,7 +95,10 @@ impl App {
                 }
             }
             // Windows, sub-agents and projects are `activate_tree_node`'s own arms.
-            NodeKey::Project(_) | NodeKey::Window(_) | NodeKey::Subagent { .. } => {
+            NodeKey::Project(_)
+            | NodeKey::Window(_)
+            | NodeKey::Subagent { .. }
+            | NodeKey::Chain(_) => {
                 return vec![];
             }
         };

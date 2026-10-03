@@ -127,6 +127,8 @@ pub fn tree_text(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> S
             | RowKind::Scout { .. }
             | RowKind::Task { .. }
             | RowKind::Stage { .. }
+            | RowKind::Round { .. }
+            | RowKind::IdleOrchestrator { .. }
             | RowKind::AgentRound { .. } => Ok(()),
         }
         .expect("writing to a String cannot fail");
@@ -190,6 +192,8 @@ pub fn tree_json(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> T
             | RowKind::Scout { .. }
             | RowKind::Task { .. }
             | RowKind::Stage { .. }
+            | RowKind::Round { .. }
+            | RowKind::IdleOrchestrator { .. }
             | RowKind::AgentRound { .. } => {}
         }
     }

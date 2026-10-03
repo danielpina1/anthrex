@@ -35,8 +35,12 @@ impl App {
                 | NodeKey::Scout { run: id, .. }
                 | NodeKey::Task { run: id, .. }
                 | NodeKey::Stage { run: id, .. }
+                | NodeKey::Round { run: id, .. }
                 | NodeKey::AgentRound { run: id, .. },
             ) => run_project(id),
+            Some(NodeKey::Chain(chain)) => (self.runs.idle_orchestrators.iter())
+                .find(|idle| idle.chain == *chain)
+                .map(|idle| idle.project.clone()),
             _ => None,
         };
         selected
@@ -81,22 +85,27 @@ impl App {
     /// directory).
     pub(super) fn open_goal_form(&mut self) -> Vec<Effect> {
         match self.goal_project() {
-            Some(project) => {
-                let (idle, busy) = self.goal_chains(&project);
-                let draft = self.goal_drafts.get(&project).cloned();
-                let mut form = GoalForm::new(project);
-                if let Some(cache) = &self.settings_cache {
-                    form.set_roster(cache.doc.models.clone());
-                }
-                if let Some(draft) = draft {
-                    form.goal = TextArea::editor(&draft);
-                }
-                form.set_chains(idle, busy);
-                self.modal = Some(Modal::StartGoal(form));
-            }
+            Some(project) => self.open_goal_form_in(project),
             None => self.toast(NO_PROJECT),
         }
         vec![]
+    }
+
+    /// The form on `project`: its draft restored, its orchestrator row from the
+    /// snapshot (continue by default when the project has an idle orchestrator). The
+    /// idle menu's `new goal here` opens it this way (milestone 9.3 decision 32).
+    pub(super) fn open_goal_form_in(&mut self, project: PathBuf) {
+        let (idle, busy) = self.goal_chains(&project);
+        let draft = self.goal_drafts.get(&project).cloned();
+        let mut form = GoalForm::new(project);
+        if let Some(cache) = &self.settings_cache {
+            form.set_roster(cache.doc.models.clone());
+        }
+        if let Some(draft) = draft {
+            form.goal = TextArea::editor(&draft);
+        }
+        form.set_chains(idle, busy);
+        self.modal = Some(Modal::StartGoal(form));
     }
 
     /// The open goal dialog's text area as the last frame drew it (decision 7): the

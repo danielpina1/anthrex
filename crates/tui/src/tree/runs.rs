@@ -1,14 +1,16 @@
 //! Runs in the project tree (milestone 8c, decisions 6–10): which runs are shown, which
 //! windows they own, a run's rolled-up status, and the grouping of plain windows and
-//! runs into projects.
+//! runs into projects. Milestone 9.3 decision 32: a project's idle orchestrator is a row
+//! of its own, in its window's place.
 
 use super::{
     NodeKey, ProjectChild, ProjectGroup, RuntimeCounts, TreeState, display_names, matches_filter,
     urgency,
 };
+use crate::safe_text::one_line;
 use proto::{
-    AgentRole, BlockReason, HoldInfo, HoldState, RunInfo, RunState, Runtime, Status, TaskInfo,
-    TaskState, WindowInfo,
+    AgentRole, BlockReason, DeliveryMode, HoldInfo, HoldState, IdleOrchestrator, RunInfo, RunState,
+    Runtime, Status, TaskInfo, TaskState, WindowInfo,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -110,6 +112,56 @@ pub(super) fn run_matches_filter(run: &RunInfo, filter: &str) -> bool {
     matches_filter(&run.goal, filter) || matches_filter(&run.run_id, filter)
 }
 
+/// Milestone 9.3 decision 32: the idle row's text, `orchestrator · idle · after <h4>`,
+/// then ` · <k> runs` from two runs on (KG §11). `<h4>` is the cleaned run id's last
+/// four characters, so a hidden carrier in the id can neither show nor shift them.
+pub fn idle_text(idle: &IdleOrchestrator) -> String {
+    let after = one_line(&idle.after_run);
+    let h4 = crate::actions_request::short_id(&after);
+    let runs = match idle.runs {
+        k if k >= 2 => format!(" · {k} runs"),
+        _ => String::new(),
+    };
+    format!("orchestrator · idle · after {h4}{runs}")
+}
+
+/// The idle chain's last run's outcome as a word: `delivered` for a complete `pr` run
+/// (D17, looked up in the snapshot), else the state's own word.
+pub fn idle_outcome(idle: &IdleOrchestrator, runs: &[RunInfo]) -> &'static str {
+    let pr = (runs.iter().find(|run| run.run_id == idle.after_run))
+        .and_then(|run| run.delivery.as_ref())
+        .is_some_and(|delivery| delivery.mode == DeliveryMode::Pr);
+    match idle.outcome {
+        RunState::Complete if pr => "delivered",
+        state => crate::app::state_text(state),
+    }
+}
+
+/// The project-tree filter on an idle row: its text or its chain id.
+pub(super) fn idle_matches_filter(idle: &IdleOrchestrator, filter: &str) -> bool {
+    matches_filter(&idle_text(idle), filter) || matches_filter(&idle.chain, filter)
+}
+
+/// Decision 32: the idle, unended chains with a listed window (never window 0), each
+/// window once, by project. An ended chain (`fresh`) has no row.
+fn idle_rows<'a>(
+    idle: &'a [IdleOrchestrator],
+    windows: &'a [WindowInfo],
+) -> Vec<(&'a IdleOrchestrator, &'a WindowInfo)> {
+    let (mut ids, mut chains) = (HashSet::new(), HashSet::new());
+    (idle.iter())
+        .filter(|idle| !idle.fresh)
+        .filter_map(|idle| {
+            let id = idle.window_id.filter(|id| *id != 0)?;
+            let window = windows.iter().find(|window| window.id == id)?;
+            let new = !ids.contains(&id) && !chains.contains(idle.chain.as_str());
+            ids.insert(id);
+            chains.insert(idle.chain.as_str());
+            new.then_some((idle, window))
+        })
+        .collect()
+}
+
 /// Decision 8: a window is owned, and so not listed as a plain window, when its `run`
 /// names a shown run. Every other window — no snapshot yet, a run that left, a run-less
 /// headless window — is plain.
@@ -140,15 +192,26 @@ pub(super) fn orchestrator_of<'a>(
 pub(super) fn group_projects<'a>(
     windows: &'a [WindowInfo],
     runs: &'a [RunInfo],
+    idle: &'a [IdleOrchestrator],
 ) -> Vec<ProjectGroup<'a>> {
     let shown: Vec<&'a RunInfo> = shown_runs(runs).collect();
     let shown_ids: HashSet<&str> = shown.iter().map(|run| run.run_id.as_str()).collect();
+    // Decision 32: an idle orchestrator's window is its row, listed nowhere else.
+    let mut by_idle: HashMap<&'a Path, Vec<(&'a IdleOrchestrator, &'a WindowInfo)>> =
+        HashMap::new();
+    for (idle, window) in idle_rows(idle, windows) {
+        by_idle
+            .entry(idle.project.as_path())
+            .or_default()
+            .push((idle, window));
+    }
+    let idle_ids: HashSet<u32> = (by_idle.values().flatten()).map(|(_, w)| w.id).collect();
+    let windows_left: Vec<&'a WindowInfo> = (windows.iter())
+        .filter(|window| !idle_ids.contains(&window.id))
+        .collect();
 
     let mut plain: HashMap<&'a Path, Vec<&'a WindowInfo>> = HashMap::new();
-    for window in windows
-        .iter()
-        .filter(|window| !owned_by(window, &shown_ids))
-    {
+    for window in (windows_left.iter().copied()).filter(|window| !owned_by(window, &shown_ids)) {
         plain
             .entry(window.project.as_path())
             .or_default()
@@ -161,11 +224,14 @@ pub(super) fn group_projects<'a>(
             .or_default()
             .push(ShownRun {
                 run,
-                orchestrator: orchestrator_of(run, windows),
+                orchestrator: orchestrator_of(run, windows)
+                    .filter(|window| !idle_ids.contains(&window.id)),
             });
     }
 
-    let roots: HashSet<&'a Path> = plain.keys().chain(by_run.keys()).copied().collect();
+    let roots: HashSet<&'a Path> = (plain.keys().chain(by_run.keys()).chain(by_idle.keys()))
+        .copied()
+        .collect();
     let names = display_names(roots.iter().copied());
     let mut projects: Vec<_> = roots
         .into_iter()
@@ -173,14 +239,14 @@ pub(super) fn group_projects<'a>(
             let mut windows = plain.remove(root).unwrap_or_default();
             windows.sort_by_key(|window| window.id);
             let runs = by_run.remove(root).unwrap_or_default();
-            let status = windows
-                .iter()
+            let idle = by_idle.remove(root).unwrap_or_default();
+            let status = (windows.iter().chain(idle.iter().map(|(_, window)| window)))
                 .map(|window| window.status)
                 .chain(runs.iter().map(|shown| run_status(shown.run)))
                 .min_by_key(|status| urgency(*status))
                 .unwrap_or(Status::Idle);
             let mut counts = RuntimeCounts::default();
-            for window in &windows {
+            for window in windows.iter().chain(idle.iter().map(|(_, window)| window)) {
                 match window.runtime {
                     Runtime::Claude => counts.claude += 1,
                     Runtime::Codex => counts.codex += 1,
@@ -196,6 +262,7 @@ pub(super) fn group_projects<'a>(
                 status,
                 counts,
                 runs,
+                idle,
                 members: windows.into_iter().map(ProjectChild::Window).collect(),
             }
         })
@@ -223,8 +290,12 @@ impl TreeState {
             | NodeKey::Scout { run, .. }
             | NodeKey::Task { run, .. }
             | NodeKey::Stage { run, .. }
+            | NodeKey::Round { run, .. }
             | NodeKey::AgentRound { run, .. } => is_shown(run),
-            NodeKey::Project(_) | NodeKey::Window(_) | NodeKey::Subagent { .. } => true,
+            NodeKey::Project(_)
+            | NodeKey::Window(_)
+            | NodeKey::Subagent { .. }
+            | NodeKey::Chain(_) => true,
         });
     }
 }

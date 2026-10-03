@@ -258,6 +258,11 @@ fn raw_content_text(row: &Row<'_>, ascii: bool) -> String {
         RowKind::Task { task, .. } => run_text::task_text_in(task, ascii),
         RowKind::Stage { run, stage } => run_text::stage_text_in(run, stage, ascii),
         RowKind::AgentRound { round, .. } => run_text::round_text(round),
+        // Milestone 9.3 decision 32: a round's separator and an idle orchestrator.
+        RowKind::Round { round, .. } => crate::theme::fold(&crate::tree::round_text(round), ascii),
+        RowKind::IdleOrchestrator { idle, .. } => {
+            crate::theme::fold(&crate::tree::idle_text(idle), ascii)
+        }
     }
 }
 

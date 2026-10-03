@@ -16,8 +16,9 @@ use crate::app::{App, state_text};
 use crate::tree::RowKind;
 use daemon::run::triage::{kinds_scale, source_label};
 use proto::{
-    AgentRoundInfo, PlannerInfo, PlannerState, RunInfo, RunPath, RunState, Runtime, ScoutInfo,
-    ScoutState, TaskInfo, TaskState, TokenUsage, WindowInfo,
+    AgentRoundInfo, IdleOrchestrator, PlannerInfo, PlannerState, RoundInfo, RoundOrigin,
+    RoundOutcome, RunInfo, RunPath, RunState, Runtime, ScoutInfo, ScoutState, TaskInfo, TaskState,
+    TokenUsage, WindowInfo,
 };
 
 /// The run (Interfaces "Run (orchestrator)"). The orchestrator's window does not change
@@ -58,6 +59,13 @@ pub(crate) fn run_inspection(
     if let Some(attention) = attention_text(run) {
         fields.push(field("attention", attention));
     }
+    // Milestone 9.3 decision 32: one row a round, in the CLI's form (KG §7), last.
+    if run.rounds.len() > 1 {
+        for (index, round) in run.rounds.iter().enumerate() {
+            let label = if index == 0 { "rounds" } else { "" };
+            fields.push(field(label, round_line(round)));
+        }
+    }
     let glyph = kind_glyph(
         RowKind::Run {
             run,
@@ -70,6 +78,90 @@ pub(crate) fn run_inspection(
         glyph,
         format!("{}  {}", run.run_id, clean(&run.goal)),
         right,
+        fields,
+    )
+}
+
+/// `round <n> · <origin> · <outcome or running> · <summary head or ->` (KG §7).
+fn round_line(round: &RoundInfo) -> String {
+    let summary = round.summary_head.as_deref().map_or("-".into(), clean);
+    format!(
+        "round {} · {} · {} · {summary}",
+        round.n,
+        origin_word(round.origin),
+        outcome_word(round.outcome)
+    )
+}
+
+fn origin_word(origin: RoundOrigin) -> &'static str {
+    match origin {
+        RoundOrigin::User => "user",
+        RoundOrigin::Orchestrator => "orchestrator",
+    }
+}
+
+fn outcome_word(outcome: Option<RoundOutcome>) -> &'static str {
+    match outcome {
+        None => "running",
+        Some(RoundOutcome::Completed) => "completed",
+        Some(RoundOutcome::Rejected) => "rejected",
+        Some(RoundOutcome::Cancelled) => "cancelled",
+    }
+}
+
+/// A round's separator (decision 32): `round <n>`, its origin and outcome on the right,
+/// its request and summary heads.
+pub(crate) fn goal_round_inspection(run: &RunInfo, round: &RoundInfo, app: &App) -> Inspection {
+    let right = format!(
+        "{} · {}",
+        origin_word(round.origin),
+        outcome_word(round.outcome)
+    );
+    let mut fields = vec![Field {
+        label: "request",
+        value: clean(&round.goal_head),
+        wrap: true,
+        marks: Vec::new(),
+    }];
+    if let Some(summary) = &round.summary_head {
+        fields.push(field("summary", clean(summary)));
+    }
+    let glyph = kind_glyph(RowKind::Round { run, round }, app);
+    rows(glyph, format!("round {}", round.n), right, fields)
+}
+
+/// An idle orchestrator's row (decision 32): its chain, its last run and that run's
+/// outcome (`delivered` for a complete `pr` run, D17), its runs and its window.
+pub(crate) fn idle_inspection(
+    idle: &IdleOrchestrator,
+    window: &WindowInfo,
+    app: &App,
+) -> Inspection {
+    let after = clean(&idle.after_run);
+    let outcome = crate::tree::idle_outcome(idle, &app.runs.runs);
+    let mut agent = idle.runtime.label().to_owned();
+    if !idle.model.is_empty() {
+        agent.push_str(&format!(" · {}", clean(&idle.model)));
+    }
+    let fields = vec![
+        field("after", format!("run {after} · {outcome}")),
+        field("runs", idle.runs.max(1).to_string()),
+        field("agent", agent),
+        field(
+            "window",
+            format!(
+                "{} {} · {}",
+                window.id,
+                clean(&window.name),
+                window.status.label()
+            ),
+        ),
+    ];
+    let glyph = kind_glyph(RowKind::IdleOrchestrator { idle, window }, app);
+    rows(
+        glyph,
+        format!("orchestrator {}", clean(&idle.chain)),
+        "idle".into(),
         fields,
     )
 }

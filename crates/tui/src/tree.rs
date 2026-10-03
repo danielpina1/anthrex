@@ -1,6 +1,7 @@
 mod forest;
 mod labels;
 mod names;
+mod round_rows;
 mod rows;
 mod run_rows;
 mod runs;
@@ -10,14 +11,16 @@ pub use forest::{SubagentNode, subagent_forest};
 pub use labels::{format_elapsed, short_model, subagent_label};
 pub use names::display_names;
 use proto::{
-    AgentRole, PlannerInfo, RunInfo, ScoutInfo, StageInfo, Status, SubagentInfo, TaskInfo,
-    WindowInfo,
+    AgentRole, IdleOrchestrator, PlannerInfo, RoundInfo, RunInfo, RunsSnapshot, ScoutInfo,
+    StageInfo, Status, SubagentInfo, TaskInfo, WindowInfo,
 };
+pub use round_rows::{earlier_round, muted_row, round_text};
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
 pub use run_rows::{RunFilter, display_rounds, round_label, run_rows};
-use runs::{ShownRun, group_projects, run_matches_filter};
+use runs::{ShownRun, group_projects, idle_matches_filter, run_matches_filter};
 pub use runs::{
-    awaiting_holds, is_paused, run_progress, run_status, run_title, shown_runs, task_held,
+    awaiting_holds, idle_outcome, idle_text, is_paused, run_progress, run_status, run_title,
+    shown_runs, task_held,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -50,6 +53,13 @@ pub enum NodeKey {
         run: String,
         n: u16,
     },
+    /// Milestone 9.3 decision 32: a round's separator in a run of several rounds.
+    Round {
+        run: String,
+        n: u32,
+    },
+    /// Milestone 9.3 decision 32: a project's idle orchestrator, by its chain id.
+    Chain(String),
     /// `round` is the display round (milestone 8c decision 14), not `AgentRoundInfo.round`.
     AgentRound {
         run: String,
@@ -110,6 +120,17 @@ pub enum RowKind<'a> {
     Stage {
         run: &'a RunInfo,
         stage: &'a StageInfo,
+    },
+    /// Milestone 9.3 decision 32: `round <r> · <goal head>`, above the round's stages.
+    Round {
+        run: &'a RunInfo,
+        round: &'a RoundInfo,
+    },
+    /// Milestone 9.3 decision 32: an idle, unended chain and its listed window, in the
+    /// window's place (`◌ orchestrator · idle · after <h4>`).
+    IdleOrchestrator {
+        idle: &'a IdleOrchestrator,
+        window: &'a WindowInfo,
     },
     AgentRound {
         run: &'a RunInfo,
@@ -216,13 +237,14 @@ impl TreeState {
             | NodeKey::Scout { .. }
             | NodeKey::Task { .. }
             | NodeKey::Stage { .. }
+            | NodeKey::Round { .. }
             | NodeKey::AgentRound { .. } => {
                 if !self.collapsed.remove(key) {
                     self.collapsed.insert(key.clone());
                 }
                 true
             }
-            NodeKey::Subagent { .. } => false,
+            NodeKey::Subagent { .. } | NodeKey::Chain(_) => false,
         }
     }
 
@@ -280,12 +302,13 @@ impl TreeState {
                 run_roots.contains(root) || windows.iter().any(|window| window.project == *root)
             }
             NodeKey::Window(id) => windows.iter().any(|window| window.id == *id),
-            NodeKey::Subagent { .. } => false,
+            NodeKey::Subagent { .. } | NodeKey::Chain(_) => false,
             NodeKey::Run(_)
             | NodeKey::Planner { .. }
             | NodeKey::Scout { .. }
             | NodeKey::Task { .. }
             | NodeKey::Stage { .. }
+            | NodeKey::Round { .. }
             | NodeKey::AgentRound { .. } => true,
         });
     }
@@ -297,6 +320,7 @@ struct ProjectGroup<'a> {
     status: Status,
     counts: RuntimeCounts,
     runs: Vec<ShownRun<'a>>,
+    idle: Vec<(&'a IdleOrchestrator, &'a WindowInfo)>,
     members: Vec<ProjectChild<'a>>,
 }
 
@@ -305,14 +329,33 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
     build_with_runs(windows, &[], state)
 }
 
-/// The project tree: every project with its shown runs, then its plain windows
-/// (milestone 8c decisions 6–10).
+/// The project tree of a snapshot: its runs and its idle orchestrators (milestone 9.3).
+pub fn build_from<'a>(
+    windows: &'a [WindowInfo],
+    snapshot: &'a RunsSnapshot,
+    state: &TreeState,
+) -> Vec<Row<'a>> {
+    build_with_idle(windows, &snapshot.runs, &snapshot.idle_orchestrators, state)
+}
+
+/// The project tree with no idle orchestrator: `build_with_idle` with none.
 pub fn build_with_runs<'a>(
     windows: &'a [WindowInfo],
     runs: &'a [RunInfo],
     state: &TreeState,
 ) -> Vec<Row<'a>> {
-    let projects = group_projects(windows, runs);
+    build_with_idle(windows, runs, &[], state)
+}
+
+/// The project tree: every project with its shown runs, its idle orchestrator, then its
+/// plain windows (milestone 8c decisions 6–10; milestone 9.3 decision 32).
+pub fn build_with_idle<'a>(
+    windows: &'a [WindowInfo],
+    runs: &'a [RunInfo],
+    idle: &'a [IdleOrchestrator],
+    state: &TreeState,
+) -> Vec<Row<'a>> {
+    let projects = group_projects(windows, runs, idle);
 
     let filter = state.filter.to_lowercase();
     let filtering = !filter.is_empty();
@@ -325,6 +368,7 @@ pub fn build_with_runs<'a>(
                 .runs
                 .iter()
                 .any(|shown| run_matches_filter(shown.run, &filter))
+            || (project.idle.iter()).any(|(idle, _)| idle_matches_filter(idle, &filter))
             || project.members.iter().any(|member| match member {
                 ProjectChild::Window(window) => window_matches_filter(window, &filter),
             });
@@ -360,7 +404,11 @@ pub fn build_with_runs<'a>(
             &filter,
             state.keep_finished_secs,
         );
-        let count = shown_runs.len() + visible.len();
+        let idle_rows: Vec<_> = (project.idle.iter())
+            .filter(|(idle, _)| !filtering || project_matches || idle_matches_filter(idle, &filter))
+            .collect();
+        let idle_count = idle_rows.len();
+        let count = shown_runs.len() + idle_count + visible.len();
         for (index, shown) in shown_runs.into_iter().enumerate() {
             let position = shown.orchestrator.map(|_| {
                 position += 1;
@@ -378,6 +426,14 @@ pub fn build_with_runs<'a>(
             });
         }
         let first_window = count - visible.len();
+        for (index, (idle, window)) in idle_rows.into_iter().enumerate() {
+            rows.push(Row {
+                key: NodeKey::Chain(idle.chain.clone()),
+                guides: guide_prefix(&[], first_window - idle_count + index + 1 < count),
+                depth: 1,
+                kind: RowKind::IdleOrchestrator { idle, window },
+            });
+        }
         for (index, member) in visible.into_iter().enumerate() {
             let has_later_sibling = first_window + index + 1 < count;
             let window = member.window;
@@ -458,6 +514,9 @@ pub fn agent_order(rows: &[Row<'_>]) -> Vec<u32> {
             | RowKind::Scout { .. }
             | RowKind::Task { .. }
             | RowKind::Stage { .. }
+            | RowKind::Round { .. }
+            // Not numbered: Enter on its row focuses it (milestone 9.3 decision 32).
+            | RowKind::IdleOrchestrator { .. }
             | RowKind::AgentRound { .. } => None,
         })
         .collect()
