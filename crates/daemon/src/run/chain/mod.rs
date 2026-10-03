@@ -12,8 +12,11 @@ use std::path::PathBuf;
 
 use proto::{AgentRole, DeliveryMode, IdleOrchestrator, RunState, Runtime, ToolCall};
 
+use serde_json::Value;
+
 use super::model::Run;
 use super::orch::contract_rounds::{chain_left, no_chain_to_continue, not_last, still_going};
+use super::orch::tools::{OrchCall, parse_call};
 
 /// The tools an idle orchestrator may call (decision 21): its last run's two reads and
 /// `start_goal`.
@@ -235,17 +238,33 @@ pub fn resolve(
 }
 
 /// Decision 21 (KG §3.2): while `chain` is idle, every tool but [`IDLE_TOOLS`] is
-/// refused, naming `last`, its last run. D17: a delivered `last` has not ended, so its
-/// `edit_plan` passes too (decision 38's summary, and decision 30's iterate, which
-/// makes the chain active again); the engine answers it as for any complete run.
-pub fn idle_refusal(chain: &Chain, last: &Run, tool: &str) -> Option<String> {
-    let allowed = IDLE_TOOLS.contains(&tool) || (tool == "edit_plan" && delivered(last));
+/// refused, naming `last`, its last run. D17, as task 6b fix round 2 narrows it: a
+/// delivered `last` has not ended, so an `edit_plan` with `args` holding `summary` alone
+/// (decision 38) or `iterate` alone (decision 30, which makes the chain active again)
+/// passes too; any other `edit_plan` is refused with the same text.
+pub fn idle_refusal(chain: &Chain, last: &Run, tool: &str, args: &Value) -> Option<String> {
+    let allowed = IDLE_TOOLS.contains(&tool)
+        || (tool == "edit_plan" && delivered(last) && summary_or_iterate(args));
     (chain.state == ChainState::Idle && !allowed).then(|| {
         format!(
             "run {} has ended; start a new goal with start_goal when the user gives you one",
             last.short()
         )
     })
+}
+
+/// Task 6b fix round 2: an `edit_plan` call's `args` that parse to `summary` alone or
+/// `iterate` alone (no edit, no submit).
+fn summary_or_iterate(args: &Value) -> bool {
+    match parse_call(AgentRole::Orchestrator, "edit_plan", args) {
+        Ok(OrchCall::EditPlan {
+            edits,
+            submit,
+            summary,
+            iterate,
+        }) => edits.is_empty() && !submit && (summary.is_some() != iterate.is_some()),
+        _ => false,
+    }
 }
 
 /// Decision 22, step 1 (KG §3.3, §3.5): the chain a goal continuing from run `after`

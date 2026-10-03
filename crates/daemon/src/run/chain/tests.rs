@@ -208,7 +208,7 @@ fn idle_allows_only_reads_and_start_goal() {
     let idle = chain("o-3f9a", PROJECT, &["goal-one-3f9a"], ChainState::Idle);
     let text = "run 3f9a has ended; start a new goal with start_goal when the user gives you one";
     for tool in ["get_context", "run_status", "start_goal"] {
-        assert_eq!(idle_refusal(&idle, &last, tool), None, "{tool}");
+        assert_eq!(idle_refusal(&idle, &last, tool, &json!({})), None, "{tool}");
     }
     for tool in [
         "spawn_scout",
@@ -219,7 +219,7 @@ fn idle_allows_only_reads_and_start_goal() {
         "anything_else",
     ] {
         assert_eq!(
-            idle_refusal(&idle, &last, tool),
+            idle_refusal(&idle, &last, tool, &json!({})),
             Some(text.to_string()),
             "{tool}"
         );
@@ -227,7 +227,11 @@ fn idle_allows_only_reads_and_start_goal() {
     // An active chain has no idle limits.
     let active = chain("o-3f9a", PROJECT, &["goal-one-3f9a"], ChainState::Active);
     for tool in ["edit_plan", "spawn_scout", "task_result"] {
-        assert_eq!(idle_refusal(&active, &last, tool), None, "{tool}");
+        assert_eq!(
+            idle_refusal(&active, &last, tool, &json!({})),
+            None,
+            "{tool}"
+        );
     }
 }
 

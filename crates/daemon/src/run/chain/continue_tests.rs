@@ -232,20 +232,48 @@ fn a_restart_treats_a_delivered_pr_runs_chain_as_idle() {
     assert_eq!(state("o-5e5e"), Some((ChainState::Active, false)));
 }
 
-/// D17: a delivered run's idle orchestrator may still call `edit_plan` (its summary,
-/// decision 38, and an iterate, which makes the chain active again); an accepted run's
-/// may not.
+/// D17, as task 6b fix round 2 narrows it: a delivered run's idle orchestrator may call
+/// `edit_plan` with `summary` alone (decision 38) or `iterate` alone (which makes the
+/// chain active again); any other `edit_plan`, and an accepted run's, is refused.
 #[test]
 fn a_delivered_runs_idle_orchestrator_may_still_edit_its_plan() {
     let idle = chain("o-3f9a", &["goal-one-3f9a"], ChainState::Idle);
     let mut delivered = run("goal-one-3f9a", RunState::Complete, 1, Some("o-3f9a"));
     delivered.delivery.mode = proto::DeliveryMode::Pr;
-    assert_eq!(idle_refusal(&idle, &delivered, "edit_plan"), None);
     let refused = Some(
         "run 3f9a has ended; start a new goal with start_goal when the user gives you one"
             .to_string(),
     );
-    assert_eq!(idle_refusal(&idle, &delivered, "task_result"), refused);
+    let edit = json!({"op": "cancel_task", "task_id": "t1"});
+    for (args, allowed) in [
+        (json!({"edits": [], "summary": "done"}), true),
+        (json!({"iterate": "more"}), true),
+        (json!({}), false),
+        (json!({"edits": [edit]}), false),
+        (json!({"edits": [], "submit": true}), false),
+        (json!({"summary": "done", "edits": [edit]}), false),
+        (
+            json!({"edits": [], "summary": "done", "submit": true}),
+            false,
+        ),
+        (
+            json!({"edits": [], "summary": "done", "iterate": "more"}),
+            false,
+        ),
+        (json!({"edits": [], "summary": 7}), false),
+    ] {
+        let expected = if allowed { None } else { refused.clone() };
+        let got = idle_refusal(&idle, &delivered, "edit_plan", &args);
+        assert_eq!(got, expected, "{args}");
+    }
+    let summary = json!({"edits": [], "summary": "done"});
+    assert_eq!(
+        idle_refusal(&idle, &delivered, "task_result", &summary),
+        refused
+    );
     let accepted = run("goal-one-3f9a", RunState::Accepted, 1, Some("o-3f9a"));
-    assert_eq!(idle_refusal(&idle, &accepted, "edit_plan"), refused);
+    assert_eq!(
+        idle_refusal(&idle, &accepted, "edit_plan", &summary),
+        refused
+    );
 }

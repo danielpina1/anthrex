@@ -337,3 +337,78 @@ async fn a_dropped_chains_window_reads_its_newest_run_and_starts_no_goal() {
     assert_eq!(answer, json!({ "error": text }));
     assert_eq!(crate::lock(&rig.runs.state).runs.len(), 2, "no run started");
 }
+
+/// The rig's run, delivered (a `pr` run complete with every PR landed, D17), as its
+/// chain's last run: the chain is idle, its window still open.
+fn delivered(rig: &Rig) {
+    let mut state = crate::lock(&rig.runs.state);
+    let run = state.runs.get_mut(&rig.run_id).unwrap();
+    run.chain = Some(CHAIN.into());
+    run.state = RunState::Complete;
+    run.delivery.mode = proto::DeliveryMode::Pr;
+    run.cancelled = false;
+    if run.rounds.is_empty() {
+        let first = crate::run::model::Round::first(run);
+        run.rounds.push(first);
+    }
+    state.chains = rebuild(&state.runs);
+    let chain = state.chains.get_mut(CHAIN).unwrap();
+    assert_eq!(chain.state, crate::run::chain::ChainState::Idle);
+    chain.ended = false;
+}
+
+/// Task 6b fix round 2 (ruling "6b concerns", concern 1): a delivered run's idle
+/// orchestrator may call `edit_plan` with `summary` alone (decision 38) or `iterate`
+/// alone (D17); any other `edit_plan`, and every other tool, is refused with decision
+/// 21's text.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delivered_runs_idle_orchestrator_may_only_summarise_or_iterate() {
+    let rig = Rig::new(|_, _| {}).await;
+    delivered(&rig);
+    let first = rig.run_id.clone();
+    let text = "run 3f9a has ended; start a new goal with start_goal when the user gives you one";
+    for args in [
+        json!({"edits": [{"op": "cancel_task", "task_id": "t1"}]}),
+        json!({"edits": [], "submit": true}),
+        json!({"summary": "done", "edits": [{"op": "cancel_task", "task_id": "t1"}]}),
+        json!({"edits": [], "summary": "done", "iterate": "more"}),
+    ] {
+        let (ok, answer) = chained(&rig, (&first, CHAIN), "edit_plan", args.clone()).await;
+        assert!(!ok, "{args}: {answer}");
+        assert_eq!(answer, json!({ "error": text }), "{args}");
+    }
+    let (ok, answer) = chained(
+        &rig,
+        (&first, CHAIN),
+        "task_result",
+        json!({"task_id": "t0"}),
+    )
+    .await;
+    assert_eq!((ok, answer), (false, json!({ "error": text })));
+
+    let summary = json!({"edits": [], "summary": "added login"});
+    let (ok, answer) = chained(&rig, (&first, CHAIN), "edit_plan", summary).await;
+    assert!(ok, "{answer}");
+    {
+        let state = crate::lock(&rig.runs.state);
+        let run = &state.runs[&first];
+        assert_eq!(
+            run.rounds.last().and_then(|r| r.summary.as_deref()),
+            Some("added login")
+        );
+        assert_eq!(
+            state.chains[CHAIN].state,
+            crate::run::chain::ChainState::Idle
+        );
+    }
+    let iterate = json!({"iterate": "add a logout button"});
+    let (ok, answer) = chained(&rig, (&first, CHAIN), "edit_plan", iterate).await;
+    assert!(ok, "{answer}");
+    let state = crate::lock(&rig.runs.state);
+    assert_eq!(state.runs[&first].state, RunState::Planning);
+    assert_eq!(state.runs[&first].round(), 2);
+    assert_eq!(
+        state.chains[CHAIN].state,
+        crate::run::chain::ChainState::Active
+    );
+}

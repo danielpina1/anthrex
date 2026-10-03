@@ -290,7 +290,7 @@ impl RunService {
         };
         let chain = call.chain.as_deref().and_then(|id| state.chains.get(id));
         if let (Some(chain), Some(last)) = (chain, state.runs.get(&current))
-            && let Some(text) = idle_refusal(chain, last, &call.tool)
+            && let Some(text) = idle_refusal(chain, last, &call.tool, &call.args)
         {
             return Err(text);
         }
