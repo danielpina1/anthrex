@@ -48,6 +48,10 @@ pub fn round_wake(h4: &str, n: u32, last: u16, request: &str) -> String {
     )
 }
 
+/// The final fix wave (review B, I1): a continued start whose steps before `Start`
+/// passed their deadline (`chain::CONTINUE_START_BOUND`, `chain::START_GOAL_TOOL_BOUND`).
+pub const CONTINUE_TOO_SLOW: &str = "continuing took too long; nothing was started";
+
 /// Decision 10's reply to an accepted iterate.
 pub fn round_started(h4: &str, n: u32) -> String {
     format!("run {h4} round {n} started; its orchestrator plans it")

@@ -33,12 +33,23 @@ pub const REQUEST: &str = "also add b";
 /// handoff's history read).
 const CONTINUE_GIT_CALLS: u64 = 24;
 
-/// `run start --goal … --continue <run>`'s reply, and the scripted `start_goal`'s answer
-/// (`docs/timing-budgets.md`, "Recorded, from M9.3.11"): every git call of a continued
+/// `run start --goal … --continue <run>`'s reply (`docs/timing-budgets.md`, "Recorded,
+/// from M9.3.11", corrected by the final fix wave): every git call of a continued
 /// start at the harness's `git_timeout_secs`, then one engine step and the request's
-/// round trip (`REQUEST_WAIT`). A local continue runs no host preflight.
+/// round trip (`REQUEST_WAIT`). A local continue runs no host preflight; a `pr` one
+/// would add `PREFLIGHT_BOUND` (no test continues in `pr` mode). Both stay under the
+/// daemon's deadline on a request's continue, `CONTINUE_START_BOUND`, so the daemon
+/// answers with the run.
 pub const CONTINUE_WAIT: Duration =
     Duration::from_secs(CONTINUE_GIT_CALLS * GIT_TIMEOUT_SECS).saturating_add(REQUEST_WAIT);
+
+/// The scripted orchestrator's `start_goal` (milestone 9.3's final fix wave, B-I1;
+/// `docs/timing-budgets.md`): the daemon answers the tool within its own deadline,
+/// `START_GOAL_TOOL_BOUND` (90 s: `anthrex mcp`'s 100 s reply bound less 10 s), with the
+/// run or a refusal that says nothing was started, then one engine step and the round
+/// trip (`REQUEST_WAIT`).
+pub const START_GOAL_WAIT: Duration =
+    daemon::run::chain::START_GOAL_TOOL_BOUND.saturating_add(REQUEST_WAIT);
 
 /// A run's completion with its summary, from the user's approval (`docs/timing-budgets.md`,
 /// "Recorded, from M9.3.11"): the task path (`RUN_WAIT`), then the scripted

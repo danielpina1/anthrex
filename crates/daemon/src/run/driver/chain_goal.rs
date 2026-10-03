@@ -22,12 +22,14 @@ use super::super::RunService;
 use super::super::adapt::GoalReady;
 use super::super::build::{Planned, Shape};
 use super::super::delivery::DeliveryStart;
-use crate::run::chain::continuable;
+use crate::run::chain::{CONTINUE_START_BOUND, START_GOAL_TOOL_BOUND, continuable};
 use crate::run::contract::sha7;
 use crate::run::engine::{EventKind, HISTORY_FILE};
 use crate::run::model::{LogEntry, Run};
 use crate::run::orch::contract::orchestrator_first_prompt;
-use crate::run::orch::contract_rounds::{goal_started, handoff_prompt, other_project};
+use crate::run::orch::contract_rounds::{
+    CONTINUE_TOO_SLOW, goal_started, handoff_prompt, other_project,
+};
 
 /// Decision 24: how many of the chain's history lines a fresh session's first prompt
 /// carries.
@@ -126,7 +128,7 @@ impl RunService {
         after: &str,
         next: Next,
     ) -> RunReply {
-        match self.continue_goal(after, next).await {
+        match self.continue_goal(after, next, CONTINUE_START_BOUND).await {
             Ok(run_id) => RunReply::Started {
                 run_id,
                 state: RunState::Planning,
@@ -151,13 +153,40 @@ impl RunService {
                 .ok_or_else(|| format!("unknown run {last}"))?;
             Next::inherited(prev, goal)
         };
-        let run_id = self.continue_goal(last, next).await?;
+        let run_id = self
+            .continue_goal(last, next, START_GOAL_TOOL_BOUND)
+            .await?;
         Ok(goal_started(&run_id))
     }
 
     /// Decision 22's steps 1 to 6 for a goal continuing from run `after`; the new run's
-    /// id.
-    async fn continue_goal(&self, after: &str, next: Next) -> Result<String, String> {
+    /// id. The final fix wave (review B, I1): every step before `Start` runs within
+    /// `bound` (capped by the context's test seam); past it the start is refused with
+    /// [`CONTINUE_TOO_SLOW`]. Dropping those steps is safe: none of them writes (the
+    /// preflights and the build read, the seal is a dry run), no lock is held across
+    /// them, and an abandoned blocking read ends on its own bound.
+    async fn continue_goal(
+        &self,
+        after: &str,
+        next: Next,
+        bound: Duration,
+    ) -> Result<String, String> {
+        let bound = self.ctx.continue_cap.map_or(bound, |cap| cap.min(bound));
+        let run = tokio::time::timeout(bound, self.continued_run(after, next))
+            .await
+            .map_err(|_| CONTINUE_TOO_SLOW.to_string())??;
+        let run_id = run.id.clone();
+        self.ask(|reply| EventKind::Start {
+            reply,
+            run: Box::new(run),
+        })
+        .await?;
+        Ok(run_id)
+    }
+
+    /// Decision 22's steps 1 to 5: the run a goal continuing from `after` starts, built
+    /// and not yet started.
+    async fn continued_run(&self, after: &str, next: Next) -> Result<Run, String> {
         let joined = self.joined(after)?;
         let timeout =
             Duration::from_secs(self.ctx.settings.current().orchestrator.git_timeout_secs);
@@ -219,13 +248,7 @@ impl RunService {
         if let Some(o) = run.orch.orchestrator.as_mut() {
             o.first_prompt = prompt;
         }
-        let run_id = run.id.clone();
-        self.ask(|reply| EventKind::Start {
-            reply,
-            run: Box::new(run),
-        })
-        .await?;
-        Ok(run_id)
+        Ok(run)
     }
 
     /// Decision 22, step 1: the chain run `after` continues, copied out of the engine
@@ -285,3 +308,7 @@ pub(in crate::run::driver) static HISTORY_READS: std::sync::Mutex<Vec<PathBuf>> 
 #[cfg(test)]
 #[path = "chain_goal_tests.rs"]
 pub(in crate::run::driver) mod tests;
+
+#[cfg(test)]
+#[path = "chain_goal_deadline_tests.rs"]
+mod deadline_tests;

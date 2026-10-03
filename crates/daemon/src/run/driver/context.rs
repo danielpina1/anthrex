@@ -44,6 +44,10 @@ pub struct RunContext {
     pub host: Arc<dyn CodeHost>,
     /// A test seam: caps every host op's bound (decision 9). `None` in the daemon.
     pub host_cap: Option<Duration>,
+    /// A test seam: caps a continued start's deadline (milestone 9.3's final fix wave,
+    /// B-I1: `chain::CONTINUE_START_BOUND`, `chain::START_GOAL_TOOL_BOUND`). `None` in
+    /// the daemon.
+    pub continue_cap: Option<Duration>,
 }
 
 /// One git read's budget: a deadline for all its calls, and a cap on each call's own
@@ -90,6 +94,7 @@ impl RunContext {
             read_git: GitBudget::DONE_CHECK,
             host: crate::host::select::build(&manager.code_host),
             host_cap: None,
+            continue_cap: None,
         }
     }
 

@@ -15,6 +15,14 @@ use super::{Runs, print_outcome};
 pub const GOAL_REQUEST_TIMEOUT: Duration =
     super::RUN_START_TIMEOUT.saturating_add(Duration::from_secs(600 + 30));
 
+/// `run start --goal … --continue`'s reply bound (milestone 9.3's final fix wave, B-I1):
+/// the daemon's own deadline on a continued start's steps before `Start`
+/// (`CONTINUE_START_BOUND`, `run start`'s terms; a continue is not triaged), then 30 s
+/// for its engine step and the reply. Past the deadline the daemon refuses, saying
+/// nothing was started, so this wait always hears a true answer.
+pub const CONTINUE_REQUEST_TIMEOUT: Duration =
+    daemon::run::chain::CONTINUE_START_BOUND.saturating_add(Duration::from_secs(30));
+
 /// `run start --goal`: on the fast path the run id on stdout and triage's message on
 /// stderr, and so on the plan and large paths with the planned message (milestone 9
 /// decision 26); any refusal is the command's error (exit 1). `orchestrator` is

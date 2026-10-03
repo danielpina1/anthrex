@@ -47,6 +47,10 @@ fn request_timeout(request: &RunRequest) -> Duration {
     match request {
         RunRequest::Finish { .. } => FINISH_REQUEST_TIMEOUT,
         RunRequest::Start { .. } => RUN_START_TIMEOUT,
+        RunRequest::StartGoal {
+            continue_from: Some(_),
+            ..
+        } => adapt::CONTINUE_REQUEST_TIMEOUT,
         RunRequest::StartGoal { .. } => adapt::GOAL_REQUEST_TIMEOUT,
         _ => RUN_REQUEST_TIMEOUT,
     }

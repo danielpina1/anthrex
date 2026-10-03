@@ -14,6 +14,21 @@ use support::run_harness::{FINISH_WAIT, REQUEST_WAIT, RUN_WAIT, RunHarness};
 use support::run_pr::log_lines;
 use support::run_rounds::*;
 
+/// Milestone 9.3's final fix wave (B-I1): this file's continue waits derive from the
+/// daemon's deadlines. A request's local continue (`CONTINUE_WAIT`'s git term) stays
+/// under `CONTINUE_START_BOUND`, so the daemon answers with the run; the scripted
+/// `start_goal` waits the tool's deadline and one step; and that deadline leaves `anthrex
+/// mcp`'s reply bound room, which Codex's per-server `tool_timeout_sec` (120 s, the
+/// daemon's `launch/role.rs`) outwaits in turn.
+#[test]
+fn the_continue_waits_derive_from_the_daemons_deadlines() {
+    use daemon::run::chain::{CONTINUE_START_BOUND, START_GOAL_TOOL_BOUND};
+    assert!(CONTINUE_WAIT.saturating_sub(REQUEST_WAIT) <= CONTINUE_START_BOUND);
+    assert_eq!(START_GOAL_WAIT, START_GOAL_TOOL_BOUND + REQUEST_WAIT);
+    assert!(START_GOAL_TOOL_BOUND < mcp::TOOL_REPLY_TIMEOUT);
+    assert!(mcp::TOOL_REPLY_TIMEOUT < std::time::Duration::from_secs(120));
+}
+
 /// The run id `start_goal`'s answer names (`run <id> started`).
 fn started(log: &[Value]) -> Option<String> {
     let call = log
@@ -143,7 +158,7 @@ fn e2e_an_idle_orchestrator_may_only_read_and_start_a_goal() {
     let log = h.wait_log(
         "start_goal",
         |log| started(log).is_some() || otherwise(log),
-        CONTINUE_WAIT.saturating_add(REQUEST_WAIT),
+        START_GOAL_WAIT.saturating_add(REQUEST_WAIT),
     );
     let refusal = format!("run {} {idle}", h4(&first));
     let refused: Vec<&Value> = (log.iter())

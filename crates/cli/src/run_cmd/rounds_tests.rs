@@ -2,6 +2,7 @@
 //! round lines (KG §7, design decision 31).
 
 use std::path::Path;
+use std::time::Duration;
 
 use clap::Parser;
 use clap::error::ErrorKind;
@@ -215,7 +216,9 @@ fn continue_sends_continue_from() {
             continue_from: Some("add-reset-3f9a".into()),
         }
     );
-    assert_eq!(request_timeout(&request), adapt::GOAL_REQUEST_TIMEOUT);
+    // The final fix wave (B-I1): a continue waits the daemon's own deadline, not
+    // triage's (changed expectation).
+    assert_eq!(request_timeout(&request), adapt::CONTINUE_REQUEST_TIMEOUT);
 
     let choice = OrchestratorChoice {
         runtime: Runtime::Codex,
@@ -240,6 +243,20 @@ fn continue_sends_continue_from() {
             delivery: None,
             continue_from: None,
         }
+    );
+}
+
+/// The final fix wave (B-I1): `--continue` outwaits the daemon's deadline on a
+/// continued start (`CONTINUE_START_BOUND`), which has `run start`'s terms; the daemon
+/// refuses past it, so the CLI never times out on a run the daemon then starts.
+#[test]
+fn a_continue_outwaits_the_daemons_continue_deadline() {
+    let bound = daemon::run::chain::CONTINUE_START_BOUND;
+    assert_eq!(bound, super::super::RUN_START_TIMEOUT, "run start's terms");
+    assert!(adapt::CONTINUE_REQUEST_TIMEOUT > bound);
+    assert_eq!(
+        adapt::CONTINUE_REQUEST_TIMEOUT,
+        bound + Duration::from_secs(30)
     );
 }
 

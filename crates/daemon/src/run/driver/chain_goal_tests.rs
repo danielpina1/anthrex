@@ -80,7 +80,7 @@ pub(in crate::run::driver) fn sleeping_claude(dir: &Path) -> String {
 pub(in crate::run::driver) struct ChainRig {
     pub checkout: Checkout,
     _sock: tempfile::TempDir,
-    socket: PathBuf,
+    pub socket: PathBuf,
     pub s: Arc<RunService>,
     pub manager: Arc<WindowManager>,
     shutdown: CancellationToken,
@@ -95,6 +95,14 @@ impl ChainRig {
     /// chain's last run, its orchestrator's window open: an idle, unended chain.
     /// `prepare` changes the previous run first.
     pub(in crate::run::driver) async fn new(prepare: impl FnOnce(&mut Run)) -> ChainRig {
+        ChainRig::with_context(prepare, |_| {}).await
+    }
+
+    /// [`ChainRig::new`] with the run context changed by `adjust` first.
+    pub(in crate::run::driver) async fn with_context(
+        prepare: impl FnOnce(&mut Run),
+        adjust: impl FnOnce(&mut RunContext),
+    ) -> ChainRig {
         let checkout = Checkout::ready(true);
         let tmp = checkout.tmp.path().to_path_buf();
         let sock = tempfile::Builder::new()
@@ -115,7 +123,9 @@ impl ChainRig {
             ..config::Git::default()
         });
         let data = tmp.join("data");
-        let s = RunService::new(manager.clone(), context(&checkout, &manager, &wiring));
+        let mut ctx = context(&checkout, &manager, &wiring);
+        adjust(&mut ctx);
+        let s = RunService::new(manager.clone(), ctx);
         crate::profile::service::wire(
             &manager,
             &s,
@@ -217,7 +227,7 @@ impl ChainRig {
     }
 
     /// The runs of the chain's that are not [`PREV`].
-    fn new_runs(&self) -> Vec<Run> {
+    pub(in crate::run::driver) fn new_runs(&self) -> Vec<Run> {
         let state = crate::lock(&self.s.state);
         let runs = state.runs.values();
         runs.filter(|r| r.id != PREV && r.chain.as_deref() == Some(CHAIN))
