@@ -243,8 +243,16 @@ impl App {
     }
 
     /// The `StartGoal` the goal form waits on was refused by the connection, or its
-    /// reply went with a lost link: the form stops submitting and says so inline.
+    /// reply went with a lost link: the form stops submitting and says so inline. A
+    /// closed dialog's wait on it ends too (final fix wave C-m9): on a lost link
+    /// whatever its id, since no reply can come; its draft stays.
     pub(super) fn goal_not_sent(&mut self, id: Option<u64>) {
+        match id {
+            Some(_) => {
+                self.take_goal_sent(id);
+            }
+            None => self.goal_sent = None,
+        }
         if let Some(Modal::StartGoal(form)) = &mut self.modal
             && form.submitting
             && (id.is_none() || form.request_id == id)
