@@ -172,14 +172,17 @@ pub(super) fn assign(run: &mut Run) {
     }
 }
 
-/// After every event: each chained, unfinished run's chain is in the table; each
-/// chain follows its current run.
+/// After every event: each chained run that is not finished (not terminal, and not
+/// delivered, D17) has its chain in the table, so a chain that left it (the project's
+/// older idle chain, task 6b fix round 3) stays out until its run iterates, when it
+/// returns active with that run alone; each chain follows its current run.
 pub(super) fn pass(state: &mut EngineState) {
     for run in state.runs.values() {
         let Some(id) = run.chain.as_deref() else {
             continue;
         };
         if !run.state.is_terminal()
+            && !finished(run)
             && !state.chains.contains_key(id)
             && let Some(chain) = Chain::new(id.to_string(), run)
         {
