@@ -59,6 +59,12 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 .await
         }
         OpKind::RestartOrchestrator { window_id } => {
+            // The final fix wave (review A, M3): a window that is gone cannot restart;
+            // the run's session starts fresh, with its handoff (`restart_lost`).
+            if !service.manager.list().iter().any(|w| w.id == window_id) {
+                service.restart_lost(&ctx.run_id, window_id).await;
+                return failed(format!("window {window_id} is gone"));
+            }
             service.refresh_otlp(ctx, window_id).await;
             match service.manager.restart(window_id).await {
                 Ok(()) => {

@@ -11,10 +11,11 @@ use std::time::Duration;
 use proto::{AgentRole, RunRef};
 
 use super::super::RunService;
-use super::chain_goal::Handoff;
+use super::chain_goal::{Handoff, history_lines};
 use crate::run::chain::{ChainState, newest};
 use crate::run::engine::{EventKind, OrchEvent};
 use crate::run::orch::contract::orchestrator_first_prompt;
+use crate::run::orch::contract_rounds::session_lost_prompt;
 
 impl RunService {
     /// Decision 19: an idle chain whose session has not ended, and whose window `gone`
@@ -135,6 +136,52 @@ impl RunService {
         }));
     }
 
+    /// The final fix wave (review A, M3): run `run_id`'s own window `window_id` is
+    /// gone when its orchestrator is to restart (a delivered run's idle window the user
+    /// closed, D17 and I3, then an iterate). As an adoption lost: its first prompt for
+    /// a fresh session (the run's own, then its summary so far and its chain's last
+    /// history lines, read within the run's `git_timeout_secs`, holding no lock; the
+    /// run's own prompt alone when it has no chain) goes to the engine with
+    /// `OrchEvent::AdoptLost`, and the restart's failure then launches it.
+    pub(in crate::run::driver) async fn restart_lost(&self, run_id: &str, window_id: u32) {
+        let found = {
+            let state = crate::lock(&self.state); // lookup
+            state.runs.get(run_id).map(|run| {
+                let first = orchestrator_first_prompt(run);
+                let chain = run.chain.clone().map(|chain| {
+                    let of_chain = state.runs.values();
+                    let of_chain = of_chain.filter(|r| r.chain.as_deref() == Some(&chain));
+                    let runs = crate::run::chain::in_order(of_chain.collect());
+                    let ids: Vec<String> = runs.iter().map(|r| r.id.clone()).collect();
+                    let summary = run
+                        .orch
+                        .orchestrator
+                        .as_ref()
+                        .and_then(|o| o.summary.clone());
+                    let history = run.repo_dir.join(crate::run::engine::HISTORY_FILE);
+                    (chain, ids, summary, history)
+                });
+                let bound = Duration::from_secs(run.limits.git_timeout_secs);
+                (first, chain, run.short().to_string(), bound)
+            })
+        };
+        let Some((first, chain, h4, bound)) = found else {
+            return;
+        };
+        let first_prompt = match chain {
+            Some((chain, runs, summary, history)) => {
+                let lines = history_lines(history, runs, bound).await;
+                session_lost_prompt(&first, (&chain, &h4), summary.as_deref(), lines.as_deref())
+            }
+            None => first,
+        };
+        self.send(EventKind::Orch(OrchEvent::AdoptLost {
+            run_id: run_id.to_string(),
+            window_id,
+            first_prompt,
+        }));
+    }
+
     /// Task 6b fix round 1 (m1), after a restart: a chained run that has not ended and
     /// starts no later goal, whose orchestrator record names a window the manager's
     /// record gives to another run, never took that window (the daemon stopped between
@@ -159,6 +206,10 @@ impl RunService {
 #[cfg(test)]
 #[path = "chain_ops_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "chain_lost_tests.rs"]
+mod lost_tests;
 
 #[cfg(test)]
 #[path = "chain_adopt_tests.rs"]

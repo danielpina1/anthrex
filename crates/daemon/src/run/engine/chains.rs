@@ -157,10 +157,21 @@ pub(super) fn adopt_lost(
     // Re-review N1: the goal is in the fresh session's prompt; round 1's request
     // wake would give it twice.
     super::wake::clear_request(run, 1);
-    let text = format!(
-        "window {window_id} was gone before run {} took it; run resume launches a fresh session",
-        run.short()
+    // The final fix wave (A-M3): a restart of the run's own window found it gone; the
+    // restart's failure launches the fresh session (`orch_window::restarted`).
+    let restarting = run.pending_ops.values().any(
+        |p| matches!(p.kind, super::OpKind::RestartOrchestrator { window_id: w } if w == window_id),
     );
+    let text = match restarting {
+        true => format!(
+            "window {window_id} is gone; run {}'s orchestrator starts a fresh session",
+            run.short()
+        ),
+        false => format!(
+            "window {window_id} was gone before run {} took it; run resume launches a fresh session",
+            run.short()
+        ),
+    };
     log(run, now, text);
     if let Some(chain) = run.chain.as_deref().and_then(|id| state.chains.get_mut(id))
         && chain.current() == run_id

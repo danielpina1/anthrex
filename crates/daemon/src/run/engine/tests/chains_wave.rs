@@ -2,7 +2,7 @@
 //! live table kept. An idle chain the table dropped (the project's older idle one,
 //! evicted when a newer chain went idle), ended by a closed window or not, stays out
 //! (review A, M1); a chain's runs keep their continue order whatever the clock did
-//! (review A, M2).
+//! (review A, M2); a restart whose window is gone launches a fresh session (A-M3).
 
 use proto::{FinishAction, RunState};
 
@@ -13,6 +13,7 @@ use super::goal_rounds_start::{iterate, reply, started};
 use super::orch::ORCH;
 use super::orch_restore::restart;
 use crate::run::chain::ChainState;
+use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent};
 use crate::run::model::{LogEntry, Run};
 
 const A: &str = "o-3f9a";
@@ -132,4 +133,43 @@ fn a_chain_back_on_an_iterate_keeps_its_continue_order() {
     let chain = &fx.state.chains[A];
     assert_eq!(chain.runs, ["engine-test-1111", "engine-test-2222", RUN_ID]);
     assert!(!fx.run().chain_left, "the chain is back");
+}
+
+/// A-M3, the engine's half: a delivered run iterated after its window was closed (I3
+/// lets the user close it). The restart the iterate asked for finds no window: the
+/// driver sends `AdoptLost` with the run's handoff, then the restart's failure. The run
+/// launches a fresh session with that prompt at once, and the round's request waits
+/// for it.
+#[test]
+fn a_restart_whose_window_is_gone_launches_a_fresh_session() {
+    let mut fx = landed();
+    fx.tick();
+    let o = fx.run_mut().orch.orchestrator.as_mut().unwrap();
+    o.live = false;
+    o.exited_at = Some(1);
+    let effects = iterate(&mut fx, "more");
+    assert_eq!(reply(&effects), started(2));
+    let restarts = ops_in(&effects, "RestartOrchestrator");
+    assert_eq!(restarts.len(), 1, "{effects:#?}");
+    fx.next(EventKind::Orch(OrchEvent::AdoptLost {
+        run_id: RUN_ID.into(),
+        window_id: ORCH,
+        first_prompt: "the handoff of 3f9a".into(),
+    }));
+    let message = format!("window {ORCH} is gone");
+    let effects = fx.done(restarts[0].0, OpResult::Failed { message });
+    let launches = ops_in(&effects, "CreateOrchestrator");
+    assert_eq!(launches.len(), 1, "{effects:#?}");
+    let OpKind::CreateOrchestrator { spec, .. } = &launches[0].1 else {
+        unreachable!()
+    };
+    assert_eq!(spec.initial_prompt.as_deref(), Some("the handoff of 3f9a"));
+    let run = fx.run();
+    assert!(run.orch.request_wake.is_some(), "round 2's request waits");
+    assert!(
+        run.log.iter().any(|e| e.text
+            == format!("window {ORCH} is gone; run 3f9a's orchestrator starts a fresh session")),
+        "{:#?}",
+        run.log
+    );
 }

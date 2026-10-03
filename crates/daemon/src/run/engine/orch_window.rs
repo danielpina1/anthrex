@@ -139,6 +139,17 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<
             let text = format!("the orchestrator could not restart: {message}");
             history::orchestrator_ended(run, Some(&text), fx);
             log(run, now, text);
+            // The final fix wave (review A, M3): the window was gone, and the driver's
+            // `AdoptLost` took it off the record with the run's handoff as its first
+            // prompt; the session starts fresh at once.
+            if run
+                .orch
+                .orchestrator
+                .as_ref()
+                .is_some_and(|o| o.window_id.is_none())
+            {
+                relaunch(run, now, fx);
+            }
         }
         _ => {}
     }
