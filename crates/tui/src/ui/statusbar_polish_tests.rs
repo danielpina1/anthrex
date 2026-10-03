@@ -181,10 +181,11 @@ fn the_menu_shows_only_esc() {
     let mut app = gate_app(w, h);
     app.open_plan_review(RUN_ID.into(), ReviewTarget::Gate);
     open_menu_on_the_run(&mut app);
-    assert_eq!(bar(&app, w, h), " MENU  esc back");
+    // Milestone 9.5 decision 42: the review's alert count stays (no key).
+    assert_eq!(bar(&app, w, h), " MENU  ⚑ 1  esc back");
     press(&mut app, KeyCode::Esc, NONE);
     let text = bar(&app, w, h);
-    assert!(text.starts_with(" PLAN  a approve"), "{text:?}");
+    assert!(text.starts_with(" PLAN  ⚑ 1  a approve"), "{text:?}");
 }
 
 /// Decision 31 and spec §6.6: the sidebar tree, the project overview and the run view

@@ -138,6 +138,9 @@ pub(super) struct Entry {
     /// not restarted by a move between the two ([`Entry::note_prompt`]): how long a
     /// wake-up has been held there (`WindowManager::held_at_prompt_for`).
     pub(super) prompt_since: Option<Instant>,
+    /// Milestone 9.5 decision 40: the last tick's footer scan found a Codex question;
+    /// only a new match raises `Attention`. Not persisted.
+    pub(super) codex_question: bool,
 }
 
 impl Entry {

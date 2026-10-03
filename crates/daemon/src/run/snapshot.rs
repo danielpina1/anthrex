@@ -250,13 +250,8 @@ pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
             .as_ref()
             .and_then(|o| o.attention(terminal)),
     );
-    if run.orch.wake_held && !terminal {
-        lines.push(crate::run::orch::WAKE_HELD.to_string());
-    }
-    // Milestone 9.5 decisions 38 and 39: the first turn waited past its bound.
-    if run.orch.first_turn_late && !terminal {
-        lines.push(crate::run::orch::START_PROMPT.to_string());
-    }
+    // A held wake-up; milestone 9.5 decisions 38 and 39: a start prompt.
+    lines.extend(crate::run::orch::orchestrator_lines(&run.orch, terminal));
     lines
 }
 

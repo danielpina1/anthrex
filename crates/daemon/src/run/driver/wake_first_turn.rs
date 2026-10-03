@@ -5,13 +5,12 @@
 //! unchanged: pasted whole, kept while the engine holds it, never pasted twice. On top
 //! of `ready`, it goes only to a window that has sent a hook or title signal: a quiet
 //! window with none is `Idle` and is exactly a start or folder-trust prompt, whose
-//! answer the paste's `\r` would be. Why it waits is logged once per reason.
-
-use std::collections::HashMap;
+//! answer the paste's `\r` would be. Why it waits is logged once per reason
+//! (`wake_report.rs`, decision 41).
 
 use proto::WindowInfo;
 
-use super::Wakes;
+use super::{WaitReason, Wakes};
 use crate::run::model::Run;
 
 /// The round a first turn is kept under: rounds count from 1 (`Run::round`), so no
@@ -40,45 +39,17 @@ pub(super) fn request_held(run: &Run) -> Option<u32> {
     first.or(run.orch.request_wake.as_ref().map(|_| run.round()))
 }
 
-/// The reason each run's wake-up was last logged as waiting for.
-#[derive(Default)]
-pub(in crate::run::driver) struct Waits {
-    logged: std::sync::Mutex<HashMap<String, &'static str>>,
-    /// Tests only: every line logged.
-    #[cfg(test)]
-    pub(super) lines: std::sync::Mutex<Vec<String>>,
-}
-
 impl Wakes {
-    /// Whether `run_id`'s waiting wake-up, otherwise ready for `window`, may go: a first
-    /// turn only once the window has sent a signal.
-    pub(super) fn signalled(&self, run_id: &str, window: &WindowInfo) -> bool {
+    /// Why `run_id`'s waiting wake-up, otherwise ready for `window`, may not go yet: a
+    /// first turn goes only once the window has sent a signal.
+    pub(super) fn unsignalled(&self, run_id: &str, window: &WindowInfo) -> Option<WaitReason> {
         let first = crate::lock(&self.pending)
             .get(run_id)
             .is_some_and(|p| p.request == Some(FIRST_TURN));
-        let waits = first && !window.signals_seen;
-        self.log_wait(run_id, waits.then_some("no hook signal yet"));
-        !waits
-    }
-
-    /// Logs at `info` why `run_id`'s wake-up waits, once until the reason changes;
-    /// `None`: it no longer waits.
-    fn log_wait(&self, run_id: &str, reason: Option<&'static str>) {
-        let mut logged = crate::lock(&self.waits.logged);
-        let Some(reason) = reason else {
-            logged.remove(run_id);
-            return;
-        };
-        if logged.insert(run_id.to_string(), reason) == Some(reason) {
-            return;
-        }
-        let line = format!("wake-up for run {run_id} waits: {reason}");
-        tracing::info!("{line}");
-        #[cfg(test)]
-        crate::lock(&self.waits.lines).push(line);
+        (first && !window.signals_seen).then_some(WaitReason::NoSignal)
     }
 }
 
 #[cfg(test)]
 #[path = "wake_first_turn_tests.rs"]
-mod tests;
+pub(super) mod tests;

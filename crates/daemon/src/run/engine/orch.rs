@@ -114,6 +114,11 @@ pub(super) fn on_orch_event(
                 run.orch.wake_held = held;
             }
         }
+        OrchEvent::StartPrompt { run_id, waiting } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                run.orch.start_prompt = waiting;
+            }
+        }
         OrchEvent::DigestRead {
             run_id, notes_seq, ..
         } => {

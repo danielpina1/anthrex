@@ -95,9 +95,7 @@ fn the_review_is_framed_with_its_header_at_80x24() {
     let buffer = draw(&mut app, 80, 24);
     let got = rows(&buffer);
     let mut expected = want(80, 23);
-    expected.push(
-        " PLAN  a approve  x reject  e edit  d drop  j/k task  PgUp/PgDn scroll  esc back".into(),
-    );
+    expected.push(" PLAN  ⚑ 1  a approve  x reject  e edit  d drop  j/k task  esc back".into());
     assert_eq!(got, expected, "{got:#?}");
     // `t1`'s row: the bar in the accent, the rest of the row reversed to the frame.
     let accent = theme::fg(Role::Accent);
@@ -120,7 +118,8 @@ fn the_review_is_framed_with_its_header_at_120x40() {
     let got = rows(&draw(&mut app, 120, 40));
     let mut expected = want(120, 39);
     expected.push(
-        " PLAN  a approve  x reject  e edit  d drop  j/k task  PgUp/PgDn scroll  esc back".into(),
+        " PLAN  ⚑ 1  a approve  x reject  e edit  d drop  j/k task  PgUp/PgDn scroll  esc back"
+            .into(),
     );
     assert_eq!(got, expected, "{got:#?}");
 }

@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use super::model::OpId;
 use crate::scout::report::ScoutReportArgs;
 
+mod attention;
 pub mod context;
 pub mod contract;
 pub mod contract_rounds;
@@ -40,6 +41,7 @@ pub mod rules;
 pub(crate) mod test_support;
 pub mod tools;
 
+pub use attention::{START_PROMPT, WAKE_HELD, orchestrator_lines};
 pub use limits::{AgentLimits, OrchLimits, PlannerLimits};
 
 /// Who sent an edit batch. Plan files and the user's `run edit` are [`EditSource::User`]
@@ -109,15 +111,10 @@ pub struct RunOrch {
     pub first_turn_since: Option<u64>,
     #[serde(skip)]
     pub first_turn_late: bool,
+    /// Decision 39, in memory only: the driver reports the window at a start prompt.
+    #[serde(skip)]
+    pub start_prompt: bool,
 }
-
-/// The attention line of a held wake-up ([`RunOrch::wake_held`]).
-pub const WAKE_HELD: &str =
-    "orchestrator wake-up held: its window was at a prompt; type in it to continue";
-
-/// Milestone 9.5 decision 39's attention line (while [`RunOrch::first_turn_late`]).
-pub const START_PROMPT: &str =
-    "orchestrator waits at a start prompt; focus its window (C-b T, Enter) to answer it";
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -49,6 +49,7 @@ use first_turn::FIRST_TURN;
 
 #[path = "wake_report.rs"]
 mod report;
+pub use report::WaitReason;
 
 /// Decision 39: the paste, then this long, then the `\r` that submits it.
 pub const SUBMIT_DELAY: Duration = Duration::from_millis(200);
@@ -135,8 +136,10 @@ pub(super) struct Wakes {
     /// finds the engine no longer holds that round's request.
     pasted: std::sync::Mutex<HashMap<String, (u32, u64)>>,
     next_generation: std::sync::atomic::AtomicU64,
-    /// Milestone 9.5 decision 38: why each run's wake-up waits, as last logged.
-    pub(super) waits: first_turn::Waits,
+    /// Milestone 9.5 decision 41: why each run's wake-up waits, as last logged.
+    pub(super) waits: report::Waits,
+    /// Milestone 9.5 decision 39: the start prompts seen and reported.
+    start_prompts: report::StartPrompts,
     /// Tests only: run between a check's two reads (the generations, then the engine).
     #[cfg(test)]
     pub(super) between_reads: std::sync::Mutex<Option<Box<dyn Fn() + Send>>>,
@@ -337,20 +340,33 @@ struct Seen {
     /// Milestone 9.3 (D13, fix round 1): the round whose request wake the engine
     /// still holds (a run holds only its current round's).
     request: Option<u32>,
+    /// The run's `wake_quiet_secs`.
+    quiet: Duration,
 }
 
 /// Whether `window` takes a paste now: `Idle` or `Done`, no client input for `quiet`,
 /// and (whole-branch review, item 2) no `Attention` left unanswered by a turn end: a
-/// paste's `\r` must never confirm a permission dialog's highlighted choice.
+/// paste's `\r` must never confirm a permission dialog's highlighted choice. If not,
+/// why (decision 41).
 fn ready(
     window: &WindowInfo,
     last_input: Option<Instant>,
     quiet: Duration,
     attention_open: bool,
-) -> bool {
-    matches!(window.status, Status::Idle | Status::Done)
-        && !attention_open
-        && last_input.is_none_or(|at| at.elapsed() >= quiet)
+) -> Result<(), WaitReason> {
+    match window.status {
+        Status::Working => return Err(WaitReason::Working),
+        Status::Starting | Status::Exited => return Err(WaitReason::Starting),
+        Status::Attention => return Err(WaitReason::Attention),
+        Status::Idle | Status::Done if attention_open => return Err(WaitReason::Attention),
+        Status::Idle | Status::Done => {}
+    }
+    match last_input.map(|at| at.elapsed()) {
+        Some(ago) if ago < quiet => Err(WaitReason::Input {
+            secs: ago.as_secs(),
+        }),
+        _ => Ok(()),
+    }
 }
 
 impl RunService {
@@ -384,7 +400,8 @@ impl RunService {
     /// Decisions 13 and 39, on every tick and every change of the window list: reports
     /// an orchestrator window that exited (or came back after an exit) to the engine,
     /// drops the wake-ups of orchestrators that are not live, and delivers each one
-    /// whose window takes it now. The engine's lock and the manager's are each taken
+    /// whose window takes it now, logging why one waits (milestone 9.5 decision 41);
+    /// then reports the held wake-ups and the start prompts (decision 39). The engine's lock and the manager's are each taken
     /// for one read, never together and never across an await.
     pub(super) fn check_orchestrators(self: &Arc<Self>) {
         // The waiting wake-ups first, then the engine: every wake-up this check may drop
@@ -442,6 +459,7 @@ impl RunService {
         let waiting = {
             self.wakes.confirm(&seen, epoch);
             self.wakes.keep_live(&seen, &judged);
+            self.wakes.forget_waits();
             self.wakes.deliverable(&judged)
         };
         let takes: Vec<Waiting> = waiting
@@ -450,7 +468,10 @@ impl RunService {
                 window(w.window_id).is_some_and(|win| {
                     let input = self.manager.last_client_input(w.window_id);
                     let open = self.manager.attention_open(w.window_id);
-                    ready(win, input, w.quiet, open) && self.wakes.signalled(&w.run_id, win)
+                    let wait = ready(win, input, w.quiet, open).err();
+                    let wait = wait.or_else(|| self.wakes.unsignalled(&w.run_id, win));
+                    self.wakes.log_wait(&w.run_id, wait);
+                    wait.is_none()
                 })
             })
             .collect();
@@ -459,6 +480,7 @@ impl RunService {
             self.deliver(run_id, p);
         }
         self.report_held();
+        self.report_start_prompt(&seen, &windows);
     }
 
     /// Every run's orchestrator window, as the engine has it.
@@ -478,6 +500,7 @@ impl RunService {
                     notes: !o.notes.is_empty(),
                     last_note_seq: o.last_note_seq,
                     request: first_turn::request_held(run),
+                    quiet: Duration::from_secs(run.limits.orch.wake_quiet_secs),
                     terminal: run.state.is_terminal(),
                     launching: run.pending_ops.values().any(|p| {
                         matches!(
@@ -495,11 +518,13 @@ impl RunService {
     fn deliver(self: &Arc<Self>, run_id: String, p: Pending) {
         let service = self.clone();
         tokio::spawn(async move {
-            let delivered = deliver_wake(&service.manager, p.window_id, &p.paste()).await;
+            let paste = p.paste();
+            let delivered = deliver_wake(&service.manager, p.window_id, &paste).await;
             let woken = delivered.is_ok() && !service.stopped.load(Ordering::SeqCst);
             service.wakes.delivered(&run_id, woken.then_some(&p));
             match delivered {
                 Ok(()) if woken => {
+                    service.wakes.log_delivered(p.window_id, paste.len());
                     service.send(EventKind::Orch(OrchEvent::OrchestratorWoken {
                         run_id,
                         digest_revision: p.digest_revision,

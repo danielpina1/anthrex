@@ -167,6 +167,7 @@ fn seen(live: bool, notes: bool, last_note_seq: u64) -> Seen {
         notes,
         last_note_seq,
         request: None,
+        quiet: Duration::from_secs(1),
     }
 }
 

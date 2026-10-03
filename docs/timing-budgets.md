@@ -460,6 +460,18 @@ The orchestrator's first turn (decision 38). `FIRST_TURN_WAIT_SECS` (60 s) is re
 | The prompt-less fake's `SessionStart` hook, or Codex's ready title | `fake-agent/tests/pty_first_message.rs` | `MCP_RUN` (150 s) | Its start-up `tools/list` is one MCP conversation (`MCP_CALL_TIMEOUT`, 120 s), then the server's exit (`EXIT_GRACE`, 2 s, after which its group is killed), then one hook (`STEP_TIMEOUT`, 5 s): 127 s. | **Recorded.** A hang guard. |
 | The fake's exit after the first message | the same | `RUN` (20 s) | The paste is read at once; then `UserPromptSubmit` (one hook, `STEP_TIMEOUT`) and the script's `expect` and `exit`. | **Recorded.** |
 
+### Recorded, from M9.5.5b (2026-10-03)
+
+The start prompt (decision 39), why a wake-up waits (decision 41) and the Codex question footer (decision 40). Measured: `driver/wake_report_tests.rs` about 10 s for its three tests (the quiet waits), `status_codex_tests.rs` about 1.2 s.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| The stand-in `claude` window reaching `Idle` with no signal, or `Working` on its line | `daemon/src/run/driver/wake_report_tests.rs` (both window tests) | `QUIET_AFTER + SLACK` (3 + 5 s), ticking every 50 ms; `SLACK` for `Working` | As M9.5.5a's row: one line of output, then the first tick `QUIET_AFTER` after it. | **Recorded.** A hang guard. |
+| The start prompt reported | the same file (`a_quiet_unsignalled_…`) | `1 s + SLACK` after the first check, checking every 50 ms; and at least 1 s (`wake_quiet_secs`) | The first check that finds the window at the prompt starts its clock; the first check `wake_quiet_secs` later reports it. The lower bound is the rule itself, not a timing guess. | **Recorded.** |
+| `input 2s ago` | the same file (`a_waiting_wake_logs_why_once`) | the check runs at least 2 s after the input (a `sleep_until` from just after the write), and must run before 3 s | The check reads the input's age as whole seconds; two direct calls follow the sleep with no await between them, so only a scheduler stall over 1 s could make it `3s`. | **Recorded.** The one upper edge; a stall that long fails other tests too. |
+| The wake-up delivered after the quiet time | the same | `4 s + SUBMIT_DELAY + SLACK` after the input, checking every 50 ms; and at least 4 s | The first check past `wake_quiet_secs` (4 s) takes it, then the paste's `SUBMIT_DELAY`. | **Recorded.** |
+| The stand-in `codex` reaching its `Ready` title and quiet, and each redraw | `daemon/src/status_codex_tests.rs` | `SLACK` (5 s) each, polling every 20 ms | One title write at start; the stand-in polls its control file every 50 ms and redraws. `SLACK` covers its first exec. Each `tick` is called only once the snapshot shows the drawn screen, so no assertion races the redraw. | **Recorded.** A hang guard. |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |

@@ -27,13 +27,13 @@ impl GitRoots for NoRoots {
 }
 
 /// Slack on top of each derived bound below (a process start, a few 20 ms polls).
-const SLACK: Duration = Duration::from_secs(5);
+pub(in crate::run::driver::wake) const SLACK: Duration = Duration::from_secs(5);
 
-struct Rig {
-    _dir: tempfile::TempDir,
-    manager: Arc<WindowManager>,
-    runs: Arc<RunService>,
-    events: UnboundedReceiver<crate::run::driver::Msg>,
+pub(in crate::run::driver::wake) struct Rig {
+    pub(in crate::run::driver::wake) _dir: tempfile::TempDir,
+    pub(in crate::run::driver::wake) manager: Arc<WindowManager>,
+    pub(in crate::run::driver::wake) runs: Arc<RunService>,
+    pub(in crate::run::driver::wake) events: UnboundedReceiver<crate::run::driver::Msg>,
 }
 
 /// `claude` as a stand-in that prints one line and then sleeps (`Starting`, then
@@ -74,7 +74,7 @@ fn role(run_id: &str) -> RoleLaunch {
     }
 }
 
-fn rig() -> Rig {
+pub(in crate::run::driver::wake) fn rig() -> Rig {
     let dir = tempfile::Builder::new()
         .prefix("ax-first-turn-")
         .tempdir_in("/tmp")
@@ -102,7 +102,7 @@ fn rig() -> Rig {
 
 impl Rig {
     /// A Claude run window, the orchestrator of run `run_id` as the manager has it.
-    async fn orchestrator_window(&self, run_id: &str) -> u32 {
+    pub(in crate::run::driver::wake) async fn orchestrator_window(&self, run_id: &str) -> u32 {
         let spec = WindowSpec {
             name: Some(format!("{run_id}/orchestrator")),
             runtime: Runtime::Claude,
@@ -145,7 +145,7 @@ impl Rig {
         );
     }
 
-    fn hook(&self, window: u32, event: &str) {
+    pub(in crate::run::driver::wake) fn hook(&self, window: u32, event: &str) {
         let payload = json!({"hook_event_name": event, "session_id": "s-first"});
         self.manager
             .handle_hook(window, HookSource::Claude, &payload)
@@ -186,7 +186,7 @@ impl Rig {
         }
     }
 
-    fn status(&self, window: u32) -> (Status, bool) {
+    pub(in crate::run::driver::wake) fn status(&self, window: u32) -> (Status, bool) {
         let w = self
             .manager
             .list()
@@ -264,7 +264,18 @@ async fn an_unsignalled_window_gets_no_first_turn_even_with_mcp_ready() {
     assert_eq!(rig.status(window), (Status::Idle, true));
     rig.runs.check_orchestrators();
     rig.wait_first_turn(SUBMIT_DELAY + SLACK).await;
-    assert_eq!(rig.wait_logs().len(), 1, "{:?}", rig.wait_logs());
+    // Milestone 9.5 decision 41 (task M9.5.5b): then the delivery's own line.
+    let paste = super::super::encode_paste_within("the first prompt", REQUEST_WAKE_MAX_BYTES);
+    assert_eq!(
+        rig.wait_logs(),
+        [
+            "wake-up for run r1 waits: no hook signal yet".to_string(),
+            format!(
+                "wake-up delivered to window {window} ({} bytes)",
+                paste.len()
+            ),
+        ]
+    );
     let _ = rig.manager.kill(window);
 }
 

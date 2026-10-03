@@ -1,0 +1,9 @@
+# Hand-written from the footer quoted in the 9.0.7 try-out (follow-ups file, "From milestone 9.0.7"); replace with a real capture. Lines starting "# " are not screen rows.
+• I need one answer before I write the plan: which crate owns the parser?
+
+  └ Asked a question (1 of 1)
+
+› Explain this codebase
+
+  Queued follow-up inputs · ? 1 question · shift+← to answer
+  gpt-6.1-sol high · 98% context left

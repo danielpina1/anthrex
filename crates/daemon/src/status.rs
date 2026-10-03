@@ -26,6 +26,8 @@ pub enum StatusEvent {
     Stop,
     CodexNotify,
     Title(CodexTitle),
+    /// Milestone 9.5 decision 40: a Codex orchestrator's footer began to show a question.
+    CodexQuestion,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +66,7 @@ pub struct StatusContext {
 /// | Signal | Applicable runtime/context | Transition |
 /// |---|---|---|
 /// | exit | all | `Exited` is terminal |
+/// | question footer | a Codex orchestrator (M9.5 decision 40) | `Attention` |
 /// | bell | Claude after hooks / all others | unchanged / `Attention` |
 /// | focus, input | all | clear `Done`, or clear `Attention` |
 /// | output, quiet | Shell or agent before its first signal | fallback activity transitions |
@@ -78,6 +81,7 @@ pub fn next(current: Status, event: StatusEvent, runtime: Runtime, ctx: StatusCo
     use StatusEvent as E;
     match (runtime, current, event) {
         (_, Exited, _) | (_, _, E::Exited) => Exited,
+        (_, _, E::CodexQuestion) => Attention,
         (Runtime::Claude, status, E::Bell) if ctx.hooks_seen => status,
         (_, _, E::Bell) => Attention,
         (_, Done, E::Focused) => Idle,

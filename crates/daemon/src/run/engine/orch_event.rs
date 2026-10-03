@@ -79,6 +79,9 @@ pub enum OrchEvent {
     /// Whole-branch fix round 2, item 2: the driver holds `run_id`'s wake-up only
     /// because its orchestrator's window was at a prompt (`held`), or no longer does.
     WakeHeld { run_id: String, held: bool },
+    /// Milestone 9.5 decision 39: `run_id`'s live orchestrator window has been quiet
+    /// with no signal for its quiet time (`waiting`: a start prompt), or no longer is.
+    StartPrompt { run_id: String, waiting: bool },
     /// M9.17 fix round 2: `run promote`'s installed check found `installed` (decision
     /// 17's map); a fast-path run with no orchestrator yet records it, so its promoted
     /// sub-planners' route agrees with the check.
@@ -141,6 +144,7 @@ impl OrchEvent {
             | OrchEvent::OrchestratorWindow { .. }
             | OrchEvent::OtlpToken { .. }
             | OrchEvent::WakeHeld { .. }
+            | OrchEvent::StartPrompt { .. }
             | OrchEvent::Installed { .. }
             | OrchEvent::RoleRouteEnded { .. }
             | OrchEvent::ChainWindowGone { .. }
