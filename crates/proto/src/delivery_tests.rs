@@ -576,13 +576,13 @@ fn appended_variants_keep_their_indices() {
         ]
     );
     let names = variant_names::<RunRequest>();
-    // Milestone 9.3 appends `Iterate` after `Watch` (`rounds_tests.rs`).
+    // Milestone 9.3 appends `Iterate` after `Watch`, and 9.5 `McpReady` after it.
     assert_eq!(
-        names[names.len() - 5..],
+        names[names.len() - 6..names.len() - 1],
         ["TaskDetail", "Settings", "Deliver", "Watch", "Iterate"],
         "{names:?}"
     );
-    let n = names.len() as u8 - 1;
+    let n = names.len() as u8 - 2;
     assert_eq!(
         variant_at::<RunRequest>(n - 2, &serde_json::json!({"run_id": "r1", "stage": 2})),
         Some(RunRequest::Deliver {

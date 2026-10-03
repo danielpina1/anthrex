@@ -94,6 +94,8 @@ fn single_code_goal_takes_the_fast_path() {
             atomic: false,
             atomic_reason: None,
             addresses: Vec::new(),
+            race: false,
+            pair: false,
         }
     );
     // A docs goal is fast too, with the kind carried.

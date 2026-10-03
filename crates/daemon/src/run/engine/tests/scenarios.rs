@@ -41,6 +41,8 @@ pub(super) fn amend(task: &str, stage: Option<u16>, priority: Option<i32>) -> Pl
         size: None,
         deps: None,
         stage,
+        race: None,
+        pair: None,
     }
 }
 

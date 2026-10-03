@@ -163,6 +163,7 @@ pub(super) fn a_stats() -> HistoryStats {
         quarantine_after: 0,
         rounds: 0,
         iterated_runs: 0,
+        tuning: None,
     }
 }
 
@@ -228,6 +229,11 @@ pub(super) fn a_task_record() -> TaskRecord {
         merge_commit: Some("dddd4444".into()),
         stage: 1,
         origin: crate::tiers::TaskOrigin::Plan,
+        pattern: None,
+        race_winner: None,
+        race_adopted: false,
+        writer_failures: 0,
+        round: 0,
     }
 }
 

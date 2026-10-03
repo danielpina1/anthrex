@@ -70,6 +70,11 @@ fn task(
         merge_commit: None,
         stage: 1,
         origin: proto::TaskOrigin::Plan,
+        pattern: None,
+        race_winner: None,
+        race_adopted: false,
+        writer_failures: 0,
+        round: 0,
     }
 }
 

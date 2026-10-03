@@ -351,6 +351,7 @@ fn in_review_r2(app: &mut App) {
         summary: "one bug".into(),
         findings: Vec::new(),
         blocking: verdict.is_some(),
+        lane: None,
     };
     t1.review_route = Some(route.clone());
     t1.reviews = vec![review(1, Some(proto::Verdict::Changes)), review(2, None)];

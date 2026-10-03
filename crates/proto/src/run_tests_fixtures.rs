@@ -62,6 +62,9 @@ pub(super) fn an_agent_round() -> AgentRoundInfo {
         rate_limited_since: None,
         rate_limited_until: None,
         sent_back_at: Vec::new(),
+        lane: None,
+        failed_error: None,
+        failed_until: None,
     }
 }
 
@@ -73,6 +76,7 @@ pub(super) fn a_review() -> ReviewInfo {
         summary: "one blocking finding".into(),
         findings: vec![a_finding()],
         blocking: true,
+        lane: None,
     }
 }
 
@@ -188,6 +192,8 @@ pub(super) fn a_task_info() -> TaskInfo {
         atomic_reason: None,
         interface_change: false,
         round: 1,
+        race: None,
+        pair: None,
     }
 }
 
@@ -257,6 +263,7 @@ pub(super) fn a_run_info() -> RunInfo {
         chain: None,
         round: 1,
         rounds: Vec::new(),
+        writer_caps: Default::default(),
     }
 }
 
@@ -271,5 +278,6 @@ pub(super) fn a_tool_call() -> ToolCall {
         scout_id: None,
         epic: None,
         chain: None,
+        lane: None,
     }
 }

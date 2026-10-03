@@ -78,6 +78,7 @@ async fn a_stuck_continue_past_the_tool_deadline_starts_nothing() {
         window_id: rig.window,
         socket: rig.socket.clone(),
         chain: Some(CHAIN.into()),
+        lane: None,
     };
     let began = Instant::now();
     let (ok, text) = tokio::time::timeout(

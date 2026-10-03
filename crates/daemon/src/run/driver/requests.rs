@@ -141,7 +141,9 @@ impl RunService {
                 run_id,
                 orchestrator,
             } => self.promote(run_id, orchestrator).await,
-            RunRequest::Stats { dir } => self.stats(dir).await,
+            // Milestone 9.5: `apply`, `dismiss` and `read_only` are ignored until tasks
+            // M9.5.11 (decisions 11, 48).
+            RunRequest::Stats { dir, .. } => self.stats(dir).await,
             RunRequest::Profile(profile) => self.profile(profile).await,
             // Milestone 9 decision 28's approval holds: only the user's requests decide.
             RunRequest::ApproveHold { run_id, hold } => self.hold_verdict(run_id, hold, true).await,
@@ -169,6 +171,8 @@ impl RunService {
                 })
                 .await,
             ),
+            // Milestone 9.5 decision 38: acknowledged and ignored until task M9.5.5a.
+            RunRequest::McpReady { .. } => RunReply::done(request::MCP_READY, ""),
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }

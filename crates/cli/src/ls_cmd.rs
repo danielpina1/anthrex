@@ -108,6 +108,7 @@ mod tests {
             kind: proto::WindowKind::Pty,
             run: None,
             signals_seen: false,
+            placeholder: false,
         }
     }
 

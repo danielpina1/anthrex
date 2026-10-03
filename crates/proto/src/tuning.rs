@@ -1,0 +1,258 @@
+//! Milestone 9.5 (tuning): race lanes and the test-writer pair as the snapshot shows
+//! them, the tuning file (`<repo_dir>/tuning.toml`, decision 10) and the tuning block of
+//! `anthrex run stats` (decision 11).
+//!
+//! Every field a protocol-15 peer never wrote is `#[serde(default)]` where it is added
+//! to an older type, so a 9.3 `run.json`, snapshot and `history.jsonl` still decode.
+//! The tuning file's types refuse unknown keys at every level: a misspelt key in a file
+//! anthrex writes itself means the file is not what anthrex wrote.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+
+use crate::run::{Budget, Effort, Route, Strength};
+
+/// One of a racing task's two lanes (decision 19): `"a"` or `"b"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RaceLane {
+    A,
+    B,
+}
+
+impl RaceLane {
+    /// `"a"` or `"b"`, as `anthrex mcp --lane` takes it and a lane's checkout ends.
+    pub fn label(self) -> &'static str {
+        match self {
+            RaceLane::A => "a",
+            RaceLane::B => "b",
+        }
+    }
+
+    /// The lane racing this one.
+    pub fn other(self) -> RaceLane {
+        match self {
+            RaceLane::A => RaceLane::B,
+            RaceLane::B => RaceLane::A,
+        }
+    }
+}
+
+/// Where one lane of a race is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaneState {
+    Preparing,
+    Working,
+    Proof,
+    Check,
+    Review,
+    Won,
+    Adopted,
+    Lost,
+    Out,
+}
+
+/// One lane of a racing task, as shown to a client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneInfo {
+    pub lane: RaceLane,
+    pub route: Route,
+    pub state: LaneState,
+    /// The lane's checkout name, `<task>.<lane>`.
+    pub checkout: String,
+    pub head: Option<String>,
+    pub reason: Option<String>,
+    pub salvage_ref: Option<String>,
+}
+
+/// A racing task's lanes and, once decided, the lane that became the task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RaceInfo {
+    pub lanes: Vec<LaneInfo>,
+    pub winner: Option<RaceLane>,
+    pub adopted: bool,
+}
+
+/// Which session of a paired task is working (decision 24).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PairPhase {
+    Writing,
+    Implementing,
+}
+
+/// A paired task's test writer and its red commit, as shown to a client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairInfo {
+    pub phase: PairPhase,
+    pub writer_route: Route,
+    pub test: Option<String>,
+    pub red: Option<String>,
+    pub red_checked: Option<bool>,
+    pub writer_failures: u8,
+}
+
+/// The opt-in pattern a task ran under, as its history record names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskPattern {
+    Race,
+    Pair,
+}
+
+/// The version every tuning file written now carries.
+pub const TUNING_VERSION: u32 = 1;
+
+/// `<repo_dir>/tuning.toml` (decision 10). `[budgets.*]` and `[weights]` are written by
+/// the automatic refit, `[thresholds]` and `[routes.*]` by `run stats --apply`, and
+/// `[dismissed]` by `run stats --dismiss`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TuningFile {
+    pub v: u32,
+    /// By class key: `"s"`, `"m"`, `"hub"`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub budgets: BTreeMap<String, ClassBudget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weights: Option<PathWeights>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thresholds: Option<SizeThresholds>,
+    /// By class key: `"s"`, `"m"`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub routes: BTreeMap<String, ClassRoute>,
+    /// Proposal id → the proposed value it was dismissed at.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dismissed: BTreeMap<String, String>,
+}
+
+impl Default for TuningFile {
+    fn default() -> Self {
+        TuningFile {
+            v: TUNING_VERSION,
+            budgets: BTreeMap::new(),
+            weights: None,
+            thresholds: None,
+            routes: BTreeMap::new(),
+            dismissed: BTreeMap::new(),
+        }
+    }
+}
+
+/// One class's refitted budget, with how many samples it came from and when.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClassBudget {
+    pub tool_calls: u32,
+    pub minutes: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u64>,
+    pub samples: u32,
+    pub at: u64,
+}
+
+/// Critical-path weights in seconds, per class; `derived` names the classes (`"S"`,
+/// `"M"`, `"hub"`) whose weight was derived rather than measured.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PathWeights {
+    pub s_secs: u64,
+    pub m_secs: u64,
+    pub hub_secs: u64,
+    #[serde(default)]
+    pub derived: Vec<String>,
+    pub at: u64,
+}
+
+/// The line thresholds of size classes S and M (spec §7.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SizeThresholds {
+    pub s_lines: u32,
+    pub m_lines: u32,
+}
+
+impl Default for SizeThresholds {
+    fn default() -> Self {
+        SizeThresholds {
+            s_lines: 20,
+            m_lines: 100,
+        }
+    }
+}
+
+/// A class's applied route: its strength and effort.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClassRoute {
+    pub strength: Strength,
+    pub effort: Effort,
+}
+
+/// One class's line of the tuning block (decision 11).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClassTuning {
+    /// `"S"`, `"M"` or `"hub"`.
+    pub class: String,
+    pub samples: u32,
+    pub budget: Budget,
+    pub refit: RefitState,
+    /// Ruling RH-5: `[orchestrator.budget.<class>]` is set in the configuration.
+    pub configured: bool,
+    /// The refit, whether it is used or not.
+    pub refit_budget: Option<Budget>,
+    pub weight_secs: Option<u64>,
+    pub weight_derived: bool,
+    /// `"standard/low"`, or `"list (config): …"`.
+    pub route: String,
+}
+
+/// What became of a class's budget refit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefitState {
+    NotYet,
+    Kept,
+    Written { at: u64 },
+    Configured,
+    Off,
+}
+
+/// The exact change a proposal makes to the tuning file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TuningChange {
+    Threshold { class: String, lines: u32 },
+    Route { class: String, route: ClassRoute },
+}
+
+/// One proposal of `run stats`, applied only on the user's confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TuningProposal {
+    pub id: String,
+    pub text: String,
+    pub current: String,
+    pub proposed: String,
+    pub change: TuningChange,
+}
+
+/// The tuning block of `run stats` (`HistoryStats.tuning`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TuningReport {
+    pub path: PathBuf,
+    pub min_samples: u32,
+    pub refit_budgets: bool,
+    pub classes: Vec<ClassTuning>,
+    pub proposals: Vec<TuningProposal>,
+    pub moved_bad_file: Option<PathBuf>,
+    pub applied: Vec<String>,
+    pub dismissed: Vec<String>,
+    /// Ruling RH-5: the first candidate of `[orchestrator.routes.orchestrator]`.
+    pub orchestrator_list: Option<String>,
+}
+
+#[cfg(test)]
+#[path = "tuning_tests.rs"]
+mod tests;

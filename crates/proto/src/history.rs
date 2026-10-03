@@ -13,6 +13,7 @@ use crate::profile::ProfileSource;
 use crate::run::{AgentRole, BlockReason, DoneSignal, GateCounts, Route, Size, TaskKind, TestMode};
 use crate::run_info::TokenUsage;
 use crate::tiers::TaskOrigin;
+use crate::tuning::{RaceLane, TaskPattern, TuningReport};
 
 /// The `v` every record written now carries. Milestone 9 (decision 43) raised it from
 /// 1 with the `role_route` line, milestone 9.1 (decision 57) to 3 with the `tier`,
@@ -239,6 +240,20 @@ pub struct TaskRecord {
     pub stage: u16,
     #[serde(default)]
     pub origin: TaskOrigin,
+    // Milestone 9.5 (no history version bump: every field defaults).
+    /// Decisions 17 and 24: the race or pair the task ran as.
+    #[serde(default)]
+    pub pattern: Option<TaskPattern>,
+    #[serde(default)]
+    pub race_winner: Option<RaceLane>,
+    #[serde(default)]
+    pub race_adopted: bool,
+    #[serde(default)]
+    pub writer_failures: u8,
+    /// Decision 4: the run's round the task belongs to; `0` on an older line reads as
+    /// round 1.
+    #[serde(default)]
+    pub round: u32,
 }
 
 /// One finished run.
@@ -313,6 +328,11 @@ pub struct HistoryStats {
     pub rounds: u32,
     #[serde(default)]
     pub iterated_runs: u32,
+    /// Milestone 9.5 decision 11: what the history has taught. Boxed so `RunReply` (and
+    /// `DaemonMsg`, which every broadcast slot holds) stays small; a `Box` is invisible
+    /// on the wire.
+    #[serde(default)]
+    pub tuning: Option<Box<TuningReport>>,
 }
 
 /// One tier job (decision 57), `record_id` `<run>/tier/<op>`.

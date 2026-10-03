@@ -136,6 +136,8 @@ fn half(id: &str, owns: &str) -> PlanTask {
         atomic: false,
         atomic_reason: None,
         addresses: Vec::new(),
+        race: false,
+        pair: false,
     }
 }
 

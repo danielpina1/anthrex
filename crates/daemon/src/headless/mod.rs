@@ -92,6 +92,10 @@ pub struct McpTarget {
     /// type: it reaches the daemon as `proto::ToolCall.chain`.
     #[serde(default)]
     pub chain: Option<String>,
+    /// A racer's lane (`--lane`), milestone 9.5. Not a wire type: it reaches the daemon
+    /// as `proto::ToolCall.lane`.
+    #[serde(default)]
+    pub lane: Option<proto::RaceLane>,
 }
 
 /// Which session a launch starts or continues.

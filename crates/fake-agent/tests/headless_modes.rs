@@ -191,6 +191,7 @@ fn mcp_call_talks_to_a_real_mcp_server() {
             scout_id: None,
             epic: None,
             chain: None,
+            lane: None,
         }]
     );
     let results: Vec<Value> = agent

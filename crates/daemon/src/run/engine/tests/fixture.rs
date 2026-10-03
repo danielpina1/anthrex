@@ -335,6 +335,7 @@ impl Fixture {
                 scout_id: None,
                 epic: None,
                 chain: None,
+                lane: None,
             },
         })
     }

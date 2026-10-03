@@ -61,6 +61,7 @@ async fn adopted() -> (ChainRig, String) {
         task_id: None,
         role: AgentRole::Orchestrator,
         session: 1,
+        lane: None,
     };
     let deadline = Instant::now() + ANSWER;
     while rig.manager.run_window_live(rig.window) != Some(expected.clone()) {
@@ -112,6 +113,7 @@ async fn a_restart_before_the_adoption_landed_leaves_a_fresh_launch() {
         task_id: None,
         role: AgentRole::Orchestrator,
         session: 1,
+        lane: None,
     };
     rig.manager.rebind_run_window(rig.window, previous).unwrap();
     {

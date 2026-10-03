@@ -151,6 +151,7 @@ fn stats_json_and_the_report_line_are_printable() {
         quarantine_after: 0,
         rounds: 0,
         iterated_runs: 0,
+        tuning: None,
     };
     let json = super::adapt::stats_json(&stats).unwrap();
     // JSON escapes the control character itself; the bidi override and the ZWJ, which

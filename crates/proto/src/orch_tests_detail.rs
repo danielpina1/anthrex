@@ -162,6 +162,8 @@ fn appended_variants_keep_their_indices() {
     expected.extend(["Deliver", "Watch"]);
     // Milestone 9.3 appends `Iterate` after `Watch` (`rounds_tests.rs`).
     expected.push("Iterate");
+    // Milestone 9.5 appends `McpReady` after `Iterate` (`tuning_tests.rs`).
+    expected.push("McpReady");
     assert_eq!(variant_names::<RunRequest>(), expected);
     assert_eq!(
         variant_at::<RunRequest>(

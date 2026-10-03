@@ -70,6 +70,7 @@ async fn tool_call_is_forwarded_with_role_run_task_and_window() {
             scout_id: None,
             epic: None,
             chain: None,
+            lane: None,
         })
     );
 
@@ -202,6 +203,7 @@ async fn a_scout_call_carries_its_scout_id() {
             scout_id: Some("onboarding-1".into()),
             epic: None,
             chain: None,
+            lane: None,
         })
     );
 }
@@ -270,6 +272,31 @@ async fn an_orchestrator_call_carries_its_chain() {
     assert_eq!(call.role, AgentRole::Orchestrator);
     assert_eq!(call.chain.as_deref(), Some("o-3f9a"));
     assert_eq!(call.tool, "run_status");
+}
+
+/// Milestone 9.5: a racer's call names its lane, through `ToolCall.lane`.
+#[tokio::test]
+async fn a_racer_call_carries_its_lane() {
+    let stub = StubDaemon::start((true, "accepted"));
+    let mut options = opts(AgentRole::Racer, stub.socket.clone());
+    options.lane = Some(proto::RaceLane::B);
+    let mut c = Client::start(options);
+    c.initialize().await;
+    let result = c.call("task_done", json!({"summary": "done"})).await;
+    assert!(!Client::is_error(&result), "{result}");
+    let call = stub.seen()[0].call.clone().expect("the call");
+    assert_eq!(call.role, AgentRole::Racer);
+    assert_eq!(call.lane, Some(proto::RaceLane::B));
+    assert_eq!(call.task_id.as_deref(), Some("t1"));
+    assert_eq!(call.tool, "task_done");
+
+    // Any other role's call carries none.
+    let stub = StubDaemon::start((true, "accepted"));
+    let mut c = Client::start(opts(AgentRole::TestWriter, stub.socket.clone()));
+    c.initialize().await;
+    c.call("task_done", json!({"summary": "red"})).await;
+    let call = stub.seen()[0].call.clone().expect("the call");
+    assert_eq!((call.role, call.lane), (AgentRole::TestWriter, None));
 }
 
 /// Milestone 9 decision 15: a sub-planner's call names its epic.

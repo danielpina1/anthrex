@@ -358,6 +358,7 @@ mod tests {
             kind: crate::types::WindowKind::Pty,
             run: None,
             signals_seen: false,
+            placeholder: false,
         };
         let client_messages = vec![
             ClientMsg::Hello {
@@ -441,6 +442,7 @@ mod tests {
                             task_id: Some("t1".into()),
                             role: crate::run::AgentRole::Reviewer,
                             session: 2,
+                            lane: None,
                         }),
                         ..window
                     },

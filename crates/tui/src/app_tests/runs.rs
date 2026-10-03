@@ -94,6 +94,9 @@ fn round(until: Option<u64>, flag: bool) -> AgentRoundInfo {
         rate_limited_since: until.map(|_| 4900),
         rate_limited_until: until,
         sent_back_at: vec![],
+        lane: None,
+        failed_error: None,
+        failed_until: None,
     }
 }
 
@@ -389,6 +392,7 @@ fn other_run_replies_change_nothing() {
         quarantine_after: 0,
         rounds: 0,
         iterated_runs: 0,
+        tuning: None,
     };
     let replies = vec![
         RunReply::Started {

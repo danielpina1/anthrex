@@ -93,7 +93,20 @@
 /// is `#[serde(default)]` (and left out while empty where it can be), so a protocol-14
 /// `run.json`, snapshot and history still load. Derivation: `PROTO_VERSION` was 14 at
 /// `crates/proto/src/lib.rs:87` before this change (set by M9.2); 14 + 1 = 15.
-pub const PROTO_VERSION: u32 = 15;
+///
+/// Milestone 9.5 task 2 bumps this to 16: it appends `AgentRole::{Racer, TestWriter}`
+/// and `RunRequest::McpReady`, adds the race, pair and tuning types
+/// (`proto::tuning`), `PlanTask.{race, pair}`, `PlanEdit::AmendTask.{race, pair}`,
+/// `RunRef.lane`, `ToolCall.lane`, `RunRequest::Stats.{apply, dismiss, read_only}`,
+/// `RunInfo.writer_caps`, `TaskInfo.{race, pair}`, `AgentRoundInfo.{lane,
+/// failed_error, failed_until}`, `ReviewInfo.lane`, `WindowInfo.placeholder`,
+/// `FullInfo.held`, `HistoryStats.tuning` and the `TaskRecord` fields `pattern`,
+/// `race_winner`, `race_adopted`, `writer_failures` and `round`. Every new field is
+/// `#[serde(default)]` and every new variant is appended last, so a protocol-15
+/// `run.json`, snapshot and history still load (`HISTORY_VERSION` stays 5).
+/// Derivation: `PROTO_VERSION` was 15 at `crates/proto/src/lib.rs:96` before this
+/// change (set by M9.3); 15 + 1 = 16.
+pub const PROTO_VERSION: u32 = 16;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -122,6 +135,7 @@ pub mod scout;
 pub mod settings;
 pub mod task_detail;
 pub mod tiers;
+pub mod tuning;
 pub mod types;
 
 pub use actions::{ACTION_TEXT_MAX, ActionInfo, ActionKind, ActionNeeds, InputKind};
@@ -177,6 +191,11 @@ pub use settings::{
 };
 pub use task_detail::{ACTIVITY_MAX, SummarySource, TaskDetailInfo, WORKER_SUMMARY_MAX};
 pub use tiers::{FullInfo, FullState, SignalInfo, StageInfo, TaskOrigin, TierInfo};
+pub use tuning::{
+    ClassBudget, ClassRoute, ClassTuning, LaneInfo, LaneState, PairInfo, PairPhase, PathWeights,
+    RaceInfo, RaceLane, RefitState, SizeThresholds, TUNING_VERSION, TaskPattern, TuningChange,
+    TuningFile, TuningProposal, TuningReport,
+};
 pub use types::{
     ClientKind, ExitInfo, GitOperation, GitState, Head, Runtime, Status, SubagentInfo,
     SubagentState, WindowInfo, WindowKind, WindowSpec,
@@ -205,8 +224,8 @@ mod orch_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_fifteen() {
-        assert_eq!(super::PROTO_VERSION, 15);
+    fn proto_version_is_sixteen() {
+        assert_eq!(super::PROTO_VERSION, 16);
     }
 
     #[test]

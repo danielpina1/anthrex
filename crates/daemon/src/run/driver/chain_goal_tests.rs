@@ -51,6 +51,7 @@ pub(in crate::run::driver) fn role(run_id: &str) -> RoleLaunch {
             task_id: None,
             role: AgentRole::Orchestrator,
             session: 1,
+            lane: None,
         },
         mcp: McpTarget {
             role: AgentRole::Orchestrator,
@@ -59,6 +60,7 @@ pub(in crate::run::driver) fn role(run_id: &str) -> RoleLaunch {
             scout_id: None,
             epic: None,
             chain: Some(CHAIN.into()),
+            lane: None,
         },
         instructions: "the orchestrator contract".into(),
         effort: Effort::High,
@@ -388,6 +390,7 @@ async fn start_goal_inherits_delivery_trust_and_checks_but_not_approve_at_once()
         window_id: rig.window,
         socket: rig.socket.clone(),
         chain: Some(CHAIN.into()),
+        lane: None,
     };
     let (ok, text) = tokio::time::timeout(
         ANSWER,
@@ -420,6 +423,7 @@ async fn start_goal_inherits_delivery_trust_and_checks_but_not_approve_at_once()
         task_id: None,
         role: AgentRole::Orchestrator,
         session: 1,
+        lane: None,
     };
     let deadline = Instant::now() + ANSWER;
     while rig.manager.run_window_live(rig.window) != Some(expected.clone()) {

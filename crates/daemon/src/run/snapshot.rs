@@ -150,6 +150,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         chain: run.chain.clone(),
         round: run.round(),
         rounds: run.round_infos(),
+        writer_caps: Default::default(),
     }
 }
 
@@ -171,7 +172,8 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
     let mut credit = |role: &str, u: TokenUsage| *by_role.entry(role.to_string()).or_default() += u;
     for round in run.tasks.iter().flat_map(|t| &t.rounds) {
         let role = match round.role {
-            AgentRole::Worker => "worker",
+            // Milestone 9.5: racers and test writers are worker sessions.
+            AgentRole::Worker | AgentRole::Racer | AgentRole::TestWriter => "worker",
             AgentRole::Reviewer => "reviewer",
             AgentRole::Scout => "scout",
             AgentRole::Orchestrator => "orchestrator",
@@ -275,6 +277,9 @@ fn round_info(r: &AgentRound, now: u64) -> AgentRoundInfo {
         rate_limited_since: r.rate_limited_since,
         rate_limited_until: r.rate_limited_until,
         sent_back_at: r.sent_back_at.clone(),
+        lane: None,
+        failed_error: None,
+        failed_until: None,
     }
 }
 
@@ -337,6 +342,7 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
                 summary: r.summary.clone(),
                 findings: r.findings.clone(),
                 blocking: r.findings.iter().any(|f| f.severity != Severity::Minor),
+                lane: None,
             })
             .collect(),
         last_check: t.checks.last().map(|c| CheckInfo {
@@ -429,6 +435,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         atomic_reason: t.spec.atomic_reason.clone(),
         interface_change: t.spec.interface_change,
         round: t.round,
+        race: None,
+        pair: None,
     }
 }
 

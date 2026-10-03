@@ -378,6 +378,7 @@ fn m9_call(role: AgentRole, window: u32, tool: &str) -> proto::ToolCall {
         scout_id: None,
         epic: (role == AgentRole::Planner).then(|| "mail".to_string()),
         chain: None,
+        lane: None,
     }
 }
 
@@ -462,6 +463,7 @@ fn a_task_note_before_the_window_is_recorded_after_binding() {
         scout_id: None,
         epic: None,
         chain: None,
+        lane: None,
     };
     let refusals = Vec::new();
     let event = crate::run::engine::OrchEvent::Tool {

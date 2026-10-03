@@ -15,6 +15,7 @@ use crate::run::{AgentRole, FinishAction, PlanEdit, RunState};
 use crate::run_info::{BaseMovedInfo, RunsSnapshot};
 use crate::settings::{SettingsReply, SettingsRequest};
 use crate::task_detail::TaskDetailInfo;
+use crate::tuning::RaceLane;
 
 /// One MCP tool call an agent round makes into the run engine, such as `task_done`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,6 +35,9 @@ pub struct ToolCall {
     /// Milestone 9.3 (KG §3.4): the calling orchestrator's chain (`anthrex mcp --chain`).
     #[serde(default)]
     pub chain: Option<String>,
+    /// Milestone 9.5: the calling racer's lane (`anthrex mcp --lane`).
+    #[serde(default)]
+    pub lane: Option<RaceLane>,
 }
 
 /// Client → daemon, carried inside `ClientMsg::Run`.
@@ -115,8 +119,16 @@ pub enum RunRequest {
         #[serde(default)]
         orchestrator: Option<OrchestratorChoice>,
     },
+    /// Milestone 9.5 decisions 11 and 48: `apply` and `dismiss` name proposals;
+    /// `read_only` records no revert and writes no file (the Settings screen's).
     Stats {
         dir: PathBuf,
+        #[serde(default)]
+        apply: Vec<String>,
+        #[serde(default)]
+        dismiss: Vec<String>,
+        #[serde(default)]
+        read_only: bool,
     },
     Profile(ProfileRequest),
     // Milestone 9 decision 28: answered with `request::APPROVE` and `request::REJECT`.
@@ -151,6 +163,12 @@ pub enum RunRequest {
     Iterate {
         run: String,
         goal: String,
+    },
+    /// Milestone 9.5 decision 38: the orchestrator's `anthrex mcp` answered its first
+    /// `tools/list`. Answered `RunReply::Done` under `request::MCP_READY`.
+    McpReady {
+        run_id: String,
+        window_id: u32,
     },
 }
 
@@ -402,4 +420,6 @@ pub mod request {
     pub const WATCH: &str = "run watch";
     /// Milestone 9.3 (KG §2.2).
     pub const ITERATE: &str = "run iterate";
+    /// Milestone 9.5 decision 38.
+    pub const MCP_READY: &str = "mcp ready";
 }

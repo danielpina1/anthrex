@@ -58,6 +58,7 @@ pub(super) fn note(fx: &mut Fixture, window: u32, kind: &str, text: &str) -> Vec
             scout_id: None,
             epic: None,
             chain: None,
+            lane: None,
         },
         refusals: Vec::new(),
     }))
@@ -138,6 +139,8 @@ fn brief_amend_resumes_a_paused_task() {
         size: None,
         deps: None,
         stage: None,
+        race: None,
+        pair: None,
     };
     let effects = edit(&mut fx, vec![amend]);
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");

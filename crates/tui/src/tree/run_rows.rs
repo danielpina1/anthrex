@@ -39,6 +39,11 @@ pub fn round_label(role: AgentRole, session: u32, number: u32) -> String {
         AgentRole::Scout => format!("research #{session}"),
         AgentRole::Planner => format!("planner #{session}"),
         AgentRole::Decider => "decider".to_string(),
+        // Milestone 9.5; task M9.5.20 adds the lane (`racer a`).
+        AgentRole::Racer if number > 1 => format!("racer r{number}"),
+        AgentRole::Racer => "racer".to_string(),
+        AgentRole::TestWriter if number > 1 => format!("test writer #{session} r{number}"),
+        AgentRole::TestWriter => format!("test writer #{session}"),
     }
 }
 
@@ -92,7 +97,10 @@ fn rounds_with<'a>(
             | AgentRole::Orchestrator
             | AgentRole::Scout
             | AgentRole::Planner
-            | AgentRole::Decider => {
+            | AgentRole::Decider
+            // Milestone 9.5: split at `sent_back_at` by task M9.5.20.
+            | AgentRole::Racer
+            | AgentRole::TestWriter => {
                 rounds.push(single(info.round));
             }
         }
@@ -111,6 +119,9 @@ fn role_rank(role: AgentRole) -> u8 {
         AgentRole::Scout => 3,
         AgentRole::Planner => 4,
         AgentRole::Decider => 5,
+        // Milestone 9.5: ordered by task M9.5.20.
+        AgentRole::Racer => 6,
+        AgentRole::TestWriter => 7,
     }
 }
 

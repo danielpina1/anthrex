@@ -44,9 +44,12 @@ pub(crate) fn round_inspection(
     );
     let fields = match info.role {
         AgentRole::Reviewer => reviewer_fields(task, round, app),
-        AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout | AgentRole::Planner => {
-            worker_fields(task, round, limited, app)
-        }
+        AgentRole::Worker
+        | AgentRole::Orchestrator
+        | AgentRole::Scout
+        | AgentRole::Planner
+        | AgentRole::Racer
+        | AgentRole::TestWriter => worker_fields(task, round, limited, app),
         // A decider has no rounds (decision 43): nothing of a worker's to show.
         AgentRole::Decider => Vec::new(),
     };

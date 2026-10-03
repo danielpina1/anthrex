@@ -145,6 +145,10 @@ pub struct WindowInfo {
     /// Milestone 9.0.5 decision 9: the agent has sent a hook, notify or title signal.
     #[serde(default)]
     pub signals_seen: bool,
+    /// Milestone 9.5 decision 44: a headless placeholder (M9 decision 11a), which a
+    /// client may close. Left out while false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub placeholder: bool,
 }
 
 /// Where a window's `HEAD` points.
@@ -259,6 +263,7 @@ mod tests {
             kind: WindowKind::Pty,
             run: None,
             signals_seen: false,
+            placeholder: false,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"project\":\"/tmp/repo\""));
@@ -289,6 +294,7 @@ mod tests {
             kind: WindowKind::Pty,
             run: None,
             signals_seen: false,
+            placeholder: false,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"worktree\":\"/tmp/repo\""));

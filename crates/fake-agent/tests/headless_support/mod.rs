@@ -167,6 +167,7 @@ impl Mcp {
             scout_id: None,
             epic: None,
             chain: None,
+            lane: None,
         }
     }
 }

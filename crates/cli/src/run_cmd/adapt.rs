@@ -113,7 +113,15 @@ pub(super) fn stats_json(stats: &proto::HistoryStats) -> anyhow::Result<String> 
 /// `stats::render` lays it out, or with `--json` as `HistoryStats`.
 pub(super) async fn stats(runs: &mut Runs, dir: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
     let dir = crate::resolve_dir(dir)?;
-    match runs.request(RunRequest::Stats { dir }).await? {
+    match runs
+        .request(RunRequest::Stats {
+            dir,
+            apply: Vec::new(),
+            dismiss: Vec::new(),
+            read_only: false,
+        })
+        .await?
+    {
         RunReply::Stats { stats, .. } if json => {
             println!("{}", stats_json(&stats)?);
             Ok(())
@@ -212,7 +220,12 @@ mod tests {
         );
         let text = format!("{:?}", parse(&["stats"]));
         assert!(text.contains("json: false"), "{text}");
-        let stats = RunRequest::Stats { dir: "/r".into() };
+        let stats = RunRequest::Stats {
+            dir: "/r".into(),
+            apply: Vec::new(),
+            dismiss: Vec::new(),
+            read_only: false,
+        };
         assert_eq!(request_timeout(&stats), super::super::RUN_REQUEST_TIMEOUT);
     }
 }

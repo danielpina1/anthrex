@@ -207,6 +207,11 @@ pub fn task_record(run: &Run, task: &Task, outcome: TaskOutcome, now: u64) -> Ta
         merge_commit: task.merge_commit.clone(),
         stage: task.spec.stage,
         origin: proto::TaskOrigin::Plan,
+        pattern: None,
+        race_winner: None,
+        race_adopted: false,
+        writer_failures: 0,
+        round: 0,
     }
 }
 

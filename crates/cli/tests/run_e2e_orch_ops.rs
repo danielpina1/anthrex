@@ -101,6 +101,7 @@ fn create_orchestrator_op_starts_the_window_and_reports_it() {
             task_id: None,
             role: proto::AgentRole::Orchestrator,
             session: 1,
+            lane: None,
         })
     );
     let argv = &argvs(&h, 1)[0];

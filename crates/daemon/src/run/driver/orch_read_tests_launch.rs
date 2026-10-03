@@ -242,6 +242,7 @@ fn tool_call(rig: &Rig, role: AgentRole, window: u32, tool: &str, args: Value) -
         scout_id: None,
         epic: (role == AgentRole::Planner).then(|| "mail".to_string()),
         chain: None,
+        lane: None,
     }
 }
 

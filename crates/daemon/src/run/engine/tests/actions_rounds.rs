@@ -163,6 +163,8 @@ fn a_live_earlier_round_task_stays_editable() {
             size: None,
             deps: None,
             stage: None,
+            race: None,
+            pair: None,
         },
         PlanEdit::AddDep {
             task_id: "fix1".into(),

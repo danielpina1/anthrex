@@ -151,6 +151,7 @@ pub fn run_ref(task: &str, role: AgentRole, session: u32) -> RunRef {
         task_id: Some(task.into()),
         role,
         session,
+        lane: None,
     }
 }
 
@@ -225,6 +226,7 @@ pub fn window(id: u32, run_ref: Option<RunRef>, kind: WindowKind) -> WindowInfo 
         kind,
         run: run_ref,
         signals_seen: false,
+        placeholder: false,
     }
 }
 

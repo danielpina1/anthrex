@@ -119,6 +119,7 @@ async fn adopt_runs_off_the_manager_lock() {
             task_id: None,
             role: AgentRole::Orchestrator,
             session: 3,
+            lane: None,
         })
     );
     assert_eq!(name.as_deref(), Some("4c1d/orchestrator"));

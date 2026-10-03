@@ -58,7 +58,12 @@ impl App {
     }
 
     fn stats_request(&mut self, dir: &std::path::Path) -> (u64, Effect) {
-        let request = RunRequest::Stats { dir: dir.into() };
+        let request = RunRequest::Stats {
+            dir: dir.into(),
+            apply: Vec::new(),
+            dismiss: Vec::new(),
+            read_only: false,
+        };
         let timeout = reply_timeout(&request);
         let (id, effect) = self.tagged_request(request);
         let what = PendingWhat::Stats { dir: dir.into() };

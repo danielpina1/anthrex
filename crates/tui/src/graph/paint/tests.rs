@@ -36,6 +36,7 @@ fn window(id: u32, project: &str, name: &str, status: Status) -> WindowInfo {
         kind: proto::WindowKind::Pty,
         run: None,
         signals_seen: false,
+        placeholder: false,
     }
 }
 

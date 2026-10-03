@@ -129,6 +129,7 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
             task_id: None,
             role: AgentRole::Orchestrator,
             session,
+            lane: None,
         },
         mcp: McpTarget {
             role: AgentRole::Orchestrator,
@@ -137,6 +138,7 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
             scout_id: None,
             epic: None,
             chain: run.chain.clone(),
+            lane: None,
         },
         instructions: ORCHESTRATOR_CONTRACT.to_string(),
         effort: route.effort,
@@ -244,12 +246,14 @@ pub fn planner_spec(run: &Run, epic: &EpicRecord, session: u32) -> PlannerSpec {
         scout_id: None,
         epic: Some(epic.epic.clone()),
         chain: None,
+        lane: None,
     };
     let run_ref = RunRef {
         run_id: run.id.clone(),
         task_id: None,
         role: AgentRole::Planner,
         session,
+        lane: None,
     };
     let headless = read_only(
         run,
@@ -314,6 +318,7 @@ pub fn research_spec(run: &Run, task: &Task) -> HeadlessSpec {
         task_id: Some(task.id().to_string()),
         role: AgentRole::Scout,
         session: task.session,
+        lane: None,
     };
     let mcp = McpTarget {
         role: AgentRole::Scout,
@@ -322,6 +327,7 @@ pub fn research_spec(run: &Run, task: &Task) -> HeadlessSpec {
         scout_id: None,
         epic: None,
         chain: None,
+        lane: None,
     };
     read_only(
         run,

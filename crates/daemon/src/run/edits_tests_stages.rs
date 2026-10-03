@@ -20,6 +20,8 @@ fn amend_stage(task_id: &str, stage: u16, priority: Option<i32>) -> PlanEdit {
         size: None,
         deps: None,
         stage: Some(stage),
+        race: None,
+        pair: None,
     }
 }
 
@@ -203,4 +205,25 @@ fn an_existing_stage_named_task_can_still_be_amended() {
         rejected(&run, vec![add(&one("stage-4", ""))]),
         ["task stage-4: id: stage-4 is reserved for stage branches"]
     );
+}
+
+/// Milestone 9.5 task 2: an amend setting `race` or `pair` is refused until task
+/// M9.5.14; one clearing them changes nothing that matters.
+#[test]
+fn amend_race_or_pair_is_not_available_yet() {
+    let amend = |field: &str, on: bool| -> PlanEdit {
+        serde_json::from_value(serde_json::json!({"op": "amend_task", "task_id": "t4", field: on}))
+            .unwrap()
+    };
+    assert_eq!(
+        rejected(&chain(), vec![amend("race", true)]),
+        ["task t4: race: not available yet"]
+    );
+    assert_eq!(
+        rejected(&chain(), vec![amend("pair", true)]),
+        ["task t4: pair: not available yet"]
+    );
+    let (edited, _) = applied(&chain(), vec![amend("race", false)]);
+    let t4 = edited.task("t4").unwrap();
+    assert!(!t4.spec.race && !t4.spec.pair);
 }

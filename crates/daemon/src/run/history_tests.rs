@@ -226,6 +226,11 @@ fn task_record_from_a_merged_task() {
         merge_commit: Some("e".repeat(40)),
         stage: 1,
         origin: proto::TaskOrigin::Plan,
+        pattern: None,
+        race_winner: None,
+        race_adopted: false,
+        writer_failures: 0,
+        round: 0,
     };
     assert_eq!(record, want);
     assert_eq!(task_record_id(&run.id, "t1"), want.record_id);

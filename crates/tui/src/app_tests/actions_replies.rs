@@ -99,7 +99,12 @@ fn reply_timeout_follows_decision_19() {
             task_id: "t1".into(),
         },
         RunRequest::Cancel { run_id: id() },
-        RunRequest::Stats { dir: "/r".into() },
+        RunRequest::Stats {
+            dir: "/r".into(),
+            apply: Vec::new(),
+            dismiss: Vec::new(),
+            read_only: false,
+        },
         RunRequest::TaskDetail {
             run_id: id(),
             task_id: "t1".into(),

@@ -90,6 +90,7 @@ fn area_scout_spec_is_read_only() {
             scout_id: Some("api-1".into()),
             epic: None,
             chain: None,
+            lane: None,
         })
     );
     assert_eq!(
@@ -120,6 +121,7 @@ fn area_scout_spec_is_read_only() {
             task_id: None,
             role: AgentRole::Scout,
             session: 1,
+            lane: None,
         })
     );
     assert_eq!(spec.codex_config_guard, None);
@@ -186,6 +188,7 @@ fn onboarding_scout_spec_is_read_only_too() {
             scout_id: Some("onboarding-1".into()),
             epic: None,
             chain: None,
+            lane: None,
         })
     );
     assert_eq!(spec.output_filter, None);

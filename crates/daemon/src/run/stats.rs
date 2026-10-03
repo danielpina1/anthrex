@@ -163,6 +163,7 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
         quarantine_after: 0,
         rounds,
         iterated_runs: iterated.len() as u32,
+        tuning: None,
     }
 }
 

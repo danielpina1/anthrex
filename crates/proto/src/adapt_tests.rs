@@ -291,7 +291,12 @@ fn every_new_request_and_reply_round_trips() {
             run_id: "run-a1b2".into(),
             orchestrator: None,
         },
-        RunRequest::Stats { dir: dir.clone() },
+        RunRequest::Stats {
+            dir: dir.clone(),
+            apply: Vec::new(),
+            dismiss: Vec::new(),
+            read_only: false,
+        },
         RunRequest::Profile(ProfileRequest::Status { dir: dir.clone() }),
         RunRequest::Profile(ProfileRequest::Detect {
             dir: dir.clone(),

@@ -48,6 +48,10 @@ pub struct FullInfo {
     pub bisect_fixes: u8,
     /// `"no single culprit: …"`, `"still red after 2 fix tasks"`, …
     pub note: Option<String>,
+    /// Milestone 9.5 decision 45: tier 3 is held after executor failures; left out
+    /// while false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub held: bool,
 }
 
 /// One stage of a run (decision 55; TT §7 without `pr`, which milestone 9.2 adds).

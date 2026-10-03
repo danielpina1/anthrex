@@ -38,6 +38,7 @@ fn a_stats() -> HistoryStats {
         quarantine_after: 0,
         rounds: 0,
         iterated_runs: 0,
+        tuning: None,
     }
 }
 

@@ -282,6 +282,12 @@ fn check_fields(spec: &PlanTask, errors: &mut Vec<PlanError>) {
     }
     // Milestone 9.1 decisions 44, 45 and 54.
     check_stage_fields(spec, errors);
+    // Milestone 9.5: protocol 16 carries `race` and `pair`; task M9.5.14 validates them.
+    for (field, set) in [("race", spec.race), ("pair", spec.pair)] {
+        if set {
+            errors.push(e(field, "4.1", "not available yet".to_string()));
+        }
+    }
     if spec.title.trim().is_empty() {
         errors.push(e("title", "fields", "must not be blank".to_string()));
     }

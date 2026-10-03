@@ -148,6 +148,7 @@ pub(crate) fn pty(id: u32, name: &str, project: &str, status: Status) -> WindowI
         kind: WindowKind::Pty,
         run: None,
         signals_seen: false,
+        placeholder: false,
     }
 }
 
@@ -167,6 +168,7 @@ pub(crate) fn run_ref(run_id: &str, task: Option<&str>, role: AgentRole, session
         task_id: task.map(str::to_owned),
         role,
         session,
+        lane: None,
     }
 }
 
@@ -221,6 +223,7 @@ pub(crate) fn three_task_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
         summary: "looks right".into(),
         findings: vec![],
         blocking: false,
+        lane: None,
     }];
 
     let mut t1 = task("t1", "spawn", Size::M, TaskState::Working);
@@ -403,6 +406,7 @@ fn gemini_t2(now: u64) -> TaskInfo {
                 finding(Severity::Minor, "crates/daemon/src/hooks.rs", 40, "comment"),
             ],
             blocking: true,
+            lane: None,
         },
         ReviewInfo {
             round: 2,
@@ -411,6 +415,7 @@ fn gemini_t2(now: u64) -> TaskInfo {
             summary: String::new(),
             findings: vec![],
             blocking: false,
+            lane: None,
         },
     ];
     t2.history = [(45_060, "review r1 changes"), (44_400, "check passed")]

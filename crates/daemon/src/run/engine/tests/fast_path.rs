@@ -321,6 +321,8 @@ fn a_fast_path_run_refuses_task_additions() {
         size: None,
         deps: None,
         stage: None,
+        race: None,
+        pair: None,
     };
     for batch in [vec![add()], vec![split()], vec![amend(), add()]] {
         let mut fx = started(true);

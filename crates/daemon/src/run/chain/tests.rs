@@ -68,6 +68,7 @@ fn call(run_id: &str, chain: Option<&str>, tool: &str) -> ToolCall {
         scout_id: None,
         epic: None,
         chain: chain.map(String::from),
+        lane: None,
     }
 }
 

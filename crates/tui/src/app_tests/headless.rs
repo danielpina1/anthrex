@@ -14,6 +14,7 @@ pub(super) fn headless(id: u32, name: &str, status: Status) -> WindowInfo {
         task_id: Some("t1".into()),
         role: proto::AgentRole::Worker,
         session: 1,
+        lane: None,
     });
     window
 }
@@ -281,6 +282,7 @@ fn kill_and_remove_of_a_live_orchestrator_open_nothing() {
         task_id: None,
         role: proto::AgentRole::Orchestrator,
         session: 1,
+        lane: None,
     });
     let mut app = app_with_runs(
         vec![orchestrator.clone()],

@@ -161,6 +161,7 @@ pub fn opts(role: AgentRole, socket: PathBuf) -> McpOptions {
         scout_id: None,
         epic: None,
         chain: None,
+        lane: None,
         window_id: 7,
         socket,
     }

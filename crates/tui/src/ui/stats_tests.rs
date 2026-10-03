@@ -62,6 +62,7 @@ pub(crate) fn history() -> HistoryStats {
         quarantine_after: 3,
         rounds: 0,
         iterated_runs: 0,
+        tuning: None,
     }
 }
 

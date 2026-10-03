@@ -100,6 +100,8 @@ fn amend(task_id: &str, a: Amend) -> PlanEdit {
         size: a.size,
         deps: None,
         stage: None,
+        race: None,
+        pair: None,
     }
 }
 

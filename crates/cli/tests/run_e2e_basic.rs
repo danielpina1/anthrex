@@ -45,6 +45,7 @@ fn e2e_green_s_task_runs_to_merged() {
             task_id: Some("t1".into()),
             role: AgentRole::Worker,
             session: 1,
+            lane: None,
         })
     );
 

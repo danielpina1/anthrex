@@ -36,6 +36,7 @@ pub fn orch_argv(runtime: Runtime, exe: &Path, socket: &Path, cwd: &Path) -> Vec
             task_id: None,
             role: AgentRole::Orchestrator,
             session: 1,
+            lane: None,
         },
         mcp: McpTarget {
             role: AgentRole::Orchestrator,
@@ -44,6 +45,7 @@ pub fn orch_argv(runtime: Runtime, exe: &Path, socket: &Path, cwd: &Path) -> Vec
             scout_id: None,
             epic: None,
             chain: None,
+            lane: None,
         },
         instructions: "THE CONTRACT".into(),
         effort: Effort::High,

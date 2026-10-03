@@ -33,6 +33,8 @@ impl Batch {
             size,
             deps,
             stage,
+            race,
+            pair,
         } = edit
         else {
             return;
@@ -46,7 +48,9 @@ impl Batch {
             && priority.is_none()
             && size.is_none()
             && deps.is_none()
-            && stage.is_none();
+            && stage.is_none()
+            && race.is_none()
+            && pair.is_none();
         if nothing {
             self.errors.push(PlanError::new(
                 Some(task_id),
@@ -119,6 +123,16 @@ impl Batch {
         if let Some(v) = stage {
             spec.stage = *v;
             changed.push("stage");
+        }
+        // Milestone 9.5: validated with the spec (refused while true until task
+        // M9.5.14, which adds their own rules).
+        if let Some(v) = race {
+            spec.race = *v;
+            changed.push("race");
+        }
+        if let Some(v) = pair {
+            spec.pair = *v;
+            changed.push("pair");
         }
 
         if !reresolve {

@@ -245,6 +245,8 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
         AgentRole::Scout => "scout",
         AgentRole::Planner => "planner",
         AgentRole::Decider => return None,
+        AgentRole::Racer => "racer",
+        AgentRole::TestWriter => "test_writer",
     };
     let mut args = vec!["mcp".to_string(), "--role".into(), role.into()];
     // M8b decision 15: a repository-level scout belongs to no run.
@@ -264,6 +266,10 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
     // Milestone 9.3 (KG §3.4): a chained orchestrator names its chain.
     if let Some(chain) = &target.chain {
         args.extend(["--chain".into(), chain.clone()]);
+    }
+    // Milestone 9.5: a racer names its lane.
+    if let Some(lane) = target.lane {
+        args.extend(["--lane".into(), lane.label().into()]);
     }
     args.extend([
         "--window".into(),
@@ -467,3 +473,7 @@ pub(crate) fn effort(effort: Effort) -> &'static str {
 #[cfg(test)]
 #[path = "argv_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "argv_lane_tests.rs"]
+mod lane_tests;

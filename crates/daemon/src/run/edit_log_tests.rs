@@ -34,6 +34,8 @@ fn describe_names_every_edit_op() {
             size: None,
             deps: None,
             stage: None,
+            race: None,
+            pair: None,
         },
         PlanEdit::AddDep {
             task_id: "t4".into(),
@@ -76,6 +78,8 @@ fn describe_names_every_edit_op() {
         size: None,
         deps: None,
         stage: Some(2),
+        race: None,
+        pair: None,
     };
     assert_eq!(describe(&[moved]), "amend t4 stage 2");
 }
@@ -139,6 +143,8 @@ fn describe_is_capped() {
             size: None,
             deps: None,
             stage: None,
+            race: None,
+            pair: None,
         })
         .collect();
     let text = describe(&edits);

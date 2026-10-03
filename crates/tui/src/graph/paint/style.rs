@@ -229,7 +229,14 @@ fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'stati
                 None => ended(app),
             }
         }
-        AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout | AgentRole::Planner => {
+        // Milestone 9.5: a racer and a test writer follow a worker's rules until task
+        // M9.5.20 draws their lanes.
+        AgentRole::Worker
+        | AgentRole::Orchestrator
+        | AgentRole::Scout
+        | AgentRole::Planner
+        | AgentRole::Racer
+        | AgentRole::TestWriter => {
             if is_live {
                 live(round.window, app.rate_limited(info), app)
             } else if task.state == TaskState::Blocked && last_worker_round(task, round) {

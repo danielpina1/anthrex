@@ -111,6 +111,7 @@ fn full(run: &Run, s: &StageRecord, head: &str) -> FullInfo {
             .unwrap_or_default(),
         bisect_fixes: s.full.bisect_fixes,
         note: s.full.note.clone(),
+        held: false,
     }
 }
 
