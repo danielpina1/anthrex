@@ -60,6 +60,7 @@ mod gate_holds;
 mod gates;
 mod goal_rounds;
 mod goal_rounds_end;
+mod hand_back;
 mod history;
 mod holds;
 mod integration;
