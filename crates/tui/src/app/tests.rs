@@ -62,6 +62,9 @@ mod run_goal;
 #[path = "../app_tests/goal_editor.rs"]
 mod goal_editor;
 
+#[path = "../app_tests/goal_editor_races.rs"]
+mod goal_editor_races;
+
 #[path = "../app_tests/plan_review.rs"]
 mod plan_review;
 

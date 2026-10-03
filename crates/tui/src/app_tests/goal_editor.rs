@@ -15,16 +15,16 @@ use proto::{
 };
 use std::path::PathBuf;
 
-fn tap(app: &mut App, code: KeyCode) -> Vec<Effect> {
+pub(super) fn tap(app: &mut App, code: KeyCode) -> Vec<Effect> {
     press(app, code, KeyModifiers::NONE)
 }
 
-fn ctrl(app: &mut App, c: char) -> Vec<Effect> {
+pub(super) fn ctrl(app: &mut App, c: char) -> Vec<Effect> {
     press(app, KeyCode::Char(c), KeyModifiers::CONTROL)
 }
 
 /// The last frame was 80x24: the large dialog's text is 72 columns by 10 rows.
-fn drawn(app: &mut App) {
+pub(super) fn drawn(app: &mut App) {
     app.set_body_area(ratatui::layout::Rect::new(0, 0, 80, 23));
 }
 
@@ -46,7 +46,7 @@ fn app_with_chains(idle: Vec<IdleOrchestrator>, runs: Vec<proto::RunInfo>) -> Ap
 }
 
 /// Opens the dialog on `project` (its row selected, `C-b g`).
-fn open_on(app: &mut App, project: &str) {
+pub(super) fn open_on(app: &mut App, project: &str) {
     let rows = crate::tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
     app.tree
         .select(&rows, crate::tree::NodeKey::Project(project.into()));
@@ -62,7 +62,7 @@ fn goal_of(request: &RunRequest) -> &str {
     }
 }
 
-fn triaged(id: u64) -> DaemonMsg {
+pub(super) fn triaged(id: u64) -> DaemonMsg {
     DaemonMsg::Run(RunReply::Triaged {
         triage: TriageInfo {
             kinds: vec![TaskKind::Code],
@@ -79,7 +79,7 @@ fn triaged(id: u64) -> DaemonMsg {
     })
 }
 
-fn started(id: u64) -> DaemonMsg {
+pub(super) fn started(id: u64) -> DaemonMsg {
     DaemonMsg::Run(RunReply::Started {
         run_id: "r-next".into(),
         state: RunState::Planning,
@@ -87,7 +87,7 @@ fn started(id: u64) -> DaemonMsg {
     })
 }
 
-fn refused(id: u64) -> DaemonMsg {
+pub(super) fn refused(id: u64) -> DaemonMsg {
     DaemonMsg::Run(RunReply::Refused {
         request: START_GOAL.into(),
         message: "not a git repository: /p/a".into(),
@@ -273,7 +273,7 @@ fn any_other_key_goes_back() {
 }
 
 /// Ctrl-S, then Esc while it waits: the dialog closes at once, keeping its text.
-fn send_and_close(app: &mut App) -> u64 {
+pub(super) fn send_and_close(app: &mut App) -> u64 {
     let (id, _) = tagged(&ctrl(app, 's'));
     assert!(tap(app, KeyCode::Esc).is_empty());
     assert_eq!(app.modal, None);
@@ -393,7 +393,7 @@ fn a_refused_start_keeps_the_draft() {
 }
 
 /// The large dialog's rows at 120x40, joined.
-fn screen(app: &App) -> String {
+pub(super) fn screen(app: &App) -> String {
     audit::rows(&audit::draw(app, 120, 40)).join("\n")
 }
 

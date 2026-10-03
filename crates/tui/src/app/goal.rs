@@ -111,8 +111,7 @@ impl App {
     }
 
     /// Closes the goal dialog: its text becomes the project's draft (an empty text
-    /// removes it), or with `keep` false the draft goes. A request still in flight is
-    /// remembered, so its success clears the draft (decision 8).
+    /// removes it), or with `keep` false the draft goes (decision 8).
     fn close_goal_form(&mut self, keep: bool) {
         let Some(Modal::StartGoal(form)) = self.modal.take() else {
             return;
@@ -124,9 +123,19 @@ impl App {
         } else {
             self.goal_drafts.remove(&form.project);
         }
-        if let (true, Some(id)) = (form.submitting, form.request_id) {
-            self.goal_sent = Some((id, form.project));
+    }
+
+    /// Esc while the dialog waits on its request: it closes keeping its draft, and the
+    /// request is remembered with the text sent, so its success still clears the draft
+    /// (review I1: only this close records it; a reply that closes the dialog does not).
+    fn close_goal_form_waiting(&mut self) {
+        if let Some(Modal::StartGoal(form)) = &self.modal
+            && let (true, Some(id)) = (form.submitting, form.request_id)
+        {
+            let sent = form.goal.text().to_string();
+            self.goal_sent = Some((id, form.project.clone(), sent));
         }
+        self.close_goal_form(true);
     }
 
     /// The open goal form's keys. Ctrl-S (or Enter on an option row) sends one tagged
@@ -139,7 +148,7 @@ impl App {
         match form.on_key_in(key, view) {
             GoalOutcome::Stay => vec![],
             GoalOutcome::Cancel => {
-                self.close_goal_form(true);
+                self.close_goal_form_waiting();
                 vec![]
             }
             GoalOutcome::Discard => {
@@ -168,9 +177,12 @@ impl App {
 
     /// Decision 44's success (`Triaged`, or milestone 9.3's `Started` for a continued
     /// goal): the form closes, the draft goes, `message` is toasted, and the run view
-    /// opens on the new run as soon as a snapshot names it. `run_id: None` only toasts.
-    /// A success for a dialog closed while it waited clears that project's draft and is
-    /// toasted. `false` when `request_id` is neither's.
+    /// opens on the new run as soon as a snapshot names it. `run_id: None` (triage
+    /// refused the goal) is a refused start: the form closes keeping its draft, and
+    /// only toasts (review m3). A reply for a dialog closed while it waited does the
+    /// same to that project's draft; when the project's dialog is open again, its
+    /// editor is cleared if it still holds exactly the goal sent, and `run <id>
+    /// started` is toasted (review m4). `false` when `request_id` is neither's.
     pub(super) fn goal_started(
         &mut self,
         request_id: Option<u64>,
@@ -178,7 +190,7 @@ impl App {
         message: &str,
     ) -> bool {
         if self.goal_form_waiting_on(request_id).is_some() {
-            self.close_goal_form(false);
+            self.close_goal_form(run_id.is_none());
             self.toast(super::runs::capped(message));
             if let Some(run_id) = run_id {
                 self.pending_open = Some(run_id);
@@ -186,17 +198,40 @@ impl App {
             }
             return true;
         }
-        match self.goal_sent.take() {
-            Some((id, project)) if Some(id) == request_id => {
-                self.goal_drafts.remove(&project);
-                self.toast(super::runs::capped(message));
-                true
+        let Some((_, project, sent)) = self.take_goal_sent(request_id) else {
+            return false;
+        };
+        let Some(run_id) = run_id else {
+            self.toast(super::runs::capped(message));
+            return true;
+        };
+        self.goal_drafts.remove(&project);
+        match &mut self.modal {
+            Some(Modal::StartGoal(form)) if form.project == project && !form.submitting => {
+                if form.goal.text() == sent {
+                    form.goal = TextArea::editor("");
+                }
+                self.toast(super::runs::capped(&format!("run {run_id} started")));
             }
+            _ => self.toast(super::runs::capped(message)),
+        }
+        true
+    }
+
+    /// The closed dialog's request, when `request_id` is its reply's.
+    fn take_goal_sent(&mut self, request_id: Option<u64>) -> Option<(u64, PathBuf, String)> {
+        match self.goal_sent.take() {
+            Some(sent) if Some(sent.0) == request_id => Some(sent),
             other => {
                 self.goal_sent = other;
-                false
+                None
             }
         }
+    }
+
+    /// A refusal ends a closed dialog's wait: its draft stays (decision 8).
+    pub(super) fn goal_refused(&mut self, request_id: Option<u64>) {
+        self.take_goal_sent(request_id);
     }
 
     /// The `StartGoal` the goal form waits on was refused by the connection, or its

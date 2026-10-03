@@ -214,6 +214,7 @@ impl App {
                     form.submitting = false;
                     form.request_id = None;
                 } else {
+                    self.goal_refused(request_id);
                     self.toast_at(super::ToastLevel::Error, text);
                 }
             }

@@ -205,7 +205,7 @@ pub struct App {
     /// Milestone 9.3 decision 8: each project's goal draft, and the goal request a
     /// closed dialog still waits on (its success clears that project's draft).
     pub goal_drafts: std::collections::BTreeMap<PathBuf, String>,
-    goal_sent: Option<(u64, PathBuf)>,
+    goal_sent: Option<(u64, PathBuf, String)>,
 }
 
 impl App {
