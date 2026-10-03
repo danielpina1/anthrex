@@ -340,6 +340,11 @@ fn status_shows_rounds_only_for_a_multi_round_run() {
     let one = example();
     assert!(one.rounds.is_empty());
     assert_eq!(round_lines(&run_block(&one, 0)), Vec::<&str>::new());
+    // A run that has round 1's record (every run made since milestone 9.3) is still a
+    // one-round run: no round lines.
+    let mut first = example();
+    first.rounds = vec![info(1, RoundOrigin::User, None, None)];
+    assert_eq!(round_lines(&run_block(&first, 0)), Vec::<&str>::new());
 
     let mut three = example();
     three.round = 3;
