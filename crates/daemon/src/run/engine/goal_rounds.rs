@@ -203,13 +203,24 @@ pub(super) fn stage_landed(run: &Run, m: u16) -> bool {
 
 /// Decision 13, `pr` mode: stage `next`, the current round's first, waits while the
 /// base fetch its round made due ([`iterate`]) is due or in flight, when every stage
-/// below it has landed ([`landed_below`]).
+/// below it has landed ([`landed_below`]). A PR below that merged or closed during the
+/// round counts as landing until that landing is processed (the final fix wave, task
+/// 5's re-review): its base fetch is due or in flight, or this pass's `land::pass` makes
+/// it due, so the stage waits for that fetch as well.
 pub(super) fn awaits_base(run: &Run, next: u16) -> bool {
     let first = run
         .current_round()
         .is_some_and(|r| r.n > 1 && r.first_stage == next);
+    if !delivery::pr(run) || !first || next < 2 {
+        return false;
+    }
+    let landing = |m: u16| {
+        let off = run.delivery.pr(m).is_some_and(|p| p.state != PrState::Open);
+        off && !delivery::land::processed(run, m)
+    };
+    let below = (1..next).all(|m| stage_landed(run, m) || landing(m));
     let fetch = run.delivery.base_fetch_due || delivery::sync::fetching(run);
-    delivery::pr(run) && first && fetch && landed_below(run, next)
+    below && (fetch || (1..next).any(landing))
 }
 
 /// Decision 13: a dependency of `task` on a task of an earlier round is met, whatever
