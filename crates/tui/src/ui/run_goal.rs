@@ -1,14 +1,14 @@
 //! Milestone 9 decision 44 and 9.0.6 decision 39: rendering for the goal form
 //! (`crate::run_goal`, the pure model), built on the kit's dialog grammar (decision 5):
 //! one accented frame titled `start a goal in <project>`, lower-case labels, `‹ value ›`
-//! choices, the goal in a four-row text area, hints `⏎ start · tab next · esc cancel`.
-//! Every glyph honours `Palette.ascii`. The project, the model names and what was typed
-//! pass `safe_text`.
+//! choices, the goal in a four-row text area. Every glyph honours `Palette.ascii`. The
+//! project, the model names and what was typed pass `safe_text`.
 //!
 //! Milestone 9.3 decision 7: this is the compact fallback, drawn below 60 columns or 16
 //! rows; at least that, the large editor of `ui/goal_editor.rs` draws instead, with the
 //! option rows built here. Both draw the orchestrator row (decision 25) and the confirm
-//! page (decision 8).
+//! page (decision 8). The compact hints read `^S start · tab next · esc cancel`: the text
+//! has the editor's keys, so Enter there is a newline (task 9b fix round 1).
 
 use crate::dialog::TextInput;
 use crate::run_goal::{GoalField, GoalForm, OrchestratorRow, field_label};
@@ -269,9 +269,8 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
         ));
     } else {
         let keys = [
-            hint("⏎", "start", 9),
+            hint("^S", "start", 9),
             hint("tab", "next", 6),
-            hint("^J", "newline", 3),
             hint("esc", "cancel", 1),
         ];
         body.push(kit::hints_joined(width, &keys, dot_sep(p), p));

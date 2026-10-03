@@ -153,7 +153,7 @@ fn compact_interior() -> Vec<String> {
         rows.push(format!("  {label:<18}< {value} >"));
     }
     rows.push(String::new());
-    rows.push("enter start - tab next - ^J newline - esc cancel".into());
+    rows.push("^S start - tab next - esc cancel".into());
     rows
 }
 

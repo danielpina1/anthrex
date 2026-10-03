@@ -1,7 +1,8 @@
 //! M9.15, decision 44: `C-b g` opens the goal form for the selected Git project (or the
 //! focused window's), and Ctrl-S (milestone 9.3 decision 7; `Enter` until then) sends
-//! M8b's `StartGoal` as a tagged request (decision 2). The form never guesses a repository, keeps its input on a refusal,
-//! and opens the run view once a snapshot names the new run.
+//! M8b's `StartGoal` as a tagged request (decision 2). The form never guesses a
+//! repository, keeps its input on a refusal, and opens the run view once a snapshot
+//! names the new run.
 
 use super::orch::tagged;
 use super::runs::{app_with_runs, deliver, run_info, snapshot};

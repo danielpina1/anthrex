@@ -101,7 +101,7 @@ fn goal_form_renders_compact_at_59x24() {
             "   approve at once   < off >",
             "   unconfined checks < off >",
             "",
-            " enter start - tab next - ^J newline - esc cancel",
+            " ^S start - tab next - esc cancel",
         ],
     );
     // 17 rows, centred in 24; the dialog is the terminal's whole width.

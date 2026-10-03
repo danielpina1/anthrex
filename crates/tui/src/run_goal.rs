@@ -25,7 +25,7 @@ use std::path::PathBuf;
 /// The toast `C-b g` shows when no project is selected, no window is focused and the
 /// TUI's start directory is empty (milestone 9.0.7 decision 37's fallback).
 pub const NO_PROJECT: &str = "select a Git project to start a goal";
-/// The inline error of an `Enter` with a blank goal.
+/// The inline error of a start (Ctrl-S, or Enter on an option row) with a blank goal.
 pub const EMPTY_GOAL: &str = "type a goal first";
 /// The inline error after the connection refused the request or the link was lost.
 pub const NOT_SENT: &str = "the goal was not sent; press Ctrl-S to retry";
