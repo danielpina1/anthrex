@@ -9,6 +9,8 @@
 //! never approves, and never changes what a task owns or must meet. The engine names
 //! the reports (`evidence_refs`); the driver reads them. Pure (design decision 2).
 
+use std::collections::BTreeSet;
+
 use proto::{BlockReason, DeciderMode, DeciderSource, Size, SizeCheckInfo, TaskState};
 
 use super::dispatch::{block, history};
@@ -17,7 +19,7 @@ use crate::decider::fallback::{OFF_REASON, SIZE_FALLBACK_REASON};
 use crate::decider::{DeciderRequest, Decision, SizeCheckInput, SizeCheckTask, SizeVerdict};
 use crate::run::contract::size_label;
 use crate::run::model::{Run, SizeCheckState, Task};
-use crate::run::route_pick::review_route;
+use crate::run::route_pick::{pick_named, repicks, review_route};
 use crate::scout::report::ONBOARDING_ALIAS;
 
 /// The note of a task the check cannot be asked about.
@@ -209,9 +211,21 @@ pub(crate) fn apply_raise(run: &mut Run, task_id: &str, size: Size, reason: &str
     if size <= from {
         return;
     }
+    let old = run.tasks[i].clone();
     run.tasks[i].size = size;
     run.tasks[i].raised_size = Some(size);
     let resolved = ladder::reresolve(run, i);
+    // Ruling T10a-4: a list's candidate whose class changed is picked again from the new
+    // class's list, as an amend's (`edits_amend.rs`); no list there, today's resolution.
+    if repicks(&old, &run.tasks[i]) {
+        run.tasks[i].route = resolved.clone();
+        pick_named(run, &BTreeSet::from([task_id.to_string()]));
+        let (task, lists, installed) =
+            (&run.tasks[i], &run.limits.route_lists, &run.orch.installed);
+        let review = (task.review_level)
+            .map(|level| review_route(lists, &run.roster, &task.route, level, installed));
+        run.tasks[i].review_route = review;
+    }
     let task = &mut run.tasks[i];
     // Milestone 9.5 (review m1): a model list's candidate keeps its effort, as a plan's.
     let listed = task.list_pick.as_ref().and_then(|p| p.chosen_route()) == Some(&task.route);

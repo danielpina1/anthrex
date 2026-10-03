@@ -7,7 +7,7 @@ use super::{Batch, EditConsequence};
 use crate::run::contract::amend_message;
 use crate::run::edits_state::{has_live_worker, is_paused, not_started};
 use crate::run::plan::PlanError;
-use crate::run::route_pick::{review_route, same_list};
+use crate::run::route_pick::{repicks, review_route};
 use crate::run::validate::resolve_task_lenient;
 
 impl Batch {
@@ -186,8 +186,7 @@ impl Batch {
         // Milestone 9.5 decision 9a: a route named again, or a list's route whose class
         // changed (review m2), is picked again from the run's lists.
         let old = &self.run.tasks[i];
-        let listed = old.list_pick.as_ref().is_some_and(|p| p.chosen.is_some());
-        let repick = route_named || (listed && !same_list(old, &resolved));
+        let repick = route_named || repicks(old, &resolved);
         let route = match escalated {
             Some(route) if !repick => route,
             _ => resolved.route,

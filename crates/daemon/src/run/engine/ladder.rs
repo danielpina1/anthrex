@@ -10,7 +10,7 @@ use super::dispatch::{block, history, launch_fresh};
 use super::schedule::op_in_flight;
 use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox};
 use crate::run::model::{AgentRound, FreshSession, Run, Task};
-use crate::run::route_pick::{review_route, rung2_route};
+use crate::run::route_pick::{every_route_failed, review_route, rung2_route};
 use crate::run::validate::resolve_task_lenient;
 
 pub(super) use super::ladder_budget::{breached, ceiling, check_budget, reached};
@@ -275,6 +275,9 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     kill_worker(run, i, fx);
     drop_queued(run, i);
     let (route, step) = rung2_route(run, i);
+    if let Some(text) = every_route_failed(run, i, &route) {
+        super::requests::log(run, now, text);
+    }
     let task = &mut run.tasks[i];
     task.list_escalation = step;
     task.rung = 2;

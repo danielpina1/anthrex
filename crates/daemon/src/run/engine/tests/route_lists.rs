@@ -187,36 +187,56 @@ fn the_reviewer_comes_from_the_review_list_and_records_it() {
     assert_eq!(fx.task("t1").routing_decisions, decisions);
 }
 
-/// Review m1: a decider's S → M raise keeps a list candidate's own effort, so the
-/// launch still records the list's choice.
+/// Ruling T10a-4: a decider's S -> M raise re-picks from the M list, as an amend's
+/// class change does; with an empty M list the task takes the plain M resolution.
 #[test]
-fn a_decider_raise_keeps_a_listed_effort() {
-    let lists = RouteLists {
-        s: RouteList {
-            candidates: vec![cand(
-                Runtime::Claude,
-                "claude-haiku-4-5",
-                Some(Effort::High),
-            )],
-            pick: Pick::First,
-        },
-        ..Default::default()
+fn a_decider_raise_repicks_from_the_new_classes_list() {
+    let s_list = RouteList {
+        candidates: vec![cand(
+            Runtime::Claude,
+            "claude-haiku-4-5",
+            Some(Effort::High),
+        )],
+        pick: Pick::First,
     };
-    let tuning = Tuned {
-        lists,
-        ..Tuned::default()
+    let m_list = RouteList {
+        candidates: vec![cand(Runtime::Claude, "claude-opus-5-5", None)],
+        pick: Pick::First,
     };
-    let plan = plan_with(PROFILE, &[task("t1", "S", "a", CHECK_MODE)]);
-    let mut run = build_tuned(&plan, &config::Orchestrator::default(), true, tuning);
-    let listed = run.tasks[0].route.clone();
-    assert_eq!(
-        (listed.model.as_str(), listed.effort),
-        ("claude-haiku-4-5", Effort::High)
-    );
-    super::super::deciders_size::apply_raise(&mut run, "t1", proto::Size::M, "evidence");
-    let t1 = &run.tasks[0];
-    assert_eq!(t1.size, proto::Size::M);
-    assert_eq!(t1.route, listed);
-    let pick = t1.list_pick.as_ref().expect("the list's pick");
+    let raised = |m: RouteList| {
+        let tuning = Tuned {
+            lists: RouteLists {
+                s: s_list.clone(),
+                m,
+                ..Default::default()
+            },
+            ..Tuned::default()
+        };
+        let plan = plan_with(PROFILE, &[task("t1", "S", "a", CHECK_MODE)]);
+        let mut run = build_tuned(&plan, &config::Orchestrator::default(), true, tuning);
+        let listed = &run.tasks[0].route;
+        assert_eq!(
+            (listed.model.as_str(), listed.effort),
+            ("claude-haiku-4-5", Effort::High)
+        );
+        super::super::deciders_size::apply_raise(&mut run, "t1", proto::Size::M, "evidence");
+        assert_eq!(run.tasks[0].size, proto::Size::M);
+        run.tasks.remove(0)
+    };
+    // The M list's candidate, recorded as its pick.
+    let t1 = raised(m_list);
+    assert_eq!(t1.route.model, "claude-opus-5-5");
+    let pick = t1.list_pick.as_ref().expect("the M list's pick");
     assert_eq!(pick.chosen_route(), Some(&t1.route));
+    // No M list: the M resolution an unlisted M task takes, and no pick.
+    let t1 = raised(RouteList::default());
+    let plain = plan_with(PROFILE, &[task("t1", "M", "a", CHECK_MODE)]);
+    let plain = build_tuned(
+        &plain,
+        &config::Orchestrator::default(),
+        true,
+        Tuned::default(),
+    );
+    assert_eq!(t1.route, plain.tasks[0].route);
+    assert_eq!(t1.list_pick, None);
 }

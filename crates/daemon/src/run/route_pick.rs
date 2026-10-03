@@ -135,10 +135,11 @@ pub fn role(
     })
 }
 
-/// Whether `a` and `b` take the same list (review m2: an amend that changes the class
-/// picks again).
-pub fn same_list(a: &Task, b: &Task) -> bool {
-    list_key(a) == list_key(b)
+/// Whether `new`, `old` re-sized, picks again (review m2, ruling T10a-4: one rule for
+/// an amend and a decider's raise): `old` took a list's candidate and `new` another list.
+pub fn repicks(old: &Task, new: &Task) -> bool {
+    let listed = old.list_pick.as_ref().is_some_and(|p| p.chosen.is_some());
+    listed && list_key(old) != list_key(new)
 }
 
 /// The list of the task's class: hub, S, else M (a task rung 3 raised to L too).
@@ -414,8 +415,9 @@ pub fn context_routes(lists: &RouteListsFrozen) -> Option<serde_json::Value> {
 /// the current one is found by its exact route, else by runtime and model (ruling
 /// T10a-1). Skipped: a candidate identical to the current route, one not installed, one
 /// that failed in this task (RL-1), one on the other runtime while an unfinished task on
-/// the current runtime overlaps the task's `owns`, and one below the current route.
-/// `None` (a list of one, a current route the list does not hold, or nothing left)
+/// the current runtime overlaps the task's `owns`, and one below the current route —
+/// unless the current route failed in this task, when the step is a substitution and
+/// any strength will do (ruling T10a-3). `None` (a list of one, a current route the list does not hold, or nothing left)
 /// leaves rung 2 to `roster::escalate`.
 pub fn next_candidate(
     limits: &RunLimits,
@@ -430,6 +432,7 @@ pub fn next_candidate(
     }
     let current = &task.route;
     let failed = failed_routes(task);
+    let substitute = failed_in(&failed, current);
     let routes: Vec<Route> = (0..list.candidates.len())
         .map(|k| route_for(limits, task, list, k))
         .collect();
@@ -448,7 +451,7 @@ pub fn next_candidate(
                 Some(FAILED_IN_TASK)
             } else if route.runtime != current.runtime && held {
                 Some(OVERLAPPING_OWNS)
-            } else if below(route, current) {
+            } else if !substitute && below(route, current) {
                 Some(BELOW_CURRENT)
             } else {
                 None
@@ -482,16 +485,35 @@ fn below(to: &Route, from: &Route) -> bool {
 
 /// The route rung 2 and `run retry` give task `i` (decision 9a, ruling RL-1): its
 /// list's [`next_candidate`], else `roster::escalate`, each skipping a route that failed
-/// in this task; with the list's step for the routing history.
+/// in this task; with the list's step for the routing history. Ruling T10a-3: when
+/// nothing is left but a failed route, the task's own route is retried
+/// ([`every_route_failed`] says so).
 pub fn rung2_route(run: &Run, i: usize) -> (Route, Option<ListPick>) {
     let (task, installed) = (&run.tasks[i], &run.orch.installed);
     if let Some((route, step)) = next_candidate(&run.limits, &run.tasks, i, installed) {
         return (route, Some(step));
     }
-    (
-        escalate_skipping(&run.roster, &task.route, &failed_routes(task)),
-        None,
-    )
+    let failed = failed_routes(task);
+    let route = escalate_skipping(&run.roster, &task.route, &failed);
+    if failed_in(&failed, &route) {
+        return (task.route.clone(), None);
+    }
+    (route, None)
+}
+
+/// Ruling T10a-3: the run-log line when task `i`'s next route, `route` (from
+/// [`rung2_route`]), failed in this task too: every route did, and the original is
+/// retried.
+pub fn every_route_failed(run: &Run, i: usize, route: &Route) -> Option<String> {
+    let task = &run.tasks[i];
+    failed_in(&failed_routes(task), route).then(|| {
+        format!(
+            "every route for task {} failed in this task; retrying {}/{}",
+            task.id(),
+            route.runtime.label(),
+            route.model
+        )
+    })
 }
 
 /// Decision 9a's reviewer from the `review` list, `None` with no list: the first

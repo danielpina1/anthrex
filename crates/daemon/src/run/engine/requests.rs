@@ -367,6 +367,9 @@ pub(super) fn rung2(
     fx: &mut Vec<Effect>,
 ) -> &'static str {
     let (route, step) = crate::run::route_pick::rung2_route(run, i);
+    if let Some(text) = crate::run::route_pick::every_route_failed(run, i, &route) {
+        log(run, now, text);
+    }
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
     let task = &mut run.tasks[i];
