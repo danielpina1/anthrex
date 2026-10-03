@@ -8,7 +8,7 @@ use proto::{Budget, HistoryLine, PathWeights, TuningFile};
 
 use super::super::refit_render::render;
 use super::tests::{NOW, budget, record};
-use super::{SizeClass, ceiling, moved, refit, report, tuned};
+use super::{SizeClass, ceiling, moved, refit, report, tuned, tuned_with};
 
 /// 30 S records of three runs: 20 tool calls, 600 working seconds; the first
 /// `with_usage` record 1000 + i worker tokens, the rest none recorded.
@@ -134,7 +134,11 @@ fn a_configured_class_shows_a_refit_below_the_change_gate() {
         "{}",
         render(&r)
     );
-    let t = tuned(&file, &cfg);
+    assert!(
+        file.budgets.is_empty(),
+        "shown, never written (ruling T8-7)"
+    );
+    let t = tuned_with(&lines, &file, &cfg);
     assert_eq!(t.budget_s, None);
     assert_eq!(
         t.log[0],
@@ -160,30 +164,147 @@ fn rung_4_token_ceiling_falls_back_per_axis() {
     let l = tok(300, 120, Some(1000));
     // M has no token budget: L's stands.
     assert_eq!(
-        ceiling(SizeClass::M, tok(150, 60, None), l),
+        ceiling(SizeClass::M, tok(150, 60, None), tok(150, 60, None), l),
         tok(300, 120, Some(1000))
     );
     assert_eq!(
-        ceiling(SizeClass::Hub, tok(150, 60, None), l),
+        ceiling(SizeClass::Hub, tok(150, 60, None), tok(150, 60, None), l),
         tok(300, 120, Some(1000))
     );
     // Both: the larger of L's and twice M's.
     assert_eq!(
-        ceiling(SizeClass::M, tok(150, 60, Some(800)), l),
+        ceiling(
+            SizeClass::M,
+            tok(150, 60, Some(800)),
+            tok(150, 60, Some(800)),
+            l
+        ),
         tok(300, 120, Some(1600))
     );
     assert_eq!(
-        ceiling(SizeClass::M, tok(150, 60, Some(300)), l),
+        ceiling(
+            SizeClass::M,
+            tok(150, 60, Some(300)),
+            tok(150, 60, Some(300)),
+            l
+        ),
         tok(300, 120, Some(1000))
     );
     // L has none: no token ceiling.
     assert_eq!(
-        ceiling(SizeClass::M, tok(150, 60, Some(800)), tok(300, 120, None)),
+        ceiling(
+            SizeClass::M,
+            tok(150, 60, Some(800)),
+            tok(150, 60, Some(800)),
+            tok(300, 120, None)
+        ),
         tok(300, 120, None)
     );
     // S: the effective M budget as it is.
     assert_eq!(
-        ceiling(SizeClass::S, tok(150, 60, None), l),
+        ceiling(SizeClass::S, tok(40, 15, None), tok(150, 60, None), l),
         tok(150, 60, None)
     );
+}
+
+/// Ruling T8-6: rung 4's ceiling is never below the class's own effective budget.
+#[test]
+fn the_ceiling_never_drops_below_the_classs_own_budget() {
+    let tok = |calls, minutes, tokens| Budget {
+        tool_calls: calls,
+        minutes,
+        tokens,
+    };
+    let (m, l) = (tok(150, 60, None), tok(300, 120, None));
+    // An S refit of 175 calls over an effective M of 150.
+    assert_eq!(
+        ceiling(SizeClass::S, tok(175, 70, None), m, l),
+        tok(175, 70, None)
+    );
+    // Per axis: the calls are S's own, the minutes M's.
+    assert_eq!(
+        ceiling(SizeClass::S, tok(175, 40, None), m, l),
+        tok(175, 60, None)
+    );
+    // A hub refit above max(L, 2 × M): the hub budget.
+    assert_eq!(
+        ceiling(SizeClass::Hub, tok(700, 300, None), m, l),
+        tok(700, 300, None)
+    );
+    // The defaults are unchanged.
+    let cfg = config::Orchestrator::default();
+    let (s, m, l) = (cfg.budget_s, cfg.budget_m, cfg.budget_l);
+    assert_eq!(ceiling(SizeClass::S, s, m, l), tok(150, 60, None));
+    assert_eq!(ceiling(SizeClass::M, m, m, l), tok(300, 120, None));
+    assert_eq!(ceiling(SizeClass::Hub, m, m, l), tok(300, 120, None));
+    // Tokens: own above the rule's wins; no rule ceiling stays none.
+    let l = tok(300, 120, Some(1000));
+    assert_eq!(
+        ceiling(
+            SizeClass::M,
+            tok(150, 60, Some(3000)),
+            tok(150, 60, None),
+            l
+        ),
+        tok(300, 120, Some(3000))
+    );
+    assert_eq!(
+        ceiling(SizeClass::S, tok(40, 15, Some(3000)), tok(150, 60, None), l),
+        tok(150, 60, None)
+    );
+}
+
+/// Ruling T8-7: a configured class's refit is shown, never written, and removing the
+/// configuration later starts from history under the normal gate.
+#[test]
+fn a_configured_class_is_never_written_to_the_file() {
+    let lines = super::tests::fixture_records("refit");
+    let mut cfg = config::Orchestrator::default();
+    cfg.tuning.configured.s = true;
+    // A refit written before the class was configured stays exactly as it is.
+    let mut stale = TuningFile::default();
+    stale.budgets.insert(
+        "s".into(),
+        proto::ClassBudget {
+            tool_calls: 60,
+            minutes: 20,
+            tokens: None,
+            samples: 31,
+            at: 1,
+        },
+    );
+    let (kept, log) = refit(&lines, &stale, &cfg, NOW);
+    assert_eq!(kept.budgets, stale.budgets);
+    assert!(log.iter().all(|l| !l.contains("budget S")), "{log:?}");
+    let (fresh, _) = refit(&lines, &TuningFile::default(), &cfg, NOW);
+    assert!(!fresh.budgets.contains_key("s"));
+    // Shown from history: report, render and the start line.
+    let r = report(&lines, &fresh, &cfg, Path::new("/tmp/t/tuning.toml"));
+    assert_eq!(r.classes[0].refit_budget, Some(budget(55, 18)));
+    assert!(render(&r).contains("(refit would be 55 calls 18m)"));
+    let t = tuned_with(&lines, &kept, &cfg);
+    assert_eq!(t.budget_s, None);
+    assert_eq!(
+        t.log[0],
+        "tuning: budget S 40 calls 15m configured (refit would be 55 calls 18m)"
+    );
+    // With no history to compute from, the start line says only what is used.
+    assert_eq!(
+        tuned(&kept, &cfg).log[0],
+        "tuning: budget S 40 calls 15m configured"
+    );
+    // The configuration removed: the normal path, from history.
+    let plain = config::Orchestrator::default();
+    let (after, log) = refit(&lines, &fresh, &plain, NOW);
+    assert_eq!(
+        (after.budgets["s"].tool_calls, after.budgets["s"].minutes),
+        (55, 18)
+    );
+    assert_eq!(
+        log[0],
+        "tuning: budget S 40 calls 15m → 55 calls 18m from 34 samples"
+    );
+    // And under the normal gate: 55/18 is within 20 % of the old 60/20, so it is kept.
+    let (after, _) = refit(&lines, &stale, &plain, NOW);
+    assert_eq!(after.budgets, stale.budgets);
 }

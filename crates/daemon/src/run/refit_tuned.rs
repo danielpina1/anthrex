@@ -14,7 +14,7 @@ use super::super::model::ClassRoutes;
 use super::propose::{current_route, effort_label, list_of, list_text, route_text, thresholds_of};
 use super::{
     SizeClass, as_budget, budget_samples, budget_text, configured, default_budget, proposals,
-    qualifies, weights_text,
+    qualifies, shown_refit, weights_text,
 };
 
 /// What a run freezes at start (decision 12); `Tuned::default()` is today exactly.
@@ -53,23 +53,39 @@ fn written<'a>(file: &'a TuningFile, t: &Tuning, class: SizeClass) -> Option<&'a
     file.budgets.get(class.key()).filter(|_| t.refit_budgets)
 }
 
-/// Decision 12: the file and config a run starts with, and its start lines.
+/// [`tuned_with`] with no history: a configured class's start line cannot say what its
+/// refit would be.
 pub fn tuned(file: &TuningFile, cfg: &config::Orchestrator) -> Tuned {
+    tuned_with(&[], file, cfg)
+}
+
+/// Decision 12: the file and config a run starts with, and its start lines. A
+/// configured class (ruling RH-5) uses its configured budget and ignores the file's
+/// refit; its line says what history's refit would be (ruling T8-7, [`shown_refit`])
+/// when `lines` give one, else only that it is configured (S and M; hub only with a
+/// refit).
+pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orchestrator) -> Tuned {
     let t = &cfg.tuning.table;
     let conf = cfg.tuning.configured;
     let mut log = Vec::new();
     let mut used = |class: SizeClass| {
-        let b = written(file, t, class)?;
-        let refit = as_budget(b, default_budget(cfg, class));
         let c = class.label();
         if configured(conf, class) {
             let own = budget_text(&default_budget(cfg, class));
-            let would = budget_text(&refit);
-            log.push(format!(
-                "tuning: budget {c} {own} configured (refit would be {would})"
-            ));
+            match shown_refit(lines, cfg, class) {
+                Some(would) => log.push(format!(
+                    "tuning: budget {c} {own} configured (refit would be {})",
+                    budget_text(&would)
+                )),
+                None if class != SizeClass::Hub => {
+                    log.push(format!("tuning: budget {c} {own} configured"));
+                }
+                None => {}
+            }
             return None;
         }
+        let b = written(file, t, class)?;
+        let refit = as_budget(b, default_budget(cfg, class));
         let samples = b.samples;
         log.push(format!(
             "tuning: budget {c} {} from {samples} samples",
@@ -131,7 +147,7 @@ pub fn report(
     path: &Path,
 ) -> TuningReport {
     let t = &cfg.tuning.table;
-    let tuned = tuned(file, cfg);
+    let tuned = tuned_with(lines, file, cfg);
     let weights = tuned.weights.as_ref();
     let classes = SizeClass::ALL
         .into_iter()
@@ -161,7 +177,11 @@ pub fn report(
                 budget: tuned.effective(cfg, class),
                 refit,
                 configured: is_configured,
-                refit_budget: written.map(|b| as_budget(b, default_budget(cfg, class))),
+                refit_budget: if is_configured {
+                    shown_refit(lines, cfg, class)
+                } else {
+                    written.map(|b| as_budget(b, default_budget(cfg, class)))
+                },
                 weight_secs,
                 weight_derived,
                 route: if list.candidates.is_empty() {

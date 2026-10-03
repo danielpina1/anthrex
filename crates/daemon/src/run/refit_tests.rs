@@ -204,9 +204,9 @@ fn fixtures_match_their_rules() {
 
 #[test]
 fn lower_median_and_percentile_are_integer_and_exact() {
-    assert_eq!(lower_median(&mut [3, 1, 2]), Some(2));
-    assert_eq!(lower_median(&mut [4, 1, 3, 2]), Some(2));
-    assert_eq!(lower_median(&mut []), None);
+    assert_eq!(lower_median(&[3, 1, 2]), Some(2));
+    assert_eq!(lower_median(&[4, 1, 3, 2]), Some(2));
+    assert_eq!(lower_median(&[]), None);
     let mut values: Vec<u64> = (1..=34).rev().collect();
     assert_eq!(percentile(&mut values, 90), Some(31));
     assert_eq!(percentile(&mut [], 90), None);
@@ -557,12 +557,21 @@ fn the_rung_4_ceiling_follows_the_effective_m_budget() {
     let t = tuned(&file, &cfg);
     let m = t.effective(&cfg, SizeClass::M);
     assert_eq!(m, budget(200, 90));
-    assert_eq!(ceiling(SizeClass::M, m, cfg.budget_l), budget(400, 180));
-    assert_eq!(ceiling(SizeClass::Hub, m, cfg.budget_l), budget(400, 180));
-    assert_eq!(ceiling(SizeClass::S, m, cfg.budget_l), budget(200, 90));
+    assert_eq!(ceiling(SizeClass::M, m, m, cfg.budget_l), budget(400, 180));
+    assert_eq!(
+        ceiling(SizeClass::Hub, m, m, cfg.budget_l),
+        budget(400, 180)
+    );
+    assert_eq!(
+        ceiling(SizeClass::S, cfg.budget_s, m, cfg.budget_l),
+        budget(200, 90)
+    );
     // Below half of L, L's budget stays the ceiling.
     let small = budget(100, 50);
-    assert_eq!(ceiling(SizeClass::M, small, cfg.budget_l), budget(300, 120));
+    assert_eq!(
+        ceiling(SizeClass::M, small, small, cfg.budget_l),
+        budget(300, 120)
+    );
 
     let mut configured = config::Orchestrator::default();
     configured.tuning.configured.m = true;
@@ -570,7 +579,7 @@ fn the_rung_4_ceiling_follows_the_effective_m_budget() {
     let m = t.effective(&configured, SizeClass::M);
     assert_eq!(m, budget(150, 60));
     assert_eq!(
-        ceiling(SizeClass::S, m, configured.budget_l),
+        ceiling(SizeClass::S, configured.budget_s, m, configured.budget_l),
         budget(150, 60)
     );
     assert_eq!(t.effective(&configured, SizeClass::Hub), budget(150, 60));

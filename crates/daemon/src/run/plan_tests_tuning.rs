@@ -74,10 +74,9 @@ fn tuned_budgets_win_over_defaults_and_lose_to_the_plan_and_config() {
     assert_eq!(task(&run, "t1").budget, budget(30, 10));
     assert_eq!(run.limits.budget_s, budget(30, 10));
     assert!(run.limits.budget_configured.s && !run.limits.budget_configured.m);
-    assert_eq!(
-        run.log[0].text,
-        "tuning: budget S 30 calls 10m configured (refit would be 55 calls 18m)"
-    );
+    // Ruling T8-7: the file's S refit is ignored while S is configured; with no history
+    // given, the line says only what is used (`refit_tests_edges` covers the refit).
+    assert_eq!(run.log[0].text, "tuning: budget S 30 calls 10m configured");
 }
 
 #[test]

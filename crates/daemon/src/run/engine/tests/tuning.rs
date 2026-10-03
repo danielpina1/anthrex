@@ -90,6 +90,23 @@ fn a_round_is_not_retuned() {
     assert_eq!(calls_and_minutes(fx.task("t2").budget), (55, 18));
 }
 
+/// Ruling T8-6: an S refit above the frozen M budget is not cut at M's: the ceiling is
+/// never below the class's own budget.
+#[test]
+fn an_s_refit_above_m_keeps_its_own_ceiling() {
+    let (mut fx, window) = working_tuned("S", tuned_with(&[("s", 175, 70)]));
+    assert_eq!(calls_and_minutes(fx.run().limits.budget_m), (150, 60));
+    fx.task_mut("t1").spent_total.tool_calls = 160;
+    tool_use(&mut fx, window);
+    assert_eq!(fx.task("t1").state, TaskState::Working, "161 of 175");
+    fx.task_mut("t1").spent_total.tool_calls = 174;
+    tool_use(&mut fx, window);
+    assert_eq!(
+        (fx.task("t1").state, fx.task("t1").rung),
+        (TaskState::Blocked, 4)
+    );
+}
+
 /// Ruling RH-4: an M task's ceiling is the larger of L's budget and twice the frozen
 /// M budget (here 400 tool calls over L's 300); an S task's is the frozen M budget.
 #[test]

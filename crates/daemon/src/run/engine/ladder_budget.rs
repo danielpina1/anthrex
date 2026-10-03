@@ -82,7 +82,13 @@ pub(super) fn ceiling(run: &Run, task: &Task) -> Budget {
         (false, Size::S) => SizeClass::S,
         _ => SizeClass::M,
     };
-    refit::ceiling(class, run.limits.budget_m, run.limits.budget_l)
+    let l = &run.limits;
+    let own = match class {
+        SizeClass::S => l.budget_s,
+        SizeClass::M => l.budget_m,
+        SizeClass::Hub => l.budget_hub.unwrap_or(l.budget_m),
+    };
+    refit::ceiling(class, own, l.budget_m, l.budget_l)
 }
 
 /// Decisions 38 and 40 for task `i`'s live worker session, in order: rung 4 on the

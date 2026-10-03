@@ -8,7 +8,7 @@ use proto::{ClassBudget, RefitState, TuningFile};
 
 use super::super::refit_render::render;
 use super::tests::{NOW, budget, fixture_records};
-use super::{SizeClass, refit, report, tuned};
+use super::{SizeClass, refit, report, tuned, tuned_with};
 
 #[test]
 fn too_few_samples_refit_nothing_and_say_so() {
@@ -39,7 +39,11 @@ fn a_configured_budget_beats_the_refit() {
     let mut cfg = config::Orchestrator::default();
     cfg.tuning.configured.s = true;
     let (file, _) = refit(&lines, &TuningFile::default(), &cfg, NOW);
-    let t = tuned(&file, &cfg);
+    assert!(
+        !file.budgets.contains_key("s"),
+        "ruling T8-7: never written"
+    );
+    let t = tuned_with(&lines, &file, &cfg);
     assert_eq!(t.budget_s, None, "the configured budget is used");
     assert_eq!(t.effective(&cfg, SizeClass::S), budget(40, 15));
     assert_eq!(
@@ -63,8 +67,10 @@ fn a_configured_budget_beats_the_refit() {
         ),
         "{text}"
     );
-    // Not configured, the refit is used.
-    let t = tuned(&file, &config::Orchestrator::default());
+    // Not configured, the refit is written and used.
+    let plain = config::Orchestrator::default();
+    let (file, _) = refit(&lines, &TuningFile::default(), &plain, NOW);
+    let t = tuned(&file, &plain);
     assert_eq!(t.budget_s, Some(budget(55, 18)));
     assert_eq!(t.log[0], "tuning: budget S 55 calls 18m from 34 samples");
 }

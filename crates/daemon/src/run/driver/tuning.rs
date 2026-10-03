@@ -169,7 +169,7 @@ fn tune_blocking(repo_dir: &Path, cfg: &config::Orchestrator, now: u64) -> Tuned
             }
         }
     };
-    let mut tuned = refit::tuned(&used, cfg);
+    let mut tuned = refit::tuned_with(&lines, &used, cfg);
     log.append(&mut tuned.log);
     tuned.log = log;
     tuned

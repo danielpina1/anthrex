@@ -238,7 +238,7 @@ impl<'a> Quality<'a> {
 
 /// The value at index `(n - 1) / 2` of the sorted values; `None` for none.
 /// M8b's `stats::median`, reused (decision 4).
-pub fn lower_median(values: &mut [u64]) -> Option<u64> {
+pub fn lower_median(values: &[u64]) -> Option<u64> {
     super::stats::median(values.to_vec())
 }
 
@@ -266,7 +266,7 @@ pub fn active_secs(phases: &PhaseSecs) -> u64 {
 }
 
 fn median_of(samples: &[&TaskRecord], value: impl Fn(&TaskRecord) -> u64) -> Option<u64> {
-    lower_median(&mut samples.iter().map(|r| value(r)).collect::<Vec<_>>())
+    lower_median(&samples.iter().map(|r| value(r)).collect::<Vec<_>>())
 }
 
 fn qualifies(samples: &[&TaskRecord], t: &Tuning) -> bool {
@@ -357,17 +357,25 @@ pub fn budget_text(b: &Budget) -> String {
 /// Rung 4's ceiling (ruling RH-4), per axis: for S, the effective M budget; for M or
 /// hub, the larger of L's budget and twice the effective M budget. On the token axis
 /// (ruling T9-1), M without a token budget leaves L's, and L without one leaves none.
-pub fn ceiling(class: SizeClass, effective_m: Budget, budget_l: Budget) -> Budget {
-    if class == SizeClass::S {
-        return effective_m;
-    }
+///
+/// Ruling T8-6: never below `own`, the class's own effective budget, on any axis (a
+/// refit S budget above the effective M, or a hub refit above the M or hub rule). A
+/// token axis with no ceiling stays without one; `own` without tokens adds none.
+pub fn ceiling(class: SizeClass, own: Budget, effective_m: Budget, budget_l: Budget) -> Budget {
+    let rule = if class == SizeClass::S {
+        effective_m
+    } else {
+        Budget {
+            tool_calls: (budget_l.tool_calls).max(effective_m.tool_calls.saturating_mul(2)),
+            minutes: budget_l.minutes.max(effective_m.minutes.saturating_mul(2)),
+            tokens: (budget_l.tokens)
+                .map(|l| effective_m.tokens.map_or(l, |m| l.max(m.saturating_mul(2)))),
+        }
+    };
     Budget {
-        tool_calls: budget_l
-            .tool_calls
-            .max(effective_m.tool_calls.saturating_mul(2)),
-        minutes: budget_l.minutes.max(effective_m.minutes.saturating_mul(2)),
-        tokens: (budget_l.tokens)
-            .map(|l| effective_m.tokens.map_or(l, |m| l.max(m.saturating_mul(2)))),
+        tool_calls: rule.tool_calls.max(own.tool_calls),
+        minutes: rule.minutes.max(own.minutes),
+        tokens: rule.tokens.map(|r| own.tokens.map_or(r, |o| r.max(o))),
     }
 }
 
@@ -423,10 +431,27 @@ fn weights_text(w: &PathWeights) -> String {
     )
 }
 
+/// Ruling T8-7: a configured class's refit, computed from history for display only
+/// ("refit would be"), with no change gate; `None` with the refit off or too few
+/// samples.
+pub fn shown_refit(
+    lines: &[HistoryLine],
+    cfg: &config::Orchestrator,
+    class: SizeClass,
+) -> Option<Budget> {
+    let t = &cfg.tuning.table;
+    if !t.refit_budgets {
+        return None;
+    }
+    let fit = fit_budget(&budget_samples(lines, class, t), t, 0)?;
+    Some(as_budget(&fit, default_budget(cfg, class)))
+}
+
 /// Decisions 6 and 7: the budgets and weights history supports, written into `file`
 /// only where they moved by `min_change_percent` (or were absent), with one refit-write
-/// line each (decision 12). A configured class is refitted too, on any change; [`tuned`]
-/// decides whether its refit is used (ruling RH-5).
+/// line each (decision 12). A configured class (ruling RH-5) is not refitted here: its
+/// `[budgets.<class>]` is left as it is (ruling T8-7), and [`shown_refit`] computes
+/// what it would be, for display only.
 pub fn refit(
     lines: &[HistoryLine],
     file: &TuningFile,
@@ -436,21 +461,16 @@ pub fn refit(
     let t = &cfg.tuning.table;
     let mut out = file.clone();
     let mut log = Vec::new();
-    for class in SizeClass::ALL.into_iter().filter(|_| t.refit_budgets) {
+    // Ruling T8-7: a configured class's refit is only shown, never written.
+    let refitted = |c: &SizeClass| t.refit_budgets && !configured(cfg.tuning.configured, *c);
+    for class in SizeClass::ALL.into_iter().filter(refitted) {
         let Some(new) = fit_budget(&budget_samples(lines, class, t), t, now) else {
             continue;
         };
         let default = default_budget(cfg, class);
         let cur = (file.budgets.get(class.key())).map_or(default, |b| as_budget(b, default));
         let new_budget = as_budget(&new, default);
-        // A configured class's refit is only shown (ruling RH-5), so it is kept current
-        // with no change gate: any change is written.
-        let write = if configured(cfg.tuning.configured, class) {
-            new_budget != cur
-        } else {
-            budget_moved(&new_budget, &cur, t.min_change_percent)
-        };
-        if write {
+        if budget_moved(&new_budget, &cur, t.min_change_percent) {
             log.push(format!(
                 "tuning: budget {} {} → {} from {} samples",
                 class.label(),
@@ -477,7 +497,7 @@ mod propose;
 #[path = "refit_tuned.rs"]
 mod tuned;
 pub use propose::{apply, dismiss, proposals};
-pub use tuned::{Tuned, report, tuned};
+pub use tuned::{Tuned, report, tuned, tuned_with};
 
 #[cfg(test)]
 #[path = "refit_tests.rs"]
