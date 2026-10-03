@@ -1,6 +1,6 @@
 //! Milestone 9.3 decisions 4, 7 and 33 (KG §1.2, §1.3): the editor's rows and its
 //! position row. The rows wrap as the editor's Up, Down and PgUp/PgDn move through them
-//! (`TextArea::drawn`), so the cursor is drawn where the keys put it. Every drawn row
+//! (`TextArea::view`), so the cursor is drawn where the keys put it. Every drawn row
 //! passes `safe_text::one_line` here, whatever `TextArea` already cleaned (decision
 //! 33). Pure: no I/O, no clock (`AGENTS.md` hard rule 5).
 

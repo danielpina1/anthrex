@@ -41,13 +41,6 @@ pub struct EditorView {
     pub rows: u16,
 }
 
-impl EditorView {
-    /// PgUp and PgDn's page (decision 5): the visible rows less one.
-    pub fn page(self) -> usize {
-        usize::from(self.rows.saturating_sub(1))
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoalField {
     Goal,

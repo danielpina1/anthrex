@@ -450,10 +450,7 @@ fn the_position_is_the_one_based_logical_line_and_grapheme_column() {
     w.on_editor_key(key(KeyCode::Left), 6, ROWS);
     assert_eq!(w.position(), (1, 10));
     // Wide characters and an emoji with its skin tone: one column each (review m2).
-    let mut cjk = TextArea::editor(
-        "日本
-👍🏽x",
-    );
+    let mut cjk = TextArea::editor("日本\n👍🏽x");
     assert_eq!(cjk.position(), (2, 3));
     press(&mut cjk, key(KeyCode::Left));
     assert_eq!(cjk.position(), (2, 2), "the emoji is one grapheme");

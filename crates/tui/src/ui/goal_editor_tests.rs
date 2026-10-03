@@ -293,3 +293,38 @@ fn goal_dialog_text_is_sanitised() {
         assert_eq!(crate::safe_text::tests::first_hostile(&row), None, "{row}");
     }
 }
+
+/// Review m2: at the 16-row minimum, with `custom…`'s row and an error showing, the
+/// large editor still keeps one text row (the options take the rest).
+#[test]
+fn the_large_text_area_keeps_a_row() {
+    let mut f = form();
+    f.runtime = Some(Runtime::Claude);
+    f.model = crate::run_goal::GoalModel::Custom;
+    f.error = Some("type a goal first".into());
+    f.goal = TextArea::editor("hello");
+    assert_eq!(text_view(&f, 60, 16), EditorView { width: 52, rows: 1 });
+    let rows = large_rows(&app_with(f, false), 60, 16);
+    assert!(rows[1].starts_with("│ hello"), "{rows:?}");
+    // The kit draws no row for none (task 9a's re-review): why the view keeps one.
+    assert!(kit::editor(&TextArea::editor("hello"), 0, 40, true).is_empty());
+}
+
+/// Review m6: the continued chain's model, daemon text, is drawn cleaned.
+#[test]
+fn a_continued_models_carriers_are_drawn_cleaned() {
+    let mut f = form();
+    f.set_chains(
+        Some(IdleOrchestrator {
+            model: "opus-x\u{200D}y\u{202E}z".into(),
+            ..idle(false)
+        }),
+        None,
+    );
+    let rows = large_rows(&app_with(f, false), 120, 40);
+    let model = "  model             ‹ opus-xyz ›";
+    assert!(rows.contains(&format!("│ {model:<112} │")), "{rows:?}");
+    for row in rows {
+        assert_eq!(crate::safe_text::tests::first_hostile(&row), None, "{row}");
+    }
+}

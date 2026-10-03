@@ -75,7 +75,11 @@ pub fn text_view(form: &GoalForm, cols: u16, rows: u16) -> EditorView {
     let interior = rect.height.saturating_sub(2);
     EditorView {
         width: rect.width.saturating_sub(4),
-        rows: interior.saturating_sub(option_rows(form) + FIXED_ROWS),
+        // At least one row (review m2): at 16 rows with `custom…` and an error the
+        // options leave none, and the footer is cut instead.
+        rows: interior
+            .saturating_sub(option_rows(form) + FIXED_ROWS)
+            .max(1),
     }
 }
 
