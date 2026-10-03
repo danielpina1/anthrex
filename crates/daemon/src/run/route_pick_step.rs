@@ -86,32 +86,50 @@ fn below(to: &Route, from: &Route) -> bool {
 /// in this task; with the list's step for the routing history. Ruling T10a-5: when the
 /// current route failed in this task and the list has no step, the roster substitutes
 /// for it ([`roster_substitute`]); with nothing left, the task's own route is retried
-/// ([`every_route_failed`] says so).
+/// ([`every_route_failed`] says so). Ruling T10a-6: both roster paths take only the
+/// entries of [`open_roster`].
 pub fn rung2_route(run: &Run, i: usize) -> (Route, Option<ListPick>) {
     let (task, installed) = (&run.tasks[i], &run.orch.installed);
     if let Some((route, step)) = next_candidate(&run.limits, &run.tasks, i, installed) {
         return (route, Some(step));
     }
     let failed = failed_routes(task);
+    let roster = open_roster(run, i, true);
     if failed_in(&failed, &task.route) {
-        let route = roster_substitute(&run.roster, &task.route, &failed, installed);
+        let route = roster_substitute(&roster, &task.route, &failed);
         return (route.unwrap_or_else(|| task.route.clone()), None);
     }
-    (escalate_skipping(&run.roster, &task.route, &failed), None)
+    (escalate_skipping(&roster, &task.route, &failed), None)
+}
+
+/// Ruling T10a-6: the roster entries task `i` may move to: those on its own runtime,
+/// and those on a runtime installed for the run that, with `overlap`, no unfinished
+/// task on another runtime holds by overlapping the task's `owns` (M8a decision 11,
+/// contract rule 22: as the lists' `overlapping owns` skip). With none on another
+/// runtime, rung 2 escalates within its own.
+fn open_roster(run: &Run, i: usize, overlap_rule: bool) -> Vec<ModelEntry> {
+    let task = &run.tasks[i];
+    let held = |runtime: Runtime| {
+        (run.tasks.iter().enumerate())
+            .filter(|(j, t)| *j != i && !t.state.is_finished())
+            .any(|(_, t)| t.route.runtime != runtime && overlap(t, task))
+    };
+    let open = |runtime: Runtime| {
+        runtime == task.route.runtime
+            || !(missing(&run.orch.installed, runtime) || overlap_rule && held(runtime))
+    };
+    (run.roster.iter())
+        .filter(|e| open(e.runtime))
+        .cloned()
+        .collect()
 }
 
 /// Ruling T10a-5: a substitute for `current`, which failed in this task, from the
-/// roster entries that have not failed in it and whose runtime is installed: the peer
-/// runtime's first at the same strength, else the strongest left (the peer runtime's
-/// first, else the roster's first, on a tie). At `high` effort, as
-/// `roster::escalate_skipping` steps on from a failed route. `None` when every roster
-/// route has failed.
-fn roster_substitute(
-    roster: &[ModelEntry],
-    current: &Route,
-    failed: &[Route],
-    installed: &Installed,
-) -> Option<Route> {
+/// `roster` entries ([`open_roster`]'s) that have not failed in it: the peer runtime's
+/// first at the same strength, else the strongest left (the peer runtime's first, else
+/// the roster's first, on a tie). At `high` effort, as `roster::escalate_skipping`
+/// steps on from a failed route. `None` when every one has failed.
+fn roster_substitute(roster: &[ModelEntry], current: &Route, failed: &[Route]) -> Option<Route> {
     let route = |e: &ModelEntry| Route {
         runtime: e.runtime,
         model: e.model.clone(),
@@ -119,7 +137,7 @@ fn roster_substitute(
         effort: Effort::High,
     };
     let left: Vec<&ModelEntry> = (roster.iter())
-        .filter(|e| !missing(installed, e.runtime) && !failed_in(failed, &route(e)))
+        .filter(|e| !failed_in(failed, &route(e)))
         .collect();
     let peer = peer(current.runtime);
     let strongest = left.iter().map(|e| e.strength).max()?;
@@ -132,17 +150,24 @@ fn roster_substitute(
     Some(route(entry))
 }
 
-/// Rulings T10a-3, T10a-5: the run-log line when task `i`'s next route, `route` (from
-/// [`rung2_route`]), failed in this task too: every list and roster route did, and the
-/// original is retried.
+/// Rulings T10a-3, T10a-5, T10a-6: the run-log line when task `i`'s next route, `route`
+/// (from [`rung2_route`]), failed in this task too, and the original is retried: every
+/// list and installed roster route failed, or only a route the overlap rule holds
+/// task `i` off has not.
 pub fn every_route_failed(run: &Run, i: usize, route: &Route) -> Option<String> {
     let task = &run.tasks[i];
-    failed_in(&failed_routes(task), route).then(|| {
+    let failed = failed_routes(task);
+    if !failed_in(&failed, route) {
+        return None;
+    }
+    let (id, runtime, model) = (task.id(), route.runtime.label(), &route.model);
+    let held = roster_substitute(&open_roster(run, i, false), &task.route, &failed).is_some();
+    Some(if held {
         format!(
-            "every route for task {} failed in this task; retrying {}/{}",
-            task.id(),
-            route.runtime.label(),
-            route.model
+            "no route for task {id} keeps the overlap rule and has not failed in this task; \
+             retrying {runtime}/{model}"
         )
+    } else {
+        format!("every route for task {id} failed in this task; retrying {runtime}/{model}")
     })
 }

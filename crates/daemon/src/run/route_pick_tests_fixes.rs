@@ -327,3 +327,56 @@ fn a_failed_unlisted_explicit_route_is_substituted_from_the_roster() {
     run.tasks[0].rounds = vec![failed_round(task(&run, "t1").route.clone())];
     assert_eq!(rung2_route(&run, 0), (sol(Effort::High), None));
 }
+
+/// Ruling T10a-6: the roster's substitute keeps the overlap rule (M8a decision 11,
+/// contract rule 22): with `t2`, unfinished, on Claude and overlapping `t1`'s `owns`,
+/// `t1`'s failed opus stays off Codex's Frontier peer and takes Claude's strongest left.
+#[test]
+fn a_roster_substitute_keeps_the_overlap_rule() {
+    let tasks = [
+        m("t1", "[\"crates/a/**\"]", ""),
+        m("t2", "[\"crates/a/src/**\"]", ""),
+    ];
+    let mut run = built(&tasks, RouteLists::default());
+    run.tasks[0].route = opus(Effort::Medium);
+    run.tasks[1].route = sonnet(Effort::Medium);
+    run.tasks[0].rounds = vec![failed_round(opus(Effort::Medium))];
+    assert_eq!(rung2_route(&run, 0), (sonnet(Effort::High), None));
+    // Every Claude route failed: the original is retried, and the line says why.
+    run.tasks[0].rounds.push(failed_round(sonnet(Effort::High)));
+    let haiku = route(Runtime::Claude, HAIKU, Strength::Fast, Effort::High);
+    run.tasks[0].rounds.push(failed_round(haiku));
+    let (next, _) = rung2_route(&run, 0);
+    assert_eq!(next, opus(Effort::Medium));
+    assert_eq!(
+        every_route_failed(&run, 0, &next).as_deref(),
+        Some(
+            "no route for task t1 keeps the overlap rule and has not failed in this task; \
+             retrying claude/claude-opus-5-5"
+        )
+    );
+    // `t2` merged: the overlap no longer holds `t1` to Claude.
+    run.tasks[1].state = proto::TaskState::Merged;
+    assert_eq!(rung2_route(&run, 0).0, sol(Effort::High));
+}
+
+/// Ruling T10a-6: a rung 2 that did not fail (the gate path) skips a runtime not
+/// installed for the run and the overlap rule's held runtime, escalating within its own.
+#[test]
+fn a_gate_path_rung_2_keeps_to_installed_and_overlap_free_runtimes() {
+    let mut run = built(&[m("t1", "[\"crates/a/**\"]", "")], RouteLists::default());
+    run.tasks[0].route = sonnet(Effort::High);
+    let codex_default = route(Runtime::Codex, "", Strength::Standard, Effort::High);
+    assert_eq!(rung2_route(&run, 0), (codex_default, None));
+    run.orch.installed = installed(true, false);
+    assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
+    // Codex installed, but an unfinished overlapping task holds `t1` to Claude.
+    let tasks = [
+        m("t1", "[\"crates/a/**\"]", ""),
+        m("t2", "[\"crates/a/src/**\"]", ""),
+    ];
+    let mut run = built(&tasks, RouteLists::default());
+    run.tasks[0].route = sonnet(Effort::High);
+    run.tasks[1].route = sonnet(Effort::Medium);
+    assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
+}
