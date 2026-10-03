@@ -129,7 +129,11 @@ pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             cancel_task(run, i, why, now, fx);
         }
     }
-    let live_left = (run.tasks.iter()).any(|t| live(t.state) && !keep(t));
+    // What the blocked wait for: every live task, as before the wave, but while a round
+    // is being cancelled only that round's (W1 fix round 2: a kept sync task is not
+    // waited for then; a plain `finish` waits for it, as it always did).
+    let waits = |t: &Task| live(t.state) && round.is_none_or(|n| t.round == n && t.sync.is_none());
+    let live_left = run.tasks.iter().any(waits);
     if !run.finish_edit || live_left {
         return;
     }

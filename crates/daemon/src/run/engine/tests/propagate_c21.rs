@@ -4,7 +4,7 @@
 //! a red propagate holds a finishing run; `run cancel` still ends it. A sync claim
 //! must keep its merge, and its reviewer sees only the resolution.
 
-use proto::{AgentRole, PlanEdit, RunState, TaskState};
+use proto::{AgentRole, PlanEdit, RunState, TaskOrigin, TaskState};
 
 use super::dispatch::edit;
 use super::fixture::*;
@@ -13,6 +13,7 @@ use super::kinds_integration::merge_real;
 use super::merge::{commit, merge, pending, pending_one, to_queue, window_of};
 use super::propagate::{TREE, conflicted, merge_t1, propagate, propagates, stages};
 use crate::run::contract::sha7;
+use crate::run::engine::fixes::add_fix;
 use crate::run::engine::stages::set_stage_head;
 use crate::run::engine::{EventKind, OpKind, OpResult};
 use crate::run::model::SyncCheck;
@@ -269,4 +270,29 @@ fn the_sync_reviewer_sees_only_the_resolution() {
         first_turn.contains(&format!("Diff ({}..", sha7(TREE))),
         "{first_turn}"
     );
+}
+
+/// W1 fix round 2 (the re-review's breakage 2): a plain `finish` edit, no round being
+/// cancelled, keeps its pre-wave rule: a live sync task is live work, so a blocked task
+/// waits for it before the finish cancels it.
+#[test]
+fn a_plain_finish_waits_for_a_live_sync_task_before_the_blocked() {
+    let mut fx = t1_propagated(conflict());
+    let now = fx.now;
+    let spec = super::fixes::spec(TaskOrigin::Bisect, "docs/other/**", Default::default());
+    let other = add_fix(fx.run_mut(), spec, now, &mut Vec::new()).expect("added");
+    fx.launch_all();
+    assert_eq!(fx.task("fix1").state, TaskState::Preparing, "live");
+    // Started, then blocked on a question: the finish cancels it only once no task
+    // is live.
+    fx.task_mut(&other).start_commit = Some(BASE.into());
+    fx.force(&other, TaskState::Blocked);
+    edit(&mut fx, vec![PlanEdit::Finish]);
+    later(&mut fx, 1_000);
+    let state = fx.task(&other).state;
+    assert_eq!(state, TaskState::Blocked, "{:#?}", fx.run().log);
+    merge_real(&mut fx, "fix1", &commit(4));
+    later(&mut fx, 1);
+    let state = fx.task(&other).state;
+    assert_eq!(state, TaskState::Cancelled, "{:#?}", fx.run().log);
 }
