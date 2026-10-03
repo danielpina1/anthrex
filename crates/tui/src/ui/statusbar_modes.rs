@@ -18,6 +18,9 @@ pub(super) struct Body {
     /// The focused worktree's git segment follows the hints (the default bar and the
     /// pending prefix; the modes that own the keys have no room for it).
     pub git: bool,
+    /// Muted text before the hints: milestone 9.3 decision 7's `widen the terminal for
+    /// the editor` under the compact goal dialog.
+    pub note: Option<&'static str>,
 }
 
 fn hint(key: &str, word: &str, priority: u8) -> Hint {
@@ -94,10 +97,20 @@ pub(super) fn filtering(app: &App) -> bool {
 }
 
 /// The hints to list. A modal's `esc` alone wins (I1), then the pending prefix, the
-/// screens, the review, the Alerts view, tree navigation, then the default bar.
-pub(super) fn body(app: &App) -> Body {
+/// screens, the review, the Alerts view, tree navigation, then the default bar. `term`
+/// is the terminal the frame is drawn at: below 60×16 the goal dialog is the compact
+/// one, and the bar says to widen it (milestone 9.3 decision 7).
+pub(super) fn body(app: &App, term: ratatui::layout::Rect) -> Body {
     let (hints, git) = if let Some((_, esc)) = modal_bar(app) {
-        (vec![esc], false)
+        let compact = matches!(app.modal, Some(crate::app::Modal::StartGoal(_)))
+            && !crate::ui::goal_editor::is_large(term.width, term.height);
+        return Body {
+            lead: None,
+            hints: vec![esc],
+            separator: "  ",
+            git: false,
+            note: compact.then_some(crate::ui::goal_editor::WIDEN),
+        };
     } else if app.keymap.pending() {
         let list = [
             ("a", "alerts", 8),
@@ -118,6 +131,7 @@ pub(super) fn body(app: &App) -> Body {
             hints: list.iter().map(|(k, w, p)| hint(k, w, *p)).collect(),
             separator: " · ",
             git: git && app.tree_input.is_none(),
+            note: None,
         };
     } else if let Some(Screen::Profile(screen)) = &app.screen {
         (crate::ui::profile::hints(screen), false)
@@ -154,6 +168,7 @@ pub(super) fn body(app: &App) -> Body {
         hints,
         separator: "  ",
         git,
+        note: None,
     }
 }
 

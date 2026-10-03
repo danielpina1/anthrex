@@ -160,8 +160,9 @@ def _goal_run(run_cmd, fail, deadline):
 
 
 def _start_in_the_form(proc, run_cmd, repo, fail):
-    """macOS: select the repository's project node, `C-b g`, type the goal, Enter; the
-    run view opens on the new run. Its id."""
+    """macOS: select the repository's project node, `C-b g`, type the goal, Ctrl-S (the
+    goal editor's start, milestone 9.3: Enter in its text is a newline); the run view
+    opens on the new run. Its id."""
     project = os.path.realpath(repo)
     proc.send(b"\x02t")
     proc.wait_for(" TREE ", label="tree navigation mode")
@@ -175,7 +176,7 @@ def _start_in_the_form(proc, run_cmd, repo, fail):
     proc.wait_for(f" start a goal in {project} ", label="the goal form on the repository")
     proc.send(GOAL.encode())
     proc.wait_for(GOAL, label="the typed goal")
-    proc.send(b"\r")
+    proc.send(b"\x13")
     run_id = _goal_run(run_cmd, fail, time.monotonic() + GOAL_CMD_TIMEOUT)
     proc.wait_for(
         f" run · {GOAL} · {run_id[-4:]} ",

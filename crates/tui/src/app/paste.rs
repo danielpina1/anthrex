@@ -40,11 +40,13 @@ impl App {
     pub fn on_paste(&mut self, text: String) -> Vec<Effect> {
         // Decision 30: a paste goes to the open form's focused field, or is dropped for
         // any other modal — both checked before tree mode and the PTY (risk 10).
+        // Milestone 9.3: the goal's editor takes the paste as the dialog draws it.
+        let goal_view = self.goal_view();
         if let Some(modal) = &mut self.modal {
             match modal {
                 Modal::NewAgent(form) => form.on_paste(&text),
                 Modal::EditTask(form) => form.on_paste(&text),
-                Modal::StartGoal(form) => form.on_paste(&text),
+                Modal::StartGoal(form) => form.on_paste_in(&text, goal_view),
                 Modal::Action(flow) => {
                     if let super::actions::ActionStep::Form(form) = &mut flow.step {
                         form.on_paste(&text);

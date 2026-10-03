@@ -1,0 +1,281 @@
+//! Milestone 9.3 task 9b: the goal dialog drawn (decisions 7, 25 and 33): large from
+//! 60×16, compact below it with the status bar's `widen the terminal for the editor`,
+//! the footer's drops, the orchestrator row's texts and the hostile-text rule. Every
+//! frame is drawn whole through `audit::draw`.
+
+use super::*;
+use crate::app::{App, Modal};
+use crate::settings::UiSettings;
+use crate::text_area::TextArea;
+use crate::theme::Palette;
+use crate::ui::audit;
+use proto::{IdleOrchestrator, RunState, Runtime};
+
+/// An app over an empty session with `form` open, in ASCII or not.
+fn app_with(form: GoalForm, ascii: bool) -> App {
+    let mut app = App::new(vec![], "/tmp".into(), UiSettings::default());
+    app.settings.badges.ascii = ascii;
+    app.modal = Some(Modal::StartGoal(form));
+    app
+}
+
+fn form() -> GoalForm {
+    GoalForm::new("/p/a".into())
+}
+
+pub(crate) fn idle(fresh: bool) -> IdleOrchestrator {
+    IdleOrchestrator {
+        chain: "o-3f9a".into(),
+        project: "/p/a".into(),
+        after_run: "r-20261001-3f9a".into(),
+        outcome: RunState::Accepted,
+        runtime: Runtime::Claude,
+        model: "claude-opus-5-5".into(),
+        window_id: (!fresh).then_some(7),
+        fresh,
+        runs: 1,
+    }
+}
+
+/// The cells of `rect` in `buffer`, row by row, trailing spaces trimmed.
+fn cells(buffer: &ratatui::buffer::Buffer, rect: Rect) -> Vec<String> {
+    (rect.y..rect.bottom())
+        .map(|y| {
+            let row: String = (rect.x..rect.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            row.trim_end().to_string()
+        })
+        .collect()
+}
+
+/// The large dialog's rows in a `w`×`h` frame.
+fn large_rows(app: &App, w: u16, h: u16) -> Vec<String> {
+    let buffer = audit::draw(app, w, h);
+    cells(&buffer, dialog_rect(Rect::new(0, 0, w, h)))
+}
+
+/// A `width`-column dialog frame titled `title` around `rows` (each padded by one
+/// column on both sides), in the palette's border set.
+pub(crate) fn framed(title: &str, width: usize, rows: &[String], ascii: bool) -> Vec<String> {
+    let (tl, tr, bl, br, h, v) = if ascii {
+        ("+", "+", "+", "+", "-", "|")
+    } else {
+        ("┌", "┐", "└", "┘", "─", "│")
+    };
+    let top = format!("{tl} {title} ");
+    let mut out = vec![format!(
+        "{top}{}{tr}",
+        h.repeat(width - 1 - top.chars().count())
+    )];
+    for row in rows {
+        out.push(format!("{v} {row:<w$} {v}", w = width - 4));
+    }
+    out.push(format!("{bl}{}{br}", h.repeat(width - 2)));
+    out
+}
+
+/// The empty form's interior with `text_rows` text rows.
+fn empty_interior(text_rows: usize, ascii: bool) -> Vec<String> {
+    let choice = |v: &str| {
+        if ascii {
+            format!("< {v} >")
+        } else {
+            format!("‹ {v} ›")
+        }
+    };
+    let mut rows = vec!["what should the run achieve?".to_string()];
+    rows.resize(text_rows + 1, String::new());
+    for (label, value) in [
+        ("runtime", "configured"),
+        ("model", "default"),
+        ("orchestrator", "new"),
+        ("delivery", "configured"),
+        ("trust", "off"),
+        ("approve at once", "off"),
+        ("unconfined checks", "off"),
+    ] {
+        rows.push(format!("  {label:<18}{}", choice(value)));
+    }
+    let dot = if ascii { "-" } else { "·" };
+    rows.push(format!("ln 1, col 1 {dot} 0 / 16,384"));
+    rows.push("^S start  Tab options  ^K cut  ^U paste  Esc cancel".into());
+    rows
+}
+
+#[test]
+fn the_dialog_is_large_at_80x24_and_120x40() {
+    for ascii in [false, true] {
+        for (w, h, width, text_rows) in [(80, 24, 76, 10), (120, 40, 116, 26)] {
+            let app = app_with(form(), ascii);
+            assert_eq!(
+                text_view(&form(), w, h),
+                EditorView {
+                    width: width - 4,
+                    rows: text_rows
+                },
+                "{w}x{h}"
+            );
+            let want = framed(
+                "start a goal in /p/a",
+                usize::from(width),
+                &empty_interior(usize::from(text_rows), ascii),
+                ascii,
+            );
+            assert_eq!(large_rows(&app, w, h), want, "{w}x{h} ascii {ascii}");
+            let buffer = audit::draw(&app, w, h);
+            // `rows − 2` high: one margin row, then the status bar.
+            let rect = dialog_rect(Rect::new(0, 0, w, h));
+            assert_eq!((rect.x, rect.y, rect.height), (2, 0, h - 2));
+            assert_eq!(audit::accented_frames(&buffer, app.palette()), 1);
+            assert_eq!(audit::stray_accent(&buffer, app.palette()), None);
+            if ascii {
+                assert_eq!(audit::first_non_ascii(&buffer), None, "{w}x{h}");
+            }
+        }
+    }
+}
+
+/// Today's compact rows (milestone 9.0.6's drawing, `GOAL_ROWS` text rows) with the
+/// orchestrator row decision 25 adds, in ASCII.
+fn compact_interior() -> Vec<String> {
+    let mut rows = vec!["> goal              what should the run achieve?".to_string()];
+    rows.resize(6, String::new());
+    for (label, value) in [
+        ("runtime", "configured"),
+        ("model", "default"),
+        ("orchestrator", "new"),
+        ("delivery", "configured"),
+        ("trust", "off"),
+        ("approve at once", "off"),
+        ("unconfined checks", "off"),
+    ] {
+        rows.push(format!("  {label:<18}< {value} >"));
+    }
+    rows.push(String::new());
+    rows.push("enter start - tab next - ^J newline - esc cancel".into());
+    rows
+}
+
+#[test]
+fn below_60_by_16_the_dialog_keeps_its_compact_layout() {
+    let app = app_with(form(), true);
+    // 59x24: 59 wide (the 64-column dialog cut to the terminal), 17 high, centred.
+    let buffer = audit::draw(&app, 59, 24);
+    let want = framed("start a goal in /p/a", 59, &compact_interior(), true);
+    assert_eq!(cells(&buffer, Rect::new(0, 3, 59, 17)), want);
+    assert_eq!(audit::accented_frames(&buffer, app.palette()), 1);
+    // 80x15: the 64-column dialog, cut to the terminal's 15 rows.
+    let buffer = audit::draw(&app, 80, 15);
+    let mut want = framed("start a goal in /p/a", 64, &compact_interior()[..13], true);
+    let last = want.len() - 1;
+    want[last] = format!("+{}+", "-".repeat(62));
+    assert_eq!(cells(&buffer, Rect::new(8, 0, 64, 15)), want);
+    // The keys move by the compact text area.
+    assert_eq!(
+        text_view(&form(), 59, 24),
+        EditorView {
+            width: goal_width(59),
+            rows: GOAL_ROWS
+        }
+    );
+    assert!(!is_large(59, 24) && !is_large(80, 15) && is_large(60, 16));
+}
+
+#[test]
+fn the_status_bar_says_widen_the_terminal() {
+    let app = app_with(form(), false);
+    let bar = |w, h| audit::rows(&audit::draw(&app, w, h))[usize::from(h) - 1].clone();
+    assert_eq!(
+        bar(59, 24),
+        " DIALOG  widen the terminal for the editor  esc back"
+    );
+    // The compact dialog is 17 rows tall and, as before 9.3, drawn over the whole
+    // frame: from 18 rows the bar shows under it.
+    assert_eq!(bar(80, 18), " DIALOG  esc back");
+    assert_eq!(
+        bar(59, 18),
+        " DIALOG  widen the terminal for the editor  esc back"
+    );
+    assert_eq!(bar(80, 24), " DIALOG  esc back");
+    assert_eq!(bar(60, 16), " DIALOG  esc back");
+}
+
+#[test]
+fn the_footer_drops_entries_from_the_right() {
+    let text = |width| footer(&FOOTER, width, Palette::PLAIN).to_string();
+    assert_eq!(
+        text(51),
+        "^S start  Tab options  ^K cut  ^U paste  Esc cancel"
+    );
+    assert_eq!(text(50), "^S start  Tab options  ^K cut  ^U paste");
+    assert_eq!(text(30), "^S start  Tab options  ^K cut");
+    assert_eq!(text(8), "^S start");
+    assert_eq!(text(7), "");
+}
+
+/// The large dialog's orchestrator row at 120x40.
+fn orchestrator_row(form: GoalForm) -> String {
+    let rows = large_rows(&app_with(form, false), 120, 40);
+    rows.into_iter()
+        .find(|r| r.contains("orchestrator "))
+        .expect("an orchestrator row")
+}
+
+#[test]
+fn the_orchestrator_row_reads_each_state() {
+    let mut f = form();
+    f.set_chains(Some(idle(false)), None);
+    assert!(f.continuing, "continue is the default");
+    let row = orchestrator_row(f.clone());
+    assert!(
+        row.contains("  orchestrator      ‹ continue o-3f9a (after 3f9a) › "),
+        "{row}"
+    );
+    f.continuing = false;
+    assert!(orchestrator_row(f.clone()).contains("  orchestrator      ‹ new › "));
+    let mut f = form();
+    f.set_chains(Some(idle(true)), None);
+    assert!(
+        orchestrator_row(f).contains("  orchestrator      ‹ continue o-3f9a (fresh session) ›")
+    );
+    let mut f = form();
+    f.set_chains(None, Some(("o-3f9a".into(), "77b2".into())));
+    assert!(orchestrator_row(f).contains(
+        "  orchestrator      o-3f9a is working on run 77b2; this goal gets a new orchestrator"
+    ));
+}
+
+/// Decision 33: visible carriers in the project path, the chain id and the goal are
+/// drawn without them. Mutant: the active chain's `one_line` in `option_lines` removed
+/// (its row then carries them; `theme::choice` cleans the continue row on its own).
+#[test]
+fn goal_dialog_text_is_sanitised() {
+    let carriers = "x\u{200D}y\u{202E}z";
+    let mut f = GoalForm::new(format!("/p/{carriers}").into());
+    f.goal = TextArea::unclean(&format!("go {carriers}"));
+    f.set_chains(None, Some((format!("o-{carriers}"), "3f9a".into())));
+    let rows = large_rows(&app_with(f.clone(), false), 120, 40);
+    assert!(
+        rows[0].starts_with("┌ start a goal in /p/xyz ─"),
+        "{}",
+        rows[0]
+    );
+    assert_eq!(rows[1], format!("│ {:<112} │", "go xyz"));
+    let busy =
+        "  orchestrator      o-xyz is working on run 3f9a; this goal gets a new orchestrator";
+    assert!(rows.contains(&format!("│ {busy:<112} │")), "{rows:?}");
+    f.set_chains(
+        Some(IdleOrchestrator {
+            chain: format!("o-{carriers}"),
+            ..idle(false)
+        }),
+        None,
+    );
+    let rows = large_rows(&app_with(f, false), 120, 40);
+    let choice = "  orchestrator      ‹ continue o-xyz (after 3f9a) ›";
+    assert!(rows.contains(&format!("│ {choice:<112} │")), "{rows:?}");
+    for row in rows {
+        assert_eq!(crate::safe_text::tests::first_hostile(&row), None, "{row}");
+    }
+}

@@ -154,6 +154,32 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             }),
         ),
         (
+            "goal form continuing",
+            with(gate(), |a| {
+                a.runs.idle_orchestrators = vec![proto::IdleOrchestrator {
+                    project: PROJECT.into(),
+                    ..crate::ui::goal_editor::tests::idle(false)
+                }];
+                chord(a, 'g');
+                let Some(Modal::StartGoal(form)) = &a.modal else {
+                    panic!("`C-b g`");
+                };
+                assert!(form.continuing, "continue is the default");
+            }),
+        ),
+        (
+            "goal form discard page",
+            with(gate(), |a| {
+                chord(a, 'g');
+                tap(a, 'x');
+                a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                let Some(Modal::StartGoal(form)) = &a.modal else {
+                    panic!("`C-b g`");
+                };
+                assert!(form.discarding, "Esc on a text asks");
+            }),
+        ),
+        (
             "action menu on its message form",
             with(crate::ui::alerts::fixture::three_runs(), |a| {
                 chord(a, 'a');

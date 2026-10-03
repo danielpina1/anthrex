@@ -226,14 +226,18 @@ impl App {
                 // Review: a reply to this client's goal whose form was closed meanwhile
                 // is still shown. This client sends `StartGoal` only tagged, so an
                 // untagged `Triaged` is not its own and changes nothing (M8c).
-                if self.goal_form_waiting_on(request_id).is_some() {
-                    self.goal_triaged(run_id, &message);
-                } else if request_id.is_some() {
+                if !self.goal_started(request_id, run_id, &message) && request_id.is_some() {
                     self.toast(capped(&message));
                 }
             }
-            RunReply::Started { .. }
-            | RunReply::ConfirmNeeded { .. }
+            // Milestone 9.3 decision 22 (D11): a continued goal's reply is `Started`.
+            RunReply::Started {
+                run_id, request_id, ..
+            } => {
+                let message = format!("run {run_id} started");
+                self.goal_started(request_id, Some(run_id), &message);
+            }
+            RunReply::ConfirmNeeded { .. }
             | RunReply::ToolResult { .. }
             // Settings, profile and stats replies are routed by id in `app/replies.rs`
             // (decisions 24, 34 and 38); one reaching here is no request of this
@@ -266,6 +270,7 @@ impl App {
         self.repair_alerts_focus();
         self.follow_action_flow();
         self.open_pending_run();
+        self.refresh_goal_chains();
         let rows = nav_rows_of(
             &self.windows,
             &self.runs.runs,

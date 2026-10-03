@@ -124,7 +124,7 @@ pub(super) fn open_form(app: &mut App) {
 }
 
 pub(super) fn focus(app: &mut App, field: GoalField) {
-    for _ in 0..7 {
+    for _ in 0..8 {
         if form(app).focus == field {
             return;
         }
@@ -139,11 +139,12 @@ pub(super) fn typed(app: &mut App, text: &str) {
     }
 }
 
-/// The form's request, from a blank goal given text `goal`.
+/// The form's request, from a blank goal given text `goal`: Ctrl-S starts it
+/// (milestone 9.3 decision 7; Enter in the text is a newline).
 fn request(app: &mut App, goal: &str) -> RunRequest {
     focus(app, GoalField::Goal);
     typed(app, goal);
-    tagged(&tap(app, KeyCode::Enter)).1
+    tagged(&press(app, KeyCode::Char('s'), KeyModifiers::CONTROL)).1
 }
 
 #[test]

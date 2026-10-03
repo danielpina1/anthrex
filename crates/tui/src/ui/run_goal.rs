@@ -4,11 +4,17 @@
 //! choices, the goal in a four-row text area, hints `⏎ start · tab next · esc cancel`.
 //! Every glyph honours `Palette.ascii`. The project, the model names and what was typed
 //! pass `safe_text`.
+//!
+//! Milestone 9.3 decision 7: this is the compact fallback, drawn below 60 columns or 16
+//! rows; at least that, the large editor of `ui/goal_editor.rs` draws instead, with the
+//! option rows built here. Both draw the orchestrator row (decision 25) and the confirm
+//! page (decision 8).
 
 use crate::dialog::TextInput;
-use crate::run_goal::{GoalField, GoalForm, GoalModel, field_label};
+use crate::run_goal::{GoalField, GoalForm, OrchestratorRow, field_label};
 use crate::safe_text::one_line;
 use crate::theme::{Glyph, Palette, Role, dot_sep, ellipsis, glyph, role};
+use crate::ui::goal_editor;
 use crate::ui::kit::{self, Hint};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -66,6 +72,23 @@ fn choice_line(form: &GoalForm, field: GoalField, value: &str, p: Palette) -> Li
     Line::from(spans)
 }
 
+/// A row whose value is shown but not chosen here, muted (decision 25): a continued
+/// chain's runtime and model, or the active chain's line, cut to `width` columns.
+fn muted_line(
+    form: &GoalForm,
+    field: GoalField,
+    value: String,
+    width: usize,
+    p: Palette,
+) -> Line<'static> {
+    let mut spans = label(form, field, p);
+    spans.push(Span::styled(
+        kit::cut(&value, width, ellipsis(p)),
+        role(Role::Muted, p),
+    ));
+    Line::from(spans)
+}
+
 fn on_off(on: bool) -> &'static str {
     if on { "on" } else { "off" }
 }
@@ -93,7 +116,7 @@ fn input_line(input: &TextInput, width: usize, focused: bool) -> Line<'static> {
 
 /// The empty goal's first row: [`PLACEHOLDER`] muted, cut to `width`, its first cell
 /// the cursor's (reversed) while focused (milestone 9.0.7 decision 35).
-fn placeholder(width: usize, focused: bool, p: Palette) -> Line<'static> {
+pub(crate) fn placeholder(width: usize, focused: bool, p: Palette) -> Line<'static> {
     let text = kit::cut(PLACEHOLDER, width.saturating_sub(1), ellipsis(p));
     let at = (text.char_indices().nth(usize::from(focused))).map_or(text.len(), |(i, _)| i);
     let reversed = ratatui::style::Style::default().add_modifier(Modifier::REVERSED);
@@ -118,6 +141,83 @@ pub fn title(form: &GoalForm, width: u16, p: Palette) -> String {
 pub fn goal_width(width: u16) -> u16 {
     let width = width.min(kit::DIALOG_MAX).saturating_sub(4).min(kit::WRAP);
     width.saturating_sub((MARK_W + LABEL_W) as u16)
+}
+
+/// The option rows (decision 7's order) for `width` interior columns: runtime, model
+/// (and the custom model's text), orchestrator, delivery, trust, approve at once and
+/// unconfined checks. Continuing a chain, its runtime and model show muted.
+pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
+    let value_w = usize::from(width).saturating_sub(MARK_W + LABEL_W);
+    let mut body = Vec::new();
+    if let Some(idle) = form.continues() {
+        let model = if idle.model.is_empty() {
+            "default"
+        } else {
+            idle.model.as_str()
+        };
+        for (field, value) in [
+            (GoalField::Runtime, idle.runtime.label()),
+            (GoalField::Model, model),
+        ] {
+            body.push(muted_line(
+                form,
+                field,
+                kit::choice_in(value, p),
+                value_w,
+                p,
+            ));
+        }
+    } else {
+        let runtime = match form.runtime {
+            Some(runtime) => runtime.label(),
+            None => "configured",
+        };
+        body.push(choice_line(form, GoalField::Runtime, runtime, p));
+        let options = form.model_options();
+        let shown = options
+            .get(form.model_at())
+            .map_or("default", String::as_str);
+        let shown = if p.ascii && shown == "custom…" {
+            "custom..."
+        } else {
+            shown
+        };
+        body.push(choice_line(form, GoalField::Model, shown, p));
+    }
+    if form.custom_shown() {
+        let focused = form.focus == GoalField::Model && !form.submitting;
+        body.push(input_line(&form.custom, value_w, focused));
+    }
+    // Decision 33: the chain id and the run's short id are drawn sanitised.
+    body.push(match form.orchestrator_row() {
+        OrchestratorRow::Choice(value) => {
+            choice_line(form, GoalField::Orchestrator, &one_line(&value), p)
+        }
+        OrchestratorRow::Busy(text) => {
+            muted_line(form, GoalField::Orchestrator, one_line(&text), value_w, p)
+        }
+    });
+    // Milestone 9.2 ruling R-13: `configured` is the repo profile's `[delivery] mode`.
+    let delivery = match form.delivery {
+        None => "configured",
+        Some(proto::DeliveryMode::Local) => "local",
+        Some(proto::DeliveryMode::Pr) => "pr",
+    };
+    body.push(choice_line(form, GoalField::Delivery, delivery, p));
+    body.push(choice_line(
+        form,
+        GoalField::Trust,
+        on_off(form.trust_project),
+        p,
+    ));
+    body.push(choice_line(form, GoalField::Yes, on_off(form.yes), p));
+    body.push(choice_line(
+        form,
+        GoalField::UnconfinedChecks,
+        on_off(form.unconfined_checks),
+        p,
+    ));
+    body
 }
 
 /// The dialog's rows for `width` interior columns: the fields, the error, a blank row
@@ -147,48 +247,7 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
         body.push(Line::from(spans));
     }
 
-    let runtime = match form.runtime {
-        Some(runtime) => runtime.label(),
-        None => "configured",
-    };
-    body.push(choice_line(form, GoalField::Runtime, runtime, p));
-
-    let options = form.model_options();
-    let shown = options
-        .get(form.model_at())
-        .map_or("default", String::as_str);
-    let shown = if p.ascii && shown == "custom…" {
-        "custom..."
-    } else {
-        shown
-    };
-    body.push(choice_line(form, GoalField::Model, shown, p));
-    if form.model == GoalModel::Custom {
-        let input = &form.custom;
-        let focused = form.focus == GoalField::Model && !form.submitting;
-        body.push(input_line(input, value_w, focused));
-    }
-    // Milestone 9.2 ruling R-13: `configured` is the repo profile's `[delivery] mode`.
-    let delivery = match form.delivery {
-        None => "configured",
-        Some(proto::DeliveryMode::Local) => "local",
-        Some(proto::DeliveryMode::Pr) => "pr",
-    };
-    body.push(choice_line(form, GoalField::Delivery, delivery, p));
-
-    body.push(choice_line(
-        form,
-        GoalField::Trust,
-        on_off(form.trust_project),
-        p,
-    ));
-    body.push(choice_line(form, GoalField::Yes, on_off(form.yes), p));
-    body.push(choice_line(
-        form,
-        GoalField::UnconfinedChecks,
-        on_off(form.unconfined_checks),
-        p,
-    ));
+    body.extend(option_lines(form, width, p));
 
     if let Some(error) = &form.error {
         body.push(Line::styled(
@@ -220,7 +279,13 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
     body
 }
 
+/// The goal dialog over the whole terminal `area`: the large editor from 60×16
+/// (`ui/goal_editor.rs`), else this compact layout; the confirm page in the dialog's
+/// place while it is open.
 pub fn render(frame: &mut Frame, form: &GoalForm, area: Rect, p: Palette) {
+    if goal_editor::is_large(area.width, area.height) {
+        return goal_editor::render(frame, form, area, p);
+    }
     let width = area.width.min(kit::DIALOG_MAX).saturating_sub(4);
     let body = body(form, width, p);
     let rect = kit::dialog_area(area, body.len() as u16);
@@ -228,6 +293,9 @@ pub fn render(frame: &mut Frame, form: &GoalForm, area: Rect, p: Palette) {
         return;
     }
     frame.render_widget(Clear, rect);
+    if form.discarding {
+        return goal_editor::render_discard(frame, rect, p);
+    }
     let title = title(form, width.saturating_sub(2), p);
     frame.render_widget(
         Paragraph::new(body).block(kit::dialog_frame(&title, false, p)),

@@ -2,17 +2,24 @@
 //! (`AGENTS.md` hard rule 5). It holds a goal (a text area; `Ctrl-J` inserts a newline),
 //! an optional orchestrator runtime, a model picked from that runtime's enabled models
 //! (or typed after `custom…`), and three toggles that start off: `trust`,
-//! `approve at once` and `unconfined checks`, for one project the caller chose. `Enter`
+//! `approve at once` and `unconfined checks`, for one project the caller chose. It
 //! builds M8b's `RunRequest::StartGoal` exactly as `anthrex run start --goal` sends it:
 //! with the toggles off the plan gate stays on and checks stay confined. Opening,
-//! sending and the replies are `app/goal.rs`; rendering is `ui/run_goal.rs`.
+//! sending and the replies are `app/goal.rs`; rendering is `ui/run_goal.rs` and
+//! `ui/goal_editor.rs`.
+//!
+//! Milestone 9.3 decisions 7, 8 and 25 (KG §1, §3.3): the goal is the nano-like editor
+//! (`TextArea::on_editor_key`, Enter a newline), Ctrl-S starts from anywhere and Enter
+//! from an option row, Esc on a text asks before discarding it, and the orchestrator
+//! row continues the project's idle orchestrator (`continue_from`) or starts a new one.
 
 use crate::app::screens::models_of;
 use crate::dialog::{TextInput, apply_text_key};
 use crate::run_edit::TEXT_MAX_CHARS;
+use crate::text_area::EditorKey;
 use crate::text_area::TextArea;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{DeliveryMode, ModelEntry, OrchestratorChoice, RunRequest, Runtime};
+use proto::{DeliveryMode, IdleOrchestrator, ModelEntry, OrchestratorChoice, RunRequest, Runtime};
 use std::path::PathBuf;
 
 /// The toast `C-b g` shows when no project is selected, no window is focused and the
@@ -21,13 +28,33 @@ pub const NO_PROJECT: &str = "select a Git project to start a goal";
 /// The inline error of an `Enter` with a blank goal.
 pub const EMPTY_GOAL: &str = "type a goal first";
 /// The inline error after the connection refused the request or the link was lost.
-pub const NOT_SENT: &str = "the goal was not sent; press Enter to retry";
+pub const NOT_SENT: &str = "the goal was not sent; press Ctrl-S to retry";
+/// Decision 8's confirm page (KG §1.4, exact): its question and its keys.
+pub const DISCARD_ASK: &str = "discard this goal text?";
+pub const DISCARD_KEYS: &str = "y discard · any other key back";
+
+/// The goal's text area as the dialog draws it (`ui::goal_editor::text_view`): the
+/// width it wraps at and its visible rows. The keys and the renderer take the same one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EditorView {
+    pub width: u16,
+    pub rows: u16,
+}
+
+impl EditorView {
+    /// PgUp and PgDn's page (decision 5): the visible rows less one.
+    pub fn page(self) -> usize {
+        usize::from(self.rows.saturating_sub(1))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoalField {
     Goal,
     Runtime,
     Model,
+    /// Milestone 9.3 decision 25: continue the project's idle orchestrator, or a new one.
+    Orchestrator,
     /// Milestone 9.2 ruling R-13: `run start --goal --delivery`.
     Delivery,
     Trust,
@@ -35,10 +62,11 @@ pub enum GoalField {
     UnconfinedChecks,
 }
 
-const FIELDS: [GoalField; 7] = [
+const FIELDS: [GoalField; 8] = [
     GoalField::Goal,
     GoalField::Runtime,
     GoalField::Model,
+    GoalField::Orchestrator,
     GoalField::Delivery,
     GoalField::Trust,
     GoalField::Yes,
@@ -81,13 +109,31 @@ pub struct GoalForm {
     pub submitting: bool,
     /// The id of the tagged `StartGoal` this form waits on (decision 2).
     pub request_id: Option<u64>,
+    /// Milestone 9.3 decision 25: the project's idle orchestrator from the snapshot,
+    /// whether the goal continues it (the default while there is one), and, with none,
+    /// an active chain and its run's short id (`o-3f9a is working on run …`).
+    pub idle: Option<IdleOrchestrator>,
+    pub continuing: bool,
+    pub busy: Option<(String, String)>,
+    /// Decision 8: the confirm page `Esc` on a text opened.
+    pub discarding: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GoalOutcome {
     Stay,
+    /// The dialog closes; the app keeps its text as the project's draft.
     Cancel,
+    /// The confirm page's `y`: the dialog closes and the draft goes.
+    Discard,
     Submit(RunRequest),
+}
+
+/// What the orchestrator row shows: a choice, or the active chain's muted line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrchestratorRow {
+    Choice(String),
+    Busy(String),
 }
 
 pub fn field_label(field: GoalField) -> &'static str {
@@ -95,6 +141,7 @@ pub fn field_label(field: GoalField) -> &'static str {
         GoalField::Goal => "goal",
         GoalField::Runtime => "runtime",
         GoalField::Model => "model",
+        GoalField::Orchestrator => "orchestrator",
         GoalField::Delivery => "delivery",
         GoalField::Trust => "trust",
         GoalField::Yes => "approve at once",
@@ -155,7 +202,7 @@ impl GoalForm {
     pub fn new(project: PathBuf) -> Self {
         Self {
             project,
-            goal: TextArea::new(),
+            goal: TextArea::editor(""),
             runtime: None,
             model: GoalModel::Default,
             delivery: None,
@@ -168,6 +215,51 @@ impl GoalForm {
             error: None,
             submitting: false,
             request_id: None,
+            idle: None,
+            continuing: false,
+            busy: None,
+            discarding: false,
+        }
+    }
+
+    /// The project's chains from a snapshot (decision 25): a new idle orchestrator is
+    /// continued by default; the same one keeps the user's choice.
+    pub fn set_chains(&mut self, idle: Option<IdleOrchestrator>, busy: Option<(String, String)>) {
+        let same = self.idle.as_ref().map(|i| &i.chain) == idle.as_ref().map(|i| &i.chain);
+        if !same {
+            self.continuing = idle.is_some();
+        }
+        self.idle = idle;
+        self.busy = busy;
+    }
+
+    /// Whether the custom model's text row is drawn: `custom…` chosen, and the model not
+    /// held by a continued chain.
+    pub fn custom_shown(&self) -> bool {
+        self.model == GoalModel::Custom && self.continues().is_none()
+    }
+
+    /// The idle orchestrator this goal continues, while continue is chosen.
+    pub fn continues(&self) -> Option<&IdleOrchestrator> {
+        self.idle.as_ref().filter(|_| self.continuing)
+    }
+
+    /// Decision 25's row (KG §3.3, §3.5, §3.6), its text unsanitised: the renderer
+    /// cleans it.
+    pub fn orchestrator_row(&self) -> OrchestratorRow {
+        match (&self.idle, &self.busy) {
+            (Some(idle), _) if self.continuing && idle.fresh => {
+                OrchestratorRow::Choice(format!("continue {} (fresh session)", idle.chain))
+            }
+            (Some(idle), _) if self.continuing => OrchestratorRow::Choice(format!(
+                "continue {} (after {})",
+                idle.chain,
+                crate::actions_request::short_id(&idle.after_run)
+            )),
+            (None, Some((chain, run))) => OrchestratorRow::Busy(format!(
+                "{chain} is working on run {run}; this goal gets a new orchestrator"
+            )),
+            _ => OrchestratorRow::Choice("new".into()),
         }
     }
 
@@ -224,23 +316,53 @@ impl GoalForm {
 
     /// [`GoalForm::on_key_in`] with the goal unwrapped.
     pub fn on_key(&mut self, key: KeyEvent) -> GoalOutcome {
-        self.on_key_in(key, 0)
+        self.on_key_in(key, EditorView::default())
     }
 
-    /// Decision 44's keys. While submitting, only `Esc` and `Ctrl-C` act, as in M8c's
-    /// edit form, so a second `Enter` sends nothing. In the goal, Up and Down move a
-    /// row of its text area drawn `goal_width` wide (`ui::run_goal::goal_width`), and
-    /// the focus only from its first or last row (milestone 9.0.7 decision 35).
-    pub fn on_key_in(&mut self, key: KeyEvent, goal_width: u16) -> GoalOutcome {
+    /// Decisions 7 and 8's keys (KG §1.2, §1.4), the goal drawn as `view` says. The
+    /// confirm page takes the next key: `y` discards, any other goes back to the text.
+    /// `Esc` and `Ctrl-C` close at once while submitting (only they act then, so a
+    /// second start sends nothing) or on an empty text, and ask on any other. Ctrl-S
+    /// starts from anywhere; the text takes every editor key (Enter a newline), and Tab
+    /// and Shift-Tab, which it hands back, move to the options; on an option row Tab,
+    /// Shift-Tab, Up and Down move (wrapping), Enter starts and the rest change it.
+    pub fn on_key_in(&mut self, key: KeyEvent, view: EditorView) -> GoalOutcome {
+        if self.discarding {
+            self.discarding = false;
+            if key.code == KeyCode::Char('y')
+                && !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                return GoalOutcome::Discard;
+            }
+            self.focus = GoalField::Goal;
+            return GoalOutcome::Stay;
+        }
         if key.code == KeyCode::Esc || is_ctrl(&key, 'c') {
-            return GoalOutcome::Cancel;
+            if self.submitting || self.goal.is_empty() {
+                return GoalOutcome::Cancel;
+            }
+            self.discarding = true;
+            return GoalOutcome::Stay;
         }
         if self.submitting {
             return GoalOutcome::Stay;
         }
-        let in_goal = self.focus == GoalField::Goal;
+        if is_ctrl(&key, 's') {
+            return self.submit();
+        }
+        if self.focus == GoalField::Goal {
+            if self.goal.on_editor_key(key, view.width, view.page()) == EditorKey::Unhandled {
+                match key.code {
+                    KeyCode::Tab => self.move_focus(1),
+                    KeyCode::BackTab => self.move_focus(-1),
+                    _ => {}
+                }
+            }
+            return GoalOutcome::Stay;
+        }
         match key.code {
-            KeyCode::Up | KeyCode::Down if in_goal && self.goal.on_key_in(key, goal_width) => {}
             KeyCode::Tab | KeyCode::Down => self.move_focus(1),
             KeyCode::BackTab | KeyCode::Up => self.move_focus(-1),
             KeyCode::Enter => return self.submit(),
@@ -254,10 +376,16 @@ impl GoalForm {
             key.code,
             KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
         );
+        let locked = self.continues().is_some();
         match self.focus {
-            GoalField::Goal => {
-                self.goal.on_key(key);
+            // The text's keys are `on_key_in`'s; continuing, the chain's runtime and
+            // model hold (decision 25).
+            GoalField::Goal => {}
+            GoalField::Runtime | GoalField::Model if locked => {}
+            GoalField::Orchestrator if toggle && self.idle.is_some() => {
+                self.continuing = !self.continuing;
             }
+            GoalField::Orchestrator => {}
             GoalField::Runtime => match key.code {
                 KeyCode::Right | KeyCode::Char(' ') => self.cycle_runtime(true),
                 KeyCode::Left => self.cycle_runtime(false),
@@ -322,15 +450,23 @@ impl GoalForm {
         };
     }
 
-    /// A paste into the goal or the custom model: control characters go; the field stays
-    /// bounded; the goal keeps its line breaks.
+    /// [`GoalForm::on_paste_in`] with the goal unwrapped.
     pub fn on_paste(&mut self, text: &str) {
-        if self.submitting {
+        self.on_paste_in(text, EditorView::default());
+    }
+
+    /// A bracketed paste into the goal (the editor's, decision 5) or the custom model:
+    /// control characters go; the field stays bounded; the goal keeps its line breaks.
+    /// The goal is drawn as `view` says (the editor's viewport follows it).
+    pub fn on_paste_in(&mut self, text: &str, view: EditorView) {
+        if self.submitting || self.discarding {
             return;
         }
+        // `view` reaches the editor's paste with task 9a's viewport (its fix round).
+        let _ = view;
         match (self.focus, &self.model) {
-            (GoalField::Goal, _) => self.goal.on_paste(text),
-            (GoalField::Model, GoalModel::Custom) => {
+            (GoalField::Goal, _) => self.goal.on_editor_paste(text),
+            (GoalField::Model, GoalModel::Custom) if self.custom_shown() => {
                 insert_bounded(&mut self.custom, &clean_line(text));
             }
             _ => {}
@@ -365,16 +501,22 @@ impl GoalForm {
     }
 
     /// Decision 44's request: what `anthrex run start --goal` sends, with the
-    /// orchestrator choice when a runtime is chosen, and decision 39's toggles.
+    /// orchestrator choice when a runtime is chosen, and decision 39's toggles; while
+    /// continuing (decision 25), `continue_from` the chain's last run and no
+    /// orchestrator choice, as `run start --goal … --continue` sends it.
     pub fn request(&self) -> Result<RunRequest, (GoalField, &'static str)> {
         let goal = self.goal.text();
         if goal.trim().is_empty() {
             return Err((GoalField::Goal, EMPTY_GOAL));
         }
-        let orchestrator = self.runtime.map(|runtime| OrchestratorChoice {
-            runtime,
-            model: self.chosen_model(),
-        });
+        let continue_from = self.continues().map(|idle| idle.after_run.clone());
+        let orchestrator = self
+            .runtime
+            .filter(|_| continue_from.is_none())
+            .map(|runtime| OrchestratorChoice {
+                runtime,
+                model: self.chosen_model(),
+            });
         Ok(RunRequest::StartGoal {
             goal: goal.trim().to_string(),
             dir: self.project.clone(),
@@ -383,7 +525,7 @@ impl GoalForm {
             unconfined_checks: self.unconfined_checks,
             orchestrator,
             delivery: self.delivery,
-            continue_from: None,
+            continue_from,
         })
     }
 }

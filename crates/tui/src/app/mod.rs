@@ -202,6 +202,10 @@ pub struct App {
     /// Decision 24: the daemon's settings, fetched once per connection (`app/screens.rs`).
     pub settings_cache: Option<screens::SettingsCache>,
     pub screen: Option<screens::Screen>, // Decision 33: the open full-body screen.
+    /// Milestone 9.3 decision 8: each project's goal draft, and the goal request a
+    /// closed dialog still waits on (its success clears that project's draft).
+    pub goal_drafts: std::collections::BTreeMap<PathBuf, String>,
+    goal_sent: Option<(u64, PathBuf)>,
 }
 
 impl App {
@@ -261,6 +265,8 @@ impl App {
             replies: Default::default(),
             settings_cache: None,
             screen: None,
+            goal_drafts: Default::default(),
+            goal_sent: None,
             settings,
         }
     }

@@ -1,6 +1,6 @@
 //! M9.15, decision 44: `C-b g` opens the goal form for the selected Git project (or the
-//! focused window's), and `Enter` sends M8b's `StartGoal` as a tagged request
-//! (decision 2). The form never guesses a repository, keeps its input on a refusal,
+//! focused window's), and Ctrl-S (milestone 9.3 decision 7; `Enter` until then) sends
+//! M8b's `StartGoal` as a tagged request (decision 2). The form never guesses a repository, keeps its input on a refusal,
 //! and opens the run view once a snapshot names the new run.
 
 use super::orch::tagged;
@@ -16,6 +16,11 @@ use proto::{
 
 fn tap(app: &mut App, code: KeyCode) -> Vec<Effect> {
     press(app, code, KeyModifiers::NONE)
+}
+
+/// Ctrl-S: the goal dialog's start, from anywhere in it (milestone 9.3 decision 7).
+fn start(app: &mut App) -> Vec<Effect> {
+    press(app, KeyCode::Char('s'), KeyModifiers::CONTROL)
 }
 
 fn typed(app: &mut App, text: &str) {
@@ -142,6 +147,9 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
     assert!(tap(&mut app, KeyCode::Right).is_empty());
     typed(&mut app, "claude-opus-5");
     assert!(tap(&mut app, KeyCode::Tab).is_empty());
+    // Milestone 9.3 decision 25: the orchestrator row, `new` with no idle one.
+    assert_eq!(goal_form(&app).focus, GoalField::Orchestrator);
+    assert!(tap(&mut app, KeyCode::Tab).is_empty());
     // Ruling R-13: configured, then local, then pr.
     assert_eq!(goal_form(&app).focus, GoalField::Delivery);
     assert!(tap(&mut app, KeyCode::Right).is_empty());
@@ -149,7 +157,7 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
     assert!(tap(&mut app, KeyCode::Tab).is_empty());
     assert_eq!(goal_form(&app).focus, GoalField::Trust);
     assert!(tap(&mut app, KeyCode::Char(' ')).is_empty());
-    let (id, request) = tagged(&tap(&mut app, KeyCode::Enter));
+    let (id, request) = tagged(&start(&mut app));
     assert_eq!(
         request,
         RunRequest::StartGoal {
@@ -167,7 +175,8 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
         }
     );
     assert!(goal_form(&app).submitting);
-    // While submitting only Esc acts: a second Enter sends nothing.
+    // While submitting only Esc acts: a second start sends nothing.
+    assert!(start(&mut app).is_empty());
     assert!(tap(&mut app, KeyCode::Enter).is_empty());
 
     // The snapshot names the run first here, so the reply opens the view at once.
@@ -186,7 +195,7 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
 fn goal_form_sends_no_orchestrator_by_default() {
     let mut app = projects_app();
     filled_form(&mut app);
-    let (_, request) = tagged(&tap(&mut app, KeyCode::Enter));
+    let (_, request) = tagged(&start(&mut app));
     assert!(matches!(
         request,
         RunRequest::StartGoal {
@@ -203,7 +212,7 @@ fn goal_form_sends_no_orchestrator_by_default() {
 fn goal_form_opens_the_view_only_once_the_snapshot_names_the_run() {
     let mut app = projects_app();
     filled_form(&mut app);
-    let (id, _) = tagged(&tap(&mut app, KeyCode::Enter));
+    let (id, _) = tagged(&start(&mut app));
     assert!(app.on_daemon(triaged(Some("r-new"), id)).is_empty());
     assert_eq!(app.modal, None, "success closes the form");
     assert_eq!(
@@ -229,7 +238,7 @@ fn goal_form_opens_the_view_only_once_the_snapshot_names_the_run() {
 fn a_goal_triage_refused_closes_the_form_with_its_message() {
     let mut app = projects_app();
     filled_form(&mut app);
-    let (id, _) = tagged(&tap(&mut app, KeyCode::Enter));
+    let (id, _) = tagged(&start(&mut app));
     app.on_daemon(triaged(None, id));
     assert_eq!(app.modal, None);
     assert_eq!(
@@ -246,10 +255,10 @@ fn goal_form_keeps_its_input_on_error() {
     select_node(&mut app, NodeKey::Project("/p/a".into()));
     open_goal_form(&mut app);
     // An empty goal is refused inline, with nothing sent.
-    assert!(tap(&mut app, KeyCode::Enter).is_empty());
+    assert!(start(&mut app).is_empty());
     assert_eq!(goal_form(&app).error.as_deref(), Some("type a goal first"));
     typed(&mut app, "add a");
-    let (id, _) = tagged(&tap(&mut app, KeyCode::Enter));
+    let (id, _) = tagged(&start(&mut app));
     app.toast("");
     app.on_daemon(refused(
         "run start --goal needs a Git repository: /p/a is not one\nsecond line",
@@ -263,8 +272,8 @@ fn goal_form_keeps_its_input_on_error() {
     assert!(!form.submitting);
     assert_eq!(form.goal.text(), "add a");
     assert_eq!(app.toast_text(), Some(""), "shown inline, not toasted");
-    // Enter sends it again, under a new id.
-    let (again, _) = tagged(&tap(&mut app, KeyCode::Enter));
+    // Ctrl-S sends it again, under a new id.
+    let (again, _) = tagged(&start(&mut app));
     assert_ne!(again, id);
 }
 
@@ -272,7 +281,7 @@ fn goal_form_keeps_its_input_on_error() {
 fn a_refusal_for_an_earlier_request_does_not_reach_the_form() {
     let mut app = projects_app();
     filled_form(&mut app);
-    let (id, _) = tagged(&tap(&mut app, KeyCode::Enter));
+    let (id, _) = tagged(&start(&mut app));
     let before = goal_form(&app).clone();
     app.on_daemon(refused("an older goal was refused", Some(id + 100)));
     assert_eq!(goal_form(&app), &before);
@@ -287,7 +296,7 @@ fn a_refusal_for_an_earlier_request_does_not_reach_the_form() {
 fn a_goal_that_was_not_sent_frees_the_form() {
     let mut app = projects_app();
     filled_form(&mut app);
-    let effects = tap(&mut app, KeyCode::Enter);
+    let effects = start(&mut app);
     let Effect::Send(msg) = &effects[0] else {
         panic!("{effects:?}")
     };
@@ -296,7 +305,7 @@ fn a_goal_that_was_not_sent_frees_the_form() {
     assert!(!form.submitting);
     assert_eq!(
         form.error.as_deref(),
-        Some("the goal was not sent; press Enter to retry")
+        Some("the goal was not sent; press Ctrl-S to retry")
     );
 }
 
@@ -306,7 +315,7 @@ fn a_goal_that_was_not_sent_frees_the_form() {
 fn a_goal_reply_after_the_form_closed_is_toasted() {
     let mut app = projects_app();
     filled_form(&mut app);
-    let (id, _) = tagged(&tap(&mut app, KeyCode::Enter));
+    let (id, _) = tagged(&start(&mut app));
     assert!(tap(&mut app, KeyCode::Esc).is_empty());
     assert_eq!(app.modal, None);
     app.toast("");

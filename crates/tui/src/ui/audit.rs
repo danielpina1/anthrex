@@ -250,7 +250,12 @@ pub(crate) fn shows(name: &str) -> Shows {
         "rename over the pane" => row("rename", Some("esc cancel"), &["⏎ rename"]),
         "config notice over the pane" => row("config", Some("esc close"), &["esc close"]),
         "edit form over the run view" => row("edit t1", Some("esc cancel"), &["⏎ save"]),
-        "goal form over the pane" => row("start a goal", Some("esc cancel"), &["⏎ start"]),
+        // Milestone 9.3 decision 7: the large editor at both audit sizes, its footer's
+        // `Esc cancel` and `^S start`; decision 25's continue row; decision 8's page.
+        "goal form over the pane" | "goal form continuing" => {
+            row("start a goal", Some("Esc cancel"), &["^S start"])
+        }
+        "goal form discard page" => row("discard this goal text?", None, &["y discard"]),
         "action menu on its message form" => row("message", Some("esc back"), &["⏎ continue"]),
         "settings discard page" => row("discard changes", Some("esc back"), &["y discard"]),
         "profile confirm page" => row("confirm profile", Some("esc back"), &["y store"]),

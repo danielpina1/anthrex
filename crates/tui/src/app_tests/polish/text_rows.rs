@@ -21,48 +21,43 @@ fn drawn_80x24(app: &mut App) {
     app.set_body_area(Rect::new(0, 0, 80, 23));
 }
 
+/// Milestone 9.3 decisions 5 and 7 (changed expectation): the goal is the large
+/// editor at 80x24, 72 columns wide, so it wraps at 71; Up and Down move a drawn row
+/// and stay put on the first and the last (the focus no longer leaves by them).
 #[test]
-fn the_goal_moves_a_wrapped_row_then_the_focus() {
+fn the_goal_moves_a_wrapped_row_and_stays_on_its_ends() {
     let mut app = app_with_cache(roster());
     drawn_80x24(&mut app);
     open_goal(&mut app);
-    // The goal's area is 40 columns at 80 (60 less the 20-column label): it wraps at 39.
-    for _ in 0..50 {
+    for _ in 0..150 {
         tap(&mut app, KeyCode::Char('a'));
     }
-    assert_eq!(goal_form(&app).goal.cursor(), 50);
+    assert_eq!(goal_form(&app).goal.cursor(), 150);
     assert!(tap(&mut app, KeyCode::Up).is_empty());
     assert_eq!(
-        goal_form(&app).focus,
-        GoalField::Goal,
-        "Up stays in the goal"
-    );
-    assert_eq!(
         goal_form(&app).goal.cursor(),
-        11,
-        "a drawn row up, column 11"
+        79,
+        "a drawn row up, column 8"
     );
     tap(&mut app, KeyCode::Up);
-    assert_ne!(
-        goal_form(&app).focus,
-        GoalField::Goal,
-        "from the first row Up leaves"
+    assert_eq!(goal_form(&app).goal.cursor(), 8);
+    tap(&mut app, KeyCode::Up);
+    assert_eq!(
+        (goal_form(&app).focus, goal_form(&app).goal.cursor()),
+        (GoalField::Goal, 8),
+        "Up on the first row stays put"
     );
     tap(&mut app, KeyCode::Down);
-    assert_eq!(goal_form(&app).focus, GoalField::Goal);
-    assert!(tap(&mut app, KeyCode::Down).is_empty());
-    assert_eq!(
-        goal_form(&app).focus,
-        GoalField::Goal,
-        "Down to the last row"
-    );
-    assert_eq!(goal_form(&app).goal.cursor(), 50);
+    tap(&mut app, KeyCode::Down);
+    assert_eq!(goal_form(&app).goal.cursor(), 150);
     tap(&mut app, KeyCode::Down);
     assert_eq!(
-        goal_form(&app).focus,
-        GoalField::Runtime,
-        "then the next field"
+        (goal_form(&app).focus, goal_form(&app).goal.cursor()),
+        (GoalField::Goal, 150),
+        "Down on the last row stays put"
     );
+    tap(&mut app, KeyCode::Tab);
+    assert_eq!(goal_form(&app).focus, GoalField::Runtime, "Tab leaves");
 }
 
 #[test]
