@@ -211,17 +211,35 @@ fn tuning_file_round_trips_and_rejects_unknown_keys() {
     assert_eq!(empty, TuningFile::default());
     assert_eq!(toml::to_string(&empty).unwrap().trim(), "v = 1");
 
-    // Unknown keys are refused at every level, naming the key.
-    let bad = TUNING_TOML.replace("tool_calls = 55", "calls = 1");
-    let error = toml::from_str::<TuningFile>(&bad).unwrap_err().to_string();
-    assert!(error.contains("calls"), "{error}");
-    for bad in [
-        format!("{TUNING_TOML}\nextra = 1"),
-        TUNING_TOML.replace("s_lines = 35", "s_lines = 35\nl_lines = 300"),
-        TUNING_TOML.replace("hub_secs = 1650", "hub_secs = 1650\nl_secs = 1"),
-        TUNING_TOML.replace("effort = \"medium\"", "effort = \"medium\"\nmodel = \"x\""),
+    // Unknown keys are refused at every level, by name, even beside every known key
+    // (so the refusal is not a missing field's).
+    for (bad, key) in [
+        (
+            TUNING_TOML.replace("tool_calls = 55", "tool_calls = 55\ncalls = 1"),
+            "calls",
+        ),
+        (TUNING_TOML.replace("v = 1", "v = 1\nextra = 1"), "extra"),
+        (format!("{TUNING_TOML}\n[extra]\nx = 1"), "extra"),
+        (
+            TUNING_TOML.replace("s_lines = 35", "s_lines = 35\nl_lines = 300"),
+            "l_lines",
+        ),
+        (
+            TUNING_TOML.replace("hub_secs = 1650", "hub_secs = 1650\nl_secs = 1"),
+            "l_secs",
+        ),
+        (
+            TUNING_TOML.replace("effort = \"medium\"", "effort = \"medium\"\nmodel = \"x\""),
+            "model",
+        ),
     ] {
-        assert!(toml::from_str::<TuningFile>(&bad).is_err(), "{bad}");
+        let error = toml::from_str::<TuningFile>(&bad)
+            .expect_err(&bad)
+            .to_string();
+        assert!(
+            error.contains(&format!("unknown field `{key}`")),
+            "{bad}\n{error}"
+        );
     }
 }
 

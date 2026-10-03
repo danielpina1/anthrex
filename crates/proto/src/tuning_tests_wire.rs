@@ -97,15 +97,27 @@ fn a_tuning_report() -> TuningReport {
     }
 }
 
-fn a_window(placeholder: bool) -> WindowInfo {
-    let mut window: WindowInfo = serde_json::from_value(json!({
-        "id": 3, "name": "3f9a/scout", "runtime": "claude", "cwd": "/tmp/x",
+/// A window as protocol 15 described it: no `placeholder`, and a `run` with no `lane`.
+fn p15_window() -> serde_json::Value {
+    json!({
+        "id": 3, "name": "3f9a/t1.w1", "runtime": "claude", "cwd": "/tmp/x",
         "project": "/tmp/p", "worktree": null, "branch": null, "status": "working",
         "tool": null, "since_secs": 1, "last_output_secs": 1, "session_id": null,
-        "model": null, "subagents": [], "exit": null, "kind": "headless", "run": null,
+        "model": null, "subagents": [], "exit": null, "kind": "headless",
+        "run": {"run_id": "r", "task_id": "t1", "role": "worker", "session": 1},
         "signals_seen": false
-    }))
-    .expect("a protocol-15 WindowInfo decodes");
+    })
+}
+
+/// Protocol-15 MessagePack bytes of `value`: a named map, as `codec::encode` writes a
+/// struct (`rmp_serde::to_vec_named`), with only the keys protocol 15 had.
+fn p15_bytes(value: &serde_json::Value) -> Vec<u8> {
+    rmp_serde::to_vec_named(value).unwrap()
+}
+
+fn a_window(placeholder: bool) -> WindowInfo {
+    let mut window: WindowInfo =
+        rmp_serde::from_slice(&p15_bytes(&p15_window())).expect("a protocol-15 WindowInfo");
     assert!(!window.placeholder, "absent reads false");
     window.placeholder = placeholder;
     window
@@ -293,14 +305,23 @@ fn old_messages_decode_with_defaults() {
         "{json}"
     );
 
-    let window = a_window(false);
-    assert!(!window.placeholder);
-    let full: FullInfo = serde_json::from_value(json!({
+    // Protocol-15 MessagePack: a window list as a 15 daemon sends it, and a stage's
+    // full suite.
+    let message = json!({"WindowsChanged": {"windows": [p15_window()]}});
+    let DaemonMsg::WindowsChanged { windows } =
+        rmp_serde::from_slice(&p15_bytes(&message)).expect("a protocol-15 WindowsChanged")
+    else {
+        panic!("a WindowsChanged");
+    };
+    assert!(!windows[0].placeholder);
+    assert_eq!(windows[0].run.as_ref().map(|r| r.lane), Some(None));
+    let full = json!({
         "state": "red", "at": null, "secs": null, "commit": null, "shards": 1,
         "flaky": [], "failing": [], "bisect_fixes": 0, "note": null
-    }))
-    .expect("a protocol-15 FullInfo decodes");
+    });
+    let full: FullInfo = rmp_serde::from_slice(&p15_bytes(&full)).expect("a protocol-15 FullInfo");
     assert!(!full.held);
+    assert_eq!(full.state, crate::tiers::FullState::Red);
 }
 
 #[test]
