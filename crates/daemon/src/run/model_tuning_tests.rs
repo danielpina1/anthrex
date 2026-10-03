@@ -15,7 +15,15 @@ const M93_RUN: &str = include_str!("../../tests/fixtures/run/m93-run.json");
 
 /// Every key milestone 9.5 adds to the persisted run. `lane` is also an older key, a
 /// routing decision's (milestone 9), so it is counted rather than looked for.
-const NEW_KEYS: [&str; 4] = ["race", "pair", "race_wait_since", "concurrency"];
+const NEW_KEYS: [&str; 7] = [
+    "race",
+    "pair",
+    "race_wait_since",
+    "concurrency",
+    "route_lists",
+    "list_pick",
+    "list_escalation",
+];
 
 fn old_run() -> Run {
     serde_json::from_str(M93_RUN).expect("m93-run.json parses")
@@ -165,6 +173,28 @@ fn a_run_with_race_pair_and_caps_round_trips() {
         .find(|op| op.task_id.as_deref() == Some("t1"))
         .expect("t1 has a pending op");
     op.lane = Some(RaceLane::B);
+    // Task M9.5.10a: a frozen model list and the picks it made.
+    let candidate = proto::RoutingCandidate {
+        route: route.clone(),
+        skipped_reason: None,
+    };
+    let pick = ListPick {
+        candidates: vec![candidate],
+        chosen: Some(0),
+        pick: ListPolicy::Spread,
+        slot: Some(0),
+    };
+    run.limits.route_lists.m = FrozenList {
+        candidates: vec![ListCandidate {
+            runtime: route.runtime,
+            model: route.model.clone(),
+            strength: route.strength,
+            effort: None,
+        }],
+        pick: ListPolicy::Spread,
+    };
+    run.tasks[0].list_pick = Some(pick.clone());
+    run.tasks[0].list_escalation = Some(pick);
 
     let dir = tmp();
     let (loaded, text) = save_and_load(&mut run, dir.path());

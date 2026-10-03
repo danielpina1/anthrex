@@ -75,6 +75,7 @@ pub fn apply_edits(
         added_deps: BTreeSet::new(),
         errors: Vec::new(),
         consequences: Vec::new(),
+        picks: BTreeSet::new(),
         now,
     };
     for edit in edits {
@@ -86,8 +87,11 @@ pub fn apply_edits(
         added_deps,
         mut errors,
         consequences,
+        picks,
         ..
     } = batch;
+    // Milestone 9.5 decision 9a: added tasks, and routes amended, take the run's lists.
+    super::route_pick::pick_named(&mut edited, &picks);
     errors.extend(validate_tasks_with(
         &edited.tasks,
         &touched,
@@ -156,6 +160,8 @@ pub(super) struct Batch {
     pub(super) added_deps: BTreeSet<(String, String)>,
     pub(super) errors: Vec<PlanError>,
     pub(super) consequences: Vec<EditConsequence>,
+    /// Decision 9a: the tasks whose route the model lists pick after the batch.
+    pub(super) picks: BTreeSet<String>,
     pub(super) now: u64,
 }
 
@@ -259,6 +265,7 @@ impl Batch {
         self.errors.extend(reserved_new_id(&spec.id));
         let task = self.resolve(spec);
         self.add_deps_of(&task);
+        self.picks.insert(task.spec.id.clone());
         self.run.tasks.push(task);
         let last = self.run.tasks.len() - 1;
         self.log(last, "added by a plan edit".to_string());
@@ -354,6 +361,7 @@ impl Batch {
         let children: Vec<Task> = specs.into_iter().map(|s| self.resolve(s)).collect();
         for child in &children {
             self.add_deps_of(child);
+            self.picks.insert(child.spec.id.clone());
         }
         let child_ids: Vec<String> = children.iter().map(|c| c.spec.id.clone()).collect();
         for task in self.run.tasks.iter_mut() {

@@ -22,6 +22,8 @@ use crate::run::model::{AgentRound, ReviewLevel, ReviewRecord, Run};
 use crate::run::orch::contract::worker_messages_for_review;
 use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid_of};
 use crate::run::roster::pick_reviewer;
+use crate::run::route_pick::reviewer;
+use crate::run::routing;
 
 pub(super) use super::review_session::{exited, resume_failed, turn_ended, watch};
 
@@ -139,6 +141,7 @@ pub(super) fn review_ready(
         "task {} is in review with no review level",
         task.id()
     );
+    let mut listed = None;
     let (author, level, route) = if reader {
         // Milestone 9 decisions 36, 37: a review task's own route and level.
         super::kinds::review_route(task)
@@ -154,7 +157,10 @@ pub(super) fn review_ready(
             .rfind(|r| r.role == AgentRole::Worker)
             .map_or(&task.route, |r| &r.route)
             .clone();
-        let route = pick_reviewer(&run.roster, &author, level);
+        // Milestone 9.5 decision 9a: the `review` list's first qualifying candidate.
+        listed = reviewer(&run.limits.route_lists, &author, level, &run.orch.installed);
+        let first = listed.as_ref().and_then(|(route, _)| route.clone());
+        let route = first.unwrap_or_else(|| pick_reviewer(&run.roster, &author, level));
         (author, level, route)
     };
     let spec = if reader {
@@ -185,7 +191,10 @@ pub(super) fn review_ready(
     let id = task.id().to_string();
     let worktree = run.review_path(&id);
     // M8b decision 33a: decided before the session-start op.
-    crate::run::routing::record_reviewer(run, i, (&author, level), &route, round_no, now);
+    match listed {
+        Some((_, list)) => routing::record_listed_reviewer(run, i, list, &route, round_no, now),
+        None => routing::record_reviewer(run, i, (&author, level), &route, round_no, now),
+    }
     let task = &mut run.tasks[i];
     task.review_route = Some(route.clone());
     weakening::new_review(task);

@@ -230,7 +230,10 @@ pub(super) fn resolve_task_lenient(
     let level = if raise { base.raised() } else { base };
     let skipped = !limits.review_small && !hub && size == Size::S && level == ReviewLevel::Small;
     let review_level = (!skipped).then_some(level);
-    let review_route = review_level.map(|l| roster::pick_reviewer(roster, &route, l));
+    // Milestone 9.5 decision 9a: the `review` list first (nothing known installed).
+    let lists = &limits.route_lists;
+    let review_route = review_level
+        .map(|l| super::route_pick::review_route(lists, roster, &route, l, &BTreeMap::new()));
 
     let task = new_task(
         spec,
@@ -499,6 +502,8 @@ fn new_task(
         race: None,
         pair: None,
         race_wait_since: None,
+        list_pick: None,
+        list_escalation: None,
     }
 }
 

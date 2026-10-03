@@ -206,6 +206,14 @@ pub struct Task {
     /// Decision 18: since when the racing task has waited for its second writer slot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub race_wait_since: Option<u64>,
+    /// Decision 9a: the plan's model-list choice for its worker route (made when the
+    /// task was built or added), when its class has a list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_pick: Option<super::ListPick>,
+    /// Decision 9a: rung 2's list step, beside `escalated_from`; the next worker launch
+    /// records it and clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_escalation: Option<super::ListPick>,
 }
 
 impl Task {

@@ -134,6 +134,10 @@ pub fn context(inputs: &ContextInputs<'_>) -> Value {
             })).collect::<Vec<_>>(),
         "omitted": {"scouts": 0},
     });
+    // Milestone 9.5 decision 9a: the user's model lists, only when there are any.
+    if let Some(routes) = crate::run::route_pick::context_routes(&limits.route_lists) {
+        answer["limits"]["routes"] = routes;
+    }
     fold_all(&mut answer);
     let finished: Vec<&str> = run
         .tasks

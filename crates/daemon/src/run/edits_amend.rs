@@ -7,7 +7,7 @@ use super::{Batch, EditConsequence};
 use crate::run::contract::amend_message;
 use crate::run::edits_state::{has_live_worker, is_paused, not_started};
 use crate::run::plan::PlanError;
-use crate::run::roster::pick_reviewer;
+use crate::run::route_pick::review_route;
 use crate::run::validate::resolve_task_lenient;
 
 impl Batch {
@@ -187,10 +187,16 @@ impl Batch {
             Some(route) if !route_named => route,
             _ => resolved.route,
         };
+        if route_named {
+            // Milestone 9.5 decision 9a: a route left to the lists is picked again.
+            self.picks.insert(spec.id.clone());
+        }
+        let (lists, roster) = (&self.run.limits.route_lists, &self.run.roster);
+        let installed = &self.run.orch.installed;
+        let review_route = (resolved.review_level)
+            .map(|level| review_route(lists, roster, &route, level, installed));
         let task = &mut self.run.tasks[i];
-        task.review_route = resolved
-            .review_level
-            .map(|level| pick_reviewer(&self.run.roster, &route, level));
+        task.review_route = review_route;
         task.spec = spec;
         task.size = resolved.size;
         task.hub = resolved.hub;

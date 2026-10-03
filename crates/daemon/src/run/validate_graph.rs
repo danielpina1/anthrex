@@ -63,6 +63,10 @@ pub fn validate_tasks(
 /// The runtime the plan gives `task`: its spec's, or `default_runtime` when the spec
 /// names none or names one a task cannot run on (which `resolve_task` reports).
 fn planned_runtime(task: &Task, default_runtime: Runtime) -> Runtime {
+    // Milestone 9.5 decision 9a: a model list's pick is the plan's route.
+    if let Some(route) = task.list_pick.as_ref().and_then(|p| p.chosen_route()) {
+        return route.runtime;
+    }
     match task.spec.route.runtime {
         Some(runtime) if runtime != Runtime::Shell => runtime,
         _ => default_runtime,

@@ -6,7 +6,7 @@ use proto::{Budget, PathWeights, Runtime, SizeThresholds};
 use serde::{Deserialize, Serialize};
 
 use super::adapt;
-use super::tuning::{BudgetsConfigured, ClassRoutes};
+use super::tuning::{BudgetsConfigured, ClassRoutes, RouteListsFrozen};
 use crate::run::refit::{SizeClass, Tuned};
 
 /// `[orchestrator.claude] auth`, mirrored here with serde because `config::ClaudeAuth`
@@ -103,6 +103,9 @@ pub struct RunLimits {
     /// Decision 13: the line thresholds in the deciders' and planners' rubric.
     #[serde(default, skip_serializing_if = "default_thresholds")]
     pub thresholds: SizeThresholds,
+    /// Decision 9a: the user's model lists, frozen with each candidate's strength.
+    #[serde(default, skip_serializing_if = "RouteListsFrozen::is_empty")]
+    pub route_lists: RouteListsFrozen,
 }
 
 fn default_thresholds(t: &SizeThresholds) -> bool {
@@ -121,6 +124,8 @@ impl RunLimits {
         self.class_routes = tuned.routes;
         self.path_weights = tuned.weights.clone();
         self.thresholds = tuned.thresholds;
+        // Ruling T9-2: the lists against the roster the run freezes (`Run.roster`).
+        self.route_lists = RouteListsFrozen::freeze(&tuned.lists, &config.models);
     }
 }
 

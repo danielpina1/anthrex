@@ -13,6 +13,10 @@ use proto::{
 use super::model::{ReviewLevel, Run, Task};
 use super::roster::peer;
 
+#[path = "routing_lists.rs"]
+mod lists;
+pub use lists::record_listed_reviewer;
+
 /// Decision 33a's policy versions: the selectors milestone 8a shipped.
 pub const WORKER_POLICY: &str = "m8a-worker-v1";
 pub const REVIEW_POLICY: &str = "m8a-review-v1";
@@ -287,15 +291,22 @@ fn decision(
 /// already counted): its first session records `initial`, and a session after rung 2
 /// or `run retry` records `escalation` from the route it escalated from. Any other
 /// fresh session (a lost resume, say) keeps the route already recorded. A run without
-/// history (one from milestone 8a) records nothing (whole-branch review m2).
+/// history (one from milestone 8a) records nothing (whole-branch review m2). Milestone
+/// 9.5 decision 9a: a model list's choice records the list's snapshot.
 pub fn record_worker(run: &mut Run, i: usize, now: u64) {
     let from = run.tasks[i].escalated_from.take();
+    let step = run.tasks[i].list_escalation.take();
     if !run.history {
         return;
     }
     let task = &run.tasks[i];
     let chosen = task.route.clone();
     let id = (AgentRole::Worker, task.session, None);
+    let first = !(task.routing_decisions.iter()).any(|d| d.role == AgentRole::Worker);
+    let listed = (from.is_some(), step, first);
+    if let Some(d) = lists::worker(run, task, id, listed, &chosen, now) {
+        return push(&mut run.tasks[i], d);
+    }
     let decision = match from {
         Some(from) => decision(
             run,
@@ -306,11 +317,7 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
             escalation_pool(&run.roster, &from),
             now,
         ),
-        None if !task
-            .routing_decisions
-            .iter()
-            .any(|d| d.role == AgentRole::Worker) =>
-        {
+        None if first => {
             let explicit = task.spec.route.model.is_some();
             let source = if explicit {
                 "explicit_task"

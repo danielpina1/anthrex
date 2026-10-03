@@ -17,7 +17,7 @@ use crate::decider::fallback::{OFF_REASON, SIZE_FALLBACK_REASON};
 use crate::decider::{DeciderRequest, Decision, SizeCheckInput, SizeCheckTask, SizeVerdict};
 use crate::run::contract::size_label;
 use crate::run::model::{Run, SizeCheckState, Task};
-use crate::run::roster::pick_reviewer;
+use crate::run::route_pick::review_route;
 use crate::scout::report::ONBOARDING_ALIAS;
 
 /// The note of a task the check cannot be asked about.
@@ -215,9 +215,9 @@ pub(crate) fn apply_raise(run: &mut Run, task_id: &str, size: Size, reason: &str
     let task = &mut run.tasks[i];
     if task.spec.route.effort.is_none() {
         task.route.effort = resolved.effort;
-        task.review_route = task
-            .review_level
-            .map(|level| pick_reviewer(&run.roster, &task.route, level));
+        let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
+        task.review_route = (task.review_level)
+            .map(|level| review_route(lists, &run.roster, &task.route, level, installed));
     }
     let note = format!(
         "size raised from {} to {}: decider cross-check (rule 7.2.5): {reason}",

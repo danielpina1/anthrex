@@ -9,7 +9,8 @@
 //! pair or cap writes the same `run.json` as milestone 9.3.
 
 use proto::{
-    ClassRoute, Effort, GateCounts, LaneState, PairPhase, RaceLane, Route, Spend, Strength,
+    ClassRoute, Effort, GateCounts, LaneState, ModelEntry, PairPhase, RaceLane, Route,
+    RoutingCandidate, Runtime, Spend, Strength,
 };
 use serde::{Deserialize, Serialize};
 
@@ -130,6 +131,163 @@ impl BudgetsConfigured {
 impl From<config::ConfiguredBudgets> for BudgetsConfigured {
     fn from(c: config::ConfiguredBudgets) -> Self {
         BudgetsConfigured { s: c.s, m: c.m }
+    }
+}
+
+/// Decision 9a: one model-list candidate as a run freezes it, with its roster strength.
+/// `effort` `None` takes the class's (or the review level's) effort where it is used.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListCandidate {
+    pub runtime: Runtime,
+    pub model: String,
+    pub strength: Strength,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Effort>,
+}
+
+impl ListCandidate {
+    /// The route this candidate gives, at `effort` when it names none.
+    pub fn route(&self, effort: Effort) -> Route {
+        Route {
+            runtime: self.runtime,
+            model: self.model.clone(),
+            strength: self.strength,
+            effort: self.effort.unwrap_or(effort),
+        }
+    }
+}
+
+/// `pick`: the first unskipped candidate, or round-robin (decision 9a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ListPolicy {
+    #[default]
+    First,
+    Spread,
+}
+
+impl ListPolicy {
+    /// The routing history's `pick_policy`.
+    pub fn label(self) -> &'static str {
+        match self {
+            ListPolicy::First => "first",
+            ListPolicy::Spread => "spread",
+        }
+    }
+}
+
+/// One frozen `[orchestrator.routes.<name>]` list. Empty: no list.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FrozenList {
+    pub candidates: Vec<ListCandidate>,
+    pub pick: ListPolicy,
+}
+
+impl FrozenList {
+    pub fn is_empty(&self) -> bool {
+        self.candidates.is_empty()
+    }
+
+    fn freeze(list: &config::RouteList, roster: &[ModelEntry]) -> Self {
+        let candidates = (list.candidates.iter())
+            .filter_map(|c| {
+                let entry = crate::run::roster::find(roster, c.runtime, &c.model)?;
+                Some(ListCandidate {
+                    runtime: c.runtime,
+                    model: c.model.clone(),
+                    strength: entry.strength,
+                    effort: c.effort,
+                })
+            })
+            .collect();
+        let pick = match list.pick {
+            config::Pick::First => ListPolicy::First,
+            config::Pick::Spread => ListPolicy::Spread,
+        };
+        FrozenList { candidates, pick }
+    }
+}
+
+/// Decision 9a: the user's model lists as a run freezes them at start
+/// (`RunLimits.route_lists`), so edits, rung-2 sessions and reviewers of a running run
+/// use the run's copy, whatever the config says later. Empty lists are not written.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RouteListsFrozen {
+    #[serde(skip_serializing_if = "FrozenList::is_empty")]
+    pub s: FrozenList,
+    #[serde(skip_serializing_if = "FrozenList::is_empty")]
+    pub m: FrozenList,
+    #[serde(skip_serializing_if = "FrozenList::is_empty")]
+    pub hub: FrozenList,
+    #[serde(skip_serializing_if = "FrozenList::is_empty")]
+    pub review: FrozenList,
+    #[serde(skip_serializing_if = "FrozenList::is_empty")]
+    pub scout: FrozenList,
+    #[serde(skip_serializing_if = "FrozenList::is_empty")]
+    pub decider: FrozenList,
+    #[serde(skip_serializing_if = "FrozenList::is_empty")]
+    pub planner: FrozenList,
+    #[serde(skip_serializing_if = "FrozenList::is_empty")]
+    pub orchestrator: FrozenList,
+}
+
+impl RouteListsFrozen {
+    /// `lists` with each candidate's roster strength (a candidate the roster lacks,
+    /// which config already dropped, is left out).
+    pub fn freeze(lists: &config::RouteLists, roster: &[ModelEntry]) -> Self {
+        let f = |list| FrozenList::freeze(list, roster);
+        RouteListsFrozen {
+            s: f(&lists.s),
+            m: f(&lists.m),
+            hub: f(&lists.hub),
+            review: f(&lists.review),
+            scout: f(&lists.scout),
+            decider: f(&lists.decider),
+            planner: f(&lists.planner),
+            orchestrator: f(&lists.orchestrator),
+        }
+    }
+
+    /// Every list with its table name, in config order.
+    pub fn named(&self) -> [(&'static str, &FrozenList); 8] {
+        [
+            ("s", &self.s),
+            ("m", &self.m),
+            ("hub", &self.hub),
+            ("review", &self.review),
+            ("scout", &self.scout),
+            ("decider", &self.decider),
+            ("planner", &self.planner),
+            ("orchestrator", &self.orchestrator),
+        ]
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.named().iter().all(|(_, list)| list.is_empty())
+    }
+}
+
+/// Decision 9a: the class-list choice behind a task's worker route, snapshotted when it
+/// is made (at the build, an edit or rung 2) for the routing history: the list, each
+/// candidate with why it was skipped (`None`: usable), and the index chosen (`None`:
+/// every candidate was skipped, or the task's route is its own, so today's resolution
+/// holds). `slot` is a `spread` list's rotation position.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListPick {
+    pub candidates: Vec<RoutingCandidate>,
+    pub chosen: Option<u32>,
+    pub pick: ListPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<u32>,
+}
+
+impl ListPick {
+    /// The chosen candidate's route.
+    pub fn chosen_route(&self) -> Option<&Route> {
+        let k = self.chosen? as usize;
+        self.candidates.get(k).map(|c| &c.route)
     }
 }
 

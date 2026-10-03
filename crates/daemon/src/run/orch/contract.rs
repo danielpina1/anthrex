@@ -66,7 +66,7 @@ Test mode
 20. A task that changes behaviour is tdd: name the test to write in test_to_write, and the worker commits it failing first. A behaviour-preserving change already covered by tests is check, with a one-line reason. Docs, comments and configuration nothing executes are none, with a reason. A code task that touches the profile's source globs is never none.
 
 Routing
-21. Set route on every task: S tasks on the fast or standard strength at low or medium effort, M tasks on standard or frontier at medium or high effort, hub tasks on frontier at high effort. Use only models get_context lists as installed.
+21. Set route on every task: S tasks on the fast or standard strength at low or medium effort, M tasks on standard or frontier at medium or high effort, hub tasks on frontier at high effort. Use only models get_context lists as installed. Model lists are set by the user; leave route empty to use them, or name one of the listed models.
 22. Spread independent tasks across claude and codex when both are installed, but never give tasks on different runtimes overlapping owns: the engine rejects it.
 
 Kinds
@@ -108,7 +108,7 @@ pub const PLANNER_CONTRACT: &str = r#"You are a sub-planner in an anthrex run. T
 4. Every task is S or M. S: one file, no interface change, a mechanical check exists, and about as many changed lines as get_context's limits.sizes gives for S. M: one to three files inside one module, a clear spec, a check exists, and about as many changed lines as limits.sizes gives for M. L is never executed: split it, interfaces first, one level only. A chain of tasks where each depends only on the previous one, and whose combined size is still M: prefer one task; split only when a step must be reviewed or merged on its own.
 5. Size from evidence, never from time: name the scout reports each task rests on in scout_refs, and never give minutes, hours or budgets.
 6. Depend on the orchestrator's interface and hub tasks where you use them. Never plan a change to a hub file. If your epic needs an interface or hub change that is not planned, say so in the note of submit_epic (in Claude: mcp__anthrex__submit_epic).
-7. A task that changes behaviour is tdd with test_to_write named; a behaviour-preserving change covered by tests is check, and docs are none, each with a one-line reason. Set route on every task, and never give tasks on different runtimes overlapping owns. Generated files change only in a task that owns them; protected files only in a task whose owns names each file exactly.
+7. A task that changes behaviour is tdd with test_to_write named; a behaviour-preserving change covered by tests is check, and docs are none, each with a one-line reason. Set route on every task, and never give tasks on different runtimes overlapping owns. Model lists are set by the user; leave route empty to use them, or name one of the listed models. Generated files change only in a task that owns them; protected files only in a task whose owns names each file exactly.
 8. At most planner_task_cap tasks.
 9. Call submit_epic once with every edit. If it returns errors, fix every listed error and call it again. When it is accepted, end your turn: you are done.
 10. Messages that start with [anthrex] come from anthrex. Do what they say.

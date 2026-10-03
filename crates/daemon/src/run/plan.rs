@@ -206,6 +206,7 @@ pub fn run_limits(
         class_routes: Default::default(),
         path_weights: None,
         thresholds: Default::default(),
+        route_lists: Default::default(),
     }
 }
 
@@ -383,6 +384,9 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         ));
         tasks.push(task);
     }
+
+    // Milestone 9.5 decision 9a: the class lists route the tasks that leave it to them.
+    super::route_pick::pick_all(&limits, &config.models, &mut tasks);
 
     let touched: BTreeSet<String> = tasks.iter().map(|t| t.spec.id.clone()).collect();
     errors.extend(validate_tasks(
