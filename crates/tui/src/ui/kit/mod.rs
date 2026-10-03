@@ -5,6 +5,7 @@
 //! forget. Pure: no I/O, no clock (`AGENTS.md` hard rule 5).
 
 mod dialog;
+mod editor;
 mod hints;
 mod pane;
 mod rows;
@@ -13,6 +14,7 @@ mod scroll;
 mod text;
 
 pub use dialog::{choice, choice_in, dialog_area, dialog_frame};
+pub use editor::{editor, editor_position};
 pub use hints::{Hint, destructive, hints, hints_joined};
 pub use pane::{bar_role, pane_frame, selection_bar};
 pub use rows::{labelled_rows, run_name, run_name_in, scroll_marks};
