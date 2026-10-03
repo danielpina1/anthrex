@@ -10,6 +10,8 @@ mod rounds;
 mod status;
 mod status_orch;
 
+pub(crate) use status::printable;
+
 use finish::{accept, confirm_id};
 
 use crate::client::CliClient;

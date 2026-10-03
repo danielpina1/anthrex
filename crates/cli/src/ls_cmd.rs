@@ -2,23 +2,55 @@
 //! project's idle orchestrator (milestone 9.3, KG §7).
 
 use std::path::Path;
+use std::time::Duration;
 
 use proto::{IdleOrchestrator, WindowInfo, safe_text};
 
 use crate::client;
-use crate::run_cmd::list_runs;
+use crate::run_cmd::{list_runs, printable};
 
 pub async fn ls(socket: &Path, json: bool) -> anyhow::Result<()> {
+    let (out, note) = output(socket, json, LS_RUNS_TIMEOUT).await?;
+    print!("{out}");
+    if let Some(note) = note {
+        eprintln!("{note}");
+    }
+    Ok(())
+}
+
+/// How long `ls` waits for the runs list after its handshake. The daemon answers `List`
+/// from its in-memory snapshot; a wait near this means the run service is busy or stuck.
+pub const LS_RUNS_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What `ls` prints to stdout, and the note it prints to stderr when the runs list did
+/// not come within `wait`.
+async fn output(
+    socket: &Path,
+    json: bool,
+    wait: Duration,
+) -> anyhow::Result<(String, Option<String>)> {
     let mut c = client::CliClient::connect(socket).await?;
     let windows = std::mem::take(&mut c.windows);
     // `--json` is the window list alone, as before: it asks for no runs.
-    let idle = if json {
-        Vec::new()
-    } else {
-        list_runs(c).await?.idle_orchestrators
+    if json {
+        return Ok((text(&windows, &[], json)?, None));
+    }
+    // The table does not depend on the run service: a refused or late runs list leaves
+    // the idle lines out and says why, drawn safe (decision 33).
+    let listed = tokio::time::timeout(wait, list_runs(c))
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("timed out waiting for the daemon")));
+    let (idle, note) = match listed {
+        Ok(runs) => (runs.idle_orchestrators, None),
+        Err(e) => {
+            let why = printable(&e.to_string());
+            (
+                Vec::new(),
+                Some(format!("anthrex: no idle orchestrators listed: {why}")),
+            )
+        }
     };
-    print!("{}", text(&windows, &idle, json)?);
-    Ok(())
+    Ok((text(&windows, &idle, json)?, note))
 }
 
 /// What `ls` prints: the windows as pretty JSON, or the window table and then one line
@@ -47,8 +79,14 @@ fn text(windows: &[WindowInfo], idle: &[IdleOrchestrator], json: bool) -> anyhow
 mod tests {
     use proto::{IdleOrchestrator, RunState, Runtime, Status, WindowInfo};
 
-    use super::text;
+    use std::time::Duration;
+
+    use proto::{ClientMsg, DaemonMsg, RunRequest};
+    use proto::{read_frame, write_frame};
+
+    use super::{LS_RUNS_TIMEOUT, output, text};
     use crate::client::format_table;
+    use crate::run_cmd::printable;
 
     fn win(id: u32, name: &str) -> WindowInfo {
         WindowInfo {
@@ -120,5 +158,79 @@ mod tests {
 
         let json = serde_json::to_string_pretty(&windows).unwrap();
         assert_eq!(text(&windows, &chains, true).unwrap(), format!("{json}\n"));
+    }
+
+    /// A daemon on a real socket that greets with two windows, reads `ls`'s runs
+    /// request, and answers `reply`, or nothing for 30 s.
+    fn fake_daemon(socket: &std::path::Path, reply: Option<DaemonMsg>) -> Vec<WindowInfo> {
+        let windows = vec![win(4, "api"), win(7, "web")];
+        let listener = tokio::net::UnixListener::bind(socket).unwrap();
+        let greeting = windows.clone();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (mut rd, mut wr) = stream.into_split();
+            let hello = read_frame::<_, ClientMsg>(&mut rd).await.unwrap().unwrap();
+            assert!(matches!(hello, ClientMsg::Hello { .. }));
+            let welcome = DaemonMsg::Welcome {
+                daemon_version: "test".into(),
+                windows: greeting,
+            };
+            write_frame(&mut wr, &welcome).await.unwrap();
+            let request = read_frame::<_, ClientMsg>(&mut rd).await.unwrap().unwrap();
+            assert_eq!(request, ClientMsg::Run(RunRequest::List));
+            match reply {
+                Some(reply) => write_frame(&mut wr, &reply).await.unwrap(),
+                None => tokio::time::sleep(Duration::from_secs(30)).await,
+            }
+        });
+        windows
+    }
+
+    /// Final fix wave (task 8 m2): a refused runs list still prints the window table,
+    /// and the daemon's error goes to stderr drawn through `printable`.
+    #[tokio::test]
+    async fn ls_prints_its_table_when_the_runs_list_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("d.sock");
+        let refused = DaemonMsg::Error {
+            request: "run".into(),
+            message: "the run service is down\u{1b}[2J".into(),
+        };
+        let windows = fake_daemon(&socket, Some(refused));
+        let bound = LS_RUNS_TIMEOUT + proto::HANDSHAKE_TIMEOUT + Duration::from_secs(2);
+        let (out, note) = tokio::time::timeout(bound, output(&socket, false, LS_RUNS_TIMEOUT))
+            .await
+            .expect("answered")
+            .expect("the table prints");
+        assert_eq!(out, format_table(&windows));
+        let note = note.expect("a note");
+        assert_eq!(
+            note,
+            format!(
+                "anthrex: no idle orchestrators listed: {}",
+                printable("the run service is down\u{1b}[2J")
+            )
+        );
+        assert!(!note.contains('\u{1b}'), "{note:?}");
+    }
+
+    /// Final fix wave (task 8 m2): a runs list that never comes is waited for `wait`
+    /// only, then the table prints with a note.
+    #[tokio::test]
+    async fn ls_bounds_its_wait_for_the_runs_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("d.sock");
+        let windows = fake_daemon(&socket, None);
+        let wait = Duration::from_millis(300);
+        let (out, note) =
+            tokio::time::timeout(Duration::from_secs(5), output(&socket, false, wait))
+                .await
+                .expect("bounded")
+                .expect("the table prints");
+        assert_eq!(out, format_table(&windows));
+        assert_eq!(
+            note.as_deref(),
+            Some("anthrex: no idle orchestrators listed: timed out waiting for the daemon")
+        );
     }
 }
