@@ -18,6 +18,9 @@ use super::{Mcp, anthrex, tempdir};
 pub struct StubDaemon {
     pub socket: PathBuf,
     calls: Arc<Mutex<Vec<ToolCall>>>,
+    /// Milestone 9.5 decision 38: each `RunRequest::McpReady`'s `(run_id, window_id)`,
+    /// answered `Done` as the daemon answers it.
+    readies: Arc<Mutex<Vec<(String, u32)>>>,
     _dir: tempfile::TempDir,
 }
 
@@ -35,6 +38,8 @@ impl StubDaemon {
         let listener = UnixListener::bind(&socket).unwrap();
         let calls = Arc::new(Mutex::new(Vec::new()));
         let record = calls.clone();
+        let readies = Arc::new(Mutex::new(Vec::new()));
+        let ready_record = readies.clone();
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { return };
@@ -48,7 +53,14 @@ impl StubDaemon {
                         windows: vec![],
                     },
                 );
-                if let Some(ClientMsg::Run(RunRequest::Tool(call))) = read_frame(&mut stream) {
+                let request = read_frame(&mut stream);
+                if let Some(ClientMsg::Run(RunRequest::McpReady { run_id, window_id })) = request {
+                    ready_record.lock().unwrap().push((run_id, window_id));
+                    let done = RunReply::done(proto::run_wire::request::MCP_READY, "");
+                    write_frame(&mut stream, &DaemonMsg::Run(done));
+                    continue;
+                }
+                if let Some(ClientMsg::Run(RunRequest::Tool(call))) = request {
                     let n = {
                         let mut calls = record.lock().unwrap();
                         calls.push(call);
@@ -63,12 +75,17 @@ impl StubDaemon {
         Self {
             socket,
             calls,
+            readies,
             _dir: dir,
         }
     }
 
     pub fn calls(&self) -> Vec<ToolCall> {
         self.calls.lock().unwrap().clone()
+    }
+
+    pub fn readies(&self) -> Vec<(String, u32)> {
+        self.readies.lock().unwrap().clone()
     }
 
     pub fn mcp(&self, role: &'static str, task: &'static str) -> Mcp {

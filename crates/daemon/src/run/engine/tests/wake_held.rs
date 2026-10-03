@@ -37,6 +37,7 @@ fn a_held_wake_shows_until_it_is_delivered_or_released() {
         digest_revision: fx.run().orch.digest_rev,
         notes_seq: 0,
         request: None,
+        first_turn: false,
     }));
     assert!(!attention(&fx).iter().any(|a| a == WAKE_HELD));
     // Released by the driver (the wake-up was dropped, or the prompt ended).

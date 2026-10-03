@@ -43,6 +43,10 @@ use crate::run::engine::{EventKind, OpKind, OrchEvent};
 use crate::run::orch::contract::{WAKE_CUT_MARKER, WAKE_MAX_BYTES};
 use crate::run::orch::contract_rounds::REQUEST_WAKE_MAX_BYTES;
 
+#[path = "wake_first_turn.rs"]
+mod first_turn;
+use first_turn::FIRST_TURN;
+
 /// Decision 39: the paste, then this long, then the `\r` that submits it.
 pub const SUBMIT_DELAY: Duration = Duration::from_millis(200);
 
@@ -128,6 +132,8 @@ pub(super) struct Wakes {
     /// finds the engine no longer holds that round's request.
     pasted: std::sync::Mutex<HashMap<String, (u32, u64)>>,
     next_generation: std::sync::atomic::AtomicU64,
+    /// Milestone 9.5 decision 38: why each run's wake-up waits, as last logged.
+    pub(super) waits: first_turn::Waits,
     /// Tests only: run between a check's two reads (the generations, then the engine).
     #[cfg(test)]
     pub(super) between_reads: std::sync::Mutex<Option<Box<dyn Fn() + Send>>>,
@@ -352,8 +358,9 @@ impl RunService {
         run_id: String,
         window_id: u32,
         text: String,
-        (digest_revision, notes_seq, request): (u64, u64, Option<u32>),
+        (digest_revision, notes_seq, request, first_turn): (u64, u64, Option<u32>, bool),
     ) {
+        let request = first_turn::kept_as(request, first_turn);
         let quiet = crate::lock(&self.state)
             .runs
             .get(&run_id)
@@ -440,7 +447,7 @@ impl RunService {
                 window(w.window_id).is_some_and(|win| {
                     let input = self.manager.last_client_input(w.window_id);
                     let open = self.manager.attention_open(w.window_id);
-                    ready(win, input, w.quiet, open)
+                    ready(win, input, w.quiet, open) && self.wakes.signalled(&w.run_id, win)
                 })
             })
             .collect();
@@ -507,7 +514,7 @@ impl RunService {
                     launches: o.launches,
                     notes: !o.notes.is_empty(),
                     last_note_seq: o.last_note_seq,
-                    request: run.orch.request_wake.as_ref().map(|_| run.round()),
+                    request: first_turn::request_held(run),
                     terminal: run.state.is_terminal(),
                     launching: run.pending_ops.values().any(|p| {
                         matches!(
@@ -534,7 +541,8 @@ impl RunService {
                         run_id,
                         digest_revision: p.digest_revision,
                         notes_seq: p.notes_seq,
-                        request: p.request,
+                        request: p.request.filter(|n| *n != FIRST_TURN),
+                        first_turn: p.request == Some(FIRST_TURN),
                     }));
                 }
                 Ok(()) => {}

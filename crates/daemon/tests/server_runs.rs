@@ -173,9 +173,9 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
     );
 }
 
-/// Milestone 9.5 task 2: until their tasks land, `McpReady` is answered `Done` and
-/// changes nothing (task M9.5.5a), and `Stats`' `apply`, `dismiss` and `read_only` are
-/// ignored (task M9.5.11).
+/// Milestone 9.5 task 2: `McpReady` from a window that is no run's orchestrator is
+/// answered `Done` and changes nothing (task M9.5.5a's caller check), and `Stats`'
+/// `apply`, `dismiss` and `read_only` are ignored until task M9.5.11.
 #[tokio::test(flavor = "multi_thread")]
 async fn mcp_ready_is_answered_and_new_stats_fields_are_ignored() {
     use proto::run_wire::request;

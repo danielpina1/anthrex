@@ -90,6 +90,7 @@ pub fn orchestrator() -> OrchestratorRecord {
         launches: 0,
         routing: Default::default(),
         usage_at_adopt: None,
+        first_turn_pending: false,
     }
 }
 

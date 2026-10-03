@@ -447,6 +447,19 @@ Smoke stage 11j (`scripts/pty_smoke_keep_going.py`), its daemon its own child un
 | Each client still open in the `finally` | `scripts/pty_smoke_pr.py` (`_reap`, `REAP_WAIT`; shared by 11i and 11j since M9.3's final fix wave) | `REAP_WAIT` 5 s | A closed client exits when its pty hangs up, in well under a frame; the bound is a hang guard. It reaps the client's exact pid only and signals nothing, so a client still running past it is left to the stage's daemon stop. | **Recorded.** A hang guard (task 12 review m5). |
 | The stage's other `anthrex` calls: `profile status --json`, `new`, `ls --json` and every `run status --json` poll | `scripts/pty_smoke_keep_going.py` (`cmd()`'s default) | `RUN_CMD_TIMEOUT` 600 s | Stage 11c's `RUN_CMD_TIMEOUT`, imported: above each call's own worst case, the largest of them `new`'s 20.25 s (`ensure_daemon`, the handshake and `CREATE_WINDOW_REPLY_TIMEOUT`, row 42); `run status` is one request (`RUN_REQUEST_TIMEOUT`, 180 s). | **Recorded** (task 12 review m5). |
 
+### Recorded, from M9.5.5a (2026-10-03)
+
+The orchestrator's first turn (decision 38). `FIRST_TURN_WAIT_SECS` (60 s) is reducer time, injected through `Event.now` (`engine/tests/first_turn.rs`), not a wall-clock bound. Measured: `driver/wake_first_turn_tests.rs` takes about 4 s (the quiet wait), `mcp/tests/stdio.rs` under 1 s, `fake-agent/tests/pty_first_message.rs` about 3 s.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| The stand-in `claude` window reaching `Idle` with no signal | `daemon/src/run/driver/wake_first_turn_tests.rs` (`an_unsignalled_window_…`) | `QUIET_AFTER + SLACK` (3 + 5 s), the test calling `WindowManager::tick` every 50 ms | Its one line of output makes it `Working`; the first tick `QUIET_AFTER` after that output makes it `Idle`. `SLACK` covers the stand-in's start (a fresh script's first exec on macOS, about 0.5 s). | **Recorded.** A hang guard. |
+| The first turn's `OrchestratorWoken` after the gate opens | the same file, both delivering tests | `SUBMIT_DELAY + SLACK` (0.2 + 5 s) | The check that takes it spawns the paste, which writes, sleeps `SUBMIT_DELAY`, writes the `\r` and sends the event: two queued writes and one sleep. | **Recorded.** |
+| Nothing pasted: the absence checks | the same file | `2 × SUBMIT_DELAY` (0.4 s) after the last check, then the channel is read | A paste the gate let through would have sent its event `SUBMIT_DELAY` after the check that took it, on a task already spawned by then. The wait only gives that task its time; what the test synchronises on is the check itself (called directly) and the waiting wake-up still kept (`Wakes::pending`). | **Recorded.** |
+| The orchestrator server's `McpReady` at the stub | `mcp/tests/stdio.rs` (`the_orchestrator_server_announces_its_tools_once`) | `support::DEADLINE` (10 s); then 200 ms before counting "still one" and "the worker sent none" | `notify_ready` is bounded by `READY_TIMEOUT` (5 s: connect, handshake, one reply), and starts at the first `tools/list`'s answer. The 200 ms waits cover only a notice spawned at the third listing (none may be) or by a worker (none may be); the presence wait is the deadline loop. | **Recorded.** |
+| The prompt-less fake's `SessionStart` hook, or Codex's ready title | `fake-agent/tests/pty_first_message.rs` | `MCP_RUN` (150 s) | Its start-up `tools/list` is one MCP conversation (`MCP_CALL_TIMEOUT`, 120 s), then the server's exit (`EXIT_GRACE`, 2 s, after which its group is killed), then one hook (`STEP_TIMEOUT`, 5 s): 127 s. | **Recorded.** A hang guard. |
+| The fake's exit after the first message | the same | `RUN` (20 s) | The paste is read at once; then `UserPromptSubmit` (one hook, `STEP_TIMEOUT`) and the script's `expect` and `exit`. | **Recorded.** |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |

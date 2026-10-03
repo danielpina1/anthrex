@@ -1,6 +1,7 @@
 //! The `mcp_call` step (M8a.20): spawn the session's configured MCP server, then
 //! `initialize` (protocol `2025-06-18`), `notifications/initialized` and one
-//! `tools/call`, over newline-delimited JSON-RPC on the server's stdio.
+//! `tools/call`, over newline-delimited JSON-RPC on the server's stdio. Milestone 9.5
+//! decision 31: [`list_tools`], the same with one `tools/list`, as a CLI does at start.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -82,48 +83,26 @@ pub fn log(script: &str, tool: &str, args: &Value, reply: &Reply, took: Duration
         .with_context(|| format!("append to {}", path.to_string_lossy()))
 }
 
-/// Calls `tool` with `args` on a fresh `server` process.
-pub fn call(server: &McpServer, tool: &str, args: &Value) -> Result<Reply> {
-    let mut command = Command::new(&server.command);
-    command
-        .args(&server.args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
-    crate::isolate_process_group(&mut command);
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("spawn the MCP server {}", server.command))?;
-    let group = child.id() as libc::pid_t;
-    let result = converse(&mut child, tool, args);
-    finish(&mut child, group);
-    result
+/// Lists the tools of a fresh `server` process: their names.
+pub fn list_tools(server: &McpServer) -> Result<Vec<String>> {
+    let reply = with_server(server, |child| converse(child, "tools/list", json!({})))?;
+    if let Some(error) = reply.get("error") {
+        bail!("the MCP server refused tools/list: {error}");
+    }
+    let tools = reply["result"]["tools"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    Ok(tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+        .collect())
 }
 
-fn converse(child: &mut Child, tool: &str, args: &Value) -> Result<Reply> {
-    let deadline = Instant::now() + MCP_CALL_TIMEOUT;
-    let mut stdin = child.stdin.take().context("MCP stdin was not piped")?;
-    let lines = read_lines(child.stdout.take().context("MCP stdout was not piped")?);
-
-    let init = json!({
-        "protocolVersion": PROTOCOL_VERSION,
-        "capabilities": {},
-        "clientInfo": {"name": "fake-agent", "version": "0"},
-    });
-    send(&mut stdin, &request(1, "initialize", init))?;
-    let reply = response(&lines, 1, deadline)?;
-    if let Some(error) = reply.get("error") {
-        bail!("the MCP server refused initialize: {error}");
-    }
-    send(
-        &mut stdin,
-        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
-    )?;
+/// Calls `tool` with `args` on a fresh `server` process.
+pub fn call(server: &McpServer, tool: &str, args: &Value) -> Result<Reply> {
     let params = json!({"name": tool, "arguments": args});
-    send(&mut stdin, &request(2, "tools/call", params))?;
-    let reply = response(&lines, 2, deadline)?;
-    drop(stdin);
-
+    let reply = with_server(server, |child| converse(child, "tools/call", params))?;
     if let Some(error) = reply.get("error") {
         let text = error["message"].as_str().unwrap_or("JSON-RPC error");
         return Ok(Reply {
@@ -146,6 +125,50 @@ fn converse(child: &mut Child, tool: &str, args: &Value) -> Result<Reply> {
         ok: result["isError"] != json!(true),
         text,
     })
+}
+
+/// Runs `talk` against a fresh `server` process, then lets it exit (or kills its group).
+fn with_server<T>(server: &McpServer, talk: impl FnOnce(&mut Child) -> Result<T>) -> Result<T> {
+    let mut command = Command::new(&server.command);
+    command
+        .args(&server.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    crate::isolate_process_group(&mut command);
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("spawn the MCP server {}", server.command))?;
+    let group = child.id() as libc::pid_t;
+    let result = talk(&mut child);
+    finish(&mut child, group);
+    result
+}
+
+/// `initialize`, `notifications/initialized`, then one `method` request: its response.
+fn converse(child: &mut Child, method: &str, params: Value) -> Result<Value> {
+    let deadline = Instant::now() + MCP_CALL_TIMEOUT;
+    let mut stdin = child.stdin.take().context("MCP stdin was not piped")?;
+    let lines = read_lines(child.stdout.take().context("MCP stdout was not piped")?);
+
+    let init = json!({
+        "protocolVersion": PROTOCOL_VERSION,
+        "capabilities": {},
+        "clientInfo": {"name": "fake-agent", "version": "0"},
+    });
+    send(&mut stdin, &request(1, "initialize", init))?;
+    let reply = response(&lines, 1, deadline)?;
+    if let Some(error) = reply.get("error") {
+        bail!("the MCP server refused initialize: {error}");
+    }
+    send(
+        &mut stdin,
+        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )?;
+    send(&mut stdin, &request(2, method, params))?;
+    let reply = response(&lines, 2, deadline)?;
+    drop(stdin);
+    Ok(reply)
 }
 
 fn request(id: u64, method: &str, params: Value) -> Value {

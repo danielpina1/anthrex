@@ -334,6 +334,7 @@ fn the_round_wake_survives_notes_and_is_cleared_once_delivered() {
             digest_revision: revision,
             notes_seq: seq,
             request,
+            first_turn: false,
         }))
     };
     woken(&mut fx, None);

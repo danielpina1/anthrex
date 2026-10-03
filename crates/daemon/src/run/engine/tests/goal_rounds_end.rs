@@ -266,6 +266,7 @@ fn a_late_woken_of_a_rejected_round_leaves_the_next_rounds_request() {
             digest_revision: revision,
             notes_seq: seq,
             request: Some(request),
+            first_turn: false,
         }))
     };
     woken(&mut fx, 2);

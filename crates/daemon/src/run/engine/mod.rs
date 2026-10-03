@@ -54,6 +54,7 @@ pub(crate) mod early;
 mod effect;
 mod event;
 mod fallback;
+mod first_turn;
 mod fixes;
 // Milestone 9.1 decisions 17-19: tier 3 (`request` is 9.2's entry).
 pub(crate) mod full;
@@ -263,7 +264,14 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             return (state, fx);
         }
         // Milestone 9 decision 29: a promotion recorded before milestone 9.
-        EventKind::Tick => promote::on_tick(&mut state, now, &mut fx),
+        EventKind::Tick => {
+            promote::on_tick(&mut state, now, &mut fx);
+            // Milestone 9.5 decision 38: a first turn waiting past its bound.
+            state
+                .runs
+                .values_mut()
+                .for_each(|run| first_turn::tick(run, now));
+        }
     }
     // M9.9 review fixes, I2 and M-b: an orchestrator call's own blocks are compared
     // away (the run before its handler's scheduler pass, `quiet_base`); what the

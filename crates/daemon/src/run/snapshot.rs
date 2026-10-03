@@ -253,6 +253,10 @@ pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
     if run.orch.wake_held && !terminal {
         lines.push(crate::run::orch::WAKE_HELD.to_string());
     }
+    // Milestone 9.5 decisions 38 and 39: the first turn waited past its bound.
+    if run.orch.first_turn_late && !terminal {
+        lines.push(crate::run::orch::START_PROMPT.to_string());
+    }
     lines
 }
 

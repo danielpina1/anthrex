@@ -101,11 +101,23 @@ pub struct RunOrch {
     /// held until the orchestrator is woken with it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_wake: Option<String>,
+    /// Milestone 9.5 decision 38, in memory only, reset by every launch: `McpReady` came;
+    /// since when a pending first turn waits; whether past `FIRST_TURN_WAIT_SECS`.
+    #[serde(skip)]
+    pub mcp_ready: bool,
+    #[serde(skip)]
+    pub first_turn_since: Option<u64>,
+    #[serde(skip)]
+    pub first_turn_late: bool,
 }
 
 /// The attention line of a held wake-up ([`RunOrch::wake_held`]).
 pub const WAKE_HELD: &str =
     "orchestrator wake-up held: its window was at a prompt; type in it to continue";
+
+/// Milestone 9.5 decision 39's attention line (while [`RunOrch::first_turn_late`]).
+pub const START_PROMPT: &str =
+    "orchestrator waits at a start prompt; focus its window (C-b T, Enter) to answer it";
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +191,9 @@ pub struct OrchestratorRecord {
     /// session the run launched, and again after a restore (the ledger restarts).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_at_adopt: Option<TokenUsage>,
+    /// Milestone 9.5 decision 38: `first_prompt` waits to be pasted as the first turn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub first_turn_pending: bool,
 }
 
 impl OrchestratorRecord {
@@ -496,6 +511,7 @@ impl OrchestratorRecord {
             launches: 0,
             routing: roles::RoleSnapshot::default(),
             usage_at_adopt: None,
+            first_turn_pending: false,
         }
     }
 }

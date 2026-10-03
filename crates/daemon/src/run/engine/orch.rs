@@ -86,10 +86,19 @@ pub(super) fn on_orch_event(
             digest_revision,
             notes_seq,
             request,
+            first_turn,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
                 run.orch.wake_held = false;
-                wake::woken(run, digest_revision, notes_seq, request);
+                match first_turn {
+                    true => super::first_turn::woken(run),
+                    false => wake::woken(run, digest_revision, notes_seq, request),
+                }
+            }
+        }
+        OrchEvent::McpReady { run_id, window_id } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                super::first_turn::mcp_ready(run, window_id);
             }
         }
         OrchEvent::ChainWindowGone { chain, window_id } => {

@@ -48,7 +48,7 @@ fn orchestrator_launching(run: &mut Run) {
     (record.window_id, record.launch_op) = (None, Some(ORCH_OP));
     let route = record.route.clone();
     let kind = OpKind::CreateOrchestrator {
-        spec: Box::new(orchestrator_window_spec(run, &route, "plan")),
+        spec: Box::new(orchestrator_window_spec(run, &route)),
         role: Box::new(orchestrator_role(run, &route)),
         project: run.project.clone(),
     };

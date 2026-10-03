@@ -14,8 +14,8 @@ use super::RunService;
 use super::adapt::BuildError;
 use super::build::Shape;
 use super::delivery::{DeliveryRequestOf, DeliveryStart};
-use crate::run::engine::EventKind;
 use crate::run::engine::actions::{self, ActionNode};
+use crate::run::engine::{EventKind, OrchEvent};
 use crate::run::git::{self, Git};
 use crate::run::model::Run;
 use crate::run::plan::parse_plan;
@@ -171,8 +171,20 @@ impl RunService {
                 })
                 .await,
             ),
-            // Milestone 9.5 decision 38: acknowledged and ignored until task M9.5.5a.
-            RunRequest::McpReady { .. } => RunReply::done(request::MCP_READY, ""),
+            // Milestone 9.5 decision 38: only the run's orchestrator window, as the
+            // manager has it, tells the engine; any other notice changes nothing.
+            RunRequest::McpReady { run_id, window_id } => {
+                let ours = self.manager.list().iter().any(|w| {
+                    w.id == window_id
+                        && w.run.as_ref().is_some_and(|r| {
+                            r.run_id == run_id && r.role == proto::AgentRole::Orchestrator
+                        })
+                });
+                if ours {
+                    self.send(EventKind::Orch(OrchEvent::McpReady { run_id, window_id }));
+                }
+                RunReply::done(request::MCP_READY, "")
+            }
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }

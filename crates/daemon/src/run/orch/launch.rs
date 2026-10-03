@@ -150,15 +150,16 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
 }
 
 /// Decision 5: `<h4>/orchestrator` in the user's own checkout, on the route's runtime
-/// and model (none for the CLI's default), with its first prompt.
-pub fn orchestrator_window_spec(run: &Run, route: &Route, first_prompt: &str) -> WindowSpec {
+/// and model (none for the CLI's default). Milestone 9.5 decision 38: with no prompt;
+/// the first prompt is pasted once the window is ready (`engine/wake.rs`).
+pub fn orchestrator_window_spec(run: &Run, route: &Route) -> WindowSpec {
     WindowSpec {
         name: Some(format!("{}/orchestrator", run.short())),
         runtime: route.runtime,
         cwd: run.root.clone(),
         worktree_branch: None,
         model: (!route.model.is_empty()).then(|| route.model.clone()),
-        initial_prompt: Some(first_prompt.to_string()),
+        initial_prompt: None,
     }
 }
 

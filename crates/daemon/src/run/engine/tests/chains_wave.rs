@@ -189,7 +189,12 @@ fn a_restart_whose_window_is_gone_launches_a_fresh_session() {
     let OpKind::CreateOrchestrator { spec, .. } = &launches[0].1 else {
         unreachable!()
     };
-    assert_eq!(spec.initial_prompt.as_deref(), Some("the handoff of 3f9a"));
+    assert_eq!(spec.initial_prompt, None);
+    let o = fx.run().orch.orchestrator.as_ref().unwrap();
+    assert_eq!(
+        (o.first_prompt.as_str(), o.first_turn_pending),
+        ("the handoff of 3f9a", true)
+    );
     let run = fx.run();
     assert!(run.orch.request_wake.is_some(), "round 2's request waits");
     assert!(

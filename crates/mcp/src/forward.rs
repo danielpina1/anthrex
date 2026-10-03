@@ -92,6 +92,37 @@ pub async fn forward(opts: &McpOptions, tool: &str, args: serde_json::Value) -> 
     }
 }
 
+/// Milestone 9.5 decision 38: tells the daemon that `opts`' server has answered its
+/// first `tools/list`: a fresh connection, `Hello`, one `RunRequest::McpReady`, then its
+/// reply, each bounded. Every failure is ignored; the daemon's bound covers a lost one.
+pub async fn notify_ready(opts: &McpOptions) {
+    let send = async {
+        let stream = UnixStream::connect(&opts.socket).await.ok()?;
+        let (mut rd, mut wr) = stream.into_split();
+        let hello = ClientMsg::Hello {
+            proto_version: PROTO_VERSION,
+            client: ClientKind::Mcp,
+        };
+        write_frame(&mut wr, &hello).await.ok()?;
+        handshake(&mut rd).await.ok()?;
+        let ready = RunRequest::McpReady {
+            run_id: opts.run_id.clone(),
+            window_id: opts.window_id,
+        };
+        write_frame(&mut wr, &ClientMsg::Run(ready)).await.ok()?;
+        loop {
+            match read_frame::<_, DaemonMsg>(&mut rd).await.ok()?? {
+                DaemonMsg::Run(RunReply::Done { .. }) | DaemonMsg::Error { .. } => return Some(()),
+                _ => continue,
+            }
+        }
+    };
+    let _ = tokio::time::timeout(READY_TIMEOUT, send).await;
+}
+
+/// The bound on [`notify_ready`] as a whole: a connect, the handshake and one reply.
+pub const READY_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// What the agent reads when the daemon refuses the handshake. The daemon only refuses
 /// a `Hello` over a protocol version mismatch, and its own text names a command.
 pub const VERSION_MISMATCH: &str =

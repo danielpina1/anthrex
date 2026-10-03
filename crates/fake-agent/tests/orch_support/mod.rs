@@ -30,6 +30,18 @@ pub fn strings(values: &[&str]) -> Vec<String> {
 /// `claude_orchestrator_argv_is_exact` and `codex_orchestrator_argv_is_exact` shapes):
 /// its `anthrex mcp` server is `exe`, on `socket`.
 pub fn orch_argv(runtime: Runtime, exe: &Path, socket: &Path, cwd: &Path) -> Vec<String> {
+    orch_argv_with(runtime, exe, socket, cwd, Some("plan the goal"))
+}
+
+/// [`orch_argv`] with `prompt` as the window's initial prompt; `None` is how the
+/// daemon launches an orchestrator since milestone 9.5 decision 38.
+pub fn orch_argv_with(
+    runtime: Runtime,
+    exe: &Path,
+    socket: &Path,
+    cwd: &Path,
+    prompt: Option<&str>,
+) -> Vec<String> {
     let role = RoleLaunch {
         run_ref: RunRef {
             run_id: RUN_ID.into(),
@@ -64,7 +76,7 @@ pub fn orch_argv(runtime: Runtime, exe: &Path, socket: &Path, cwd: &Path) -> Vec
         cwd: cwd.to_path_buf(),
         worktree_branch: None,
         model: Some(model.into()),
-        initial_prompt: Some("plan the goal".into()),
+        initial_prompt: prompt.map(str::to_string),
     };
     let ctx = LaunchContext {
         window_id: ORCH_WINDOW,
@@ -282,10 +294,22 @@ impl Orch {
 
     pub fn spawn(&self, runtime: Runtime, env: &[(&str, &Path)]) -> Pty {
         let args = orch_argv(runtime, &self.exe, &self.stub.socket, &self.repo);
+        self.spawn_args(&args, env)
+    }
+
+    /// [`Orch::spawn`] with `prompt` as the initial prompt (`None`: none after `--`).
+    /// Only `pty_first_message.rs` uses it.
+    #[allow(dead_code)]
+    pub fn spawn_with(&self, runtime: Runtime, env: &[(&str, &Path)], prompt: Option<&str>) -> Pty {
+        let args = orch_argv_with(runtime, &self.exe, &self.stub.socket, &self.repo, prompt);
+        self.spawn_args(&args, env)
+    }
+
+    fn spawn_args(&self, args: &[String], env: &[(&str, &Path)]) -> Pty {
         let log = self.path("hooks.log");
         let mut env = env.to_vec();
         env.push(("FA_HOOK_LOG", &log));
-        Pty::spawn(&args, &self.repo, &env)
+        Pty::spawn(args, &self.repo, &env)
     }
 
     /// Runs the Claude orchestrator to its exit.

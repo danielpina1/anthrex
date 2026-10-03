@@ -80,12 +80,14 @@ fn promote_creates_an_orchestrator_and_leaves_t1_running() {
     let OpKind::CreateOrchestrator { spec, .. } = &creates[0].1 else {
         unreachable!()
     };
-    let first = spec.initial_prompt.clone().unwrap();
+    // Milestone 9.5 decision 38: pasted once the window is ready, not passed at launch.
+    assert_eq!(spec.initial_prompt, None);
+    assert!(o.first_turn_pending);
+    let first = o.first_prompt.clone();
     assert!(
         first.contains("promoted from the fast path at the user's request"),
         "{first}"
     );
-    assert_eq!(first, o.first_prompt);
     assert_eq!(*fx.task("t1"), t1, "t1 is exactly as it was");
     // The attention line of milestone 8b is gone: the orchestrator shows instead.
     let info = &crate::run::snapshot::snapshot(&fx.state, fx.now).runs[0];

@@ -26,6 +26,8 @@ pub struct Seen {
     pub client: ClientKind,
     pub proto_version: u32,
     pub call: Option<ToolCall>,
+    /// Milestone 9.5 decision 38: a `RunRequest::McpReady`'s `(run_id, window_id)`.
+    pub ready: Option<(String, u32)>,
 }
 
 /// How the stub answers.
@@ -86,6 +88,7 @@ impl StubDaemon {
                         client,
                         proto_version,
                         call: None,
+                        ready: None,
                     });
                     let error = DaemonMsg::Error {
                         request: "hello".into(),
@@ -103,15 +106,26 @@ impl StubDaemon {
                 )
                 .await
                 .unwrap();
-                let call = match read_frame::<_, ClientMsg>(&mut rd).await {
-                    Ok(Some(ClientMsg::Run(RunRequest::Tool(call)))) => Some(call),
-                    _ => None,
+                let (call, ready) = match read_frame::<_, ClientMsg>(&mut rd).await {
+                    Ok(Some(ClientMsg::Run(RunRequest::Tool(call)))) => (Some(call), None),
+                    Ok(Some(ClientMsg::Run(RunRequest::McpReady { run_id, window_id }))) => {
+                        (None, Some((run_id, window_id)))
+                    }
+                    _ => (None, None),
                 };
                 record.lock().unwrap().push(Seen {
                     client,
                     proto_version,
                     call: call.clone(),
+                    ready: ready.clone(),
                 });
+                if ready.is_some() {
+                    // Answered as the daemon answers it (`driver/requests.rs`).
+                    let done = RunReply::done(proto::run_wire::request::MCP_READY, "");
+                    let _ = write_frame(&mut wr, &DaemonMsg::Run(done)).await;
+                    held.push((rd, wr));
+                    continue;
+                }
                 if call.is_none() {
                     continue;
                 }

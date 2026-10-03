@@ -43,6 +43,57 @@ async fn initialize_then_list_tools() {
     assert_eq!(stub.accepted(), 0, "listing never touches the daemon");
 }
 
+/// Milestone 9.5 decision 38: the orchestrator's server tells the daemon, once, that it
+/// has answered `tools/list`, naming its run and window; no other role's does.
+#[tokio::test]
+async fn the_orchestrator_server_announces_its_tools_once() {
+    let stub = StubDaemon::start((true, "unused"));
+    let mut c = Client::start(opts(AgentRole::Orchestrator, stub.socket.clone()));
+    c.initialize().await;
+    assert_eq!(stub.accepted(), 0, "nothing before tools/list");
+    let list = c.request("tools/list", json!({})).await;
+    assert!(list["result"]["tools"].as_array().is_some(), "{list}");
+    c.request("tools/list", json!({})).await;
+    let deadline = std::time::Instant::now() + support::DEADLINE;
+    while stub.seen().is_empty() {
+        assert!(std::time::Instant::now() < deadline, "no McpReady");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    // A third look, after the notice: still one.
+    c.request("tools/list", json!({})).await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let seen = stub.seen();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert_eq!(seen[0].client, ClientKind::Mcp);
+    assert_eq!(seen[0].ready, Some(("add-reset-3f9a".to_string(), 7)));
+    assert_eq!(seen[0].call, None);
+    assert_eq!(stub.accepted(), 1);
+
+    // A worker's server lists its tools and says nothing.
+    let stub = StubDaemon::start((true, "unused"));
+    let mut w = Client::start(opts(AgentRole::Worker, stub.socket.clone()));
+    w.initialize().await;
+    w.request("tools/list", json!({})).await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(stub.accepted(), 0, "{:?}", stub.seen());
+}
+
+/// A notice that cannot reach the daemon is dropped: the server goes on serving.
+#[tokio::test]
+async fn a_lost_ready_notice_changes_nothing() {
+    let dir = tempfile::Builder::new()
+        .prefix("anthrex-mcp-ready-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let mut c = Client::start(opts(AgentRole::Orchestrator, dir.path().join("none.sock")));
+    c.initialize().await;
+    let list = c.request("tools/list", json!({})).await;
+    assert!(list["result"]["tools"].as_array().is_some(), "{list}");
+    let list = c.request("tools/list", json!({})).await;
+    assert!(list["result"]["tools"].as_array().is_some(), "{list}");
+    assert!(!c.server.is_finished());
+}
+
 #[tokio::test]
 async fn tool_call_is_forwarded_with_role_run_task_and_window() {
     let stub = StubDaemon::start((true, "Task t1 recorded as done."));

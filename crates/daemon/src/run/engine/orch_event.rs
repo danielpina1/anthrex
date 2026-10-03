@@ -52,6 +52,9 @@ pub enum OrchEvent {
         /// `request_wake`, which only this clears, and only while it is still round
         /// `n`'s.
         request: Option<u32>,
+        /// Milestone 9.5 decision 38: the wake was the session's first turn, which only
+        /// this clears.
+        first_turn: bool,
     },
     /// Decisions 16 and 39: the orchestrator read the digest at `digest_revision`,
     /// whose answer included the wake notes up to `notes_seq` (`wake::notes_seq` of
@@ -110,6 +113,9 @@ pub enum OrchEvent {
         window_id: u32,
         first_prompt: String,
     },
+    /// Milestone 9.5 decision 38: window `window_id`'s anthrex server answered its first
+    /// `tools/list`; the driver checked it is run `run_id`'s orchestrator window.
+    McpReady { run_id: String, window_id: u32 },
 }
 
 /// How a run scout's or sub-planner's session ended: its report or epic accepted, or
@@ -138,7 +144,8 @@ impl OrchEvent {
             | OrchEvent::Installed { .. }
             | OrchEvent::RoleRouteEnded { .. }
             | OrchEvent::ChainWindowGone { .. }
-            | OrchEvent::AdoptLost { .. } => None,
+            | OrchEvent::AdoptLost { .. }
+            | OrchEvent::McpReady { .. } => None,
         }
     }
 }
