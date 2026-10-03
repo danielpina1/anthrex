@@ -174,3 +174,49 @@ async fn an_ended_run_leaves_another_runs_window_with_its_old_id_alone() {
     assert_eq!(freed, None);
     assert_eq!(other.map(|r| r.run_id), Some("live-run".to_string()));
 }
+
+/// The final fix wave (review A, I3; milestone 9.3 D17, decision 19): a delivered `pr`
+/// run (complete, every PR landed) is finished for its chain, so its idle
+/// orchestrator's window is released as an accepted run's is, and `C-b x` or the idle
+/// menu's `close` can kill it. An iterate that makes the run planning again protects
+/// the window again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_delivered_runs_idle_window_is_released_until_an_iterate() {
+    let dir = tempdir();
+    let (manager, runs) = service(dir.path());
+    let window = live_window(&manager, dir.path(), "delivered-run").await;
+    ended(&runs, dir.path(), "delivered-run", window);
+    {
+        let mut state = crate::lock(&runs.state);
+        let run = state.runs.get_mut("delivered-run").unwrap();
+        run.state = proto::RunState::Complete;
+        run.delivery.mode = proto::DeliveryMode::Pr;
+        assert!(crate::run::chain::delivered(run));
+    }
+
+    let shutdown = CancellationToken::new();
+    let service = runs.spawn(shutdown.clone());
+    let freed = wait_freed(&manager, window).await;
+    // The iterate's effect on the run (the engine's own path is pinned by
+    // `goal_rounds_start`): planning again, its orchestrator live.
+    {
+        let mut state = crate::lock(&runs.state);
+        let run = state.runs.get_mut("delivered-run").unwrap();
+        run.state = proto::RunState::Planning;
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while manager.run_window_live(window).is_none() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let again = manager.run_window_live(window);
+
+    shutdown.cancel();
+    runs.stop().await;
+    let _ = service.await;
+    let _ = manager.kill(window);
+    assert_eq!(
+        freed, None,
+        "the delivered run's idle window is a plain one"
+    );
+    assert_eq!(again.map(|r| r.run_id), Some("delivered-run".to_string()));
+}

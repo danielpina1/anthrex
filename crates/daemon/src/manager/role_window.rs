@@ -185,6 +185,22 @@ impl WindowManager {
         }
     }
 
+    /// The final fix wave (review A, I3): [`Self::end_run_window`]'s inverse, for a
+    /// delivered `pr` run's window that an iterate made the orchestrator of a running
+    /// run again. Sets `id`'s live flag only while `id` is still `run_id`'s window.
+    /// Under the lock, no I/O.
+    pub fn resume_run_window(&self, id: u32, run_id: &str) {
+        let mut inner = crate::lock(&self.inner);
+        if let Some(entry) = inner.entries.get_mut(&id)
+            && entry
+                .role
+                .as_ref()
+                .is_some_and(|role| role.run_ref.run_id == run_id)
+        {
+            entry.run_live = true;
+        }
+    }
+
     /// M9.13 review, item 1: replaces run window `id`'s role environment with
     /// `refresh(<its current one>)`, in the persisted record too, so the next restart
     /// launches with it. Under the lock, no I/O (`refresh` must be pure). `false` when

@@ -287,7 +287,7 @@ impl RunService {
         let windows: Vec<u32> = crate::lock(&self.state)
             .runs
             .values()
-            .filter(|run| !run.state.is_terminal())
+            .filter(|run| !run.state.is_terminal() && !crate::run::chain::finished(run))
             .filter_map(|run| run.orch.orchestrator.as_ref()?.window_id)
             .collect();
         for id in windows {
@@ -307,10 +307,24 @@ impl RunService {
     /// other way: the manager never calls into the run service, its lock is held only
     /// inside its own methods, and neither lock is held across I/O or an `await`
     /// here (`end_run_window` changes one flag).
+    ///
+    /// The final fix wave (review A, I3): the release keys on the run being finished for
+    /// its chain (`chain::finished`, D17), so a delivered `pr` run's idle orchestrator is
+    /// a plain window too, and the user can close it (decision 19). An iterate makes
+    /// that run planning again with its orchestrator live, and the window is protected
+    /// again, only while it is still that run's.
     pub(super) fn release_ended_orchestrators(&self, state: &crate::run::engine::EngineState) {
-        for run in state.runs.values().filter(|run| run.state.is_terminal()) {
-            if let Some(id) = run.orch.orchestrator.as_ref().and_then(|o| o.window_id) {
+        for run in state.runs.values() {
+            let Some(o) = run.orch.orchestrator.as_ref() else {
+                continue;
+            };
+            let Some(id) = o.window_id else {
+                continue;
+            };
+            if run.state.is_terminal() || crate::run::chain::finished(run) {
                 self.manager.end_run_window(id, &run.id);
+            } else if o.live {
+                self.manager.resume_run_window(id, &run.id);
             }
         }
     }
