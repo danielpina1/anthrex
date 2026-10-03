@@ -12,9 +12,9 @@ use super::plan::PlanError;
 
 /// The first edit of `edits` that reaches into an earlier round of `run`: an
 /// `add_task` (or a `split_task` child, or an `amend_task`'s new stage) in a stage below
-/// the current round's first, or an edit naming a task of an earlier round. Every
+/// the current round's first, or an edit naming a finished task of an earlier round. Every
 /// source is refused alike, with KG §2.4's text naming the stage and its round.
-pub(super) fn earlier_round(run: &Run, edits: &[PlanEdit]) -> Option<PlanError> {
+pub(crate) fn earlier_round(run: &Run, edits: &[PlanEdit]) -> Option<PlanError> {
     if run.round() < 2 {
         return None;
     }
@@ -23,9 +23,12 @@ pub(super) fn earlier_round(run: &Run, edits: &[PlanEdit]) -> Option<PlanError> 
         let text = contract_rounds::earlier_round(stage, run.round_of_stage(stage));
         Some(PlanError::new(id, "", "44", text))
     };
+    // The final fix wave (review A, I2): only a finished task of an earlier round is
+    // done. A live one is engine-made (an earlier round ends only once its planned
+    // tasks finished), and stays answerable, messageable, refreshable and cancellable.
     let earlier_task = |id: &str| {
         run.task(id)
-            .filter(|t| t.round < run.round())
+            .filter(|t| t.round < run.round() && t.state.is_finished())
             .map(|t| t.stage())
     };
     edits.iter().find_map(|edit| {

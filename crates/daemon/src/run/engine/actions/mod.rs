@@ -178,8 +178,15 @@ fn task_relevant(run: &Run, id: &str, kind: &ActionKind) -> bool {
 /// handler's order: a `run edit`'s run-wide checks, then its edit's.
 pub(crate) fn check(run: &Run, node: &ActionNode, kind: &ActionKind) -> Result<(), String> {
     use ActionKind::*;
+    // The final fix wave (I2): `apply_edits` refuses an edit into an earlier round
+    // before any of its rules, so the check does too.
+    let earlier = |edits: &[PlanEdit]| {
+        crate::run::validate_rounds::earlier_round(run, edits).map(|e| e.message)
+    };
     let edit = |edits: &[PlanEdit], rule: &dyn Fn() -> Option<String>| {
-        rules::edit_run(run, edits, false).or_else(rule)
+        rules::edit_run(run, edits, false)
+            .or_else(|| earlier(edits))
+            .or_else(rule)
     };
     let task = || match node {
         ActionNode::Task(id) => *id,
