@@ -305,3 +305,27 @@ async fn an_unreadable_file_is_kept_and_the_log_says_so() {
     assert_eq!(tuned.budget_s, None);
     assert!(dir.join(TUNING_FILE).is_dir(), "left as it was");
 }
+
+/// Task M9.5.8 fix round 3 (N5): a start passes the history to `tuned_with`, so a
+/// configured class with a qualifying history says what its refit would be, and the
+/// refit is not written (ruling T8-7).
+#[tokio::test]
+async fn a_configured_class_start_line_shows_the_history_refit() {
+    let (_tmp, dir) = repo_dir(true);
+    let mut cfg = config::Orchestrator::default();
+    cfg.tuning.configured.s = true;
+    let tuned = tune_for_start(&cfg, &TuningLocks::default(), &dir, NOW).await;
+    assert_eq!(tuned.budget_s, None, "the configured budget is used");
+    assert!(
+        tuned
+            .log
+            .iter()
+            .any(|l| l == "tuning: budget S 40 calls 15m configured (refit would be 55 calls 18m)"),
+        "{:?}",
+        tuned.log
+    );
+    let Loaded::File(file) = load(&dir, NOW).unwrap() else {
+        panic!("a tuning.toml (the weights)");
+    };
+    assert!(!file.budgets.contains_key("s"), "{file:?}");
+}

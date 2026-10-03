@@ -68,6 +68,8 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
     let t = &cfg.tuning.table;
     let conf = cfg.tuning.configured;
     let mut log = Vec::new();
+    // The bare `configured` lines, which say nothing history taught (ruling T8-8).
+    let mut bare = 0;
     let mut used = |class: SizeClass| {
         let c = class.label();
         if configured(conf, class) {
@@ -79,6 +81,7 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
                 )),
                 None if class != SizeClass::Hub => {
                     log.push(format!("tuning: budget {c} {own} configured"));
+                    bare += 1;
                 }
                 None => {}
             }
@@ -119,7 +122,9 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
             ));
         }
     }
-    if log.is_empty() {
+    // Decision 12 and ruling T8-8: with nothing learned, say so, after any `configured`
+    // lines.
+    if log.len() == bare {
         log.push(format!(
             "tuning: none (history has fewer than {} samples per class)",
             t.min_samples

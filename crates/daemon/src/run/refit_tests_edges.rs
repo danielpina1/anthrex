@@ -308,3 +308,30 @@ fn a_configured_class_is_never_written_to_the_file() {
     let (after, _) = refit(&lines, &stale, &plain, NOW);
     assert_eq!(after.budgets, stale.budgets);
 }
+
+/// Ruling T8-8: with nothing learned from history, the start log keeps decision 12's
+/// `none` line, after the `configured` lines.
+#[test]
+fn nothing_learned_still_says_none_after_the_configured_lines() {
+    let too_few = super::tests::fixture_records("too-few");
+    let mut cfg = config::Orchestrator::default();
+    cfg.tuning.configured.s = true;
+    cfg.tuning.configured.m = true;
+    let none = "tuning: none (history has fewer than 30 samples per class)";
+    let (file, _) = refit(&too_few, &TuningFile::default(), &cfg, NOW);
+    for t in [tuned_with(&too_few, &file, &cfg), tuned(&file, &cfg)] {
+        assert_eq!(
+            t.log,
+            [
+                "tuning: budget S 40 calls 15m configured",
+                "tuning: budget M 150 calls 60m configured",
+                none,
+            ]
+        );
+    }
+    // Something learned (a refit to show): no `none` line.
+    let lines = super::tests::fixture_records("refit");
+    let (file, _) = refit(&lines, &TuningFile::default(), &cfg, NOW);
+    let t = tuned_with(&lines, &file, &cfg);
+    assert!(!t.log.iter().any(|l| l == none), "{:?}", t.log);
+}
