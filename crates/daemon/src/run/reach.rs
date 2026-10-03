@@ -16,8 +16,8 @@
 use proto::{Route, Runtime, Size};
 
 use super::model::{ReviewLevel, Run, Task};
-use super::roster::{escalate, pick_reviewer};
-use super::route_pick::task_list;
+use super::roster::escalate;
+use super::route_pick::{review_route, task_list};
 use super::validate::resolve_task_lenient;
 
 /// Whether `edits` can widen [`reachable_runtimes`] (T22-P2, F4): only a task added,
@@ -41,13 +41,14 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
         let levels = review_levels(run, t);
         found.extend(t.review_route.as_ref().map(|r| r.runtime));
         // Milestone 9.5 decision 9a: rung 2 can take any candidate of its list.
-        let listed = (task_list(&run.limits.route_lists, t).candidates.iter())
-            .map(|c| c.route(t.route.effort));
+        let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
+        let listed = (task_list(lists, t).candidates.iter()).map(|c| c.route(t.route.effort));
         let starts: Vec<Route> = std::iter::once(t.route.clone()).chain(listed).collect();
         for route in starts.iter().flat_map(|r| escalations(run, r)) {
             found.push(route.runtime);
             for &level in &levels {
-                found.push(pick_reviewer(&run.roster, &route, level).runtime);
+                let reviewer = review_route(lists, &run.roster, &route, level, installed);
+                found.push(reviewer.runtime);
             }
         }
     }

@@ -147,8 +147,10 @@ fn the_overlap_rule_sees_a_lists_runtime() {
     assert!(show(&errors).contains("(rule 9)"), "{}", show(&errors));
 }
 
-/// Rung 2 can take any candidate of the class list, so its runtimes are reachable
-/// (the project-trust and API-key checks cover them).
+/// Every candidate of the class list counts as a start route, so its runtimes are
+/// reachable (the project-trust and API-key checks cover them). A superset: rung 2's
+/// guard (ruling T10a-1) keeps opus from stepping down to luna, but a pick by a later
+/// edit could take it.
 #[test]
 fn a_class_lists_runtimes_are_reachable() {
     let mut config = config::Orchestrator::default();
@@ -171,8 +173,6 @@ fn a_class_lists_runtimes_are_reachable() {
     let text = plan_with(PROFILE, &[m("t1", "[\"crates/a/**\"]", "")]);
     let run = build_tuned(&text, &config, tuned(lists)).expect("builds");
     assert_eq!(task(&run, "t1").route, opus(Effort::High));
-    let (next, _) = next_candidate(&run.limits, &run.tasks, 0, &Installed::new()).expect("luna");
-    assert_eq!(next.runtime, Runtime::Codex);
     let reachable = crate::run::reach::reachable_runtimes(&run);
     assert_eq!(reachable, [Runtime::Claude, Runtime::Codex]);
 }

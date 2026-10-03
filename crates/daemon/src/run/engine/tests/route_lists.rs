@@ -24,14 +24,14 @@ fn cand(runtime: Runtime, model: &str, effort: Option<Effort>) -> Candidate {
     }
 }
 
-/// `s` = [codex/gpt-6.1-sol low, claude/claude-sonnet-5 medium]; `review` =
+/// `s` = [codex/gpt-6.1-sol low, claude/claude-opus-5-5 medium]; `review` =
 /// [claude/claude-haiku-4-5, claude/claude-opus-5-5 high, codex/gpt-6.1-sol].
 fn lists() -> RouteLists {
     RouteLists {
         s: RouteList {
             candidates: vec![
                 cand(Runtime::Codex, SOL, Some(Effort::Low)),
-                cand(Runtime::Claude, "claude-sonnet-5", Some(Effort::Medium)),
+                cand(Runtime::Claude, "claude-opus-5-5", Some(Effort::Medium)),
             ],
             pick: Pick::First,
         },
@@ -105,8 +105,8 @@ fn a_listed_worker_records_its_list_and_rung_2_takes_the_next_candidate() {
     assert_eq!(fx.task("t1").rung, 2);
     let next = Route {
         runtime: Runtime::Claude,
-        model: "claude-sonnet-5".into(),
-        strength: Strength::Standard,
+        model: "claude-opus-5-5".into(),
+        strength: Strength::Frontier,
         effort: Effort::Medium,
     };
     assert_eq!(fx.task("t1").route, next);
@@ -185,4 +185,38 @@ fn the_reviewer_comes_from_the_review_list_and_records_it() {
     };
     super::dispatch::edit(&mut fx, vec![add]);
     assert_eq!(fx.task("t1").routing_decisions, decisions);
+}
+
+/// Review m1: a decider's S → M raise keeps a list candidate's own effort, so the
+/// launch still records the list's choice.
+#[test]
+fn a_decider_raise_keeps_a_listed_effort() {
+    let lists = RouteLists {
+        s: RouteList {
+            candidates: vec![cand(
+                Runtime::Claude,
+                "claude-haiku-4-5",
+                Some(Effort::High),
+            )],
+            pick: Pick::First,
+        },
+        ..Default::default()
+    };
+    let tuning = Tuned {
+        lists,
+        ..Tuned::default()
+    };
+    let plan = plan_with(PROFILE, &[task("t1", "S", "a", CHECK_MODE)]);
+    let mut run = build_tuned(&plan, &config::Orchestrator::default(), true, tuning);
+    let listed = run.tasks[0].route.clone();
+    assert_eq!(
+        (listed.model.as_str(), listed.effort),
+        ("claude-haiku-4-5", Effort::High)
+    );
+    super::super::deciders_size::apply_raise(&mut run, "t1", proto::Size::M, "evidence");
+    let t1 = &run.tasks[0];
+    assert_eq!(t1.size, proto::Size::M);
+    assert_eq!(t1.route, listed);
+    let pick = t1.list_pick.as_ref().expect("the list's pick");
+    assert_eq!(pick.chosen_route(), Some(&t1.route));
 }

@@ -346,11 +346,21 @@ fn rung_2_takes_the_next_candidate_and_never_breaks_the_overlap_rule() {
         [Some(CURRENT_ROUTE), Some(OVERLAPPING_OWNS), None]
     );
 
-    // From the last candidate it cycles to the first, skipping one identical to it.
+    // From the last candidate it cycles, past one below it (ruling T10a-1), to opus;
+    // with the overlap, nothing is left and rung 2 is `roster::escalate`'s.
+    let mut cycled = run.clone();
+    cycled.tasks[0].route = sol(Effort::High);
+    let (next, step) = next_candidate(&cycled.limits, &cycled.tasks, 0, &none).expect("cycles");
+    assert_eq!(next, opus(Effort::High));
+    assert_eq!(
+        reasons(&step.candidates),
+        [Some(BELOW_CURRENT), None, Some(CURRENT_ROUTE)]
+    );
     overlapped.tasks[0].route = sol(Effort::High);
-    let (next, _) =
-        next_candidate(&overlapped.limits, &overlapped.tasks, 0, &none).expect("cycles");
-    assert_eq!(next, sol(Effort::Medium));
+    assert_eq!(
+        next_candidate(&overlapped.limits, &overlapped.tasks, 0, &none),
+        None
+    );
 
     // A one-candidate list leaves rung 2 to `roster::escalate`.
     let one = RouteLists {
@@ -549,3 +559,6 @@ mod frozen;
 
 #[path = "route_pick_tests_roles.rs"]
 mod roles;
+
+#[path = "route_pick_tests_fixes.rs"]
+mod fixes;

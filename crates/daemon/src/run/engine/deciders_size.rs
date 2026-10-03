@@ -213,7 +213,9 @@ pub(crate) fn apply_raise(run: &mut Run, task_id: &str, size: Size, reason: &str
     run.tasks[i].raised_size = Some(size);
     let resolved = ladder::reresolve(run, i);
     let task = &mut run.tasks[i];
-    if task.spec.route.effort.is_none() {
+    // Milestone 9.5 (review m1): a model list's candidate keeps its effort, as a plan's.
+    let listed = task.list_pick.as_ref().and_then(|p| p.chosen_route()) == Some(&task.route);
+    if task.spec.route.effort.is_none() && !listed {
         task.route.effort = resolved.effort;
         let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
         task.review_route = (task.review_level)

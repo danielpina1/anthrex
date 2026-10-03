@@ -29,6 +29,9 @@ pub const BELOW_STRENGTH: &str = "below the author's strength";
 pub const NOT_INSTALLED: &str = super::orch::roles::NOT_INSTALLED;
 pub const AUTHOR_RUNTIME: &str = "the author's runtime";
 pub const CURRENT_ROUTE: &str = "the current route";
+/// Ruling T10a-1: rung 2 never steps to a weaker strength, nor to a lower effort at the
+/// same strength.
+pub const BELOW_CURRENT: &str = "below the current route";
 /// Ruling RL-1: the route of a session of this task that ended for an environment reason.
 pub const FAILED_IN_TASK: &str = "failed in this task";
 
@@ -130,6 +133,12 @@ pub fn role(
         pick: list.pick,
         rotation,
     })
+}
+
+/// Whether `a` and `b` take the same list (review m2: an amend that changes the class
+/// picks again).
+pub fn same_list(a: &Task, b: &Task) -> bool {
+    list_key(a) == list_key(b)
 }
 
 /// The list of the task's class: hub, S, else M (a task rung 3 raised to L too).
@@ -310,8 +319,12 @@ pub fn pick(
         let list = task_list(lists, &tasks[group[0]]);
         let n = list.candidates.len();
         let key = list_key(&tasks[group[0]]);
+        // Ruling T10a-2: a group with a runtime-only route takes that runtime's first
+        // unskipped candidate and no rotation slot (`skip` narrows it to the runtime).
+        let named = (group.iter()).any(|&i| tasks[i].spec.route.runtime.is_some());
         let (start, slot) = match policy(list, &tasks[group[0]]) {
             ListPolicy::First => (0, None),
+            ListPolicy::Spread if named => (0, None),
             ListPolicy::Spread => match joined(tasks, &pending, &group) {
                 Some((k, slot)) => (k, Some(slot)),
                 None => {
@@ -396,11 +409,14 @@ pub fn context_routes(lists: &RouteListsFrozen) -> Option<serde_json::Value> {
 }
 
 /// Decision 9a's rung 2 (and `run retry`'s) for task `i` whose list has two or more
-/// candidates: the next unskipped candidate after the task's current one, cycling.
-/// Skipped: a candidate identical to the current route, one not installed, one that
-/// failed in this task (RL-1), and one on the other runtime while an unfinished task on
-/// the current runtime overlaps the task's `owns`. `None` (a list of one, or nothing
-/// left) leaves rung 2 to `roster::escalate`.
+/// candidates: the next unskipped candidate after the task's current one, cycling. The
+/// candidates' routes keep the plan's effort ([`route_for`], as [`pick`] gave them), and
+/// the current one is found by its exact route, else by runtime and model (ruling
+/// T10a-1). Skipped: a candidate identical to the current route, one not installed, one
+/// that failed in this task (RL-1), one on the other runtime while an unfinished task on
+/// the current runtime overlaps the task's `owns`, and one below the current route.
+/// `None` (a list of one, a current route the list does not hold, or nothing left)
+/// leaves rung 2 to `roster::escalate`.
 pub fn next_candidate(
     limits: &RunLimits,
     tasks: &[Task],
@@ -414,9 +430,11 @@ pub fn next_candidate(
     }
     let current = &task.route;
     let failed = failed_routes(task);
-    let routes: Vec<Route> = (list.candidates.iter())
-        .map(|c| c.route(class_effort(limits, task)))
+    let routes: Vec<Route> = (0..list.candidates.len())
+        .map(|k| route_for(limits, task, list, k))
         .collect();
+    let same = |r: &Route| r.runtime == current.runtime && r.model == current.model;
+    let at = (routes.iter().position(|r| r == current)).or_else(|| routes.iter().position(same))?;
     let held = (tasks.iter().enumerate())
         .filter(|(j, t)| *j != i && !t.state.is_finished())
         .any(|(_, t)| t.route.runtime == current.runtime && overlap(t, task));
@@ -430,18 +448,16 @@ pub fn next_candidate(
                 Some(FAILED_IN_TASK)
             } else if route.runtime != current.runtime && held {
                 Some(OVERLAPPING_OWNS)
+            } else if below(route, current) {
+                Some(BELOW_CURRENT)
             } else {
                 None
             }
         })
         .collect();
     let n = routes.len();
-    let start = routes
-        .iter()
-        .position(|r| r == current)
-        .map_or(0, |k| k + 1);
-    let k = (0..n)
-        .map(|d| (start + d) % n)
+    let k = (1..n)
+        .map(|d| (at + d) % n)
         .find(|&k| reasons[k].is_none())?;
     let candidates = (routes.iter().zip(&reasons))
         .map(|(route, reason)| RoutingCandidate {
@@ -457,6 +473,11 @@ pub fn next_candidate(
         slot,
     };
     Some((routes[k].clone(), step))
+}
+
+/// Ruling T10a-1: `to` is a weaker strength than `from`, or a lower effort at the same.
+fn below(to: &Route, from: &Route) -> bool {
+    to.strength < from.strength || (to.strength == from.strength && to.effort < from.effort)
 }
 
 /// The route rung 2 and `run retry` give task `i` (decision 9a, ruling RL-1): its
@@ -535,6 +556,23 @@ pub fn review_route(
     reviewer(lists, author, level, installed, &[])
         .and_then(|(route, _)| route)
         .unwrap_or_else(|| pick_reviewer(roster, author, level))
+}
+
+/// A task's reviewer as resolution forecasts it (decision 9a: the `review` list first),
+/// before anything is known installed.
+pub fn forecast(
+    limits: &RunLimits,
+    roster: &[ModelEntry],
+    author: &Route,
+    level: ReviewLevel,
+) -> Route {
+    review_route(
+        &limits.route_lists,
+        roster,
+        author,
+        level,
+        &Installed::new(),
+    )
 }
 
 #[cfg(test)]
