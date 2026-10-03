@@ -363,6 +363,8 @@ fn an_adoption_lost_launches_a_fresh_session_at_resume() {
     let o = run.orch.orchestrator.as_ref().unwrap();
     assert_eq!((o.window_id, o.live), (None, false));
     assert_eq!(o.first_prompt, "the handoff of 4c1d");
+    // Re-review N1: the goal is in the prompt, so the next-goal request is cleared.
+    assert_eq!(run.orch.request_wake, None);
     assert!(
         run.log.iter().any(|e| e.text
             == "window 90 was gone before run 4c1d took it; run resume launches a fresh session"),

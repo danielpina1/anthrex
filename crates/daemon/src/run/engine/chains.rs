@@ -153,6 +153,9 @@ pub(super) fn adopt_lost(
     o.window_id = None;
     o.live = false;
     o.first_prompt = first_prompt;
+    // Re-review N1: the goal is in the fresh session's prompt; round 1's request
+    // wake would give it twice.
+    super::wake::clear_request(run, 1);
     let text = format!(
         "window {window_id} was gone before run {} took it; run resume launches a fresh session",
         run.short()
