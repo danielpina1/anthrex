@@ -305,10 +305,7 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
     }
     body.push(Line::raw(""));
     if form.submitting {
-        body.push(Line::styled(
-            format!("starting{} triage can take minutes", ellipsis(p)),
-            role(Role::Muted, p),
-        ));
+        body.push(Line::styled(starting_text(form, p), role(Role::Muted, p)));
         body.push(kit::hints_joined(
             width,
             &[hint("esc", "close", 1)],
@@ -324,6 +321,17 @@ pub fn body(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
         body.push(kit::hints_joined(width, &keys, dot_sep(p), p));
     }
     body
+}
+
+/// The row while the goal is sent: `starting…`, and for a new orchestrator `triage can
+/// take minutes`; a continued goal is not triaged (decision 22). Both dialogs draw it
+/// (final fix wave C-m7).
+pub(crate) fn starting_text(form: &GoalForm, p: Palette) -> String {
+    if form.continues().is_some() {
+        format!("starting{}", ellipsis(p))
+    } else {
+        format!("starting{} triage can take minutes", ellipsis(p))
+    }
 }
 
 /// The goal dialog over the whole terminal `area`: the large editor from 60×16

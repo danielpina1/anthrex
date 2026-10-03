@@ -10,7 +10,7 @@ use crate::run_goal::{DISCARD_ASK, EditorView, GoalForm};
 use crate::safe_text::one_line;
 use crate::theme::{Palette, Role, ellipsis, role};
 use crate::ui::kit::{self, Hint};
-use crate::ui::run_goal::{GOAL_ROWS, goal_width, option_lines, placeholder, title};
+use crate::ui::run_goal::{GOAL_ROWS, goal_width, option_lines, placeholder, starting_text, title};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -130,13 +130,7 @@ pub fn body(form: &GoalForm, view: EditorView, height: u16, p: Palette) -> Vec<L
         ));
     }
     if form.submitting {
-        // A continued goal is not triaged (decision 22).
-        let waiting = if form.continues().is_some() {
-            format!("starting{}", ellipsis(p))
-        } else {
-            format!("starting{} triage can take minutes", ellipsis(p))
-        };
-        lines.push(Line::styled(waiting, role(Role::Muted, p)));
+        lines.push(Line::styled(starting_text(form, p), role(Role::Muted, p)));
         lines.push(footer(&[("Esc", "close")], view.width, p));
     } else {
         if lines.len() + 2 <= usize::from(height) {

@@ -370,6 +370,28 @@ fn a_long_continue_choice_is_cut_at_a_word() {
     );
 }
 
+/// Final fix wave C-m7: while a goal is sent, both dialogs say triage can take minutes
+/// for a new orchestrator only; a continued goal is not triaged (decision 22).
+#[test]
+fn only_a_new_goal_waits_on_triage() {
+    let mut f = form();
+    f.goal = TextArea::editor("go");
+    f.set_chains(Some(idle(false)), None);
+    f.submitting = true;
+    let mut new = f.clone();
+    new.continuing = false;
+    for (w, h) in [(120, 40), (50, 24)] {
+        let row = row_with(&app_with(new.clone(), false), w, h, "starting");
+        assert!(
+            row.contains("starting… triage can take minutes"),
+            "{w}x{h}: {row:?}"
+        );
+        let row = row_with(&app_with(f.clone(), true), w, h, "starting");
+        assert!(row.contains("starting..."), "{w}x{h}: {row:?}");
+        assert!(!row.contains("triage"), "{w}x{h}: {row:?}");
+    }
+}
+
 /// Review m6: the continued chain's model, daemon text, is drawn cleaned.
 #[test]
 fn a_continued_models_carriers_are_drawn_cleaned() {
