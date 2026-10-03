@@ -150,16 +150,31 @@ impl App {
         if self.focused_window().is_none() {
             if let Some(i) = previous_index
                 && !self.windows.is_empty()
+                && let Some(id) = tree::focus_fallback(&self.rows(), i)
             {
-                let order = tree::agent_order(&self.rows());
-                if let Some(id) = order.get(i.min(order.len().saturating_sub(1))).copied() {
-                    effects.extend(self.focus(id));
-                    return effects;
-                }
+                effects.extend(self.focus(id));
+                return effects;
             }
             effects.extend(self.ensure_focus());
             return effects;
         }
         effects
+    }
+
+    /// Final fix wave C-m2: the first focus is taken at the first draw, usually before
+    /// the first runs snapshot says which windows are idle orchestrators. Once, after
+    /// the next snapshot, a focus still `ensure_focus`'s own that is now on an idle
+    /// orchestrator moves to the first numbered window; a focus the user chose stays.
+    pub(super) fn focus_off_idle(&mut self) -> Vec<Effect> {
+        if !std::mem::take(&mut self.auto_focus) {
+            return vec![];
+        }
+        let rows = self.rows();
+        let numbered = tree::numbered_order(&rows);
+        let idle = |id: &u32| !numbered.contains(id) && tree::agent_order(&rows).contains(id);
+        match (self.focused, tree::focus_fallback(&rows, 0)) {
+            (Some(id), Some(next)) if idle(&id) && numbered.contains(&next) => self.focus(next),
+            _ => vec![],
+        }
     }
 }

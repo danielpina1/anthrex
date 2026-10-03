@@ -146,6 +146,9 @@ pub struct App {
     term_size: (u16, u16),
     pending_resize: Option<Instant>,
     pending_focus: Option<u32>,
+    /// Final fix wave C-m2: the focus is `ensure_focus`'s own pick, not the user's,
+    /// until the next runs snapshot or `focus` (`windows::focus_off_idle`).
+    auto_focus: bool,
     /// Decision 35: the window whose `Subscribe` was last handed to the connection —
     /// set optimistically by whatever emits the effect, cleared by `on_send_failed`
     /// when that particular send is reported refused. `App::focus`'s early return for
@@ -227,6 +230,7 @@ impl App {
             term_size: (0, 0),
             pending_resize: None,
             pending_focus: None,
+            auto_focus: false,
             subscribed: None,
             runs: runs::no_runs(),
             run_view: None,
@@ -332,8 +336,12 @@ impl App {
         if self.focused_window().is_some() {
             return vec![];
         }
-        match tree::agent_order(&self.rows()).first().copied() {
-            Some(id) => self.focus(id),
+        match tree::focus_fallback(&self.rows(), 0) {
+            Some(id) => {
+                let effects = self.focus(id);
+                self.auto_focus = true;
+                effects
+            }
             None => {
                 self.focused = None;
                 self.follow_no_focus()
@@ -345,6 +353,7 @@ impl App {
         if !self.windows.iter().any(|w| w.id == id) {
             return vec![];
         }
+        self.auto_focus = false;
         if self.term_size == (0, 0) {
             self.pending_focus = Some(id);
             return vec![];

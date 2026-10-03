@@ -394,3 +394,96 @@ fn an_idle_window_takes_no_number_from_a_later_project() {
         "`C-b 2` is the second numbered window"
     );
 }
+
+/// `idle_fixture`'s idle orchestrator moved to project `/r/a`, which sorts first, beside
+/// `extra` (its own windows); `/r/b` holds the windows `rest`.
+fn two_projects(extra: &[u32], rest: &[u32]) -> (RunsSnapshot, Vec<WindowInfo>) {
+    let (mut snap, windows) = idle_fixture(1);
+    snap.runs[0].project = "/r/a".into();
+    snap.idle_orchestrators[0].project = "/r/a".into();
+    let mut orchestrator = windows[1].clone();
+    orchestrator.project = "/r/a".into();
+    let mut out = vec![orchestrator];
+    out.extend(
+        extra
+            .iter()
+            .map(|&id| pty(id, "shell", "/r/a", Status::Idle)),
+    );
+    out.extend(
+        rest.iter()
+            .map(|&id| pty(id, "shell", "/r/b", Status::Idle)),
+    );
+    (snap, out)
+}
+
+/// Final fix wave C-m2 (carried 159): the first focus is the first numbered window, not
+/// an idle orchestrator listed above it, whose chat would take the user's keys.
+#[test]
+fn the_first_focus_prefers_a_numbered_window() {
+    let (snap, windows) = two_projects(&[], &[1]);
+    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
+    let _ = app.run_subscription();
+    app.on_daemon(DaemonMsg::Run(RunReply::Snapshot(snap)));
+    let rows = app.rows();
+    assert_eq!(
+        tree::agent_order(&rows),
+        vec![7, 1],
+        "the idle row comes first"
+    );
+    let _ = app.set_terminal_size(80, 24);
+    assert_eq!(app.focused, Some(1));
+
+    // With only the idle orchestrator, it is focused: nothing else can be.
+    let (snap, windows) = two_projects(&[], &[]);
+    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
+    let _ = app.run_subscription();
+    app.on_daemon(DaemonMsg::Run(RunReply::Snapshot(snap)));
+    let _ = app.set_terminal_size(80, 24);
+    assert_eq!(app.focused, Some(7));
+}
+
+/// C-m2, the client's real order: the first focus is taken at the first draw, before
+/// the first runs snapshot says the window is an idle orchestrator. That snapshot moves
+/// the automatic focus to the first numbered window, once; a focus the user chose stays.
+#[test]
+fn the_first_snapshot_moves_an_automatic_focus_off_an_idle_window() {
+    let (snap, windows) = two_projects(&[], &[1]);
+    let mut app = App::new(windows.clone(), "/tmp".into(), UiSettings::default());
+    let _ = app.set_terminal_size(80, 24);
+    assert_eq!(app.focused, Some(7), "a plain window until the snapshot");
+    let _ = app.run_subscription();
+    let effects = app.on_daemon(DaemonMsg::Run(RunReply::Snapshot(snap.clone())));
+    assert_eq!(app.focused, Some(1));
+    assert!(
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::Send(ClientMsg::Subscribe { window_id: 1, .. }))),
+        "{effects:?}"
+    );
+    // Once: the user's own focus on the idle window is kept by later snapshots.
+    let _ = app.focus(7);
+    app.on_daemon(DaemonMsg::Run(RunReply::Snapshot(snap.clone())));
+    assert_eq!(app.focused, Some(7));
+
+    // A focus the user asked for before the first draw (`--focus`) is kept too.
+    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
+    app.request_focus(7);
+    let _ = app.set_terminal_size(80, 24);
+    let _ = app.run_subscription();
+    app.on_daemon(DaemonMsg::Run(RunReply::Snapshot(snap)));
+    assert_eq!(app.focused, Some(7));
+}
+
+/// C-m2: closing the focused window refocuses the nearest numbered window, not the idle
+/// orchestrator that took its place in `agent_order`.
+#[test]
+fn a_refocus_after_a_close_prefers_a_numbered_window() {
+    let (snap, windows) = two_projects(&[1], &[2]);
+    let mut app = app_of((snap, windows.clone()), false);
+    assert_eq!(tree::agent_order(&app.rows()), vec![1, 7, 2]);
+    let _ = app.focus(1);
+    assert_eq!(app.focused, Some(1));
+    let left: Vec<WindowInfo> = windows.into_iter().filter(|w| w.id != 1).collect();
+    app.on_daemon(DaemonMsg::WindowsChanged { windows: left });
+    assert_eq!(app.focused, Some(2));
+}
