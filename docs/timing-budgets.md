@@ -482,6 +482,12 @@ The start prompt (decision 39), why a wake-up waits (decision 41) and the Codex 
 | A Codex question holding the wake-up (fix round 1, ruling T5b-1) | `wake_report_tests.rs` (`a_codex_question_holds_the_wake_…`) | `2 × SUBMIT_DELAY` after each check for the absence; `SUBMIT_DELAY + SLACK` for the delivery once released | As the M9.5.5a absence row: a paste the gate let through would send its event `SUBMIT_DELAY` after the check that took it. The quiet time is 0, so the first check after the `Stop` takes it. | **Recorded.** |
 | The stand-in `codex` reaching its `Ready` title and quiet, and each redraw | `daemon/src/status_codex_tests.rs` | `SLACK` (5 s) each, polling every 20 ms | One title write at start; the stand-in polls its control file every 50 ms and redraws. `SLACK` covers its first exec. Each `tick` is called only once the snapshot shows the drawn screen, so no assertion races the redraw. | **Recorded.** A hang guard. |
 
+### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
+
+| Test | File | Bound | Derivation | Status |
+|------|------|-------|------------|--------|
+| `e2e_pr_rewritten_remote_stage_branch_halts_without_forcing`: the halt's log line in `run.json` | `crates/cli/tests/run_e2e_pr.rs` (`wait_log_line`, polling `run.json` every 100 ms) | `REQUEST_WAIT` (75 s) | The snapshot that shows `Halted` is published from the engine's memory on a tick, and the halt's `run.json` save runs on its own path, so the file can lag the snapshot. A halt is a structural change, saved right after its step (one small write and a few fsyncs, milliseconds); even a counter-only change is saved within `COUNTER_PERSIST_EVERY` (5 s). `REQUEST_WAIT` is the existing bound for an edit to persist (`a_manual_restart_of_the_orchestrator_is_not_an_exit`), a hang guard the loop ends early. | **Fixed.** It read `run.json` once, right after the halt was seen, and failed once in M9.5.9's runs. RED: a temporary 3 s sleep before a halted run's `journal::save_run` failed the old assertion and passed the loop; the fixed test passed 20 of 20 alone. |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |

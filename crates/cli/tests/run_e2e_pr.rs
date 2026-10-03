@@ -156,7 +156,10 @@ fn e2e_pr_rewritten_remote_stage_branch_halts_without_forcing() {
         )
     );
     let line = format!("stage 1 (PR #{number}): origin has {r7}, which does not contain {p7}");
-    assert!(log_lines(&run).contains(&line), "{:#?}", log_lines(&run));
+    // Ruling F-1: the snapshot shows the halt from the engine's memory, and `run.json`
+    // may be saved a moment later, so the line is waited for in the file
+    // (`docs/timing-budgets.md`).
+    wait_log_line(&h, &id, &line, REQUEST_WAIT);
 
     // No forced push: the remote branch is still the rewrite, and its reflog holds
     // anthrex's one push (a creation) and then the rewrite, nothing after it.
