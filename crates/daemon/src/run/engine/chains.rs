@@ -106,7 +106,8 @@ fn adopt(run: &mut Run, prev: &Run, window_id: u32, now: u64, fx: &mut Vec<Effec
         o.exited_at = None;
     }
     let ended = (prev.short(), outcome(prev));
-    run.orch.request_wake = Some(next_goal_wake(run.short(), ended, &run.goal));
+    let wake = next_goal_wake(run.short(), ended, run.orch.yes, &run.goal);
+    run.orch.request_wake = Some(wake);
     log(
         run,
         now,

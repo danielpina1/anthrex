@@ -127,9 +127,18 @@ pub fn round_done(n: u32) -> String {
 /// after the chain's previous run `prev` and its `outcome` (`accepted`, `discarded` or,
 /// D17, `delivered`). D17 dropped the spec's open-PRs line: a chain's earlier `pr` run
 /// is finished for it only once every PR has landed, so it could never name one.
-pub fn next_goal_wake(h4: &str, (prev, outcome): (&str, &str), goal: &str) -> String {
+///
+/// Task M9.3.7 fix round 1 (review m5): an adopted session gets no new first prompt,
+/// so the wake names the new run's gate. `yes` is the run's `--yes`: a user's continue
+/// with it skips the gate (decision 12), and `start_goal` never sets it.
+pub fn next_goal_wake(h4: &str, (prev, outcome): (&str, &str), yes: bool, goal: &str) -> String {
+    let gate = if yes {
+        "started with --yes, so your submitted plan starts at once"
+    } else {
+        "whose plan stops at the plan gate for the user"
+    };
     format!(
-        "a new goal, run {h4} (your previous run {prev} was {outcome}):\n{}",
+        "a new goal, run {h4} (your previous run {prev} was {outcome}), {gate}:\n{}",
         fence(goal)
     )
 }

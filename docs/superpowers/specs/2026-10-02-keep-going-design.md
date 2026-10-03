@@ -238,7 +238,8 @@ The next goal can be started two ways:
 **The new run** gets a new id, and its own branches and plan gate. It is based on the branch the user has checked out, which holds the accepted work if the user accepted into it. The preflight line says `based on <branch> at <sha7>`.
 
 The orchestrator is woken with this exact text, the goal fenced as user input:
-`a new goal, run <h4> (your previous run <h4> was <accepted|discarded|delivered>):` followed by the fenced goal.
+`a new goal, run <h4> (your previous run <h4> was <accepted|discarded|delivered>), <gate>:` followed by the fenced goal, where `<gate>` is `whose plan stops at the plan gate for the user`, or `started with --yes, so your submitted plan starts at once` for a goal the user started with "approve at once".
+- The gate clause was added on 2026-10-03 (milestone 9.3 task 7, fix round 1): an adopted session gets no new first prompt, so without it the orchestrator knew only its first run's gate. A goal from `start_goal` never has "approve at once", so its wake always carries the first form.
 - `delivered` names a `pr` run complete with every PR landed, which is finished for its chain (milestone 9.3 ruling D17). The `pr`-mode line naming open PRs was dropped by D17: a chain's earlier `pr` run is finished only once its PRs have landed, so the line could never be non-empty.
 
 The window is renamed `<new h4>/orchestrator`. The chain records the new run, and its state becomes `Active`.

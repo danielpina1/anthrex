@@ -17,8 +17,7 @@ use proto::{ActionKind, RunState};
 const CHAIN: &str = "o-3f9a";
 const NEXT: &str = "engine-test-4c1d";
 /// D17's wake after a delivered run (KG §3.3's `<accepted|discarded|delivered>`).
-const DELIVERED_WAKE: &str =
-    "a new goal, run 4c1d (your previous run 3f9a was delivered):\n```\nAdd a logout button\n```\n";
+const DELIVERED_WAKE: &str = "a new goal, run 4c1d (your previous run 3f9a was delivered), whose plan stops at the plan gate for the user:\n```\nAdd a logout button\n```\n";
 /// D17's refusal of an iterate once a next goal has started from the chain.
 const SUPERSEDED: &str =
     "run 3f9a is no longer its orchestrator's current run; start a new goal instead";

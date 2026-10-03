@@ -30,9 +30,9 @@ const CHAIN: &str = "o-3f9a";
 /// The chain's next run.
 const NEXT: &str = "engine-test-4c1d";
 const GOAL: &str = "Add a logout button";
-/// KG §3.3's wake for [`GOAL`] after the accepted fixture run (D1's fence).
-const WAKE: &str =
-    "a new goal, run 4c1d (your previous run 3f9a was accepted):\n```\nAdd a logout button\n```\n";
+/// KG §3.3's wake for [`GOAL`] after the accepted fixture run (D1's fence), with task
+/// M9.3.7 fix round 1's gate clause for a goal started without `--yes`.
+const WAKE: &str = "a new goal, run 4c1d (your previous run 3f9a was accepted), whose plan stops at the plan gate for the user:\n```\nAdd a logout button\n```\n";
 
 /// A continued goal `id` of [`CHAIN`], as `chain_goal.rs` builds it: a planned run with
 /// no triage (D14), its first prompt `prompt` (the driver's handoff prompt).
@@ -240,7 +240,24 @@ fn the_next_goal_wake_names_no_open_prs() {
     let wake = fx.state.runs[NEXT].orch.request_wake.clone().unwrap();
     assert_eq!(
         wake,
-        "a new goal, run 4c1d (your previous run 3f9a was discarded):\n```\nAdd a logout button\n```\n"
+        "a new goal, run 4c1d (your previous run 3f9a was discarded), whose plan stops at the plan gate for the user:\n```\nAdd a logout button\n```\n"
+    );
+}
+
+/// Task M9.3.7 fix round 1 (review m5): an adopted session gets no new first prompt, so
+/// the next-goal wake names the new run's gate. A user's `--continue --yes` goal skips
+/// it (decision 12: `--yes` and a user round), and the wake says so.
+#[test]
+fn a_yes_continue_wake_says_its_plan_starts_at_once() {
+    let mut fx = ended(FinishAction::Accept);
+    let mut run = continued(&fx, NEXT, None);
+    run.orch.yes = true;
+    start(&mut fx, run);
+    assert_eq!(
+        fx.state.runs[NEXT].orch.request_wake.as_deref(),
+        Some(
+            "a new goal, run 4c1d (your previous run 3f9a was accepted), started with --yes, so your submitted plan starts at once:\n```\nAdd a logout button\n```\n"
+        )
     );
 }
 
