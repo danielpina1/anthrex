@@ -462,6 +462,22 @@ def keep_going_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         wait_run(first, "accepted", lambda r: r["state"] == "accepted", REQUEST_WAIT)
         print(f"ok: run {h4} was accepted; both rounds' files are on main")
 
+        # The orchestrator's script polls until it sees the accept. Once the next goal
+        # starts, its calls resolve to the new run (D16), which is never `accepted`, so
+        # the next goal waits for that poll to end, as the e2e test's `wait_saw` does.
+        def saw_accept():
+            for call in _mcp_calls(mcp_log):
+                if call.get("script") != ORCH or call.get("tool") != "run_status":
+                    continue
+                try:
+                    if json.loads(call.get("result") or "")["run"]["state"] == "accepted":
+                        return True
+                except (ValueError, KeyError, TypeError):
+                    pass
+            return None
+
+        _deadline_loop("the orchestrator seeing the accept", ACCEPT_WAIT, saw_accept, fail)
+
         # 5. `C-b g` on the project: the orchestrator row continues the idle orchestrator.
         proc = pty_proc([bin_path], env=env)
         proc.wait_for("agents", label="stage-11j second attach banner")
