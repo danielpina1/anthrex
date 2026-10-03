@@ -25,7 +25,7 @@ pub(super) fn running(run: &Run) -> usize {
 }
 
 /// Decision 20's `spawn_scout { id, question, area, web }`: the full id is
-/// `<h4>-<id>`, each at most once per run and at most `max_scouts` per run; the scout is
+/// `<h4>-<id>`, each at most once per run and at most `max_scouts` per round; the scout is
 /// queued for a reader slot and the reply is at once, `queued` or `starting`.
 pub(super) fn spawn(
     run: &mut Run,
@@ -39,7 +39,9 @@ pub(super) fn spawn(
         let text = format!("scout {full} already exists in run {}", run.id);
         return refuse(fx, reply, text);
     }
-    let n = run.orch.run_scouts.len();
+    // Milestone 9.3 decision 14: the round's scouts, from its start.
+    let before = run.current_round().map_or(0, |r| r.scouts_before as usize);
+    let n = run.orch.run_scouts.len().saturating_sub(before);
     if n >= run.limits.orch.max_scouts as usize {
         let text = format!(
             "run {} already has {n} scouts, the most max_scouts allows",

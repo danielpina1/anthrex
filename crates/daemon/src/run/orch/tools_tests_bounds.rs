@@ -314,3 +314,68 @@ fn stage_and_atomic_fields_are_accepted() {
         "invalid arguments: edits[0]: atomic: unknown field"
     );
 }
+
+/// Milestone 9.3 decision 30: `edit_plan`'s `iterate` is 1 to 16,384 characters, with
+/// or without an `edits` array; an `iterate` edit inside `edits` is bounded the same
+/// way and reaches the engine, which refuses it in the orchestrator's words.
+#[test]
+fn parse_call_bounds_iterate() {
+    let parse = |args: Value| parse_call(AgentRole::Orchestrator, "edit_plan", &args);
+    let at = "é".repeat(proto::GOAL_MAX_CHARS);
+    let over = "x".repeat(proto::GOAL_MAX_CHARS + 1);
+    assert_eq!(
+        parse(json!({"iterate": at})),
+        Ok(OrchCall::EditPlan {
+            edits: Vec::new(),
+            submit: false,
+            summary: None,
+            iterate: Some(at.clone()),
+        })
+    );
+    let Ok(OrchCall::EditPlan { edits, iterate, .. }) =
+        parse(json!({"iterate": "x", "edits": [], "submit": true}))
+    else {
+        panic!("edit_plan must parse");
+    };
+    assert_eq!((edits.len(), iterate.as_deref()), (0, Some("x")));
+    assert_eq!(
+        parse(json!({"iterate": over})),
+        Err("invalid arguments: iterate: must be 1 to 16384 characters".into())
+    );
+    assert_eq!(
+        parse(json!({"iterate": ""})),
+        Err("invalid arguments: iterate: must be 1 to 16384 characters".into())
+    );
+    // Task M9.3.7 fix round 1 (ruling: option (b)): a missing `edits` is an empty
+    // batch with or without `iterate`, so the plain MCP schema is exact. Changed
+    // expectation: task M9.3.4a pinned `edits: required` here without `iterate`.
+    for (bare, full) in [
+        (json!({}), json!({"edits": []})),
+        (
+            json!({"submit": true}),
+            json!({"edits": [], "submit": true}),
+        ),
+        (
+            json!({"summary": "done"}),
+            json!({"edits": [], "summary": "done"}),
+        ),
+    ] {
+        assert_eq!(parse(bare.clone()), parse(full), "{bare}");
+        assert!(parse(bare).is_ok());
+    }
+    assert_eq!(
+        parse(json!({"edits": null})),
+        Err("invalid arguments: edits: must be an array".into()),
+        "a present edits is still checked"
+    );
+    let Ok(OrchCall::EditPlan { edits, .. }) =
+        parse(json!({"edits": [{"op": "iterate", "goal": at}]}))
+    else {
+        panic!("an iterate edit parses");
+    };
+    assert_eq!(edits, vec![PlanEdit::Iterate { goal: at }]);
+    assert_eq!(
+        refusal(json!({"op": "iterate", "goal": over})),
+        "invalid arguments: edits[0]: goal: must be 1 to 16384 characters"
+    );
+}

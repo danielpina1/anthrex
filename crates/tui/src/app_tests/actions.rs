@@ -109,12 +109,7 @@ pub(super) fn sent_tagged_id(effects: &[Effect], want: impl Fn(&RunRequest) -> b
 }
 
 fn select(app: &mut App, key: NodeKey) {
-    let rows = crate::app::nav_rows_of(
-        &app.windows,
-        &app.runs.runs,
-        &app.tree,
-        app.run_view.as_ref(),
-    );
+    let rows = crate::app::nav_rows_of(&app.windows, &app.runs, &app.tree, app.run_view.as_ref());
     app.tree.select(&rows, key.clone());
     assert_eq!(app.tree.selected, Some(key));
 }

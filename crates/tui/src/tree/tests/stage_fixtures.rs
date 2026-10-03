@@ -18,6 +18,7 @@ pub(crate) fn stage(n: u16, head: Option<&str>, tasks: u32, merged: u32) -> Stag
         fix_tasks: vec![],
         propagate_red: None,
         pr: None,
+        round: 1,
     }
 }
 
@@ -107,4 +108,35 @@ pub(crate) fn two_stage_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
     info.stages = vec![one, two];
     let shell = super::run_fixtures::pty(1, "shell", PROJECT, proto::Status::Idle);
     (snapshot(10_000, vec![info]), vec![shell])
+}
+
+/// Milestone 9.3 task 10b: the two-stage run as round 2 of two. Round 1 (`Add mul()`,
+/// completed, summary `mul is in a`) made stage 1 and `t1`; round 2 (`also report the
+/// product`, running) made stage 2 with `t2` and `t3`.
+pub(crate) fn two_round_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
+    let (mut snap, windows) = two_stage_fixture();
+    let run = &mut snap.runs[0];
+    let round = |n, head: &str, outcome, summary: Option<&str>| proto::RoundInfo {
+        n,
+        goal_head: head.into(),
+        origin: proto::RoundOrigin::User,
+        outcome,
+        summary_head: summary.map(str::to_owned),
+        ended: outcome.is_some(),
+    };
+    run.round = 2;
+    run.rounds = vec![
+        round(
+            1,
+            "Add mul()",
+            Some(proto::RoundOutcome::Completed),
+            Some("mul is in a"),
+        ),
+        round(2, "also report the product", None, None),
+    ];
+    for task in &mut run.tasks[1..] {
+        task.round = 2;
+    }
+    run.stages[1].round = 2;
+    (snap, windows)
 }

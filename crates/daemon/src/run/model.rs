@@ -43,6 +43,11 @@ pub use stages::*;
 mod task;
 pub use task::*;
 
+// Milestone 9.3's rounds (decision 18); `rounds` is the session rounds' module.
+#[path = "model_goal_rounds.rs"]
+mod goal_rounds;
+pub use goal_rounds::Round;
+
 /// How thoroughly a task is reviewed, decision 35: `S` tasks get `Small`, `M` tasks
 /// `Medium`, hub tasks `Frontier`, each possibly raised by the level rule (no `check` in
 /// the profile, or a non-`tdd` task whose `owns` touch `source`).
@@ -194,6 +199,11 @@ pub struct Run {
     /// M8a.14: decision 37's `finish` edit: nothing new starts; done once live tasks end.
     #[serde(default)]
     pub finish_edit: bool,
+    /// W1 fix round 2 of milestone 9.3's final fix wave: `finish_edit` was set by a
+    /// round's cancel (decision 16), not by the user's `finish`; the round's end
+    /// clears it, and only such a finish is the round's alone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub round_finish: bool,
     /// M8a.14: the accept or discard request its in-flight op answers; a restore clears it.
     #[serde(default)]
     pub finish_reply: Option<u64>,
@@ -342,6 +352,23 @@ pub struct Run {
     /// Milestone 9.2 decisions 3 and 16: how the run is delivered, frozen at start.
     #[serde(default)]
     pub delivery: super::delivery::RunDelivery,
+    /// Milestone 9.3 decision 18: one record a round, oldest first. A run from before
+    /// rounds gets round 1 at restore (`engine::goal_rounds::ensure_first`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rounds: Vec<Round>,
+    /// Milestone 9.3 decision 19: the chain whose orchestrator session the run uses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<String>,
+    /// Milestone 9.3 D17: the run a next goal started from this run's chain, its
+    /// orchestrator's current run since; this run iterates no more (decision 9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continued_by: Option<String>,
+    /// Milestone 9.3's final fix wave (review A, M1): the run's chain left the table
+    /// while this run was its current one (the project's older idle chain, dropped when
+    /// a newer one went idle), so a restart's `chain::rebuild` leaves it out too.
+    /// Cleared when the chain comes back (an iterate, D17).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub chain_left: bool,
 }
 
 impl Run {

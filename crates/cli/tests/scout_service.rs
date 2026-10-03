@@ -242,6 +242,7 @@ fn call(window_id: u32, scout: &str) -> ToolCall {
         args: report_args(),
         scout_id: Some(scout.into()),
         epic: None,
+        chain: None,
     }
 }
 

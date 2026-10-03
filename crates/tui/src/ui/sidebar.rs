@@ -79,7 +79,7 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
         block = block.title_bottom(mark(down));
     }
     frame.render_widget(block, layout.sidebar);
-    let pos_width = tree::agent_order(&rows).len().max(1).to_string().len();
+    let pos_width = tree::numbered_order(&rows).len().max(1).to_string().len();
     let mut lines: Vec<_> = rows[geometry.first..geometry.first + geometry.count]
         .iter()
         .map(|row| {

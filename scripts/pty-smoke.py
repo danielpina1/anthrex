@@ -46,6 +46,7 @@ from pty_smoke_adapt import DECIDER_DIR, adapt_stage
 from pty_smoke_orch import orch_stage
 from pty_smoke_tiers import tiers_stage
 from pty_smoke_pr import pr_stage
+from pty_smoke_keep_going import keep_going_stage
 from pty_smoke_run_view import run_view_stage
 from pty_smoke_tui import tui_stage
 
@@ -1741,6 +1742,7 @@ def main():
     orch_stage(PtyProc, BIN, run_cmd, fail)
     tiers_stage(PtyProc, BIN, run_cmd, fail)
     pr_stage(PtyProc, BIN, run_cmd, fail, ENV)
+    keep_going_stage(PtyProc, BIN, run_cmd, fail, ENV)
     tui_stage(PtyProc, BIN, run_cmd, fail, ANTHREX_CONFIG_PATH)
 
     print("== stage 12: stop the daemon, verify status ==")
@@ -1800,9 +1802,13 @@ def main():
 
 def only(stage):
     """`ANTHREX_SMOKE_ONLY=<stage>`: runs that one stage alone, for a stage that needs
-    nothing the stages before it set up. Only `11i` qualifies: it runs its own daemon
-    (`scripts/pty_smoke_pr.py`). The merge gate is the whole script, without it."""
-    stages = {"11i": lambda: pr_stage(PtyProc, BIN, run_cmd, fail, ENV)}
+    nothing the stages before it set up. Only `11i` and `11j` qualify: each runs its own
+    daemon (`scripts/pty_smoke_pr.py`, `scripts/pty_smoke_keep_going.py`). The merge gate
+    is the whole script, without it."""
+    stages = {
+        "11i": lambda: pr_stage(PtyProc, BIN, run_cmd, fail, ENV),
+        "11j": lambda: keep_going_stage(PtyProc, BIN, run_cmd, fail, ENV),
+    }
     if stage not in stages:
         fail(f"ANTHREX_SMOKE_ONLY={stage!r}: only {sorted(stages)} can run alone")
     ensure_binary()

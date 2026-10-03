@@ -139,6 +139,7 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
             unconfined_checks: false,
             orchestrator: None,
             delivery: None,
+            continue_from: None,
         })
         .await,
         proto::RunReply::Refused {
@@ -373,6 +374,7 @@ async fn a_tagged_goal_start_is_triaged_with_its_id() {
             unconfined_checks: true,
             orchestrator: None,
             delivery: None,
+            continue_from: None,
         },
     };
     write_frame(&mut wr, &msg).await.unwrap();
@@ -433,6 +435,7 @@ async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
             model: None,
         }),
         delivery: None,
+        continue_from: None,
     });
     write_frame(&mut wr, &msg).await.unwrap();
     let reply = next_run_reply(&mut rd).await;

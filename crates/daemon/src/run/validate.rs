@@ -488,6 +488,7 @@ fn new_task(
         signals_more: 0,
         signal_refusals: 0,
         sync: None,
+        round: proto::first_round(),
     }
 }
 

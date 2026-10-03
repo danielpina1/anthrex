@@ -101,8 +101,15 @@ pub(crate) fn frame_title(
         ReviewTarget::Hold(id) => format!("hold {id} · "),
     };
     let what = theme::fold(&crate::safe_text::one_line(&what), p.ascii);
+    // Milestone 9.3 decision 32: a later round's gate names the round after the run.
+    let round = match (&review.target, run) {
+        (ReviewTarget::Gate, Some(run)) if run.round > 1 => {
+            theme::fold(&format!(" · round {}", run.round), p.ascii)
+        }
+        _ => String::new(),
+    };
     // The corners, each title's two spaces, and one `─` between the titles.
-    let room = usize::from(width).saturating_sub(4 + width_of(&what));
+    let room = usize::from(width).saturating_sub(4 + width_of(&what) + width_of(&round));
     let with_right = room.saturating_sub(RIGHT.len() + 3);
     let (room, right) = if with_right >= MIN_NAME {
         (with_right, true)
@@ -116,7 +123,7 @@ pub(crate) fn frame_title(
         Some(run) => kit::run_name_in(&theme::fold(&run.goal, p.ascii), &run.run_id, room, p),
         None => crate::safe_text::one_line(&review.run_id),
     };
-    (format!("{what}{name}"), right)
+    (format!("{what}{name}{round}"), right)
 }
 
 /// Decision 23's frame: [`frame_title`] in the accent while the review has the keys.
@@ -137,8 +144,9 @@ fn frame_block(
     block.title_top(Line::from(Span::styled(format!(" {RIGHT} "), muted)).right_aligned())
 }
 
-/// The header (decision 23): the summary row, then the layout's warnings in
-/// `Attention`, each indented by the bar's column and cut to the width.
+/// The header (decision 23): milestone 9.3's round row, the summary row, the delivery
+/// row, then the layout's warnings in `Attention`, each indented by the bar's column
+/// and cut to the width.
 fn render_header(
     out: &mut Vec<Placed>,
     layout: &ReviewLayout,
@@ -148,7 +156,16 @@ fn render_header(
 ) {
     let area = indented(layout.header);
     let width = usize::from(area.width);
-    let mut lines = vec![Line::raw(header_line(run, tasks, area.width, p.ascii))];
+    let mut lines: Vec<Line<'static>> = (layout.round.iter())
+        .map(|round| Line::raw(truncate_in(round, width, p.ascii)))
+        .collect();
+    lines.push(Line::raw(header_line(
+        run,
+        tasks,
+        layout.gate,
+        area.width,
+        p.ascii,
+    )));
     if let Some(delivery) = &layout.delivery {
         lines.push(Line::raw(truncate_in(delivery, width, p.ascii)));
     }
@@ -364,3 +381,7 @@ mod tests;
 #[cfg(test)]
 #[path = "plan_review_frame_tests.rs"]
 mod frame_tests;
+
+#[cfg(test)]
+#[path = "plan_review_rounds_tests.rs"]
+mod rounds_tests;

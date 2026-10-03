@@ -69,6 +69,7 @@ async fn tool_call_is_forwarded_with_role_run_task_and_window() {
             args,
             scout_id: None,
             epic: None,
+            chain: None,
         })
     );
 
@@ -200,6 +201,7 @@ async fn a_scout_call_carries_its_scout_id() {
             args,
             scout_id: Some("onboarding-1".into()),
             epic: None,
+            chain: None,
         })
     );
 }
@@ -251,6 +253,23 @@ async fn tool_outside_the_role_is_refused_without_a_daemon() {
             "{role:?} {tool}: {result}"
         );
     }
+}
+
+/// Milestone 9.3 (KG §3.4): a chained orchestrator's call names its chain.
+#[tokio::test]
+async fn an_orchestrator_call_carries_its_chain() {
+    let stub = StubDaemon::start((true, "{}"));
+    let mut options = opts(AgentRole::Orchestrator, stub.socket.clone());
+    options.task_id = None;
+    options.chain = Some("o-3f9a".into());
+    let mut c = Client::start(options);
+    c.initialize().await;
+    let result = c.call("run_status", json!({})).await;
+    assert!(!Client::is_error(&result), "{result}");
+    let call = stub.seen()[0].call.clone().expect("the call");
+    assert_eq!(call.role, AgentRole::Orchestrator);
+    assert_eq!(call.chain.as_deref(), Some("o-3f9a"));
+    assert_eq!(call.tool, "run_status");
 }
 
 /// Milestone 9 decision 15: a sub-planner's call names its epic.

@@ -492,11 +492,15 @@ fn a_restore_that_changes_a_run_bumps_its_revision() {
     assert_eq!(fresh.run().state, RunState::Paused);
     assert_eq!(fresh.run().revision, revision + 1);
     // Unchanged by the restore: unchanged revision.
-    let waiting = build(
+    let mut waiting = build(
         &plan_with(PROFILE, &[task("t1", "S", "a", "")]),
         &config::Orchestrator::default(),
         false,
     );
+    // Milestone 9.3 decision 18: a started run has its round 1 (`requests::start`).
+    waiting
+        .rounds
+        .push(crate::run::model::Round::first(&waiting));
     let mut fresh = Fixture::new("");
     fresh.next(EventKind::Restore {
         held: Vec::new(),

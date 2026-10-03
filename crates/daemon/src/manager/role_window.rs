@@ -185,6 +185,22 @@ impl WindowManager {
         }
     }
 
+    /// The final fix wave (review A, I3): [`Self::end_run_window`]'s inverse, for a
+    /// delivered `pr` run's window that an iterate made the orchestrator of a running
+    /// run again. Sets `id`'s live flag only while `id` is still `run_id`'s window.
+    /// Under the lock, no I/O.
+    pub fn resume_run_window(&self, id: u32, run_id: &str) {
+        let mut inner = crate::lock(&self.inner);
+        if let Some(entry) = inner.entries.get_mut(&id)
+            && entry
+                .role
+                .as_ref()
+                .is_some_and(|role| role.run_ref.run_id == run_id)
+        {
+            entry.run_live = true;
+        }
+    }
+
     /// M9.13 review, item 1: replaces run window `id`'s role environment with
     /// `refresh(<its current one>)`, in the persisted record too, so the next restart
     /// launches with it. Under the lock, no I/O (`refresh` must be pure). `false` when
@@ -204,6 +220,27 @@ impl WindowManager {
         role.env = refresh(&role.env);
         entry.run = Some(role_record(role));
         true
+    }
+
+    /// Milestone 9.3 decision 23: run window `id` becomes `run_ref`'s, a continued run
+    /// adopting its chain's orchestrator, in the persisted record too (as
+    /// [`Self::update_role_env`] keeps it), so a restart restores it as that run's. The
+    /// live flag stays as it is and now guards `run_ref`'s run: the ended run's
+    /// `end_run_window` no longer reaches it. Under the lock, no I/O.
+    pub fn rebind_run_window(&self, id: u32, run_ref: RunRef) -> anyhow::Result<()> {
+        let mut inner = crate::lock(&self.inner);
+        let entry = inner
+            .entries
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        let role = entry
+            .role
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("window {id} is not a run window"))?;
+        role.run_ref = run_ref;
+        entry.run = Some(role_record(role));
+        self.publish(&inner);
+        Ok(())
     }
 
     /// Tests only: holds (or releases) `id`'s `restarting` flag as a restart in flight
@@ -229,6 +266,13 @@ impl WindowManager {
         let entry = inner.entries.get(&id)?;
         let role = entry.role.as_ref().filter(|_| entry.run_live)?;
         Some(role.run_ref.clone())
+    }
+
+    /// Milestone 9.3 task 6b fix round 1 (m1): the run window `id`'s run, live or not;
+    /// `None` for no window or one that is not a run's. Under the lock, no I/O.
+    pub fn run_window_run(&self, id: u32) -> Option<RunRef> {
+        let inner = crate::lock(&self.inner);
+        Some(inner.entries.get(&id)?.role.as_ref()?.run_ref.clone())
     }
 
     /// Records a client's `Input` for `id`. Under the lock, no I/O.
@@ -284,3 +328,7 @@ impl WindowManager {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "role_window_tests.rs"]
+mod tests;

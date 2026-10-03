@@ -147,7 +147,17 @@ pub fn request_for(
         (ActionKind::CancelTask, ActionTarget::Task(_)) => {
             Some(edit(vec![PlanEdit::CancelTask { task_id: task? }], false))
         }
+        // Milestone 9.3 decision 32: `iterate` is local here; the menu entry opens the
+        // iterate dialog, whose Ctrl-S sends [`iterate`] itself.
         _ => None,
+    }
+}
+
+/// Milestone 9.3 decision 32: `anthrex run iterate <run> <text>`'s request.
+pub fn iterate(run_id: &str, goal: &str) -> RunRequest {
+    RunRequest::Iterate {
+        run: run_id.to_string(),
+        goal: goal.to_string(),
     }
 }
 

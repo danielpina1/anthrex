@@ -81,6 +81,7 @@ fn parse_call_for_each_tool() {
             ],
             submit: true,
             summary: Some("All done.".into()),
+            iterate: None,
         })
     );
     assert_eq!(
@@ -89,6 +90,7 @@ fn parse_call_for_each_tool() {
             edits: Vec::new(),
             submit: false,
             summary: None,
+            iterate: None,
         })
     );
     assert_eq!(
@@ -325,6 +327,47 @@ fn override_op_fails_to_parse_with_the_documented_message() {
                 "invalid arguments: edits[0]: unknown variant `{op}`"
             )),
             "{error}"
+        );
+    }
+}
+
+/// Milestone 9.3 decision 29: `start_goal { goal }` (1 to 16,384 characters) is the
+/// orchestrator's alone; every other role is refused with the role's text.
+#[test]
+fn start_goal_is_the_orchestrators_alone() {
+    assert_eq!(
+        orch("start_goal", json!({"goal": "add a login page"})),
+        Ok(OrchCall::StartGoal {
+            goal: "add a login page".into()
+        })
+    );
+    let long = "x".repeat(proto::GOAL_MAX_CHARS + 1);
+    for (args, problem) in [
+        (json!({}), "goal: required"),
+        (json!({"goal": ""}), "goal: must be 1 to 16384 characters"),
+        (json!({"goal": long}), "goal: must be 1 to 16384 characters"),
+        (json!({"goal": 3}), "goal: must be a string"),
+        (json!({"goal": "x", "yes": true}), "yes: unknown field"),
+    ] {
+        assert_eq!(
+            orch("start_goal", args),
+            Err(format!("invalid arguments: {problem}"))
+        );
+    }
+    for role in [
+        AgentRole::Planner,
+        AgentRole::Worker,
+        AgentRole::Reviewer,
+        AgentRole::Scout,
+        AgentRole::Decider,
+    ] {
+        assert_eq!(
+            parse_call(role, "start_goal", &json!({"goal": "x"})),
+            Err(format!(
+                "tool start_goal is not available to the {} role",
+                crate::run::orch::json::label(&role)
+            )),
+            "{role:?}"
         );
     }
 }

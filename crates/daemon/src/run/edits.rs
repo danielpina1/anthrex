@@ -12,17 +12,17 @@
 use super::phases::set_state;
 use std::collections::BTreeSet;
 
-use proto::{BlockInfo, BlockReason, PlanEdit, PlanTask, Size, TaskState};
+use proto::{BlockInfo, BlockReason, PlanEdit, PlanTask, TaskState};
 
-use super::contract::{amend_message, answer_message};
+use super::contract::answer_message;
 use super::delivery::{reply_edit, validate};
-use super::edits_state::{has_live_worker, is_live, is_paused};
+use super::edits_state::is_live;
 pub(super) use super::edits_state::{not_started, state_label};
 use super::engine::actions::rules;
 use super::model::{Run, Task, TaskEvent, task_branch, task_path};
 use super::orch::EditSource;
+use super::orch::contract_rounds::{ITERATE_BY_PLANNER, ITERATE_BY_USER, ITERATE_IN_EDITS};
 use super::plan::PlanError;
-use super::roster::pick_reviewer;
 use super::validate::{
     EditScope, combined_cycles, implicit_deps, protected_notes, reserved_new_id,
     resolve_task_lenient, split_child_stage, validate_tasks_with,
@@ -64,6 +64,10 @@ pub fn apply_edits(
     source: &EditSource,
     now: u64,
 ) -> Result<(Run, Vec<EditConsequence>), Vec<PlanError>> {
+    // Milestone 9.3 decision 15: earlier rounds are read-only.
+    if let Some(error) = super::validate_rounds::earlier_round(run, edits) {
+        return Err(vec![error]);
+    }
     let mut batch = Batch {
         source: source.clone(),
         run: run.clone(),
@@ -89,7 +93,7 @@ pub fn apply_edits(
         &touched,
         Some(&added_deps),
         scope,
-        edited.limits.max_tasks,
+        (edited.limits.max_tasks, edited.round()),
         edited.limits.default_runtime,
     ));
     errors.extend(super::validate_stages::single_layout_rule(&edited));
@@ -123,11 +127,14 @@ fn requeue_waiting(run: &mut Run, now: u64) {
         .enumerate()
         .filter(|(_, t)| t.state == TaskState::Queued)
         .filter(|(_, t)| {
+            // Milestone 9.3 decision 13: an earlier round's task is a met dependency.
+            let earlier = |d: &String| run.tasks.iter().any(|x| x.id() == d && x.round < t.round);
             t.spec.deps.iter().any(|d| {
-                !matches!(
-                    state_of(&run.tasks, d),
-                    Some(TaskState::Merged | TaskState::Reported)
-                )
+                !earlier(d)
+                    && !matches!(
+                        state_of(&run.tasks, d),
+                        Some(TaskState::Merged | TaskState::Reported)
+                    )
             }) || t
                 .implicit_deps
                 .iter()
@@ -172,6 +179,16 @@ impl Batch {
                 let edit = (*pr, &thread[..], &body[..]);
                 let applied = reply_edit::apply(&mut self.run, edit, &self.source, self.now);
                 self.errors.extend(applied.err());
+            }
+            // Milestone 9.3 decision 30: a round starts only from `run iterate` or
+            // `edit_plan`'s `iterate`; never as a batch edit.
+            PlanEdit::Iterate { .. } => {
+                let text = match self.source {
+                    EditSource::User => ITERATE_BY_USER,
+                    EditSource::Orchestrator => ITERATE_IN_EDITS,
+                    EditSource::Planner { .. } => ITERATE_BY_PLANNER,
+                };
+                self.errors.push(PlanError::new(None, "", "43", text));
             }
         }
     }
@@ -223,6 +240,9 @@ impl Batch {
         let before = (self.run.task(&task.spec.id)).map(|t| t.spec.addresses.clone());
         let review = validate::apply(&mut self.run, &mut task, &self.source, before.as_deref());
         self.errors.extend(review);
+        // Milestone 9.3 decision 13: a new task is the current round's; an amended one
+        // keeps its own.
+        task.round = (self.run.task(&task.spec.id)).map_or(self.run.round(), |t| t.round);
         self.touched.insert(task.spec.id.clone());
         task
     }
@@ -364,187 +384,6 @@ impl Batch {
         }
     }
 
-    /// `amend_task`: brief, acceptance and priority on any unfinished task; route, test
-    /// mode, its reason, size, deps and stage only on a task that has not started (one
-    /// refusal per such field; nothing is applied). An amend naming no field is refused.
-    /// When route, test mode, its reason or size changed, the task's derived fields are
-    /// re-resolved from the spec (decisions 8–10), but never below the engine's own
-    /// changes (fix round 1, F1): a size the engine raised (rung 3) is a floor, even for
-    /// an explicit smaller `size`; an escalated route (rung 2) stays unless the amend
-    /// names `route`; the engine's notes stay. Otherwise only the spec changes. Either
-    /// way the spec is validated as a plan task's is. A new brief or new criteria reach
-    /// a live worker as `amend_message`.
-    fn amend_task(&mut self, edit: &PlanEdit) {
-        let PlanEdit::AmendTask {
-            task_id,
-            brief,
-            acceptance,
-            route,
-            test_mode,
-            test_mode_reason,
-            priority,
-            size,
-            deps,
-            stage,
-        } = edit
-        else {
-            return;
-        };
-        let Some(i) = self.find(task_id) else { return };
-        let nothing = brief.is_none()
-            && acceptance.is_none()
-            && route.is_none()
-            && test_mode.is_none()
-            && test_mode_reason.is_none()
-            && priority.is_none()
-            && size.is_none()
-            && deps.is_none()
-            && stage.is_none();
-        if nothing {
-            self.errors.push(PlanError::new(
-                Some(task_id),
-                "amend_task",
-                "13",
-                "nothing to amend",
-            ));
-            return;
-        }
-        let state = self.run.tasks[i].state;
-        if state.is_finished() {
-            return self.refuse(i, "only unfinished tasks can be amended");
-        }
-        let restricted = [
-            ("route", route.is_some()),
-            ("test_mode", test_mode.is_some()),
-            ("test_mode_reason", test_mode_reason.is_some()),
-            ("size", size.is_some()),
-            ("deps", deps.is_some()),
-            ("stage", stage.is_some()),
-        ];
-        let reresolve = restricted[..4].iter().any(|(_, set)| *set);
-        if restricted.iter().any(|(_, set)| *set) && !not_started(&self.run.tasks[i]) {
-            for (name, _) in restricted.iter().filter(|(_, set)| *set) {
-                self.refuse(
-                    i,
-                    &format!("{name} can be amended only on pending, queued or blocked tasks"),
-                );
-            }
-            return;
-        }
-        // Ruling C-14 (d): a blocked task with a worktree has started too.
-        if stage.is_some() && self.run.tasks[i].start_commit.is_some() {
-            let text = format!("task {task_id} has started: its stage cannot change");
-            return self
-                .errors
-                .push(PlanError::new(Some(task_id), "", "13", text));
-        }
-
-        let mut spec = self.run.tasks[i].spec.clone();
-        let mut changed = Vec::new();
-        if let Some(v) = brief {
-            spec.brief = v.clone();
-            changed.push("brief");
-        }
-        if let Some(v) = acceptance {
-            spec.acceptance = v.clone();
-            changed.push("acceptance");
-        }
-        if let Some(v) = route {
-            spec.route = v.clone();
-            changed.push("route");
-        }
-        if let Some(v) = test_mode {
-            spec.test_mode = Some(*v);
-            changed.push("test_mode");
-        }
-        if let Some(v) = test_mode_reason {
-            spec.test_mode_reason = Some(v.clone());
-            changed.push("test_mode_reason");
-        }
-        if let Some(v) = priority {
-            spec.priority = *v;
-            changed.push("priority");
-        }
-        if let Some(v) = size {
-            spec.size = *v;
-            changed.push("size");
-        }
-        if let Some(v) = stage {
-            spec.stage = *v;
-            changed.push("stage");
-        }
-
-        if !reresolve {
-            let resolved = self.resolve(spec);
-            self.run.tasks[i].spec = resolved.spec;
-        } else {
-            self.reresolve(i, spec, route.is_some());
-        }
-        if let Some(deps) = deps {
-            self.amend_deps(i, deps, &mut changed);
-        }
-        let task = &self.run.tasks[i];
-        // Decision 42c: a new brief or acceptance also releases a paused task.
-        let reaches = brief.is_some() || acceptance.is_some();
-        if reaches && (has_live_worker(task) || is_paused(task)) {
-            self.consequences.push(EditConsequence::Deliver {
-                task_id: task.id().to_string(),
-                text: amend_message(task),
-            });
-            self.release_pause(i);
-        }
-        self.log(i, format!("amended: {}", changed.join(", ")));
-    }
-
-    /// Re-resolves task `i` from its amended `spec` without undoing the engine: what the
-    /// unamended spec resolves to is the plan's part, and anything the task holds beyond
-    /// it (a larger size, a different route, extra notes) is the engine's.
-    fn reresolve(&mut self, i: usize, spec: PlanTask, route_named: bool) {
-        let run = &self.run;
-        let old = &run.tasks[i];
-        let (planned, _) = resolve_task_lenient(
-            old.spec.clone(),
-            &run.profile,
-            &run.limits,
-            &run.roster,
-            run.limits.default_runtime,
-        );
-        // The recorded rung-3 raise, never a guess from the spec (fix round 2, N1).
-        let floor = old.raised_size.unwrap_or(Size::S);
-        let escalated = (old.route != planned.route).then(|| old.route.clone());
-        let engine_notes: Vec<String> = old
-            .notes
-            .iter()
-            .filter(|n| !planned.notes.contains(n))
-            .cloned()
-            .collect();
-
-        let mut sized = spec.clone();
-        sized.size = sized.size.max(floor);
-        let resolved = self.resolve(sized);
-        let route = match escalated {
-            Some(route) if !route_named => route,
-            _ => resolved.route,
-        };
-        let task = &mut self.run.tasks[i];
-        task.review_route = resolved
-            .review_level
-            .map(|level| pick_reviewer(&self.run.roster, &route, level));
-        task.spec = spec;
-        task.size = resolved.size;
-        task.hub = resolved.hub;
-        task.test_mode = resolved.test_mode;
-        task.review_level = resolved.review_level;
-        task.route = route;
-        task.budget = resolved.budget;
-        task.notes = resolved.notes;
-        for note in engine_notes {
-            if !task.notes.contains(&note) {
-                task.notes.push(note);
-            }
-        }
-    }
-
     fn add_dep(&mut self, id: &str, dep: &str) {
         let Some(i) = self.find(id) else { return };
         if self.epic_being_planned(i) {
@@ -584,6 +423,9 @@ impl Batch {
         self.log(i, "answered".to_string());
     }
 }
+
+#[path = "edits_amend.rs"]
+mod amend;
 
 #[cfg(test)]
 #[path = "edits_tests.rs"]

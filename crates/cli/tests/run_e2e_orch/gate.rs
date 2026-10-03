@@ -113,7 +113,8 @@ fn e2e_rejected_plan_discards_the_run_and_the_orchestrator_learns_it() {
             "edit_plan",
             json!({"edits": [add(plan_task("t2", &["b.txt"], json!({})))]}),
         ),
-        expect_error("is discarded"),
+        // Milestone 9.3 decision 21: the discarded run's orchestrator is idle.
+        expect_error("has ended; start a new goal with start_goal"),
         marker(),
         read(None),
     ];
@@ -128,10 +129,10 @@ fn e2e_rejected_plan_discards_the_run_and_the_orchestrator_learns_it() {
         .unwrap();
     assert_eq!(refused["ok"], false, "{refused}");
     assert!(
-        refused["result"]
-            .as_str()
-            .unwrap()
-            .contains(&format!("run {run} is discarded")),
+        refused["result"].as_str().unwrap().contains(&format!(
+            "run {} has ended; start a new goal with start_goal when the user gives you one",
+            &run[run.len() - 4..]
+        )),
         "{refused}"
     );
     // Decision 30: the window is a plain one now; the user may remove it.

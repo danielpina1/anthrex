@@ -179,6 +179,8 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
     task.route = pick_reviewer(&run.roster, &author, ReviewLevel::Frontier);
     task.review_level = Some(ReviewLevel::Frontier);
     task.orch.integration_of = Some(epic.clone());
+    // Milestone 9.3 decision 13: the round of the stage it reviews.
+    task.round = run.round_of_stage(task.stage());
     task.history.push(TaskEvent {
         at: now,
         text: format!("added by the engine: the integration review of epic {epic}"),

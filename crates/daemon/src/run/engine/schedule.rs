@@ -7,7 +7,7 @@ use std::cmp::Reverse;
 
 use proto::{AgentRole, Size, TaskKind, TaskState};
 
-use super::OpKind;
+use super::{OpKind, goal_rounds};
 use crate::run::model::{Run, Task};
 
 /// Decision 41: a writer slot is held from `preparing` through `check` (a handed-back
@@ -171,16 +171,22 @@ fn state_of(run: &Run, id: &str) -> Option<TaskState> {
 /// `cancelled` (decision 41). Research and review tasks own nothing, so they are never
 /// an implicit dependency.
 pub fn unfinished_deps(run: &Run, task: &Task) -> Vec<String> {
+    // Milestone 9.3 decision 13: a task of an earlier round is a met dependency.
+    let earlier = |d: &&String| {
+        run.task(d)
+            .is_some_and(|d| goal_rounds::dep_met(run, task, d))
+    };
     let declared = task.spec.deps.iter().filter(|d| {
-        !matches!(
-            state_of(run, d),
-            Some(TaskState::Merged | TaskState::Reported)
-        )
+        !earlier(d)
+            && !matches!(
+                state_of(run, d),
+                Some(TaskState::Merged | TaskState::Reported)
+            )
     });
     let implicit = task
         .implicit_deps
         .iter()
-        .filter(|d| state_of(run, d).is_some_and(|s| !s.is_finished()));
+        .filter(|d| !earlier(d) && state_of(run, d).is_some_and(|s| !s.is_finished()));
     let mut out: Vec<String> = Vec::new();
     for dep in declared.chain(implicit) {
         if !out.contains(dep) {

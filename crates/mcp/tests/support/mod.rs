@@ -160,6 +160,7 @@ pub fn opts(role: AgentRole, socket: PathBuf) -> McpOptions {
         task_id: Some("t1".into()),
         scout_id: None,
         epic: None,
+        chain: None,
         window_id: 7,
         socket,
     }

@@ -117,6 +117,21 @@ pub fn local_actions(run: &RunInfo, target: &ActionTarget) -> Vec<ActionInfo> {
     out
 }
 
+/// Milestone 9.3: round 2 or later, not yet ended, as the daemon's
+/// `goal_rounds_end::open_round` reads it: by `RoundInfo.ended` (its `ended_at`), not
+/// the outcome, which a cancelled round has while it still runs (final fix wave C-m3).
+pub(crate) fn open_round(run: &RunInfo) -> bool {
+    run.round > 1 && run.rounds.last().is_some_and(|r| !r.ended)
+}
+
+/// Decision 12: the tasks a reject of the open round cancels, its unfinished ones.
+/// The action menu's reject page and the plan gate's `x` both count them.
+pub(crate) fn round_open_tasks(run: &RunInfo) -> usize {
+    (run.tasks.iter())
+        .filter(|t| t.round == run.round && !t.state.is_finished())
+        .count()
+}
+
 fn task_of<'a>(run: &'a RunInfo, id: &str) -> Option<&'a TaskInfo> {
     run.tasks.iter().find(|task| task.id == id)
 }
@@ -186,6 +201,19 @@ pub fn confirm_details(run: &RunInfo, kind: &ActionKind, ascii: bool) -> Vec<(St
             let head = format!("{}@{}", run.run_branch, seven(&run.run_head));
             rows.push(row("merges", head));
             rows
+        }
+        // Milestone 9.3 decision 12: an open later round's reject drops that round.
+        ActionKind::Reject if open_round(run) => {
+            let sep = if ascii { "-" } else { "·" };
+            let n = run.round;
+            let tasks = plural(round_open_tasks(run), "task", "tasks");
+            vec![
+                row("cancels", format!("round {n}'s {tasks}")),
+                row(
+                    "keeps",
+                    format!("the earlier rounds {sep} {} unchanged", run.base_branch),
+                ),
+            ]
         }
         ActionKind::Discard | ActionKind::Reject => {
             // No count: the snapshot cannot tell which worktrees still exist (merged
@@ -436,6 +464,9 @@ impl App {
                 Some(dir) => self.open_stats(dir),
                 None => vec![],
             },
+            // Milestone 9.3 decision 32: the iterate dialog replaces the menu.
+            (ActionKind::Iterate, ActionTarget::Run) => self.open_iterate(&flow.run_id),
+            // A kind without a local screen: a `not yet` toast; the menu stays open.
             _ => {
                 self.toast("not yet");
                 self.modal = Some(Modal::Action(Box::new(flow)));

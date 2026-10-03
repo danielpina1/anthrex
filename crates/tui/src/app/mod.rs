@@ -5,6 +5,7 @@ use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
 pub use alerts::{Alert, AlertKey, AlertWho, AlertsFocus, alerts};
+pub use confirm::PendingAction;
 use crossterm::event::KeyEvent;
 pub use link::Link;
 pub use plan_review::{PlanReview, ReviewTarget};
@@ -28,31 +29,6 @@ pub enum Effect {
     /// Decision 32: `C-b r` while not connected. `lib.rs` starts an attempt at once
     /// (unless one is already in flight) and opens a fresh 30 s window.
     Reconnect,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PendingAction {
-    Kill(u32),
-    /// Decision 23: a live window's restart confirmation. Carries the window id
-    /// directly, the same way `Kill` does, rather than an index or a reliance on
-    /// `App.focused` staying put — a dialog that instead trusted focus to still name
-    /// the right window was milestone 5's worst defect (see `app/modal_keys.rs`'s
-    /// `open_force_remove` doc comment for the sibling case this mirrors).
-    Restart(u32),
-    StopDaemon,
-    /// Milestone 8c decision 32: the plan gate's requests, each carrying its run.
-    ApproveRun(String),
-    RejectRun(String),
-    RemoveTask {
-        run_id: String,
-        task_id: String,
-    },
-    /// Milestone 9 decisions 28 and 13: a hold's rejection, and the user's submit.
-    RejectHold {
-        run_id: String,
-        hold: String,
-    },
-    SubmitPlan(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +63,8 @@ pub enum Modal {
     /// Milestone 9 decision 44: the goal form (`crate::run_goal`).
     StartGoal(crate::run_goal::GoalForm),
     Action(Box<actions::ActionFlow>), // Milestone 9.0.6 decision 12: the action menu.
+    Iterate(crate::run_iterate::IterateForm), // Milestone 9.3 decision 32 (`app/iterate.rs`).
+    IdleMenu(idle_menu::IdleMenu),    // Milestone 9.3 decision 32: the idle orchestrator's menu.
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,6 +146,9 @@ pub struct App {
     term_size: (u16, u16),
     pending_resize: Option<Instant>,
     pending_focus: Option<u32>,
+    /// Final fix wave C-m2: the focus is `ensure_focus`'s own pick, not the user's,
+    /// until the next runs snapshot or `focus` (`windows::focus_off_idle`).
+    auto_focus: bool,
     /// Decision 35: the window whose `Subscribe` was last handed to the connection —
     /// set optimistically by whatever emits the effect, cleared by `on_send_failed`
     /// when that particular send is reported refused. `App::focus`'s early return for
@@ -202,6 +183,10 @@ pub struct App {
     /// Decision 24: the daemon's settings, fetched once per connection (`app/screens.rs`).
     pub settings_cache: Option<screens::SettingsCache>,
     pub screen: Option<screens::Screen>, // Decision 33: the open full-body screen.
+    /// Milestone 9.3 decision 8: each project's goal draft, and the goal request a
+    /// closed dialog still waits on (its success clears that project's draft).
+    pub goal_drafts: std::collections::BTreeMap<PathBuf, String>,
+    goal_sent: Option<(u64, PathBuf, String)>,
 }
 
 impl App {
@@ -245,6 +230,7 @@ impl App {
             term_size: (0, 0),
             pending_resize: None,
             pending_focus: None,
+            auto_focus: false,
             subscribed: None,
             runs: runs::no_runs(),
             run_view: None,
@@ -261,6 +247,8 @@ impl App {
             replies: Default::default(),
             settings_cache: None,
             screen: None,
+            goal_drafts: Default::default(),
+            goal_sent: None,
             settings,
         }
     }
@@ -348,8 +336,12 @@ impl App {
         if self.focused_window().is_some() {
             return vec![];
         }
-        match tree::agent_order(&self.rows()).first().copied() {
-            Some(id) => self.focus(id),
+        match tree::focus_fallback(&self.rows(), 0) {
+            Some(id) => {
+                let effects = self.focus(id);
+                self.auto_focus = true;
+                effects
+            }
             None => {
                 self.focused = None;
                 self.follow_no_focus()
@@ -361,6 +353,7 @@ impl App {
         if !self.windows.iter().any(|w| w.id == id) {
             return vec![];
         }
+        self.auto_focus = false;
         if self.term_size == (0, 0) {
             self.pending_focus = Some(id);
             return vec![];
@@ -445,7 +438,7 @@ impl App {
         match cmd {
             Command::NextWindow => self.focus_relative(1),
             Command::PrevWindow => self.focus_relative(-1),
-            Command::FocusIndex(i) => match tree::agent_order(&self.rows()).get(i).copied() {
+            Command::FocusIndex(i) => match tree::numbered_order(&self.rows()).get(i).copied() {
                 Some(id) => self.focus(id),
                 None => vec![],
             },
@@ -555,6 +548,8 @@ mod daemon;
 mod goal;
 mod headless;
 pub(crate) mod help;
+pub(crate) mod idle_menu;
+mod iterate;
 mod lifecycle;
 mod link;
 mod modal_keys;

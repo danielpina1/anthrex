@@ -15,35 +15,41 @@ use super::{Runs, print_outcome};
 pub const GOAL_REQUEST_TIMEOUT: Duration =
     super::RUN_START_TIMEOUT.saturating_add(Duration::from_secs(600 + 30));
 
+/// `run start --goal … --continue`'s reply bound (milestone 9.3's final fix wave, B-I1):
+/// the daemon's own deadline on a continued start's steps before `Start`
+/// (`CONTINUE_START_BOUND`, `run start`'s terms; a continue is not triaged), then 30 s
+/// for its engine step and the reply. Past the deadline the daemon refuses, saying
+/// nothing was started, so this wait always hears a true answer.
+pub const CONTINUE_REQUEST_TIMEOUT: Duration =
+    daemon::run::chain::CONTINUE_START_BOUND.saturating_add(Duration::from_secs(30));
+
 /// `run start --goal`: on the fast path the run id on stdout and triage's message on
 /// stderr, and so on the plan and large paths with the planned message (milestone 9
 /// decision 26); any refusal is the command's error (exit 1). `orchestrator` is
 /// `--orchestrator`'s choice (decision 6), `delivery` `--delivery`'s (M9.2 decision 3).
+/// With `--continue <run>` (milestone 9.3 decision 22) the run is resolved first and the
+/// goal continues its chain, untriaged: `Started`'s run id on stdout.
 pub(super) async fn start_goal(
     socket: &Path,
     dir: Option<PathBuf>,
     goal: String,
-    (yes, trust_project, unconfined_checks): (bool, bool, bool),
-    (orchestrator, delivery): (
+    flags: (bool, bool, bool),
+    (orchestrator, delivery, continue_from): (
         Option<proto::OrchestratorChoice>,
         Option<proto::DeliveryMode>,
+        Option<String>,
     ),
 ) -> anyhow::Result<()> {
+    continue_checked(&goal, continue_from.is_some())?;
     let dir = crate::resolve_dir(dir)?;
     tui::spawn::ensure_daemon(&std::env::current_exe()?, socket).await?;
     let mut runs = Runs::connect(socket).await?;
-    let reply = runs
-        .request(RunRequest::StartGoal {
-            goal,
-            dir,
-            yes,
-            trust_project,
-            unconfined_checks,
-            orchestrator,
-            delivery,
-        })
-        .await?;
-    match reply {
+    let continue_from = match continue_from {
+        Some(run) => Some(runs.resolve(&run).await?),
+        None => None,
+    };
+    let request = goal_request(goal, dir, flags, (orchestrator, delivery), continue_from);
+    match runs.request(request).await? {
         RunReply::Triaged {
             run_id: Some(run_id),
             message,
@@ -54,7 +60,44 @@ pub(super) async fn start_goal(
             Ok(())
         }
         RunReply::Triaged { message, .. } => anyhow::bail!(message),
+        RunReply::Started { run_id, .. } => {
+            println!("{run_id}");
+            Ok(())
+        }
         other => print_outcome(other),
+    }
+}
+
+/// The final fix wave (B-M6): a continued goal over `GOAL_MAX_CHARS` is refused before
+/// connecting, with the daemon's own text, as `run iterate`'s request is.
+pub(super) fn continue_checked(goal: &str, continuing: bool) -> anyhow::Result<()> {
+    if continuing && goal.chars().count() > proto::GOAL_MAX_CHARS {
+        anyhow::bail!(daemon::run::orch::contract_rounds::GOAL_TOO_LONG);
+    }
+    Ok(())
+}
+
+/// The `StartGoal` request `run start --goal` sends; `continue_from` is the resolved run
+/// id of `--continue`, which conflicts with `--orchestrator` (decision 31).
+pub(super) fn goal_request(
+    goal: String,
+    dir: PathBuf,
+    (yes, trust_project, unconfined_checks): (bool, bool, bool),
+    (orchestrator, delivery): (
+        Option<proto::OrchestratorChoice>,
+        Option<proto::DeliveryMode>,
+    ),
+    continue_from: Option<String>,
+) -> RunRequest {
+    RunRequest::StartGoal {
+        goal,
+        dir,
+        yes,
+        trust_project,
+        unconfined_checks,
+        orchestrator,
+        delivery,
+        continue_from,
     }
 }
 
@@ -139,6 +182,7 @@ mod tests {
             unconfined_checks: false,
             orchestrator: None,
             delivery: None,
+            continue_from: None,
         };
         assert_eq!(request_timeout(&goal), GOAL_REQUEST_TIMEOUT);
         assert_eq!(

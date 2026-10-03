@@ -36,6 +36,8 @@ fn a_stats() -> HistoryStats {
         flaky_proposals: Vec::new(),
         window_days: 0,
         quarantine_after: 0,
+        rounds: 0,
+        iterated_runs: 0,
     }
 }
 
@@ -90,6 +92,7 @@ fn every_run_reply_round_trips_its_request_id() {
         runs: Vec::new(),
         now: 1_700_000_000,
         proposals: Vec::new(),
+        idle_orchestrators: Vec::new(),
     });
     assert_eq!(snapshot.clone().tagged(Some(7)), snapshot);
     assert_eq!(snapshot.request_id(), None);

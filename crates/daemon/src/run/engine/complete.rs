@@ -118,14 +118,23 @@ pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     // Controller ruling C-21 (1b): the `finish` edit keeps sync tasks, which the run
     // needs to deliver its merged work; `run cancel` gives them up.
     let finishing = run.finish_edit && !run.cancelled;
-    let keep = move |t: &Task| finishing && t.sync.is_some();
+    // The final fix wave (review A, I1): a round's cancel (milestone 9.3 decision 16)
+    // ends that round's tasks only; the earlier rounds' work, an engine-made fix on
+    // their stages included, keeps going.
+    let round = super::goal_rounds_end::cancelling_round(run);
+    let keep = move |t: &Task| finishing && t.sync.is_some() || round.is_some_and(|n| t.round != n);
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
         if !task.state.is_finished() && task.start_commit.is_none() && !keep(task) {
             cancel_task(run, i, why, now, fx);
         }
     }
-    if !run.finish_edit || run.tasks.iter().any(|t| live(t.state)) {
+    // What the blocked wait for: every live task, as before the wave, but while a round
+    // is being cancelled only that round's (W1 fix round 2: a kept sync task is not
+    // waited for then; a plain `finish` waits for it, as it always did).
+    let waits = |t: &Task| live(t.state) && round.is_none_or(|n| t.round == n && t.sync.is_none());
+    let live_left = run.tasks.iter().any(waits);
+    if !run.finish_edit || live_left {
         return;
     }
     for i in 0..run.tasks.len() {
@@ -312,6 +321,11 @@ pub(super) fn cancel(
     };
     if let Some(text) = rules::cancel(run) {
         return answer(fx, Err(text));
+    }
+    // Milestone 9.3 decision 16: a later round's cancel ends that round only.
+    if super::goal_rounds_end::open_round(run) {
+        let text = super::goal_rounds_end::cancel_round(run, now, fx);
+        return answer(fx, Ok(text));
     }
     if run.state == RunState::Paused {
         run.state = RunState::Running;

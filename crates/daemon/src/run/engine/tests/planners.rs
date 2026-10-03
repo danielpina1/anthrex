@@ -71,6 +71,7 @@ pub(super) fn planner_tool(
             args,
             scout_id: None,
             epic: Some(epic.into()),
+            chain: None,
         },
         refusals: Vec::new(),
     }))

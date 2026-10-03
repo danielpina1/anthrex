@@ -36,7 +36,10 @@ pub(crate) fn request_kinds(run: &Run, node: &ActionNode) -> Vec<ActionKind> {
                 kinds.push(ApproveHold { hold: h.id.clone() });
                 kinds.push(RejectHold { hold: h.id.clone() });
             }
-            kinds.extend([Pause, Unpause, Resume, Cancel, Promote, Accept, Discard]);
+            // Milestone 9.3 decision 32: `iterate` last.
+            kinds.extend([
+                Pause, Unpause, Resume, Cancel, Promote, Accept, Discard, Iterate,
+            ]);
             kinds
         }
         ActionNode::Stage(stage) => vec![MessageStage { stage: *stage }],
@@ -104,6 +107,8 @@ fn relevant(run: &Run, node: &ActionNode, kind: &ActionKind) -> bool {
     );
     let complete = state == RunState::Complete;
     match (node, kind) {
+        // Milestone 9.3 decision 32: listed only when decision 9 lets the run iterate.
+        (ActionNode::Run, Iterate) => rules::iterate(run).is_none(),
         // Milestone 9.2 decisions 38-39 and ruling R-1: a `pr`-mode run never lists
         // accept (anthrex never merges), and discard only once it is complete.
         (ActionNode::Run, Accept | Discard) if delivery::pr(run) => complete && *kind == Discard,
@@ -173,8 +178,15 @@ fn task_relevant(run: &Run, id: &str, kind: &ActionKind) -> bool {
 /// handler's order: a `run edit`'s run-wide checks, then its edit's.
 pub(crate) fn check(run: &Run, node: &ActionNode, kind: &ActionKind) -> Result<(), String> {
     use ActionKind::*;
+    // The final fix wave (I2): `apply_edits` refuses an edit into an earlier round
+    // before any of its rules, so the check does too.
+    let earlier = |edits: &[PlanEdit]| {
+        crate::run::validate_rounds::earlier_round(run, edits).map(|e| e.message)
+    };
     let edit = |edits: &[PlanEdit], rule: &dyn Fn() -> Option<String>| {
-        rules::edit_run(run, edits, false).or_else(rule)
+        rules::edit_run(run, edits, false)
+            .or_else(|| earlier(edits))
+            .or_else(rule)
     };
     let task = || match node {
         ActionNode::Task(id) => *id,
@@ -225,6 +237,8 @@ pub(crate) fn check(run: &Run, node: &ActionNode, kind: &ActionKind) -> Result<(
         }
         // Client-only kinds change nothing in the daemon (decision 10).
         ReviewPlan | Stats | OpenConversation => None,
+        // Milestone 9.3 decision 9.
+        Iterate => rules::iterate(run),
     };
     refusal.map_or(Ok(()), Err)
 }

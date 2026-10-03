@@ -8,14 +8,16 @@ use crate::ui::audit::fixtures;
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 
 /// The status bar alone, `w` columns wide, trailing spaces trimmed: the full-height
-/// help covers the bar's row at 80x24, so the whole frame would hide what it says.
-fn bar(app: &App, w: u16, _h: u16) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(w, 1)).expect("a test terminal");
+/// help covers the bar's row at 80x24, so the whole frame would hide what it says. It
+/// is drawn on its row of a `w`x`h` frame, since milestone 9.3 decision 7's bar reads
+/// the frame's size (the goal dialog's compact fallback below 60x16).
+fn bar(app: &App, w: u16, h: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("a test terminal");
     terminal
-        .draw(|f| super::render(f, app, Rect::new(0, 0, w, 1)))
+        .draw(|f| super::render(f, app, Rect::new(0, h - 1, w, 1)))
         .expect("a frame");
     let buffer = terminal.backend().buffer();
-    let row: String = (0..w).map(|x| buffer[(x, 0)].symbol()).collect();
+    let row: String = (0..w).map(|x| buffer[(x, h - 1)].symbol()).collect();
     row.trim_end().to_string()
 }
 
@@ -26,7 +28,9 @@ fn expected(name: &str) -> &'static str {
         | "profile under the help"
         | "help over the run view"
         | "help over the alerts view" => " HELP  esc close",
-        "action menu over the run view" | "action menu on its message form" => " MENU  esc back",
+        "action menu over the run view"
+        | "action menu on its message form"
+        | "idle menu over the sidebar" => " MENU  esc back",
         "config notice over the pane" => " DIALOG  esc close",
         "confirm over the overview"
         | "new agent over the pane"
@@ -34,7 +38,10 @@ fn expected(name: &str) -> &'static str {
         | "force remove over the pane"
         | "rename over the pane"
         | "edit form over the run view"
-        | "goal form over the pane" => " DIALOG  esc back",
+        | "goal form over the pane"
+        | "goal form continuing"
+        | "goal form discard page"
+        | "iterate dialog over the run view" => " DIALOG  esc back",
         other => panic!("the Dialog-region fixture {other:?} has no expected bar"),
     }
 }

@@ -11,8 +11,7 @@ use super::{App, Effect, TreeInput};
 use crate::tree::{self, NodeKey, Row, RunFilter, TreeState};
 use crossterm::event::{KeyCode, KeyEvent};
 use proto::{
-    AgentRoundInfo, ClientMsg, RunInfo, RunReply, RunRequest, RunState, RunsSnapshot, Runtime,
-    WindowInfo,
+    AgentRoundInfo, ClientMsg, RunReply, RunRequest, RunState, RunsSnapshot, Runtime, WindowInfo,
 };
 use std::time::Instant;
 
@@ -28,18 +27,18 @@ pub struct RunView {
 /// run, the project tree's otherwise.
 pub fn nav_rows_of<'a>(
     windows: &'a [WindowInfo],
-    runs: &'a [RunInfo],
+    snapshot: &'a RunsSnapshot,
     state: &TreeState,
     view: Option<&RunView>,
 ) -> Vec<Row<'a>> {
     let shown = view.and_then(|view| {
-        tree::shown_runs(runs)
+        tree::shown_runs(&snapshot.runs)
             .find(|run| run.run_id == view.run_id)
             .map(|run| (run, view.filter))
     });
     match shown {
         Some((run, filter)) => tree::run_rows(run, windows, state, filter),
-        None => tree::build_with_runs(windows, runs, state),
+        None => tree::build_from(windows, snapshot, state),
     }
 }
 
@@ -89,6 +88,7 @@ pub(super) fn no_runs() -> RunsSnapshot {
         runs: vec![],
         now: 0,
         proposals: Vec::new(),
+        idle_orchestrators: Vec::new(),
     }
 }
 
@@ -178,6 +178,7 @@ impl App {
                 self.replace_runs(snapshot);
                 self.runs_received_at = Instant::now();
                 self.run_subscribed = true;
+                return self.focus_off_idle();
             }
             // Decision 34: an edit's reply ends a submitting form — closed on `Done`,
             // its error row filled on `Refused`. Every other reply is a toast.
@@ -188,7 +189,10 @@ impl App {
                 request_id,
                 ..
             } => {
-                if self.form_waiting_on(request_id).is_some() {
+                // Milestone 9.3 decision 32: and the iterate dialog's.
+                if self.form_waiting_on(request_id).is_some()
+                    || self.iterate_waiting_on(request_id).is_some()
+                {
                     self.modal = None;
                 }
                 self.toast(capped(&message));
@@ -212,7 +216,12 @@ impl App {
                     form.error = Some(text);
                     form.submitting = false;
                     form.request_id = None;
+                } else if let Some(form) = self.iterate_waiting_on(request_id) {
+                    form.error = Some(text);
+                    form.submitting = false;
+                    form.request_id = None;
                 } else {
+                    self.goal_refused(request_id);
                     self.toast_at(super::ToastLevel::Error, text);
                 }
             }
@@ -225,14 +234,18 @@ impl App {
                 // Review: a reply to this client's goal whose form was closed meanwhile
                 // is still shown. This client sends `StartGoal` only tagged, so an
                 // untagged `Triaged` is not its own and changes nothing (M8c).
-                if self.goal_form_waiting_on(request_id).is_some() {
-                    self.goal_triaged(run_id, &message);
-                } else if request_id.is_some() {
+                if !self.goal_started(request_id, run_id, &message) && request_id.is_some() {
                     self.toast(capped(&message));
                 }
             }
-            RunReply::Started { .. }
-            | RunReply::ConfirmNeeded { .. }
+            // Milestone 9.3 decision 22 (D11): a continued goal's reply is `Started`.
+            RunReply::Started {
+                run_id, request_id, ..
+            } => {
+                let message = format!("run {run_id} started");
+                self.goal_started(request_id, Some(run_id), &message);
+            }
+            RunReply::ConfirmNeeded { .. }
             | RunReply::ToolResult { .. }
             // Settings, profile and stats replies are routed by id in `app/replies.rs`
             // (decisions 24, 34 and 38); one reaching here is no request of this
@@ -265,9 +278,10 @@ impl App {
         self.repair_alerts_focus();
         self.follow_action_flow();
         self.open_pending_run();
+        self.refresh_goal_chains();
         let rows = nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         );
@@ -304,7 +318,7 @@ impl App {
     pub fn nav_rows(&self) -> Vec<Row<'_>> {
         nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         )
@@ -330,7 +344,7 @@ impl App {
         self.settle_graph_viewport();
         let rows = nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         );
@@ -355,7 +369,7 @@ impl App {
         if self.tree_input.is_some() {
             self.tree_input = Some(TreeInput::Navigate);
         }
-        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
+        let rows = tree::build_from(&self.windows, &self.runs, &self.tree);
         let run = NodeKey::Run(view.run_id);
         let key = match (tree::row_index(&rows, &run), run_row) {
             (None, Some(at)) if !rows.is_empty() => rows[at.min(rows.len() - 1)].key.clone(),
@@ -396,7 +410,7 @@ impl App {
                 view.filter = next_filter(view.filter);
                 let rows = nav_rows_of(
                     &self.windows,
-                    &self.runs.runs,
+                    &self.runs,
                     &self.tree,
                     self.run_view.as_ref(),
                 );

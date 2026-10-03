@@ -68,6 +68,11 @@ fn landing(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
     let Some(pr) = run.delivery.pr(n).cloned() else {
         return;
     };
+    // Milestone 9.3 (task 5 fix round 1): a widened run's stage 1 has no head until
+    // `create_pass` records it; what landed is judged against that head, so it waits.
+    if run.stage_head(n).is_none() {
+        return;
+    }
     let landed = run.delivery.stage(n).and_then(|s| s.landed);
     match (pr.state, landed) {
         (PrState::Merged, Some(PrState::Merged)) | (PrState::Closed, Some(PrState::Closed)) => {}
@@ -534,17 +539,21 @@ fn append(run: &mut Run, n: u16, outcome: StageOutcome, now: u64, fx: &mut Vec<E
 /// a merge's method known and its history line out, and no base fetch is due; and no
 /// merged stage left work undelivered.
 pub(super) fn settled(run: &Run) -> bool {
-    let done = |n: u16| {
-        let Some(stage) = run.delivery.stage(n) else {
-            return true;
-        };
-        match stage.pr.as_ref() {
-            Some(pr) if pr.state != PrState::Open => {
-                stage.landed == Some(pr.state) && stage.history_written
-            }
-            _ => true,
-        }
-    };
     let unlanded = run.delivery.alerts.keys().any(|k| k.ends_with("/unlanded"));
-    !run.delivery.base_fetch_due && !unlanded && (1..=stage_count(run)).all(done)
+    !run.delivery.base_fetch_due && !unlanded && (1..=stage_count(run)).all(|n| processed(run, n))
+}
+
+/// [`settled`]'s per stage: stage `n`'s landing, if its PR merged or closed, is
+/// processed (seen, and its history line out); true for an open PR or none (also
+/// `goal_rounds::landed_below`, milestone 9.3).
+pub(in crate::run::engine) fn processed(run: &Run, n: u16) -> bool {
+    let Some(stage) = run.delivery.stage(n) else {
+        return true;
+    };
+    match stage.pr.as_ref() {
+        Some(pr) if pr.state != PrState::Open => {
+            stage.landed == Some(pr.state) && stage.history_written
+        }
+        _ => true,
+    }
 }

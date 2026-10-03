@@ -162,7 +162,7 @@ impl App {
         if !self.sidebar_visible {
             return vec![];
         }
-        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
+        let rows = tree::build_from(&self.windows, &self.runs, &self.tree);
         let geometry =
             ui::tree_view::geometry(layout.sidebar_list, rows.len(), self.tree.sidebar.top);
         let Some(index) = geometry.index_at(column, row) else {
@@ -180,7 +180,7 @@ impl App {
             self.close_run_view();
         }
         if self.tree_input.is_some() {
-            let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
+            let rows = tree::build_from(&self.windows, &self.runs, &self.tree);
             self.tree.select(&rows, key.clone());
         }
         let effects = match key {
@@ -209,7 +209,13 @@ impl App {
             | NodeKey::Scout { .. }
             | NodeKey::Task { .. }
             | NodeKey::Stage { .. }
+            | NodeKey::Round { .. }
             | NodeKey::AgentRound { .. }) => self.activate_tree_node(key),
+            // Milestone 9.3 decision 32: an idle orchestrator's row, as a PTY window's.
+            NodeKey::Chain(chain) => match self.idle_window(&chain) {
+                Some(id) => self.focus(id),
+                None => vec![],
+            },
         };
         self.reveal_tree_anchor();
         effects
@@ -234,7 +240,7 @@ impl App {
         // view's while it is open (milestone 8c decision 11).
         let rows = nav_rows_of(
             &self.windows,
-            &self.runs.runs,
+            &self.runs,
             &self.tree,
             self.run_view.as_ref(),
         );

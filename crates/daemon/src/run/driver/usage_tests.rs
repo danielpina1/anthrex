@@ -213,6 +213,8 @@ async fn restoring_a_run_with_orchestrator_usage_writes_nothing() {
     let mut stored = run("done", data.path(), RunState::Accepted);
     stored.orchestrator_usage = usage(999);
     stored.revision = 4;
+    // Milestone 9.3 decision 18: a run from 9.3 on has its round 1 stored.
+    stored.rounds.push(crate::run::model::Round::first(&stored));
     crate::run::journal::save_run(&stored).unwrap();
     let file = stored.data_dir.join(crate::run::journal::RUN_FILE);
     let before = std::fs::metadata(&file).unwrap().ino();

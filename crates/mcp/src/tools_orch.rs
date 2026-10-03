@@ -1,5 +1,6 @@
-//! Milestone 9's tools (decision 15, Interfaces "MCP"): the orchestrator's six, the
-//! sub-planner's two and the worker's `task_note`. Every schema is a closed object at
+//! Milestone 9's tools (decision 15, Interfaces "MCP"): the orchestrator's six (seven
+//! since milestone 9.3's `start_goal`), the sub-planner's two and the worker's
+//! `task_note`. Every schema is a closed object at
 //! every level. The limits are what the model sees; the daemon parses every call again
 //! (`daemon::run::orch::tools::parse_call`) and refuses what breaks them. No tool here
 //! approves, accepts, merges or overrides anything: `plan_edit`'s `op` has no such
@@ -18,11 +19,13 @@ pub const RUN_STATUS: &str = "run_status";
 pub const TASK_RESULT: &str = "task_result";
 pub const SUBMIT_EPIC: &str = "submit_epic";
 pub const TASK_NOTE: &str = "task_note";
+pub const START_GOAL: &str = "start_goal";
 
 /// The most `run_status` waits, in seconds (decision 16).
 pub const RUN_STATUS_MAX_WAIT: u64 = 50;
 
-/// `tools_for(Orchestrator)`, in decision 15's order.
+/// `tools_for(Orchestrator)`, in decision 15's order, milestone 9.3's `start_goal` last
+/// (decision 29).
 pub fn orchestrator_tools() -> Vec<Tool> {
     vec![
         get_context(),
@@ -31,10 +34,12 @@ pub fn orchestrator_tools() -> Vec<Tool> {
         edit_plan(),
         run_status(),
         task_result(),
+        start_goal(),
     ]
 }
 
-/// `tools_for(Planner)`.
+/// `tools_for(Planner)`, unchanged by milestone 9.3: a sub-planner sees neither
+/// `start_goal` nor `edit_plan`'s `iterate` (KG §4).
 pub fn planner_tools() -> Vec<Tool> {
     vec![get_context(), submit_epic()]
 }
@@ -98,18 +103,37 @@ fn spawn_subplanner() -> Tool {
     )
 }
 
+/// Milestone 9.3 decisions 29 and 30: `iterate` starts a round. Nothing is required: the
+/// daemon's `parse_call` reads a missing `edits` as an empty batch (task M9.3.7's fix
+/// round 1), so this plain schema (task M9.1.11: no `oneOf`, `anyOf` or `allOf`) is
+/// exact. That `iterate` comes alone is the engine's check, so the description says it.
 fn edit_plan() -> Tool {
     Tool::new(
         EDIT_PLAN,
         "Apply plan edits as one batch. Set submit to open the plan gate. Add a summary for \
-         the user when the run is complete. Returns at once.",
+         the user when the run is complete. Set iterate, with no edits and nothing else, to \
+         start a round the user asked for. Returns at once.",
         closed(
             json!({
                 "edits": array(object(plan_edit()), None, 60),
                 "submit": boolean(),
                 "summary": text(8000),
+                "iterate": text(proto::GOAL_MAX_CHARS as u64),
             }),
-            &["edits"],
+            &[],
+        ),
+    )
+}
+
+/// Milestone 9.3 decision 29: a next goal on this orchestrator's chain (KG §3.3).
+fn start_goal() -> Tool {
+    Tool::new(
+        START_GOAL,
+        "Start a new goal on this orchestrator when the user gives you one; only while your \
+         last run has ended.",
+        closed(
+            json!({"goal": text(proto::GOAL_MAX_CHARS as u64)}),
+            &["goal"],
         ),
     )
 }

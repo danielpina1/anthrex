@@ -56,6 +56,7 @@ fn planner_spec(repo: &std::path::Path) -> PlannerSpec {
             task_id: None,
             scout_id: None,
             epic: Some("mail".into()),
+            chain: None,
         }),
         allowed_tools: vec![
             "mcp__anthrex__get_context".into(),

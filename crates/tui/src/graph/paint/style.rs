@@ -10,8 +10,8 @@ use crate::app::App;
 use crate::theme::{self, Glyph, Role, TaskLook};
 use crate::tree::{DisplayRound, NodeKey, Row, RowKind};
 use proto::{
-    AgentRole, FullState, PlannerInfo, PlannerState, RunState, ScoutInfo, ScoutState, Status,
-    TaskInfo, TaskState, WindowInfo,
+    AgentRole, FullState, PlannerInfo, PlannerState, RoundOutcome, RunState, ScoutInfo, ScoutState,
+    Status, TaskInfo, TaskState, WindowInfo,
 };
 use ratatui::style::{Modifier, Style};
 use std::collections::HashSet;
@@ -125,7 +125,9 @@ fn finished(kind: &RowKind<'_>) -> bool {
         | RowKind::Window { .. }
         | RowKind::Subagent { .. }
         | RowKind::Run { .. }
-        | RowKind::Task { .. } => false,
+        | RowKind::Task { .. }
+        | RowKind::Round { .. }
+        | RowKind::IdleOrchestrator { .. } => false,
     }
 }
 
@@ -155,6 +157,13 @@ pub(crate) fn node_glyph(row: &Row<'_>, app: &App) -> (&'static str, Role) {
         ),
         RowKind::AgentRound { task, round, .. } => round_glyph(task, round, app),
         RowKind::Stage { stage, .. } => theme::stage_look(stage, frame, ascii),
+        // Milestone 9.3 decision 32: a round by its outcome, the open one as its run.
+        RowKind::Round { run, round } => match round.outcome {
+            None => theme::run_look(run.state, ascii),
+            Some(RoundOutcome::Completed) => check(app),
+            Some(RoundOutcome::Rejected | RoundOutcome::Cancelled) => ended(app),
+        },
+        RowKind::IdleOrchestrator { .. } => (theme::glyph(Glyph::NotStarted, ascii), Role::Muted),
     }
 }
 

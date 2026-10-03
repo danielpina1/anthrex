@@ -2,6 +2,7 @@ mod client;
 mod filter_hook;
 mod filter_run;
 mod hook;
+mod ls_cmd;
 mod mcp_cmd;
 mod pre_clap;
 mod profile_cmd;
@@ -68,7 +69,7 @@ enum Command {
         /// Show the project containing this directory
         #[arg(long)]
         project: Option<PathBuf>,
-        /// Print the project tree as pretty JSON
+        /// Print the project tree as pretty JSON (a window's position is its place in tree order, not its C-b number)
         #[arg(long)]
         json: bool,
     },
@@ -232,15 +233,7 @@ async fn run_cli() -> anyhow::Result<()> {
                 other => anyhow::bail!("unexpected reply: {other:?}"),
             }
         }
-        Some(Command::Ls { json }) => {
-            let c = client::CliClient::connect(&socket).await?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&c.windows)?);
-            } else {
-                print!("{}", client::format_table(&c.windows));
-            }
-            Ok(())
-        }
+        Some(Command::Ls { json }) => ls_cmd::ls(&socket, json).await,
         Some(Command::Tree { project, json }) => {
             let c = client::CliClient::connect(&socket).await?;
             let requested = project.map(|path| resolve_dir(Some(path))).transpose()?;
@@ -596,5 +589,7 @@ mod tests {
         assert!(help.contains("Print the project tree"));
         assert!(help.contains("--project <PROJECT>"));
         assert!(help.contains("--json"));
+        // The final fix wave (B-M7): positions are tree order, not C-b numbers.
+        assert!(help.contains("tree order, not its C-b number"), "{help}");
     }
 }

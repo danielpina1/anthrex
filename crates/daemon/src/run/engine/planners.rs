@@ -22,6 +22,7 @@ use super::{
 use crate::run::edits_orch::planner_confinement;
 use crate::run::globs::{intersects, validate_glob};
 use crate::run::model::Run;
+use crate::run::orch::contract_rounds::ITERATE_BY_PLANNER;
 use crate::run::orch::launch::{planner_route, planner_spec};
 use crate::run::orch::roles;
 use crate::run::orch::tools::{OrchCall, parse_call};
@@ -440,17 +441,20 @@ fn outside_its_round(run: &Run, edits: &[PlanEdit], epic: &str) -> Vec<PlanError
         .collect()
 }
 
-/// The edit ops a sub-planner may not use (decision 22, TT §12.1).
-fn forbidden(edit: &PlanEdit) -> Option<&'static str> {
-    match edit {
-        PlanEdit::Answer { .. } => Some("answer"),
-        PlanEdit::Pause => Some("pause"),
-        PlanEdit::Resume => Some("resume"),
-        PlanEdit::Finish => Some("finish"),
-        PlanEdit::Message { .. } => Some("message"),
-        PlanEdit::Refresh { .. } => Some("refresh"),
-        _ => None,
-    }
+/// The edit ops a sub-planner may not use (decision 22, TT §12.1), each with its
+/// refusal; milestone 9.3 decision 30's `iterate` in its own words.
+fn forbidden(edit: &PlanEdit) -> Option<String> {
+    let op = match edit {
+        PlanEdit::Answer { .. } => "answer",
+        PlanEdit::Pause => "pause",
+        PlanEdit::Resume => "resume",
+        PlanEdit::Finish => "finish",
+        PlanEdit::Message { .. } => "message",
+        PlanEdit::Refresh { .. } => "refresh",
+        PlanEdit::Iterate { .. } => return Some(ITERATE_BY_PLANNER.to_string()),
+        _ => return None,
+    };
+    Some(format!("op {op} is not available to a sub-planner"))
 }
 
 /// Decision 22's `submit_epic` of epic `k`, from its live session in `window`: one
@@ -472,7 +476,6 @@ fn submit_epic(
     let refused = edits
         .iter()
         .find_map(forbidden)
-        .map(|op| format!("op {op} is not available to a sub-planner"))
         .or_else(|| kinds::engine_owned(run, edits));
     if let Some(text) = refused {
         record_rejected(run, edits, &source, text.clone(), now);

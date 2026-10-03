@@ -334,6 +334,7 @@ impl Fixture {
                 args,
                 scout_id: None,
                 epic: None,
+                chain: None,
             },
         })
     }

@@ -38,6 +38,16 @@ fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
 const GET_CONTEXT: &str = "Read the run's context: the repository profile, the models you can \
     route to, the limits, scout reports, epics and the plan so far.";
 
+/// Milestone 9.3 task M9.3.7: `edit_plan` names its `iterate`, which comes alone (the
+/// schema cannot say so). `edits` may be left out in every call (fix round 1).
+const EDIT_PLAN: &str = "Apply plan edits as one batch. Set submit to open the plan gate. Add \
+    a summary for the user when the run is complete. Set iterate, with no edits and nothing \
+    else, to start a round the user asked for. Returns at once.";
+
+/// Milestone 9.3 decision 29.
+const START_GOAL: &str = "Start a new goal on this orchestrator when the user gives you one; \
+    only while your last run has ended.";
+
 #[test]
 fn tools_for_orchestrator_and_planner_are_exact() {
     let orchestrator = [
@@ -52,11 +62,7 @@ fn tools_for_orchestrator_and_planner_are_exact() {
             "Start a sub-planner for one epic with its own area, or a fresh one to re-plan \
              an existing epic. Returns at once.",
         ),
-        (
-            "edit_plan",
-            "Apply plan edits as one batch. Set submit to open the plan gate. Add a summary \
-             for the user when the run is complete. Returns at once.",
-        ),
+        ("edit_plan", EDIT_PLAN),
         (
             "run_status",
             "Read the run digest. With since and wait_secs, wait up to wait_secs seconds (at \
@@ -67,6 +73,7 @@ fn tools_for_orchestrator_and_planner_are_exact() {
             "Read everything about one task: brief, commits, diff size, checks, proofs, \
              reviews, agent rounds and any report.",
         ),
+        ("start_goal", START_GOAL),
     ];
     assert_eq!(
         described(&tools_for(AgentRole::Orchestrator)),
@@ -97,6 +104,7 @@ fn no_role_gets_a_tool_it_must_not_have() {
                 "edit_plan",
                 "run_status",
                 "task_result",
+                "start_goal",
             ],
         ),
         (AgentRole::Planner, &["get_context", "submit_epic"]),
@@ -170,11 +178,12 @@ fn every_schema_is_closed_at_every_level() {
         counts.push((role_name(role), objects));
     }
     // edit_plan and submit_epic each hold plan_edit, its plan_task and route, and
-    // `into`'s plan_task and route: seven objects with the tool's own.
+    // `into`'s plan_task and route: seven objects with the tool's own. start_goal
+    // (milestone 9.3) is the orchestrator's thirteenth.
     assert_eq!(
         counts,
         [
-            ("orchestrator", 12),
+            ("orchestrator", 13),
             ("worker", 3),
             ("reviewer", 2),
             ("scout", 4),
@@ -213,8 +222,8 @@ fn schemas_match_the_interface_table() {
         }
     }
     assert_eq!(
-        checked, 9,
-        "six orchestrator tools, two planner tools, task_note"
+        checked, 10,
+        "seven orchestrator tools, two planner tools, task_note"
     );
 }
 
@@ -328,5 +337,68 @@ fn mcp_schema_has_reply_comment_and_addresses() {
             let required = task["required"].as_array().unwrap();
             assert!(!required.contains(&json!("addresses")));
         }
+    }
+}
+
+/// Milestone 9.3 decision 29: the orchestrator lists seven tools, `start_goal` last,
+/// taking one required `goal` of 1 to 16,384 characters.
+#[test]
+fn orchestrator_tools_list_start_goal_last() {
+    let tools = tools_for(AgentRole::Orchestrator);
+    assert_eq!(tools.len(), 7);
+    let last = tools.last().unwrap();
+    assert_eq!(last.name, "start_goal");
+    assert_eq!(last.description.as_deref(), Some(START_GOAL));
+    assert_eq!(
+        Value::Object((*last.input_schema).clone()),
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {"goal": {"type": "string", "minLength": 1, "maxLength": proto::GOAL_MAX_CHARS}},
+            "required": ["goal"],
+        })
+    );
+    assert!(allowed(AgentRole::Orchestrator, "start_goal"));
+}
+
+/// Decisions 29 and 30, and task M9.3.4a's carried item: `edit_plan` takes `iterate`
+/// (1 to 16,384 characters), and `edits` is not required, because the daemon's
+/// `parse_call` reads a missing `edits` as an empty batch (task M9.3.7's fix round 1),
+/// so this plain schema is exact. `iterate` is not a `plan_edit` op.
+#[test]
+fn edit_plan_takes_iterate() {
+    let tools = tools_for(AgentRole::Orchestrator);
+    let edit_plan = tools.iter().find(|t| t.name == "edit_plan").unwrap();
+    let schema = Value::Object((*edit_plan.input_schema).clone());
+    assert_eq!(
+        schema["properties"]["iterate"],
+        json!({"type": "string", "minLength": 1, "maxLength": proto::GOAL_MAX_CHARS})
+    );
+    assert_eq!(schema["required"], json!([]));
+    let mut keys: Vec<&String> = schema["properties"].as_object().unwrap().keys().collect();
+    keys.sort();
+    assert_eq!(keys, ["edits", "iterate", "submit", "summary"]);
+    let ops = &schema["properties"]["edits"]["items"]["properties"]["op"]["enum"];
+    assert!(
+        !ops.as_array().unwrap().contains(&json!("iterate")),
+        "{ops}"
+    );
+    assert_eq!(edit_plan.description.as_deref(), Some(EDIT_PLAN));
+    // submit_epic is unchanged: edits stay required, and it has no iterate.
+    let planner = tools_for(AgentRole::Planner);
+    let submit_epic = planner.iter().find(|t| t.name == "submit_epic").unwrap();
+    let schema = Value::Object((*submit_epic.input_schema).clone());
+    assert_eq!(schema["required"], json!(["edits"]));
+    assert_eq!(schema["properties"]["iterate"], Value::Null);
+}
+
+/// Decision 29 (KG §4): a sub-planner can call neither `start_goal` nor `iterate`. Its
+/// tools are unchanged, and `start_goal` never reaches the daemon from its window.
+#[test]
+fn planners_see_neither() {
+    assert_eq!(names(AgentRole::Planner), ["get_context", "submit_epic"]);
+    assert!(!allowed(AgentRole::Planner, "start_goal"));
+    for role in ROLES.into_iter().filter(|r| *r != AgentRole::Orchestrator) {
+        assert!(!allowed(role, "start_goal"), "{}", role_name(role));
     }
 }

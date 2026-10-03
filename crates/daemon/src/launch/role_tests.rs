@@ -25,6 +25,7 @@ fn role() -> RoleLaunch {
             task_id: None,
             scout_id: None,
             epic: None,
+            chain: None,
         },
         instructions: "THE CONTRACT".into(),
         effort: Effort::High,
@@ -82,7 +83,7 @@ fn mcp_config() -> String {
     )
 }
 
-const ALLOWED: &str = "mcp__anthrex__get_context,mcp__anthrex__spawn_scout,mcp__anthrex__spawn_subplanner,mcp__anthrex__edit_plan,mcp__anthrex__run_status,mcp__anthrex__task_result,Read,Glob,Grep";
+const ALLOWED: &str = "mcp__anthrex__get_context,mcp__anthrex__spawn_scout,mcp__anthrex__spawn_subplanner,mcp__anthrex__edit_plan,mcp__anthrex__run_status,mcp__anthrex__task_result,mcp__anthrex__start_goal,Read,Glob,Grep";
 const DISALLOWED: &str = "Edit,Write,NotebookEdit,Bash,Agent,Task,Artifact,CronCreate,CronDelete,RemoteTrigger,PushNotification,SendMessage,Workflow,WebFetch,WebSearch,Monitor,EnterWorktree,ExitWorktree,ScheduleWakeup,DesignSync";
 
 /// Decision 7's order, with rulings 1 and 2: the user-settings-only flags, the MCP
@@ -363,4 +364,31 @@ fn a_role_record_missing_optional_fields_still_parses() {
             "{required}"
         );
     }
+}
+
+/// Milestone 9.3 task M9.3.7 fix round 1 (review I1): Claude's allowlist and the MCP
+/// crate's orchestrator tools never drift. Every tool `anthrex mcp` lists for the
+/// orchestrator is pre-allowed as `mcp__anthrex__<name>` (a tool neither allowed nor
+/// disallowed asks the user, decision 7), and every `mcp__anthrex__` entry is one of
+/// them; the rest are decision 7's read-only tools.
+#[test]
+fn the_orchestrators_allowlist_names_every_mcp_tool_and_no_other() {
+    let tools: Vec<String> = mcp::tools::tools_for(AgentRole::Orchestrator)
+        .iter()
+        .map(|t| format!("mcp__anthrex__{}", t.name))
+        .collect();
+    for tool in &tools {
+        assert!(
+            ORCHESTRATOR_ALLOWED_TOOLS.contains(&tool.as_str()),
+            "{tool} is not pre-allowed"
+        );
+    }
+    let (anthrex, rest): (Vec<&str>, Vec<&str>) = ORCHESTRATOR_ALLOWED_TOOLS
+        .iter()
+        .partition(|t| t.starts_with("mcp__anthrex__"));
+    assert_eq!(
+        anthrex, tools,
+        "the allowlist's anthrex tools, in the MCP order"
+    );
+    assert_eq!(rest, ["Read", "Glob", "Grep"]);
 }

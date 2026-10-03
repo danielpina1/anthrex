@@ -1,5 +1,5 @@
 {
-  "_about": "Milestone 9 brief, Interfaces \"MCP (crates/mcp)\": every tool of the orchestrator and the sub-planner, and the worker's task_note, as the table gives them. Built from the table alone, independently of the Rust schemas it checks.",
+  "_about": "Milestone 9 brief, Interfaces \"MCP (crates/mcp)\": every tool of the orchestrator and the sub-planner, and the worker's task_note, as the table gives them. Built from the table alone, independently of the Rust schemas it checks. Milestone 9.3 decision 29 (task M9.3.7) adds edit_plan's iterate (string, 1 to 16,384 characters) and the orchestrator's seventh tool, start_goal, from that decision's text; edit_plan requires nothing, since the daemon reads a missing edits as an empty batch (task M9.3.7's fix round 1).",
   "orchestrator": [
     {
       "name": "get_context",
@@ -109,7 +109,7 @@
     },
     {
       "name": "edit_plan",
-      "description": "Apply plan edits as one batch. Set submit to open the plan gate. Add a summary for the user when the run is complete. Returns at once.",
+      "description": "Apply plan edits as one batch. Set submit to open the plan gate. Add a summary for the user when the run is complete. Set iterate, with no edits and nothing else, to start a round the user asked for. Returns at once.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -645,11 +645,14 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 8000
+          },
+          "iterate": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
           }
         },
-        "required": [
-          "edits"
-        ]
+        "required": []
       }
     },
     {
@@ -687,6 +690,24 @@
         },
         "required": [
           "task_id"
+        ]
+      }
+    },
+    {
+      "name": "start_goal",
+      "description": "Start a new goal on this orchestrator when the user gives you one; only while your last run has ended.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          }
+        },
+        "required": [
+          "goal"
         ]
       }
     }

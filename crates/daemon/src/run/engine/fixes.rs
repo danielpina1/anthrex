@@ -101,6 +101,8 @@ pub(crate) fn add_fix(
         .extend(protected_notes(&task.spec.owns, &run.protected_files));
     task.origin = spec.origin;
     task.sync = spec.sync;
+    // Milestone 9.3 decision 13: the round of the stage it fixes.
+    task.round = run.round_of_stage(task.stage());
     let what = fix_text(run, &spec.fixes);
     task.fixes = Some(spec.fixes);
     task.history.push(TaskEvent {
@@ -115,7 +117,7 @@ pub(crate) fn add_fix(
         &touched,
         None,
         &EditScope::Run,
-        run.limits.max_tasks,
+        (run.limits.max_tasks, run.round()),
         run.limits.default_runtime,
     ));
     let implicit = implicit_deps(&tasks);

@@ -8,12 +8,14 @@
 //! verdict, which only the user's requests carry (`OrchEvent::{ApproveHold,
 //! RejectHold}`, from `anthrex run approve|reject --hold`).
 
-use proto::{AgentRole, RunState, Runtime, ToolCall};
+use proto::{AgentRole, MessageTarget, PlanEdit, RunState, Runtime, ToolCall};
 use serde_json::json;
 
 use super::batch::{Applied, Refused, apply_batch, record_rejected};
 use super::requests::log;
-use super::{Effect, EngineState, ReplyId, gate_holds, kinds, planners, run_scouts, wake};
+use super::{
+    Effect, EngineState, ReplyId, gate_holds, goal_rounds, kinds, planners, run_scouts, wake,
+};
 use crate::run::edits_orch::{MessageOutcome, one_edit_rule};
 use crate::run::model::Run;
 use crate::run::orch::tools::{OrchCall, parse_call};
@@ -83,12 +85,21 @@ pub(super) fn on_orch_event(
             run_id,
             digest_revision,
             notes_seq,
+            request,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
                 run.orch.wake_held = false;
-                wake::woken(run, digest_revision, notes_seq);
+                wake::woken(run, digest_revision, notes_seq, request);
             }
         }
+        OrchEvent::ChainWindowGone { chain, window_id } => {
+            super::chains::window_gone(state, &chain, window_id)
+        }
+        OrchEvent::AdoptLost {
+            run_id,
+            window_id,
+            first_prompt,
+        } => super::chains::adopt_lost(state, &run_id, window_id, first_prompt, now),
         OrchEvent::WakeHeld { run_id, held } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
                 run.orch.wake_held = held;
@@ -211,17 +222,30 @@ pub(super) fn tool(
     };
     match parsed {
         OrchCall::EditPlan { edits, submit, .. }
-            if ending.is_some() && (submit || !edits.is_empty()) =>
+            if ending.is_some()
+                && (submit || !edits.is_empty())
+                && !earlier_rounds_only(run, &edits, submit) =>
         {
             refuse(fx, reply, ending.unwrap_or_default())
         }
         OrchCall::SpawnSubplanner { .. } | OrchCall::SpawnScout { .. } if ending.is_some() => {
             refuse(fx, reply, ending.unwrap_or_default())
         }
+        // Milestone 9.3 decision 30: a round, alone in its call.
+        OrchCall::EditPlan {
+            iterate: Some(goal),
+            edits,
+            submit,
+            summary,
+        } => {
+            let alone = edits.is_empty() && !submit && summary.is_none();
+            goal_rounds::edit(run, reply, (&goal, alone), (now, quiet_base), fx)
+        }
         OrchCall::EditPlan {
             edits,
             submit,
             summary,
+            iterate: None,
         } => {
             let call = (&edits[..], submit, summary);
             edit_plan(run, reply, call, refusals, (now, quiet_base), fx)
@@ -343,7 +367,7 @@ pub(super) fn rejected(errors: &[crate::run::plan::PlanError]) -> String {
 /// Decision 19's accepted reply. `revision` is the digest's after this batch and the
 /// scheduler's pass over it (run here first, as a tick at the same time would), so it
 /// is the revision `run_status` then reports.
-fn accepted(
+pub(super) fn accepted(
     run: &mut Run,
     reply: ReplyId,
     (notes, held, message): (Vec<String>, Option<String>, Option<MessageOutcome>),
@@ -389,6 +413,25 @@ pub(super) fn settle_quiet(run: &mut Run, base: &mut Option<Run>, now: u64, fx: 
     settle(run, now, fx);
 }
 
+/// W1 fix round 2: while a round is being cancelled, the orchestrator still answers
+/// and messages the earlier rounds' live tasks (the final fix wave's A-I2); nothing
+/// else, and nothing of the round itself.
+fn earlier_rounds_only(run: &Run, edits: &[PlanEdit], submit: bool) -> bool {
+    let Some(n) = super::goal_rounds_end::cancelling_round(run) else {
+        return false;
+    };
+    let earlier = |id: &str| run.task(id).is_some_and(|t| t.round < n);
+    !submit
+        && edits.iter().all(|edit| match edit {
+            PlanEdit::Answer { task_id, .. } => earlier(task_id),
+            PlanEdit::Message {
+                to: MessageTarget::Tasks(ids),
+                ..
+            } => ids.iter().all(|id| earlier(id)),
+            _ => false,
+        })
+}
+
 /// `run <id> was cancelled` or `run <id> is finishing` while the run is being ended
 /// (M9.9 second review, C-1).
 pub(super) fn ending(run: &Run) -> Option<String> {
@@ -422,7 +465,19 @@ fn new_notes(before: &Run, after: &Run) -> Vec<String> {
 /// The report is rewritten at once (M9.16), so a `complete` run's opens with the summary
 /// before the user accepts or discards it.
 fn write_summary(run: &mut Run, summary: String, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.3 decision 17: the round's summary too. While a later round is still
+    // open, a summary is the previous round's, whose completion asked for it (task 4b
+    // fix round 1, m2).
+    let last = run.rounds.len().saturating_sub(1);
+    let k = last.saturating_sub(usize::from(super::goal_rounds_end::open_round(run)));
+    // The final fix wave (review A, I4): a `pr` round's summary is asked for at its own
+    // end (decision 17); the completion's summary is the run's only.
+    let completed_pr = super::delivery::pr(run) && run.state == RunState::Complete;
+    let keep = |r: &crate::run::model::Round| completed_pr && r.n > 1 && r.summary.is_some();
     if let Some(o) = run.orch.orchestrator.as_mut() {
+        if let Some(round) = run.rounds.get_mut(k).filter(|r| !keep(r)) {
+            round.summary = Some(summary.clone());
+        }
         o.summary = Some(summary);
         log(run, now, "the orchestrator wrote its summary");
         fx.push(Effect::WriteReport {
@@ -443,14 +498,10 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
     match run.state {
         RunState::Planning => {
             set_submitted(run);
-            if run.orch.yes {
+            // Milestone 9.3 decision 12: a round the orchestrator started never skips it.
+            if super::goal_rounds_end::skips_gate(run) {
                 run.state = RunState::Running;
-                run.approved_by = Some("--yes".into());
-                run.approved_at = Some(now);
-                super::stages::fix_layout(run, now);
-                for q in &mut run.decider_queue {
-                    q.queued_at = now;
-                }
+                super::goal_rounds_end::approved(run, "--yes", now);
                 log(
                     run,
                     now,

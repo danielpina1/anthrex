@@ -389,13 +389,14 @@ fn contract_contains_delivery_rules_numbered_on() {
 41. A fix task whose files lie outside its stage waits for the user's approval; say so, and do not work around it.
 42. CI failures become fix tasks without you; when a stage's CI or reviews are handed to the user, tell the user what you know.";
     assert_eq!(DELIVERY_RULES, EXPECTED);
-    assert!(ORCHESTRATOR_CONTRACT.ends_with(&format!("\n{DELIVERY_RULES}")));
+    // Milestone 9.3 (task M9.3.7) appends its rules 43 to 46 right after them.
+    assert!(ORCHESTRATOR_CONTRACT.contains(&format!("\n{DELIVERY_RULES}\n43. ")));
     assert!(!PLANNER_CONTRACT.contains("pull request"));
-    // Every numbered rule, in order, 1 to 42 with no gap.
+    // Every numbered rule, in order, 1 to 46 with no gap.
     let numbers: Vec<u32> = (ORCHESTRATOR_CONTRACT.lines())
         .filter_map(|l| l.split_once(". ").and_then(|(n, _)| n.parse().ok()))
         .collect();
-    assert_eq!(numbers, (1..=42).collect::<Vec<_>>());
+    assert_eq!(numbers, (1..=46).collect::<Vec<_>>());
     // 9.1's stage-size sentence names the key get_context gives.
     assert!(ORCHESTRATOR_CONTRACT.contains("stage_target_lines"));
     assert!(!ORCHESTRATOR_CONTRACT.contains("Aim for 300 to 800 changed lines"));

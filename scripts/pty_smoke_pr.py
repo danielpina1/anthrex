@@ -71,6 +71,9 @@ LAND_WAIT = VIEW_WAIT + FETCH_WAIT + TIER_WAIT + PUSH_WAIT + WRITE + MARGIN
 # daemon binding its socket, and `DAEMON_STOP_CMD_TIMEOUT` (40 s) of
 # `scripts/pty-smoke.py`, `daemon stop`'s 19 s worst case with margin.
 DAEMON_START_WAIT, DAEMON_STOP_WAIT = 60.0, 40.0
+# A closed client's exit, reaped by its pid (`_reap`): it exits as soon as its pty hangs
+# up; a hang guard, not a cost (`docs/timing-budgets.md`).
+REAP_WAIT = 5.0
 
 URL = "https://github.com/fake/app.git"
 
@@ -442,30 +445,34 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         print(f"ok: run {run_id} completed once the user had merged both PRs; nothing asked to land")
     finally:
         if proc is not None:
-            proc.close()
-            # Reap the client this stage spawned (its exact pid only); closing its pty
-            # hangs it up.
-            deadline = time.monotonic() + 5.0
-            while time.monotonic() < deadline:
-                try:
-                    pid, _ = os.waitpid(proc.pid, os.WNOHANG)
-                except ChildProcessError:
-                    break
-                if pid == proc.pid:
-                    break
-                time.sleep(0.1)
+            _reap(proc)
         _stop_daemon(run_cmd, env, socket, daemon)
         if not os.environ.get("ANTHREX_SMOKE_KEEP"):
             shutil.rmtree(root, ignore_errors=True)
 
 
-def _stop_daemon(run_cmd, env, socket, daemon):
-    """The stage's cleanup of its own daemon, on every way out: `anthrex daemon stop`
-    under the stage's variables whenever its socket is there, until the child it
-    spawned has exited (it may bind its socket late), for at most `DAEMON_START_WAIT`
-    plus `DAEMON_STOP_WAIT`. A stop that times out (`run_cmd`'s `fail`, a
-    `SystemExit`) is reported and the cleanup goes on. Nothing is signalled: a daemon
-    that will not stop is reported by its pid."""
+def _reap(proc):
+    """Closes a client a stage spawned, which hangs up its pty, and reaps its exact pid
+    only, for at most `REAP_WAIT` (stages 11i and 11j, task 12 review m2)."""
+    proc.close()
+    deadline = time.monotonic() + REAP_WAIT
+    while time.monotonic() < deadline:
+        try:
+            pid, _ = os.waitpid(proc.pid, os.WNOHANG)
+        except ChildProcessError:
+            break
+        if pid == proc.pid:
+            break
+        time.sleep(0.1)
+
+
+def _stop_daemon(run_cmd, env, socket, daemon, stage="11i"):
+    """The stage's cleanup of its own daemon, on every way out (stage 11j's too; `stage`
+    names it in what is reported): `anthrex daemon stop` under the stage's variables
+    whenever its socket is there, until the child it spawned has exited (it may bind its
+    socket late), for at most `DAEMON_START_WAIT` plus `DAEMON_STOP_WAIT`. A stop that
+    times out (`run_cmd`'s `fail`, a `SystemExit`) is reported and the cleanup goes on.
+    Nothing is signalled: a daemon that will not stop is reported by its pid."""
     deadline = time.monotonic() + DAEMON_START_WAIT + DAEMON_STOP_WAIT
     while time.monotonic() < deadline:
         child_gone = daemon is None or daemon.poll() is not None
@@ -473,7 +480,7 @@ def _stop_daemon(run_cmd, env, socket, daemon):
             # Deferred from task 17: the child exited without removing its socket; no
             # daemon of this stage answers there, so say so instead of stopping it.
             print(
-                f"stage 11i: its daemon, pid {daemon.pid}, exited ({daemon.returncode}) "
+                f"stage {stage}: its daemon, pid {daemon.pid}, exited ({daemon.returncode}) "
                 f"and left a stale socket {socket}",
                 file=sys.stderr,
             )
@@ -482,14 +489,14 @@ def _stop_daemon(run_cmd, env, socket, daemon):
             try:
                 run_cmd(["daemon", "stop"], expect_ok=False, timeout=DAEMON_STOP_WAIT, env=env)
             except SystemExit:
-                print(f"stage 11i: `anthrex daemon stop` on {socket} timed out", file=sys.stderr)
+                print(f"stage {stage}: `anthrex daemon stop` on {socket} timed out", file=sys.stderr)
         elif child_gone:
             return
         time.sleep(0.2)
     if daemon is not None and daemon.poll() is None:
-        print(f"stage 11i: LEAKED its daemon, pid {daemon.pid} (socket {socket})", file=sys.stderr)
+        print(f"stage {stage}: LEAKED its daemon, pid {daemon.pid} (socket {socket})", file=sys.stderr)
     elif os.path.exists(socket):
-        print(f"stage 11i: a daemon still answers on {socket}", file=sys.stderr)
+        print(f"stage {stage}: a daemon still answers on {socket}", file=sys.stderr)
 
 
 def subprocess_ok(argv, cwd):

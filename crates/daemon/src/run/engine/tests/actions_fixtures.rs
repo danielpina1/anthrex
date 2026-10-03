@@ -46,10 +46,12 @@ pub(super) const FIXTURES: &[(&str, Build)] = &[
     ("finishing", finishing),
     ("complete", complete),
     ("complete_with_moved_base", complete_with_moved_base),
+    ("complete_orchestrated", complete_orchestrated),
     ("cancelled_halted", cancelled_halted),
     ("accepted", accepted),
     ("discarded", discarded),
     ("failed", failed),
+    ("round_two_fixes", super::actions_rounds::round_two_fixes),
 ];
 
 /// The fixture called `name`, built.
@@ -154,7 +156,7 @@ fn window(windows: &[(String, u32)], task: &str) -> u32 {
 }
 
 /// `task` blocks itself with a question from `window`.
-fn ask(fx: &mut Fixture, window: u32, task: &str) {
+pub(super) fn ask(fx: &mut Fixture, window: u32, task: &str) {
     let args = json!({"kind": "question", "reason": "which table?"});
     let effects = fx.tool_as(AgentRole::Worker, window, task, "task_blocked", args);
     assert!(replies(&effects).iter().all(Result::is_ok), "{effects:#?}");
@@ -326,6 +328,12 @@ pub(super) fn complete() -> Fixture {
     }
     assert_eq!(fx.run().state, RunState::Complete, "{:#?}", fx.run().log);
     fx
+}
+
+/// Milestone 9.3: a planned run whose orchestrator's task merged, complete: the one
+/// fixture state a round can start from (decision 9).
+fn complete_orchestrated() -> Fixture {
+    super::goal_rounds_start::complete()
 }
 
 /// The base head after an advance.

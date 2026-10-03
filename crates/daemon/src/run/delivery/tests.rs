@@ -280,6 +280,13 @@ fn old_run_json_loads_with_local_delivery() {
         let full = stage["full"].as_object_mut().unwrap();
         assert_eq!(full.remove("runs"), Some(serde_json::json!(0)));
     }
+    // Milestone 9.3 decision 18: round 1, on each stage and each task.
+    for key in ["stages", "tasks"] {
+        for node in back[key].as_array_mut().unwrap() {
+            let round = node.as_object_mut().unwrap().remove("round");
+            assert_eq!(round, Some(serde_json::json!(1)), "{key}");
+        }
+    }
     let stored: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(back, stored);
     // A BisectRecord without `ci` (9.1's) is not a CI bisect.

@@ -26,8 +26,9 @@ pub use forward::forward;
 pub use tools::tools_for;
 
 /// Who this server speaks for: `anthrex mcp --role [--run] [--task] [--scout] [--epic]
-/// --window --socket`. `run_id` is empty for a repository-level scout (M8b decision 15);
-/// `epic` is a sub-planner's own (milestone 9 decision 15).
+/// [--chain] --window --socket`. `run_id` is empty for a repository-level scout (M8b
+/// decision 15); `epic` is a sub-planner's own (milestone 9 decision 15); `chain` is a
+/// chained orchestrator's (milestone 9.3, KG §3.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpOptions {
     pub role: proto::AgentRole,
@@ -35,6 +36,7 @@ pub struct McpOptions {
     pub task_id: Option<String>,
     pub scout_id: Option<String>,
     pub epic: Option<String>,
+    pub chain: Option<String>,
     pub window_id: u32,
     pub socket: PathBuf,
 }

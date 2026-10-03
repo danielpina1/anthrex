@@ -16,8 +16,9 @@ use crate::run::edits_orch::{one_edit_rule, plan_message, refresh_refusal};
 use crate::run::edits_state::state_label;
 use crate::run::engine::dispatch::finishing_as;
 use crate::run::engine::gates::{OVERRIDE_APPLIES, OVERRIDE_KINDS};
-use crate::run::engine::{delivery, full, orch_window, schedule, worker_messages};
+use crate::run::engine::{delivery, full, goal_rounds, orch_window, schedule, worker_messages};
 use crate::run::model::Run;
+use crate::run::orch::contract_rounds as rounds;
 use crate::run::plan::PlanError;
 
 /// The refusal of a handler whose rule, asked again, no longer refuses: a rule and its
@@ -237,6 +238,39 @@ pub(crate) fn finish(run: &Run, action: FinishAction) -> Option<String> {
         return Some(text);
     }
     (run.state != RunState::Complete && !discardable).then(state)
+}
+
+/// Milestone 9.3 decision 9: `run iterate` and `edit_plan`'s `iterate`
+/// (`goal_rounds::iterate`), in order: a run being finished, one with no orchestrator,
+/// `ROUNDS_MAX` reached, `STAGES_MAX` reached (the final fix wave, A-M5), halted, ended, one whose chain started a next goal since (D17),
+/// then a settled run passes; a cancelled `pr`
+/// run (D7) and every other state are refused.
+pub(crate) fn iterate(run: &Run) -> Option<String> {
+    if let Some(text) = being_finished(run) {
+        return Some(text);
+    }
+    let h4 = run.short();
+    if run.orch.orchestrator.is_none() {
+        return Some(rounds::no_orchestrator(h4));
+    }
+    if run.round() >= proto::ROUNDS_MAX {
+        return Some(rounds::rounds_max(h4));
+    }
+    // The final fix wave (A-M5): a round needs a stage after the last.
+    if crate::run::snapshot_stages::stage_count(run) >= proto::STAGES_MAX {
+        return Some(rounds::stages_max(h4));
+    }
+    match run.state {
+        RunState::Halted => Some(rounds::halted(h4)),
+        RunState::Accepted | RunState::Discarded | RunState::Failed => {
+            Some(rounds::ended(h4, run.state.label()))
+        }
+        // D17: a next goal started from its chain since.
+        _ if run.continued_by.is_some() => Some(rounds::superseded(h4)),
+        _ if goal_rounds::settled(run) => None,
+        RunState::Complete if delivery::pr(run) && run.cancelled => Some(rounds::cancelled(h4)),
+        _ => Some(rounds::not_settled(h4, run.state.label())),
+    }
 }
 
 /// `run approve --hold` and `run reject --hold` (`gate_holds::decide`).

@@ -98,6 +98,8 @@ pub(super) fn apply_batch(
             // Decision 37: the scheduler's `complete::finish_pass` does the rest.
             EditConsequence::Finish => {
                 run.finish_edit = true;
+                // W1 fix round 2: the user's finish is the run's, even mid round cancel.
+                run.round_finish = false;
                 log(run, now, "the finish edit: no new task starts");
             }
             // Decision 45: dispatch, gates and deliveries stop; a turn already open runs

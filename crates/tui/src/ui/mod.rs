@@ -11,7 +11,9 @@ mod audit_tests;
 pub mod badge;
 pub mod conversation;
 pub mod dialog;
+pub mod goal_editor;
 pub mod help;
+pub mod idle_menu;
 pub mod kit;
 pub mod modal;
 pub mod overview;
@@ -19,6 +21,7 @@ pub mod plan_review;
 pub mod profile;
 pub mod run_edit;
 pub mod run_goal;
+pub mod run_iterate;
 pub mod run_list;
 #[cfg(test)]
 pub(crate) mod run_pr_tests;

@@ -124,7 +124,7 @@ pub(super) fn open_form(app: &mut App) {
 }
 
 pub(super) fn focus(app: &mut App, field: GoalField) {
-    for _ in 0..7 {
+    for _ in 0..8 {
         if form(app).focus == field {
             return;
         }
@@ -139,11 +139,12 @@ pub(super) fn typed(app: &mut App, text: &str) {
     }
 }
 
-/// The form's request, from a blank goal given text `goal`.
+/// The form's request, from a blank goal given text `goal`: Ctrl-S starts it
+/// (milestone 9.3 decision 7; Enter in the text is a newline).
 fn request(app: &mut App, goal: &str) -> RunRequest {
     focus(app, GoalField::Goal);
     typed(app, goal);
-    tagged(&tap(app, KeyCode::Enter)).1
+    tagged(&press(app, KeyCode::Char('s'), KeyModifiers::CONTROL)).1
 }
 
 #[test]
@@ -337,6 +338,7 @@ fn the_toggles_reach_the_request() {
             unconfined_checks: true,
             orchestrator: None,
             delivery: None,
+            continue_from: None,
         }
     );
 
@@ -353,6 +355,7 @@ fn the_toggles_reach_the_request() {
             unconfined_checks: false,
             orchestrator: None,
             delivery: None,
+            continue_from: None,
         }
     );
 }
@@ -398,6 +401,7 @@ fn the_model_picker_lists_the_runtimes_enabled_models_then_custom() {
                 model: Some("claude-opus-5-5".into()),
             }),
             delivery: None,
+            continue_from: None,
         }
     );
 }
@@ -435,6 +439,7 @@ fn custom_reveals_the_text_line_and_its_text_is_the_model_sent() {
                 model: Some("my model-2".into()),
             }),
             delivery: None,
+            continue_from: None,
         }
     );
 }

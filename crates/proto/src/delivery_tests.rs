@@ -153,7 +153,7 @@ fn delivery_keys_are_pinned_by_literal_json() {
         serde_json::to_value(HistoryLine::Stage(a_stage_line())).unwrap(),
         json!({
             "type": "stage",
-            "v": 4,
+            "v": 5,
             "record_id": "run-a1b2/stage/1",
             "run_id": "run-a1b2",
             "stage": 1,
@@ -266,6 +266,7 @@ fn new_requests_round_trip() {
         unconfined_checks: true,
         orchestrator: None,
         delivery,
+        continue_from: None,
     };
     for delivery in [None, Some(DeliveryMode::Pr), Some(DeliveryMode::Local)] {
         both_ways(&ClientMsg::Run(start(delivery)));
@@ -395,9 +396,16 @@ fn old_snapshot_and_profile_still_decode() {
     assert_eq!(run.test_slots, 8, "a 9.1 field survives");
     assert_eq!(run.tasks[0].fixes.as_deref(), Some("bisect of t4"));
     // A local run's snapshot is written exactly as 9.1 wrote it: `delivery` and each
-    // stage's `pr` are left out while `None`.
-    let stored: serde_json::Value =
+    // stage's `pr` are left out while `None`. Milestone 9.3 adds only `round` (always
+    // written, 1 for a run, task or stage from before it; `rounds_tests.rs`).
+    let mut stored: serde_json::Value =
         serde_json::from_str(include_str!("m9_1_run_info.json")).unwrap();
+    stored["round"] = 1.into();
+    for key in ["tasks", "stages"] {
+        for node in stored[key].as_array_mut().unwrap() {
+            node["round"] = 1.into();
+        }
+    }
     assert_eq!(serde_json::to_value(&run).unwrap(), stored);
 
     let mut run = run;
@@ -466,7 +474,7 @@ fn hold_kind_fix_round_trips() {
 
 #[test]
 fn stage_history_line_round_trips() {
-    assert_eq!(HISTORY_VERSION, 4);
+    assert_eq!(HISTORY_VERSION, 5);
     let line = HistoryLine::Stage(a_stage_line());
     let json = serde_json::to_string(&line).unwrap();
     assert!(json.starts_with(r#"{"type":"stage","#), "{json}");
@@ -498,7 +506,7 @@ fn stage_history_line_round_trips() {
 }
 
 /// The variants a tagged enum declares, in order, from serde's "expected one of" list.
-fn tagged_names<T: DeserializeOwned + std::fmt::Debug>(tag: &str) -> Vec<String> {
+pub(crate) fn tagged_names<T: DeserializeOwned + std::fmt::Debug>(tag: &str) -> Vec<String> {
     let error = serde_json::from_str::<T>(&format!(r#"{{"{tag}":"no_such_variant"}}"#))
         .unwrap_err()
         .to_string();
@@ -516,7 +524,7 @@ fn tagged_names<T: DeserializeOwned + std::fmt::Debug>(tag: &str) -> Vec<String>
 }
 
 /// The variants an externally tagged enum declares, in order.
-fn variant_names<T: DeserializeOwned + std::fmt::Debug>() -> Vec<String> {
+pub(crate) fn variant_names<T: DeserializeOwned + std::fmt::Debug>() -> Vec<String> {
     let error = serde_json::from_str::<T>(r#""NoSuchVariant""#)
         .unwrap_err()
         .to_string();
@@ -533,7 +541,7 @@ fn variant_names<T: DeserializeOwned + std::fmt::Debug>() -> Vec<String> {
 }
 
 /// `{index: payload}` in MessagePack: a struct variant addressed by its index.
-fn variant_at<T: DeserializeOwned>(index: u8, payload: &serde_json::Value) -> Option<T> {
+pub(crate) fn variant_at<T: DeserializeOwned>(index: u8, payload: &serde_json::Value) -> Option<T> {
     assert!(index < 0x80, "a positive fixint");
     let mut bytes = vec![0x81, index];
     bytes.extend(rmp_serde::to_vec_named(payload).unwrap());
@@ -543,9 +551,10 @@ fn variant_at<T: DeserializeOwned>(index: u8, payload: &serde_json::Value) -> Op
 #[test]
 fn appended_variants_keep_their_indices() {
     let names = tagged_names::<PlanEdit>("op");
+    // Milestone 9.3 appends `iterate` (`rounds_tests.rs`).
     assert_eq!(
-        names[names.len() - 3..],
-        ["message", "refresh", "reply_comment"],
+        names[names.len() - 4..],
+        ["message", "refresh", "reply_comment", "iterate"],
         "{names:?}"
     );
     let names = tagged_names::<HoldKind>("kind");
@@ -561,16 +570,19 @@ fn appended_variants_keep_their_indices() {
             "tier",
             "flaky",
             "bisect",
-            "stage"
+            "stage",
+            // Milestone 9.3 appends `round` (`rounds_tests.rs`).
+            "round"
         ]
     );
     let names = variant_names::<RunRequest>();
+    // Milestone 9.3 appends `Iterate` after `Watch` (`rounds_tests.rs`).
     assert_eq!(
-        names[names.len() - 4..],
-        ["TaskDetail", "Settings", "Deliver", "Watch"],
+        names[names.len() - 5..],
+        ["TaskDetail", "Settings", "Deliver", "Watch", "Iterate"],
         "{names:?}"
     );
-    let n = names.len() as u8;
+    let n = names.len() as u8 - 1;
     assert_eq!(
         variant_at::<RunRequest>(n - 2, &serde_json::json!({"run_id": "r1", "stage": 2})),
         Some(RunRequest::Deliver {

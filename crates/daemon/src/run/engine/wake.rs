@@ -72,6 +72,22 @@ fn drop_up_to(run: &mut Run, seq: u64) {
     (o.notes, o.note_seqs) = keep.into_iter().unzip();
 }
 
+/// Drops every note whose text is `text` (W1 fix round 2: a note that turned untrue
+/// before any session read it).
+pub(super) fn unnote(run: &mut Run, text: &str) {
+    let Some(o) = run.orch.orchestrator.as_mut() else {
+        return;
+    };
+    o.note_seqs.resize(o.notes.len(), 0);
+    let keep: Vec<(String, u64)> = o
+        .notes
+        .drain(..)
+        .zip(o.note_seqs.drain(..))
+        .filter(|(n, _)| n != text)
+        .collect();
+    (o.notes, o.note_seqs) = keep.into_iter().unzip();
+}
+
 /// Decisions 16 and 39: the orchestrator read a digest whose answer included the
 /// notes up to `notes_seq`; those are dropped, so an orchestrator that polls is never
 /// pasted at.
@@ -81,8 +97,12 @@ pub(super) fn digest_read(run: &mut Run, notes_seq: u64, now: u64) {
 }
 
 /// Decision 39: the driver pasted the wake-up of `revision`, which held the notes up
-/// to `notes_seq`.
-pub(super) fn woken(run: &mut Run, revision: u64, notes_seq: u64) {
+/// to `notes_seq` and, with `request: Some(n)`, round `n`'s request wake (milestone 9.3
+/// decision 11).
+pub(super) fn woken(run: &mut Run, revision: u64, notes_seq: u64, request: Option<u32>) {
+    if let Some(n) = request {
+        clear_request(run, n);
+    }
     drop_up_to(run, notes_seq);
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.last_wake_rev = o.last_wake_rev.max(revision);
@@ -90,12 +110,42 @@ pub(super) fn woken(run: &mut Run, revision: u64, notes_seq: u64) {
     }
 }
 
+/// Milestone 9.3 (D13, fix round 1): round `n`'s request wake is dropped, and no later
+/// round's: a run holds one request, its current round's (`goal_rounds::iterate` sets
+/// it for the round it starts).
+pub(super) fn clear_request(run: &mut Run, n: u32) {
+    if run.round() == n {
+        run.orch.request_wake = None;
+    }
+}
+
 /// Decision 39's wake-up, for a run the step changed: notes pending, the orchestrator's
 /// window live, `wake_orchestrator` on, and a digest revision newer than the last
-/// wake-up's.
+/// wake-up's. Milestone 9.3 decision 11 (D13): while the run holds a request wake, one
+/// goes whenever the window is live, the request first, then a blank line and the
+/// notes' text when notes are pending; the engine emits it again with every change
+/// until an `OrchestratorWoken` for a request clears it.
 pub(super) fn effect(run: &Run) -> Option<Effect> {
     let o = run.orch.orchestrator.as_ref()?;
     let window_id = o.window_id?;
+    if let Some(request) = run.orch.request_wake.as_ref().filter(|_| o.live) {
+        let mut text = request.clone();
+        if !o.notes.is_empty() {
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push('\n');
+            text.push_str(&wake_text(&run.id, &o.notes));
+        }
+        return Some(Effect::WakeOrchestrator {
+            run_id: run.id.clone(),
+            window_id,
+            text,
+            digest_revision: run.orch.digest_rev,
+            notes_seq: notes_seq(run),
+            request: Some(run.round()),
+        });
+    }
     let due = !o.notes.is_empty()
         && o.live
         && run.limits.orch.wake_orchestrator
@@ -106,6 +156,7 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
         text: wake_text(&run.id, &o.notes),
         digest_revision: run.orch.digest_rev,
         notes_seq: notes_seq(run),
+        request: None,
     })
 }
 

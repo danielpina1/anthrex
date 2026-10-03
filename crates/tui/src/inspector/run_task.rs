@@ -25,6 +25,10 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
         field("route", route_text(task)),
     ];
     fields.extend(super::run_stage::task_fields(run, task));
+    // Milestone 9.3 decision 32: DETAIL's `round <r>`, for a run of several rounds.
+    if run.rounds.len() > 1 {
+        fields.push(field("round", task.round.to_string()));
+    }
     if let Some(deps) = deps_text(run, task, app) {
         fields.push(field("deps", deps));
     }

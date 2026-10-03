@@ -379,7 +379,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         &tasks,
         &touched,
         &EditScope::Run,
-        limits.max_tasks,
+        // Milestone 9.3 decision 14: a new plan is round 1's.
+        (limits.max_tasks, proto::first_round()),
         limits.default_runtime,
     ));
     if !errors.is_empty() {
@@ -444,6 +445,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         log: Vec::new(),
         created_at: ctx.now,
         finish_edit: false,
+        round_finish: false,
         finish_reply: None,
         cancelled: false,
         verify_failures: 0,
@@ -496,6 +498,11 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
             limits: ctx.delivery.into(),
             ..Default::default()
         },
+        // Milestone 9.3 decision 18: round 1 is recorded when the run starts.
+        rounds: Vec::new(),
+        chain: None,
+        continued_by: None,
+        chain_left: false,
     })
 }
 

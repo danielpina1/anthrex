@@ -221,6 +221,7 @@ pub fn headless_spec_on(scout: &ScoutSpec, ctx: &ScoutContext, route: &Route) ->
             task_id: None,
             scout_id: Some(scout.id.clone()),
             epic: None,
+            chain: None,
         }),
         allowed_tools: allowed.into_iter().map(String::from).collect(),
         claude_permission_mode: claude.then(|| REVIEWER_PERMISSION_MODE.to_string()),

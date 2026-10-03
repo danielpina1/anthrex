@@ -31,6 +31,9 @@ pub struct ToolCall {
     /// Milestone 9: the calling sub-planner's epic (`anthrex mcp --epic`).
     #[serde(default)]
     pub epic: Option<String>,
+    /// Milestone 9.3 (KG §3.4): the calling orchestrator's chain (`anthrex mcp --chain`).
+    #[serde(default)]
+    pub chain: Option<String>,
 }
 
 /// Client → daemon, carried inside `ClientMsg::Run`.
@@ -102,6 +105,9 @@ pub enum RunRequest {
         /// Milestone 9.2 decision 3.
         #[serde(default)]
         delivery: Option<DeliveryMode>,
+        /// Milestone 9.3 (KG §3.3): continue this run's chain on its orchestrator.
+        #[serde(default)]
+        continue_from: Option<String>,
     },
     Promote {
         run_id: String,
@@ -139,6 +145,12 @@ pub enum RunRequest {
     Watch {
         run_id: String,
         on: bool,
+    },
+    /// Milestone 9.3 (KG §2.2): a new round of a settled run. Answered under
+    /// `request::ITERATE`.
+    Iterate {
+        run: String,
+        goal: String,
     },
 }
 
@@ -388,4 +400,6 @@ pub mod request {
     /// Milestone 9.2 decision 25.
     pub const DELIVER: &str = "run deliver";
     pub const WATCH: &str = "run watch";
+    /// Milestone 9.3 (KG §2.2).
+    pub const ITERATE: &str = "run iterate";
 }

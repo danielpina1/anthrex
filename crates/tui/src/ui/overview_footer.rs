@@ -101,6 +101,8 @@ pub(in crate::ui) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, S
         | RowKind::Scout { .. }
         | RowKind::Task { .. }
         | RowKind::Stage { .. }
+        | RowKind::Round { .. }
+        | RowKind::IdleOrchestrator { .. }
         | RowKind::AgentRound { .. } => {
             let inspection = inspector::inspect(row, app);
             let right = inspection

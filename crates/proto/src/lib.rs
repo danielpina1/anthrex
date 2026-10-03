@@ -84,7 +84,16 @@
 /// (`bdfe635`); 13 + 1 = 14. Task M9.2.15's fix round adds `DeliveryInfo.alerts`
 /// (`DeliveryAlert`, ruling R-13) within 14: the version is unreleased and this
 /// milestone's own, and the field is `#[serde(default)]` and left out when empty.
-pub const PROTO_VERSION: u32 = 14;
+///
+/// Milestone 9.3 task 2 bumps this to 15: it adds `RunRequest::Iterate`,
+/// `PlanEdit::Iterate`, `ActionKind::Iterate` and the `round` history line, all appended
+/// last, plus `ToolCall.chain`, `RunRequest::StartGoal`'s `continue_from`, the rounds
+/// and chain of `RunInfo`, `TaskInfo.round`, `StageInfo.round`, the snapshot's
+/// `idle_orchestrators` and the stats' round counts (`proto::rounds`). Every new field
+/// is `#[serde(default)]` (and left out while empty where it can be), so a protocol-14
+/// `run.json`, snapshot and history still load. Derivation: `PROTO_VERSION` was 14 at
+/// `crates/proto/src/lib.rs:87` before this change (set by M9.2); 14 + 1 = 15.
+pub const PROTO_VERSION: u32 = 15;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -104,6 +113,7 @@ pub mod orch;
 pub mod paths;
 pub mod planner;
 pub mod profile;
+pub mod rounds;
 pub mod run;
 pub mod run_info;
 pub mod run_wire;
@@ -149,6 +159,7 @@ pub use profile::{
     ProfileStatus, ProfileVerification, ProposalAlertInfo, ProposalOrigin, ProposalRecord,
     ProposalState, RepoProfile,
 };
+pub use rounds::*;
 pub use run::{
     AgentRole, BlockReason, Budget, DoneSignal, EditFile, Effort, Finding, FinishAction,
     GateCounts, GateKind, ModelEntry, Plan, PlanEdit, PlanTask, ProfileSpec, Route, RouteSpec,
@@ -194,8 +205,8 @@ mod orch_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_fourteen() {
-        assert_eq!(super::PROTO_VERSION, 14);
+    fn proto_version_is_fifteen() {
+        assert_eq!(super::PROTO_VERSION, 15);
     }
 
     #[test]

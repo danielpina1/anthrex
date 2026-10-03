@@ -19,9 +19,12 @@ fn muted() -> ratatui::style::Color {
 
 const PLACEHOLDER: &str = "what should the run achieve?";
 
+/// Milestone 9.3 decision 7 (changed expectation): at 80x24 and 120x40 the large
+/// editor shows the placeholder on its first row, with no label; the compact dialog
+/// (59x24) still puts it after the goal's label.
 #[test]
 fn the_goal_field_shows_its_placeholder_while_empty() {
-    for (w, h) in [(80, 24), (120, 40)] {
+    for (w, h, label) in [(80, 24, false), (120, 40, false), (59, 24, true)] {
         let mut app = app_with_cache(roster());
         app.set_terminal_size(w, h);
         open_goal(&mut app);
@@ -30,8 +33,13 @@ fn the_goal_field_shows_its_placeholder_while_empty() {
         let &(x, y) = found
             .first()
             .unwrap_or_else(|| panic!("{w}x{h}:\n{}", audit::rows(&buffer).join("\n")));
-        // On the goal's first row, after its label; muted past the cursor's cell.
-        assert!(audit::rows(&buffer)[usize::from(y)].contains("goal"));
+        // On the goal's first row (after its label in the compact dialog); muted past
+        // the cursor's cell.
+        let row = &audit::rows(&buffer)[usize::from(y)];
+        assert_eq!(row.contains("goal "), label, "{w}x{h}: {row}");
+        if !label {
+            assert_eq!(y, 1, "the large dialog's first interior row");
+        }
         assert_eq!(buffer[(x + 1, y)].fg, muted(), "{w}x{h}");
 
         assert!(press(&mut app, KeyCode::Char('x'), KeyModifiers::NONE).is_empty());
@@ -40,7 +48,12 @@ fn the_goal_field_shows_its_placeholder_while_empty() {
             audit::find(&buffer, PLACEHOLDER).is_empty(),
             "gone once typed"
         );
-        assert!(!audit::find(&buffer, "goal              x").is_empty());
+        let typed = if label {
+            "goal              x"
+        } else {
+            "│ x"
+        };
+        assert!(!audit::find(&buffer, typed).is_empty(), "{w}x{h}");
     }
     // In ASCII too.
     let mut app = app_with_cache(roster());
@@ -176,7 +189,8 @@ fn an_empty_session_uses_the_start_directory() {
     for c in "add a readme".chars() {
         tap(&mut app, KeyCode::Char(c));
     }
-    let (id, request) = one_tagged(&tap(&mut app, KeyCode::Enter));
+    // Milestone 9.3 decision 7 (changed expectation): Ctrl-S starts.
+    let (id, request) = one_tagged(&press(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL));
     let RunRequest::StartGoal { dir, goal, .. } = &request else {
         panic!("{request:?}");
     };
@@ -199,7 +213,9 @@ fn an_empty_session_uses_the_start_directory() {
         audit::rows(&buffer).join("\n")
     );
     assert_eq!(app.toast_text(), None, "the form's row, not a toast");
+    // Milestone 9.3 decision 8 (changed expectation): Esc on a text asks; `y` discards.
     tap(&mut app, KeyCode::Esc);
+    tap(&mut app, KeyCode::Char('y'));
     assert_eq!(app.modal, None);
 
     // `C-b P`: the Profile screen on it, with its three requests.

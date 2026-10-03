@@ -245,6 +245,8 @@ fn strip_m91_defaults(back: &mut serde_json::Value) {
         take(task, "signals", json!([]));
         take(task, "signals_more", json!(0));
         take(task, "sync", Value::Null);
+        // Milestone 9.3 decision 18: round 1.
+        take(task, "round", json!(1));
         let spec = task["spec"].as_object_mut().unwrap();
         take(spec, "atomic", json!(false));
         take(spec, "atomic_reason", Value::Null);

@@ -194,7 +194,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
 /// decision 36: a delivering `pr` run's reads ` <m>/<n> merged · delivering · <age> `,
 /// else ` delivering · <age> ` (review finding I1: never wider than the plain form,
 /// `delivering` being as wide as `<m>/<n> merged` with one-digit counts and narrower
-/// past them, so the state word shows wherever the plain form would).
+/// past them, so the state word shows wherever the plain form would). Milestone 9.3
+/// decision 32: a run of several rounds appends ` · round <n>` to the name, counted
+/// before the name is cut, so a narrow frame cuts the goal, never the round.
 fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
     let Some(run) = app.runs.runs.iter().find(|run| run.run_id == run_id) else {
         return (format!("run {}", crate::safe_text::one_line(run_id)), None);
@@ -213,9 +215,13 @@ fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
             false => vec![format!("{merged}/{total} merged · {}", since(at))],
         }
     };
+    let round = match run.rounds.len() {
+        0 | 1 => String::new(),
+        _ => format!(" · round {}", run.round),
+    };
     // The corners, the title's own spaces and `run · `, the right text's two spaces,
-    // and a column between the two.
-    let chrome = 2 + 2 + 6 + 1;
+    // a column between the two, and the round.
+    let chrome = 2 + 2 + 6 + 1 + u16::try_from(round.width()).unwrap_or(u16::MAX);
     let fits = |right: &String| {
         let right_width = u16::try_from(right.width() + 2).unwrap_or(u16::MAX);
         width
@@ -230,7 +236,7 @@ fn run_title(app: &App, run_id: &str, width: u16) -> (String, Option<String>) {
         None => (width.saturating_sub(chrome), None),
     };
     let name = super::kit::run_name_in(&run.goal, &run.run_id, room, app.palette());
-    (format!("run · {name}"), right)
+    (format!("run · {name}{round}"), right)
 }
 
 /// The columns a run's name keeps before the title drops its right-hand text: the

@@ -134,6 +134,7 @@ pub fn record_id(line: &HistoryLine) -> &str {
         HistoryLine::Flaky(r) => &r.record_id,
         HistoryLine::Bisect(r) => &r.record_id,
         HistoryLine::Stage(r) => &r.record_id,
+        HistoryLine::Round(r) => &r.record_id,
     }
 }
 

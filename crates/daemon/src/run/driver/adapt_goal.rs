@@ -99,7 +99,68 @@ fn refused(message: String) -> RunReply {
     RunReply::refused(request::START_GOAL, message)
 }
 
+/// What a goal has passed before triage (decision 22's steps 1 and 2, then milestone
+/// 9.2's delivery preflight): the preflight, the stored profile and its report, and the
+/// frozen delivery. Milestone 9.3 decision 22: a continued goal passes the same, and
+/// skips triage (`driver/chain_goal.rs`).
+pub(in crate::run::driver) struct GoalReady {
+    pub pre: Preflight,
+    pub profile: RepoProfile,
+    pub report: Option<String>,
+    pub frozen: Frozen,
+}
+
 impl RunService {
+    /// Decision 22's steps 1 and 2, and the delivery's preflight (milestone 9.2
+    /// decision 17), in that order, each refusal as `run start --goal` words it.
+    pub(in crate::run::driver) async fn goal_ready(
+        &self,
+        goal: &str,
+        dir: &Path,
+        (trust_project, unconfined_checks): (bool, bool),
+        delivery: Option<DeliveryMode>,
+    ) -> Result<GoalReady, String> {
+        // Review m2: a blank goal never spends a triage call.
+        if let Some(refusal) = triage::blank_goal(goal) {
+            return Err(refusal);
+        }
+        let Some(adaptation) = self.adaptation.get() else {
+            return Err("the profile service is not running".to_string());
+        };
+        // 1. M8a's early refusals, exactly as `build_plan` applies them.
+        let live = self.ctx.settings.current();
+        let config = &live.orchestrator;
+        let allowed = unconfined_checks || config.unconfined_checks;
+        if let Some(refusal) =
+            confine::start_refusal(config.worker_sandbox, confine::available(), allowed)
+        {
+            return Err(refusal);
+        }
+        let timeout = Duration::from_secs(config.git_timeout_secs);
+        let (g, d) = (self.ctx.git.clone(), dir.to_path_buf());
+        let pre = blocking(move || git::preflight(&g, &d, timeout)).await?;
+        // 2. A stored profile, or the reason there is none.
+        let (profile, report) = match adaptation.profiles.effective(&pre.project).await {
+            Effective::Stored { profile, meta, .. } => (profile, meta.report),
+            Effective::Unparseable { path, error } => return Err(unparseable(&path, &error)),
+            Effective::Absent { proposal } => {
+                let flags = (trust_project, unconfined_checks);
+                return Err(no_profile(adaptation, &pre, proposal, flags).await);
+            }
+        };
+        // Milestone 9.2 decision 17: preflight before triage, so a refusal costs no
+        // decider call; the mode is resolved here, once.
+        let frozen = self
+            .freeze_delivery(&pre, delivery, profile.delivery.as_ref())
+            .await?;
+        Ok(GoalReady {
+            pre,
+            profile,
+            report,
+            frozen,
+        })
+    }
+
     /// Decision 22, steps 1 to 6.
     pub(in crate::run::driver) async fn start_goal(
         &self,
@@ -109,46 +170,23 @@ impl RunService {
         yes: bool,
         (orchestrator, delivery): (Option<OrchestratorChoice>, Option<DeliveryMode>),
     ) -> RunReply {
-        // Review m2: a blank goal never spends a triage call.
-        if let Some(refusal) = triage::blank_goal(&goal) {
-            return refused(refusal);
-        }
+        let flags = (trust_project, unconfined_checks);
+        let ready = match self.goal_ready(&goal, &dir, flags, delivery).await {
+            Ok(ready) => ready,
+            Err(message) => return refused(message),
+        };
+        let GoalReady {
+            pre,
+            profile,
+            report,
+            frozen,
+        } = ready;
         let Some(adaptation) = self.adaptation.get() else {
             return refused("the profile service is not running".to_string());
         };
-        // 1. M8a's early refusals, exactly as `build_plan` applies them.
         let live = self.ctx.settings.current();
         let config = &live.orchestrator;
-        let allowed = unconfined_checks || config.unconfined_checks;
-        if let Some(refusal) =
-            confine::start_refusal(config.worker_sandbox, confine::available(), allowed)
-        {
-            return refused(refusal);
-        }
         let timeout = Duration::from_secs(config.git_timeout_secs);
-        let (g, d) = (self.ctx.git.clone(), dir.clone());
-        let pre = match blocking(move || git::preflight(&g, &d, timeout)).await {
-            Ok(pre) => pre,
-            Err(message) => return refused(message),
-        };
-        // 2. A stored profile, or the reason there is none.
-        let (profile, report) = match adaptation.profiles.effective(&pre.project).await {
-            Effective::Stored { profile, meta, .. } => (profile, meta.report),
-            Effective::Unparseable { path, error } => return refused(unparseable(&path, &error)),
-            Effective::Absent { proposal } => {
-                let flags = (trust_project, unconfined_checks);
-                return refused(no_profile(adaptation, &pre, proposal, flags).await);
-            }
-        };
-        // Milestone 9.2 decision 17: preflight before triage, so a refusal costs no
-        // decider call; the mode is resolved here, once.
-        let frozen = match self
-            .freeze_delivery(&pre, delivery, profile.delivery.as_ref())
-            .await
-        {
-            Ok(frozen) => frozen,
-            Err(message) => return refused(message),
-        };
         // 3. Triage.
         let decision = self
             .triage(
@@ -166,7 +204,7 @@ impl RunService {
         // 6. Milestone 9 decision 26: the planned and large paths build a planned run.
         let flags = (trust_project, unconfined_checks);
         let planned = |info: TriageInfo| Planned {
-            triage: info,
+            triage: Some(info),
             usage: decision.usage,
             yes,
             choice: orchestrator.clone(),
@@ -361,7 +399,10 @@ impl RunService {
         (trust_project, unconfined_checks): (bool, bool),
         (planned, frozen): (Planned, Frozen),
     ) -> RunReply {
-        let info = planned.triage.clone();
+        // D14: only a continued goal (`chain_goal.rs`) builds an untriaged planned run.
+        let Some(info) = planned.triage.clone() else {
+            return refused("a planned goal needs its triage".to_string());
+        };
         let plan = Plan {
             goal: goal.to_string(),
             max_writers: None,

@@ -378,6 +378,10 @@ impl App {
                 self.goal_not_sent(Some(id));
                 true
             }
+            RunRequest::Iterate { .. } => {
+                self.iterate_not_sent(Some(id));
+                true
+            }
             _ => true,
         }
     }

@@ -81,6 +81,10 @@ pub const COUNTER_PERSIST_EVERY: Duration = Duration::from_secs(5);
 /// M8a.16: a run's report is rewritten at most this often.
 pub const REPORT_EVERY: Duration = Duration::from_millis(500);
 
+/// `Event` carries a whole `EventKind` (milestone 9.3's `ToolCall.chain` took it past
+/// clippy's 200-byte line); a message lives only in the driver's queue, so boxing every
+/// event would buy nothing.
+#[allow(clippy::large_enum_variant)]
 enum Msg {
     Event(EventKind),
     /// Orchestrator totals are pending (`driver/usage.rs`).

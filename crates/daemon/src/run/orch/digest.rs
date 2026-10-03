@@ -98,6 +98,9 @@ fn build(run: &Run, now: u64, for_fingerprint: bool) -> Value {
             "complete": matches!(run.state, RunState::Complete | RunState::Accepted),
             "halted_reason": cut_opt(run.halted_reason.as_deref(), LINE_MAX),
             "summary_written": orch.is_some_and(|o| o.summary.is_some()),
+            // Milestone 9.3 decision 28: the current round, and the stage its tasks start at.
+            "round": run.round(),
+            "first_stage": run.current_round().map_or(1, |r| r.first_stage),
         },
         "gate": gate(run, for_fingerprint),
         "slots": {
@@ -392,3 +395,7 @@ mod tests;
 #[cfg(test)]
 #[path = "tests_delivery.rs"]
 mod tests_delivery;
+
+#[cfg(test)]
+#[path = "digest_tests_rounds.rs"]
+mod tests_rounds;

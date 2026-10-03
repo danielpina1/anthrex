@@ -51,12 +51,7 @@ pub(super) fn task_key(run: &str, id: &str) -> NodeKey {
 }
 
 pub(super) fn select(app: &mut App, key: NodeKey) {
-    let rows = crate::app::nav_rows_of(
-        &app.windows,
-        &app.runs.runs,
-        &app.tree,
-        app.run_view.as_ref(),
-    );
+    let rows = crate::app::nav_rows_of(&app.windows, &app.runs, &app.tree, app.run_view.as_ref());
     assert!(rows.iter().any(|row| row.key == key), "{key:?} is a row");
     app.tree.select(&rows, key);
 }

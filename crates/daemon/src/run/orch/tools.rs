@@ -37,6 +37,9 @@ pub enum OrchCall {
         edits: Vec<PlanEdit>,
         submit: bool,
         summary: Option<String>,
+        /// Milestone 9.3 decision 30: a round's request, alone in its call (the
+        /// engine's check).
+        iterate: Option<String>,
     },
     RunStatus {
         since: Option<u64>,
@@ -49,6 +52,11 @@ pub enum OrchCall {
         edits: Vec<PlanEdit>,
         note: Option<String>,
     },
+    /// Milestone 9.3 decision 22: a next goal on the orchestrator's chain (the
+    /// driver's, `chain_goal.rs`).
+    StartGoal {
+        goal: String,
+    },
     /// A worker's (decision 42f).
     TaskNote {
         kind: TaskNoteKind,
@@ -56,7 +64,7 @@ pub enum OrchCall {
     },
 }
 
-/// Parses `tool`'s `args` for `role`: the orchestrator's six tools, a planner's
+/// Parses `tool`'s `args` for `role`: the orchestrator's seven tools, a planner's
 /// `get_context` and `submit_epic`, a worker's `task_note`. Any other pairing is
 /// `tool <tool> is not available to the <role> role`.
 pub fn parse_call(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall, String> {
@@ -69,6 +77,7 @@ pub fn parse_call(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall,
                 | "edit_plan"
                 | "run_status"
                 | "task_result"
+                | "start_goal"
         ),
         AgentRole::Planner => matches!(tool, "get_context" | "submit_epic"),
         AgentRole::Worker => tool == "task_note",
@@ -111,11 +120,20 @@ fn parse(tool: &str, args: &Value) -> Result<OrchCall, String> {
             })
         }
         "edit_plan" => {
-            let map = object(args, &["edits", "submit", "summary"])?;
+            let map = object(args, &["edits", "submit", "summary", "iterate"])?;
+            let iterate = text(map, "iterate", proto::GOAL_MAX_CHARS)?;
+            // Milestone 9.3 decision 30: an iterate needs no `edits` array; and task
+            // M9.3.7's fix round 1 (option (b)): no call does, a missing `edits` is an
+            // empty batch, so the MCP schema can stay plain and exact.
+            let edits = match map.get("edits") {
+                None => Vec::new(),
+                Some(_) => edits(map, 0)?,
+            };
             Ok(OrchCall::EditPlan {
-                edits: edits(map, 0)?,
+                edits,
                 submit: flag(map, "submit")?,
                 summary: text(map, "summary", 8000)?,
+                iterate,
             })
         }
         "run_status" => {
@@ -140,6 +158,12 @@ fn parse(tool: &str, args: &Value) -> Result<OrchCall, String> {
             let map = object(args, &["task_id"])?;
             Ok(OrchCall::TaskResult {
                 task_id: required(text(map, "task_id", 16)?, "task_id")?,
+            })
+        }
+        "start_goal" => {
+            let map = object(args, &["goal"])?;
+            Ok(OrchCall::StartGoal {
+                goal: required(text(map, "goal", proto::GOAL_MAX_CHARS)?, "goal")?,
             })
         }
         "submit_epic" => {

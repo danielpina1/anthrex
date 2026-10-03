@@ -140,6 +140,7 @@ impl Rig {
             epic: epic.map(String::from),
             window_id,
             socket: self.socket.clone(),
+            chain: None,
         }
     }
 

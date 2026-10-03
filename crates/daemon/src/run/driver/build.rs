@@ -17,6 +17,7 @@ use super::adapt::BuildError;
 use super::delivery::DeliveryStart;
 use super::ops::blocking;
 use super::{RunService, unix_now};
+use crate::run::chain::suffix_taken;
 use crate::run::confine;
 use crate::run::git::{self, Git, os};
 use crate::run::globs::ProtectedMatcher;
@@ -98,9 +99,10 @@ pub(super) enum Shape {
     Planned(Box<Planned>),
 }
 
-/// Decision 26: what makes a built run a planned one.
+/// Decision 26: what makes a built run a planned one. Milestone 9.3 (D14): a continued
+/// goal is not triaged, so its `triage` is `None`.
 pub(super) struct Planned {
-    pub triage: proto::TriageInfo,
+    pub triage: Option<proto::TriageInfo>,
     pub usage: Option<proto::TokenUsage>,
     pub yes: bool,
     pub choice: Option<proto::OrchestratorChoice>,
@@ -505,13 +507,16 @@ impl RunService {
     }
 
     /// Decision 15: the slug and a random suffix, redrawn while the id's branches, its
-    /// data directory or an engine run already take it.
+    /// data directory or an engine run already take it, or (milestone 9.3) a chain
+    /// already has its suffix (`chain::suffix_taken`).
     fn pick_id(&self, goal: &str, refs: &[String]) -> Result<String, String> {
         for _ in 0..ID_DRAWS {
             let id = slug(goal, random_suffix());
-            let taken = run_id_taken(&id, refs)
-                || runs_dir(&self.ctx.data_dir).join(&id).exists()
-                || crate::lock(&self.state).runs.contains_key(&id);
+            let taken =
+                run_id_taken(&id, refs) || runs_dir(&self.ctx.data_dir).join(&id).exists() || {
+                    let state = crate::lock(&self.state);
+                    state.runs.contains_key(&id) || suffix_taken(&state.chains, &state.runs, &id)
+                };
             if !taken {
                 return Ok(id);
             }

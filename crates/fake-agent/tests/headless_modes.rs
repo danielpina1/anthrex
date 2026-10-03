@@ -190,6 +190,7 @@ fn mcp_call_talks_to_a_real_mcp_server() {
             args: json!({"summary": "did it"}),
             scout_id: None,
             epic: None,
+            chain: None,
         }]
     );
     let results: Vec<Value> = agent

@@ -262,6 +262,9 @@ pub struct TaskInfo {
     /// Milestone 9.0.6 decision 7: what this node can be asked to do now.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActionInfo>,
+    /// Milestone 9.3: the round that added this task; 1 for a task from before.
+    #[serde(default = "crate::rounds::first_round")]
+    pub round: u32,
 }
 
 fn first_stage() -> u16 {
@@ -408,6 +411,14 @@ pub struct RunInfo {
     /// run's snapshot is 9.1's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<crate::delivery::DeliveryInfo>,
+    /// Milestone 9.3 (KG §2, §3): the current round, every round when there are more
+    /// than one (left out while empty), and the chain the run belongs to.
+    #[serde(default = "crate::rounds::first_round")]
+    pub round: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rounds: Vec<crate::rounds::RoundInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<String>,
 }
 
 /// Every run the daemon knows about, at one revision.
@@ -421,4 +432,7 @@ pub struct RunsSnapshot {
     /// Milestone 9.0.5 decision 10: the profile proposals ready to confirm.
     #[serde(default)]
     pub proposals: Vec<ProposalAlertInfo>,
+    /// Milestone 9.3 (KG §3.1): each project's idle orchestrator; left out while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub idle_orchestrators: Vec<crate::rounds::IdleOrchestrator>,
 }

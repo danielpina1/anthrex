@@ -95,6 +95,7 @@ fn call(tool: &str) -> ToolCall {
         args: serde_json::json!({"summary": "s", "files": []}),
         scout_id: Some(ID.into()),
         epic: None,
+        chain: None,
     }
 }
 

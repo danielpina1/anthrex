@@ -16,12 +16,13 @@ use crate::tiers::TaskOrigin;
 
 /// The `v` every record written now carries. Milestone 9 (decision 43) raised it from
 /// 1 with the `role_route` line, milestone 9.1 (decision 57) to 3 with the `tier`,
-/// `flaky` and `bisect` lines, milestone 9.2 (decision 44) to 4 with the `stage` line;
-/// older lines still decode unchanged.
-pub const HISTORY_VERSION: u32 = 4;
+/// `flaky` and `bisect` lines, milestone 9.2 (decision 44) to 4 with the `stage` line,
+/// milestone 9.3 (KG §2.6) to 5 with the `round` line; older lines still decode
+/// unchanged.
+pub const HISTORY_VERSION: u32 = 5;
 
 /// One line of `history.jsonl`, tagged `"type": "task" | "run" | "revert" |
-/// "role_route" | "tier" | "flaky" | "bisect" | "stage"`.
+/// "role_route" | "tier" | "flaky" | "bisect" | "stage" | "round"`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HistoryLine {
@@ -36,6 +37,8 @@ pub enum HistoryLine {
     Bisect(BisectLine),
     /// Milestone 9.2 decision 44.
     Stage(StageLine),
+    /// Milestone 9.3 (KG §2.6).
+    Round(crate::rounds::RoundLine),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,6 +307,12 @@ pub struct HistoryStats {
     pub window_days: u32,
     #[serde(default)]
     pub quarantine_after: u32,
+    /// Milestone 9.3 (KG §2.6): the `round` lines read, and the runs with a round after
+    /// their first ended (`iterated_runs`).
+    #[serde(default)]
+    pub rounds: u32,
+    #[serde(default)]
+    pub iterated_runs: u32,
 }
 
 /// One tier job (decision 57), `record_id` `<run>/tier/<op>`.

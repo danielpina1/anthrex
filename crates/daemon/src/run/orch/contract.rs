@@ -28,7 +28,8 @@ pub use super::extract::{
 };
 
 /// The orchestrator's system prompt (Interfaces "Contracts (exact)"), milestone 9.2's
-/// `DELIVERY_RULES` (rules 38 to 42) appended.
+/// `DELIVERY_RULES` (rules 38 to 42) and milestone 9.3's `ROUND_RULES` (43 to 46)
+/// appended.
 pub const ORCHESTRATOR_CONTRACT: &str = concat!(
     r#"You are the orchestrator of an anthrex run. The user gave a goal. You scout the repository, plan the work as small tasks, and steer the run until it finishes. anthrex's engine does the rest: it runs each task in its own git worktree with a headless worker, proves tdd tests, runs the check, has a different agent review the work, and merges approved work into the run branch. Nothing reaches the user's base branch until the user accepts the run.
 
@@ -87,15 +88,16 @@ Talking to the user
 32. After each run_status that changed something, write at most two lines here: what happened, and what you are waiting for.
 
 Finishing
-33. When run_status reports the run complete, call edit_plan with a summary for the user: what was done, what was not and why, every task that failed or is blocked, and what the user should check before accepting. The user accepts or discards the run; you never do.
+33. When run_status reports complete, write a summary with edit_plan summary. The user accepts or discards the run, or iterates it; you never accept or discard.
 
 Stages and testing
-34. Most goals need one stage. When the work is large enough to review in parts, group tasks into stages with the stage field. A stage is a unit a person can review and the full test suite can judge on its own: it must leave the code building and its tests passing without any later stage. Aim for stage_target_lines changed lines per stage, the range get_context gives under limits (300 to 800 unless the user set another); on the large path, one epic is usually one stage. A task depends only on tasks in its own or an earlier stage. The stages are fixed when the plan is approved: a plan approved with one stage keeps one.
+34. Most goals need one stage. When the work is large enough to review in parts, group tasks into stages with the stage field. A stage is a unit a person can review and the full test suite can judge on its own: it must leave the code building and its tests passing without any later stage. Aim for stage_target_lines changed lines per stage, the range get_context gives under limits (300 to 800 unless the user set another); on the large path, one epic is usually one stage. A task depends only on tasks in its own or an earlier stage. The stages are fixed when the plan is approved: a plan approved with one stage keeps one, until a later round adds stages after it (rule 44).
 35. When an interface change cannot be additive, such as a protocol version bump that must update every client together, make it one task with atomic set to true and a one-line atomic_reason. It is a hub task: it runs alone and is tdd. At most one atomic task per stage.
 36. The engine adds fix tasks itself, with ids fix1, fix2 and so on: when the full test suite of a stage fails and a bisect finds the merge that broke it, and when merging one stage into the next conflicts. They are ordinary tasks. Do not cancel one unless the plan no longer needs it.
 37. When the full test suite of a stage fails and no single merge is to blame, or merging one stage into the next fails its tests, you are woken: plan a fix task in that stage, or tell the user and end the run with a finish edit if it cannot be fixed.
 "#,
-    crate::run::delivery::contract::delivery_rules!()
+    crate::run::delivery::contract::delivery_rules!(),
+    crate::run::orch::contract_rounds::round_rules!()
 );
 
 /// A sub-planner's system prompt (Interfaces "Contracts (exact)").
@@ -202,6 +204,20 @@ fn bullets<'a>(lines: &mut Vec<String>, items: impl IntoIterator<Item = &'a Stri
 
 /// The orchestrator's first turn on the plan or large path.
 pub fn orchestrator_first_prompt(run: &Run) -> String {
+    first_prompt(run, format!("Goal: {}", run.goal))
+}
+
+/// Milestone 9.3's final fix wave (review B, M6): [`orchestrator_first_prompt`] for a
+/// chained run's fresh session (decision 24's handoff, an adoption lost, a window gone
+/// at a restart), whose goal may be the orchestrator's own `start_goal` text: the goal
+/// fenced as data, as the next-goal wake fences it (D1).
+pub fn fresh_first_prompt(run: &Run) -> String {
+    let goal = crate::run::delivery::quote::fence(&run.goal);
+    first_prompt(run, format!("Goal:\n{}", goal.trim_end_matches('\n')))
+}
+
+/// The first turn's lines, with `goal_line` for the goal.
+fn first_prompt(run: &Run, goal_line: String) -> String {
     let path = path_label(run.path.unwrap_or(RunPath::Plan));
     let path = match &run.triage {
         Some(t) => format!(
@@ -212,8 +228,9 @@ pub fn orchestrator_first_prompt(run: &Run) -> String {
         ),
         None => path.to_string(),
     };
+    // Milestone 9.3 decision 12: `--yes` holds for the user's goal and rounds only.
     let gate = if run.orch.yes {
-        "off: the run was started with --yes, so your submitted plan starts at once"
+        "off: the run was started with --yes, so your submitted plan starts at once; a round you start with iterate and a goal you start with start_goal still stop at the gate for the user (rules 43 and 45)"
     } else {
         "the user approves your submitted plan in the run view"
     };
@@ -223,7 +240,7 @@ pub fn orchestrator_first_prompt(run: &Run) -> String {
             run.id,
             run.root.display()
         ),
-        format!("Goal: {}", run.goal),
+        goal_line,
         format!("Path: {path}"),
         format!("Plan gate: {gate}"),
         "Start with get_context, then scout, then plan.".into(),
@@ -487,3 +504,7 @@ mod tests;
 #[cfg(test)]
 #[path = "contract_tests_prompts.rs"]
 mod tests_prompts;
+
+#[cfg(test)]
+#[path = "contract_tests_fresh.rs"]
+mod tests_fresh;

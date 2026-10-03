@@ -55,11 +55,20 @@ pub(super) fn live(run: &Run, n: u16) -> bool {
     !landed && !run.delivery.stage(n).is_some_and(|s| s.skipped)
 }
 
-/// The one stage a base sync goes into: the lowest one still delivering, unless a
-/// closed PR below it pauses it (decision 37).
+/// The one stage a base sync goes into: the lowest one still delivering that exists
+/// ([`exists`]), unless a closed PR below it pauses it (decision 37).
 pub(super) fn target(run: &Run) -> Option<u16> {
-    let n = (1..=stage_count(run)).find(|&n| live(run, n))?;
+    let n = (1..=stage_count(run)).find(|&n| live(run, n) && exists(run, n))?;
     (!stage_paused(run, n)).then_some(n)
+}
+
+/// Stage `n` exists or is still to be created: it has a head or a PR, or one of its
+/// tasks is unfinished. A cancelled round's stage that was never created has none of
+/// these, and a base sync is never due into it (the final fix wave, review A C1).
+pub(in crate::run::engine) fn exists(run: &Run, n: u16) -> bool {
+    run.stage_head(n).is_some()
+        || run.delivery.pr(n).is_some()
+        || (run.tasks.iter()).any(|t| t.stage() == n && !t.state.is_finished())
 }
 
 /// An unfinished sync task of stage `n` (9.1's or a base sync's): the stage's next base
@@ -84,7 +93,8 @@ fn in_flight(run: &Run, n: u16, sha: &str) -> bool {
     )
 }
 
-pub(super) fn fetching(run: &Run) -> bool {
+/// A base fetch is in flight (also read by `goal_rounds::awaits_base`, milestone 9.3).
+pub(in crate::run::engine) fn fetching(run: &Run) -> bool {
     run.pending_ops.values().any(|p| {
         matches!(
             &p.kind,

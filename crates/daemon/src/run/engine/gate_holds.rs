@@ -397,9 +397,11 @@ pub(super) fn replan_epic_hold(run: &mut Run, epic: &str, now: u64) -> Option<St
 }
 
 /// A drafted hold is submitted (the orchestrator's `submit`, a sub-planner's accepted
-/// epic): it awaits the user, or is approved at once for a run started with `--yes`.
+/// epic): it awaits the user, or is approved at once for a run started with `--yes`,
+/// unless the round is one the orchestrator started, which always stops for the user
+/// (milestone 9.3 decision 12, task 4b fix round 1).
 pub(super) fn submitted(run: &mut Run, id: &str, now: u64) {
-    let yes = run.orch.yes;
+    let yes = super::goal_rounds_end::skips_gate(run);
     let Some(hold) = run
         .orch
         .gate_holds

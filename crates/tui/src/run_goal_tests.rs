@@ -62,6 +62,7 @@ fn codex_with_no_model_is_its_configured_default() {
                 model: None,
             }),
             delivery: None,
+            continue_from: None,
         })
     );
 }
@@ -105,11 +106,13 @@ fn space_toggles_trust_and_esc_cancels_even_while_submitting() {
     assert_eq!(form.on_key(key(KeyCode::Esc)), GoalOutcome::Cancel);
 }
 
+/// Milestone 9.3 (changed expectation): eight fields, the orchestrator row after the
+/// model's.
 #[test]
-fn tab_visits_the_seven_fields_in_the_dialogs_order() {
+fn tab_visits_the_eight_fields_in_the_dialogs_order() {
     let mut form = form_with("add a");
     let mut seen = vec![form.focus];
-    for _ in 0..6 {
+    for _ in 0..7 {
         form.on_key(key(KeyCode::Tab));
         seen.push(form.focus);
     }
@@ -119,6 +122,7 @@ fn tab_visits_the_seven_fields_in_the_dialogs_order() {
             GoalField::Goal,
             GoalField::Runtime,
             GoalField::Model,
+            GoalField::Orchestrator,
             GoalField::Delivery,
             GoalField::Trust,
             GoalField::Yes,
@@ -133,6 +137,7 @@ fn tab_visits_the_seven_fields_in_the_dialogs_order() {
             "goal",
             "runtime",
             "model",
+            "orchestrator",
             "delivery",
             "trust",
             "approve at once",

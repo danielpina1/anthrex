@@ -48,12 +48,7 @@ fn pr_view(state: RunState, selected: &NodeKey) -> App {
     let (snap, windows) = pr_snapshot(state);
     let mut app = app_with_runs(windows, snap);
     open_run_view(&mut app, RUN_ID);
-    let rows = crate::app::nav_rows_of(
-        &app.windows,
-        &app.runs.runs,
-        &app.tree,
-        app.run_view.as_ref(),
-    );
+    let rows = crate::app::nav_rows_of(&app.windows, &app.runs, &app.tree, app.run_view.as_ref());
     app.tree.select(&rows, selected.clone());
     app
 }

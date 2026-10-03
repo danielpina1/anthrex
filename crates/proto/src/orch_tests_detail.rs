@@ -160,6 +160,8 @@ fn appended_variants_keep_their_indices() {
     expected.push("Settings");
     // Milestone 9.2 appends `Deliver` and `Watch` after 9.0.6's `Settings` (`delivery_tests.rs`).
     expected.extend(["Deliver", "Watch"]);
+    // Milestone 9.3 appends `Iterate` after `Watch` (`rounds_tests.rs`).
+    expected.push("Iterate");
     assert_eq!(variant_names::<RunRequest>(), expected);
     assert_eq!(
         variant_at::<RunRequest>(

@@ -55,6 +55,8 @@ fn epic(run: &Run) -> &EpicRecord {
     &run.orch.epics[0]
 }
 
+/// Milestone 9.3 (task M9.3.7, decision 12, KG §3.3): the `--yes` gate line says that a
+/// round or a goal the orchestrator starts itself still stops at the gate.
 #[test]
 fn orchestrator_first_prompt_is_exact() {
     let mut run = planned_run();
@@ -78,7 +80,7 @@ fn orchestrator_first_prompt_is_exact() {
         "[anthrex] You are the orchestrator of run add-password-reset-3f9a in /tmp/x.\n\
          Goal: Test goal\n\
          Path: large (triage: code/large, fallback: the decider timed out: two modules change)\n\
-         Plan gate: off: the run was started with --yes, so your submitted plan starts at once\n\
+         Plan gate: off: the run was started with --yes, so your submitted plan starts at once; a round you start with iterate and a goal you start with start_goal still stop at the gate for the user (rules 43 and 45)\n\
          Start with get_context, then scout, then plan."
     );
 }

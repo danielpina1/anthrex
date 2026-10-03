@@ -18,6 +18,16 @@ pub struct TextArea {
     cursor: usize,
     /// The most characters it holds; 0 is [`TEXT_MAX_CHARS`].
     cap: usize,
+    /// Milestone 9.3 decision 4: the editor's cut buffer (Ctrl-K, Ctrl-U), whether the
+    /// last editor key was a Ctrl-K (so the next one appends), and whether the last
+    /// editor key or paste stopped at the cap. Only `text_area_editor`'s keys change
+    /// them; `on_key`, `on_key_in` and `on_paste` leave them at their defaults.
+    cut: String,
+    cutting: bool,
+    at_cap: bool,
+    /// Decision 4 as amended (task 9a's fix round 1): the editor's viewport, the first
+    /// drawn row in view, kept nano's way by the editor's keys and paste only.
+    top: usize,
 }
 
 /// Newlines kept (`\r\n` and `\r` become one), a tab a space, every other control and
@@ -188,6 +198,10 @@ impl TextArea {
 
 #[path = "text_area_rows.rs"]
 mod rows;
+
+#[path = "text_area_editor.rs"]
+mod editor;
+pub use editor::EditorKey;
 
 #[cfg(test)]
 #[path = "text_area_tests.rs"]

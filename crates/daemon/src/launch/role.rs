@@ -32,7 +32,9 @@ pub struct RoleLaunch {
     pub remove_env: Vec<String>,
 }
 
-/// Decision 7: the orchestrator's six anthrex tools and its read-only tools.
+/// Decision 7: the orchestrator's anthrex tools, in `anthrex mcp`'s order (six, and
+/// milestone 9.3's `start_goal`), and its read-only tools. A drift test keeps the
+/// anthrex half equal to `mcp::tools::tools_for(Orchestrator)`.
 pub const ORCHESTRATOR_ALLOWED_TOOLS: &[&str] = &[
     "mcp__anthrex__get_context",
     "mcp__anthrex__spawn_scout",
@@ -40,6 +42,7 @@ pub const ORCHESTRATOR_ALLOWED_TOOLS: &[&str] = &[
     "mcp__anthrex__edit_plan",
     "mcp__anthrex__run_status",
     "mcp__anthrex__task_result",
+    "mcp__anthrex__start_goal",
     "Read",
     "Glob",
     "Grep",

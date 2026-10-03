@@ -62,7 +62,9 @@ fn an_empty_session_reaches_the_goal_form_and_shows_the_daemons_refusal() {
     for c in "add a readme".chars() {
         key(&mut app, KeyCode::Char(c), KeyModifiers::NONE);
     }
-    let sent = tagged(&key(&mut app, KeyCode::Enter, KeyModifiers::NONE));
+    // Milestone 9.3 decision 7 (changed expectation): Ctrl-S starts; Enter in the text
+    // is a newline.
+    let sent = tagged(&key(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL));
     let [(id, request)] = &sent[..] else {
         panic!("one StartGoal: {sent:?}");
     };
@@ -84,9 +86,15 @@ fn an_empty_session_reaches_the_goal_form_and_shows_the_daemons_refusal() {
         }
         other => panic!("the form closed: {other:?}"),
     }
+    // Milestone 9.3 decision 8 (changed expectation): Esc on a text asks, `y` discards.
+    assert!(key(&mut app, KeyCode::Esc, KeyModifiers::NONE).is_empty());
     assert!(
-        key(&mut app, KeyCode::Esc, KeyModifiers::NONE).is_empty() && app.modal.is_none(),
-        "esc closes the form"
+        matches!(&app.modal, Some(Modal::StartGoal(form)) if form.discarding),
+        "esc on a text asks"
+    );
+    assert!(
+        key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE).is_empty() && app.modal.is_none(),
+        "y discards and closes the form"
     );
 
     // `C-b P`: the screen's three requests, each refused by the daemon the same way.

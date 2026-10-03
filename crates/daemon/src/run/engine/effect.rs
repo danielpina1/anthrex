@@ -81,5 +81,17 @@ pub enum Effect {
         /// The highest note seq `text` holds (`OrchEvent::OrchestratorWoken` drops
         /// the notes up to it).
         notes_seq: u64,
+        /// Milestone 9.3 decision 11 (D13, fix round 1): `Some(n)` when `text` starts
+        /// with the run's `request_wake`, round `n`'s, pasted whole and kept until
+        /// delivered. Daemon-internal: no wire field.
+        request: Option<u32>,
+    },
+    /// Milestone 9.3 decision 23: a continued run takes its idle chain's orchestrator
+    /// window, renamed `name` and rebound to `run_id`, its session never restarted
+    /// (`driver/chain_ops.rs`, off every lock).
+    AdoptOrchestrator {
+        run_id: String,
+        window_id: u32,
+        name: String,
     },
 }

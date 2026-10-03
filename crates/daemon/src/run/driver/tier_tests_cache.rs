@@ -46,8 +46,11 @@ async fn a_second_job_on_the_same_tree_runs_nothing() {
     let first = rig.tier_with(1, &spec, &cache).await;
     assert!(first.ok, "{first:?}");
     assert!(first.steps.iter().all(|s| !s.cached));
+    // The final fix wave: what ran, so a short store below says whether the steps were
+    // planned (`graph_note`) and ran (`steps`), or ran and were not stored.
+    assert_eq!(first.graph_note, None, "{first:#?}");
     let lines = stored(&spec);
-    assert_eq!(commands(&lines), [BUILD_CMD, TEST_B, TEST_C]);
+    assert_eq!(commands(&lines), [BUILD_CMD, TEST_B, TEST_C], "{first:#?}");
     for line in &lines {
         assert_eq!(line.key.tree, first.tree);
         assert_eq!(line.key.profile_hash, "00000000000000aa");
@@ -274,8 +277,12 @@ async fn a_cached_build_runs_again_when_a_later_step_misses() {
     let rig = Rig::new();
     let cache = TestCache::new(14);
     let spec = cached(&rig);
-    assert!(rig.tier_with(1, &spec, &cache).await.ok);
-    assert_eq!(builds_and_tests(&rig), (1, 2));
+    let first = rig.tier_with(1, &spec, &cache).await;
+    assert!(first.ok, "{first:?}");
+    // The final fix wave: the job's premise, said first, so a failure names its cause
+    // (a graph the job could not read plans tier 1 as the build alone).
+    assert_eq!(first.graph_note, None, "{first:#?}");
+    assert_eq!(builds_and_tests(&rig), (1, 2), "{first:#?}");
     // The same build command; the test steps' commands (and so their keys) differ.
     let other = TierSpec {
         profile: TierProfile {

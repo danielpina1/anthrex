@@ -59,12 +59,22 @@ pub(super) fn start(
     if state.runs.contains_key(&run.id) {
         return reply(fx, id, Err(format!("run {} already exists", run.id)));
     }
+    // Milestone 9.3 decision 18: every run starts in round 1.
+    super::goal_rounds::ensure_first(&mut run);
+    // Milestone 9.3 decision 19: a run with an orchestrator starts its chain, unless it
+    // continues one (decisions 23, 24: it joins it, or is refused).
+    let continued = run.chain.is_some();
+    super::chains::assign(&mut run);
     let fast = run.path == Some(RunPath::Fast);
     // Review I1: the engine's own barrier. A fast-path run is one task, neither hub nor
     // L, whatever its caller checked; any other is refused and nothing is created.
     if let Some(reason) = fast.then(|| fast_refusal(&run)).flatten() {
         return reply(fx, id, Err(reason));
     }
+    let join = match super::chains::join(state, &mut run, continued, now, fx) {
+        Ok(join) => join,
+        Err(text) => return reply(fx, id, Err(text)),
+    };
     if fast {
         // M8b decision 24: a fast-path run has no plan gate.
         run.state = RunState::Running;
@@ -93,7 +103,7 @@ pub(super) fn start(
         env: profile_env(&run.profile, &path),
     };
     emit_op(&mut run, op, None, kind, fx);
-    if run.state == RunState::Planning {
+    if run.state == RunState::Planning && join != super::chains::Join::Adopted {
         super::orch_window::launch(&mut run, now, fx);
     }
     // M8b decision 19: every task is cross-checked; one waiting is not runnable. The
@@ -154,15 +164,9 @@ pub(super) fn approve(
         return reply(fx, id, Err(text));
     }
     run.state = RunState::Running;
-    run.approved_by = Some("user".to_string());
-    run.approved_at = Some(now);
-    // Milestone 9.1 decision 46.
-    stages::fix_layout(run, now);
-    // Task 12 review m7: a decider queued at the gate (a size check) could not start
-    // there; its slot wait counts from now.
-    for q in &mut run.decider_queue {
-        q.queued_at = now;
-    }
+    // Milestone 9.1 decision 46 (the layout) and task 12 review m7 (a decider queued
+    // at the gate waits from now); milestone 9.3 decision 12: round 1's approval only.
+    super::goal_rounds_end::approved(run, "user", now);
     log(run, now, "approved by the user");
     // Milestone 9 decisions 30, 39.
     super::wake::note(run, "the user approved the plan".to_string());
@@ -185,6 +189,11 @@ pub(super) fn reject(
     // Milestone 9 decision 26: a run still being planned is discarded too.
     if let Some(text) = rules::reject(run) {
         return reply(fx, id, Err(text));
+    }
+    // Milestone 9.3 decision 12: a later round's reject keeps the run.
+    if super::goal_rounds_end::open_round(run) {
+        let text = super::goal_rounds_end::reject_round(run, now, fx);
+        return reply(fx, id, Ok(text));
     }
     let mut worktrees: Vec<_> = run
         .tasks

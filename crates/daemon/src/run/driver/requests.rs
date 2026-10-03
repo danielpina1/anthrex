@@ -109,10 +109,33 @@ impl RunService {
                 unconfined_checks,
                 orchestrator,
                 delivery,
+                continue_from: None,
             } => {
                 let flags = (trust_project, unconfined_checks);
                 self.start_goal(goal, dir, flags, yes, (orchestrator, delivery))
                     .await
+            }
+            // Milestone 9.3 decision 22: a next goal on a chain's orchestrator, which
+            // keeps its runtime and model (`orchestrator` is ignored).
+            RunRequest::StartGoal {
+                goal,
+                dir,
+                yes,
+                trust_project,
+                unconfined_checks,
+                delivery,
+                continue_from: Some(after),
+                ..
+            } => {
+                let next = super::orch::Next {
+                    goal,
+                    dir,
+                    trust_project,
+                    unconfined_checks,
+                    yes,
+                    delivery,
+                };
+                self.continue_request(&after, next).await
             }
             RunRequest::Promote {
                 run_id,
@@ -136,6 +159,16 @@ impl RunService {
                 let req = DeliveryRequestOf::Watch { run_id, on };
                 self.delivery_request(req).await
             }
+            // Milestone 9.3 decision 10: a round of a settled run.
+            RunRequest::Iterate { run, goal } => answer(
+                request::ITERATE,
+                self.ask(|reply| EventKind::Iterate {
+                    reply,
+                    run_id: run,
+                    goal,
+                })
+                .await,
+            ),
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }
@@ -428,3 +461,7 @@ impl RunService {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "requests_tests.rs"]
+mod tests;

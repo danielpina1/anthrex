@@ -153,10 +153,11 @@ fn variant_names<T: DeserializeOwned + std::fmt::Debug>() -> Vec<String> {
 fn settings_variants_are_appended_last() {
     let requests = variant_names::<RunRequest>();
     // Milestone 9.2 appends `Deliver` and `Watch` after `Settings` (protocol 14,
-    // `delivery_tests.rs`); `Settings` keeps its index right after `TaskDetail`.
+    // `delivery_tests.rs`), and milestone 9.3 `Iterate` after `Watch` (protocol 15,
+    // `rounds_tests.rs`); `Settings` keeps its index right after `TaskDetail`.
     assert_eq!(
-        requests[requests.len() - 4..],
-        ["TaskDetail", "Settings", "Deliver", "Watch"]
+        requests[requests.len() - 5..],
+        ["TaskDetail", "Settings", "Deliver", "Watch", "Iterate"]
     );
     let replies = variant_names::<RunReply>();
     assert_eq!(replies.last().map(String::as_str), Some("Settings"));

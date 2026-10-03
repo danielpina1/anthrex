@@ -1,25 +1,30 @@
 mod forest;
+mod labels;
 mod names;
+mod round_rows;
 mod rows;
 mod run_rows;
 mod runs;
+mod types;
 
 pub use forest::{SubagentNode, subagent_forest};
+pub use labels::{format_elapsed, short_model, subagent_label};
 pub use names::display_names;
 use proto::{
-    AgentRole, AgentRoundInfo, PlannerInfo, RunInfo, Runtime, ScoutInfo, StageInfo, Status,
-    SubagentInfo, TaskInfo, WindowInfo,
+    AgentRole, IdleOrchestrator, PlannerInfo, RoundInfo, RunInfo, RunsSnapshot, ScoutInfo,
+    StageInfo, Status, SubagentInfo, TaskInfo, WindowInfo,
 };
+pub use round_rows::{earlier_round, muted_row, round_text};
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
 pub use run_rows::{RunFilter, display_rounds, round_label, run_rows};
-use runs::{ShownRun, group_projects, run_matches_filter};
+use runs::{ShownRun, group_projects, idle_matches_filter, run_matches_filter};
 pub use runs::{
-    awaiting_holds, is_paused, run_progress, run_status, run_title, shown_runs, task_held,
+    awaiting_holds, idle_outcome, idle_text, is_paused, run_progress, run_status, run_title,
+    shown_runs, task_held, window_row,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+pub use types::{DisplayRound, RuntimeCounts};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NodeKey {
@@ -48,6 +53,13 @@ pub enum NodeKey {
         run: String,
         n: u16,
     },
+    /// Milestone 9.3 decision 32: a round's separator in a run of several rounds.
+    Round {
+        run: String,
+        n: u32,
+    },
+    /// Milestone 9.3 decision 32: a project's idle orchestrator, by its chain id.
+    Chain(String),
     /// `round` is the display round (milestone 8c decision 14), not `AgentRoundInfo.round`.
     AgentRound {
         run: String,
@@ -56,13 +68,6 @@ pub enum NodeKey {
         session: u32,
         round: u32,
     },
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RuntimeCounts {
-    pub claude: usize,
-    pub codex: usize,
-    pub shell: usize,
 }
 
 /// A plain window of a project. A project's shown runs are held apart, in
@@ -116,23 +121,22 @@ pub enum RowKind<'a> {
         run: &'a RunInfo,
         stage: &'a StageInfo,
     },
+    /// Milestone 9.3 decision 32: `round <r> · <goal head>`, above the round's stages.
+    Round {
+        run: &'a RunInfo,
+        round: &'a RoundInfo,
+    },
+    /// Milestone 9.3 decision 32: an idle, unended chain and its listed window, in the
+    /// window's place (`◌ orchestrator · idle · after <h4>`).
+    IdleOrchestrator {
+        idle: &'a IdleOrchestrator,
+        window: &'a WindowInfo,
+    },
     AgentRound {
         run: &'a RunInfo,
         task: &'a TaskInfo,
         round: DisplayRound<'a>,
     },
-}
-
-/// One agent-round node of the run view (milestone 8c decision 14).
-#[derive(Debug, Clone, PartialEq)]
-pub struct DisplayRound<'a> {
-    pub info: &'a AgentRoundInfo,
-    pub number: u32,
-    pub started_at: u64,
-    pub ended_at: Option<u64>,
-    /// The session's last display round: its counters and sub-agents hang here.
-    pub last: bool,
-    pub window: Option<&'a WindowInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -233,13 +237,14 @@ impl TreeState {
             | NodeKey::Scout { .. }
             | NodeKey::Task { .. }
             | NodeKey::Stage { .. }
+            | NodeKey::Round { .. }
             | NodeKey::AgentRound { .. } => {
                 if !self.collapsed.remove(key) {
                     self.collapsed.insert(key.clone());
                 }
                 true
             }
-            NodeKey::Subagent { .. } => false,
+            NodeKey::Subagent { .. } | NodeKey::Chain(_) => false,
         }
     }
 
@@ -297,12 +302,13 @@ impl TreeState {
                 run_roots.contains(root) || windows.iter().any(|window| window.project == *root)
             }
             NodeKey::Window(id) => windows.iter().any(|window| window.id == *id),
-            NodeKey::Subagent { .. } => false,
+            NodeKey::Subagent { .. } | NodeKey::Chain(_) => false,
             NodeKey::Run(_)
             | NodeKey::Planner { .. }
             | NodeKey::Scout { .. }
             | NodeKey::Task { .. }
             | NodeKey::Stage { .. }
+            | NodeKey::Round { .. }
             | NodeKey::AgentRound { .. } => true,
         });
     }
@@ -314,6 +320,7 @@ struct ProjectGroup<'a> {
     status: Status,
     counts: RuntimeCounts,
     runs: Vec<ShownRun<'a>>,
+    idle: Vec<(&'a IdleOrchestrator, &'a WindowInfo)>,
     members: Vec<ProjectChild<'a>>,
 }
 
@@ -322,14 +329,33 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
     build_with_runs(windows, &[], state)
 }
 
-/// The project tree: every project with its shown runs, then its plain windows
-/// (milestone 8c decisions 6–10).
+/// The project tree of a snapshot: its runs and its idle orchestrators (milestone 9.3).
+pub fn build_from<'a>(
+    windows: &'a [WindowInfo],
+    snapshot: &'a RunsSnapshot,
+    state: &TreeState,
+) -> Vec<Row<'a>> {
+    build_with_idle(windows, &snapshot.runs, &snapshot.idle_orchestrators, state)
+}
+
+/// The project tree with no idle orchestrator: `build_with_idle` with none.
 pub fn build_with_runs<'a>(
     windows: &'a [WindowInfo],
     runs: &'a [RunInfo],
     state: &TreeState,
 ) -> Vec<Row<'a>> {
-    let projects = group_projects(windows, runs);
+    build_with_idle(windows, runs, &[], state)
+}
+
+/// The project tree: every project with its shown runs, its idle orchestrator, then its
+/// plain windows (milestone 8c decisions 6–10; milestone 9.3 decision 32).
+pub fn build_with_idle<'a>(
+    windows: &'a [WindowInfo],
+    runs: &'a [RunInfo],
+    idle: &'a [IdleOrchestrator],
+    state: &TreeState,
+) -> Vec<Row<'a>> {
+    let projects = group_projects(windows, runs, idle);
 
     let filter = state.filter.to_lowercase();
     let filtering = !filter.is_empty();
@@ -342,6 +368,7 @@ pub fn build_with_runs<'a>(
                 .runs
                 .iter()
                 .any(|shown| run_matches_filter(shown.run, &filter))
+            || (project.idle.iter()).any(|(idle, _)| idle_matches_filter(idle, &filter))
             || project.members.iter().any(|member| match member {
                 ProjectChild::Window(window) => window_matches_filter(window, &filter),
             });
@@ -377,7 +404,11 @@ pub fn build_with_runs<'a>(
             &filter,
             state.keep_finished_secs,
         );
-        let count = shown_runs.len() + visible.len();
+        let idle_rows: Vec<_> = (project.idle.iter())
+            .filter(|(idle, _)| !filtering || project_matches || idle_matches_filter(idle, &filter))
+            .collect();
+        let idle_count = idle_rows.len();
+        let count = shown_runs.len() + idle_count + visible.len();
         for (index, shown) in shown_runs.into_iter().enumerate() {
             let position = shown.orchestrator.map(|_| {
                 position += 1;
@@ -395,6 +426,14 @@ pub fn build_with_runs<'a>(
             });
         }
         let first_window = count - visible.len();
+        for (index, (idle, window)) in idle_rows.into_iter().enumerate() {
+            rows.push(Row {
+                key: NodeKey::Chain(idle.chain.clone()),
+                guides: guide_prefix(&[], first_window - idle_count + index + 1 < count),
+                depth: 1,
+                kind: RowKind::IdleOrchestrator { idle, window },
+            });
+        }
         for (index, member) in visible.into_iter().enumerate() {
             let has_later_sibling = first_window + index + 1 < count;
             let window = member.window;
@@ -464,20 +503,56 @@ fn matches_filter(text: &str, filter: &str) -> bool {
     text.to_lowercase().contains(filter)
 }
 
+/// The order `C-b j`/`k` cycle: the numbered windows in tree order, each project's idle
+/// orchestrator window after that project's windows (milestone 9.3 decision 32; its row
+/// has no number, so it comes after every number its project shows).
 pub fn agent_order(rows: &[Row<'_>]) -> Vec<u32> {
-    rows.iter()
-        .filter_map(|row| match &row.kind {
-            RowKind::Window { info, .. } => Some(info.id),
-            RowKind::Run { orchestrator, .. } => orchestrator.map(|window| window.id),
-            RowKind::Project { .. }
-            | RowKind::Subagent { .. }
+    let (mut order, mut idle) = (Vec::new(), Vec::new());
+    for row in rows {
+        match &row.kind {
+            RowKind::Project { .. } => order.append(&mut idle),
+            RowKind::Window { info, .. } => order.push(info.id),
+            RowKind::Run { orchestrator, .. } => order.extend(orchestrator.map(|w| w.id)),
+            RowKind::IdleOrchestrator { window, .. } => idle.push(window.id),
+            RowKind::Subagent { .. }
             | RowKind::Planner { .. }
             | RowKind::Scout { .. }
             | RowKind::Task { .. }
             | RowKind::Stage { .. }
-            | RowKind::AgentRound { .. } => None,
+            | RowKind::Round { .. }
+            | RowKind::AgentRound { .. } => {}
+        }
+    }
+    order.append(&mut idle);
+    order
+}
+
+/// The numbered windows only: what `C-b <n>` and the shown numbers count (an idle
+/// orchestrator's row has none).
+pub fn numbered_order(rows: &[Row<'_>]) -> Vec<u32> {
+    let order = agent_order(rows);
+    let idle: Vec<u32> = (rows.iter())
+        .filter_map(|row| match &row.kind {
+            RowKind::IdleOrchestrator { window, .. } => Some(window.id),
+            _ => None,
         })
-        .collect()
+        .collect();
+    order.into_iter().filter(|id| !idle.contains(id)).collect()
+}
+
+/// The window the focus falls back to at position `at` of [`agent_order`] (0 for a
+/// first focus): the numbered window nearest it, the later on a tie (the one that took
+/// a closed window's place), so an idle orchestrator's chat never takes the keys while
+/// a numbered window exists (final fix wave C-m2); else the idle one at `at`.
+pub fn focus_fallback(rows: &[Row<'_>], at: usize) -> Option<u32> {
+    let order = agent_order(rows);
+    let numbered = numbered_order(rows);
+    let at = at.min(order.len().saturating_sub(1));
+    (order.iter().enumerate())
+        .filter(|(_, id)| numbered.contains(id))
+        .min_by_key(|(k, _)| (k.abs_diff(at), *k < at))
+        .map(|(_, id)| *id)
+        .or_else(|| order.get(at).copied())
 }
 
 pub fn row_index(rows: &[Row<'_>], key: &NodeKey) -> Option<usize> {
@@ -497,60 +572,6 @@ pub fn urgency(status: Status) -> u8 {
 
 /// A runtime's two-letter tag: `theme::runtime_tag`, the one table (final fix wave M5).
 pub use crate::theme::runtime_tag;
-
-pub fn short_model(runtime: Runtime, model: &str) -> String {
-    let model = match runtime {
-        Runtime::Claude => {
-            let stripped = model.strip_prefix("claude-").unwrap_or(model);
-            let numeric_suffix = stripped.char_indices().find_map(|(index, character)| {
-                (character == '-'
-                    && stripped[index + character.len_utf8()..]
-                        .chars()
-                        .next()
-                        .is_some_and(|next| next.is_ascii_digit()))
-                .then_some(index)
-            });
-            &stripped[..numeric_suffix.unwrap_or(stripped.len())]
-        }
-        Runtime::Codex | Runtime::Shell => model,
-    };
-    cut_to_width(model, 8)
-}
-
-fn cut_to_width(text: &str, max_width: usize) -> String {
-    let mut end = 0;
-    for (index, grapheme) in text.grapheme_indices(true) {
-        let candidate_end = index + grapheme.len();
-        if UnicodeWidthStr::width(&text[..candidate_end]) > max_width {
-            break;
-        }
-        end = candidate_end;
-    }
-    text[..end].to_owned()
-}
-
-/// The text a sub-agent row shows in its name column: `kind: label` when a
-/// label was set, `kind` alone otherwise.
-///
-/// Shared by the sidebar and the graph overview's layout and painter, so the
-/// string a tier is sized to and the string drawn inside it can never drift
-/// apart into two definitions.
-pub fn subagent_label(info: &SubagentInfo) -> String {
-    match info.label.as_deref() {
-        Some(label) => format!("{}: {label}", info.kind),
-        None => info.kind.clone(),
-    }
-}
-
-pub fn format_elapsed(secs: u64) -> String {
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else {
-        format!("{}h", secs / 3600)
-    }
-}
 
 #[cfg(test)]
 mod tests;

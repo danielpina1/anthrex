@@ -166,7 +166,7 @@ async fn local_mode_calls_no_host() {
 /// and renamed into place, then executed once (a guard makes that run exit at once),
 /// retrying while a concurrent fork still holds a writable copy of its descriptor
 /// (`ETXTBSY`), so the daemon's exec of it is never the first and never busy.
-fn decider_stand_in(dir: &Path) -> (String, std::path::PathBuf) {
+pub(in crate::run::driver) fn decider_stand_in(dir: &Path) -> (String, std::path::PathBuf) {
     let marker = dir.join("decider-called");
     let script = dir.join("decider.sh");
     let staged = dir.join("decider.sh.new");
@@ -209,10 +209,15 @@ fn decider_stand_in(dir: &Path) -> (String, std::path::PathBuf) {
     (script.display().to_string(), marker)
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn preflight_runs_before_triage_for_a_goal() {
-    let rig = Rig::new(true);
-    rig.ctl.create_repo("fake", "app", &rig.bare, "main");
+/// A spawned service over `rig` whose decider is the stand-in (its marker returned),
+/// with a stored profile, so a goal reaches triage once preflight passes.
+fn goal_service(
+    rig: &Rig,
+) -> (
+    Arc<RunService>,
+    tokio::task::JoinHandle<()>,
+    std::path::PathBuf,
+) {
     let tmp = rig.tmp.path();
     let (decider, marker) = decider_stand_in(tmp);
     let data = tmp.join("data");
@@ -237,7 +242,6 @@ async fn preflight_runs_before_triage_for_a_goal() {
         &socket,
         &config::Orchestrator::default(),
     );
-    // A stored profile, so the goal reaches triage when preflight passes.
     let pre =
         crate::run::git::preflight("git".as_ref(), &rig.work, Duration::from_secs(30)).unwrap();
     let repo_dir = crate::profile::repo_dir(&data, &pre.project);
@@ -251,7 +255,12 @@ async fn preflight_runs_before_triage_for_a_goal() {
         project: Some(pre.project.clone()),
     };
     crate::profile::store::save(&repo_dir, &proto::RepoProfile::default(), &meta).unwrap();
-    let goal = || RunRequest::StartGoal {
+    (s, handle, marker)
+}
+
+/// A `pr` goal on `rig`'s checkout, continuing `continue_from` when it is `Some`.
+fn pr_goal(rig: &Rig, continue_from: Option<&str>) -> RunRequest {
+    RunRequest::StartGoal {
         goal: "Add a feature to crates/a".into(),
         dir: rig.work.clone(),
         yes: true,
@@ -259,7 +268,16 @@ async fn preflight_runs_before_triage_for_a_goal() {
         unconfined_checks: true,
         orchestrator: None,
         delivery: Some(DeliveryMode::Pr),
-    };
+        continue_from: continue_from.map(String::from),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn preflight_runs_before_triage_for_a_goal() {
+    let rig = Rig::new(true);
+    rig.ctl.create_repo("fake", "app", &rig.bare, "main");
+    let (s, handle, marker) = goal_service(&rig);
+    let goal = || pr_goal(&rig, None);
 
     // Refused: no decider was called, and nothing is left behind.
     let reply = ask(&s, goal()).await;
@@ -282,6 +300,35 @@ async fn preflight_runs_before_triage_for_a_goal() {
         2,
         "one preflight per start"
     );
+    s.stop().await;
+    handle.abort();
+}
+
+/// Milestone 9.3 (task M9.3.2 fix round 1, I1; task 6b): a goal continuing a run is
+/// routed to `chain_goal.rs`, never started as a new run, and one naming a run that
+/// does not exist is refused by the chain lookup, before preflight: no decider call, no
+/// run, no ref, no host call. The same goal without `continue_from` reaches triage on
+/// this rig. (Changed expectation: task 2's placeholder refusal `continuing an
+/// orchestrator is not available yet` is gone.)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_continued_goal_of_an_unknown_run_is_refused_before_preflight() {
+    let rig = Rig::new(true);
+    rig.ctl.create_repo("fake", "app", &rig.bare, "main");
+    rig.ctl.log_in("github.com");
+    let (s, handle, marker) = goal_service(&rig);
+
+    let reply = ask(&s, pr_goal(&rig, Some("run-x"))).await;
+    assert_eq!(
+        reply,
+        RunReply::refused(request::START_GOAL, "unknown run run-x")
+    );
+    assert!(!marker.exists(), "a continued goal reached triage");
+    assert!(s.current().runs.is_empty());
+    assert_eq!(run_refs(&rig.work), "");
+    assert_eq!(gh_calls(&rig, &["auth", "status"]), 0, "no preflight");
+
+    let reply = ask(&s, pr_goal(&rig, None)).await;
+    assert!(marker.exists(), "a new goal reaches triage: {reply:?}");
     s.stop().await;
     handle.abort();
 }

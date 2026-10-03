@@ -12,19 +12,30 @@
 use std::time::Duration;
 
 use proto::run_wire::request;
-use proto::{AgentRole, OrchestratorChoice, RepoProfile, RunReply, RunsSnapshot, ScoutReport};
+use proto::{AgentRole, RunReply, RunsSnapshot};
 use proto::{Runtime, ToolCall};
 use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::{RunService, unix_now};
+use crate::run::chain::{idle_refusal, resolve};
 use crate::run::engine::early::{awaits_launch, holds_planner_call};
 use crate::run::engine::{EventKind, HOLD_LIMIT_SECS, OrchEvent, notes_seq};
 use crate::run::model::{Run, task_branch};
-use crate::run::orch::context::{Asker, ContextInputs, context};
-use crate::run::orch::extract::ExtractSlot;
+use crate::run::orch::context::Asker;
 use crate::run::orch::result::{TaskGit, task_result};
 use crate::run::orch::tools::{OrchCall, parse_call};
+
+#[path = "chain_goal.rs"]
+mod chain_goal;
+#[path = "chain_ops.rs"]
+mod chain_ops;
+pub(super) use chain_goal::Next;
+#[path = "orch_promote.rs"]
+mod promote;
+#[cfg(test)]
+use promote::filled;
+use promote::get_context;
 
 /// How long `get_context`'s file reads and build may take (the stored profile and the
 /// scout reports, each at most 1 MiB).
@@ -166,6 +177,13 @@ impl RunService {
     /// [`Self::orch_tool`], with an early call's launch wait bounded by `limit` (a test
     /// shortens it; production passes [`LAUNCH_WAIT`]).
     pub(super) async fn orch_tool_within(&self, call: ToolCall, limit: Duration) -> RunReply {
+        // Milestone 9.3 decisions 20 and 21, before any other check: a chained call
+        // reaches its chain's current run, and an idle chain's tools are limited. `read`
+        // is reached only from here, so its calls are resolved too.
+        let call = match self.resolved(call) {
+            Ok(call) => call,
+            Err(text) => return refused(text),
+        };
         let read = matches!(
             call.tool.as_str(),
             "get_context" | "run_status" | "task_result"
@@ -181,16 +199,27 @@ impl RunService {
         if call.role == AgentRole::Orchestrator && !self.await_launch(&call, limit).await {
             return refused(ORCHESTRATOR_LAUNCH_PENDING);
         }
+        // Milestone 9.3 decision 22: `start_goal` is the driver's (`chain_goal.rs`).
+        if let Ok(OrchCall::StartGoal { goal }) = parse_call(call.role, &call.tool, &call.args) {
+            return match self.looked_up(&call, |_| ()) {
+                Ok(()) => match self.start_goal_tool(&call.run_id, goal).await {
+                    Ok(text) => RunReply::tool_result(true, json!({ "message": text }).to_string()),
+                    Err(text) => refused(text),
+                },
+                Err(text) => refused(text),
+            };
+        }
         // Decision 42e: a refresh's clean-tree check, for a caller that passes decision
         // 15's check, before the engine sees the call.
         if let Ok(OrchCall::EditPlan {
             edits,
             submit,
             summary,
+            iterate,
         }) = parse_call(call.role, &call.tool, &call.args)
             && self.looked_up(&call, |_| ()).is_ok()
         {
-            let alone = !submit && summary.is_none();
+            let alone = !submit && summary.is_none() && iterate.is_none();
             if let Err(text) = self.refresh_precheck(&call.run_id, &edits, alone).await {
                 return refused(text);
             }
@@ -250,6 +279,26 @@ impl RunService {
         }
     }
 
+    /// Decisions 20 and 21: `call` with its run resolved to its chain's current run
+    /// (`chain::resolve`), or the refusal of a run outside the chain or of a tool an
+    /// idle chain does not allow (`chain::idle_refusal`). The engine lock is taken only
+    /// for the lookup: this is not async, so it is never held across an await.
+    fn resolved(&self, mut call: ToolCall) -> Result<ToolCall, String> {
+        let state = crate::lock(&self.state); // lookup
+        let Some(current) = resolve(&state.chains, &state.runs, &call)? else {
+            return Ok(call);
+        };
+        let chain = call.chain.as_deref().and_then(|id| state.chains.get(id));
+        if let (Some(chain), Some(last)) = (chain, state.runs.get(&current))
+            && let Some(text) = idle_refusal(chain, last, &call.tool, &call.args)
+        {
+            return Err(text);
+        }
+        drop(state);
+        call.run_id = current;
+        Ok(call)
+    }
+
     /// `read(run)` of the caller's run under the engine lock, after decision 15's run
     /// and caller checks; the lock is released on return.
     fn looked_up<T>(&self, call: &ToolCall, read: impl FnOnce(&Run) -> T) -> Result<T, String> {
@@ -277,6 +326,9 @@ impl RunService {
                     let wait = Duration::from_secs(wait_secs);
                     self.wait_digest(&call.run_id, since, wait).await;
                 }
+                // Task 6b (6a review m4): a next goal may have moved the chain on during
+                // the wait; the answer is its current run's.
+                let call = self.resolved(call.clone()).unwrap_or(call);
                 self.run_status(&call).await
             }
             OrchCall::GetContext { scouts } => {
@@ -407,158 +459,15 @@ impl RunService {
             )),
         }
     }
-
-    /// Decision 29: `run promote`, performed by the engine.
-    pub(super) async fn promote(
-        &self,
-        run_id: String,
-        orchestrator: Option<OrchestratorChoice>,
-    ) -> RunReply {
-        match self.promote_refusal(&run_id, orchestrator.as_ref()).await {
-            Err(text) => return RunReply::refused(request::PROMOTE, text),
-            // M9.17 fix round 2: what the check found, recorded before the engine
-            // performs the promotion (events are handled in order).
-            Ok(Some(installed)) => self.send(EventKind::Orch(OrchEvent::Installed {
-                run_id: run_id.clone(),
-                installed,
-            })),
-            Ok(None) => {}
-        }
-        let event = |reply| EventKind::Promote {
-            reply,
-            run_id,
-            orchestrator,
-        };
-        answer(request::PROMOTE, self.ask(event).await)
-    }
-}
-
-/// Decision 17: the context of a clone of the run, its stored profile and scout
-/// reports read and the answer built on `spawn_blocking`, within
-/// [`CONTEXT_READ_TIMEOUT`].
-async fn get_context(run: Run, asker: Asker, only: Option<Vec<String>>) -> RunReply {
-    let build = tokio::task::spawn_blocking(move || {
-        let (profile, reports) = context_reads(&run);
-        let inputs = ContextInputs {
-            run: &run,
-            asker,
-            profile: profile.as_ref(),
-            reports,
-            only,
-        };
-        context(&inputs).to_string()
-    });
-    match tokio::time::timeout(CONTEXT_READ_TIMEOUT, build).await {
-        Ok(Ok(text)) => RunReply::tool_result(true, text),
-        Ok(Err(error)) => refused(format!("a blocking step did not finish: {error}")),
-        Err(_) => refused(format!(
-            "the run's context could not be read within {} s",
-            CONTEXT_READ_TIMEOUT.as_secs()
-        )),
-    }
-}
-
-/// `get_context`'s reads (blocking): the repository's stored profile, and the reports
-/// it lists, the onboarding one (the alias `onboarding`, when the profile names one)
-/// and each run scout's. Each ref is resolved only to a report anthrex stored
-/// (`scout::report::resolve_ref`, through `read_report`'s guards); one that cannot be
-/// read is left out with a warning.
-pub(super) fn context_reads(run: &Run) -> (Option<RepoProfile>, Vec<ScoutReport>) {
-    use crate::profile::store::{Stored, load};
-    use crate::scout::report::{ONBOARDING_ALIAS, resolve_ref};
-    use crate::scout::spec::valid_id;
-    let repo_dir = &run.repo_dir;
-    if repo_dir.as_os_str().is_empty() {
-        return (None, Vec::new());
-    }
-    let profile = match load(repo_dir) {
-        Stored::Found { profile, .. } => Some(profile),
-        _ => None,
-    };
-    // The run's own directory, `<data_dir>/runs/<id>` (task M9.13's fix).
-    let run_dir = &run.data_dir;
-    let onboarding = run.onboarding_report.as_deref().filter(|id| valid_id(id));
-    let mut refs: Vec<&str> = onboarding.map(|_| ONBOARDING_ALIAS).into_iter().collect();
-    for id in &run.scout_reports {
-        if valid_id(id) && id != ONBOARDING_ALIAS && !refs.contains(&id.as_str()) {
-            refs.push(id);
-        }
-    }
-    let reports = refs
-        .into_iter()
-        .filter_map(|reference| {
-            let path = resolve_ref(reference, run_dir, repo_dir, onboarding);
-            super::adapt::read_report(&path)
-                .inspect_err(
-                    |error| tracing::warn!(run = %run.id, "scout report {reference}: {error}"),
-                )
-                .ok()
-        })
-        .collect();
-    (profile, reports)
-}
-
-impl RunService {
-    /// Decision 34, the driver's half: a first turn with the scout extract of its
-    /// slot's reports, read on a blocking thread (each resolved only to a report anthrex
-    /// stored, through `read_report`'s guards); a report that cannot be read is left out
-    /// with a warning (`readable_reports`). With no slot, the turn as the engine built
-    /// it. A run scout's report is in the run's own directory (`OpCtx::data_dir`,
-    /// `<data_dir>/runs/<id>`), the onboarding report in the repository's (`Run::
-    /// repo_dir`, read under the engine lock): task M9.13 found both paths built from the
-    /// run's directory as if it were the daemon's, so no extract was ever filled.
-    pub(super) async fn fill_extract(
-        &self,
-        ctx: &super::OpCtx,
-        slot: Option<ExtractSlot>,
-        first_turn: String,
-    ) -> String {
-        let Some(slot) = slot else {
-            return first_turn;
-        };
-        let run_dir = ctx.data_dir.clone();
-        let repo_dir = crate::lock(&self.state)
-            .runs
-            .get(&ctx.run_id)
-            .map(|run| run.repo_dir.clone())
-            .unwrap_or_default();
-        let fallback = first_turn.clone();
-        tokio::task::spawn_blocking(move || filled(&slot, &run_dir, &repo_dir, &first_turn))
-            .await
-            .unwrap_or(fallback)
-    }
-}
-
-/// [`fill_extract`]'s blocking body.
-pub(super) fn filled(
-    slot: &ExtractSlot,
-    run_dir: &std::path::Path,
-    repo_dir: &std::path::Path,
-    first_turn: &str,
-) -> String {
-    use crate::run::orch::extract::{readable_reports, scout_extract};
-    use crate::scout::report::resolve_ref;
-    use crate::scout::spec::valid_id;
-    let read = slot
-        .refs
-        .iter()
-        .map(|reference| {
-            let report = if valid_id(reference) {
-                let onboarding = slot.onboarding.as_deref().filter(|id| valid_id(id));
-                let path = resolve_ref(reference, run_dir, repo_dir, onboarding);
-                super::adapt::read_report(&path)
-            } else {
-                Err("not a stored report".to_string())
-            };
-            (reference.clone(), report)
-        })
-        .collect();
-    slot.fill(first_turn, &scout_extract(&readable_reports(read)))
 }
 
 #[cfg(test)]
 #[path = "orch_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "chain_tests.rs"]
+mod chain_tests;
 
 #[cfg(test)]
 #[path = "orch_read_rig.rs"]

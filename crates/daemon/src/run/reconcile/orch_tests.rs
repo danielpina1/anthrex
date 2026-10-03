@@ -80,6 +80,7 @@ fn create(run_id: &str) -> OpKind {
                 task_id: None,
                 scout_id: None,
                 epic: None,
+                chain: None,
             },
             run_ref: r,
             instructions: String::new(),

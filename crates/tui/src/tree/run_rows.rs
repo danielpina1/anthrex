@@ -141,9 +141,9 @@ pub fn run_rows<'a>(
 }
 
 /// One node of the run view before it becomes a row.
-struct Node<'a> {
-    row: Row<'a>,
-    children: Vec<Node<'a>>,
+pub(super) struct Node<'a> {
+    pub(super) row: Row<'a>,
+    pub(super) children: Vec<Node<'a>>,
     /// The window whose sub-agents hang below this node, after its children.
     subagents: Option<Subagents<'a>>,
 }
@@ -155,7 +155,7 @@ struct Subagents<'a> {
     show_all: bool,
 }
 
-fn node(key: NodeKey, kind: RowKind<'_>) -> Node<'_> {
+pub(super) fn node(key: NodeKey, kind: RowKind<'_>) -> Node<'_> {
     Node {
         row: Row {
             key,
@@ -378,7 +378,8 @@ fn build_tree<'a>(run: &'a RunInfo, windows: &'a [WindowInfo], keep: u64) -> Nod
             None => root.children.push(built),
         }
     }
-    root.children.extend(stages);
+    // Milestone 9.3 decision 32: with several rounds, each under its separator.
+    root.children = super::round_rows::group(run, std::mem::take(&mut root.children), stages);
     root
 }
 

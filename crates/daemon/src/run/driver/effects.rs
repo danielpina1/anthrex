@@ -289,14 +289,26 @@ impl RunService {
                     adaptation.scouts.halt(&scout_id, &reason);
                 }
             }
-            // Decision 39: the paste (`driver/wake.rs`).
+            // Decision 39: the paste (`driver/wake.rs`); milestone 9.3's request wake.
             Effect::WakeOrchestrator {
                 run_id,
                 window_id,
                 text,
                 digest_revision,
                 notes_seq,
-            } => self.queue_wake(run_id, window_id, text, (digest_revision, notes_seq)),
+                request,
+            } => self.queue_wake(
+                run_id,
+                window_id,
+                text,
+                (digest_revision, notes_seq, request),
+            ),
+            // Milestone 9.3 decision 23 (`driver/chain_ops.rs`), off every lock.
+            Effect::AdoptOrchestrator {
+                run_id,
+                window_id,
+                name,
+            } => self.adopt(run_id, window_id, name),
             Effect::Persist { .. } | Effect::Op { .. } | Effect::Publish { .. } => {}
         }
     }

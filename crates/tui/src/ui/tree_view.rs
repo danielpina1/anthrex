@@ -197,11 +197,29 @@ pub fn narrow_line(
                 ],
             )
         }
+        // Milestone 9.3 decision 32: `◌ orchestrator · idle · after <h4>`, muted whole,
+        // in its window's place; `idle_text` cleans the run id, folded here.
+        // No right-hand text: the row's own words take the room.
+        RowKind::IdleOrchestrator { idle, window } => {
+            let focused = app.focused == Some(window.id);
+            let text = theme::fold(&tree::idle_text(idle), ascii);
+            (
+                vec![
+                    Span::raw(guides),
+                    focus_mark(focused),
+                    Span::styled(format!(" {} ", glyph(Glyph::NotStarted, ascii)), muted),
+                ],
+                Name::Text(Span::styled(text, muted)),
+                None,
+                vec![vec![]],
+            )
+        }
         // The run view's rows (task M8c.4) are drawn only on its canvas, never here.
         RowKind::Planner { .. }
         | RowKind::Scout { .. }
         | RowKind::Task { .. }
         | RowKind::Stage { .. }
+        | RowKind::Round { .. }
         | RowKind::AgentRound { .. } => (
             vec![Span::raw(guides)],
             Name::Text(Span::raw(crate::graph::content_text_in(row, ascii))),

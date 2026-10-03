@@ -187,6 +187,7 @@ pub(super) fn a_task_info() -> TaskInfo {
         atomic: false,
         atomic_reason: None,
         interface_change: false,
+        round: 1,
     }
 }
 
@@ -253,6 +254,9 @@ pub(super) fn a_run_info() -> RunInfo {
         stages: Vec::new(),
         test_slots: 0,
         delivery: None,
+        chain: None,
+        round: 1,
+        rounds: Vec::new(),
     }
 }
 
@@ -266,5 +270,6 @@ pub(super) fn a_tool_call() -> ToolCall {
         args: serde_json::json!({"summary": "ok"}),
         scout_id: None,
         epic: None,
+        chain: None,
     }
 }

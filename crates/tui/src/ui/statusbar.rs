@@ -109,7 +109,7 @@ pub(crate) fn render_with(frame: &mut Frame, app: &App, area: Rect, all: &[crate
     if statusbar_modes::filtering(app) {
         spans.push(Span::styled(format!("/{}", app.tree.filter), muted));
     } else {
-        let body = statusbar_modes::body(app);
+        let body = statusbar_modes::body(app, frame.area());
         let used = spans_width(&spans);
         let available = area.width.saturating_sub(used).saturating_sub(toast_width);
         spans.extend(body_spans(app, &body, available, palette));
@@ -154,6 +154,22 @@ fn body_spans(
 ) -> Vec<Span<'static>> {
     let mut out = Vec::new();
     let mut remaining = available;
+    if let Some(note) = body.note {
+        // The note goes before `esc` does (task 9b fix round 1): it shows only when the
+        // `esc` hints still fit after it.
+        let esc: usize = (body.hints.iter())
+            .filter(|h| h.key == "esc")
+            .map(|h| {
+                UnicodeWidthStr::width(h.key.as_str()) + 1 + UnicodeWidthStr::width(h.word.as_str())
+            })
+            .sum();
+        let width = UnicodeWidthStr::width(note) as u16 + GAP;
+        if usize::from(width) + esc <= usize::from(remaining) {
+            remaining -= width;
+            out.push(Span::styled(note, role(Role::Muted, palette)));
+            out.push(Span::raw(" ".repeat(usize::from(GAP))));
+        }
+    }
     if let Some((label, glyph)) = &body.lead {
         let glyph = theme::fold(glyph, palette.ascii);
         let lead = format!("{label} {glyph} ");

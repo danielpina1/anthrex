@@ -261,6 +261,10 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
     if let Some(epic) = &target.epic {
         args.extend(["--epic".into(), epic.clone()]);
     }
+    // Milestone 9.3 (KG §3.4): a chained orchestrator names its chain.
+    if let Some(chain) = &target.chain {
+        args.extend(["--chain".into(), chain.clone()]);
+    }
     args.extend([
         "--window".into(),
         window_id.to_string(),

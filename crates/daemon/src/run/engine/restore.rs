@@ -90,6 +90,8 @@ pub(super) fn restore(
             crate::run::orch::digest::note_change(run);
         }
     }
+    // Milestone 9.3 decision 19: idle chains end with the old daemon (KG §3.6).
+    state.chains = crate::run::chain::rebuild(&state.runs);
 }
 
 /// Before the replay: the run's state, the waits that died with the old daemon, and the
@@ -99,6 +101,8 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
     run.finish_reply = None;
     // Milestone 9.1 decision 47: a run from before stages has its one.
     super::stages::ensure_first(run);
+    // Milestone 9.3 decision 18: a run from before rounds has its one.
+    super::goal_rounds::ensure_first(run);
     if run.state.is_terminal() {
         // M8b decision 33: an ended run still owes the history lines it had in flight.
         let history: Vec<PendingOp> = run

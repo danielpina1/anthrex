@@ -200,4 +200,4 @@ mod build_plan {
 
 #[cfg(test)]
 #[path = "delivery_tests.rs"]
-mod tests;
+pub(in crate::run::driver) mod tests;

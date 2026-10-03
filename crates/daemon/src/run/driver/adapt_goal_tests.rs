@@ -214,7 +214,7 @@ fn one_task_plan() -> String {
 
 fn planned(runtime: proto::Runtime) -> Shape {
     Shape::Planned(Box::new(super::super::super::build::Planned {
-        triage: proto::TriageInfo {
+        triage: Some(proto::TriageInfo {
             kinds: vec![proto::TaskKind::Code],
             scale: proto::Scale::Plan,
             path: proto::RunPath::Plan,
@@ -222,7 +222,7 @@ fn planned(runtime: proto::Runtime) -> Shape {
             source: proto::DeciderSource::Decider,
             fallback_reason: None,
             at: 1,
-        },
+        }),
         usage: None,
         yes: false,
         choice: Some(proto::OrchestratorChoice {

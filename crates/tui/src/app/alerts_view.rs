@@ -276,7 +276,7 @@ impl App {
         if let Some(id) = task {
             let rows = super::nav_rows_of(
                 &self.windows,
-                &self.runs.runs,
+                &self.runs,
                 &self.tree,
                 self.run_view.as_ref(),
             );

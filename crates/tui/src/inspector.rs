@@ -193,6 +193,9 @@ fn inspect_raw(row: &Row<'_>, app: &App) -> Inspection {
         RowKind::AgentRound { run, task, round } => {
             run_round::round_inspection(run, task, round, app)
         }
+        // Milestone 9.3 decision 32.
+        RowKind::Round { run, round } => run::goal_round_inspection(run, round, app),
+        RowKind::IdleOrchestrator { idle, window } => run::idle_inspection(idle, window, app),
     }
 }
 
@@ -345,7 +348,7 @@ fn spawned_by(row: &Row<'_>, info: &SubagentInfo, app: &App) -> String {
     }
     // The same number the window's own box and the sidebar show, so the two
     // can be matched up by eye.
-    match tree::agent_order(&app.rows())
+    match tree::numbered_order(&app.rows())
         .iter()
         .position(|id| *id == window.id)
     {
@@ -462,3 +465,6 @@ mod run_task_sections_tests;
 
 #[cfg(test)]
 mod run_task_outcome_tests;
+
+#[cfg(test)]
+mod run_rounds_tests;

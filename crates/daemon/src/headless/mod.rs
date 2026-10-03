@@ -88,6 +88,10 @@ pub struct McpTarget {
     /// A sub-planner's epic (`--epic`), milestone 9 decision 31.
     #[serde(default)]
     pub epic: Option<String>,
+    /// A chained orchestrator's chain (`--chain`), milestone 9.3 (KG §3.4). Not a wire
+    /// type: it reaches the daemon as `proto::ToolCall.chain`.
+    #[serde(default)]
+    pub chain: Option<String>,
 }
 
 /// Which session a launch starts or continues.
