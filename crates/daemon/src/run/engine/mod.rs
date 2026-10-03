@@ -80,6 +80,7 @@ mod research;
 mod restore;
 mod results;
 mod review;
+mod review_session;
 mod rounds;
 mod run_scouts;
 pub(crate) mod schedule;
