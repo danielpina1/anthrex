@@ -4,7 +4,8 @@
 //! ended is not adopted; the adoption is lost (review B, M1). A delivered run iterated after its window was closed starts a
 //! fresh session with its handoff (review A, M3); and an adopted window still reaches
 //! its chain after an evicted chain iterates (task 6b fix round 4, on a real window);
-//! `start_goal` from an unchained orchestrator is refused in its words (review B, M5).
+//! `start_goal` from an unchained orchestrator is refused in its words (review B, M5);
+//! a continued goal over the cap is refused (review B, M6).
 //! No agent runs; the tests kill only the windows the rig and its runs made.
 
 use std::time::{Duration, Instant};
@@ -228,5 +229,39 @@ async fn start_goal_from_an_unchained_orchestrator_is_refused_in_its_words() {
     let answer: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(answer, json!({ "error": refusal }));
     assert!(rig.new_runs().is_empty());
+    rig.stop().await;
+}
+
+/// B-M6: a continued goal over `GOAL_MAX_CHARS` is refused with the daemon's text, as
+/// an iterate's request is, and starts nothing; one at the cap is not refused for its
+/// length.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_continued_goal_over_the_cap_is_refused() {
+    let rig = ChainRig::new(|_| {}).await;
+    let request = |goal: String| RunRequest::StartGoal {
+        goal,
+        dir: rig.checkout.work.clone(),
+        yes: false,
+        trust_project: false,
+        unconfined_checks: true,
+        orchestrator: None,
+        delivery: Some(proto::DeliveryMode::Local),
+        continue_from: Some(PREV.into()),
+    };
+    let over = "é".repeat(proto::GOAL_MAX_CHARS + 1);
+    let reply = tokio::time::timeout(ANSWER, rig.s.request(request(over)))
+        .await
+        .expect("answered");
+    let text = "the goal is longer than its 16,384-character limit";
+    assert_eq!(
+        reply,
+        RunReply::refused(proto::run_wire::request::START_GOAL, text.to_string())
+    );
+    assert!(rig.new_runs().is_empty());
+    let at = "é".repeat(proto::GOAL_MAX_CHARS);
+    let reply = tokio::time::timeout(ANSWER, rig.s.request(request(at)))
+        .await
+        .expect("answered");
+    assert!(matches!(reply, RunReply::Started { .. }), "{reply:?}");
     rig.stop().await;
 }

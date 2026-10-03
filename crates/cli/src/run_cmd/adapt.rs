@@ -40,6 +40,7 @@ pub(super) async fn start_goal(
         Option<String>,
     ),
 ) -> anyhow::Result<()> {
+    continue_checked(&goal, continue_from.is_some())?;
     let dir = crate::resolve_dir(dir)?;
     tui::spawn::ensure_daemon(&std::env::current_exe()?, socket).await?;
     let mut runs = Runs::connect(socket).await?;
@@ -65,6 +66,15 @@ pub(super) async fn start_goal(
         }
         other => print_outcome(other),
     }
+}
+
+/// The final fix wave (B-M6): a continued goal over `GOAL_MAX_CHARS` is refused before
+/// connecting, with the daemon's own text, as `run iterate`'s request is.
+pub(super) fn continue_checked(goal: &str, continuing: bool) -> anyhow::Result<()> {
+    if continuing && goal.chars().count() > proto::GOAL_MAX_CHARS {
+        anyhow::bail!(daemon::run::orch::contract_rounds::GOAL_TOO_LONG);
+    }
+    Ok(())
 }
 
 /// The `StartGoal` request `run start --goal` sends; `continue_from` is the resolved run

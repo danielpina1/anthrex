@@ -220,8 +220,8 @@ impl RunService {
 mod tests;
 
 #[cfg(test)]
-#[path = "chain_lost_tests.rs"]
-mod lost_tests;
+#[path = "chain_wave_tests.rs"]
+mod wave_tests;
 
 #[cfg(test)]
 #[path = "chain_adopt_tests.rs"]

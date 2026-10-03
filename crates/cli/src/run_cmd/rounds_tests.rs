@@ -260,6 +260,21 @@ fn a_continue_outwaits_the_daemons_continue_deadline() {
     );
 }
 
+/// The final fix wave (B-M6): `--continue` refuses a goal over the cap before it
+/// connects, with the daemon's text; a goal at the cap, and any goal without
+/// `--continue` (triage judges a new goal), pass.
+#[test]
+fn a_continue_caps_its_goal_before_connecting() {
+    let over = "x".repeat(GOAL_MAX_CHARS + 1);
+    let error = adapt::continue_checked(&over, true).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        daemon::run::orch::contract_rounds::GOAL_TOO_LONG
+    );
+    assert!(adapt::continue_checked(&"é".repeat(GOAL_MAX_CHARS), true).is_ok());
+    assert!(adapt::continue_checked(&over, false).is_ok());
+}
+
 /// Pinning: a round is one engine step (the brief's "Timing"), so `run iterate` waits as
 /// every other run request does.
 #[test]

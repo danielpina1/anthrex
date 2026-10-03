@@ -28,7 +28,8 @@ use crate::run::engine::{EventKind, HISTORY_FILE};
 use crate::run::model::{LogEntry, Run};
 use crate::run::orch::contract::orchestrator_first_prompt;
 use crate::run::orch::contract_rounds::{
-    CONTINUE_TOO_SLOW, NO_CHAIN_FOR_TOOL, goal_started, handoff_prompt, other_project,
+    CONTINUE_TOO_SLOW, GOAL_TOO_LONG, NO_CHAIN_FOR_TOOL, goal_started, handoff_prompt,
+    other_project,
 };
 
 /// Decision 24: how many of the chain's history lines a fresh session's first prompt
@@ -195,6 +196,10 @@ impl RunService {
     /// Decision 22's steps 1 to 5: the run a goal continuing from `after` starts, built
     /// and not yet started.
     async fn continued_run(&self, after: &str, next: Next) -> Result<Run, String> {
+        // The final fix wave (B-M6): the goal is capped as a round's request is.
+        if next.goal.chars().count() > proto::GOAL_MAX_CHARS {
+            return Err(GOAL_TOO_LONG.to_string());
+        }
         let joined = self.joined(after)?;
         let timeout =
             Duration::from_secs(self.ctx.settings.current().orchestrator.git_timeout_secs);

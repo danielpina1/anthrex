@@ -60,6 +60,10 @@ pub fn round_started(h4: &str, n: u32) -> String {
 /// Decision 10, step 1: a request over `GOAL_MAX_CHARS` characters.
 pub const REQUEST_TOO_LONG: &str = "the request is longer than its 16,384-character limit";
 
+/// The final fix wave (review B, M6): a continued goal over `GOAL_MAX_CHARS` characters,
+/// from the CLI's `--continue` (which refuses it before connecting) or the TUI.
+pub const GOAL_TOO_LONG: &str = "the goal is longer than its 16,384-character limit";
+
 /// Decision 9, step 2: a run with no orchestrator record.
 pub fn no_orchestrator(h4: &str) -> String {
     format!("run {h4} has no orchestrator; start a new goal for more work")
