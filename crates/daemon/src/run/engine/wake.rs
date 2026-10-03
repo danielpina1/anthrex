@@ -72,6 +72,22 @@ fn drop_up_to(run: &mut Run, seq: u64) {
     (o.notes, o.note_seqs) = keep.into_iter().unzip();
 }
 
+/// Drops every note whose text is `text` (W1 fix round 2: a note that turned untrue
+/// before any session read it).
+pub(super) fn unnote(run: &mut Run, text: &str) {
+    let Some(o) = run.orch.orchestrator.as_mut() else {
+        return;
+    };
+    o.note_seqs.resize(o.notes.len(), 0);
+    let keep: Vec<(String, u64)> = o
+        .notes
+        .drain(..)
+        .zip(o.note_seqs.drain(..))
+        .filter(|(n, _)| n != text)
+        .collect();
+    (o.notes, o.note_seqs) = keep.into_iter().unzip();
+}
+
 /// Decisions 16 and 39: the orchestrator read a digest whose answer included the
 /// notes up to `notes_seq`; those are dropped, so an orchestrator that polls is never
 /// pasted at.

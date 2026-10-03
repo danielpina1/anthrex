@@ -123,6 +123,9 @@ pub(super) fn window_seen(
     }
 }
 
+/// Decisions 11 and 39: a restarted orchestrator's first wake-up note.
+const RESUMED_NOTE: &str = "the daemon restarted and your session was resumed";
+
 /// `RestartOrchestrator`'s result.
 pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<Effect>) {
     let Some(o) = run.orch.orchestrator.as_mut() else {
@@ -148,6 +151,8 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<
                 .as_ref()
                 .is_some_and(|o| o.window_id.is_none())
             {
+                // W1 fix round 2: the restart's note is untrue of a fresh session.
+                super::wake::unnote(run, RESUMED_NOTE);
                 relaunch(run, now, fx);
             }
         }
@@ -186,8 +191,7 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
                 format!("restarting the orchestrator in window {window_id}"),
             );
             // Decisions 11, 39: its first wake-up says so.
-            let text = "the daemon restarted and your session was resumed";
-            super::wake::note(run, text.to_string());
+            super::wake::note(run, RESUMED_NOTE.to_string());
         }
         None => launch(run, now, fx),
     }

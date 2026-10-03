@@ -135,19 +135,15 @@ fn a_chain_back_on_an_iterate_keeps_its_continue_order() {
     assert!(!fx.run().chain_left, "the chain is back");
 }
 
-/// A-M3, the engine's half: a delivered run iterated after its window was closed (I3
-/// lets the user close it). The restart the iterate asked for finds no window: the
-/// driver sends `AdoptLost` with the run's handoff, then the restart's failure. The run
-/// launches a fresh session with that prompt at once, and the round's request waits
-/// for it.
-#[test]
-fn a_restart_whose_window_is_gone_launches_a_fresh_session() {
-    let mut fx = landed();
+/// [`landed`]'s orchestrator dormant, the run iterated, and the restart the iterate
+/// asked for failed on a window that is gone (the driver's `AdoptLost` first): the
+/// failure's effects.
+fn window_gone_restart(fx: &mut Fixture) -> Vec<crate::run::engine::Effect> {
     fx.tick();
     let o = fx.run_mut().orch.orchestrator.as_mut().unwrap();
     o.live = false;
     o.exited_at = Some(1);
-    let effects = iterate(&mut fx, "more");
+    let effects = iterate(fx, "more");
     assert_eq!(reply(&effects), started(2));
     let restarts = ops_in(&effects, "RestartOrchestrator");
     assert_eq!(restarts.len(), 1, "{effects:#?}");
@@ -157,7 +153,37 @@ fn a_restart_whose_window_is_gone_launches_a_fresh_session() {
         first_prompt: "the handoff of 3f9a".into(),
     }));
     let message = format!("window {ORCH} is gone");
-    let effects = fx.done(restarts[0].0, OpResult::Failed { message });
+    fx.done(restarts[0].0, OpResult::Failed { message })
+}
+
+/// W1 fix round 2 (the re-review's breakage 3): the fresh session A-M3 launches never
+/// reads the failed restart's "the daemon restarted and your session was resumed":
+/// neither is true of it.
+#[test]
+fn a_fresh_session_after_a_gone_window_gets_no_resumed_note() {
+    let mut fx = landed();
+    let effects = window_gone_restart(&mut fx);
+    assert_eq!(
+        ops_in(&effects, "CreateOrchestrator").len(),
+        1,
+        "{effects:#?}"
+    );
+    let notes = &fx.run().orch.orchestrator.as_ref().unwrap().notes;
+    assert!(
+        !notes.iter().any(|n| n.contains("your session was resumed")),
+        "{notes:?}"
+    );
+}
+
+/// A-M3, the engine's half: a delivered run iterated after its window was closed (I3
+/// lets the user close it). The restart the iterate asked for finds no window: the
+/// driver sends `AdoptLost` with the run's handoff, then the restart's failure. The run
+/// launches a fresh session with that prompt at once, and the round's request waits
+/// for it.
+#[test]
+fn a_restart_whose_window_is_gone_launches_a_fresh_session() {
+    let mut fx = landed();
+    let effects = window_gone_restart(&mut fx);
     let launches = ops_in(&effects, "CreateOrchestrator");
     assert_eq!(launches.len(), 1, "{effects:#?}");
     let OpKind::CreateOrchestrator { spec, .. } = &launches[0].1 else {
