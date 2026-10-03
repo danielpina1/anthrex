@@ -6,6 +6,7 @@ use super::adapt::{
 };
 use super::agent::{KNOWN_AGENT_KEYS, KNOWN_PLANNERS_KEYS};
 use super::report_unknown_profile;
+use super::tuning::{KNOWN_TUNING_KEYS, report_unknown_routes};
 use crate::{Problem, report_unknown_nested, unknown_key_problem};
 
 const KNOWN_BUDGET_RUNG_KEYS: &[&str] = &["tool_calls", "minutes", "tokens"];
@@ -76,6 +77,10 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
             "planners" => {
                 report_unknown_nested(sub, "orchestrator.planners", KNOWN_PLANNERS_KEYS, problems)
             }
+            "tuning" => {
+                report_unknown_nested(sub, "orchestrator.tuning", KNOWN_TUNING_KEYS, problems)
+            }
+            "routes" => report_unknown_routes(sub, problems),
             other => problems.push(unknown_key_problem(&format!("orchestrator.{other}"))),
         }
     }

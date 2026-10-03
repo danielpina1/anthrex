@@ -25,6 +25,7 @@ mod agent;
 mod budget;
 mod profile;
 mod roster;
+mod tuning;
 
 pub use adapt::{Deciders, Metering, Onboarding, Scouts};
 pub use agent::AgentConfig;
@@ -101,6 +102,7 @@ pub struct Orchestrator {
     pub metering: Metering,
     /// Milestone 9: the orchestrator agent, planner, wake, message and note settings.
     pub agent: agent::AgentSettings,
+    pub tuning: tuning::TuningConfig, // 9.5: [orchestrator.tuning] and the model lists
 }
 
 /// `[orchestrator.claude] auth`, decision 50: whether a headless Claude session reads
@@ -170,6 +172,7 @@ impl Default for Orchestrator {
             onboarding: Onboarding::default(),
             metering: Metering::default(),
             agent: agent::AgentSettings::default(),
+            tuning: tuning::TuningConfig::default(),
         }
     }
 }
@@ -296,6 +299,7 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
     read_profile(t, &mut o, problems);
     adapt::read_adapt(t, &mut o, problems);
     o.agent = agent::read(t, problems);
+    o.tuning = tuning::read_tuning(t, &o.models, problems);
 
     o
 }
