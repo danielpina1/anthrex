@@ -109,8 +109,9 @@ fn adopt(run: &mut Run, prev: &Run, window_id: u32, now: u64, fx: &mut Vec<Effec
         let spent = prev
             .orchestrator_usage
             .saturating_sub(prev.orchestrator_base);
-        o.usage_at_adopt = p.usage_at_adopt;
-        o.usage_at_adopt += spent;
+        let mut at = p.usage_at_adopt.unwrap_or_default();
+        at += spent;
+        o.usage_at_adopt = Some(at);
     }
     let ended = (prev.short(), outcome(prev));
     let wake = next_goal_wake(run.short(), ended, run.orch.yes, &run.goal);
@@ -161,6 +162,7 @@ pub(super) fn adopt_lost(
     o.window_id = None;
     o.live = false;
     o.first_prompt = first_prompt;
+    super::orch_window::own_session(run);
     // Re-review N1: the goal is in the fresh session's prompt; round 1's request
     // wake would give it twice.
     super::wake::clear_request(run, 1);

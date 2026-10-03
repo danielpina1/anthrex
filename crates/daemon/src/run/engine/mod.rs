@@ -230,7 +230,11 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
                 .get_mut(&run_id)
                 .filter(|r| !r.state.is_terminal() && r.continued_by.is_none());
             if let Some(run) = open {
-                let from = run.orch.orchestrator.as_ref().map(|o| o.usage_at_adopt);
+                let from = run
+                    .orch
+                    .orchestrator
+                    .as_ref()
+                    .and_then(|o| o.usage_at_adopt);
                 run.orchestrator_usage = run.orchestrator_base;
                 run.orchestrator_usage += usage.saturating_sub(from.unwrap_or_default());
             }

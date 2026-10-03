@@ -37,7 +37,8 @@ fn credited(fx: &Fixture, run: &str) -> TokenUsage {
     fx.state.runs[run].orchestrator_usage
 }
 
-fn at_adopt(fx: &Fixture, run: &str) -> TokenUsage {
+/// `Some` while the run's session is an adopted one, posting under an earlier run's id.
+fn at_adopt(fx: &Fixture, run: &str) -> Option<TokenUsage> {
     let o = fx.state.runs[run].orch.orchestrator.as_ref();
     o.expect("an orchestrator").usage_at_adopt
 }
@@ -67,7 +68,7 @@ fn a_delivered_previous_run_is_not_credited() {
 fn the_new_run_counts_only_what_was_spent_after_adopting() {
     let mut fx = delivered_with_usage();
     continue_as(&mut fx, NEXT, None);
-    assert_eq!(at_adopt(&fx, NEXT), usage(1000));
+    assert_eq!(at_adopt(&fx, NEXT), Some(usage(1000)));
     post(&mut fx, NEXT, usage(1500));
     assert_eq!(credited(&fx, NEXT), usage(500));
     // The second run accepted, a third run adopts the window: the session's counter
@@ -76,7 +77,7 @@ fn the_new_run_counts_only_what_was_spent_after_adopting() {
     fx.tick();
     continue_as(&mut fx, THIRD, None);
     assert_eq!(fx.state.runs[NEXT].continued_by.as_deref(), Some(THIRD));
-    assert_eq!(at_adopt(&fx, THIRD), usage(1500));
+    assert_eq!(at_adopt(&fx, THIRD), Some(usage(1500)));
     post(&mut fx, THIRD, usage(1800));
     assert_eq!(credited(&fx, THIRD), usage(300));
     // Per field, saturating at 0.
@@ -97,17 +98,19 @@ fn a_fresh_session_is_metered_as_before() {
     let mut fx = ended(FinishAction::Accept);
     gone(&mut fx, ORCH);
     continue_as(&mut fx, NEXT, None);
-    assert_eq!(at_adopt(&fx, NEXT), TokenUsage::default());
+    assert_eq!(at_adopt(&fx, NEXT), None);
     post(&mut fx, NEXT, usage(700));
     assert_eq!(credited(&fx, NEXT), usage(700));
 }
 
-/// A session the run launches itself after its adoption was lost posts under its own
-/// id from zero, so nothing is subtracted from it.
+/// Review I1: a session the run launches itself after its adoption was lost posts
+/// under its own id from zero; what the adopted session was credited stays, as base.
 #[test]
 fn a_launch_after_a_lost_adoption_counts_from_zero() {
     let mut fx = delivered_with_usage();
     continue_as(&mut fx, NEXT, None);
+    post(&mut fx, NEXT, usage(1500));
+    assert_eq!(credited(&fx, NEXT), usage(500));
     fx.next(EventKind::Orch(crate::run::engine::OrchEvent::AdoptLost {
         run_id: NEXT.into(),
         window_id: ORCH,
@@ -130,9 +133,51 @@ fn a_launch_after_a_lost_adoption_counts_from_zero() {
             pid: None,
         },
     });
-    assert_eq!(at_adopt(&fx, NEXT), TokenUsage::default());
+    assert_eq!(at_adopt(&fx, NEXT), None);
     post(&mut fx, NEXT, usage(40));
-    assert_eq!(credited(&fx, NEXT), usage(40));
+    assert_eq!(credited(&fx, NEXT), usage(540));
+}
+
+/// Review I1: `run resume`'s restart of an adopted session's window re-keys it to the
+/// run's own id (`refresh_otlp`), whose total starts at zero: the credit so far becomes
+/// the base. Adopted at 1000, credited 500, restarted, 300 spent: 800.
+#[test]
+fn a_restarted_adopted_session_keeps_its_credit() {
+    let mut fx = delivered_with_usage();
+    continue_as(&mut fx, NEXT, None);
+    post(&mut fx, NEXT, usage(1500));
+    assert_eq!(credited(&fx, NEXT), usage(500));
+    let launch = fx.state.runs[NEXT]
+        .orch
+        .orchestrator
+        .as_ref()
+        .unwrap()
+        .launches;
+    fx.next(EventKind::Orch(
+        crate::run::engine::OrchEvent::OrchestratorWindow {
+            run_id: NEXT.into(),
+            window_id: ORCH,
+            live: false,
+            launch,
+        },
+    ));
+    let reply = fx.reply();
+    let effects = fx.next(EventKind::Resume {
+        reply,
+        run_id: NEXT.into(),
+        rebaseline: None,
+    });
+    let (op, _) = ops_in(&effects, "RestartOrchestrator")
+        .pop()
+        .expect("a restart");
+    fx.next(EventKind::OpDone {
+        run_id: NEXT.into(),
+        op,
+        result: OpResult::Restarted,
+    });
+    assert_eq!(at_adopt(&fx, NEXT), None);
+    post(&mut fx, NEXT, usage(300));
+    assert_eq!(credited(&fx, NEXT), usage(800));
 }
 
 /// A new daemon's ledger counts from zero again, and the restored usage is the base:
@@ -149,7 +194,7 @@ fn a_restore_drops_the_adoption_point() {
         runs,
         replay: Vec::new(),
     });
-    assert_eq!(at_adopt(&fx, NEXT), TokenUsage::default());
+    assert_eq!(at_adopt(&fx, NEXT), Some(TokenUsage::default()));
     post(&mut fx, NEXT, usage(40));
     assert_eq!(credited(&fx, NEXT), usage(540));
 }
