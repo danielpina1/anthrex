@@ -8,7 +8,8 @@ use super::super::alerts::age_text;
 use super::super::kit::{self, Hint};
 use crate::app::alerts::tasks_text;
 use crate::app::alerts_view::{alert_actions, alert_node, can_message, enter_label, run_of};
-use crate::app::{Alert, AlertKey, AlertWho, App};
+use crate::app::plan_review::review_tasks;
+use crate::app::{Alert, AlertKey, AlertWho, App, ReviewTarget};
 use crate::inspector::run_format::reason_text;
 use crate::inspector::run_format::route_tag;
 use crate::safe_text::{multi_line, one_line};
@@ -35,18 +36,31 @@ fn run_stages(run: &RunInfo) -> usize {
     usize::from(planned).max(run.stages.len())
 }
 
-/// A hold's stages: the distinct stages of its own tasks (Review focus 4: never the
-/// run's, which the hold need not span).
-fn hold_stages(run: &RunInfo, tasks: &[String]) -> usize {
-    let mut stages: Vec<u16> = run
-        .tasks
-        .iter()
-        .filter(|task| tasks.contains(&task.id))
-        .map(|task| task.stage)
-        .collect();
+/// The distinct stages of `tasks`: a hold's own (Review focus 4: never the run's,
+/// which the hold need not span), or a later round's at its gate.
+fn distinct_stages<'a>(tasks: impl Iterator<Item = &'a TaskInfo>) -> usize {
+    let mut stages: Vec<u16> = tasks.map(|task| task.stage).collect();
     stages.sort_unstable();
     stages.dedup();
     stages.len()
+}
+
+/// A hold's stages: the distinct stages of its own tasks.
+fn hold_stages(run: &RunInfo, tasks: &[String]) -> usize {
+    distinct_stages(run.tasks.iter().filter(|task| tasks.contains(&task.id)))
+}
+
+/// The gate's `plan` row: the tasks the gate reviews (`review_tasks`), and the plan's
+/// stages; at a later round's gate (final fix wave C-I1) that round's tasks and their
+/// own stages, as the gate alert's line counts them.
+fn gate_plan(run: &RunInfo) -> String {
+    let tasks = review_tasks(run, &ReviewTarget::Gate);
+    let stages = if run.round > 1 {
+        distinct_stages(tasks.iter().copied())
+    } else {
+        run_stages(run)
+    };
+    plan_text(tasks.len(), stages)
 }
 
 /// `<base>@<base7>`, the branch alone when the sha is unknown; none without a branch.
@@ -154,7 +168,7 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         }
         (AlertKey::Gate(_), Some(run)) => {
             push(&mut rows, "phase", "awaiting approval".to_owned());
-            push(&mut rows, "plan", plan_text(counted(run), run_stages(run)));
+            push(&mut rows, "plan", gate_plan(run));
             if let Some(base) = base_text(run) {
                 push(&mut rows, "base", base);
             }

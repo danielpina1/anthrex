@@ -279,6 +279,7 @@ fn a_later_rounds_reject_page_names_the_round() {
         origin: RoundOrigin::User,
         outcome,
         summary_head: None,
+        ended: outcome.is_some(),
     };
     run.round = 2;
     run.rounds = vec![round(1, Some(RoundOutcome::Completed)), round(2, None)];
@@ -295,5 +296,19 @@ fn a_later_rounds_reject_page_names_the_round() {
     assert_eq!(
         confirm_details(run, &ActionKind::Reject, true)[1],
         row("keeps", "the earlier rounds - main unchanged")
+    );
+
+    // Final fix wave C-m3: a cancelled round runs until its sessions end (decision
+    // 16), and the daemon keys an open round on its end, so the page still names the
+    // round; once it has ended, a reject is the whole run's.
+    run.rounds[1].outcome = Some(RoundOutcome::Cancelled);
+    assert_eq!(
+        confirm_details(run, &ActionKind::Reject, false)[0],
+        row("cancels", "round 2's 1 task")
+    );
+    run.rounds[1].ended = true;
+    assert_eq!(
+        confirm_details(run, &ActionKind::Reject, false)[0].0,
+        "removes"
     );
 }

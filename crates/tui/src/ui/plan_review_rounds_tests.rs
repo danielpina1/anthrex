@@ -31,6 +31,7 @@ fn round(n: u32, head: &str, outcome: Option<RoundOutcome>) -> RoundInfo {
         origin: RoundOrigin::User,
         outcome,
         summary_head: None,
+        ended: outcome.is_some(),
     }
 }
 
@@ -176,4 +177,134 @@ fn review_text_is_sanitised() {
     let alert = alerts(&app).into_iter().find(|a| a.priority == 2).unwrap();
     assert_eq!(alert.text, "round 2 awaits approval · 2 tasks");
     assert!(PLAN_RUN.ends_with("0723"));
+}
+
+/// The open confirm's message and action.
+fn confirm(app: &App) -> (String, crate::app::PendingAction) {
+    match &app.modal {
+        Some(crate::app::Modal::Confirm { message, action }) => (message.clone(), action.clone()),
+        other => panic!("no confirm: {other:?}"),
+    }
+}
+
+/// Final fix wave C-I1: at round 2's gate the review's `a` counts the round's tasks
+/// (round 1's merged `t1` is not one that starts), and `x` drops the round only and
+/// removes nothing, as the daemon's `reject_round` does and the action menu's reject
+/// page says (task 10a). A one-round run keeps today's texts.
+#[test]
+fn a_rounds_gate_confirms_name_the_round() {
+    use crate::app::PendingAction;
+    use crossterm::event::KeyCode;
+    use proto::{ClientMsg, RunRequest};
+    let id = PLAN_RUN.to_string();
+    let mut app = app_with(round_two(), ReviewTarget::Gate);
+    super::tests::press(&mut app, KeyCode::Char('a'));
+    assert_eq!(
+        confirm(&app),
+        (
+            format!("Approve run {id}? 2 tasks start."),
+            PendingAction::ApproveRun(id.clone())
+        )
+    );
+    super::tests::press(&mut app, KeyCode::Esc);
+    super::tests::press(&mut app, KeyCode::Char('x'));
+    assert_eq!(
+        confirm(&app),
+        (
+            format!(
+                "Reject round 2 of run {id}? Its 2 tasks are cancelled; nothing is removed \
+                 and the earlier rounds are unchanged."
+            ),
+            PendingAction::RejectRun(id.clone())
+        )
+    );
+    assert_eq!(
+        app.on_key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('y'),
+            crossterm::event::KeyModifiers::NONE
+        )),
+        vec![crate::app::Effect::Send(ClientMsg::Run(
+            RunRequest::Reject { run_id: id.clone() }
+        ))]
+    );
+
+    // One round: today's texts, every task not cancelled counted.
+    let mut app = app_with(overlapping_plan(), ReviewTarget::Gate);
+    super::tests::press(&mut app, KeyCode::Char('a'));
+    assert_eq!(confirm(&app).0, format!("Approve run {id}? 3 tasks start."));
+    super::tests::press(&mut app, KeyCode::Esc);
+    super::tests::press(&mut app, KeyCode::Char('x'));
+    assert_eq!(
+        confirm(&app).0,
+        format!("Reject run {id}? Its branches and worktrees are removed; salvage refs are kept.")
+    );
+}
+
+/// C-I1: the round's reject confirm counts its tasks, so a snapshot that drops one
+/// closes it, as the approve confirm closes (review I1's stale check).
+#[test]
+fn a_rounds_reject_confirm_closes_when_its_count_changes() {
+    use crossterm::event::KeyCode;
+    let mut app = app_with(round_two(), ReviewTarget::Gate);
+    super::tests::press(&mut app, KeyCode::Char('x'));
+    assert!(app.modal.is_some());
+    let mut snap = round_two();
+    snap.runs[0].tasks[2].state = TaskState::Cancelled;
+    app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot(snap)));
+    assert_eq!(app.modal, None);
+    assert_eq!(
+        app.toast_text(),
+        Some(format!("run {PLAN_RUN}'s plan changed; press x again").as_str())
+    );
+}
+
+/// C-I1: the gate alert's `plan` row counts the round's tasks and their stages, as its
+/// line does (`t2` and `t3`, both in stage 2), never the run's.
+#[test]
+fn a_rounds_gate_alert_counts_its_round() {
+    let plan_row = |app: &App| {
+        let alert = alerts(app).into_iter().find(|a| a.priority == 2).unwrap();
+        crate::ui::alerts_view::detail_lines(app, &alert, 80)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .find(|row| row.starts_with("plan"))
+            .unwrap()
+    };
+    let app = app_with(round_two(), ReviewTarget::Gate);
+    assert_eq!(plan_row(&app), "plan   2 tasks");
+    let mut snap = round_two();
+    snap.runs[0].tasks[2].stage = 3;
+    let app = app_with(snap, ReviewTarget::Gate);
+    assert_eq!(plan_row(&app), "plan   2 tasks · 2 stages");
+    // One round: the plan's, as today.
+    let app = app_with(overlapping_plan(), ReviewTarget::Gate);
+    assert_eq!(plan_row(&app), "plan   3 tasks · 2 stages");
+}
+
+/// Final fix wave C-m4 (10a m2): only the gate's review cuts the critical path to the
+/// round's tasks; a hold's review in a later round names the whole path, as in round 1
+/// (the brief's task 10a note).
+#[test]
+fn a_later_rounds_hold_review_keeps_the_whole_critical_path() {
+    let mut snap = round_two();
+    let run = &mut snap.runs[0];
+    run.state = proto::RunState::Running;
+    run.tasks[1].hold = Some("epic:ui".into());
+    run.holds = vec![crate::tree::orch_fixtures::hold(
+        "epic:ui",
+        proto::HoldState::Awaiting,
+        &["t2"],
+    )];
+    let mut app = app_with(snap, ReviewTarget::Hold("epic:ui".into()));
+    let got = rows(&draw(&mut app, 80, 24));
+    assert_eq!(
+        got[1],
+        framed(" 1 task · M · ~100 calls · critical t1 › t2 › t3", 80),
+        "{got:#?}"
+    );
 }

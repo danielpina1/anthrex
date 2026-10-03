@@ -294,6 +294,38 @@ fn goal_dialog_text_is_sanitised() {
     }
 }
 
+/// Final fix wave C-m8: a short id is cleaned before it is cut, as the idle row cleans
+/// it, so a carrier among a run id's last four characters never shortens the drawn
+/// `<h4>`: the continue row's `after` and the active chain's run.
+#[test]
+fn short_ids_are_cleaned_before_they_are_cut() {
+    let mut f = form();
+    f.set_chains(
+        Some(IdleOrchestrator {
+            after_run: "r-20261001-3f\u{200D}9\u{202E}a".into(),
+            ..idle(false)
+        }),
+        None,
+    );
+    let rows = large_rows(&app_with(f, false), 120, 40);
+    let choice = "  orchestrator      ‹ continue o-3f9a (after 3f9a) ›";
+    assert!(rows.contains(&format!("│ {choice:<112} │")), "{rows:?}");
+
+    let mut app = app_with(form(), false);
+    let mut run = crate::tree::run_fixtures::run(
+        "r-20261003-77\u{200D}b\u{202E}2",
+        "/p/a",
+        RunState::Running,
+    );
+    run.chain = Some("o-3f9a".into());
+    let snap = crate::tree::run_fixtures::snapshot(100, vec![run]);
+    app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot(snap)));
+    let rows = large_rows(&app, 120, 40);
+    let busy =
+        "  orchestrator      o-3f9a is working on run 77b2; this goal gets a new orchestrator";
+    assert!(rows.contains(&format!("│ {busy:<112} │")), "{rows:?}");
+}
+
 /// Review m2: at the 16-row minimum, with `custom…`'s row and an error showing, the
 /// large editor still keeps one text row (the options take the rest).
 #[test]
@@ -308,6 +340,88 @@ fn the_large_text_area_keeps_a_row() {
     assert!(rows[1].starts_with("│ hello"), "{rows:?}");
     // The kit draws no row for none (task 9a's re-review): why the view keeps one.
     assert!(kit::editor(&TextArea::editor("hello"), 0, 40, true).is_empty());
+}
+
+/// Final fix wave C-m1 (carried N1): at 60×16 with `custom…` and an error the body is
+/// one row too tall, so the position row goes and the footer stays: `^S start` is still
+/// the hint for retrying. One row taller, both are drawn.
+#[test]
+fn the_footer_outlasts_the_position_row() {
+    let mut f = form();
+    f.runtime = Some(Runtime::Claude);
+    f.model = crate::run_goal::GoalModel::Custom;
+    f.error = Some("type a goal first".into());
+    f.goal = TextArea::editor("hello");
+    let footer = "^S start  Tab options  ^K cut  ^U paste  Esc cancel";
+    let position = "ln 1, col 6";
+    for ascii in [false, true] {
+        let rows = large_rows(&app_with(f.clone(), ascii), 60, 16);
+        let interior = &rows[1..rows.len() - 1];
+        assert_eq!(interior.len(), 12);
+        assert!(interior[11].contains(footer), "{rows:?}");
+        assert!(interior[10].contains("type a goal first"), "{rows:?}");
+        assert!(!rows.iter().any(|r| r.contains(position)), "{rows:?}");
+        let rows = large_rows(&app_with(f.clone(), ascii), 60, 17);
+        let interior = &rows[1..rows.len() - 1];
+        assert!(interior[12].contains(footer), "{rows:?}");
+        assert!(interior[11].contains(position), "{rows:?}");
+    }
+}
+
+/// The row of a `w`×`h` frame holding `needle`, trimmed, from the whole buffer.
+fn row_with(app: &App, w: u16, h: u16, needle: &str) -> String {
+    let buffer = audit::draw(app, w, h);
+    let rows = cells(&buffer, Rect::new(0, 0, w, h));
+    let row = rows.into_iter().find(|r| r.contains(needle));
+    row.unwrap_or_else(|| panic!("no row with {needle:?}"))
+}
+
+/// Final fix wave C-m6: a continue choice too long for the row loses whole words, then
+/// takes the ellipsis, and keeps its closing chevron: at 60×16 (the large dialog's
+/// 32-column value) and at 50×24 (the compact one's 26), in both palettes.
+#[test]
+fn a_long_continue_choice_is_cut_at_a_word() {
+    let mut f = form();
+    f.set_chains(Some(idle(true)), None);
+    for (ascii, open, close, dots) in [(false, "‹", "›", "…"), (true, "<", ">", "...")] {
+        let app = app_with(f.clone(), ascii);
+        let row = row_with(&app, 60, 16, "orchestrator ");
+        let want = format!("  orchestrator      {open} continue o-3f9a (fresh{dots} {close}");
+        assert!(row.contains(&format!("{want} ")), "{row:?}");
+        let row = row_with(&app, 50, 24, "orchestrator ");
+        let want = format!("  orchestrator      {open} continue o-3f9a{dots} {close}");
+        assert!(row.contains(&want), "{row:?}");
+    }
+    // What fits is drawn whole.
+    let mut f = form();
+    f.set_chains(Some(idle(false)), None);
+    let row = row_with(&app_with(f, false), 60, 16, "orchestrator ");
+    assert!(
+        row.contains("  orchestrator      ‹ continue o-3f9a (after 3f9a) ›"),
+        "{row:?}"
+    );
+}
+
+/// Final fix wave C-m7: while a goal is sent, both dialogs say triage can take minutes
+/// for a new orchestrator only; a continued goal is not triaged (decision 22).
+#[test]
+fn only_a_new_goal_waits_on_triage() {
+    let mut f = form();
+    f.goal = TextArea::editor("go");
+    f.set_chains(Some(idle(false)), None);
+    f.submitting = true;
+    let mut new = f.clone();
+    new.continuing = false;
+    for (w, h) in [(120, 40), (50, 24)] {
+        let row = row_with(&app_with(new.clone(), false), w, h, "starting");
+        assert!(
+            row.contains("starting… triage can take minutes"),
+            "{w}x{h}: {row:?}"
+        );
+        let row = row_with(&app_with(f.clone(), true), w, h, "starting");
+        assert!(row.contains("starting..."), "{w}x{h}: {row:?}");
+        assert!(!row.contains("triage"), "{w}x{h}: {row:?}");
+    }
 }
 
 /// Review m6: the continued chain's model, daemon text, is drawn cleaned.

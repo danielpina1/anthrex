@@ -7,22 +7,46 @@ use super::{App, Effect, Modal, PendingAction};
 use crate::run_edit::{EditOutcome, TaskEditForm};
 use crate::tree::NodeKey;
 use crossterm::event::KeyEvent;
-use proto::{RunInfo, RunPath, RunRequest, RunState, TaskInfo, TaskState};
+use proto::{RunInfo, RunPath, RunRequest, RunState, TaskInfo};
 
+use super::actions::{open_round, round_open_tasks};
+use super::plan_review::{ReviewTarget, review_tasks};
 use super::runs::state_text;
 
 pub(super) fn confirm(message: String, action: PendingAction) -> Modal {
     Modal::Confirm { message, action }
 }
 
-/// Decision 32's approve confirm: the tasks not `cancelled` are the ones that start.
+/// Decision 32's approve confirm: the tasks the gate reviews are the ones that start,
+/// at a later round's gate that round's only (final fix wave C-I1).
 fn approve_message(run: &RunInfo) -> String {
     let run_id = &run.run_id;
-    let starting = run.tasks.iter().filter(|t| t.state != TaskState::Cancelled);
-    match starting.count() {
+    match review_tasks(run, &ReviewTarget::Gate).len() {
         1 => format!("Approve run {run_id}? 1 task starts."),
         n => format!("Approve run {run_id}? {n} tasks start."),
     }
+}
+
+/// Decision 32's reject confirm. Milestone 9.3 decision 12 (final fix wave C-I1): an
+/// open later round's reject drops that round and removes nothing, as the action
+/// menu's reject page says.
+fn reject_message(run: &RunInfo) -> String {
+    let run_id = &run.run_id;
+    if !open_round(run) {
+        return format!(
+            "Reject run {run_id}? Its branches and worktrees are removed; salvage refs are \
+             kept."
+        );
+    }
+    let tasks = match round_open_tasks(run) {
+        1 => "1 task is".to_string(),
+        k => format!("{k} tasks are"),
+    };
+    format!(
+        "Reject round {} of run {run_id}? Its {tasks} cancelled; nothing is removed and the \
+         earlier rounds are unchanged.",
+        run.round
+    )
 }
 
 impl App {
@@ -67,13 +91,7 @@ impl App {
         };
         let modal = match (key, task) {
             ('a', _) => confirm(approve_message(run), PendingAction::ApproveRun(run_id)),
-            ('x', _) => confirm(
-                format!(
-                    "Reject run {run_id}? Its branches and worktrees are removed; \
-                     salvage refs are kept."
-                ),
-                PendingAction::RejectRun(run_id),
-            ),
+            ('x', _) => confirm(reject_message(run), PendingAction::RejectRun(run_id)),
             ('e', Some(task)) => Modal::EditTask(Box::new(TaskEditForm::in_run(run, task))),
             (_, Some(task)) => confirm(
                 format!("Remove {} from run {run_id}'s plan?", task.id),
@@ -198,7 +216,13 @@ impl App {
                 }
                 Ok(_) => None,
             },
-            PendingAction::RejectRun(run_id) => self.gate_run(run_id).err(),
+            PendingAction::RejectRun(run_id) => match self.gate_run(run_id) {
+                Err(text) => Some(text),
+                Ok(run) if reject_message(run) != message => {
+                    Some(format!("run {run_id}'s plan changed; press x again"))
+                }
+                Ok(_) => None,
+            },
             PendingAction::RejectHold { run_id, hold } => self.stale_hold(run_id, hold),
             PendingAction::SubmitPlan(run_id) => self.stale_submit(run_id),
             PendingAction::RemoveTask { run_id, task_id } => {

@@ -58,6 +58,7 @@ impl Round {
             origin: self.origin,
             outcome: self.outcome,
             summary_head: self.summary.as_deref().map(head),
+            ended: self.ended_at.is_some(),
         }
     }
 }

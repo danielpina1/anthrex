@@ -117,10 +117,19 @@ pub fn local_actions(run: &RunInfo, target: &ActionTarget) -> Vec<ActionInfo> {
     out
 }
 
-/// Milestone 9.3: round 2 or later, not yet ended (its outcome unset), as the daemon's
-/// `goal_rounds_end::open_round` reads it.
+/// Milestone 9.3: round 2 or later, not yet ended, as the daemon's
+/// `goal_rounds_end::open_round` reads it: by `RoundInfo.ended` (its `ended_at`), not
+/// the outcome, which a cancelled round has while it still runs (final fix wave C-m3).
 pub(crate) fn open_round(run: &RunInfo) -> bool {
-    run.round > 1 && run.rounds.last().is_some_and(|r| r.outcome.is_none())
+    run.round > 1 && run.rounds.last().is_some_and(|r| !r.ended)
+}
+
+/// Decision 12: the tasks a reject of the open round cancels, its unfinished ones.
+/// The action menu's reject page and the plan gate's `x` both count them.
+pub(crate) fn round_open_tasks(run: &RunInfo) -> usize {
+    (run.tasks.iter())
+        .filter(|t| t.round == run.round && !t.state.is_finished())
+        .count()
 }
 
 fn task_of<'a>(run: &'a RunInfo, id: &str) -> Option<&'a TaskInfo> {
@@ -197,10 +206,7 @@ pub fn confirm_details(run: &RunInfo, kind: &ActionKind, ascii: bool) -> Vec<(St
         ActionKind::Reject if open_round(run) => {
             let sep = if ascii { "-" } else { "·" };
             let n = run.round;
-            let k = (run.tasks.iter())
-                .filter(|t| t.round == n && !t.state.is_finished())
-                .count();
-            let tasks = plural(k, "task", "tasks");
+            let tasks = plural(round_open_tasks(run), "task", "tasks");
             vec![
                 row("cancels", format!("round {n}'s {tasks}")),
                 row(

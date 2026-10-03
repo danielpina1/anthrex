@@ -90,6 +90,9 @@ pub(crate) struct ReviewLayout {
     /// Ruling R-13: a `pr` run's gate's `delivered as …` row
     /// (`plan_summary::delivery_line`), under the summary row.
     pub delivery: Option<String>,
+    /// The review is the run's gate, not a hold's (final fix wave C-m4: only the gate
+    /// cuts the critical path to a later round's tasks).
+    pub gate: bool,
     /// The header's `⚠` rows (`plan_summary::overlap_lines`), computed once a frame:
     /// the header is the summary row, the delivery row and these.
     pub warnings: Vec<String>,
@@ -105,9 +108,10 @@ pub(crate) struct ReviewLayout {
 pub(crate) const BAR: u16 = 1;
 
 /// Decision 26's stacking of a header (the round's row, the summary row, the delivery
-/// row and `warnings`) and a list of `tasks` in `body`.
+/// row and `warnings`) and a list of `tasks` in `body`; `gate`: the review is the gate's.
 pub(crate) fn stacked(
     body: Rect,
+    gate: bool,
     (round, delivery): (Option<String>, Option<String>),
     warnings: Vec<String>,
     tasks: usize,
@@ -143,6 +147,7 @@ pub(crate) fn stacked(
         header,
         round,
         delivery,
+        gate,
         warnings,
         rules: [rule(first), rule(second)],
         list,
@@ -471,7 +476,7 @@ impl App {
                     let warnings = overlap_lines(&overlaps(run, &tasks), ascii);
                     (rows, warnings, tasks.len())
                 });
-        stacked(body, rows, warnings, tasks)
+        stacked(body, gate, rows, warnings, tasks)
     }
 
     /// Decision 14's `p` in the run view on `run_id`: the gate while the run awaits

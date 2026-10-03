@@ -62,8 +62,15 @@ fn sizes(tasks: &[&TaskInfo]) -> String {
 /// <sizes> · ~<calls> calls[ · critical <t1 › t2 › t3>]`, cut with `…` to `width`, so
 /// the critical path, last, is what a narrow screen cuts. The stages are those of the
 /// reviewed tasks (milestone 9.0.7 task 6's ruling for a hold); the calls the sum of
-/// the budgets the tasks were given.
-pub(crate) fn header_line(run: &RunInfo, tasks: &[&TaskInfo], width: u16, ascii: bool) -> String {
+/// the budgets the tasks were given. `gate`: the review is the gate's, whose critical
+/// path a later round cuts to its own tasks (a hold's names the whole path).
+pub(crate) fn header_line(
+    run: &RunInfo,
+    tasks: &[&TaskInfo],
+    gate: bool,
+    width: u16,
+    ascii: bool,
+) -> String {
     let mut parts = vec![count(tasks.len(), "task")];
     let mut epics: Vec<&str> = tasks.iter().filter_map(|t| t.epic.as_deref()).collect();
     epics.sort_unstable();
@@ -82,9 +89,10 @@ pub(crate) fn header_line(run: &RunInfo, tasks: &[&TaskInfo], width: u16, ascii:
     }
     let calls: u64 = tasks.iter().map(|t| u64::from(t.budget.tool_calls)).sum();
     parts.push(format!("~{calls} calls"));
-    // Milestone 9.3 decision 32: a later round names its own tasks' part of the path.
+    // Milestone 9.3 decision 32: a later round's gate names its own tasks' part of the
+    // path; a hold's review is unchanged (final fix wave C-m4).
     let path: Vec<String> = (run.critical_path.iter())
-        .filter(|id| run.round <= 1 || tasks.iter().any(|t| t.id == **id))
+        .filter(|id| !gate || run.round <= 1 || tasks.iter().any(|t| t.id == **id))
         .map(|id| one_line(id))
         .collect();
     if !path.is_empty() {

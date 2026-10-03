@@ -120,3 +120,32 @@ fn ctrl_s_on_the_confirm_page_goes_back() {
     assert_eq!(form(&app).goal.text(), "add a");
     assert!(screen(&app).contains("^S start"));
 }
+
+/// Final fix wave C-m9: a closed dialog's slot ends with its request. A refused send of
+/// that request clears it, and a lost link clears it too, since no reply can come.
+#[test]
+fn a_send_failure_or_a_lost_link_ends_a_closed_dialogs_wait() {
+    let mut app = app();
+    drawn(&mut app);
+    open_on(&mut app, "/p/a");
+    typed(&mut app, "goal a");
+    let (id, request) = tagged(&ctrl(&mut app, 's'));
+    assert!(tap(&mut app, KeyCode::Esc).is_empty());
+    assert_eq!(app.goal_sent.as_ref().map(|s| s.0), Some(id));
+    // Another request's failure leaves it.
+    app.on_send_failed(&ClientMsg::RunTagged {
+        id: id + 100,
+        request: request.clone(),
+    });
+    assert_eq!(app.goal_sent.as_ref().map(|s| s.0), Some(id));
+    app.on_send_failed(&ClientMsg::RunTagged { id, request });
+    assert_eq!(app.goal_sent, None);
+    assert_eq!(app.goal_drafts[&PathBuf::from("/p/a")], "goal a");
+
+    open_on(&mut app, "/p/a");
+    let id = send_and_close(&mut app);
+    assert_eq!(app.goal_sent.as_ref().map(|s| s.0), Some(id));
+    app.on_link_lost("gone");
+    assert_eq!(app.goal_sent, None);
+    assert_eq!(app.goal_drafts[&PathBuf::from("/p/a")], "goal a");
+}

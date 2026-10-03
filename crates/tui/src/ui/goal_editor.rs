@@ -10,7 +10,7 @@ use crate::run_goal::{DISCARD_ASK, EditorView, GoalForm};
 use crate::safe_text::one_line;
 use crate::theme::{Palette, Role, ellipsis, role};
 use crate::ui::kit::{self, Hint};
-use crate::ui::run_goal::{GOAL_ROWS, goal_width, option_lines, placeholder, title};
+use crate::ui::run_goal::{GOAL_ROWS, goal_width, option_lines, placeholder, starting_text, title};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -76,7 +76,7 @@ pub fn text_view(form: &GoalForm, cols: u16, rows: u16) -> EditorView {
     EditorView {
         width: rect.width.saturating_sub(4),
         // At least one row (review m2): at 16 rows with `custom…` and an error the
-        // options leave none, and the footer is cut instead.
+        // options leave none, and `body` drops the position row instead (C-m1).
         rows: interior
             .saturating_sub(option_rows(form) + FIXED_ROWS)
             .max(1),
@@ -109,8 +109,11 @@ pub fn footer(entries: &[(&str, &str)], width: u16, p: Palette) -> Line<'static>
     Line::from(spans)
 }
 
-/// The large dialog's interior rows for the goal drawn as `view`, `view.width` wide.
-pub fn body(form: &GoalForm, view: EditorView, p: Palette) -> Vec<Line<'static>> {
+/// The large dialog's interior rows for the goal drawn as `view`, `view.width` wide, in
+/// an interior `height` rows high. When they overflow it (16 rows with `custom…` and an
+/// error), the position row goes before the footer (final fix wave C-m1), so the hint
+/// for retrying stays.
+pub fn body(form: &GoalForm, view: EditorView, height: u16, p: Palette) -> Vec<Line<'static>> {
     let focused = form.focus == crate::run_goal::GoalField::Goal && !form.submitting;
     let mut lines = kit::editor(&form.goal, view.rows, view.width, focused);
     if form.goal.is_empty()
@@ -127,16 +130,12 @@ pub fn body(form: &GoalForm, view: EditorView, p: Palette) -> Vec<Line<'static>>
         ));
     }
     if form.submitting {
-        // A continued goal is not triaged (decision 22).
-        let waiting = if form.continues().is_some() {
-            format!("starting{}", ellipsis(p))
-        } else {
-            format!("starting{} triage can take minutes", ellipsis(p))
-        };
-        lines.push(Line::styled(waiting, role(Role::Muted, p)));
+        lines.push(Line::styled(starting_text(form, p), role(Role::Muted, p)));
         lines.push(footer(&[("Esc", "close")], view.width, p));
     } else {
-        lines.push(kit::editor_position(&form.goal, view.width, p));
+        if lines.len() + 2 <= usize::from(height) {
+            lines.push(kit::editor_position(&form.goal, view.width, p));
+        }
         lines.push(footer(&FOOTER, view.width, p));
     }
     lines
@@ -184,7 +183,8 @@ pub fn render(frame: &mut Frame, form: &GoalForm, area: Rect, p: Palette) {
     let view = text_view(form, area.width, area.height);
     let title = title(form, view.width.saturating_sub(2), p);
     frame.render_widget(
-        Paragraph::new(body(form, view, p)).block(kit::dialog_frame(&title, false, p)),
+        Paragraph::new(body(form, view, rect.height.saturating_sub(2), p))
+            .block(kit::dialog_frame(&title, false, p)),
         rect,
     );
 }

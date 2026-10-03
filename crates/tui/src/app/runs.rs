@@ -178,6 +178,7 @@ impl App {
                 self.replace_runs(snapshot);
                 self.runs_received_at = Instant::now();
                 self.run_subscribed = true;
+                return self.focus_off_idle();
             }
             // Decision 34: an edit's reply ends a submitting form — closed on `Done`,
             // its error row filled on `Refused`. Every other reply is a toast.

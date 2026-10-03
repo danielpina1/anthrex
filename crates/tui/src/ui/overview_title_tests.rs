@@ -152,6 +152,7 @@ fn rounds_of(n: u32) -> App {
                 origin: proto::RoundOrigin::User,
                 outcome: None,
                 summary_head: None,
+                ended: false,
             })
             .collect();
     }

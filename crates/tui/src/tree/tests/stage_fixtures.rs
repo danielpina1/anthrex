@@ -122,6 +122,7 @@ pub(crate) fn two_round_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
         origin: proto::RoundOrigin::User,
         outcome,
         summary_head: summary.map(str::to_owned),
+        ended: outcome.is_some(),
     };
     run.round = 2;
     run.rounds = vec![

@@ -540,6 +540,21 @@ pub fn numbered_order(rows: &[Row<'_>]) -> Vec<u32> {
     order.into_iter().filter(|id| !idle.contains(id)).collect()
 }
 
+/// The window the focus falls back to at position `at` of [`agent_order`] (0 for a
+/// first focus): the numbered window nearest it, the later on a tie (the one that took
+/// a closed window's place), so an idle orchestrator's chat never takes the keys while
+/// a numbered window exists (final fix wave C-m2); else the idle one at `at`.
+pub fn focus_fallback(rows: &[Row<'_>], at: usize) -> Option<u32> {
+    let order = agent_order(rows);
+    let numbered = numbered_order(rows);
+    let at = at.min(order.len().saturating_sub(1));
+    (order.iter().enumerate())
+        .filter(|(_, id)| numbered.contains(id))
+        .min_by_key(|(k, _)| (k.abs_diff(at), *k < at))
+        .map(|(_, id)| *id)
+        .or_else(|| order.get(at).copied())
+}
+
 pub fn row_index(rows: &[Row<'_>], key: &NodeKey) -> Option<usize> {
     rows.iter().position(|row| &row.key == key)
 }

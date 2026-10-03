@@ -29,6 +29,7 @@ fn a_round_info() -> RoundInfo {
         origin: RoundOrigin::Orchestrator,
         outcome: Some(RoundOutcome::Completed),
         summary_head: Some("added --verbose".into()),
+        ended: true,
     }
 }
 
@@ -90,11 +91,20 @@ fn round_types_round_trip() {
     both_ways(&RoundInfo {
         outcome: None,
         summary_head: None,
+        ended: false,
         ..a_round_info()
     });
+    // Final fix wave C-m3: a cancelled round not yet ended (decision 16).
+    both_ways(&RoundInfo {
+        outcome: Some(RoundOutcome::Cancelled),
+        ended: false,
+        ..a_round_info()
+    });
+    assert_eq!(serde_json::to_value(a_round_info()).unwrap()["ended"], true);
     let running: RoundInfo =
         serde_json::from_value(json!({"n": 3, "goal_head": "g", "origin": "user"})).unwrap();
     assert_eq!((running.outcome, running.summary_head), (None, None));
+    assert!(!running.ended, "a round without `ended` has not ended");
     both_ways(&an_idle_orchestrator());
     both_ways(&IdleOrchestrator {
         outcome: RunState::Discarded,
@@ -262,9 +272,11 @@ fn old_snapshot_still_decodes() {
             origin: RoundOrigin::User,
             outcome: Some(RoundOutcome::Completed),
             summary_head: None,
+            ended: true,
         },
         RoundInfo {
             outcome: None,
+            ended: false,
             ..a_round_info()
         },
     ];
@@ -278,7 +290,23 @@ fn old_snapshot_still_decodes() {
         ..snapshot
     };
     both_ways(&snapshot);
-    both_ways(&DaemonMsg::Run(RunReply::Snapshot(snapshot)));
+    both_ways(&DaemonMsg::Run(RunReply::Snapshot(snapshot.clone())));
+
+    // Final fix wave C-m3: a snapshot written before `RoundInfo.ended` (9.3's own
+    // earlier builds) still decodes, every round not ended; MessagePack likewise.
+    let mut old = serde_json::to_value(&snapshot).unwrap();
+    for round in old["runs"][0]["rounds"].as_array_mut().unwrap() {
+        assert!(round.as_object_mut().unwrap().remove("ended").is_some());
+    }
+    let back: RunsSnapshot = serde_json::from_value(old.clone()).expect("no `ended`");
+    assert!(back.runs[0].rounds.iter().all(|r| !r.ended));
+    let packed = rmp_serde::to_vec_named(&old).unwrap();
+    let back: RunsSnapshot = rmp_serde::from_slice(&packed).expect("no `ended`, packed");
+    assert!(back.runs[0].rounds.iter().all(|r| !r.ended));
+    assert_eq!(
+        back.runs[0].rounds[0].outcome,
+        Some(RoundOutcome::Completed)
+    );
 }
 
 #[test]
