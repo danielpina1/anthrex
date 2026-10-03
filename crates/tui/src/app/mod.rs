@@ -5,6 +5,7 @@ use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
 pub use alerts::{Alert, AlertKey, AlertWho, AlertsFocus, alerts};
+pub use confirm::PendingAction;
 use crossterm::event::KeyEvent;
 pub use link::Link;
 pub use plan_review::{PlanReview, ReviewTarget};
@@ -28,31 +29,6 @@ pub enum Effect {
     /// Decision 32: `C-b r` while not connected. `lib.rs` starts an attempt at once
     /// (unless one is already in flight) and opens a fresh 30 s window.
     Reconnect,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PendingAction {
-    Kill(u32),
-    /// Decision 23: a live window's restart confirmation. Carries the window id
-    /// directly, the same way `Kill` does, rather than an index or a reliance on
-    /// `App.focused` staying put — a dialog that instead trusted focus to still name
-    /// the right window was milestone 5's worst defect (see `app/modal_keys.rs`'s
-    /// `open_force_remove` doc comment for the sibling case this mirrors).
-    Restart(u32),
-    StopDaemon,
-    /// Milestone 8c decision 32: the plan gate's requests, each carrying its run.
-    ApproveRun(String),
-    RejectRun(String),
-    RemoveTask {
-        run_id: String,
-        task_id: String,
-    },
-    /// Milestone 9 decisions 28 and 13: a hold's rejection, and the user's submit.
-    RejectHold {
-        run_id: String,
-        hold: String,
-    },
-    SubmitPlan(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
