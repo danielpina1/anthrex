@@ -3,13 +3,14 @@
 //! to iterate, cancel or end (review A, C1); a round's cancel spares the earlier
 //! rounds' engine-made work (A-I1); and a halted round can be cancelled (A-M7).
 
-use proto::{RoundOutcome, RunState, TaskState};
+use proto::{RoundOutcome, RunState, TaskOrigin, TaskState};
 use serde_json::json;
 
 use super::delivery_sync::{fetched, fetching};
+use super::fixes::spec as fixes_spec;
 use super::fixture::*;
 use super::goal_rounds_end::{create_stages, settle_ops};
-use super::goal_rounds_pr::{landed, sessions_end};
+use super::goal_rounds_pr::{delivering, landed, sessions_end};
 use super::goal_rounds_stages::{add_in, plan_round};
 use super::goal_rounds_start::{iterate, reply, started};
 use super::kinds_cancel::cancel;
@@ -17,6 +18,7 @@ use super::merge::{commit, pending};
 use super::orch::{answer, edit_plan};
 use super::orch_restore::restart;
 use crate::run::engine::OpResult;
+use crate::run::engine::fixes::add_fix;
 
 /// The run settles: stages created, ops answered, sessions ended and the ref guard
 /// passed, until it is `complete` or six passes went by.
@@ -103,4 +105,43 @@ fn a_fetched_base_is_never_due_into_a_stage_never_created() {
     fetched(&mut fx, &commit(71), None);
     let due = &fx.run().delivery.base_sync_due;
     assert!(due.is_empty(), "{due:?}");
+}
+
+/// An engine-made bisect fix task on stage 1 (round 1's), queued; its id.
+fn stage_one_fix(fx: &mut Fixture) -> String {
+    let spec = fixes_spec(TaskOrigin::Bisect, "crates/fix/**", Default::default());
+    let now = fx.now;
+    let id = add_fix(fx.run_mut(), spec, now, &mut Vec::new()).expect("added");
+    assert_eq!(fx.task(&id).round, 1);
+    id
+}
+
+/// A-I1 (decision 16, "the earlier rounds intact"): round 2's cancel cancels round 2's
+/// tasks only. An engine-made fix on stage 1, queued before the cancel or added after
+/// it while the round waits to end, keeps going.
+#[test]
+fn a_round_cancel_spares_an_earlier_rounds_fix() {
+    let mut fx = delivering();
+    assert_eq!(reply(&iterate(&mut fx, "more")), started(2));
+    plan_round(&mut fx, json!([add_in("t2", "mail", 2, &[])]));
+    create_stages(&mut fx);
+    let before = stage_one_fix(&mut fx);
+    assert!(reply(&cancel(&mut fx)).is_ok());
+    assert_eq!(fx.task("t2").state, TaskState::Cancelled);
+    fx.tick();
+    let after = stage_one_fix(&mut fx);
+    fx.tick();
+    for id in [&before, &after] {
+        let state = fx.task(id).state;
+        assert!(
+            !state.is_finished(),
+            "{id} is {state:?}: {:#?}",
+            fx.run().log
+        );
+    }
+    assert_eq!(
+        fx.run().rounds[1].ended_at,
+        None,
+        "the round waits for them"
+    );
 }

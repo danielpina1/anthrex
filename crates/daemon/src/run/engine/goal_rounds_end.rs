@@ -37,6 +37,16 @@ pub(super) fn open_round(run: &Run) -> bool {
         .is_some_and(|r| r.n > 1 && r.ended_at.is_none())
 }
 
+/// The round a `run cancel` is ending (decision 16): the current round, open and
+/// `cancelled`, of a run that was not cancelled as a whole. `finish_edit` is then that
+/// round's, and `complete::finish_pass` cancels its tasks only (the final fix wave,
+/// review A, I1).
+pub(super) fn cancelling_round(run: &Run) -> Option<u32> {
+    let round = run.current_round()?;
+    let cancelled = round.outcome == Some(RoundOutcome::Cancelled);
+    (!run.cancelled && run.finish_edit && open_round(run) && cancelled).then_some(round.n)
+}
+
 /// The plan is approved, `by` the user or `--yes`: round 1's approval is the run's and
 /// fixes its layout (milestone 9.1 decision 46); a later round's leaves both as round 1
 /// set them (decision 12). A decider queued at the gate waits from now (task 12 review
