@@ -117,10 +117,11 @@ pub fn local_actions(run: &RunInfo, target: &ActionTarget) -> Vec<ActionInfo> {
     out
 }
 
-/// Milestone 9.3: round 2 or later, not yet ended (its outcome unset), as the daemon's
-/// `goal_rounds_end::open_round` reads it.
+/// Milestone 9.3: round 2 or later, not yet ended, as the daemon's
+/// `goal_rounds_end::open_round` reads it: by `RoundInfo.ended` (its `ended_at`), not
+/// the outcome, which a cancelled round has while it still runs (final fix wave C-m3).
 pub(crate) fn open_round(run: &RunInfo) -> bool {
-    run.round > 1 && run.rounds.last().is_some_and(|r| r.outcome.is_none())
+    run.round > 1 && run.rounds.last().is_some_and(|r| !r.ended)
 }
 
 /// Decision 12: the tasks a reject of the open round cancels, its unfinished ones.
