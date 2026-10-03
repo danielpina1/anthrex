@@ -1,17 +1,19 @@
 //! Milestone 9.3's final fix wave (W1), on `chain_goal_tests.rs`' rig (a real socket,
 //! a temporary checkout, the fake GitHub, and a real PTY window whose `claude` is a
-//! stand-in that sleeps): a delivered run iterated after its window was closed starts a
+//! stand-in that sleeps): an idle chain's window that exited before its chain was seen
+//! ended is not adopted; the adoption is lost (review B, M1). A delivered run iterated after its window was closed starts a
 //! fresh session with its handoff (review A, M3); and an adopted window still reaches
 //! its chain after an evicted chain iterates (task 6b fix round 4, on a real window).
 //! No agent runs; the tests kill only the windows the rig and its runs made.
 
 use std::time::{Duration, Instant};
 
-use proto::{AgentRole, RunReply, RunRequest};
+use proto::{AgentRole, RunReply, RunRequest, Status};
 use serde_json::{Value, json};
 
 use super::super::chain_goal::tests::{ANSWER, CHAIN, ChainRig, PREV, started};
 use crate::run::model::Run;
+use crate::window::WindowEvent;
 
 /// [`PREV`]'s summary, which a fresh session's first prompt names.
 const SUMMARY: &str = "added login";
@@ -30,6 +32,45 @@ async fn until(rig: &ChainRig, run_id: &str, what: &str, done: impl Fn(&Run) -> 
         assert!(Instant::now() < deadline, "{what}");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+/// B-M1: the chain's window exits after the continue's lookup chose to adopt it, and
+/// before the adoption runs (the window is still listed, `Exited`). The adoption is
+/// lost: the new run keeps no window, and its first prompt is the handoff of a fresh
+/// session, never the exited window's restart with the previous run's prompt.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_exited_window_is_not_adopted() {
+    let rig = ChainRig::new(|prev| {
+        prev.orch.orchestrator.as_mut().unwrap().summary = Some(SUMMARY.into());
+    })
+    .await;
+    let run_id = started(&rig.continued(PREV, &rig.checkout.work.clone()).await);
+    let _ = rig.manager.kill(rig.window);
+    // The rig runs no window event pump: its exit is delivered as the daemon's pump
+    // delivers it.
+    let exit = WindowEvent::Exited {
+        code: None,
+        signal: Some("SIGHUP".into()),
+    };
+    rig.manager.handle_event(rig.window, exit);
+    let list = rig.manager.list();
+    let exited = list.iter().find(|w| w.id == rig.window).map(|w| w.status);
+    assert_eq!(exited, Some(Status::Exited));
+    let name = format!("{}/orchestrator", &run_id[run_id.len() - 4..]);
+    rig.s.adopt_window(&run_id, rig.window, name, || {}).await;
+    until(
+        &rig,
+        &run_id,
+        "the adoption was never reported lost",
+        |run| {
+            let o = run.orch.orchestrator.as_ref().unwrap();
+            o.window_id.is_none()
+                && o.first_prompt
+                    .contains("This session continues o-3f9a. Your previous run 3f9a was accepted.")
+        },
+    )
+    .await;
+    rig.stop().await;
 }
 
 /// A-M3: [`PREV`] delivered (a `pr` run complete, D17), its idle window closed by the

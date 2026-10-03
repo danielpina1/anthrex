@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use proto::{AgentRole, RunRef};
+use proto::{AgentRole, RunRef, Status};
 
 use super::super::RunService;
 use super::chain_goal::{Handoff, history_lines};
@@ -58,7 +58,8 @@ impl RunService {
     /// passes nothing), with no engine lock held; then its live flag is set for the run
     /// if it has not ended (`mark_live`). The session is never restarted. Fix round 1
     /// (m1): a rebind that fails (the window gone, or not a run window) is an adoption
-    /// lost ([`Self::adopt_lost`]).
+    /// lost ([`Self::adopt_lost`]), and so is a window whose session has exited (the
+    /// final fix wave, B-M1).
     pub(in crate::run::driver) async fn adopt_window(
         &self,
         run_id: &str,
@@ -80,6 +81,17 @@ impl RunService {
         let manager = self.manager.clone();
         let done = tokio::task::spawn_blocking(move || {
             hold();
+            // The final fix wave (review B, M1): a window that exited before its chain
+            // was seen ended (`ChainWindowGone`, at most a tick later) is not adopted:
+            // its session is gone, so the adoption is lost.
+            let running = manager
+                .list()
+                .into_iter()
+                .any(|w| w.id == window_id && w.status != Status::Exited)
+                && !manager.is_restarting(window_id);
+            if !running {
+                anyhow::bail!("window {window_id} is not running");
+            }
             if let Err(error) = manager.rename(window_id, name) {
                 tracing::warn!(window_id, %error, "the adopted orchestrator kept its name");
             }
