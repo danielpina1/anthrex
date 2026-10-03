@@ -25,6 +25,9 @@ pub struct TextArea {
     cut: String,
     cutting: bool,
     at_cap: bool,
+    /// Decision 4 as amended (task 9a's fix round 1): the editor's viewport, the first
+    /// drawn row in view, kept nano's way by the editor's keys and paste only.
+    top: usize,
 }
 
 /// Newlines kept (`\r\n` and `\r` become one), a tab a space, every other control and

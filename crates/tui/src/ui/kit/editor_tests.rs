@@ -56,9 +56,9 @@ fn twelve_lines() -> TextArea {
     let mut text = format!("{}\n", "a".repeat(100)).repeat(11);
     text.push_str(&"b".repeat(1_284 - 11 * 101));
     let mut area = TextArea::editor(&text);
-    area.on_editor_key(key(KeyCode::Home), 80, 4);
+    area.on_editor_key(key(KeyCode::Home), 80, 5);
     for _ in 0..3 {
-        area.on_editor_key(key(KeyCode::Right), 80, 4);
+        area.on_editor_key(key(KeyCode::Right), 80, 5);
     }
     area
 }
@@ -111,7 +111,7 @@ fn the_count_turns_to_attention_above_90_percent() {
 #[test]
 fn the_cap_text_replaces_the_position() {
     let mut area = TextArea::editor(&"x".repeat(proto::GOAL_MAX_CHARS));
-    area.on_editor_key(key(KeyCode::Char('y')), 80, 4);
+    area.on_editor_key(key(KeyCode::Char('y')), 80, 5);
     assert!(area.at_cap());
     let line = editor_position(&area, 60, P);
     assert_eq!(text(&line), "goal is at its 16,384-character limit");
@@ -125,7 +125,7 @@ fn the_cap_text_replaces_the_position() {
         "goal is at its 16,384-character limit"
     );
     // The next key that inserts nothing past the cap brings the position back.
-    area.on_editor_key(key(KeyCode::Left), 80, 4);
+    area.on_editor_key(key(KeyCode::Left), 80, 5);
     assert_eq!(
         text(&editor_position(&area, 60, P)),
         "ln 1, col 16384 · 16,384 / 16,384"
@@ -147,7 +147,7 @@ fn editor_rows_are_sanitised() {
     }
     // The cursor on the carriers' row: every piece around it is clean too.
     let mut on_row = TextArea::unclean("x\u{200D}y\u{202E}z");
-    on_row.on_editor_key(key(KeyCode::Left), 20, 2);
+    on_row.on_editor_key(key(KeyCode::Left), 20, 3);
     let lines = editor(&on_row, 1, 20, true);
     assert_eq!(texts(&lines), ["xyz"]);
     assert_eq!(cursor(&lines), Some((0, "z".to_string())));
@@ -171,17 +171,19 @@ fn the_editor_scrolls_to_the_cursor() {
     );
     assert_eq!(cursor(&lines), Some((4, " ".to_string())));
     // Ctrl-Home: the first five, the cursor on the first row.
-    area.on_editor_key(ctrl_code(KeyCode::Home), 40, 4);
+    area.on_editor_key(ctrl_code(KeyCode::Home), 40, 5);
     let lines = editor(&area, 5, 40, true);
     assert_eq!(texts(&lines)[0], "line0");
     assert_eq!(texts(&lines)[4], "line4");
     assert_eq!(cursor(&lines), Some((0, "l".to_string())));
-    // A PgDn moves four rows: the cursor's row stays in view.
-    area.on_editor_key(key(KeyCode::PageDown), 40, 4);
-    area.on_editor_key(key(KeyCode::PageDown), 40, 4);
+    // A PgDn moves four rows and the view with them, as nano does (task 9a's fix
+    // round 1, a changed expectation: the stateless view had `line8` on the bottom
+    // row).
+    area.on_editor_key(key(KeyCode::PageDown), 40, 5);
+    area.on_editor_key(key(KeyCode::PageDown), 40, 5);
     let lines = editor(&area, 5, 40, true);
-    assert_eq!(texts(&lines)[4], "line8");
-    assert_eq!(cursor(&lines), Some((4, "l".to_string())));
+    assert_eq!(texts(&lines)[0], "line8");
+    assert_eq!(cursor(&lines), Some((0, "l".to_string())));
     // Unfocused: no cursor drawn.
     assert_eq!(cursor(&editor(&area, 5, 40, false)), None);
     // A short text pads to the rows.
@@ -195,24 +197,100 @@ fn the_editor_draws_the_cursor_where_its_keys_put_it() {
     // move through it: `abcde` / `fghij`.
     let mut area = TextArea::editor("abcdefghij");
     for _ in 0..3 {
-        area.on_editor_key(key(KeyCode::Left), 6, 1);
+        area.on_editor_key(key(KeyCode::Left), 6, 2);
     }
     let lines = editor(&area, 2, 6, true);
     assert_eq!(texts(&lines), ["abcde", "fghij"]);
     assert_eq!(cursor(&lines), Some((1, "h".to_string())));
-    area.on_editor_key(key(KeyCode::Up), 6, 1);
+    area.on_editor_key(key(KeyCode::Up), 6, 2);
     assert_eq!(
         cursor(&editor(&area, 2, 6, true)),
         Some((0, "c".to_string()))
     );
     // The end of a wrapped row is the next row's start.
-    area.on_editor_key(key(KeyCode::Up), 6, 1);
-    area.on_editor_key(ctrl_code(KeyCode::Home), 6, 1);
+    area.on_editor_key(key(KeyCode::Up), 6, 2);
+    area.on_editor_key(ctrl_code(KeyCode::Home), 6, 2);
     for _ in 0..5 {
-        area.on_editor_key(key(KeyCode::Right), 6, 1);
+        area.on_editor_key(key(KeyCode::Right), 6, 2);
     }
     assert_eq!(
         cursor(&editor(&area, 2, 6, true)),
         Some((1, "f".to_string()))
     );
+    // Wide characters (review m2): `日本語abc` at 6 columns wraps as `日本` /
+    // `語abc`; the reversed cell is the whole wide character, Up and Down keep the
+    // display column.
+    let mut wide = TextArea::editor("日本語abc");
+    wide.on_editor_key(ctrl_code(KeyCode::Home), 6, 2);
+    wide.on_editor_key(key(KeyCode::Right), 6, 2);
+    let lines = editor(&wide, 2, 6, true);
+    assert_eq!(texts(&lines), ["日本", "語abc"]);
+    assert_eq!(cursor(&lines), Some((0, "本".to_string())));
+    wide.on_editor_key(key(KeyCode::Down), 6, 2);
+    assert_eq!(
+        cursor(&editor(&wide, 2, 6, true)),
+        Some((1, "a".to_string()))
+    );
+    assert_eq!(wide.position(), (1, 4));
+    let mut emoji = TextArea::editor("👍🏽x");
+    emoji.on_editor_key(ctrl_code(KeyCode::Home), 20, 2);
+    assert_eq!(
+        cursor(&editor(&emoji, 1, 20, true)),
+        Some((0, "👍🏽".to_string()))
+    );
+}
+
+#[test]
+fn the_view_clamps_its_top_when_the_rows_or_the_width_shrink() {
+    // Decision 4 as amended: the stored top is the last key's; a frame drawn with
+    // fewer rows (a resize, the custom-model row shown) or a narrower wrap never
+    // hides the cursor, and the next key goes on from the view that was drawn.
+    let text30: Vec<String> = (0..30).map(|i| format!("line{i}")).collect();
+    let mut area = TextArea::editor(&text30.join("\n"));
+    area.on_editor_key(ctrl_code(KeyCode::Home), 40, 10);
+    for _ in 0..9 {
+        area.on_editor_key(key(KeyCode::Down), 40, 10);
+    }
+    let lines = editor(&area, 10, 40, true);
+    assert_eq!(
+        (texts(&lines)[0].as_str(), cursor(&lines).unwrap().0),
+        ("line0", 9)
+    );
+    // One row fewer: the view moves just enough.
+    let lines = editor(&area, 9, 40, true);
+    assert_eq!(
+        (texts(&lines)[0].as_str(), cursor(&lines).unwrap().0),
+        ("line1", 8)
+    );
+    // The next key at the new size goes on from that view.
+    area.on_editor_key(key(KeyCode::Up), 40, 9);
+    let lines = editor(&area, 9, 40, true);
+    assert_eq!(
+        (texts(&lines)[0].as_str(), cursor(&lines).unwrap().0),
+        ("line1", 7)
+    );
+
+    // Narrower: three 29-column lines wrap into nine rows at 11 columns.
+    let mut wrapped =
+        TextArea::editor(&["a".repeat(29), "b".repeat(29), "c".repeat(29)].join("\n"));
+    wrapped.on_editor_key(key(KeyCode::Left), 40, 5);
+    let lines = editor(&wrapped, 5, 40, true);
+    assert_eq!(cursor(&lines).unwrap().0, 2);
+    let lines = editor(&wrapped, 5, 11, true);
+    assert_eq!(texts(&lines)[4], "ccccccccc");
+    assert_eq!(
+        cursor(&lines).unwrap().0,
+        4,
+        "on the bottom row, not below it"
+    );
+    wrapped.on_editor_key(key(KeyCode::Up), 11, 5);
+    let lines = editor(&wrapped, 5, 11, true);
+    assert_eq!(
+        cursor(&lines).unwrap().0,
+        3,
+        "the view stayed; the cursor moved"
+    );
+    // A larger area shows more again, from the stored top.
+    let lines = editor(&wrapped, 9, 11, true);
+    assert_eq!(texts(&lines)[0], "aaaaaaaaaa");
 }

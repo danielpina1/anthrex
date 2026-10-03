@@ -10,6 +10,7 @@ use super::{TextArea, clean};
 use crate::run_edit::TEXT_MAX_CHARS;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// What [`TextArea::on_editor_key`] did with a key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,16 +63,28 @@ impl TextArea {
         (line, column)
     }
 
-    /// A bracketed paste: line breaks kept, control and hidden format characters
-    /// dropped (as [`TextArea::on_paste`]), stopped at the cap. It ends a Ctrl-K run.
-    pub fn on_editor_paste(&mut self, text: &str) {
+    /// A bracketed paste into an area drawn `width` columns wide with `rows` visible
+    /// rows: line breaks kept, control and hidden format characters dropped (as
+    /// [`TextArea::on_paste`]), stopped at the cap. It ends a Ctrl-K run, and scrolls
+    /// the view as little as the cursor needs.
+    pub fn on_editor_paste(&mut self, text: &str, width: u16, rows: u16) {
+        let rows = usize::from(rows.max(1));
+        self.fit(width, rows);
         self.cutting = false;
         self.at_cap = self.insert_capped(text);
+        self.fit(width, rows);
     }
 
-    /// KG §1.2's keys, for an area drawn `width` columns wide (0: unwrapped) with a
-    /// page of `page` drawn rows (the visible rows less one; 0 moves one row).
-    pub fn on_editor_key(&mut self, key: KeyEvent, width: u16, page: usize) -> EditorKey {
+    /// KG §1.2's keys, for an area drawn `width` columns wide (0: unwrapped) with `rows`
+    /// visible rows (decision 4 as amended). PgUp and PgDn move a page, the visible
+    /// rows less one (at least one), keeping the goal column, and shift the view by
+    /// the rows they moved, as nano does; any other move scrolls the view as little as
+    /// keeps the cursor in it, so crossing an edge scrolls one row.
+    pub fn on_editor_key(&mut self, key: KeyEvent, width: u16, rows: u16) -> EditorKey {
+        let rows = usize::from(rows.max(1));
+        // From the view the last frame drew (a resize or a new row count may have moved
+        // it since the last key).
+        self.fit(width, rows);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         // Every key ends a run of Ctrl-Ks but a Ctrl-K, and clears the cap notice
@@ -79,8 +92,8 @@ impl TextArea {
         let appending = std::mem::take(&mut self.cutting);
         self.at_cap = false;
         let before = self.text.len();
-        let is =
-            |c: char| matches!(key.code, KeyCode::Char(k) if ctrl && k.eq_ignore_ascii_case(&c));
+        // The editor's Ctrl chords; with Alt too they are not the editor's (review m4).
+        let is = |c: char| matches!(key.code, KeyCode::Char(k) if ctrl && !alt && k.eq_ignore_ascii_case(&c));
         if is('j') {
             self.at_cap = self.insert_capped("\n");
         } else if is('k') {
@@ -101,11 +114,13 @@ impl TextArea {
                     self.move_row(key.code == KeyCode::Down, width);
                 }
                 KeyCode::PageUp | KeyCode::PageDown => {
-                    for _ in 0..page.max(1) {
-                        if !self.move_row(key.code == KeyCode::PageDown, width) {
-                            break;
-                        }
-                    }
+                    let down = key.code == KeyCode::PageDown;
+                    let moved = self.move_rows(down, (rows - 1).max(1), width);
+                    self.top = if down {
+                        self.top + moved
+                    } else {
+                        self.top.saturating_sub(moved)
+                    };
                 }
                 KeyCode::Home if ctrl => self.cursor = 0,
                 KeyCode::End if ctrl => self.cursor = self.len(),
@@ -120,6 +135,7 @@ impl TextArea {
                 _ => return EditorKey::Unhandled,
             }
         }
+        self.fit(width, rows);
         if self.text.len() == before {
             EditorKey::Moved
         } else {
@@ -168,19 +184,61 @@ impl TextArea {
         }
     }
 
-    /// The text's drawn rows at `width` (as `ui::kit::text_area` and Up and Down wrap
-    /// them: one column short of the width, 0 unwrapped) and the cursor's `(row,
-    /// grapheme in that row)`, for `ui::kit::editor`.
-    pub(crate) fn drawn(&self, width: u16) -> (Vec<Vec<&str>>, (usize, usize)) {
+    /// PgUp/PgDn (review m1): the cursor `n` drawn rows up or down at its display
+    /// column, clamped to the target row only (a short row on the way does not lose
+    /// the column), stopping at the first or last row. How many rows it moved.
+    fn move_rows(&mut self, down: bool, n: usize, width: u16) -> usize {
         let rows = self.rows(width);
+        let Some(at) = rows.iter().rposition(|(start, _, _)| *start <= self.cursor) else {
+            return 0;
+        };
+        let target = if down {
+            (at + n).min(rows.len() - 1)
+        } else {
+            at.saturating_sub(n)
+        };
+        let (start, row, _) = &rows[at];
+        let column: usize = row[..self.cursor - start].iter().map(|g| g.width()).sum();
+        let (start, row, last) = &rows[target];
+        // As `move_row` places it: a wrapped row's end is the next row's start.
+        let room = if *last {
+            row.len()
+        } else {
+            row.len().saturating_sub(1)
+        };
+        let mut taken = 0;
+        let mut used = 0;
+        while taken < room && used + row[taken].width() <= column {
+            used += row[taken].width();
+            taken += 1;
+        }
+        self.cursor = start + taken;
+        target.abs_diff(at)
+    }
+
+    /// Moves `top` as little as keeps the view drawn at `width` and `rows` honest
+    /// ([`fit_top`]).
+    fn fit(&mut self, width: u16, rows: usize) {
+        let top = self.view(width, rows).2;
+        self.top = top;
+    }
+
+    /// The text's drawn rows at `width` (as `ui::kit::text_area` and Up and Down wrap
+    /// them: one column short of the width, 0 unwrapped), the cursor's `(row, grapheme
+    /// in that row)`, and the first row a view of `rows` rows shows: the stored top
+    /// through [`fit_top`], so `ui::kit::editor` never hides the cursor whatever
+    /// changed since the last key (a resize, the custom-model row, a restored draft).
+    pub(crate) fn view(&self, width: u16, rows: usize) -> (Vec<Vec<&str>>, (usize, usize), usize) {
+        let drawn = self.rows(width);
         // A cursor on a wrap boundary is drawn at the start of the next row.
-        let at = rows
+        let at = drawn
             .iter()
             .rposition(|(start, _, _)| *start <= self.cursor)
             .unwrap_or(0);
-        let column = self.cursor.saturating_sub(rows.get(at).map_or(0, |r| r.0));
-        let rows = rows.into_iter().map(|(_, row, _)| row).collect();
-        (rows, (at, column))
+        let column = self.cursor.saturating_sub(drawn.get(at).map_or(0, |r| r.0));
+        let top = fit_top(self.top, at, drawn.len(), rows);
+        let drawn = drawn.into_iter().map(|(_, row, _)| row).collect();
+        (drawn, (at, column), top)
     }
 
     /// A text area holding `text` as given, past `clean`: what a renderer test plants
@@ -195,6 +253,21 @@ impl TextArea {
     }
 }
 
+/// The first row of a `rows`-row view of `total` drawn rows whose cursor is on
+/// `cursor_row`, from the stored `top`: clamped to `[cursor_row + 1 − rows,
+/// cursor_row]` (the cursor in view, moved as little as needed: nano's scroll by one
+/// at the edges, and the nearest edge row after a jump), and never so far down that rows
+/// sit empty below the text while text is hidden above (a larger area shows more).
+fn fit_top(top: usize, cursor_row: usize, total: usize, rows: usize) -> usize {
+    let rows = rows.max(1);
+    top.clamp((cursor_row + 1).saturating_sub(rows), cursor_row)
+        .min(total.saturating_sub(rows))
+}
+
 #[cfg(test)]
 #[path = "text_area_editor_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "text_area_editor_view_tests.rs"]
+mod view_tests;

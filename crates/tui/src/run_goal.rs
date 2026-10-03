@@ -353,7 +353,7 @@ impl GoalForm {
             return self.submit();
         }
         if self.focus == GoalField::Goal {
-            if self.goal.on_editor_key(key, view.width, view.page()) == EditorKey::Unhandled {
+            if self.goal.on_editor_key(key, view.width, view.rows) == EditorKey::Unhandled {
                 match key.code {
                     KeyCode::Tab => self.move_focus(1),
                     KeyCode::BackTab => self.move_focus(-1),
@@ -462,10 +462,8 @@ impl GoalForm {
         if self.submitting || self.discarding {
             return;
         }
-        // `view` reaches the editor's paste with task 9a's viewport (its fix round).
-        let _ = view;
         match (self.focus, &self.model) {
-            (GoalField::Goal, _) => self.goal.on_editor_paste(text),
+            (GoalField::Goal, _) => self.goal.on_editor_paste(text, view.width, view.rows),
             (GoalField::Model, GoalModel::Custom) if self.custom_shown() => {
                 insert_bounded(&mut self.custom, &clean_line(text));
             }

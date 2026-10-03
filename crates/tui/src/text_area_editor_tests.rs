@@ -20,12 +20,13 @@ fn ctrl_code(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::CONTROL)
 }
 
-/// Wide enough that nothing wraps; a page of four rows (five drawn, less one).
+/// Wide enough that nothing wraps; five visible rows, so a page of four (less one).
 const W: u16 = 80;
 const PAGE: usize = 4;
+const ROWS: u16 = 5;
 
 fn press(area: &mut TextArea, k: KeyEvent) -> EditorKey {
-    area.on_editor_key(k, W, PAGE)
+    area.on_editor_key(k, W, ROWS)
 }
 
 fn type_str(area: &mut TextArea, s: &str) {
@@ -140,15 +141,15 @@ fn editor_up_and_down_move_by_drawn_row() {
         press(&mut a, key(KeyCode::Right));
     }
     assert_eq!(
-        a.on_editor_key(key(KeyCode::Down), 6, PAGE),
+        a.on_editor_key(key(KeyCode::Down), 6, ROWS),
         EditorKey::Moved
     );
     assert_eq!(a.cursor(), 7, "a drawn row down, the same column");
-    a.on_editor_key(key(KeyCode::Down), 6, PAGE);
+    a.on_editor_key(key(KeyCode::Down), 6, ROWS);
     assert_eq!(at(&a), (1, 2), "clamped to the end of the shorter row");
-    a.on_editor_key(key(KeyCode::Up), 6, PAGE);
+    a.on_editor_key(key(KeyCode::Up), 6, ROWS);
     assert_eq!(a.cursor(), 7);
-    a.on_editor_key(key(KeyCode::Up), 6, PAGE);
+    a.on_editor_key(key(KeyCode::Up), 6, ROWS);
     assert_eq!(a.cursor(), 2);
 }
 
@@ -177,11 +178,11 @@ fn editor_home_and_end_reach_the_ends_of_the_logical_line() {
     press(&mut a, key(KeyCode::Up));
     assert_eq!(at(&a), (1, 4));
     assert_eq!(
-        a.on_editor_key(key(KeyCode::End), 6, PAGE),
+        a.on_editor_key(key(KeyCode::End), 6, ROWS),
         EditorKey::Moved
     );
     assert_eq!(at(&a), (1, 10));
-    a.on_editor_key(key(KeyCode::Home), 6, PAGE);
+    a.on_editor_key(key(KeyCode::Home), 6, ROWS);
     assert_eq!(at(&a), (1, 0));
 }
 
@@ -189,9 +190,9 @@ fn editor_home_and_end_reach_the_ends_of_the_logical_line() {
 fn editor_ctrl_a_and_ctrl_e_are_home_and_end_of_the_logical_line() {
     let mut a = TextArea::editor("first\nabcdefghij\nlast");
     press(&mut a, key(KeyCode::Up));
-    assert_eq!(a.on_editor_key(ctrl('e'), 6, PAGE), EditorKey::Moved);
+    assert_eq!(a.on_editor_key(ctrl('e'), 6, ROWS), EditorKey::Moved);
     assert_eq!(at(&a), (1, 10));
-    assert_eq!(a.on_editor_key(ctrl('a'), 6, PAGE), EditorKey::Moved);
+    assert_eq!(a.on_editor_key(ctrl('a'), 6, ROWS), EditorKey::Moved);
     assert_eq!(at(&a), (1, 0));
     assert_eq!(a.text(), "first\nabcdefghij\nlast", "nothing inserted");
 }
@@ -212,7 +213,7 @@ fn editor_pgdn_moves_by_the_visible_rows_less_one() {
     // Drawn rows, not logical lines: `abcdefghij` is two rows at 6 columns.
     let mut w = TextArea::editor("abcdefghij\nx\ny");
     press(&mut w, ctrl_code(KeyCode::Home));
-    w.on_editor_key(key(KeyCode::PageDown), 6, 2);
+    w.on_editor_key(key(KeyCode::PageDown), 6, 3);
     assert_eq!(at(&w), (1, 0));
 }
 
@@ -228,9 +229,9 @@ fn editor_pgup_moves_by_the_visible_rows_less_one() {
     press(&mut a, key(KeyCode::PageUp));
     press(&mut a, key(KeyCode::PageUp));
     assert_eq!(at(&a), (0, 5), "stops on the first row, clamped");
-    // A page of 0 (a one-row area) still moves a row.
+    // A one-row area (a page of 0) still moves a row.
     let mut b = lines(3);
-    b.on_editor_key(key(KeyCode::PageUp), W, 0);
+    b.on_editor_key(key(KeyCode::PageUp), W, 1);
     assert_eq!(at(&b).0, 1);
 }
 
@@ -334,7 +335,7 @@ fn ctrl_u_pastes_the_cut_at_the_cursor_within_the_cap() {
 fn a_paste_keeps_its_breaks_and_drops_controls() {
     // Pinning: the same cleaning `TextArea::on_paste` does today.
     let mut a = TextArea::editor("");
-    a.on_editor_paste("one\r\ntwo\x1b[31m\u{7}\rthree\tx\u{2028}y");
+    a.on_editor_paste("one\r\ntwo\x1b[31m\u{7}\rthree\tx\u{2028}y", W, ROWS);
     assert_eq!(a.text(), "one\ntwo[31m\nthree x\ny");
     assert_eq!(a.cursor(), a.text().graphemes(true).count());
     let mut old = TextArea::new();
@@ -345,7 +346,7 @@ fn a_paste_keeps_its_breaks_and_drops_controls() {
 #[test]
 fn a_hostile_paste_is_stored_without_its_carriers() {
     let mut a = TextArea::editor("");
-    a.on_editor_paste("x\u{200D}y\u{202E}z");
+    a.on_editor_paste("x\u{200D}y\u{202E}z", W, ROWS);
     assert_eq!(a.text(), "xyz");
     // Typed one by one, the same.
     let mut t = TextArea::editor("");
@@ -355,7 +356,7 @@ fn a_hostile_paste_is_stored_without_its_carriers() {
     assert_eq!(t.text(), "xyz");
     // And every hostile character of the literal lists (the kept breaks aside).
     let mut h = TextArea::editor("");
-    h.on_editor_paste(&crate::safe_text::tests::hostile_text());
+    h.on_editor_paste(&crate::safe_text::tests::hostile_text(), W, ROWS);
     let stored = h.text().replace('\n', "");
     assert_eq!(crate::safe_text::tests::first_hostile(&stored), None);
 }
@@ -381,7 +382,7 @@ fn typing_and_pasting_stop_at_the_cap_and_say_so() {
     assert!(!a.at_cap());
     assert_eq!(a.text().chars().count(), cap - 1);
     // A paste stops at the cap too, keeping what fits.
-    a.on_editor_paste("12345");
+    a.on_editor_paste("12345", W, ROWS);
     assert_eq!(a.text().chars().count(), cap);
     assert!(a.at_cap());
     assert!(
@@ -389,11 +390,11 @@ fn typing_and_pasting_stop_at_the_cap_and_say_so() {
         "{:?}",
         &a.text()[a.text().len() - 4..]
     );
-    a.on_editor_paste("");
+    a.on_editor_paste("", W, ROWS);
     assert!(!a.at_cap(), "a paste that fits clears it");
     // The editor's cap is the daemon's, in characters (not bytes): 4-byte characters.
     let mut w = TextArea::editor("");
-    w.on_editor_paste(&"😀".repeat(cap + 1));
+    w.on_editor_paste(&"😀".repeat(cap + 1), W, ROWS);
     assert_eq!(w.text().chars().count(), cap);
     assert!(w.at_cap());
     assert_eq!(w.limit(), cap);
@@ -410,6 +411,23 @@ fn editor_tab_shift_tab_ctrl_s_and_esc_are_the_dialogs() {
         key(KeyCode::Esc),
         ctrl('c'),
         KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT),
+        // Every Ctrl+Alt chord, the editor's own letters included (review m4).
+        KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ),
+        KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ),
+        KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ),
+        KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ),
         key(KeyCode::F(2)),
     ] {
         assert_eq!(press(&mut a, k), EditorKey::Unhandled, "{k:?}");
@@ -429,8 +447,19 @@ fn the_position_is_the_one_based_logical_line_and_grapheme_column() {
     assert_eq!(TextArea::editor("").position(), (1, 1));
     // A wrapped line is still one logical line.
     let mut w = TextArea::editor("abcdefghij");
-    w.on_editor_key(key(KeyCode::Left), 6, PAGE);
+    w.on_editor_key(key(KeyCode::Left), 6, ROWS);
     assert_eq!(w.position(), (1, 10));
+    // Wide characters and an emoji with its skin tone: one column each (review m2).
+    let mut cjk = TextArea::editor(
+        "日本
+👍🏽x",
+    );
+    assert_eq!(cjk.position(), (2, 3));
+    press(&mut cjk, key(KeyCode::Left));
+    assert_eq!(cjk.position(), (2, 2), "the emoji is one grapheme");
+    let mut up = TextArea::editor("日本\nab");
+    press(&mut up, key(KeyCode::Up));
+    assert_eq!(up.position(), (1, 2), "two display columns up: after `日`");
 }
 
 #[test]
@@ -461,4 +490,14 @@ fn the_existing_text_area_keys_are_unchanged() {
     let mut b = TextArea::new();
     b.on_paste(&"y".repeat(TEXT_MAX_CHARS + 1));
     assert_eq!(b, TextArea::from_text(&"y".repeat(TEXT_MAX_CHARS)));
+    // The viewport top too (fix round 1): only the editor's keys and paste move it.
+    let mut long = TextArea::from_text(&"row\n".repeat(40));
+    for _ in 0..30 {
+        long.on_key_in(key(KeyCode::Up), 20);
+    }
+    long.on_paste("more\nlines\n");
+    assert_eq!(
+        (long.top, long.cut.as_str(), long.cutting, long.at_cap),
+        (0, "", false, false)
+    );
 }

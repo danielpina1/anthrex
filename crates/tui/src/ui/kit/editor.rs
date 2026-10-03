@@ -14,12 +14,13 @@ use unicode_width::UnicodeWidthStr;
 
 /// The editor as exactly `rows` lines (padded when the text is shorter; no scroll
 /// marks, the position row says where the cursor is), wrapped one column short of
-/// `width` and scrolled so the cursor's row is in view. The cursor is drawn reversed
+/// `width`, drawn from the editor's viewport top (decision 4 as amended) as
+/// `TextArea::view` fits it to these rows, so the cursor's row is always in view: a
+/// resize, the custom-model row or a restored draft cannot hide it. The cursor is drawn reversed
 /// when `focused`, in every palette (the kit's text areas draw it so in ASCII too).
 pub fn editor(area: &TextArea, rows: u16, width: u16, focused: bool) -> Vec<Line<'static>> {
     let rows = usize::from(rows);
-    let (visual, (cursor_row, cursor_col)) = area.drawn(width);
-    let top = (cursor_row + 1).saturating_sub(rows);
+    let (visual, (cursor_row, cursor_col), top) = area.view(width, rows);
     // The per-row sanitiser (decision 33): every piece of a row drawn goes through it.
     let safe = |graphemes: &[&str]| one_line(&graphemes.concat());
     let mut out = Vec::with_capacity(rows);
