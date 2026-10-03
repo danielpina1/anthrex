@@ -336,6 +336,40 @@ fn the_footer_outlasts_the_position_row() {
     }
 }
 
+/// The row of a `w`×`h` frame holding `needle`, trimmed, from the whole buffer.
+fn row_with(app: &App, w: u16, h: u16, needle: &str) -> String {
+    let buffer = audit::draw(app, w, h);
+    let rows = cells(&buffer, Rect::new(0, 0, w, h));
+    let row = rows.into_iter().find(|r| r.contains(needle));
+    row.unwrap_or_else(|| panic!("no row with {needle:?}"))
+}
+
+/// Final fix wave C-m6: a continue choice too long for the row loses whole words, then
+/// takes the ellipsis, and keeps its closing chevron: at 60×16 (the large dialog's
+/// 32-column value) and at 50×24 (the compact one's 26), in both palettes.
+#[test]
+fn a_long_continue_choice_is_cut_at_a_word() {
+    let mut f = form();
+    f.set_chains(Some(idle(true)), None);
+    for (ascii, open, close, dots) in [(false, "‹", "›", "…"), (true, "<", ">", "...")] {
+        let app = app_with(f.clone(), ascii);
+        let row = row_with(&app, 60, 16, "orchestrator ");
+        let want = format!("  orchestrator      {open} continue o-3f9a (fresh{dots} {close}");
+        assert!(row.contains(&format!("{want} ")), "{row:?}");
+        let row = row_with(&app, 50, 24, "orchestrator ");
+        let want = format!("  orchestrator      {open} continue o-3f9a{dots} {close}");
+        assert!(row.contains(&want), "{row:?}");
+    }
+    // What fits is drawn whole.
+    let mut f = form();
+    f.set_chains(Some(idle(false)), None);
+    let row = row_with(&app_with(f, false), 60, 16, "orchestrator ");
+    assert!(
+        row.contains("  orchestrator      ‹ continue o-3f9a (after 3f9a) ›"),
+        "{row:?}"
+    );
+}
+
 /// Review m6: the continued chain's model, daemon text, is drawn cleaned.
 #[test]
 fn a_continued_models_carriers_are_drawn_cleaned() {

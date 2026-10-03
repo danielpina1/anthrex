@@ -22,6 +22,7 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// Rows of the goal's text area.
 pub const GOAL_ROWS: u16 = 4;
@@ -61,15 +62,54 @@ fn indent() -> Span<'static> {
     Span::raw(" ".repeat(MARK_W + LABEL_W))
 }
 
-fn choice_line(form: &GoalForm, field: GoalField, value: &str, p: Palette) -> Line<'static> {
+/// A chosen row: its label and `‹ value ›` fitted to `width` columns ([`fitted_choice`]).
+fn choice_line(
+    form: &GoalForm,
+    field: GoalField,
+    value: &str,
+    width: usize,
+    p: Palette,
+) -> Line<'static> {
     let mut spans = label(form, field, p);
     let style = if form.focus == field && !form.submitting {
         role(Role::Accent, p).add_modifier(Modifier::BOLD)
     } else {
         ratatui::style::Style::default()
     };
-    spans.push(Span::styled(kit::choice_in(value, p), style));
+    spans.push(Span::styled(fitted_choice(value, width, p), style));
     Line::from(spans)
+}
+
+/// `‹ value ›` in `width` columns (final fix wave C-m6): a value too long loses whole
+/// words from its end and takes the ellipsis, keeping the closing chevron, so
+/// `(fresh session)` never ends mid-word; a first word longer than the room is cut
+/// inside it.
+fn fitted_choice(value: &str, width: usize, p: Palette) -> String {
+    let value = one_line(value);
+    // The chevrons and their spaces: `‹ ` and ` ›`.
+    let room = width.saturating_sub(4);
+    if value.width() <= room {
+        return kit::choice_in(&value, p);
+    }
+    let dots = ellipsis(p);
+    let mut kept = String::new();
+    for word in value.split(' ') {
+        let next = if kept.is_empty() {
+            word.to_string()
+        } else {
+            format!("{kept} {word}")
+        };
+        if next.width() + dots.width() > room {
+            break;
+        }
+        kept = next;
+    }
+    let text = if kept.is_empty() {
+        kit::cut(&value, room, dots)
+    } else {
+        format!("{kept}{dots}")
+    };
+    kit::choice_in(&text, p)
 }
 
 /// A row whose value is shown but not chosen here, muted (decision 25): a continued
@@ -172,7 +212,7 @@ pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<
             Some(runtime) => runtime.label(),
             None => "configured",
         };
-        body.push(choice_line(form, GoalField::Runtime, runtime, p));
+        body.push(choice_line(form, GoalField::Runtime, runtime, value_w, p));
         let options = form.model_options();
         let shown = options
             .get(form.model_at())
@@ -182,7 +222,7 @@ pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<
         } else {
             shown
         };
-        body.push(choice_line(form, GoalField::Model, shown, p));
+        body.push(choice_line(form, GoalField::Model, shown, value_w, p));
     }
     if form.custom_shown() {
         let focused = form.focus == GoalField::Model && !form.submitting;
@@ -191,7 +231,7 @@ pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<
     // Decision 33: the chain id and the run's short id are drawn sanitised.
     body.push(match form.orchestrator_row() {
         OrchestratorRow::Choice(value) => {
-            choice_line(form, GoalField::Orchestrator, &one_line(&value), p)
+            choice_line(form, GoalField::Orchestrator, &value, value_w, p)
         }
         OrchestratorRow::Busy(text) => {
             muted_line(form, GoalField::Orchestrator, one_line(&text), value_w, p)
@@ -203,18 +243,26 @@ pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<
         Some(proto::DeliveryMode::Local) => "local",
         Some(proto::DeliveryMode::Pr) => "pr",
     };
-    body.push(choice_line(form, GoalField::Delivery, delivery, p));
+    body.push(choice_line(form, GoalField::Delivery, delivery, value_w, p));
     body.push(choice_line(
         form,
         GoalField::Trust,
         on_off(form.trust_project),
+        value_w,
         p,
     ));
-    body.push(choice_line(form, GoalField::Yes, on_off(form.yes), p));
+    body.push(choice_line(
+        form,
+        GoalField::Yes,
+        on_off(form.yes),
+        value_w,
+        p,
+    ));
     body.push(choice_line(
         form,
         GoalField::UnconfinedChecks,
         on_off(form.unconfined_checks),
+        value_w,
         p,
     ));
     body
