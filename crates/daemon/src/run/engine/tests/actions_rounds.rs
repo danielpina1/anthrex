@@ -149,4 +149,52 @@ fn a_live_earlier_round_task_stays_editable() {
         replies(&edit(&mut done, vec![amend])),
         vec![Err(text.to_string())]
     );
+    // W1 fix round 2: a live earlier-round task takes answer, message, refresh and
+    // cancel only; nothing that adds or moves work (D15, KG §2.4).
+    let work = [
+        PlanEdit::AmendTask {
+            task_id: "fix1".into(),
+            brief: Some("more".into()),
+            acceptance: None,
+            route: None,
+            test_mode: None,
+            test_mode_reason: None,
+            priority: None,
+            size: None,
+            deps: None,
+            stage: None,
+        },
+        PlanEdit::AddDep {
+            task_id: "fix1".into(),
+            dep: "t2".into(),
+        },
+    ];
+    for refused in work {
+        let mut fx = round_two_fixes();
+        assert_eq!(
+            replies(&edit(&mut fx, vec![refused.clone()])),
+            vec![Err(text.to_string())],
+            "{refused:?}"
+        );
+    }
+}
+
+/// W1 fix round 2 (the re-review's breakage 1): the orchestrator's `split_task` of a
+/// live round-1 fix during round 2 is refused with KG §2.4's text, and no child lands
+/// in round 1's stage.
+#[test]
+fn a_split_of_a_live_earlier_round_task_is_refused() {
+    let mut fx = round_two_fixes();
+    let child = super::orch::add("x1", "fix")["task"].clone();
+    let split = json!({"op": "split_task", "task_id": "fix1", "into": [child]});
+    let effects = edit_plan(&mut fx, json!({"edits": [split]}));
+    let (ok, value) = answer(&effects);
+    assert!(!ok, "{value}");
+    assert_eq!(
+        value["errors"][0]["message"],
+        json!("stage 1 belongs to round 1, which is done; put new work in a new stage"),
+        "{value}"
+    );
+    assert!(fx.run().task("x1").is_none());
+    assert_eq!(fx.task("fix1").state, TaskState::Blocked);
 }
