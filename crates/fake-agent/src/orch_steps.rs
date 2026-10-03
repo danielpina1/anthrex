@@ -224,7 +224,7 @@ pub fn pty(args: &[String]) -> Result<Option<i32>> {
         after_cr: false,
     };
     if message.is_empty()
-        && let Some(code) = pty.start(resume.is_none())?
+        && let Some(code) = pty.start(resume.is_none(), start::is_codex(args))?
     {
         return Ok(Some(code));
     }

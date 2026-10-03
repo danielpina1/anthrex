@@ -66,10 +66,14 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 return failed(format!("window {window_id} is gone"));
             }
             service.refresh_otlp(ctx, window_id).await;
+            let resumed = service.restart_resumes(&ctx.run_id, window_id);
             match service.manager.restart(window_id).await {
                 Ok(()) => {
                     service.mark_live(&ctx.run_id, window_id);
-                    OpResult::Restarted
+                    match resumed {
+                        true => OpResult::Restarted,
+                        false => OpResult::RestartedFresh,
+                    }
                 }
                 Err(error) => failed(error.to_string()),
             }
@@ -274,6 +278,22 @@ impl RunService {
                 String::new()
             }
         }
+    }
+
+    /// Milestone 9.5 fix round 1 (m1, m2): whether restarting `run_id`'s window `id`
+    /// resumes its session. One whose first turn is still pending never had a prompt,
+    /// so it is forgotten and the restart starts fresh; one with no session id cannot
+    /// resume. Either way the engine sends the first prompt again (`RestartedFresh`).
+    fn restart_resumes(&self, run_id: &str, id: u32) -> bool {
+        let pending = crate::lock(&self.state)
+            .runs
+            .get(run_id)
+            .and_then(|run| run.orch.orchestrator.as_ref())
+            .is_some_and(|o| o.first_turn_pending);
+        if pending {
+            self.manager.forget_session(id);
+        }
+        !pending && self.manager.knows_session(id)
     }
 
     /// Decision 11: window `id` is the orchestrator of a run that has not ended.

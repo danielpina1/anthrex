@@ -101,6 +101,15 @@ pub(super) fn on_orch_event(
                 super::first_turn::mcp_ready(run, window_id);
             }
         }
+        OrchEvent::FirstSignal {
+            run_id,
+            window_id,
+            launch,
+        } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                super::first_turn::signalled(run, (window_id, launch), now);
+            }
+        }
         OrchEvent::ChainWindowGone { chain, window_id } => {
             super::chains::window_gone(state, &chain, window_id)
         }

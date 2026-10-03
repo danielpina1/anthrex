@@ -6,11 +6,14 @@
 //! of `ready`, it goes only to a window that has sent a hook or title signal: a quiet
 //! window with none is `Idle` and is exactly a start or folder-trust prompt, whose
 //! answer the paste's `\r` would be. Why it waits is logged once per reason
-//! (`wake_report.rs`, decision 41).
+//! (`wake_report.rs`, decision 41). Fix round 1, ruling T5a-1: a signalled window whose
+//! notice has not come is reported (`FirstSignal`), and the engine's grace runs from it.
 
 use proto::WindowInfo;
 
+use super::super::RunService;
 use super::{WaitReason, Wakes};
+use crate::run::engine::{EventKind, OrchEvent};
 use crate::run::model::Run;
 
 /// The round a first turn is kept under: rounds count from 1 (`Run::round`), so no
@@ -47,6 +50,36 @@ impl Wakes {
             .get(run_id)
             .is_some_and(|p| p.request == Some(FIRST_TURN));
         (first && !window.signals_seen).then_some(WaitReason::NoSignal)
+    }
+}
+
+impl RunService {
+    /// Ruling T5a-1: each run whose live orchestrator waits for its first turn without
+    /// the notice, and whose window has sent a signal, is reported once per launch (the
+    /// engine keeps the first report; a repeat before it is read changes nothing).
+    pub(super) fn report_first_signal(&self, windows: &[WindowInfo]) {
+        let signalled: Vec<OrchEvent> = {
+            let state = crate::lock(&self.state);
+            state
+                .runs
+                .values()
+                .filter(|run| !run.orch.mcp_ready && run.orch.first_signal_at.is_none())
+                .filter_map(|run| {
+                    let o = run.orch.orchestrator.as_ref()?;
+                    let window_id = o.window_id?;
+                    let window = windows.iter().find(|w| w.id == window_id)?;
+                    let waiting = o.live && o.first_turn_pending && !run.state.is_terminal();
+                    (waiting && window.signals_seen).then(|| OrchEvent::FirstSignal {
+                        run_id: run.id.clone(),
+                        window_id,
+                        launch: o.launches,
+                    })
+                })
+                .collect()
+        };
+        for event in signalled {
+            self.send(EventKind::Orch(event));
+        }
     }
 }
 

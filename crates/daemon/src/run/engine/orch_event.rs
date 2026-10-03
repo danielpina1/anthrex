@@ -119,6 +119,14 @@ pub enum OrchEvent {
     /// Milestone 9.5 decision 38: window `window_id`'s anthrex server answered its first
     /// `tools/list`; the driver checked it is run `run_id`'s orchestrator window.
     McpReady { run_id: String, window_id: u32 },
+    /// Fix round 1, ruling T5a-1: the driver saw window `window_id`, the run's
+    /// orchestrator at its `launch`, with `signals_seen` while its first turn waits for
+    /// the notice; `MCP_READY_GRACE_SECS` counts from the first such report.
+    FirstSignal {
+        run_id: String,
+        window_id: u32,
+        launch: u64,
+    },
 }
 
 /// How a run scout's or sub-planner's session ended: its report or epic accepted, or
@@ -149,7 +157,8 @@ impl OrchEvent {
             | OrchEvent::RoleRouteEnded { .. }
             | OrchEvent::ChainWindowGone { .. }
             | OrchEvent::AdoptLost { .. }
-            | OrchEvent::McpReady { .. } => None,
+            | OrchEvent::McpReady { .. }
+            | OrchEvent::FirstSignal { .. } => None,
         }
     }
 }

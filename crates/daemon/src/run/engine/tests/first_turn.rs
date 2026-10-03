@@ -4,10 +4,11 @@
 //! `FIRST_TURN_WAIT_SECS` the run says so and keeps waiting.
 
 use super::fixture::*;
+use super::orch::launched;
 use super::orch::{ORCH, add, first_turn_woken, launched_waiting, mcp_ready, planned};
 use super::orch_restore::{restart, resume};
-use crate::run::engine::first_turn::FIRST_TURN_WAIT_SECS;
-use crate::run::engine::{Effect, OpKind, OpResult};
+use crate::run::engine::first_turn::{FIRST_TURN_WAIT_SECS, MCP_READY_GRACE_SECS};
+use crate::run::engine::{Effect, EventKind, OpKind, OpResult, OrchEvent};
 use crate::run::orch::START_PROMPT;
 use crate::run::orch::contract::orchestrator_first_prompt;
 use crate::run::snapshot::attention;
@@ -173,18 +174,127 @@ fn a_relaunch_before_the_first_turn_delivers_it_after_the_new_servers_notice() {
     assert_eq!(restarts.len(), 1, "{effects:#?}");
     assert!(!fx.run().orch.mcp_ready, "reset by the relaunch");
     assert!(fx.run().orch.first_turn_since.is_some());
-    let effects = fx.done(restarts[0].0, OpResult::Restarted);
-    assert_eq!(wakes(&effects), vec![], "the restart's note waits too");
+    // Fix round 1 (m2): the driver starts a pending first turn's session fresh.
+    let effects = fx.done(restarts[0].0, OpResult::RestartedFresh);
+    assert_eq!(wakes(&effects), vec![], "nothing before the first turn");
     // The new session's server: the first prompt, before any note.
     let effects = mcp_ready(&mut fx, ORCH);
     assert_eq!(wakes(&effects), vec![(first, true)]);
-    let effects = first_turn_woken(&mut fx);
-    let after = wakes(&effects);
-    assert_eq!(after.len(), 1, "{effects:#?}");
+    first_turn_woken(&mut fx);
+    let o = fx.run().orch.orchestrator.as_ref().unwrap();
     assert!(
-        after[0]
-            .0
-            .contains("the daemon restarted and your session was resumed"),
-        "{after:?}"
+        !o.notes
+            .iter()
+            .any(|n| n.contains("your session was resumed")),
+        "untrue of a fresh session: {:?}",
+        o.notes
     );
+}
+
+/// The driver's report that window `window` has sent its first signal, made when the
+/// record's `launches` was `launch`.
+fn first_signal(fx: &mut Fixture, now: u64, window: u32, launch: u64) -> Vec<Effect> {
+    fx.send(
+        now,
+        EventKind::Orch(OrchEvent::FirstSignal {
+            run_id: RUN_ID.into(),
+            window_id: window,
+            launch,
+        }),
+    )
+}
+
+/// Fix round 1, ruling T5a-1: a window that has sent a signal waits for its server's
+/// notice at most `MCP_READY_GRACE_SECS`; then its first turn goes anyway, and the run
+/// says so. A report about another window or an earlier launch starts no grace.
+#[test]
+fn a_signalled_window_gets_its_first_turn_after_the_mcp_ready_grace() {
+    let mut fx = launched_waiting(false);
+    let launch = fx.run().orch.orchestrator.as_ref().unwrap().launches;
+    let t = fx.now + 1;
+    first_signal(&mut fx, t, ORCH + 1, launch);
+    first_signal(&mut fx, t, ORCH, launch + 1);
+    assert_eq!(fx.run().orch.first_signal_at, None, "not this window's");
+    first_signal(&mut fx, t, ORCH, launch);
+    assert_eq!(fx.run().orch.first_signal_at, Some(t));
+    // A later report keeps the first.
+    first_signal(&mut fx, t + 5, ORCH, launch);
+    assert_eq!(fx.run().orch.first_signal_at, Some(t));
+    let line = "first turn sent without the MCP ready notice after 30 s";
+    let logged = |fx: &Fixture| fx.run().log.iter().filter(|e| e.text == line).count();
+    let effects = fx.send(t + MCP_READY_GRACE_SECS - 1, EventKind::Tick);
+    assert_eq!(wakes(&effects), vec![], "29 s: nothing yet");
+    assert_eq!(logged(&fx), 0);
+    let effects = fx.send(t + MCP_READY_GRACE_SECS, EventKind::Tick);
+    assert_eq!(wakes(&effects), vec![(first_prompt(&fx), true)], "30 s");
+    assert_eq!(logged(&fx), 1, "{:#?}", fx.run().log);
+    fx.tick();
+    assert_eq!(logged(&fx), 1, "once");
+    first_turn_woken(&mut fx);
+    assert!(!pending(&fx));
+}
+
+/// With the notice in time, the grace says nothing.
+#[test]
+fn the_notice_inside_the_grace_sends_the_first_turn_without_the_line() {
+    let mut fx = launched_waiting(false);
+    let launch = fx.run().orch.orchestrator.as_ref().unwrap().launches;
+    let t = fx.now + 1;
+    first_signal(&mut fx, t, ORCH, launch);
+    mcp_ready(&mut fx, ORCH);
+    fx.send(t + MCP_READY_GRACE_SECS, EventKind::Tick);
+    assert!(
+        !fx.run()
+            .log
+            .iter()
+            .any(|e| e.text.starts_with("first turn sent without")),
+        "{:#?}",
+        fx.run().log
+    );
+}
+
+/// Fix round 1 (m1): a restart that could not resume its session (no session id) is a
+/// fresh session, which needs the first prompt again; the restart's "resumed" note is
+/// untrue of it.
+#[test]
+fn a_restart_that_cannot_resume_sends_the_first_prompt_again() {
+    let mut fx = launched(false);
+    let first = first_prompt(&fx);
+    assert!(!pending(&fx), "delivered once");
+    restart(&mut fx);
+    let effects = resume(&mut fx);
+    let restarts = ops_in(&effects, "RestartOrchestrator");
+    assert_eq!(restarts.len(), 1, "{effects:#?}");
+    let effects = fx.done(restarts[0].0, OpResult::RestartedFresh);
+    assert!(pending(&fx), "the fresh session waits for its first turn");
+    assert!(fx.run().orch.first_turn_since.is_some());
+    assert_eq!(wakes(&effects), vec![]);
+    let effects = mcp_ready(&mut fx, ORCH);
+    assert_eq!(wakes(&effects), vec![(first, true)]);
+    let o = fx.run().orch.orchestrator.as_ref().unwrap();
+    assert!(
+        !o.notes
+            .iter()
+            .any(|n| n.contains("your session was resumed")),
+        "{:?}",
+        o.notes
+    );
+}
+
+/// Fix round 1 (m4): a notice that comes while the restart is in flight is the old
+/// session's and arms nothing; the new session's own notice does.
+#[test]
+fn a_notice_during_the_restart_is_the_old_sessions() {
+    let mut fx = launched_waiting(false);
+    let first = first_prompt(&fx);
+    restart(&mut fx);
+    let effects = resume(&mut fx);
+    let restarts = ops_in(&effects, "RestartOrchestrator");
+    assert_eq!(restarts.len(), 1, "{effects:#?}");
+    assert_eq!(wakes(&mcp_ready(&mut fx, ORCH)), vec![]);
+    let effects = fx.done(restarts[0].0, OpResult::RestartedFresh);
+    assert_eq!(wakes(&effects), vec![], "the old notice armed nothing");
+    assert!(!fx.run().orch.mcp_ready);
+    let effects = mcp_ready(&mut fx, ORCH);
+    assert_eq!(wakes(&effects), vec![(first, true)]);
 }

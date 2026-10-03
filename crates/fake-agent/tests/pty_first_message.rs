@@ -63,7 +63,9 @@ fn fake_agent_takes_its_first_message_from_stdin() {
     assert!(records[0].get("raw").is_none(), "{records:?}");
 }
 
-/// Codex's orchestrator has no hooks here: its ready title is the signal.
+/// Fix round 1 (m3): Codex as the daemon launches it, its hooks configured, behaves as
+/// real Codex does (M3.11): its status title is its start signal, and its session (and
+/// with it `SessionStart`) starts only with the first submitted turn.
 #[test]
 fn a_codex_fake_sets_its_ready_title_before_its_first_message() {
     let orch = Orch::new(
@@ -73,13 +75,26 @@ fn a_codex_fake_sets_its_ready_title_before_its_first_message() {
         ],
         &[(true, "{}")],
     );
+    let log = orch.path("hooks.log");
     let mut pty = orch.spawn_with(Runtime::Codex, &[], None);
     wait_for("the ready title", MCP_RUN, || {
         pty.screen().contains("\x1b]0;Ready")
     });
     assert_eq!(orch.stub.readies(), [(RUN_ID.to_string(), ORCH_WINDOW)]);
+    assert!(hooks(&log).is_empty(), "{:?}", hooks(&log));
     pty.write(b"\x1b[200~go\x1b[201~\r");
     assert_eq!(pty.wait(RUN), 8, "screen {:?}", pty.screen());
+    let seen: Vec<(String, Value)> = hooks(&log)
+        .into_iter()
+        .map(|(e, p)| (e, p["prompt"].clone()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("SessionStart".to_string(), Value::Null),
+            ("UserPromptSubmit".to_string(), json!("go")),
+        ]
+    );
 }
 
 /// A session given a prompt after `--` (the launch before decision 38) lists nothing

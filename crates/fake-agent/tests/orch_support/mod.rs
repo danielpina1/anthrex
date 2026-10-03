@@ -30,17 +30,20 @@ pub fn strings(values: &[&str]) -> Vec<String> {
 /// `claude_orchestrator_argv_is_exact` and `codex_orchestrator_argv_is_exact` shapes):
 /// its `anthrex mcp` server is `exe`, on `socket`.
 pub fn orch_argv(runtime: Runtime, exe: &Path, socket: &Path, cwd: &Path) -> Vec<String> {
-    orch_argv_with(runtime, exe, socket, cwd, Some("plan the goal"))
+    orch_argv_with(runtime, exe, socket, cwd, Some("plan the goal"), false)
 }
 
 /// [`orch_argv`] with `prompt` as the window's initial prompt; `None` is how the
-/// daemon launches an orchestrator since milestone 9.5 decision 38.
+/// daemon launches an orchestrator since milestone 9.5 decision 38. `codex_hooks`
+/// configures Codex's lifecycle hooks, as the daemon always does
+/// (`ManagerConfig::from_env`'s `codex_hook_source`).
 pub fn orch_argv_with(
     runtime: Runtime,
     exe: &Path,
     socket: &Path,
     cwd: &Path,
     prompt: Option<&str>,
+    codex_hooks: bool,
 ) -> Vec<String> {
     let role = RoleLaunch {
         run_ref: RunRef {
@@ -86,7 +89,7 @@ pub fn orch_argv_with(
         exe,
         claude_bin: "/nonexistent/claude",
         codex_bin: "/nonexistent/codex",
-        codex_hook_source: None,
+        codex_hook_source: codex_hooks.then_some("/<session-flags>/config.toml"),
         codex_bypass_hook_trust: false,
         resume: None,
         caps: &CLI_CAPS,
@@ -297,11 +300,19 @@ impl Orch {
         self.spawn_args(&args, env)
     }
 
-    /// [`Orch::spawn`] with `prompt` as the initial prompt (`None`: none after `--`).
-    /// Only `pty_first_message.rs` uses it.
+    /// [`Orch::spawn`] with `prompt` as the initial prompt (`None`: none after `--`)
+    /// and Codex's hooks configured, as the daemon launches it. Only
+    /// `pty_first_message.rs` uses it.
     #[allow(dead_code)]
     pub fn spawn_with(&self, runtime: Runtime, env: &[(&str, &Path)], prompt: Option<&str>) -> Pty {
-        let args = orch_argv_with(runtime, &self.exe, &self.stub.socket, &self.repo, prompt);
+        let args = orch_argv_with(
+            runtime,
+            &self.exe,
+            &self.stub.socket,
+            &self.repo,
+            prompt,
+            true,
+        );
         self.spawn_args(&args, env)
     }
 

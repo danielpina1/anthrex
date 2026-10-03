@@ -481,6 +481,7 @@ impl RunService {
         }
         self.report_held();
         self.report_start_prompt(&seen, &windows);
+        self.report_first_signal(&windows);
     }
 
     /// Every run's orchestrator window, as the engine has it.

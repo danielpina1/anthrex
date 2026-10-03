@@ -137,12 +137,18 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<
         return;
     };
     match result {
-        OpResult::Restarted => {
+        OpResult::Restarted | OpResult::RestartedFresh => {
             o.live = true;
             o.exited_at = None;
             o.launches += 1;
             own_session(run);
             log(run, now, "the orchestrator restarted");
+            // Milestone 9.5 fix round 1 (m1, m2): a fresh session takes the first
+            // prompt again, and was not resumed.
+            if result == OpResult::RestartedFresh {
+                super::first_turn::fresh_session(run, now);
+                super::wake::unnote(run, RESUMED_NOTE);
+            }
         }
         OpResult::Failed { message } => {
             let text = format!("the orchestrator could not restart: {message}");
@@ -167,7 +173,7 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<
 }
 
 /// Whether a `CreateOrchestrator` or `RestartOrchestrator` is in flight.
-fn launching(run: &Run) -> bool {
+pub(super) fn launching(run: &Run) -> bool {
     run.pending_ops.values().any(|p| {
         matches!(
             p.kind,
@@ -210,6 +216,7 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
 fn first_turn_waits(run: &mut Run, now: u64) {
     run.orch.mcp_ready = false;
     run.orch.first_turn_late = false;
+    run.orch.first_signal_at = None;
     let pending = run
         .orch
         .orchestrator

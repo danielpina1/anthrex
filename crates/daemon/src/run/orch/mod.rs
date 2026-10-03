@@ -104,13 +104,16 @@ pub struct RunOrch {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_wake: Option<String>,
     /// Milestone 9.5 decision 38, in memory only, reset by every launch: `McpReady` came;
-    /// since when a pending first turn waits; whether past `FIRST_TURN_WAIT_SECS`.
+    /// since when a pending first turn waits; whether past `FIRST_TURN_WAIT_SECS`; when
+    /// the window first signalled while it waited (ruling T5a-1's grace).
     #[serde(skip)]
     pub mcp_ready: bool,
     #[serde(skip)]
     pub first_turn_since: Option<u64>,
     #[serde(skip)]
     pub first_turn_late: bool,
+    #[serde(skip)]
+    pub first_signal_at: Option<u64>,
     /// Decision 39, in memory only: the driver reports the window at a start prompt.
     #[serde(skip)]
     pub start_prompt: bool,

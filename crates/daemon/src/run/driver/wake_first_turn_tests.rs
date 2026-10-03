@@ -36,12 +36,13 @@ pub(in crate::run::driver::wake) struct Rig {
     pub(in crate::run::driver::wake) events: UnboundedReceiver<crate::run::driver::Msg>,
 }
 
-/// `claude` as a stand-in that prints one line and then sleeps (`Starting`, then
-/// `Working` on its output, then `Idle` once quiet: an agent at a prompt that has sent
-/// no signal).
+/// `claude` as a stand-in that appends its argv to `<dir>/claude.args`, prints one
+/// line and then sleeps (`Starting`, then `Working` on its output, then `Idle` once
+/// quiet: an agent at a prompt that has sent no signal).
 fn stand_in(dir: &Path) -> String {
     let claude = dir.join("claude");
-    std::fs::write(&claude, "#!/bin/sh\necho starting\nexec sleep 300\n").unwrap();
+    let script = "#!/bin/sh\necho \"$*\" >> \"$0.args\"\necho starting\nexec sleep 300\n";
+    std::fs::write(&claude, script).unwrap();
     std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     claude.to_str().unwrap().into()
 }
@@ -167,6 +168,11 @@ impl Rig {
                     first_turn: true,
                     ..
                 })) => seen.push(("first turn", run_id, 0)),
+                crate::run::driver::Msg::Event(EventKind::Orch(OrchEvent::FirstSignal {
+                    run_id,
+                    window_id,
+                    launch: 1,
+                })) => seen.push(("signal", run_id, window_id)),
                 _ => {}
             }
         }
@@ -297,5 +303,99 @@ async fn an_open_attention_holds_the_first_turn() {
     assert_eq!(rig.status(window).0, Status::Done);
     rig.runs.check_orchestrators();
     rig.wait_first_turn(SUBMIT_DELAY + SLACK).await;
+    let _ = rig.manager.kill(window);
+}
+
+/// Fix round 1, ruling T5a-1: while the first turn waits for its server's notice, the
+/// driver reports the window's first signal (with the launch it saw), from which the
+/// engine counts `MCP_READY_GRACE_SECS`; with the notice in, it reports nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_first_signal_is_reported_while_the_notice_is_missing() {
+    let mut rig = rig();
+    let window = rig.orchestrator_window("r1").await;
+    rig.run_waiting_first_turn(window);
+    let set_ready = |rig: &Rig, ready: bool| {
+        crate::lock(&rig.runs.state)
+            .runs
+            .get_mut("r1")
+            .unwrap()
+            .orch
+            .mcp_ready = ready;
+    };
+    set_ready(&rig, false);
+    rig.runs.check_orchestrators();
+    assert_eq!(rig.sent(), vec![], "no signal yet");
+    rig.hook(window, "SessionStart");
+    rig.runs.check_orchestrators();
+    assert_eq!(rig.sent(), vec![("signal", "r1".to_string(), window)]);
+    set_ready(&rig, true);
+    rig.runs.check_orchestrators();
+    assert_eq!(rig.sent(), vec![], "the notice came");
+    let _ = rig.manager.kill(window);
+}
+
+/// Waits, at most `QUIET_AFTER + SLACK`, until the stand-in has started `n` times;
+/// its argv lines.
+async fn launches(rig: &Rig, n: usize) -> Vec<String> {
+    let path = rig._dir.path().join("claude.args");
+    let deadline = Instant::now() + QUIET_AFTER + SLACK;
+    loop {
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let lines: Vec<String> = text.lines().map(str::to_string).collect();
+        if lines.len() >= n {
+            return lines;
+        }
+        assert!(Instant::now() < deadline, "{n} launches: {lines:?}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Fix round 1 (m1, m2): `RestartOrchestrator` resumes a session only when its first
+/// turn was delivered and the window knows the session. A session still waiting for
+/// its first turn starts fresh (never `--resume` of a session that has had no turn),
+/// and so does one with no session id; either is `RestartedFresh`, so the engine sends
+/// the first prompt again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restart_resumes_only_a_session_that_had_its_first_turn() {
+    use crate::run::engine::{OpKind, OpResult};
+    let rig = rig();
+    let window = rig.orchestrator_window("r1").await;
+    launches(&rig, 1).await;
+    rig.hook(window, "SessionStart");
+    rig.run_waiting_first_turn(window);
+    let ctx = {
+        let state = crate::lock(&rig.runs.state);
+        super::super::super::context::OpCtx::of(&state.runs["r1"])
+    };
+    let restart = || {
+        let (runs, ctx) = (rig.runs.clone(), ctx.clone());
+        async move {
+            let kind = OpKind::RestartOrchestrator { window_id: window };
+            super::super::super::orch_ops::run(&runs, &ctx, kind).await
+        }
+    };
+    // Pending: fresh, although the window knows a session.
+    assert_eq!(restart().await, OpResult::RestartedFresh);
+    let argv = launches(&rig, 2).await;
+    assert!(!argv[1].contains("--resume"), "{argv:#?}");
+    // Delivered, with a session: resumed.
+    crate::lock(&rig.runs.state)
+        .runs
+        .get_mut("r1")
+        .unwrap()
+        .orch
+        .orchestrator
+        .as_mut()
+        .unwrap()
+        .first_turn_pending = false;
+    rig.hook(window, "SessionStart");
+    assert_eq!(restart().await, OpResult::Restarted);
+    let argv = launches(&rig, 3).await;
+    assert!(argv[2].contains("--resume s-first"), "{argv:#?}");
+    // Delivered, but no session known (its hooks never came): fresh.
+    rig.manager.forget_session(window);
+    assert_eq!(restart().await, OpResult::RestartedFresh);
+    let argv = launches(&rig, 4).await;
+    assert!(!argv[3].contains("--resume"), "{argv:#?}");
     let _ = rig.manager.kill(window);
 }

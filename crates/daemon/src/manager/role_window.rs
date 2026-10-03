@@ -283,6 +283,25 @@ impl WindowManager {
         }
     }
 
+    /// Milestone 9.5 decision 38 (fix round 1, m2): `id`'s next restart starts a fresh
+    /// session instead of resuming the one it knew (a session whose first turn never
+    /// came, or whose restart must not resume).
+    pub fn forget_session(&self, id: u32) {
+        let mut inner = crate::lock(&self.inner);
+        if let Some(entry) = inner.entries.get_mut(&id) {
+            entry.state.session_id = None;
+        }
+    }
+
+    /// Fix round 1 (m1): whether `id`'s next restart resumes a session (`launch::plan`).
+    pub fn knows_session(&self, id: u32) -> bool {
+        let inner = crate::lock(&self.inner);
+        inner
+            .entries
+            .get(&id)
+            .is_some_and(|entry| entry.state.session_id.is_some())
+    }
+
     /// When a client's `Input` last reached `id`.
     pub fn last_client_input(&self, id: u32) -> Option<Instant> {
         let inner = crate::lock(&self.inner);

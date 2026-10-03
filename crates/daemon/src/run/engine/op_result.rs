@@ -153,6 +153,9 @@ pub enum OpResult {
     HistoryAppended,
     /// Milestone 9: `RestartOrchestrator` restarted the window.
     Restarted,
+    /// Milestone 9.5 decision 38 (fix round 1, m1 and m2): it restarted the window with a
+    /// fresh session, not a resumed one, which needs the first prompt again.
+    RestartedFresh,
     /// `StartScout`'s scout window.
     ScoutStarted {
         window_id: u32,

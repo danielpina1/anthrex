@@ -460,6 +460,13 @@ The orchestrator's first turn (decision 38). `FIRST_TURN_WAIT_SECS` (60 s) is re
 | The prompt-less fake's `SessionStart` hook, or Codex's ready title | `fake-agent/tests/pty_first_message.rs` | `MCP_RUN` (150 s) | Its start-up `tools/list` is one MCP conversation (`MCP_CALL_TIMEOUT`, 120 s), then the server's exit (`EXIT_GRACE`, 2 s, after which its group is killed), then one hook (`STEP_TIMEOUT`, 5 s): 127 s. | **Recorded.** A hang guard. |
 | The fake's exit after the first message | the same | `RUN` (20 s) | The paste is read at once; then `UserPromptSubmit` (one hook, `STEP_TIMEOUT`) and the script's `expect` and `exit`. | **Recorded.** |
 
+Fix round 1 (ruling T5a-1): `MCP_READY_GRACE_SECS` (30 s) after the window's first signal, past which the first turn is pasted without the server's notice, is reducer time, injected through `Event.now` (`engine/tests/first_turn.rs`, 29 s → nothing, 30 s → the paste and the line), not a wall-clock bound.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| Each restart's stand-in start (its argv line) | `daemon/src/run/driver/wake_first_turn_tests.rs` (`a_restart_resumes_only_…`, `launches`) | `QUIET_AFTER + SLACK` (3 + 5 s), reading every 20 ms | `WindowManager::restart` has returned when the wait starts, so the process is spawned; what remains is the stand-in's exec and its first `echo` (a fresh script's first exec on macOS, about 0.5 s). | **Recorded.** A hang guard. |
+| The first turn delivered before a daemon restart | `cli/tests/run_e2e_orch_ops.rs` (`waiting`, used by eight tests) | `REQUEST_WAIT` (60 s), polling `run.json` every 100 ms | After the session is known: the server's notice (`READY_TIMEOUT`, 5 s), the window's quiet time (`QUIET_AFTER`, 3 s), the paste (`SUBMIT_DELAY`) and the engine's persist; or, without the notice, `MCP_READY_GRACE_SECS` (30 s) then the same: 34 s. | **Recorded.** |
+
 ### Recorded, from M9.5.5b (2026-10-03)
 
 The start prompt (decision 39), why a wake-up waits (decision 41) and the Codex question footer (decision 40). Measured: `driver/wake_report_tests.rs` about 10 s for its three tests (the quiet waits), `status_codex_tests.rs` about 1.2 s.
