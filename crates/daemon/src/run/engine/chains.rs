@@ -104,6 +104,13 @@ fn adopt(run: &mut Run, prev: &Run, window_id: u32, now: u64, fx: &mut Vec<Effec
         o.first_prompt = p.first_prompt.clone();
         o.live = true;
         o.exited_at = None;
+        // Milestone 9.5 decision 37: the session's counter now, what `prev` was
+        // credited since its base plus where it started counting.
+        let spent = prev
+            .orchestrator_usage
+            .saturating_sub(prev.orchestrator_base);
+        o.usage_at_adopt = p.usage_at_adopt;
+        o.usage_at_adopt += spent;
     }
     let ended = (prev.short(), outcome(prev));
     let wake = next_goal_wake(run.short(), ended, run.orch.yes, &run.goal);

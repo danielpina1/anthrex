@@ -65,6 +65,8 @@ pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64, fx: 
             o.exited_at = None;
             o.start_error = None;
             o.launches += 1;
+            // Milestone 9.5 decision 37: a session the run launched counts from zero.
+            o.usage_at_adopt = Default::default();
             run.windows_created += 1;
             log(
                 run,
@@ -208,9 +210,12 @@ pub(super) fn relaunchable(run: &Run) -> bool {
 }
 
 /// After a daemon restart the orchestrator's window is dormant (decision 11).
+/// Milestone 9.5 decision 37: the new daemon's OTLP totals count from zero on top of
+/// the restored usage, so an adoption point no longer applies.
 pub(super) fn restored(run: &mut Run) {
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.live = false;
+        o.usage_at_adopt = Default::default();
     }
 }
 

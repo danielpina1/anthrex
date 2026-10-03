@@ -51,6 +51,16 @@ impl TokenUsage {
     pub fn billable(&self) -> u64 {
         self.input + self.cache_write + self.output
     }
+
+    /// Milestone 9.5 decision 37: field-wise, saturating at 0.
+    pub fn saturating_sub(self, other: Self) -> Self {
+        TokenUsage {
+            input: self.input.saturating_sub(other.input),
+            output: self.output.saturating_sub(other.output),
+            cache_read: self.cache_read.saturating_sub(other.cache_read),
+            cache_write: self.cache_write.saturating_sub(other.cache_write),
+        }
+    }
 }
 
 /// Field-wise and saturating (milestone 8b's usage by role): a sum never panics or

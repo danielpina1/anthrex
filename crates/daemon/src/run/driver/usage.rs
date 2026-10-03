@@ -10,6 +10,9 @@
 //!   map into one `OrchestratorUsage` per run. A flood of posts therefore adds at most
 //!   one message to the engine's queue, and the map holds at most one total per live
 //!   run.
+//! - **Chains** (milestone 9.5 decision 37). An adopted session posts under the run
+//!   that launched it. A continued run is not live itself: its id resolves to its
+//!   chain's current run (the last `continued_by`) for `is_live`, `token` and `post`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -21,6 +24,7 @@ use proto::TokenUsage;
 use super::{Msg, RunService};
 use crate::metering::UsageSink;
 use crate::run::engine::{EngineState, EventKind};
+use crate::run::model::Run;
 
 /// See the module doc.
 #[derive(Default)]
@@ -32,30 +36,55 @@ pub(super) struct Metered {
     /// orchestrator's, when set), and how many live runs have an orchestrator.
     tokens: Mutex<HashMap<String, String>>,
     orchestrators: AtomicUsize,
+    /// Decision 37: each continued run's chain's current run, when that one is live.
+    via: Mutex<HashMap<String, String>>,
 }
 
 impl Metered {
     /// Called under the engine lock after a step: the live runs are `state`'s runs that
     /// have not ended. The generation moves only when they changed.
     pub(super) fn refresh_live(&self, state: &EngineState) {
-        let open = || state.runs.values().filter(|run| !run.state.is_terminal());
+        let current = |run: &Run| !run.state.is_terminal() && run.continued_by.is_none();
+        let open = || state.runs.values().filter(|run| current(run));
+        let via: HashMap<String, String> = (state.runs.values())
+            .filter(|run| run.continued_by.is_some())
+            .filter_map(|run| Some((run.id.clone(), chain_end(state, run)?.id.clone())))
+            .collect();
         let orchestrators = open().filter(|run| run.orch.orchestrator.is_some()).count();
-        let tokens: HashMap<String, String> = open()
+        let mut tokens: HashMap<String, String> = open()
             .filter_map(|run| {
                 let token = &run.orch.orchestrator.as_ref()?.otlp_token;
                 (!token.is_empty()).then(|| (run.id.clone(), token.clone()))
             })
             .collect();
+        for (from, to) in &via {
+            if let Some(token) = tokens.get(to).cloned() {
+                tokens.insert(from.clone(), token);
+            }
+        }
         *crate::lock(&self.tokens) = tokens;
+        let ids: HashSet<String> = open()
+            .map(|run| run.id.clone())
+            .chain(via.keys().cloned())
+            .collect();
+        *crate::lock(&self.via) = via;
         if self.orchestrators.swap(orchestrators, Ordering::SeqCst) != orchestrators {
             self.generation.fetch_add(1, Ordering::SeqCst);
         }
         let mut live = crate::lock(&self.live);
-        if open().count() == live.len() && open().all(|run| live.contains(&run.id)) {
+        if *live == ids {
             return;
         }
-        *live = open().map(|run| run.id.clone()).collect();
+        *live = ids;
         self.generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Decision 37: the run `run_id`'s totals are credited to.
+    fn credited(&self, run_id: String) -> String {
+        crate::lock(&self.via)
+            .get(&run_id)
+            .cloned()
+            .unwrap_or(run_id)
     }
 
     /// Keeps `usage` as `run_id`'s pending total, replacing an earlier one. True when
@@ -72,6 +101,18 @@ impl Metered {
     }
 }
 
+/// The last run of `run`'s `continued_by` links, if it has not ended (not a cycle).
+fn chain_end<'a>(state: &'a EngineState, run: &'a Run) -> Option<&'a Run> {
+    let mut at = run;
+    for _ in 0..state.runs.len() {
+        match at.continued_by.as_deref() {
+            None => return (!at.state.is_terminal()).then_some(at),
+            Some(next) => at = state.runs.get(next)?,
+        }
+    }
+    None
+}
+
 impl UsageSink for RunService {
     fn is_live(&self, run_id: &str) -> bool {
         crate::lock(&self.metered.live).contains(run_id)
@@ -82,6 +123,7 @@ impl UsageSink for RunService {
     }
 
     fn post(&self, run_id: String, usage: TokenUsage) {
+        let run_id = self.metered.credited(run_id);
         if self.metered.offer(run_id, usage) {
             let _ = self.tx.send(Msg::Usage);
         }

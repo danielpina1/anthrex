@@ -254,3 +254,89 @@ async fn restoring_a_run_the_restore_changes_saves_it() {
     );
     assert_eq!(on_disk.orchestrator_usage, usage(999));
 }
+
+/// `run` with an orchestrator whose OTLP token is `token`, continued by `next` if set.
+fn chained(id: &str, data: &Path, state: RunState, token: &str, next: Option<&str>) -> Run {
+    let mut run = run(id, data, state);
+    let mut o = crate::run::orch::test_support::orchestrator();
+    o.otlp_token = token.into();
+    run.orch.orchestrator = Some(o);
+    run.continued_by = next.map(String::from);
+    run
+}
+
+/// Milestone 9.5 decision 37 (FU-F43): an adopted session posts under the chain's first
+/// run, which resolves to the chain's current run: live while it is, its token, and its
+/// credit. The continued runs are not live themselves.
+#[test]
+fn a_continued_runs_post_is_credited_to_the_current_run() {
+    let data = tempfile::tempdir().unwrap();
+    let s = service(data.path());
+    let mut rx = crate::lock(&s.rx).take().expect("the loop never ran");
+    let mut state = crate::run::engine::EngineState::default();
+    for (id, run_state, token, next) in [
+        ("r1", RunState::Complete, "t1", Some("r2")),
+        ("r2", RunState::Paused, "t2", None),
+    ] {
+        let run = chained(id, data.path(), run_state, token, next);
+        state.runs.insert(id.into(), run);
+    }
+    s.metered.refresh_live(&state);
+    assert!(s.is_live("r1"), "r1 resolves to r2, which is live");
+    assert_eq!(s.token("r1").as_deref(), Some("t2"));
+    assert_eq!(s.live_orchestrators(), 1, "r1's session is r2's");
+    assert_eq!(
+        *crate::lock(&s.metered.live),
+        ["r1", "r2"].into_iter().map(String::from).collect()
+    );
+    s.post("r1".into(), usage(5));
+    assert!(matches!(rx.try_recv(), Ok(Msg::Usage)));
+    assert_eq!(
+        s.metered.take().into_iter().collect::<Vec<_>>(),
+        vec![("r2".to_string(), usage(5))]
+    );
+    // A third run: the chain's first run resolves to its last one.
+    state.runs.get_mut("r2").unwrap().continued_by = Some("r3".into());
+    let third = chained("r3", data.path(), RunState::Paused, "t3", None);
+    state.runs.insert("r3".into(), third);
+    s.metered.refresh_live(&state);
+    assert_eq!(s.token("r1").as_deref(), Some("t3"));
+    s.post("r1".into(), usage(6));
+    assert_eq!(
+        s.metered.take().into_iter().collect::<Vec<_>>(),
+        vec![("r3".to_string(), usage(6))]
+    );
+    // Once the current run ends, nothing in the chain is live.
+    let generation = s.live_generation();
+    state.runs.get_mut("r3").unwrap().state = RunState::Accepted;
+    s.metered.refresh_live(&state);
+    assert!(!s.is_live("r1") && !s.is_live("r2") && !s.is_live("r3"));
+    assert_eq!(s.token("r1"), None);
+    assert!(s.live_generation() > generation);
+}
+
+/// FU-F40: a delivered `pr` run a next goal continued keeps the usage it had; the
+/// session's later totals go to the run that adopted it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delivered_previous_run_is_not_credited() {
+    let data = tempfile::tempdir().unwrap();
+    let s = service(data.path());
+    {
+        let mut state = crate::lock(&s.state);
+        let mut r1 = chained("r1", data.path(), RunState::Complete, "t", Some("r2"));
+        r1.orchestrator_usage = usage(1000);
+        let mut r2 = chained("r2", data.path(), RunState::Paused, "t", None);
+        r2.orch.orchestrator.as_mut().unwrap().usage_at_adopt = usage(1000);
+        state.runs.insert("r1".into(), r1);
+        state.runs.insert("r2".into(), r2);
+    }
+    let handle = s.spawn(CancellationToken::new());
+    nudge(&s);
+    until("r1 resolves to r2", || s.is_live("r1")).await;
+    s.post("r1".into(), usage(1300));
+    let total = |id: &str| crate::lock(&s.state).runs[id].orchestrator_usage;
+    until("r2 is credited", || total("r2") == usage(300)).await;
+    assert_eq!(total("r1"), usage(1000));
+    s.stop().await;
+    let _ = handle.await;
+}

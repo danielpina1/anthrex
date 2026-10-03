@@ -89,6 +89,7 @@ pub fn orchestrator() -> OrchestratorRecord {
         start_error: None,
         launches: 0,
         routing: Default::default(),
+        usage_at_adopt: TokenUsage::default(),
     }
 }
 

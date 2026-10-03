@@ -174,6 +174,15 @@ pub struct OrchestratorRecord {
     /// Decision 43: its route's resolution, which every launch's record keeps.
     #[serde(default)]
     pub routing: roles::RoleSnapshot,
+    /// Milestone 9.5 decision 37: the adopted session's usage counter when this run
+    /// took its window (`chains::adopt`); the OTLP totals count from it. Zero for a
+    /// session the run launched, and again after a restore (the ledger restarts).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub usage_at_adopt: TokenUsage,
+}
+
+fn is_zero(usage: &TokenUsage) -> bool {
+    *usage == TokenUsage::default()
 }
 
 impl OrchestratorRecord {
@@ -490,6 +499,7 @@ impl OrchestratorRecord {
             start_error: None,
             launches: 0,
             routing: roles::RoleSnapshot::default(),
+            usage_at_adopt: TokenUsage::default(),
         }
     }
 }
