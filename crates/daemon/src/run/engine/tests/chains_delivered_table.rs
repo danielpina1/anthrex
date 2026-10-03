@@ -3,7 +3,8 @@
 //! re-inserts a chain only for a run that is not finished, so a restart keeps the
 //! project's newest idle chain, two delivered chains never swap places, and a later
 //! accept does not bring the delivered chain back. Iterating the delivered run puts its
-//! chain back, active, with that run alone (ruled).
+//! chain back, active, with every run that carries it, that run current (fix round 4,
+//! amending fix round 3's ruled `[run]`).
 
 use proto::{FinishAction, RunState};
 
@@ -127,7 +128,9 @@ fn accepting_another_chain_after_a_delivered_one_does_not_bring_it_back() {
 }
 
 /// Ruled with I1: iterating a delivered run whose chain has left the table puts its
-/// chain back, active, with that run alone and the run's own orchestrator window.
+/// chain back, active, with every run that carries it (here that run alone; a
+/// two-run chain is `chain_tests.rs`' `an_adopted_window_reaches_its_chain_…`) and the
+/// run's own orchestrator window.
 #[test]
 fn iterating_a_delivered_run_whose_chain_left_the_table_restarts_it() {
     let newer = as_b(

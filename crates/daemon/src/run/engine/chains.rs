@@ -179,7 +179,9 @@ pub(super) fn assign(run: &mut Run) {
 /// After every event: each chained run that is not finished (not terminal, and not
 /// delivered, D17) has its chain in the table, so a chain that left it (the project's
 /// older idle chain, task 6b fix round 3) stays out until its run iterates, when it
-/// returns active with that run alone; each chain follows its current run.
+/// returns active with every run that carries it, in `rebuild`'s order, that run last
+/// and current (fix round 4: an adopted window's MCP target names the chain's first
+/// run); each chain follows its current run.
 pub(super) fn pass(state: &mut EngineState) {
     for run in state.runs.values() {
         let Some(id) = run.chain.as_deref() else {
@@ -188,8 +190,9 @@ pub(super) fn pass(state: &mut EngineState) {
         if !run.state.is_terminal()
             && !finished(run)
             && !state.chains.contains_key(id)
-            && let Some(chain) = Chain::new(id.to_string(), run)
+            && let Some(mut chain) = Chain::new(id.to_string(), run)
         {
+            chain.runs = members(&state.runs, id, &run.id);
             state.chains.insert(id.to_string(), chain);
         }
     }
@@ -220,6 +223,19 @@ pub(super) fn pass(state: &mut EngineState) {
     for id in idle {
         make_idle(&mut state.chains, &id);
     }
+}
+
+/// Every run carrying chain `id`, oldest first (`rebuild`'s order: created, then id),
+/// with `current` last.
+fn members(runs: &std::collections::BTreeMap<String, Run>, id: &str, current: &str) -> Vec<String> {
+    let mut list: Vec<&Run> = runs
+        .values()
+        .filter(|r| r.chain.as_deref() == Some(id) && r.id != current)
+        .collect();
+    list.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+    let mut ids: Vec<String> = list.into_iter().map(|r| r.id.clone()).collect();
+    ids.push(current.to_string());
+    ids
 }
 
 /// `OrchEvent::ChainWindowGone`: the driver saw an idle chain's window close or exit
