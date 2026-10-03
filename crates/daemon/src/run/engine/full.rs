@@ -99,9 +99,18 @@ fn in_flight(run: &Run) -> bool {
 }
 
 /// A red stage no longer holds completion once the run is ending anyway: the `finish`
-/// edit (decision 19), or `run cancel`, which must complete.
+/// edit (decision 19), or `run cancel`, which must complete. A round's cancel
+/// (milestone 9.3 decision 16) ends that round's stages only ([`ending_at`]).
 pub(super) fn ending(run: &Run) -> bool {
-    run.finish_edit || run.cancelled
+    run.cancelled || run.finish_edit && super::goal_rounds_end::cancelling_round(run).is_none()
+}
+
+/// Stage `n` is ending: the whole run is ([`ending`]), or the round being cancelled is
+/// `n`'s (W1 fix round 2: the earlier rounds' tier 3 and bisects keep going, as
+/// `complete::finish_pass` keeps their tasks).
+pub(super) fn ending_at(run: &Run, n: u16) -> bool {
+    let round = super::goal_rounds_end::cancelling_round(run);
+    ending(run) || round.is_some_and(|r| run.round_of_stage(n) == r)
 }
 
 /// Decision 17(b): no queued task, no pending propagate, and no candidate or
@@ -136,6 +145,7 @@ pub(super) fn idle_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         .stages
         .iter()
         .filter(|s| lacks_green(run, s) && !red_at_head(s) && !infra_waiting(s, now))
+        .filter(|s| !ending_at(run, s.n))
         // Ruling C-19: an open bisect fix task's stage waits for it.
         .filter(|s| bisect::fix_open(run, s.n).is_none())
         .map(|s| s.n)
@@ -166,7 +176,7 @@ pub(super) fn completion(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
         }
         // Ruling C-18: a held stage is passed over only by a run ending anyway.
         if infra_waiting(s, now) {
-            if ending(run) && infra_held(s) {
+            if ending_at(run, n) && infra_held(s) {
                 red.push(n);
                 continue;
             }
@@ -176,7 +186,7 @@ pub(super) fn completion(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
             start(run, n, FullWhy::Completion, now, fx);
             return false;
         }
-        if !ending(run) {
+        if !ending_at(run, n) {
             return false;
         }
         red.push(n);
@@ -206,8 +216,8 @@ pub(super) fn holds_completion(run: &Run, now: u64) -> bool {
         && (bisect::bisecting(run)
             || run.stages.iter().any(|s| {
                 lacks_green(run, s)
-                    && ((!ending(run) && red_at_head(s))
-                        || (infra_waiting(s, now) && !(ending(run) && infra_held(s))))
+                    && ((!ending_at(run, s.n) && red_at_head(s))
+                        || (infra_waiting(s, now) && !(ending_at(run, s.n) && infra_held(s))))
             }))
 }
 

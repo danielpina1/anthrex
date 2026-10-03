@@ -8,7 +8,7 @@
 //! verdict, which only the user's requests carry (`OrchEvent::{ApproveHold,
 //! RejectHold}`, from `anthrex run approve|reject --hold`).
 
-use proto::{AgentRole, RunState, Runtime, ToolCall};
+use proto::{AgentRole, MessageTarget, PlanEdit, RunState, Runtime, ToolCall};
 use serde_json::json;
 
 use super::batch::{Applied, Refused, apply_batch, record_rejected};
@@ -222,7 +222,9 @@ pub(super) fn tool(
     };
     match parsed {
         OrchCall::EditPlan { edits, submit, .. }
-            if ending.is_some() && (submit || !edits.is_empty()) =>
+            if ending.is_some()
+                && (submit || !edits.is_empty())
+                && !earlier_rounds_only(run, &edits, submit) =>
         {
             refuse(fx, reply, ending.unwrap_or_default())
         }
@@ -413,6 +415,25 @@ pub(super) fn settle_quiet(run: &mut Run, base: &mut Option<Run>, now: u64, fx: 
 
 /// `run <id> was cancelled` or `run <id> is finishing` while the run is being ended
 /// (M9.9 second review, C-1).
+/// W1 fix round 2: while a round is being cancelled, the orchestrator still answers
+/// and messages the earlier rounds' live tasks (the final fix wave's A-I2); nothing
+/// else, and nothing of the round itself.
+fn earlier_rounds_only(run: &Run, edits: &[PlanEdit], submit: bool) -> bool {
+    let Some(n) = super::goal_rounds_end::cancelling_round(run) else {
+        return false;
+    };
+    let earlier = |id: &str| run.task(id).is_some_and(|t| t.round < n);
+    !submit
+        && edits.iter().all(|edit| match edit {
+            PlanEdit::Answer { task_id, .. } => earlier(task_id),
+            PlanEdit::Message {
+                to: MessageTarget::Tasks(ids),
+                ..
+            } => ids.iter().all(|id| earlier(id)),
+            _ => false,
+        })
+}
+
 pub(super) fn ending(run: &Run) -> Option<String> {
     if run.cancelled {
         Some(format!("run {} was cancelled", run.id))

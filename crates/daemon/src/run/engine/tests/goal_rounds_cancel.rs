@@ -182,3 +182,25 @@ fn a_halted_round_can_be_cancelled() {
     assert!(run.rounds[1].ended_at.is_some());
     assert!(!run.finish_edit);
 }
+
+/// W1 fix round 2 (item 4): while round 2 is being cancelled, the orchestrator can still
+/// answer a live round-1 fix's question (A-I2's "and by the orchestrator"); the round's
+/// cancel is not the run's finish.
+#[test]
+fn the_orchestrator_answers_an_earlier_rounds_fix_while_a_round_is_cancelled() {
+    let mut fx = super::actions_rounds::round_two_fixes();
+    assert!(reply(&cancel(&mut fx)).is_ok());
+    assert_eq!(fx.task("fix1").state, TaskState::Blocked);
+    let edit = json!({"edits": [{"op": "answer", "task_id": "fix1", "text": "the users table"}]});
+    let effects = super::orch::edit_plan(&mut fx, edit);
+    assert!(answer(&effects).0, "{effects:#?}");
+    assert_ne!(
+        fx.task("fix1").state,
+        TaskState::Blocked,
+        "{:#?}",
+        fx.run().log
+    );
+    // Work for the round itself is still refused: the round is ending.
+    let add = json!({"edits": [add_in("t3", "mail", 2, &[])]});
+    assert!(!answer(&super::orch::edit_plan(&mut fx, add)).0);
+}

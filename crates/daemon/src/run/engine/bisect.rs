@@ -257,7 +257,8 @@ fn issue(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
 
 /// Every scheduler pass of a running run: a bisect whose probe was lost in a restart
 /// (decision 29) or waits out an executor failure's backoff is issued again; a run
-/// ending anyway (the `finish` edit, `run cancel`) ends its bisects.
+/// ending anyway (the `finish` edit, `run cancel`) ends its bisects, a round's cancel
+/// that round's stages' only.
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let idle: Vec<(u16, u64)> = run
         .stages
@@ -267,7 +268,7 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         .map(|(n, b)| (n, b.retry_at))
         .collect();
     for (n, retry_at) in idle {
-        if full::ending(run) {
+        if full::ending_at(run, n) {
             end(
                 run,
                 n,
@@ -322,7 +323,7 @@ pub(super) fn probe_done(
     };
     b.probe = None;
     let at = probe_commit(b, probe);
-    if full::ending(run) {
+    if full::ending_at(run, n) {
         return end(
             run,
             n,

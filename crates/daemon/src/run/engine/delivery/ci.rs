@@ -75,7 +75,7 @@ pub(super) fn stale(run: &Run, n: u16, rec: &CiRecord) -> Option<String> {
 /// the red (fix round 1: no fix task, no attention line that nothing would clear).
 pub(super) fn gone(run: &Run, n: u16, rec: &CiRecord) -> Option<String> {
     stale(run, n, rec)
-        .or_else(|| super::super::full::ending(run).then(|| "the run is ending".to_string()))
+        .or_else(|| super::super::full::ending_at(run, n).then(|| "the run is ending".to_string()))
 }
 
 /// Drops record `i` of stage `n` for `why`.
