@@ -69,7 +69,7 @@ enum Command {
         /// Show the project containing this directory
         #[arg(long)]
         project: Option<PathBuf>,
-        /// Print the project tree as pretty JSON
+        /// Print the project tree as pretty JSON (a window's position is its place in tree order, not its C-b number)
         #[arg(long)]
         json: bool,
     },
@@ -589,5 +589,7 @@ mod tests {
         assert!(help.contains("Print the project tree"));
         assert!(help.contains("--project <PROJECT>"));
         assert!(help.contains("--json"));
+        // The final fix wave (B-M7): positions are tree order, not C-b numbers.
+        assert!(help.contains("tree order, not its C-b number"), "{help}");
     }
 }

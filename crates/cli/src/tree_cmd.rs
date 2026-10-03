@@ -43,6 +43,9 @@ pub struct CountsJson {
 #[derive(Debug, serde::Serialize)]
 pub struct WindowJson {
     pub id: u32,
+    /// The window's place in tree order, counted from 1 across the projects. Not its
+    /// `C-b <n>` number: the sidebar does not number an idle orchestrator's window,
+    /// and `tree` lists it as a plain window (milestone 9.3's final fix wave, B-M7).
     pub position: usize,
     pub name: String,
     pub runtime: String,
