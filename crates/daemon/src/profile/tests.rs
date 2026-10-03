@@ -277,6 +277,7 @@ fn confinement_still_comes_from_the_users_config() {
         protected_files: Vec::new(),
     };
     let ctx = BuildContext {
+        tuning: Default::default(),
         id: "confinement-0001".into(),
         wt_dir: PathBuf::from("/tmp/wt"),
         data_dir: PathBuf::from("/tmp/data/runs/confinement-0001"),
@@ -540,6 +541,7 @@ fn a_stale_profile_gets_the_attention_line() {
         protected_files: Vec::new(),
     };
     let ctx = BuildContext {
+        tuning: Default::default(),
         id: "stale-0001".into(),
         wt_dir: PathBuf::from("/tmp/wt"),
         data_dir: PathBuf::from("/tmp/data/runs/stale-0001"),

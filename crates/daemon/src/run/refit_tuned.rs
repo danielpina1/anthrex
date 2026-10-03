@@ -130,7 +130,7 @@ pub fn tuned(file: &TuningFile, cfg: &config::Orchestrator) -> Tuned {
 }
 
 /// Decision 11's report over `file` as it is (the caller refits and saves first);
-/// `applied`, `dismissed` and `moved_bad_file` are the caller's to fill.
+/// `applied`, `dismissed`, `moved_bad_file` and `parse_error` are the caller's to fill.
 pub fn report(
     lines: &[HistoryLine],
     file: &TuningFile,
@@ -195,6 +195,7 @@ pub fn report(
         classes,
         proposals: proposals(lines, file, cfg),
         moved_bad_file: None,
+        parse_error: None,
         applied: Vec::new(),
         dismissed: Vec::new(),
         orchestrator_list,

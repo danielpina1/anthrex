@@ -2,10 +2,12 @@
 //! hold. Split out of `model.rs` before milestone 9.1 to keep it under the 600-line
 //! rule; a pure move. Pure.
 
-use proto::{Budget, Runtime};
+use proto::{Budget, PathWeights, Runtime, SizeThresholds};
 use serde::{Deserialize, Serialize};
 
 use super::adapt;
+use super::tuning::{BudgetsConfigured, ClassRoutes};
+use crate::run::refit::{SizeClass, Tuned};
 
 /// `[orchestrator.claude] auth`, mirrored here with serde because `config::ClaudeAuth`
 /// has no serde derive (the config crate does not depend on serde) and [`RunLimits`] is
@@ -83,6 +85,43 @@ pub struct RunLimits {
     /// from a run recorded before milestone 9.1: the config defaults.
     #[serde(default)]
     pub testing: TestingLimits,
+    /// Milestone 9.5 decision 6: the hub refit budget, when a run uses one (else a hub
+    /// task takes `budget_m`). Each 9.5 field below is frozen at start
+    /// ([`RunLimits::freeze`]), absent from an older run, and not written while it holds
+    /// what an older run reads it as.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_hub: Option<Budget>,
+    /// Ruling RH-5: the classes config sets explicitly (their refit is never used).
+    #[serde(default, skip_serializing_if = "BudgetsConfigured::is_none")]
+    pub budget_configured: BudgetsConfigured,
+    /// Decision 9: each class's default strength and effort.
+    #[serde(default, skip_serializing_if = "ClassRoutes::is_default")]
+    pub class_routes: ClassRoutes,
+    /// Decision 7: the critical-path weights, when history gave them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_weights: Option<PathWeights>,
+    /// Decision 13: the line thresholds in the deciders' and planners' rubric.
+    #[serde(default, skip_serializing_if = "default_thresholds")]
+    pub thresholds: SizeThresholds,
+}
+
+fn default_thresholds(t: &SizeThresholds) -> bool {
+    *t == SizeThresholds::default()
+}
+
+impl RunLimits {
+    /// Decision 12: what a start learned, frozen. The budgets are decision 6's
+    /// effective ones (a plan's `[task.budget]` still wins, per task); `budget_l` stays
+    /// the config's.
+    pub fn freeze(&mut self, tuned: &Tuned, config: &config::Orchestrator) {
+        self.budget_s = tuned.effective(config, SizeClass::S);
+        self.budget_m = tuned.effective(config, SizeClass::M);
+        self.budget_hub = tuned.budget_hub;
+        self.budget_configured = tuned.configured.into();
+        self.class_routes = tuned.routes;
+        self.path_weights = tuned.weights.clone();
+        self.thresholds = tuned.thresholds;
+    }
 }
 
 /// Milestone 9.1 decision 3: the `[testing]` keys a run is frozen with at start

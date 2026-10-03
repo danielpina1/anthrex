@@ -11,6 +11,7 @@ use crate::run::engine::{
 };
 use crate::run::model::{OpId, Run, Task};
 use crate::run::plan::{BuildContext, Preflight, build_run, parse_plan};
+use crate::run::refit::Tuned;
 
 pub use crate::run::test_support::{plan_with, task_toml};
 
@@ -61,6 +62,16 @@ pub fn preflight() -> Preflight {
 }
 
 pub fn build(plan_toml: &str, config: &config::Orchestrator, yes: bool) -> Run {
+    build_tuned(plan_toml, config, yes, Tuned::default())
+}
+
+/// [`build`], with what a start froze from history (milestone 9.5 decision 12).
+pub fn build_tuned(
+    plan_toml: &str,
+    config: &config::Orchestrator,
+    yes: bool,
+    tuning: Tuned,
+) -> Run {
     let plan = parse_plan(plan_toml).unwrap_or_else(|e| panic!("fixture plan: {e}"));
     build_run(
         plan,
@@ -74,6 +85,7 @@ pub fn build(plan_toml: &str, config: &config::Orchestrator, yes: bool) -> Run {
             now: 1_000,
             yes,
             delivery: &config::Delivery::default(),
+            tuning,
         },
     )
     .unwrap_or_else(|e| panic!("fixture run: {e:?}"))
@@ -83,6 +95,8 @@ pub struct Fixture {
     pub state: EngineState,
     pub plan: String,
     pub config: config::Orchestrator,
+    /// What the fixture's build freezes (milestone 9.5 decision 12; [`Fixture::with_tuning`]).
+    pub tuning: Tuned,
     pub now: u64,
     /// Every effect every step returned, in order.
     pub log: Vec<crate::run::engine::Effect>,
@@ -101,12 +115,21 @@ impl Fixture {
         Self::deciding(plan_toml, config)
     }
 
+    /// [`Fixture::new`], its run built with `tuning` (milestone 9.5 decision 12).
+    pub fn with_tuning(plan_toml: &str, tuning: Tuned) -> Self {
+        Fixture {
+            tuning,
+            ..Self::new(plan_toml)
+        }
+    }
+
     /// `config` as it is, its deciders included (M8b.12's tests).
     pub fn deciding(plan_toml: &str, config: config::Orchestrator) -> Self {
         Fixture {
             state: EngineState::default(),
             plan: plan_toml.to_string(),
             config,
+            tuning: Tuned::default(),
             now: 2_000,
             log: Vec::new(),
             next_reply: 1,
@@ -143,7 +166,7 @@ impl Fixture {
         yes: bool,
         edit: impl FnOnce(&mut Run),
     ) -> Vec<crate::run::engine::Effect> {
-        let mut run = build(&self.plan, &self.config, yes);
+        let mut run = build_tuned(&self.plan, &self.config, yes, self.tuning.clone());
         edit(&mut run);
         let reply = self.reply();
         self.next(EventKind::Start {

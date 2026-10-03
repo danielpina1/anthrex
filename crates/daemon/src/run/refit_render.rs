@@ -7,15 +7,22 @@ use proto::{ClassTuning, RefitState, TuningReport};
 use super::refit::budget_text;
 use super::report::format_utc;
 
+/// Decision 10's line for a `tuning.toml` that did not parse (`error`, ruling T8-2) and
+/// was moved to `moved`: the first line of the block, and a run log line at a start.
+pub fn moved_bad_line(error: Option<&str>, moved: &std::path::Path) -> String {
+    let error = error.map(|e| format!(" ({e})")).unwrap_or_default();
+    format!(
+        "tuning: tuning.toml did not parse{error}; it was moved to {} and tuning starts again from history",
+        moved.display()
+    )
+}
+
 /// The block for `report`, every line ending in a newline.
 pub fn render(report: &TuningReport) -> String {
     let mut out = String::new();
     if let Some(moved) = &report.moved_bad_file {
-        // The parse error is not in `TuningReport` (implementation notes, M9.5.8).
-        out.push_str(&format!(
-            "tuning: tuning.toml did not parse; it was moved to {} and tuning starts again from history\n",
-            moved.display()
-        ));
+        out.push_str(&moved_bad_line(report.parse_error.as_deref(), moved));
+        out.push('\n');
     }
     let header = if report.refit_budgets {
         format!("refit after {} samples per class", report.min_samples)

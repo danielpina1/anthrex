@@ -19,7 +19,8 @@ pub use ci::{CI_SUMMARY_INPUT_BYTES, CiSummaryInput};
 use crate::headless::argv::CliCaps;
 use crate::manager::ManagerConfig;
 use proto::{
-    DeciderMode, DeciderSource, Route, Runtime, Scale, Size, TaskKind, TestMode, TokenUsage,
+    DeciderMode, DeciderSource, Route, Runtime, Scale, Size, SizeThresholds, TaskKind, TestMode,
+    TokenUsage,
 };
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
@@ -72,6 +73,13 @@ pub struct TriageInput {
     pub files_total: u32,
     /// `[orchestrator] planner_task_cap`: the plan scale's upper bound (M9.3).
     pub planner_task_cap: u32,
+    /// Milestone 9.5 decision 13: the repository's line thresholds (`tuning.toml`).
+    #[serde(default, skip_serializing_if = "default_thresholds")]
+    pub thresholds: SizeThresholds,
+}
+
+fn default_thresholds(t: &SizeThresholds) -> bool {
+    *t == SizeThresholds::default()
 }
 
 /// One task of a size check.
@@ -107,6 +115,9 @@ pub struct SizeCheckInput {
     pub evidence: Vec<Evidence>,
     pub modules: Vec<String>,
     pub hub: Vec<String>,
+    /// Milestone 9.5 decision 13: the run's frozen line thresholds.
+    #[serde(default, skip_serializing_if = "default_thresholds")]
+    pub thresholds: SizeThresholds,
 }
 
 /// A failed check to summarise.
@@ -287,3 +298,5 @@ mod tests_ci;
 mod tests_context;
 #[cfg(test)]
 mod tests_prompt;
+#[cfg(test)]
+mod tests_thresholds;

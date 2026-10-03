@@ -42,6 +42,7 @@ mod stage_ops;
 mod stop;
 mod tier;
 pub mod tier_step;
+pub mod tuning;
 mod usage;
 mod wake;
 
@@ -138,6 +139,7 @@ pub struct RunService {
     test_cache: TestCache,
     /// Milestone 9.0.6 decision 28: held by one Settings save at a time (`settings.rs`).
     settings_write: Arc<tokio::sync::Mutex<()>>,
+    tuning: tuning::TuningLocks,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -223,6 +225,7 @@ impl RunService {
             scheduler: TestScheduler::new(slots),
             test_cache: TestCache::new(test_cache_days),
             settings_write: Arc::default(),
+            tuning: Default::default(),
         })
     }
 

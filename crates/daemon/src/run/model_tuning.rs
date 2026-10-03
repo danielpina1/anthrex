@@ -106,6 +106,33 @@ impl Default for ClassRoutes {
     }
 }
 
+impl ClassRoutes {
+    /// M8a's defaults: a run that froze nothing writes no `class_routes`.
+    pub fn is_default(&self) -> bool {
+        *self == ClassRoutes::default()
+    }
+}
+
+/// Ruling RH-5's `config::ConfiguredBudgets` as a run freezes it (`RunLimits`; the
+/// config crate has no serde): which classes `[orchestrator.budget.<class>]` sets.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BudgetsConfigured {
+    pub s: bool,
+    pub m: bool,
+}
+
+impl BudgetsConfigured {
+    pub fn is_none(&self) -> bool {
+        !self.s && !self.m
+    }
+}
+
+impl From<config::ConfiguredBudgets> for BudgetsConfigured {
+    fn from(c: config::ConfiguredBudgets) -> Self {
+        BudgetsConfigured { s: c.s, m: c.m }
+    }
+}
+
 #[cfg(test)]
 #[path = "model_tuning_tests.rs"]
 mod tests;

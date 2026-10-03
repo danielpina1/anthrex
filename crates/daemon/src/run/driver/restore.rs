@@ -16,6 +16,7 @@ use crate::run::journal;
 use crate::run::model::{LogEntry, OpId, Run};
 use crate::run::reconcile;
 use crate::run::test_cache::CACHE_FILE;
+use crate::run::tuning_io::TUNING_FILE;
 use crate::worktree::pinned::PinAs;
 use proto::RunState;
 
@@ -50,7 +51,7 @@ pub(super) struct AcceptCleanUp {
 /// directory, swept before any restored op is spawned, so no op's write in flight can
 /// lose its temp file. Blocking; a failure is a warning.
 fn sweep_run_leftovers(data_dir: &std::path::Path) {
-    let files = [CACHE_FILE, super::graph::GRAPH_CACHE_FILE, "tuning.toml"];
+    let files = [CACHE_FILE, super::graph::GRAPH_CACHE_FILE, TUNING_FILE];
     let entries = match std::fs::read_dir(data_dir.join("repos")) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,

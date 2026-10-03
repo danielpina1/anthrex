@@ -81,6 +81,7 @@ fn size_check_answers_are_filtered_to_the_asked_ids() {
         ]}}),
     );
     let request = DeciderRequest::SizeCheck(SizeCheckInput {
+        thresholds: Default::default(),
         tasks: vec![SizeCheckTask {
             id: "t1".into(),
             title: "Add a retry".into(),

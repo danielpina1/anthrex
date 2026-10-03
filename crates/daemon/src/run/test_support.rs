@@ -104,6 +104,24 @@ pub fn build_full(
     config: &config::Orchestrator,
     pre: Preflight,
 ) -> Result<Run, Vec<PlanError>> {
+    build_full_tuned(text, config, pre, Default::default())
+}
+
+/// [`build_with`], with what a start froze from history (milestone 9.5 decision 12).
+pub fn build_tuned(
+    text: &str,
+    config: &config::Orchestrator,
+    tuning: super::refit::Tuned,
+) -> Result<Run, Vec<PlanError>> {
+    build_full_tuned(text, config, preflight(), tuning)
+}
+
+fn build_full_tuned(
+    text: &str,
+    config: &config::Orchestrator,
+    pre: Preflight,
+    tuning: super::refit::Tuned,
+) -> Result<Run, Vec<PlanError>> {
     let plan = parse_plan(text).unwrap_or_else(|e| panic!("fixture plan must parse: {e}"));
     build_run(
         plan,
@@ -117,6 +135,7 @@ pub fn build_full(
             now: 1_000,
             yes: false,
             delivery: &config::Delivery::default(),
+            tuning,
         },
     )
 }

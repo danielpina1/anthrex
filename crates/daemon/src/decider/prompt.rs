@@ -7,7 +7,7 @@ use super::{
     BlockedReasonInput, CheckSummaryInput, DeciderRequest, Evidence, SizeCheckInput, SizeCheckTask,
     TriageInput,
 };
-use proto::Size;
+use proto::{Size, SizeThresholds};
 
 /// The most a decider prompt may carry.
 pub const PROMPT_MAX_BYTES: usize = 128 * 1024;
@@ -22,17 +22,19 @@ const EVIDENCE_SUMMARY_CHARS: usize = 4000;
 const BRIEF_CHARS: usize = 2000;
 
 /// `{cap}` is `[orchestrator] planner_task_cap` (M9.3); with the default 12 the head is
-/// byte-identical to milestone 8b's.
+/// byte-identical to milestone 8b's. `{s_lines}` and `{m_lines}` are the input's line
+/// thresholds (milestone 9.5 decision 13; the defaults 20 and 100 change nothing), as
+/// in the size check's head.
 const TRIAGE_HEAD: &str = "[anthrex decider] triage v1
 You label a coding goal for an orchestration engine. Answer with one JSON object that matches the schema, and nothing else.
 kinds: every kind the goal needs. code changes behaviour; docs changes documentation, comments or configuration nothing executes; research investigates and reports without changing code; review reviews an existing branch or commit range.
 scale: single when one task of size S or M does the whole goal; plan when it needs 2 to {cap} tasks; large when it needs more, or two or more separate areas that each need several tasks.
-Size S: one file, no interface change, about 20 changed lines or fewer. Size M: 1 to 3 files inside one module, about 100 changed lines or fewer. Anything bigger is not single.
+Size S: one file, no interface change, about {s_lines} changed lines or fewer. Size M: 1 to 3 files inside one module, about {m_lines} changed lines or fewer. Anything bigger is not single.
 When scale is single, give task: a short title; a brief a worker can follow without asking anything; acceptance criteria; the paths it owns, as globs relative to the repository root and as narrow as possible; its size; whether it changes an interface other code uses; its test mode (tdd for any change in behaviour, check for behaviour-preserving work already covered by tests, none for docs) with a one-line reason unless tdd; and for tdd the name of the test to write. Otherwise task is null.";
 
 const SIZE_CHECK_HEAD: &str = "[anthrex decider] size_check v1
 You check the size of planned coding tasks against what scouts found in the repository. Answer with one JSON object that matches the schema, and nothing else, with one entry per task id below.
-Size S: one file, no interface change, a mechanical check exists, about 20 changed lines or fewer. Size M: 1 to 3 files inside one module, a clear spec, about 100 changed lines or fewer. Size L: files in more than one module plus an interface change, more than about 100 lines, an unclear spec, or a new dependency.
+Size S: one file, no interface change, a mechanical check exists, about {s_lines} changed lines or fewer. Size M: 1 to 3 files inside one module, a clear spec, about {m_lines} changed lines or fewer. Size L: files in more than one module plus an interface change, more than about {m_lines} lines, an unclear spec, or a new dependency.
 Judge each task from the evidence, not from its stated size. Give the size you believe and a one-sentence reason naming the evidence.";
 
 const CHECK_SUMMARY_HEAD: &str = "[anthrex decider] check_summary v1
@@ -40,6 +42,12 @@ A check command failed in a coding task's checkout. Summarise the failure for th
 
 const BLOCKED_REASON_HEAD: &str = "[anthrex decider] blocked_reason v1
 A coding agent stopped its task and gave the reason below without saying what kind of block it is. Classify it. question: it needs an answer or a decision about the task. mis_sized: the task is bigger than one task, or needs changes outside the paths it owns. environment: a tool, command, permission, dependency or setup is broken or missing. Answer with one JSON object that matches the schema, and nothing else.";
+
+/// `head` with decision 13's line thresholds in place of `{s_lines}` and `{m_lines}`.
+fn sized(head: &str, t: SizeThresholds) -> String {
+    head.replace("{s_lines}", &t.s_lines.to_string())
+        .replace("{m_lines}", &t.m_lines.to_string())
+}
 
 /// The prompt for `request`, at most [`PROMPT_MAX_BYTES`].
 pub fn render(request: &DeciderRequest) -> String {
@@ -232,6 +240,7 @@ fn triage_with(input: &TriageInput, cut: TriageCut) -> String {
         )
     };
     let head = TRIAGE_HEAD.replace("{cap}", &input.planner_task_cap.to_string());
+    let head = sized(&head, input.thresholds);
     join(&head, vec![goal, profile, report, tracked])
 }
 
@@ -360,7 +369,8 @@ fn size_check_with(input: &SizeCheckInput, cut: SizeCut) -> String {
         }
         format!("Scout evidence:\n{}", blocks.join("\n\n"))
     };
-    join(SIZE_CHECK_HEAD, vec![areas.join("\n"), tasks, evidence])
+    let head = sized(SIZE_CHECK_HEAD, input.thresholds);
+    join(&head, vec![areas.join("\n"), tasks, evidence])
 }
 
 // ---- check summary ------------------------------------------------------------------

@@ -161,6 +161,7 @@ fn run_appending(data: &Path, history: &Path) -> (Run, OpKind) {
     };
     let config = config::Orchestrator::default();
     let ctx = BuildContext {
+        tuning: Default::default(),
         id: "history-5a1e".into(),
         wt_dir: PathBuf::from("/tmp/nowhere-wt"),
         data_dir: data.join("runs").join("history-5a1e"),

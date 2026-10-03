@@ -251,6 +251,9 @@ pub struct TuningReport {
     pub dismissed: Vec<String>,
     /// Ruling RH-5: the first candidate of `[orchestrator.routes.orchestrator]`.
     pub orchestrator_list: Option<String>,
+    /// Ruling T8-2: why the moved bad file did not parse (decision 10's `(<error>)`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parse_error: Option<String>,
 }
 
 #[cfg(test)]

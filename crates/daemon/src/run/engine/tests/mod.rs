@@ -137,6 +137,7 @@ mod stage_infos;
 mod stages;
 mod tiers;
 mod tiers_untiered;
+mod tuning;
 mod turns;
 mod turns_failed_notes;
 mod turns_fixes;

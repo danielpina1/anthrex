@@ -107,6 +107,7 @@ pub(super) fn cross_check(run: &mut Run, ids: &[String], now: u64, fx: &mut Vec<
             evidence: Vec::new(),
             modules: run.profile.modules.clone(),
             hub: run.profile.hub.clone(),
+            thresholds: run.limits.thresholds,
         });
         let decider_id = deciders::queue(run, task_ids, request, now);
         for (i, _) in chunk {

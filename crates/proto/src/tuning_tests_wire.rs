@@ -91,6 +91,7 @@ fn a_tuning_report() -> TuningReport {
             },
         ],
         moved_bad_file: Some(PathBuf::from("/tmp/data/repos/p-1234/tuning.toml.bad-1")),
+        parse_error: Some("TOML parse error at line 1, column 1".into()),
         applied: vec!["route-m".into()],
         dismissed: vec!["threshold-s".into()],
         orchestrator_list: Some("codex/gpt-6.1-sol high".into()),
@@ -374,4 +375,25 @@ fn appended_variants_keep_their_indices() {
     );
     let names = tagged_names::<PlanEdit>("op");
     assert_eq!(names[names.len() - 1], "iterate", "{names:?}");
+}
+
+/// Ruling T8-2: a moved bad file's parse error rides `TuningReport.parse_error`, absent
+/// from what the daemon sent before (MessagePack without the key decodes as `None`),
+/// and not written while unset.
+#[test]
+fn a_tuning_report_without_its_parse_error_still_decodes() {
+    let mut value = serde_json::to_value(a_tuning_report()).unwrap();
+    assert_eq!(value["parse_error"], "TOML parse error at line 1, column 1");
+    value.as_object_mut().unwrap().remove("parse_error");
+    let report: TuningReport =
+        rmp_serde::from_slice(&p15_bytes(&value)).expect("a report without parse_error");
+    assert_eq!(report.parse_error, None);
+    assert_eq!(report.moved_bad_file, a_tuning_report().moved_bad_file);
+    let unset = TuningReport {
+        parse_error: None,
+        ..a_tuning_report()
+    };
+    let json = serde_json::to_value(&unset).unwrap();
+    assert!(json.get("parse_error").is_none(), "{json}");
+    both_ways(&unset);
 }

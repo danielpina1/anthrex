@@ -18,11 +18,12 @@ pub const CONTEXT_MAX_BYTES: usize = 96 * 1024;
 pub const SUMMARY_MAX: usize = 8000;
 pub const SUMMARY_TRIMMED: usize = 1000;
 
-/// Spec §7.1's size rubric, as the planners read it.
+/// Spec §7.1's size rubric, as the planners read it; the line counts are the run's
+/// frozen thresholds (milestone 9.5 decision 13; 20 and 100 by default).
 const SIZE_S: &str =
-    "one file, no interface change, a mechanical check exists, about 20 changed lines";
+    "one file, no interface change, a mechanical check exists, about {n} changed lines";
 const SIZE_M: &str =
-    "one to three files inside one module, a clear spec, a check exists, about 100 changed lines";
+    "one to three files inside one module, a clear spec, a check exists, about {n} changed lines";
 const SIZE_L: &str = "never executed: split it";
 
 /// Who calls `get_context`.
@@ -90,7 +91,11 @@ pub fn context(inputs: &ContextInputs<'_>) -> Value {
             "max_readers": limits.max_readers,
             "max_bounces": limits.max_bounces,
             "max_scouts": limits.orch.max_scouts,
-            "sizes": {"S": SIZE_S, "M": SIZE_M, "L": SIZE_L},
+            "sizes": {
+                "S": SIZE_S.replace("{n}", &limits.thresholds.s_lines.to_string()),
+                "M": SIZE_M.replace("{n}", &limits.thresholds.m_lines.to_string()),
+                "L": SIZE_L,
+            },
             // Milestone 9.2 decision 16: the frozen `[delivery] stage_target_lines`.
             "stage_target_lines": run.delivery.limits.stage_target_lines,
         },

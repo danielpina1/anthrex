@@ -288,11 +288,13 @@ impl RunService {
                     .and_then(|mut e| e.pop())
             });
             let listing = Git::new(&g, timeout).ok(&root, &[os("ls-files"), os("-z")])?;
-            Ok((report, triage::tracked_files(&listing)))
+            let thresholds = crate::run::tuning_io::thresholds(&repo_dir);
+            Ok((report, triage::tracked_files(&listing), thresholds))
         })
         .await;
         match read {
-            Ok((report, (files, total))) => {
+            Ok((report, (files, total), thresholds)) => {
+                input.thresholds = thresholds;
                 if let Some(report) = report {
                     input.report_summary = Some(report.summary);
                     input.report_files = report.files;
@@ -382,6 +384,8 @@ fn triage_input(
         files: Vec::new(),
         files_total: 0,
         planner_task_cap: orchestrator.agent.planner_task_cap,
+        // Milestone 9.5 decision 13: `triage` reads the repository's own.
+        thresholds: Default::default(),
     }
 }
 

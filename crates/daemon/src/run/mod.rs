@@ -70,6 +70,7 @@ pub mod stats;
 pub mod test_cache;
 pub mod tiers;
 pub mod triage;
+pub mod tuning_io;
 pub mod validate;
 mod validate_graph;
 mod validate_kinds;

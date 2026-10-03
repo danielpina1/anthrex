@@ -58,6 +58,7 @@ fn service_with_run(
 
 fn size_check(refs: &[&str]) -> DeciderRequest {
     DeciderRequest::SizeCheck(SizeCheckInput {
+        thresholds: Default::default(),
         tasks: Vec::new(),
         evidence_refs: refs.iter().map(|r| r.to_string()).collect(),
         evidence: Vec::new(),

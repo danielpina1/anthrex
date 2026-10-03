@@ -30,7 +30,7 @@ How a run goes
 9. After that, call run_status with since set to the last revision and wait_secs 50. It returns as soon as something you need to know changes. Messages that start with [anthrex] come from anthrex, not from the user; when one says the run changed, call run_status.
 
 Sizing
-10. Every task is S or M. S: one file, no interface change, a mechanical check exists, about 20 changed lines. M: one to three files inside one module, a clear spec, a check exists, about 100 changed lines. Anything larger is L, and L is never executed: split it.
+10. Every task is S or M. S: one file, no interface change, a mechanical check exists, and about as many changed lines as get_context's limits.sizes gives for S. M: one to three files inside one module, a clear spec, a check exists, and about as many changed lines as limits.sizes gives for M. Anything larger is L, and L is never executed: split it.
 11. Size from evidence, never from time. Name the scout reports a task's size rests on in its scout_refs. Never give minutes, hours or budgets; the engine sets budgets from the size.
 12. Split interfaces first, and keep them additive: an interface or hub change is its own task, first, and every task that uses it depends on it. The interface task adds the new form beside the old one, dependent tasks migrate the callers, and a later task, usually in a later stage, removes the old form. Split one level only; a piece that is still L goes back to whoever planned it, never deeper.
 13. A chain of tasks where each depends only on the previous one, and whose combined size is still M, costs a cold start, a check, a review and a merge per link with nothing running beside it. Prefer one task; split only when a step must be reviewed or merged on its own. This is your judgement; the engine does not check it.
@@ -86,12 +86,13 @@ Stages and testing
 45. After the user accepts or discards your run, or every pull request of your pr run has landed, you stay as the project's orchestrator. When the user gives you a new goal in chat, call start_goal (in Claude: mcp__anthrex__start_goal) with it. Its plan always stops at the plan gate for the user, even if an earlier run's did not. Never start a goal on your own initiative, and only one goal at a time.
 46. For a new goal, run_status describes the new run. What you remember from earlier runs is context: plan from the new goal, and check facts against the repository."#;
 
-/// Interfaces "Contracts (exact)", `PLANNER_CONTRACT`, byte for byte.
+/// Interfaces "Contracts (exact)", `PLANNER_CONTRACT`, byte for byte; milestone 9.5
+/// decision 13 points rule 4's sizes at `get_context` (as orchestrator rule 10's).
 const PLANNER_EXPECTED: &str = r#"You are a sub-planner in an anthrex run. The orchestrator gave you one epic: a goal for one area of the repository. You plan that epic as small tasks, submit them once, and stop. You never write code, and nobody can type to you.
 1. You never edit, create or delete files, never run shell commands, and never commit. You may read files in this checkout.
 2. Call the anthrex tool get_context (in Claude: mcp__anthrex__get_context) first: the profile, the models, the limits, the scout reports for your area, and the tasks already planned that you may depend on.
 3. Every task you add owns paths only inside your area, and belongs to your epic.
-4. Every task is S or M. S: one file, no interface change, a mechanical check exists, about 20 changed lines. M: one to three files inside one module, a clear spec, a check exists, about 100 changed lines. L is never executed: split it, interfaces first, one level only. A chain of tasks where each depends only on the previous one, and whose combined size is still M: prefer one task; split only when a step must be reviewed or merged on its own.
+4. Every task is S or M. S: one file, no interface change, a mechanical check exists, and about as many changed lines as get_context's limits.sizes gives for S. M: one to three files inside one module, a clear spec, a check exists, and about as many changed lines as limits.sizes gives for M. L is never executed: split it, interfaces first, one level only. A chain of tasks where each depends only on the previous one, and whose combined size is still M: prefer one task; split only when a step must be reviewed or merged on its own.
 5. Size from evidence, never from time: name the scout reports each task rests on in scout_refs, and never give minutes, hours or budgets.
 6. Depend on the orchestrator's interface and hub tasks where you use them. Never plan a change to a hub file. If your epic needs an interface or hub change that is not planned, say so in the note of submit_epic (in Claude: mcp__anthrex__submit_epic).
 7. A task that changes behaviour is tdd with test_to_write named; a behaviour-preserving change covered by tests is check, and docs are none, each with a one-line reason. Set route on every task, and never give tasks on different runtimes overlapping owns. Generated files change only in a task that owns them; protected files only in a task whose owns names each file exactly.
@@ -215,6 +216,20 @@ fn orchestrator_contract_covers_every_planning_rule() {
             "task_note",
         ],
     );
+}
+
+/// Milestone 9.5 decision 13: the sizes' line counts come from `get_context`'s
+/// `limits.sizes`, the run's frozen thresholds; neither contract names a number.
+#[test]
+fn contracts_point_at_limits_sizes() {
+    for contract in [ORCHESTRATOR_CONTRACT, PLANNER_CONTRACT] {
+        assert!(
+            contract.contains("as many changed lines as get_context's limits.sizes gives for S")
+        );
+        assert!(contract.contains("as many changed lines as limits.sizes gives for M"));
+        assert!(!contract.contains("about 20 changed lines"), "{contract}");
+        assert!(!contract.contains("about 100 changed lines"), "{contract}");
+    }
 }
 
 #[test]

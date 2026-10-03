@@ -304,6 +304,9 @@ impl RunService {
         let id = self.pick_id(&plan.goal, &refs)?;
         let wt_dir = repo_worktrees_dir(&self.ctx.worktrees_root, &pre.project);
         let now = unix_now();
+        // Milestone 9.5 decision 12 (ruling RH-8): every start kind tunes here, once.
+        let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);
+        let tuning = super::tuning::tune_for_start(&config, &self.tuning, &repo_dir, now).await;
         let ctx = BuildContext {
             id: id.clone(),
             wt_dir,
@@ -313,6 +316,7 @@ impl RunService {
             delivery: &self.ctx.delivery,
             now,
             yes,
+            tuning,
         };
         let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
         delivery.apply(&mut run);

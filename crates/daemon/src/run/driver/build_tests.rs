@@ -190,3 +190,156 @@ fn a_run_id_never_takes_a_chains_suffix() {
         Err("could not pick a free run id".to_string())
     );
 }
+
+/// Milestone 9.5 task 9: a start's tuning, through `build_delivered`, in a real
+/// temporary repository with the recorded history `refit.jsonl` in its data directory.
+/// The agent binaries stand in as installed and are never launched; delivery is local.
+mod tuning {
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    use super::super::Shape;
+    use crate::manager::{GitRoots, ManagerConfig, WindowManager};
+    use crate::run::driver::RunService;
+    use crate::run::driver::delivery::tests::git;
+    use crate::run::model::Run;
+    use crate::run::test_support::{PROFILE, plan_with, task_toml};
+
+    struct NoRoots;
+    impl GitRoots for NoRoots {
+        fn register(&self, _: PathBuf) {}
+        fn unregister(&self, _: &Path) {}
+    }
+
+    /// The start lines of a start that wrote `refit.jsonl`'s refit (decision 12).
+    const BUDGET_S: &str = "tuning: budget S 55 calls 18m from 34 samples";
+    const WEIGHTS: &str = "tuning: path weights S 550s, M 1650s (derived), hub 1650s (derived)";
+    const REFIT_S: &str = "tuning: budget S 40 calls 15m → 55 calls 18m from 34 samples";
+
+    /// A repository with one commit, a service over `data` whose Claude and Codex are
+    /// an executable that is never run, and the repository's data directory holding
+    /// `refit.jsonl` as its history.
+    fn rig(tmp: &Path) -> (PathBuf, PathBuf, Arc<RunService>) {
+        let work = tmp.join("work");
+        std::fs::create_dir_all(work.join("crates/a/src")).unwrap();
+        git(&work, &["init", "-q", "-b", "main"]);
+        std::fs::write(work.join("crates/a/src/lib.rs"), "// a\n").unwrap();
+        git(&work, &["add", "-A"]);
+        git(&work, &["commit", "-q", "-m", "base"]);
+        let data = tmp.join("data");
+        let mut config = ManagerConfig::for_tests(tmp.join("d.sock"), "/bin/sh".into());
+        config.claude_bin = "/usr/bin/false".into();
+        config.codex_bin = "/usr/bin/false".into();
+        config.cli_caps = crate::headless::argv::CLI_CAPS;
+        config.worktrees_root = data.join("worktrees");
+        let (manager, _events) = WindowManager::new(config);
+        let service = RunService::for_manager(&manager, data.clone(), Arc::new(NoRoots));
+        let project = work.canonicalize().unwrap();
+        let repo_dir = crate::profile::repo_dir(&data, &project);
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let history =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/history/refit.jsonl");
+        std::fs::copy(history, repo_dir.join("history.jsonl")).unwrap();
+        (work, repo_dir, service)
+    }
+
+    fn planned(triaged: bool) -> Shape {
+        Shape::Planned(Box::new(super::super::Planned {
+            triage: triaged.then(|| proto::TriageInfo {
+                kinds: vec![proto::TaskKind::Code],
+                scale: proto::Scale::Plan,
+                path: proto::RunPath::Plan,
+                reason: "several modules".into(),
+                source: proto::DeciderSource::Decider,
+                fallback_reason: None,
+                at: 1,
+            }),
+            usage: None,
+            yes: false,
+            choice: Some(proto::OrchestratorChoice {
+                runtime: proto::Runtime::Claude,
+                model: None,
+            }),
+        }))
+    }
+
+    /// A plan with one S task, or none (a planned run's plan, decision 26).
+    fn plan(task: bool) -> proto::Plan {
+        let tasks = [task_toml("t1", "S", "[\"crates/a/src/lib.rs\"]", "")];
+        let mut plan = crate::run::plan::parse_plan(&plan_with(PROFILE, &tasks)).unwrap();
+        if !task {
+            plan.tasks.clear();
+        }
+        plan
+    }
+
+    async fn start(service: &RunService, work: &Path, task: bool, shape: Shape) -> Run {
+        match service
+            .build_plan(plan(task), work.to_path_buf(), false, false, true, shape)
+            .await
+        {
+            Ok(run) => run,
+            Err(error) => panic!("{}", error.text()),
+        }
+    }
+
+    fn log(run: &Run) -> Vec<&str> {
+        run.log.iter().map(|e| e.text.as_str()).collect()
+    }
+
+    /// Decision 12 at a planned (goal) start: the run log opens with the refit-write
+    /// lines of the refit this start wrote, then the start lines, `budget S` first; the
+    /// run's limits hold what it froze.
+    #[tokio::test]
+    async fn a_planned_run_is_tuned_at_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, repo_dir, service) = rig(tmp.path());
+        let run = start(&service, &work, false, planned(true)).await;
+        assert_eq!(run.state, proto::RunState::Planning);
+        assert_eq!(run.repo_dir, repo_dir);
+        assert_eq!(log(&run)[..4], [REFIT_S, WEIGHTS, BUDGET_S, WEIGHTS]);
+        assert_eq!(
+            (run.limits.budget_s.tool_calls, run.limits.budget_s.minutes),
+            (55, 18)
+        );
+        assert_eq!(
+            run.limits.path_weights.as_ref().map(|w| w.s_secs),
+            Some(550)
+        );
+        assert!(repo_dir.join("tuning.toml").exists());
+    }
+
+    /// Ruling RH-8: a plan start, a fast goal start, a planned goal start and a
+    /// continued run (an untriaged planned start, as `chain_goal.rs` builds it) each
+    /// tune once, through `build_delivered`; only the first one's refit wrote the file.
+    #[tokio::test]
+    async fn every_start_kind_is_tuned_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, _repo_dir, service) = rig(tmp.path());
+        let kinds = [
+            ("plan", true, Shape::PlanFile),
+            ("fast goal", true, Shape::Fast),
+            ("planned goal", false, planned(true)),
+            ("continued run", false, planned(false)),
+        ];
+        for (n, (kind, task, shape)) in kinds.into_iter().enumerate() {
+            let run = start(&service, &work, task, shape).await;
+            let log = log(&run);
+            let count = |line: &str| log.iter().filter(|l| **l == line).count();
+            assert_eq!(count(BUDGET_S), 1, "{kind}: {log:?}");
+            assert_eq!(count(REFIT_S), usize::from(n == 0), "{kind}: {log:?}");
+            assert_eq!(
+                log.iter().position(|l| *l == BUDGET_S),
+                Some(if n == 0 { 2 } else { 0 })
+            );
+            if task {
+                let t1 = run.task("t1").unwrap();
+                assert_eq!(
+                    (t1.budget.tool_calls, t1.budget.minutes),
+                    (55, 18),
+                    "{kind}"
+                );
+            }
+        }
+    }
+}

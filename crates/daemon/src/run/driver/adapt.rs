@@ -480,6 +480,7 @@ mod tests {
             protected_files: Vec::new(),
         };
         let ctx = BuildContext {
+            tuning: Default::default(),
             id: "g-0001".into(),
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: PathBuf::from("/tmp/data/runs/g-0001"),

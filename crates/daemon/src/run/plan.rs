@@ -98,6 +98,9 @@ pub struct BuildContext<'a> {
     pub delivery: &'a config::Delivery,
     pub now: u64,
     pub yes: bool,
+    /// Milestone 9.5 decision 12: what the start learned from history, frozen into the
+    /// run's limits; `Tuned::default()` builds exactly what milestone 9.3 built.
+    pub tuning: super::refit::Tuned,
 }
 
 /// Parses a plan file. The error is the `toml` crate's, which names the line and the
@@ -197,6 +200,12 @@ pub fn run_limits(
         decider_slot_wait_secs: config.deciders.slot_wait_secs,
         orch: super::orch::OrchLimits::from_config(config),
         testing: testing.into(),
+        // Milestone 9.5: nothing learned until `RunLimits::freeze`.
+        budget_hub: None,
+        budget_configured: Default::default(),
+        class_routes: Default::default(),
+        path_weights: None,
+        thresholds: Default::default(),
     }
 }
 
@@ -344,13 +353,14 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
     profile.confined_localhost_ports = for_repo(&config.confined_localhost_ports, &pre.root)
         .cloned()
         .unwrap_or_default();
-    let limits = run_limits(
+    let mut limits = run_limits(
         config,
         ctx.testing,
         plan.max_writers,
         plan.max_readers,
         plan.max_bounces,
     );
+    limits.freeze(&ctx.tuning, config);
     let mut errors = Vec::new();
     check_plan(&plan, &profile, &mut errors);
 
@@ -442,7 +452,13 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         protected_files: pre.protected_files,
         rate_limits: Default::default(),
         outcome: None,
-        log: Vec::new(),
+        // Decision 12's tuning lines open the run's log.
+        log: (ctx.tuning.log.iter())
+            .map(|text| super::model::LogEntry {
+                at: ctx.now,
+                text: text.clone(),
+            })
+            .collect(),
         created_at: ctx.now,
         finish_edit: false,
         round_finish: false,

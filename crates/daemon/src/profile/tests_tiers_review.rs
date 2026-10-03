@@ -74,6 +74,7 @@ fn assert_confirmable(kept: &RepoProfile) {
         plan,
         preflight(),
         BuildContext {
+            tuning: Default::default(),
             id: RUN_ID.to_string(),
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: PathBuf::from(format!("/tmp/data/runs/{RUN_ID}")),

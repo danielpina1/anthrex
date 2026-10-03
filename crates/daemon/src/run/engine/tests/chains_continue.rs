@@ -45,6 +45,7 @@ fn continued(fx: &Fixture, id: &str, prompt: Option<&str>) -> Run {
         plan,
         preflight(),
         crate::run::plan::BuildContext {
+            tuning: Default::default(),
             id: id.to_string(),
             wt_dir: WT.into(),
             data_dir: format!("/tmp/data/runs/{id}").into(),

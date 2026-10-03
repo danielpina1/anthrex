@@ -49,6 +49,7 @@ pub(super) fn planned_on(yes: bool, choice: Option<Runtime>) -> Fixture {
         plan,
         preflight(),
         crate::run::plan::BuildContext {
+            tuning: Default::default(),
             id: RUN_ID.to_string(),
             wt_dir: WT.into(),
             data_dir: format!("/tmp/data/runs/{RUN_ID}").into(),

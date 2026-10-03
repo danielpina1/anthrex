@@ -53,6 +53,7 @@ pub fn run_at(data_dir: &Path, root: &Path, wt_dir: &Path, base_sha: &str) -> Ru
     };
     let config = config::Orchestrator::default();
     let ctx = BuildContext {
+        tuning: Default::default(),
         id: RUN_ID.into(),
         wt_dir: wt_dir.to_path_buf(),
         data_dir: data_dir.join("runs").join(RUN_ID),
