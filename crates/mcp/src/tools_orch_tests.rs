@@ -38,12 +38,11 @@ fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
 const GET_CONTEXT: &str = "Read the run's context: the repository profile, the models you can \
     route to, the limits, scout reports, epics and the plan so far.";
 
-/// Milestone 9.3 task M9.3.7: `edit_plan` names its `iterate` and when `edits` may be
-/// left out, since a plain schema cannot say "required unless".
+/// Milestone 9.3 task M9.3.7: `edit_plan` names its `iterate`, which comes alone (the
+/// schema cannot say so). `edits` may be left out in every call (fix round 1).
 const EDIT_PLAN: &str = "Apply plan edits as one batch. Set submit to open the plan gate. Add \
     a summary for the user when the run is complete. Set iterate, with no edits and nothing \
-    else, to start a round the user asked for. Without iterate, edits is required (it may be \
-    empty). Returns at once.";
+    else, to start a round the user asked for. Returns at once.";
 
 /// Milestone 9.3 decision 29.
 const START_GOAL: &str = "Start a new goal on this orchestrator when the user gives you one; \
@@ -363,8 +362,9 @@ fn orchestrator_tools_list_start_goal_last() {
 }
 
 /// Decisions 29 and 30, and task M9.3.4a's carried item: `edit_plan` takes `iterate`
-/// (1 to 16,384 characters), and `edits` is no longer required, because the daemon's
-/// `parse_call` accepts `{"iterate": …}` alone. `iterate` is not a `plan_edit` op.
+/// (1 to 16,384 characters), and `edits` is not required, because the daemon's
+/// `parse_call` reads a missing `edits` as an empty batch (task M9.3.7's fix round 1),
+/// so this plain schema is exact. `iterate` is not a `plan_edit` op.
 #[test]
 fn edit_plan_takes_iterate() {
     let tools = tools_for(AgentRole::Orchestrator);

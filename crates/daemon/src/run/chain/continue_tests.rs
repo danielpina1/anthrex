@@ -248,6 +248,9 @@ fn a_delivered_runs_idle_orchestrator_may_still_edit_its_plan() {
     for (args, allowed) in [
         (json!({"edits": [], "summary": "done"}), true),
         (json!({"iterate": "more"}), true),
+        // Task M9.3.7 fix round 1: a missing `edits` is an empty batch.
+        (json!({"summary": "done"}), true),
+        (json!({"submit": true}), false),
         (json!({}), false),
         (json!({"edits": [edit]}), false),
         (json!({"edits": [], "submit": true}), false),

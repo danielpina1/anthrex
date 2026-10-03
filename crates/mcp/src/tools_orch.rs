@@ -103,18 +103,16 @@ fn spawn_subplanner() -> Tool {
     )
 }
 
-/// Milestone 9.3 decisions 29 and 30: `iterate` starts a round, and `edits` may then be
-/// left out, as the daemon's `parse_call` allows. A plain schema (task M9.1.11: no
-/// `oneOf`, `anyOf` or `allOf`) cannot require `edits` only without `iterate`, so
-/// `required` is empty and the description says it; the daemon refuses an `edit_plan`
-/// with neither (`invalid arguments: edits: required`).
+/// Milestone 9.3 decisions 29 and 30: `iterate` starts a round. Nothing is required: the
+/// daemon's `parse_call` reads a missing `edits` as an empty batch (task M9.3.7's fix
+/// round 1), so this plain schema (task M9.1.11: no `oneOf`, `anyOf` or `allOf`) is
+/// exact. That `iterate` comes alone is the engine's check, so the description says it.
 fn edit_plan() -> Tool {
     Tool::new(
         EDIT_PLAN,
         "Apply plan edits as one batch. Set submit to open the plan gate. Add a summary for \
          the user when the run is complete. Set iterate, with no edits and nothing else, to \
-         start a round the user asked for. Without iterate, edits is required (it may be \
-         empty). Returns at once.",
+         start a round the user asked for. Returns at once.",
         closed(
             json!({
                 "edits": array(object(plan_edit()), None, 60),

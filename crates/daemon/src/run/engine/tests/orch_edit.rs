@@ -394,6 +394,43 @@ fn a_fast_orchestrator_is_reported_below_the_frontier() {
 
 /// `run` without what a rejected batch still changes (task M9.9, decision 40): its
 /// edit-log record, and the revisions that record moves.
+/// Milestone 9.3 task M9.3.7 fix round 1 (ruling: option (b)): an `edit_plan` with no
+/// `edits` is an empty batch. `{}` changes nothing but the edit log, as `{"edits": []}`
+/// does; `{"submit": true}` is refused on an empty plan and submits one that has
+/// tasks; `{}` on a complete run gets the complete run's refusal, and a summary alone
+/// is accepted there.
+#[test]
+fn an_edit_plan_without_edits_is_an_empty_batch() {
+    let mut fx = launched(false);
+    let before = fx.run().clone();
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({})));
+    assert!(ok, "{value}");
+    assert_eq!(value["accepted"], true);
+    assert_eq!(but_the_log(fx.run()), but_the_log(&before));
+    assert_eq!(fx.run().state, RunState::Planning);
+
+    let effects = edit_plan(&mut fx, json!({"submit": true}));
+    assert_eq!(
+        error(&effects),
+        "the plan has no tasks yet; add tasks before submitting"
+    );
+    edit_plan(&mut fx, json!({"edits": [add("t1", "auth")]}));
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"submit": true})));
+    assert!(ok, "{value}");
+    assert_eq!(value["awaiting_approval"], true);
+    assert_eq!(fx.run().state, RunState::AwaitingApproval);
+
+    fx.run_mut().state = RunState::Complete;
+    assert_eq!(
+        error(&edit_plan(&mut fx, json!({}))),
+        "edits are not accepted on a complete run; only a summary is"
+    );
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"summary": "All done."})));
+    assert!(ok, "{value}");
+    let o = fx.run().orch.orchestrator.as_ref().unwrap();
+    assert_eq!(o.summary.as_deref(), Some("All done."));
+}
+
 fn but_the_log(run: &crate::run::model::Run) -> crate::run::model::Run {
     let mut run = run.clone();
     run.plan_edits.clear();

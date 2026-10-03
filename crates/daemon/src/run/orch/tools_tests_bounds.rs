@@ -346,10 +346,27 @@ fn parse_call_bounds_iterate() {
         parse(json!({"iterate": ""})),
         Err("invalid arguments: iterate: must be 1 to 16384 characters".into())
     );
+    // Task M9.3.7 fix round 1 (ruling: option (b)): a missing `edits` is an empty
+    // batch with or without `iterate`, so the plain MCP schema is exact. Changed
+    // expectation: task M9.3.4a pinned `edits: required` here without `iterate`.
+    for (bare, full) in [
+        (json!({}), json!({"edits": []})),
+        (
+            json!({"submit": true}),
+            json!({"edits": [], "submit": true}),
+        ),
+        (
+            json!({"summary": "done"}),
+            json!({"edits": [], "summary": "done"}),
+        ),
+    ] {
+        assert_eq!(parse(bare.clone()), parse(full), "{bare}");
+        assert!(parse(bare).is_ok());
+    }
     assert_eq!(
-        parse(json!({"submit": true})),
-        Err("invalid arguments: edits: required".into()),
-        "edits stay required without iterate"
+        parse(json!({"edits": null})),
+        Err("invalid arguments: edits: must be an array".into()),
+        "a present edits is still checked"
     );
     let Ok(OrchCall::EditPlan { edits, .. }) =
         parse(json!({"edits": [{"op": "iterate", "goal": at}]}))

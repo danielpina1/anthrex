@@ -368,6 +368,8 @@ async fn a_delivered_runs_idle_orchestrator_may_only_summarise_or_iterate() {
     let first = rig.run_id.clone();
     let text = "run 3f9a has ended; start a new goal with start_goal when the user gives you one";
     for args in [
+        json!({}),
+        json!({"submit": true}),
         json!({"edits": [{"op": "cancel_task", "task_id": "t1"}]}),
         json!({"edits": [], "submit": true}),
         json!({"summary": "done", "edits": [{"op": "cancel_task", "task_id": "t1"}]}),
@@ -386,7 +388,8 @@ async fn a_delivered_runs_idle_orchestrator_may_only_summarise_or_iterate() {
     .await;
     assert_eq!((ok, answer), (false, json!({ "error": text })));
 
-    let summary = json!({"edits": [], "summary": "added login"});
+    // Task M9.3.7 fix round 1: the summary alone needs no `edits`.
+    let summary = json!({"summary": "added login"});
     let (ok, answer) = chained(&rig, (&first, CHAIN), "edit_plan", summary).await;
     assert!(ok, "{answer}");
     {

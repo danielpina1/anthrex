@@ -122,10 +122,12 @@ fn parse(tool: &str, args: &Value) -> Result<OrchCall, String> {
         "edit_plan" => {
             let map = object(args, &["edits", "submit", "summary", "iterate"])?;
             let iterate = text(map, "iterate", proto::GOAL_MAX_CHARS)?;
-            // Milestone 9.3 decision 30: an iterate needs no `edits` array.
+            // Milestone 9.3 decision 30: an iterate needs no `edits` array; and task
+            // M9.3.7's fix round 1 (option (b)): no call does, a missing `edits` is an
+            // empty batch, so the MCP schema can stay plain and exact.
             let edits = match map.get("edits") {
-                None if iterate.is_some() => Vec::new(),
-                _ => edits(map, 0)?,
+                None => Vec::new(),
+                Some(_) => edits(map, 0)?,
             };
             Ok(OrchCall::EditPlan {
                 edits,
