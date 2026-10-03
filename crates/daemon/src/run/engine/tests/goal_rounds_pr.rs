@@ -93,7 +93,7 @@ fn iterated(mut fx: Fixture) -> Result<String, String> {
 /// Round 2's `t2` in stage 2, planned, approved, its stages created and `t2` merged
 /// at `C2`, then stage 2's PR opened as #13 (tier 3 green, pushed). Returns the
 /// `OpenPr` and the effects of the step that recorded it.
-fn deliver_round_two(fx: &mut Fixture) -> (HostOp, Vec<Effect>) {
+pub(super) fn deliver_round_two(fx: &mut Fixture) -> (HostOp, Vec<Effect>) {
     plan_round(fx, json!([add_in("t2", "mail", 2, &[])]));
     create_stages(fx);
     deliver_after_plan(fx)

@@ -83,6 +83,7 @@ mod goal_rounds_pr;
 mod goal_rounds_pr_fixes;
 mod goal_rounds_stages;
 mod goal_rounds_start;
+mod goal_rounds_wave;
 mod history;
 mod history_tiers;
 mod history_tiers_c23;

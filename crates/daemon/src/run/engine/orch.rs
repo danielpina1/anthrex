@@ -449,8 +449,12 @@ fn write_summary(run: &mut Run, summary: String, now: u64, fx: &mut Vec<Effect>)
     // fix round 1, m2).
     let last = run.rounds.len().saturating_sub(1);
     let k = last.saturating_sub(usize::from(super::goal_rounds_end::open_round(run)));
+    // The final fix wave (review A, I4): a `pr` round's summary is asked for at its own
+    // end (decision 17); the completion's summary is the run's only.
+    let completed_pr = super::delivery::pr(run) && run.state == RunState::Complete;
+    let keep = |r: &crate::run::model::Round| completed_pr && r.n > 1 && r.summary.is_some();
     if let Some(o) = run.orch.orchestrator.as_mut() {
-        if let Some(round) = run.rounds.get_mut(k) {
+        if let Some(round) = run.rounds.get_mut(k).filter(|r| !keep(r)) {
             round.summary = Some(summary.clone());
         }
         o.summary = Some(summary);
