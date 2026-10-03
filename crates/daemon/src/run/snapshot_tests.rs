@@ -275,3 +275,43 @@ fn the_snapshot_carries_each_nodes_actions() {
         assert!(!task.actions.is_empty(), "{}", task.id);
     }
 }
+
+/// Milestone 9.5 decision 43 (FU-F23): a round waiting out a failed turn carries its
+/// error; a rate-limited one too, and its wait stays `rate_limited_until`'s.
+///
+/// `failed_until` is not asserted: decision 43's `at + rate_limit_retry_secs` reads
+/// `WaitingContinue.at` as the failure's time, but the engine stores the continue's
+/// own time there (`not_before(now, wait)`). Stopped for a ruling (Implementation
+/// notes, Task M9.5.6).
+#[test]
+fn a_waiting_failed_turn_is_in_the_snapshot() {
+    use crate::run::model::FailedTurn;
+    let failed = |rate_limit: bool| {
+        let mut run = run_of(1);
+        run.id = "failed-0001".into();
+        run.state = RunState::Running;
+        run.limits.rate_limit_retry_secs = 300;
+        let mut r = round(1, 3, TokenUsage::default());
+        r.failed_turn = FailedTurn::WaitingContinue {
+            at: 100,
+            rate_limit,
+        };
+        r.failed_error = Some("overloaded".into());
+        task_mut(&mut run, "t0").rounds = vec![r];
+        let snap = snapshot(&state_of(vec![run]), 50);
+        info(&snap, "failed-0001", "t0").rounds[0].clone()
+    };
+    let other = failed(false);
+    assert_eq!(other.failed_error.as_deref(), Some("overloaded"));
+    let limited = failed(true);
+    assert_eq!(limited.failed_error.as_deref(), Some("overloaded"));
+    assert_eq!(limited.failed_until, None, "a rate limit has its own wait");
+    // A round with no failed turn carries neither.
+    let mut run = run_of(1);
+    run.state = RunState::Running;
+    let id = run.id.clone();
+    task_mut(&mut run, "t0").rounds = vec![round(1, 3, TokenUsage::default())];
+    let snap = snapshot(&state_of(vec![run]), 50);
+    let plain = &info(&snap, &id, "t0").rounds[0];
+    assert_eq!((&plain.failed_error, plain.failed_until), (&None, None));
+}

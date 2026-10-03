@@ -137,6 +137,12 @@ mod pr_delivery;
 #[path = "../app_tests/pr_delivery_alerts.rs"]
 mod pr_delivery_alerts;
 
+#[path = "../app_tests/placeholder.rs"]
+mod placeholder;
+
+#[path = "../app_tests/alerts_tier3.rs"]
+mod alerts_tier3;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

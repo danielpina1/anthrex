@@ -277,7 +277,9 @@ fn round_info(r: &AgentRound, now: u64) -> AgentRoundInfo {
         rate_limited_until: r.rate_limited_until,
         sent_back_at: r.sent_back_at.clone(),
         lane: None,
-        failed_error: None,
+        // Milestone 9.5 decision 43: the failed turn's error. `failed_until` waits for
+        // a ruling (Implementation notes, Task M9.5.6).
+        failed_error: r.failed_error.clone(),
         failed_until: None,
     }
 }

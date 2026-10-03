@@ -39,3 +39,27 @@ fn a_single_stage_run_keeps_its_one_stage_on_integration() {
     assert_eq!(got[0].branch, run.run_branch());
     assert_eq!(got[0].head.as_deref(), Some(run.run_head.as_str()));
 }
+
+/// Milestone 9.5 decision 45 (FU-F21): a stage whose head failed tier 3's executor
+/// three times in a row is held (ruling C-18), and its `FullInfo` says so; two failures,
+/// or three on an older head, are not a hold.
+#[test]
+fn a_held_stage_says_so() {
+    use crate::run::model::InfraFailures;
+    let mut run = run_with(&[task_toml("t1", "S", "[\"crates/a/**\"]", "")]);
+    run.state = RunState::Running;
+    let head = run.stages[0].head.clone();
+    let held_with = |run: &mut crate::run::model::Run, commit: &str, count: u8| {
+        run.stages[0].full.infra = Some(InfraFailures {
+            commit: commit.to_string(),
+            count,
+            at: 100,
+            line: "executor lost".into(),
+        });
+        stage_infos(run)[0].full.held
+    };
+    assert!(!stage_infos(&run)[0].full.held);
+    assert!(held_with(&mut run, &head, 3));
+    assert!(!held_with(&mut run, &head, 2));
+    assert!(!held_with(&mut run, "0123", 3));
+}

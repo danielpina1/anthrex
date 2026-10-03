@@ -137,7 +137,8 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         | AlertKey::Accept(id)
         | AlertKey::Hold { run: id, .. }
         | AlertKey::Blocked { run: id, .. }
-        | AlertKey::Delivery { run: id, .. } => run_of(app, id),
+        | AlertKey::Delivery { run: id, .. }
+        | AlertKey::Stage { run: id, .. } => run_of(app, id),
     };
     let counted = |run: &RunInfo| {
         run.tasks
@@ -218,6 +219,15 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
             }
             push(&mut rows, "run", run_name(run, p));
         }
+        (AlertKey::Stage { stage, kind, .. }, Some(run)) => {
+            push(&mut rows, "phase", stage_phase(*kind).to_owned());
+            push(
+                &mut rows,
+                "stage",
+                format!("{stage} of {}", run.stages.len()),
+            );
+            push(&mut rows, "run", run_name(run, p));
+        }
         (AlertKey::Proposal(project), _) => {
             push(&mut rows, "phase", "proposal ready".to_owned());
             push(&mut rows, "project", project.to_string_lossy().into_owned());
@@ -228,6 +238,16 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
         push(&mut rows, "age", age_text(age));
     }
     rows
+}
+
+/// Milestone 9.5 decision 45: a stage alert's phase words.
+fn stage_phase(kind: crate::app::StageAlert) -> &'static str {
+    use crate::app::StageAlert::*;
+    match kind {
+        Held => "tier 3 held",
+        PropagateRed => "propagate red",
+        Red => "tier 3 red",
+    }
 }
 
 /// Ruling R-13: a delivery alert's phase word.

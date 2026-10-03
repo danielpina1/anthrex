@@ -3,7 +3,7 @@
 
 use super::run_format::{
     billable, clean, counts_text, effort_text, finding_text, format_duration, format_tokens,
-    kind_glyph, most_severe, rank, rows, session_text, strength_text,
+    kind_glyph, local_hhmm, most_severe, rank, rows, session_text, strength_text,
 };
 use super::{Field, Inspection, field};
 use crate::app::App;
@@ -20,14 +20,15 @@ pub(crate) fn round_inspection(
     let info = round.info;
     let live = round.ended_at.is_none();
     let limited = live && app.rate_limited(info);
-    let status = if limited {
-        "rate-limited"
-    } else if live {
-        round
+    let status = match (&info.failed_error, info.failed_until) {
+        // Milestone 9.5 decision 43: a failed turn waiting for its retry.
+        (Some(error), Some(until)) if live && !limited => failed_text(error, until, app),
+        _ if limited => "rate-limited".to_owned(),
+        _ if live => round
             .window
             .map_or("starting", |window| window.status.label())
-    } else {
-        "finished"
+            .to_owned(),
+        _ => "finished".to_owned(),
     };
     let duration = match round.ended_at {
         None => app.run_age(round.started_at),
@@ -63,6 +64,23 @@ pub(crate) fn round_inspection(
     );
     rows(glyph, name, right, fields)
 }
+
+/// Decision 43: `failed: <error> · retries <hh:mm>`, the error one line and cut to
+/// [`FAILED_ERROR_CHARS`] characters.
+fn failed_text(error: &str, until: u64, app: &App) -> String {
+    let mut shown =
+        crate::safe_text::one_line(&error.chars().take(FAILED_ERROR_CHARS).collect::<String>());
+    if error.chars().nth(FAILED_ERROR_CHARS).is_some() {
+        shown.push('…');
+    }
+    format!(
+        "failed: {shown} · retries {}",
+        local_hhmm(until, app.utc_offset_secs)
+    )
+}
+
+/// Decision 43: the most of a failed turn's error the round's status shows.
+const FAILED_ERROR_CHARS: usize = 80;
 
 fn worker_fields(
     task: &TaskInfo,

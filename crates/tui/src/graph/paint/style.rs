@@ -186,8 +186,9 @@ fn ended(app: &App) -> (&'static str, Role) {
 }
 
 /// A live agent node: the spinner while its window is `Working`, `⚑` while the window
-/// asks for attention, `⊘` in `Paused` while the round is rate-limited (waiting on
-/// someone else, never "needs you": no alert is raised for it), else `●` (decision 19).
+/// asks for attention, `⊘` in `Paused` while the round is rate-limited or waits out a
+/// failed turn (milestone 9.5 decision 43; waiting on someone else, never "needs you":
+/// no alert is raised for it), else `●` (decision 19).
 fn live(window: Option<&WindowInfo>, rate_limited: bool, app: &App) -> (&'static str, Role) {
     let (frame, ascii) = (app.spinner_frame, app.palette().ascii);
     match window.map(|window| window.status) {
@@ -225,7 +226,7 @@ fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'stati
             match review {
                 Some(review) if review.blocking => cross(app),
                 Some(_) => check(app),
-                None if is_live => live(round.window, app.rate_limited(info), app),
+                None if is_live => live(round.window, app.round_waits(info), app),
                 None => ended(app),
             }
         }
@@ -238,7 +239,7 @@ fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'stati
         | AgentRole::Racer
         | AgentRole::TestWriter => {
             if is_live {
-                live(round.window, app.rate_limited(info), app)
+                live(round.window, app.round_waits(info), app)
             } else if task.state == TaskState::Blocked && last_worker_round(task, round) {
                 cross(app)
             } else {

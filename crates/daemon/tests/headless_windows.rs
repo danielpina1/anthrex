@@ -185,6 +185,7 @@ async fn headless_windows_persist_and_restore_as_ended() {
     assert_eq!(window.status, Status::Exited);
     assert_eq!(window.session_id.as_deref(), Some(CLAUDE_SESSION));
     assert_eq!(window.run, Some(run_ref()));
+    assert!(!window.placeholder);
     assert_eq!(
         restored.headless_spec(info.id),
         Some(spec(Runtime::Claude, dir.path()))
@@ -202,6 +203,8 @@ async fn headless_windows_persist_and_restore_as_ended() {
     assert_eq!(window.kind, WindowKind::Headless);
     assert_eq!(window.status, Status::Exited);
     assert_eq!(window.run, None);
+    // Milestone 9.5 decision 44 (FU-F7): the client is told, so it may close it.
+    assert!(window.placeholder);
     let placeholder = fallback.headless_spec(info.id).expect("a placeholder spec");
     assert_eq!((placeholder.run_ref, placeholder.mcp), (None, None));
 }

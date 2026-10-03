@@ -342,9 +342,18 @@ impl WindowManager {
     /// `kill` and `remove` may reach.
     pub fn is_placeholder_headless(&self, id: u32) -> bool {
         let inner = crate::lock(&self.inner);
-        inner.entries.get(&id).is_some_and(|entry| {
-            matches!(&entry.process, super::entry::Process::Headless(window) if window.placeholder)
-        })
+        inner
+            .entries
+            .get(&id)
+            .is_some_and(super::entry::Entry::is_placeholder)
+    }
+}
+
+impl super::entry::Entry {
+    /// Decision 11a: a headless window restored as a placeholder; `WindowInfo` carries
+    /// it so a client may offer `kill` and `remove` (milestone 9.5 decision 44).
+    pub(super) fn is_placeholder(&self) -> bool {
+        matches!(&self.process, super::entry::Process::Headless(window) if window.placeholder)
     }
 }
 

@@ -102,7 +102,7 @@ pub use early::{HOLD_CAP, HOLD_LIMIT_SECS, HOLD_WINDOWS_CAP, HeldEvent, HeldWind
 pub use effect::Effect;
 pub use event::{AgentSignal, EventKind};
 pub(crate) use fixes::fix_text;
-pub(crate) use full::attention as full_attention;
+pub(crate) use full::{attention as full_attention, infra_held};
 pub use history::HISTORY_FILE;
 pub(crate) use integration::attention as integration_attention;
 pub use op_result::OpResult;

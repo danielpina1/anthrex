@@ -111,7 +111,8 @@ fn full(run: &Run, s: &StageRecord, head: &str) -> FullInfo {
             .unwrap_or_default(),
         bisect_fixes: s.full.bisect_fixes,
         note: s.full.note.clone(),
-        held: false,
+        // Milestone 9.5 decision 45: held after executor failures (ruling C-18).
+        held: super::engine::infra_held(s),
     }
 }
 

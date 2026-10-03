@@ -521,10 +521,11 @@ fn each_round_counts_its_own_limits() {
     let third = json!({"edits": [add_in("t5", "web")]});
     assert_eq!(rejected(&edit_plan(&mut fx, third)), too_many);
     assert!(answer(&scout(&mut fx, "c")).0);
-    // Fix round 1 (m5): round 2's own second scout is refused.
+    // Fix round 1 (m5): round 2's own second scout is refused (milestone 9.5 decision
+    // 46: with the round's text).
     assert_eq!(
         error(&scout(&mut fx, "d")),
-        format!("run {RUN_ID} already has 1 scouts, the most max_scouts allows")
+        format!("round 2 of run {RUN_ID} already has 1 scouts, the most max_scouts allows")
     );
     assert!(answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true}))).0);
     fx.approve();

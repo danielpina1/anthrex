@@ -166,7 +166,12 @@ pub(super) fn window_limit_reached(run: &mut Run, i: usize, now: u64) -> bool {
     if run.windows_created.saturating_sub(before) < run.limits.max_windows {
         return false;
     }
-    let text = format!("run window limit ({}) reached", run.limits.max_windows);
+    // Milestone 9.5 decision 46: a later round's text names the round.
+    let limit = run.limits.max_windows;
+    let text = match run.round() {
+        r if r > 1 => format!("round {r}'s window limit ({limit}) reached"),
+        _ => format!("run window limit ({limit}) reached"),
+    };
     block(run, i, BlockReason::Environment, text, now);
     true
 }

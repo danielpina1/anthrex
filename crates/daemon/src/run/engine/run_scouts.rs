@@ -43,10 +43,11 @@ pub(super) fn spawn(
     let before = run.current_round().map_or(0, |r| r.scouts_before as usize);
     let n = run.orch.run_scouts.len().saturating_sub(before);
     if n >= run.limits.orch.max_scouts as usize {
-        let text = format!(
-            "run {} already has {n} scouts, the most max_scouts allows",
-            run.id
-        );
+        // Milestone 9.5 decision 46: a later round's text names the round.
+        let text = match run.round() {
+            r if r > 1 => format!("round {r} of run {} already has {n} scouts", run.id),
+            _ => format!("run {} already has {n} scouts", run.id),
+        } + ", the most max_scouts allows";
         return refuse(fx, reply, text);
     }
     if let Some((glob, problem)) = area
