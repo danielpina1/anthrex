@@ -337,7 +337,7 @@ fn cancelling_a_round_ends_it_cancelled() {
 }
 
 /// `t2` waits at the head of the queue when its merge finds the run ref moved.
-fn halted_in_round_two() -> Fixture {
+pub(super) fn halted_in_round_two() -> Fixture {
     let mut fx = round_two_running();
     fx.run_mut()
         .pending_ops

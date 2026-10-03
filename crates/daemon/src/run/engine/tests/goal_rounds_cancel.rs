@@ -9,14 +9,16 @@ use serde_json::json;
 use super::delivery_sync::{fetched, fetching};
 use super::fixes::spec as fixes_spec;
 use super::fixture::*;
-use super::goal_rounds_end::{create_stages, settle_ops};
+use super::goal_rounds_end::{create_stages, halted_in_round_two, settle_ops};
 use super::goal_rounds_pr::{delivering, landed, sessions_end};
 use super::goal_rounds_stages::{add_in, plan_round};
 use super::goal_rounds_start::{iterate, reply, started};
 use super::kinds_cancel::cancel;
+use super::kinds_integration::{C1, C2};
 use super::merge::{commit, pending};
 use super::orch::{answer, edit_plan};
 use super::orch_restore::restart;
+use super::scenarios::halt_and_rebaseline;
 use crate::run::engine::OpResult;
 use crate::run::engine::fixes::add_fix;
 
@@ -144,4 +146,39 @@ fn a_round_cancel_spares_an_earlier_rounds_fix() {
         None,
         "the round waits for them"
     );
+}
+
+/// A-M7 (KG §2.4, "the user resumes it or cancels the round"): round 2 halted (its
+/// merge found the stage ref moved). The round's cancel answers with the round's text
+/// and leaves the run halted, the round `cancelled` and nothing new starting; the
+/// resume that rebaselines it then lets the queued merge land, the run completes and
+/// the round ends `cancelled`.
+#[test]
+fn a_halted_round_can_be_cancelled() {
+    let mut fx = halted_in_round_two();
+    assert_eq!(fx.run().state, RunState::Halted);
+    assert_eq!(
+        reply(&cancel(&mut fx)),
+        Ok("run 3f9a round 2 cancelled; it ends once its sessions have ended".into())
+    );
+    let run = fx.run();
+    assert_eq!(run.state, RunState::Halted);
+    assert_eq!(run.rounds[1].outcome, Some(RoundOutcome::Cancelled));
+    assert_eq!(run.rounds[1].ended_at, None);
+    assert!(run.finish_edit && !run.cancelled);
+    halt_and_rebaseline(&mut fx, vec![(1, C1.into()), (2, C1.into())]);
+    assert_eq!(fx.run().state, RunState::Running, "{:#?}", fx.run().log);
+    if let Some((op, _)) = pending(&fx, "MergeCandidate", Some("t2")).first().cloned() {
+        let merged = OpResult::Merged {
+            commit: C2.into(),
+            tier: None,
+        };
+        fx.done(op, merged);
+    }
+    settle(&mut fx);
+    let run = fx.run();
+    assert_eq!(run.state, RunState::Complete, "{:#?}", run.log);
+    assert_eq!(run.rounds[1].outcome, Some(RoundOutcome::Cancelled));
+    assert!(run.rounds[1].ended_at.is_some());
+    assert!(!run.finish_edit);
 }
