@@ -189,7 +189,10 @@ impl App {
                 request_id,
                 ..
             } => {
-                if self.form_waiting_on(request_id).is_some() {
+                // Milestone 9.3 decision 32: and the iterate dialog's.
+                if self.form_waiting_on(request_id).is_some()
+                    || self.iterate_waiting_on(request_id).is_some()
+                {
                     self.modal = None;
                 }
                 self.toast(capped(&message));
@@ -210,6 +213,10 @@ impl App {
                     form.submitting = false;
                     form.request_id = None;
                 } else if let Some(form) = self.goal_form_waiting_on(request_id) {
+                    form.error = Some(text);
+                    form.submitting = false;
+                    form.request_id = None;
+                } else if let Some(form) = self.iterate_waiting_on(request_id) {
                     form.error = Some(text);
                     form.submitting = false;
                     form.request_id = None;

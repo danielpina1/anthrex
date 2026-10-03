@@ -108,6 +108,20 @@ pub fn iterate_effect(n: u32) -> String {
     format!("plan round {n} of this run with its orchestrator")
 }
 
+/// Decision 12 (task 4b's carried item): the action menu's `reject` line while round
+/// `n` (2 or later) is open, its unfinished `tasks` counted (`1 task`, `2 tasks`).
+pub fn reject_effect(n: u32, tasks: &str) -> String {
+    format!("reject: drop round {n}'s {tasks}; the earlier rounds are unchanged")
+}
+
+/// Decision 16 (task 4b's carried item): the action menu's `cancel` line while round
+/// `n` (2 or later) is open: its live `workers` and unmerged `tasks`, counted.
+pub fn cancel_effect(n: u32, workers: &str, tasks: &str) -> String {
+    format!(
+        "cancel: stop {workers} and cancel round {n}'s {tasks}; the earlier rounds are unchanged"
+    )
+}
+
 /// Decision 12: the reply to a rejected round `n`.
 pub fn round_rejected(h4: &str, n: u32) -> String {
     format!("run {h4} round {n} rejected; the earlier rounds are unchanged")

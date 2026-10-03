@@ -42,13 +42,15 @@ pub struct PlanReview {
 pub(crate) const LEAVE_REVIEW_FIRST: &str = "leave the plan review first (esc)";
 
 /// The tasks `target` reviews, in plan order: at the gate every task not cancelled (a
-/// dropped task leaves the list), for a hold the hold's own tasks.
+/// dropped task leaves the list) of the current round (milestone 9.3 decision 32: a
+/// later round's gate shows that round's tasks only), for a hold the hold's own tasks.
 pub(crate) fn review_tasks<'a>(run: &'a RunInfo, target: &ReviewTarget) -> Vec<&'a TaskInfo> {
     match target {
         ReviewTarget::Gate => run
             .tasks
             .iter()
             .filter(|task| task.state != TaskState::Cancelled)
+            .filter(|task| run.round <= 1 || task.round == run.round)
             .collect(),
         ReviewTarget::Hold(id) => {
             let Some(hold) = run.holds.iter().find(|hold| hold.id == *id) else {
@@ -82,6 +84,9 @@ pub(crate) struct ReviewLayout {
     /// The frame's interior.
     pub inner: Rect,
     pub header: Rect,
+    /// Milestone 9.3 decision 32: a later round's gate's `round <n> · <request>` row
+    /// (`plan_summary::round_line`), above the summary row.
+    pub round: Option<String>,
     /// Ruling R-13: a `pr` run's gate's `delivered as …` row
     /// (`plan_summary::delivery_line`), under the summary row.
     pub delivery: Option<String>,
@@ -99,15 +104,16 @@ pub(crate) struct ReviewLayout {
 /// so every text starts in one column.
 pub(crate) const BAR: u16 = 1;
 
-/// Decision 26's stacking of a header (the summary row and `warnings`) and a list of
-/// `tasks` in `body`.
+/// Decision 26's stacking of a header (the round's row, the summary row, the delivery
+/// row and `warnings`) and a list of `tasks` in `body`.
 pub(crate) fn stacked(
     body: Rect,
-    delivery: Option<String>,
+    (round, delivery): (Option<String>, Option<String>),
     warnings: Vec<String>,
     tasks: usize,
 ) -> ReviewLayout {
-    let header_rows = u16::try_from(warnings.len() + usize::from(delivery.is_some()))
+    let extra = usize::from(round.is_some()) + usize::from(delivery.is_some());
+    let header_rows = u16::try_from(warnings.len() + extra)
         .unwrap_or(u16::MAX)
         .saturating_add(1);
     let inner = Rect {
@@ -135,6 +141,7 @@ pub(crate) fn stacked(
     ReviewLayout {
         inner,
         header,
+        round,
         delivery,
         warnings,
         rules: [rule(first), rule(second)],
@@ -454,16 +461,17 @@ impl App {
     pub(crate) fn review_layout(&self, body: Rect) -> ReviewLayout {
         let ascii = self.palette().ascii;
         let gate = (self.plan_review.as_ref()).is_some_and(|r| r.target == ReviewTarget::Gate);
-        let (delivery, warnings, tasks) =
+        let (rows, warnings, tasks) =
             self.reviewed()
-                .map_or((None, Vec::new(), 0), |(run, tasks)| {
-                    (
+                .map_or(((None, None), Vec::new(), 0), |(run, tasks)| {
+                    let rows = (
+                        super::plan_summary::round_line(run, gate, ascii),
                         super::plan_summary::delivery_line(run, gate, ascii),
-                        overlap_lines(&overlaps(run, &tasks), ascii),
-                        tasks.len(),
-                    )
+                    );
+                    let warnings = overlap_lines(&overlaps(run, &tasks), ascii);
+                    (rows, warnings, tasks.len())
                 });
-        stacked(body, delivery, warnings, tasks)
+        stacked(body, rows, warnings, tasks)
     }
 
     /// Decision 14's `p` in the run view on `run_id`: the gate while the run awaits

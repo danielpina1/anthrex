@@ -82,24 +82,47 @@ pub(crate) fn header_line(run: &RunInfo, tasks: &[&TaskInfo], width: u16, ascii:
     }
     let calls: u64 = tasks.iter().map(|t| u64::from(t.budget.tool_calls)).sum();
     parts.push(format!("~{calls} calls"));
-    if !run.critical_path.is_empty() {
-        let path: Vec<String> = run.critical_path.iter().map(|id| one_line(id)).collect();
+    // Milestone 9.3 decision 32: a later round names its own tasks' part of the path.
+    let path: Vec<String> = (run.critical_path.iter())
+        .filter(|id| run.round <= 1 || tasks.iter().any(|t| t.id == **id))
+        .map(|id| one_line(id))
+        .collect();
+    if !path.is_empty() {
         parts.push(format!("critical {}", path.join(" › ")));
     }
     let text = theme::fold(&one_line(&parts.join(" · ")), ascii);
     truncate_in(&text, usize::from(width), ascii)
 }
 
+/// Milestone 9.3 decision 32 (KG §2.4 step 5): a later round's gate leads its header
+/// with `round <n> · <request>`, the round's request as the snapshot carries it (its
+/// one-line head), cleaned and folded; `None` for round 1 or a hold's review.
+pub(crate) fn round_line(run: &RunInfo, gate: bool, ascii: bool) -> Option<String> {
+    if !gate || run.round <= 1 {
+        return None;
+    }
+    let n = run.round;
+    let text = match run.rounds.iter().find(|r| r.n == n) {
+        Some(round) => format!("round {n} · {}", one_line(round.goal_head.trim())),
+        None => format!("round {n}"),
+    };
+    Some(theme::fold(&text, ascii))
+}
+
 /// Ruling R-13: a `pr` run's gate says how it is delivered, `delivered as 3 pull
 /// requests to fake/app`, one per stage of the plan (`1 pull request` for an unstaged
-/// one); the repo is the host's text, cleaned and folded, and left out while unknown.
-/// `None` for a local run or a hold's review, whose tasks join PRs already planned.
+/// one; milestone 9.3 decision 32: of a later round's own tasks); the repo is the host's
+/// text, cleaned and folded, and left out while unknown. `None` for a local run or a
+/// hold's review, whose tasks join PRs already planned.
 pub(crate) fn delivery_line(run: &RunInfo, gate: bool, ascii: bool) -> Option<String> {
     let d = run
         .delivery
         .as_ref()
         .filter(|d| gate && d.mode == proto::DeliveryMode::Pr)?;
-    let mut stages: Vec<u16> = run.tasks.iter().map(|t| t.stage).collect();
+    let mut stages: Vec<u16> = (run.tasks.iter())
+        .filter(|t| run.round <= 1 || t.round == run.round)
+        .map(|t| t.stage)
+        .collect();
     stages.sort_unstable();
     stages.dedup();
     let prs = match stages.len().max(1) {

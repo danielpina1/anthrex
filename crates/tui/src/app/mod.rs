@@ -87,6 +87,7 @@ pub enum Modal {
     /// Milestone 9 decision 44: the goal form (`crate::run_goal`).
     StartGoal(crate::run_goal::GoalForm),
     Action(Box<actions::ActionFlow>), // Milestone 9.0.6 decision 12: the action menu.
+    Iterate(crate::run_iterate::IterateForm), // Milestone 9.3 decision 32 (`app/iterate.rs`).
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -561,6 +562,7 @@ mod daemon;
 mod goal;
 mod headless;
 pub(crate) mod help;
+mod iterate;
 mod lifecycle;
 mod link;
 mod modal_keys;

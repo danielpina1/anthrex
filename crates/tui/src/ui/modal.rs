@@ -163,6 +163,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }
         Modal::EditTask(form) => crate::ui::run_edit::render(frame, form, area, p),
         Modal::StartGoal(form) => crate::ui::run_goal::render(frame, form, area, p),
+        Modal::Iterate(form) => crate::ui::run_iterate::render(frame, form, area, p),
         Modal::Confirm { message, action } => render_confirm(frame, message, action, area, p),
         Modal::Action(flow) => crate::ui::action_menu::render(frame, app, flow, area),
         Modal::Help(view) => crate::ui::help::render(frame, app, view, area),

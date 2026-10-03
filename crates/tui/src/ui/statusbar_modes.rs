@@ -98,12 +98,15 @@ pub(super) fn filtering(app: &App) -> bool {
 
 /// The hints to list. A modal's `esc` alone wins (I1), then the pending prefix, the
 /// screens, the review, the Alerts view, tree navigation, then the default bar. `term`
-/// is the terminal the frame is drawn at: below 60×16 the goal dialog is the compact
-/// one, and the bar says to widen it (milestone 9.3 decision 7).
+/// is the terminal the frame is drawn at: below 60×16 the goal and iterate dialogs are
+/// the compact ones, and the bar says to widen it (milestone 9.3 decisions 7 and 32).
 pub(super) fn body(app: &App, term: ratatui::layout::Rect) -> Body {
     let (hints, git) = if let Some((_, esc)) = modal_bar(app) {
-        let compact = matches!(app.modal, Some(crate::app::Modal::StartGoal(_)))
-            && !crate::ui::goal_editor::is_large(term.width, term.height);
+        let editor = matches!(
+            app.modal,
+            Some(crate::app::Modal::StartGoal(_) | crate::app::Modal::Iterate(_))
+        );
+        let compact = editor && !crate::ui::goal_editor::is_large(term.width, term.height);
         return Body {
             lead: None,
             hints: vec![esc],

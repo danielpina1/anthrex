@@ -179,6 +179,20 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
                 assert!(form.discarding, "Esc on a text asks");
             }),
         ),
+        // Milestone 9.3 decision 32: the menu's `iterate` on a complete run, and a later
+        // round's plan review.
+        (
+            "iterate dialog over the run view",
+            with(run_view(iterable()), |a| {
+                tap(a, '.');
+                a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                assert!(matches!(a.modal, Some(Modal::Iterate(_))), "`iterate`");
+            }),
+        ),
+        (
+            "plan review of round 2",
+            with(run_view(round_two_gate()), |a| tap(a, 'p')),
+        ),
         (
             "action menu on its message form",
             with(crate::ui::alerts::fixture::three_runs(), |a| {
@@ -241,4 +255,50 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             }),
         ),
     ]
+}
+
+/// The gate fixture's run as a `pr` run, complete (every PR landed, so no `ready to
+/// accept` alert), every task merged, listing `iterate` first.
+fn iterable() -> App {
+    let (mut snap, windows) = gate_fixture();
+    let run = &mut snap.runs[0];
+    run.state = proto::RunState::Complete;
+    run.delivery = Some(crate::tree::pr_fixtures::delivery(false));
+    for task in &mut run.tasks {
+        task.state = proto::TaskState::Merged;
+    }
+    run.actions = vec![proto::ActionInfo {
+        kind: proto::ActionKind::Iterate,
+        label: "iterate".into(),
+        effect: "plan round 2 of this run with its orchestrator".into(),
+        needs: proto::ActionKind::Iterate.needs(),
+        destructive: false,
+        refused_why: None,
+    }];
+    app_of(windows, snap)
+}
+
+/// The gate fixture as round 2's gate: `t1` merged in round 1, `t2` the round's.
+fn round_two_gate() -> App {
+    let (mut snap, windows) = gate_fixture();
+    let run = &mut snap.runs[0];
+    let round = |n, goal_head: &str, outcome| proto::RoundInfo {
+        n,
+        goal_head: goal_head.into(),
+        origin: proto::RoundOrigin::User,
+        outcome,
+        summary_head: None,
+    };
+    run.round = 2;
+    run.rounds = vec![
+        round(
+            1,
+            "Add password reset",
+            Some(proto::RoundOutcome::Completed),
+        ),
+        round(2, "add a reset email", None),
+    ];
+    run.tasks[0].state = proto::TaskState::Merged;
+    run.tasks[1].round = 2;
+    app_of(windows, snap)
 }

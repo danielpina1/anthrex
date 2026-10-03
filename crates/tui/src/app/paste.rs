@@ -40,7 +40,12 @@ impl App {
     pub fn on_paste(&mut self, text: String) -> Vec<Effect> {
         // Decision 30: a paste goes to the open form's focused field, or is dropped for
         // any other modal — both checked before tree mode and the PTY (risk 10).
-        // Milestone 9.3: the goal's editor takes the paste as the dialog draws it.
+        // Milestone 9.3: the goal's editor takes the paste as the dialog draws it, and
+        // so does the iterate dialog's (decision 32).
+        if matches!(self.modal, Some(Modal::Iterate(_))) {
+            self.on_iterate_paste(&text);
+            return vec![];
+        }
         let goal_view = self.goal_view();
         if let Some(modal) = &mut self.modal {
             match modal {

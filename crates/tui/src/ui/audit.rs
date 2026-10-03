@@ -256,6 +256,11 @@ pub(crate) fn shows(name: &str) -> Shows {
             row("start a goal", Some("Esc cancel"), &["^S start"])
         }
         "goal form discard page" => row("discard this goal text?", None, &["y discard"]),
+        // Milestone 9.3 decision 32: the iterate dialog, and the round's plan review.
+        "iterate dialog over the run view" => {
+            row("iterate run 3f9a", Some("Esc cancel"), &["^S start"])
+        }
+        "plan review of round 2" => row("round 2", Some("esc back"), &["a approve"]),
         "action menu on its message form" => row("message", Some("esc back"), &["⏎ continue"]),
         "settings discard page" => row("discard changes", Some("esc back"), &["y discard"]),
         "profile confirm page" => row("confirm profile", Some("esc back"), &["y store"]),

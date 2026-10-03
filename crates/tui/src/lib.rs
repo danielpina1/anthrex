@@ -14,6 +14,7 @@ pub mod profile_view;
 pub mod reconnect;
 pub mod run_edit;
 pub mod run_goal;
+pub mod run_iterate;
 pub mod safe_text;
 pub mod settings;
 pub mod spawn;

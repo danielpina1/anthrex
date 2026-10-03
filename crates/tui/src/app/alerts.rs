@@ -5,7 +5,7 @@
 //! resolved. The box is drawn by `ui/alerts.rs`, the view by `ui/alerts_view.rs`, and
 //! the view's keys are `app/alerts_view.rs`'s (decision 11). Pure: no I/O.
 
-use super::{App, Effect};
+use super::{App, Effect, ReviewTarget};
 use crate::inspector::run_format::reason_text;
 use crate::safe_text::one_line;
 use crate::tree::{self, awaiting_holds, is_paused};
@@ -206,12 +206,12 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             push(1, key, text.to_owned(), None, None, age);
         }
         if run.state == RunState::AwaitingApproval {
-            let n = run
-                .tasks
-                .iter()
-                .filter(|task| task.state != TaskState::Cancelled)
-                .count();
-            let text = format!("plan awaits approval · {}", tasks_text(n));
+            // Milestone 9.3 decision 32: a later round's gate counts its own tasks.
+            let n = super::plan_review::review_tasks(run, &ReviewTarget::Gate).len();
+            let text = match run.round {
+                0 | 1 => format!("plan awaits approval · {}", tasks_text(n)),
+                round => format!("round {round} awaits approval · {}", tasks_text(n)),
+            };
             push(2, AlertKey::Gate(id.clone()), text, None, None, None);
         }
         for hold in awaiting_holds(run) {

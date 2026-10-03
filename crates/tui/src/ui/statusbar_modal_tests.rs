@@ -38,7 +38,8 @@ fn expected(name: &str) -> &'static str {
         | "edit form over the run view"
         | "goal form over the pane"
         | "goal form continuing"
-        | "goal form discard page" => " DIALOG  esc back",
+        | "goal form discard page"
+        | "iterate dialog over the run view" => " DIALOG  esc back",
         other => panic!("the Dialog-region fixture {other:?} has no expected bar"),
     }
 }

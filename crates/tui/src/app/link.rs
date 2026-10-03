@@ -160,6 +160,7 @@ impl App {
         // Whole-branch review M2: a submitting edit form's reply went with the link.
         self.edit_not_sent(None);
         self.goal_not_sent(None);
+        self.iterate_not_sent(None);
         self.forget_task_detail_in_flight();
         // Final review I2: a brief that was loading lost its reply with the link.
         self.form_brief_link_lost();
@@ -201,6 +202,7 @@ impl App {
         // Whole-branch review M2: nor does the new connection carry an old reply.
         self.edit_not_sent(None);
         self.goal_not_sent(None);
+        self.iterate_not_sent(None);
         let mut effects = self.replace_windows(windows);
         let already_resubscribed = effects.iter().any(|effect| {
             matches!(

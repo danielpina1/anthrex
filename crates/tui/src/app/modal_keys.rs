@@ -166,6 +166,10 @@ impl App {
                 self.on_goal_key(key)
             }
             Modal::Action(flow) => self.on_action_key(*flow, key),
+            Modal::Iterate(form) => {
+                self.modal = Some(Modal::Iterate(form));
+                self.on_iterate_key(key)
+            }
         }
     }
 

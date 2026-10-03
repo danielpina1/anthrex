@@ -7,7 +7,9 @@ use proto::{ActionKind, AgentRole, Effort, HoldState};
 use super::ActionNode;
 use crate::run::contract::sha7;
 use crate::run::engine::full;
+use crate::run::engine::goal_rounds_end::open_round;
 use crate::run::model::{Run, Task};
+use crate::run::orch::contract_rounds as rounds;
 use crate::run::roster::escalate;
 
 /// The menu's label for `kind`.
@@ -76,6 +78,12 @@ pub(super) fn effect(run: &Run, node: &ActionNode, kind: &ActionKind) -> String 
                 tasks(n)
             )
         }
+        // Milestone 9.3 decision 12 (task 4b's carried item): an open later round's
+        // reject drops that round only.
+        Reject if open_round(run) => {
+            let n = run.round();
+            rounds::reject_effect(n, &tasks(unfinished(run).filter(|t| t.round == n).count()))
+        }
         Reject => format!(
             "reject: discard run {id}: its worktrees and anthrex/{id}/* branches go; {base} is unchanged"
         ),
@@ -97,6 +105,13 @@ pub(super) fn effect(run: &Run, node: &ActionNode, kind: &ActionKind) -> String 
         Pause => "pause: no new task, gate or delivery starts; open turns finish".into(),
         Unpause => "resume: dispatch, gates and deliveries start again".into(),
         Resume => resume(run),
+        // Decision 16: an open later round's cancel cancels that round only.
+        Cancel if open_round(run) => {
+            let n = run.round();
+            let ours = || unfinished(run).filter(|t| t.round == n);
+            let workers = plural(ours().filter(|t| has_worker(t)).count(), "worker");
+            rounds::cancel_effect(n, &workers, &plural(ours().count(), "unmerged task"))
+        }
         Cancel => {
             let workers = run.tasks.iter().filter(|t| has_worker(t)).count();
             let tasks = plural(unfinished(run).count(), "unmerged task");
@@ -174,7 +189,7 @@ pub(super) fn effect(run: &Run, node: &ActionNode, kind: &ActionKind) -> String 
         Stats => "stats: this project's run history".into(),
         OpenConversation => format!("open conversation: {t}'s conversation, read-only"),
         // Milestone 9.3 decision 32: the round it would start.
-        Iterate => crate::run::orch::contract_rounds::iterate_effect(run.round() + 1),
+        Iterate => rounds::iterate_effect(run.round() + 1),
     }
 }
 
