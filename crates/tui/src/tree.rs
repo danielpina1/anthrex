@@ -3,12 +3,13 @@ mod names;
 mod rows;
 mod run_rows;
 mod runs;
+mod types;
 
 pub use forest::{SubagentNode, subagent_forest};
 pub use names::display_names;
 use proto::{
-    AgentRole, AgentRoundInfo, PlannerInfo, RunInfo, Runtime, ScoutInfo, StageInfo, Status,
-    SubagentInfo, TaskInfo, WindowInfo,
+    AgentRole, PlannerInfo, RunInfo, Runtime, ScoutInfo, StageInfo, Status, SubagentInfo, TaskInfo,
+    WindowInfo,
 };
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
 pub use run_rows::{RunFilter, display_rounds, round_label, run_rows};
@@ -18,6 +19,7 @@ pub use runs::{
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+pub use types::{DisplayRound, RuntimeCounts};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -56,13 +58,6 @@ pub enum NodeKey {
         session: u32,
         round: u32,
     },
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RuntimeCounts {
-    pub claude: usize,
-    pub codex: usize,
-    pub shell: usize,
 }
 
 /// A plain window of a project. A project's shown runs are held apart, in
@@ -121,18 +116,6 @@ pub enum RowKind<'a> {
         task: &'a TaskInfo,
         round: DisplayRound<'a>,
     },
-}
-
-/// One agent-round node of the run view (milestone 8c decision 14).
-#[derive(Debug, Clone, PartialEq)]
-pub struct DisplayRound<'a> {
-    pub info: &'a AgentRoundInfo,
-    pub number: u32,
-    pub started_at: u64,
-    pub ended_at: Option<u64>,
-    /// The session's last display round: its counters and sub-agents hang here.
-    pub last: bool,
-    pub window: Option<&'a WindowInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
