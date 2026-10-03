@@ -147,7 +147,8 @@ pub fn newest<'a>(
 }
 
 /// Decision 19, at `EventKind::Restore`: one chain per `Run.chain`, its runs oldest
-/// first. A chain whose last run failed is dropped; one whose last run is finished
+/// first. A chain whose last run failed, or which the live table had dropped
+/// (`Run.chain_left`), is left out; one whose last run is finished
 /// (accepted, discarded, or delivered, D17) is idle and ended (its window died with the daemon, KG §3.6), the
 /// project's newest only; any other is active.
 pub fn rebuild(runs: &BTreeMap<String, Run>) -> BTreeMap<String, Chain> {
@@ -170,6 +171,8 @@ pub fn rebuild(runs: &BTreeMap<String, Run>) -> BTreeMap<String, Chain> {
         chain.runs = list.iter().map(|r| r.id.clone()).collect();
         match last.state {
             RunState::Failed => continue,
+            // The final fix wave (review A, M1): the live table had dropped it.
+            _ if finished(last) && last.chain_left => continue,
             _ if finished(last) => idle.push((ended_at(last), chain.id.clone())),
             _ => {}
         }

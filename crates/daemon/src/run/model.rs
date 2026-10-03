@@ -358,6 +358,12 @@ pub struct Run {
     /// orchestrator's current run since; this run iterates no more (decision 9).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continued_by: Option<String>,
+    /// Milestone 9.3's final fix wave (review A, M1): the run's chain left the table
+    /// while this run was its current one (the project's older idle chain, dropped when
+    /// a newer one went idle), so a restart's `chain::rebuild` leaves it out too.
+    /// Cleared when the chain comes back (an iterate, D17).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub chain_left: bool,
 }
 
 impl Run {

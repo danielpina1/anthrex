@@ -182,7 +182,12 @@ pub(super) fn assign(run: &mut Run) {
 /// returns active with every run that carries it, in `rebuild`'s order, that run last
 /// and current (fix round 4: an adopted window's MCP target names the chain's first
 /// run); each chain follows its current run.
+///
+/// The final fix wave (review A, M1): a chain dropped as the project's older idle one
+/// marks its current run `chain_left`, so a restart leaves it out too; the mark goes
+/// when the chain comes back.
 pub(super) fn pass(state: &mut EngineState) {
+    let mut back = Vec::new();
     for run in state.runs.values() {
         let Some(id) = run.chain.as_deref() else {
             continue;
@@ -193,7 +198,13 @@ pub(super) fn pass(state: &mut EngineState) {
             && let Some(mut chain) = Chain::new(id.to_string(), run)
         {
             chain.runs = members(&state.runs, id, &run.id);
+            back.extend(chain.runs.clone());
             state.chains.insert(id.to_string(), chain);
+        }
+    }
+    for id in back {
+        if let Some(run) = state.runs.get_mut(&id) {
+            run.chain_left = false;
         }
     }
     let mut idle = Vec::new();
@@ -221,7 +232,17 @@ pub(super) fn pass(state: &mut EngineState) {
         state.chains.remove(&id);
     }
     for id in idle {
+        let before: Vec<(String, String)> = (state.chains.values())
+            .map(|c| (c.id.clone(), c.current().to_string()))
+            .collect();
         make_idle(&mut state.chains, &id);
+        for (chain, current) in before {
+            if !state.chains.contains_key(&chain)
+                && let Some(run) = state.runs.get_mut(&current)
+            {
+                run.chain_left = true;
+            }
+        }
     }
 }
 

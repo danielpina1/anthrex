@@ -14,6 +14,7 @@ mod chains;
 mod chains_continue;
 mod chains_delivered;
 mod chains_delivered_table;
+mod chains_wave;
 mod control;
 mod control_clock;
 mod control_clock_props;
