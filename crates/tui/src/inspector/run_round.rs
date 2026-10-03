@@ -20,9 +20,10 @@ pub(crate) fn round_inspection(
     let info = round.info;
     let live = round.ended_at.is_none();
     let limited = live && app.rate_limited(info);
-    let status = match (&info.failed_error, info.failed_until) {
-        // Milestone 9.5 decision 43: a failed turn waiting for its retry.
-        (Some(error), Some(until)) if live && !limited => failed_text(error, until, app),
+    let status = match info.failed_until {
+        // Milestone 9.5 decision 43: a failed turn waiting for its retry (the glyph's
+        // `App::round_waits` predicate).
+        Some(until) if live && !limited => failed_text(info.failed_error.as_deref(), until, app),
         _ if limited => "rate-limited".to_owned(),
         _ if live => round
             .window
@@ -65,22 +66,29 @@ pub(crate) fn round_inspection(
     rows(glyph, name, right, fields)
 }
 
-/// Decision 43: `failed: <error> · retries <hh:mm>`, the error one line and cut to
-/// [`FAILED_ERROR_CHARS`] characters.
-fn failed_text(error: &str, until: u64, app: &App) -> String {
-    let mut shown =
-        crate::safe_text::one_line(&error.chars().take(FAILED_ERROR_CHARS).collect::<String>());
-    if error.chars().nth(FAILED_ERROR_CHARS).is_some() {
-        shown.push('…');
-    }
-    format!(
-        "failed: {shown} · retries {}",
-        local_hhmm(until, app.utc_offset_secs)
-    )
-}
-
 /// Decision 43: the most of a failed turn's error the round's status shows.
 const FAILED_ERROR_CHARS: usize = 80;
+
+/// Decision 43: `failed: <error> · retries <hh:mm>`, the error one line and cut to
+/// [`FAILED_ERROR_CHARS`] characters; `failed` alone without an error, and no retry
+/// time once it has passed (a paused run's round keeps its failed turn).
+fn failed_text(error: Option<&str>, until: u64, app: &App) -> String {
+    let mut text = "failed".to_owned();
+    if let Some(error) = error {
+        let head: String = error.chars().take(FAILED_ERROR_CHARS).collect();
+        text.push_str(&format!(": {}", crate::safe_text::one_line(&head)));
+        if error.chars().nth(FAILED_ERROR_CHARS).is_some() {
+            text.push('…');
+        }
+    }
+    if until > app.run_now() {
+        text.push_str(&format!(
+            " · retries {}",
+            local_hhmm(until, app.utc_offset_secs)
+        ));
+    }
+    text
+}
 
 fn worker_fields(
     task: &TaskInfo,

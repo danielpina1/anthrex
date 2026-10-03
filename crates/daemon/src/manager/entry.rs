@@ -178,7 +178,7 @@ impl Entry {
                 None => self.headless().and_then(|spec| spec.run_ref.clone()),
             },
             signals_seen: self.state.signals_seen,
-            placeholder: self.is_placeholder(),
+            placeholder: self.is_placeholder(), // defined in manager/role_window.rs
         }
     }
 

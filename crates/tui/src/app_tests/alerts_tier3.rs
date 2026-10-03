@@ -84,3 +84,51 @@ fn tier_3_states_raise_alerts() {
         ]
     );
 }
+
+/// Review minor 2: a held stage's alert opens its run's menu with `Resume`
+/// preselected (`anthrex run resume` retries it); a red one opens its stage's menu with
+/// no preselection. The detail reads the phase, the stage of the run's stages and the
+/// run.
+#[test]
+fn stage_alerts_open_their_node_and_name_their_stage() {
+    use crate::actions_request::ActionTarget;
+    use crate::app::alerts_view::{alert_node, preselected};
+    use proto::ActionKind;
+    let app = app_with_runs(vec![], snapshot(1, 100, runs(false)));
+    let all = alerts(&app);
+    let node = |i: usize| alert_node(&all[i].key);
+    assert_eq!(node(1), Some(("h-held".into(), ActionTarget::Run)));
+    assert_eq!(node(2), Some(("r-reds".into(), ActionTarget::Stage(1))));
+    assert_eq!(node(3), Some(("r-reds".into(), ActionTarget::Stage(2))));
+    assert_eq!(preselected(&app, &all[1].key), Some(ActionKind::Resume));
+    for alert in &all[2..] {
+        assert_eq!(preselected(&app, &alert.key), None, "{:?}", alert.key);
+    }
+    let rows = |i: usize| -> Vec<String> {
+        crate::ui::alerts_view::detail_lines(&app, &all[i], 80)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|text| {
+                ["phase ", "stage ", "run "]
+                    .iter()
+                    .any(|l| text.starts_with(l))
+            })
+            .collect()
+    };
+    assert_eq!(
+        rows(1),
+        [
+            "phase tier 3 held",
+            "stage 1 of 1",
+            "run Add password reset · held"
+        ]
+    );
+    assert_eq!(rows(2)[..2], ["phase propagate red", "stage 1 of 3"]);
+    assert_eq!(rows(4)[..2], ["phase tier 3 red", "stage 3 of 3"]);
+}

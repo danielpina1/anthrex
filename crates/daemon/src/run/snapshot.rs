@@ -14,7 +14,7 @@ use super::engine::actions::{ActionNode, available};
 use super::engine::ladder::{round_spend, total_spend};
 use super::engine::schedule::{critical_path, readers_busy, waves, writers_busy};
 use super::messages::summary;
-use super::model::{AgentRound, Run, Task};
+use super::model::{AgentRound, FailedTurn, Run, Task};
 pub use super::snapshot_orch::PAUSED_ATTENTION_SECS;
 pub use super::snapshot_orch::SNAPSHOT_NOTE_MAX;
 use super::snapshot_orch::{message_line, noted_lines, paused_line, plan_text_shown, task_notes};
@@ -277,10 +277,16 @@ fn round_info(r: &AgentRound, now: u64) -> AgentRoundInfo {
         rate_limited_until: r.rate_limited_until,
         sent_back_at: r.sent_back_at.clone(),
         lane: None,
-        // Milestone 9.5 decision 43: the failed turn's error. `failed_until` waits for
-        // a ruling (Implementation notes, Task M9.5.6).
+        // Milestone 9.5 decision 43: the failed turn's error, and its retry (ruling
+        // T6-1: `at` is already the continue's time).
         failed_error: r.failed_error.clone(),
-        failed_until: None,
+        failed_until: match r.failed_turn {
+            FailedTurn::WaitingContinue {
+                at,
+                rate_limit: false,
+            } => Some(at),
+            _ => None,
+        },
     }
 }
 

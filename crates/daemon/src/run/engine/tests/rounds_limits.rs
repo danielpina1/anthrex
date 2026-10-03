@@ -47,9 +47,13 @@ fn limit_texts_name_the_round() {
         error(&scout(&mut fx, "d")),
         format!("round 2 of run {RUN_ID} already has 1 scouts, the most max_scouts allows")
     );
+}
 
-    // Round 2's window limit: one window from the round's start, so one of its two
-    // tasks is blocked with the round's text.
+/// Round 2's window limit: one window from the round's start, so one of its two tasks
+/// is blocked with the round's text (round 1's is pinned by `dispatch_slots.rs` and
+/// `goal_rounds_end.rs`).
+#[test]
+fn a_later_rounds_window_limit_names_the_round() {
     let mut fx = complete();
     fx.run_mut().limits.max_windows = 1;
     assert_eq!(reply(&iterate(&mut fx, "more")), started(2));
