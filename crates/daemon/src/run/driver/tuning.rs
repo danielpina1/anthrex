@@ -78,8 +78,8 @@ fn none_because(why: impl std::fmt::Display) -> Option<String> {
 /// file loaded (a bad one moved aside), refitted from `history.jsonl` and written when
 /// the refit changed it, then frozen. `Tuned.log` is the run log's tuning lines in
 /// order: the moved file's line, the refit-write lines (also to the daemon log), then
-/// the start lines, each text once. A run with history off (an empty `repo_dir`) reads and writes no
-/// tuning. `config` is the start's one read of the settings.
+/// the start lines, each text once. A run with history off (an empty `repo_dir`)
+/// reads and writes no tuning. `config` is the start's one read of the settings.
 pub async fn tune_for_start(
     config: &config::Orchestrator,
     locks: &TuningLocks,

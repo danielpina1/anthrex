@@ -318,7 +318,7 @@ impl RunService {
 }
 
 /// How long the goal's start waits for pre-run triage's history line (review M-6).
-const TRIAGE_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(in crate::run::driver) const TRIAGE_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Pre-run triage records made by this daemon: each record id's `<n>`.
 static TRIAGE_SEQ: AtomicU64 = AtomicU64::new(1);

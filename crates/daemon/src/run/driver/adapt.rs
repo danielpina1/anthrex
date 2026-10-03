@@ -45,6 +45,8 @@ use crate::scout::service::ScoutService;
 // M8b.14: `run start --goal` (decision 22).
 #[path = "adapt_goal.rs"]
 mod goal;
+#[cfg(test)]
+pub(super) use goal::TRIAGE_WRITE_TIMEOUT;
 pub(super) use goal::{BuildError, GoalReady, fast_barrier};
 
 // M8b.16: `MeasureDiff` and `AppendHistory` (decisions 32, 33); M8b.17: `run stats`

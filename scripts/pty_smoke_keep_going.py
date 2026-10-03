@@ -43,8 +43,9 @@ from pty_smoke_run import (
 
 # The bounds, restated across the language boundary from `crates/cli/tests/support`
 # (`docs/timing-budgets.md`, "Recorded, from M9.3.12"): `REQUEST_WAIT` (75 s since
-# M9.5's ruling T9-4, one request with a run start's tuning), `GIT_TIMEOUT_SECS` (5 s, set below as the harness sets it) and M9.3.11's
-# `CONTINUE_GIT_CALLS` (24, a continued start's git calls).
+# M9.5's ruling T9-4, one request with a run start's tuning), `GIT_TIMEOUT_SECS` (5 s,
+# set below as the harness sets it) and M9.3.11's `CONTINUE_GIT_CALLS` (24, a
+# continued start's git calls).
 REQUEST_WAIT, GIT_TIMEOUT_SECS, CONTINUE_GIT_CALLS = 75.0, 5.0, 24
 # `run start --goal`'s legal worst case (stage 11d's `GOAL_CMD_TIMEOUT`,
 # `scripts/pty_smoke_adapt.py`, imported so the two cannot drift): the first goal's start
