@@ -5,7 +5,7 @@
 
 use super::fixture::*;
 use super::orch::launched;
-use super::orch::{ORCH, add, first_turn_woken, launched_waiting, mcp_ready, planned};
+use super::orch::{ORCH, add, first_turn_woken, launched_waiting, mcp_ready, planned, planned_on};
 use super::orch_restore::{restart, resume};
 use crate::run::engine::first_turn::{FIRST_TURN_WAIT_SECS, MCP_READY_GRACE_SECS};
 use crate::run::engine::{Effect, EventKind, OpKind, OpResult, OrchEvent};
@@ -297,4 +297,67 @@ fn a_notice_during_the_restart_is_the_old_sessions() {
     assert!(!fx.run().orch.mcp_ready);
     let effects = mcp_ready(&mut fx, ORCH);
     assert_eq!(wakes(&effects), vec![(first, true)]);
+}
+
+/// Ruling T5a-2: the first-turn gate is Claude's only. A Codex orchestrator keeps 9.3's
+/// launch: its first prompt on the command line, nothing pending, nothing pasted, and a
+/// restart (fresh or resumed) as in 9.3.
+#[test]
+fn a_codex_orchestrator_gets_its_first_prompt_on_the_command_line() {
+    let mut fx = planned_on(false, Some(proto::Runtime::Codex));
+    let (op, kind) = fx.op("CreateOrchestrator");
+    let OpKind::CreateOrchestrator { spec, .. } = kind else {
+        unreachable!()
+    };
+    assert_eq!(spec.runtime, proto::Runtime::Codex);
+    assert_eq!(
+        spec.initial_prompt.as_deref(),
+        Some(orchestrator_first_prompt(fx.run()).as_str())
+    );
+    assert!(!pending(&fx));
+    assert_eq!(fx.run().orch.first_turn_since, None);
+    let (branch, _) = fx.op("CreateRunBranch");
+    fx.done(branch, OpResult::Worktree { head: BASE.into() });
+    let effects = fx.done(
+        op,
+        OpResult::Window {
+            window_id: ORCH,
+            pid: None,
+        },
+    );
+    let mut all = wakes(&effects);
+    all.extend(wakes(&mcp_ready(&mut fx, ORCH)));
+    let now = fx.now + 1;
+    all.extend(wakes(&first_signal(&mut fx, now, ORCH, 1)));
+    let late = fx.now + FIRST_TURN_WAIT_SECS + MCP_READY_GRACE_SECS;
+    all.extend(wakes(&fx.send(late, EventKind::Tick)));
+    assert!(all.iter().all(|(_, first)| !first), "{all:#?}");
+    assert_eq!(start_prompts(&fx), 0);
+    assert!(
+        !fx.run()
+            .log
+            .iter()
+            .any(|e| e.text.starts_with("first turn"))
+    );
+    // A restart that could not resume is 9.3's restart: no first turn pending.
+    restart(&mut fx);
+    let effects = resume(&mut fx);
+    let restarts = ops_in(&effects, "RestartOrchestrator");
+    assert_eq!(restarts.len(), 1, "{effects:#?}");
+    let effects = fx.done(restarts[0].0, OpResult::RestartedFresh);
+    assert!(!pending(&fx));
+    assert!(wakes(&effects).iter().all(|(_, first)| !first));
+}
+
+/// Ruling T5a-2: a Claude orchestrator chosen by name still waits for its first turn.
+#[test]
+fn a_claude_orchestrator_still_waits_for_its_first_turn() {
+    let fx = planned_on(false, Some(proto::Runtime::Claude));
+    let (_, kind) = fx.op("CreateOrchestrator");
+    let OpKind::CreateOrchestrator { spec, .. } = kind else {
+        unreachable!()
+    };
+    assert_eq!(spec.runtime, proto::Runtime::Claude);
+    assert_eq!(spec.initial_prompt, None);
+    assert!(pending(&fx));
 }

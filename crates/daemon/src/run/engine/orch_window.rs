@@ -9,13 +9,14 @@ use super::requests::log;
 use super::{Effect, OpId, OpKind, OpResult, emit_op, history, next_op};
 use crate::run::model::Run;
 use crate::run::orch::contract::orchestrator_first_prompt;
-use crate::run::orch::launch::{orchestrator_role, orchestrator_window_spec};
+use crate::run::orch::launch::{first_turn_pasted, orchestrator_role, orchestrator_window_spec};
 
 /// Decisions 5 and 26: the orchestrator's window, and its first prompt (the planned
 /// run's, unless a promotion or a chain set its own). Decision 43: its session's record
 /// is opened first, `start` (`promote` for a promotion), or `retry` after an earlier
-/// session. Milestone 9.5 decision 38: the window starts with no prompt; the first
-/// prompt waits as the first turn ([`first_turn_waits`]).
+/// session. Milestone 9.5 decision 38: a Claude window starts with no prompt; the first
+/// prompt waits as the first turn ([`first_turn_waits`]). Ruling T5a-2: a Codex window
+/// has it on its command line, as in 9.3.
 pub(super) fn launch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let Some(o) = run.orch.orchestrator.as_ref() else {
         return;
@@ -26,7 +27,7 @@ pub(super) fn launch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     } else {
         o.first_prompt.clone()
     };
-    let spec = orchestrator_window_spec(run, &route);
+    let spec = orchestrator_window_spec(run, &route, &first);
     let role = orchestrator_role(run, &route);
     let earlier = run
         .role_routing_decisions
@@ -42,7 +43,7 @@ pub(super) fn launch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.first_prompt = first;
         o.launch_op = Some(op);
-        o.first_turn_pending = true;
+        o.first_turn_pending = first_turn_pasted(&route);
     }
     first_turn_waits(run, now);
     let kind = OpKind::CreateOrchestrator {
@@ -141,11 +142,13 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<
             o.live = true;
             o.exited_at = None;
             o.launches += 1;
+            let pasted = first_turn_pasted(&o.route);
             own_session(run);
             log(run, now, "the orchestrator restarted");
             // Milestone 9.5 fix round 1 (m1, m2): a fresh session takes the first
-            // prompt again, and was not resumed.
-            if result == OpResult::RestartedFresh {
+            // prompt again, and was not resumed. Ruling T5a-2: Claude's only; a Codex
+            // restart is 9.3's (its window's spec carries the first prompt).
+            if result == OpResult::RestartedFresh && pasted {
                 super::first_turn::fresh_session(run, now);
                 super::wake::unnote(run, RESUMED_NOTE);
             }

@@ -318,7 +318,8 @@ pub enum OpKind {
         project: PathBuf,
     },
     /// Decision 11: `WindowManager::restart` of the orchestrator window, which re-passes
-    /// its role with its session; the result is `Restarted` (`RestartedFresh` when it could not resume), or `Failed`.
+    /// its role with its session; the result is `Restarted` (`RestartedFresh` when it
+    /// could not resume), or `Failed`.
     RestartOrchestrator { window_id: u32 },
     /// Decision 20: a run scout on M8b's `ScoutService`; the result is `ScoutStarted`.
     StartScout {

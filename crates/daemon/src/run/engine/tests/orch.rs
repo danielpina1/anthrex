@@ -35,6 +35,11 @@ pub(super) fn triage(path: RunPath) -> TriageInfo {
 
 /// A planned run (decision 26), started; its run branch and orchestrator not yet made.
 pub(super) fn planned(yes: bool) -> Fixture {
+    planned_on(yes, None)
+}
+
+/// [`planned`], its orchestrator on `choice`'s runtime (milestone 9.5 ruling T5a-2).
+pub(super) fn planned_on(yes: bool, choice: Option<Runtime>) -> Fixture {
     let text = plan_with(PROFILE, &[task("t0", "S", "auth", "")]);
     let mut fx = Fixture::new(&text);
     // Decision 26: the driver builds a planned run from a plan with no task.
@@ -56,8 +61,17 @@ pub(super) fn planned(yes: bool) -> Fixture {
     )
     .unwrap_or_else(|e| panic!("an empty plan builds: {e:?}"));
     let agent = config::AgentConfig::default();
-    let resolved =
-        resolve_orchestrator(None, &agent, run.limits.default_runtime, &run.roster).unwrap();
+    let choice = choice.map(|runtime| OrchestratorChoice {
+        runtime,
+        model: None,
+    });
+    let resolved = resolve_orchestrator(
+        choice.as_ref(),
+        &agent,
+        run.limits.default_runtime,
+        &run.roster,
+    )
+    .unwrap();
     make_planned(
         &mut run,
         Some(triage(RunPath::Plan)),

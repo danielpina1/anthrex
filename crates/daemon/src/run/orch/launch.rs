@@ -150,17 +150,26 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
 }
 
 /// Decision 5: `<h4>/orchestrator` in the user's own checkout, on the route's runtime
-/// and model (none for the CLI's default). Milestone 9.5 decision 38: with no prompt;
-/// the first prompt is pasted once the window is ready (`engine/wake.rs`).
-pub fn orchestrator_window_spec(run: &Run, route: &Route) -> WindowSpec {
+/// and model (none for the CLI's default), with its first prompt. Milestone 9.5
+/// decision 38 and ruling T5a-2: a Claude orchestrator starts with no prompt, and its
+/// first prompt is pasted once the window is ready (`engine/wake.rs`).
+pub fn orchestrator_window_spec(run: &Run, route: &Route, first_prompt: &str) -> WindowSpec {
     WindowSpec {
         name: Some(format!("{}/orchestrator", run.short())),
         runtime: route.runtime,
         cwd: run.root.clone(),
         worktree_branch: None,
         model: (!route.model.is_empty()).then(|| route.model.clone()),
-        initial_prompt: None,
+        initial_prompt: (!first_turn_pasted(route)).then(|| first_prompt.to_string()),
     }
+}
+
+/// Milestone 9.5 ruling T5a-2: whether the orchestrator's first prompt waits to be
+/// pasted (decision 38). Only Claude's does: Claude runs no hook before its workspace
+/// trust prompt, so a prompt on its command line could start work before the user
+/// trusts the folder, and FU-F12 was Claude's. Codex keeps 9.3's command-line prompt.
+pub fn first_turn_pasted(route: &Route) -> bool {
+    route.runtime == Runtime::Claude
 }
 
 /// The run scouts' route keys: the ones the run froze at its start (whole-branch
