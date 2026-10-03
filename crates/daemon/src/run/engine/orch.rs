@@ -413,8 +413,6 @@ pub(super) fn settle_quiet(run: &mut Run, base: &mut Option<Run>, now: u64, fx: 
     settle(run, now, fx);
 }
 
-/// `run <id> was cancelled` or `run <id> is finishing` while the run is being ended
-/// (M9.9 second review, C-1).
 /// W1 fix round 2: while a round is being cancelled, the orchestrator still answers
 /// and messages the earlier rounds' live tasks (the final fix wave's A-I2); nothing
 /// else, and nothing of the round itself.
@@ -434,6 +432,8 @@ fn earlier_rounds_only(run: &Run, edits: &[PlanEdit], submit: bool) -> bool {
         })
 }
 
+/// `run <id> was cancelled` or `run <id> is finishing` while the run is being ended
+/// (M9.9 second review, C-1).
 pub(super) fn ending(run: &Run) -> Option<String> {
     if run.cancelled {
         Some(format!("run {} was cancelled", run.id))
