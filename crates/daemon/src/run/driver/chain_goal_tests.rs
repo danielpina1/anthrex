@@ -458,12 +458,23 @@ async fn a_continued_run_is_based_on_the_checkout() {
 }
 
 /// Decision 24: the chain's history lines for a fresh session's first prompt are read
-/// within the run's `git_timeout_secs`; a history file that never opens (a FIFO with
-/// no writer) gives `(history unavailable)` within that bound plus slack
-/// (`docs/timing-budgets.md`). A readable file gives the chain's last ten lines as
-/// written.
+/// within the run's `git_timeout_secs`; a history file that does not answer (a FIFO
+/// whose writer sends nothing) gives `(history unavailable)` within that bound plus
+/// slack (`docs/timing-budgets.md`). A readable file gives the chain's last ten lines
+/// as written.
+///
+/// Task 6b fix round 3: no thread can wait for good. The writer opens the FIFO only
+/// once the read has (a non-blocking open fails with `ENXIO` until a reader is there),
+/// within a deadline; it holds it for `HOLD`, past the bound and its slack, so the
+/// read's open completes and its read waits; then it closes it, which ends the
+/// abandoned read (EOF). Before, the
+/// test's writer opened and closed at once, after the bound, and on macOS the reader
+/// blocked in `open` could miss that writer and wait for good (about one run in three).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_handoff_history_read_is_bounded() {
+    // How long the writer holds the FIFO open: past the bound plus the 5 s slack below,
+    // so a read that were not bounded would end (EOF) only after the slack, and fail.
+    const HOLD: Duration = Duration::from_secs(9);
     let dir = tempfile::tempdir().unwrap();
     let mut run = run_of(1);
     run.limits.git_timeout_secs = 1;
@@ -473,17 +484,38 @@ async fn the_handoff_history_read_is_bounded() {
     let fifo = dir.path().join("history.jsonl");
     let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
     assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    let held = fifo.clone();
+    let writer = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let opened = std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&held);
+            match opened {
+                Ok(file) => {
+                    std::thread::sleep(HOLD);
+                    drop(file);
+                    return true;
+                }
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(_) => return false,
+            }
+        }
+    });
     let started = Instant::now();
-    let lines = history_lines(fifo.clone(), chain.clone(), bound).await;
+    let read = history_lines(fifo.clone(), chain.clone(), bound);
+    let lines = tokio::time::timeout(Duration::from_secs(30), read)
+        .await
+        .expect("the read is bounded");
     let took = started.elapsed();
+    let opened = tokio::task::spawn_blocking(move || writer.join().unwrap())
+        .await
+        .unwrap();
+    assert!(opened, "the read never opened the history file");
     let prompt = handoff_prompt("first", (CHAIN, "3f9a", "accepted"), None, lines.as_deref());
-    // Release the abandoned read: a writer opens the FIFO and closes it (EOF).
-    let writer = std::fs::OpenOptions::new()
-        .write(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(&fifo);
-    assert!(writer.is_ok(), "the read was still waiting: {writer:?}");
-    drop(writer);
     assert_eq!(lines, None);
     assert!(
         prompt.ends_with("```\n(history unavailable)\n```\n"),
