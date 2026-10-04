@@ -13,7 +13,7 @@ use super::dispatch::{block, history};
 use super::race_view::{Exit, address_lane, in_lane, live, view_lane};
 use super::{Effect, OpKind, OpResult, ReplyId, concurrency, emit_op, next_op, requests, schedule};
 use crate::run::contract::sha7;
-use crate::run::model::{Lane, Race, Run, Task, lane_checkout, task_branch};
+use crate::run::model::{Lane, Race, RaceDecision, Run, Task, lane_checkout, task_branch};
 use crate::run::phases::set_state;
 use crate::run::validate::strength_label;
 use crate::run::validate_patterns::{RACE_DISPATCH, peer_route};
@@ -31,10 +31,12 @@ pub(super) enum Start {
 /// Decision 18: whether task `i`, which the scheduler would start now, races. It races
 /// only on the critical path, with `max_writers >= 2`, a second racer's route, and two
 /// writer slots within the runtimes' caps (decision 16); with one, it waits up to
-/// `race_slot_wait_secs`. Each fallback to one worker is noted on the task and logged.
+/// `race_slot_wait_secs` from when it first waited. Ruling T17a-1: the first decision
+/// is latched (`Task.race_decision`), so a fallback to one worker is noted and logged
+/// once, and a task decided single stays single for this dispatch.
 pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
     let task = &run.tasks[i];
-    if !RACE_DISPATCH || !task.spec.race || task.race.is_some() {
+    if !RACE_DISPATCH || !task.spec.race || task.race.is_some() || task.race_decision.is_some() {
         return Start::Single;
     }
     if !schedule::critical_path(run).contains(&i) {
@@ -62,6 +64,7 @@ pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
     let runtime = task.route.runtime;
     if free >= 2 && concurrency::has_room(run, runtime) && concurrency::has_room(run, peer.runtime)
     {
+        run.tasks[i].race_decision = Some(RaceDecision::Race);
         return Start::Race(peer);
     }
     let since = *run.tasks[i].race_wait_since.get_or_insert(now);
@@ -77,6 +80,9 @@ pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
 fn single(run: &mut Run, i: usize, note: &str, now: u64) -> Start {
     let task = &mut run.tasks[i];
     task.race_wait_since = None;
+    task.race_decision = Some(RaceDecision::Single {
+        reason: note.to_string(),
+    });
     if !task.notes.iter().any(|n| n == note) {
         task.notes.push(note.to_string());
     }
@@ -269,21 +275,43 @@ pub(super) fn refusal(run: &Run, i: usize, lane: RaceLane, tool: &str) -> Option
     })
 }
 
-/// The reader slots the lanes' reviews hold (decision 41, counted per lane): a lane in
-/// `review`, but the one whose view the task is (counted as the task).
+/// The reader slots the lanes' reviews hold (decision 41, counted per lane). Ruling
+/// T17a-2: by `schedule::holds_reader`'s rule, a lane in `review` holds one only once
+/// its reviewer round or its `PrepareReview` exists. In a lane's view the viewed lane
+/// is counted as the task, and the others as `enter` found them (`parked_readers`).
 pub fn lane_readers(run: &Run) -> usize {
     (run.tasks.iter())
-        .filter(|t| !t.state.is_finished())
-        .flat_map(|task| {
-            (task.race.iter()).flat_map(move |race| {
-                (race.lanes.iter()).filter(move |l| {
-                    l.state == LaneState::Review
-                        && Some(l.lane) != task.lane_view
-                        && race.winner != Some(l.lane)
-                })
-            })
+        .map(|task| match task.lane_view {
+            Some(_) => task.parked_readers,
+            None if task.state.is_finished() => 0,
+            None => (task.race.iter().flat_map(|r| &r.lanes))
+                .filter(|l| lane_holds_reader(run, task, l))
+                .count(),
         })
-        .count()
+        .sum()
+}
+
+/// Whether lane `lane` of task `task` (not in a view) holds a reader slot: in `review`
+/// with a live reviewer, a resumable one that owes its verdict, or a `PrepareReview`
+/// in flight (`schedule::holds_reader`, per lane).
+pub(super) fn lane_holds_reader(run: &Run, task: &Task, lane: &Lane) -> bool {
+    let l = Some(lane.lane);
+    let reviewer =
+        |r: &&crate::run::model::AgentRound| r.role == AgentRole::Reviewer && r.lane == l;
+    let live = task.rounds.iter().filter(reviewer).any(|r| !r.ended);
+    let resumable = task.rounds.iter().rfind(reviewer).is_some_and(|r| {
+        r.ended
+            && !r.retiring
+            && r.session_id.is_some()
+            && !(task.reviews.iter())
+                .any(|rv| rv.lane == l && rv.round == r.round && rv.verdict.is_some())
+    });
+    let preparing = run.pending_ops.values().any(|p| {
+        p.task_id.as_deref() == Some(task.id())
+            && p.lane == l
+            && matches!(p.kind, OpKind::PrepareReview { .. })
+    });
+    lane.state == LaneState::Review && (live || resumable || preparing)
 }
 
 /// The window-name stem of task `task`'s sessions: `<task>.` (`t1.w1`, `t1.r1`), or in
@@ -497,14 +525,15 @@ pub(super) fn on_crowned(run: &mut Run, i: usize, head: &str, now: u64) {
 }
 
 /// Milestone 9.5 decision 20: in a lane's view, rung 2 or 3 takes the lane out of its
-/// race (`race_view` reads the block as `Out`): its sessions stopped, its rung and the
-/// block kept for the lane. Nothing of the task's own changes (no escalation, no size
-/// raised); the action that took the lane out is the adoption's (task M9.5.17b).
+/// race (`race_view` reads the view's block as `Out`, with its text): its sessions
+/// stopped and its rung kept for the lane. Nothing of the task's own changes (no
+/// escalation, no size raised); the action that took the lane out is the adoption's
+/// (task M9.5.17b). Minor m7: the lane keeps no block reason (the rung says why), so
+/// the view's block only carries the text out.
 pub(super) fn lane_out(
     run: &mut Run,
     i: usize,
     rung: u8,
-    reason: BlockReason,
     text: String,
     now: u64,
     fx: &mut Vec<Effect>,
@@ -514,5 +543,7 @@ pub(super) fn lane_out(
     let task = &mut run.tasks[i];
     task.rung = rung;
     task.fresh_session = None;
-    block(run, i, reason, text, now);
+    set_state(task, TaskState::Blocked, now);
+    let reason = BlockReason::Environment;
+    task.block = Some(proto::BlockInfo { reason, text });
 }

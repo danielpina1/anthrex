@@ -493,10 +493,12 @@ fn new_task(
         race: None,
         pair: None,
         race_wait_since: None,
+        race_decision: None,
         list_pick: None,
         list_escalation: None,
         paused: Default::default(),
         lane_view: None,
+        parked_readers: 0,
     }
 }
 

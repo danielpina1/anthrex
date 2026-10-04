@@ -15,10 +15,11 @@ const M93_RUN: &str = include_str!("../../tests/fixtures/run/m93-run.json");
 
 /// Every key milestone 9.5 adds to the persisted run. `lane` is also an older key, a
 /// routing decision's (milestone 9), so it is counted rather than looked for.
-const NEW_KEYS: [&str; 8] = [
+const NEW_KEYS: [&str; 9] = [
     "race",
     "pair",
     "race_wait_since",
+    "race_decision",
     "concurrency",
     "route_lists",
     "list_pick",
@@ -199,6 +200,10 @@ fn a_run_with_race_pair_and_caps_round_trips() {
     };
     run.tasks[0].list_pick = Some(pick.clone());
     run.tasks[0].list_escalation = Some(pick);
+    // Ruling T17a-1: a latched race decision.
+    run.tasks[1].race_decision = Some(super::RaceDecision::Single {
+        reason: "race skipped: max_writers is 1".into(),
+    });
     // Task M9.5.10b (ruling RL-1): a session that failed for an environment reason.
     run.tasks[0].rounds[0].environment_failed = true;
 

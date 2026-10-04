@@ -266,7 +266,7 @@ pub(super) fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut V
 pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
     // Milestone 9.5 decision 20: past rung 1, a lane leaves its race.
     if run.tasks[i].lane_view.is_some() {
-        return super::race::lane_out(run, i, 2, BlockReason::Human, reason, now, fx);
+        return super::race::lane_out(run, i, 2, reason, now, fx);
     }
     done::drop_claim(
         run,
@@ -304,7 +304,7 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
 pub(super) fn rung3(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Vec<Effect>) {
     // Milestone 9.5 decision 20: the size is the task's; a lane only leaves its race.
     if run.tasks[i].lane_view.is_some() {
-        return super::race::lane_out(run, i, 3, BlockReason::MisSized, text, now, fx);
+        return super::race::lane_out(run, i, 3, text, now, fx);
     }
     kill_worker(run, i, fx);
     drop_queued(run, i);

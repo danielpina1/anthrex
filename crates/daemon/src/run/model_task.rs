@@ -206,6 +206,9 @@ pub struct Task {
     /// Decision 18: since when the racing task has waited for its second writer slot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub race_wait_since: Option<u64>,
+    /// Ruling T17a-1: the race decision, latched once per dispatch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race_decision: Option<super::RaceDecision>,
     /// Decision 9a: the plan's model-list choice for its worker route (made when the
     /// task was built or added), when its class has a list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -222,6 +225,10 @@ pub struct Task {
     /// always in a persisted or published run.
     #[serde(skip)]
     pub lane_view: Option<proto::RaceLane>,
+    /// Ruling T17a-2: in a lane's view, the reader slots the task's other lanes hold
+    /// (their reviewer rounds and ops wait outside the view); zero otherwise.
+    #[serde(skip)]
+    pub parked_readers: usize,
 }
 
 impl Task {

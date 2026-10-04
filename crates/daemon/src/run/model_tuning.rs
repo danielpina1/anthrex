@@ -110,6 +110,16 @@ impl LaneGates {
     }
 }
 
+/// Decision 18 (ruling T17a-1): what dispatch decided for a racing task, latched the
+/// first time it decided: it races, or it runs one worker for `reason` (its note).
+/// Cleared only when the task goes back to be dispatched again (a reset or retry).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum RaceDecision {
+    Race,
+    Single { reason: String },
+}
+
 /// A racing task's two lanes and, once decided, the lane that became the task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Race {

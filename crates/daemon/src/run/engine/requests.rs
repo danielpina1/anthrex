@@ -418,6 +418,8 @@ pub(super) fn rung2(
         set_state(task, TaskState::Queued, now);
         task.block = None;
         task.fresh_session = None;
+        // Ruling T17a-1: a new dispatch decides the race again.
+        task.race_decision = None;
         "it is dispatched again"
     } else {
         task.fresh_session = Some(FreshSession {

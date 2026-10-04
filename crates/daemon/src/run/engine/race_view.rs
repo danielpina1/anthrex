@@ -207,6 +207,12 @@ fn enter(run: &mut Run, i: usize, k: usize) -> Held {
     let id = run.tasks[i].id().to_string();
     let mut lane = run.tasks[i].race.as_ref().expect("a race").lanes[k].clone();
     let label = lane.lane;
+    // Ruling T17a-2: the other lanes' reader slots, counted before their rounds and
+    // ops wait outside.
+    let task = &run.tasks[i];
+    let readers = (task.race.iter().flat_map(|r| &r.lanes))
+        .filter(|l| l.lane != label && super::race::lane_holds_reader(run, task, l))
+        .count();
     let path = run.task_path(&lane.checkout);
     let branch = task_branch(&run.id, &lane.checkout);
     // The ops and messages of the task's other lanes, and its own, wait outside.
@@ -258,6 +264,7 @@ fn enter(run: &mut Run, i: usize, k: usize) -> Held {
         mail,
     };
     task.lane_view = Some(label);
+    task.parked_readers = readers;
     held
 }
 
@@ -265,6 +272,7 @@ fn leave(run: &mut Run, i: usize, k: usize, held: Held) -> Exit {
     let id = run.tasks[i].id().to_string();
     let task = &mut run.tasks[i];
     let label = task.lane_view.take().expect("a lane's view");
+    task.parked_readers = 0;
     let (shown, block) = (task.state, task.block.take());
     unpark(&mut task.rounds, held.rounds, |r| r.lane = Some(label));
     unpark(&mut task.proofs, held.proofs, |r| r.lane = Some(label));
@@ -307,7 +315,8 @@ fn leave(run: &mut Run, i: usize, k: usize, held: Held) -> Exit {
             TaskState::MergeQueue => Exit::Passed,
             TaskState::Blocked => {
                 let reason = block.as_ref().map(|b| b.text.clone()).unwrap_or_default();
-                lane.gates.block = block;
+                // Minor m7: past rung 1 the lane's rung says why it is out.
+                lane.gates.block = block.filter(|_| lane.gates.rung < 2);
                 Exit::Out(reason)
             }
             other => Exit::Out(format!("its view became {}", other.label())),
