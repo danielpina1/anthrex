@@ -6,7 +6,7 @@ use proto::{Budget, PathWeights, Runtime, SizeThresholds};
 use serde::{Deserialize, Serialize};
 
 use super::adapt;
-use super::tuning::{BudgetsConfigured, ClassRoutes, RouteListsFrozen};
+use super::tuning::{ClassRoutes, RouteListsFrozen};
 use crate::run::refit::{SizeClass, Tuned};
 
 /// `[orchestrator.claude] auth`, mirrored here with serde because `config::ClaudeAuth`
@@ -91,9 +91,6 @@ pub struct RunLimits {
     /// what an older run reads it as.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_hub: Option<Budget>,
-    /// Ruling RH-5: the classes config sets explicitly (their refit is never used).
-    #[serde(default, skip_serializing_if = "BudgetsConfigured::is_none")]
-    pub budget_configured: BudgetsConfigured,
     /// Decision 9: each class's default strength and effort.
     #[serde(default, skip_serializing_if = "ClassRoutes::is_default")]
     pub class_routes: ClassRoutes,
@@ -143,7 +140,6 @@ impl RunLimits {
         self.budget_s = tuned.effective(config, SizeClass::S);
         self.budget_m = tuned.effective(config, SizeClass::M);
         self.budget_hub = tuned.budget_hub;
-        self.budget_configured = tuned.configured.into();
         self.class_routes = tuned.routes;
         self.path_weights = tuned.weights.clone();
         self.thresholds = tuned.thresholds;

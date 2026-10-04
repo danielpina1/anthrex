@@ -57,8 +57,9 @@ impl TuningLocks {
         lock.lock_owned().await
     }
 
-    /// How many starts have tuned through these locks.
-    pub fn tunings(&self) -> u64 {
+    /// How many starts have tuned through these locks (tests only).
+    #[cfg(test)]
+    pub(crate) fn tunings(&self) -> u64 {
         self.tunings.load(Ordering::Relaxed)
     }
 }

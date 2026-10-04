@@ -7,9 +7,7 @@
 mod support;
 
 use daemon::run::engine::OpResult;
-use daemon::run::git::{
-    clear_stale_locks, crown, prepare_task_worktree, salvage, sync, task_tmp, zero_oid,
-};
+use daemon::run::git::{clear_stale_locks, crown, prepare_task_worktree, salvage, sync, task_tmp};
 use daemon::run::role_launch::{
     task_engine_dir, task_objects_dir, task_repo_dir, worker_git_roots,
 };
@@ -190,15 +188,10 @@ fn crown_is_idempotent_and_refuses_a_moved_branch() {
     assert!(write < read, "{lines:?}");
 }
 
+/// M9.5.1 item 8: a sha256 repository's ids, and so its zero oid, have 64 digits; the
+/// crown's create-only update takes that zero oid (a sha1 one would be refused).
 #[test]
 fn crown_uses_the_repositorys_zero_oid() {
-    let lane = Lane::new();
-    assert_eq!(
-        zero_oid(real_git(), lane.root(), T).unwrap(),
-        "0".repeat(40)
-    );
-
-    // M9.5.1 item 8: a sha256 repository's ids, and so its zero oid, have 64 digits.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     out(&root, &["init", "-q", "--object-format=sha256"]);
@@ -206,7 +199,6 @@ fn crown_uses_the_repositorys_zero_oid() {
     out(&root, &["config", "user.email", "run@tester.test"]);
     let sha = commit_file(&root, "a.txt", "a\n", "a");
     assert_eq!(sha.len(), 64);
-    assert_eq!(zero_oid(real_git(), &root, T).unwrap(), "0".repeat(64));
     let crowned = crown(real_git(), &root, "anthrex/r/t1", &sha, T).unwrap();
     assert_eq!(crowned, OpResult::Crowned { head: sha.clone() });
     assert_eq!(out(&root, &["rev-parse", "refs/heads/anthrex/r/t1"]), sha);

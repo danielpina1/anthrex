@@ -202,7 +202,6 @@ pub fn run_limits(
         testing: testing.into(),
         // Milestone 9.5: nothing learned until `RunLimits::freeze`.
         budget_hub: None,
-        budget_configured: Default::default(),
         class_routes: Default::default(),
         path_weights: None,
         thresholds: Default::default(),

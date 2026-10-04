@@ -344,7 +344,6 @@ mod tuning {
         let run = built.unwrap_or_else(|e| panic!("{}", e.text()));
         let t1 = run.task("t1").unwrap();
         assert_eq!((t1.budget.tool_calls, t1.budget.minutes), (33, 11));
-        assert!(run.limits.budget_configured.s);
         assert!(
             log(&run).contains(
                 &"tuning: budget S 33 calls 11m configured (refit would be 55 calls 18m)"

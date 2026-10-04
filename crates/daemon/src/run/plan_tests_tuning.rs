@@ -73,7 +73,6 @@ fn tuned_budgets_win_over_defaults_and_lose_to_the_plan_and_config() {
     let run = built(&text, &configured, tuned(&file, &configured));
     assert_eq!(task(&run, "t1").budget, budget(30, 10));
     assert_eq!(run.limits.budget_s, budget(30, 10));
-    assert!(run.limits.budget_configured.s && !run.limits.budget_configured.m);
     // Ruling T8-7: the file's S refit is ignored while S is configured; with no history
     // given, the line says only what is used (`refit_tests_edges` covers the refit).
     assert_eq!(run.log[0].text, "tuning: budget S 30 calls 10m configured");
@@ -196,13 +195,7 @@ fn default_tuning_reproduces_today() {
     assert_eq!(limits.thresholds, SizeThresholds::default());
     // A run with nothing tuned writes none of the new limit keys.
     let json = serde_json::to_value(limits).unwrap();
-    for key in [
-        "budget_hub",
-        "budget_configured",
-        "class_routes",
-        "path_weights",
-        "thresholds",
-    ] {
+    for key in ["budget_hub", "class_routes", "path_weights", "thresholds"] {
         assert!(json.get(key).is_none(), "{key}: {json}");
     }
 }

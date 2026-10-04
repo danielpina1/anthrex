@@ -288,3 +288,23 @@ fn a_lane_written_with_exited_still_loads() {
     let (_, text) = save_and_load(&mut run, dir.path());
     assert!(!text.contains("\"exited\""), "{text}");
 }
+
+/// Whole-branch review B, M5: `RunLimits.budget_configured` was never read and is gone;
+/// a run.json written with it still loads, and is written back without it.
+#[test]
+fn limits_written_with_budget_configured_still_load() {
+    let mut run = old_run();
+    let dir = tmp();
+    run.data_dir = journal::runs_dir(dir.path()).join(&run.id);
+    journal::save_run(&run).expect("save_run");
+    let path = run.data_dir.join(RUN_FILE);
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("run.json")).expect("JSON");
+    json["limits"]["budget_configured"] = serde_json::json!({"s": true, "m": false});
+    std::fs::write(&path, json.to_string()).expect("write run.json");
+    let (mut runs, problems) = journal::load_all(dir.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs.remove(0).0, run);
+    let (_, text) = save_and_load(&mut run, dir.path());
+    assert!(!text.contains("budget_configured"), "{text}");
+}

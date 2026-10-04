@@ -207,26 +207,6 @@ impl ClassRoutes {
     }
 }
 
-/// Ruling RH-5's `config::ConfiguredBudgets` as a run freezes it (`RunLimits`; the
-/// config crate has no serde): which classes `[orchestrator.budget.<class>]` sets.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BudgetsConfigured {
-    pub s: bool,
-    pub m: bool,
-}
-
-impl BudgetsConfigured {
-    pub fn is_none(&self) -> bool {
-        !self.s && !self.m
-    }
-}
-
-impl From<config::ConfiguredBudgets> for BudgetsConfigured {
-    fn from(c: config::ConfiguredBudgets) -> Self {
-        BudgetsConfigured { s: c.s, m: c.m }
-    }
-}
-
 /// Decision 9a: one model-list candidate as a run freezes it, with its roster strength.
 /// `effort` `None` takes the class's (or the review level's) effort where it is used.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

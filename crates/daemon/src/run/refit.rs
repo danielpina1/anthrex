@@ -208,7 +208,8 @@ fn ran_on(record: &TaskRecord, cur: ClassRoute) -> bool {
 /// run's accept); a bisect of its run names it as the culprit; or a CI or review fix
 /// task of its run and stage exists (such a fix task names a stage, never a task, so it
 /// counts against every plan task of that stage, the conservative reading).
-pub fn failed_on_quality(record: &TaskRecord, lines: &[HistoryLine]) -> bool {
+#[cfg(test)]
+fn failed_on_quality(record: &TaskRecord, lines: &[HistoryLine]) -> bool {
     Quality::of(lines).fails(record)
 }
 

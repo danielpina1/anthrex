@@ -24,10 +24,6 @@ const STALE_LOCKS: [&str; 2] = ["index.lock", "HEAD.lock"];
 
 /// The repository's null object id: `0` repeated for its object format
 /// (`git rev-parse --show-object-format`), 40 digits for sha1 and 64 for sha256.
-pub fn zero_oid(git: &OsStr, root: &Path, timeout: Duration) -> Result<String, String> {
-    zero_in(Git::new(git, timeout), root)
-}
-
 fn zero_in(g: Git<'_>, root: &Path) -> Result<String, String> {
     let format = g.ok(root, &[os("rev-parse"), os("--show-object-format")])?;
     match format.trim() {
