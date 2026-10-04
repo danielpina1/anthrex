@@ -103,6 +103,7 @@ fn event_for(fx: &mut Fixture, node: &ActionNode, kind: &ActionKind) -> EventKin
             run_id,
             goal: "more".into(),
         },
+        ActionKind::ReviewDoc => unreachable!("not a request kind before task M9.6.7"),
     }
 }
 

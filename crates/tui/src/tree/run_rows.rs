@@ -57,6 +57,9 @@ pub fn round_label_with_lane(
         AgentRole::Racer => format!("racer{lane}"),
         AgentRole::TestWriter if number > 1 => format!("test writer #{session} r{number}"),
         AgentRole::TestWriter => format!("test writer #{session}"),
+        // Milestone 9.6: design agents have no task rounds; named for a stray one.
+        AgentRole::Brainstormer => format!("brainstormer #{session}"),
+        AgentRole::DocReviewer => format!("doc reviewer #{session}"),
     }
 }
 

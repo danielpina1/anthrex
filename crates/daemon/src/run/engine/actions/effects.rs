@@ -39,6 +39,8 @@ pub(crate) fn label(kind: &ActionKind) -> String {
         OpenConversation => "open conversation".into(),
         // Milestone 9.3 decision 32.
         Iterate => "iterate".into(),
+        // Milestone 9.6 decision 34 (never listed before task M9.6.7).
+        ReviewDoc => "review document".into(),
     }
 }
 
@@ -198,6 +200,7 @@ pub(super) fn effect(run: &Run, node: &ActionNode, kind: &ActionKind) -> String 
         OpenConversation => format!("open conversation: {t}'s conversation, read-only"),
         // Milestone 9.3 decision 32: the round it would start.
         Iterate => rounds::iterate_effect(run.round() + 1),
+        ReviewDoc => "review document: open the gate's document".into(),
     }
 }
 

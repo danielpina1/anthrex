@@ -100,6 +100,7 @@ pub(super) fn goal_request(
         orchestrator,
         delivery,
         continue_from,
+        design: None,
     }
 }
 
@@ -315,6 +316,7 @@ mod tests {
             orchestrator: None,
             delivery: None,
             continue_from: None,
+            design: None,
         };
         assert_eq!(request_timeout(&goal), GOAL_REQUEST_TIMEOUT);
         assert_eq!(

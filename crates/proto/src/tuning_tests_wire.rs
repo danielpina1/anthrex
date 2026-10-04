@@ -348,9 +348,10 @@ fn appended_variants_keep_their_indices() {
             Some(role)
         );
     }
-    assert!(
-        rmp_serde::from_slice::<AgentRole>(&[8]).is_err(),
-        "no role after"
+    // Milestone 9.6 appends `Brainstormer` and `DocReviewer` (`design_tests.rs`).
+    assert_eq!(
+        rmp_serde::from_slice::<AgentRole>(&[8]).ok(),
+        Some(AgentRole::Brainstormer)
     );
     let roles = variant_names::<AgentRole>();
     assert_eq!(
@@ -363,16 +364,19 @@ fn appended_variants_keep_their_indices() {
             "planner",
             "decider",
             "racer",
-            "test_writer"
+            "test_writer",
+            "brainstormer",
+            "doc_reviewer"
         ]
     );
     let names = variant_names::<RunRequest>();
+    // Milestone 9.6 appends `DocGate` and `ShowDoc` after `McpReady`.
     assert_eq!(
-        names[names.len() - 3..],
+        names[names.len() - 5..names.len() - 2],
         ["Watch", "Iterate", "McpReady"],
         "{names:?}"
     );
-    let n = names.len() as u8;
+    let n = names.len() as u8 - 2;
     assert_eq!(
         variant_at::<RunRequest>(n - 1, &json!({"run_id": "r1", "window_id": 3})),
         Some(RunRequest::McpReady {
@@ -385,6 +389,7 @@ fn appended_variants_keep_their_indices() {
         Some(RunRequest::Iterate {
             run: "r1".into(),
             goal: "more".into(),
+            design: None,
         })
     );
     let names = tagged_names::<PlanEdit>("op");

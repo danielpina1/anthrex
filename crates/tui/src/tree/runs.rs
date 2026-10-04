@@ -76,8 +76,14 @@ pub fn run_status(run: &RunInfo) -> Status {
         || !run.attention.is_empty();
     match run.state {
         RunState::AwaitingApproval | RunState::Paused | RunState::Halted => Status::Attention,
-        RunState::Running | RunState::Planning if asks => Status::Attention,
-        RunState::Running | RunState::Planning => Status::Working,
+        RunState::Running | RunState::Planning | RunState::Brainstorming | RunState::Specifying
+            if asks =>
+        {
+            Status::Attention
+        }
+        RunState::Running | RunState::Planning | RunState::Brainstorming | RunState::Specifying => {
+            Status::Working
+        }
         RunState::Complete | RunState::Accepted => Status::Done,
         // Terminal: never shown (decision 6), mapped only to keep the match exhaustive.
         RunState::Discarded | RunState::Failed => Status::Exited,

@@ -224,6 +224,7 @@ impl ChainRig {
             orchestrator: None,
             delivery: Some(DeliveryMode::Local),
             continue_from: Some(after.into()),
+            design: None,
         };
         tokio::time::timeout(ANSWER, self.s.request(req))
             .await

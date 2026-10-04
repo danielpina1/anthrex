@@ -254,6 +254,8 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
         AgentRole::Decider => return None,
         AgentRole::Racer => "racer",
         AgentRole::TestWriter => "test_writer",
+        // Milestone 9.6: the design agents get their `anthrex mcp` in task M9.6.6.
+        AgentRole::Brainstormer | AgentRole::DocReviewer => return None,
     };
     let mut args = vec!["mcp".to_string(), "--role".into(), role.into()];
     // M8b decision 15: a repository-level scout belongs to no run.

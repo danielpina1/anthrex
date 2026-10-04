@@ -158,6 +158,7 @@ pub fn iterate(run_id: &str, goal: &str) -> RunRequest {
     RunRequest::Iterate {
         run: run_id.to_string(),
         goal: goal.to_string(),
+        design: None,
     }
 }
 

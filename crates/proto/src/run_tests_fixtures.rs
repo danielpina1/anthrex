@@ -194,6 +194,7 @@ pub(super) fn a_task_info() -> TaskInfo {
         round: 1,
         race: None,
         pair: None,
+        covers: Vec::new(),
     }
 }
 
@@ -264,6 +265,9 @@ pub(super) fn a_run_info() -> RunInfo {
         round: 1,
         rounds: Vec::new(),
         writer_caps: Default::default(),
+        design: Default::default(),
+        doc_gate: None,
+        docs: Vec::new(),
     }
 }
 

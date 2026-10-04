@@ -518,6 +518,7 @@ impl GoalForm {
             orchestrator,
             delivery: self.delivery,
             continue_from,
+            design: None,
         })
     }
 }

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::adapt::TriageInfo;
 use crate::delivery::DeliveryMode;
+use crate::design::{DesignMode, DocGateAction, DocGateKind, DocKind, DocView, RoundDesign};
 use crate::history::HistoryStats;
 use crate::orch::OrchestratorChoice;
 use crate::profile::{
@@ -56,6 +57,9 @@ pub enum RunRequest {
         /// Milestone 9.2 decision 3: `--delivery pr|local`; `None` uses the profile's.
         #[serde(default)]
         delivery: Option<DeliveryMode>,
+        /// Milestone 9.6 decision 3: `--design full|off`; `None` follows the rules.
+        #[serde(default)]
+        design: Option<DesignMode>,
     },
     Approve {
         run_id: String,
@@ -112,6 +116,9 @@ pub enum RunRequest {
         /// Milestone 9.3 (KG §3.3): continue this run's chain on its orchestrator.
         #[serde(default)]
         continue_from: Option<String>,
+        /// Milestone 9.6 decision 3.
+        #[serde(default)]
+        design: Option<DesignMode>,
     },
     Promote {
         run_id: String,
@@ -165,12 +172,34 @@ pub enum RunRequest {
     Iterate {
         run: String,
         goal: String,
+        /// Milestone 9.6 decision 28: `None` is `Amend` for a design run, else `Off`.
+        #[serde(default)]
+        design: Option<RoundDesign>,
     },
     /// Milestone 9.5 decision 38: the orchestrator's `anthrex mcp` answered its first
     /// `tools/list`. Answered `RunReply::Done` under `request::MCP_READY`.
     McpReady {
         run_id: String,
         window_id: u32,
+    },
+    /// Milestone 9.6 decision 7: the user's action at a document gate. Answered under
+    /// `request::DOC_GATE`.
+    DocGate {
+        run: String,
+        kind: DocGateKind,
+        action: DocGateAction,
+    },
+    /// Milestone 9.6 (DF §7): one document version, the latest when `version` is
+    /// `None`. Answered with `RunReply::Doc`, or refused under `request::SHOW_DOC`.
+    ShowDoc {
+        run: String,
+        kind: DocKind,
+        #[serde(default)]
+        version: Option<u32>,
+        #[serde(default)]
+        diff: bool,
+        #[serde(default)]
+        findings: bool,
     },
 }
 
@@ -288,6 +317,13 @@ pub enum RunReply {
         #[serde(default)]
         request_id: Option<u64>,
     },
+    /// Milestone 9.6: one document version (`RunRequest::ShowDoc`). Boxed for the same
+    /// reason as `Profile`.
+    Doc {
+        doc: Box<DocView>,
+        #[serde(default)]
+        request_id: Option<u64>,
+    },
 }
 
 impl RunReply {
@@ -347,7 +383,8 @@ impl RunReply {
             | RunReply::Profile { request_id, .. }
             | RunReply::Stats { request_id, .. }
             | RunReply::TaskDetail { request_id, .. }
-            | RunReply::Settings { request_id, .. } => *request_id = id,
+            | RunReply::Settings { request_id, .. }
+            | RunReply::Doc { request_id, .. } => *request_id = id,
             RunReply::Snapshot(_) => {}
         }
         self
@@ -365,7 +402,8 @@ impl RunReply {
             | RunReply::Profile { request_id, .. }
             | RunReply::Stats { request_id, .. }
             | RunReply::TaskDetail { request_id, .. }
-            | RunReply::Settings { request_id, .. } => *request_id,
+            | RunReply::Settings { request_id, .. }
+            | RunReply::Doc { request_id, .. } => *request_id,
             RunReply::Snapshot(_) => None,
         }
     }
@@ -424,4 +462,7 @@ pub mod request {
     pub const ITERATE: &str = "run iterate";
     /// Milestone 9.5 decision 38.
     pub const MCP_READY: &str = "mcp ready";
+    /// Milestone 9.6 decision 7 and DF §7.
+    pub const DOC_GATE: &str = "run doc gate";
+    pub const SHOW_DOC: &str = "run show";
 }

@@ -70,18 +70,21 @@ fn appended_variants_keep_their_indices() {
             "flaky",
             "bisect",
             "stage",
-            // Milestone 9.3 appends `round` (`rounds_tests.rs`).
-            "round"
+            // Milestone 9.3 appends `round` (`rounds_tests.rs`), 9.6 `phase`
+            // (`design_tests.rs`).
+            "round",
+            "phase"
         ]
     );
     let names = variant_names::<RunRequest>();
-    // Milestone 9.3 appends `Iterate` after `Watch`, and 9.5 `McpReady` after it.
+    // Milestone 9.3 appends `Iterate` after `Watch`, 9.5 `McpReady` after it, and 9.6
+    // `DocGate` and `ShowDoc` after that (`design_tests.rs`).
     assert_eq!(
-        names[names.len() - 6..names.len() - 1],
+        names[names.len() - 8..names.len() - 3],
         ["TaskDetail", "Settings", "Deliver", "Watch", "Iterate"],
         "{names:?}"
     );
-    let n = names.len() as u8 - 2;
+    let n = names.len() as u8 - 4;
     assert_eq!(
         variant_at::<RunRequest>(n - 2, &serde_json::json!({"run_id": "r1", "stage": 2})),
         Some(RunRequest::Deliver {

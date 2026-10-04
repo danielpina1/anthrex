@@ -36,6 +36,9 @@ pub enum AgentRole {
     /// Milestone 9.5 decision 24: the headless session that commits a paired task's
     /// failing test (`"test_writer"`).
     TestWriter,
+    /// Milestone 9.6 decision 9: a headless brainstormer and document reviewer.
+    Brainstormer,
+    DocReviewer,
 }
 
 /// Identifies one agent round: which run, optionally which task, which role, and which
@@ -243,14 +246,16 @@ pub struct PlanTask {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub addresses: Vec<String>,
     /// Milestone 9.5 decision 17: race two workers on different runtimes. Left out
-    /// while false, so a plan, a `run.json` and a snapshot without it are written as
-    /// 9.3's.
+    /// while false, so a plan, a `run.json` and a snapshot are written as 9.3's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub race: bool,
     /// Milestone 9.5 decision 24: a test writer commits the failing test, then a
     /// different worker implements. Left out while false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pair: bool,
+    /// Milestone 9.6 decision 17: the spec requirements (`R4`) it delivers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covers: Vec<String>,
 }
 
 fn default_kind() -> TaskKind {
@@ -399,6 +404,9 @@ pub enum RunState {
     Failed,
     /// Milestone 9 decision 26: the orchestrator is writing the plan.
     Planning,
+    /// Milestone 9.6 decision 4: the design flow's first two phases.
+    Brainstorming,
+    Specifying,
 }
 
 /// The lifecycle a task moves through.
@@ -515,6 +523,8 @@ impl RunState {
             RunState::Discarded => "discarded",
             RunState::Failed => "failed",
             RunState::Planning => "planning",
+            RunState::Brainstorming => "brainstorming",
+            RunState::Specifying => "specifying",
         }
     }
 

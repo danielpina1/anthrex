@@ -34,7 +34,9 @@ pub(super) fn request_text(
 /// is the daemon's text, the command's error (exit 1).
 pub(super) async fn iterate(runs: &mut Runs, run: &str, goal: String) -> anyhow::Result<()> {
     let run = runs.resolve(run).await?;
-    runs.done(RunRequest::Iterate { run, goal }).await
+    // Milestone 9.6: `--design` arrives with task M9.6.16.
+    let design = None;
+    runs.done(RunRequest::Iterate { run, goal, design }).await
 }
 
 /// KG §7: for a run with more than one round, `round <n> of <total>` and one line a

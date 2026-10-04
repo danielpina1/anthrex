@@ -91,12 +91,14 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
             // Decision 43: role-routing records never count toward the aggregates;
             // neither do milestone 9.1's tier, flaky and bisect lines (decision 57);
             // `flaky_proposals` reads the flaky ones. Milestone 9.2's `stage` lines
-            // (decision 44) are skipped too.
+            // (decision 44) are skipped too, and so are milestone 9.6's `phase` lines
+            // (decision 32; the refit reads them in task M9.6.13).
             HistoryLine::RoleRoute(_)
             | HistoryLine::Tier(_)
             | HistoryLine::Flaky(_)
             | HistoryLine::Bisect(_)
-            | HistoryLine::Stage(_) => {}
+            | HistoryLine::Stage(_)
+            | HistoryLine::Phase(_) => {}
             // Milestone 9.3 (KG §2.6): every round line, and the runs whose round after
             // the first has ended (round 1's line is written when round 2 starts).
             HistoryLine::Round(r) => {

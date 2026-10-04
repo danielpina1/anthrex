@@ -35,6 +35,7 @@ fn enter_is_a_newline_and_ctrl_s_sends_the_trimmed_request() {
     let want = RunRequest::Iterate {
         run: "r-20261001-3f9a".into(),
         goal: "also add b\nc".into(),
+        design: None,
     };
     assert_eq!(
         key(&mut form, KeyCode::Char('s'), KeyModifiers::CONTROL),

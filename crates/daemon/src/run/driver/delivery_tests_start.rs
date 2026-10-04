@@ -33,6 +33,7 @@ fn start(rig: &Rig, yes: bool, delivery: Option<DeliveryMode>) -> RunRequest {
         trust_project: false,
         unconfined_checks: true,
         delivery,
+        design: None,
     }
 }
 
@@ -320,6 +321,7 @@ fn pr_goal(rig: &Rig, continue_from: Option<&str>) -> RunRequest {
         orchestrator: None,
         delivery: Some(DeliveryMode::Pr),
         continue_from: continue_from.map(String::from),
+        design: None,
     }
 }
 

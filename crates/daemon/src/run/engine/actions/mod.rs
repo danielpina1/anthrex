@@ -8,6 +8,10 @@ mod effects;
 pub(crate) mod rules;
 
 pub(crate) use effects::label;
+
+/// Milestone 9.6 task M9.6.2: the refusal of a document gate's request or action until
+/// task M9.6.7 implements them.
+pub(crate) const DOC_GATES_NOT_YET: &str = "run doc gates are not available yet";
 use proto::{
     ActionInfo, ActionKind, ActionNeeds, BlockReason, FinishAction, HoldState, MessageKind,
     MessageTarget, PlanEdit, RunPath, RunState, TaskState,
@@ -239,6 +243,8 @@ pub(crate) fn check(run: &Run, node: &ActionNode, kind: &ActionKind) -> Result<(
         ReviewPlan | Stats | OpenConversation => None,
         // Milestone 9.3 decision 9.
         Iterate => rules::iterate(run),
+        // Milestone 9.6: the document gates arrive with task M9.6.7.
+        ReviewDoc => Some(DOC_GATES_NOT_YET.into()),
     };
     refusal.map_or(Ok(()), Err)
 }

@@ -28,6 +28,9 @@ pub fn tools_for(role: AgentRole) -> Vec<Tool> {
         // Milestone 9 decision 43: a decider never runs `anthrex mcp`, and never gets
         // an anthrex tool even if something asked for its list.
         AgentRole::Decider => Vec::new(),
+        // Milestone 9.6: the design agents' tools arrive with task M9.6.6; until then
+        // they are refused every tool.
+        AgentRole::Brainstormer | AgentRole::DocReviewer => Vec::new(),
     }
 }
 
@@ -48,6 +51,8 @@ pub fn role_name(role: AgentRole) -> &'static str {
         AgentRole::Decider => "decider",
         AgentRole::Racer => "racer",
         AgentRole::TestWriter => "test_writer",
+        AgentRole::Brainstormer => "brainstormer",
+        AgentRole::DocReviewer => "doc_reviewer",
     }
 }
 

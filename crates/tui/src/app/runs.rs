@@ -78,6 +78,8 @@ pub(crate) fn state_text(state: RunState) -> &'static str {
         RunState::Discarded => "discarded",
         RunState::Failed => "failed",
         RunState::Planning => "planning",
+        RunState::Brainstorming => "brainstorming",
+        RunState::Specifying => "specifying",
     }
 }
 
@@ -252,7 +254,9 @@ impl App {
             // client's.
             | RunReply::Stats { .. }
             | RunReply::Profile { .. }
-            | RunReply::Settings { .. } => {}
+            | RunReply::Settings { .. }
+            // Milestone 9.6: the gate screen asks for documents from task M9.6.17.
+            | RunReply::Doc { .. } => {}
             RunReply::TaskDetail { detail, request_id } => self.on_task_detail(detail, request_id),
         }
         vec![]

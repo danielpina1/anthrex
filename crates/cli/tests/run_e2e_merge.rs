@@ -138,6 +138,7 @@ fn half(id: &str, owns: &str) -> PlanTask {
         addresses: Vec::new(),
         race: false,
         pair: false,
+        covers: Vec::new(),
     }
 }
 

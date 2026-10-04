@@ -257,6 +257,7 @@ fn new_requests_round_trip() {
         trust_project: false,
         unconfined_checks: false,
         delivery,
+        design: None,
     };
     let goal = |delivery| RunRequest::StartGoal {
         goal: "add a flag".into(),
@@ -267,6 +268,7 @@ fn new_requests_round_trip() {
         orchestrator: None,
         delivery,
         continue_from: None,
+        design: None,
     };
     for delivery in [None, Some(DeliveryMode::Pr), Some(DeliveryMode::Local)] {
         both_ways(&ClientMsg::Run(start(delivery)));
@@ -286,6 +288,7 @@ fn new_requests_round_trip() {
             trust_project: false,
             unconfined_checks: false,
             delivery: None,
+            design: None,
         }
     );
     let old: RunRequest = serde_json::from_str(

@@ -214,6 +214,7 @@ fn continue_sends_continue_from() {
             orchestrator: None,
             delivery: Some(proto::DeliveryMode::Pr),
             continue_from: Some("add-reset-3f9a".into()),
+            design: None,
         }
     );
     // The final fix wave (B-I1): a continue waits the daemon's own deadline, not
@@ -242,6 +243,7 @@ fn continue_sends_continue_from() {
             orchestrator: Some(choice),
             delivery: None,
             continue_from: None,
+            design: None,
         }
     );
 }
@@ -282,6 +284,7 @@ fn request_timeout_of_iterate_is_the_run_request_timeout() {
     let iterate = RunRequest::Iterate {
         run: "add-reset-3f9a".into(),
         goal: "also add b".into(),
+        design: None,
     };
     assert_eq!(request_timeout(&iterate), RUN_REQUEST_TIMEOUT);
 }

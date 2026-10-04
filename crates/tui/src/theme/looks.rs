@@ -65,7 +65,9 @@ pub fn run_look(state: RunState, ascii: bool) -> (&'static str, Role) {
     let g = |mark| glyph(mark, ascii);
     match state {
         RunState::AwaitingApproval | RunState::Halted => (g(Glyph::NeedsYou), Role::Attention),
-        RunState::Planning | RunState::Running => (g(Glyph::Run), Role::Working),
+        RunState::Planning | RunState::Brainstorming | RunState::Specifying | RunState::Running => {
+            (g(Glyph::Run), Role::Working)
+        }
         RunState::Paused => (g(Glyph::Run), Role::Paused),
         RunState::Complete | RunState::Accepted => (g(Glyph::Passed), Role::Done),
         RunState::Discarded => (g(Glyph::Ended), Role::Muted),

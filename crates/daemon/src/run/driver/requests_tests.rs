@@ -29,6 +29,7 @@ async fn run_iterate_reaches_the_engine() {
     let iterate = RunRequest::Iterate {
         run: "nope".into(),
         goal: "more".into(),
+        design: None,
     };
     let reply = tokio::time::timeout(Duration::from_secs(10), s.request(iterate))
         .await

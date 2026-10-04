@@ -41,6 +41,8 @@ pub enum ActionKind {
     OpenConversation,
     /// Milestone 9.3 (KG §2.2): opens the iterate dialog.
     Iterate,
+    /// Milestone 9.6 decision 34: opens the brainstorm or spec gate's screen.
+    ReviewDoc,
 }
 
 /// Which input form an action opens.
@@ -89,7 +91,7 @@ impl ActionKind {
     pub fn needs(&self) -> ActionNeeds {
         use ActionKind::*;
         match self {
-            ReviewPlan | Stats | OpenConversation | Iterate => ActionNeeds::Open,
+            ReviewPlan | Stats | OpenConversation | Iterate | ReviewDoc => ActionNeeds::Open,
             Answer => ActionNeeds::Input(InputKind::Answer),
             Message | MessageStage { .. } => ActionNeeds::Input(InputKind::Message),
             Override => ActionNeeds::Input(InputKind::Reason),

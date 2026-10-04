@@ -103,6 +103,7 @@ async fn a_stuck_continue_past_the_tool_deadline_starts_nothing() {
         orchestrator: None,
         delivery: Some(DeliveryMode::Local),
         continue_from: Some(PREV.into()),
+        design: None,
     };
     let reply = tokio::time::timeout(ANSWER, rig.s.request(req))
         .await

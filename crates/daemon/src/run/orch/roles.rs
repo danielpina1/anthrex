@@ -64,6 +64,8 @@ pub fn role_name(role: AgentRole) -> &'static str {
         AgentRole::Decider => "decider",
         AgentRole::Racer => "racer",
         AgentRole::TestWriter => "test_writer",
+        AgentRole::Brainstormer => "brainstormer",
+        AgentRole::DocReviewer => "doc_reviewer",
     }
 }
 

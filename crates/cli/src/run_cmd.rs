@@ -405,6 +405,7 @@ async fn start(
             trust_project,
             unconfined_checks,
             delivery,
+            design: None,
         })
         .await?;
     let run_id = match reply {

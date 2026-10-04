@@ -89,6 +89,7 @@ pub(crate) fn add_fix(
         addresses: Vec::new(),
         race: false,
         pair: false,
+        covers: Vec::new(),
     };
     let (mut task, mut errors) = resolve_task_lenient(
         plan,

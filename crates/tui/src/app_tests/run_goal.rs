@@ -173,6 +173,7 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
             }),
             delivery: Some(proto::DeliveryMode::Pr),
             continue_from: None,
+            design: None,
         }
     );
     assert!(goal_form(&app).submitting);

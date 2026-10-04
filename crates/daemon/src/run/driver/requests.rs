@@ -45,6 +45,8 @@ impl RunService {
                 unconfined_checks,
                 // Milestone 9.2 decision 3: `--delivery`, resolved once, at the start.
                 delivery,
+                // Milestone 9.6: read from task M9.6.3; a plan file never runs the flow.
+                design: _,
             } => {
                 let flags = (yes, trust_project, unconfined_checks);
                 self.start(plan_toml, dir, flags, delivery).await
@@ -110,6 +112,8 @@ impl RunService {
                 orchestrator,
                 delivery,
                 continue_from: None,
+                // Milestone 9.6: read from task M9.6.3.
+                design: _,
             } => {
                 let flags = (trust_project, unconfined_checks);
                 self.start_goal(goal, dir, flags, yes, (orchestrator, delivery))
@@ -166,7 +170,8 @@ impl RunService {
                 self.delivery_request(req).await
             }
             // Milestone 9.3 decision 10: a round of a settled run.
-            RunRequest::Iterate { run, goal } => answer(
+            // Milestone 9.6: `design` is read from task M9.6.15.
+            RunRequest::Iterate { run, goal, .. } => answer(
                 request::ITERATE,
                 self.ask(|reply| EventKind::Iterate {
                     reply,
@@ -192,6 +197,13 @@ impl RunService {
                     self.send(EventKind::Orch(OrchEvent::McpReady { run_id, window_id }));
                 }
                 RunReply::done(request::MCP_READY, "")
+            }
+            // Milestone 9.6: the document gates arrive with tasks M9.6.5 and M9.6.7.
+            RunRequest::DocGate { .. } => {
+                RunReply::refused(request::DOC_GATE, actions::DOC_GATES_NOT_YET)
+            }
+            RunRequest::ShowDoc { .. } => {
+                RunReply::refused(request::SHOW_DOC, actions::DOC_GATES_NOT_YET)
             }
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")

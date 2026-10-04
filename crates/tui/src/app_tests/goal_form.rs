@@ -339,6 +339,7 @@ fn the_toggles_reach_the_request() {
             orchestrator: None,
             delivery: None,
             continue_from: None,
+            design: None,
         }
     );
 
@@ -356,6 +357,7 @@ fn the_toggles_reach_the_request() {
             orchestrator: None,
             delivery: None,
             continue_from: None,
+            design: None,
         }
     );
 }
@@ -402,6 +404,7 @@ fn the_model_picker_lists_the_runtimes_enabled_models_then_custom() {
             }),
             delivery: None,
             continue_from: None,
+            design: None,
         }
     );
 }
@@ -440,6 +443,7 @@ fn custom_reveals_the_text_line_and_its_text_is_the_model_sent() {
             }),
             delivery: None,
             continue_from: None,
+            design: None,
         }
     );
 }

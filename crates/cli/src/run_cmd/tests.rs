@@ -110,6 +110,7 @@ fn run_start_outwaits_both_preflights() {
         trust_project: false,
         unconfined_checks: false,
         delivery: None,
+        design: None,
     };
     assert!(
         request_timeout(&start) > preflights,
@@ -132,6 +133,7 @@ fn run_start_outwaits_both_preflights() {
         orchestrator: None,
         delivery: None,
         continue_from: None,
+        design: None,
     };
     // The goal's own terms (the triage decider's 600 s and 30 s) on top.
     assert!(request_timeout(&goal) > preflights + Duration::from_secs(600 + 30));

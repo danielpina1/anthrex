@@ -93,6 +93,7 @@ async fn a_delivered_run_whose_window_was_closed_iterates_in_a_fresh_session() {
     let req = RunRequest::Iterate {
         run: PREV.into(),
         goal: "also add a logout button".into(),
+        design: None,
     };
     let reply = tokio::time::timeout(ANSWER, rig.s.request(req))
         .await
@@ -160,6 +161,7 @@ async fn an_adopted_window_reaches_its_chain_after_an_evicted_chain_iterates() {
     let req = RunRequest::Iterate {
         run: next.clone(),
         goal: "add a logout button".into(),
+        design: None,
     };
     let reply = tokio::time::timeout(ANSWER, rig.s.request(req))
         .await
@@ -249,6 +251,7 @@ async fn a_continued_goal_over_the_cap_is_refused() {
         orchestrator: None,
         delivery: Some(proto::DeliveryMode::Local),
         continue_from: Some(PREV.into()),
+        design: None,
     };
     let over = "é".repeat(proto::GOAL_MAX_CHARS + 1);
     let reply = tokio::time::timeout(ANSWER, rig.s.request(request(over)))

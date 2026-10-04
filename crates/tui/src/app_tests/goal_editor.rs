@@ -481,6 +481,7 @@ fn continue_sends_continue_from_and_no_orchestrator() {
             orchestrator: None,
             delivery: None,
             continue_from: Some("r-20261001-3f9a".into()),
+            design: None,
         }
     );
     // `new` sends the runtime and no `continue_from`.

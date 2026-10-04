@@ -82,7 +82,12 @@ pub fn parse_call(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall,
         AgentRole::Planner => matches!(tool, "get_context" | "submit_epic"),
         // Milestone 9.5: a racer and a test writer have the worker's tools.
         AgentRole::Worker | AgentRole::Racer | AgentRole::TestWriter => tool == "task_note",
-        AgentRole::Reviewer | AgentRole::Scout | AgentRole::Decider => false,
+        // Milestone 9.6: the design agents' tools arrive with task M9.6.6.
+        AgentRole::Reviewer
+        | AgentRole::Scout
+        | AgentRole::Decider
+        | AgentRole::Brainstormer
+        | AgentRole::DocReviewer => false,
     };
     if !allowed {
         return Err(format!(
