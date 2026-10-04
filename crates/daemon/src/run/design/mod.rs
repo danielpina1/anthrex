@@ -14,6 +14,7 @@
 
 pub mod changes;
 pub mod coverage;
+pub mod pack;
 pub mod plan_md;
 pub mod requirements;
 pub mod state;
