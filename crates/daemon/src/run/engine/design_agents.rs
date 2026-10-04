@@ -56,8 +56,7 @@ pub(crate) fn readers(run: &Run) -> usize {
 }
 
 /// `start_brainstorm` was accepted: decision 10's two brainstormers, queued for reader
-/// slots, and their pack's inputs frozen (ruling T8-2) with `earlier`, a continued
-/// goal's previous spec.
+/// slots, and their pack's inputs frozen with `earlier` (ruling T8-2).
 pub(super) fn queue_brainstormers(run: &mut Run, earlier: Option<EarlierSpec>, now: u64) {
     let picks = brainstorm_picks(run);
     let pack = freeze(run, earlier);

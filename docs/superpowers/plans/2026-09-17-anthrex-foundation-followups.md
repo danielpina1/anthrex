@@ -1927,3 +1927,7 @@ What the fix wave's code half (`.superpowers/sdd/M9.5-tuning/fix-wave-W1a-report
 - **`engine/tests/race_fixes.rs` is at 588 lines** (W1b round 3). The next race test goes in a new file.
 - **`run/delivery/tests.rs` is at 601 lines** (the final docs step's measurement at `34313dbd`). It was 600 at `e0e1bd5e`, and FW-2 (b) added a line. Split it move-only before it takes more.
 - **The CLI's `run_cmd/delivery.rs:363-374` runs `git.output()` with no timeout.** It is a client-side git call, so it is outside AGENTS.md rule 2 (which is about the daemon), but a stalled git would hang the command. Give it the same bounded wait the daemon's git calls use. (Final docs step, 2026-10-04.)
+
+## From M9.6.8's review (2026-10-04, fix round 1, m7), for later
+
+- **The brainstormer's and the document reviewer's `tokens` budgets are not enforced.** `[orchestrator.design.budget]` freezes `tokens` for both, but the scout machine they run on stops a session only past its tool calls or its minutes (`DesignAgentSpec.max_tool_calls`, `timeout_secs`). `DesignAgent.tokens` records what each session spent, after it ends. Fix direction: give the scout machine a token ceiling from the session's usage events, and fail the session past it with its own text, as for calls and minutes.
