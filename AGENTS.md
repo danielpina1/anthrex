@@ -58,7 +58,7 @@ All five must pass before a milestone is done. `cargo test` spawns real shells i
 8. **Keep files focused.** A file that grows past roughly 600 lines is doing too much; split it by responsibility, following the brief's file list.
 9. **Never push to `main`, never force-push a shared branch, never merge a pull request.** Opening a pull request is the end of your job.
 10. **Never probe git under the manager lock.** Git registration, probing and unregistration each run on their own task per worktree root, entirely outside `daemon::lock(&m)`. A blocking git command that could stall while the lock is held would freeze every window, not just the one it's checking — the same class of bug as hard rule 2, for git specifically.
-11. **Every git invocation passes `--no-optional-locks` and a scrubbed environment.** Remove `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE` and `GIT_PREFIX` before spawning `git`. Skipping `--no-optional-locks` lets a probe take the index lock at the same moment an agent runs git in that worktree — an intermittent failure that is miserable to diagnose, because it reproduces only under real concurrent use, never in a quiet checkout.
+11. **Every git invocation passes `--no-optional-locks` and a scrubbed environment.** Remove `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_PREFIX`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, and the pathspec modes `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` and `GIT_ICASE_PATHSPECS` before spawning `git`; a leaked pathspec mode silently changes which paths a probe or a diff matches. Skipping `--no-optional-locks` lets a probe take the index lock at the same moment an agent runs git in that worktree — an intermittent failure that is miserable to diagnose, because it reproduces only under real concurrent use, never in a quiet checkout.
 
 ## Facts learned the hard way in milestone 1
 
@@ -67,7 +67,7 @@ All five must pass before a milestone is done. `cargo test` spawns real shells i
 - macOS: writing to a PTY master blocks after about 1 KB when the foreground program is not reading. Never write from a thread that anything else waits on.
 - `JoinHandle::abort()` takes effect at the next yield point. Await the handle after aborting when ordering matters.
 - Kill signals the process group with SIGHUP first, so an interactive shell exits at once.
-- Edition 2024 makes `std::env::set_var` and `remove_var` unsafe. Tests that change environment variables must hold a shared lock.
+- Edition 2024 makes `std::env::set_var` and `remove_var` unsafe. Tests that change environment variables must hold a shared lock. A test that sets an environment variable a spawned process reads goes alone in its own test binary (as `crates/daemon/tests/run_git_pathspec_env.rs` and `worktree_env.rs` do): a shared lock cannot cover a concurrent spawn from another test in the same binary.
 - Claude Code accepts hooks through `claude --settings '<json>'`, merged under the user's own settings. Codex runs `notify` with the JSON payload as the last argument, not on stdin.
 
 ## Commits and pull requests
