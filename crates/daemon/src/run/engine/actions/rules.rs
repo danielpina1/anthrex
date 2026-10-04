@@ -176,6 +176,13 @@ pub(crate) fn resume(run: &Run, rebaseline: bool) -> Option<String> {
     if run.state != RunState::Halted {
         return Some(is(run));
     }
+    // Milestone 9.6 ruling T7-1: a phase budget's halt resumes into its phase only.
+    if let Some(phase) = crate::run::engine::design::halted_phase(run).filter(|_| rebaseline) {
+        return Some(format!(
+            "run {} halted in its {phase} phase; resume it without --rebaseline",
+            run.id
+        ));
+    }
     (!rebaseline && !run.halt_retryable).then(|| {
         let reason = run.halted_reason.clone().unwrap_or_default();
         format!(

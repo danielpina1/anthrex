@@ -60,6 +60,7 @@ mod delivery_watch_adopt;
 mod delivery_watch_fixes;
 mod design_agents;
 mod design_agents_end;
+mod design_clock;
 mod design_fixture;
 mod design_gate;
 mod design_phases;

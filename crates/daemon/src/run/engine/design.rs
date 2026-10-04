@@ -277,8 +277,13 @@ pub(super) fn start_clock(run: &mut Run, now: u64) {
 /// The phase whose clock runs, as the halt names it: the run's phase, or the phase of
 /// the gate the orchestrator is revising.
 fn phase_name(run: &Run) -> Option<&'static str> {
+    phase_of(run, run.state)
+}
+
+/// The design phase of a run in `state`: its own, or at a revising gate its gate's.
+fn phase_of(run: &Run, state: RunState) -> Option<&'static str> {
     let design = run.orch.design.as_ref()?;
-    match run.state {
+    match state {
         RunState::Brainstorming => Some("brainstorming"),
         RunState::Specifying => Some("specifying"),
         RunState::Planning => Some("planning"),
@@ -292,6 +297,16 @@ fn phase_name(run: &Run) -> Option<&'static str> {
         }
         _ => None,
     }
+}
+
+/// Ruling T7-1: the phase a halted design run returns to on its plain `run resume`
+/// (`halted_from`), which `rules::resume` names when it refuses `--rebaseline`.
+pub(crate) fn halted_phase(run: &Run) -> Option<&'static str> {
+    if run.state != RunState::Halted {
+        return None;
+    }
+    let from = run.orch.design.as_ref()?.halted_from?;
+    phase_of(run, from)
 }
 
 /// Decision 8, on every tick: a phase past its `phase_minutes` of unpaused wall-clock
@@ -315,10 +330,29 @@ pub(super) fn tick(run: &mut Run, now: u64) {
         design.halted_from = Some(run.state);
         design.phase_started = None;
     }
-    run.state = RunState::Halted;
-    run.halted_reason = Some(text.clone());
+    // Fix round 1 (m1): halted as every halt is (its log line and wake note).
+    super::merge::halt(run, text, now);
     run.halt_retryable = true;
-    log(run, now, text);
+}
+
+/// Ruling T7-2, after a restore: a daemon restart's downtime never counts toward a
+/// phase's budget. A run the restore left stopped (paused, or halted) has it as paused
+/// time already (ruling T12-1, `Run::paused_total`); any other whose clock runs (a
+/// revising gate, which the restore does not pause) has its clock shifted by it, from
+/// its last change as T12-1 counts it.
+pub(super) fn restored(run: &mut Run, now: u64) {
+    if matches!(run.state, RunState::Paused | RunState::Halted) || run.last_step_at == 0 {
+        return;
+    }
+    let down = now.saturating_sub(run.last_step_at);
+    let started = run
+        .orch
+        .design
+        .as_mut()
+        .and_then(|d| d.phase_started.as_mut());
+    if let Some(started) = started {
+        *started = started.saturating_add(down).min(now);
+    }
 }
 
 /// F-3 (task M9.6.1): a plain `run resume` of a run a phase budget halted returns it to

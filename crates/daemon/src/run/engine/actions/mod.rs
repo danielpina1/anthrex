@@ -209,7 +209,9 @@ pub(crate) fn check(run: &Run, node: &ActionNode, kind: &ActionKind) -> Result<(
         ApproveHold { hold } | RejectHold { hold } => rules::hold(run, hold),
         Pause => edit(&[PlanEdit::Pause], &|| rules::pause(run)),
         Unpause => edit(&[PlanEdit::Resume], &|| rules::unpause(run)),
-        Resume => rules::resume(run, true),
+        // Ruling T7-1: refused only when neither form (with `--rebaseline` or without)
+        // is admitted; the text is the rebaselined form's.
+        Resume => rules::resume(run, true).filter(|_| rules::resume(run, false).is_some()),
         Cancel => rules::cancel(run),
         Promote => rules::promote(run),
         Accept => rules::finish(run, FinishAction::Accept),

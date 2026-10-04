@@ -201,7 +201,8 @@ fn a_phase_over_budget_halts_and_resume_restarts_its_clock() {
     let text = "design flow: the specifying phase passed its 60 min budget";
     assert_eq!(fx.run().state, RunState::Halted);
     assert_eq!(fx.run().halted_reason.as_deref(), Some(text));
-    assert!(log_lines(&fx).contains(&text.to_string()));
+    // Fix round 1 (m1): logged as every halt is.
+    assert!(log_lines(&fx).contains(&format!("halted: {text}")));
     // Its tools wait for the user.
     let effects = submit(&mut fx, "spec", SPEC);
     assert_eq!(refused(&effects), format!("run {RUN_ID} is halted"));

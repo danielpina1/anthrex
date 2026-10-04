@@ -448,6 +448,7 @@ pub(super) fn resume(
     }
     // Review m1: a halt on refs that could not be read is retried as it is.
     if rebaseline.is_none() && run.halt_retryable {
+        left_halt(run);
         run.halt_retryable = false;
         run.halted_reason = None;
         run.state = RunState::Running;
@@ -462,10 +463,19 @@ pub(super) fn resume(
         "resumed{}",
         stages::rebaseline(run, &read, now, &mut effects)
     );
+    left_halt(run);
     run.halted_reason = None;
     run.halt_retryable = false;
     run.state = RunState::Running;
     log(run, now, text.clone());
     answer(Ok(format!("run {run_id} {text}")));
     fx.extend(effects);
+}
+
+/// Milestone 9.6 ruling T7-1: no resume leaves a phase budget's halt behind, so a later
+/// halt's plain resume never returns the run to a design phase.
+fn left_halt(run: &mut Run) {
+    if let Some(design) = run.orch.design.as_mut() {
+        design.halted_from = None;
+    }
 }
