@@ -179,13 +179,23 @@ fn roster_substitute(roster: &[ModelEntry], current: &Route, failed: &[Route]) -
 /// list and installed roster route failed, or only a route the overlap rule holds
 /// task `i` off has not.
 pub fn every_route_failed(run: &Run, i: usize, route: &Route) -> Option<String> {
+    route_failed_line(run, i, &run.tasks[i].route, route)
+}
+
+/// [`every_route_failed`] for a test writer stepping from `from`, its own route (ruling
+/// T16-7, N3), as the worker's steps from the task's route.
+pub fn writer_route_failed(run: &Run, i: usize, from: &Route, route: &Route) -> Option<String> {
+    route_failed_line(run, i, from, route)
+}
+
+fn route_failed_line(run: &Run, i: usize, from: &Route, route: &Route) -> Option<String> {
     let task = &run.tasks[i];
     let failed = failed_routes(task);
     if !failed_in(&failed, route) {
         return None;
     }
     let (id, runtime, model) = (task.id(), route.runtime.label(), &route.model);
-    let held = roster_substitute(&open_roster(run, i, false), &task.route, &failed).is_some();
+    let held = roster_substitute(&open_roster(run, i, false), from, &failed).is_some();
     Some(if held {
         format!(
             "no route for task {id} keeps the overlap rule and has not failed in this task; \

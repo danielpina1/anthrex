@@ -18,7 +18,7 @@ use crate::run::contract_patterns::{
 };
 use crate::run::model::{Pair, ProofRecord, Run, Task};
 use crate::run::phases::set_state;
-use crate::run::route_pick::{every_route_failed, writer_route, writer_step};
+use crate::run::route_pick::{writer_route, writer_route_failed, writer_step};
 
 /// Whether task `task` is a paired task whose test writer is (or will be) at work.
 pub(crate) fn writing(task: &Task) -> bool {
@@ -86,7 +86,7 @@ pub(super) fn escalate_writer(run: &mut Run, i: usize, now: u64) -> bool {
         return false;
     };
     let next = writer_step(run, i, &current);
-    if let Some(text) = every_route_failed(run, i, &next) {
+    if let Some(text) = writer_route_failed(run, i, &current, &next) {
         requests::log(run, now, text);
     }
     if let Some(pair) = run.tasks[i].pair.as_mut() {

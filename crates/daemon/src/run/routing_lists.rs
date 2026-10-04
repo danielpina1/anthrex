@@ -58,6 +58,19 @@ pub(super) fn worker(
     }
 }
 
+/// Milestone 9.5 ruling T16-7 (N3): a test writer's first decision when it runs on the
+/// task's route and a class list chose that route: the list's snapshot, `configured_list`.
+pub(super) fn test_writer(
+    run: &Run,
+    task: &Task,
+    id: (AgentRole, u32, Option<u32>),
+    chosen: &Route,
+    now: u64,
+) -> Option<RoutingDecision> {
+    let pick = (task.list_pick.as_ref()).filter(|p| p.chosen_route() == Some(chosen))?;
+    Some(over_list(run, task, (id, "test_writer"), pick, chosen, now))
+}
+
 /// Review round `round` of task `i` is being launched on `chosen`, from the `review`
 /// list's snapshot `list`: the list's first qualifying candidate (`configured_list`),
 /// or, with none qualifying, `pick_reviewer`'s route appended (`review_policy`).

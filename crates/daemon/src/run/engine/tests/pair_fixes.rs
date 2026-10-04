@@ -319,3 +319,33 @@ fn a_red_check_leaves_a_red_only_proof_record() {
     let tally = crate::run::history::gates(fx.task("t1"));
     assert_eq!((tally.proofs, tally.proofs_failed), (0, 0));
 }
+
+/// Ruling T16-7 (N3): a writer that falls back to the task's route, which a model list
+/// chose, records the list's source and snapshot.
+#[test]
+fn a_writer_on_a_list_chosen_route_records_the_list() {
+    let tasks = [task("t1", "S", "a", &format!("{PAIRED}\n{SONNET_HIGH}"))];
+    let (fx, launch, _) = running(PROFILE, &tasks, config::Orchestrator::default(), |run| {
+        run.orch.installed.insert("codex".into(), false);
+        let route = run.tasks[0].route.clone();
+        run.tasks[0].list_pick = Some(crate::run::model::ListPick {
+            candidates: vec![proto::RoutingCandidate {
+                route,
+                skipped_reason: None,
+            }],
+            chosen: Some(0),
+            pick: Default::default(),
+            slot: None,
+        });
+    });
+    assert_eq!(launch.spec.runtime, Runtime::Claude, "the task's own route");
+    let t1 = fx.task("t1");
+    let writer = (t1.routing_decisions.iter())
+        .find(|d| d.role == AgentRole::TestWriter)
+        .unwrap();
+    assert_eq!(
+        (writer.trigger.as_str(), writer.source.as_str()),
+        ("test_writer", "configured_list")
+    );
+    assert_eq!(writer.pick_policy.as_deref(), Some("first"));
+}

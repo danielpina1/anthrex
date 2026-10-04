@@ -357,7 +357,8 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
 
 /// Milestone 9.5 decision 9a: a paired task's test writer session is being launched on
 /// `chosen`. Its first session records trigger `test_writer`, its source naming the
-/// pick (`peer_route` for the peer runtime's route, else the task route's own source);
+/// pick (`peer_route` for the peer runtime's route, else the task route's own source,
+/// a model list's `configured_list` with its snapshot when the list chose it);
 /// a session after rung 2 or `run retry` records `escalation` from the route it stepped
 /// from; any other fresh session (a lost resume, say) records nothing, as a worker's.
 /// Nothing for a run without history.
@@ -380,6 +381,13 @@ pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
             now,
         ),
         None if first => {
+            // Ruling T16-7 (N3): on the task's route a list chose, the list's record.
+            let listed = (*chosen == task.route)
+                .then(|| lists::test_writer(run, task, id, chosen, now))
+                .flatten();
+            if let Some(d) = listed {
+                return push(&mut run.tasks[i], d);
+            }
             let explicit = task.spec.route.model.is_some();
             let source = match (*chosen != task.route, explicit) {
                 (true, _) => "peer_route",

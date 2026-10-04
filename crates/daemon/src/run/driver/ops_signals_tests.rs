@@ -186,10 +186,15 @@ impl Rig {
     }
 
     async fn verify(&self, signals: Option<SignalsSpec>) -> OpResult {
+        self.verify_at(&self.start.clone(), signals).await
+    }
+
+    /// [`Rig::verify`] with the op's run head given.
+    async fn verify_at(&self, run_head: &str, signals: Option<SignalsSpec>) -> OpResult {
         let kind = OpKind::VerifyDone {
             worktree: self.worktree.clone(),
             start: self.start.clone(),
-            run_head: self.start.clone(),
+            run_head: run_head.to_string(),
             owns: vec!["**".into()],
             generated: Vec::new(),
             protected: Vec::new(),

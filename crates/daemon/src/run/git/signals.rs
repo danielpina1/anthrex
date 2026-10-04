@@ -301,46 +301,35 @@ fn read_signals(
     })
 }
 
-/// Milestone 9.5 rulings RP-2 and T16-1: a paired task's implementer's signals. While no
-/// merge has landed on the checkout's first-parent line after `red` (the engine's
-/// refresh or merge-queue hand-back), they are read over `red..head`. Once one has, the
-/// newest such merge is the base, so the run head's changes it carries are never the
-/// implementer's; the paths `start..red` touched (the writer's test) are still read
-/// over `red..head`, those paths only, in place of the merge-based read's. Deleted test
-/// files and `DiffTooLarge` first; at most [`SIGNALS_MAX`], `more` counting both reads'
-/// overflow (the merge-based read's may include a dropped signal on a red path).
+/// Milestone 9.5 rulings RP-2, T16-1 and T16-7: a paired task's implementer's signals.
+/// No merge commit is ever a base. The paths `start..red` touched (the writer's test)
+/// are read over `red..head`, those paths only; every other path is read with
+/// [`done_signals`]'s merge-base read (`<merge-base of run_head and head>..head`),
+/// which no merge can move past the implementer's own commits. Deleted test files and
+/// `DiffTooLarge` first; at most [`SIGNALS_MAX`], `more` counting both reads' overflow
+/// (either read's may include a signal the other side's paths drop). The base is `red`
+/// when a deleted test file is on a writer's path (decision 41's restore command names
+/// a commit that has it, ruling T16-7 N2), else the merge base.
 pub fn pair_signals(
     git: &OsStr,
     worktree: &Path,
-    (start, red, head): (&str, &str, &str),
+    (start, red, run_head, head): (&str, &str, &str, &str),
     spec: &SignalsSpec,
     timeout: Duration,
 ) -> Result<ClaimSignals, String> {
-    if [start, red, head].iter().any(|r| r.starts_with('-')) {
+    if [start, red, run_head, head]
+        .iter()
+        .any(|r| r.starts_with('-'))
+    {
         return Err(format!("not a diff range: {start:?} {red:?} {head:?}"));
     }
-    let g = Git::new(git, timeout);
-    let range = format!("{red}..{head}");
-    let merges = [os("rev-list"), os("--first-parent"), os("--merges")];
-    let mut args = merges.to_vec();
-    args.extend([os("-n"), os("1"), os(&range)]);
-    let merge = g.ok(worktree, &args)?.trim().to_string();
-    if merge.is_empty() {
-        return done_signals_from(git, worktree, (red, head), spec, timeout);
-    }
     let attrs = NoAttributes::probe(git, worktree, timeout)?;
-    let red_paths = signal_paths(
-        git,
-        worktree,
-        &format!("{start}..{red}"),
-        None,
-        &attrs,
-        timeout,
-    )?;
+    let range = format!("{start}..{red}");
+    let red_paths = signal_paths(git, worktree, &range, None, &attrs, timeout)?;
     let on_red = |s: &Signal| path_of(s).is_some_and(|p| red_paths.iter().any(|r| r == p));
-    let since = done_signals_from(git, worktree, (&merge, head), spec, timeout)?;
+    let own = done_signals(git, worktree, run_head, head, spec, timeout)?;
     let of_red = done_signals_from(git, worktree, (red, head), spec, timeout)?;
-    let mut list: Vec<Signal> = (since.list.into_iter().filter(|s| !on_red(s)))
+    let mut list: Vec<Signal> = (own.list.into_iter().filter(|s| !on_red(s)))
         .chain(of_red.list.into_iter().filter(|s| on_red(s)))
         .collect();
     let first = |s: &Signal| match s {
@@ -351,14 +340,20 @@ pub fn pair_signals(
     list.sort_by_key(first);
     let mut seen = false;
     list.retain(|s| !matches!(s, Signal::DiffTooLarge) || !std::mem::replace(&mut seen, true));
+    let red_deleted =
+        (list.iter()).any(|s| matches!(s, Signal::DeletedTestFile { .. }) && on_red(s));
     let over = list.len().saturating_sub(SIGNALS_MAX);
     list.truncate(SIGNALS_MAX);
-    let more = (since.more.saturating_add(of_red.more))
+    let more = (own.more.saturating_add(of_red.more))
         .saturating_add(u32::try_from(over).unwrap_or(u32::MAX));
     Ok(ClaimSignals {
         list,
         more,
-        base: merge,
+        base: if red_deleted {
+            red.to_string()
+        } else {
+            own.base
+        },
     })
 }
 

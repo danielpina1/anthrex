@@ -492,7 +492,9 @@ pub fn forecast(
 
 #[path = "route_pick_step.rs"]
 mod step;
-pub use step::{every_route_failed, next_candidate, rung2_route, writer_route, writer_step};
+pub use step::{
+    every_route_failed, next_candidate, rung2_route, writer_route, writer_route_failed, writer_step,
+};
 
 #[cfg(test)]
 #[path = "route_pick_tests.rs"]
