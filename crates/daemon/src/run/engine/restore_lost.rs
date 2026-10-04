@@ -78,12 +78,14 @@ pub(super) fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Eff
             task.handback_due = task.state == TaskState::MergeQueue;
         }
         // Carry T13: `start_gates` and `dispatch_reviewers` re-issue a gate's op.
-        // Milestone 9.1 decision 29: tier 1 is a check gate's op too.
+        // Milestone 9.1 decision 29: tier 1 is a check gate's op too. Ruling FW-2 (e):
+        // a review task's target is resolved again (`kinds::dispatch`).
         (
             OpKind::Proof { .. }
             | OpKind::Check { .. }
             | OpKind::PrepareReview { .. }
-            | OpKind::Tier(_),
+            | OpKind::Tier(_)
+            | OpKind::ResolveTarget { .. },
             Some(i),
         ) if run.tasks[i].gate_op == Some(op) => {
             run.tasks[i].gate_op = None;
