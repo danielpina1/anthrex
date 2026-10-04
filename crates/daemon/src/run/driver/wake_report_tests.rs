@@ -351,11 +351,11 @@ fn ready_reports_its_reason() {
         Err(WaitReason::Attention)
     );
     assert_eq!(ready(&idle, None, quiet, true), Err(WaitReason::Attention));
-    // Ruling T5b-2: bounded, though `now` is the check's own and the age exact.
-    let Err(WaitReason::Input { secs }) = ready(&idle, ago(2), quiet, false) else {
-        panic!("not held by its input");
-    };
-    assert!((2..4).contains(&secs), "{secs}");
+    // Ruling T5b-2: `now` is the check's own, so the age is exact (task 5b re-review).
+    assert_eq!(
+        ready(&idle, ago(2), quiet, false),
+        Err(WaitReason::Input { secs: 2 })
+    );
     assert_eq!(ready(&idle, ago(6), quiet, false), Ok(()));
     assert_eq!(
         ready(&window_info(Status::Done), None, quiet, false),

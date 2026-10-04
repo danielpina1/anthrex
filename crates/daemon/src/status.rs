@@ -69,7 +69,7 @@ pub struct StatusContext {
 /// |---|---|---|
 /// | exit | all | `Exited` is terminal |
 /// | question footer | a Codex orchestrator (M9.5 decision 40) | `Attention` |
-/// | any but input | Codex `Attention` while the footer shows (ruling T5b-1) | unchanged |
+/// | any but input and exit | Codex `Attention` while the footer shows (ruling T5b-1) | unchanged |
 /// | bell | Claude after hooks / all others | unchanged / `Attention` |
 /// | focus, input | all | clear `Done`, or clear `Attention` |
 /// | output, quiet | Shell or agent before its first signal | fallback activity transitions |
