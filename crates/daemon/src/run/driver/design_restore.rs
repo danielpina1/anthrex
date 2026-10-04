@@ -27,20 +27,20 @@ impl RunService {
     /// Reads back every design run's versions and sends each run's result to the
     /// engine. Called last by `restore`.
     pub(super) async fn check_design_docs(&self) {
-        self.check_design_docs_within(IO_WAIT).await;
+        self.check_design_docs_with(IO_WAIT, check_all).await;
     }
 
-    /// [`Self::check_design_docs`], bounded by `wait`.
-    pub(super) async fn check_design_docs_within(&self, wait: Duration) {
+    /// The read-back, bounded by `wait`, with its blocking half `read` ([`check_all`];
+    /// a test's seam).
+    pub(super) async fn check_design_docs_with<F>(&self, wait: Duration, read: F)
+    where
+        F: FnOnce(Vec<(String, Vec<ToCheck>)>) -> Vec<(String, Vec<DocChecked>)> + Send + 'static,
+    {
         let runs = self.design_docs();
         if runs.is_empty() {
             return;
         }
-        let read = move || -> Vec<(String, Vec<DocChecked>)> {
-            (runs.into_iter())
-                .map(|(run_id, docs)| (run_id, check(docs)))
-                .collect()
-        };
+        let read = move || read(runs);
         match tokio::time::timeout(wait, tokio::task::spawn_blocking(read)).await {
             Ok(Ok(all)) => {
                 for (run_id, checked) in all {
@@ -71,6 +71,13 @@ impl RunService {
         })
         .collect()
     }
+}
+
+/// The blocking half for every run: [`check`] each run's versions.
+fn check_all(runs: Vec<(String, Vec<ToCheck>)>) -> Vec<(String, Vec<DocChecked>)> {
+    (runs.into_iter())
+        .map(|(run_id, docs)| (run_id, check(docs)))
+        .collect()
 }
 
 /// The blocking half: each file read whole and checked against its index entry.

@@ -533,6 +533,12 @@ The bounds the fix wave's code (`e0e1bd5e..34313dbd`) added, from its W1a and W1
 | `a_write_begun_before_the_bound_is_answered_with_its_result` | the same | start bound `0`, write bound `30s`; the committed signal awaited with `recv_timeout(30s)`; the gate's `recv_timeout(30s)` | A pinning test: the test releases the write as soon as it is committed, so the request answers with the write's own result in milliseconds. Every 30 s is a hang guard that the test's own signals end at once. | **Recorded.** |
 | `project_detection_runs_git_without_the_inherited_git_variables` | `crates/daemon/tests/git_env_scrub.rs` | `detect_roots_with`'s git timeout `10s` | One spawn of a stand-in `git` script that writes its environment to a file and exits 1. | **Recorded.** A hang guard; alone in its binary (AGENTS.md, "Facts learned"). |
 
+### Recorded, from M9.6.7's fix round 2 (2026-10-04)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `a_read_back_that_times_out_changes_nothing` | `crates/daemon/src/run/driver/design_restore_tests.rs` | the read-back's wait `300ms`; `elapsed < 5s`; the call under `tokio::time::timeout(10s)`; the seam's own `recv_timeout(30s)`; the read's start awaited with `recv_timeout(5s)` | `check_design_docs_with` returns at its wait (300 ms) plus one `spawn_blocking` start and the engine lock's version listing; the seam blocks on a channel the test holds, so the timeout is the condition under test, not a synchronisation. The test cannot hang: its sender is dropped on every exit (a panic's unwinding included), which ends the blocked read, the read's own wait is bounded, and the call's 10 s deadline fails the test instead of waiting (probed: with the wait ignored, it fails at 10.05 s). Replaces a FIFO, whose blocked `open` could outlive the test when the read had not reached it in time. | **Recorded.** |
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |

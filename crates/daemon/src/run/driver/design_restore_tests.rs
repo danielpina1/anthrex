@@ -180,20 +180,16 @@ mod service {
     }
 
     /// Review m4 and m5: the read-back is one blocking task for every run, bounded by
-    /// its wait. A file that never answers (a FIFO with no writer) times it out: the
-    /// restore goes on, and the engine is told nothing, so the gate stays as it was.
+    /// its wait. A read that never answers (the seam blocks on a channel this test
+    /// holds) times it out: the restore goes on, and the engine is told nothing, so the
+    /// gate stays as it was. Fix round 2: it cannot hang. The test's sender is dropped
+    /// on every exit, a panic's unwinding included, which ends the blocked read; the
+    /// read's own wait is bounded too, and the call has a hard deadline.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_read_back_that_times_out_changes_nothing() {
+        const READ_BOUND: Duration = Duration::from_secs(30);
         let data = tempfile::tempdir().unwrap();
-        let made = std::sync::Mutex::new(None);
-        let fifo = |path: &Path| {
-            std::fs::remove_file(path).unwrap();
-            let status = std::process::Command::new("mkfifo").arg(path).status();
-            assert!(status.unwrap().success(), "mkfifo {}", path.display());
-            *made.lock().unwrap() = Some(path.to_path_buf());
-        };
-        let s = at_spec_gate(data.path(), fifo).await;
-        let fifo = made.lock().unwrap().clone().unwrap();
+        let s = at_spec_gate(data.path(), |_| {}).await;
         let shutdown = CancellationToken::new();
         s.spawn(shutdown.clone());
         let gate_of = |s: &RunService| {
@@ -202,12 +198,26 @@ mod service {
             design.and_then(|d| d.gate)
         };
         let before = gate_of(&s);
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (entered, read_began) = std::sync::mpsc::channel::<()>();
+        let stalled = move |runs: Vec<(String, Vec<super::super::ToCheck>)>| {
+            let _ = entered.send(());
+            let _ = held.recv_timeout(READ_BOUND);
+            runs.into_iter()
+                .map(|(id, docs)| (id, super::super::check(docs)))
+                .collect()
+        };
         let started = Instant::now();
-        s.check_design_docs_within(Duration::from_millis(300)).await;
+        let call = s.check_design_docs_with(Duration::from_millis(300), stalled);
+        tokio::time::timeout(Duration::from_secs(10), call)
+            .await
+            .expect("the read-back returns at its wait");
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "bounded by its wait"
         );
+        let began = read_began.recv_timeout(Duration::from_secs(5));
+        assert!(began.is_ok(), "the read had started: the wait timed it out");
         // The service still answers, and nothing reached the engine.
         let reply = s
             .request(RunRequest::DocGate {
@@ -219,15 +229,7 @@ mod service {
         let refused = "rethink is only for the brainstorm gate";
         assert_eq!(reply, RunReply::refused(request::DOC_GATE, refused));
         assert_eq!(gate_of(&s), before, "the gate is unchanged");
-        // The blocked read gets its end of file, so the blocking thread ends. Opened
-        // without blocking: with no reader waiting, it fails instead of hanging.
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut open = std::fs::OpenOptions::new();
-        open.write(true).custom_flags(libc::O_NONBLOCK);
-        drop(
-            open.open(&fifo)
-                .expect("the read-back still waits on the FIFO"),
-        );
+        drop(release);
         shutdown.cancel();
     }
 }
