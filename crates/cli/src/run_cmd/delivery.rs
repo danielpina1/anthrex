@@ -367,15 +367,8 @@ fn bare_under(dir: &Path, bare: &Path) -> anyhow::Result<()> {
         "--is-bare-repository",
         "--absolute-git-dir",
     ]);
-    for var in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_COMMON_DIR",
-        "GIT_INDEX_FILE",
-        "GIT_PREFIX",
-    ] {
-        git.env_remove(var);
-    }
+    // AGENTS.md rule 11 (W2 re-review N1): every inherited git variable dropped.
+    daemon::subprocess::scrub_inherited_git(&mut git);
     let output = git.output().map_err(|_| refuse())?;
     let text = String::from_utf8_lossy(&output.stdout);
     let mut lines = text.lines();

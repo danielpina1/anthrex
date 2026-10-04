@@ -450,6 +450,17 @@ pub(crate) fn scrub_git_env(command: &mut Command) -> &mut Command {
     scrub_git_location_env(command).env("GIT_NO_REPLACE_OBJECTS", "1")
 }
 
+/// AGENTS.md rule 11 for a git the daemon or the CLI runs itself: every inherited git
+/// location variable, object-store variable and pathspec mode removed (W2 re-review N1:
+/// eleven in all). A variable set on `command` after this call stays.
+pub fn scrub_inherited_git(command: &mut Command) -> &mut Command {
+    let vars = config::reserved_env::GIT_LOCATION_VARS.iter();
+    for key in vars.chain(&config::reserved_env::GIT_STORE_AND_PATHSPEC_VARS) {
+        command.env_remove(key);
+    }
+    command
+}
+
 /// Rule 11's inherited location variables removed, as in [`scrub_git_env`], without
 /// `GIT_NO_REPLACE_OBJECTS`: for a process that runs the project's or an agent's own
 /// commands (a check, a proof, `setup`, a headless session), whose git is the user's
