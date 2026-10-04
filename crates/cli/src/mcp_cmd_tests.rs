@@ -82,6 +82,7 @@ fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
             epic: epic.map(String::from),
             chain: chain.clone(),
             lane: None,
+            agent_label: None,
         };
         let mut argv = vec!["anthrex".to_string()];
         argv.extend(daemon::headless::argv::mcp_args(&target, 12, socket).expect("an mcp role"));
@@ -314,6 +315,7 @@ fn lane_is_required_for_racers_and_refused_otherwise() {
             epic: None,
             chain: None,
             lane,
+            agent_label: None,
         };
         let argv = daemon::headless::argv::mcp_args(&target, 12, socket).expect("an mcp role");
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();

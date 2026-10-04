@@ -29,6 +29,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         }),
         allowed_tools: [
             "mcp__anthrex__task_done",
@@ -78,6 +79,7 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         }),
         allowed_tools: [
             "mcp__anthrex__submit_review",
@@ -215,6 +217,7 @@ fn mcp_args_for_a_worker() {
         epic: None,
         chain: None,
         lane: None,
+        agent_label: None,
     };
     assert_eq!(
         mcp_args(&target, 7, Path::new("/tmp/a.sock")),

@@ -168,6 +168,7 @@ impl Mcp {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         }
     }
 }

@@ -91,6 +91,7 @@ fn area_scout_spec_is_read_only() {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         })
     );
     assert_eq!(
@@ -189,6 +190,7 @@ fn onboarding_scout_spec_is_read_only_too() {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         })
     );
     assert_eq!(spec.output_filter, None);

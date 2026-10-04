@@ -93,6 +93,25 @@ impl RunService {
         }
     }
 
+    /// `get_doc` (task M9.6.6): one version's text only, capped at [`DOC_READ_CAP`], with
+    /// no diff and no findings; a refusal is the read's own text.
+    pub(super) async fn get_doc(
+        &self,
+        run_id: &str,
+        kind: DocKind,
+        version: Option<u32>,
+        from: Option<String>,
+    ) -> Result<String, String> {
+        let query = DocQuery {
+            kind,
+            version,
+            from,
+            diff: false,
+            findings: false,
+        };
+        Ok(self.doc_view(run_id, query).await?.text)
+    }
+
     /// One version's text, with its diff against the previous version and its findings
     /// when asked: looked up under the engine lock, read after it is released.
     pub(super) async fn doc_view(&self, run_id: &str, query: DocQuery) -> Result<DocView, String> {

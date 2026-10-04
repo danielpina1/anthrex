@@ -16,6 +16,7 @@ fn mcp_args_carry_the_chain() {
         epic: None,
         chain: Some("o-3f9a".into()),
         lane: None,
+        agent_label: None,
     };
     assert_eq!(
         mcp_args(&target, 4, Path::new("/s")),

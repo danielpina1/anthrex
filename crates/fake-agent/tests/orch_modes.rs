@@ -175,6 +175,7 @@ fn script_names_for_planners_integration_reviewers_and_run_scouts() {
         epic: epic.map(String::from),
         chain: None,
         lane: None,
+        agent_label: None,
     };
     let cases = [
         (

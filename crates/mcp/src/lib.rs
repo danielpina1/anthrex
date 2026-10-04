@@ -8,6 +8,7 @@
 
 pub mod forward;
 pub mod tools;
+pub mod tools_design;
 pub mod tools_orch;
 pub mod tools_scout;
 

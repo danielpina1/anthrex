@@ -98,6 +98,12 @@ pub struct McpTarget {
     /// as `proto::ToolCall.lane`.
     #[serde(default)]
     pub lane: Option<proto::RaceLane>,
+    /// A design agent's label (`--agent-label`), milestone 9.6 ruling T1-O3: a
+    /// brainstormer's `claude`, `codex`, `A` or `B`, a document reviewer's `<doc>-r<n>`.
+    /// Only its session's argv names it (fake-agent keys its scripts by it); the daemon
+    /// never reads it back, and it is no protocol field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_label: Option<String>,
 }
 
 /// Which session a launch starts or continues.

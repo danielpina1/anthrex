@@ -61,6 +61,7 @@ pub fn orch_argv_with(
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         },
         instructions: "THE CONTRACT".into(),
         effort: Effort::High,

@@ -223,6 +223,7 @@ pub fn headless_spec_on(scout: &ScoutSpec, ctx: &ScoutContext, route: &Route) ->
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         }),
         allowed_tools: allowed.into_iter().map(String::from).collect(),
         claude_permission_mode: claude.then(|| REVIEWER_PERMISSION_MODE.to_string()),

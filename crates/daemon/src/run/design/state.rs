@@ -140,13 +140,24 @@ impl DocVersion {
 }
 
 impl DesignState {
-    /// Version `n` of `kind`, or its latest when `n` is `None`.
+    /// Version `n` of `kind`, or its latest when `n` is `None`. Ruling T5-1's seam: a
+    /// spec's review draft is stored with `n = 0` (task M9.6.10), so the latest is the
+    /// highest gate version, or, before any, the last draft stored (`max_by_key` keeps
+    /// the last of equal keys). `get_doc { kind: "spec" }` reads it so.
     pub fn find(&self, kind: DocKind, n: Option<u32>) -> Option<&DocVersion> {
         let mut of_kind = self.versions.iter().filter(|v| v.kind == kind);
         match n {
             Some(n) => of_kind.find(|v| v.n == n),
             None => of_kind.max_by_key(|v| v.n),
         }
+    }
+
+    /// The live design agent of `role` in `window`: a brainstormer, or the document
+    /// reviewer, whose session runs there (the driver's caller check, task M9.6.6).
+    pub fn live_agent(&self, role: AgentRole, window: u32) -> Option<&DesignAgent> {
+        (self.brainstormers.iter().chain(&self.reviewer)).find(|a| {
+            a.role == role && a.window_id == Some(window) && a.state == DesignAgentState::Running
+        })
     }
 
     /// The latest brainstorm draft from `label` (`get_doc`'s `from`).

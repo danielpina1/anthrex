@@ -4,10 +4,11 @@
 //! have. Every object is closed. Problems read `invalid arguments: <field>: <problem>`,
 //! in M8a's worker-tool wording (`engine/tools.rs`). Pure.
 
-use proto::{AgentRole, PlanEdit, TaskNoteKind};
+use proto::{AgentRole, DocFinding, DocKind, FindingAnswer, PlanEdit, TaskNoteKind};
 use serde_json::{Map, Value};
 
 use super::json::label;
+pub use design::SubmitDoc;
 
 /// `run_status`'s longest wait, in seconds.
 pub const RUN_STATUS_MAX_WAIT: u64 = 50;
@@ -40,6 +41,8 @@ pub enum OrchCall {
         /// Milestone 9.3 decision 30: a round's request, alone in its call (the
         /// engine's check).
         iterate: Option<String>,
+        /// Milestone 9.6 decision 20: the answers to the plan review's findings.
+        responses: Vec<FindingAnswer>,
     },
     RunStatus {
         since: Option<u64>,
@@ -62,11 +65,26 @@ pub enum OrchCall {
         kind: TaskNoteKind,
         text: String,
     },
+    /// Milestone 9.6 (`tools_design.rs`): the orchestrator's, a brainstormer's (its
+    /// `submit_doc`) and a document reviewer's (`get_doc`, `submit_findings`).
+    StartBrainstorm {
+        answers: String,
+    },
+    SubmitDoc(SubmitDoc),
+    GetDoc {
+        kind: DocKind,
+        version: Option<u32>,
+        from: Option<String>,
+    },
+    SubmitFindings {
+        findings: Vec<DocFinding>,
+    },
 }
 
-/// Parses `tool`'s `args` for `role`: the orchestrator's seven tools, a planner's
-/// `get_context` and `submit_epic`, a worker's `task_note`. Any other pairing is
-/// `tool <tool> is not available to the <role> role`.
+/// Parses `tool`'s `args` for `role`: the orchestrator's ten tools, a planner's
+/// `get_context` and `submit_epic`, a worker's `task_note`, a brainstormer's
+/// `submit_doc`, a document reviewer's `get_doc` and `submit_findings`. Any other
+/// pairing is `tool <tool> is not available to the <role> role`.
 pub fn parse_call(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall, String> {
     let allowed = match role {
         AgentRole::Orchestrator => matches!(
@@ -78,16 +96,16 @@ pub fn parse_call(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall,
                 | "run_status"
                 | "task_result"
                 | "start_goal"
+                | "start_brainstorm"
+                | "submit_doc"
+                | "get_doc"
         ),
         AgentRole::Planner => matches!(tool, "get_context" | "submit_epic"),
         // Milestone 9.5: a racer and a test writer have the worker's tools.
         AgentRole::Worker | AgentRole::Racer | AgentRole::TestWriter => tool == "task_note",
-        // Milestone 9.6: the design agents' tools arrive with task M9.6.6.
-        AgentRole::Reviewer
-        | AgentRole::Scout
-        | AgentRole::Decider
-        | AgentRole::Brainstormer
-        | AgentRole::DocReviewer => false,
+        AgentRole::Brainstormer => tool == "submit_doc",
+        AgentRole::DocReviewer => matches!(tool, "get_doc" | "submit_findings"),
+        AgentRole::Reviewer | AgentRole::Scout | AgentRole::Decider => false,
     };
     if !allowed {
         return Err(format!(
@@ -95,11 +113,14 @@ pub fn parse_call(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall,
             label(&role)
         ));
     }
-    parse(tool, args).map_err(|problem| format!("invalid arguments: {problem}"))
+    parse(role, tool, args).map_err(|problem| format!("invalid arguments: {problem}"))
 }
 
-fn parse(tool: &str, args: &Value) -> Result<OrchCall, String> {
+fn parse(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall, String> {
     match tool {
+        "start_brainstorm" | "submit_doc" | "get_doc" | "submit_findings" => {
+            design::parse(role, tool, args)
+        }
         "get_context" => {
             let map = object(args, &["scouts"])?;
             Ok(OrchCall::GetContext {
@@ -126,7 +147,10 @@ fn parse(tool: &str, args: &Value) -> Result<OrchCall, String> {
             })
         }
         "edit_plan" => {
-            let map = object(args, &["edits", "submit", "summary", "iterate"])?;
+            let map = object(
+                args,
+                &["edits", "submit", "summary", "iterate", "responses"],
+            )?;
             let iterate = text(map, "iterate", proto::GOAL_MAX_CHARS)?;
             // Milestone 9.3 decision 30: an iterate needs no `edits` array; and task
             // M9.3.7's fix round 1 (option (b)): no call does, a missing `edits` is an
@@ -140,6 +164,7 @@ fn parse(tool: &str, args: &Value) -> Result<OrchCall, String> {
                 submit: flag(map, "submit")?,
                 summary: text(map, "summary", 8000)?,
                 iterate,
+                responses: design::responses(map)?,
             })
         }
         "run_status" => {
@@ -322,6 +347,9 @@ fn edits(map: &Map<String, Value>, min: usize) -> Result<Vec<PlanEdit>, String> 
 #[path = "tools_bounds.rs"]
 mod bounds;
 
+#[path = "tools_design.rs"]
+mod design;
+
 #[cfg(test)]
 #[path = "tools_tests.rs"]
 mod tests;
@@ -329,3 +357,11 @@ mod tests;
 #[cfg(test)]
 #[path = "tools_tests_bounds.rs"]
 mod tests_bounds;
+
+#[cfg(test)]
+#[path = "tools_tests_design.rs"]
+mod tests_design;
+
+#[cfg(test)]
+#[path = "tools_tests_design_args.rs"]
+mod tests_design_args;

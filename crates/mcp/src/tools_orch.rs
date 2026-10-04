@@ -24,10 +24,10 @@ pub const START_GOAL: &str = "start_goal";
 /// The most `run_status` waits, in seconds (decision 16).
 pub const RUN_STATUS_MAX_WAIT: u64 = 50;
 
-/// `tools_for(Orchestrator)`, in decision 15's order, milestone 9.3's `start_goal` last
-/// (decision 29).
+/// `tools_for(Orchestrator)`, in decision 15's order, then milestone 9.3's `start_goal`
+/// (decision 29), then milestone 9.6's three (`tools_design.rs`).
 pub fn orchestrator_tools() -> Vec<Tool> {
-    vec![
+    let mut tools = vec![
         get_context(),
         spawn_scout(),
         spawn_subplanner(),
@@ -35,7 +35,9 @@ pub fn orchestrator_tools() -> Vec<Tool> {
         run_status(),
         task_result(),
         start_goal(),
-    ]
+    ];
+    tools.extend(crate::tools_design::orchestrator_design_tools());
+    tools
 }
 
 /// `tools_for(Planner)`, unchanged by milestone 9.3: a sub-planner sees neither
@@ -119,6 +121,8 @@ fn edit_plan() -> Tool {
                 "submit": boolean(),
                 "summary": text(8000),
                 "iterate": text(proto::GOAL_MAX_CHARS as u64),
+                // Milestone 9.6 decision 20: the answers to the plan review's findings.
+                "responses": crate::tools_design::responses(),
             }),
             &[],
         ),
@@ -219,7 +223,8 @@ fn plan_edit() -> JsonObject {
 
 /// A task as `add_task` and `split_task` take it. `budget` is deliberately absent
 /// (decision 23.1); `stage`, `atomic` and `atomic_reason` are M9.1 decision 43's,
-/// `addresses` (review thread refs, `<pr>:<key>`) M9.2 decision 31's, `race` and `pair` M9.5's.
+/// `addresses` (review thread refs, `<pr>:<key>`) M9.2 decision 31's, `race` and `pair` M9.5's,
+/// `covers` M9.6's.
 fn plan_task() -> JsonObject {
     closed(
         json!({
@@ -246,6 +251,8 @@ fn plan_task() -> JsonObject {
             "addresses": array(text(64), None, 20),
             "race": boolean(),
             "pair": boolean(),
+            // Milestone 9.6 decision 17: the spec requirements the task delivers.
+            "covers": crate::tools_design::covers(),
         }),
         &["id", "title", "size", "owns", "brief", "acceptance"],
     )

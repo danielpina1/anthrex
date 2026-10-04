@@ -139,6 +139,7 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
             epic: None,
             chain: run.chain.clone(),
             lane: None,
+            agent_label: None,
         },
         instructions: ORCHESTRATOR_CONTRACT.to_string(),
         effort: route.effort,
@@ -263,6 +264,7 @@ pub fn planner_spec(run: &Run, epic: &EpicRecord, session: u32) -> PlannerSpec {
         epic: Some(epic.epic.clone()),
         chain: None,
         lane: None,
+        agent_label: None,
     };
     let run_ref = RunRef {
         run_id: run.id.clone(),
@@ -344,6 +346,7 @@ pub fn research_spec(run: &Run, task: &Task) -> HeadlessSpec {
         epic: None,
         chain: None,
         lane: None,
+        agent_label: None,
     };
     read_only(
         run,

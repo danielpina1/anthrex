@@ -24,6 +24,9 @@ enum Rule {
     Route,
     /// `message`'s `to`: 1 to 20 task ids, or a string (its form is serde's).
     To,
+    /// Milestone 9.6 decision 17: `plan_task.covers`, at most 32 ids of at most 8
+    /// characters, each `R<n>`.
+    Covers,
 }
 
 const EDIT: &[(&str, Rule)] = &[
@@ -87,6 +90,8 @@ const TASK: &[(&str, Rule)] = &[
     // Milestone 9.5 decision 32.
     ("race", Rule::Serde),
     ("pair", Rule::Serde),
+    // Milestone 9.6 decision 17.
+    ("covers", Rule::Covers),
     // Not in the schema (decision 23.1), but M8a's `PlanTask` reads it and rule 7.1
     // refuses it with its own text, which tells the model what to do.
     ("budget", Rule::Serde),
@@ -160,6 +165,16 @@ fn fields(map: &Map<String, Value>, rules: &[(&str, Rule)], path: &str) -> Resul
                 }
             }
             Rule::Route => object(value, ROUTE, &format!("{at}: "))?,
+            Rule::Covers => {
+                for (i, item) in array(value, &at, 0, 32)?.iter().enumerate() {
+                    text(item, &format!("{at}[{i}]"), 1, 8)?;
+                    let id = item.as_str().unwrap_or_default();
+                    let digits = id.strip_prefix('R').unwrap_or_default();
+                    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                        return Err(format!("{path}covers entries look like R4"));
+                    }
+                }
+            }
             Rule::To => {
                 if value.is_array() {
                     for (i, item) in array(value, &at, 1, 20)?.iter().enumerate() {

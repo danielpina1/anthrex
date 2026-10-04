@@ -115,6 +115,7 @@ fn a_headless_spec_round_trips_through_json() {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         }),
         allowed_tools: vec!["Bash".into()],
         claude_permission_mode: Some("acceptEdits".into()),
@@ -149,6 +150,7 @@ fn a_persisted_spec_without_an_epic_still_loads() {
         epic: None,
         chain: None,
         lane: None,
+        agent_label: None,
     };
     let mut json = serde_json::to_value(&target).unwrap();
     json.as_object_mut().unwrap().remove("epic");
@@ -167,6 +169,7 @@ fn persisted_mcp_target_without_chain_still_loads() {
         epic: None,
         chain: None,
         lane: None,
+        agent_label: None,
     };
     let mut json = serde_json::to_value(&target).unwrap();
     json.as_object_mut().unwrap().remove("chain");
@@ -192,6 +195,7 @@ fn persisted_mcp_target_without_lane_still_loads() {
         epic: None,
         chain: None,
         lane: None,
+        agent_label: None,
     };
     let mut json = serde_json::to_value(&target).unwrap();
     json.as_object_mut().unwrap().remove("lane");

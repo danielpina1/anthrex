@@ -61,6 +61,7 @@ pub(in crate::run::driver) fn role(run_id: &str) -> RoleLaunch {
             epic: None,
             chain: Some(CHAIN.into()),
             lane: None,
+            agent_label: None,
         },
         instructions: "the orchestrator contract".into(),
         effort: Effort::High,

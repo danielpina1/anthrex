@@ -82,6 +82,7 @@ fn parse_call_for_each_tool() {
             submit: true,
             summary: Some("All done.".into()),
             iterate: None,
+            responses: Vec::new(),
         })
     );
     assert_eq!(
@@ -91,6 +92,7 @@ fn parse_call_for_each_tool() {
             submit: false,
             summary: None,
             iterate: None,
+            responses: Vec::new(),
         })
     );
     assert_eq!(

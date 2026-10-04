@@ -1,5 +1,5 @@
 {
-  "_about": "Milestone 9 brief, Interfaces \"MCP (crates/mcp)\": every tool of the orchestrator and the sub-planner, and the worker's task_note, as the table gives them. Built from the table alone, independently of the Rust schemas it checks. Milestone 9.3 decision 29 (task M9.3.7) adds edit_plan's iterate (string, 1 to 16,384 characters) and the orchestrator's seventh tool, start_goal, from that decision's text; edit_plan requires nothing, since the daemon reads a missing edits as an empty batch (task M9.3.7's fix round 1).",
+  "_about": "Milestone 9 brief, Interfaces \"MCP (crates/mcp)\": every tool of the orchestrator and the sub-planner, and the worker's task_note, as the table gives them. Built from the table alone, independently of the Rust schemas it checks. Milestone 9.3 decision 29 (task M9.3.7) adds edit_plan's iterate (string, 1 to 16,384 characters) and the orchestrator's seventh tool, start_goal, from that decision's text; edit_plan requires nothing, since the daemon reads a missing edits as an empty batch (task M9.3.7's fix round 1). Milestone 9.6 (task M9.6.6, Interfaces \"MCP tools\" and decisions 17 and 20) adds plan_task's covers (at most 32 ids, each matching ^R[0-9]+$, at most 8 characters), edit_plan's responses (at most 40 {id, answer}), the orchestrator's start_brainstorm, submit_doc and get_doc, a brainstormer's submit_doc and a document reviewer's get_doc and submit_findings.",
   "orchestrator": [
     {
       "name": "get_context",
@@ -306,6 +306,15 @@
                     },
                     "pair": {
                       "type": "boolean"
+                    },
+                    "covers": {
+                      "type": "array",
+                      "maxItems": 32,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^R[0-9]+$",
+                        "maxLength": 8
+                      }
                     }
                   },
                   "required": [
@@ -494,6 +503,15 @@
                       },
                       "pair": {
                         "type": "boolean"
+                      },
+                      "covers": {
+                        "type": "array",
+                        "maxItems": 32,
+                        "items": {
+                          "type": "string",
+                          "pattern": "^R[0-9]+$",
+                          "maxLength": 8
+                        }
                       }
                     },
                     "required": [
@@ -668,6 +686,29 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 16384
+          },
+          "responses": {
+            "type": "array",
+            "maxItems": 40,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,15}$"
+                },
+                "answer": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "id",
+                "answer"
+              ]
+            }
           }
         },
         "required": []
@@ -726,6 +767,109 @@
         },
         "required": [
           "goal"
+        ]
+      }
+    },
+    {
+      "name": "start_brainstorm",
+      "description": "Start the two brainstormers with the user's answers to your questions (empty if they skipped). Only in the brainstorming phase. Returns at once.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "answers": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 8192
+          }
+        },
+        "required": [
+          "answers"
+        ]
+      }
+    },
+    {
+      "name": "submit_doc",
+      "description": "Submit a design document: the merged brainstorm report (kind brainstorm) or the spec (kind spec). A spec with ready false goes to review; with ready true it opens the gate, and responses must answer every finding of the latest review.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "brainstorm",
+              "spec"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "amend": {
+            "type": "boolean"
+          },
+          "responses": {
+            "type": "array",
+            "maxItems": 40,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,15}$"
+                },
+                "answer": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "id",
+                "answer"
+              ]
+            }
+          }
+        },
+        "required": [
+          "kind",
+          "text"
+        ]
+      }
+    },
+    {
+      "name": "get_doc",
+      "description": "Read a design document: the latest of a kind, one version, or a brainstormer's draft (from).",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "brainstorm_draft",
+              "brainstorm",
+              "spec",
+              "plan"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "from": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,32}$"
+          }
+        },
+        "required": [
+          "kind"
         ]
       }
     }
@@ -951,6 +1095,15 @@
                     },
                     "pair": {
                       "type": "boolean"
+                    },
+                    "covers": {
+                      "type": "array",
+                      "maxItems": 32,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^R[0-9]+$",
+                        "maxLength": 8
+                      }
                     }
                   },
                   "required": [
@@ -1139,6 +1292,15 @@
                       },
                       "pair": {
                         "type": "boolean"
+                      },
+                      "covers": {
+                        "type": "array",
+                        "maxItems": 32,
+                        "items": {
+                          "type": "string",
+                          "pattern": "^R[0-9]+$",
+                          "maxLength": 8
+                        }
                       }
                     },
                     "required": [
@@ -1338,6 +1500,115 @@
         "required": [
           "kind",
           "text"
+        ]
+      }
+    }
+  ],
+  "brainstormer": [
+    {
+      "name": "submit_doc",
+      "description": "Submit your brainstorm draft (kind brainstorm_draft) in the six-section template. If it is refused, fix what the refusal names and submit again.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "brainstorm_draft"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 12288
+          }
+        },
+        "required": [
+          "kind",
+          "text"
+        ]
+      }
+    }
+  ],
+  "doc_reviewer": [
+    {
+      "name": "get_doc",
+      "description": "Read a design document: the latest of a kind, one version, or a brainstormer's draft (from).",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "brainstorm_draft",
+              "brainstorm",
+              "spec",
+              "plan"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "from": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,32}$"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      }
+    },
+    {
+      "name": "submit_findings",
+      "description": "Submit your review's findings once, then stop. Use blocking only for placeholders, contradictions, untestable requirements, scope beyond the approved approach, dropped brainstorm decisions, a requirement without an acceptance check, or a plan task that does not deliver its covers.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "findings": {
+            "type": "array",
+            "maxItems": 40,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,15}$"
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "blocking",
+                    "minor"
+                  ]
+                },
+                "place": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "id",
+                "severity",
+                "place",
+                "text"
+              ]
+            }
+          }
+        },
+        "required": [
+          "findings"
         ]
       }
     }

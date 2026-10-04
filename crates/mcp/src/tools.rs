@@ -13,7 +13,7 @@ pub const TASK_BLOCKED: &str = "task_blocked";
 pub const SUBMIT_REVIEW: &str = "submit_review";
 
 /// The tools `role` may call (milestone 9 decision 15 for the orchestrator's, the
-/// sub-planner's and the worker's `task_note`).
+/// sub-planner's and the worker's `task_note`; milestone 9.6 for the design agents').
 pub fn tools_for(role: AgentRole) -> Vec<Tool> {
     use crate::tools_orch::{orchestrator_tools, planner_tools, task_note};
     match role {
@@ -28,9 +28,10 @@ pub fn tools_for(role: AgentRole) -> Vec<Tool> {
         // Milestone 9 decision 43: a decider never runs `anthrex mcp`, and never gets
         // an anthrex tool even if something asked for its list.
         AgentRole::Decider => Vec::new(),
-        // Milestone 9.6: the design agents' tools arrive with task M9.6.6; until then
-        // they are refused every tool.
-        AgentRole::Brainstormer | AgentRole::DocReviewer => Vec::new(),
+        // Milestone 9.6 (`tools_design.rs`): a brainstormer submits its draft; a document
+        // reviewer reads the document and submits its findings.
+        AgentRole::Brainstormer => crate::tools_design::brainstormer_tools(),
+        AgentRole::DocReviewer => crate::tools_design::doc_reviewer_tools(),
     }
 }
 

@@ -254,8 +254,8 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
         AgentRole::Decider => return None,
         AgentRole::Racer => "racer",
         AgentRole::TestWriter => "test_writer",
-        // Milestone 9.6: the design agents get their `anthrex mcp` in task M9.6.6.
-        AgentRole::Brainstormer | AgentRole::DocReviewer => return None,
+        AgentRole::Brainstormer => "brainstormer",
+        AgentRole::DocReviewer => "doc_reviewer",
     };
     let mut args = vec!["mcp".to_string(), "--role".into(), role.into()];
     // M8b decision 15: a repository-level scout belongs to no run.
@@ -280,6 +280,15 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
     // `--lane` for any other, task 2 review m2).
     if let Some(lane) = target.lane.filter(|_| target.role == AgentRole::Racer) {
         args.extend(["--lane".into(), lane.label().into()]);
+    }
+    // Milestone 9.6 ruling T1-O3: a design agent names its label, and no other role
+    // does (the CLI refuses `--agent-label` for any other).
+    let design = matches!(
+        target.role,
+        AgentRole::Brainstormer | AgentRole::DocReviewer
+    );
+    if let Some(label) = target.agent_label.as_ref().filter(|_| design) {
+        args.extend(["--agent-label".into(), label.clone()]);
     }
     args.extend([
         "--window".into(),
@@ -492,3 +501,7 @@ mod tests;
 #[cfg(test)]
 #[path = "argv_lane_tests.rs"]
 mod lane_tests;
+
+#[cfg(test)]
+#[path = "argv_design_tests.rs"]
+mod design_tests;

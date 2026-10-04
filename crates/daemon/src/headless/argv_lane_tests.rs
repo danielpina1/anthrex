@@ -20,6 +20,7 @@ fn mcp_args_carry_the_lane() {
         epic: None,
         chain: None,
         lane: Some(proto::RaceLane::A),
+        agent_label: None,
     };
     assert_eq!(
         mcp_args(&racer, 4, Path::new("/s")),
@@ -77,6 +78,7 @@ fn only_a_racer_names_its_lane() {
             epic: None,
             chain: None,
             lane: Some(proto::RaceLane::A),
+            agent_label: None,
         };
         let args = mcp_args(&target, 4, Path::new("/s")).unwrap();
         assert!(!args.iter().any(|a| a == "--lane"), "{role:?}: {args:?}");

@@ -28,6 +28,7 @@ fn role() -> RoleLaunch {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         },
         instructions: "THE CONTRACT".into(),
         effort: Effort::High,
@@ -85,7 +86,7 @@ fn mcp_config() -> String {
     )
 }
 
-const ALLOWED: &str = "mcp__anthrex__get_context,mcp__anthrex__spawn_scout,mcp__anthrex__spawn_subplanner,mcp__anthrex__edit_plan,mcp__anthrex__run_status,mcp__anthrex__task_result,mcp__anthrex__start_goal,Read,Glob,Grep";
+const ALLOWED: &str = "mcp__anthrex__get_context,mcp__anthrex__spawn_scout,mcp__anthrex__spawn_subplanner,mcp__anthrex__edit_plan,mcp__anthrex__run_status,mcp__anthrex__task_result,mcp__anthrex__start_goal,mcp__anthrex__start_brainstorm,mcp__anthrex__submit_doc,mcp__anthrex__get_doc,Read,Glob,Grep";
 const DISALLOWED: &str = "Edit,Write,NotebookEdit,Bash,Agent,Task,Artifact,CronCreate,CronDelete,RemoteTrigger,PushNotification,SendMessage,Workflow,WebFetch,WebSearch,Monitor,EnterWorktree,ExitWorktree,ScheduleWakeup,DesignSync";
 
 /// Decision 7's order, with rulings 1 and 2: the user-settings-only flags, the MCP
@@ -393,4 +394,15 @@ fn the_orchestrators_allowlist_names_every_mcp_tool_and_no_other() {
         "the allowlist's anthrex tools, in the MCP order"
     );
     assert_eq!(rest, ["Read", "Glob", "Grep"]);
+    // Milestone 9.6 task M9.6.6: the design flow's three are pre-allowed, after
+    // `start_goal`, and a design agent's tools are never the orchestrator's.
+    for tool in ["start_brainstorm", "submit_doc", "get_doc"] {
+        let name = format!("mcp__anthrex__{tool}");
+        assert!(
+            ORCHESTRATOR_ALLOWED_TOOLS.contains(&name.as_str()),
+            "{name}"
+        );
+    }
+    assert!(!ORCHESTRATOR_ALLOWED_TOOLS.contains(&"mcp__anthrex__submit_findings"));
+    assert_eq!(anthrex.len(), 10);
 }

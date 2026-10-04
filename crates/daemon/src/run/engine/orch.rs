@@ -266,8 +266,9 @@ pub(super) fn tool(
             edits,
             submit,
             summary,
+            responses,
         } => {
-            let alone = edits.is_empty() && !submit && summary.is_none();
+            let alone = edits.is_empty() && !submit && summary.is_none() && responses.is_empty();
             goal_rounds::edit(run, reply, (&goal, alone), (now, quiet_base), fx)
         }
         OrchCall::EditPlan {
@@ -275,6 +276,7 @@ pub(super) fn tool(
             submit,
             summary,
             iterate: None,
+            ..
         } => {
             let call = (&edits[..], submit, summary);
             edit_plan(run, reply, call, refusals, (now, quiet_base), fx)
