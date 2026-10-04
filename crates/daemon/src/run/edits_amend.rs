@@ -154,6 +154,14 @@ impl Batch {
         if let Some(deps) = deps {
             self.amend_deps(i, deps, &mut changed);
         }
+        // Milestone 9.5 rulings T17a-3, T17a-4: what decides the race changed before
+        // the task started, so its next dispatch decides again.
+        let decides = race.is_some() || pair.is_some() || route.is_some();
+        let task = &mut self.run.tasks[i];
+        if (decides || stage.is_some() || deps.is_some()) && !has_started(task) {
+            task.race_decision = None;
+            task.race_wait_since = None;
+        }
         let task = &self.run.tasks[i];
         // Decision 42c: a new brief or acceptance also releases a paused task.
         let reaches = brief.is_some() || acceptance.is_some();

@@ -33,7 +33,7 @@ fn the_crown_is_sent_only_after_the_lane_is_won() {
 }
 
 /// The crown result: the task is the lane's (ruling T1-3).
-fn crowned(fx: &mut Fixture, op: OpId, head: &str) -> Vec<Effect> {
+pub(super) fn crowned(fx: &mut Fixture, op: OpId, head: &str) -> Vec<Effect> {
     fx.done(op, OpResult::Crowned { head: head.into() })
 }
 
@@ -166,7 +166,17 @@ fn a_moved_task_branch_halts_and_nothing_imports_before_the_crown() {
     }));
     assert_eq!(fx.run().state, proto::RunState::Running);
     effects.extend(fx.tick());
-    assert_eq!(ops_in(&effects, "CrownRacer").len(), 1, "{effects:#?}");
+    let crowns = ops_in(&effects, "CrownRacer");
+    assert_eq!(crowns.len(), 1, "{effects:#?}");
+    // N2: the crown sent again is lane b's, at lane b's head.
+    match &crowns[0].1 {
+        OpKind::CrownRacer {
+            checkout,
+            lane_head,
+            ..
+        } => assert_eq!((checkout, lane_head.as_str()), (&lane_path(B), HEAD_B)),
+        other => panic!("{other:?}"),
+    }
     for name in [
         "VerifyDone",
         "CountCommits",
@@ -224,7 +234,7 @@ fn a_lanes_salvage_ref_is_the_tasks() {
 }
 
 /// The crowned lane b's conflict, handed back into its checkout: the task `working`.
-fn handed_back(fx: &mut Fixture) {
+pub(super) fn handed_back(fx: &mut Fixture) {
     let (op, _) = super::merge::pending_one(fx, "MergeCandidate", Some("t1"));
     let conflict = OpResult::Conflict {
         files: vec!["crates/a/x.rs".to_string()],

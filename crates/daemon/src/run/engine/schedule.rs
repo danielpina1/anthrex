@@ -44,9 +44,11 @@ pub fn writer_slots(task: &Task) -> Vec<Runtime> {
             .map(|l| l.route.runtime)
             .collect();
     }
-    // Minor m5: a race's one slot is its winning lane's, on that lane's runtime, from
-    // `Won` on (the task takes the lane's route only at the crown).
-    let won = (task.race.iter()).find_map(|r| r.lanes.iter().find(|l| Some(l.lane) == r.winner));
+    // Minor m5, ruling T17a-5: between `Won` and the crown, the race's one slot is the
+    // winning lane's, on that lane's runtime; the crown (adoption included) swaps the
+    // lane's route in, and from then on the task's route is the runtime.
+    let won = (task.race.iter().filter(|r| !r.crowned))
+        .find_map(|r| r.lanes.iter().find(|l| Some(l.lane) == r.winner));
     match holds_writer(task.state) {
         true => vec![won.map_or(task.route.runtime, |l| l.route.runtime)],
         false => Vec::new(),

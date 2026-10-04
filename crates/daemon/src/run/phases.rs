@@ -41,4 +41,11 @@ pub fn set_state(task: &mut Task, state: TaskState, now: u64) {
     }
     task.phase_since = now;
     task.state = state;
+    // Milestone 9.5 ruling T17a-4: the race decision belongs to one queued stint; a
+    // task back to `pending` (it gained a dependency, or a cancelled one was replaced)
+    // decides again when it is queued again.
+    if state == TaskState::Pending {
+        task.race_decision = None;
+        task.race_wait_since = None;
+    }
 }
