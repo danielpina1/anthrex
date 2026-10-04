@@ -121,11 +121,12 @@ fn the_same_runtime_fallback_names_its_reason() {
     assert_eq!(why.as_deref(), Some("the codex runtime is not installed"));
 }
 
-/// Ruling T10-4: a spec gate revising after a Back or a failed read-back was not sent
-/// for review, and a review draft is refused with the cause-neutral text.
+/// Rulings T10-4 and T10-6: a spec gate revising after a Back or a failed read-back is
+/// not sent for review, and a review draft is refused with the cause-neutral text.
 #[test]
 fn a_back_or_read_back_revision_is_not_sent_for_review() {
-    let not_sent = "not reviewed: this revision was not sent for review";
+    // Ruling T10-6 (amends T10-4): a refusal that says what to do.
+    let not_sent = "this revision is not sent for review; submit it with ready: true";
     let mut fx = at_plan_gate(false);
     let back = DocGateAction::Back {
         note: "Rethink R2.".into(),
@@ -312,7 +313,7 @@ fn a_revision_after_changes_is_reviewed_only_when_asked() {
     let draft = outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap_err();
     assert_eq!(
         draft,
-        "the user asked for no review of this revision; submit with ready = true"
+        "the user asked for no review of this revision; submit it with ready: true"
     );
     let before = launches(&fx).len();
     outcome(&submit_spec(&mut fx, true, Value::Null)).unwrap();
