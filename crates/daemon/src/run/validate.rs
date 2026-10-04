@@ -441,6 +441,7 @@ fn new_task(
         worktree: Default::default(),
         prewarmed: false,
         worktree_live: false,
+        prepare_failed: false,
         awaiting_deps: false,
         held_answered: false,
         gate_op: None,

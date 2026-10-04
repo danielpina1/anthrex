@@ -52,6 +52,11 @@ pub struct Task {
     /// fails, cleared when it is removed (M8a.11; the cancel clean-up of M8a.6's F5).
     #[serde(default)]
     pub worktree_live: bool,
+    /// Ruling FW-4: a `PrepareWorktree` of the task's own checkout came back `Failed`.
+    /// Its branch may exist all the same (git makes it before the checkout), so a racing
+    /// task with one never races: the crown could not create the branch.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prepare_failed: bool,
     /// An answer or other message is held for this started task until every dependency
     /// has finished (M8a.6 ruling N5); the task stays `blocked` meanwhile.
     #[serde(default)]

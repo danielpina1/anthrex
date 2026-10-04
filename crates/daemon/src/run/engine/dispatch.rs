@@ -305,6 +305,11 @@ pub(super) fn worktree_done(
             block(run, i, BlockReason::Environment, text, now);
         }
         OpResult::Failed { message } if !state.is_finished() => {
+            // Ruling FW-4: the task branch may have been made before the step that
+            // failed; a lane's own failure (in its view) is the race's, not the task's.
+            if run.tasks[i].race.is_none() {
+                run.tasks[i].prepare_failed = true;
+            }
             let text = format!("could not prepare the worktree: {message}");
             block(run, i, BlockReason::Environment, text, now);
         }

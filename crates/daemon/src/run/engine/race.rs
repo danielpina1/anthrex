@@ -37,13 +37,15 @@ pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
         return Start::Single;
     }
     // The final fix wave's A-I2: a task that has its own checkout (a start commit, a
-    // live worktree, a pre-warm, or one still being made: ruling FW-2 (a)) works
-    // there; its lanes would race from the stage head, and the crown could not create
-    // a task branch that already exists.
+    // live worktree, a pre-warm, one still being made: ruling FW-2 (a), or one whose
+    // making failed after its branch may have been made: ruling FW-4) works there; its
+    // lanes would race from the stage head, and the crown could not create a task
+    // branch that already exists.
     let making = schedule::op_in_flight(run, task.id(), |k| {
         matches!(k, OpKind::PrepareWorktree { .. })
     });
-    if task.start_commit.is_some() || task.worktree_live || task.prewarmed || making {
+    let had = task.worktree_live || task.prewarmed || task.prepare_failed;
+    if task.start_commit.is_some() || had || making {
         return single(run, i, "race skipped: the task already has a checkout", now);
     }
     if !schedule::critical_path(run).contains(&i) {

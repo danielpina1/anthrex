@@ -111,6 +111,32 @@ fn a_task_amended_to_race_while_its_prewarm_runs_runs_single() {
     single_in_own_checkout(&fx);
 }
 
+/// Ruling FW-4 (low confidence, verified): a pre-warm's `PrepareWorktree` that comes
+/// back `Failed` may have created the task branch before a later step failed
+/// (`git::ensure_task_worktree` makes the branch first), so the crown's create-only
+/// `update-ref` would meet it and answer `RefMoved`. The task counts as having a
+/// checkout: amended to `race = true`, approved and retried, it runs single.
+#[test]
+fn a_task_whose_prewarm_failed_runs_single_when_amended_to_race() {
+    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "M", "a", "")]));
+    fx.ready(false);
+    let (op, _) = fx.op("PrepareWorktree");
+    let message = "git clone failed after the branch was made".to_string();
+    fx.done(op, OpResult::Failed { message });
+    assert_eq!(fx.task("t1").state, TaskState::Blocked);
+    assert!(!fx.task("t1").prewarmed && !fx.task("t1").worktree_live);
+    let effects = edit(&mut fx, vec![amend("t1", Some(true), None)]);
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    fx.approve();
+    let effects = super::control::retry(&mut fx, "t1");
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    assert!(fx.task("t1").race.is_none(), "{:?}", fx.task("t1").race);
+    fx.complete_prepares();
+    fx.complete_windows();
+    assert_eq!(fx.task("t1").state, TaskState::Working);
+    single_in_own_checkout(&fx);
+}
+
 /// A-I2, route 2: a racing task decided single starts in its own checkout, is blocked
 /// on a dependency that is cancelled, and the amend of its deps releases it to
 /// `pending` (which clears the latch). Decided again, it still runs single in its own
