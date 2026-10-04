@@ -181,7 +181,8 @@ fn an_untagged_approach_or_an_unlisted_recommendation_is_refused() {
         "the recommendation must name one of the listed approaches"
     );
     assert_eq!(fx.run().state, RunState::Brainstorming);
-    assert!(fx.run().orch.design.as_ref().unwrap().versions.is_empty());
+    let design = fx.run().orch.design.as_ref().unwrap();
+    assert_eq!(design.find(DocKind::Brainstorm, None), None);
     assert_eq!(submitted(&mut fx, "brainstorm", REPORT)["version"], 1);
 }
 
@@ -271,7 +272,10 @@ fn rethink_relaunches_both_with_the_note_and_reopens_a_new_version() {
     started(&mut fx, "claude", CLAUDE + 10);
     started(&mut fx, "codex", CODEX + 10);
     let round_two = DRAFT.replace("Stored tokens.\n", "Stored tokens, with SSO.\n");
-    assert!(answered(&submit_draft(&mut fx, CLAUDE + 10, &round_two)).0);
+    let effects = submit_draft(&mut fx, CLAUDE + 10, &round_two);
+    assert!(answered(&effects).0);
+    // Ruling T8-1 in round 2 too: held, not written, while the other runs.
+    assert!(writes(&effects).is_empty(), "{effects:?}");
     let effects = submit_draft(&mut fx, CODEX + 10, &codex_draft());
     let dir = state::design_dir(fx.run());
     let paths: Vec<_> = writes(&effects).into_iter().map(|(p, _)| p).collect();
@@ -339,49 +343,142 @@ fn the_orchestrator_cannot_submit_a_draft_and_a_brainstormer_cannot_submit_the_r
     assert!(design.versions.is_empty() && design.held.is_empty());
 }
 
-/// After a restart the engine holds no draft's text until the read-back refills it:
-/// a report revised then still carries the drafts the restore read back (task 5's
-/// check); without them, the appendix names each draft as unread rather than leaving it
-/// out or attaching another round's.
+/// Ruling T9-1 and T9-1a: after a restart the engine holds no draft's text until the
+/// restore's read-back answers. Until then the report, the orchestrator's and the
+/// user's edit at the gate alike, is refused as not in; once read back it is taken with
+/// the real drafts; a draft the read-back could not read is attached as unread, with
+/// why, and its brainstormer's outcome is unchanged (no single-brainstorm line).
 #[test]
-fn a_report_after_a_restart_attaches_the_drafts_read_back() {
+fn a_report_after_a_restart_waits_for_the_drafts_read_back() {
     use crate::run::engine::DocChecked;
-    let mut fx = brainstorming();
-    both_drafts(&mut fx);
-    submitted(&mut fx, "brainstorm", REPORT);
-    let changes = DocGateAction::Changes {
-        note: "More.".into(),
-        review: false,
+    let at_gate = || {
+        let mut fx = brainstorming();
+        both_drafts(&mut fx);
+        submitted(&mut fx, "brainstorm", REPORT);
+        // A restart: the texts are memory only.
+        fx.run_mut().orch.design.as_mut().unwrap().texts.clear();
+        fx
     };
-    act(&mut fx, DocGateKind::Brainstorm, changes).unwrap();
-    let lost = |fx: &mut Fixture| fx.run_mut().orch.design.as_mut().unwrap().texts.clear();
-    lost(&mut fx);
-    let effects = submit(&mut fx, "brainstorm", REPORT);
-    let unread = "(no draft: its draft could not be read back)";
-    assert_eq!(writes(&effects)[0].1.matches(unread).count(), 2);
-    act(
-        &mut fx,
-        DocGateKind::Brainstorm,
-        DocGateAction::Changes {
-            note: "Again.".into(),
+    let changes = |fx: &mut Fixture| {
+        let changes = DocGateAction::Changes {
+            note: "More.".into(),
             review: false,
-        },
-    )
-    .unwrap();
-    lost(&mut fx);
-    let read = |n: u32, text: &str| DocChecked {
+        };
+        act(fx, DocGateKind::Brainstorm, changes).unwrap();
+    };
+    let read = |n: u32, read: Result<&str, &str>| DocChecked {
         kind: DocKind::BrainstormDraft,
         n,
-        read: Ok(Some(text.to_string())),
+        read: read.map(|t| Some(t.to_string())).map_err(String::from),
     };
-    fx.next(EventKind::DesignChecked {
-        run_id: RUN_ID.into(),
-        checked: vec![read(1, DRAFT), read(2, &codex_draft())],
-    });
+    let checked = |fx: &mut Fixture, checked: Vec<DocChecked>| {
+        fx.next(EventKind::DesignChecked {
+            run_id: RUN_ID.into(),
+            checked,
+        });
+    };
+
+    // Before the read-back: refused, nothing stored, for the orchestrator and the user.
+    let mut fx = at_gate();
+    let edit = DocGateAction::Edit {
+        text: REPORT.into(),
+    };
+    assert_eq!(
+        act(&mut fx, DocGateKind::Brainstorm, edit),
+        Err(NOT_IN.into())
+    );
+    changes(&mut fx);
+    assert_eq!(refused(&submit(&mut fx, "brainstorm", REPORT)), NOT_IN);
+    assert_eq!(gate(&fx).map(|g| g.1), Some(1));
+
+    // Read back: taken, with the real drafts.
+    checked(
+        &mut fx,
+        vec![read(1, Ok(DRAFT)), read(2, Ok(&codex_draft()))],
+    );
     let effects = submit(&mut fx, "brainstorm", REPORT);
     let drafts = vec![
         ("claude".to_string(), Ok(DRAFT.to_string())),
         ("codex".to_string(), Ok(codex_draft())),
     ];
     assert_eq!(writes(&effects)[0].1, attach(REPORT, &drafts));
+
+    // One unreadable: taken, that draft attached as unread with why; both still `Done`.
+    let mut fx = at_gate();
+    changes(&mut fx);
+    let why = "its file differs from what was stored";
+    checked(&mut fx, vec![read(1, Ok(DRAFT)), read(2, Err(why))]);
+    let effects = submit(&mut fx, "brainstorm", REPORT);
+    let drafts = vec![
+        ("claude".to_string(), Ok(DRAFT.to_string())),
+        (
+            "codex".to_string(),
+            Err(format!("its draft could not be read back: {why}")),
+        ),
+    ];
+    assert_eq!(writes(&effects)[0].1, attach(REPORT, &drafts));
+    assert!((writes(&effects)[0].1).contains(&format!(
+        "(no draft: its draft could not be read back: {why})"
+    )));
+    assert_eq!(
+        states(&fx),
+        [DesignAgentState::Done, DesignAgentState::Done]
+    );
+}
+
+/// Review minor 7: the merged report's template, pinned whole.
+#[test]
+fn the_reports_template_is_exact() {
+    let mut fx = brainstorming();
+    both_drafts(&mut fx);
+    let expected = "the merged report's template: ## Where they agree; ## Where they \
+                    disagree (each side, then your judgment); ## Approaches, each approach \
+                    a \"### <name> [claude]\" heading tagged [claude], [codex] or [both]; ## \
+                    Recommendation, naming one listed approach; ## Questions for you";
+    assert_eq!(notes(&fx)[1], expected);
+    let mut fx = brainstorming();
+    assert!(answered(&submit_draft(&mut fx, CLAUDE, DRAFT)).0);
+    ended(&mut fx, "codex", 1, ScoutEnd::Failed { reason: "x".into() });
+    let single = format!("{expected}; begin with the line \"single brainstorm: codex failed: x\"");
+    assert_eq!(notes(&fx)[1], single);
+}
+
+/// The brainstorm gate's latest version's text, as the engine keeps it.
+fn version_text(fx: &Fixture) -> String {
+    let design = fx.run().orch.design.as_ref().unwrap();
+    design.text_of(DocKind::Brainstorm).unwrap().1.to_string()
+}
+
+/// Review minor 5: an appendix heading of the report's own cuts it there, and the run's
+/// log says so; the engine's own appendix sent back is cut silently.
+#[test]
+fn a_reports_own_appendix_heading_is_warned_in_the_log() {
+    use crate::run::engine::design::report::CUT_WARNING;
+    let mut fx = brainstorming();
+    both_drafts(&mut fx);
+    let own = format!("{REPORT}\n{APPENDIX}\nmy own notes\n");
+    submitted(&mut fx, "brainstorm", &own);
+    assert_eq!(
+        log_lines(&fx).iter().filter(|l| *l == CUT_WARNING).count(),
+        1
+    );
+    // What came after the report's own heading is not stored.
+    assert!(!version_text(&fx).contains("my own notes"));
+    let changes = DocGateAction::Changes {
+        note: "Again.".into(),
+        review: false,
+    };
+    act(&mut fx, DocGateKind::Brainstorm, changes).unwrap();
+    // The stored file, as `get_doc` returns it, resubmitted: no warning.
+    let drafts = vec![
+        ("claude".to_string(), Ok(DRAFT.to_string())),
+        ("codex".to_string(), Ok(codex_draft())),
+    ];
+    let file = attach(REPORT, &drafts);
+    assert_eq!(version_text(&fx), file);
+    submitted(&mut fx, "brainstorm", &file);
+    assert_eq!(
+        log_lines(&fx).iter().filter(|l| *l == CUT_WARNING).count(),
+        1
+    );
 }

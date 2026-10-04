@@ -8,8 +8,9 @@
 //!
 //! The engine lock is taken only to list the versions; every run's reads run as one
 //! `spawn_blocking` task, bounded by [`IO_WAIT`] (AGENTS.md rule 2), after the rest of
-//! the restore (task M9.6.7 fix round 1, m5). A read-back that times out tells the
-//! engine nothing: the gates stay as they were stored.
+//! the restore (task M9.6.7 fix round 1, m5). A read-back that times out or panics
+//! leaves the gates as they were stored, and reports each kept brainstorm draft
+//! unreadable, so a merged report never waits for it forever (ruling T9-1a).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,15 +44,30 @@ impl RunService {
         if runs.is_empty() {
             return;
         }
+        let drafts = kept_drafts(&runs);
         let read = move || read(runs);
-        match tokio::time::timeout(wait, tokio::task::spawn_blocking(read)).await {
+        let why = match tokio::time::timeout(wait, tokio::task::spawn_blocking(read)).await {
             Ok(Ok(all)) => {
                 for (run_id, checked) in all {
                     self.send(EventKind::DesignChecked { run_id, checked });
                 }
+                return;
             }
-            Ok(Err(error)) => tracing::error!(%error, "checking the design documents panicked"),
-            Err(_) => tracing::error!("checking the design documents timed out"),
+            Ok(Err(error)) => {
+                tracing::error!(%error, "checking the design documents panicked");
+                format!("its read failed: {error}")
+            }
+            Err(_) => {
+                tracing::error!("checking the design documents timed out");
+                format!("its read took over {} ms", wait.as_millis())
+            }
+        };
+        // Ruling T9-1a: a merged report waits for its drafts' texts, so each kept draft
+        // is reported unreadable rather than left unanswered; the gates are left as
+        // stored.
+        for (run_id, named) in drafts {
+            let checked = unread(&named, why.clone());
+            self.send(EventKind::DesignChecked { run_id, checked });
         }
     }
 
@@ -116,6 +132,21 @@ pub(super) fn kept(design: &DesignState, v: &DocVersion) -> bool {
         (kind, _) => design.find(kind, None),
     };
     v.n > 0 && latest.is_some_and(|l| l.n == v.n)
+}
+
+/// Each run's brainstorm drafts whose text the read-back keeps: what a merged report
+/// waits for.
+fn kept_drafts(runs: &[(String, Vec<ToCheck>)]) -> Vec<(String, Vec<(DocKind, u32)>)> {
+    (runs.iter())
+        .map(|(run_id, docs)| {
+            let drafts = (docs.iter())
+                .filter(|(v, _, keep)| *keep && v.kind == DocKind::BrainstormDraft)
+                .map(|(v, _, _)| (v.kind, v.n))
+                .collect::<Vec<_>>();
+            (run_id.clone(), drafts)
+        })
+        .filter(|(_, drafts)| !drafts.is_empty())
+        .collect()
 }
 
 /// Every one of `named`'s versions, unread for `reason`.

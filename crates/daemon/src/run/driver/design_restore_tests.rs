@@ -256,8 +256,8 @@ mod service {
 
     /// Review m4 and m5: the read-back is one blocking task for every run, bounded by
     /// its wait. A read that never answers (the seam blocks on a channel this test
-    /// holds) times it out: the restore goes on, and the engine is told nothing, so the
-    /// gate stays as it was. Fix round 2: it cannot hang. The test's sender is dropped
+    /// holds) times it out: the restore goes on, and the engine is told nothing of its
+    /// gate documents, so the gate stays as it was. Fix round 2: it cannot hang. The test's sender is dropped
     /// on every exit, a panic's unwinding included, which ends the blocked read; the
     /// read's own wait is bounded too, and the call has a hard deadline.
     #[tokio::test(flavor = "multi_thread")]
@@ -304,6 +304,73 @@ mod service {
         let refused = "rethink is only for the brainstorm gate";
         assert_eq!(reply, RunReply::refused(request::DOC_GATE, refused));
         assert_eq!(gate_of(&s), before, "the gate is unchanged");
+        drop(release);
+        shutdown.cancel();
+    }
+
+    /// Ruling T9-1a: a read-back that times out still answers for each kept
+    /// brainstorm draft, as unreadable with why, so a merged report never waits for its
+    /// text forever; the older draft (not kept) and the gate are left alone.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_read_back_that_times_out_marks_the_kept_drafts_unreadable() {
+        const READ_BOUND: Duration = Duration::from_secs(30);
+        let data = tempfile::tempdir().unwrap();
+        let s = at_spec_gate(data.path(), |_| {}).await;
+        let writes = {
+            let mut state = crate::lock(&s.state);
+            let run = state.runs.get_mut(RUN_ID).unwrap();
+            let mut writes = Vec::new();
+            for (label, text) in [("claude", "a"), ("codex", "b"), ("claude", "c")] {
+                let author = DocAuthor::Brainstormer {
+                    label: label.into(),
+                };
+                let doc = NewDoc::new(DocKind::BrainstormDraft, author, "submitted", text);
+                writes.push(state::store(run, doc, 2_001).unwrap().1);
+            }
+            run.orch.design.as_mut().unwrap().drafts_settled = true;
+            writes
+        };
+        for write in writes {
+            let Effect::WriteDoc { path, text, index } = write else {
+                panic!("a write");
+            };
+            s.write_doc(path, text, index).await;
+        }
+        let shutdown = CancellationToken::new();
+        s.spawn(shutdown.clone());
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let stalled = move |runs: Vec<(String, Vec<super::super::ToCheck>)>| {
+            let _ = held.recv_timeout(READ_BOUND);
+            runs.into_iter()
+                .map(|(id, docs)| (id, super::super::check(docs)))
+                .collect()
+        };
+        let call = s.check_design_docs_with(Duration::from_millis(300), stalled);
+        tokio::time::timeout(Duration::from_secs(10), call)
+            .await
+            .expect("the read-back returns at its wait");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let unread = loop {
+            let design = crate::lock(&s.state).runs[RUN_ID]
+                .orch
+                .design
+                .clone()
+                .unwrap();
+            if design.unread.len() >= 2 || Instant::now() >= deadline {
+                break design;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        let why = "its read took over 300 ms".to_string();
+        // Drafts 3 (claude's latest) and 2 (codex's); claude's first is not kept.
+        let mut marked = unread.unread.clone();
+        marked.sort();
+        assert_eq!(marked, [(2, why.clone()), (3, why)]);
+        assert_eq!(
+            unread.gate.and_then(|g| g.revising),
+            None,
+            "the gate as stored"
+        );
         drop(release);
         shutdown.cancel();
     }

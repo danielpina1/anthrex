@@ -9,8 +9,6 @@
 use proto::DocKind;
 
 use super::super::requests::log;
-use super::queue_brainstormers;
-use crate::decider::DECIDER_CAPS;
 use crate::run::design::pack::{FrozenPack, FrozenRethink, freeze};
 use crate::run::design::state::{DesignAgentState, design_dir};
 use crate::run::model::Run;
@@ -30,14 +28,9 @@ pub(in crate::run::engine) fn rethink(run: &mut Run, note: &str, now: u64) {
     });
     let before = design.pack.clone().unwrap_or_else(|| freeze(run, None));
     let round = design.rethinks + 1;
-    if design.brainstormers.is_empty() {
-        // None was ever queued (a run from before its brainstormers): as the start does.
-        queue_brainstormers(run, before.earlier, &DECIDER_CAPS, now);
-        if let Some(pack) = run.orch.design.as_mut().and_then(|d| d.pack.as_mut()) {
-            pack.rethink = previous;
-        }
-        return;
-    }
+    // Never empty here: the brainstorm gate opens only on a report taken once the
+    // drafts settled (`report_doc`), which `settle` does only with brainstormers, and
+    // the list is only ever replaced by `start_brainstorm`, refused after the first.
     let Some(design) = run.orch.design.as_mut() else {
         return;
     };

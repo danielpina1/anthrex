@@ -58,7 +58,15 @@ fn ready_false_dispatches_the_peer_reviewer() {
     // Ruling T5-1: the run's listed documents are its gate versions, not the draft.
     let snap = snapshot(&fx.state, fx.now);
     let docs: Vec<DocKind> = snap.runs[0].docs.iter().map(|d| d.kind).collect();
-    assert_eq!(docs, [DocKind::Brainstorm]);
+    // (The brainstorm's two drafts, which the fixture stores since ruling T9-1a.)
+    assert_eq!(
+        docs,
+        [
+            DocKind::BrainstormDraft,
+            DocKind::BrainstormDraft,
+            DocKind::Brainstorm
+        ]
+    );
 }
 
 /// DF §4.2: with no peer installed, the orchestrator's own runtime reviews, and the run

@@ -5,15 +5,15 @@
 use std::collections::BTreeMap;
 
 use proto::{
-    AgentRole, DesignMode, DocGateAction, DocGateKind, Effort, Route, RunPath, RunState, Runtime,
-    Strength,
+    AgentRole, DesignMode, DocAuthor, DocGateAction, DocGateKind, DocKind, Effort, Route, RunPath,
+    RunState, Runtime, Strength,
 };
 use serde_json::{Value, json};
 
 use super::dispatch::replies;
 use super::fixture::*;
 use super::orch::{ORCH, error, first_turn_woken, mcp_ready, orch_tool, triage};
-use crate::run::design::state::{DesignAgent, DesignAgentState, DesignState};
+use crate::run::design::state::{DesignAgent, DesignAgentState, DesignState, NewDoc};
 use crate::run::engine::{Effect, EventKind, OpResult, design};
 use crate::run::orch::launch::resolve_orchestrator;
 use crate::run::orch::make_planned;
@@ -149,24 +149,38 @@ fn brainstormer(label: &str, runtime: Runtime) -> DesignAgent {
 }
 
 /// The brainstorm started, and both drafts in (stubbing task M9.6.8): the two
-/// brainstormers' records, then `design::drafts_in`, at the fixture's time.
+/// brainstormers' records and their stored drafts, then `design::drafts_in`, at the
+/// fixture's time.
 pub(super) fn drafts_in(fx: &mut Fixture) {
     start_brainstorm(fx);
-    let now = fx.now;
-    let run = fx.run_mut();
-    let design = run.orch.design.as_mut().expect("a design run");
+    let design = fx.run_mut().orch.design.as_mut().expect("a design run");
     design.brainstormers = vec![
         brainstormer("claude", Runtime::Claude),
         brainstormer("codex", Runtime::Codex),
     ];
-    design::drafts_in(run, None, now);
+    redrafts_in(fx);
 }
 
-/// After a rethink (task M9.6.9 relaunches both brainstormers): both drafts in again,
-/// stubbing their sessions as [`drafts_in`] does.
+/// Each brainstormer's draft stored and held in memory, as `design_drafts::flush`
+/// does (ruling T9-1a: the merged report needs each draft's text), then
+/// `design::drafts_in`. After a rethink (task M9.6.9 relaunches both brainstormers), the
+/// next round's drafts.
 pub(super) fn redrafts_in(fx: &mut Fixture) {
     let now = fx.now;
     let run = fx.run_mut();
+    let labels: Vec<String> = (run.orch.design.as_ref().unwrap().brainstormers.iter())
+        .map(|a| a.label.clone())
+        .collect();
+    for label in labels {
+        let author = DocAuthor::Brainstormer {
+            label: label.clone(),
+        };
+        let text = format!("## Understanding\n{label}'s draft\n");
+        let doc = NewDoc::new(DocKind::BrainstormDraft, author, "submitted", &text);
+        let (version, _) = crate::run::design::state::store(run, doc, now).unwrap();
+        let design = run.orch.design.as_mut().unwrap();
+        design.keep_text(version.kind, version.n, text);
+    }
     let design = run.orch.design.as_mut().expect("a design run");
     for agent in design.brainstormers.iter_mut() {
         agent.state = DesignAgentState::Done;

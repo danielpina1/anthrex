@@ -69,6 +69,11 @@ pub struct DesignState {
     /// other brainstormer runs; a restore relaunches its brainstormer instead.
     #[serde(skip)]
     pub held: Vec<(String, String)>,
+    /// Ruling T9-1a: brainstorm drafts a restore could not read back, `(n, reason)`.
+    /// Such a draft is attached as unread; its brainstormer's outcome is unchanged. In
+    /// memory only, as [`DesignState::texts`]: the next restore reads it again.
+    #[serde(skip)]
+    pub unread: Vec<(u32, String)>,
     /// Ruling T8-5: this brainstorm round's drafts are in (`design::drafts_in` ran), so
     /// the brainstorm never settles again until brainstormers are queued anew.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -320,9 +325,24 @@ impl DesignState {
         found.map(|(_, _, text)| text.as_str())
     }
 
+    /// Why brainstorm draft `n` could not be read back, when a restore found so.
+    pub fn unread_reason(&self, n: u32) -> Option<&str> {
+        let found = self.unread.iter().find(|(m, _)| *m == n);
+        found.map(|(_, reason)| reason.as_str())
+    }
+
+    /// Ruling T9-1a: brainstorm draft `n` could not be read back, for `reason`.
+    pub fn mark_unread(&mut self, n: u32, reason: String) {
+        self.unread.retain(|(m, _)| *m != n);
+        self.unread.push((n, reason));
+    }
+
     /// Caches `text` as `kind`'s latest, version `n`: for a draft, its brainstormer's
     /// latest.
     pub fn keep_text(&mut self, kind: DocKind, n: u32, text: String) {
+        if kind == DocKind::BrainstormDraft {
+            self.unread.retain(|(m, _)| *m != n);
+        }
         let label = |n: u32| {
             self.find(kind, Some(n))
                 .and_then(|v| v.label().map(String::from))

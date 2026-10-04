@@ -176,10 +176,11 @@ pub(super) fn submit_doc(
     };
     let doc = match kind {
         // Task M9.6.9: the merged report, once the drafts are in, with their appendix.
-        DocGateKind::Brainstorm => match report::drafts_not_in(run) {
-            Some(text) => return Err(text),
-            None => report::report_doc(run, &doc.text, DocAuthor::Orchestrator, &reason)?,
-        },
+        DocGateKind::Brainstorm => {
+            let (doc, cut) = report::report_doc(run, &doc.text, DocAuthor::Orchestrator, &reason)?;
+            report::warn_cut(run, cut, now);
+            doc
+        }
         // Task M9.6.10: a review draft, or the gate's next version after its review.
         _ => return review::submit_spec(run, doc, &reason, now, fx),
     };
@@ -439,6 +440,12 @@ pub(super) fn checked(run: &mut Run, checked: Vec<DocChecked>, now: u64) {
                     now,
                     format!("design flow: the {what} could not be read back: {reason}"),
                 );
+                // Ruling T9-1a: the draft is attached as unread; its outcome stands.
+                if let Some(design) =
+                    (run.orch.design.as_mut()).filter(|_| doc.kind == DocKind::BrainstormDraft)
+                {
+                    design.mark_unread(doc.n, reason);
+                }
                 lost |= gate
                     .as_ref()
                     .is_some_and(|g| gate_doc(g.kind) == doc.kind && g.version == doc.n);

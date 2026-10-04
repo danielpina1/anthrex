@@ -294,7 +294,8 @@ fn the_gate_survives_a_restart() {
     );
     assert_eq!(gate(&fx), Some((DocGateKind::Spec, 1, None)));
     let design = fx.run().orch.design.as_ref().unwrap();
-    assert_eq!(design.versions.len(), 2);
+    // The two drafts (the fixture stores them, ruling T9-1a), the report and the spec.
+    assert_eq!(design.versions.len(), 4);
     let effects = resume(&mut fx);
     assert_eq!(ops_in(&effects, "RestartOrchestrator").len(), 1);
     act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();

@@ -146,7 +146,11 @@ pub(crate) fn act(
             let (user, reason) = (DocAuthor::User, "edited by you");
             let doc = match kind {
                 // Task M9.6.9: the user's report takes the drafts' appendix as well.
-                DocGateKind::Brainstorm => report_doc(run, &text, user, reason)?,
+                DocGateKind::Brainstorm => {
+                    let (doc, cut) = report_doc(run, &text, user, reason)?;
+                    super::design::report::warn_cut(run, cut, now);
+                    doc
+                }
                 _ => {
                     let text = checked_text(run, gate_doc(kind), &text, false, true)?;
                     NewDoc::new(gate_doc(kind), user, reason, &text)
