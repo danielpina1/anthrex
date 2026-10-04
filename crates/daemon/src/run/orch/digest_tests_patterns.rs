@@ -39,7 +39,6 @@ fn lane(lane: RaceLane, runtime: Runtime, state: LaneState) -> Lane {
         salvage_ref: None,
         cleared_locks: Vec::new(),
         kill_sent_at: None,
-        exited: false,
         removed: false,
         kept: false,
         gates: Default::default(),

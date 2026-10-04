@@ -119,7 +119,6 @@ fn new_lane(task: &str, lane: RaceLane, route: Route, review_route: Option<Route
         salvage_ref: None,
         cleared_locks: Vec::new(),
         kill_sent_at: None,
-        exited: false,
         removed: false,
         kept: false,
         gates: Default::default(),

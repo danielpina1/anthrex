@@ -80,7 +80,7 @@ fn a_restart_before_the_losers_exit_keeps_its_checkout_and_its_locks() {
     let line = "race t1: kept a checkout: its racer had no process after the restart";
     assert!(logged(&fx, line), "{:#?}", fx.run().log);
     let la = lane(&fx, A);
-    assert!(la.kept && !la.exited);
+    assert!(la.kept);
     fx.done(op, removed(1));
     let la = lane(&fx, A);
     assert_eq!((la.salvage_ref, la.removed), (Some(salvage(1)), false));

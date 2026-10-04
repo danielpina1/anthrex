@@ -70,8 +70,6 @@ pub struct Lane {
     pub cleared_locks: Vec<String>,
     /// When the lane's racer was sent `KillWindow` (decision 22's wait).
     pub kill_sent_at: Option<u64>,
-    /// The racer's session has ended (`ProcessExited`, or it had already ended).
-    pub exited: bool,
     /// The lane's checkout was removed.
     pub removed: bool,
     /// The lane's checkout was kept: its racer did not exit in time.

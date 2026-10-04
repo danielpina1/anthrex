@@ -218,7 +218,6 @@ pub fn race_of(task: &Task, states: [proto::LaneState; 2]) -> super::model::Race
             salvage_ref: None,
             cleared_locks: Vec::new(),
             kill_sent_at: None,
-            exited: false,
             removed: false,
             kept: false,
             gates: Default::default(),

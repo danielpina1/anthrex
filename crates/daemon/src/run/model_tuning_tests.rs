@@ -92,7 +92,6 @@ fn lane(lane: RaceLane, route: Route) -> Lane {
         salvage_ref: None,
         cleared_locks: Vec::new(),
         kill_sent_at: None,
-        exited: false,
         removed: false,
         kept: false,
         gates: Default::default(),
@@ -136,7 +135,6 @@ fn a_run_with_race_pair_and_caps_round_trips() {
     b.salvage_ref = Some(format!("refs/anthrex/salvage/{}/t1/1", run.id));
     b.cleared_locks = vec!["index.lock".into()];
     b.kill_sent_at = Some(400);
-    b.exited = true;
     b.removed = true;
     b.kept = true;
     run.tasks[0].race = Some(Race {
@@ -252,4 +250,40 @@ fn an_old_run_json_still_loads() {
     // `save_and_load` moved the run's data directory under the temp dir.
     again["data_dir"] = captured["data_dir"].clone();
     assert_eq!(again, captured);
+}
+
+/// The final fix wave's m9: `Lane.exited` was dropped (nothing read it). A `run.json`
+/// that still carries it on a lane loads through the daemon's own load (no model type
+/// denies unknown fields), and is written back without it.
+#[test]
+fn a_lane_written_with_exited_still_loads() {
+    let mut run = old_run();
+    let route = run.tasks[0].route.clone();
+    run.tasks[0].race = Some(Race {
+        lanes: vec![lane(RaceLane::A, route.clone()), lane(RaceLane::B, route)],
+        winner: None,
+        adopted: false,
+        started_at: 100,
+        crowned: false,
+        ended: false,
+    });
+    let dir = tmp();
+    run.data_dir = journal::runs_dir(dir.path()).join(&run.id);
+    journal::save_run(&run).expect("save_run");
+    let path = run.data_dir.join(RUN_FILE);
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("run.json")).expect("JSON");
+    for lane in json["tasks"][0]["race"]["lanes"]
+        .as_array_mut()
+        .expect("lanes")
+    {
+        lane["exited"] = serde_json::Value::Bool(true);
+    }
+    std::fs::write(&path, json.to_string()).expect("write run.json");
+    let (mut runs, problems) = journal::load_all(dir.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    let loaded = runs.remove(0).0;
+    assert_eq!(loaded, run);
+    let (_, text) = save_and_load(&mut run, dir.path());
+    assert!(!text.contains("\"exited\""), "{text}");
 }

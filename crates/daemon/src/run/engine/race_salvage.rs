@@ -89,7 +89,6 @@ fn salvage(run: &mut Run, i: usize, lane: RaceLane, now: u64, fx: &mut Vec<Effec
     let seq = merge::reserve_salvage_seq(&mut run.tasks[i]);
     let reference = salvage_ref(run, &id, seq);
     if let Some(stopped) = lane_mut(&mut run.tasks[i], lane) {
-        stopped.exited = !kept;
         stopped.kept = kept;
     }
     if let Some(why) = why_kept {

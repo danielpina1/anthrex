@@ -232,7 +232,7 @@ fn the_loser_is_stopped_then_salvaged_after_its_ops_and_exit() {
         let la = lane(&fx, A);
         assert_eq!(la.salvage_ref, Some(salvage(1)));
         assert_eq!(la.cleared_locks, ["index.lock"]);
-        assert!(la.exited && la.removed && !la.kept);
+        assert!(la.removed && !la.kept);
         let t1 = fx.task("t1");
         assert_eq!(t1.salvage_refs, [salvage(1)]);
         let line = "racer a: removed a stale index.lock left by the stopped racer";
