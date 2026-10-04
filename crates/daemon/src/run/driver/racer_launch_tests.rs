@@ -17,6 +17,7 @@ use crate::manager::{ManagerConfig, WindowManager};
 use crate::run::driver::{EventKind, GitRoots, Msg, OpCtx, RunContext, RunService};
 use crate::run::git;
 use crate::run::model::Run;
+use crate::run::role_launch::{task_tmp_dir, worker_git_roots};
 use crate::run::role_launch_patterns::{racer_spec, test_writer_spec};
 use crate::run::test_support::{PROFILE, plan_with, race_of, run_ok, task_toml};
 
@@ -186,8 +187,9 @@ fn reaches(roots: &[PathBuf], dir: &Path) -> bool {
 
 /// Task 15's addendum: a racer's sandbox is completed like a worker's, on its own
 /// lane's checkout: its objects, its temporary directory and the commit's files in its
-/// own git directory, and nothing of the other lane, of the task's own checkout or of
-/// the user's repository.
+/// own git directory (exactly a worker's grant there, task 18 review m1), and nothing
+/// of the other lane (its temporary directory included), of the task's own checkout or
+/// of the user's repository.
 #[test]
 fn a_racers_sandbox_covers_its_own_lanes_git_dir_only() {
     let rig = Rig::new(&["t1", "t1.a", "t1.b"], |_| {});
@@ -204,9 +206,20 @@ fn a_racers_sandbox_covers_its_own_lanes_git_dir_only() {
             roots.contains(&rig.repo(own).join("git/objects")),
             "{lane:?}: {roots:?}"
         );
+        // Task 18 review m1: exactly a worker's grant, computed for the lane's checkout.
+        let (git_common, own_path) =
+            rig.run(|run| (run.git_common_dir.clone(), run.task_path(own)));
+        let roots_of_own = worker_git_roots(&rig.data_dir, own);
+        let mut worker = git::worker_git_dirs(&git_common, &own_path, &roots_of_own).unwrap();
+        let mut racer = roots.clone();
+        worker.sort();
+        racer.sort();
+        assert_eq!(racer, worker, "{lane:?}: a worker's grant on {own}");
         let (other_path, task_path) = rig.run(|run| (run.task_path(other), run.task_path("t1")));
         for forbidden in [
             rig.repo(other),
+            // The other lane's temporary directory is outside its repository.
+            task_tmp_dir(&rig.data_dir, other),
             other_path,
             rig.repo("t1"),
             task_path,

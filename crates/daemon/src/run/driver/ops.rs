@@ -128,7 +128,7 @@ impl RunService {
 /// resolving a path the worker could have swapped: I1), plus the commit's files in the
 /// checkout's own git directory. Nothing of the git common directory. Any other session
 /// (a reviewer) is left as it is. Milestone 9.5 (task M9.5.18): a racer's and a test
-/// writer's too, a racer's on its own lane's stored checkout; a racer whose lane the
+/// writer's too, a racer's on its own lane's stored checkout; a session whose lane the
 /// run does not store is refused, with a logged error.
 async fn worker_git_dirs(
     service: &Arc<RunService>,
@@ -155,7 +155,7 @@ async fn worker_git_dirs(
         })
         .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
     let checkout = checkout.inspect_err(|error| {
-        tracing::error!(run = %ctx.run_id, %task, %error, "a racer's launch was refused");
+        tracing::error!(run = %ctx.run_id, %task, %error, "a session's launch was refused");
     })?;
     let roots = worker_git_roots(&ctx.data_dir, &checkout);
     let sandboxed = spec

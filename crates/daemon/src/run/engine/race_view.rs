@@ -40,6 +40,9 @@ pub(super) fn view_lane(task: &Task, lane: Option<RaceLane>) -> Option<RaceLane>
     let lane = lane?;
     let race = task.race.as_ref()?;
     let known = race.lanes.iter().any(|l| l.lane == lane);
+    // Task 18 review m4: no path names a lane the race does not store (the driver
+    // refuses such a racer's launch); were one to, its result would be dropped.
+    debug_assert!(known, "task {} has no lane {}", task.id(), lane.label());
     let became = race.crowned && race.winner == Some(lane);
     (known && !became).then_some(lane)
 }

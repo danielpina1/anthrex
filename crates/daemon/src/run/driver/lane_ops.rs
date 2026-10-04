@@ -125,7 +125,7 @@ pub(super) fn checkout_of(run: &Run, task: &str, lane: Option<RaceLane>) -> Resu
     match lanes.find(|l| l.lane == lane) {
         Some(stored) => Ok(stored.checkout.clone()),
         None => Err(format!(
-            "task {task} has no lane {}; its racer gets no sandbox roots",
+            "task {task} has no lane {}; its session gets no sandbox roots",
             lane.label()
         )),
     }
