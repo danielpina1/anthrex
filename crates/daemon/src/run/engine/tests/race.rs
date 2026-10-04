@@ -267,7 +267,7 @@ fn a_race_whose_peer_is_not_installed_runs_single() {
 /// `tdep` (S) and `t0` (M) start first; `t1` races once `tdep` merges ([`unblock`]),
 /// then leads the critical path (with `t4` after it), with `t0` still holding a writer
 /// slot; `t3` (S) comes last.
-fn behind_one_slot(limits: &str, t0_extra: &str) -> Fixture {
+pub(super) fn behind_one_slot(limits: &str, t0_extra: &str) -> Fixture {
     let tasks = [
         task("tdep", "S", "d", ""),
         task("t0", "M", "z", t0_extra),
@@ -285,7 +285,7 @@ fn behind_one_slot(limits: &str, t0_extra: &str) -> Fixture {
 }
 
 /// `tdep` merges: `t1` is runnable.
-fn unblock(fx: &mut Fixture) {
+pub(super) fn unblock(fx: &mut Fixture) {
     fx.merge("tdep", HEAD);
 }
 

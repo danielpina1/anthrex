@@ -1,6 +1,7 @@
 //! The final fix wave's race items in the reducer: a task with its own checkout never
 //! races (A-I2); a lane view's refresh and `resolving` (m1, m2); the crowned task's
-//! reviewer author (m3); a lane's rung 4 on adoption (m4); rung 4 after the crown (m5).
+//! reviewer author (m3); a lane's rung 4 on adoption (m4); rung 4 after the crown (m5);
+//! the race slot wait (m6).
 
 use proto::{AgentRole, BlockReason, LaneState, PlanEdit, RaceLane, Runtime, TaskState};
 use serde_json::json;
@@ -10,7 +11,7 @@ use super::fixture::*;
 use super::gates::{check_result, only_op};
 use super::gates_review::reviewer;
 use super::kinds::approve;
-use super::race::{RACING, lane, launched, racing, tdd};
+use super::race::{RACING, behind_one_slot, lane, launched, racing, tdd, unblock};
 use super::race_crown::{crowned, handed_back};
 use super::race_end::{b_out, to_check, unreviewed};
 use super::race_lanes::{HEAD_B, passes, proof, submit, to_review};
@@ -296,4 +297,53 @@ fn after_the_crown_rung_4_weighs_the_winners_spend_only() {
     let rung4 = crate::run::engine::clock::epoch_spend(t1, fx.now);
     assert_eq!(rung4.tool_calls, 3, "the winner's alone");
     assert_eq!(crate::run::engine::clock::race_cost(t1).tool_calls, 5);
+}
+
+/// Minor m6: `t1` waits for its second writer slot (`race_slot_wait_secs` 120). A
+/// 10-minute pause inside the wait is not waiting time: on resume it still waits, and
+/// it gives up 120 running seconds after it began.
+#[test]
+fn the_race_slot_wait_leaves_out_a_pause() {
+    let mut fx = behind_one_slot("max_writers = 2", "");
+    unblock(&mut fx);
+    let since = fx.now;
+    assert_eq!(fx.task("t1").race_wait_since, Some(since));
+    fx.send(since + 60, EventKind::Tick);
+    let effects = edit(&mut fx, vec![PlanEdit::Pause]);
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    fx.now = since + 660;
+    let effects = edit(&mut fx, vec![PlanEdit::Resume]);
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    assert_eq!(fx.run().paused_secs, 600);
+    let waiting = |fx: &Fixture| {
+        let t1 = fx.task("t1");
+        t1.state == TaskState::Queued && t1.race_decision.is_none()
+    };
+    assert!(waiting(&fx), "the pause is not waiting time");
+    fx.send(since + 719, EventKind::Tick);
+    assert!(waiting(&fx), "119 running seconds");
+    fx.send(since + 720, EventKind::Tick);
+    let t1 = fx.task("t1");
+    assert_eq!(t1.state, TaskState::Preparing);
+    let note = "race skipped: no second writer slot within 120 s";
+    assert!(t1.notes.iter().any(|n| n == note), "{:?}", t1.notes);
+}
+
+/// Minor m6, a restart: the daemon's downtime is paused time (ruling T12-1), so it is
+/// not waiting time either.
+#[test]
+fn the_race_slot_wait_leaves_out_the_downtime() {
+    let mut fx = behind_one_slot("max_writers = 2", "");
+    unblock(&mut fx);
+    let since = fx.now;
+    fx.now = since + 3_600;
+    super::control_restore::restart(&mut fx, Vec::new());
+    super::control::resume(&mut fx);
+    fx.tick();
+    let t1 = fx.task("t1");
+    assert_eq!(
+        (t1.state, t1.race_decision.as_ref()),
+        (TaskState::Queued, None),
+        "still waiting after an hour's downtime"
+    );
 }

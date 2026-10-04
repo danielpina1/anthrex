@@ -203,7 +203,9 @@ pub struct Task {
     /// Decision 25: the test writer and its red commit, once a paired task starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pair: Option<super::Pair>,
-    /// Decision 18: since when the racing task has waited for its second writer slot.
+    /// Decision 18: since when the racing task has waited for its second writer slot,
+    /// on the run's running clock (the time less [`super::Run::paused_total`]; the final
+    /// fix wave's m6), so a pause or a daemon's downtime is no waiting time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub race_wait_since: Option<u64>,
     /// Ruling T17a-1: the race decision, latched once per dispatch.

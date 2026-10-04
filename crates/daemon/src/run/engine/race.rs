@@ -70,9 +70,12 @@ pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
         run.tasks[i].race_decision = Some(RaceDecision::Race);
         return Start::Race(peer);
     }
-    let since = *run.tasks[i].race_wait_since.get_or_insert(now);
+    // The final fix wave's m6: the wait is timed on the run's running clock, so a
+    // pause and a daemon's downtime (paused time, ruling T12-1) are no waiting time.
+    let running = now.saturating_sub(run.paused_total(now));
+    let since = *run.tasks[i].race_wait_since.get_or_insert(running);
     let wait = run.limits.race_slot_wait_secs;
-    if now.saturating_sub(since) < wait {
+    if running.saturating_sub(since) < wait {
         return Start::Wait;
     }
     run.tasks[i].race_wait_since = None;
