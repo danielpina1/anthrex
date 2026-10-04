@@ -1,17 +1,22 @@
 //! The final fix wave's race items in the reducer: a task with its own checkout never
-//! races (A-I2); a lane view's refresh and `resolving` (m1, m2).
+//! races (A-I2); a lane view's refresh and `resolving` (m1, m2); the crowned task's
+//! reviewer author (m3).
 
-use proto::{AgentRole, LaneState, PlanEdit, RaceLane, TaskState};
+use proto::{AgentRole, LaneState, PlanEdit, RaceLane, Runtime, TaskState};
 use serde_json::json;
 
 use super::dispatch::{edit, replies, task_path};
 use super::fixture::*;
 use super::gates::{check_result, only_op};
-use super::race::{RACING, lane, launched, racing};
-use super::race_crown::crowned;
+use super::gates_review::reviewer;
+use super::kinds::approve;
+use super::race::{RACING, lane, launched, racing, tdd};
+use super::race_crown::{crowned, handed_back};
 use super::race_end::{to_check, unreviewed};
-use super::race_lanes::HEAD_B;
+use super::race_lanes::{HEAD_B, proof, submit, to_review};
+use super::turns::exited;
 use crate::run::engine::{OpKind, OpResult};
+use crate::run::model::task_branch;
 use crate::run::orch::RefreshState;
 
 const A: RaceLane = RaceLane::A;
@@ -199,4 +204,46 @@ fn one_lanes_refresh_conflict_does_not_hold_the_other_lane() {
     let lanes = hand_back_lanes(&fx);
     assert_eq!(lanes.len(), 2, "{lanes:?}");
     assert!(lanes[1].ends_with("t1.b"), "{lanes:?}");
+}
+
+/// Minor m3: after the crown the reviewer is picked against the winning racer's route.
+/// Lane a (Claude) wins; lane b's (Codex) racer round is the later one, yet the
+/// crowned task's next review runs on Codex, the peer of its author.
+#[test]
+fn after_the_crown_the_reviewers_author_is_the_winning_racer() {
+    let (mut fx, a, _) = racing();
+    let first = to_review(&mut fx, A, HEAD);
+    let effects = submit(&mut fx, first, approve());
+    let (op, _) = only_op(&effects, "CrownRacer");
+    crowned(&mut fx, op, HEAD);
+    exited(&mut fx, first);
+    handed_back(&mut fx);
+    let t1 = fx.task("t1");
+    let racers: Vec<Option<RaceLane>> = (t1.rounds.iter())
+        .filter(|r| r.role == AgentRole::Racer)
+        .map(|r| r.lane)
+        .collect();
+    assert_eq!(racers.last(), Some(&Some(B)), "lane b's racer is the later");
+    let effects = fx.tool_as(AgentRole::Racer, a, "t1", "task_done", tdd());
+    let (op, _) = only_op(&effects, "VerifyDone");
+    let mut check = fx.clean_check("t1");
+    if let OpResult::DoneChecked {
+        head, head_branch, ..
+    } = &mut check
+    {
+        *head = HEAD.to_string();
+        *head_branch = Some(task_branch(RUN_ID, "t1"));
+    }
+    let effects = fx.done(op, check);
+    let (op, _) = only_op(&effects, "Proof");
+    fx.turn_completed(a);
+    let effects = fx.done(op, proof(true));
+    let (op, _) = only_op(&effects, "Check");
+    let effects = fx.done(op, check_result(true));
+    let (op, _) = only_op(&effects, "PrepareReview");
+    let (_, kind) = reviewer(&mut fx, op, "diff --git a/x b/x");
+    match kind {
+        OpKind::CreateWindow { spec, .. } => assert_eq!(spec.runtime, Runtime::Codex),
+        other => panic!("{other:?}"),
+    }
 }

@@ -158,11 +158,13 @@ pub(super) fn review_ready(
         // claimed commit, the last worker round's (an escalation to the peer runtime
         // included), so it stays on the other runtime. A route amended while that
         // session lived applies from the next fresh session (final review A-6).
-        // Milestone 9.5 decision 20: a lane's view shows its own racer only.
+        // Milestone 9.5 decision 20: a lane's view shows its own racer only; the final
+        // fix wave's m3: a crowned task's racer is the winner's (`model::writes`), never
+        // a lost lane's.
         let author = task
             .rounds
             .iter()
-            .rfind(|r| matches!(r.role, AgentRole::Worker | AgentRole::Racer))
+            .rfind(|r| r.role != AgentRole::TestWriter && crate::run::model::writes(task, r))
             .map_or(&task.route, |r| &r.route)
             .clone();
         // Milestone 9.5 decision 9a: the `review` list's first qualifying candidate.
