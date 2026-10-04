@@ -16,7 +16,6 @@ use super::design::{checked_text, start_clock};
 use super::requests::log;
 use super::{Effect, EngineState, ReplyId, goal_rounds_end, wake};
 use crate::run::design::changes;
-use crate::run::design::plan_md;
 use crate::run::design::report;
 use crate::run::design::state::{DocGate, NewDoc, Revision, gate_doc, not_design, store};
 use crate::run::model::Run;
@@ -269,6 +268,10 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
         DocGateAction::Rethink { .. } if design.rethinks >= MAX_RETHINKS => Some(format!(
             "the brainstorm has been rethought {MAX_RETHINKS} times; approve, change or reject"
         )),
+        // Decision 18 (task M9.6.11): the plan's checks again at its approval.
+        DocGateAction::Approve if kind == DocGateKind::Plan => {
+            super::design::plan::approve_refusal(run)
+        }
         DocGateAction::Rethink { .. } | DocGateAction::Approve | DocGateAction::Reject => None,
     }
 }
@@ -380,37 +383,6 @@ pub(super) fn open(
     let text = format!("the {} v{} awaits the user", kind.label(), version.n);
     log(run, now, text);
     Ok(version.n)
-}
-
-/// A plan submitted in a design run (`edit_plan`'s or `run edit --submit`'s, by
-/// `author`): the plan gate opens at `plan.md`'s next version (decision 21), the first
-/// time and after each changes request; a submit at the open gate otherwise stores
-/// nothing. `None`: no submit.
-pub(super) fn plan_submitted(
-    run: &mut Run,
-    author: Option<DocAuthor>,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let (Some(author), Some(design)) = (author, run.orch.design.as_ref()) else {
-        return;
-    };
-    if run.state != RunState::AwaitingApproval {
-        return;
-    }
-    let reason = match &design.gate {
-        None => "submitted".to_string(),
-        Some(g) if g.kind == DocGateKind::Plan => match &g.revising {
-            Some(note) => format!("revised: {}", note_head(note)),
-            None => return,
-        },
-        Some(_) => return,
-    };
-    let text = plan_md::render(run, &design.requirements);
-    let doc = NewDoc::new(DocKind::Plan, author, &reason, &text);
-    if let Err(error) = open(run, doc, now, fx) {
-        log(run, now, format!("the plan gate did not open: {error}"));
-    }
 }
 
 /// Review focus 1: a fresh orchestrator session (a lost window's handoff, a fresh

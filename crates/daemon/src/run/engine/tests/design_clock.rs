@@ -79,8 +79,14 @@ fn a_budget_halt_refuses_rebaseline_and_a_later_halt_resumes_to_running() {
     );
     assert_eq!(fx.run().state, RunState::Planning);
     assert_eq!(halted_from(&fx), None);
-    // The plan, its gate and the user's approve: the run runs.
-    let args = json!({"edits": [add_task("t1")], "submit": true});
+    // The plan, its gate and the user's approve: the run runs. Task M9.6.11: the
+    // approved spec read back, its requirements covered, and the plan review first.
+    super::design_plan_fixture::read_back(&mut fx, 1, SPEC);
+    let t1 = super::design_plan_fixture::covering("t1", &["R1", "R2"]);
+    let args = json!({"edits": [t1], "submit": true});
+    assert!(replies(&orch_tool(&mut fx, ORCH, "edit_plan", args))[0].is_ok());
+    super::design_plan_fixture::plan_reviewed(&mut fx, json!([]));
+    let args = json!({"submit": true});
     assert!(replies(&orch_tool(&mut fx, ORCH, "edit_plan", args))[0].is_ok());
     assert_eq!(
         replies(&fx.approve()),

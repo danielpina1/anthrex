@@ -2,7 +2,9 @@
 //! `design_agents.rs`: the document reviewer. One per review, queued by a spec's review
 //! draft ([`queue`]) on the orchestrator's peer runtime, else its own (`same_runtime`),
 //! it takes a reader slot as a brainstormer does and starts while its review is asked
-//! (specifying, or the spec gate the orchestrator revises; [`start_next`]). Its one
+//! (specifying, or the spec gate the orchestrator revises; [`start_next`]). Task
+//! M9.6.11: the plan's one review too, queued by the first passing plan submit and
+//! asked in planning. Its one
 //! write, `submit_findings`, is taken only from its live window ([`tool`]); the
 //! findings wake the orchestrator with the exact note. Its session runs unsaved (ruling
 //! T8-4, keyed on its MCP role) and is never resumed: an end without its findings is
@@ -96,12 +98,14 @@ pub(in crate::run::engine) fn in_progress(run: &Run) -> Option<(DocKind, u32)> {
     live.then(|| review(design).map(|r| (r.doc, r.n)))?
 }
 
-/// Whether the run is where a review is asked: specifying, or at the spec gate the
-/// orchestrator revises.
+/// Whether the run is where its review is asked: specifying, or at the spec gate the
+/// orchestrator revises; the plan's (task M9.6.11), planning.
 fn asked(run: &Run) -> bool {
-    match run.state {
-        RunState::Specifying => true,
-        RunState::AwaitingApproval => design_gate::waiting(run)
+    let doc = run.orch.design.as_ref().and_then(review).map(|r| r.doc);
+    match (doc, run.state) {
+        (Some(DocKind::Plan), state) => state == RunState::Planning,
+        (_, RunState::Specifying) => true,
+        (_, RunState::AwaitingApproval) => design_gate::waiting(run)
             .is_some_and(|g| g.kind == proto::DocGateKind::Spec && g.revising.is_some()),
         _ => false,
     }
@@ -116,9 +120,8 @@ pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
         return false;
     }
     let op = next_op(run);
-    let k = (run.orch.design.as_ref())
-        .and_then(review)
-        .map_or(0, |r| r.n);
+    let asked = (run.orch.design.as_ref()).and_then(review);
+    let (doc, k) = asked.map_or((DocKind::Spec, 0), |r| (r.doc, r.n));
     let Some(agent) = run.orch.design.as_mut().and_then(|d| d.reviewer.as_mut()) else {
         return false;
     };
@@ -127,7 +130,7 @@ pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
     agent.window_id = None;
     agent.started = Some(now);
     let agent = agent.clone();
-    let spec = reviewer_spec(run, &agent, k);
+    let spec = reviewer_spec(run, &agent, (doc, k));
     let text = format!(
         "document reviewer {} session {} starting",
         agent.label, agent.session
@@ -239,15 +242,21 @@ pub(super) fn fail(run: &mut Run, reason: String, now: u64) {
         return;
     };
     record.failed = Some(reason.clone());
-    let (doc, k) = (record.doc.label(), record.n);
+    let (kind, doc, k) = (record.doc, record.doc.label(), record.n);
     log(
         run,
         now,
         format!("document reviewer {label} failed: {reason}"),
     );
-    let note = format!(
-        "{doc} review {k} failed: {reason}; submit the {doc} with ready = true, and its gate opens not reviewed"
-    );
+    let note = match kind {
+        // Task M9.6.11: the plan is submitted with edit_plan.
+        DocKind::Plan => format!(
+            "plan review {k} failed: {reason}; submit the plan again with edit_plan, and its gate opens not reviewed"
+        ),
+        _ => format!(
+            "{doc} review {k} failed: {reason}; submit the {doc} with ready = true, and its gate opens not reviewed"
+        ),
+    };
     wake::note(run, note);
 }
 
@@ -314,16 +323,22 @@ fn findings_in(run: &mut Run, findings: Vec<DocFinding>, now: u64) -> Value {
         return json!({"accepted": false});
     };
     review.findings = findings;
-    let (doc, k) = (review.doc.label(), review.n);
+    let (kind, doc, k) = (review.doc, review.doc.label(), review.n);
     history::note_result(run, (AgentRole::DocReviewer, &record), FINDINGS_ACCEPTED);
     log(
         run,
         now,
         format!("{doc} review {k} is in: {n} findings ({b} blocking)"),
     );
-    let note = format!(
-        "{doc} review {k} is in: {n} findings ({b} blocking); answer each in your next submit_doc"
-    );
+    let note = match kind {
+        // Decision 20 (task M9.6.11): the plan's exact note.
+        DocKind::Plan => format!(
+            "plan review is in: {n} findings ({b} blocking); answer each in edit_plan's responses when you submit"
+        ),
+        _ => format!(
+            "{doc} review {k} is in: {n} findings ({b} blocking); answer each in your next submit_doc"
+        ),
+    };
     wake::note(run, note);
     json!({"accepted": true, "findings": n})
 }

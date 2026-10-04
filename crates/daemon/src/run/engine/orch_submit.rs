@@ -64,7 +64,7 @@ pub(in crate::run::engine) fn submit_refusal(run: &Run) -> Option<String> {
     if let Some(how) = super::super::dispatch::finishing_as(run) {
         return Some(format!("run {} is being {how}", run.id));
     }
-    match run.state {
+    let refusal = match run.state {
         RunState::Planning if run.tasks.iter().all(|t| t.state.is_finished()) => {
             Some("the plan has no tasks yet; add tasks before submitting".into())
         }
@@ -76,7 +76,9 @@ pub(in crate::run::engine) fn submit_refusal(run: &Run) -> Option<String> {
             planners_finished(run).err()
         }
         _ => None,
-    }
+    };
+    // Milestone 9.6 decision 18 (task M9.6.11): a design run's plan checks.
+    refusal.or_else(|| super::super::design::plan::refusal(run))
 }
 
 /// Decision 27: no sub-planner is queued or planning.

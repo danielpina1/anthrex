@@ -44,7 +44,7 @@ pub struct DocVersion {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report: Option<ReportSummary>,
     /// Ruling T5-1: a spec's review draft, sent to review `k`: stored with `n = 0`,
-    /// never a gate version.
+    /// never a gate version. Task M9.6.11: the plan review's draft too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft_review: Option<u32>,
 }
@@ -190,8 +190,9 @@ pub fn store(run: &mut Run, doc: NewDoc, now: u64) -> Result<(DocVersion, Effect
         }
         _ => {}
     }
-    if doc.draft_review.is_some() && doc.kind != DocKind::Spec {
-        return Err("only a spec has review drafts".into());
+    // Task M9.6.11: the plan review's draft too.
+    if doc.draft_review.is_some() && !matches!(doc.kind, DocKind::Spec | DocKind::Plan) {
+        return Err("only a spec or a plan has review drafts".into());
     }
     let requirements = match doc.kind {
         DocKind::Spec => scan(&doc.text).into_iter().map(|r| r.id).collect(),

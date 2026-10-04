@@ -59,6 +59,10 @@ pub(crate) fn approve(run: &Run) -> Option<String> {
     if let Some(text) = crate::run::engine::design_gate::plan_approve_refusal(run) {
         return Some(text);
     }
+    // Milestone 9.6 decision 18: the plan at its gate passes its checks again.
+    if let Some(text) = crate::run::engine::design::plan::approve_refusal(run) {
+        return Some(text);
+    }
     if run.state == RunState::Planning {
         return Some(format!(
             "run {run_id} is still being planned; approve it when the orchestrator has submitted the plan"

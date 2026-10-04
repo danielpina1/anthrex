@@ -233,6 +233,6 @@ fn a_review_draft_is_stored_outside_the_gate_versions() {
     };
     assert_eq!(
         store(&mut run, brainstorm, 4).unwrap_err(),
-        "only a spec has review drafts"
+        "only a spec or a plan has review drafts"
     );
 }

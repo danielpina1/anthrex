@@ -281,6 +281,11 @@ fn the_state_survives_save_and_load() {
         }),
         // Task M9.6.10: the approved spec, whose requirements are stored.
         approved_spec: Some(2),
+        // Task M9.6.11: its Interfaces section, a failed read-back (ruling T10-3) and
+        // a plan revision's note kept for its next version.
+        interfaces_section: "`reset(token)`".into(),
+        spec_unread: true,
+        plan_revision: Some("Add mail.".into()),
     };
     let mut run = old_run();
     run.design_mode = DesignMode::Full;

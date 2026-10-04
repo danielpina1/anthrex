@@ -223,16 +223,27 @@ pub fn brainstormer_spec(run: &Run, agent: &DesignAgent) -> DesignAgentSpec {
 
 /// The first turn of the reviewer of review `k` of the spec: its draft, named
 /// explicitly (ruling T5-1), and its one submission.
-pub fn reviewer_first_turn(k: u32) -> String {
-    format!(
-        "[anthrex] Review the spec draft sent to review {k}: read it with get_doc, kind \"spec\", draft {k}. Then submit your findings once with submit_findings."
-    )
+/// Task M9.6.11: the plan's review reads the plan sent to it, the only plan stored
+/// before its first gate version, and the approved spec it must cover.
+pub fn reviewer_first_turn(doc: proto::DocKind, k: u32) -> String {
+    match doc {
+        proto::DocKind::Plan => format!(
+            "[anthrex] Review the plan sent to review {k}: read it with get_doc, kind \"plan\", and the approved spec with get_doc, kind \"spec\". Then submit your findings once with submit_findings."
+        ),
+        _ => format!(
+            "[anthrex] Review the spec draft sent to review {k}: read it with get_doc, kind \"spec\", draft {k}. Then submit your findings once with submit_findings."
+        ),
+    }
 }
 
 /// Decision 9 (task M9.6.10): the document reviewer `agent` of review `k`, launched
 /// read-only as a brainstormer is, with its own contract, tools and budget
 /// (`[orchestrator.design.budget] doc_reviewer`), named `<doc>-r<k>` (ruling T1-O3).
-pub fn reviewer_spec(run: &Run, agent: &DesignAgent, k: u32) -> DesignAgentSpec {
+pub fn reviewer_spec(
+    run: &Run,
+    agent: &DesignAgent,
+    (doc, k): (proto::DocKind, u32),
+) -> DesignAgentSpec {
     let kind = DesignAgentKind::DocReviewer {
         doc: agent.label.clone(),
     };
@@ -244,7 +255,7 @@ pub fn reviewer_spec(run: &Run, agent: &DesignAgent, k: u32) -> DesignAgentSpec 
         run_ref(run, &kind, agent.session),
     );
     let budget = run.limits.orch.design.doc_reviewer;
-    let mut first_turn = reviewer_first_turn(k);
+    let mut first_turn = reviewer_first_turn(doc, k);
     // Ruling T8-7: the one relaunch after an attempt that ended without submitting.
     if agent.unsubmitted {
         first_turn = format!("{first_turn}\n{}", resubmit_line(kind.submit_tool()));

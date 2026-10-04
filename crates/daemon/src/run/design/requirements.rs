@@ -134,6 +134,15 @@ pub fn goal_section(spec: &str) -> String {
     cut(text.join("\n").trim(), GOAL_CAP)
 }
 
+/// Decision 22 (task M9.6.11): the spec's `## Interfaces` section, trimmed and cut to
+/// [`GOAL_CAP`] bytes: what a sub-planner gets beside the Goal and its requirements.
+pub fn interfaces_section(spec: &str) -> String {
+    let lines = lines(spec);
+    let body = section(&lines, "## Interfaces").unwrap_or_default();
+    let text: Vec<&str> = body.iter().map(|l| l.text).collect();
+    cut(text.join("\n").trim(), GOAL_CAP)
+}
+
 fn find(spec: &str) -> Vec<Found> {
     let lines = lines(spec);
     let Some(body) = section(&lines, "## Requirements") else {

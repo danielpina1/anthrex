@@ -244,9 +244,10 @@ pub(super) fn at_spec_gate(yes: bool) -> Fixture {
     fx
 }
 
-/// An `add_task` edit whose brief has the design flow's five headings.
+/// An `add_task` edit whose brief has the design flow's five headings, each on its own
+/// line (decision 19).
 pub(super) fn add_task(id: &str) -> Value {
-    let brief = "Files: a\nTests first: t\nSteps: s\nAcceptance: a\nVerify: v";
+    let brief = "Files:\na\nTests first:\nt\nSteps:\ns\nAcceptance:\na\nVerify:\nv";
     json!({"op": "add_task", "task": {
         "id": id, "title": format!("Title {id}"), "size": "S",
         "owns": [format!("crates/{id}/**")],
@@ -254,12 +255,19 @@ pub(super) fn add_task(id: &str) -> Value {
     }})
 }
 
-/// A design run at the plan gate, v1: its plan submitted by the orchestrator.
+/// A design run at the plan gate, v1: its plan submitted by the orchestrator. Task
+/// M9.6.11: the approved spec read back, `t1` covering its requirements, and the plan
+/// review taken (no findings) before the submit that opens the gate.
 pub(super) fn at_plan_gate(yes: bool) -> Fixture {
     let mut fx = at_spec_gate(yes);
     act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
-    let args = json!({"edits": [add_task("t1")], "submit": true});
+    super::design_plan_fixture::read_back(&mut fx, 1, SPEC);
+    let t1 = super::design_plan_fixture::covering("t1", &["R1", "R2"]);
+    let args = json!({"edits": [t1], "submit": true});
     let effects = orch_tool(&mut fx, ORCH, "edit_plan", args);
+    assert!(replies(&effects)[0].is_ok(), "{effects:?}");
+    super::design_plan_fixture::plan_reviewed(&mut fx, json!([]));
+    let effects = orch_tool(&mut fx, ORCH, "edit_plan", json!({"submit": true}));
     assert!(replies(&effects)[0].is_ok(), "{effects:?}");
     fx
 }

@@ -17,6 +17,7 @@
 
 pub mod changes;
 pub mod coverage;
+pub mod epic;
 pub mod pack;
 pub mod plan_md;
 pub mod report;

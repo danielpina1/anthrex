@@ -275,6 +275,8 @@ pub(super) fn resume(
             && rebaseline.is_none()
             && let Some(text) = super::design::resume_phase(run, now)
         {
+            // Milestone 9.6 ruling T10-3: an unread approved spec is read again.
+            super::design::review::read_again(run, fx);
             return fx.push(Effect::Reply {
                 reply,
                 result: Ok(text),
@@ -356,8 +358,10 @@ fn retry_held(run: &mut Run, now: u64) -> Option<String> {
 pub(super) fn unpause(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     run.state = run.paused_from.take().unwrap_or(RunState::Running);
     log(run, now, "resumed");
-    // Milestone 9.6 task M9.6.8 (m1): a brainstorm that ended while paused settles.
+    // Milestone 9.6 task M9.6.8 (m1): a brainstorm that ended while paused settles;
+    // ruling T10-3: an approved spec whose read-back failed is read again.
     super::design_agents::settle(run, now, fx);
+    super::design::review::read_again(run, fx);
     resumed(run, now, fx);
     // Milestone 9 decisions 11 and 29: the orchestrator restarts, and a promotion
     // recorded before milestone 9 is performed.

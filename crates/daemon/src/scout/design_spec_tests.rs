@@ -347,7 +347,7 @@ fn a_document_reviewer_is_launched_read_only_and_never_resumed() {
     let run = run();
     let mut reviewer = agent("spec-r2", Runtime::Codex);
     reviewer.role = AgentRole::DocReviewer;
-    let spec = reviewer_spec(&run, &reviewer, 2);
+    let spec = reviewer_spec(&run, &reviewer, (proto::DocKind::Spec, 2));
     assert_eq!(
         spec.first_turn,
         "[anthrex] Review the spec draft sent to review 2: read it with get_doc, kind \"spec\", draft 2. Then submit your findings once with submit_findings."
@@ -369,7 +369,7 @@ fn a_document_reviewer_is_launched_read_only_and_never_resumed() {
     assert!(args.contains(&"--ephemeral".to_string()), "{args:?}");
     assert!(!args.contains(&"resume".to_string()), "{args:?}");
     reviewer.unsubmitted = true;
-    let again = reviewer_spec(&run, &reviewer, 2);
+    let again = reviewer_spec(&run, &reviewer, (proto::DocKind::Spec, 2));
     assert!(
         again.first_turn.ends_with(
             "\nYour previous attempt ended without submitting; submit it now with submit_findings."
@@ -377,6 +377,10 @@ fn a_document_reviewer_is_launched_read_only_and_never_resumed() {
         "{}",
         again.first_turn
     );
-    let on_claude = reviewer_spec(&run, &agent("spec-r2", Runtime::Claude), 2);
+    let on_claude = reviewer_spec(
+        &run,
+        &agent("spec-r2", Runtime::Claude),
+        (proto::DocKind::Spec, 2),
+    );
     assert_eq!(on_claude.headless.allowed_tools, DOC_REVIEWER_ALLOWED_TOOLS);
 }

@@ -86,6 +86,18 @@ pub struct DesignState {
     /// section are stored once the driver has read its text back.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approved_spec: Option<u32>,
+    /// The approved spec's Interfaces section, at most 8 KiB: a sub-planner's first turn
+    /// carries it with the Goal (decision 22, task M9.6.11).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub interfaces_section: String,
+    /// Ruling T10-3: the approved spec's read-back failed once; it is read again when the
+    /// run resumes or restores, and a second failure halts the run.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub spec_unread: bool,
+    /// The note of a plan revision whose gate a sub-planner left for planning (task
+    /// M9.6.11): the stale gate is cleared, and the next plan version keeps the note.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_revision: Option<String>,
 }
 
 fn is_zero(n: &u32) -> bool {

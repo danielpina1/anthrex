@@ -89,11 +89,15 @@ pub(super) fn tool(
             | OrchCall::SubmitFindings { .. }
     );
     if run.orch.design.is_none() {
-        if design_tool {
-            refuse(fx, reply, not_design(&run.id));
-            return None;
+        // Task 6's review (m5): `edit_plan`'s responses answer a design run's plan review.
+        let answers =
+            matches!(&parsed, OrchCall::EditPlan { responses, .. } if !responses.is_empty());
+        match (design_tool, answers) {
+            (true, _) => refuse(fx, reply, not_design(&run.id)),
+            (_, true) => refuse(fx, reply, plan::RESPONSES_ONLY),
+            _ => return Some(parsed),
         }
-        return Some(parsed);
+        return None;
     }
     let plan_tool = matches!(
         parsed,
@@ -472,6 +476,8 @@ pub(super) fn checked(run: &mut Run, checked: Vec<DocChecked>, now: u64) {
     );
 }
 
+#[path = "design_plan.rs"]
+pub(crate) mod plan;
 #[path = "design_report.rs"]
 pub(super) mod report;
 #[path = "design_review.rs"]

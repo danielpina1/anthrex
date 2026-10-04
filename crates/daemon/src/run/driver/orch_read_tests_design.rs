@@ -226,3 +226,33 @@ async fn the_reviewer_reads_its_review_draft() {
         format!("run {} has no spec draft for review 3", rig.run_id)
     );
 }
+
+/// Task 6's carry (e) for task M9.6.11: the plan review's draft is stored before its
+/// reviewer starts, so the reviewer's `get_doc { kind: "plan" }` reads it while the
+/// plan has no gate version.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_plan_reviewer_reads_the_plan_sent_to_it() {
+    let rig = Rig::new(design_run).await;
+    let effect = {
+        let mut engine = crate::lock(&rig.runs.state);
+        let run = engine.runs.get_mut(&rig.run_id).expect("the run");
+        let doc = NewDoc {
+            draft_review: Some(1),
+            ..NewDoc::new(
+                DocKind::Plan,
+                DocAuthor::Orchestrator,
+                "draft",
+                "# Plan: x\n",
+            )
+        };
+        state::store(run, doc, 2_000).expect("stored").1
+    };
+    let Effect::WriteDoc { path, text, .. } = effect else {
+        panic!("not a write: {effect:?}");
+    };
+    assert!(path.ends_with("plan-draft-r1.md"), "{path:?}");
+    write_new(&path, &text).expect("written");
+    let read = |args| raw(&rig, AgentRole::DocReviewer, REVIEWER, args);
+    let (ok, text) = read(json!({"kind": "plan"})).await;
+    assert_eq!((ok, text.as_str()), (true, "# Plan: x\n"));
+}

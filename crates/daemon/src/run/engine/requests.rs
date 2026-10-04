@@ -271,8 +271,14 @@ pub(super) fn edit(
         let result = submit_edit(run, batch, now, fx);
         return reply(fx, id, result);
     }
+    // Milestone 9.6 ruling T7-7: an edit at the open plan gate is its next version.
+    let at_gate = super::design::plan::open_gate(run).then(|| run.tasks.clone());
     match apply_batch(run, batch, &EditSource::User, now, fx) {
-        Ok(applied) => reply(fx, id, Ok(applied.text)),
+        Ok(applied) => {
+            let text =
+                super::design::plan::user_edited(run, at_gate.as_deref(), applied.text, now, fx);
+            reply(fx, id, Ok(text))
+        }
         Err(Refused::Text(text)) => reply(fx, id, Err(text)),
         Err(Refused::Plan(errors)) => {
             let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
@@ -310,10 +316,9 @@ fn submit_edit(
             }
         }
     }
-    super::orch::submit_plan(&mut edited, "the user", now)?;
-    // Milestone 9.6 decision 21: a design run's plan gate opens at a `plan.md` version.
+    // Milestone 9.6 decisions 18 and 21: a design run's checks, and its plan gate.
     let author = Some(proto::DocAuthor::User);
-    super::design_gate::plan_submitted(&mut edited, author, now, &mut effects);
+    super::design::plan::submit(&mut edited, author, &[], now, &mut effects)?;
     *run = edited;
     fx.extend(effects);
     let awaiting = |id: &str| {

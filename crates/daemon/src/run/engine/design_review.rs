@@ -14,7 +14,9 @@
 //!   version's findings file keeps every answer.
 //! - **Approval.** The approved version's text is read back by the driver, checked
 //!   against its index entry, and its requirements and Goal section are stored from it,
-//!   never from the engine's cache of texts ([`approved`], [`requirements_read`]).
+//!   never from the engine's cache of texts ([`approved`], [`requirements_read`]). A
+//!   failed read-back is read again when the run resumes or restores, and a second
+//!   failure halts the run (ruling T10-3, [`read_again`]).
 //!
 //! Pure (design decision 2).
 
@@ -178,20 +180,35 @@ fn ready(
 /// The user approved spec v`n`: its requirements wait for its text, read back by the
 /// driver against its index entry (`Effect::ReadBack`, then [`requirements_read`]).
 pub(in crate::run::engine) fn approved(run: &mut Run, n: u32, fx: &mut Vec<Effect>) {
-    let dir = design_dir(run);
-    let run_id = run.id.clone();
-    let Some(design) = run.orch.design.as_mut() else {
+    unapproved(run);
+    if let Some(design) = run.orch.design.as_mut() {
+        design.approved_spec = Some(n);
+    }
+    ask(run, n, fx);
+}
+
+/// Ruling T10-3: when the run resumes, an approved spec whose requirements are not
+/// stored yet (its read-back failed, or never came back) is read back again.
+pub(in crate::run::engine) fn read_again(run: &mut Run, fx: &mut Vec<Effect>) {
+    let due = (run.orch.design.as_ref())
+        .filter(|d| d.requirements.is_empty())
+        .and_then(|d| d.approved_spec);
+    if let Some(n) = due {
+        ask(run, n, fx);
+    }
+}
+
+/// `Effect::ReadBack` of spec v`n`, against its index entry.
+fn ask(run: &Run, n: u32, fx: &mut Vec<Effect>) {
+    let Some(design) = run.orch.design.as_ref() else {
         return;
     };
-    design.approved_spec = Some(n);
-    design.requirements.clear();
-    design.goal_section.clear();
     let Some(version) = design.find(DocKind::Spec, Some(n)).cloned() else {
         return;
     };
-    let path = dir.join(design.file_name(&version));
+    let path = design_dir(run).join(design.file_name(&version));
     fx.push(Effect::ReadBack {
-        run_id,
+        run_id: run.id.clone(),
         docs: vec![(version, path)],
     });
 }
@@ -218,6 +235,8 @@ pub(in crate::run::engine) fn requirements_read(
             if let Some(design) = run.orch.design.as_mut() {
                 design.requirements = found;
                 design.goal_section = requirements::goal_section(text);
+                design.interfaces_section = requirements::interfaces_section(text);
+                design.spec_unread = false;
             }
             let text = format!(
                 "the spec v{n}'s requirements are stored: {}",
@@ -228,10 +247,18 @@ pub(in crate::run::engine) fn requirements_read(
         }
         Ok(None) => None,
         Err(reason) => {
-            let text =
-                format!("design flow: the approved spec v{n} could not be read back: {reason}");
+            // Task 10's review (m9): the log line is ruling T10-3's halt text.
+            let text = format!("design flow: the approved spec could not be read back: {reason}");
+            // Ruling T10-3: read again on resume or restore; a second failure halts.
+            if run.orch.design.as_ref().is_some_and(|d| d.spec_unread) {
+                unread_halt(run, text, now);
+                return Some(n);
+            }
             log(run, now, text);
             if run.state != RunState::Planning {
+                if let Some(design) = run.orch.design.as_mut() {
+                    design.spec_unread = true;
+                }
                 return Some(n);
             }
             if let Some(design) = run.orch.design.as_mut() {
@@ -255,7 +282,24 @@ pub(in crate::run::engine) fn unapproved(run: &mut Run) {
         design.approved_spec = None;
         design.requirements.clear();
         design.goal_section.clear();
+        design.interfaces_section.clear();
+        design.spec_unread = false;
     }
+}
+
+/// Ruling T10-3: the approved spec's second failed read-back halts the run, retryably;
+/// its plain `run resume` returns it to the phase it left and reads the spec again.
+fn unread_halt(run: &mut Run, text: String, now: u64) {
+    let from = match run.state {
+        RunState::Paused => run.paused_from.take(),
+        state => Some(state),
+    };
+    if let Some(design) = run.orch.design.as_mut() {
+        design.halted_from = from;
+        design.phase_started = None;
+    }
+    super::super::merge::halt(run, text, now);
+    run.halt_retryable = true;
 }
 
 /// The orchestrator's digest (`run_status`): the spec review its next `ready` submit

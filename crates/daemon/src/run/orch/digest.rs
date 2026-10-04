@@ -209,6 +209,10 @@ fn gate(run: &Run, for_fingerprint: bool) -> Value {
     if let Some(review) = crate::run::engine::design::review::digest(run) {
         gate["spec_review"] = review;
     }
+    // Task M9.6.11: the plan review the orchestrator's next submit answers.
+    if let Some(review) = crate::run::engine::design::plan::digest(run) {
+        gate["plan_review"] = review;
+    }
     gate
 }
 

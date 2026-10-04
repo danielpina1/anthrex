@@ -325,6 +325,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         runs
     });
     for (id, run) in state.runs.iter_mut() {
+        // Milestone 9.6 task M9.6.11: a design run's plan at its gate.
+        design::plan::pass(run, now, &mut fx);
         dispatch::schedule(run, now, &mut fx);
         // Milestone 9.3 decision 17: a round whose run completed ends.
         goal_rounds_end::pass(run, now, &mut fx);

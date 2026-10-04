@@ -8,7 +8,7 @@
 //! verdict, which only the user's requests carry (`OrchEvent::{ApproveHold,
 //! RejectHold}`, from `anthrex run approve|reject --hold`).
 
-use proto::{AgentRole, MessageTarget, PlanEdit, RunState, Runtime, ToolCall};
+use proto::{AgentRole, FindingAnswer, MessageTarget, PlanEdit, RunState, Runtime, ToolCall};
 use serde_json::json;
 
 use super::batch::{Applied, Refused, apply_batch, record_rejected};
@@ -300,9 +300,9 @@ pub(super) fn tool(
             submit,
             summary,
             iterate: None,
-            ..
+            responses,
         } => {
-            let call = (&edits[..], submit, summary);
+            let call = (&edits[..], submit, summary, &responses[..]);
             edit_plan(run, reply, call, refusals, (now, quiet_base), fx)
         }
         _ if run.state == RunState::Complete => {
@@ -342,7 +342,7 @@ pub(super) fn tool(
 fn edit_plan(
     run: &mut Run,
     reply: ReplyId,
-    (edits, submit, summary): (&[proto::PlanEdit], bool, Option<String>),
+    (edits, submit, summary, responses): (&[PlanEdit], bool, Option<String>, &[FindingAnswer]),
     refusals: &[(Runtime, String)],
     (now, base): (u64, &mut Option<Run>),
     fx: &mut Vec<Effect>,
@@ -402,12 +402,13 @@ fn edit_plan(
     // whatever other task of the call an epic or the promotion holds (fix round, I2).
     let review = super::delivery::review_holds(&mut edited, &added, now);
     let held = held.or(review);
-    if submit && let Err(text) = submit_plan(&mut edited, "the orchestrator", now) {
+    // Milestone 9.6 decisions 18 to 21: a design run's checks, plan review and gate.
+    let author = submit.then_some(proto::DocAuthor::Orchestrator);
+    let submitted = super::design::plan::submit(&mut edited, author, responses, now, &mut effects);
+    if let Err(text) = submitted {
         record_rejected(run, edits, &source, text.clone(), now);
         return refuse(fx, reply, text);
     }
-    let author = submit.then_some(proto::DocAuthor::Orchestrator);
-    super::design_gate::plan_submitted(&mut edited, author, now, &mut effects);
     if let Some(summary) = summary {
         write_summary(&mut edited, summary, now, &mut effects);
     }
@@ -450,6 +451,10 @@ pub(super) fn accepted(
         "notes": notes,
         "held": held,
     });
+    // Milestone 9.6 decision 20: the plan went to its review, not to the gate.
+    if super::design::plan::awaiting_review(run) {
+        value["awaiting_review"] = json!(true);
+    }
     // Decision 42b: a message's recipients.
     if let Some(outcome) = message {
         let refused: Vec<_> = outcome

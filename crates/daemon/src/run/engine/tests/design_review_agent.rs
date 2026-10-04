@@ -301,7 +301,8 @@ fn the_approved_spec_is_read_back_and_a_failed_read_reopens_its_gate() {
     assert!(design(&fx).requirements.is_empty());
     let note = "the approved spec v1 could not be read back; submit it again";
     assert!(notes(&fx).contains(&note.to_string()), "{:?}", notes(&fx));
-    let logged = "design flow: the approved spec v1 could not be read back: its file differs from what was stored";
+    // Task 10's review (m9): the line is ruling T10-3's halt text (task M9.6.11).
+    let logged = "design flow: the approved spec could not be read back: its file differs from what was stored";
     // Fix round 1 (m3): logged once.
     let failed: Vec<String> = (log_lines(&fx).into_iter())
         .filter(|l| l.contains("could not be read back"))
