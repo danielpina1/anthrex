@@ -11,7 +11,8 @@ use std::collections::HashSet;
 /// test-writer session becomes one display round per piece between its `sent_back_at`
 /// bounces; every other round is one. Bounces are
 /// taken in time order and never before the session's start, and a repeated
-/// `(role, session, number)` keeps its earliest copy, so no two rounds share a key.
+/// `(role, lane, session, number)` keeps its earliest copy, so no two rounds share a
+/// key (both lanes number their reviewers from 1; ruling T20-1).
 pub fn display_rounds<'a>(task: &'a TaskInfo, windows: &'a [WindowInfo]) -> Vec<DisplayRound<'a>> {
     rounds_with(task, |id| windows.iter().find(|window| window.id == id))
 }
@@ -64,7 +65,10 @@ pub(super) fn rounds_with<'a>(
     }
     rounds.sort_by_key(|round| (round.started_at, rank(round.info)));
     let mut seen = HashSet::new();
-    rounds.retain(|round| seen.insert((round.info.role, round.info.session, round.number)));
+    rounds.retain(|round| {
+        let info = round.info;
+        seen.insert((info.role, info.lane, info.session, round.number))
+    });
     rounds
 }
 

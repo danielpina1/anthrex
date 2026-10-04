@@ -463,6 +463,7 @@ fn prune_runs_drops_keys_of_runs_that_left() {
         run: "a".into(),
         task: "t1".into(),
         role: AgentRole::Worker,
+        lane: None,
         session: 1,
         round: 1,
     };

@@ -226,6 +226,7 @@ fn h_below_the_root_selects_the_parent() {
         run: RUN_ID.into(),
         task: "t1".into(),
         role: proto::AgentRole::Worker,
+        lane: None,
         session: 1,
         round: 1,
     };

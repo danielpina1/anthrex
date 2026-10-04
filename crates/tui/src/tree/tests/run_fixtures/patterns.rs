@@ -1,10 +1,10 @@
 //! Milestone 9.5 task 20: a racing task and a paired task (decision 29, Interfaces
 //! "Run view"), for the tree, canvas, inspector and render-audit tests.
 
-use super::{PROJECT, headless, route_json, run, run_ref, snapshot, task, worker};
+use super::{PROJECT, headless, reviewer, route_json, run, run_ref, snapshot, task, worker};
 use proto::{
-    AgentRole, LaneInfo, LaneState, PairInfo, PairPhase, RaceInfo, RaceLane, ReviewInfo, Route,
-    RunState, RunsSnapshot, Runtime, Size, TaskState, WindowInfo,
+    AgentRole, Finding, LaneInfo, LaneState, PairInfo, PairPhase, RaceInfo, RaceLane, ReviewInfo,
+    Route, RunState, RunsSnapshot, Runtime, Size, TaskState, WindowInfo,
 };
 
 const NOW: u64 = 10_000;
@@ -22,6 +22,7 @@ fn lane(lane: RaceLane, runtime: Runtime, state: LaneState) -> LaneInfo {
         head: None,
         reason: None,
         salvage_ref: None,
+        kept: false,
     }
 }
 
@@ -127,4 +128,52 @@ pub(crate) fn pair_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
             Some(run_ref("r1", Some("t3"), AgentRole::Worker, 2)),
         )],
     )
+}
+
+/// [`race_fixture`] as the daemon numbers it (ruling T20-1): both lanes' first
+/// reviewers are `Reviewer` session 1, round 1, told apart only by their lane. Lane a
+/// is in `review`, its racer ended and its reviewer `review a#1` live on window 12 with
+/// no verdict yet; lane b's racer ended and its reviewer `review b#1` ended with a
+/// blocking `changes` (one important finding), so lane b is `working` again.
+pub(crate) fn lane_reviews_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
+    let (mut snapshot, _) = race_fixture();
+    let t2 = &mut snapshot.runs[0].tasks[0];
+    let race = t2.race.as_mut().expect("the race");
+    race.lanes[0].state = LaneState::Review;
+    race.lanes[1].state = LaneState::Working;
+    for round in &mut t2.rounds {
+        match round.role {
+            AgentRole::Racer => round.ended_at = Some(NOW - 120),
+            _ => {
+                round.session = 1;
+                round.ended_at = Some(NOW - 50);
+            }
+        }
+    }
+    let mut review_a = reviewer(1, Some(12), Runtime::Claude, NOW - 40);
+    review_a.lane = Some(RaceLane::A);
+    t2.rounds.push(review_a);
+    let route = t2.review_route.clone().expect("a review route");
+    let review = |lane, verdict, findings: Vec<Finding>| ReviewInfo {
+        round: 1,
+        route: route.clone(),
+        verdict,
+        summary: String::new(),
+        blocking: !findings.is_empty(),
+        findings,
+        lane: Some(lane),
+    };
+    let finding: Finding = serde_json::from_value(serde_json::json!({
+        "severity": "important", "file": "src/reset.rs", "line": 12, "input": null,
+        "text": "lane b's reset skips the expiry check"
+    }))
+    .expect("a Finding");
+    t2.reviews = vec![
+        review(RaceLane::A, None, Vec::new()),
+        review(RaceLane::B, Some(proto::Verdict::Changes), vec![finding]),
+    ];
+    let mut review_ref = run_ref("r1", Some("t2"), AgentRole::Reviewer, 1);
+    review_ref.lane = Some(RaceLane::A);
+    let windows = vec![headless(12, "1a2b/t2.ar1", PROJECT, Some(review_ref))];
+    (snapshot, windows)
 }

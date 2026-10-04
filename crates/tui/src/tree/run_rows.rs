@@ -164,6 +164,7 @@ impl<'a> Builder<'a> {
                 run: run.run_id.clone(),
                 task: task.id.clone(),
                 role: round.info.role,
+                lane: round.info.lane,
                 session: round.info.session,
                 round: round.number,
             };

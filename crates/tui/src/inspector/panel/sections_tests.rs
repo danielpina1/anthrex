@@ -183,6 +183,7 @@ fn round_doing_reads_now() {
         run: "r1".into(),
         task: "t2".into(),
         role,
+        lane: None,
         session,
         round,
     };

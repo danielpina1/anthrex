@@ -24,11 +24,12 @@ fn task_rounds(info: &RunInfo, windows: &[WindowInfo], id: &str) -> Vec<(NodeKey
         .collect()
 }
 
-fn key(task: &str, role: AgentRole, session: u32, round: u32) -> NodeKey {
+fn key(task: &str, role: AgentRole, lane: Option<RaceLane>, session: u32, round: u32) -> NodeKey {
     NodeKey::AgentRound {
         run: "r1".into(),
         task: task.into(),
         role,
+        lane,
         session,
         round,
     }
@@ -40,10 +41,16 @@ fn race_rounds_are_ordered_and_labelled() {
     assert_eq!(
         task_rounds(&snapshot.runs[0], &windows, "t2"),
         [
-            (key("t2", AgentRole::Racer, 1, 1), "racer a".to_owned()),
-            (key("t2", AgentRole::Racer, 2, 1), "racer b".to_owned()),
             (
-                key("t2", AgentRole::Reviewer, 2, 1),
+                key("t2", AgentRole::Racer, Some(RaceLane::A), 1, 1),
+                "racer a".to_owned()
+            ),
+            (
+                key("t2", AgentRole::Racer, Some(RaceLane::B), 2, 1),
+                "racer b".to_owned()
+            ),
+            (
+                key("t2", AgentRole::Reviewer, Some(RaceLane::B), 2, 1),
                 "review b#1".to_owned()
             ),
         ]
@@ -86,10 +93,13 @@ fn pair_rounds_are_ordered_and_labelled() {
         task_rounds(&snapshot.runs[0], &windows, "t3"),
         [
             (
-                key("t3", AgentRole::TestWriter, 1, 1),
+                key("t3", AgentRole::TestWriter, None, 1, 1),
                 "test writer #1".to_owned()
             ),
-            (key("t3", AgentRole::Worker, 2, 1), "worker #2".to_owned()),
+            (
+                key("t3", AgentRole::Worker, None, 2, 1),
+                "worker #2".to_owned()
+            ),
         ]
     );
 }
@@ -121,11 +131,20 @@ fn a_racer_sent_back_splits_like_a_worker() {
     assert_eq!(
         rounds[..2],
         [
-            (key("t2", AgentRole::Racer, 1, 1), "racer a".to_owned()),
-            (key("t2", AgentRole::Racer, 2, 1), "racer b".to_owned()),
+            (
+                key("t2", AgentRole::Racer, Some(RaceLane::A), 1, 1),
+                "racer a".to_owned()
+            ),
+            (
+                key("t2", AgentRole::Racer, Some(RaceLane::B), 2, 1),
+                "racer b".to_owned()
+            ),
         ]
     );
-    assert!(rounds.contains(&(key("t2", AgentRole::Racer, 1, 2), "racer a r2".to_owned())));
+    assert!(rounds.contains(&(
+        key("t2", AgentRole::Racer, Some(RaceLane::A), 1, 2),
+        "racer a r2".to_owned()
+    )));
     let shown = display_rounds(&snapshot.runs[0].tasks[0], &windows);
     let pieces: Vec<(u32, bool)> = shown
         .iter()
@@ -179,4 +198,50 @@ fn round_labels_with_and_without_a_lane() {
         "worker #2"
     );
     assert_eq!(round_label(AgentRole::Racer, 1, 1), "racer");
+}
+
+/// Ruling T20-1 (c): the daemon numbers each lane's reviewers from 1, so both lanes'
+/// first reviewers are `Reviewer` session 1, round 1. The lane in the key keeps them
+/// two nodes.
+#[test]
+fn two_lanes_first_reviewers_are_two_nodes() {
+    let (snapshot, windows) = crate::tree::run_fixtures::lane_reviews_fixture();
+    let (a, b) = (Some(RaceLane::A), Some(RaceLane::B));
+    assert_eq!(
+        task_rounds(&snapshot.runs[0], &windows, "t2"),
+        [
+            (key("t2", AgentRole::Racer, a, 1, 1), "racer a".to_owned()),
+            (key("t2", AgentRole::Racer, b, 2, 1), "racer b".to_owned()),
+            (
+                key("t2", AgentRole::Reviewer, b, 1, 1),
+                "review b#1".to_owned()
+            ),
+            (
+                key("t2", AgentRole::Reviewer, a, 1, 1),
+                "review a#1".to_owned()
+            ),
+        ]
+    );
+}
+
+/// Two racers with one session number (ruling T20-1 (c)) are two nodes too.
+#[test]
+fn two_racers_with_one_session_number_are_two_nodes() {
+    let (mut snapshot, windows) = race_fixture();
+    for round in &mut snapshot.runs[0].tasks[0].rounds {
+        if round.role == AgentRole::Racer {
+            round.session = 1;
+            round.round = 1;
+        }
+    }
+    let (a, b) = (Some(RaceLane::A), Some(RaceLane::B));
+    let rounds = task_rounds(&snapshot.runs[0], &windows, "t2");
+    assert_eq!(
+        rounds[..2],
+        [
+            (key("t2", AgentRole::Racer, a, 1, 1), "racer a".to_owned()),
+            (key("t2", AgentRole::Racer, b, 1, 1), "racer b".to_owned()),
+        ]
+    );
+    assert_eq!(rounds.len(), 3);
 }

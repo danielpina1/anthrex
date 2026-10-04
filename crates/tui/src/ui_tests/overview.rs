@@ -176,6 +176,7 @@ fn the_run_views_single_line_is_the_live_glyph_the_name_and_the_right_text() {
         run: RUN_ID.into(),
         task: "t1".into(),
         role: proto::AgentRole::Worker,
+        lane: None,
         session: 1,
         round: 1,
     };

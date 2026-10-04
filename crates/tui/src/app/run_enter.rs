@@ -70,6 +70,7 @@ impl App {
                 run,
                 task,
                 role,
+                lane,
                 session,
                 round,
             } => {
@@ -82,6 +83,7 @@ impl App {
                 let rounds = tree::display_rounds(info, &self.windows);
                 let found = rounds.iter().find(|shown| {
                     shown.info.role == role
+                        && shown.info.lane == lane
                         && shown.info.session == session
                         && shown.number == round
                 });
@@ -90,7 +92,7 @@ impl App {
                 };
                 Agent {
                     window: shown.info.window_id,
-                    label: tree::round_label_with_lane(role, shown.info.lane, session, round),
+                    label: tree::round_label_with_lane(role, lane, session, round),
                     ended: shown.info.ended_at.is_some(),
                 }
             }

@@ -72,16 +72,22 @@ pub(super) fn pair_row(task: &TaskInfo, ascii: bool) -> Option<String> {
     Some(text)
 }
 
-/// A racer round's `race` field: where its lane stands, and its salvage once it left
-/// the race.
+/// A racer round's `race` field: where its lane stands, its salvage once it left the
+/// race, and ` · checkout kept` when its checkout was kept (task 20b).
 pub(super) fn race_field(task: &TaskInfo, lane: Option<RaceLane>) -> Option<String> {
     let race = task.race.as_ref()?;
     let info = lane_of(race, lane?)?;
     let x = info.lane.label();
     let y = info.lane.other().label();
-    let salvage = || match &info.salvage_ref {
-        Some(salvage) => format!(" · salvaged {salvage}"),
-        None => " · salvage pending".to_owned(),
+    let salvage = || {
+        let mut text = match &info.salvage_ref {
+            Some(salvage) => format!(" · salvaged {salvage}"),
+            None => " · salvage pending".to_owned(),
+        };
+        if info.kept {
+            text.push_str(" · checkout kept");
+        }
+        text
     };
     Some(match info.state {
         LaneState::Won => format!("lane {x} · won"),
@@ -120,7 +126,8 @@ pub(super) fn test_field(task: &TaskInfo, ascii: bool) -> Option<String> {
 }
 
 /// The task's state word while a pattern is under way: `racing` while its race has no
-/// winner, `writing the test` while its test writer works. `None` otherwise, and for a
+/// winner and a lane still in it (task 20b: a race whose lanes both went out, retried
+/// as one worker, is not), `writing the test` while its test writer works. `None` otherwise, and for a
 /// task not at work (waiting, blocked, finished), which keeps its own word.
 pub(super) fn state_word(task: &TaskInfo) -> Option<&'static str> {
     let at_work = matches!(
@@ -134,7 +141,11 @@ pub(super) fn state_word(task: &TaskInfo) -> Option<&'static str> {
     if !at_work {
         return None;
     }
-    if task.race.as_ref().is_some_and(|race| race.winner.is_none()) {
+    let racing = |race: &RaceInfo| {
+        let live = |info: &LaneInfo| !matches!(info.state, LaneState::Lost | LaneState::Out);
+        race.winner.is_none() && race.lanes.iter().any(live)
+    };
+    if task.race.as_ref().is_some_and(racing) {
         return Some("racing");
     }
     task.pair

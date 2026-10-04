@@ -63,10 +63,13 @@ pub enum NodeKey {
     /// Milestone 9.3 decision 32: a project's idle orchestrator, by its chain id.
     Chain(String),
     /// `round` is the display round (milestone 8c decision 14), not `AgentRoundInfo.round`.
+    /// `lane` is a racer's or lane reviewer's race lane (milestone 9.5 ruling T20-1):
+    /// both lanes number their reviewers from 1, so the lane tells them apart.
     AgentRound {
         run: String,
         task: String,
         role: AgentRole,
+        lane: Option<proto::RaceLane>,
         session: u32,
         round: u32,
     },

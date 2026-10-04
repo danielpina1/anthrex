@@ -581,4 +581,4 @@ pub(crate) fn planner_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
 
 // Milestone 9.5 task 20: a race and a pair, kept apart so this file stays focused.
 mod patterns;
-pub(crate) use patterns::{pair_fixture, race_fixture};
+pub(crate) use patterns::{lane_reviews_fixture, pair_fixture, race_fixture};

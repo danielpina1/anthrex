@@ -18,6 +18,7 @@ use super::model::{AgentRound, FailedTurn, Run, Task};
 pub use super::snapshot_orch::PAUSED_ATTENTION_SECS;
 pub use super::snapshot_orch::SNAPSHOT_NOTE_MAX;
 use super::snapshot_orch::{message_line, noted_lines, paused_line, plan_text_shown, task_notes};
+use super::snapshot_patterns as patterns;
 
 /// History entries a task shows, newest first.
 const HISTORY_SHOWN: usize = 10;
@@ -281,7 +282,7 @@ fn round_info(r: &AgentRound, now: u64) -> AgentRoundInfo {
         rate_limited_since: r.rate_limited_since,
         rate_limited_until: r.rate_limited_until,
         sent_back_at: r.sent_back_at.clone(),
-        lane: None,
+        lane: patterns::round_lane(r),
         // Milestone 9.5 decision 43: the failed turn's error, and its retry (ruling
         // T6-1: `at` is already the continue's time).
         failed_error: r.failed_error.clone(),
@@ -354,7 +355,7 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
                 summary: r.summary.clone(),
                 findings: r.findings.clone(),
                 blocking: r.findings.iter().any(|f| f.severity != Severity::Minor),
-                lane: None,
+                lane: patterns::review_lane(r),
             })
             .collect(),
         last_check: t.checks.last().map(|c| CheckInfo {
@@ -452,8 +453,9 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         atomic_reason: t.spec.atomic_reason.clone(),
         interface_change: t.spec.interface_change,
         round: t.round,
-        race: None,
-        pair: None,
+        // Milestone 9.5 decision 1 (task 20b).
+        race: patterns::race_info(t),
+        pair: patterns::pair_info(t),
     }
 }
 

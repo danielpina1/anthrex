@@ -292,3 +292,6 @@ fn old_history_lines_still_parse() {
 
 #[path = "tuning_tests_wire.rs"]
 mod wire;
+
+#[path = "tuning_tests_kept.rs"]
+mod kept;

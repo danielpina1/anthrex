@@ -9,11 +9,18 @@ use crate::tree::display_rounds;
 use crate::tree::run_fixtures::{pair_fixture, race_fixture};
 use proto::{LaneState, PairPhase, RaceLane};
 
-fn round_key(task: &str, role: AgentRole, session: u32, round: u32) -> NodeKey {
+fn round_key(
+    task: &str,
+    role: AgentRole,
+    lane: Option<RaceLane>,
+    session: u32,
+    round: u32,
+) -> NodeKey {
     NodeKey::AgentRound {
         run: "r1".into(),
         task: task.into(),
         role,
+        lane,
         session,
         round,
     }
@@ -82,7 +89,7 @@ fn node_text_for_new_rounds() {
 #[test]
 fn a_live_racer_and_test_writer_follow_a_workers_rules() {
     let app = app_of(race_fixture());
-    let racer_a = round_key("t2", AgentRole::Racer, 1, 1);
+    let racer_a = round_key("t2", AgentRole::Racer, Some(RaceLane::A), 1, 1);
     assert_eq!(look(&app, &racer_a), ("●", Role::Working));
     let (mut snapshot, windows) = race_fixture();
     let round = &mut snapshot.runs[0].tasks[0].rounds[2];
@@ -98,14 +105,14 @@ fn a_live_racer_and_test_writer_follow_a_workers_rules() {
     t3.rounds[0].ended_at = None;
     t3.pair.as_mut().expect("a pair").phase = PairPhase::Writing;
     let app = app_of((snapshot, windows));
-    let writer = round_key("t3", AgentRole::TestWriter, 1, 1);
+    let writer = round_key("t3", AgentRole::TestWriter, None, 1, 1);
     assert_eq!(look(&app, &writer), ("●", Role::Working));
 }
 
 #[test]
 fn loser_and_out_rounds_are_ended_and_muted() {
-    let racer_a = round_key("t2", AgentRole::Racer, 1, 1);
-    let racer_b = round_key("t2", AgentRole::Racer, 2, 1);
+    let racer_a = round_key("t2", AgentRole::Racer, Some(RaceLane::A), 1, 1);
+    let racer_b = round_key("t2", AgentRole::Racer, Some(RaceLane::B), 2, 1);
     let end_a = |snapshot: &mut RunsSnapshot| {
         let t2 = &mut snapshot.runs[0].tasks[0];
         for round in &mut t2.rounds {
@@ -139,7 +146,7 @@ fn loser_and_out_rounds_are_ended_and_muted() {
 
 #[test]
 fn an_ended_test_writer_passed_unless_its_task_is_blocked_writing() {
-    let writer = round_key("t3", AgentRole::TestWriter, 1, 1);
+    let writer = round_key("t3", AgentRole::TestWriter, None, 1, 1);
     let app = app_of(pair_fixture());
     assert_eq!(look(&app, &writer), ("✓", Role::Done));
 
@@ -170,7 +177,7 @@ fn an_ended_test_writer_passed_unless_its_task_is_blocked_writing() {
     t3.pair.as_mut().expect("a pair").phase = PairPhase::Writing;
     let app = app_of((snapshot, windows));
     assert_eq!(look(&app, &writer), ("✓", Role::Done));
-    let last = round_key("t3", AgentRole::TestWriter, 2, 1);
+    let last = round_key("t3", AgentRole::TestWriter, None, 2, 1);
     assert_eq!(look(&app, &last), ("✗", Role::Failed));
 }
 

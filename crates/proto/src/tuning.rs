@@ -66,6 +66,14 @@ pub struct LaneInfo {
     pub head: Option<String>,
     pub reason: Option<String>,
     pub salvage_ref: Option<String>,
+    /// The lane's checkout was kept, because its racer did not exit in time (decision
+    /// 22); it goes with the run's other checkouts at accept or discard. Task 20b.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub kept: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// A racing task's lanes and, once decided, the lane that became the task.

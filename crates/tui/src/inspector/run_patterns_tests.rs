@@ -19,11 +19,12 @@ fn task_key(id: &str) -> NodeKey {
     }
 }
 
-fn round_key(task: &str, role: AgentRole, session: u32) -> NodeKey {
+fn round_key(task: &str, role: AgentRole, lane: Option<RaceLane>, session: u32) -> NodeKey {
     NodeKey::AgentRound {
         run: "r1".into(),
         task: task.into(),
         role,
+        lane,
         session,
         round: 1,
     }
@@ -259,12 +260,18 @@ fn racer_round_race_field() {
 #[test]
 fn a_racer_rounds_race_field_follows_doing() {
     let app = app_of(race_fixture());
-    let inspection = inspect_node(&app, &round_key("t2", AgentRole::Racer, 1));
+    let inspection = inspect_node(
+        &app,
+        &round_key("t2", AgentRole::Racer, Some(RaceLane::A), 1),
+    );
     assert_eq!(inspection.name, "racer a  claude · standard · medium");
     let labels: Vec<&str> = pairs(&inspection).iter().map(|(label, _)| *label).collect();
     assert_eq!(labels[..2], ["doing", "race"]);
     assert_eq!(value(&inspection, "race"), Some("lane a · racing"));
-    let inspection = inspect_node(&app, &round_key("t2", AgentRole::Reviewer, 2));
+    let inspection = inspect_node(
+        &app,
+        &round_key("t2", AgentRole::Reviewer, Some(RaceLane::B), 2),
+    );
     assert!(
         inspection.name.starts_with("review b#1  claude"),
         "{}",
@@ -317,7 +324,7 @@ fn test_writer_round_test_field() {
     );
 
     let app = app_of(pair_fixture());
-    let inspection = inspect_node(&app, &round_key("t3", AgentRole::TestWriter, 1));
+    let inspection = inspect_node(&app, &round_key("t3", AgentRole::TestWriter, None, 1));
     assert_eq!(inspection.name, "test writer #1  codex · standard · medium");
     let labels: Vec<&str> = pairs(&inspection).iter().map(|(label, _)| *label).collect();
     assert_eq!(labels[..2], ["doing", "test"]);
@@ -356,4 +363,80 @@ fn the_task_state_word_says_racing_and_writing_the_test() {
     });
     let right = inspect_node(&app, &task_key("t3")).right;
     assert_eq!(right.as_deref(), Some("blocked"));
+}
+
+/// Task 20b: decision 22's kept checkout (`LaneInfo.kept`) follows the salvage.
+#[test]
+fn a_kept_checkout_is_named_after_its_salvage() {
+    let field = |change: &dyn Fn(&mut TaskInfo)| {
+        let (mut snapshot, _) = race_fixture();
+        let t2 = &mut snapshot.runs[0].tasks[0];
+        lane(t2, RaceLane::B).state = LaneState::Won;
+        race(t2).winner = Some(RaceLane::B);
+        let a = lane(t2, RaceLane::A);
+        a.state = LaneState::Lost;
+        a.salvage_ref = Some("refs/anthrex/salvage/t2-1".into());
+        a.kept = true;
+        change(t2);
+        race_field(t2, Some(RaceLane::A))
+    };
+    assert_eq!(
+        field(&|_| {}).as_deref(),
+        Some("lane a · lost to b · salvaged refs/anthrex/salvage/t2-1 · checkout kept")
+    );
+    let out = |t2: &mut TaskInfo| {
+        let a = lane(t2, RaceLane::A);
+        a.state = LaneState::Out;
+        a.reason = Some("its racer stalled".into());
+    };
+    assert_eq!(
+        field(&out).as_deref(),
+        Some(
+            "lane a · out: its racer stalled · salvaged refs/anthrex/salvage/t2-1 · checkout kept"
+        )
+    );
+    let pending = |t2: &mut TaskInfo| lane(t2, RaceLane::A).salvage_ref = None;
+    assert_eq!(
+        field(&pending).as_deref(),
+        Some("lane a · lost to b · salvage pending · checkout kept")
+    );
+    let not_kept = |t2: &mut TaskInfo| lane(t2, RaceLane::A).kept = false;
+    assert_eq!(
+        field(&not_kept).as_deref(),
+        Some("lane a · lost to b · salvaged refs/anthrex/salvage/t2-1")
+    );
+}
+
+/// Task 20b: the snapshot as the daemon fills it (both lanes' first reviewers on
+/// session 1): each lane reviewer is inspected on its own and judges its own racer,
+/// and the task shows its race row.
+#[test]
+fn each_lane_reviewer_is_inspected_on_its_own() {
+    let app = app_of(crate::tree::run_fixtures::lane_reviews_fixture());
+    for (lane, racer) in [
+        (RaceLane::A, "racer a · claude · standard"),
+        (RaceLane::B, "racer b · codex · standard"),
+    ] {
+        let key = round_key("t2", AgentRole::Reviewer, Some(lane), 1);
+        let inspection = inspect_node(&app, &key);
+        let name = format!("review {}#1  claude", lane.label());
+        assert!(inspection.name.starts_with(&name), "{}", inspection.name);
+        assert_eq!(value(&inspection, "judging"), Some(racer));
+    }
+    let (_, row) = detail(&app, "t2", "race");
+    let review = crate::theme::glyph(crate::theme::Glyph::Review, false);
+    let live = crate::theme::glyph(crate::theme::Glyph::Live, false);
+    assert_eq!(row, Some(format!("a claude {review} · b codex {live}")));
+}
+
+/// A race with no lane left in it (both out, the task retried as one worker:
+/// `Race.ended`) is no longer `racing`.
+#[test]
+fn a_race_with_no_lane_left_is_not_racing() {
+    let app = changed(race_fixture(), |t2| {
+        lane(t2, RaceLane::A).state = LaneState::Out;
+        lane(t2, RaceLane::B).state = LaneState::Out;
+    });
+    let right = inspect_node(&app, &task_key("t2")).right;
+    assert_eq!(right.as_deref(), Some("working"));
 }

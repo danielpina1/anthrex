@@ -25,6 +25,7 @@ fn worker_round(task: &str) -> NodeKey {
         run: RUN_ID.into(),
         task: task.into(),
         role: AgentRole::Worker,
+        lane: None,
         session: 1,
         round: 1,
     }

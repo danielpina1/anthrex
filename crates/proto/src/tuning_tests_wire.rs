@@ -30,6 +30,7 @@ fn a_lane(lane: RaceLane, state: LaneState) -> LaneInfo {
         head: Some("d1d1d1d".into()),
         reason: Some("check failed twice".into()),
         salvage_ref: Some("refs/anthrex/salvage/r/t1/1".into()),
+        kept: false,
     }
 }
 

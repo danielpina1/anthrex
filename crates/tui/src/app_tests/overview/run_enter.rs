@@ -34,6 +34,7 @@ fn round_key(task: &str, role: AgentRole, session: u32, round: u32) -> NodeKey {
         run: RUN_ID.into(),
         task: task.into(),
         role,
+        lane: None,
         session,
         round,
     }
