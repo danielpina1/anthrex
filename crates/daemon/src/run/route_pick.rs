@@ -221,17 +221,16 @@ enum Mover {
     Transient,
 }
 
-/// Ruling FW-1: the tasks that wait on task `i`, directly, transitively, or through an
-/// implicit `owns` dependency. They never run alongside it, so the overlap rule for a
-/// racer or a test writer does not count them.
-fn dependents(tasks: &[Task], i: usize) -> BTreeSet<usize> {
+/// Ruling FW-5: the tasks that declare they wait on task `i`, directly or through other
+/// declared deps. An implicit `owns` dependency is left out: it links tasks on one
+/// runtime only, so the move it would allow dissolves it.
+fn declared_dependents(tasks: &[Task], i: usize) -> BTreeSet<usize> {
     let mut found = BTreeSet::new();
     let mut frontier = vec![i];
     while let Some(k) = frontier.pop() {
         let id = tasks[k].id();
         for (j, t) in tasks.iter().enumerate() {
-            let waits = (t.spec.deps.iter().chain(&t.implicit_deps)).any(|d| d == id);
-            if j != i && waits && found.insert(j) {
+            if j != i && t.spec.deps.iter().any(|d| d == id) && found.insert(j) {
                 frontier.push(j);
             }
         }
@@ -240,12 +239,12 @@ fn dependents(tasks: &[Task], i: usize) -> BTreeSet<usize> {
 }
 
 /// The tasks the overlap rule counts against task `i` for `mover`: every other
-/// unfinished one, but for a racer or a test writer not those that wait on it (rulings
-/// FW-1, FW-5).
+/// unfinished one, but for a racer or a test writer not those that declare they wait on
+/// it (rulings FW-1, FW-5).
 fn alongside(tasks: &[Task], i: usize, mover: Mover) -> impl Iterator<Item = (usize, &Task)> {
     let waiting = match mover {
         Mover::Worker => BTreeSet::new(),
-        Mover::Transient => dependents(tasks, i),
+        Mover::Transient => declared_dependents(tasks, i),
     };
     (tasks.iter().enumerate())
         .filter(move |(j, t)| *j != i && !t.state.is_finished() && !waiting.contains(j))

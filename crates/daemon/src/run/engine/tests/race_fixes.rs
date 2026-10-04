@@ -509,26 +509,59 @@ fn an_adopted_lanes_typed_question_is_not_classified() {
     assert!(fx.task("t1").pending_classification.is_none());
 }
 
-/// Review B's M9 with ruling FW-1: the second racer's peer route keeps the overlap rule
-/// (contract rule 22) only against tasks that may run beside it. `t2` overlaps `t1`'s
-/// owns but waits for it (an implicit dependency), so it never runs alongside: `t1`
-/// races.
+/// Whether `t1` raced, with no `race skipped` note.
+fn raced(fx: &Fixture) -> bool {
+    let t1 = fx.task("t1");
+    let skipped = t1.notes.iter().any(|n| n.starts_with("race skipped"));
+    t1.race.is_some() && !skipped
+}
+
+/// Review B's M9 with rulings FW-1 and FW-5: the second racer's peer route keeps the
+/// overlap rule (contract rule 22) only against tasks that may run beside it. `t2`
+/// overlaps `t1`'s owns but declares that it waits for it, so it never runs alongside:
+/// `t1` races.
 #[test]
 fn a_later_dependent_overlapping_task_does_not_skip_the_race() {
+    let tasks = [
+        task("t1", "M", "a", RACING),
+        task_toml("t2", "M", "[\"crates/a/src/**\"]", "deps = [\"t1\"]"),
+    ];
+    let fx = launched(PROFILE, &tasks, config::Orchestrator::default());
+    assert_eq!(fx.task("t2").state, TaskState::Pending);
+    assert!(raced(&fx), "{:?}", fx.task("t1").notes);
+}
+
+/// Ruling FW-5 (O-2): the exemption counts declared dependencies, followed
+/// transitively. `t3` overlaps `t1`'s owns and waits for it only through `t2`: `t1`
+/// races.
+#[test]
+fn a_declared_transitive_dependent_does_not_skip_the_race() {
+    let tasks = [
+        task("t1", "M", "a", RACING),
+        task("t2", "M", "b", "deps = [\"t1\"]"),
+        task_toml("t3", "M", "[\"crates/a/src/**\"]", "deps = [\"t2\"]"),
+    ];
+    let fx = launched(PROFILE, &tasks, config::Orchestrator::default());
+    assert_eq!(fx.task("t3").state, TaskState::Pending);
+    assert!(raced(&fx), "{:?}", fx.task("t1").notes);
+}
+
+/// Ruling FW-5 (O-2): an implicit `owns` dependency never exempts. It links tasks on
+/// one runtime only, so it would vanish once the racer's peer runtime shared owns with
+/// `t2`. `t2`'s only link to `t1` is that implicit edge: `t1` runs single, saying why.
+#[test]
+fn an_implicit_dependent_alone_still_skips_the_race() {
     let tasks = [
         task("t1", "M", "a", RACING),
         task_toml("t2", "M", "[\"crates/a/src/**\"]", ""),
     ];
     let fx = launched(PROFILE, &tasks, config::Orchestrator::default());
     assert_eq!(fx.task("t2").implicit_deps, ["t1"]);
-    assert_eq!(fx.task("t2").state, TaskState::Pending);
+    assert!(fx.task("t2").spec.deps.is_empty());
     let t1 = fx.task("t1");
-    assert!(t1.race.is_some(), "{:?}", t1.notes);
-    assert!(
-        !t1.notes.iter().any(|n| n.starts_with("race skipped")),
-        "{:?}",
-        t1.notes
-    );
+    assert!(t1.race.is_none(), "{:?}", t1.race);
+    let note = "race skipped: a codex racer would overlap an unfinished task's owns";
+    assert!(t1.notes.iter().any(|n| n == note), "{:?}", t1.notes);
 }
 
 /// Ruling FW-1's other half: an overlapping task that may run beside `t1` (no declared
