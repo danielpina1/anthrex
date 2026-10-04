@@ -161,6 +161,8 @@ fn exchange(task: &mut Task, lane: &mut Lane) {
     swap(&mut task.worktree_live, &mut gates.worktree_live);
     swap(&mut task.clock, &mut gates.clock);
     swap(&mut task.orch.refresh, &mut gates.refresh);
+    // The final fix wave's m2: a lane's refresh conflict is its own to resolve.
+    swap(&mut task.resolving, &mut gates.resolving);
 }
 
 /// What a view holds while it is open: the task's own values of the fields the lane
@@ -350,10 +352,15 @@ fn keep(lane: &mut Lane, state: LaneState) -> Exit {
 }
 
 /// Decisions 20–21: the crowned (or adopted) lane becomes the task. The lane's own
-/// fields are the task's from now on; the task keeps its whole spend, both lanes'.
+/// fields are the task's from now on; the task keeps its whole spend, both lanes'. A
+/// refresh requested while the winner waited for its crown stays the task's when the
+/// lane has none of its own (the final fix wave's m1).
 pub(super) fn become_lane(task: &mut Task, lane: &Lane) {
     let spent = task.spent_total;
     let mut own = lane.clone();
     exchange(task, &mut own);
     task.spent_total = spent;
+    if task.orch.refresh.is_none() {
+        task.orch.refresh = own.gates.refresh;
+    }
 }

@@ -1,13 +1,21 @@
 //! The final fix wave's race items in the reducer: a task with its own checkout never
-//! races (A-I2).
+//! races (A-I2); a lane view's refresh and `resolving` (m1, m2).
 
-use proto::{AgentRole, PlanEdit, TaskState};
+use proto::{AgentRole, LaneState, PlanEdit, RaceLane, TaskState};
 use serde_json::json;
 
 use super::dispatch::{edit, replies, task_path};
 use super::fixture::*;
-use super::race::{RACING, launched};
-use crate::run::engine::OpResult;
+use super::gates::{check_result, only_op};
+use super::race::{RACING, lane, launched, racing};
+use super::race_crown::crowned;
+use super::race_end::{to_check, unreviewed};
+use super::race_lanes::HEAD_B;
+use crate::run::engine::{OpKind, OpResult};
+use crate::run::orch::RefreshState;
+
+const A: RaceLane = RaceLane::A;
+const B: RaceLane = RaceLane::B;
 
 /// The note and log line of a task that already has its own checkout.
 const HAS_CHECKOUT: &str = "race skipped: the task already has a checkout";
@@ -119,4 +127,76 @@ fn a_started_task_released_to_pending_runs_single_again() {
         t1.state
     );
     single_in_own_checkout(&fx);
+}
+
+/// Each racer's turn ends, and any commit count the turn end started is answered.
+fn turns_end(fx: &mut Fixture, windows: &[u32]) {
+    for window in windows {
+        let effects = fx.turn_completed(*window);
+        for (op, _) in ops_in(&effects, "CountCommits") {
+            let commits = OpResult::Commits {
+                count: 0,
+                head: BASE.into(),
+            };
+            fx.done(op, commits);
+        }
+    }
+}
+
+fn refresh_t1() -> PlanEdit {
+    PlanEdit::Refresh {
+        task_id: "t1".into(),
+    }
+}
+
+/// The lane of each `HandBack` in `fx`'s log, in order.
+fn hand_back_lanes(fx: &Fixture) -> Vec<String> {
+    (fx.ops("HandBack").into_iter())
+        .map(|(_, kind)| match kind {
+            OpKind::HandBack { worktree, .. } => worktree.display().to_string(),
+            other => panic!("{other:?}"),
+        })
+        .collect()
+}
+
+/// Minor m1: a refresh requested while the winner waits for its crown stays on the
+/// task through the crown (`become_lane` keeps it), where the crowned task finds it.
+#[test]
+fn a_refresh_between_the_win_and_the_crown_survives_the_crown() {
+    let (mut fx, _, b) = unreviewed();
+    let check = to_check(&mut fx, B, b, HEAD_B);
+    let effects = fx.done(check, check_result(true));
+    let (crown, _) = only_op(&effects, "CrownRacer");
+    assert_eq!(lane(&fx, B).state, LaneState::Won);
+    let effects = edit(&mut fx, vec![refresh_t1()]);
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    assert_eq!(fx.task("t1").orch.refresh, Some(RefreshState::Due));
+    crowned(&mut fx, crown, HEAD_B);
+    assert_eq!(fx.task("t1").orch.refresh, Some(RefreshState::Due));
+}
+
+/// Minor m2: `resolving` is each lane's own. Lane a's refresh conflicts; lane b's due
+/// refresh still goes into its checkout at its turn boundary.
+#[test]
+fn one_lanes_refresh_conflict_does_not_hold_the_other_lane() {
+    let (mut fx, a, b) = racing();
+    let effects = edit(&mut fx, vec![refresh_t1()]);
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    turns_end(&mut fx, &[a]);
+    let (op, kind) = fx.ops("HandBack").pop().expect("lane a's hand-back");
+    assert!(format!("{kind:?}").contains("t1.a"), "{kind:?}");
+    let conflict = OpResult::HandedBack {
+        files: vec!["crates/a/x.rs".to_string()],
+        head: None,
+        onto: None,
+        merged: Vec::new(),
+        merged_total: 0,
+    };
+    fx.done(op, conflict);
+    assert!(lane(&fx, A).gates.resolving, "lane a resolves its conflict");
+    assert!(!fx.task("t1").resolving, "the task's own flag is untouched");
+    turns_end(&mut fx, &[b]);
+    let lanes = hand_back_lanes(&fx);
+    assert_eq!(lanes.len(), 2, "{lanes:?}");
+    assert!(lanes[1].ends_with("t1.b"), "{lanes:?}");
 }

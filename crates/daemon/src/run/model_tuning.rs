@@ -106,6 +106,10 @@ pub struct LaneGates {
     /// task's `orch.refresh` in the lane's view.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh: Option<crate::run::orch::RefreshState>,
+    /// The final fix wave's m2: the lane resolves a conflict its refresh handed back,
+    /// the task's `resolving` in the lane's view.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub resolving: bool,
 }
 
 impl LaneGates {
