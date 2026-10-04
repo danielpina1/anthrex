@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use proto::{ModelEntry, Route, TaskKind, TestMode};
 
-use super::edits_state::not_started;
+use super::edits_state::has_started;
 use super::model::Task;
 use super::plan::PlanError;
 use super::roster::peer;
@@ -27,8 +27,11 @@ pub const PATTERNS_DISPATCH: bool = false;
 /// counts as installed).
 pub type Peers<'a> = (&'a [ModelEntry], &'a Installed);
 
-/// The race and pair rules for every unfinished task of `touched`, each exact
-/// (decisions 17 and 24). A task's other problems are reported by the other rules.
+/// The race and pair rules for every task of `touched` that has not started, each exact
+/// (decisions 17 and 24). A started task is never judged again: its race and pair were
+/// decided at dispatch and cannot change (RR-8), and the engine may since have moved its
+/// route where no peer exists (review I1, the same reason as final review A-I1). A
+/// task's other problems are reported by the other rules.
 pub fn validate(
     tasks: &[Task],
     touched: &BTreeSet<String>,
@@ -36,7 +39,7 @@ pub fn validate(
     installed: &Installed,
 ) -> Vec<PlanError> {
     (tasks.iter())
-        .filter(|t| !t.state.is_finished() && touched.contains(t.id()))
+        .filter(|t| !has_started(t) && touched.contains(t.id()))
         .flat_map(|t| task_rules(t, roster, installed))
         .collect()
 }
@@ -100,13 +103,6 @@ pub fn peer_route(roster: &[ModelEntry], route: &Route, installed: &Installed) -
         strength: entry.strength,
         effort: route.effort,
     })
-}
-
-/// Review ruling I9: the stage rule's "started" (`edits_amend.rs`, ruling C-14(d)): a
-/// task that is not `not_started`, or one with a start commit (it was dispatched and
-/// has a checkout).
-pub(crate) fn has_started(task: &Task) -> bool {
-    !not_started(task) || task.start_commit.is_some()
 }
 
 /// Ruling RR-8: an amend naming `race` or `pair` on a task that has started is refused,

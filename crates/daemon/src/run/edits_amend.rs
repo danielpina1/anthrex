@@ -5,7 +5,7 @@ use proto::{PlanEdit, PlanTask, Size};
 
 use super::{Batch, EditConsequence};
 use crate::run::contract::amend_message;
-use crate::run::edits_state::{has_live_worker, is_paused, not_started};
+use crate::run::edits_state::{has_live_worker, has_started, is_paused, not_started};
 use crate::run::plan::PlanError;
 use crate::run::route_pick::{repicks, review_route};
 use crate::run::validate::resolve_task_lenient;
@@ -67,11 +67,11 @@ impl Batch {
             return self.refuse(i, "only unfinished tasks can be amended");
         }
         // Milestone 9.5 ruling RR-8: race and pair change only before dispatch (after
-        // 9.3's earlier-round refusal, which `apply_edits` runs first, ruling RR-7).
+        // 9.3's earlier-round refusal, which `apply_edits` runs first, ruling RR-7),
+        // reported beside the restricted fields' refusals (review m1).
         let refused = validate_patterns::amend_refusals(&self.run.tasks[i], *race, *pair);
-        if !refused.is_empty() {
-            return self.errors.extend(refused);
-        }
+        let race_or_pair_refused = !refused.is_empty();
+        self.errors.extend(refused);
         let restricted = [
             ("route", route.is_some()),
             ("test_mode", test_mode.is_some()),
@@ -91,11 +91,14 @@ impl Batch {
             return;
         }
         // Ruling C-14 (d): a blocked task with a worktree has started too.
-        if stage.is_some() && self.run.tasks[i].start_commit.is_some() {
+        if stage.is_some() && has_started(&self.run.tasks[i]) {
             let text = format!("task {task_id} has started: its stage cannot change");
-            return self
-                .errors
+            self.errors
                 .push(PlanError::new(Some(task_id), "", "13", text));
+            return;
+        }
+        if race_or_pair_refused {
+            return;
         }
 
         let mut spec = self.run.tasks[i].spec.clone();

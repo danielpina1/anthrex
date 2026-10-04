@@ -293,3 +293,57 @@ fn race_and_pair_widen_reach() {
     let none = [("codex".to_string(), false)].into();
     assert_eq!(peer_route(&run.roster, &run.tasks[0].route, &none), None);
 }
+
+/// Review I1 (the A-I1 class): a race is decided at dispatch, so a started racing task
+/// is not judged again. Here rung 2 moved its route to Frontier, where the default
+/// roster has no Codex peer, and a brief or an acceptance amend still applies.
+#[test]
+fn a_started_racing_task_on_a_moved_route_still_takes_a_brief() {
+    let mut run = run_ok(&plan_with(PROFILE, &[code("t1", "race = true")]));
+    let t1 = &mut run.tasks[0];
+    t1.state = TaskState::Working;
+    t1.start_commit = Some("c".repeat(40));
+    t1.route = proto::Route {
+        runtime: Runtime::Claude,
+        model: "claude-opus-5-5".into(),
+        strength: proto::Strength::Frontier,
+        effort: proto::Effort::High,
+    };
+    let brief = json!({"op": "amend_task", "task_id": "t1", "brief": "New brief"});
+    let accept = json!({"op": "amend_task", "task_id": "t1", "acceptance": ["New"]});
+    for edit in [brief, accept] {
+        let edited = apply(&run, vec![serde_json::from_value(edit.clone()).unwrap()]);
+        assert!(edited.is_ok(), "{edit}: {edited:?}");
+    }
+    // The control: the same task before dispatch is judged, and refused.
+    run.tasks[0].state = TaskState::Queued;
+    run.tasks[0].start_commit = None;
+    let brief = json!({"op": "amend_task", "task_id": "t1", "brief": "New brief"});
+    assert_eq!(
+        apply(&run, vec![serde_json::from_value(brief).unwrap()]).unwrap_err(),
+        [
+            "task t1: race: the roster has no codex model at strength frontier for the second racer (rule 4.1.race)"
+        ]
+    );
+}
+
+/// Review m1: an amend naming `race` (or `pair`) and `route` on a started task gets
+/// both refusals in one reply.
+#[test]
+fn a_started_tasks_race_and_route_amend_reports_both_refusals() {
+    for field in ["race", "pair"] {
+        let mut run = flat();
+        run.tasks[0].state = TaskState::Working;
+        run.tasks[0].start_commit = Some("c".repeat(40));
+        let edit = json!({"op": "amend_task", "task_id": "t1", field: true,
+            "route": {"runtime": "codex"}});
+        assert_eq!(
+            apply(&run, vec![serde_json::from_value(edit).unwrap()]).unwrap_err(),
+            [
+                format!("task t1 has started: its {field} cannot change"),
+                "task t1 is working; route can be amended only on pending, queued or blocked tasks"
+                    .to_string(),
+            ]
+        );
+    }
+}

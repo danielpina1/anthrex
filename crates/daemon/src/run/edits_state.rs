@@ -16,6 +16,13 @@ pub(crate) fn not_started(task: &Task) -> bool {
     ) && !is_paused(task)
 }
 
+/// The stage rule's "started" (ruling C-14(d)), which milestone 9.5's race and pair
+/// share (review ruling I9): a task that is not [`not_started`], or one with a start
+/// commit (it was dispatched and has a checkout).
+pub(crate) fn has_started(task: &Task) -> bool {
+    !not_started(task) || task.start_commit.is_some()
+}
+
 /// Milestone 9 decision 42c: `blocked(message_pause)`, shown as `paused(message)`.
 pub(crate) fn is_paused(task: &Task) -> bool {
     task.state == TaskState::Blocked
