@@ -23,9 +23,7 @@ use crate::run::route_pick::{writer_route, writer_route_failed, writer_step};
 
 /// Whether task `task` is a paired task whose test writer is (or will be) at work.
 pub(crate) fn writing(task: &Task) -> bool {
-    task.pair
-        .as_ref()
-        .is_some_and(|p| p.phase == PairPhase::Writing)
+    crate::run::phases::writing(task)
 }
 
 /// The test and red commit a paired task's implementer works against, once confirmed.

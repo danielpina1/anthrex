@@ -163,7 +163,15 @@ pub(super) fn effect(run: &Run, node: &ActionNode, kind: &ActionKind) -> String 
         }
         Retry => {
             let i = task.and_then(|task| run.tasks.iter().position(|x| x.id() == task.id()));
-            let route = i.map(|i| crate::run::route_pick::rung2_route(run, i).0);
+            // The final fix wave (review B's M3): while the test is being written, the
+            // retry escalates the test writer's route, not the implementer's.
+            let route = i.map(|i| {
+                let task = &run.tasks[i];
+                match task.pair.as_ref().filter(|_| crate::run::phases::writing(task)) {
+                    Some(pair) => crate::run::route_pick::writer_step(run, i, &pair.writer_route),
+                    None => crate::run::route_pick::rung2_route(run, i).0,
+                }
+            });
             let (runtime, model, effort) = route.map_or_else(Default::default, |r| {
                 let model = if r.model.is_empty() { "default".to_string() } else { r.model };
                 (r.runtime.label(), model, effort_label(r.effort))

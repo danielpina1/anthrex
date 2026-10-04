@@ -44,7 +44,8 @@ pub fn pair_info(task: &Task) -> Option<PairInfo> {
         test: pair.test.clone(),
         red: pair.red.clone(),
         red_checked: pair.red_checked,
-        writer_failures: pair.writer_failures,
+        // The final fix wave (review B's M7): the counter REPORT.md and history read.
+        writer_failures: super::history::writer_failures(task),
     })
 }
 

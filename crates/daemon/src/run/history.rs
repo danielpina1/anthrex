@@ -90,7 +90,7 @@ fn sum(task: &Task, role: impl Fn(AgentRole) -> bool) -> TokenUsage {
 /// Decision 30: the test writer's gate failures of a paired task. While it writes, they
 /// are the task's own counters; from the implementer's start, the pair keeps them.
 pub(crate) fn writer_failures(task: &Task) -> u8 {
-    match super::snapshot_patterns::pair_info(task) {
+    match task.pair.as_ref() {
         Some(pair) if pair.phase == PairPhase::Writing => task.failures,
         Some(pair) => pair.writer_failures,
         None => 0,
@@ -229,7 +229,11 @@ pub fn task_record(run: &Run, task: &Task, outcome: TaskOutcome, now: u64) -> Ta
         stalls: task.stalls,
         budget_exceeded: task.budget_exceeded,
         conflicts: task.conflicts,
-        max_rung: task.max_rung.max(task.rung),
+        // The final fix wave (review B's M2): not a test writer's rung.
+        max_rung: match super::phases::writing(task) {
+            true => task.max_rung,
+            false => task.max_rung.max(task.rung),
+        },
         sessions: task.session,
         done_signal: task.done.as_ref().map(|d| d.signal),
         merge_commit: task.merge_commit.clone(),
