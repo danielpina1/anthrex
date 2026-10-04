@@ -132,6 +132,14 @@ fn a_paired_task_shows_its_phase() {
         (None, None, None)
     );
     assert_eq!(writing.writer_failures, 0);
+    // Whole-branch review D, M-1: before the red check the test is the spec's
+    // `test_to_write`, so the run view reads `writing <test_to_write>`.
+    run.tasks[1].spec.test_to_write = Some("t1::expires".into());
+    let named = pair_info(&run.tasks[1]).unwrap();
+    assert_eq!(
+        (named.test.as_deref(), named.red),
+        (Some("t1::expires"), None)
+    );
 
     run.tasks[1].pair = Some(pair(PairPhase::Implementing));
     let implementing = pair_info(&run.tasks[1]).unwrap();

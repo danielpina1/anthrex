@@ -41,7 +41,8 @@ pub fn pair_info(task: &Task) -> Option<PairInfo> {
     Some(PairInfo {
         phase: pair.phase,
         writer_route: pair.writer_route.clone(),
-        test: pair.test.clone(),
+        // Whole-branch review D, M-1: before the red check, the test the spec names.
+        test: (pair.test.clone()).or_else(|| task.spec.test_to_write.clone()),
         red: pair.red.clone(),
         red_checked: pair.red_checked,
         // The final fix wave (review B's M7): the counter REPORT.md and history read.
