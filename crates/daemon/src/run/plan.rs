@@ -495,6 +495,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         onboarding_report: None,
         path: None,
         triage: None,
+        design_mode: proto::DesignMode::Off,
         triage_usage: Default::default(),
         scout_usage: Default::default(),
         orchestrator_usage: Default::default(),

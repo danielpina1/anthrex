@@ -234,6 +234,9 @@ impl RunService {
             usage: None,
             yes: next.yes,
             choice: Some(joined.choice.clone()),
+            // Milestone 9.6: off until task M9.6.15 passes the request's own (decision
+            // 30: a continued goal is `Full` by default, like any goal).
+            design: Some(proto::DesignMode::Off),
         }));
         let all = (false, next.trust_project, next.unconfined_checks);
         let done = DeliveryStart::Done(frozen);

@@ -14,6 +14,7 @@ use super::RunService;
 use super::adapt::BuildError;
 use super::build::Shape;
 use super::delivery::{DeliveryRequestOf, DeliveryStart};
+use crate::run::design::{GoalOrigin, mode_for};
 use crate::run::engine::actions::{self, ActionNode};
 use crate::run::engine::{EventKind, OrchEvent};
 use crate::run::git::{self, Git};
@@ -45,9 +46,14 @@ impl RunService {
                 unconfined_checks,
                 // Milestone 9.2 decision 3: `--delivery`, resolved once, at the start.
                 delivery,
-                // Milestone 9.6: read from task M9.6.3; a plan file never runs the flow.
-                design: _,
+                // Milestone 9.6 (DF §1): a plan file never runs the design flow.
+                design,
             } => {
+                let live = self.ctx.settings.current();
+                let config = &live.orchestrator.design;
+                if let Err(refusal) = mode_for(GoalOrigin::PlanFile, design, config) {
+                    return RunReply::refused(request::START, refusal);
+                }
                 let flags = (yes, trust_project, unconfined_checks);
                 self.start(plan_toml, dir, flags, delivery).await
             }
@@ -112,12 +118,11 @@ impl RunService {
                 orchestrator,
                 delivery,
                 continue_from: None,
-                // Milestone 9.6: read from task M9.6.3.
-                design: _,
+                design,
             } => {
                 let flags = (trust_project, unconfined_checks);
-                self.start_goal(goal, dir, flags, yes, (orchestrator, delivery))
-                    .await
+                let choices = (orchestrator, delivery, design);
+                self.start_goal(goal, dir, flags, yes, choices).await
             }
             // Milestone 9.3 decision 22: a next goal on a chain's orchestrator, which
             // keeps its runtime and model (`orchestrator` is ignored).

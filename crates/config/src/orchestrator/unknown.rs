@@ -5,6 +5,7 @@ use super::adapt::{
     KNOWN_DECIDERS_KEYS, KNOWN_METERING_KEYS, KNOWN_ONBOARDING_KEYS, KNOWN_SCOUTS_KEYS,
 };
 use super::agent::{KNOWN_AGENT_KEYS, KNOWN_PLANNERS_KEYS};
+use super::design::report_unknown_design;
 use super::report_unknown_profile;
 use super::tuning::{KNOWN_TUNING_KEYS, report_unknown_routes};
 use crate::{Problem, report_unknown_nested, unknown_key_problem};
@@ -81,6 +82,7 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
                 report_unknown_nested(sub, "orchestrator.tuning", KNOWN_TUNING_KEYS, problems)
             }
             "routes" => report_unknown_routes(sub, problems),
+            "design" => report_unknown_design(sub, problems),
             other => problems.push(unknown_key_problem(&format!("orchestrator.{other}"))),
         }
     }

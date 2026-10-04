@@ -1,8 +1,8 @@
-//! [`OrchLimits`], [`AgentLimits`] and [`PlannerLimits`]: the `[orchestrator]` keys a
-//! run is frozen with, moved out of `orch/mod.rs` (milestone 9.3, task 3) and
-//! re-exported there. Pure.
+//! [`OrchLimits`], [`AgentLimits`], [`PlannerLimits`] and [`DesignLimits`]: the
+//! `[orchestrator]` keys a run is frozen with, moved out of `orch/mod.rs` (milestone
+//! 9.3, task 3) and re-exported there. Pure.
 
-use proto::{Effort, Runtime, Strength};
+use proto::{Budget, Effort, Runtime, Strength};
 use serde::{Deserialize, Serialize};
 
 /// `[orchestrator]`'s milestone 9 keys, as the run was built with them. Absent from a
@@ -26,6 +26,49 @@ pub struct OrchLimits {
     /// run recorded before them: the scout service's live keys and roster.
     #[serde(default)]
     pub scouts: Option<crate::scout::spec::ScoutRouting>,
+    /// Milestone 9.6: `[orchestrator.design]`, frozen with the run's mode
+    /// (`Run.design_mode`). Not written while it is the default, so a run recorded
+    /// before 9.6 is written back as it was read.
+    #[serde(default, skip_serializing_if = "DesignLimits::is_default")]
+    pub design: DesignLimits,
+}
+
+/// `[orchestrator.design]` without its `default` (the mode is decided once, at the
+/// start, and frozen as `Run.design_mode`): where the documents are committed, the
+/// questions, the orchestrator phases' budget and the design agents' budgets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DesignLimits {
+    /// Empty: the documents are never committed.
+    pub docs_dir: String,
+    pub commit_brainstorm: bool,
+    pub max_questions: u32,
+    pub phase_minutes: u32,
+    pub brainstormer: Budget,
+    pub doc_reviewer: Budget,
+}
+
+impl DesignLimits {
+    pub fn from_config(design: &config::DesignConfig) -> DesignLimits {
+        DesignLimits {
+            docs_dir: design.docs_dir.clone(),
+            commit_brainstorm: design.commit_brainstorm,
+            max_questions: design.max_questions,
+            phase_minutes: design.phase_minutes,
+            brainstormer: design.budget.brainstormer,
+            doc_reviewer: design.budget.doc_reviewer,
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == DesignLimits::default()
+    }
+}
+
+impl Default for DesignLimits {
+    fn default() -> Self {
+        DesignLimits::from_config(&config::DesignConfig::default())
+    }
 }
 
 /// `[orchestrator.agent]`: `runtime` `None` means `default_runtime`; an empty `model`
@@ -87,6 +130,7 @@ impl OrchLimits {
                 effort: a.agent.effort,
             },
             scouts: Some(crate::scout::spec::ScoutRouting::from_config(config)),
+            design: DesignLimits::from_config(&config.design),
         }
     }
 }

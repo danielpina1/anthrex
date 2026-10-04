@@ -1,6 +1,7 @@
 //! `[orchestrator.routes.<name>]`, the user's model lists (milestone 9.5 decision 9a):
 //! one ordered list of candidates and a `pick` per task class (`s`, `m`, `hub`) and per
-//! role (`review`, `scout`, `decider`, `planner`, `orchestrator`). Read by
+//! role (`review`, `scout`, `decider`, `planner`, `orchestrator`, and milestone 9.6's
+//! `brainstorm`). Read by
 //! `tuning::read_tuning`; unknown tables and keys are reported by
 //! [`report_unknown_routes`], which `orchestrator/unknown.rs` calls for `routes`.
 //!
@@ -23,6 +24,7 @@ const KNOWN_ROUTE_TABLES: &[&str] = &[
     "decider",
     "planner",
     "orchestrator",
+    "brainstorm",
 ];
 const KNOWN_ROUTE_KEYS: &[&str] = &["candidates", "pick"];
 const KNOWN_CANDIDATE_KEYS: &[&str] = &["runtime", "model", "effort"];
@@ -61,6 +63,9 @@ pub struct RouteLists {
     pub decider: RouteList,
     pub planner: RouteList,
     pub orchestrator: RouteList,
+    /// Milestone 9.6 decision 10: the brainstormers' list (its first two entries on
+    /// different runtimes, else its first two).
+    pub brainstorm: RouteList,
 }
 
 /// 9.5 decision 9a: `[orchestrator.routes.<name>]` tables, their keys, and each
@@ -105,8 +110,19 @@ pub(super) fn read_routes(
         decider,
         planner,
         orchestrator,
+        brainstorm,
     } = &mut lists;
-    let fields = [s, m, hub, review, scout, decider, planner, orchestrator];
+    let fields = [
+        s,
+        m,
+        hub,
+        review,
+        scout,
+        decider,
+        planner,
+        orchestrator,
+        brainstorm,
+    ];
     for (name, list) in KNOWN_ROUTE_TABLES.iter().zip(fields) {
         let Some(value) = routes.get(*name) else {
             continue;

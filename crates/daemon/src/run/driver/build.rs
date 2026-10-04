@@ -19,6 +19,7 @@ use super::ops::blocking;
 use super::{RunService, unix_now};
 use crate::run::chain::suffix_taken;
 use crate::run::confine;
+use crate::run::design::{GoalOrigin, mode_for};
 use crate::run::git::{self, Git, os};
 use crate::run::globs::ProtectedMatcher;
 use crate::run::journal::runs_dir;
@@ -128,6 +129,8 @@ pub(super) struct Planned {
     pub usage: Option<proto::TokenUsage>,
     pub yes: bool,
     pub choice: Option<proto::OrchestratorChoice>,
+    /// Milestone 9.6: the start's `--design` or goal dialog row, if any.
+    pub design: Option<proto::DesignMode>,
 }
 
 /// Decision 17's `installed`, by how a session is launched (M9.17 fix round 3): each
@@ -241,7 +244,15 @@ impl RunService {
     /// frozen `[orchestrator.agent]`, default runtime and roster) over the installed
     /// runtimes, then `make_planned`, and the sub-planners' runtime checked installed
     /// (the start check decision 26 cites, M9.17 fix round).
-    async fn make_planned(&self, run: &mut Run, planned: Planned) -> Result<(), String> {
+    async fn make_planned(
+        &self,
+        run: &mut Run,
+        planned: Planned,
+        design: &config::DesignConfig,
+    ) -> Result<(), String> {
+        // Milestone 9.6 decision 3: the mode, from the start's settings read, frozen.
+        let origin = GoalOrigin::Goal(planned.triage.as_ref());
+        run.design_mode = mode_for(origin, planned.design, design)?;
         let config = self.manager.config();
         let (claude, codex) = (config.claude_bin.clone(), config.codex_bin.clone());
         let bins = (claude.clone(), codex.clone());
@@ -354,7 +365,8 @@ impl RunService {
         run.codex_config_base =
             blocking(move || git::codex_config_tree(&g, &root, &base, timeout)).await?;
         if let Shape::Planned(planned) = shape {
-            self.make_planned(&mut run, *planned).await?;
+            self.make_planned(&mut run, *planned, &config.design)
+                .await?;
         }
 
         let runtimes = reachable_runtimes(&run);

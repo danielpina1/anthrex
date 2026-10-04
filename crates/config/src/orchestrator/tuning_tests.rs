@@ -83,6 +83,7 @@ fn defaults_when_absent() {
         &lists.decider,
         &lists.planner,
         &lists.orchestrator,
+        &lists.brainstorm,
     ] {
         assert!(list.candidates.is_empty());
         assert_eq!(list.pick, Pick::First);

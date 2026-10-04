@@ -30,6 +30,7 @@ mod confine_cache;
 pub mod contract;
 pub mod contract_patterns;
 pub mod delivery;
+pub mod design;
 pub mod driver;
 pub mod edit_log;
 pub mod edits;

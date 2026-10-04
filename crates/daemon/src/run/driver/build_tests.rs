@@ -260,6 +260,7 @@ mod tuning {
                 runtime: proto::Runtime::Claude,
                 model: None,
             }),
+            design: None,
         }))
     }
 
@@ -389,5 +390,80 @@ mod tuning {
                 );
             }
         }
+    }
+
+    /// Task M9.6.3 (decision 3): a planned build decides the design mode and freezes
+    /// the design limits from the start's settings read; a later config, as a second
+    /// start sees it, changes neither, and the run keeps both across a save and load.
+    #[tokio::test]
+    async fn the_mode_is_frozen_at_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, _repo_dir, service) = rig(tmp.path());
+        let build = |config: config::Orchestrator| {
+            let once = super::super::TuneOnce::with_config(config);
+            let (service, work) = (service.clone(), work.clone());
+            async move {
+                let delivery = crate::run::driver::delivery::DeliveryStart::Resolve(None);
+                let flags = (false, false, true);
+                let built = service
+                    .build_delivered(plan(false), work, flags, planned(true), delivery, &once)
+                    .await;
+                built.unwrap_or_else(|e| panic!("{}", e.text()))
+            }
+        };
+        let mut first = config::Orchestrator::default();
+        first.design.phase_minutes = 30;
+        let mut run = build(first).await;
+        assert_eq!(run.design_mode, proto::DesignMode::Full);
+        assert_eq!(run.limits.orch.design.phase_minutes, 30);
+
+        // The config changes: the flow is off by default and the budget is longer.
+        let mut later = config::Orchestrator::default();
+        later.design.default = proto::DesignMode::Off;
+        later.design.phase_minutes = 90;
+        let other = build(later).await;
+        assert_eq!(other.design_mode, proto::DesignMode::Off);
+        assert_eq!(other.limits.orch.design.phase_minutes, 90);
+
+        // The first run keeps its own, as written and read back by a restart.
+        assert_eq!(run.design_mode, proto::DesignMode::Full);
+        run.data_dir = crate::run::journal::runs_dir(&tmp.path().join("saved")).join(&run.id);
+        crate::run::journal::save_run(&run).unwrap();
+        let (mut runs, problems) = crate::run::journal::load_all(&tmp.path().join("saved"));
+        assert!(problems.is_empty(), "{problems:?}");
+        let loaded = runs.remove(0).0;
+        assert_eq!(loaded.design_mode, proto::DesignMode::Full);
+        assert_eq!(loaded.limits.orch.design.phase_minutes, 30);
+    }
+
+    /// Decision 3: a planned build refuses `--design full` for a goal DF §1 puts off,
+    /// with the exact text, and builds nothing.
+    #[tokio::test]
+    async fn a_planned_build_refuses_full_for_a_research_goal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, _repo_dir, service) = rig(tmp.path());
+        let Shape::Planned(mut research) = planned(true) else {
+            unreachable!()
+        };
+        let triage = research.triage.as_mut().unwrap();
+        triage.kinds = vec![proto::TaskKind::Research];
+        research.design = Some(proto::DesignMode::Full);
+        let built = service
+            .build_plan(
+                plan(false),
+                work,
+                false,
+                false,
+                true,
+                Shape::Planned(research),
+            )
+            .await;
+        let Err(error) = built else {
+            panic!("a research goal built with the design flow");
+        };
+        assert_eq!(
+            error.text(),
+            "the design flow runs only for planned code or docs goals; this goal is research"
+        );
     }
 }

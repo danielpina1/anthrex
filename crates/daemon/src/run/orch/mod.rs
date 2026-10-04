@@ -42,7 +42,7 @@ pub(crate) mod test_support;
 pub mod tools;
 
 pub use attention::{START_PROMPT, WAKE_HELD, orchestrator_lines};
-pub use limits::{AgentLimits, OrchLimits, PlannerLimits};
+pub use limits::{AgentLimits, DesignLimits, OrchLimits, PlannerLimits};
 
 /// Who sent an edit batch. Plan files and the user's `run edit` are [`EditSource::User`]
 /// and keep M8a's rules only; the orchestrator's `edit_plan` and a sub-planner's

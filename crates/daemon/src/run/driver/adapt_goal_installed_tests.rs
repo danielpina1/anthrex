@@ -74,6 +74,7 @@ fn planned(choice: Option<Runtime>) -> Shape {
             runtime,
             model: None,
         }),
+        design: None,
     }))
 }
 
