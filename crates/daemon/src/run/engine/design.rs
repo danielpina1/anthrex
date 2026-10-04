@@ -110,6 +110,13 @@ pub(super) fn tool(
         refuse(fx, reply, text);
         return None;
     }
+    // Ruling T7-8: a sub-planner changes the plan; `edit_plan`'s edits are checked
+    // against the plan they change (`orch.rs::edit_plan`).
+    let spawn = matches!(parsed, OrchCall::SpawnSubplanner { .. });
+    if let Some(text) = design_gate::plan_locked(run).filter(|_| spawn) {
+        refuse(fx, reply, text);
+        return None;
+    }
     let result = match parsed {
         OrchCall::StartBrainstorm { answers } => start_brainstorm(run, &answers, earlier, now),
         OrchCall::SubmitDoc(doc) => submit_doc(run, doc, now, fx),

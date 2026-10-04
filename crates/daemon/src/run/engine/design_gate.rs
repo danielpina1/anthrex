@@ -71,24 +71,17 @@ pub(crate) fn plan_approve_refusal(run: &Run) -> Option<String> {
     refusal(run, gate.kind, &DocGateAction::Approve)
 }
 
-/// Ruling T7-4: the orchestrator changed the plan at the open plan gate (a sub-planner
-/// started there, or `edit_plan`'s edits): the run plans again, the gate closes and the
-/// planning clock starts, so the next passing submit opens the plan's next version. A
-/// gate the orchestrator revises is left as it is: its next submit is that version
-/// already. Returns whether the gate closed.
-pub(super) fn plan_changed(run: &mut Run, now: u64) -> bool {
-    if !waiting(run).is_some_and(|g| g.kind == DocGateKind::Plan && g.revising.is_none()) {
-        return false;
-    }
-    if let Some(design) = run.orch.design.as_mut() {
-        design.gate = None;
-    }
-    run.state = RunState::Planning;
-    if let Some(o) = run.orch.orchestrator.as_mut() {
-        o.plan_submitted = false;
-    }
-    start_clock(run, now);
-    true
+/// Ruling T7-8 (replacing T7-4's scope): at a design run's open plan gate that the
+/// orchestrator does not revise, its plan changes (`edit_plan` edits, `spawn_subplanner`)
+/// are refused: every new plan version follows a user action, so BD-2's cap counts the
+/// user's cycles. While it revises (changes, or a back), they are taken, and its next
+/// submit opens the next version.
+pub(super) fn plan_locked(run: &Run) -> Option<String> {
+    let gate = waiting(run).filter(|g| g.kind == DocGateKind::Plan && g.revising.is_none())?;
+    Some(format!(
+        "the plan v{} is waiting for the user; change it after they ask for changes",
+        gate.version
+    ))
 }
 
 /// Whether the run is in a document phase: brainstorming or specifying (or paused

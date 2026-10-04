@@ -392,10 +392,10 @@ fn edit_plan(
             }
         }
     }
-    // Milestone 9.6 ruling T7-4: a plan changed at the open plan gate plans again.
-    if edited.tasks != run.tasks && super::design_gate::plan_changed(&mut edited, now) {
-        let text = "planning again: the orchestrator changed the plan at the gate";
-        log(&mut edited, now, text);
+    // Milestone 9.6 ruling T7-8: the plan at its open gate is the user's to change.
+    if let Some(text) = super::design_gate::plan_locked(run).filter(|_| edited.tasks != run.tasks) {
+        record_rejected(run, edits, &source, text.clone(), now);
+        return refuse(fx, reply, text);
     }
     let held = gate_holds::assign(&mut edited, edits, &added, now);
     // Milestone 9.2 decision 31: a review fix outside its stage waits for the user,
