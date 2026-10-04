@@ -155,10 +155,12 @@ pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let finished = run.tasks.iter().all(|t| t.state.is_finished())
         && super::kinds::may_complete(run)
         && super::delivery::may_complete(run);
+    // The final fix wave's m7: a lane's salvage still due is ending work too.
     let ending = run
         .tasks
         .iter()
-        .any(|t| t.state == TaskState::Cancelled && t.rounds.iter().any(|r| !r.ended));
+        .any(|t| t.state == TaskState::Cancelled && t.rounds.iter().any(|r| !r.ended))
+        || super::race_salvage::pending(run);
     if !finished || ending || !run.merge_queue.is_empty() || !run.pending_ops.is_empty() {
         return;
     }

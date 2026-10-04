@@ -1,9 +1,12 @@
 //! The final fix wave's race items in the reducer: a task with its own checkout never
 //! races (A-I2); a lane view's refresh and `resolving` (m1, m2); the crowned task's
 //! reviewer author (m3); a lane's rung 4 on adoption (m4); rung 4 after the crown (m5);
-//! the race slot wait (m6).
+//! the race slot wait (m6); completion and discard wait for a lane's salvage (m7).
 
-use proto::{AgentRole, BlockReason, LaneState, PlanEdit, RaceLane, Runtime, TaskState};
+use proto::{
+    AgentRole, BlockReason, FinishAction, LaneState, PlanEdit, RaceLane, RunState, Runtime,
+    TaskState,
+};
 use serde_json::json;
 
 use super::dispatch::{edit, replies, task_path};
@@ -11,11 +14,13 @@ use super::fixture::*;
 use super::gates::{check_result, only_op};
 use super::gates_review::reviewer;
 use super::kinds::approve;
+use super::merge::{commit, merge, pending, pending_one};
 use super::race::{RACING, behind_one_slot, lane, launched, racing, tdd, unblock};
 use super::race_crown::{crowned, handed_back};
 use super::race_end::{b_out, to_check, unreviewed};
 use super::race_lanes::{HEAD_B, passes, proof, submit, to_review};
-use super::turns::exited;
+use super::turns::{exited, killed_exit};
+use crate::run::engine::actions::rules;
 use crate::run::engine::{EventKind, OpKind, OpResult};
 use crate::run::model::task_branch;
 use crate::run::orch::RefreshState;
@@ -346,4 +351,58 @@ fn the_race_slot_wait_leaves_out_the_downtime() {
         (TaskState::Queued, None),
         "still waiting after an hour's downtime"
     );
+}
+
+/// Minor m7: lane b wins and its task merges while lane a's stopped racer has not
+/// exited yet. The run does not complete (no `VerifyRefs`) until lane a's salvage is
+/// done, so accept and discard never run beside it.
+#[test]
+fn completion_waits_for_a_lost_lanes_salvage() {
+    let (mut fx, a, b) = unreviewed();
+    let check = to_check(&mut fx, B, b, HEAD_B);
+    let effects = fx.done(check, check_result(true));
+    let (crown, _) = only_op(&effects, "CrownRacer");
+    crowned(&mut fx, crown, HEAD_B);
+    merge(&mut fx, "t1", &commit(1));
+    fx.tick();
+    assert_eq!(fx.task("t1").state, TaskState::Merged);
+    assert!(
+        pending(&fx, "VerifyRefs", None).is_empty(),
+        "lane a's salvage is due"
+    );
+    let effects = killed_exit(&mut fx, a);
+    let (op, kind) = only_op(&effects, "RemoveWorktree");
+    assert!(format!("{kind:?}").contains("t1.a"), "{kind:?}");
+    let removed = OpResult::Removed {
+        salvage_ref: None,
+        cleared_locks: Vec::new(),
+    };
+    fx.done(op, removed);
+    fx.tick();
+    pending_one(&fx, "VerifyRefs", None);
+}
+
+/// Minor m7, discard: a cancelled run halted by its crown's moved branch, whose
+/// stopped racers have not exited, is not discarded beside their salvage.
+#[test]
+fn a_halted_cancelled_run_is_not_discarded_beside_a_salvage() {
+    let (mut fx, _, b) = unreviewed();
+    let check = to_check(&mut fx, B, b, HEAD_B);
+    let effects = fx.done(check, check_result(true));
+    let (crown, _) = only_op(&effects, "CrownRacer");
+    let moved = OpResult::RefMoved {
+        reason: "anthrex/x/t1 moved".into(),
+    };
+    fx.done(crown, moved);
+    let reply = fx.reply();
+    fx.next(EventKind::Cancel {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    let run = fx.run();
+    assert_eq!((run.state, run.cancelled), (RunState::Halted, true));
+    assert!(run.tasks.iter().all(|t| t.state.is_finished()));
+    assert!(run.pending_ops.is_empty(), "{:#?}", run.pending_ops);
+    let refusal = rules::finish(fx.run(), FinishAction::Discard);
+    assert!(refusal.is_some(), "the lanes' salvage is due");
 }

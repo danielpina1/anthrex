@@ -20,6 +20,16 @@ fn due(lane: &Lane) -> bool {
     matches!(lane.state, LaneState::Out | LaneState::Lost) && !lane.removed && !lane.kept
 }
 
+/// The final fix wave's m7: a stopped lane's salvage is still due somewhere in `run`
+/// (its racer may still be running in the checkout). The run neither completes nor is
+/// discarded meanwhile.
+pub(crate) fn pending(run: &Run) -> bool {
+    (run.tasks
+        .iter()
+        .flat_map(|t| t.race.iter().flat_map(|r| &r.lanes)))
+    .any(|l| due(l) && l.gates.worktree_live)
+}
+
 /// Every scheduler pass, whatever the task's state (a cancelled task's lanes too): each
 /// stopped lane whose ops have returned is salvaged and removed once its racer has
 /// exited, or salvaged and kept once its wait is over.

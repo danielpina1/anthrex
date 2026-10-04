@@ -220,7 +220,9 @@ pub(crate) fn finish(run: &Run, action: FinishAction) -> Option<String> {
         && run.state == RunState::Halted
         && run.cancelled
         && run.tasks.iter().all(|t| t.state.is_finished())
-        && run.pending_ops.is_empty();
+        && run.pending_ops.is_empty()
+        // The final fix wave's m7: never beside a race lane's salvage.
+        && !crate::run::engine::race_salvage::pending(run);
     let state = || {
         let label = run.state.label();
         format!(
