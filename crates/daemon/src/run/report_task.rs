@@ -6,7 +6,7 @@ use proto::{
 };
 
 use super::contract::{mode_label, sha7, size_label};
-use super::engine::{epoch_spend, ladder};
+use super::engine::{epoch_spend, ladder, race_cost};
 use super::history::writer_failures;
 use super::model::{SizeCheckState, Task};
 use super::report::{format_utc, verdict_label};
@@ -159,6 +159,17 @@ fn race_lines(task: &Task, out: &mut String) {
         Some(w) => format!("racer {} won", w.label()),
         None if race.lanes.iter().any(live) => "racing".to_string(),
         None => "no winner: both racers went out".to_string(),
+    };
+    // The final fix wave's m5: once there is a winner, what the other lanes spent.
+    let head = match race.winner {
+        Some(_) => {
+            let cost = race_cost(task);
+            format!(
+                "{head}; race cost: {} calls, {} tokens",
+                cost.tool_calls, cost.tokens
+            )
+        }
+        None => head,
     };
     out.push_str(&format!("Race: {head}\n"));
     let stored = task.race.iter().flat_map(|r| r.lanes.iter());

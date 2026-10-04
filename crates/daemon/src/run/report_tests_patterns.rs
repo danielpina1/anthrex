@@ -49,6 +49,9 @@ fn report_has_race_pair_concurrency_and_tuning() {
     race.lanes[1].reason = Some("racer a won".into());
     race.lanes[1].salvage_ref = Some("refs/anthrex/salvage/r1/t1/2".into());
     race.lanes[1].cleared_locks = vec!["index.lock".into(), "HEAD.lock".into()];
+    // The final fix wave's m5: the loser's spend is the race's cost.
+    race.lanes[1].spent.tool_calls = 12;
+    race.lanes[1].spent.tokens = 3_400;
     t1.race = Some(race);
     // t2: lane a went out and its racer did not exit (kept); lane b was adopted.
     let t2 = &mut run.tasks[1];
@@ -91,7 +94,7 @@ fn report_has_race_pair_concurrency_and_tuning() {
     assert_eq!(
         block(&report, "Race: "),
         [
-            "Race: racer a won",
+            "Race: racer a won; race cost: 12 calls, 3400 tokens",
             "- racer a: claude claude-opus-5-5 (standard/medium); won",
             "- racer b: codex gpt-6.1-sol (standard/medium); lost; salvaged `refs/anthrex/salvage/r1/t1/2`; removed stale index.lock, HEAD.lock; reason: racer a won",
         ]
@@ -100,7 +103,7 @@ fn report_has_race_pair_concurrency_and_tuning() {
     assert_eq!(
         block(t2, "Race: "),
         [
-            "Race: racer b adopted after racer a went out",
+            "Race: racer b adopted after racer a went out; race cost: 0 calls, 0 tokens",
             "- racer a: claude claude-opus-5-5 (standard/medium); out; salvaged `refs/anthrex/salvage/r1/t2/1`; checkout kept; reason: the check failed twice",
             "- racer b: codex gpt-6.1-sol (standard/medium); adopted",
         ]

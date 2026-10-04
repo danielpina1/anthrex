@@ -103,8 +103,8 @@ pub(crate) mod weakening;
 mod worker_messages;
 
 pub use crate::headless::TurnOutcome;
-pub(crate) use clock::epoch_spend;
 pub use clock::{BudgetEpoch, TaskClock};
+pub(crate) use clock::{epoch_spend, race_cost};
 pub use early::{HOLD_CAP, HOLD_LIMIT_SECS, HOLD_WINDOWS_CAP, HeldEvent, HeldWindow};
 pub use effect::Effect;
 pub use event::{AgentSignal, EventKind};

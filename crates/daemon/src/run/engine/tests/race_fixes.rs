@@ -1,6 +1,6 @@
 //! The final fix wave's race items in the reducer: a task with its own checkout never
 //! races (A-I2); a lane view's refresh and `resolving` (m1, m2); the crowned task's
-//! reviewer author (m3); a lane's rung 4 on adoption (m4).
+//! reviewer author (m3); a lane's rung 4 on adoption (m4); rung 4 after the crown (m5).
 
 use proto::{AgentRole, BlockReason, LaneState, PlanEdit, RaceLane, Runtime, TaskState};
 use serde_json::json;
@@ -13,7 +13,7 @@ use super::kinds::approve;
 use super::race::{RACING, lane, launched, racing, tdd};
 use super::race_crown::{crowned, handed_back};
 use super::race_end::{b_out, to_check, unreviewed};
-use super::race_lanes::{HEAD_B, proof, submit, to_review};
+use super::race_lanes::{HEAD_B, passes, proof, submit, to_review};
 use super::turns::exited;
 use crate::run::engine::{EventKind, OpKind, OpResult};
 use crate::run::model::task_branch;
@@ -266,4 +266,34 @@ fn a_lanes_rung_4_is_kept_on_adoption() {
     assert_eq!(block.reason, BlockReason::Human);
     assert!(block.text.contains("next size's budget"), "{}", block.text);
     assert_eq!(t1.size, proto::Size::M, "no size raised");
+}
+
+/// Minor m5: after the crown, rung 4 weighs the winning lane's tool calls only; the
+/// task's total keeps both lanes', and the loser's are the race's cost.
+#[test]
+fn after_the_crown_rung_4_weighs_the_winners_spend_only() {
+    let (mut fx, a, b) = racing();
+    let tool = || crate::run::engine::AgentSignal::ToolUse {
+        name: "Bash".into(),
+        target: None,
+    };
+    for _ in 0..5 {
+        fx.signal(a, tool());
+    }
+    for _ in 0..3 {
+        fx.signal(b, tool());
+    }
+    let effects = passes(&mut fx, B, HEAD_B);
+    let (op, _) = only_op(&effects, "CrownRacer");
+    crowned(&mut fx, op, HEAD_B);
+    let (calls_a, calls_b) = (lane(&fx, A).spent.tool_calls, lane(&fx, B).spent.tool_calls);
+    assert_eq!((calls_a, calls_b), (5, 3));
+    let t1 = fx.task("t1");
+    assert_eq!(
+        t1.spent_total.tool_calls, 8,
+        "the task's total keeps both lanes'"
+    );
+    let rung4 = crate::run::engine::clock::epoch_spend(t1, fx.now);
+    assert_eq!(rung4.tool_calls, 3, "the winner's alone");
+    assert_eq!(crate::run::engine::clock::race_cost(t1).tool_calls, 5);
 }
