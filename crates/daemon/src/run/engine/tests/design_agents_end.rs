@@ -372,3 +372,27 @@ fn a_pack_that_cannot_be_read_back_halts_the_brainstorm() {
     assert_eq!(fx.run().orch.design.as_ref().unwrap().phase_started, None);
     assert!(log_lines(&fx).contains(&"resumed; the brainstormers are relaunched".to_string()));
 }
+
+/// Fix round 2: a resume whose deferred settle halts the run (both brainstormers failed
+/// while it was paused) says so in its reply.
+#[test]
+fn a_resume_that_ends_in_a_halt_says_so() {
+    let mut fx = brainstorming();
+    let run = fx.run_mut();
+    run.paused_from = Some(RunState::Brainstorming);
+    run.state = RunState::Paused;
+    for (label, reason) in [("claude", "a"), ("codex", "b")] {
+        let failed = ScoutEnd::Failed {
+            reason: reason.into(),
+        };
+        ended(&mut fx, label, 1, failed);
+    }
+    assert_eq!(fx.run().state, RunState::Paused);
+    let effects = resume(&mut fx);
+    assert_eq!(fx.run().state, RunState::Halted);
+    let reason = "design flow: both brainstormers failed: a; b";
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(format!("run {RUN_ID} resumed and halted: {reason}"))]
+    );
+}

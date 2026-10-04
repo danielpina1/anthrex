@@ -324,6 +324,11 @@ pub(super) fn resume(
     super::full::retry(run, now);
     super::delivery::release(run, now);
     unpause(run, now, fx);
+    // Milestone 9.6 (task M9.6.8 fix round 2): a deferred settle can halt it.
+    if run.state == RunState::Halted {
+        let reason = run.halted_reason.as_deref().unwrap_or_default();
+        text.push_str(&format!(" and halted: {reason}"));
+    }
     fx.push(Effect::Reply {
         reply,
         result: Ok(text),
