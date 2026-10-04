@@ -16,7 +16,7 @@ use crate::safe_text::{multi_line, one_line};
 use crate::theme::{self, Palette, Role, fold};
 use crate::tree::{self, format_elapsed};
 use crate::ui::tree_view::truncate_in;
-use proto::{AgentRole, RunInfo, TaskInfo, TaskState};
+use proto::{RunInfo, TaskInfo, TaskState};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -80,10 +80,8 @@ fn base_text(run: &RunInfo) -> Option<String> {
 /// `<tag> <model> · <k> calls · <elapsed>` of the task's latest worker round (M9.0.5's
 /// `worker_line` facts: the elapsed time frozen at the round's end).
 fn worker_text(app: &App, task: &TaskInfo) -> Option<String> {
-    let round = task
-        .rounds
-        .iter()
-        .filter(|round| round.role == AgentRole::Worker)
+    // Whole-branch review D, I-1: a racer or test writer writes it as a worker does.
+    let round = crate::inspector::writing_rounds(task)
         .max_by_key(|round| (round.started_at, round.session, round.round))?;
     let elapsed = match round.ended_at {
         Some(ended) => ended.saturating_sub(round.started_at),
@@ -383,3 +381,7 @@ pub(crate) fn detail_lines(app: &App, alert: &Alert, width: u16) -> Vec<Line<'st
     out.push(kit::hints(width, &detail_hints(app, alert), p));
     out
 }
+
+#[cfg(test)]
+#[path = "alerts_detail_tests.rs"]
+mod tests;

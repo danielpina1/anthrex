@@ -240,23 +240,8 @@ pub fn confirm_details(run: &RunInfo, kind: &ActionKind, ascii: bool) -> Vec<(St
                 .iter()
                 .filter(|t| !t.state.is_finished())
                 .collect();
-            let workers: Vec<&str> = unfinished
-                .iter()
-                .filter(|t| {
-                    t.rounds
-                        .iter()
-                        .any(|r| r.role == AgentRole::Worker && r.ended_at.is_none())
-                })
-                .map(|t| t.id.as_str())
-                .collect();
-            let stops = if workers.is_empty() {
-                "no worker is live".to_string()
-            } else {
-                let names = workers.join(", ");
-                format!("{}: {names}", plural(workers.len(), "worker", "workers"))
-            };
             vec![
-                row("stops", stops),
+                row("stops", cancel_stops(run)),
                 row(
                     "cancels",
                     plural(unfinished.len(), "unmerged task", "unmerged tasks"),
@@ -573,4 +558,29 @@ impl App {
         }
         self.modal = Some(Modal::Action(flow));
     }
+}
+
+/// The Cancel confirm's `stops` row: each live session that writes an unfinished task
+/// (whole-branch review D, I-1: a racer, `t1 racer a`, and a test writer, `t1 test
+/// writer`, as well as a worker, `t1`).
+pub(crate) fn cancel_stops(run: &RunInfo) -> String {
+    let workers: Vec<String> = (run.tasks.iter())
+        .filter(|t| !t.state.is_finished())
+        .flat_map(|t| {
+            let mut live: Vec<_> = (t.rounds.iter())
+                .filter(|r| crate::inspector::writes(r.role) && r.ended_at.is_none())
+                .collect();
+            live.sort_by_key(|r| r.lane);
+            live.into_iter().map(|r| match (r.role, r.lane) {
+                (AgentRole::Racer, Some(lane)) => format!("{} racer {}", t.id, lane.label()),
+                (AgentRole::TestWriter, _) => format!("{} test writer", t.id),
+                _ => t.id.clone(),
+            })
+        })
+        .collect();
+    if workers.is_empty() {
+        return "no worker is live".to_string();
+    }
+    let names = workers.join(", ");
+    format!("{}: {names}", plural(workers.len(), "worker", "workers"))
 }

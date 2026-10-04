@@ -5,8 +5,28 @@
 
 use crate::theme::{Glyph, glyph};
 use proto::{
-    AgentRole, LaneInfo, LaneState, PairPhase, RaceInfo, RaceLane, ReviewInfo, TaskInfo, TaskState,
+    AgentRole, AgentRoundInfo, LaneInfo, LaneState, PairPhase, RaceInfo, RaceLane, ReviewInfo,
+    TaskInfo, TaskState,
 };
+
+/// Decision 23's roles that write a task, as the daemon's `model::writes`: a worker, a
+/// racer and a test writer (whole-branch review D, I-1).
+pub(crate) fn writes(role: AgentRole) -> bool {
+    matches!(
+        role,
+        AgentRole::Worker | AgentRole::Racer | AgentRole::TestWriter
+    )
+}
+
+/// The task's writing rounds that speak for it: every writer's, but once its race has
+/// a winner, no other lane's racer.
+pub(crate) fn writing_rounds(task: &TaskInfo) -> impl Iterator<Item = &AgentRoundInfo> {
+    let winner = task.race.as_ref().and_then(|race| race.winner);
+    let loser = move |round: &AgentRoundInfo| {
+        round.role == AgentRole::Racer && winner.is_some_and(|w| round.lane != Some(w))
+    };
+    (task.rounds.iter()).filter(move |round| writes(round.role) && !loser(round))
+}
 
 /// A sha's first seven characters, as git abbreviates it.
 fn short(sha: &str) -> String {

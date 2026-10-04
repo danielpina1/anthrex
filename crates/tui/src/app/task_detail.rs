@@ -6,17 +6,15 @@
 
 use super::{App, Effect};
 use crate::tree::NodeKey;
-use proto::{AgentRole, RunRequest, TaskDetailInfo, TaskInfo, TaskState};
+use proto::{RunRequest, TaskDetailInfo, TaskInfo, TaskState};
 
 /// Decision 23's key: what, when it changes, makes a fetched detail stale.
 pub type DetailKey = (TaskState, usize, usize, u32, bool, bool, bool);
 
 /// Decision 23: `TaskInfo`'s key.
 pub fn detail_key(task: &TaskInfo) -> DetailKey {
-    let workers = task
-        .rounds
-        .iter()
-        .filter(|round| round.role == AgentRole::Worker);
+    // Whole-branch review D, I-1: a racer's or a test writer's turn too.
+    let workers = (task.rounds.iter()).filter(|round| crate::inspector::writes(round.role));
     let turns = workers.clone().map(|round| round.turns).sum();
     let latest_open = workers
         .max_by_key(|round| (round.started_at, round.session, round.round))

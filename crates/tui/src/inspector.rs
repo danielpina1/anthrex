@@ -425,6 +425,7 @@ mod run_task_outcome;
 mod run_task_sections;
 
 pub use panel::panel_rows;
+pub(crate) use run_patterns::{writes, writing_rounds};
 pub(crate) use run_stage::tier_duration;
 pub(crate) use run_task::state_word;
 pub use run_task::{task_panel_room, task_panel_rows};
@@ -475,3 +476,6 @@ mod run_patterns_tests;
 
 #[cfg(test)]
 mod run_patterns_review_tests;
+
+#[cfg(test)]
+mod run_writes_tests;

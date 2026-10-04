@@ -177,3 +177,27 @@ pub(crate) fn lane_reviews_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
     let windows = vec![headless(12, "1a2b/t2.ar1", PROJECT, Some(review_ref))];
     (snapshot, windows)
 }
+
+/// [`race_fixture`] with both racers live (whole-branch review D, I-1).
+pub(crate) fn racers_live_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
+    let (mut snapshot, windows) = race_fixture();
+    for round in &mut snapshot.runs[0].tasks[0].rounds {
+        if round.role == AgentRole::Racer {
+            round.ended_at = None;
+        }
+    }
+    (snapshot, windows)
+}
+
+/// [`pair_fixture`] in its writing phase: the test writer live, no implementer yet
+/// (whole-branch review D, I-1).
+pub(crate) fn pair_writing_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
+    let (mut snapshot, windows) = pair_fixture();
+    let t3 = &mut snapshot.runs[0].tasks[0];
+    t3.rounds
+        .retain(|round| round.role == AgentRole::TestWriter);
+    t3.rounds[0].ended_at = None;
+    let pair = t3.pair.as_mut().expect("a pair");
+    (pair.phase, pair.red, pair.red_checked) = (PairPhase::Writing, None, None);
+    (snapshot, windows)
+}
