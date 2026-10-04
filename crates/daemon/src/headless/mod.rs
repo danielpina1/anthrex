@@ -315,6 +315,16 @@ mod claude_auth_serde {
     }
 }
 
+/// Milestone 9.6 rulings T8-4 and T8-7: a design agent's session is not saved, so it is
+/// never resumed; a resume, or a Codex design agent's next turn, is refused before
+/// anything changes.
+pub fn never_resumed(id: u32, spec: &HeadlessSpec) -> anyhow::Result<()> {
+    if crate::headless::argv::unsaved(spec) {
+        anyhow::bail!("window {id} is a design agent's session, which is never resumed");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod test_support;
 

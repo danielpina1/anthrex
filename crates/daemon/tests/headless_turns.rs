@@ -13,6 +13,8 @@ mod support;
 mod control;
 #[path = "headless_turns/cursor.rs"]
 mod cursor;
+#[path = "headless_turns/design.rs"]
+mod design;
 #[path = "headless_turns/ending.rs"]
 mod ending;
 
