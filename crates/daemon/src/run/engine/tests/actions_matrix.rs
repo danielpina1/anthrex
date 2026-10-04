@@ -12,7 +12,8 @@ use crate::run::validate::EditScope;
 use proto::{ActionKind, FinishAction, MessageKind, MessageTarget, PlanEdit};
 
 /// The engine event the driver sends for `kind` on `node`, with a valid input. Resume
-/// carries a rebaseline (preflight F31: a halt that is not retryable needs one).
+/// carries a rebaseline (preflight F31: a halt that is not retryable needs one), except
+/// for a phase budget's halt (ruling T7-1).
 fn event_for(fx: &mut Fixture, node: &ActionNode, kind: &ActionKind) -> EventKind {
     let (reply, run_id) = (fx.reply(), RUN_ID.to_string());
     let edit = |edits: Vec<PlanEdit>, submit| EventKind::Edit {
@@ -33,10 +34,13 @@ fn event_for(fx: &mut Fixture, node: &ActionNode, kind: &ActionKind) -> EventKin
         ActionKind::Submit => edit(vec![], true),
         ActionKind::Pause => edit(vec![PlanEdit::Pause], false),
         ActionKind::Unpause => edit(vec![PlanEdit::Resume], false),
+        // Milestone 9.6 ruling T7-1: a phase budget's halt resumes without one.
         ActionKind::Resume => EventKind::Resume {
             reply,
+            rebaseline: crate::run::engine::design::halted_phase(fx.run())
+                .is_none()
+                .then(|| Rebaseline::from((BASE.to_string(), HEAD.to_string()))),
             run_id,
-            rebaseline: Some(Rebaseline::from((BASE.to_string(), HEAD.to_string()))),
         },
         ActionKind::Cancel => EventKind::Cancel { reply, run_id },
         ActionKind::Promote => EventKind::Promote {
@@ -310,7 +314,10 @@ fn client_only_kinds_are_never_listed() {
             let requests = actions::request_kinds(fx.run(), &node.as_node());
             for action in listed {
                 assert!(!action.kind.is_local(), "{name}: {node:?}");
-                assert!(requests.contains(&action.kind), "{name}: {node:?}");
+                // Milestone 9.6 decision 34: the daemon lists `ReviewDoc`, which opens
+                // the gate's screen and is backed by no request.
+                let opens = action.kind == ActionKind::ReviewDoc;
+                assert!(opens || requests.contains(&action.kind), "{name}: {node:?}");
                 let confirm = action.needs == proto::ActionNeeds::Confirm;
                 assert!(confirm || action.needs == action.kind.needs(), "{name}");
                 assert_eq!(action.destructive, action.kind.destructive());

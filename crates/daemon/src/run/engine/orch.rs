@@ -388,6 +388,11 @@ fn edit_plan(
             }
         }
     }
+    // Milestone 9.6 ruling T7-4: a plan changed at the open plan gate plans again.
+    if edited.tasks != run.tasks && super::design_gate::plan_changed(&mut edited, now) {
+        let text = "planning again: the orchestrator changed the plan at the gate";
+        log(&mut edited, now, text);
+    }
     let held = gate_holds::assign(&mut edited, edits, &added, now);
     // Milestone 9.2 decision 31: a review fix outside its stage waits for the user,
     // whatever other task of the call an epic or the promotion holds (fix round, I2).

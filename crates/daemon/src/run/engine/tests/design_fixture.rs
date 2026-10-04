@@ -236,6 +236,27 @@ pub(super) fn at_plan_gate(yes: bool) -> Fixture {
     fx
 }
 
+/// [`at_plan_gate`], the user's changes asked: the orchestrator revises the plan.
+pub(super) fn plan_revising() -> Fixture {
+    let mut fx = at_plan_gate(false);
+    let changes = DocGateAction::Changes {
+        note: "Split t1.".into(),
+        review: false,
+    };
+    act(&mut fx, DocGateKind::Plan, changes).unwrap();
+    fx
+}
+
+/// [`at_spec_gate`], the spec approved, then halted by the planning phase's budget.
+pub(super) fn budget_halted() -> Fixture {
+    let mut fx = at_spec_gate(false);
+    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    let late = fx.now + u64::from(fx.run().limits.orch.design.phase_minutes) * 60 + 1;
+    fx.send(late, EventKind::Tick);
+    assert_eq!(fx.run().state, RunState::Halted);
+    fx
+}
+
 /// The open gate: kind, version, revising.
 pub(super) fn gate(fx: &Fixture) -> Option<(DocGateKind, u32, Option<String>)> {
     let design: &DesignState = fx.run().orch.design.as_ref()?;

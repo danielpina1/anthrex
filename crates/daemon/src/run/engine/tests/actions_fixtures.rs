@@ -9,6 +9,7 @@ use proto::{
 use serde_json::json;
 
 use super::actions_twins::hold_stage;
+use super::design_fixture as design;
 use super::dispatch::{edit, replies};
 use super::fixture::*;
 use super::gate_holds::awaiting;
@@ -52,6 +53,12 @@ pub(super) const FIXTURES: &[(&str, Build)] = &[
     ("discarded", discarded),
     ("failed", failed),
     ("round_two_fixes", super::actions_rounds::round_two_fixes),
+    // Milestone 9.6 (fix round 1, ruling T7-3): design runs.
+    ("design_brainstorming", || design::design_launched(false)),
+    ("design_spec_gate", || design::at_spec_gate(false)),
+    ("design_plan_gate", || design::at_plan_gate(false)),
+    ("design_plan_revising", design::plan_revising),
+    ("design_halted", design::budget_halted),
 ];
 
 /// The fixture called `name`, built.
@@ -441,10 +448,9 @@ fn failed() -> Fixture {
 fn every_fixture_builds() {
     for (name, build) in FIXTURES {
         let fx = build();
-        assert!(
-            *name == "planning_empty" || !fx.run().tasks.is_empty(),
-            "{name}"
-        );
+        // A design run has no task before it plans (milestone 9.6 decision 4).
+        let before_tasks = *name == "planning_empty" || name.starts_with("design_");
+        assert!(before_tasks || !fx.run().tasks.is_empty(), "{name}");
     }
     let fx = running();
     let state = |id: &str| fx.task(id).state;

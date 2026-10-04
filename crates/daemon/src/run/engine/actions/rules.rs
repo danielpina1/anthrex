@@ -55,6 +55,10 @@ pub(crate) fn approve(run: &Run) -> Option<String> {
     if let Some(text) = crate::run::engine::design_gate::plain_approve_refusal(run) {
         return Some(text);
     }
+    // Ruling T7-3: the plan gate's approve is its own action's (`design_gate::act`).
+    if let Some(text) = crate::run::engine::design_gate::plan_approve_refusal(run) {
+        return Some(text);
+    }
     if run.state == RunState::Planning {
         return Some(format!(
             "run {run_id} is still being planned; approve it when the orchestrator has submitted the plan"

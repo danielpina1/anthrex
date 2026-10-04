@@ -297,6 +297,7 @@ pub(super) fn spawn_subplanner(
     }
     log(run, now, format!("sub-planner {epic} queued"));
     if run.state == RunState::AwaitingApproval {
+        super::design_gate::plan_changed(run, now); // milestone 9.6 ruling T7-4
         run.state = RunState::Planning;
         if let Some(o) = run.orch.orchestrator.as_mut() {
             o.plan_submitted = false;
