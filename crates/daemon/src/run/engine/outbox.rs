@@ -202,8 +202,6 @@ pub(super) fn deliver(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         if resumable {
             round.ended = false;
             round.ended_at = None;
-            // Ruling T17b-2: a resumed round's next exit is its own.
-            round.orphaned = false;
             round.carried = message_ids;
             let session_id = round.session_id.clone().unwrap_or_default();
             let session = if reviewer {
@@ -362,6 +360,9 @@ pub(super) fn resumed(
     let error = match result {
         OpResult::Resumed => {
             run.tasks[i].rounds[r].delivery_failures = 0;
+            // Ruling T17b-3 (N2): only a resume that succeeded makes the round's next
+            // exit its racer's own; a failed one leaves it orphaned.
+            run.tasks[i].rounds[r].orphaned = false;
             worker_messages::delivered(run, &carried);
             return;
         }

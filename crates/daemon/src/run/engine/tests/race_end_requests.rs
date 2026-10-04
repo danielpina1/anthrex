@@ -198,7 +198,7 @@ fn a_lanes_note_is_recorded_with_its_lane() {
 
 /// Lane b's Codex racer has its session id (Codex reports it with its first turn), so
 /// it can be resumed.
-fn with_codex_session(fx: &mut Fixture) {
+pub(super) fn with_codex_session(fx: &mut Fixture) {
     let t1 = fx.task_mut("t1");
     let racer = (t1.rounds.iter_mut()).find(|r| r.lane == Some(B) && r.role == AgentRole::Racer);
     racer.expect("lane b's racer").session_id = Some("thread-b".into());

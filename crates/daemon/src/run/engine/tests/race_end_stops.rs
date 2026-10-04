@@ -1,7 +1,8 @@
-//! Milestone 9.5 task M9.5.17b, fix round 1: how a stopped lane is salvaged across a
-//! restart and a cancel. A lane's racer has exited only by its own `ProcessExited` (or
-//! when it never had a window): a round the restore ended keeps the checkout and its
-//! locks (ruling T17b-2). Salvage numbers are reserved as each removal is sent, from
+//! Milestone 9.5 task M9.5.17b, fix rounds 1 and 2: how a stopped lane is salvaged
+//! across a restart and a cancel. A lane's racer has exited only by its own
+//! `ProcessExited` (or when its launch failed): a round the restore ended, a launch the
+//! restart lost and a resume that failed keep the checkout and its locks (rulings
+//! T17b-2, T17b-3). Salvage numbers are reserved as each removal is sent, from
 //! the task's one counter (m4), and a lane records its ref only once the salvage
 //! succeeded (m3). A cancel reaches every racing task whatever its state (m1), and the
 //! review's missing cases (m6): a restart during a salvage, a cancel while the winner
@@ -84,27 +85,6 @@ fn a_restart_before_the_losers_exit_keeps_its_checkout_and_its_locks() {
     let la = lane(&fx, A);
     assert_eq!((la.salvage_ref, la.removed), (Some(salvage(1)), false));
     assert!(lane_removals(&fx.tick(), A).is_empty());
-}
-
-/// Review m5: a loser whose racer round had no window at the restart (its launch was
-/// lost; a constructed state) never had a process: it is salvaged as exited, with no
-/// kept line.
-#[test]
-fn a_restart_with_no_racer_window_salvages_the_loser_as_exited() {
-    let (mut fx, _, _) = racing();
-    passes(&mut fx, B, HEAD_B);
-    let rounds = fx.task_mut("t1").rounds.iter_mut();
-    for round in rounds.filter(|r| r.lane == Some(A)) {
-        round.window_id = None;
-    }
-    let effects = restarted(&mut fx);
-    assert_eq!(only_removal(&effects, A).1, removal(A, 1, false));
-    assert!(
-        !fx.run()
-            .log
-            .iter()
-            .any(|l| l.text.contains("kept a checkout"))
-    );
 }
 
 /// Review m6 and m3: a salvage the restart lost is sent again with the same number,
@@ -269,5 +249,155 @@ fn a_cancel_reaches_a_race_blocked_after_a_failed_crown() {
             removal(B, 2, after_restart),
             "after_restart: {after_restart}"
         );
+    }
+}
+
+/// A racing `t1` whose lane b's racer window came and whose lane a's `CreateWindow` is
+/// still in flight: the fixture and that op. Lane b's racer is window 90.
+fn lane_a_launching() -> (Fixture, OpId) {
+    // Unreviewed (S), so lane b wins with no reviewer window to launch.
+    let config = config::Orchestrator {
+        review_small: false,
+        ..Default::default()
+    };
+    let tasks = [task("t1", "S", "a", super::race::RACING)];
+    let mut fx = Fixture::with_config(&plan_with(PROFILE, &tasks), config);
+    fx.ready(true);
+    fx.complete_prepares();
+    let launches: Vec<OpId> = fx
+        .ops("CreateWindow")
+        .into_iter()
+        .map(|(op, _)| op)
+        .collect();
+    let lane_of = |fx: &Fixture, op| super::race::lane_of(fx, op);
+    let a = *launches
+        .iter()
+        .find(|op| lane_of(&fx, **op) == Some(A))
+        .expect("a's launch");
+    let b = *launches
+        .iter()
+        .find(|op| lane_of(&fx, **op) == Some(B))
+        .expect("b's launch");
+    let window = OpResult::Window {
+        window_id: 90,
+        pid: None,
+    };
+    fx.done(b, window);
+    (fx, a)
+}
+
+/// Lane b (window 90) claims, passes its proof and its check, and wins.
+fn b_wins_unreviewed(fx: &mut Fixture) {
+    let effects = super::race::claim(fx, B, 90, HEAD_B);
+    let (op, _) = only_op(&effects, "Proof");
+    let effects = fx.done(op, super::race_lanes::proof(true));
+    let (op, _) = only_op(&effects, "Check");
+    fx.done(op, super::gates::check_result(true));
+    assert_eq!(lane(fx, B).state, LaneState::Won);
+    assert_eq!(lane(fx, A).state, LaneState::Lost);
+}
+
+/// Ruling T17b-3 (N1): a loser whose racer's `CreateWindow` the restart lost may have
+/// been started by the old daemon, so its checkout is kept and its locks too; only a
+/// launch whose failure came back counts as exited.
+#[test]
+fn a_losers_launch_lost_at_a_restart_keeps_its_checkout() {
+    for lost in [true, false] {
+        let (mut fx, launch) = lane_a_launching();
+        b_wins_unreviewed(&mut fx);
+        let effects = match lost {
+            true => restarted(&mut fx),
+            false => {
+                let failed = OpResult::Failed {
+                    message: "no such binary".into(),
+                };
+                [fx.done(launch, failed), fx.tick()].concat()
+            }
+        };
+        assert_eq!(
+            only_removal(&effects, A).1,
+            removal(A, 1, lost),
+            "lost: {lost}"
+        );
+        let line = "race t1: kept a checkout: its racer had no process after the restart";
+        assert_eq!(logged(&fx, line), lost, "{:#?}", fx.run().log);
+    }
+}
+
+/// Ruling T17b-3: a live lane whose launch the restart lost is relaunched; the new
+/// window's process is the racer's own again.
+#[test]
+fn a_relaunched_racer_is_no_longer_orphaned() {
+    let (mut fx, _) = lane_a_launching();
+    restart(&mut fx, Vec::new());
+    let mut effects = super::control::resume(&mut fx);
+    effects.extend(fx.tick());
+    let (op, _) = only_op(&effects, "CreateWindow");
+    let racer_a = |fx: &Fixture| {
+        let mut rounds = fx.task("t1").rounds.iter();
+        rounds
+            .rfind(|r| r.lane == Some(A))
+            .cloned()
+            .expect("a's racer")
+    };
+    assert!(racer_a(&fx).orphaned, "orphaned while its relaunch runs");
+    let window = OpResult::Window {
+        window_id: 91,
+        pid: None,
+    };
+    fx.done(op, window);
+    assert!(!racer_a(&fx).orphaned);
+}
+
+/// Ruling T17b-3 (N2): a restored racer is its own again only once its resume
+/// succeeded. Lane b's resume fails and a fresh session takes the lane: cancelled, its
+/// checkout is kept once that session exits (the old daemon's racer may still run).
+/// Lane b's resume succeeds: its checkout is removed once its racer exits.
+#[test]
+fn a_racer_whose_resume_failed_keeps_its_checkout() {
+    for resumed in [false, true] {
+        let (mut fx, _, b) = racing();
+        super::race_end_requests::with_codex_session(&mut fx);
+        restart(&mut fx, Vec::new());
+        let mut effects = super::control::resume(&mut fx);
+        effects.extend(fx.tick());
+        let resume = (ops_in(&effects, "ResumeSession").into_iter())
+            .find(|(_, kind)| matches!(kind, OpKind::ResumeSession { window_id, .. } if *window_id == b))
+            .expect("lane b's resume")
+            .0;
+        let result = match resumed {
+            true => OpResult::Resumed,
+            false => OpResult::ResumeFailed {
+                error: "no such thread".into(),
+            },
+        };
+        fx.done(resume, result);
+        // A failed resume starts a fresh session in the lane, after its diff so far.
+        let diffs = (fx.run().pending_ops.values())
+            .filter(|p| p.kind.name() == "DiffSoFar" && p.lane == Some(B))
+            .map(|p| p.op);
+        for op in diffs.collect::<Vec<_>>() {
+            let diff = OpResult::Diff {
+                stat: String::new(),
+                patch: String::new(),
+            };
+            fx.done(op, diff);
+        }
+        fx.complete_windows();
+        let racer = super::race::window(&fx, B);
+        assert_eq!(racer == b, resumed);
+        let effects = cancel(&mut fx);
+        assert!(
+            lane_removals(&effects, B).is_empty(),
+            "it waits for its exit"
+        );
+        let effects = killed_exit(&mut fx, racer);
+        assert_eq!(
+            only_removal(&effects, B).1,
+            removal(B, 1, !resumed),
+            "resumed: {resumed}"
+        );
+        let line = "race t1: kept b checkout: its racer had no process after the restart";
+        assert_eq!(logged(&fx, line), !resumed, "{:#?}", fx.run().log);
     }
 }

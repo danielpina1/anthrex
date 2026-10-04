@@ -46,13 +46,14 @@ fn op_in_flight(run: &Run, task: &Task, lane: RaceLane) -> bool {
 /// Why lane `lane`'s checkout must be kept, or `None` when its racer is known to have
 /// finished; `Err(())` while it may still exit in time. Ruling T17b-2 (RR-2): a racer has
 /// finished only by its `ProcessExited` (a real exit, or the engine's for a window with
-/// no process), or when it never had a process (a launch that failed, or one the
-/// restart lost: no window, ruling m5). A round the restore ended (`orphaned`) has not.
+/// no process), or when its launch failed. A round `orphaned` by the restart has not:
+/// one the restore ended, one whose launch the restart lost (ruling T17b-3, N1: the
+/// old daemon may have started it), or one whose resume failed (N2).
 fn kept_because(task: &Task, lane: &Lane, now: u64) -> Result<Option<&'static str>, ()> {
     let racers =
         (task.rounds.iter()).filter(|r| r.lane == Some(lane.lane) && r.role == AgentRole::Racer);
     let open = racers.clone().any(|r| !r.ended && r.window_id.is_some());
-    let orphaned = racers.clone().any(|r| r.ended && r.orphaned);
+    let orphaned = racers.clone().any(|r| r.orphaned);
     let waited = now >= lane.kill_sent_at.unwrap_or(now) + LANE_EXIT_WAIT_SECS;
     match (open, orphaned) {
         (true, _) if waited => Ok(Some("its racer did not exit")),

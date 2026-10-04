@@ -203,6 +203,9 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         (OpKind::CreateWindow { .. }, Some(i)) => {
             if let Some(round) = run.tasks[i].rounds.iter_mut().find(|r| r.launch_op == op) {
                 round.relaunch = Some(Box::new(kind));
+                // Ruling T17b-3 (N1): the old daemon may have started this racer, so
+                // its lane is never cleaned as if it had exited.
+                round.orphaned = round.role == AgentRole::Racer;
             }
         }
         (OpKind::MergeCandidate { .. }, Some(i)) if run.tasks[i].merge_op == Some(op) => {

@@ -1876,3 +1876,14 @@ Suggested order: the two user-visible bugs first (the merged stage's fix tasks; 
 ## From M9.5.5b (2026-10-03), for the controller's ruling or later
 
 - *Fixed in M9.5.5b's fix round 1 (ruling T5b-1): while the footer shows, `Attention` holds against every event but client input and exit.* **A Codex title can end a question's `Attention` while the footer stays.** Decision 40 raises `Attention` only on a change from no footer match to a match (`manager/mod.rs::tick`, `Entry.codex_question`), so input that answers it is not undone by the next tick. But a Codex orchestrator launched with no hooks (as the daemon launches it today, M9.5.5a's notes) takes its status from its titles, and `status::next` maps `Title(Working | Thinking)` to `Working` from any status, `Attention` included (`(Runtime::Codex, _, E::Title(CodexTitle::Working | CodexTitle::Thinking)) if !ctx.hooks_seen => Working`). In the try-out's case (a question queued while the window stayed working) one title change after the match would end the attention with the footer still on screen, and nothing raises it again until the footer leaves and comes back. Unverified against real Codex (whether it retitles during a turn with a question queued). Fix direction: keep the match as "raised, not yet answered" until client input (`InputSent`) or the footer's leaving, and re-raise on a tick that finds the footer still unanswered and the status no longer `Attention`; the five M9.5.5b tick assertions all still hold under it.
+
+## From M9.5.17b's fix round 2 (2026-10-04, ruling T17b-3), for later
+
+- **An old daemon's session that survives a crash goes untracked once its round is resumed or relaunched.** This affects every task, not only races, and it predates 17b.
+  - A crash, or a shutdown whose escalation failed, can leave a headless group running.
+  - The restore ends the round (`restore::settle`), or sets its `relaunch` (`restore::lost`).
+  - A successful resume or relaunch then gives the round a new process. That process's `ProcessExited` is taken as the session's exit, while the old process may still be working in the same checkout.
+  - For race lanes, 17b keeps a lane's checkout and locks only until the resume or relaunch succeeds (`AgentRound.orphaned`).
+  - Fix direction: record the old pid and process group in `run.json`, and have the restore check them before it resumes or relaunches. That needs probe code outside the reducer, which RR-2's "no new kill code" puts out of 17b's scope.
+
+  Related: the `setsid` and `ECHILD` limits recorded in M9.5.17b's notes.

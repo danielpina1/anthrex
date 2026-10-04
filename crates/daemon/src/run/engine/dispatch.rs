@@ -334,6 +334,8 @@ pub(super) fn window_done(
         OpResult::Window { window_id, pid } => {
             let round = &mut run.tasks[i].rounds[r];
             round.window_id = Some(window_id);
+            // Ruling T17b-3: a relaunch's window is the racer's own again.
+            round.orphaned = false;
             // M8a.25: the first process's `ProcessStarted` came before the window.
             if round.pid.is_none() {
                 round.pid = pid;

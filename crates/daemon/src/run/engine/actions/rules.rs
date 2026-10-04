@@ -372,11 +372,8 @@ pub(crate) fn retry(run: &Run, task_id: &str) -> Option<String> {
 
 /// Task 17b's review, m2: a lane of the task's race is still racing.
 fn has_live_lane(task: &crate::run::model::Task) -> bool {
-    use proto::LaneState::{Check, Preparing, Proof, Review, Working};
-    let lanes = task.race.iter().flat_map(|r| &r.lanes);
-    lanes
-        .clone()
-        .any(|l| matches!(l.state, Preparing | Working | Proof | Check | Review))
+    let mut lanes = task.race.iter().flat_map(|r| &r.lanes);
+    lanes.any(|l| super::super::race_view::live(l.state))
 }
 
 /// `run override` (`gates::override_task`, decision 35), up to the count of a blocked

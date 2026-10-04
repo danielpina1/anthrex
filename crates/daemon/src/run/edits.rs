@@ -210,7 +210,6 @@ impl Batch {
         found
     }
 
-    /// Decision 13's per-state refusal: `task <id> is <state>; <why>`.
     /// [`Self::refuse`], or for a task that is waiting only because it was dispatched
     /// as a race, the started-task text with `tail` (ruling T17b-1).
     fn refuse_unstarted(&mut self, i: usize, tail: &str, why: &str) {
@@ -224,6 +223,7 @@ impl Batch {
         }
     }
 
+    /// Decision 13's per-state refusal: `task <id> is <state>; <why>`.
     fn refuse(&mut self, i: usize, why: &str) {
         let task = &self.run.tasks[i];
         self.errors.push(PlanError::new(
