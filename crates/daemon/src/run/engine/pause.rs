@@ -27,9 +27,9 @@ fn stopped(state: RunState) -> bool {
 
 /// A step changed `run` (it was `old`): entering `paused` or `halted` records when,
 /// leaving them adds the span to `paused_secs` (and a review wait open across it to the
-/// stage's `review_paused_secs`), and the step's time is recorded. A task whose phase changed in the step moves
-/// the paused time of the active phase it left into `paused.active`, and starts its new
-/// phase from the run's paused total.
+/// stage's `review_paused_secs`), and the step's time is recorded. A task whose phase
+/// changed in the step moves the paused time of the active phase it left into
+/// `paused.active`, and starts its new phase from the run's paused total.
 pub(super) fn account(old: &Run, run: &mut Run, now: u64) {
     match (stopped(old.state), stopped(run.state)) {
         (false, true) => run.paused_at = Some(now),
