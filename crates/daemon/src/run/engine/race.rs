@@ -12,7 +12,7 @@ use super::{Effect, OpKind, concurrency, requests, schedule};
 use crate::run::model::{Lane, Race, RaceDecision, Run, Task, lane_checkout};
 use crate::run::phases::set_state;
 use crate::run::validate::strength_label;
-use crate::run::validate_patterns::{RACE_DISPATCH, peer_route};
+use crate::run::validate_patterns::peer_route;
 
 /// What dispatch does with a task the scheduler would start (decision 18).
 pub(super) enum Start {
@@ -33,7 +33,7 @@ pub(super) enum Start {
 /// checkout never races (the final fix wave's A-I2).
 pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
     let task = &run.tasks[i];
-    if !RACE_DISPATCH || !task.spec.race || task.race.is_some() || task.race_decision.is_some() {
+    if !task.spec.race || task.race.is_some() || task.race_decision.is_some() {
         return Start::Single;
     }
     // The final fix wave's A-I2: a task that has its own checkout (a start commit, a

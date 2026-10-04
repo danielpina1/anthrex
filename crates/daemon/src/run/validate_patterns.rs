@@ -15,12 +15,6 @@ use super::roster::peer;
 use super::route_pick::Installed;
 use super::validate::strength_label;
 
-/// The gate between the race rule and the scheduler (task M9.5.14's addendum, which
-/// named it `PATTERNS_DISPATCH` for both patterns). Task M9.5.16 opened the pair's half
-/// (a paired task starts with its test writer, `engine/pair.rs`); task M9.5.17a opened
-/// the race's: `engine/race.rs::start` and the pre-warm read it.
-pub const RACE_DISPATCH: bool = true;
-
 /// Where the second racer and the test writer come from: the run's roster and what its
 /// start found installed (`run.orch.installed`; empty for a plan file, so every runtime
 /// counts as installed).

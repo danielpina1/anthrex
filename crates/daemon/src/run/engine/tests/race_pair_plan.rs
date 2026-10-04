@@ -1,7 +1,7 @@
 //! Milestone 9.5 task M9.5.14: `race` and `pair` set by the orchestrator mid-run go
-//! through M9's gate holds and the project-trust check (ruling RR-6), and the dispatch
-//! gate (`validate_patterns::RACE_DISPATCH`): a racing task races (task M9.5.17a), a
-//! paired one starts with its test writer (task M9.5.16, `pair.rs`).
+//! through M9's gate holds and the project-trust check (ruling RR-6), and at dispatch a
+//! racing task races (task M9.5.17a) and a paired one starts with its test writer (task
+//! M9.5.16, `pair.rs`).
 
 use proto::{AgentRole, ModelEntry, PlanEdit, Runtime, Strength};
 use serde_json::json;
@@ -13,7 +13,6 @@ use super::orch::{add, answer, edit_plan};
 use crate::headless::McpTarget;
 use crate::run::engine::{EventKind, OpKind};
 use crate::run::validate::EditScope;
-use crate::run::validate_patterns::RACE_DISPATCH;
 
 /// RR-6: a racing task the orchestrator adds to an epic still being decided waits under
 /// the epic's hold, a paired one too, and a pair amend on a held task keeps its hold;
@@ -110,12 +109,11 @@ fn a_racing_task_that_widens_the_reach_is_refused_by_the_trust_check() {
     assert_eq!(fx.run().tasks.len(), 1, "a refused edit changes nothing");
 }
 
-/// The addendum's gate, opened by tasks M9.5.16 (the pair) and M9.5.17a (the race): a
-/// racing task starts two racers in its two lane checkouts, and a paired task starts its
-/// test writer.
+/// At dispatch (tasks M9.5.16 and M9.5.17a; the final fix wave removed the staging
+/// gate, review D's M-5): a racing task starts two racers in its two lane checkouts, and
+/// a paired task starts its test writer.
 #[test]
 fn race_tasks_race_and_paired_tasks_start_their_test_writer() {
-    const { assert!(RACE_DISPATCH, "the race's dispatch has landed") };
     let plan = plan_with(
         &profile_with("max_writers = 3"),
         &[

@@ -76,7 +76,7 @@ pub(super) fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             || !task.implicit_deps.is_empty()
             || prepare_in_flight(run, i)
             // Milestone 9.5 decision 18: a racing task's checkouts are its lanes'.
-            || (crate::run::validate_patterns::RACE_DISPATCH && task.spec.race)
+            || task.spec.race
         {
             continue;
         }
