@@ -311,7 +311,9 @@ fn complete(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 
 /// `run cancel` (decision 37): every run session is killed and every unmerged task
 /// cancelled (salvaged once its session has exited), and the run completes. A paused
-/// run runs again to complete; a halted one completes after `resume --rebaseline`.
+/// run runs again to complete; a halted one completes after `resume --rebaseline`,
+/// except a design run halted before its plan was approved (milestone 9.6 ruling T7-9):
+/// it is never resumed into its phase, and its reply says to discard it.
 pub(super) fn cancel(
     state: &mut EngineState,
     reply: ReplyId,
@@ -349,7 +351,13 @@ pub(super) fn cancel(
     super::delivery::land::cancelled(run, now, fx);
     super::planners::halt_all(run, super::planners::RUN_CANCELLED, now, fx);
     log(run, now, "cancelled by the user");
-    let mut text = format!("run {run_id} cancelled; it completes once its sessions have ended");
+    let before_plan = super::design::halted_phase(run).is_some();
+    let mut text = match before_plan {
+        true => format!(
+            "run {run_id} cancelled before its plan was approved; discard it with anthrex run discard {run_id}"
+        ),
+        false => format!("run {run_id} cancelled; it completes once its sessions have ended"),
+    };
     for id in merging {
         text.push_str(&deferred_note(&id));
     }

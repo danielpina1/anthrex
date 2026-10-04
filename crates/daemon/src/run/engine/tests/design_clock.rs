@@ -163,3 +163,26 @@ fn two_restarts_in_a_row_credit_each_downtime_once() {
     fx.send(back + 21 * 60, EventKind::Tick);
     assert_eq!(fx.run().state, RunState::Halted, "{:?}", log_lines(&fx));
 }
+
+/// Ruling T7-9: a run halted before its plan was approved and then cancelled is not
+/// resumed into its phase: either resume is refused exactly (the menu's too), and the
+/// cancel's reply says to discard it (review m2's halted, cancelled discard, which
+/// waits for its sessions' ops as for any cancelled run).
+#[test]
+fn a_cancelled_run_halted_before_its_plan_is_discarded_not_resumed() {
+    let mut fx = budget_halted();
+    let reply = fx.reply();
+    let effects = fx.next(EventKind::Cancel {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    let discard = format!("discard it with anthrex run discard {RUN_ID}");
+    let cancelled = format!("run {RUN_ID} cancelled before its plan was approved; {discard}");
+    assert_eq!(replies(&effects), vec![Ok(cancelled)]);
+    let refusal = format!("run {RUN_ID} was cancelled before its plan was approved; {discard}");
+    assert_eq!(replies(&resume(&mut fx)), vec![Err(refusal.clone())]);
+    assert_eq!(resume_rebaselined(&mut fx), vec![Err(refusal.clone())]);
+    assert_eq!(fx.run().state, RunState::Halted);
+    let check = actions::check(fx.run(), &ActionNode::Run, &ActionKind::Resume);
+    assert_eq!(check, Err(refusal));
+}

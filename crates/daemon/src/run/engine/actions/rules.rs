@@ -180,6 +180,14 @@ pub(crate) fn resume(run: &Run, rebaseline: bool) -> Option<String> {
     if run.state != RunState::Halted {
         return Some(is(run));
     }
+    // Milestone 9.6 ruling T7-9: a run cancelled before its plan was approved is
+    // discarded, never resumed into its phase.
+    if run.cancelled && crate::run::engine::design::halted_phase(run).is_some() {
+        let id = &run.id;
+        return Some(format!(
+            "run {id} was cancelled before its plan was approved; discard it with anthrex run discard {id}"
+        ));
+    }
     // Milestone 9.6 ruling T7-1: a phase budget's halt resumes into its phase only.
     if let Some(phase) = crate::run::engine::design::halted_phase(run).filter(|_| rebaseline) {
         return Some(format!(
