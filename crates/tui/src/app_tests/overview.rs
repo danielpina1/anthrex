@@ -22,6 +22,9 @@ mod run_view;
 #[path = "overview/run_enter.rs"]
 mod run_enter;
 
+#[path = "overview/run_enter_lanes.rs"]
+mod run_enter_lanes;
+
 #[path = "overview/run_view_rows.rs"]
 mod run_view_rows;
 

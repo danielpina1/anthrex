@@ -13,10 +13,16 @@ use proto::{
 use super::model::{ReviewLevel, Run, Task};
 use super::roster::peer;
 
+#[path = "routing_lists.rs"]
+mod lists;
+pub use lists::record_listed_reviewer;
+
 /// Decision 33a's policy versions: the selectors milestone 8a shipped.
 pub const WORKER_POLICY: &str = "m8a-worker-v1";
 pub const REVIEW_POLICY: &str = "m8a-review-v1";
 pub const ESCALATE_POLICY: &str = "m8a-escalate-v1";
+/// A decision's `source` when the task took its class's default route (decision 33a).
+pub const CLASS_DEFAULT: &str = "class_default";
 
 /// The reason given to a selectable candidate after the chosen one.
 pub const RANKED_AFTER: &str = "ranked after the selected route";
@@ -238,6 +244,22 @@ pub fn reviewer_pool(roster: &[ModelEntry], author: &Route, level: ReviewLevel) 
     raw
 }
 
+/// Milestone 9.5 ruling RL-1: each pool entry whose route failed in this task says so,
+/// except at the `chosen` model (every entry failed: the selector fell back to it, and
+/// the record must not call its own choice skipped).
+fn mark_failed(mut raw: Vec<Raw>, task: &Task, chosen: &Route) -> Vec<Raw> {
+    use super::route_pick::{failed_in, failed_routes};
+    let failed = (failed_routes(task).into_iter())
+        .filter(|f| !failed_in(std::slice::from_ref(chosen), f))
+        .collect::<Vec<_>>();
+    for (route, reason) in raw.iter_mut() {
+        if failed_in(&failed, route) {
+            *reason = Some(super::route_pick::FAILED_IN_TASK.to_string());
+        }
+    }
+    raw
+}
+
 /// Appends `decision` to the task unless one with its identity `(role, session, round,
 /// lane)` is there already (a restored or repeated launch); numbers it.
 pub fn push(task: &mut Task, mut decision: RoutingDecision) {
@@ -287,15 +309,22 @@ fn decision(
 /// already counted): its first session records `initial`, and a session after rung 2
 /// or `run retry` records `escalation` from the route it escalated from. Any other
 /// fresh session (a lost resume, say) keeps the route already recorded. A run without
-/// history (one from milestone 8a) records nothing (whole-branch review m2).
+/// history (one from milestone 8a) records nothing (whole-branch review m2). Milestone
+/// 9.5 decision 9a: a model list's choice records the list's snapshot.
 pub fn record_worker(run: &mut Run, i: usize, now: u64) {
     let from = run.tasks[i].escalated_from.take();
+    let step = run.tasks[i].list_escalation.take();
     if !run.history {
         return;
     }
     let task = &run.tasks[i];
     let chosen = task.route.clone();
     let id = (AgentRole::Worker, task.session, None);
+    let first = !(task.routing_decisions.iter()).any(|d| d.role == AgentRole::Worker);
+    let listed = (from.is_some(), step, first);
+    if let Some(d) = lists::worker(run, task, id, listed, &chosen, now) {
+        return push(&mut run.tasks[i], d);
+    }
     let decision = match from {
         Some(from) => decision(
             run,
@@ -303,19 +332,15 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
             id,
             ("escalation", "escalation_policy", ESCALATE_POLICY),
             &chosen,
-            escalation_pool(&run.roster, &from),
+            mark_failed(escalation_pool(&run.roster, &from), task, &chosen),
             now,
         ),
-        None if !task
-            .routing_decisions
-            .iter()
-            .any(|d| d.role == AgentRole::Worker) =>
-        {
+        None if first => {
             let explicit = task.spec.route.model.is_some();
             let source = if explicit {
                 "explicit_task"
             } else {
-                "class_default"
+                CLASS_DEFAULT
             };
             decision(
                 run,
@@ -330,6 +355,61 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
         None => return,
     };
     push(&mut run.tasks[i], decision);
+}
+
+/// Milestone 9.5 decision 9a: a paired task's test writer session is being launched on
+/// `chosen`. Its first session records trigger `test_writer`, its source naming the
+/// pick (`peer_route` for the peer runtime's route, else the task route's own source,
+/// a model list's `configured_list` with its snapshot when the list chose it);
+/// a session after rung 2 or `run retry` records `escalation` from the route it stepped
+/// from; any other fresh session (a lost resume, say) records nothing, as a worker's.
+/// Nothing for a run without history.
+pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
+    let from = (run.tasks[i].pair.as_mut()).and_then(|p| p.escalated_from.take());
+    if !run.history {
+        return;
+    }
+    let task = &run.tasks[i];
+    let id = (AgentRole::TestWriter, task.session, None);
+    let first = !(task.routing_decisions.iter()).any(|d| d.role == AgentRole::TestWriter);
+    let d = match from {
+        Some(from) => decision(
+            run,
+            task,
+            id,
+            ("escalation", "escalation_policy", ESCALATE_POLICY),
+            chosen,
+            mark_failed(escalation_pool(&run.roster, &from), task, chosen),
+            now,
+        ),
+        None if first => {
+            // Ruling T16-7 (N3): on the task's route a list chose, the list's record.
+            let listed = (*chosen == task.route)
+                .then(|| lists::test_writer(run, task, id, chosen, now))
+                .flatten();
+            if let Some(d) = listed {
+                return push(&mut run.tasks[i], d);
+            }
+            let explicit = task.spec.route.model.is_some();
+            let source = match (*chosen != task.route, explicit) {
+                (true, _) => "peer_route",
+                (false, true) => "explicit_task",
+                (false, false) => CLASS_DEFAULT,
+            };
+            let pool = worker_pool(&run.roster, chosen, explicit);
+            decision(
+                run,
+                task,
+                id,
+                ("test_writer", source, WORKER_POLICY),
+                chosen,
+                pool,
+                now,
+            )
+        }
+        None => return,
+    };
+    push(&mut run.tasks[i], d);
 }
 
 /// Review round `round` of task `i` is being launched on `chosen`, which
@@ -352,7 +432,7 @@ pub fn record_reviewer(
         (AgentRole::Reviewer, round, Some(round)),
         ("review", "review_policy", REVIEW_POLICY),
         chosen,
-        reviewer_pool(&run.roster, author, level),
+        mark_failed(reviewer_pool(&run.roster, author, level), task, chosen),
         now,
     );
     push(&mut run.tasks[i], decision);

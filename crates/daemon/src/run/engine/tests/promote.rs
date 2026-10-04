@@ -80,12 +80,15 @@ fn promote_creates_an_orchestrator_and_leaves_t1_running() {
     let OpKind::CreateOrchestrator { spec, .. } = &creates[0].1 else {
         unreachable!()
     };
+    // Milestone 9.5 ruling T5a-2: a Codex orchestrator's first prompt is on its command
+    // line, as in 9.3; only Claude's waits to be pasted (decision 38).
     let first = spec.initial_prompt.clone().unwrap();
+    assert_eq!(first, o.first_prompt);
+    assert!(!o.first_turn_pending);
     assert!(
         first.contains("promoted from the fast path at the user's request"),
         "{first}"
     );
-    assert_eq!(first, o.first_prompt);
     assert_eq!(*fx.task("t1"), t1, "t1 is exactly as it was");
     // The attention line of milestone 8b is gone: the orchestrator shows instead.
     let info = &crate::run::snapshot::snapshot(&fx.state, fx.now).runs[0];

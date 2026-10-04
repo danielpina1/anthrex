@@ -220,7 +220,9 @@ pub(crate) fn finish(run: &Run, action: FinishAction) -> Option<String> {
         && run.state == RunState::Halted
         && run.cancelled
         && run.tasks.iter().all(|t| t.state.is_finished())
-        && run.pending_ops.is_empty();
+        && run.pending_ops.is_empty()
+        // The final fix wave's m7: never beside a race lane's salvage.
+        && !crate::run::engine::race_salvage::pending(run);
     let state = || {
         let label = run.state.label();
         format!(
@@ -346,6 +348,11 @@ pub(crate) fn retry(run: &Run, task_id: &str) -> Option<String> {
         return Some(format!("unknown task {task_id}"));
     };
     match &task.block {
+        // Milestone 9.5 decision 23: nothing to retry until one racer is left (a
+        // winner whose crown failed is blocked, and retried).
+        _ if task.racing() && (task.state != TaskState::Blocked || has_live_lane(task)) => Some(
+            format!("task {task_id} is racing: it has nothing to retry until one racer is left"),
+        ),
         // Milestone 9 decision 42c.
         _ if worker_messages::paused_refusal(task).is_some() => {
             worker_messages::paused_refusal(task)
@@ -363,6 +370,12 @@ pub(crate) fn retry(run: &Run, task_id: &str) -> Option<String> {
         )),
         _ => None,
     }
+}
+
+/// Task 17b's review, m2: a lane of the task's race is still racing.
+fn has_live_lane(task: &crate::run::model::Task) -> bool {
+    let mut lanes = task.race.iter().flat_map(|r| &r.lanes);
+    lanes.any(|l| super::super::race_view::live(l.state))
 }
 
 /// `run override` (`gates::override_task`, decision 35), up to the count of a blocked
@@ -394,11 +407,24 @@ pub(crate) fn override_task(run: &Run, task_id: &str) -> Option<String> {
         .then(|| format!("task {task_id} has no commits; {OVERRIDE_APPLIES}"))
 }
 
-/// Why task `i` cannot be overridden now, if it cannot: a held or `dep_cancelled` task
-/// waits for its dependencies; any task but one in `review` or `blocked` is refused.
+/// Why task `i` cannot be overridden now, if it cannot: a paired task whose test is
+/// still being written waits for its implementer (milestone 9.5 ruling T16-5: a failing
+/// test alone never merges); a held or `dep_cancelled` task waits for its dependencies;
+/// any task but one in `review` or `blocked` is refused.
 pub(crate) fn override_refusal(run: &Run, i: usize) -> Option<String> {
     let task = &run.tasks[i];
     let id = task.id();
+    if super::super::pair::writing(task) {
+        return Some(format!(
+            "task {id} is still writing its test; override it once its implementer has started"
+        ));
+    }
+    // Milestone 9.5 decision 23.
+    if task.racing() {
+        return Some(format!(
+            "task {id} is racing: there is no failed gate to override"
+        ));
+    }
     let dep_cancelled = task
         .block
         .as_ref()

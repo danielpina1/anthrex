@@ -33,7 +33,7 @@ fn third_flaky_run_is_proposed_for_quarantine() {
         flaky("r3", 7, "b::other", NOW - DAY),
     ];
     assert_eq!(
-        flaky_proposals(&three, NOW, 14, 3),
+        flaky_proposals(&three, NOW, 14, 3, None),
         [FlakyProposal {
             test: "a::flaky".into(),
             runs: 3,
@@ -42,15 +42,15 @@ fn third_flaky_run_is_proposed_for_quarantine() {
     );
 
     // Two runs: none.
-    assert!(flaky_proposals(&three[1..], NOW, 14, 3).is_empty());
+    assert!(flaky_proposals(&three[1..], NOW, 14, 3, None).is_empty());
 
     // Three runs, one of them outside the window: none.
     let mut old = three.clone();
     old[0] = flaky("r1", 4, "a::flaky", NOW - 15 * DAY);
-    assert!(flaky_proposals(&old, NOW, 14, 3).is_empty());
+    assert!(flaky_proposals(&old, NOW, 14, 3, None).is_empty());
     // The edge of the window is inside it.
     old[0] = flaky("r1", 4, "a::flaky", NOW - 14 * DAY);
-    assert_eq!(flaky_proposals(&old, NOW, 14, 3).len(), 1);
+    assert_eq!(flaky_proposals(&old, NOW, 14, 3, None).len(), 1);
 }
 
 /// Decision 34: the most flaky test first; ties by name.
@@ -65,7 +65,7 @@ fn proposals_are_ordered_by_runs_then_name() {
             lines.push(flaky(run, 1, "a::three", at));
         }
     }
-    let names: Vec<(String, u32)> = flaky_proposals(&lines, NOW, 14, 3)
+    let names: Vec<(String, u32)> = flaky_proposals(&lines, NOW, 14, 3, None)
         .into_iter()
         .map(|p| (p.test, p.runs))
         .collect();
@@ -151,7 +151,7 @@ fn stats_json_carries_flaky_proposals() {
 fn summarise_at(dir: &Path, path: &Path, testing: &config::Testing) -> HistoryStats {
     let git = std::ffi::OsStr::new("/nonexistent/anthrex-test/git");
     let timeout = std::time::Duration::from_secs(5);
-    crate::run::history_io::summarise(git, dir, path, NOW, timeout, testing)
+    crate::run::history_io::summarise(git, dir, path, NOW, timeout, testing, None)
 }
 
 /// Pinning: a history written by milestones 8b (version 1) and 9 (version 2) still
@@ -224,7 +224,7 @@ fn a_proposal_counts_every_run_and_keeps_the_latest_time() {
         flaky("r2", 1, "a::flaky", NOW - 3 * DAY),
     ];
     assert_eq!(
-        flaky_proposals(&lines, NOW, 14, 3),
+        flaky_proposals(&lines, NOW, 14, 3, None),
         [FlakyProposal {
             test: "a::flaky".into(),
             runs: 4,
@@ -243,10 +243,10 @@ fn a_flaky_line_from_the_future_is_ignored() {
             flaky("r3", 1, "a::flaky", NOW + ahead),
         ]
     };
-    let kept = flaky_proposals(&at(300), NOW, 14, 3);
+    let kept = flaky_proposals(&at(300), NOW, 14, 3, None);
     assert_eq!(kept.len(), 1, "{kept:?}");
     assert_eq!(kept[0].last_at, NOW + 300);
-    assert!(flaky_proposals(&at(301), NOW, 14, 3).is_empty());
+    assert!(flaky_proposals(&at(301), NOW, 14, 3, None).is_empty());
 }
 
 /// Ruling C-23: a name a shell would read inside `"…"` is single-quoted instead; a

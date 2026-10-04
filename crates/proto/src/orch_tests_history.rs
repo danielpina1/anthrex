@@ -26,6 +26,7 @@ fn a_role_decision(role: AgentRole, run_id: Option<&str>) -> RoleRoutingDecision
         source: "agent_config".into(),
         policy_version: "m9-orchestrator-v1".into(),
         pick_policy: None,
+        rotation: None,
         input: RoleRoutingInput {
             run_path: Some(RunPath::Plan),
             goal: Some("Add password reset".into()),
@@ -145,4 +146,19 @@ fn reported_task_outcome_round_trips() {
         serde_json::to_string(&TaskOutcome::Reported).unwrap(),
         "\"reported\""
     );
+}
+
+/// Milestone 9.5 decision 9a: a `spread` role list's rotation position is kept; a
+/// record without one writes no `rotation` key, as before.
+#[test]
+fn a_role_decisions_rotation_round_trips() {
+    let mut decision = a_role_decision(AgentRole::Scout, Some("run-a1b2"));
+    let json = serde_json::to_string(&HistoryLine::RoleRoute(decision.clone())).unwrap();
+    assert!(!json.contains("rotation"), "{json}");
+    decision.pick_policy = Some("spread".into());
+    decision.rotation = Some(2);
+    let line = HistoryLine::RoleRoute(decision);
+    let json = serde_json::to_string(&line).unwrap();
+    assert!(json.contains(r#""rotation":2"#), "{json}");
+    both_ways(&line);
 }

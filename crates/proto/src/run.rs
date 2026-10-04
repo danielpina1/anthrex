@@ -31,6 +31,11 @@ pub enum AgentRole {
     /// role-routing record. A decider has no rounds or tasks and never runs
     /// `anthrex mcp`, so it is never given anthrex tools.
     Decider,
+    /// Milestone 9.5 decision 19: a headless worker in one lane of a race (`"racer"`).
+    Racer,
+    /// Milestone 9.5 decision 24: the headless session that commits a paired task's
+    /// failing test (`"test_writer"`).
+    TestWriter,
 }
 
 /// Identifies one agent round: which run, optionally which task, which role, and which
@@ -42,6 +47,9 @@ pub struct RunRef {
     pub task_id: Option<String>,
     pub role: AgentRole,
     pub session: u32,
+    /// Milestone 9.5: a racer's lane; `None` for every other role, and then left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<crate::tuning::RaceLane>,
 }
 
 /// How capable a route's model should be. Ordered: a task can only be "raised", never
@@ -234,6 +242,15 @@ pub struct PlanTask {
     /// a plan, a `run.json` and a snapshot without review fixes are written as 9.1's.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub addresses: Vec<String>,
+    /// Milestone 9.5 decision 17: race two workers on different runtimes. Left out
+    /// while false, so a plan, a `run.json` and a snapshot without it are written as
+    /// 9.3's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub race: bool,
+    /// Milestone 9.5 decision 24: a test writer commits the failing test, then a
+    /// different worker implements. Left out while false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pair: bool,
 }
 
 fn default_kind() -> TaskKind {
@@ -307,6 +324,13 @@ pub enum PlanEdit {
         /// Milestone 9.1 decision 43: moves a task that has not started.
         #[serde(default)]
         stage: Option<u16>,
+        /// Milestone 9.5 decision 17: sets or clears `race` on a task that has not
+        /// started.
+        #[serde(default)]
+        race: Option<bool>,
+        /// Milestone 9.5 decision 24: sets or clears `pair` likewise.
+        #[serde(default)]
+        pair: Option<bool>,
     },
     AddDep {
         task_id: String,

@@ -564,6 +564,7 @@ mod tests {
             task_id: Some("t2".into()),
             role: AgentRole::Worker,
             session: 3,
+            lane: None,
         };
         let jitter = launch_jitter(Some(&run));
         assert_eq!(jitter, Duration::from_millis(jitter_ms("run-1", "t2", 3)));

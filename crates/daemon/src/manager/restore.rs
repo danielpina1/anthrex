@@ -262,6 +262,7 @@ impl WindowManager {
                 last_client_input: None,
                 attention_open: false,
                 prompt_since: None,
+                codex_question: None,
                 conversations: crate::conversation::ConversationSet::new(id, runtime),
                 conversation_viewers: 0,
                 transcript: Default::default(),

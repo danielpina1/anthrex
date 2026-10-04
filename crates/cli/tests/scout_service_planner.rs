@@ -57,6 +57,7 @@ fn planner_spec(repo: &std::path::Path) -> PlannerSpec {
             scout_id: None,
             epic: Some("mail".into()),
             chain: None,
+            lane: None,
         }),
         allowed_tools: vec![
             "mcp__anthrex__get_context".into(),
@@ -79,6 +80,7 @@ fn planner_spec(repo: &std::path::Path) -> PlannerSpec {
             task_id: None,
             role: AgentRole::Planner,
             session: 1,
+            lane: None,
         }),
         codex_config_guard: None,
         output_filter: None,

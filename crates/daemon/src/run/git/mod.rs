@@ -21,6 +21,7 @@
 
 mod accept;
 mod checkout;
+mod crown;
 mod done;
 mod handback;
 mod import;
@@ -33,6 +34,7 @@ mod salvage;
 mod sandbox;
 mod settings;
 mod signals;
+mod signals_pair;
 mod summary;
 mod tiers;
 mod tmp;
@@ -41,6 +43,7 @@ mod worktrees;
 pub use accept::{ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout};
 pub(crate) use checkout::restore_owner_access;
 pub use checkout::{Repo, checkout_repo_dir, default_repo_dir};
+pub use crown::{clear_stale_locks, cleared_of, crown};
 pub use done::{
     DoneChecked, RefreshedIn, count_commits, count_commits_excluding, diff_so_far, verify_done,
     verify_done_excluding, verify_done_spilling,
@@ -62,6 +65,7 @@ pub use signals::{
     DiffLimits, NoAttributes, SIGNALS_DIFF_BYTES, Zero, cfg_test_files, done_signals,
     done_signals_from, done_signals_with, signal_paths, unified_zero,
 };
+pub use signals_pair::pair_signals;
 pub use summary::{resolve_target, task_summary, task_summary_excluding};
 pub use tiers::{changed_paths, checkout_tree, show_stat, sync_read, tree_of, tree_patch};
 

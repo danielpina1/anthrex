@@ -22,9 +22,10 @@ impl RunService {
             Err(text) => return RunReply::refused(request::PROMOTE, text),
             // M9.17 fix round 2: what the check found, recorded before the engine
             // performs the promotion (events are handled in order).
-            Ok(Some(installed)) => self.send(EventKind::Orch(OrchEvent::Installed {
+            Ok(Some(found)) => self.send(EventKind::Orch(OrchEvent::Installed {
                 run_id: run_id.clone(),
-                installed,
+                installed: found.headless,
+                window: found.window,
             })),
             Ok(None) => {}
         }

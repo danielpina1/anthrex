@@ -20,6 +20,18 @@ pub const GIT_LOCATION_VARS: [&str; 5] = [
     "GIT_PREFIX",
 ];
 
+/// AGENTS.md rule 11's other inherited git variables: the object store's two and the
+/// four pathspec modes. Every git the daemon or the CLI runs itself drops them too
+/// (`daemon::subprocess::scrub_inherited_git`); a session's own git is the user's.
+pub const GIT_STORE_AND_PATHSPEC_VARS: [&str; 6] = [
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
+];
+
 /// Decision 26: inherited variables removed from every headless session and every
 /// engine command, by prefix ... Since F2 round 2 (N1) also exported shell functions
 /// (`BASH_FUNC_<name>%%`), which bash imports at start-up. Since milestone 9 (M9.1

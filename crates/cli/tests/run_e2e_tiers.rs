@@ -186,14 +186,12 @@ fn e2e_run_stats_proposes_a_thrice_flaky_test() {
     let out = h.anthrex(&["run", "stats", "--dir", &repo]);
     assert!(out.status.success(), "{out:?}");
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        text.ends_with(
-            "Flaky tests (at least 3 runs in the last 14 days):\n\
+    // M9.5 decision 11: the tuning block follows the flaky block.
+    let flaky = "Flaky tests (at least 3 runs in the last 14 days):\n\
              proposal: add b::flaky to slow_tests (flaky in 3 runs in the last 14 days)\n  \
-             fix: anthrex run start --goal \"Make the test b::flaky deterministic; it failed and then passed on retry in 3 runs\"\n"
-        ),
-        "{text}"
-    );
+             fix: anthrex run start --goal \"Make the test b::flaky deterministic; it failed and then passed on retry in 3 runs\"\n";
+    let at = text.find(flaky).unwrap_or_else(|| panic!("{text}"));
+    assert!(text[at + flaky.len()..].starts_with("tuning: "), "{text}");
 }
 
 /// Whether `line`'s arguments hold `--filter <expr>` with the timing group's own

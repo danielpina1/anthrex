@@ -5,7 +5,7 @@ use proto::{
     Verdict,
 };
 
-use crate::run::model::{AgentRound, CheckRecord, ReviewRecord, Run};
+use crate::run::model::{AgentRound, CheckRecord, ProofRecord, ReviewRecord, Run};
 use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};
 
 pub(super) const STANDARD: &str =
@@ -72,6 +72,24 @@ pub(super) fn check(ok: bool, on_candidate: bool) -> CheckRecord {
         summary: None,
         summary_source: None,
         tier: None,
+        lane: None,
+    }
+}
+
+/// A proof that passed (red failed, head passed, matched) at `at`.
+pub(super) fn passed_proof(at: u64) -> ProofRecord {
+    ProofRecord {
+        at,
+        test: "t".into(),
+        red: "r".into(),
+        head: "h".into(),
+        red_failed: true,
+        head_passed: true,
+        matched: true,
+        red_tail: String::new(),
+        head_tail: String::new(),
+        lane: None,
+        red_only: false,
     }
 }
 
@@ -94,6 +112,7 @@ pub(super) fn review(round: u32, verdict: Verdict, findings: Vec<Finding>) -> Re
         verdict: Some(verdict),
         summary: String::new(),
         findings,
+        lane: None,
     }
 }
 

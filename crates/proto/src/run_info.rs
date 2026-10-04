@@ -24,6 +24,7 @@ use crate::run::{
 pub use crate::run::{Finding, Severity};
 use crate::scout::ScoutInfo;
 use crate::tiers::{SignalInfo, StageInfo, TaskOrigin, TierInfo};
+use crate::tuning::{PairInfo, RaceInfo, RaceLane};
 
 /// How much of a task's or agent round's budget has been used.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +50,16 @@ impl TokenUsage {
     /// an inherent impl to a foreign type.
     pub fn billable(&self) -> u64 {
         self.input + self.cache_write + self.output
+    }
+
+    /// Milestone 9.5 decision 37: field-wise, saturating at 0.
+    pub fn saturating_sub(self, other: Self) -> Self {
+        TokenUsage {
+            input: self.input.saturating_sub(other.input),
+            output: self.output.saturating_sub(other.output),
+            cache_read: self.cache_read.saturating_sub(other.cache_read),
+            cache_write: self.cache_write.saturating_sub(other.cache_write),
+        }
     }
 }
 
@@ -88,6 +99,10 @@ pub struct CheckInfo {
     /// Milestone 9.1: the tier record, when the check was a tier job.
     #[serde(default)]
     pub tier: Option<TierInfo>,
+    /// Milestone 9.5 (task 20b's carry): the race lane whose check this is, while the
+    /// race has no winner; once it has, the winner's or the task's own (no lane).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<RaceLane>,
 }
 
 /// The outcome of one proof (TDD red/green) run.
@@ -100,6 +115,9 @@ pub struct ProofInfo {
     pub head_passed: bool,
     pub matched: bool,
     pub ok: bool,
+    /// Milestone 9.5 (task 20b's carry): as [`CheckInfo::lane`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<RaceLane>,
 }
 
 /// The outcome of one review round.
@@ -111,6 +129,10 @@ pub struct ReviewInfo {
     pub summary: String,
     pub findings: Vec<Finding>,
     pub blocking: bool,
+    /// Milestone 9.5: the lane a racing task's review round reviewed; left out while
+    /// `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<RaceLane>,
 }
 
 /// One agent round: one process, one session, on one task (or none, for a reviewer that
@@ -144,6 +166,17 @@ pub struct AgentRoundInfo {
     /// When a failed gate sent this worker session back (rung 1), oldest first.
     #[serde(default)]
     pub sent_back_at: Vec<u64>,
+    // Milestone 9.5; each left out while `None`, so a round is written as 9.3 wrote it.
+    /// A racer's or lane reviewer's lane; `None` for every other role (task 20b).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<RaceLane>,
+    /// Decision 43: the error of a turn that failed and waits to be continued, one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_error: Option<String>,
+    /// Decision 43: when that turn is continued (not set for a rate limit, which
+    /// `rate_limited_until` already shows).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_until: Option<u64>,
 }
 
 /// One task's full state, as shown to a client.
@@ -265,6 +298,12 @@ pub struct TaskInfo {
     /// Milestone 9.3: the round that added this task; 1 for a task from before.
     #[serde(default = "crate::rounds::first_round")]
     pub round: u32,
+    /// Milestone 9.5 decisions 19 and 24: a racing task's lanes, a paired task's test
+    /// writer; each left out while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race: Option<RaceInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pair: Option<PairInfo>,
 }
 
 fn first_stage() -> u16 {
@@ -419,6 +458,10 @@ pub struct RunInfo {
     pub rounds: Vec<crate::rounds::RoundInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<String>,
+    /// Milestone 9.5 decision 16: each runtime whose writer cap is below `max_writers`;
+    /// left out while empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub writer_caps: BTreeMap<String, u8>,
 }
 
 /// Every run the daemon knows about, at one revision.

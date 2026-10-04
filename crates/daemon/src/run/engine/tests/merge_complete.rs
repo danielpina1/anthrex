@@ -355,7 +355,13 @@ fn finish_cancels_unstarted_then_completes_when_live_ones_end() {
     assert_eq!(fx.task("t4").state, TaskState::Cancelled);
     assert_alive(&fx);
     for (op, _) in pending(&fx, "RemoveWorktree", Some("t1")) {
-        fx.done(op, OpResult::Removed { salvage_ref: None });
+        fx.done(
+            op,
+            OpResult::Removed {
+                salvage_ref: None,
+                cleared_locks: Vec::new(),
+            },
+        );
     }
     assert!(pending(&fx, "VerifyRefs", None).is_empty());
     let effects = fx.signal(
@@ -374,6 +380,7 @@ fn finish_cancels_unstarted_then_completes_when_live_ones_end() {
         op,
         OpResult::Removed {
             salvage_ref: Some(salvage.clone()),
+            cleared_locks: Vec::new(),
         },
     );
     assert_eq!(fx.task("t2").salvage_refs, vec![salvage]);
@@ -415,6 +422,7 @@ fn cancel_kills_salvages_and_completes() {
         op,
         OpResult::Removed {
             salvage_ref: Some(salvage.clone()),
+            cleared_locks: Vec::new(),
         },
     );
     assert_eq!(fx.task("t1").salvage_refs, vec![salvage]);

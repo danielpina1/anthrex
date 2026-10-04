@@ -25,6 +25,7 @@ pub fn run_ref() -> RunRef {
         task_id: Some("t1".into()),
         role: AgentRole::Worker,
         session: 1,
+        lane: None,
     }
 }
 

@@ -27,7 +27,7 @@ use crate::launch;
 use crate::status::StatusEvent;
 use crate::window::{Attachment, WindowEvent};
 use crate::worktree;
-use entry::{Entry, Inner};
+use entry::{Entry, Inner, Process};
 use proto::{ExitInfo, HookSource, Status, WindowInfo};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -325,7 +325,8 @@ impl WindowManager {
         }
     }
 
-    /// Called once a second by the daemon: Working windows that went quiet become Idle.
+    /// Called once a second by the daemon: Working windows that went quiet become Idle,
+    /// and a Codex orchestrator showing a question becomes `Attention`.
     pub fn tick(&self) {
         let now = Instant::now();
         let mut inner = crate::lock(&self.inner);
@@ -347,6 +348,21 @@ impl WindowManager {
             {
                 changed |= entry.apply(StatusEvent::Quiet);
             }
+            // Milestone 9.5 decision 40 (review ruling I11): a Codex orchestrator's
+            // question footer, whatever the status; a copy of the screen, no I/O.
+            // A higher count than the last tick's is a new question (review m6).
+            let asks = match &entry.process {
+                Process::Live(window)
+                    if entry.role.is_some() && entry.spec.runtime == proto::Runtime::Codex =>
+                {
+                    crate::status_codex::screen_questions(&window.screen_text())
+                }
+                _ => None,
+            };
+            if asks.unwrap_or(0) > entry.codex_question.unwrap_or(0) {
+                changed |= entry.apply(StatusEvent::CodexQuestion);
+            }
+            entry.codex_question = asks;
         }
         if changed {
             self.publish(&inner);

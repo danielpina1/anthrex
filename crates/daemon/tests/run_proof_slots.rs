@@ -48,6 +48,7 @@ fn the_proof_holds_a_slot_for_each_command_only() {
         setup: Some("echo \"$SLOT_STEP\" >> \"$PROOF_LOG\"".into()),
         env: vec![("PROOF_LOG".into(), log.display().to_string())],
         confine: None,
+        red_only: false,
     };
     let events = Arc::new(Mutex::new(Vec::new()));
     let seen = events.clone();
@@ -74,4 +75,51 @@ fn the_proof_holds_a_slot_for_each_command_only() {
             "released Head",
         ]
     );
+}
+
+/// Milestone 9.5 decision 25 (ruling RP-1): the red-only mode of the same proof, a
+/// paired task's red check. A test that fails at `red` gives `red_failed` and no head
+/// run; one that passes gives `false` with its tail. One slot (no `setup`), once.
+#[test]
+fn the_red_only_proof_runs_only_the_red_run() {
+    let repo = repo();
+    commit_file(&repo.root, "README", "base\n", "base");
+    let test = "echo \"$SLOT_STEP\" >> \"$PROOF_LOG\"\ngrep -q reset impl.txt || exit 1\necho 'PASS t_reset'\n";
+    let red = commit_file(&repo.root, "tests/t_reset.sh", test, "red");
+    let green = commit_file(&repo.root, "impl.txt", "fn reset() {}\n", "green");
+    for (at, fails) in [(red, true), (green, false)] {
+        let (_wt, wt) = wt_dir();
+        let logs = tempfile::tempdir().unwrap();
+        let log = logs.path().join("proof.log");
+        let op = ProofOp {
+            root: repo.root.clone(),
+            path: wt.join("runs/r1/t1.proof"),
+            repo: wt.join("data/tasks/t1.proof"),
+            red: at.clone(),
+            head: at,
+            command: proof_command("sh tests/{test}.sh", "t_reset"),
+            passed: proof_pattern("PASS {test}", "t_reset"),
+            timeout_secs: 60,
+            setup: None,
+            env: vec![("PROOF_LOG".into(), log.display().to_string())],
+            confine: None,
+            red_only: true,
+        };
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let seen = events.clone();
+        let slot = move |step: ProofStep| {
+            lock(&seen).push(format!("granted {step:?}"));
+            let extra = vec![("SLOT_STEP".to_string(), format!("{step:?}"))];
+            Ok((extra, Box::new(Hold(seen.clone(), step)) as Box<dyn Send>))
+        };
+        let runs = run_proof_scheduled(real_git(), &op, T, &direct, &slot).unwrap();
+        assert_eq!(runs.red_failed, fails, "{runs:?}");
+        assert!(!runs.head_passed && !runs.matched, "{runs:?}");
+        assert_eq!(runs.head_tail, "", "no head run");
+        if !fails {
+            assert!(runs.red_tail.contains("PASS t_reset"), "{runs:?}");
+        }
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "Red\n");
+        assert_eq!(*lock(&events), vec!["granted Red", "released Red"]);
+    }
 }

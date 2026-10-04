@@ -339,6 +339,7 @@ impl ProfileService {
                 pre,
                 record,
                 codex_config: Vec::new(),
+                route: None,
             };
             tokio::spawn(self.clone().verify_in_background(job));
             return Ok(ProfileReply::Done {

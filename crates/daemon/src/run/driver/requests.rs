@@ -14,8 +14,8 @@ use super::RunService;
 use super::adapt::BuildError;
 use super::build::Shape;
 use super::delivery::{DeliveryRequestOf, DeliveryStart};
-use crate::run::engine::EventKind;
 use crate::run::engine::actions::{self, ActionNode};
+use crate::run::engine::{EventKind, OrchEvent};
 use crate::run::git::{self, Git};
 use crate::run::model::Run;
 use crate::run::plan::parse_plan;
@@ -141,7 +141,13 @@ impl RunService {
                 run_id,
                 orchestrator,
             } => self.promote(run_id, orchestrator).await,
-            RunRequest::Stats { dir } => self.stats(dir).await,
+            // Milestone 9.5 decisions 11 and 48.
+            RunRequest::Stats {
+                dir,
+                apply,
+                dismiss,
+                read_only,
+            } => self.stats(dir, apply, dismiss, read_only).await,
             RunRequest::Profile(profile) => self.profile(profile).await,
             // Milestone 9 decision 28's approval holds: only the user's requests decide.
             RunRequest::ApproveHold { run_id, hold } => self.hold_verdict(run_id, hold, true).await,
@@ -169,10 +175,37 @@ impl RunService {
                 })
                 .await,
             ),
+            // Milestone 9.5 decision 38: only the run's orchestrator window, as the
+            // manager has it, tells the engine; any other notice changes nothing.
+            // Whole-branch review C, m-1: a chain's run is read as the chain's current
+            // run, as a chain window's tool calls are (an adopted window's server keeps
+            // the `--run` it was launched with).
+            RunRequest::McpReady { run_id, window_id } => {
+                let run_id = self.chain_current(&run_id).unwrap_or(run_id);
+                let ours = self.manager.list().iter().any(|w| {
+                    w.id == window_id
+                        && w.run.as_ref().is_some_and(|r| {
+                            r.run_id == run_id && r.role == proto::AgentRole::Orchestrator
+                        })
+                });
+                if ours {
+                    self.send(EventKind::Orch(OrchEvent::McpReady { run_id, window_id }));
+                }
+                RunReply::done(request::MCP_READY, "")
+            }
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }
         }
+    }
+
+    /// The current run of `run_id`'s chain, when it is one of the chain's runs. The
+    /// engine lock is taken only for the lookup.
+    fn chain_current(&self, run_id: &str) -> Option<String> {
+        let state = crate::lock(&self.state); // lookup
+        let chain = state.runs.get(run_id)?.chain.as_deref()?;
+        let chain = state.chains.get(chain)?;
+        (chain.runs.iter().any(|r| r == run_id)).then(|| chain.current().to_string())
     }
 
     /// Milestone 9.0.5 decision 7: a task's brief, acceptance and worker summary, built
@@ -242,7 +275,8 @@ impl RunService {
     ) -> Result<Run, String> {
         let plan = parse_plan(&plan_toml)?;
         let delivery = DeliveryStart::Resolve(delivery);
-        self.build_delivered(plan, dir, flags, Shape::PlanFile, delivery)
+        let once = super::build::TuneOnce::new();
+        self.build_delivered(plan, dir, flags, Shape::PlanFile, delivery, &once)
             .await
             .map_err(BuildError::text)
     }

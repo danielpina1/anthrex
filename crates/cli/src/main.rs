@@ -353,7 +353,8 @@ async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow
     // `UiSettings` before `tui::run` starts: nothing under `crates/tui/src/app/` or
     // `crates/tui/src/ui/` does I/O (task M6.9's layering rule), so the CLI is the only
     // place `config::load` can run for the TUI. Every problem it found is formatted
-    // (decision 7's `<key>: <message> (using <default>)`, `Problem`'s own `Display`)
+    // (decision 7's `<key>: <message> (using <default>)`, or `(entry skipped)` for a
+    // dropped list entry: `Problem`'s own `Display`)
     // and shown once, in a dismissable notice, instead of being lost to a log no one
     // watching the TUI would see.
     let (loaded_config, config_problems) = config::load(&proto::paths::config_path());

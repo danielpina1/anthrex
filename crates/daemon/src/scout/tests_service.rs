@@ -96,6 +96,7 @@ fn call(tool: &str) -> ToolCall {
         scout_id: Some(ID.into()),
         epic: None,
         chain: None,
+        lane: None,
     }
 }
 

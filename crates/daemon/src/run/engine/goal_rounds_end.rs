@@ -50,13 +50,20 @@ pub(super) fn cancelling_round(run: &Run) -> Option<u32> {
 
 /// The plan is approved, `by` the user or `--yes`: round 1's approval is the run's and
 /// fixes its layout (milestone 9.1 decision 46); a later round's leaves both as round 1
-/// set them (decision 12). A decider queued at the gate waits from now (task 12 review
-/// m7).
+/// set them (decision 12), and its own time is the round's (milestone 9.5 ruling RE-1).
+/// A decider queued at the gate waits from now (task 12 review m7).
 pub(super) fn approved(run: &mut Run, by: &str, now: u64) {
     if run.round() <= 1 {
         run.approved_by = Some(by.to_string());
         run.approved_at = Some(now);
         stages::fix_layout(run, now);
+    }
+    // Milestone 9.5 ruling RE-1 and decision 15: a later round's estimate runs from its
+    // approval, and every round's counts the time paused since.
+    let (later, paused) = (run.round() > 1, run.paused_secs);
+    if let Some(round) = run.rounds.last_mut() {
+        round.approved_at = later.then_some(now);
+        round.paused_before = paused;
     }
     for q in &mut run.decider_queue {
         q.queued_at = now;
@@ -164,10 +171,22 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
 /// `completed` unless a cancel made it `cancelled`, and `finish_edit`, when the cancel
 /// set it (`round_finish`), is cleared. The round's `ended_at` is set in the step that asks for its summary,
 /// so a summary written after that note is the round's (`orch::write_summary`). Round 1
-/// ends when a second round starts (`goal_rounds::iterate`, decision 10).
+/// ends when a second round starts (`goal_rounds::iterate`, decision 10). A run
+/// discarded or failed first ends it `cancelled` (milestone 9.5 decision 34).
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if !open_round(run) {
         return;
+    }
+    // Milestone 9.5 decision 34: a run that ended without completing ends its round
+    // `cancelled`, before `history::pass` writes the run's own line.
+    if matches!(run.state, RunState::Discarded | RunState::Failed) {
+        let (n, state) = (run.round(), run.state.label());
+        log(
+            run,
+            now,
+            format!("round {n} ended cancelled: the run is {state}"),
+        );
+        return end_round(run, RoundOutcome::Cancelled, now, fx);
     }
     let pr_end = run.state == RunState::Running && delivered(run);
     if run.state != RunState::Complete && !pr_end {

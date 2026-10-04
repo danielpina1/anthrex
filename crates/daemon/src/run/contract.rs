@@ -17,11 +17,19 @@ use super::model::{CheckRecord, ProofRecord, ReviewLevel, ReviewRecord, Run, Tas
 // Milestone 9.1's tier texts (decision 13 and the tier line of a bounce).
 #[path = "contract_tiers.rs"]
 mod tiers;
+#[cfg(test)]
+pub(crate) use tiers::deleted_test_file_message;
 pub(crate) use tiers::{
     BisectFix, bisect_fix_acceptance, bisect_fix_brief, bisect_fix_title,
-    deleted_test_file_message, shown, signal_unjustified, signals_block, signals_unanswered,
+    deleted_test_files_message, shown, signal_unjustified, signals_block, signals_unanswered,
     sync_fix_acceptance, sync_fix_brief, sync_fix_title,
 };
+
+// The diff clamp (decision 35, ruling Q4).
+#[path = "contract_clamp.rs"]
+mod clamp;
+pub(crate) use clamp::floor_boundary;
+pub use clamp::{DIFF_CUT_MARKER, REVIEW_DIFF_MAX, clamp_diff, clamp_with};
 
 /// The worker's system prompt (decision 30, exact). It never varies, so the cached
 /// prefix is stable (spec §14.2).
@@ -86,6 +94,10 @@ pub fn worker_prompt(run: &Run, task: &Task, extract: &str, notes: &str) -> Stri
         out.push_str("\n\n");
         out.push_str(section);
     }
+    // Milestone 9.5 decision 26: a paired task's implementer is told whose test it is.
+    if let Some(note) = super::contract_patterns::implementer_note(task) {
+        out.push_str(&format!("\n\n{note}"));
+    }
     out.push_str("\n\n");
     out.push_str(&task.spec.brief);
     out
@@ -147,8 +159,22 @@ pub fn handover_prompt(
     extract: &str,
     notes: &str,
 ) -> String {
-    let start = task.start_commit.as_deref().unwrap_or(run.head_for(task));
     let mut out = worker_prompt(run, task, extract, notes);
+    out.push_str(&handover_tail(run, task, reason, stat, patch));
+    out
+}
+
+/// [`handover_prompt`] after its worker prompt; a fresh test writer's too (milestone
+/// 9.5 decision 25).
+pub(crate) fn handover_tail(
+    run: &Run,
+    task: &Task,
+    reason: &str,
+    stat: &str,
+    patch: &str,
+) -> String {
+    let start = task.start_commit.as_deref().unwrap_or(run.head_for(task));
+    let mut out = String::new();
     out.push_str(&format!(
         "\n\nThis is session {} of this task.\nWhy a new session: {reason}\n",
         task.session
@@ -234,6 +260,8 @@ pub fn reviewer_prompt(
     if !signals.is_empty() {
         lines.push(signals);
     }
+    // Milestone 9.5 ruling RP-2: a paired task's signals are measured from its red.
+    lines.extend(super::contract_patterns::reviewer_note(task));
     let earlier: Vec<String> = task
         .reviews
         .iter()
@@ -541,54 +569,6 @@ pub const REVIEWER_STOPPED_TWICE: &str = "the reviewer stopped twice without a v
 /// Decision 35 (invented text): a reviewer whose process died mid-turn is resumed with
 /// this, the reviewer's form of `RESUME_AFTER_EXIT`.
 pub const REVIEWER_RESUME_AFTER_EXIT: &str = "[anthrex] Your session's process stopped in the middle of a turn and has been resumed. Finish your review and call submit_review, exactly once.";
-
-/// Decision 35 and ruling Q4: the reviewer's diff, and decision 30's hand-over diff, are
-/// clamped to this many bytes.
-pub const REVIEW_DIFF_MAX: usize = 16 * 1024;
-
-/// The line [`clamp_diff`] puts where it cut the middle out of a diff.
-pub const DIFF_CUT_MARKER: &str = "\n[anthrex: the middle of this diff was cut to fit]\n";
-
-/// A head-and-tail clamp on character boundaries: `text` itself when it is at most
-/// `max` bytes, else its first part, [`DIFF_CUT_MARKER`] and its last part, together at
-/// most `max` bytes and never more than 3 bytes short of it (the most a UTF-8 cut can
-/// cost, since the tail takes whatever the head's cut left over).
-pub fn clamp_diff(text: &str, max: usize) -> String {
-    clamp_with(text, max, DIFF_CUT_MARKER)
-}
-
-/// [`clamp_diff`] with another marker line; `messages::clamp` uses it (decision 29).
-pub fn clamp_with(text: &str, max: usize, marker: &str) -> String {
-    if text.len() <= max {
-        return text.to_string();
-    }
-    if max <= marker.len() {
-        return text[..floor_boundary(text, max)].to_string();
-    }
-    let budget = max - marker.len();
-    let head_end = floor_boundary(text, budget / 2);
-    let tail_len = budget - head_end;
-    let tail_start = ceil_boundary(text, text.len() - tail_len);
-    let mut out = String::with_capacity(max);
-    out.push_str(&text[..head_end]);
-    out.push_str(marker);
-    out.push_str(&text[tail_start..]);
-    out
-}
-
-pub(crate) fn floor_boundary(text: &str, mut index: usize) -> usize {
-    while !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn ceil_boundary(text: &str, mut index: usize) -> usize {
-    while !text.is_char_boundary(index) {
-        index += 1;
-    }
-    index
-}
 
 #[cfg(test)]
 #[path = "contract_tests.rs"]

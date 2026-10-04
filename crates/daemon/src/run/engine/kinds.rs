@@ -130,7 +130,7 @@ fn prepare(run: &mut Run, i: usize, (base, head): (String, String), fx: &mut Vec
         root: run.root.clone(),
         head_ref: head,
         base_ref: base,
-        path: run.review_path(&id),
+        path: run.review_path(&run.tasks[i].checkout_name()),
         base_tree: None,
     };
     run.tasks[i].gate_op = Some(op);

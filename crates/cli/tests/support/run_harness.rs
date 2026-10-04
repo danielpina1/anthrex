@@ -38,10 +38,11 @@ pub const NO_DECIDER_BIN: &str = "/nonexistent/anthrex-test/decider";
 /// How long one raw request may take, `run accept` and `run discard` aside: `run
 /// start`'s legal worst case is its preflight's git calls at the harness's 5 s
 /// `git_timeout_secs` (six calls, 30 s) plus the id draw's and the settings scan's
-/// (three more, 15 s) and the base's `.codex` listing (final fix batch F2, 5 s), 50 s;
-/// every other request is one engine step. Recorded in
-/// `docs/timing-budgets.md`.
-pub const REQUEST_WAIT: Duration = Duration::from_secs(60);
+/// (three more, 15 s) and the base's `.codex` listing (final fix batch F2, 5 s), 50 s,
+/// then its tuning (milestone 9.5 ruling T9-4: the daemon's `TUNING_START_BOUND`,
+/// 10 s), 60 s, and one engine step and the reply: 75 s. Every other request is one
+/// engine step. Recorded in `docs/timing-budgets.md`.
+pub const REQUEST_WAIT: Duration = Duration::from_secs(75);
 
 /// How long `Finish` may take: its own reads (three git calls, 15 s), then the op.
 /// Accept's merge runs under `ACCEPT_MERGE_TIMEOUT` (600 s, never shortened); its other
@@ -216,6 +217,11 @@ impl RunHarness {
             ("FAKE_AGENT_STDIN_FILE".into(), path(&io)),
             // M9.16: every MCP call a `fake-agent` makes (`RunHarness::mcp_log`).
             ("FAKE_AGENT_MCP_LOG".into(), path(&io.join("mcp.jsonl"))),
+            // Every line a `fake-agent` writes to stderr (`RunHarness::trail`).
+            (
+                "FAKE_AGENT_ERROR_LOG".into(),
+                path(&io.join("fake-agent.errors")),
+            ),
             ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
             ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
         ];
@@ -476,10 +482,11 @@ impl RunHarness {
             }
             if Instant::now() >= deadline {
                 panic!(
-                    "run {id} did not get there within {wait:?}; last snapshot:\n{}\n--- daemon.log:\n{}\n--- daemon.out:\n{}",
+                    "run {id} did not get there within {wait:?}; last snapshot:\n{}\n--- daemon.log:\n{}\n--- daemon.out:\n{}\n{}",
                     serde_json::to_string_pretty(&last).unwrap(),
                     self.log_tail(),
-                    self.out_tail()
+                    self.out_tail(),
+                    self.trail()
                 );
             }
             std::thread::sleep(Duration::from_millis(200));

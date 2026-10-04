@@ -534,6 +534,7 @@ fn host_ops_reconcile_as_not_started_and_are_emitted_again_after_restore() {
             op: 4,
             task_id: None,
             kind: kind.clone(),
+            lane: None,
         },
     );
     let journal = vec![JournalLine::Intent { op: 4, kind }];

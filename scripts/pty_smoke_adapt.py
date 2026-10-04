@@ -33,9 +33,10 @@ from pty_smoke_run import (
 DECIDER_DIR = f"/tmp/anthrex-smoke-adapt-deciders-{os.getpid()}"
 
 # `run start --goal`'s legal worst case: `ensure_daemon` (3.25 s) + `HANDSHAKE_TIMEOUT`
-# (5 s) + `GOAL_REQUEST_TIMEOUT` (1205 s, `crates/cli/src/run_cmd/adapt.rs`: the 575 s
-# `RUN_START_TIMEOUT`, the largest `deciders.timeout_secs` of 600 s, and 30 s of its own
-# git calls) = 1213.25 s, rounded up to 1300 s (about 7% over). Derived as
+# (5 s) + `GOAL_REQUEST_TIMEOUT` (1220 s, `crates/cli/src/run_cmd/adapt.rs`: the 585 s
+# `RUN_START_TIMEOUT`, the largest `deciders.timeout_secs` of 600 s, 30 s of its own
+# git calls, and the 5 s installed probe before triage) = 1228.25 s, rounded up to
+# 1300 s (about 6% over). Derived as
 # `pty_smoke_run.py` derives `RUN_CMD_TIMEOUT`; change the Rust constant, change this value.
 GOAL_CMD_TIMEOUT = 1300.0
 

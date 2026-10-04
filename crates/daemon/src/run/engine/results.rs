@@ -4,8 +4,10 @@
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, bisect, complete, deciders, delivery, dispatch,
     done, early, fallback, full, gates, history, holds, kinds, ladder, merge, orch_window, outbox,
-    planners, propagate, requests, review, run_scouts, stages, tiers, worker_messages,
+    planners, propagate, race, race_end, race_salvage, race_view, requests, review, run_scouts,
+    stages, tiers, worker_messages,
 };
+use crate::run::model::Run;
 
 /// Routes an op's result by the kind of the op it answers. A result for an op the run
 /// no longer has pending (stale, or replayed twice) is ignored.
@@ -27,12 +29,52 @@ pub(super) fn op_done(
         .task_id
         .as_deref()
         .and_then(|id| run.tasks.iter().position(|t| t.id() == id));
+    // Milestone 9.5 decision 22: a stopped lane's salvage is the race's, outside views.
+    if let (OpKind::RemoveWorktree { .. }, Some(i), Some(lane)) =
+        (&pending.kind, task, pending.lane)
+        && race_salvage::owns(run, i, Some(lane))
+    {
+        return race_salvage::removed(run, i, lane, result, now);
+    }
+    // Milestone 9.5 decision 20: a lane's op is answered in its lane's view; so is a
+    // check summary a lane waits for, whichever view started its decider. The crown is
+    // the task's: it makes the lane the task (decision 21).
+    let lane = match (&pending.kind, task) {
+        (OpKind::CrownRacer { .. }, _) => None,
+        (OpKind::Decide { decider_id, .. }, _) => race::lane_of_decider(run, *decider_id),
+        (_, Some(i)) => race_view::view_lane(&run.tasks[i], pending.lane).map(|l| (i, l)),
+        _ => None,
+    };
+    let bound = match lane {
+        Some((i, l)) => {
+            let answer = |run: &mut Run, fx: &mut Vec<Effect>| {
+                route(run, (op, pending.kind, task), result, now, fx)
+            };
+            race::with_lane(run, i, l, now, fx, answer).flatten()
+        }
+        None => route(run, (op, pending.kind, task), result, now, fx),
+    };
+    // The session's events that came before its window, now that its round has it.
+    if let Some(window_id) = bound {
+        early::replay(state, window_id, fx);
+    }
+}
+
+/// The op's result, to the module that owns the op; the window a `CreateWindow`
+/// bound, if any.
+fn route(
+    run: &mut Run,
+    (op, kind, task): (OpId, OpKind, Option<usize>),
+    result: OpResult,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> Option<u32> {
     let mut bound = None;
     // Controller ruling C-21 (3): a later hand-back into a sync task is recorded.
-    if let (OpKind::HandBack { run_head, .. }, Some(i)) = (&pending.kind, task) {
+    if let (OpKind::HandBack { run_head, .. }, Some(i)) = (&kind, task) {
         propagate::record_hand_back(run, i, run_head, &result);
     }
-    match (pending.kind, task) {
+    match (kind, task) {
         (kind @ OpKind::Proof { .. }, Some(i)) => {
             gates::proof_done(run, i, op, &kind, result, now, fx)
         }
@@ -118,10 +160,9 @@ pub(super) fn op_done(
         (kind @ OpKind::StartPlanner { .. }, _) => {
             bound = planners::started(run, &kind, result, now, fx);
         }
+        // Milestone 9.5 decision 21: the crown of a race's winner.
+        (OpKind::CrownRacer { .. }, Some(i)) => race_end::crown_done(run, i, result, now, fx),
         _ => {}
     }
-    // The session's events that came before its window, now that its round has it.
-    if let Some(window_id) = bound {
-        early::replay(state, window_id, fx);
-    }
+    bound
 }

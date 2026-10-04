@@ -93,6 +93,8 @@ pub(super) fn amend(route: Option<RouteSpec>, size: Option<Size>) -> PlanEdit {
         priority: None,
         deps: None,
         stage: None,
+        race: None,
+        pair: None,
     }
 }
 
@@ -443,6 +445,8 @@ fn a_mode_other_than_tdd_needs_a_reason() {
             size: None,
             deps: None,
             stage: None,
+            race: None,
+            pair: None,
         }])
     );
 }
@@ -468,6 +472,8 @@ fn the_brief_round_trips_its_newlines() {
             size: None,
             deps: None,
             stage: None,
+            race: None,
+            pair: None,
         }])
     );
 }

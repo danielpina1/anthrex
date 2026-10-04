@@ -13,6 +13,7 @@ use proto::{Runtime, Size, TaskState};
 use super::globs::{any_intersect, inside_area, intersects, literal_prefix};
 use super::model::Task;
 use super::plan::PlanError;
+use super::validate_patterns::Peers;
 use super::validate_stages::stage_rules;
 
 /// Where an edit batch may reach: the whole run, or (for M9's sub-planners) only an
@@ -42,13 +43,15 @@ pub(crate) fn is_valid_area_glob(glob: &str) -> bool {
 /// spec that names none) and applies to a pair only when the batch touches one of the
 /// two: a runtime the engine escalated to (rung 2, `run retry`) is not the plan's, and
 /// must not block every later edit (final review A-I1, the same reason as the L
-/// exemption); the profile-dependent rules run per task, in `resolve_task`.
+/// exemption); the profile-dependent rules run per task, in `resolve_task`. `peers` is
+/// what milestone 9.5's race and pair rules take a second runtime from.
 pub fn validate_tasks(
     tasks: &[Task],
     touched: &BTreeSet<String>,
     scope: &EditScope,
     (max_tasks, round): (u32, u32),
     default_runtime: Runtime,
+    peers: Peers<'_>,
 ) -> Vec<PlanError> {
     validate_tasks_with(
         tasks,
@@ -57,12 +60,17 @@ pub fn validate_tasks(
         scope,
         (max_tasks, round),
         default_runtime,
+        peers,
     )
 }
 
 /// The runtime the plan gives `task`: its spec's, or `default_runtime` when the spec
 /// names none or names one a task cannot run on (which `resolve_task` reports).
 fn planned_runtime(task: &Task, default_runtime: Runtime) -> Runtime {
+    // Milestone 9.5 decision 9a: a model list's pick is the plan's route.
+    if let Some(route) = task.list_pick.as_ref().and_then(|p| p.chosen_route()) {
+        return route.runtime;
+    }
     match task.spec.route.runtime {
         Some(runtime) if runtime != Runtime::Shell => runtime,
         _ => default_runtime,
@@ -80,6 +88,7 @@ pub fn validate_tasks_with(
     scope: &EditScope,
     (max_tasks, round): (u32, u32),
     default_runtime: Runtime,
+    (roster, installed): Peers<'_>,
 ) -> Vec<PlanError> {
     let mut errors = Vec::new();
     // Milestone 9.3 decision 14: `max_tasks` counts the tasks of `round`, the run's
@@ -188,6 +197,10 @@ pub fn validate_tasks_with(
         }
     }
     errors.extend(stage_rules(tasks, &by_id));
+    // Milestone 9.5 decisions 17 and 24: `race` and `pair`, on the touched tasks.
+    errors.extend(super::validate_patterns::validate(
+        tasks, touched, roster, installed,
+    ));
     errors.extend(cycles(tasks));
     errors
 }
@@ -343,9 +356,10 @@ impl<'a> Tarjan<'a> {
     }
 }
 
-/// A task that has started, for decision 41: any state from `preparing` to
-/// `merge_queue`, or `blocked` with a start commit (its worktree exists).
-fn has_started(task: &Task) -> bool {
+/// A task that has started, for decision 41's implicit dependencies: any state from
+/// `preparing` to `merge_queue`, or `blocked` with a start commit (its worktree exists).
+/// Named apart from `edits_state::has_started`, whose meaning differs (task 14's carry).
+fn under_way(task: &Task) -> bool {
     matches!(
         task.state,
         TaskState::Preparing
@@ -416,7 +430,7 @@ pub fn implicit_deps(tasks: &[Task]) -> Vec<Vec<String>> {
             // stages the later stage waits for the earlier, whatever the plan order,
             // unless it has started; an earlier stage never waits for a later one.
             let stages = earlier.spec.stage.cmp(&task.spec.stage);
-            let (w, on) = match (stages, has_started(earlier), has_started(task)) {
+            let (w, on) = match (stages, under_way(earlier), under_way(task)) {
                 (Ordering::Less, _, true) | (Ordering::Greater, true, _) => continue,
                 (Ordering::Less, _, false) => (i, j),
                 (Ordering::Greater, false, _) => (j, i),

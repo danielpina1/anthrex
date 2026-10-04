@@ -27,6 +27,7 @@ impl AgentState {
             focused,
             signals_seen: self.signals_seen,
             hooks_seen: self.hooks_seen,
+            codex_question: false,
         }
     }
 

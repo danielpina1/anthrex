@@ -87,6 +87,8 @@ pub(crate) fn add_fix(
         atomic: false,
         atomic_reason: None,
         addresses: Vec::new(),
+        race: false,
+        pair: false,
     };
     let (mut task, mut errors) = resolve_task_lenient(
         plan,
@@ -96,7 +98,7 @@ pub(crate) fn add_fix(
         run.limits.default_runtime,
     );
     task.branch = task_branch(&run.id, &id);
-    task.worktree = task_path(&run.wt_dir, &run.id, &id);
+    task.worktree = task_path(&run.wt_dir, &run.id, &task.checkout_name());
     task.notes
         .extend(protected_notes(&task.spec.owns, &run.protected_files));
     task.origin = spec.origin;
@@ -119,6 +121,7 @@ pub(crate) fn add_fix(
         &EditScope::Run,
         (run.limits.max_tasks, run.round()),
         run.limits.default_runtime,
+        (&run.roster, &run.orch.installed),
     ));
     let implicit = implicit_deps(&tasks);
     for (task, deps) in tasks.iter_mut().zip(implicit) {

@@ -251,6 +251,8 @@ fn only_the_reason_changing_sends_only_the_reason() {
             size: None,
             deps: None,
             stage: None,
+            race: None,
+            pair: None,
         }
     );
 }
@@ -575,6 +577,8 @@ fn the_largest_edit_fits_one_frame() {
         size: Some(proto::Size::L),
         deps: None,
         stage: Some(u16::MAX),
+        race: None,
+        pair: None,
     };
     let msg = proto::ClientMsg::RunTagged {
         id: u64::MAX,

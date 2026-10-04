@@ -3,7 +3,7 @@
 //! the entry Enter preselects (9.0.6 decision 17). `ui/alerts_view.rs` draws the view.
 //! Pure: no I/O.
 
-use super::alerts::{AlertKey, alerts};
+use super::alerts::{AlertKey, StageAlert, alerts};
 use super::{App, Effect};
 use crate::actions_request::ActionTarget;
 use crate::keymap::Command;
@@ -22,6 +22,13 @@ pub(crate) fn alert_node(key: &AlertKey) -> Option<(String, ActionTarget)> {
         | AlertKey::Hold { run, .. }
         | AlertKey::Delivery { run, .. } => Some((run.clone(), ActionTarget::Run)),
         AlertKey::Blocked { run, task } => Some((run.clone(), ActionTarget::Task(task.clone()))),
+        // Milestone 9.5 decision 45: a held stage resumes from its run's menu.
+        AlertKey::Stage {
+            run,
+            kind: StageAlert::Held,
+            ..
+        } => Some((run.clone(), ActionTarget::Run)),
+        AlertKey::Stage { run, stage, .. } => Some((run.clone(), ActionTarget::Stage(*stage))),
         AlertKey::Proposal(_) => None,
     }
 }
@@ -74,6 +81,8 @@ pub(crate) fn preselected(app: &App, key: &AlertKey) -> Option<ActionKind> {
         AlertKey::Delivery { kind, .. } => {
             (*kind == proto::DeliveryAlertKind::HostOpHeld).then_some(ActionKind::Resume)
         }
+        // Decision 45: `anthrex run resume` retries a held stage's tier 3.
+        AlertKey::Stage { kind, .. } => (*kind == StageAlert::Held).then_some(ActionKind::Resume),
     }
 }
 

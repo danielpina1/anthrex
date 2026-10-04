@@ -122,6 +122,16 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// same. `ProfileService::restore` calls it at daemon start (M8b.11). A missing
 /// directory has nothing to sweep.
 pub fn sweep_leftovers(repo_dir: &Path) -> io::Result<()> {
+    sweep_named(
+        repo_dir,
+        &[PROFILE_FILE, META_FILE, PROPOSAL_FILE, DETECTION_FILE],
+    )
+}
+
+/// [`sweep_leftovers`] for `files`' temp files (`<file>.<pid>.<n>.tmp`). Milestone 9.5
+/// decision 36: the run restore sweeps the files the runs write before any restored op
+/// can start a write (`run::driver::restore`).
+pub fn sweep_named(repo_dir: &Path, files: &[&str]) -> io::Result<()> {
     let entries = match std::fs::read_dir(repo_dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -132,9 +142,7 @@ pub fn sweep_leftovers(repo_dir: &Path) -> io::Result<()> {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        let ours = [PROFILE_FILE, META_FILE, PROPOSAL_FILE, DETECTION_FILE]
-            .iter()
-            .any(|file| name.starts_with(&format!("{file}.")));
+        let ours = (files.iter()).any(|file| name.starts_with(&format!("{file}.")));
         if ours && name.ends_with(".tmp") {
             match std::fs::remove_file(entry.path()) {
                 Ok(()) => removed = true,

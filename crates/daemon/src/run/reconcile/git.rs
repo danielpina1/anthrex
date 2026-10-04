@@ -192,13 +192,16 @@ pub(super) fn merge_candidate(
     }))
 }
 
-/// `CreateStageBranch` (milestone 9.1 decision 53): the branch at `from` is the op's
-/// result, an absent one is not started, and one anywhere else is a moved ref.
-pub(super) fn create_stage_branch(
+/// `CreateStageBranch` (milestone 9.1 decision 53), and milestone 9.5's `CrownRacer`
+/// (decision 27: the task branch only, `done` being `Crowned`; no re-pin here, a restart
+/// pins the checkout from `Task.branch`): the branch at `from` is the op's result `done`,
+/// an absent one is not started (the op, a create-only compare-and-swap, re-runs), and
+/// one anywhere else, or symbolic, is a moved ref.
+pub(super) fn created_at(
     g: Git<'_>,
     root: &Path,
-    branch: &str,
-    from: &str,
+    (branch, from): (&str, &str),
+    done: OpResult,
 ) -> Result<Reconciled, String> {
     let refname = format!("refs/heads/{branch}");
     // Controller ruling C-15 (M-4): a symbolic ref there is not the op's branch.
@@ -209,7 +212,7 @@ pub(super) fn create_stage_branch(
     }
     Ok(match read(g, root, &refname)? {
         None => Reconciled::NotStarted,
-        Some(head) if head == from => Reconciled::Replay(OpResult::StageCreated),
+        Some(head) if head == from => Reconciled::Replay(done),
         Some(head) => Reconciled::Replay(OpResult::RefMoved {
             reason: format!("{refname} exists at {}, not {}", short(&head), short(from)),
         }),
@@ -438,13 +441,18 @@ pub(super) fn abort_merge(g: Git<'_>, worktree: &Path) -> Result<Reconciled, Str
 pub(super) fn remove_worktree(
     g: Git<'_>,
     root: &Path,
-    path: &Path,
+    (path, keep_path): (&Path, bool),
     repo: &Path,
     salvage_ref: &str,
     notes: &mut Vec<String>,
 ) -> Result<Reconciled, String> {
     if path.exists() {
-        return Ok(Reconciled::NotStarted);
+        // Milestone 9.5 decision 27: a kept lane checkout (`keep_path`) is done once
+        // its salvage ref exists.
+        return Ok(match keep_path && read(g, root, salvage_ref)?.is_some() {
+            true => removed(Some(salvage_ref.to_string())),
+            false => Reconciled::NotStarted,
+        });
     }
     if repo.exists() {
         match std::fs::remove_dir_all(repo) {
@@ -472,7 +480,15 @@ pub(super) fn remove_worktree(
         }
     }
     let salvage_ref = read(g, root, salvage_ref)?.map(|_| salvage_ref.to_string());
-    Ok(Reconciled::Replay(OpResult::Removed { salvage_ref }))
+    Ok(removed(salvage_ref))
+}
+
+/// `Removed`, replayed: which locks a lane's removal cleared is not known any more.
+fn removed(salvage_ref: Option<String>) -> Reconciled {
+    Reconciled::Replay(OpResult::Removed {
+        salvage_ref,
+        cleared_locks: Vec::new(),
+    })
 }
 
 /// `Accept`: a base that already contains the run head was accepted. The run head is

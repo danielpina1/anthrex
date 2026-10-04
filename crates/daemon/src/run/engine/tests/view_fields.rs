@@ -30,6 +30,8 @@ fn amend(priority: i32) -> Vec<PlanEdit> {
         size: None,
         deps: None,
         stage: None,
+        race: None,
+        pair: None,
     }]
 }
 

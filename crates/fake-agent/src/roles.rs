@@ -120,8 +120,19 @@ pub fn find(role: Option<&str>, task: Option<&str>, session: &str, resume: bool)
 /// The role and the script key of a session's `anthrex mcp` server (M9.12, the flags
 /// `daemon::headless::argv::mcp_args` writes): an orchestrator's key is `run`, a
 /// sub-planner's its `--epic`, a run scout's its `--scout` id without the run's
-/// `<h4>-` prefix, a research task's scout its `--task`, and anyone else's its `--task`.
+/// `<h4>-` prefix, a research task's scout its `--task`, a racer's `<task>-<lane>`
+/// (milestone 9.5 decision 31: `racer-t1-a-1.jsonl`), and anyone else's its `--task`
+/// (a test writer's `test_writer-t1-1.jsonl`).
 pub fn key(server: Option<&McpServer>) -> (Option<String>, Option<String>) {
+    if let Some(server) = server
+        && server.flag("--role") == Some("racer")
+    {
+        let key = match (server.flag("--task"), server.flag("--lane")) {
+            (Some(task), Some(lane)) => Some(format!("{task}-{lane}")),
+            _ => None,
+        };
+        return (Some("racer".into()), key);
+    }
     let Some(server) = server else {
         return (None, None);
     };

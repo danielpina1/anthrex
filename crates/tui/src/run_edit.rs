@@ -461,6 +461,8 @@ impl TaskEditForm {
             size: (self.size != original.size).then_some(self.size),
             deps: None,
             stage: (self.stage != original.stage).then_some(self.stage),
+            race: None,
+            pair: None,
         };
         let changed = route_changed
             || mode_changed

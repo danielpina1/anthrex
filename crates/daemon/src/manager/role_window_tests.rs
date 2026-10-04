@@ -17,6 +17,7 @@ fn run_ref(run_id: &str) -> RunRef {
         task_id: None,
         role: AgentRole::Orchestrator,
         session: 1,
+        lane: None,
     }
 }
 
@@ -30,6 +31,7 @@ fn role(run_id: &str) -> RoleLaunch {
             scout_id: None,
             epic: None,
             chain: Some("o-3f9a".into()),
+            lane: None,
         },
         instructions: "the orchestrator contract".into(),
         effort: Effort::High,

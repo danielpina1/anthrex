@@ -102,7 +102,7 @@ fn read_ignore(table: &toml::Table, config: &mut Config, problems: &mut Vec<Prob
             problems.push(Problem {
                 key: "git.ignore".to_string(),
                 message: "expected a string".to_string(),
-                default: "entry dropped".to_string(),
+                default: crate::ENTRY_SKIPPED.to_string(),
             });
             continue;
         };
@@ -110,7 +110,7 @@ fn read_ignore(table: &toml::Table, config: &mut Config, problems: &mut Vec<Prob
             Some(message) => problems.push(Problem {
                 key: "git.ignore".to_string(),
                 message: format!("{text:?}: {message}"),
-                default: "entry dropped".to_string(),
+                default: crate::ENTRY_SKIPPED.to_string(),
             }),
             None => ignore.push(text.to_string()),
         }

@@ -280,6 +280,7 @@ fn reviewer_prompt_uses_the_latest_summary() {
         summary: summary.map(str::to_string),
         summary_source: source,
         tier: None,
+        lane: None,
     };
     task.checks = vec![
         check(Some("old summary"), Some(DeciderSource::Decider)),

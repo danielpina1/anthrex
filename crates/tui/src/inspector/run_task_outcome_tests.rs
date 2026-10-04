@@ -122,6 +122,7 @@ fn review(verdict: Verdict, blocking: bool) -> ReviewInfo {
         summary: "\n  looks right  \nsecond line".into(),
         findings: Vec::new(),
         blocking,
+        lane: None,
     }
 }
 

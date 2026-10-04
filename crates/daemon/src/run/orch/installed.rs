@@ -6,7 +6,9 @@ use proto::{ModelEntry, OrchestratorChoice, Route, RoutingCandidate, Runtime};
 
 use super::launch::{Resolved, resolve_orchestrator};
 use super::roles::NOT_INSTALLED;
+use crate::run::model::Run;
 use crate::run::roster::peer;
+use crate::run::route_pick::Installed;
 
 /// A runtime's configured binary when that binary is not installed, `None` when it is.
 pub type Missing<'a> = &'a dyn Fn(Runtime) -> Option<String>;
@@ -74,6 +76,36 @@ pub fn resolve_installed(
     candidates.append(&mut resolved.candidates);
     resolved.candidates = candidates;
     Ok(resolved)
+}
+
+/// Milestone 9.5 rulings RH-5 and RL-3: [`resolve_installed`] for planned `run` from its
+/// frozen `[orchestrator.agent]`, default runtime and roster, below an explicit
+/// `choice` and the run's `orchestrator` list over `window` (what the orchestrator's
+/// window finds installed).
+pub fn resolve_planned(
+    run: &Run,
+    choice: Option<&OrchestratorChoice>,
+    window: &Installed,
+    missing: Missing<'_>,
+) -> Result<Resolved, String> {
+    let (agent, runtime) = (run.limits.orch.agent.config(), run.limits.default_runtime);
+    let today = || resolve_installed(choice, &agent, runtime, &run.roster, missing);
+    let list = &run.limits.route_lists.orchestrator;
+    super::roles::lists::orchestrator(choice, list, agent.effort, window, today)
+}
+
+/// Rulings RH-5 and RL-3: decision 29's route for `run`'s promotion
+/// ([`resolve_orchestrator`], no fallback), below an explicit `choice` and the run's
+/// `orchestrator` list over `installed`.
+pub fn resolve_promoted(
+    run: &Run,
+    choice: Option<&OrchestratorChoice>,
+    installed: &Installed,
+) -> Result<Resolved, String> {
+    let (agent, runtime) = (run.limits.orch.agent.config(), run.limits.default_runtime);
+    let today = || resolve_orchestrator(choice, &agent, runtime, &run.roster);
+    let list = &run.limits.route_lists.orchestrator;
+    super::roles::lists::orchestrator(choice, list, agent.effort, installed, today)
 }
 
 /// The start's refusal when `who`'s `runtime` is not installed; `hint` says what else

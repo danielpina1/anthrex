@@ -408,7 +408,7 @@ fn reconcile_remove_worktree_gone_with_salvage_ref() {
     // (the daemon died between the removal and the prune). t3 was never touched.
     write(&t1, "src/a.txt", "uncommitted\n");
     assert_eq!(
-        salvage(real_git(), &t1, &salvage_ref("t1"), "salvage t1", T).unwrap(),
+        salvage(real_git(), &t1, &salvage_ref("t1"), "salvage t1", false, T).unwrap(),
         Some(salvage_ref("t1"))
     );
     remove_worktree(real_git(), w.root(), &t1, T).unwrap();
@@ -418,6 +418,9 @@ fn reconcile_remove_worktree_gone_with_salvage_ref() {
             root: w.root().to_path_buf(),
             path: path.clone(),
             salvage_ref: salvage_ref(task),
+            keep_head: false,
+            clear_locks: false,
+            keep_path: false,
         };
         pend(&mut w.run, op, Some(task), kind);
     }
@@ -428,12 +431,16 @@ fn reconcile_remove_worktree_gone_with_salvage_ref() {
             (
                 1,
                 Reconciled::Replay(OpResult::Removed {
-                    salvage_ref: Some(salvage_ref("t1"))
+                    salvage_ref: Some(salvage_ref("t1")),
+                    cleared_locks: Vec::new(),
                 })
             ),
             (
                 2,
-                Reconciled::Replay(OpResult::Removed { salvage_ref: None })
+                Reconciled::Replay(OpResult::Removed {
+                    salvage_ref: None,
+                    cleared_locks: Vec::new(),
+                })
             ),
             (3, Reconciled::NotStarted),
         ]

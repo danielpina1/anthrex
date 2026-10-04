@@ -5,6 +5,8 @@
 //! resolved. The box is drawn by `ui/alerts.rs`, the view by `ui/alerts_view.rs`, and
 //! the view's keys are `app/alerts_view.rs`'s (decision 11). Pure: no I/O.
 
+pub use super::alerts_stage::StageAlert;
+use super::alerts_stage::stage_alerts;
 use super::{App, Effect, ReviewTarget};
 use crate::inspector::run_format::reason_text;
 use crate::safe_text::one_line;
@@ -36,6 +38,12 @@ pub enum AlertKey {
         kind: DeliveryAlertKind,
         stage: Option<u16>,
         n: usize,
+    },
+    /// Milestone 9.5 decision 45: one of a stage's tier-3 states.
+    Stage {
+        run: String,
+        stage: u16,
+        kind: StageAlert,
     },
 }
 
@@ -172,7 +180,7 @@ pub fn task_needs_you(run: &RunInfo, task: &proto::TaskInfo) -> bool {
     blocked_text(run, task).is_some()
 }
 
-fn orchestrator_lives(run: &RunInfo) -> bool {
+pub(super) fn orchestrator_lives(run: &RunInfo) -> bool {
     run.orchestrator.as_ref().is_some_and(|orch| orch.live)
 }
 
@@ -244,6 +252,14 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             };
             let detail = run.halted_reason.as_deref();
             push(3, AlertKey::Halted(id.clone()), text, None, detail, None);
+        }
+        for (stage, kind, text) in stage_alerts(run) {
+            let key = AlertKey::Stage {
+                run: id.clone(),
+                stage,
+                kind,
+            };
+            push(3, key, text, None, None, None);
         }
         // Milestone 9.2 ruling R-13: what the user must act on for the delivery, from
         // the daemon's typed alerts (never its attention text), at priority 3.

@@ -81,6 +81,7 @@ fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
             scout_id: scout.map(String::from),
             epic: epic.map(String::from),
             chain: chain.clone(),
+            lane: None,
         };
         let mut argv = vec!["anthrex".to_string()];
         argv.extend(daemon::headless::argv::mcp_args(&target, 12, socket).expect("an mcp role"));
@@ -103,6 +104,7 @@ fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
                         chain: chain.clone(),
                         window_id: 12,
                         socket: socket.to_path_buf(),
+                        lane: None,
                     }
                 );
             }
@@ -291,4 +293,79 @@ fn scout_accepts_task_instead_of_scout() {
     let opts = options(&["--role", "scout", "--scout", "s-1", "--window", "4"]).unwrap();
     assert_eq!(opts.scout_id.as_deref(), Some("s-1"));
     assert_eq!(opts.task_id, None);
+}
+
+/// Milestone 9.5: the daemon's racer and test-writer argv parse; `--role racer`
+/// requires `--lane`, and every other role refuses one.
+#[test]
+fn lane_is_required_for_racers_and_refused_otherwise() {
+    use proto::RaceLane;
+    let socket = Path::new("/tmp/anthrex-x/d.sock");
+    for (role, lane) in [
+        (AgentRole::Racer, Some(RaceLane::A)),
+        (AgentRole::Racer, Some(RaceLane::B)),
+        (AgentRole::TestWriter, None),
+    ] {
+        let target = McpTarget {
+            role,
+            run_id: "add-reset-3f9a".into(),
+            task_id: Some("t1".into()),
+            scout_id: None,
+            epic: None,
+            chain: None,
+            lane,
+        };
+        let argv = daemon::headless::argv::mcp_args(&target, 12, socket).expect("an mcp role");
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        assert_eq!(
+            options(&argv[1..]).unwrap_or_else(|e| panic!("{argv:?}: {e}")),
+            mcp::McpOptions {
+                role,
+                run_id: "add-reset-3f9a".into(),
+                task_id: Some("t1".into()),
+                scout_id: None,
+                epic: None,
+                chain: None,
+                lane,
+                window_id: 12,
+                socket: socket.to_path_buf(),
+            }
+        );
+    }
+
+    let error = options(&[
+        "--role", "racer", "--run", "r1", "--task", "t1", "--window", "3",
+    ])
+    .expect_err("a racer without a lane");
+    assert!(
+        error.contains("--role racer requires --lane <a|b>"),
+        "{error}"
+    );
+    for argv in [
+        &["--role", "worker", "--run", "r1", "--task", "t1"][..],
+        &["--role", "test_writer", "--run", "r1", "--task", "t1"][..],
+        &["--role", "reviewer", "--run", "r1", "--task", "t1"][..],
+        &["--role", "orchestrator", "--run", "r1"][..],
+        &["--role", "planner", "--run", "r1", "--epic", "mail"][..],
+        &["--role", "scout", "--scout", "s-1"][..],
+    ] {
+        let mut argv = argv.to_vec();
+        argv.extend(["--lane", "a", "--window", "3"]);
+        let error = options(&argv).expect_err("--lane outside a racer");
+        assert!(
+            error.contains("--lane <a|b> is accepted only with --role racer"),
+            "{argv:?}: {error}"
+        );
+    }
+    assert!(
+        options(&[
+            "--role", "racer", "--run", "r1", "--task", "t1", "--lane", "c", "--window", "3",
+        ])
+        .is_err(),
+        "a lane is a or b"
+    );
+    assert!(
+        options(&["--role", "test_writer", "--task", "t1", "--window", "3"]).is_err(),
+        "a test writer belongs to a run"
+    );
 }

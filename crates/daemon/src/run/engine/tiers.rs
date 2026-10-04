@@ -95,7 +95,7 @@ pub(super) fn start_tier1(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect
     let task = &run.tasks[i];
     let id = task.id().to_string();
     let head = task.head.clone().unwrap_or_default();
-    let mut job = spec(run, 1, task.stage(), run.proof_path(&id));
+    let mut job = spec(run, 1, task.stage(), run.proof_path(&task.checkout_name()));
     job.scratch = Some(ScratchAt {
         root: run.root.clone(),
         commit: head.clone(),
@@ -216,6 +216,7 @@ fn task_facts(
         summary: None,
         summary_source: None,
         tier: Some(record(outcome, now)),
+        lane: None,
     });
     command
 }

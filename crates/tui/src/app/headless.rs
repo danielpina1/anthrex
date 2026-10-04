@@ -38,8 +38,11 @@ impl App {
 
     /// `refuse_headless_control`, and milestone 9 decision 11's second case for `C-b x`
     /// and `C-b X` only: the focused window is the orchestrator of a run this client
-    /// shows as not terminal. `C-b R` stays allowed.
+    /// shows as not terminal. `C-b R` stays allowed. A placeholder: none (9.5 d. 44).
     pub(super) fn refuse_kill_or_remove(&mut self) -> bool {
+        if self.focused_window().is_some_and(|w| w.placeholder) {
+            return false;
+        }
         if self.refuse_headless_control() {
             return true;
         }

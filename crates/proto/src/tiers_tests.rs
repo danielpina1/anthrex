@@ -51,6 +51,7 @@ fn a_full_info() -> FullInfo {
         failing: vec!["daemon::run::merges".into()],
         bisect_fixes: 1,
         note: Some("no single culprit: two merges".into()),
+        held: false,
     }
 }
 
@@ -196,6 +197,8 @@ fn an_amend(stage: Option<u16>) -> PlanEdit {
         size: None,
         deps: None,
         stage,
+        race: None,
+        pair: None,
     }
 }
 

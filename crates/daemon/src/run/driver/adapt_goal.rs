@@ -15,7 +15,7 @@ use proto::{
     ProposalState, RepoProfile, RoleRoutingInput, RunPath, RunReply, TriageInfo,
 };
 
-use super::super::build::{Planned, Shape};
+use super::super::build::{Planned, Shape, TuneOnce};
 use super::super::delivery::{DeliveryStart, Frozen};
 use super::super::{RunService, unix_now};
 use super::{Adaptation, read_evidence, unparseable};
@@ -210,8 +210,11 @@ impl RunService {
             choice: orchestrator.clone(),
         };
         let spec = profile.spec();
+        // Milestone 9.5 decision 12 (ruling T9-5): one settings read and one tuning for
+        // the fast build and its fallback.
+        let once = TuneOnce::with_config(config.clone());
         let TriageRoute::Fast(task) = route else {
-            let p = (planned(info), frozen);
+            let p = (planned(info), frozen, &once);
             return self
                 .start_planned(&goal, &spec, dir.clone(), flags, p)
                 .await;
@@ -221,13 +224,13 @@ impl RunService {
         let all = (true, trust_project, unconfined_checks);
         let done = DeliveryStart::Done(frozen.clone());
         let built = match self
-            .build_delivered(plan, dir.clone(), all, Shape::Fast, done)
+            .build_delivered(plan, dir.clone(), all, Shape::Fast, done, &once)
             .await
         {
             Ok(run) => Ok(run),
             Err(BuildError::Plan(errors)) => Err(errors),
             Err(BuildError::NotFast(reason)) => {
-                let p = (planned(triage::not_fast(info, reason)), frozen);
+                let p = (planned(triage::not_fast(info, reason)), frozen, &once);
                 return self.start_planned(&goal, &spec, dir, flags, p).await;
             }
             Err(BuildError::Refused(message)) => return refused(message),
@@ -235,7 +238,7 @@ impl RunService {
         let mut run = match triage::check_fast(built) {
             Ok(run) => run,
             Err(reason) => {
-                let p = (planned(triage::not_fast(info, reason)), frozen);
+                let p = (planned(triage::not_fast(info, reason)), frozen, &once);
                 return self.start_planned(&goal, &spec, dir, flags, p).await;
             }
         };
@@ -288,19 +291,23 @@ impl RunService {
                     .and_then(|mut e| e.pop())
             });
             let listing = Git::new(&g, timeout).ok(&root, &[os("ls-files"), os("-z")])?;
-            Ok((report, triage::tracked_files(&listing)))
+            let thresholds = crate::run::tuning_io::thresholds(&repo_dir);
+            Ok((report, triage::tracked_files(&listing), thresholds))
         })
         .await;
         match read {
-            Ok((report, (files, total))) => {
+            Ok((report, (files, total), thresholds)) => {
+                input.thresholds = thresholds;
                 if let Some(report) = report {
                     input.report_summary = Some(report.summary);
                     input.report_files = report.files;
                 }
                 input.files = files;
                 input.files_total = total;
-                let decision = decide(&adaptation.deciders, &DeciderRequest::Triage(input)).await;
-                self.record_triage(adaptation, pre, (goal, profile), &decision)
+                // Milestone 9.5 rulings RL-2, I6: routed over what is installed now.
+                let routed = crate::decider::call::routed(&adaptation.deciders).await;
+                let decision = decide(&routed.ctx, &DeciderRequest::Triage(input)).await;
+                self.record_triage(adaptation, pre, (goal, profile), (&routed, &decision))
                     .await;
                 decision
             }
@@ -313,7 +320,7 @@ impl RunService {
 }
 
 /// How long the goal's start waits for pre-run triage's history line (review M-6).
-const TRIAGE_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(in crate::run::driver) const TRIAGE_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Pre-run triage records made by this daemon: each record id's `<n>`.
 static TRIAGE_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -329,7 +336,7 @@ impl RunService {
         adaptation: &Adaptation,
         pre: &Preflight,
         (goal, profile): (&str, &RepoProfile),
-        decision: &Decision,
+        (routed, decision): (&crate::decider::call::Routed, &Decision),
     ) {
         let n = TRIAGE_SEQ.fetch_add(1, Ordering::Relaxed);
         let nanos = std::time::SystemTime::now()
@@ -341,12 +348,20 @@ impl RunService {
             ..RoleRoutingInput::default()
         };
         let session = format!("{nanos}/{n}");
-        let route = &adaptation.deciders.route;
+        let route = &routed.ctx.route;
         let roster = &adaptation.scouts.context().roster.current();
-        let strength = self.ctx.settings.current().orchestrator.deciders.strength;
-        let chosen = (route, roles::decider_candidates(roster, route, strength));
-        let at = unix_now();
-        let mut record = roles::decider_record(None, (&session, "triage"), &[], chosen, input, at);
+        let chosen = (
+            route,
+            roles::decider_candidates(roster, route, routed.strength()),
+        );
+        let session = (session.as_str(), "triage");
+        let pick = (routed.pick.as_ref(), routed.moved.as_ref());
+        let at = (input, unix_now());
+        let mut record = roles::decider_listed(None, session, &[], chosen, pick, at);
+        // Ruling T10b-1: a triage has no run log yet; the daemon's log says it.
+        if let Some(line) = routed.moved_line() {
+            tracing::info!("{line}");
+        }
         let (outcome, result) = roles::decider_outcome(decision);
         roles::finish(&mut record, outcome, result);
         let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);
@@ -382,6 +397,8 @@ fn triage_input(
         files: Vec::new(),
         files_total: 0,
         planner_task_cap: orchestrator.agent.planner_task_cap,
+        // Milestone 9.5 decision 13: `triage` reads the repository's own.
+        thresholds: Default::default(),
     }
 }
 
@@ -397,7 +414,7 @@ impl RunService {
         profile: &ProfileSpec,
         dir: PathBuf,
         (trust_project, unconfined_checks): (bool, bool),
-        (planned, frozen): (Planned, Frozen),
+        (planned, frozen, once): (Planned, Frozen, &TuneOnce),
     ) -> RunReply {
         // D14: only a continued goal (`chain_goal.rs`) builds an untriaged planned run.
         let Some(info) = planned.triage.clone() else {
@@ -414,7 +431,10 @@ impl RunService {
         let shape = Shape::Planned(Box::new(planned));
         let flags = (false, trust_project, unconfined_checks);
         let done = DeliveryStart::Done(frozen);
-        let run = match self.build_delivered(plan, dir, flags, shape, done).await {
+        let run = match self
+            .build_delivered(plan, dir, flags, shape, done, once)
+            .await
+        {
             Ok(run) => run,
             Err(error) => return refused(error.text()),
         };

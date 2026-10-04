@@ -491,3 +491,23 @@ fn review_findings_go_to_the_report() {
     let fx = running("", &[review("v2", "M")]);
     assert_eq!(crate::run::report::research_text(fx.run()), None);
 }
+
+/// Ruling FW-2 (e): a review task's `ResolveTarget` lost at a restart frees its
+/// `gate_op`, so the running pass resolves the target again instead of leaving the
+/// task in review with nothing in flight.
+#[test]
+fn a_lost_resolve_target_resolves_again_after_a_restart() {
+    let mut fx = running("", &[review("v1", "S")]);
+    fx.tick();
+    let (op, _) = pending_one(&fx, "ResolveTarget", Some("v1"));
+    assert_eq!(fx.task("v1").gate_op, Some(op));
+    super::control_restore::restart(&mut fx, Vec::new());
+    assert_eq!(fx.task("v1").gate_op, None, "the lost op is not the task's");
+    super::control::resume(&mut fx);
+    fx.tick();
+    let (again, _) = pending_one(&fx, "ResolveTarget", Some("v1"));
+    assert_ne!(again, op);
+    assert_eq!(fx.task("v1").gate_op, Some(again));
+    assert_eq!(fx.task("v1").state, TaskState::Review);
+    assert_eq!(readers_busy(fx.run()), 1);
+}

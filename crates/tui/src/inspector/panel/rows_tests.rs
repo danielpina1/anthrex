@@ -62,6 +62,7 @@ fn round_key(role: AgentRole, session: u32, round: u32) -> NodeKey {
         run: "r1".into(),
         task: "t2".into(),
         role,
+        lane: None,
         session,
         round,
     }

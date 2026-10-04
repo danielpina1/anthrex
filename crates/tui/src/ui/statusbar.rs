@@ -76,8 +76,9 @@ pub(crate) fn render_with(frame: &mut Frame, app: &App, area: Rect, all: &[crate
     // alert's role, the key in the accent. It is measured before the hints, so no
     // hint drop reaches it. The final fix wave's M1: the key shows only where `C-b a`
     // opens the view; under a modal, a screen, the plan review or the open view the
-    // count stays alone.
-    if !app.sidebar_visible
+    // count stays alone. Milestone 9.5 decision 42: under the plan review, which hides
+    // the alerts, the count shows whatever the sidebar.
+    if (!app.sidebar_visible || app.plan_review.is_some())
         && let Some(top) = all.first()
     {
         spans.push(Span::styled(

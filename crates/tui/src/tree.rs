@@ -5,6 +5,7 @@ mod round_rows;
 mod rows;
 mod run_rows;
 mod runs;
+mod task_rounds;
 mod types;
 
 pub use forest::{SubagentNode, subagent_forest};
@@ -16,7 +17,7 @@ use proto::{
 };
 pub use round_rows::{earlier_round, muted_row, round_text};
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
-pub use run_rows::{RunFilter, display_rounds, round_label, run_rows};
+pub use run_rows::{RunFilter, round_label, round_label_with_lane, run_rows};
 use runs::{ShownRun, group_projects, idle_matches_filter, run_matches_filter};
 pub use runs::{
     awaiting_holds, idle_outcome, idle_text, is_paused, run_progress, run_status, run_title,
@@ -24,6 +25,7 @@ pub use runs::{
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+pub use task_rounds::display_rounds;
 pub use types::{DisplayRound, RuntimeCounts};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -61,10 +63,13 @@ pub enum NodeKey {
     /// Milestone 9.3 decision 32: a project's idle orchestrator, by its chain id.
     Chain(String),
     /// `round` is the display round (milestone 8c decision 14), not `AgentRoundInfo.round`.
+    /// `lane` is a racer's or lane reviewer's race lane (milestone 9.5 ruling T20-1):
+    /// both lanes number their reviewers from 1, so the lane tells them apart.
     AgentRound {
         run: String,
         task: String,
         role: AgentRole,
+        lane: Option<proto::RaceLane>,
         session: u32,
         round: u32,
     },

@@ -272,6 +272,8 @@ fn iterate_on_a_complete_run_starts_round_two() {
             first_stage: 2,
             windows_before: windows,
             scouts_before: 0,
+            approved_at: None,
+            paused_before: 0,
         }
     );
     let wake = round_wake(2, 1, "add a --json flag\nto every command");
@@ -334,6 +336,7 @@ fn the_round_wake_survives_notes_and_is_cleared_once_delivered() {
             digest_revision: revision,
             notes_seq: seq,
             request,
+            first_turn: false,
         }))
     };
     woken(&mut fx, None);

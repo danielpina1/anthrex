@@ -36,6 +36,7 @@ fn window(id: u32, kind: WindowKind, run: Option<RunRef>) -> WindowInfo {
         kind,
         run,
         signals_seen: false,
+        placeholder: false,
     }
 }
 
@@ -45,6 +46,7 @@ fn orchestrator_ref(run: &str, session: u32) -> RunRef {
         task_id: None,
         role: AgentRole::Orchestrator,
         session,
+        lane: None,
     }
 }
 
@@ -57,6 +59,7 @@ fn intent_only(kind: OpKind) -> (Run, Vec<JournalLine>) {
             op: 4,
             task_id: None,
             kind: kind.clone(),
+            lane: None,
         },
     );
     (run, vec![JournalLine::Intent { op: 4, kind }])
@@ -81,6 +84,7 @@ fn create(run_id: &str) -> OpKind {
                 scout_id: None,
                 epic: None,
                 chain: None,
+                lane: None,
             },
             run_ref: r,
             instructions: String::new(),
@@ -151,6 +155,7 @@ fn start_scout_is_not_replayed() {
         task_id: None,
         role: AgentRole::Scout,
         session: 1,
+        lane: None,
     };
     let windows = vec![window(9, WindowKind::Headless, Some(scout))];
     let out = reconcile(

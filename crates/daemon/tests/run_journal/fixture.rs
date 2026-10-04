@@ -53,6 +53,7 @@ pub fn run_at(data_dir: &Path, root: &Path, wt_dir: &Path, base_sha: &str) -> Ru
     };
     let config = config::Orchestrator::default();
     let ctx = BuildContext {
+        tuning: Default::default(),
         id: RUN_ID.into(),
         wt_dir: wt_dir.to_path_buf(),
         data_dir: data_dir.join("runs").join(RUN_ID),
@@ -140,8 +141,11 @@ pub fn round(
         relaunch: None,
         closed_pid: None,
         exited_pid: None,
+        orphaned: false,
         activity: None,
         last_text: None,
+        lane: None,
+        environment_failed: false,
     }
 }
 
@@ -151,6 +155,7 @@ pub fn run_ref(task: &str, role: AgentRole, session: u32) -> RunRef {
         task_id: Some(task.into()),
         role,
         session,
+        lane: None,
     }
 }
 
@@ -199,6 +204,7 @@ pub fn pend(run: &mut Run, op: OpId, task: Option<&str>, kind: OpKind) {
             op,
             task_id: task.map(str::to_string),
             kind,
+            lane: None,
         },
     );
     run.next_op = run.next_op.max(op + 1);
@@ -225,6 +231,7 @@ pub fn window(id: u32, run_ref: Option<RunRef>, kind: WindowKind) -> WindowInfo 
         kind,
         run: run_ref,
         signals_seen: false,
+        placeholder: false,
     }
 }
 
@@ -373,6 +380,7 @@ pub fn full_run(data_dir: &Path) -> Run {
             input: None,
             text: "wrong".into(),
         }],
+        lane: None,
     });
     task.checks.push(CheckRecord {
         at: 1_250,
@@ -385,6 +393,7 @@ pub fn full_run(data_dir: &Path) -> Run {
         summary: Some("the decider's summary".into()),
         summary_source: Some(proto::DeciderSource::Decider),
         tier: None,
+        lane: None,
     });
     task.proofs.push(ProofRecord {
         at: 1_260,
@@ -396,6 +405,8 @@ pub fn full_run(data_dir: &Path) -> Run {
         matched: true,
         red_tail: "red".into(),
         head_tail: "green".into(),
+        lane: None,
+        red_only: false,
     });
     task.salvage_refs = vec!["refs/anthrex/salvage/x".into()];
     task.failure_log = vec!["a failure".into()];

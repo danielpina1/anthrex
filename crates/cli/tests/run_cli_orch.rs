@@ -293,6 +293,7 @@ fn fast_run(h: &RunHarness) -> String {
 #[test]
 fn promote_with_orchestrator_choice() {
     let h = RunHarness::orch("", &[]);
+    h.script(ORCH, &[read_message()]);
     let id = fast_run(&h);
     let out = run(&h, &["promote", &id, "--orchestrator", "codex:"]);
     ok(&out);
@@ -300,6 +301,30 @@ fn promote_with_orchestrator_choice() {
     let route = info.orchestrator.expect("promoted").route;
     assert_eq!((route.runtime, route.model.as_str()), (Runtime::Codex, ""));
     assert_eq!(info.path, Some(RunPath::Plan));
+    // Milestone 9.5 ruling T5a-2: a Codex orchestrator's first prompt is the last
+    // argument of its launch, after `--`, as in 9.3; nothing is pasted as a first turn.
+    let deadline = std::time::Instant::now() + RUN_WAIT;
+    let argv: Vec<String> = loop {
+        if let Some(line) = h.io_lines(ORCH, "args").first() {
+            break serde_json::from_str(line).unwrap();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the orchestrator's argv"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    let first = argv.last().unwrap();
+    assert_eq!(argv[argv.len() - 2], "--", "{argv:?}");
+    assert!(first.contains("promoted from the fast path"), "{argv:?}");
+    let pending = &h.run_json(&id)["orch"]["orchestrator"]["first_turn_pending"];
+    assert_ne!(*pending, json!(true));
+    assert!(
+        !h.io_lines(ORCH, "stdin")
+            .iter()
+            .any(|l| l.contains("first_message")),
+        "nothing pasted as a first turn"
+    );
 }
 
 /// Pinning (decision 29, M9.7): the repeat reply carries no time.

@@ -32,7 +32,10 @@ fn w_sends_put_and_saved_shows_the_line() {
         doc: saved_doc.clone(),
         origin: origin(&[]),
     };
-    assert!(app.on_daemon(reply(saved, id)).is_empty());
+    // Milestone 9.5 decision 48 (task 11's fix round): the save's one effect asks the
+    // project's tuning again, since a saved budget can become explicit.
+    let effects = app.on_daemon(reply(saved, id));
+    super::settings_screen::only_the_tuning_ask(&app, &effects);
     assert!(!app.settings_saving());
     assert_eq!(screen(&app).outcome, Some(SaveOutcome::Saved));
     assert!(!screen(&app).dirty());

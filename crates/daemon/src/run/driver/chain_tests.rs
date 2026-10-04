@@ -280,6 +280,7 @@ async fn a_long_poll_resolved_before_an_adopt_answers_for_the_new_run() {
         scout_id: None,
         epic: None,
         chain: Some(CHAIN.into()),
+        lane: None,
     };
     // Resolved while idle: the chain's last run.
     let resolved = rig.runs.resolved(call).unwrap();

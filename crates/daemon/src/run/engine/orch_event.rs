@@ -52,6 +52,9 @@ pub enum OrchEvent {
         /// `request_wake`, which only this clears, and only while it is still round
         /// `n`'s.
         request: Option<u32>,
+        /// Milestone 9.5 decision 38: the wake was the session's first turn, which only
+        /// this clears.
+        first_turn: bool,
     },
     /// Decisions 16 and 39: the orchestrator read the digest at `digest_revision`,
     /// whose answer included the wake notes up to `notes_seq` (`wake::notes_seq` of
@@ -76,12 +79,18 @@ pub enum OrchEvent {
     /// Whole-branch fix round 2, item 2: the driver holds `run_id`'s wake-up only
     /// because its orchestrator's window was at a prompt (`held`), or no longer does.
     WakeHeld { run_id: String, held: bool },
+    /// Milestone 9.5 decision 39: `run_id`'s live orchestrator window has been quiet
+    /// with no signal for its quiet time (`waiting`: a start prompt), or no longer is.
+    StartPrompt { run_id: String, waiting: bool },
     /// M9.17 fix round 2: `run promote`'s installed check found `installed` (decision
     /// 17's map); a fast-path run with no orchestrator yet records it, so its promoted
-    /// sub-planners' route agrees with the check.
+    /// sub-planners' route agrees with the check. Whole-branch review B, M8: `window` is
+    /// what the orchestrator's window finds, which the promotion's `orchestrator` list
+    /// is read over, as a planned start's is.
     Installed {
         run_id: String,
         installed: std::collections::BTreeMap<String, bool>,
+        window: std::collections::BTreeMap<String, bool>,
     },
     /// Decision 43: the record of a session the driver dispatches (a run-bound decider,
     /// a run scout), sent before the session starts.
@@ -91,6 +100,9 @@ pub enum OrchEvent {
         reply: ReplyId,
         run_id: String,
         decision: Box<RoleRoutingDecision>,
+        /// A line for the run log once the record is kept (ruling T10b-1: a decider the
+        /// probe moved to the peer runtime).
+        log: Option<String>,
     },
     /// Decision 43: that session ended.
     RoleRouteEnded {
@@ -109,6 +121,17 @@ pub enum OrchEvent {
         run_id: String,
         window_id: u32,
         first_prompt: String,
+    },
+    /// Milestone 9.5 decision 38: window `window_id`'s anthrex server answered its first
+    /// `tools/list`; the driver checked it is run `run_id`'s orchestrator window.
+    McpReady { run_id: String, window_id: u32 },
+    /// Fix round 1, ruling T5a-1: the driver saw window `window_id`, the run's
+    /// orchestrator at its `launch`, with `signals_seen` while its first turn waits for
+    /// the notice; `MCP_READY_GRACE_SECS` counts from the first such report.
+    FirstSignal {
+        run_id: String,
+        window_id: u32,
+        launch: u64,
     },
 }
 
@@ -135,10 +158,13 @@ impl OrchEvent {
             | OrchEvent::OrchestratorWindow { .. }
             | OrchEvent::OtlpToken { .. }
             | OrchEvent::WakeHeld { .. }
+            | OrchEvent::StartPrompt { .. }
             | OrchEvent::Installed { .. }
             | OrchEvent::RoleRouteEnded { .. }
             | OrchEvent::ChainWindowGone { .. }
-            | OrchEvent::AdoptLost { .. } => None,
+            | OrchEvent::AdoptLost { .. }
+            | OrchEvent::McpReady { .. }
+            | OrchEvent::FirstSignal { .. } => None,
         }
     }
 }

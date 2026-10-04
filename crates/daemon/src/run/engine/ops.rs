@@ -134,6 +134,11 @@ pub enum OpKind {
         timeout_secs: u64,
         setup: Option<String>,
         env: Vec<(String, String)>,
+        /// Milestone 9.5 decision 25 (ruling RP-1): only the run at `red`, a paired
+        /// task's red check; `head` is not run and `OpResult::Proof.red_failed` is the
+        /// answer.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        red_only: bool,
     },
     /// Decision 34's check. With `scratch` (ruling T13-I3), `dir` is the task's scratch
     /// worktree (`<task>.proof`, the proof's) and the check runs on the claimed commit,
@@ -223,10 +228,22 @@ pub enum OpKind {
     /// Decision 20: `salvage(path, salvage_ref, …)` then `remove_worktree`, both writes
     /// through `GitQueue::write`. The result is `Removed { salvage_ref }` (`Some` only
     /// when the worktree was dirty).
+    ///
+    /// Milestone 9.5 decision 22, a race lane's (`driver/lane_ops.rs::remove_lane`):
+    /// with `clear_locks`, `git::clear_stale_locks` of the lane checkout's own git
+    /// directory first (`Removed.cleared_locks`); with `keep_head`, a clean checkout is
+    /// salvaged at its head too; with `keep_path`, the salvage only, the checkout and
+    /// every lock in it left in place.
     RemoveWorktree {
         root: PathBuf,
         path: PathBuf,
         salvage_ref: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keep_head: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_locks: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keep_path: bool,
     },
     /// Decision 37's ref guard before `complete` (M8a.14): `guard_refs`, a read.
     /// `RefCheck::Ok` is `RefsOk`; `BaseAdvanced` sends `Event::BaseAdvanced`, then
@@ -318,7 +335,8 @@ pub enum OpKind {
         project: PathBuf,
     },
     /// Decision 11: `WindowManager::restart` of the orchestrator window, which re-passes
-    /// its role with its session; the result is `Restarted`, or `Failed`.
+    /// its role with its session; the result is `Restarted` (`RestartedFresh` when it
+    /// could not resume), or `Failed`.
     RestartOrchestrator { window_id: u32 },
     /// Decision 20: a run scout on M8b's `ScoutService`; the result is `ScoutStarted`.
     StartScout {
@@ -359,6 +377,20 @@ pub enum OpKind {
         repo: crate::host::HostRepo,
         op: crate::run::delivery::ops::HostOp,
     },
+    /// Milestone 9.5 decision 21 (ruling T1-2): the crown of a race lane, one
+    /// compare-and-swap creating `refs/heads/<task_branch>` at `lane_head`
+    /// (`git::crown`), a write through `GitQueue::write`; no checkout step. **Executor
+    /// contract** (`driver/lane_ops.rs::crown_racer`): on `Crowned`, re-pin `checkout`
+    /// (the lane checkout) so its own branch is the task branch (review ruling I2,
+    /// `worktree::pinned::repin_own`), in memory only; on `RefMoved` or an error, re-pin
+    /// nothing. Results: `Crowned { head }`, `RefMoved`, `Failed`.
+    CrownRacer {
+        root: PathBuf,
+        task_branch: String,
+        lane_head: String,
+        adopt: bool,
+        checkout: PathBuf,
+    },
 }
 
 impl OpKind {
@@ -396,6 +428,7 @@ impl OpKind {
             OpKind::CreateStageBranch { .. } => "CreateStageBranch",
             OpKind::Propagate(_) => "Propagate",
             OpKind::Host { .. } => "Host",
+            OpKind::CrownRacer { .. } => "CrownRacer",
         }
     }
 }

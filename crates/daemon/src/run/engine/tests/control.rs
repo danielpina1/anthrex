@@ -67,6 +67,8 @@ fn amend_brief(task: &str, brief: &str) -> PlanEdit {
         size: None,
         deps: None,
         stage: None,
+        race: None,
+        pair: None,
     }
 }
 
@@ -349,6 +351,8 @@ fn a_paused_run_refuses_tools_and_most_requests() {
         size: None,
         deps: None,
         stage: None,
+        race: None,
+        pair: None,
     };
     applied(&edit(&mut fx, vec![priority]));
     assert_alive(&fx);

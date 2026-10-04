@@ -56,7 +56,9 @@ pub struct HeadlessSpec {
     /// checked (Claude, or a Codex CLI that does not load project config).
     #[serde(default)]
     pub codex_config_guard: Option<codex_guard::CodexConfigGuard>,
-    /// Milestone 8b decision 28: a Claude worker's `PreToolUse` output-filter hook.
+    /// Milestone 8b decision 28: a worker-like session's output filter, as the
+    /// `PreToolUse` hook on Claude and, on Codex, as `codex_filter_note` after its
+    /// contract (milestone 9.5 decision 28; `None`: no filter).
     #[serde(default)]
     pub output_filter: Option<crate::output_filter::FilterHook>,
 }
@@ -92,6 +94,10 @@ pub struct McpTarget {
     /// type: it reaches the daemon as `proto::ToolCall.chain`.
     #[serde(default)]
     pub chain: Option<String>,
+    /// A racer's lane (`--lane`), milestone 9.5. Not a wire type: it reaches the daemon
+    /// as `proto::ToolCall.lane`.
+    #[serde(default)]
+    pub lane: Option<proto::RaceLane>,
 }
 
 /// Which session a launch starts or continues.

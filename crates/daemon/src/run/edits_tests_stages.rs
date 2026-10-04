@@ -20,6 +20,8 @@ fn amend_stage(task_id: &str, stage: u16, priority: Option<i32>) -> PlanEdit {
         size: None,
         deps: None,
         stage: Some(stage),
+        race: None,
+        pair: None,
     }
 }
 

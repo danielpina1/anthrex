@@ -99,11 +99,24 @@ fn adopt(run: &mut Run, prev: &Run, window_id: u32, now: u64, fx: &mut Vec<Effec
         o.window_id = Some(window_id);
         o.otlp_token = p.otlp_token.clone();
         o.session = p.session;
-        o.routing = p.routing.clone();
+        // Review 10b's carry: the chain kept the session's route, so its record says
+        // so (ruling RH-5), as a fresh continued session's does.
+        o.routing = crate::run::orch::roles::RoleSnapshot {
+            source: crate::run::orch::roles::lists::CHAIN_SOURCE.to_string(),
+            ..p.routing.clone()
+        };
         o.launches = p.launches;
         o.first_prompt = p.first_prompt.clone();
         o.live = true;
         o.exited_at = None;
+        // Milestone 9.5 decision 37: the session's counter now, what `prev` was
+        // credited since its base plus where it started counting.
+        let spent = prev
+            .orchestrator_usage
+            .saturating_sub(prev.orchestrator_base);
+        let mut at = p.usage_at_adopt.unwrap_or_default();
+        at += spent;
+        o.usage_at_adopt = Some(at);
     }
     let ended = (prev.short(), outcome(prev));
     let wake = next_goal_wake(run.short(), ended, run.orch.yes, &run.goal);
@@ -154,6 +167,7 @@ pub(super) fn adopt_lost(
     o.window_id = None;
     o.live = false;
     o.first_prompt = first_prompt;
+    super::orch_window::own_session(run);
     // Re-review N1: the goal is in the fresh session's prompt; round 1's request
     // wake would give it twice.
     super::wake::clear_request(run, 1);

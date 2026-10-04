@@ -29,7 +29,8 @@ pub use git::{
 };
 use git::{KNOWN_GIT_KEYS, read_git};
 pub use orchestrator::{
-    AgentConfig, ClaudeAuth, ClaudeHeadless, Deciders, Metering, Onboarding, Orchestrator, Scouts,
+    AgentConfig, Candidate, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, Metering,
+    Onboarding, Orchestrator, Pick, RouteList, RouteLists, Scouts, Tuning, TuningConfig,
     default_roster,
 };
 use runtimes::{read_runtimes, report_unknown_runtimes};
@@ -122,8 +123,15 @@ pub struct Problem {
     pub default: String,
 }
 
+/// A [`Problem`]'s `default` for a list entry that was dropped: printed `(entry
+/// skipped)`, not `(using entry skipped)` (milestone 9.5 decision 9a).
+pub(crate) const ENTRY_SKIPPED: &str = "entry skipped";
+
 impl std::fmt::Display for Problem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.default == ENTRY_SKIPPED {
+            return write!(f, "{}: {} ({ENTRY_SKIPPED})", self.key, self.message);
+        }
         write!(f, "{}: {} (using {})", self.key, self.message, self.default)
     }
 }

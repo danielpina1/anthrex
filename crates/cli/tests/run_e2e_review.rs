@@ -291,7 +291,20 @@ fn e2e_a_reviewer_whose_model_is_refused_blocks_at_once_on_the_error() {
     );
     let id = h.start(&plan("", &[task("t1", &["a.txt"], "")]), true);
     // One task path; no engine timer is on it (docs/timing-budgets.md).
-    let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Blocked, RUN_WAIT);
+    // The block lands on the failed turn; the reviewer's round ends when its process is
+    // seen to exit, which can be a moment later, so the wait covers both.
+    let run = h.wait_run(
+        &id,
+        |r| {
+            let t1 = t(r, "t1");
+            t1.state == TaskState::Blocked
+                && t1
+                    .rounds
+                    .iter()
+                    .any(|a| a.role == AgentRole::Reviewer && a.ended_at.is_some())
+        },
+        RUN_WAIT,
+    );
     let t1 = t(&run, "t1");
     let block = t1.block.as_ref().expect("a blocked task has its block");
     assert_eq!(

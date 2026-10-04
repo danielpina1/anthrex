@@ -177,6 +177,7 @@ async fn an_adopted_window_reaches_its_chain_after_an_evicted_chain_iterates() {
         window_id: rig.window,
         socket: rig.socket.clone(),
         chain: Some(CHAIN.into()),
+        lane: None,
     };
     let call = |tool: &'static str, args: Value| {
         let opts = opts.clone();
@@ -216,6 +217,7 @@ async fn start_goal_from_an_unchained_orchestrator_is_refused_in_its_words() {
         window_id: rig.window,
         socket: rig.socket.clone(),
         chain: None,
+        lane: None,
     };
     let (ok, text) = tokio::time::timeout(
         ANSWER,

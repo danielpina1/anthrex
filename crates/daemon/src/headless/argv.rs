@@ -31,7 +31,13 @@ pub struct CliCaps {
     pub codex_project_config_paths: &'static [&'static str],
     /// The flags that stop Codex loading project config; `None`: impossible.
     pub codex_user_config_only: Option<&'static [&'static str]>,
+    /// How a Codex worker, racer or test writer gets the output filter (M9.5 decision 28).
+    pub codex_filter: CodexFilter,
 }
+
+// Milestone 9.5 decision 28's `CodexFilter` lives with the filter it selects (task 19
+// review m4: `output_filter` stays a leaf that imports nothing of `headless`).
+pub use crate::output_filter::CodexFilter;
 
 /// Decision 54's key names under `"sandbox"`. `write_allow` is a dotted path into
 /// nested objects.
@@ -117,6 +123,7 @@ pub const CLI_CAPS: CliCaps = CliCaps {
     codex_loads_project_config: true,
     codex_project_config_paths: &[".codex/config.toml", ".codex/hooks.json"],
     codex_user_config_only: None,
+    codex_filter: CodexFilter::Instruction,
 };
 
 /// Which of decision 53's three Codex branches a run started under (ruling T23-C1):
@@ -245,6 +252,8 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
         AgentRole::Scout => "scout",
         AgentRole::Planner => "planner",
         AgentRole::Decider => return None,
+        AgentRole::Racer => "racer",
+        AgentRole::TestWriter => "test_writer",
     };
     let mut args = vec!["mcp".to_string(), "--role".into(), role.into()];
     // M8b decision 15: a repository-level scout belongs to no run.
@@ -264,6 +273,11 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
     // Milestone 9.3 (KG §3.4): a chained orchestrator names its chain.
     if let Some(chain) = &target.chain {
         args.extend(["--chain".into(), chain.clone()]);
+    }
+    // Milestone 9.5: a racer names its lane, and no other role does (the CLI refuses
+    // `--lane` for any other, task 2 review m2).
+    if let Some(lane) = target.lane.filter(|_| target.role == AgentRole::Racer) {
+        args.extend(["--lane".into(), lane.label().into()]);
     }
     args.extend([
         "--window".into(),
@@ -368,12 +382,12 @@ pub fn claude_args(
 
 /// One Codex turn's argv (decision 25): `exec --json` for the first turn, `exec resume
 /// <id> --json` for every later one, then the project-config exclusion when the CLI has
-/// one, the MCP server, the instructions, effort and approval policy, the sandbox, a
-/// worker's writable roots, the model when named, `--`, and the turn's message. `exec
-/// resume` rejects `-s` (M8a.1 item 6), so a resume passes `-c sandbox_mode=…` unless
-/// the caps say otherwise. Since final fix batch F1d Codex's network, `$TMPDIR` and
-/// `/tmp` are pinned off ([`CODEX_SANDBOX_PINS`]). Every TOML string comes from
-/// `launch::codex::toml_string`.
+/// one, the MCP server, the instructions (with M9.5 decision 28's filter note), effort
+/// and approval policy, the sandbox, a worker's writable roots, the model when named,
+/// `--`, and the turn's message. `exec resume` rejects `-s` (M8a.1 item 6), so a resume
+/// passes `-c sandbox_mode=…` unless the caps say otherwise. Since final fix batch F1d
+/// Codex's network, `$TMPDIR` and `/tmp` are pinned off ([`CODEX_SANDBOX_PINS`]). Every
+/// TOML string comes from `launch::codex::toml_string`.
 pub fn codex_args(
     spec: &HeadlessSpec,
     session: &SessionArg,
@@ -414,7 +428,12 @@ pub fn codex_args(
     }
     config(format!(
         "developer_instructions={}",
-        toml_string(&spec.instructions)
+        toml_string(&crate::output_filter::codex_instructions(
+            &spec.instructions,
+            exe,
+            spec.output_filter.as_ref(),
+            caps.codex_filter
+        ))
     ));
     config(format!(
         "model_reasoning_effort={}",
@@ -467,3 +486,7 @@ pub(crate) fn effort(effort: Effort) -> &'static str {
 #[cfg(test)]
 #[path = "argv_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "argv_lane_tests.rs"]
+mod lane_tests;

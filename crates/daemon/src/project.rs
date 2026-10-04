@@ -62,6 +62,8 @@ pub fn detect_roots_with(git: &OsStr, cwd: &Path, timeout: Duration) -> Detected
         "--git-common-dir",
         "--show-toplevel",
     ]);
+    // AGENTS.md rule 11 (W2 re-review N1): every inherited git variable dropped.
+    subprocess::scrub_inherited_git(&mut command);
 
     // `run_captured`, not `run`: the plain `Outcome` this command produces cannot tell
     // "git could not even be started" apart from "git ran and exited non-zero", and

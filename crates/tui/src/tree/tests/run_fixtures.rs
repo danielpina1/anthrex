@@ -60,7 +60,7 @@ pub(crate) fn task(id: &str, title: &str, size: Size, state: TaskState) -> TaskI
     serde_json::from_value(value).expect("a minimal TaskInfo")
 }
 
-fn round(
+pub(crate) fn round(
     role: AgentRole,
     session: u32,
     window: Option<u32>,
@@ -148,6 +148,7 @@ pub(crate) fn pty(id: u32, name: &str, project: &str, status: Status) -> WindowI
         kind: WindowKind::Pty,
         run: None,
         signals_seen: false,
+        placeholder: false,
     }
 }
 
@@ -167,6 +168,7 @@ pub(crate) fn run_ref(run_id: &str, task: Option<&str>, role: AgentRole, session
         task_id: task.map(str::to_owned),
         role,
         session,
+        lane: None,
     }
 }
 
@@ -221,6 +223,7 @@ pub(crate) fn three_task_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
         summary: "looks right".into(),
         findings: vec![],
         blocking: false,
+        lane: None,
     }];
 
     let mut t1 = task("t1", "spawn", Size::M, TaskState::Working);
@@ -361,6 +364,7 @@ fn gemini_t2(now: u64) -> TaskInfo {
         head_passed: true,
         matched: true,
         ok: true,
+        lane: None,
     });
     t2.last_check = Some(proto::CheckInfo {
         at: now - 1000,
@@ -373,6 +377,7 @@ fn gemini_t2(now: u64) -> TaskInfo {
         decider_summary: None,
         summary_source: None,
         tier: None,
+        lane: None,
     });
     let mut work = worker(1, Some(7), Runtime::Codex, now - 1560);
     work.route = t2.route.clone();
@@ -403,6 +408,7 @@ fn gemini_t2(now: u64) -> TaskInfo {
                 finding(Severity::Minor, "crates/daemon/src/hooks.rs", 40, "comment"),
             ],
             blocking: true,
+            lane: None,
         },
         ReviewInfo {
             round: 2,
@@ -411,6 +417,7 @@ fn gemini_t2(now: u64) -> TaskInfo {
             summary: String::new(),
             findings: vec![],
             blocking: false,
+            lane: None,
         },
     ];
     t2.history = [(45_060, "review r1 changes"), (44_400, "check passed")]
@@ -573,3 +580,9 @@ pub(crate) fn planner_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
     .collect();
     (snapshot(now, vec![info]), vec![])
 }
+
+// Milestone 9.5 task 20: a race and a pair, kept apart so this file stays focused.
+mod patterns;
+pub(crate) use patterns::{
+    lane_reviews_fixture, pair_fixture, pair_writing_fixture, race_fixture, racers_live_fixture,
+};

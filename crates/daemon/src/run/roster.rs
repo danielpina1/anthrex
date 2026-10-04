@@ -150,6 +150,11 @@ pub fn escalate(roster: &[ModelEntry], route: &Route) -> Route {
     route.clone()
 }
 
+// Milestone 9.5 ruling RL-1: the roster picks without the routes failed in a task.
+#[path = "roster_skipping.rs"]
+mod skipping;
+pub use skipping::{escalate_skipping, pick_reviewer_skipping};
+
 #[cfg(test)]
 #[path = "roster_tests.rs"]
 mod tests;

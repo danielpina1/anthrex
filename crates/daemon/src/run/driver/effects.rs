@@ -297,11 +297,12 @@ impl RunService {
                 digest_revision,
                 notes_seq,
                 request,
+                first_turn,
             } => self.queue_wake(
                 run_id,
                 window_id,
                 text,
-                (digest_revision, notes_seq, request),
+                (digest_revision, notes_seq, request, first_turn),
             ),
             // Milestone 9.3 decision 23 (`driver/chain_ops.rs`), off every lock.
             Effect::AdoptOrchestrator {

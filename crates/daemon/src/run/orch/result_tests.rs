@@ -26,6 +26,7 @@ fn check(at: u64, ok: bool) -> CheckRecord {
         summary: None,
         summary_source: None,
         tier: None,
+        lane: None,
     }
 }
 
@@ -72,6 +73,8 @@ fn full_run() -> Run {
         matched: true,
         red_tail: String::new(),
         head_tail: String::new(),
+        lane: None,
+        red_only: false,
     }];
     t.reviews = vec![review(
         1,
@@ -127,6 +130,8 @@ fn task_result_carries_every_field() {
         "deps",
         "implicit_deps",
         "route",
+        "race",
+        "pair",
         "review_route",
         "state",
         "block",
@@ -183,7 +188,7 @@ fn task_result_carries_every_field() {
     );
     assert_eq!(
         r["proofs"],
-        json!([{"at": "12:10", "test": "b::parses", "red": "a1b2c3d", "ok": true}])
+        json!([{"at": "12:10", "test": "b::parses", "red": "a1b2c3d", "ok": true, "red_only": false}])
     );
     assert_eq!(
         r["reviews"],
@@ -342,6 +347,8 @@ fn the_cap_holds_at_the_schema_maxima() {
                 matched: true,
                 red_tail: text(4000),
                 head_tail: text(4000),
+                lane: None,
+                red_only: false,
             })
             .collect();
         t.orch.messages = (0..50)

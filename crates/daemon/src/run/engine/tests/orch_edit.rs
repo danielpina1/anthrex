@@ -435,6 +435,8 @@ fn but_the_log(run: &crate::run::model::Run) -> crate::run::model::Run {
     let mut run = run.clone();
     run.plan_edits.clear();
     run.revision = 0;
+    // Milestone 9.5 decision 15: the logged batch is a change, so its step's time.
+    run.last_step_at = 0;
     run.orch.digest_rev = 0;
     run.orch.digest_fp = 0;
     run

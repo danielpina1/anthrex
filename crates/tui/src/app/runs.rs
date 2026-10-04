@@ -313,6 +313,12 @@ impl App {
             .is_some_and(|until| until > self.run_now())
     }
 
+    /// Milestone 9.5 decision 43: rate-limited, or waiting out a failed turn until its
+    /// retry (the daemon clears `failed_until` once it sends the continue).
+    pub fn round_waits(&self, round: &AgentRoundInfo) -> bool {
+        self.rate_limited(round) || round.failed_until.is_some()
+    }
+
     /// Decision 11: the rows the canvas, the painter, the inspector, the reveal, the
     /// selection keys and the mouse read. The sidebar keeps reading `rows()`.
     pub fn nav_rows(&self) -> Vec<Row<'_>> {

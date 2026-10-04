@@ -1,24 +1,23 @@
 //! The worker launches of `dispatch.rs`, split out of it (milestone 9.3 task 4b, a
 //! move-only split): the plan gate's pre-warm (decision 14), writer dispatch into task
 //! worktrees (decision 19), the launch of a worktree prepared while the run was not
-//! running (ruling T14-I2), and worker sessions, first or fresh (decisions 24–26, 30).
-//! Pure (design decision 2).
+//! running (ruling T14-I2). The worker sessions themselves are `dispatch_session.rs`'s
+//! (decisions 24–26, 30). Pure (design decision 2).
 
 use crate::run::phases::set_state;
 
-use proto::{AgentRole, Runtime, TaskState};
+use proto::TaskState;
 
-use super::{history, new_round, window_limit_reached};
-use crate::run::contract::{handover_prompt, worker_prompt};
+use super::history;
+use super::session::launch_worker;
+use crate::run::engine::race::Start;
 use crate::run::engine::schedule::{
     dispatch_order, held_hub_waits_for, hub_started, is_reader_task, may_return_to_working,
     op_in_flight, size_check_pending, writers_busy,
 };
-use crate::run::engine::{Effect, OpKind, done, emit_op, gate_holds, ladder, next_op};
+use crate::run::engine::{Effect, OpKind, concurrency, emit_op, gate_holds, next_op, pair};
 use crate::run::env::profile_env;
-use crate::run::model::{FreshSession, Run, Task};
-use crate::run::orch::contract::notes_section;
-use crate::run::role_launch::{jitter_ms, session_uuid_of, worker_spec};
+use crate::run::model::Run;
 
 fn prepare_in_flight(run: &Run, i: usize) -> bool {
     op_in_flight(run, run.tasks[i].id(), |k| {
@@ -76,6 +75,8 @@ pub(super) fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             || !task.spec.deps.is_empty()
             || !task.implicit_deps.is_empty()
             || prepare_in_flight(run, i)
+            // Milestone 9.5 decision 18: a racing task's checkouts are its lanes'.
+            || task.spec.race
         {
             continue;
         }
@@ -90,6 +91,9 @@ pub(super) fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     // F3 review N1: a held hub task lets only what it waits for start.
     let only = held_hub_waits_for(run);
+    // Milestone 9.5 decision 18: a race waiting for its second slot at the head of the
+    // line holds it.
+    let mut first = true;
     for i in dispatch_order(run) {
         // M8b decision 19: a task waiting for its size cross-check is not runnable;
         // milestone 9 decision 28: nor is one whose approval hold is not approved.
@@ -108,12 +112,30 @@ pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         if busy >= usize::from(run.limits.max_writers) || hub_started(run) {
             break;
         }
+        let head_of_line = std::mem::replace(&mut first, false);
+        match super::super::race::start(run, i, now) {
+            Start::Single => {}
+            Start::Wait if head_of_line => break,
+            Start::Wait => continue,
+            Start::Race(peer) => {
+                history(run, i, now, "dispatched");
+                super::super::race::dispatch_race(run, i, peer, now, fx, prepare);
+                continue;
+            }
+        }
+        // Milestone 9.5 decision 16: a task whose runtime is at its cap is skipped; a
+        // paired task's is its test writer's (the final fix wave's A-I3).
+        if !concurrency::has_room(run, pair::dispatch_runtime(run, i)) {
+            continue;
+        }
         if run.tasks[i].hub
             && (busy > 0 || run.tasks.iter().any(|t| may_return_to_working(t.state)))
         {
             continue;
         }
         set_state(&mut run.tasks[i], TaskState::Preparing, now);
+        // Milestone 9.5 decision 25: a paired task starts with its test writer.
+        pair::begin(run, i);
         history(run, i, now, "dispatched");
         if prepare_in_flight(run, i) {
             // A pre-warm still running: its result continues the dispatch.
@@ -150,116 +172,4 @@ pub(super) fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             prepare(run, i, head, fx);
         }
     }
-}
-
-/// A new worker session for task `i`, starting at `start` (decisions 24–26, 30); a
-/// sync task's merge is handed back into its worktree first (milestone 9.1 decision 51).
-pub(in crate::run::engine) fn launch_worker(
-    run: &mut Run,
-    i: usize,
-    start: String,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    if super::super::propagate::hand_back_first(run, i, &start, now, fx) {
-        return;
-    }
-    let prompt =
-        |run: &Run, task: &Task| worker_prompt(run, task, "", &notes_section(&task.orch.messages));
-    launch(run, i, Some(start), prompt, now, fx);
-}
-
-/// A fresh worker session for a started task (rung 2, or a resume that failed): its
-/// first turn is decision 30's hand-over prompt, ending with the messages a failed
-/// resume carried (decision 29).
-pub(in crate::run::engine) fn launch_fresh(
-    run: &mut Run,
-    i: usize,
-    fresh: &FreshSession,
-    stat: &str,
-    patch: &str,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let prompt = |run: &Run, task: &Task| {
-        let mut text = handover_prompt(
-            run,
-            task,
-            &fresh.reason,
-            stat,
-            patch,
-            "",
-            &notes_section(&task.orch.messages),
-        );
-        if let Some(append) = &fresh.append {
-            text.push_str("\n\n");
-            text.push_str(append);
-        }
-        text
-    };
-    launch(run, i, None, prompt, now, fx);
-}
-
-/// Session `n + 1` of task `i`, its first turn built once the session number is known;
-/// `start` is set on the first (a task blocked by the window limit has not started).
-fn launch(
-    run: &mut Run,
-    i: usize,
-    start: Option<String>,
-    first_turn: impl FnOnce(&Run, &Task) -> String,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    if window_limit_reached(run, i, now) {
-        return;
-    }
-    // Ruling T12-I1: a new round ends any claim of an earlier one, and (ruling T12-N)
-    // every op the earlier ones awaited.
-    done::drop_claim(
-        run,
-        i,
-        "this session was replaced; its task_done no longer applies",
-        fx,
-    );
-    ladder::supersede(run, i);
-    let op = next_op(run);
-    if let Some(start) = start {
-        run.tasks[i].start_commit = Some(start);
-    }
-    run.tasks[i].session += 1;
-    // M8b decision 33a: the route is fixed; decided before the session-start op.
-    crate::run::routing::record_worker(run, i, now);
-    let task = &run.tasks[i];
-    let spec = worker_spec(run, task);
-    let first_turn = first_turn(run, task);
-    // Milestone 9 decision 42d: the first turn carries every recorded message.
-    super::super::worker_messages::launched(run, i);
-    let task = &run.tasks[i];
-    let extract = crate::run::orch::extract::worker_slot(run, task);
-    let name = format!("{}/{}.w{}", run.short(), task.id(), task.session);
-    let uuid = (task.route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
-    let jitter = jitter_ms(&run.id, task.id(), task.session);
-    let round = new_round(
-        AgentRole::Worker,
-        task.session,
-        task.route.clone(),
-        op,
-        uuid.clone(),
-        now,
-    );
-    let (id, worktree, session) = (task.id().to_string(), task.worktree.clone(), task.session);
-    run.tasks[i].rounds.push(round);
-    run.windows_created += 1;
-    history(run, i, now, format!("worker session {session} starting"));
-    let kind = OpKind::CreateWindow {
-        name,
-        spec: Box::new(spec),
-        session_uuid: uuid,
-        first_turn,
-        project: run.project.clone(),
-        worktree,
-        jitter_ms: jitter,
-        extract,
-    };
-    emit_op(run, op, Some(&id), kind, fx);
 }

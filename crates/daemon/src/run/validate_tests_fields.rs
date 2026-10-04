@@ -11,6 +11,20 @@ fn one(id: &str, extra: &str) -> String {
     task_toml(id, "S", &format!("[\"crates/{id}/src/lib.rs\"]"), extra)
 }
 
+/// The cross-task rules with the default roster, every runtime installed: no task here
+/// races or pairs, so milestone 9.5's `peers` changes nothing in them.
+fn validate_tasks(
+    tasks: &[Task],
+    touched: &BTreeSet<String>,
+    scope: &EditScope,
+    limits: (u32, u32),
+    runtime: proto::Runtime,
+) -> Vec<PlanError> {
+    let roster = config::default_roster();
+    let peers = (&roster[..], &Default::default());
+    super::super::validate_tasks(tasks, touched, scope, limits, runtime, peers)
+}
+
 #[test]
 fn duplicate_ids() {
     let text = plan_with(PROFILE, &[one("t1", ""), one("t2", ""), one("t1", "")]);

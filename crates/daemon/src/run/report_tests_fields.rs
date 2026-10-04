@@ -44,6 +44,7 @@ fn review(run: &mut Run, summary: String, findings: Vec<Finding>) {
         verdict: Some(Verdict::Changes),
         summary,
         findings,
+        lane: None,
     });
 }
 
@@ -85,6 +86,8 @@ const FIELDS: &[Field] = &[
                 matched: true,
                 red_tail: String::new(),
                 head_tail: String::new(),
+                lane: None,
+                red_only: false,
             })
         },
         new_lists: 0,
@@ -106,6 +109,7 @@ const FIELDS: &[Field] = &[
                 summary: None,
                 summary_source: None,
                 tier: None,
+                lane: None,
             })
         },
         new_lists: 0,

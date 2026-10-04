@@ -30,7 +30,7 @@ pub fn rewrite(runtime: &Runtime, cmd: &str, session: &str) -> Result<String> {
             let printed = match crate::run_hook_output(hook, &payload) {
                 Ok(printed) => printed,
                 Err(error) => {
-                    eprintln!("fake-agent: PreToolUse hook failed: {error:#}");
+                    crate::diag::say!("fake-agent: PreToolUse hook failed: {error:#}");
                     continue;
                 }
             };

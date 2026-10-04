@@ -141,6 +141,9 @@ pub struct StageDelivery {
     pub review_rounds: u32,
     /// Decision 43: seconds open with no fix task in flight and no CI running.
     pub review_wait_secs: u64,
+    /// The final fix wave's ruling FW-2 (b): the part of `review_wait_secs` that fell
+    /// inside the run's pauses, which the estimate already leaves out as paused time.
+    pub review_paused_secs: u64,
     pub history_written: bool,
     /// Task M9.2.7: the head the opening push sent, until the stage's PR is recorded
     /// with it as `pushed_head` (not in Interfaces' `StageDelivery`).

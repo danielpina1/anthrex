@@ -50,6 +50,7 @@ impl Tree {
                 kind: proto::WindowKind::Pty,
                 run: None,
                 signals_seen: false,
+                placeholder: false,
             });
             subagents.push(SubagentInfo {
                 id: index.to_string(),

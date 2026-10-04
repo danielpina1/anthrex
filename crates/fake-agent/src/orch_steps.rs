@@ -7,7 +7,8 @@
 //! turn with the `Stop` hook (Codex: its `notify`), then reads a bracketed paste or
 //! typed bytes up to `\r` from the terminal, as a real TUI does. M3's steps run as in
 //! M3. `mcp_until`, `capture_json`, `expect` and `expect_error_contains` run here in
-//! both modes, through [`Host`].
+//! both modes, through [`Host`]. Milestone 9.5 decision 31: with no prompt after `--`,
+//! the session starts as a CLI does ([`Pty::start`]).
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Stdin};
@@ -104,7 +105,7 @@ pub fn owns(step: &Step) -> bool {
 }
 
 fn fail(text: String) -> Result<Flow> {
-    eprintln!("fake-agent: {text}");
+    crate::diag::say!("fake-agent: {text}");
     Ok(Flow::Exit(3))
 }
 
@@ -135,7 +136,9 @@ pub fn run(host: &mut impl Host, step: &Step) -> Result<Flow> {
                 }
                 if Instant::now() >= deadline {
                     let (tool, text) = (&until.tool, &reply.text);
-                    eprintln!("fake-agent: mcp_until {tool} timed out; last result {text:?}");
+                    crate::diag::say!(
+                        "fake-agent: mcp_until {tool} timed out; last result {text:?}"
+                    );
                     return Ok(Flow::Exit(4));
                 }
             }
@@ -203,12 +206,13 @@ pub fn pty(args: &[String]) -> Result<Option<i32>> {
             Ok(file) => match crate::script::parse_script(BufReader::new(file)) {
                 Ok(steps) => steps,
                 Err(error) => {
-                    eprintln!("fake-agent: {error:#}");
+                    crate::diag::say!("fake-agent: {error:#}");
                     return Ok(Some(2));
                 }
             },
         },
     };
+    let message = prompt(args);
     let mut pty = Pty {
         pos: script.pos(),
         vars: script.vars(),
@@ -217,10 +221,15 @@ pub fn pty(args: &[String]) -> Result<Option<i32>> {
         server,
         hooks,
         session,
-        message: prompt(args),
+        message: message.clone(),
         input: BufReader::new(io::stdin()),
         after_cr: false,
     };
+    if message.is_empty()
+        && let Some(code) = pty.start(resume.is_none(), start::is_codex(args))?
+    {
+        return Ok(Some(code));
+    }
     pty.run().map(Some)
 }
 
@@ -314,7 +323,7 @@ impl Pty {
                         if let Some(expect) = expect
                             && !text.contains(expect.as_str())
                         {
-                            eprintln!(
+                            crate::diag::say!(
                                 "fake-agent: expected a message containing {expect:?}, got {text:?}"
                             );
                             return Ok(3);
@@ -323,7 +332,7 @@ impl Pty {
                     }
                     Read::Eof => return Ok(0),
                     Read::Timeout => {
-                        eprintln!("fake-agent: read_message timed out");
+                        crate::diag::say!("fake-agent: read_message timed out");
                         return Ok(4);
                     }
                 }
@@ -340,7 +349,7 @@ impl Pty {
                     let reply = self.call(&tool, &args)?;
                     if reply.ok == expect_error {
                         let wanted = if expect_error { "an error" } else { "success" };
-                        eprintln!(
+                        crate::diag::say!(
                             "fake-agent: mcp_call {tool} expected {wanted}, got {:?}",
                             reply.text
                         );
@@ -378,20 +387,46 @@ impl Pty {
     fn read_message(&mut self, timeout_ms: Option<u64>) -> Result<Read> {
         let raw_mode = RawMode::enter();
         self.turn_ended()?;
+        let (raw, first_at) = match self.read_raw(timeout_ms)? {
+            Ok(read) => read,
+            Err(end) => return Ok(end),
+        };
+        drop(raw_mode);
+        let text = text_of(&raw);
+        let line = json!({"at": crate::headless::timestamp(), "first_at": first_at,
+            "raw": String::from_utf8_lossy(&raw), "text": text});
+        roles::record_stdin(&self.script.name, &line.to_string())?;
+        self.submitted(&text)?;
+        Ok(Read::Message(text))
+    }
+
+    /// `UserPromptSubmit` for `text`, when the session has the hook.
+    fn submitted(&mut self, text: &str) -> Result<()> {
+        if let Some(command) = self.hooks.hook("UserPromptSubmit") {
+            let mut payload = json!({"prompt": text, "session_id": self.session});
+            crate::fill_hook_payload(&mut payload, "UserPromptSubmit")?;
+            crate::run_hook(command, &payload)?;
+        }
+        Ok(())
+    }
+
+    /// A bracketed paste or typed bytes up to `\r` (or `\n`), and when the first byte
+    /// came; `Err` with the end when the input ends or `timeout_ms` passes first.
+    fn read_raw(&mut self, timeout_ms: Option<u64>) -> Result<Result<(Vec<u8>, String), Read>> {
         let deadline = timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms));
         let mut raw = Vec::new();
         let mut in_paste = false;
         let mut first_at = String::new();
         loop {
             if self.input.buffer().is_empty() && !readable(deadline) {
-                return Ok(Read::Timeout);
+                return Ok(Err(Read::Timeout));
             }
             let byte = match self.input.fill_buf() {
-                Ok([]) => return Ok(Read::Eof),
+                Ok([]) => return Ok(Err(Read::Eof)),
                 Ok(bytes) => bytes[0],
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 // A PTY whose other side closed reads EIO on Linux.
-                Err(_) => return Ok(Read::Eof),
+                Err(_) => return Ok(Err(Read::Eof)),
             };
             self.input.consume(1);
             if raw.is_empty() {
@@ -416,19 +451,7 @@ impl Pty {
                 None => self.after_cr = true,
             }
         }
-        drop(raw_mode);
-        let text = String::from_utf8_lossy(&unframe(&raw[..raw.len() - 1]))
-            .replace("\r\n", "\n")
-            .replace('\r', "\n");
-        let line = json!({"at": crate::headless::timestamp(), "first_at": first_at,
-            "raw": String::from_utf8_lossy(&raw), "text": text});
-        roles::record_stdin(&self.script.name, &line.to_string())?;
-        if let Some(command) = self.hooks.hook("UserPromptSubmit") {
-            let mut payload = json!({"prompt": text, "session_id": self.session});
-            crate::fill_hook_payload(&mut payload, "UserPromptSubmit")?;
-            crate::run_hook(command, &payload)?;
-        }
-        Ok(Read::Message(text))
+        Ok(Ok((raw, first_at)))
     }
 
     fn turn_ended(&mut self) -> Result<()> {
@@ -471,6 +494,14 @@ impl Host for Pty {
     fn save_vars(&mut self) -> Result<()> {
         self.script.save_vars(&self.vars)
     }
+}
+
+/// A read's text: its last byte (the Enter) and paste brackets dropped, line ends `\n`,
+/// as Claude reports a prompt.
+fn text_of(raw: &[u8]) -> String {
+    String::from_utf8_lossy(&unframe(&raw[..raw.len() - 1]))
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
 }
 
 /// `raw` without its paste brackets.
@@ -520,6 +551,9 @@ fn readable(deadline: Option<Instant>) -> bool {
         }
     }
 }
+
+#[path = "orch_start.rs"]
+mod start;
 
 #[cfg(test)]
 #[path = "orch_steps_tests.rs"]

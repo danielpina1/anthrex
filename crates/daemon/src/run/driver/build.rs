@@ -23,8 +23,7 @@ use crate::run::git::{self, Git, os};
 use crate::run::globs::ProtectedMatcher;
 use crate::run::journal::runs_dir;
 use crate::run::model::{ClaudeAuth, Run};
-use crate::run::orch::installed::{Missing, not_installed, resolve_installed};
-use crate::run::orch::launch::resolve_orchestrator;
+use crate::run::orch::installed::{Missing, not_installed, resolve_planned, resolve_promoted};
 use crate::run::orch::make_planned;
 use crate::run::plan::{BuildContext, random_suffix, resolve_profile, run_id_taken, slug};
 use crate::run::reach::{edits_may_widen, reachable_runtimes};
@@ -91,6 +90,29 @@ fn run_refs(git: &OsString, root: &Path, timeout: Duration) -> Result<Vec<String
     Ok(listing.lines().map(str::to_string).collect())
 }
 
+/// Milestone 9.5 decision 12: one start's tuning, shared by a goal's fast build and the
+/// planned build it may fall back to, so the start tunes once; and (ruling T9-5) its one
+/// read of the settings, so both builds use the same.
+#[derive(Default)]
+pub(super) struct TuneOnce {
+    config: std::sync::OnceLock<config::Orchestrator>,
+    tuned: tokio::sync::OnceCell<crate::run::refit::Tuned>,
+}
+
+impl TuneOnce {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    /// A start's settings read, `config`, already made (a goal's).
+    pub(super) fn with_config(config: config::Orchestrator) -> Self {
+        TuneOnce {
+            config: config.into(),
+            ..Self::default()
+        }
+    }
+}
+
 /// What [`RunService::build_plan`] builds: a plan file's run, the fast path's one-task
 /// run, or a goal's planned run.
 pub(super) enum Shape {
@@ -113,13 +135,14 @@ pub(super) struct Planned {
 /// `window` is for the orchestrator, whose window starts the agent through
 /// `/bin/sh -c 'exec "$0" "$@"'`; `headless` for the sub-planners and scouts, spawned
 /// directly, and it is the map a run records (`run.orch.installed`).
-pub(super) struct Found {
+#[derive(Debug, Clone)]
+pub(crate) struct Found {
     pub window: BTreeMap<String, bool>,
     pub headless: BTreeMap<String, bool>,
 }
 
 /// [`Found`] from the daemon's `PATH` and `HOME` (blocking: it stats files).
-fn found(claude: &str, codex: &str) -> Found {
+pub(crate) fn found(claude: &str, codex: &str) -> Found {
     let (path, home) = (std::env::var_os("PATH"), std::env::var_os("HOME"));
     let macos = cfg!(target_os = "macos");
     found_in((claude, codex), path.as_deref(), home.as_deref(), macos)
@@ -229,13 +252,8 @@ impl RunService {
             Ok((found(&claude, &codex), token))
         })
         .await?;
-        let resolved = resolve_installed(
-            planned.choice.as_ref(),
-            &run.limits.orch.agent.config(),
-            run.limits.default_runtime,
-            &run.roster,
-            &missing_in(&found.window, &bins),
-        )?;
+        let window = missing_in(&found.window, &bins);
+        let resolved = resolve_planned(run, planned.choice.as_ref(), &found.window, &window)?;
         make_planned(
             run,
             planned.triage,
@@ -261,6 +279,7 @@ impl RunService {
     /// its sub-planners'); decision 6's profile choice right after preflight. Milestone
     /// 9.2 (decisions 3, 17): the delivery resolved and preflighted right after the
     /// profile choice, or already done before triage (`run start --goal`), and frozen.
+    /// Milestone 9.5 decision 12: tuned once per `once`, with its settings read.
     pub(super) async fn build_delivered(
         &self,
         mut plan: Plan,
@@ -268,9 +287,11 @@ impl RunService {
         (yes, trust_project, unconfined_checks): (bool, bool, bool),
         shape: Shape,
         delivery: DeliveryStart,
+        once: &TuneOnce,
     ) -> Result<Run, BuildError> {
         let fast = matches!(shape, Shape::Fast);
-        let mut config = self.ctx.settings.current().orchestrator.clone();
+        let read = || self.ctx.settings.current().orchestrator.clone();
+        let mut config = once.config.get_or_init(read).clone();
         // Final fix batch F1c round 2: never run worker-written code unconfined unless
         // the user said so, on the command line or in their own config.
         let available = confine::available();
@@ -304,6 +325,11 @@ impl RunService {
         let id = self.pick_id(&plan.goal, &refs)?;
         let wt_dir = repo_worktrees_dir(&self.ctx.worktrees_root, &pre.project);
         let now = unix_now();
+        // Milestone 9.5 decision 12 (ruling RH-8): every start kind tunes here, once; a
+        // goal whose fast build fell back reuses the first build's (`once`).
+        let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);
+        let tune = super::tuning::tune_for_start(&config, &self.tuning, &repo_dir, now);
+        let tuning = once.tuned.get_or_init(|| tune).await.clone();
         let ctx = BuildContext {
             id: id.clone(),
             wt_dir,
@@ -313,6 +339,7 @@ impl RunService {
             delivery: &self.ctx.delivery,
             now,
             yes,
+            tuning,
         };
         let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
         delivery.apply(&mut run);
@@ -399,13 +426,15 @@ impl RunService {
     ///
     /// M9.17 fix round 2: it also repeats decision 26's installed check, for the new
     /// orchestrator's runtime (the engine resolves it the same way, with no fallback)
-    /// and the sub-planners'. `Ok(Some(installed))` is what the promoted run records as
-    /// `orch.installed`, so its planners' route at spawn agrees with this check.
+    /// and the sub-planners'. `Ok(Some(found))`: its `headless` map is what the promoted
+    /// run records as `orch.installed`, so its planners' route at spawn agrees with this
+    /// check, and its `window` map is what the promotion reads the `orchestrator` list
+    /// over (whole-branch review B, M8, as a planned start does).
     pub(super) async fn promote_refusal(
         &self,
         run_id: &str,
         choice: Option<&proto::OrchestratorChoice>,
-    ) -> Result<Option<BTreeMap<String, bool>>, String> {
+    ) -> Result<Option<Found>, String> {
         let run = crate::lock(&self.state).runs.get(run_id).cloned();
         let Some(run) = run.filter(|r| {
             r.path == Some(proto::RunPath::Fast)
@@ -414,18 +443,15 @@ impl RunService {
         }) else {
             return Ok(None);
         };
-        let Ok(resolved) = resolve_orchestrator(
-            choice,
-            &run.limits.orch.agent.config(),
-            run.limits.default_runtime,
-            &run.roster,
-        ) else {
-            return Ok(None);
-        };
         let config = self.manager.config();
         let bins = (config.claude_bin.clone(), config.codex_bin.clone());
         let (claude, codex) = bins.clone();
         let found = blocking(move || Ok(found(&claude, &codex))).await?;
+        // Milestone 9.5: over the map the engine resolves the promotion with, the
+        // window's (whole-branch review B, M8).
+        let Ok(resolved) = resolve_promoted(&run, choice, &found.window) else {
+            return Ok(None);
+        };
         let window = missing_in(&found.window, &bins);
         let runtime = resolved.route.runtime;
         let hint = "choose another runtime with --orchestrator";
@@ -457,7 +483,7 @@ impl RunService {
             }
         }
         if refusals.is_empty() {
-            Ok(Some(promoted.orch.installed))
+            Ok(Some(found.clone()))
         } else {
             Err(refusals.join("\n"))
         }
@@ -524,6 +550,9 @@ impl RunService {
         Err("could not pick a free run id".to_string())
     }
 }
+
+#[path = "build_installed.rs"]
+pub(crate) mod installed;
 
 #[cfg(test)]
 #[path = "build_tests.rs"]

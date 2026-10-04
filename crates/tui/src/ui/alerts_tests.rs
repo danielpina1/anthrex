@@ -461,7 +461,7 @@ fn the_status_bar_precedence_is_prefix_plan_alerts_tree() {
     assert!(app.alerts_focus.is_some());
     let (buffer, _) = draw_at(&app, 120, 24);
     assert!(
-        row(&buffer, 23).starts_with(" PLAN  a approve  x reject"),
+        row(&buffer, 23).starts_with(" PLAN  ⚑ 10  a approve  x reject"),
         "{:?}",
         row(&buffer, 23)
     );

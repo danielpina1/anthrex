@@ -272,6 +272,7 @@ pub(super) fn turn_ended(
                 | FailureKind::SandboxUnavailable
                 | FailureKind::ClientError,
         } => {
+            run.tasks[i].rounds[r].environment_failed = true;
             return give_up(run, i, error, now, fx);
         }
         TurnOutcome::Failed {
@@ -279,7 +280,7 @@ pub(super) fn turn_ended(
             kind: FailureKind::RateLimit,
         } => {
             if !streak {
-                count_rate_limit(run, i, r);
+                count_rate_limit(run, i, r, now);
             }
             let round = &mut run.tasks[i].rounds[r];
             round.failed_turn = FailedTurn::WaitingContinue {
@@ -300,6 +301,7 @@ pub(super) fn turn_ended(
                 round.failed_turn,
                 FailedTurn::ContinueSent { rate_limit: false }
             ) {
+                round.environment_failed = true;
                 return give_up(run, i, error, now, fx);
             }
             round.failed_turn = FailedTurn::WaitingContinue {

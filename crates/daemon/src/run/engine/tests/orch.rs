@@ -35,6 +35,11 @@ pub(super) fn triage(path: RunPath) -> TriageInfo {
 
 /// A planned run (decision 26), started; its run branch and orchestrator not yet made.
 pub(super) fn planned(yes: bool) -> Fixture {
+    planned_on(yes, None)
+}
+
+/// [`planned`], its orchestrator on `choice`'s runtime (milestone 9.5 ruling T5a-2).
+pub(super) fn planned_on(yes: bool, choice: Option<Runtime>) -> Fixture {
     let text = plan_with(PROFILE, &[task("t0", "S", "auth", "")]);
     let mut fx = Fixture::new(&text);
     // Decision 26: the driver builds a planned run from a plan with no task.
@@ -44,6 +49,7 @@ pub(super) fn planned(yes: bool) -> Fixture {
         plan,
         preflight(),
         crate::run::plan::BuildContext {
+            tuning: Default::default(),
             id: RUN_ID.to_string(),
             wt_dir: WT.into(),
             data_dir: format!("/tmp/data/runs/{RUN_ID}").into(),
@@ -56,8 +62,17 @@ pub(super) fn planned(yes: bool) -> Fixture {
     )
     .unwrap_or_else(|e| panic!("an empty plan builds: {e:?}"));
     let agent = config::AgentConfig::default();
-    let resolved =
-        resolve_orchestrator(None, &agent, run.limits.default_runtime, &run.roster).unwrap();
+    let choice = choice.map(|runtime| OrchestratorChoice {
+        runtime,
+        model: None,
+    });
+    let resolved = resolve_orchestrator(
+        choice.as_ref(),
+        &agent,
+        run.limits.default_runtime,
+        &run.roster,
+    )
+    .unwrap();
     make_planned(
         &mut run,
         Some(triage(RunPath::Plan)),
@@ -73,8 +88,18 @@ pub(super) fn planned(yes: bool) -> Fixture {
     fx
 }
 
-/// [`planned`], with the run branch made and the orchestrator in window [`ORCH`].
+/// [`planned`], with the run branch made and the orchestrator in window [`ORCH`], its
+/// first turn delivered (milestone 9.5 decision 38: its anthrex server announced its
+/// tools, and the driver pasted the first prompt).
 pub(super) fn launched(yes: bool) -> Fixture {
+    let mut fx = launched_waiting(yes);
+    mcp_ready(&mut fx, ORCH);
+    first_turn_woken(&mut fx);
+    fx
+}
+
+/// [`launched`] before its first turn: the window is up, its first prompt not pasted.
+pub(super) fn launched_waiting(yes: bool) -> Fixture {
     let mut fx = planned(yes);
     let (op, _) = fx.op("CreateRunBranch");
     fx.done(op, OpResult::Worktree { head: BASE.into() });
@@ -87,6 +112,26 @@ pub(super) fn launched(yes: bool) -> Fixture {
         },
     );
     fx
+}
+
+/// Milestone 9.5 decision 38: window `window`'s anthrex server answered its first
+/// `tools/list` (the driver's caller check passed).
+pub(super) fn mcp_ready(fx: &mut Fixture, window: u32) -> Vec<Effect> {
+    fx.next(EventKind::Orch(OrchEvent::McpReady {
+        run_id: RUN_ID.into(),
+        window_id: window,
+    }))
+}
+
+/// The driver pasted the first turn.
+pub(super) fn first_turn_woken(fx: &mut Fixture) -> Vec<Effect> {
+    fx.next(EventKind::Orch(OrchEvent::OrchestratorWoken {
+        run_id: RUN_ID.into(),
+        digest_revision: 0,
+        notes_seq: 0,
+        request: None,
+        first_turn: true,
+    }))
 }
 
 /// A tool call of the orchestrator's role from `window`.
@@ -104,6 +149,7 @@ pub(super) fn orch_tool(fx: &mut Fixture, window: u32, tool: &str, args: Value) 
             scout_id: None,
             epic: None,
             chain: None,
+            lane: None,
         },
         refusals: Vec::new(),
     }))
@@ -176,7 +222,17 @@ fn planned_run_starts_in_planning_and_creates_branch_then_orchestrator() {
     assert_eq!(spec.worktree_branch, None);
     assert_eq!(spec.runtime, Runtime::Claude);
     assert_eq!(spec.model.as_deref(), Some("claude-opus-5-5"));
-    let first = spec.initial_prompt.clone().unwrap();
+    // Milestone 9.5 decision 38: the first prompt is pasted once the window is ready,
+    // never passed at launch.
+    assert_eq!(spec.initial_prompt, None);
+    let first = fx
+        .run()
+        .orch
+        .orchestrator
+        .as_ref()
+        .unwrap()
+        .first_prompt
+        .clone();
     assert!(first.starts_with(&format!(
         "[anthrex] You are the orchestrator of run {RUN_ID}"
     )));

@@ -3,25 +3,19 @@
 //! protected, generated and spill split. The turn-end fallback, whose claim this
 //! module checks, is in `fallback.rs`. Pure (design decision 2).
 
-use proto::{
-    AgentRole, BlockReason, DoneSignal, GateKind, RunState, TaskState, TestMode, ToolCall,
-};
+use proto::{BlockReason, DoneSignal, RunState, TaskState, TestMode, ToolCall};
 
-use super::dispatch::{block, history};
+use super::dispatch::block;
 use super::ladder::{self, live, worker_round};
 use super::tools::{DoneArgs, parse_blocked, parse_done};
-use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, ReplyId, emit_op, fallback, gates, next_op, outbox,
-};
-use crate::run::contract::{
-    BLOCKED_CLASSIFYING, DONE_ACCEPTED, blocked_recorded, generated_files_message,
-    protected_file_message,
-};
-use crate::run::globs::names_literally;
-use crate::run::model::{DoneClaim, FallbackState, PendingClaim, Run, StallState};
+use super::{Effect, EngineState, OpKind, OpResult, ReplyId, emit_op, next_op};
+use crate::run::contract::{BLOCKED_CLASSIFYING, blocked_recorded};
+use crate::run::model::{DoneClaim, PendingClaim, Run, StallState};
 use crate::run::orch::contract::STOP_AND_WAIT_REFUSAL;
 
-fn reply(fx: &mut Vec<Effect>, reply: ReplyId, result: Result<String, String>) {
+pub(super) use super::done_checked::checked;
+
+pub(super) fn reply(fx: &mut Vec<Effect>, reply: ReplyId, result: Result<String, String>) {
     fx.push(Effect::Reply { reply, result });
 }
 
@@ -67,13 +61,28 @@ pub(super) fn answer(
             return reply(fx, id, Err(text));
         }
     }
+    // Milestone 9.5 decision 20: a lane's session is answered in its lane's view; a
+    // lane that left the race is refused (Interfaces, "MCP").
+    if let Some((i, lane)) = super::race::lane_of_window(run, call.window_id) {
+        if let Some(text) = super::race::refusal(run, i, lane, &call.tool) {
+            return reply(fx, id, Err(text));
+        }
+        let call = |run: &mut Run, fx: &mut Vec<Effect>| tool_call(run, id, &call, now, fx);
+        super::race::with_lane(run, i, lane, now, fx, call);
+        return;
+    }
+    tool_call(run, id, &call, now, fx)
+}
+
+/// The tool, by name.
+fn tool_call(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: &mut Vec<Effect>) {
     match call.tool.as_str() {
-        "task_done" | "task_blocked" => worker_tool(run, id, &call, now, fx),
-        "submit_review" => super::review::submit(run, id, &call, now, fx),
+        "task_done" | "task_blocked" => worker_tool(run, id, call, now, fx),
+        "submit_review" => super::review::submit(run, id, call, now, fx),
         // Milestone 9 decision 42f, past M8a's run gate above.
-        "task_note" => super::worker_messages::task_note(run, id, &call, now, fx),
+        "task_note" => super::worker_messages::task_note(run, id, call, now, fx),
         // Milestone 9 decision 35: a research task's report.
-        "submit_scout_report" => super::kinds::submit_research(run, id, &call, now, fx),
+        "submit_scout_report" => super::kinds::submit_research(run, id, call, now, fx),
         other => {
             let role = serde_json::to_value(call.role)
                 .ok()
@@ -91,13 +100,13 @@ pub(super) fn answer(
 fn worker_tool(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: &mut Vec<Effect>) {
     let task_id = call.task_id.clone().unwrap_or_default();
     let found = run.tasks.iter().position(|t| t.id() == task_id);
+    // Milestone 9.5 decision 25: a paired task's test writer is its writer meanwhile.
     let current = found.is_some_and(|i| {
         let task = &run.tasks[i];
-        call.role == AgentRole::Worker
-            && worker_round(task).is_some_and(|r| {
-                let round = &task.rounds[r];
-                live(round) && round.window_id == Some(call.window_id)
-            })
+        worker_round(task).is_some_and(|r| {
+            let round = &task.rounds[r];
+            round.role == call.role && live(round) && round.window_id == Some(call.window_id)
+        })
     });
     let (Some(i), true) = (found, current) else {
         let text = format!("this window is not the current worker of task {task_id}");
@@ -126,6 +135,10 @@ fn worker_tool(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: &mut V
         Ok(args) => args,
         Err(e) => return reply(fx, id, Err(format!("invalid arguments: {e}"))),
     };
+    // Decision 26: an implementer names the test writer's test and red, or neither.
+    if let Some(text) = super::pair::implementer_mismatch(&run.tasks[i], &args) {
+        return reply(fx, id, Err(text));
+    }
     let window = Some(call.window_id);
     if run.tasks[i]
         .claim
@@ -148,7 +161,7 @@ fn worker_tool(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: &mut V
 }
 
 /// The reply to a claim whose session was replaced or stopped (ruling T12-I1).
-const REPLACED: &str = "this session is being replaced; its task_done no longer applies";
+pub(super) const REPLACED: &str = "this session is being replaced; its task_done no longer applies";
 
 /// Ruling T12-I1: ends task `i`'s claim, if any, answering its tool call with `text`.
 /// Its `VerifyDone` is no longer awaited: its result is dropped (ruling T12-N).
@@ -164,7 +177,7 @@ pub(super) fn drop_claim(run: &mut Run, i: usize, text: &str, fx: &mut Vec<Effec
 /// The window of task `i`'s current worker session: its latest worker round, unless
 /// the engine killed it or its resume failed (`retiring`). A round that ended between
 /// turns is still that session, since the next delivery resumes it (ruling T12-I1).
-fn session_window(run: &Run, i: usize) -> Option<u32> {
+pub(super) fn session_window(run: &Run, i: usize) -> Option<u32> {
     let task = &run.tasks[i];
     worker_round(task)
         .map(|r| &task.rounds[r])
@@ -181,6 +194,7 @@ pub(super) fn claim(
     signal: DoneSignal,
     fx: &mut Vec<Effect>,
 ) {
+    let args = super::pair::fill(&run.tasks[i], args);
     let task = &run.tasks[i];
     let kind = OpKind::VerifyDone {
         worktree: task.worktree.clone(),
@@ -198,7 +212,7 @@ pub(super) fn claim(
         resolution: task.resolution.clone().map(Box::new),
         not_own: super::worker_messages::not_own(task),
         not_run: super::worker_messages::not_run(task),
-        signals: super::weakening::spec(run),
+        signals: super::weakening::spec(run, task),
         // Milestone 9.1 decision 51: a sync task's spill is against its merge.
         spill_base: task.sync.as_ref().map(|s| s.base_tree.clone()),
         // Controller ruling C-21 (3, 5).
@@ -233,7 +247,7 @@ pub(super) fn claim(
 
 /// Decision 35: a task the user has overridden is exempt from the protected, generated
 /// and spill checks.
-fn spill_exempt(run: &Run, i: usize) -> bool {
+pub(super) fn spill_exempt(run: &Run, i: usize) -> bool {
     run.tasks[i].merged_without_approval.is_some()
 }
 
@@ -259,7 +273,11 @@ fn task_blocked(
         Some(_) => block(run, i, BlockReason::Question, reason, now),
         None => {
             block(run, i, BlockReason::Question, reason.clone(), now);
-            if super::deciders::classify(run, i, reason, now, fx) {
+            // Milestone 9.5 decision 20: a lane is out of its race whatever the kind; the
+            // final fix wave's m8: an adoption classifies it after the crown.
+            let racing = run.tasks[i].lane_view.is_some();
+            run.tasks[i].lane_unclassified = racing;
+            if !racing && super::deciders::classify(run, i, reason, now, fx) {
                 return reply(fx, id, Ok(BLOCKED_CLASSIFYING.to_string()));
             }
         }
@@ -275,13 +293,19 @@ pub(super) fn mis_sized(run: &mut Run, i: usize, reason: &str, now: u64, fx: &mu
 }
 
 /// The first of decision 32's rejections that applies, or `None`.
-fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Option<String> {
+pub(super) fn rejection(
+    run: &Run,
+    i: usize,
+    claim: &PendingClaim,
+    result: &OpResult,
+) -> Option<String> {
     let OpResult::DoneChecked {
         commits,
         dirty_tracked,
         merge_in_progress,
         untracked_in_owns,
         red_ok,
+        head,
         head_branch,
         sync_kept,
         ..
@@ -291,7 +315,9 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
     };
     let task = &run.tasks[i];
     let branch = &task.branch;
-    let explicit = claim.claim.signal == DoneSignal::TaskDone;
+    // Milestone 9.5 decision 25: a test writer's claim needs its test and red however
+    // it came.
+    let explicit = claim.claim.signal == DoneSignal::TaskDone || super::pair::writing(task);
     // Carry T8 (M8a.8 minor 11), as final fix batch F1b recasts it: the worker commits
     // on a detached `HEAD`, which the engine records on the task's branch; a `HEAD` that
     // names a branch, or a stopped rebase, is not a claim the branch can carry.
@@ -316,6 +342,9 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
         && (claim.claim.test.is_none() || claim.claim.red.is_none())
     {
         "task_done rejected: this is a tdd task; name the test (test) and the commit where it was added and failed (red)".into()
+    } else if let Some(text) = super::pair::writer_rejection(task, claim.claim.red.as_deref(), head)
+    {
+        text
     } else if *sync_kept == Some(false) {
         // Controller ruling C-21 (5).
         super::propagate::lost_merge(run, task)
@@ -327,236 +356,4 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
     } else {
         return None;
     })
-}
-
-/// `VerifyDone`'s result (decisions 32, 55, 56). A rejection leaves the task working
-/// and counts nothing; a protected or generated path is a gate failure of `done`; a
-/// non-generated path outside `owns` is rung 3; otherwise the claim is accepted and
-/// the task moves to its first gate. The turn-end fallback's claim has no reply: its
-/// rejection or bounce text alone is queued as the worker's next turn instead (ruling
-/// T12-N4). Only the result of the claim's own op settles it (ruling T12-N).
-pub(super) fn checked(
-    run: &mut Run,
-    i: usize,
-    op: OpId,
-    result: OpResult,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    if run.tasks[i].claim.as_ref().and_then(|c| c.op) != Some(op) {
-        return;
-    }
-    let Some(pending) = run.tasks[i].claim.take() else {
-        return;
-    };
-    let answer =
-        |fx: &mut Vec<Effect>, run: &mut Run, text: Result<String, String>| match pending.reply {
-            Some(id) => reply(fx, id, text),
-            None => {
-                if let Err(text) = text {
-                    let task_id = run.tasks[i].id().to_string();
-                    outbox::queue(run, &task_id, format!("[anthrex] {text}"), now);
-                }
-            }
-        };
-    let state = run.tasks[i].state;
-    if state != TaskState::Working {
-        let text = format!(
-            "task_done is accepted only while the task is working (it is {})",
-            state.label()
-        );
-        if let Some(id) = pending.reply {
-            reply(fx, id, Err(text));
-        }
-        return;
-    }
-    // Ruling T12-I1: a claim is its session's; a session killed or replaced lost it.
-    if pending.window_id.is_none() || pending.window_id != session_window(run, i) {
-        if let Some(id) = pending.reply {
-            reply(fx, id, Err(REPLACED.to_string()));
-        }
-        return;
-    }
-    // Ruling T12-later: the stall clock waited for the check; it runs again from here.
-    let Some(r) = worker_round(&run.tasks[i]) else {
-        return;
-    };
-    run.tasks[i].rounds[r].last_event = now;
-    // Ruling T12-R4: the fallback's claim is its turn's; once a later turn has started,
-    // that turn's end decides afresh.
-    if pending.reply.is_none() && run.tasks[i].rounds[r].turns != pending.turn {
-        return fallback::drop_stale(run, i, r, fx);
-    }
-    let (outside, generated, protected, head, resolution_only, signals) = match &result {
-        OpResult::DoneChecked {
-            outside_owns,
-            generated_outside_owns,
-            protected_changed,
-            head,
-            resolution_only,
-            signals,
-            ..
-        } => (
-            outside_owns.clone(),
-            generated_outside_owns.clone(),
-            protected_changed.clone(),
-            head.clone(),
-            *resolution_only,
-            signals.as_deref().cloned().unwrap_or_default(),
-        ),
-        OpResult::Failed { message } => {
-            let text = format!("task_done could not be checked: {message}; call task_done again");
-            answer(fx, run, Err(text.clone()));
-            return reengage(run, i, &pending, text, now);
-        }
-        _ => return,
-    };
-    if let Some(text) = rejection(run, i, &pending, &result) {
-        history(run, i, now, text.clone());
-        answer(fx, run, Err(text.clone()));
-        return reengage(run, i, &pending, text, now);
-    }
-    let told = pending.reply.is_some();
-    if !spill_exempt(run, i) {
-        // Decision 56 first: a protected path `owns` does not name literally.
-        let owns = &run.tasks[i].spec.owns;
-        let caught: Vec<String> = protected
-            .into_iter()
-            .filter(|p| !names_literally(owns, p))
-            .collect();
-        if !caught.is_empty() {
-            let text = protected_file_message(&caught);
-            return bounce(run, i, &pending, text, told, now, fx);
-        }
-        // Milestone 9.1 decision 41: a deleted test file `owns` does not name exactly.
-        if let Some(text) = super::weakening::bounce(run, i, &signals) {
-            return bounce(run, i, &pending, text, told, now, fx);
-        }
-        // Decision 55: any non-generated path outside `owns` is rung 3.
-        if !outside.is_empty() {
-            let text = format!("changed files outside owns: {}", outside.join(", "));
-            if let Some(id) = pending.reply {
-                reply(fx, id, Err(text.clone()));
-            }
-            return ladder::rung3(run, i, text, now, fx);
-        }
-        if !generated.is_empty() {
-            let text = generated_files_message(&generated);
-            return bounce(run, i, &pending, text, told, now, fx);
-        }
-    }
-    let id = pending.reply;
-    super::weakening::keep(&mut run.tasks[i], signals);
-    accept(run, i, pending, head, resolution_only, now);
-    if let Some(id) = id {
-        reply(fx, id, Ok(DONE_ACCEPTED.to_string()));
-    }
-}
-
-/// A gate failure of `done` (decisions 55, 56). At rung 1 the reply is the message
-/// itself; at rung 2 or 3 the session is being replaced or stopped, and the reply says
-/// so instead of asking for another try (review m-7).
-#[allow(clippy::too_many_arguments)]
-fn bounce(
-    run: &mut Run,
-    i: usize,
-    pending: &PendingClaim,
-    text: String,
-    told: bool,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let rung = ladder::gate_failure(run, i, GateKind::Done, text.clone(), told, now, fx);
-    let Some(id) = pending.reply else {
-        return;
-    };
-    let text = match rung {
-        1 => {
-            reengage(run, i, pending, text.clone(), now);
-            text
-        }
-        2 => "task_done rejected again: this session is being replaced by a fresh one; stop now"
-            .to_string(),
-        _ => {
-            let cause = run.tasks[i]
-                .block
-                .as_ref()
-                .map(|b| b.text.clone())
-                .unwrap_or_default();
-            format!("task_done rejected: the task is blocked (mis_sized): {cause}; stop now")
-        }
-    };
-    reply(fx, id, Err(text));
-}
-
-/// Ruling T12-N2: a claim answered after its turn ended (or its process exited) leaves
-/// the worker waiting for nothing: the reply text goes to it as its next turn, which
-/// resumes the session when its process has ended. Within the claiming turn the tool
-/// reply is enough; a later turn open meanwhile gets the text at its end (ruling
-/// T12-O2). The fallback's claim (no reply) had its text queued already.
-fn reengage(run: &mut Run, i: usize, pending: &PendingClaim, text: String, now: u64) {
-    let task = &run.tasks[i];
-    let claiming_turn = |r: usize| {
-        let round = &task.rounds[r];
-        round.turn_open && round.turns == pending.turn
-    };
-    if pending.reply.is_none() || worker_round(task).is_none_or(claiming_turn) {
-        return;
-    }
-    let text = if text.starts_with("[anthrex]") {
-        text
-    } else {
-        format!("[anthrex] {text}")
-    };
-    let id = task.id().to_string();
-    outbox::queue(run, &id, text, now);
-}
-
-/// Decision 32: the claim is recorded and the task moves to its first gate — `proof`
-/// (tdd), `check` (a check in the profile), `review`, or the merge queue; a handed-back
-/// task goes straight back to the merge queue (decision 36).
-fn accept(
-    run: &mut Run,
-    i: usize,
-    pending: PendingClaim,
-    head: String,
-    resolution_only: Option<bool>,
-    now: u64,
-) {
-    let task = &mut run.tasks[i];
-    // Ruling T14-I3: an accepted claim ends the conflict it resolved.
-    task.resolving = false;
-    let signal = pending.claim.signal;
-    task.done = Some(pending.claim);
-    task.head = Some(head);
-    if let Some(r) = worker_round(task) {
-        let round = &mut task.rounds[r];
-        round.turn_had_task_done = true;
-        round.fallback = FallbackState::None;
-        round.fallback_waiting = false;
-    }
-    if task.handback_due {
-        let how = match signal {
-            DoneSignal::TaskDone => "task_done",
-            DoneSignal::TurnEndFallback => "the turn-end fallback",
-        };
-        history(run, i, now, format!("done ({how}); the run head first"));
-        return super::merge::hand_back_due(run, i, now);
-    }
-    let task = &mut run.tasks[i];
-    // Ruling T14-R2: straight back to the queue only for the conflict's resolution and
-    // nothing more; any other claim passes every gate.
-    let resolved = std::mem::take(&mut task.handed_back) && resolution_only == Some(true);
-    task.resolution = None;
-    let next = if resolved {
-        TaskState::MergeQueue
-    } else {
-        gates::next_gate(run, i, None)
-    };
-    gates::enter(run, i, next, now);
-    let how = match signal {
-        DoneSignal::TaskDone => "task_done",
-        DoneSignal::TurnEndFallback => "the turn-end fallback",
-    };
-    history(run, i, now, format!("done ({how}); next: {}", next.label()));
 }

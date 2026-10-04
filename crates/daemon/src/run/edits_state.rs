@@ -2,18 +2,41 @@
 //! AGENTS.md rule 8. Pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or
 //! `std::time::SystemTime` (design decision 2).
 
-use proto::{AgentRole, BlockReason, TaskKind, TaskState};
+use proto::{BlockReason, TaskKind, TaskState};
 
 use super::model::Task;
 
 /// The states in which a task has not started: route, size, test mode and dependencies
 /// may change, and it may be split. A `paused(message)` task has started (milestone 9
 /// decision 42c): its worker waits in its session.
+///
+/// Milestone 9.5 ruling T17b-1: a task dispatched as a race has started, whatever its
+/// state (its start commits are its lanes'); [`started_refusal`] says so.
 pub(crate) fn not_started(task: &Task) -> bool {
     matches!(
         task.state,
         TaskState::Pending | TaskState::Queued | TaskState::Blocked
     ) && !is_paused(task)
+        && task.race.is_none()
+}
+
+/// Ruling T17b-1: the refusal, in the started-task shape (ruling RR-8), of a change
+/// that needs a task not started, for one that is pending, queued or blocked only
+/// because it was dispatched as a race: `task <id> has started: <tail>`.
+pub(crate) fn started_refusal(task: &Task, tail: &str) -> Option<String> {
+    let waiting = matches!(
+        task.state,
+        TaskState::Pending | TaskState::Queued | TaskState::Blocked
+    );
+    (waiting && task.race.is_some()).then(|| format!("task {} has started: {tail}", task.id()))
+}
+
+/// The stage rule's "started" (ruling C-14(d)), which milestone 9.5's race and pair
+/// share (review ruling I9): a task that is not [`not_started`], or one with a start
+/// commit (it was dispatched and has a checkout); a race dispatched is not
+/// [`not_started`] (task 17a's second re-review, (c), and ruling T17b-1).
+pub(crate) fn has_started(task: &Task) -> bool {
+    !not_started(task) || task.start_commit.is_some()
 }
 
 /// Milestone 9 decision 42c: `blocked(message_pause)`, shown as `paused(message)`.
@@ -50,7 +73,7 @@ pub(crate) fn has_live_worker(task: &Task) -> bool {
         || task
             .rounds
             .iter()
-            .any(|r| r.role == AgentRole::Worker && !r.ended)
+            .any(|r| super::model::writes(task, r) && !r.ended)
 }
 
 fn block_label(reason: BlockReason) -> &'static str {

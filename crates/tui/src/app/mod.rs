@@ -4,7 +4,7 @@ use crate::dialog::{FormDefaults, NewAgentForm, RemoveConfirm};
 use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
-pub use alerts::{Alert, AlertKey, AlertWho, AlertsFocus, alerts};
+pub use alerts::{Alert, AlertKey, AlertWho, AlertsFocus, StageAlert, alerts};
 pub use confirm::PendingAction;
 use crossterm::event::KeyEvent;
 pub use link::Link;
@@ -541,6 +541,7 @@ impl App {
 
 pub(crate) mod actions;
 pub(crate) mod alerts;
+mod alerts_stage;
 pub(crate) mod alerts_view;
 mod confirm;
 mod conversation;

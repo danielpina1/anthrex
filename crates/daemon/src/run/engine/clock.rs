@@ -7,7 +7,7 @@
 //! it overlapped. Ruling T15-C1: `run retry` starts a new budget epoch, and rung 4
 //! counts from it; `spent_total` keeps the whole for the report.
 
-use proto::{AgentRole, RunState, Spend, TaskState};
+use proto::{RunState, Spend, TaskState};
 use serde::{Deserialize, Serialize};
 
 use super::dispatch::history;
@@ -176,8 +176,11 @@ pub(super) fn stop_at_restore(task: &mut Task) {
 /// The clock restarts at `now` after a stop at `since`.
 fn restart(task: &mut Task, since: u64, now: u64) {
     let latest = worker_round(task);
+    let writing: Vec<bool> = (task.rounds.iter())
+        .map(|r| crate::run::model::writes(task, r))
+        .collect();
     for (r, round) in task.rounds.iter_mut().enumerate() {
-        if round.role != AgentRole::Worker {
+        if !writing[r] {
             continue;
         }
         let from = since.max(round.started_at);
@@ -201,28 +204,65 @@ fn restart(task: &mut Task, since: u64, now: u64) {
     }
 }
 
-/// The spend rung 4 weighs (decision 38): the task's since its last retry.
+/// The spend rung 4 weighs (decision 38): the task's since its last retry. After the
+/// crown, the winning lane's only (the final fix wave's m5): its seconds are the
+/// crowned racer's rounds (`model::writes`), and the race's cost is left out of its
+/// tool calls and tokens ([`own_spend`]).
 pub(crate) fn epoch_spend(task: &Task, now: u64) -> Spend {
     let epoch = task.epoch.unwrap_or_default();
     let secs = task
         .rounds
         .iter()
         .enumerate()
-        .filter(|(r, round)| *r >= epoch.round && round.role == AgentRole::Worker)
+        .filter(|(r, round)| *r >= epoch.round && crate::run::model::writes(task, round))
         .map(|(_, round)| round_spend(round, task.clock.stopped, now).secs)
         .sum();
+    let own = own_spend(task);
     Spend {
-        tool_calls: task.spent_total.tool_calls.saturating_sub(epoch.tool_calls),
+        tool_calls: own.tool_calls.saturating_sub(epoch.tool_calls),
         secs,
-        tokens: task.spent_total.tokens.saturating_sub(epoch.tokens),
+        tokens: own.tokens.saturating_sub(epoch.tokens),
     }
 }
 
-/// `run retry` starts a new epoch at the fresh session's round.
+/// The task's total tool calls and tokens, less a crowned race's cost ([`race_cost`]).
+/// In a lane's view the total is the lane's own already.
+fn own_spend(task: &Task) -> Spend {
+    let crowned = task.lane_view.is_none() && task.race.as_ref().is_some_and(|r| r.crowned);
+    let cost = match crowned {
+        true => race_cost(task),
+        false => Spend::default(),
+    };
+    Spend {
+        tool_calls: task.spent_total.tool_calls.saturating_sub(cost.tool_calls),
+        secs: 0,
+        tokens: task.spent_total.tokens.saturating_sub(cost.tokens),
+    }
+}
+
+/// The final fix wave's m5: the race's cost, what every lane but the winner spent
+/// (tool calls and tokens). The task's total keeps it; rung 4 does not weigh it once
+/// the winner is crowned (see `epoch_spend`), and `REPORT.md`'s race line shows it.
+pub(crate) fn race_cost(task: &Task) -> Spend {
+    let Some(race) = task.race.as_ref().filter(|r| r.winner.is_some()) else {
+        return Spend::default();
+    };
+    (race.lanes.iter())
+        .filter(|l| Some(l.lane) != race.winner)
+        .fold(Spend::default(), |sum, l| Spend {
+            tool_calls: sum.tool_calls.saturating_add(l.spent.tool_calls),
+            secs: 0,
+            tokens: sum.tokens.saturating_add(l.spent.tokens),
+        })
+}
+
+/// `run retry` starts a new epoch at the fresh session's round, from the task's own
+/// spend ([`own_spend`]).
 pub(super) fn new_epoch(task: &mut Task) {
+    let own = own_spend(task);
     task.epoch = Some(BudgetEpoch {
         round: task.rounds.len(),
-        tool_calls: task.spent_total.tool_calls,
-        tokens: task.spent_total.tokens,
+        tool_calls: own.tool_calls,
+        tokens: own.tokens,
     });
 }

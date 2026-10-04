@@ -10,7 +10,7 @@
 use crate::app::stats::{StatsScreen, StatsState};
 use crate::app::{App, region::KeyRegion};
 use crate::safe_text::{multi_line, one_line};
-use crate::theme::{Palette, Role, dot, ellipsis, role};
+use crate::theme::{Palette, Role, dot, ellipsis, fold, role};
 use crate::ui::kit::{self, Hint, cut, wrap_words};
 use proto::HistoryStats;
 use ratatui::Frame;
@@ -183,6 +183,15 @@ fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'stat
     if names.is_empty() {
         out.push(line("  none".into(), muted));
     }
+    if let Some(tuning) = &stats.tuning {
+        out.push(Line::default());
+        // Whole-branch review D, M-3: a long line wraps, its evidence never cut off.
+        for (text, style) in tuning_lines(tuning, p) {
+            for text in wrap_hanging(&text, width) {
+                out.push(line(text, style));
+            }
+        }
+    }
     if !stats.problems.is_empty() {
         out.push(Line::default());
         out.push(line("problems".into(), role(Role::Attention, p)));
@@ -195,6 +204,66 @@ fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'stat
     out.push(line(path, muted));
     out
 }
+
+/// Milestone 9.5 decision 48 (ruling RH-6): the tuning block read-only, as `anthrex
+/// run stats` prints it (`refit_render::render`), each line sanitised and in the
+/// palette's punctuation; its `*` note and `budget <C>: configured …` lines muted, the
+/// `tuning proposals:` heading bold, and the CLI's `apply with …` line replaced by the
+/// hint [`APPLY_HINT`]: proposals are applied from the CLI only.
+fn tuning_lines(report: &proto::TuningReport, p: Palette) -> Vec<(String, Style)> {
+    let text = daemon::run::refit_render::render(report);
+    let muted = role(Role::Muted, p);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    text.lines()
+        .map(|l| {
+            let style = if l.starts_with("  * ") || l.starts_with("  budget ") {
+                muted
+            } else if l.starts_with("tuning proposals:") || l.starts_with("  CLASS ") {
+                bold
+            } else {
+                Style::default()
+            };
+            let l = if l.starts_with("apply with ") {
+                APPLY_HINT
+            } else {
+                l
+            };
+            (fold(&one_line(l), p.ascii), style)
+        })
+        .collect()
+}
+
+/// `text` as printed when it fits `width`; otherwise broken at the last space that
+/// fits, the rest word-wrapped under the line's second column (after its first run of
+/// two spaces, as a proposal's text sits after its id), or four past its indent when
+/// that column is past half the width.
+fn wrap_hanging(text: &str, width: usize) -> Vec<String> {
+    if text.width() <= width {
+        return vec![text.to_owned()];
+    }
+    let indent = text.len() - text.trim_start_matches(' ').len();
+    let column = (text[indent..].find("  "))
+        .map(|gap| indent + gap)
+        .map(|gap| gap + text[gap..].len() - text[gap..].trim_start_matches(' ').len())
+        .map(|at| text[..at].width())
+        .filter(|&at| at <= width / 2)
+        .unwrap_or((indent + 4).min(width / 2));
+    let split = (text.char_indices())
+        .filter(|&(i, c)| c == ' ' && i > indent && text[..i].width() <= width)
+        .map(|(i, _)| i)
+        .next_back();
+    let Some(split) = split else {
+        return wrap_words(text, width);
+    };
+    let hang = " ".repeat(column);
+    let rest = wrap_words(text[split..].trim_start(), width - column);
+    let mut out = vec![text[..split].trim_end().to_owned()];
+    out.extend(rest.into_iter().map(|l| format!("{hang}{l}")));
+    out
+}
+
+/// Ruling RH-6's hint, in place of the CLI's `apply with …` line.
+pub(crate) const APPLY_HINT: &str = "apply: anthrex run stats --apply <id>";
 
 /// Everything the screen shows under its title, before scrolling.
 pub(crate) fn body_lines(app: &App, s: &StatsScreen, width: u16) -> Vec<Line<'static>> {

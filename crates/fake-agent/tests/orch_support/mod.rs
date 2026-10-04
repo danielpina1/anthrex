@@ -30,12 +30,28 @@ pub fn strings(values: &[&str]) -> Vec<String> {
 /// `claude_orchestrator_argv_is_exact` and `codex_orchestrator_argv_is_exact` shapes):
 /// its `anthrex mcp` server is `exe`, on `socket`.
 pub fn orch_argv(runtime: Runtime, exe: &Path, socket: &Path, cwd: &Path) -> Vec<String> {
+    orch_argv_with(runtime, exe, socket, cwd, Some("plan the goal"), false)
+}
+
+/// [`orch_argv`] with `prompt` as the window's initial prompt; `None` is how the
+/// daemon launches an orchestrator since milestone 9.5 decision 38. `codex_hooks`
+/// configures Codex's lifecycle hooks, as the daemon always does
+/// (`ManagerConfig::from_env`'s `codex_hook_source`).
+pub fn orch_argv_with(
+    runtime: Runtime,
+    exe: &Path,
+    socket: &Path,
+    cwd: &Path,
+    prompt: Option<&str>,
+    codex_hooks: bool,
+) -> Vec<String> {
     let role = RoleLaunch {
         run_ref: RunRef {
             run_id: RUN_ID.into(),
             task_id: None,
             role: AgentRole::Orchestrator,
             session: 1,
+            lane: None,
         },
         mcp: McpTarget {
             role: AgentRole::Orchestrator,
@@ -44,6 +60,7 @@ pub fn orch_argv(runtime: Runtime, exe: &Path, socket: &Path, cwd: &Path) -> Vec
             scout_id: None,
             epic: None,
             chain: None,
+            lane: None,
         },
         instructions: "THE CONTRACT".into(),
         effort: Effort::High,
@@ -62,7 +79,7 @@ pub fn orch_argv(runtime: Runtime, exe: &Path, socket: &Path, cwd: &Path) -> Vec
         cwd: cwd.to_path_buf(),
         worktree_branch: None,
         model: Some(model.into()),
-        initial_prompt: Some("plan the goal".into()),
+        initial_prompt: prompt.map(str::to_string),
     };
     let ctx = LaunchContext {
         window_id: ORCH_WINDOW,
@@ -72,7 +89,7 @@ pub fn orch_argv(runtime: Runtime, exe: &Path, socket: &Path, cwd: &Path) -> Vec
         exe,
         claude_bin: "/nonexistent/claude",
         codex_bin: "/nonexistent/codex",
-        codex_hook_source: None,
+        codex_hook_source: codex_hooks.then_some("/<session-flags>/config.toml"),
         codex_bypass_hook_trust: false,
         resume: None,
         caps: &CLI_CAPS,
@@ -280,10 +297,30 @@ impl Orch {
 
     pub fn spawn(&self, runtime: Runtime, env: &[(&str, &Path)]) -> Pty {
         let args = orch_argv(runtime, &self.exe, &self.stub.socket, &self.repo);
+        self.spawn_args(&args, env)
+    }
+
+    /// [`Orch::spawn`] with `prompt` as the initial prompt (`None`: none after `--`)
+    /// and Codex's hooks configured, as the daemon launches it. Only
+    /// `pty_first_message.rs` uses it.
+    #[allow(dead_code)]
+    pub fn spawn_with(&self, runtime: Runtime, env: &[(&str, &Path)], prompt: Option<&str>) -> Pty {
+        let args = orch_argv_with(
+            runtime,
+            &self.exe,
+            &self.stub.socket,
+            &self.repo,
+            prompt,
+            true,
+        );
+        self.spawn_args(&args, env)
+    }
+
+    fn spawn_args(&self, args: &[String], env: &[(&str, &Path)]) -> Pty {
         let log = self.path("hooks.log");
         let mut env = env.to_vec();
         env.push(("FA_HOOK_LOG", &log));
-        Pty::spawn(&args, &self.repo, &env)
+        Pty::spawn(args, &self.repo, &env)
     }
 
     /// Runs the Claude orchestrator to its exit.

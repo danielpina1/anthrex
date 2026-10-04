@@ -85,6 +85,9 @@ pub enum Effect {
         /// with the run's `request_wake`, round `n`'s, pasted whole and kept until
         /// delivered. Daemon-internal: no wire field.
         request: Option<u32>,
+        /// Milestone 9.5 decision 38: `text` is the session's first prompt, pasted whole
+        /// into a window that has sent a signal, held until its `OrchestratorWoken`.
+        first_turn: bool,
     },
     /// Milestone 9.3 decision 23: a continued run takes its idle chain's orchestrator
     /// window, renamed `name` and rebound to `run_id`, its session never restarted

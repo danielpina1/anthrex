@@ -304,6 +304,7 @@ fn restored_with_window(run_id: &str, data: &Path) -> (Arc<RunService>, Arc<Wind
         task_id: Some("t1".into()),
         role: proto::AgentRole::Worker,
         session: 1,
+        lane: None,
     });
     let record: crate::state::WindowRecord = serde_json::from_value(serde_json::json!({
         "id": 1,

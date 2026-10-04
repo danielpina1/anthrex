@@ -10,6 +10,7 @@ const TRIAGE_GOLDEN: &str = "[anthrex decider] triage v1\nYou label a coding goa
 
 fn triage(goal: &str) -> TriageInput {
     TriageInput {
+        thresholds: Default::default(),
         goal: goal.into(),
         profile_summary: String::new(),
         report_summary: None,
@@ -46,6 +47,7 @@ fn evidence(id: &str, summary: &str) -> Evidence {
 
 fn size_check(tasks: Vec<SizeCheckTask>, evidence: Vec<Evidence>) -> SizeCheckInput {
     SizeCheckInput {
+        thresholds: Default::default(),
         tasks,
         evidence_refs: vec![],
         evidence,
@@ -123,6 +125,7 @@ fn triage_prompt_uses_planner_task_cap() {
 fn sections_with_empty_inputs_are_omitted() {
     // Every triage section filled: each appears once, in order.
     let full = DeciderRequest::Triage(TriageInput {
+        thresholds: Default::default(),
         goal: "G".into(),
         profile_summary: "languages: rust".into(),
         report_summary: Some("It is a Rust workspace.".into()),
@@ -212,6 +215,7 @@ fn oversized_inputs_are_cut_in_order_with_the_marker() {
     // 5000 tracked paths: they are cut first, from the end; the report is untouched.
     let paths = many_paths(5000);
     let request = DeciderRequest::Triage(TriageInput {
+        thresholds: Default::default(),
         goal: "G".into(),
         profile_summary: String::new(),
         report_summary: Some("S".into()),
@@ -238,6 +242,7 @@ fn oversized_inputs_are_cut_in_order_with_the_marker() {
     // then the summary is cut to 8000 characters; then the refill (ruling M2) brings
     // back the report's files whole, then as many tracked paths as fit.
     let request = DeciderRequest::Triage(TriageInput {
+        thresholds: Default::default(),
         goal: "G".into(),
         profile_summary: String::new(),
         report_summary: Some("x".repeat(200_000)),

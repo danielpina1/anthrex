@@ -191,6 +191,7 @@ fn mcp_call_talks_to_a_real_mcp_server() {
             scout_id: None,
             epic: None,
             chain: None,
+            lane: None,
         }]
     );
     let results: Vec<Value> = agent
@@ -521,4 +522,37 @@ fn codex_mode_reads_stdin_to_eof_before_it_starts() {
     assert!(agent.wait(RUN).success());
     assert_eq!(texts(&agent), ["hi"]);
     assert_eq!(lines(&stdin_file), ["left over"]);
+}
+
+/// What a headless fake says on stderr reaches only the daemon, so with
+/// `FAKE_AGENT_ERROR_LOG` it is kept there too, with its pid, script and cwd; a failed
+/// `git_commit` says what git said.
+#[test]
+fn a_failed_step_is_kept_in_the_error_log() {
+    let dir = tempdir();
+    let script = write_steps(
+        &dir.path().join("s.jsonl"),
+        &[json!({"git_commit": {"file": "a.txt", "content": "x", "message": "m"}})],
+    );
+    let log = dir.path().join("errors.log");
+    let mut agent = Agent::codex(
+        &codex_argv(None, None, false, "go"),
+        dir.path(),
+        &[
+            ("FAKE_AGENT_SCRIPT", &script),
+            ("FAKE_AGENT_ERROR_LOG", &log),
+            ("GIT_CEILING_DIRECTORIES", dir.path()),
+        ],
+    );
+
+    assert_eq!(agent.wait(RUN).code(), Some(1), "{}", agent.stderr());
+    let kept = fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        kept.contains(" pid ")
+            && kept.contains(" s in ")
+            && kept.contains("git add -- a.txt exited with")
+            && kept.contains("not a git repository"),
+        "{kept}"
+    );
+    assert!(kept.contains("fake-agent: exiting with 1"), "{kept}");
 }

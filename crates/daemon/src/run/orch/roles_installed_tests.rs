@@ -170,7 +170,7 @@ fn a_config_change_after_the_start_does_not_reroute_a_runs_scouts() {
     let d = scout_record(&run, "s1", 2_000);
     assert_eq!(d.chosen.runtime, Runtime::Codex);
     assert_eq!(
-        crate::run::orch::launch::scout_route_of(&run).runtime,
+        crate::run::orch::launch::scout_route_of(&run, "s1").runtime,
         Runtime::Codex
     );
 }
@@ -189,7 +189,7 @@ fn a_run_recorded_before_the_frozen_keys_never_reads_the_live_config() {
     assert_eq!(run.limits.orch.scouts, None);
     // Nothing here reads the daemon's config (the routing takes the run alone), so a
     // live config routing every scout to Codex cannot reach it.
-    let route = crate::run::orch::launch::scout_route_of(&run);
+    let route = crate::run::orch::launch::scout_route_of(&run, "s1");
     assert_eq!(route.runtime, Runtime::Claude);
     assert_eq!(route.strength, config::Scouts::default().strength);
     assert_eq!(scout_record(&run, "s1", 2_000).chosen, route);

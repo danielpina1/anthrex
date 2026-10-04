@@ -5,16 +5,18 @@
 
 use std::sync::Arc;
 
-use proto::{ProposalOrigin, ProposalRecord, ProposalState, Runtime};
+use proto::{ProposalOrigin, ProposalRecord, ProposalState, Route, Runtime};
 
 use super::service::{ProfileService, already_running, blocking};
 use super::store;
 use crate::headless::argv::CodexProjectConfig;
 use crate::run::confine;
+use crate::run::driver::build::installed::installed_now;
 use crate::run::driver::unix_now;
 use crate::run::git;
 use crate::run::plan::Preflight;
-use crate::scout::spec::scout_route;
+use crate::scout::spec::{ScoutRouting, run_scout_route};
+use std::sync::atomic::Ordering;
 
 /// Decision 12's refusal of project settings a scout would run without asking.
 pub fn settings_refusal(paths: &[String]) -> String {
@@ -28,13 +30,27 @@ impl ProfileService {
     /// Decision 12's project-settings check for the scout this service would start,
     /// and, for a Codex scout that loads project config, the `.codex` entries its guard
     /// needs. `Err` is the refusal (or a git failure).
-    async fn scout_checks(
+    pub(super) async fn scout_checks(
         &self,
         pre: &Preflight,
         trust_project: bool,
-    ) -> Result<(Vec<String>, Vec<crate::headless::codex_guard::GuardEntry>), String> {
+    ) -> Result<
+        (
+            Vec<String>,
+            Vec<crate::headless::codex_guard::GuardEntry>,
+            Route,
+        ),
+        String,
+    > {
         let ctx = self.scouts.context();
-        let runtime = scout_route(ctx).runtime;
+        // Milestone 9.5 rulings RL-2, I6: over what is installed now, never under a lock.
+        let config = self.manager.config();
+        let (claude, codex) = (config.claude_bin.clone(), config.codex_bin.clone());
+        let installed = installed_now(claude, codex).await;
+        let list = &self.ctx.orchestrator.tuning.routes.scout;
+        let rotation = self.onboarding_rotation.fetch_add(1, Ordering::Relaxed);
+        let route = onboarding_route(ctx, list, rotation, &installed);
+        let runtime = route.runtime;
         let caps = self.ctx.cli_caps;
         let timeout = self.git_timeout();
         let codex_loaded =
@@ -59,7 +75,7 @@ impl ProfileService {
         } else {
             Vec::new()
         };
-        Ok((paths, guard))
+        Ok((paths, guard, route))
     }
 
     /// Decision 8: starts detection for the repository `pre` describes, answering at
@@ -78,7 +94,7 @@ impl ProfileService {
             return Err(already_running(&pre.project, &state));
         }
         self.confinement_refusal(unconfined_checks)?;
-        let (trusted, codex_config) = self.scout_checks(pre, trust_project).await?;
+        let (trusted, codex_config, route) = self.scout_checks(pre, trust_project).await?;
         let Some((generation, token)) = self.register(&pre.project) else {
             return Err(already_running(&pre.project, &ProposalState::Preparing));
         };
@@ -107,6 +123,7 @@ impl ProfileService {
             pre: pre.clone(),
             record,
             codex_config,
+            route: Some(route),
         };
         tokio::spawn(self.clone().detect_in_background(job));
         Ok(())
@@ -186,4 +203,24 @@ impl ProfileService {
             Err(error) => tracing::warn!(%error, "could not record a refused automatic detection"),
         }
     }
+}
+
+/// Milestone 9.5 (decision 9a, rulings RL-2, I6): the onboarding scout's route over
+/// what its start found `installed` (empty: everything counts as installed): the
+/// `scout` list's pick for session `rotation`, else [`run_scout_route`]'s rule on the
+/// service's scout keys, which is [`crate::scout::spec::scout_route`] when everything
+/// is installed. The list is the daemon's (`[orchestrator.routes]` is not a settings
+/// key, so a save never changes it); each start freezes it against the live roster,
+/// the roster its fallback reads too (review 10b, minor 6).
+pub(super) fn onboarding_route(
+    ctx: &crate::scout::spec::ScoutContext,
+    list: &config::RouteList,
+    rotation: u32,
+    installed: &crate::run::route_pick::Installed,
+) -> Route {
+    let roster = ctx.roster.current();
+    let list = crate::run::model::FrozenList::freeze(list, &roster);
+    let pick = crate::run::route_pick::role(&list, rotation, ctx.scouts.effort, installed);
+    let today = || run_scout_route(&roster, &ScoutRouting::of(ctx), installed);
+    pick.and_then(|p| p.route).unwrap_or_else(today)
 }

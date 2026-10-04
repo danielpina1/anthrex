@@ -73,6 +73,7 @@ fn scout_dispatched(fx: &mut Fixture, id: &str) -> String {
         reply,
         run_id: RUN_ID.into(),
         decision: Box::new(decision),
+        log: None,
     }));
     spec.id.clone()
 }
@@ -110,6 +111,7 @@ fn decider_dispatched(fx: &mut Fixture, op: u64) -> String {
         reply,
         run_id: RUN_ID.into(),
         decision: Box::new(d),
+        log: None,
     }));
     id
 }

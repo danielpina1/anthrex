@@ -260,23 +260,45 @@ fn sh_quote(text: &str) -> String {
 /// the restore command from `base` (the commit the diff was read from), each raw path
 /// single-quoted. With a path holding a control character, or a command longer than
 /// [`RESTORE_COMMAND_MAX`], the command is left out (ruling C-20).
+#[cfg(test)]
 pub(crate) fn deleted_test_file_message(paths: &[String], base: &str) -> String {
+    deleted_test_files_message(&[(base, paths.to_vec())])
+}
+
+/// Decision 41's message with a restore base per group of paths (milestone 9.5
+/// ruling T16-8 (b)): one `git checkout <base> -- <paths>` per group, joined by `&&`.
+/// A single group's text is exactly the one-base message.
+pub(crate) fn deleted_test_files_message(groups: &[(&str, Vec<String>)]) -> String {
     let mut lines = vec!["[anthrex] task_done rejected:".to_string()];
+    let paths: Vec<&String> = groups.iter().flat_map(|(_, p)| p).collect();
     lines.extend(paths.iter().map(|p| {
         format!(
             "deleted test file {}; restore it or own it exactly",
             shown(p)
         )
     }));
-    let quoted: Vec<String> = paths.iter().map(|p| sh_quote(p)).collect();
-    let command = format!("git checkout {} -- {}", super::sha7(base), quoted.join(" "));
+    let checkout = |(base, paths): &(&str, Vec<String>)| {
+        let quoted: Vec<String> = paths.iter().map(|p| sh_quote(p)).collect();
+        format!("git checkout {} -- {}", super::sha7(base), quoted.join(" "))
+    };
+    let command = groups.iter().map(checkout).collect::<Vec<_>>().join(" && ");
     let plain = !paths.iter().any(|p| p.chars().any(char::is_control));
     let how = if plain && command.chars().count() <= RESTORE_COMMAND_MAX {
         format!("Restore it ({command}, then commit)")
-    } else {
+    } else if let [(base, _)] = groups {
         format!(
             "Restore the deleted test files from {}, then commit,",
             super::sha7(base)
+        )
+    } else {
+        // Milestone 9.5 re-review 3's NI-3: each file with its own commit.
+        let each: Vec<String> = (groups.iter())
+            .flat_map(|(base, paths)| paths.iter().map(move |p| (base, p)))
+            .map(|(base, p)| format!("{} from {}", shown(p), super::sha7(base)))
+            .collect();
+        format!(
+            "Restore each deleted test file from its commit ({}), then commit,",
+            each.join("; ")
         )
     };
     lines.push(format!(

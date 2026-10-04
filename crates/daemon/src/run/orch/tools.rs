@@ -80,7 +80,8 @@ pub fn parse_call(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall,
                 | "start_goal"
         ),
         AgentRole::Planner => matches!(tool, "get_context" | "submit_epic"),
-        AgentRole::Worker => tool == "task_note",
+        // Milestone 9.5: a racer and a test writer have the worker's tools.
+        AgentRole::Worker | AgentRole::Racer | AgentRole::TestWriter => tool == "task_note",
         AgentRole::Reviewer | AgentRole::Scout | AgentRole::Decider => false,
     };
     if !allowed {

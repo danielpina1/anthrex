@@ -3,12 +3,12 @@
 //! file, and the engine (`engine/history.rs`) emits the ops.
 
 use proto::{
-    AgentRole, GateTally, HISTORY_VERSION, RunRecord, RunState, Severity, SeverityTally,
-    TaskOutcome, TaskRecord, TaskState, TokenUsage, Verdict,
+    AgentRole, GateTally, HISTORY_VERSION, PairPhase, RunRecord, RunState, Severity, SeverityTally,
+    TaskOutcome, TaskPattern, TaskRecord, TaskState, TokenUsage, Verdict,
 };
 
 use super::contract::generated_files_message;
-use super::model::{Run, SizeCheckState, Task};
+use super::model::{Run, SizeCheckState, Task, writes_task};
 use super::phases::phase_mut;
 
 /// A run record keeps the goal's first 200 characters.
@@ -79,28 +79,40 @@ pub fn run_record_due(run: &Run) -> Option<&'static str> {
     run_outcome(run)
 }
 
-fn sum(task: &Task, role: AgentRole) -> TokenUsage {
+fn sum(task: &Task, role: impl Fn(AgentRole) -> bool) -> TokenUsage {
     let mut total = TokenUsage::default();
-    for round in task.rounds.iter().filter(|r| r.role == role) {
+    for round in task.rounds.iter().filter(|r| role(r.role)) {
         total += round.usage;
     }
     total
+}
+
+/// Decision 30: the test writer's gate failures of a paired task. While it writes, they
+/// are the task's own counters; from the implementer's start, the pair keeps them.
+pub(crate) fn writer_failures(task: &Task) -> u8 {
+    match task.pair.as_ref() {
+        Some(pair) if pair.phase == PairPhase::Writing => task.failures,
+        Some(pair) => pair.writer_failures,
+        None => 0,
+    }
 }
 
 fn count(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-fn gates(task: &Task) -> GateTally {
+/// A task's gate tally. Milestone 9.5 minor m3: a red-only check (decision 25's, of a
+/// test writer's claim) is not a proof.
+pub(crate) fn gates(task: &Task) -> GateTally {
     let own = || task.checks.iter().filter(|c| !c.on_candidate);
+    let proofs = || task.proofs.iter().filter(|p| !p.red_only);
     // A generated-file bounce (decision 55) is known by its message's opening words.
     let message = generated_files_message(&[]);
     let generated = &message[..message.find(" outside").unwrap_or(message.len())];
     GateTally {
-        proofs: count(task.proofs.len()),
+        proofs: count(proofs().count()),
         proofs_failed: count(
-            task.proofs
-                .iter()
+            proofs()
                 .filter(|p| !(p.red_failed && p.head_passed && p.matched))
                 .count(),
         ),
@@ -144,6 +156,20 @@ fn severities(task: &Task) -> SeverityTally {
 /// The record of a finished task, or, at the run's end, of an unfinished one. Its
 /// phases include the time in its current state up to `now`; `wall_secs` is their sum.
 pub fn task_record(run: &Run, task: &Task, outcome: TaskOutcome, now: u64) -> TaskRecord {
+    // Decision 30: the race or pair it ran as. A raced task records the winning lane's
+    // route until the crown; from then the task is the lane's, and its own route holds
+    // any later escalation (fix round 1, review m1).
+    let race = super::snapshot_patterns::race_info(task);
+    let winner = race.as_ref().and_then(|r| r.winner);
+    let crowned = task.race.as_ref().is_some_and(|r| r.crowned);
+    let route = (race.as_ref().zip(winner).filter(|_| !crowned))
+        .and_then(|(r, w)| r.lanes.iter().find(|l| l.lane == w))
+        .map_or_else(|| task.route.clone(), |l| l.route.clone());
+    let pattern = match (&race, &task.pair) {
+        (Some(_), _) => Some(TaskPattern::Race),
+        (None, Some(_)) => Some(TaskPattern::Pair),
+        (None, None) => None,
+    };
     let mut phases = task.phases;
     if task.phase_since > 0
         && let Some(open) = phase_mut(&mut phases, task.state)
@@ -178,19 +204,21 @@ pub fn task_record(run: &Run, task: &Task, outcome: TaskOutcome, now: u64) -> Ta
             Some(SizeCheckState::Done(info)) => Some(info.clone()),
             _ => None,
         },
-        route: task.route.clone(),
+        route,
         review_routes: task.reviews.iter().map(|r| r.route.clone()).collect(),
         routing_decisions: task.routing_decisions.clone(),
         outcome,
         block: task.block.as_ref().map(|b| b.reason),
         diff: task.diff,
+        // Decision 4: every session that wrote the task, a race's two lanes and a
+        // pair's test writer included.
         tool_calls: task
             .rounds
             .iter()
-            .filter(|r| r.role == AgentRole::Worker)
+            .filter(|r| writes_task(r.role))
             .fold(0u32, |a, r| a.saturating_add(r.tool_calls)),
-        worker_usage: sum(task, AgentRole::Worker),
-        reviewer_usage: sum(task, AgentRole::Reviewer),
+        worker_usage: sum(task, writes_task),
+        reviewer_usage: sum(task, |role| role == AgentRole::Reviewer),
         decider_usage: task.decider_usage,
         phases,
         wall_secs,
@@ -201,12 +229,21 @@ pub fn task_record(run: &Run, task: &Task, outcome: TaskOutcome, now: u64) -> Ta
         stalls: task.stalls,
         budget_exceeded: task.budget_exceeded,
         conflicts: task.conflicts,
-        max_rung: task.max_rung.max(task.rung),
+        // The final fix wave (review B's M2): not a test writer's rung.
+        max_rung: match super::phases::writing(task) {
+            true => task.max_rung,
+            false => task.max_rung.max(task.rung),
+        },
         sessions: task.session,
         done_signal: task.done.as_ref().map(|d| d.signal),
         merge_commit: task.merge_commit.clone(),
         stage: task.spec.stage,
-        origin: proto::TaskOrigin::Plan,
+        origin: task.origin,
+        pattern,
+        race_winner: winner,
+        race_adopted: race.is_some_and(|r| r.adopted),
+        writer_failures: writer_failures(task),
+        round: task.round,
     }
 }
 

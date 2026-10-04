@@ -47,8 +47,8 @@ const GOAL_CHARS: usize = 200;
 /// configuration says later.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoleSnapshot {
-    /// `explicit_choice`, `agent_config` or `roster_default`; empty on a record made
-    /// before milestone 9's task M9.13b.
+    /// `explicit_choice`, `continued_chain`, `configured_list`, `agent_config` or
+    /// `roster_default`; empty on a record made before milestone 9's task M9.13b.
     pub source: String,
     pub candidates: Vec<RoutingCandidate>,
 }
@@ -62,6 +62,8 @@ pub fn role_name(role: AgentRole) -> &'static str {
         AgentRole::Scout => "scout",
         AgentRole::Planner => "planner",
         AgentRole::Decider => "decider",
+        AgentRole::Racer => "racer",
+        AgentRole::TestWriter => "test_writer",
     }
 }
 
@@ -144,6 +146,7 @@ pub fn record(
         source: source.to_string(),
         policy_version: policy.to_string(),
         pick_policy: None,
+        rotation: None,
         input,
         chosen: chosen.clone(),
         selected_index: selected as u32,
@@ -236,7 +239,7 @@ pub fn orchestrator_record(run: &Run, trigger: &str, now: u64) -> Option<RoleRou
         "" => "unrecorded",
         source => source,
     };
-    Some(record(
+    let mut decision = record(
         Some(run),
         AgentRole::Orchestrator,
         &session,
@@ -247,7 +250,13 @@ pub fn orchestrator_record(run: &Run, trigger: &str, now: u64) -> Option<RoleRou
         o.routing.candidates.clone(),
         &o.route,
         now,
-    ))
+    );
+    // Milestone 9.5 decision 9a: a route the `orchestrator` list chose.
+    if source == lists::LIST_SOURCE {
+        let pick = run.limits.route_lists.orchestrator.pick;
+        lists::mark(&mut decision, (pick, 0), Some(&o.route));
+    }
+    Some(decision)
 }
 
 /// The record of session `session` of epic `k`'s sub-planner: `[orchestrator.planners]`
@@ -258,12 +267,16 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
     let orchestrator = run.orch.orchestrator.as_ref().map(|o| o.route.runtime);
     let runtime = p.runtime.or(orchestrator).unwrap_or(epic.route.runtime);
     let ladder = ladder_candidates(&run.roster, runtime, p.strength, p.effort);
-    let candidates = mark_not_installed(ladder, &run.orch.installed);
+    let mut candidates = mark_not_installed(ladder, &run.orch.installed);
+    let pick = lists::planner_pick(run, k);
+    if let Some(pick) = &pick {
+        candidates = lists::candidates(pick, candidates);
+    }
     let mut input = input_of(run);
     input.epic = Some(epic.epic.clone());
     input.area = epic.area.clone();
     let trigger = if session == 1 { "start" } else { "replan" };
-    record(
+    let mut decision = record(
         Some(run),
         AgentRole::Planner,
         &format!("{}/{session}", epic.epic),
@@ -274,23 +287,31 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
         candidates,
         &epic.route,
         now,
-    )
+    );
+    if let Some(p) = pick {
+        lists::mark(&mut decision, (p.pick, p.rotation), p.route.as_ref());
+    }
+    decision
 }
 
 /// The record of run scout `scout_id`'s session, on the route the driver starts it on
 /// (`launch::scout_route_of`: `[orchestrator.scouts]` as the run froze it, over the
 /// run's installed runtimes).
 pub fn scout_record(run: &Run, scout_id: &str, now: u64) -> RoleRoutingDecision {
-    let chosen = crate::run::orch::launch::scout_route_of(run);
+    let chosen = crate::run::orch::launch::scout_route_of(run, scout_id);
     let routing = crate::run::orch::launch::scout_routing(run);
     let runtime = routing.runtime.unwrap_or(routing.default_runtime);
     let ladder = ladder_candidates(&run.roster, runtime, routing.strength, chosen.effort);
-    let candidates = mark_not_installed(ladder, &run.orch.installed);
+    let mut candidates = mark_not_installed(ladder, &run.orch.installed);
+    let pick = lists::scout_pick(run, scout_id);
+    if let Some(pick) = &pick {
+        candidates = lists::candidates(pick, candidates);
+    }
     let mut input = input_of(run);
     if let Some(scout) = run.orch.run_scouts.iter().find(|s| s.id == scout_id) {
         input.area = scout.area.clone();
     }
-    record(
+    let mut decision = record(
         Some(run),
         AgentRole::Scout,
         scout_id,
@@ -301,7 +322,11 @@ pub fn scout_record(run: &Run, scout_id: &str, now: u64) -> RoleRoutingDecision 
         candidates,
         &chosen,
         now,
-    )
+    );
+    if let Some(p) = pick {
+        lists::mark(&mut decision, (p.pick, p.rotation), p.route.as_ref());
+    }
+    decision
 }
 
 /// A decider's candidates (review I-2): `[orchestrator.deciders]`'s ladder on the
@@ -350,6 +375,34 @@ pub fn decider_record(
     decision
 }
 
+/// Milestone 9.5 decision 9a: [`decider_record`] for a call routed over the `decider`
+/// list's `pick` (`None`: no list): the list's snapshot first, and the list marked.
+/// `moved`: the mode's route the probe found not installed (ruling T10b-1), recorded
+/// skipped as [`NOT_INSTALLED`] ahead of the peer runtime's candidates.
+pub fn decider_listed(
+    run: Option<&Run>,
+    session: (&str, &str),
+    task_ids: &[String],
+    (route, candidates): (&Route, Vec<RoutingCandidate>),
+    (pick, moved): (Option<&crate::run::route_pick::RolePick>, Option<&Route>),
+    (input, now): (RoleRoutingInput, u64),
+) -> RoleRoutingDecision {
+    let skipped = moved.map(|m| RoutingCandidate {
+        route: m.clone(),
+        skipped_reason: Some(NOT_INSTALLED.to_string()),
+    });
+    let candidates: Vec<_> = skipped.into_iter().chain(candidates).collect();
+    let candidates = match pick {
+        Some(p) => lists::candidates(p, candidates),
+        None => candidates,
+    };
+    let mut decision = decider_record(run, session, task_ids, (route, candidates), input, now);
+    if let Some(p) = pick {
+        lists::mark(&mut decision, (p.pick, p.rotation), p.route.as_ref());
+    }
+    decision
+}
+
 /// A decider call's outcome: `completed` with `answered`, or `fallback` with its
 /// reason.
 pub fn decider_outcome(decision: &crate::decider::Decision) -> (RoleOutcome, Option<String>) {
@@ -358,6 +411,9 @@ pub fn decider_outcome(decision: &crate::decider::Decision) -> (RoleOutcome, Opt
         proto::DeciderSource::Fallback => (RoleOutcome::Fallback, decision.fallback_reason.clone()),
     }
 }
+
+#[path = "role_lists.rs"]
+pub mod lists;
 
 #[cfg(test)]
 #[path = "roles_tests.rs"]

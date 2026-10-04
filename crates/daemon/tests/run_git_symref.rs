@@ -120,6 +120,7 @@ fn assert_every_engine_call_refuses(w: &World, run_head: &str) {
         &w.task,
         &format!("refs/anthrex/salvage/{}/t1/1", w.run),
         "salvage",
+        false,
         T,
     );
     assert!(result.is_err(), "salvage judged the base's tip: {result:?}");

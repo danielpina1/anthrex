@@ -275,7 +275,8 @@ fn appended_variants_keep_their_indices() {
     use AgentRole as A;
     assert_last(
         &[A::Orchestrator, A::Worker, A::Reviewer, A::Scout],
-        &[A::Planner, A::Decider],
+        // Milestone 9.5 appends `Racer` and `TestWriter` after `Decider` (`tuning_tests.rs`).
+        &[A::Planner, A::Decider, A::Racer, A::TestWriter],
     );
     use RunState as R;
     assert_last(

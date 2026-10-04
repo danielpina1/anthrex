@@ -45,7 +45,18 @@ pub(super) fn on_signal(
                 .map(|r| (i, r))
         });
         if let Some((i, r)) = found {
-            apply(run, i, r, signal, now, fx);
+            // Milestone 9.5 decision 20: a lane's session, in its lane's view.
+            let lane = super::race_view::view_lane(&run.tasks[i], run.tasks[i].rounds[r].lane);
+            let Some(lane) = lane else {
+                return apply(run, i, r, signal, now, fx);
+            };
+            let in_view = |run: &mut Run, fx: &mut Vec<Effect>| {
+                let rounds = &run.tasks[i].rounds;
+                if let Some(r) = rounds.iter().rposition(|r| r.window_id == Some(window_id)) {
+                    apply(run, i, r, signal, now, fx);
+                }
+            };
+            super::race::with_lane(run, i, lane, now, fx, in_view);
             return;
         }
     }
@@ -61,6 +72,7 @@ fn runtime_label(runtime: Runtime) -> String {
 }
 
 fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &mut Vec<Effect>) {
+    let worker = crate::run::model::writes(&run.tasks[i], &run.tasks[i].rounds[r]);
     let round = &mut run.tasks[i].rounds[r];
     if round.ended {
         return;
@@ -124,7 +136,6 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             round.set_rate_limited(None, now);
         }
     }
-    let worker = round.role == AgentRole::Worker;
     match signal {
         AgentSignal::Init { session_id } => round.session_id = Some(session_id),
         AgentSignal::TurnStarted => {
@@ -150,7 +161,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             if error == RATE_LIMIT {
                 round.in_retry_streak = true;
                 if !streak {
-                    count_rate_limit(run, i, r);
+                    count_rate_limit(run, i, r, now);
                 }
             }
         }
@@ -193,9 +204,12 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
     }
 }
 
-pub(super) fn count_rate_limit(run: &mut Run, i: usize, r: usize) {
-    let label = runtime_label(run.tasks[i].rounds[r].route.runtime);
-    *run.rate_limits.entry(label).or_insert(0) += 1;
+/// One rate-limit event of a task session (decision 32): counted, and, milestone 9.5
+/// decision 16, its runtime's writer cap halved (`concurrency::on_rate_limit`).
+pub(super) fn count_rate_limit(run: &mut Run, i: usize, r: usize, now: u64) {
+    let runtime = run.tasks[i].rounds[r].route.runtime;
+    *run.rate_limits.entry(runtime_label(runtime)).or_insert(0) += 1;
+    super::concurrency::on_rate_limit(run, runtime, now);
 }
 
 /// Saturating, as `TokenUsage`'s `+=` is (followups file, "From M8b.15"): a session's
@@ -232,8 +246,8 @@ fn turn_ended(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    let worker = crate::run::model::writes(&run.tasks[i], &run.tasks[i].rounds[r]);
     let round = &mut run.tasks[i].rounds[r];
-    let worker = round.role == AgentRole::Worker;
     round.turn_open = false;
     round.closed_pid = round.pid;
     if let Some(usage) = usage {
@@ -326,6 +340,7 @@ fn failed_turn(
     match kind {
         FailureKind::SandboxUnavailable => {
             kill_worker(run, i, fx);
+            run.tasks[i].rounds[r].environment_failed = true;
             block(
                 run,
                 i,
@@ -336,12 +351,13 @@ fn failed_turn(
         }
         // Ruling F-1: a client error is as final as a failed login.
         FailureKind::Authentication | FailureKind::Billing | FailureKind::ClientError => {
+            run.tasks[i].rounds[r].environment_failed = true;
             block(run, i, BlockReason::Environment, error, now);
         }
         FailureKind::RateLimit => {
             // One event, unless a retry streak ran straight into this failure.
             if !streak {
-                count_rate_limit(run, i, r);
+                count_rate_limit(run, i, r, now);
             }
             let round = &mut run.tasks[i].rounds[r];
             round.failed_turn = FailedTurn::WaitingContinue {
@@ -358,6 +374,7 @@ fn failed_turn(
                 round.failed_turn,
                 FailedTurn::ContinueSent { rate_limit: false }
             ) {
+                round.environment_failed = true;
                 return block(run, i, BlockReason::Environment, error, now);
             }
             round.failed_turn = FailedTurn::WaitingContinue {
@@ -387,8 +404,8 @@ fn exited(
     fx: &mut Vec<Effect>,
 ) {
     let working = run.tasks[i].state == TaskState::Working;
+    let worker = crate::run::model::writes(&run.tasks[i], &run.tasks[i].rounds[r]);
     let round = &mut run.tasks[i].rounds[r];
-    let worker = round.role == AgentRole::Worker;
     let research = round.role == AgentRole::Scout;
     // Codex runs one process per turn: its exit between turns is the normal end of one,
     // and the round has no process until the next starts. A retiring round's exit ends

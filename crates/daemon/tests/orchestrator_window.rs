@@ -71,6 +71,7 @@ fn role() -> RoleLaunch {
             task_id: None,
             role: AgentRole::Orchestrator,
             session: 1,
+            lane: None,
         },
         mcp: McpTarget {
             role: AgentRole::Orchestrator,
@@ -79,6 +80,7 @@ fn role() -> RoleLaunch {
             scout_id: None,
             epic: None,
             chain: None,
+            lane: None,
         },
         instructions: "the orchestrator contract".into(),
         effort: Effort::High,

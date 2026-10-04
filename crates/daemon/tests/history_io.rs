@@ -161,6 +161,7 @@ fn run_appending(data: &Path, history: &Path) -> (Run, OpKind) {
     };
     let config = config::Orchestrator::default();
     let ctx = BuildContext {
+        tuning: Default::default(),
         id: "history-5a1e".into(),
         wt_dir: PathBuf::from("/tmp/nowhere-wt"),
         data_dir: data.join("runs").join("history-5a1e"),
@@ -186,6 +187,7 @@ fn run_appending(data: &Path, history: &Path) -> (Run, OpKind) {
             op: 7,
             task_id: Some("t1".into()),
             kind: kind.clone(),
+            lane: None,
         },
     );
     (run, kind)
@@ -336,6 +338,7 @@ fn role_route_append_is_idempotent_by_record_id() {
             op: 7,
             task_id: None,
             kind: kind.clone(),
+            lane: None,
         },
     );
     let journal = vec![JournalLine::Intent { op: 7, kind }];

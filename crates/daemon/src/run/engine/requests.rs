@@ -19,7 +19,6 @@ use crate::decider::fallback::SIZED_BY_TRIAGE;
 use crate::run::env::profile_env;
 use crate::run::model::{FreshSession, LogEntry, Run, SizeCheckState};
 use crate::run::orch::EditSource;
-use crate::run::roster::escalate;
 use crate::run::triage::fast_refusal;
 use crate::run::validate::EditScope;
 
@@ -311,13 +310,14 @@ fn submit_edit(
 
 /// `run retry` (decision 42) of a blocked task that is neither L nor `dep_cancelled`:
 /// `failures = 1`, `bounces`, `budget_exceeded` and `conflicts` cleared, rung 2 on
-/// `roster::escalate(route)` (decision 38's rung 2), and a fresh session in the same
-/// worktree from the task's own start commit (carry M8a.11), with decision 30's
-/// hand-over prompt; its old session, if alive, is killed first. The hand-back context
-/// ends (carry T14-R2), so the fresh session's claim passes every gate. A task that
-/// never started is dispatched again instead. A held task (M8a.6 ruling N5) waits for
-/// its dependencies, then has the run head handed back before the fresh session, and
-/// keeps its own block until then (`holds::resume_held`, carries T11-RR and M8a.14).
+/// `route_pick::rung2_route` (decision 38's rung 2; milestone 9.5's lists and RL-1), and
+/// a fresh session in the same worktree from the task's own start commit (carry M8a.11),
+/// with decision 30's hand-over prompt; its old session, if alive, is killed first. The
+/// hand-back context ends (carry T14-R2), so the fresh session's claim passes every
+/// gate. A task that never started is dispatched again instead. A held task (M8a.6
+/// ruling N5) waits for its dependencies, then has the run head handed back before the
+/// fresh session, and keeps its own block until then (`holds::resume_held`, carries
+/// T11-RR and M8a.14).
 pub(super) fn retry(
     state: &mut EngineState,
     id: ReplyId,
@@ -343,6 +343,22 @@ pub(super) fn retry(
             .unwrap_or_default();
         format!(" (it was blocked({label}): {})", b.text)
     });
+    // Milestone 9.5 decision 21: a winner whose crown failed is crowned again.
+    if super::race_end::retry_crown(run, i, now) {
+        history(
+            run,
+            i,
+            now,
+            format!("retried by the user: its crown is sent again{was}"),
+        );
+        log(
+            run,
+            now,
+            format!("{task_id} retried: its crown is sent again"),
+        );
+        let text = format!("task {task_id} retried: its race's winner is crowned again");
+        return reply(fx, id, Ok(text));
+    }
     // M9.9 second review, M-c: the user's retry lifts decision 25's cap.
     run.tasks[i].orch.rewrite_restarts = 0;
     let how = rung2(run, i, format!("the user retried it{was}"), now, fx);
@@ -366,8 +382,19 @@ pub(super) fn rung2(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> &'static str {
-    let task = &run.tasks[i];
-    let route = escalate(&run.roster, &task.route);
+    // Milestone 9.5 decision 26: while the test is being written, the test writer's
+    // route escalates and the implementer's stays.
+    let writer = super::pair::escalate_writer(run, i, now);
+    let (route, step) = match writer {
+        true => (run.tasks[i].route.clone(), None),
+        false => crate::run::route_pick::rung2_route(run, i),
+    };
+    if let Some(text) = (!writer)
+        .then(|| crate::run::route_pick::every_route_failed(run, i, &route))
+        .flatten()
+    {
+        log(run, now, text);
+    }
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
     let task = &mut run.tasks[i];
@@ -386,7 +413,15 @@ pub(super) fn rung2(
     // M8b decision 33a: the next worker launch records this escalation, its pool
     // stepping from the route the selector stepped from (a second escalation before
     // the launch overwrites the first: the intermediate route never ran).
-    task.escalated_from = Some(std::mem::replace(&mut task.route, route));
+    if !writer {
+        task.escalated_from = Some(std::mem::replace(&mut task.route, route));
+    }
+    // A research or review task's pick is its `list_pick` (its review records it,
+    // ruling RL-4); a worker's escalation is recorded at its next launch.
+    match super::schedule::is_reader_task(task) {
+        true => task.list_pick = step.or(task.list_pick.take()),
+        false => task.list_escalation = step,
+    }
     // Ruling T15-C1: a new budget epoch; rung 4 counts from the fresh session.
     super::clock::new_epoch(task);
     // `kill_worker`'s `supersede` ended the hand-back context (`handed_back`,
@@ -399,6 +434,12 @@ pub(super) fn rung2(
         set_state(task, TaskState::Queued, now);
         task.block = None;
         task.fresh_session = None;
+        // Ruling T17a-1: a new dispatch decides the race again.
+        task.race_decision = None;
+        // Task 17a's re-review (b): a race that ended with both lanes out runs single.
+        if let Some(race) = task.race.as_mut().filter(|r| r.winner.is_none()) {
+            race.ended = true;
+        }
         "it is dispatched again"
     } else {
         task.fresh_session = Some(FreshSession {

@@ -56,7 +56,7 @@ pub(super) const ORCHESTRATOR_LAUNCH_PENDING: &str =
 /// orchestrator and sub-planner call, and a worker's `task_note`.
 pub(super) fn is_orch_call(call: &ToolCall) -> bool {
     matches!(call.role, AgentRole::Orchestrator | AgentRole::Planner)
-        || (call.role == AgentRole::Worker && call.tool == "task_note")
+        || (crate::run::model::writes_task(call.role) && call.tool == "task_note")
 }
 
 /// Decision 15's refusal: `ToolResult { ok: false }` holding `{"error": "<text>"}`.
@@ -188,7 +188,9 @@ impl RunService {
             call.tool.as_str(),
             "get_context" | "run_status" | "task_result"
         );
-        if read && call.role != AgentRole::Worker {
+        // Milestone 9.5 (task 16 minor m5): a task's writing session's reads go the
+        // worker's way, a test writer's too.
+        if read && !crate::run::model::writes_task(call.role) {
             return self.read(call, limit).await;
         }
         // The engine holds a sub-planner's early `submit_epic` itself; it has no hold

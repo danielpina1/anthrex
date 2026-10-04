@@ -74,7 +74,7 @@ pub(super) fn read_models(table: &toml::Table, o: &mut Orchestrator, problems: &
                         Err(message) => problems.push(Problem {
                             key: format!("orchestrator.models[{i}]"),
                             message,
-                            default: "entry skipped".to_string(),
+                            default: crate::ENTRY_SKIPPED.to_string(),
                         }),
                     }
                 }

@@ -163,6 +163,17 @@ fn lexical(path: &Path) -> PathBuf {
     }
 }
 
+/// Milestone 9.5 review ruling I2: `worktree`'s own branch (`Pin.own`) becomes `own`
+/// (`refs/heads/…`), in memory only, no git: a crowned race lane's checkout, whose
+/// imports then move the task branch. A worktree that is not pinned is left unpinned.
+/// It holds until the next [`pin`] of the worktree, which passes the task's branch.
+pub fn repin_own(worktree: &Path, own: &str) {
+    let key_path = key(worktree);
+    if let Some(pin) = crate::lock(&PINS).get_mut(&key_path) {
+        pin.own = Some(own.to_string());
+    }
+}
+
 /// Forgets `worktree` (it was removed).
 pub fn unpin(worktree: &Path) {
     crate::lock(&PINS).remove(&key(worktree));

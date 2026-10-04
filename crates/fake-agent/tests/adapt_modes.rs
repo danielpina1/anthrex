@@ -42,6 +42,7 @@ fn ctx(runtime: Runtime) -> DeciderContext {
         cwd: PathBuf::from("/tmp/unused"),
         schema_dir: PathBuf::from("/tmp/unused"),
         caps: CLI_CAPS,
+        routing: Default::default(),
     }
 }
 

@@ -227,6 +227,8 @@ fn only_task_edits_may_widen_the_reach() {
         size: Some(proto::Size::M),
         deps: None,
         stage: None,
+        race: None,
+        pair: None,
     };
     assert!(edits_may_widen(&[PlanEdit::Pause, amend]));
     assert!(edits_may_widen(&[PlanEdit::SplitTask {

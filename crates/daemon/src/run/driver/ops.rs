@@ -19,12 +19,13 @@ use crate::run::proof::ProofOp;
 use crate::run::role_launch::worker_git_roots;
 use crate::run::slots::{Priority, Want};
 use crate::run::tiers::SignalsSpec;
-use proto::AgentRole;
 
 // Decision 33's proof and decision 34's check (split out to keep this file under the
 // 600-line rule).
 #[path = "gate_ops.rs"]
 mod gate_ops;
+#[path = "lane_ops.rs"]
+mod lane_ops;
 #[path = "sync_done.rs"]
 mod sync_done;
 use gate_ops::{check, proof};
@@ -38,6 +39,11 @@ use scheduled::scheduled;
 #[cfg(test)]
 #[path = "ops_signals_tests.rs"]
 mod signals_tests;
+
+// Task M9.5.18: racers' and test writers' sandboxes and calls.
+#[cfg(test)]
+#[path = "racer_launch_tests.rs"]
+mod racer_launch_tests;
 
 pub(super) fn failed(message: impl Into<String>) -> OpResult {
     OpResult::Failed {
@@ -121,7 +127,9 @@ impl RunService {
 /// through a link, and named by appending to the engine's own directory, never by
 /// resolving a path the worker could have swapped: I1), plus the commit's files in the
 /// checkout's own git directory. Nothing of the git common directory. Any other session
-/// (a reviewer) is left as it is.
+/// (a reviewer) is left as it is. Milestone 9.5 (task M9.5.18): a racer's and a test
+/// writer's too, a racer's on its own lane's stored checkout; a session whose lane the
+/// run does not store is refused, with a logged error.
 async fn worker_git_dirs(
     service: &Arc<RunService>,
     ctx: &OpCtx,
@@ -130,17 +138,26 @@ async fn worker_git_dirs(
     let task = spec
         .run_ref
         .as_ref()
-        .filter(|r| r.role == AgentRole::Worker)
-        .and_then(|r| r.task_id.clone());
-    let Some(task) = task else {
+        .filter(|r| crate::run::model::writes_task(r.role))
+        .and_then(|r| Some((r.task_id.clone()?, r.role, r.lane)));
+    let Some((task, role, lane)) = task else {
         return Ok(());
     };
-    let common = crate::lock(&service.state)
+    // Milestone 9.5 ruling RR-1: the session's checkout, a lane's or the task's.
+    let (common, checkout) = crate::lock(&service.state)
         .runs
         .get(&ctx.run_id)
-        .map(|run| run.git_common_dir.clone())
+        .map(|run| {
+            (
+                run.git_common_dir.clone(),
+                lane_ops::session_checkout(run, &task, role, lane),
+            )
+        })
         .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
-    let roots = worker_git_roots(&ctx.data_dir, &task);
+    let checkout = checkout.inspect_err(|error| {
+        tracing::error!(run = %ctx.run_id, %task, %error, "a session's launch was refused");
+    })?;
+    let roots = worker_git_roots(&ctx.data_dir, &checkout);
     let sandboxed = spec
         .claude_sandbox
         .as_ref()
@@ -347,6 +364,7 @@ pub(super) async fn run(
             timeout_secs,
             setup,
             env,
+            red_only,
         } => {
             let op_id = op;
             let op = ProofOp {
@@ -361,6 +379,7 @@ pub(super) async fn run(
                 setup,
                 env,
                 confine: ctx.confine.as_deref().cloned(),
+                red_only,
             };
             proof(service, ctx, op_id, op).await
         }
@@ -425,15 +444,8 @@ pub(super) async fn run(
                 .await
                 .map(|()| OpResult::MergeAborted),
         ),
-        OpKind::RemoveWorktree {
-            root,
-            path,
-            salvage_ref,
-        } => settle(
-            cleanup::remove_worktree(service, ctx, root, path, salvage_ref)
-                .await
-                .map(|salvage_ref| OpResult::Removed { salvage_ref }),
-        ),
+        // Milestone 9.5 decision 22: with a race lane's variants.
+        OpKind::RemoveWorktree { .. } => settle(lane_ops::remove_lane(service, ctx, kind).await),
         OpKind::VerifyRefs { .. } => stage_ops::verify_refs(service, ctx, kind).await,
         // Milestone 9.1 decision 48.
         OpKind::CreateStageBranch { .. } => stage_ops::create(service, ctx, kind).await,
@@ -467,6 +479,8 @@ pub(super) async fn run(
         }
         // Milestone 9.2 decision 8 (`driver/host_ops.rs`).
         OpKind::Host { repo, op } => service.host_op(ctx, repo, op).await,
+        // Milestone 9.5 decision 21.
+        OpKind::CrownRacer { .. } => lane_ops::crown_racer(service, ctx, kind).await,
     }
 }
 
@@ -503,8 +517,14 @@ fn verify_done(
     });
     // Milestone 9.1 decision 40: only when the op asks (never for an untiered profile).
     // Controller ruling C-21 (2): a sync task's from its conflicted tree.
+    // Milestone 9.5 rulings RP-2 and T16-7: a paired task's implementer's: the writer's
+    // paths from its red commit, every other path from the merge base with the run head.
+    let red_at = signals.and_then(|s| s.red.as_deref());
     let mut signals =
-        match (signals, spill_base.as_deref()) {
+        match (signals, red_at.or(spill_base.as_deref())) {
+            (Some(spec), Some(red)) if red_at.is_some() && !d.head.is_empty() => Some(Box::new(
+                git::pair_signals(git, worktree, (start, red, run_head, &d.head), spec, t)?,
+            )),
             (Some(spec), Some(base)) if !d.head.is_empty() => Some(Box::new(
                 git::done_signals_from(git, worktree, (base, &d.head), spec, t)?,
             )),

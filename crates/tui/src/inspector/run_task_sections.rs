@@ -11,8 +11,10 @@ use super::{Field, Marks, Section, SectionField};
 use crate::app::App;
 use crate::app::task_detail::DetailState;
 use crate::safe_text::one_line;
-use crate::tree::{NodeKey, is_paused, round_label, task_held};
-use proto::{AgentRole, AgentRoundInfo, DeciderSource, RunInfo, RunState, TaskInfo, TaskState};
+use crate::tree::{NodeKey, is_paused, round_label_with_lane, task_held};
+use proto::{
+    AgentRole, AgentRoundInfo, DeciderSource, RaceLane, RunInfo, RunState, TaskInfo, TaskState,
+};
 
 fn plain(label: &'static str, value: impl Into<String>) -> SectionField {
     SectionField {
@@ -36,7 +38,7 @@ pub(super) fn stage_words(run: &RunInfo, task: &TaskInfo) -> String {
             TaskState::Pending => "waiting for its dependencies".to_owned(),
             TaskState::Queued => "queued for a worker".to_owned(),
             TaskState::Preparing => "preparing its worktree".to_owned(),
-            TaskState::Working => "worker is working".to_owned(),
+            TaskState::Working => working_words(task),
             TaskState::Proof => "running the test proof".to_owned(),
             TaskState::Check => "running the check".to_owned(),
             TaskState::Review => "in review".to_owned(),
@@ -63,19 +65,53 @@ pub(super) fn stage_words(run: &RunInfo, task: &TaskInfo) -> String {
     }
 }
 
-/// The latest round of `role`, by start.
-fn latest(task: &TaskInfo, role: AgentRole) -> Option<&AgentRoundInfo> {
-    task.rounds
-        .iter()
-        .filter(|round| round.role == role)
-        .max_by_key(|round| (round.started_at, round.session, round.round))
+/// Who is working a `working` task (whole-branch review D, I-1): its live test writer,
+/// its live racers, or its worker.
+fn working_words(task: &TaskInfo) -> String {
+    let live = |role: AgentRole| {
+        (task.rounds.iter()).filter(move |round| round.role == role && round.ended_at.is_none())
+    };
+    let racers: Vec<_> = live(AgentRole::Racer).collect();
+    if live(AgentRole::TestWriter).next().is_some() {
+        "test writer is working".to_owned()
+    } else if racers.len() >= 2 {
+        "racers are working".to_owned()
+    } else if let Some(lane) = racers.first().and_then(|round| round.lane) {
+        format!("racer {} is working", lane.label())
+    } else {
+        "worker is working".to_owned()
+    }
 }
 
 /// `<round label> · <runtime> <model> · <elapsed> · <n> tool calls`, the elapsed time
-/// frozen at the round's end.
+/// frozen at the round's end, of the task's latest writing round (whole-branch review
+/// D, I-1: a racer or a test writer too). While its race has no winner, each lane's
+/// latest racer, one line each.
 pub(super) fn worker_line(task: &TaskInfo, app: &App) -> Option<String> {
-    let round = latest(task, AgentRole::Worker)?;
-    let label = round_label(round.role, round.session, round.round);
+    let newest = |rounds: &mut dyn Iterator<Item = &'_ AgentRoundInfo>| {
+        rounds
+            .max_by_key(|round| (round.started_at, round.session, round.round))
+            .map(|round| round_line(round, app))
+    };
+    if task.race.as_ref().is_some_and(|race| race.winner.is_none()) {
+        let lanes: Vec<String> = [RaceLane::A, RaceLane::B]
+            .into_iter()
+            .filter_map(|lane| {
+                let mut racers = (task.rounds.iter())
+                    .filter(|round| round.role == AgentRole::Racer && round.lane == Some(lane));
+                newest(&mut racers)
+            })
+            .collect();
+        if !lanes.is_empty() {
+            return Some(lanes.join("\n"));
+        }
+    }
+    newest(&mut crate::inspector::writing_rounds(task))
+}
+
+/// One writing round's [`worker_line`].
+fn round_line(round: &AgentRoundInfo, app: &App) -> String {
+    let label = round_label_with_lane(round.role, round.lane, round.session, round.round);
     let elapsed = match round.ended_at {
         Some(ended) => ended.saturating_sub(round.started_at),
         None => app.run_age(round.started_at),
@@ -86,11 +122,11 @@ pub(super) fn worker_line(task: &TaskInfo, app: &App) -> Option<String> {
     } else {
         format!("{} {model}", round.route.runtime.label())
     };
-    Some(format!(
+    format!(
         "{label} · {who} · {} · {} tool calls",
         format_duration(elapsed),
         round.tool_calls
-    ))
+    )
 }
 
 /// The task's live round: the latest-started one without an end. `TaskInfo.activity`
@@ -140,6 +176,7 @@ pub(super) fn check_line(run: &RunInfo, task: &TaskInfo) -> String {
     if let Some(line) = summary {
         text.push_str(&format!(" · {}", one_line(line)));
     }
+    text.insert_str(0, &super::run_patterns::lane_prefix(task, check.lane));
     match task.state {
         TaskState::Working if !check.ok => text.push_str(&format!(
             " → bounced (check {}/{})",
@@ -179,10 +216,11 @@ fn intent(run: &RunInfo, task: &TaskInfo, app: &App) -> Section {
 }
 
 /// DETAIL's milestone 8c rows, in decision 12's order; milestone 9.3 decision 32 puts
-/// `round` after `stage` (a run of several rounds only).
-const DETAIL_ROWS: [&str; 11] = [
-    "deps", "budget", "tries", "stage", "round", "origin", "tier", "route", "messages", "notes",
-    "history",
+/// `round` after `stage` (a run of several rounds only), milestone 9.5 decision 29
+/// `race` and `pair` after `route` (a racing or paired task only).
+const DETAIL_ROWS: [&str; 13] = [
+    "deps", "budget", "tries", "stage", "round", "origin", "tier", "route", "race", "pair",
+    "messages", "notes", "history",
 ];
 
 /// DETAIL: `phase` (the lifecycle words), `worker`, `now`, then milestone 8c's rows

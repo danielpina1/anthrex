@@ -26,6 +26,8 @@ fn amend_brief(text: &str) -> PlanEdit {
         size: None,
         deps: None,
         stage: None,
+        race: None,
+        pair: None,
     }
 }
 

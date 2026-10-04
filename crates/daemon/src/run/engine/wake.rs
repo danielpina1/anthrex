@@ -128,6 +128,19 @@ pub(super) fn clear_request(run: &mut Run, n: u32) {
 pub(super) fn effect(run: &Run) -> Option<Effect> {
     let o = run.orch.orchestrator.as_ref()?;
     let window_id = o.window_id?;
+    // Milestone 9.5 decision 38: nothing goes before the first turn, which goes once
+    // the window is live and its anthrex server has announced its tools.
+    if o.first_turn_pending {
+        return (o.live && run.orch.mcp_ready).then(|| Effect::WakeOrchestrator {
+            run_id: run.id.clone(),
+            window_id,
+            text: o.first_prompt.clone(),
+            digest_revision: run.orch.digest_rev,
+            notes_seq: 0,
+            request: None,
+            first_turn: true,
+        });
+    }
     if let Some(request) = run.orch.request_wake.as_ref().filter(|_| o.live) {
         let mut text = request.clone();
         if !o.notes.is_empty() {
@@ -144,6 +157,7 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
             digest_revision: run.orch.digest_rev,
             notes_seq: notes_seq(run),
             request: Some(run.round()),
+            first_turn: false,
         });
     }
     let due = !o.notes.is_empty()
@@ -157,6 +171,7 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
         digest_revision: run.orch.digest_rev,
         notes_seq: notes_seq(run),
         request: None,
+        first_turn: false,
     })
 }
 

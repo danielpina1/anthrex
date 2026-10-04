@@ -2,6 +2,7 @@
 //! task 9b, move only): one `App` per key region, built with the audit's helpers.
 
 use super::*;
+use crate::tree::run_fixtures::{pair_fixture, race_fixture};
 use crate::ui::run_pr_tests;
 
 /// One `App` per key region of decision 1 that exists, each reached by the keys a
@@ -40,6 +41,14 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
         ("run view at the gate", run_view(gate())),
         ("run view running", run_view(running())),
         ("run view on a task", on_task(run_view(running()), "t1")),
+        (
+            "run view racing",
+            on_task(run_view(loaded(race_fixture())), "t2"),
+        ),
+        (
+            "run view pairing",
+            on_task(run_view(loaded(pair_fixture())), "t3"),
+        ),
         (
             "run view on a task in review",
             on_task(run_view(with(running(), in_review_r2)), "t1"),
@@ -114,6 +123,23 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
         (
             "settings",
             crate::ui::settings::tests::opened(false, crate::ui::settings::tests::sample()),
+        ),
+        // Milestone 9.5 decision 48: the limits with S's refit under its budget.
+        (
+            "settings limits with a refit",
+            with(
+                crate::ui::settings::tests::opened(false, crate::ui::settings::tests::sample()),
+                |a| {
+                    let Some(Screen::Settings(s)) = &mut a.screen else {
+                        panic!("the settings screen");
+                    };
+                    let mut report = crate::ui::stats::tests::tuning_report();
+                    report.classes[0].configured = false;
+                    report.orchestrator_list = Some("claude/claude-opus-5-5 high".into());
+                    s.tuning = Some(Box::new(report));
+                    s.section = crate::app::settings_screen::SettingsSection::Limits;
+                },
+            ),
         ),
         // Decision 35: the old dialogs, each over the screen it opens from.
         ("new agent over the pane", with(gate(), |a| chord(a, 'c'))),
@@ -262,7 +288,9 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
             with(gate(), |a| {
                 a.screen = Some(Screen::Stats(Box::new(StatsScreen {
                     project: "/r/demo".into(),
-                    state: StatsState::Ready(Box::new(crate::ui::stats::tests::history())),
+                    state: StatsState::Ready(Box::new(
+                        crate::ui::stats::tests::history_with_tuning(),
+                    )),
                     scroll: 0,
                     request: 4,
                 })));

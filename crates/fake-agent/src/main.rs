@@ -1,5 +1,6 @@
 mod bash;
 mod decider;
+mod diag;
 mod headless;
 mod mcp;
 mod orch_steps;
@@ -30,10 +31,13 @@ fn main() {
     let code = match run() {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("fake-agent: {error:#}");
+            crate::diag::say!("fake-agent: {error:#}");
             1
         }
     };
+    if code != 0 {
+        crate::diag::say!("fake-agent: exiting with {code}");
+    }
     std::process::exit(code);
 }
 
@@ -72,7 +76,7 @@ fn run() -> Result<i32> {
     let steps = match script::parse_script(BufReader::new(script_file)) {
         Ok(steps) => steps,
         Err(error) => {
-            eprintln!("fake-agent: {error:#}");
+            crate::diag::say!("fake-agent: {error:#}");
             return Ok(2);
         }
     };
@@ -361,27 +365,36 @@ pub(crate) fn kill_process_group(process_group: libc::pid_t) {
 
 pub(crate) fn git_commit(file: &str, content: &str, message: &str) -> Result<()> {
     fs::write(file, content).with_context(|| format!("write {file}"))?;
-    let add = Command::new("git")
-        .args(["add", "--", file])
-        .status()
-        .context("run git add")?;
-    if !add.success() {
-        bail!("git add exited with {add}");
-    }
-    let commit = Command::new("git")
-        .args([
-            "-c",
-            "user.name=fake-agent",
-            "-c",
-            "user.email=fake-agent@example.invalid",
-            "commit",
-            "-m",
-            message,
-        ])
-        .status()
-        .context("run git commit")?;
-    if !commit.success() {
-        bail!("git commit exited with {commit}");
+    git(&["add", "--", file])?;
+    git(&[
+        "-c",
+        "user.name=fake-agent",
+        "-c",
+        "user.email=fake-agent@example.invalid",
+        "commit",
+        "-m",
+        message,
+    ])
+}
+
+/// `git <args>` in the cwd, its stdout inherited as before. Its stderr is passed on,
+/// and a failure carries it: otherwise it is lost with the session's stderr.
+fn git(args: &[&str]) -> Result<()> {
+    let output = Command::new("git")
+        .args(args)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("run git {}", args.join(" ")))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    eprint!("{stderr}");
+    if !output.status.success() {
+        bail!(
+            "git {} exited with {}: {}",
+            args.join(" "),
+            output.status,
+            stderr.trim()
+        );
     }
     Ok(())
 }

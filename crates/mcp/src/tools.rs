@@ -17,7 +17,10 @@ pub const SUBMIT_REVIEW: &str = "submit_review";
 pub fn tools_for(role: AgentRole) -> Vec<Tool> {
     use crate::tools_orch::{orchestrator_tools, planner_tools, task_note};
     match role {
-        AgentRole::Worker => vec![task_done(), task_blocked(), task_note()],
+        // Milestone 9.5: a racer and a test writer report as a worker does.
+        AgentRole::Worker | AgentRole::Racer | AgentRole::TestWriter => {
+            vec![task_done(), task_blocked(), task_note()]
+        }
         AgentRole::Reviewer => vec![submit_review()],
         AgentRole::Orchestrator => orchestrator_tools(),
         AgentRole::Planner => planner_tools(),
@@ -43,6 +46,8 @@ pub fn role_name(role: AgentRole) -> &'static str {
         AgentRole::Scout => "scout",
         AgentRole::Planner => "planner",
         AgentRole::Decider => "decider",
+        AgentRole::Racer => "racer",
+        AgentRole::TestWriter => "test_writer",
     }
 }
 
@@ -137,6 +142,21 @@ mod tests {
 
     fn schema(role: AgentRole, name: &str) -> Value {
         Value::Object((*tool(role, name).input_schema).clone())
+    }
+
+    /// Milestone 9.5: a racer and a test writer are workers to the engine; they get the
+    /// worker's tools with the same schemas, and their own names.
+    #[test]
+    fn racer_and_test_writer_get_the_worker_tools() {
+        for role in [AgentRole::Racer, AgentRole::TestWriter] {
+            assert_eq!(names(role), ["task_done", "task_blocked", "task_note"]);
+            for name in ["task_done", "task_blocked", "task_note"] {
+                assert_eq!(tool(role, name), tool(AgentRole::Worker, name), "{name}");
+            }
+            assert!(!allowed(role, "submit_review"));
+        }
+        assert_eq!(role_name(AgentRole::Racer), "racer");
+        assert_eq!(role_name(AgentRole::TestWriter), "test_writer");
     }
 
     /// Decision 42f: M8a's `worker_tools_are_task_done_and_task_blocked`, renamed.

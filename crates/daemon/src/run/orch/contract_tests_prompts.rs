@@ -66,7 +66,7 @@ fn orchestrator_first_prompt_is_exact() {
          Goal: Test goal\n\
          Path: plan (triage: code,docs/plan, decider: two modules change)\n\
          Plan gate: the user approves your submitted plan in the run view\n\
-         Start with get_context, then scout, then plan."
+         Start with get_context, then scout, then plan. If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting."
     );
     run.path = Some(RunPath::Large);
     run.orch.yes = true;
@@ -81,8 +81,27 @@ fn orchestrator_first_prompt_is_exact() {
          Goal: Test goal\n\
          Path: large (triage: code/large, fallback: the decider timed out: two modules change)\n\
          Plan gate: off: the run was started with --yes, so your submitted plan starts at once; a round you start with iterate and a goal you start with start_goal still stop at the gate for the user (rules 43 and 45)\n\
-         Start with get_context, then scout, then plan."
+         Start with get_context, then scout, then plan. If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting."
     );
+}
+
+/// Milestone 9.5 decision 38 (ruling T1-1): the first prompt's last line, and rule 4 of
+/// the contract, say to call `get_context` again when an anthrex tool is missing, since
+/// the first turn may come before the anthrex server has connected.
+#[test]
+fn the_first_prompt_tells_how_to_retry_a_missing_tool() {
+    const RETRY: &str = "If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting.";
+    let first = orchestrator_first_prompt(&planned_run());
+    assert_eq!(
+        first.lines().last(),
+        Some(format!("Start with get_context, then scout, then plan. {RETRY}").as_str())
+    );
+    let rule4 = ORCHESTRATOR_CONTRACT
+        .lines()
+        .find(|l| l.starts_with("4. "))
+        .unwrap();
+    assert!(rule4.starts_with("4. Call get_context"), "{rule4}");
+    assert!(rule4.ends_with(&format!(" {RETRY}")), "{rule4}");
 }
 
 #[test]
@@ -279,6 +298,7 @@ fn integration_review_prompt_is_exact() {
             finding(Severity::Critical, "the token never expires"),
             finding(Severity::Minor, "a name"),
         ],
+        lane: None,
     });
     run.tasks.push(review);
     let prompt = integration_review_prompt(&run, epic(&run), 2, BASE, HEAD);

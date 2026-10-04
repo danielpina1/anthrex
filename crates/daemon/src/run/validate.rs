@@ -189,14 +189,14 @@ pub(super) fn resolve_task_lenient(
         notes.push(NO_TEST_PASSED_NOTE.to_string());
     }
 
-    // Route, decision 8.
-    let (class_strength, class_effort) = if hub {
-        (Strength::Frontier, Effort::High)
-    } else if size == Size::S {
-        (Strength::Standard, Effort::Low)
-    } else {
-        (Strength::Standard, Effort::Medium)
+    // Route, decision 8, by the class's frozen default (milestone 9.5 decision 12).
+    let routes = &limits.class_routes;
+    let class = match (hub, size) {
+        (true, _) => routes.hub,
+        (false, Size::S) => routes.s,
+        _ => routes.m,
     };
+    let (class_strength, class_effort) = (class.strength, class.effort);
     let route = resolve_route(
         &spec,
         roster,
@@ -213,6 +213,7 @@ pub(super) fn resolve_task_lenient(
             b
         }
         None if size == Size::S && !hub => limits.budget_s,
+        None if hub => limits.budget_hub.unwrap_or(limits.budget_m),
         None => limits.budget_m,
     };
 
@@ -229,7 +230,7 @@ pub(super) fn resolve_task_lenient(
     let level = if raise { base.raised() } else { base };
     let skipped = !limits.review_small && !hub && size == Size::S && level == ReviewLevel::Small;
     let review_level = (!skipped).then_some(level);
-    let review_route = review_level.map(|l| roster::pick_reviewer(roster, &route, l));
+    let review_route = review_level.map(|l| super::route_pick::forecast(limits, roster, &route, l));
 
     let task = new_task(
         spec,
@@ -440,6 +441,7 @@ fn new_task(
         worktree: Default::default(),
         prewarmed: false,
         worktree_live: false,
+        prepare_failed: false,
         awaiting_deps: false,
         held_answered: false,
         gate_op: None,
@@ -489,6 +491,17 @@ fn new_task(
         signal_refusals: 0,
         sync: None,
         round: proto::first_round(),
+        race: None,
+        pair: None,
+        race_wait_since: None,
+        race_decision: None,
+        list_pick: None,
+        list_escalation: None,
+        paused: Default::default(),
+        lane_view: None,
+        parked_readers: 0,
+        lane_unclassified: false,
+        salvage_seq: 0,
     }
 }
 

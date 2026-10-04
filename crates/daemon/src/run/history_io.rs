@@ -254,9 +254,10 @@ fn reverted_shas(body: &str) -> impl Iterator<Item = &str> {
 }
 
 /// Decision 34's candidates on `base_branch`: each accepted run's accept merge
-/// (`task_id: None`) and its merged tasks' merge commits, for runs accepted into that
-/// branch at most [`REVERT_WINDOW_SECS`] before `now`, less every commit a revert
-/// record already names. Keyed by sha: `(run, task)`.
+/// (`task_id: None`), its merged tasks' merge commits and its recorded revert commits
+/// (milestone 9.5 decision 33), for runs accepted into that branch at most
+/// [`REVERT_WINDOW_SECS`] before `now`, less every commit a revert record already
+/// names. Keyed by sha: `(run, task)`.
 fn candidates<'a>(
     history: &'a [HistoryLine],
     base_branch: &str,
@@ -282,6 +283,14 @@ fn candidates<'a>(
             shas.insert(merge, (t.run_id.as_str(), Some(t.task_id.as_str())));
         }
     }
+    // Milestone 9.5 decision 33: a recorded revert commit of those runs, too.
+    for line in history {
+        if let HistoryLine::Revert(r) = line
+            && runs.contains(r.run_id.as_str())
+        {
+            shas.insert(&r.revert_commit, (r.run_id.as_str(), r.task_id.as_deref()));
+        }
+    }
     for line in history {
         if let HistoryLine::Revert(r) = line {
             shas.remove(r.reverted.as_str());
@@ -304,7 +313,7 @@ pub fn detect_reverts(
     now: u64,
     timeout: Duration,
 ) -> Result<Vec<RevertRecord>, String> {
-    let wanted = candidates(history, base_branch, now);
+    let mut wanted = candidates(history, base_branch, now);
     if wanted.is_empty() {
         return Ok(Vec::new());
     }
@@ -326,7 +335,9 @@ pub fn detect_reverts(
         ],
     )?;
     let mut found = Vec::new();
-    for entry in log.split('\0') {
+    // Oldest first: a revert found here is a candidate for a later commit (decision 33).
+    let entries: Vec<&str> = log.split('\0').collect();
+    for entry in entries.into_iter().rev() {
         let Some((commit, body)) = entry.trim_start().split_once('\x1f') else {
             continue;
         };
@@ -338,7 +349,8 @@ pub fn detect_reverts(
             continue;
         }
         let hit = reverted_shas(body).find_map(|sha| candidate_of(&wanted, sha));
-        if let Some((reverted, &(run_id, task_id))) = hit {
+        if let Some((&reverted, &(run_id, task_id))) = hit {
+            wanted.insert(commit, (run_id, task_id));
             found.push(RevertRecord {
                 v: HISTORY_VERSION,
                 record_id,
@@ -350,8 +362,48 @@ pub fn detect_reverts(
             });
         }
     }
-    found.reverse();
     Ok(found)
+}
+
+/// Milestone 9.5 decision 33: the revert records in effect that revert a merge, not
+/// another revert. A record is in effect unless a record in effect names its
+/// `revert_commit` as `reverted`, evaluated from the newest end of each chain: a revert
+/// of a revert reinstates the task, and a third revert reverts it again. Pure.
+pub fn effective_reverts(lines: &[HistoryLine]) -> Vec<&RevertRecord> {
+    let reverts: Vec<&RevertRecord> = (lines.iter())
+        .filter_map(|line| match line {
+            HistoryLine::Revert(r) => Some(r),
+            _ => None,
+        })
+        .collect();
+    let commits: HashSet<&str> = reverts.iter().map(|r| r.revert_commit.as_str()).collect();
+    let mut known = HashMap::new();
+    let reverts_a_merge = |r: &&RevertRecord| !commits.contains(r.reverted.as_str());
+    (reverts.iter().copied())
+        .filter(reverts_a_merge)
+        .filter(|r| in_effect(r, &reverts, &mut known, 0))
+        .collect()
+}
+
+/// Whether `record` is in effect: no record in effect reverts its commit. `known`
+/// memoises; a chain deeper than the records (a cycle only a hand-edited file can make)
+/// stops there, in effect.
+fn in_effect<'a>(
+    record: &'a RevertRecord,
+    reverts: &[&'a RevertRecord],
+    known: &mut HashMap<&'a str, bool>,
+    depth: usize,
+) -> bool {
+    let commit = record.revert_commit.as_str();
+    if let Some(&known) = known.get(commit) {
+        return known;
+    }
+    let undone = depth < reverts.len()
+        && (reverts.iter())
+            .filter(|r| r.reverted == commit)
+            .any(|r| in_effect(r, reverts, known, depth + 1));
+    known.insert(commit, !undone);
+    !undone
 }
 
 /// Decision 34 at `run start` and `run stats`: [`detect_reverts`] on each base branch
@@ -394,7 +446,8 @@ pub fn record_reverts(
 /// Decision 35's blocking core: reverts recorded first ([`record_reverts`], each
 /// warning logged), then the history read once more and aggregated, with that read's
 /// skipped lines as the problems (so each is reported once), and milestone 9.1
-/// decision 34's quarantine proposals over `testing`'s window.
+/// decision 34's quarantine proposals over `testing`'s window, less the tests the
+/// stored profile's `slow_tests` already names (milestone 9.5 decision 35).
 pub fn summarise(
     git: &OsStr,
     root: &Path,
@@ -402,15 +455,27 @@ pub fn summarise(
     now: u64,
     timeout: Duration,
     testing: &config::Testing,
+    slow_tests: Option<&str>,
 ) -> HistoryStats {
     for warning in record_reverts(git, root, path, now, timeout) {
         tracing::warn!(path = %path.display(), %warning, "revert detection");
     }
+    summarise_read(path, now, testing, slow_tests)
+}
+
+/// [`summarise`] without recording reverts: no git, no write (milestone 9.5 decision
+/// 48's read-only `Stats`).
+pub fn summarise_read(
+    path: &Path,
+    now: u64,
+    testing: &config::Testing,
+    slow_tests: Option<&str>,
+) -> HistoryStats {
     let (lines, problems) = read_history(path);
     let mut stats = super::stats::aggregate(&lines, path);
     stats.problems = problems;
     let (days, after) = (testing.flaky_window_days, testing.flaky_quarantine_after);
-    stats.flaky_proposals = super::stats::flaky_proposals(&lines, now, days, after);
+    stats.flaky_proposals = super::stats::flaky_proposals(&lines, now, days, after, slow_tests);
     stats.window_days = days;
     stats.quarantine_after = after;
     stats

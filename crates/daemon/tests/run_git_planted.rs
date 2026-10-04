@@ -83,7 +83,15 @@ fn engine_and_probe_reads_never_run_a_planted_fsmonitor() {
     assert!(probe(real_git(), &task, PROBE_TIMEOUT).is_some());
     assert!(probe(real_git(), &repo.root, PROBE_TIMEOUT).is_some());
     let reference = "refs/anthrex/salvage/fs01/t1/1";
-    let saved = salvage(real_git(), &task, reference, "anthrex salvage fs01/t1", T).unwrap();
+    let saved = salvage(
+        real_git(),
+        &task,
+        reference,
+        "anthrex salvage fs01/t1",
+        false,
+        T,
+    )
+    .unwrap();
     assert_eq!(saved.as_deref(), Some(reference));
 
     assert_eq!(

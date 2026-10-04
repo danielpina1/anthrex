@@ -58,7 +58,9 @@ pub(super) fn enter(run: &mut Run, i: usize, state: TaskState, now: u64) {
     set_state(&mut run.tasks[i], state, now);
     run.tasks[i].gate_op = None;
     let id = run.tasks[i].id().to_string();
-    if state == TaskState::MergeQueue && !run.merge_queue.contains(&id) {
+    // Milestone 9.5 decision 21: a lane past its last gate is crowned first.
+    let lane = run.tasks[i].lane_view.is_some();
+    if state == TaskState::MergeQueue && !lane && !run.merge_queue.contains(&id) {
         run.merge_queue.push(id);
     }
 }
@@ -124,6 +126,8 @@ fn start_proof(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
             matched: false,
             red_tail: String::new(),
             head_tail: String::new(),
+            lane: None,
+            red_only: false,
         };
         let text = proof_failed_message(&single, &record, NAME_ONLY);
         run.tasks[i].proofs.push(record);
@@ -132,7 +136,7 @@ fn start_proof(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
     };
     let passed = run.profile.test_passed.as_deref().unwrap_or(NAME_ONLY);
     let id = task.id().to_string();
-    let path = run.proof_path(&id);
+    let path = run.proof_path(&task.checkout_name());
     let kind = OpKind::Proof {
         root: run.root.clone(),
         path: path.clone(),
@@ -143,6 +147,8 @@ fn start_proof(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
         timeout_secs: run.profile.check_timeout_secs,
         setup: run.profile.setup.clone(),
         env: profile_env(&run.profile, &path),
+        // Milestone 9.5 ruling RP-1: a test writer's claim gets the red run alone.
+        red_only: super::pair::writing(task),
     };
     let op = next_op(run);
     run.tasks[i].gate_op = Some(op);
@@ -164,7 +170,7 @@ fn start_check(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
     // whatever the branch tip has become since the claim.
     let task = &run.tasks[i];
     let id = task.id().to_string();
-    let dir = run.proof_path(&id);
+    let dir = run.proof_path(&task.checkout_name());
     let kind = OpKind::Check {
         env: profile_env(&run.profile, &dir),
         dir,
@@ -208,6 +214,7 @@ pub(super) fn proof_done(
         head,
         command,
         passed: pattern,
+        red_only,
         ..
     } = kind
     else {
@@ -217,6 +224,14 @@ pub(super) fn proof_done(
         return;
     }
     match result {
+        // Milestone 9.5 decision 25: the red check of a test writer's claim.
+        OpResult::Proof {
+            red_failed,
+            red_tail,
+            ..
+        } if *red_only => {
+            super::pair::on_red_checked(run, i, red_failed, &red_tail, command, now, fx)
+        }
         OpResult::Proof {
             red_failed,
             head_passed,
@@ -239,6 +254,8 @@ pub(super) fn proof_done(
                 matched,
                 red_tail,
                 head_tail,
+                lane: None,
+                red_only: false,
             };
             let ok = red_failed && head_passed && matched;
             let text = proof_failed_message(command, &record, pattern);
@@ -298,6 +315,7 @@ pub(super) fn check_done(
                 summary: None,
                 summary_source: None,
                 tier: None,
+                lane: None,
             };
             run.tasks[i].checks.push(record);
             if ok {

@@ -14,24 +14,46 @@ use super::dispatch::{block, history};
 use super::signals::end_round;
 use super::{Effect, OpId, OpKind, OpResult, emit_op, kinds, next_op, review, worker_messages};
 use crate::run::messages::{DELIVERY_MAX_FAILURES, DELIVERY_RETRY_SECS, join_turn};
-use crate::run::model::{FailedTurn, FreshSession, Outgoing, Run, StallState};
+use crate::run::model::{FailedTurn, FreshSession, Outgoing, Run, StallState, writes};
 use crate::run::role_launch::jitter_ms;
 
 /// Queues `text` for task `task_id`'s current worker. The window is the worker round's
 /// at queue time (0 when it has none yet); delivery always goes to the task's current
-/// worker round.
+/// worker round. Milestone 9.5 ruling RR-4: a racing task's message goes to every live
+/// lane (`<task>.<x>`), or to its winner waiting for the crown, whose `Crowned` makes
+/// the message the task's.
 pub(super) fn queue(run: &mut Run, task_id: &str, text: String, now: u64) {
+    let lanes = run
+        .task(task_id)
+        .map(super::race::message_lanes)
+        .unwrap_or_default();
+    if !lanes.is_empty() {
+        for lane in lanes {
+            let address = format!("{task_id}.{}", lane.label());
+            let window_id = (run.task(task_id).into_iter())
+                .flat_map(|t| t.rounds.iter().rev())
+                .find(|r| r.role == AgentRole::Racer && r.lane == Some(lane))
+                .and_then(|r| r.window_id)
+                .unwrap_or(0);
+            push(run, window_id, address, text.clone(), now);
+        }
+        return;
+    }
     let window_id = run
         .task(task_id)
-        .and_then(|t| t.rounds.iter().rev().find(|r| r.role == AgentRole::Worker))
+        .and_then(|t| t.rounds.iter().rev().find(|r| writes(t, r)))
         .and_then(|r| r.window_id)
         .unwrap_or(0);
+    push(run, window_id, task_id.to_string(), text, now);
+}
+
+fn push(run: &mut Run, window_id: u32, task_id: String, text: String, now: u64) {
     let id = run.next_message;
     run.next_message += 1;
     run.outbox.push(Outgoing {
         id,
         window_id,
-        task_id: task_id.to_string(),
+        task_id,
         text,
         queued_at: now,
         delivered_at: None,
@@ -79,10 +101,8 @@ fn target(run: &Run, address: &str) -> Option<(usize, Option<usize>, bool)> {
         return Some((i, kinds::research_round(run, i), true));
     }
     let i = run.tasks.iter().position(|t| t.id() == address)?;
-    let r = run.tasks[i]
-        .rounds
-        .iter()
-        .rposition(|r| r.role == AgentRole::Worker);
+    let task = &run.tasks[i];
+    let r = task.rounds.iter().rposition(|r| writes(task, r));
     Some((i, r, false))
 }
 
@@ -264,14 +284,14 @@ fn delivered_to(
     now: u64,
 ) {
     {
-        let Some(round) = run.tasks[i]
-            .rounds
-            .iter_mut()
-            .rev()
-            .find(|r| r.role == role)
-        else {
+        let task = &run.tasks[i];
+        let wanted = |r: &crate::run::model::AgentRound| {
+            r.role == role || (role == AgentRole::Worker && writes(task, r))
+        };
+        let Some(r) = task.rounds.iter().rposition(wanted) else {
             return;
         };
+        let round = &mut run.tasks[i].rounds[r];
         if ok {
             round.delivery_failures = 0;
             round.delivery_retry_at = None;
@@ -340,6 +360,9 @@ pub(super) fn resumed(
     let error = match result {
         OpResult::Resumed => {
             run.tasks[i].rounds[r].delivery_failures = 0;
+            // Ruling T17b-3 (N2): only a resume that succeeded makes the round's next
+            // exit its racer's own; a failed one leaves it orphaned.
+            run.tasks[i].rounds[r].orphaned = false;
             worker_messages::delivered(run, &carried);
             return;
         }

@@ -327,7 +327,8 @@ impl App {
     /// entry goes at once and no `no reply from daemon` follows. A screen or form that
     /// owns it says so itself; `true` when the usual not-sent toast is its only feedback.
     pub(super) fn tagged_not_sent(&mut self, id: u64, request: &RunRequest) -> bool {
-        let stats_own = self.stats_awaited() == Some(id);
+        // Milestone 9.5 decision 48: the Settings screen's read-only `Stats` fails quietly.
+        let stats_own = self.stats_awaited() == Some(id) || self.settings_tuning_is(id);
         let put_own = self.settings_put_was_screens(id);
         let pending = self.replies.take(Some(id)).map(|p| p.what);
         let why = if self.connected() {

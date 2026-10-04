@@ -57,6 +57,7 @@ fn reconciled(root: &std::path::Path, base: &str, task: &str) -> Reconciled {
             op: 1,
             task_id: None,
             kind: kind.clone(),
+            lane: None,
         },
     );
     let journal = [JournalLine::Intent { op: 1, kind }];
@@ -152,6 +153,7 @@ fn propagate_is_journaled_and_reconciled() {
                 op: 1,
                 task_id: None,
                 kind: kind.clone(),
+                lane: None,
             },
         );
         let journal = [JournalLine::Intent {

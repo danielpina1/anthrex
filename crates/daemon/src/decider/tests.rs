@@ -256,6 +256,7 @@ fn triage_task_size_l_is_an_error() {
 #[test]
 fn size_check_ignores_unknown_ids_and_reports_bad_sizes() {
     let request = DeciderRequest::SizeCheck(SizeCheckInput {
+        thresholds: Default::default(),
         tasks: ["t1", "t2"]
             .iter()
             .map(|id| SizeCheckTask {
@@ -459,6 +460,7 @@ fn no_answer_is_an_error() {
 #[test]
 fn fallback_table() {
     let triage = DeciderRequest::Triage(TriageInput {
+        thresholds: Default::default(),
         goal: "G".into(),
         profile_summary: String::new(),
         report_summary: None,
@@ -488,6 +490,7 @@ fn fallback_table() {
         hub: false,
     };
     let sc = DeciderRequest::SizeCheck(SizeCheckInput {
+        thresholds: Default::default(),
         tasks: vec![task("t1", Size::S), task("t2", Size::M)],
         evidence_refs: vec![],
         evidence: vec![],

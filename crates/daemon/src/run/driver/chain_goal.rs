@@ -20,7 +20,7 @@ use proto::{DeliveryMode, OrchestratorChoice, Plan, RunReply, RunState};
 
 use super::super::RunService;
 use super::super::adapt::GoalReady;
-use super::super::build::{Planned, Shape};
+use super::super::build::{Planned, Shape, TuneOnce};
 use super::super::delivery::DeliveryStart;
 use crate::run::chain::{CONTINUE_START_BOUND, START_GOAL_TOOL_BOUND, continuable};
 use crate::run::contract::sha7;
@@ -238,10 +238,16 @@ impl RunService {
         let all = (false, next.trust_project, next.unconfined_checks);
         let done = DeliveryStart::Done(frozen);
         let mut run = self
-            .build_delivered(plan, next.dir, all, shape, done)
+            .build_delivered(plan, next.dir, all, shape, done, &TuneOnce::new())
             .await
             .map_err(|error| error.text())?;
         run.chain = Some(joined.chain.clone());
+        // Ruling RH-5: the chain's route was passed as the choice; its record says why.
+        if let Some(o) = run.orch.orchestrator.as_mut()
+            && o.routing.source == crate::run::orch::roles::lists::EXPLICIT_SOURCE
+        {
+            o.routing.source = crate::run::orch::roles::lists::CHAIN_SOURCE.to_string();
+        }
         let based = format!("based on {} at {}", run.base_branch, sha7(&run.base_sha));
         run.log.insert(
             0,
@@ -335,3 +341,7 @@ pub(in crate::run::driver) mod tests;
 #[cfg(test)]
 #[path = "chain_goal_deadline_tests.rs"]
 mod deadline_tests;
+
+#[cfg(test)]
+#[path = "chain_goal_list_tests.rs"]
+mod list_tests;

@@ -35,6 +35,9 @@ pub fn render(run: &Run, now: u64) -> String {
     super::report_tiers::section(run, &mut out);
     // Milestone 9 decisions 35 and 36.
     super::report_orch::sections(run, &mut out);
+    // Milestone 9.5 decisions 12 and 30: what the run was tuned with, then its caps.
+    tuning_section(run, &mut out);
+    crate::run::engine::concurrency::report_section(run, &mut out);
     out.push_str("\n## Log\n\n");
     log_section(run, &mut out);
     out
@@ -263,6 +266,19 @@ fn tasks_table(run: &Run, out: &mut String) {
     }
 }
 
+/// Decision 12's `tuning:` lines as the start froze them (`Run.tuning_lines`, ruling
+/// T21-1): the moved file's, the refit-write lines and the start lines. None for a run
+/// started without tuning (history off, or before 9.5).
+fn tuning_section(run: &Run, out: &mut String) {
+    if run.tuning_lines.is_empty() {
+        return;
+    }
+    out.push_str("\n## Tuning\n\n");
+    for line in &run.tuning_lines {
+        out.push_str(&format!("- {}\n", list_item_text("", line)));
+    }
+}
+
 fn log_section(run: &Run, out: &mut String) {
     for entry in &run.log {
         out.push_str(&format!(
@@ -318,3 +334,7 @@ mod tests;
 #[cfg(test)]
 #[path = "report_tests_tiers.rs"]
 mod tests_tiers;
+
+#[cfg(test)]
+#[path = "report_tests_patterns.rs"]
+mod tests_patterns;

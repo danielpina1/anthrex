@@ -37,6 +37,7 @@ pub mod scout;
 pub mod server;
 pub mod state;
 pub mod status;
+pub mod status_codex;
 pub mod subagents;
 /// `#[doc(hidden)] pub` rather than private only so that `crates/daemon/tests/subprocess.rs`
 /// can exercise `Captured`, `Outcome`, `run` and `run_captured` in a test binary of its own —

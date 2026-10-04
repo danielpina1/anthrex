@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use super::model::OpId;
 use crate::scout::report::ScoutReportArgs;
 
+mod attention;
 pub mod context;
 pub mod contract;
 pub mod contract_rounds;
@@ -40,6 +41,7 @@ pub mod rules;
 pub(crate) mod test_support;
 pub mod tools;
 
+pub use attention::{START_PROMPT, WAKE_HELD, orchestrator_lines};
 pub use limits::{AgentLimits, OrchLimits, PlannerLimits};
 
 /// Who sent an edit batch. Plan files and the user's `run edit` are [`EditSource::User`]
@@ -101,11 +103,26 @@ pub struct RunOrch {
     /// held until the orchestrator is woken with it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_wake: Option<String>,
+    /// Milestone 9.5 decision 38, in memory only, reset by every launch: `McpReady` came;
+    /// since when a pending first turn waits; whether past `FIRST_TURN_WAIT_SECS`; when
+    /// the window first signalled while it waited (ruling T5a-1's grace).
+    #[serde(skip)]
+    pub mcp_ready: bool,
+    #[serde(skip)]
+    pub first_turn_since: Option<u64>,
+    #[serde(skip)]
+    pub first_turn_late: bool,
+    #[serde(skip)]
+    pub first_signal_at: Option<u64>,
+    /// Decision 39, in memory only: the driver reports the window at a start prompt.
+    #[serde(skip)]
+    pub start_prompt: bool,
+    /// Whole-branch review B, M8, in memory only: what `run promote`'s check found the
+    /// orchestrator's window has installed, which the promotion reads its `orchestrator`
+    /// list over (taken by the promotion).
+    #[serde(skip)]
+    pub promote_window: Option<BTreeMap<String, bool>>,
 }
-
-/// The attention line of a held wake-up ([`RunOrch::wake_held`]).
-pub const WAKE_HELD: &str =
-    "orchestrator wake-up held: its window was at a prompt; type in it to continue";
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,6 +191,14 @@ pub struct OrchestratorRecord {
     /// Decision 43: its route's resolution, which every launch's record keeps.
     #[serde(default)]
     pub routing: roles::RoleSnapshot,
+    /// Milestone 9.5 decision 37: the adopted session's usage counter when this run
+    /// took its window (`chains::adopt`); the OTLP totals count from it. Zero for a
+    /// session the run launched, and again after a restore (the ledger restarts).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_at_adopt: Option<TokenUsage>,
+    /// Milestone 9.5 decision 38: `first_prompt` waits to be pasted as the first turn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub first_turn_pending: bool,
 }
 
 impl OrchestratorRecord {
@@ -248,6 +273,9 @@ pub struct WorkerNote {
     /// it existed): the digest breaks a tie on `at` by it, newest first.
     #[serde(default)]
     pub seq: u64,
+    /// Milestone 9.5 decision 19 (ruling RR-4): the race lane whose racer wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<proto::RaceLane>,
 }
 
 /// Appends `note` to task `task`'s notes with the next run-wide `seq`; false when
@@ -490,6 +518,8 @@ impl OrchestratorRecord {
             start_error: None,
             launches: 0,
             routing: roles::RoleSnapshot::default(),
+            usage_at_adopt: None,
+            first_turn_pending: false,
         }
     }
 }

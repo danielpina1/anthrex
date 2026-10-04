@@ -185,6 +185,7 @@ fn a_tool_call(chain: Option<String>) -> ToolCall {
         scout_id: None,
         epic: None,
         chain,
+        lane: None,
     }
 }
 
@@ -349,6 +350,7 @@ fn round_history_line_round_trips() {
         quarantine_after: 3,
         rounds: 5,
         iterated_runs: 2,
+        tuning: None,
     };
     both_ways(&stats);
     let mut old = serde_json::to_value(&stats).unwrap();
@@ -376,12 +378,13 @@ fn appended_variants_keep_their_indices() {
     let names = tagged_names::<HistoryLine>("type");
     assert_eq!(names[names.len() - 2..], ["stage", "round"], "{names:?}");
     let names = variant_names::<RunRequest>();
+    // Milestone 9.5 appends `McpReady` after `Iterate` (`tuning_tests.rs`).
     assert_eq!(
-        names[names.len() - 3..],
-        ["Deliver", "Watch", "Iterate"],
+        names[names.len() - 4..],
+        ["Deliver", "Watch", "Iterate", "McpReady"],
         "{names:?}"
     );
-    let n = names.len() as u8;
+    let n = names.len() as u8 - 1;
     assert_eq!(
         variant_at::<RunRequest>(n - 1, &json!({"run": "r1", "goal": "more"})),
         Some(RunRequest::Iterate {

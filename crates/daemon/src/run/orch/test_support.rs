@@ -89,6 +89,8 @@ pub fn orchestrator() -> OrchestratorRecord {
         start_error: None,
         launches: 0,
         routing: Default::default(),
+        usage_at_adopt: None,
+        first_turn_pending: false,
     }
 }
 
@@ -138,6 +140,7 @@ pub fn note(at: u64, kind: TaskNoteKind, text: &str) -> WorkerNote {
         kind,
         text: text.into(),
         seq: 0,
+        lane: None,
     }
 }
 
@@ -159,6 +162,7 @@ pub fn review(round: u32, verdict: Option<Verdict>, findings: &[(Severity, &str)
                 text: text.to_string(),
             })
             .collect(),
+        lane: None,
     }
 }
 
@@ -212,8 +216,11 @@ pub fn round(session: u32, tool_calls: u32, usage: TokenUsage) -> AgentRound {
         relaunch: None,
         closed_pid: None,
         exited_pid: None,
+        orphaned: false,
         activity: None,
         last_text: None,
+        lane: None,
+        environment_failed: false,
     }
 }
 

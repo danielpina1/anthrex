@@ -378,6 +378,7 @@ fn reviewer_prompt_states_a_check_with_no_output() {
         summary: None,
         summary_source: None,
         tier: None,
+        lane: None,
     };
     let (base, head) = ("c".repeat(40), "d".repeat(40));
     let cases = [

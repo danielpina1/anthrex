@@ -332,6 +332,7 @@ fn mcp_args_for_a_scout() {
         scout_id: Some("onboarding-1".into()),
         epic: None,
         chain: None,
+        lane: None,
     };
     assert_eq!(
         mcp_args(&target, 7, Path::new("/tmp/a.sock")).unwrap(),
@@ -370,6 +371,7 @@ fn mcp_args_refuses_a_decider() {
         scout_id: None,
         epic: None,
         chain: None,
+        lane: None,
     };
     assert_eq!(mcp_args(&target, 7, Path::new("/tmp/a.sock")), None);
     for runtime in [Runtime::Claude, Runtime::Codex] {
@@ -402,6 +404,7 @@ fn mcp_args_for_a_planner() {
         scout_id: None,
         epic: Some("mail".into()),
         chain: None,
+        lane: None,
     };
     assert_eq!(
         mcp_args(&target, 7, Path::new("/tmp/a.sock")).unwrap(),

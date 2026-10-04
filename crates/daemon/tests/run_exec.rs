@@ -295,6 +295,7 @@ fn op(p: &ProofRepo, name: &str, red: &str, head: &str, test: &str) -> ProofOp {
         setup: None,
         env: Vec::new(),
         confine: None,
+        red_only: false,
     }
 }
 

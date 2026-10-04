@@ -35,6 +35,9 @@ pub(super) struct Job {
     pub(super) pre: Preflight,
     pub(super) record: ProposalRecord,
     pub(super) codex_config: Vec<GuardEntry>,
+    /// The onboarding scout's route, picked at the start over what was installed then
+    /// (milestone 9.5 rulings RL-2, I6); `None` for a job that starts no scout.
+    pub(super) route: Option<proto::Route>,
 }
 
 /// How a phase ended short of `Ready`.
@@ -305,7 +308,11 @@ impl ProfileService {
             // borrows.
             repo_paths: vec![repo, pre.git_common_dir.join("objects")],
         };
-        let handle = self.scouts.start(spec).await.map_err(|error| {
+        let started = match job.route.clone() {
+            Some(route) => self.scouts.start_on(spec, route).await,
+            None => self.scouts.start(spec).await,
+        };
+        let handle = started.map_err(|error| {
             Stop::Failed(format!("could not start the onboarding scout: {error}"))
         })?;
         job.record.window_id = Some(handle.window_id);

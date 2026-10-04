@@ -22,13 +22,14 @@ use rmcp::model::{
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData, ServerHandler, ServiceExt};
 
-pub use forward::forward;
+pub use forward::{forward, notify_ready};
 pub use tools::tools_for;
 
 /// Who this server speaks for: `anthrex mcp --role [--run] [--task] [--scout] [--epic]
-/// [--chain] --window --socket`. `run_id` is empty for a repository-level scout (M8b
-/// decision 15); `epic` is a sub-planner's own (milestone 9 decision 15); `chain` is a
-/// chained orchestrator's (milestone 9.3, KG §3.4).
+/// [--chain] [--lane] --window --socket`. `run_id` is empty for a repository-level scout
+/// (M8b decision 15); `epic` is a sub-planner's own (milestone 9 decision 15); `chain`
+/// is a chained orchestrator's (milestone 9.3, KG §3.4); `lane` is a racer's
+/// (milestone 9.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpOptions {
     pub role: proto::AgentRole,
@@ -37,6 +38,7 @@ pub struct McpOptions {
     pub scout_id: Option<String>,
     pub epic: Option<String>,
     pub chain: Option<String>,
+    pub lane: Option<proto::RaceLane>,
     pub window_id: u32,
     pub socket: PathBuf,
 }
@@ -55,8 +57,16 @@ where
 {
     let server = Server {
         opts: Arc::new(opts),
+        ready: Arc::default(),
     };
-    server.serve((reader, writer)).await?.waiting().await?;
+    let notice = server.ready.clone();
+    let served = server.serve((reader, writer)).await?.waiting().await;
+    // Decision 38: a client that closed at once still has its notice sent.
+    let pending = crate::lock_ready(&notice).take();
+    if let Some(handle) = pending {
+        let _ = handle.await;
+    }
+    served?;
     Ok(())
 }
 
@@ -69,6 +79,13 @@ pub async fn serve_stdio(opts: McpOptions) -> anyhow::Result<()> {
 #[derive(Clone)]
 struct Server {
     opts: Arc<McpOptions>,
+    /// Milestone 9.5 decision 38: the orchestrator's one `McpReady`, sent after its
+    /// first `tools/list` is answered; `Some` once started.
+    ready: Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+}
+
+fn lock_ready<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl ServerHandler for Server {
@@ -83,6 +100,13 @@ impl ServerHandler for Server {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        let mut ready = lock_ready(&self.ready);
+        if self.opts.role == proto::AgentRole::Orchestrator && ready.is_none() {
+            let opts = self.opts.clone();
+            // Beside the answer: the daemon still pastes only into a quiet window that
+            // has sent a signal (`driver/wake_first_turn.rs`).
+            *ready = Some(tokio::spawn(async move { notify_ready(&opts).await }));
+        }
         Ok(ListToolsResult::with_all_items(tools_for(self.opts.role)))
     }
 

@@ -57,7 +57,7 @@ pub fn resolve_orchestrator(
         .and_then(|c| c.model.clone())
         .or_else(|| (!agent.model.is_empty()).then(|| agent.model.clone()));
     let source = if choice.is_some() {
-        "explicit_choice"
+        super::roles::lists::EXPLICIT_SOURCE
     } else if agent.runtime.is_some() || !agent.model.is_empty() {
         "agent_config"
     } else {
@@ -129,6 +129,7 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
             task_id: None,
             role: AgentRole::Orchestrator,
             session,
+            lane: None,
         },
         mcp: McpTarget {
             role: AgentRole::Orchestrator,
@@ -137,6 +138,7 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
             scout_id: None,
             epic: None,
             chain: run.chain.clone(),
+            lane: None,
         },
         instructions: ORCHESTRATOR_CONTRACT.to_string(),
         effort: route.effort,
@@ -148,7 +150,9 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
 }
 
 /// Decision 5: `<h4>/orchestrator` in the user's own checkout, on the route's runtime
-/// and model (none for the CLI's default), with its first prompt.
+/// and model (none for the CLI's default), with its first prompt. Milestone 9.5
+/// decision 38 and ruling T5a-2: a Claude orchestrator starts with no prompt, and its
+/// first prompt is pasted once the window is ready (`engine/wake.rs`).
 pub fn orchestrator_window_spec(run: &Run, route: &Route, first_prompt: &str) -> WindowSpec {
     WindowSpec {
         name: Some(format!("{}/orchestrator", run.short())),
@@ -156,8 +160,16 @@ pub fn orchestrator_window_spec(run: &Run, route: &Route, first_prompt: &str) ->
         cwd: run.root.clone(),
         worktree_branch: None,
         model: (!route.model.is_empty()).then(|| route.model.clone()),
-        initial_prompt: Some(first_prompt.to_string()),
+        initial_prompt: (!first_turn_pasted(route)).then(|| first_prompt.to_string()),
     }
+}
+
+/// Milestone 9.5 ruling T5a-2: whether the orchestrator's first prompt waits to be
+/// pasted (decision 38). Only Claude's does: Claude runs no hook before its workspace
+/// trust prompt, so a prompt on its command line could start work before the user
+/// trusts the folder, and FU-F12 was Claude's. Codex keeps 9.3's command-line prompt.
+pub fn first_turn_pasted(route: &Route) -> bool {
+    route.runtime == Runtime::Claude
 }
 
 /// The run scouts' route keys: the ones the run froze at its start (whole-branch
@@ -176,15 +188,16 @@ pub fn scout_routing(run: &Run) -> crate::scout::spec::ScoutRouting {
     })
 }
 
-/// A run scout's route: [`crate::scout::spec::run_scout_route`] on [`scout_routing`]
-/// and the run's roster, over its installed runtimes.
-pub fn scout_route_of(run: &Run) -> Route {
-    crate::scout::spec::run_scout_route(&run.roster, &scout_routing(run), &run.orch.installed)
+/// Run scout `scout_id`'s route: the run's `scout` list's pick (milestone 9.5 decision
+/// 9a), else [`frozen_scout_route`].
+pub fn scout_route_of(run: &Run, scout_id: &str) -> Route {
+    let pick = super::roles::lists::scout_pick(run, scout_id).and_then(|p| p.route);
+    pick.unwrap_or_else(|| frozen_scout_route(run))
 }
 
-/// The run scouts' route as `reach::reachable_runtimes` counts it: [`scout_route_of`].
+/// The run scouts' route with no `scout` list, as `reach::reachable_runtimes` counts it.
 pub fn frozen_scout_route(run: &Run) -> Route {
-    scout_route_of(run)
+    crate::scout::spec::run_scout_route(&run.roster, &scout_routing(run), &run.orch.installed)
 }
 
 /// Decision 31: a sub-planner's route, `[orchestrator.planners]` as the run was built
@@ -194,6 +207,11 @@ pub fn frozen_scout_route(run: &Run) -> Route {
 /// planner stays on Codex instead of naming an uninstalled Claude model.
 pub fn planner_route(run: &Run) -> Option<Route> {
     let orchestrator = run.orch.orchestrator.as_ref()?;
+    // Milestone 9.5 decision 9a: the next epic's pick from the run's `planner` list.
+    let k = run.orch.epics.len();
+    if let Some(route) = super::roles::lists::planner_pick(run, k).and_then(|p| p.route) {
+        return Some(route);
+    }
     let p = &run.limits.orch.planners;
     let runtime = p.runtime.unwrap_or(orchestrator.route.runtime);
     let peer = crate::run::roster::peer(runtime);
@@ -244,12 +262,14 @@ pub fn planner_spec(run: &Run, epic: &EpicRecord, session: u32) -> PlannerSpec {
         scout_id: None,
         epic: Some(epic.epic.clone()),
         chain: None,
+        lane: None,
     };
     let run_ref = RunRef {
         run_id: run.id.clone(),
         task_id: None,
         role: AgentRole::Planner,
         session,
+        lane: None,
     };
     let headless = read_only(
         run,
@@ -314,6 +334,7 @@ pub fn research_spec(run: &Run, task: &Task) -> HeadlessSpec {
         task_id: Some(task.id().to_string()),
         role: AgentRole::Scout,
         session: task.session,
+        lane: None,
     };
     let mcp = McpTarget {
         role: AgentRole::Scout,
@@ -322,6 +343,7 @@ pub fn research_spec(run: &Run, task: &Task) -> HeadlessSpec {
         scout_id: None,
         epic: None,
         chain: None,
+        lane: None,
     };
     read_only(
         run,

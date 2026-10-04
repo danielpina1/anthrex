@@ -114,6 +114,7 @@ fn a_headless_spec_round_trips_through_json() {
             scout_id: None,
             epic: None,
             chain: None,
+            lane: None,
         }),
         allowed_tools: vec!["Bash".into()],
         claude_permission_mode: Some("acceptEdits".into()),
@@ -147,6 +148,7 @@ fn a_persisted_spec_without_an_epic_still_loads() {
         scout_id: None,
         epic: None,
         chain: None,
+        lane: None,
     };
     let mut json = serde_json::to_value(&target).unwrap();
     json.as_object_mut().unwrap().remove("epic");
@@ -164,6 +166,7 @@ fn persisted_mcp_target_without_chain_still_loads() {
         scout_id: None,
         epic: None,
         chain: None,
+        lane: None,
     };
     let mut json = serde_json::to_value(&target).unwrap();
     json.as_object_mut().unwrap().remove("chain");
@@ -175,6 +178,35 @@ fn persisted_mcp_target_without_chain_still_loads() {
     let json = serde_json::to_value(&chained).unwrap();
     assert_eq!(json["chain"], "o-3f9a");
     assert_eq!(serde_json::from_value::<McpTarget>(json).unwrap(), chained);
+}
+
+/// Milestone 9.5 task 2: a target persisted before `McpTarget.lane` existed still loads,
+/// with no lane; a racer's round-trips with its lane.
+#[test]
+fn persisted_mcp_target_without_lane_still_loads() {
+    let target = McpTarget {
+        role: AgentRole::Worker,
+        run_id: "r-3f9a".into(),
+        task_id: Some("t1".into()),
+        scout_id: None,
+        epic: None,
+        chain: None,
+        lane: None,
+    };
+    let mut json = serde_json::to_value(&target).unwrap();
+    json.as_object_mut().unwrap().remove("lane");
+    assert_eq!(serde_json::from_value::<McpTarget>(json).unwrap(), target);
+    let racer = McpTarget {
+        role: AgentRole::Racer,
+        lane: Some(proto::RaceLane::B),
+        ..target
+    };
+    let json = serde_json::to_value(&racer).unwrap();
+    assert_eq!(
+        (&json["role"], &json["lane"]),
+        (&"racer".into(), &"b".into())
+    );
+    assert_eq!(serde_json::from_value::<McpTarget>(json).unwrap(), racer);
 }
 
 /// Final fix batch F2 (review C, M2; round 2, N2): only a Claude `api_key` session keeps

@@ -402,3 +402,74 @@ fn planners_see_neither() {
         assert!(!allowed(role, "start_goal"), "{}", role_name(role));
     }
 }
+
+/// Whether `value` meets `schema`, for the plain schemas these tools use: `type`,
+/// `enum`, `required`, closed `properties` and `items` (no schema combinators).
+fn conforms(schema: &Value, value: &Value) -> bool {
+    let typed = match schema["type"].as_str() {
+        Some("object") => value.is_object(),
+        Some("array") => value.is_array(),
+        Some("string") => value.is_string(),
+        Some("boolean") => value.is_boolean(),
+        Some("integer") => value.is_i64() || value.is_u64(),
+        _ => true,
+    };
+    if !typed
+        || schema["enum"]
+            .as_array()
+            .is_some_and(|e| !e.contains(value))
+    {
+        return false;
+    }
+    if let (Some(props), Some(map)) = (schema["properties"].as_object(), value.as_object()) {
+        let required = schema["required"].as_array().cloned().unwrap_or_default();
+        return required
+            .iter()
+            .all(|k| map.contains_key(k.as_str().unwrap()))
+            && map
+                .iter()
+                .all(|(k, v)| props.get(k).is_some_and(|s| conforms(s, v)));
+    }
+    match (schema.get("items"), value.as_array()) {
+        (Some(items), Some(list)) => list.iter().all(|v| conforms(items, v)),
+        _ => true,
+    }
+}
+
+/// Milestone 9.5 decision 32: `plan_task` (`add_task`, `split_task`) and `plan_edit`
+/// (`amend_task`) take `race` and `pair` as booleans, for both planners.
+#[test]
+fn edit_plan_schema_accepts_race_and_pair() {
+    for (role, tool) in [
+        (AgentRole::Orchestrator, "edit_plan"),
+        (AgentRole::Planner, "submit_epic"),
+    ] {
+        let tools = tools_for(role);
+        let found = tools.iter().find(|t| t.name == tool).unwrap();
+        let schema = Value::Object((*found.input_schema).clone());
+        let task = json!({"id": "t1", "title": "T", "size": "S", "owns": ["a/**"],
+            "brief": "B", "acceptance": ["A"]});
+        let add = |key: &str, v: Value| {
+            let mut task = task.clone();
+            task[key] = v;
+            json!({"edits": [{"op": "add_task", "task": task}]})
+        };
+        let amend =
+            |key: &str, v: Value| json!({"edits": [{"op": "amend_task", "task_id": "t1", key: v}]});
+        assert!(conforms(&schema, &add("race", json!(true))), "{tool}");
+        assert!(conforms(&schema, &add("pair", json!(true))), "{tool}");
+        assert!(conforms(&schema, &amend("pair", json!(false))), "{tool}");
+        assert!(conforms(&schema, &amend("race", json!(true))), "{tool}");
+        assert!(!conforms(&schema, &add("race", json!("yes"))), "{tool}");
+        assert!(!conforms(&schema, &amend("race", json!("yes"))), "{tool}");
+        // The control: a key the schema does not have is refused.
+        assert!(!conforms(&schema, &add("racing", json!(true))), "{tool}");
+        let edit = &schema["properties"]["edits"]["items"]["properties"];
+        for key in ["race", "pair"] {
+            assert_eq!(edit[key], json!({"type": "boolean"}), "{tool}.{key}");
+            assert_eq!(edit["task"]["properties"][key], json!({"type": "boolean"}));
+            let required = edit["task"]["required"].as_array().unwrap();
+            assert!(!required.contains(&json!(key)), "{tool}.{key}");
+        }
+    }
+}

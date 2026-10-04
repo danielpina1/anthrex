@@ -5,10 +5,10 @@
 
 use std::cmp::Reverse;
 
-use proto::{AgentRole, Size, TaskKind, TaskState};
+use proto::{AgentRole, LaneState, Runtime, Size, TaskKind, TaskState};
 
 use super::{OpKind, goal_rounds};
-use crate::run::model::{Run, Task};
+use crate::run::model::{Run, RunLimits, Task};
 
 /// Decision 41: a writer slot is held from `preparing` through `check` (a handed-back
 /// task is `working` again, so it holds one too). `review` and `merge_queue` hold none.
@@ -25,11 +25,56 @@ pub fn is_reader_task(task: &Task) -> bool {
     matches!(task.spec.kind, TaskKind::Research | TaskKind::Review)
 }
 
+/// Milestone 9.5 decision 16 and ruling RR-9: the writer slots busy, counting lanes.
 pub fn writers_busy(run: &Run) -> usize {
-    run.tasks
-        .iter()
-        .filter(|t| holds_writer(t.state) && !is_reader_task(t))
-        .count()
+    run.tasks.iter().map(|t| writer_slots(t).len()).sum()
+}
+
+/// The writer slots `task` holds, each with its runtime (decision 16): a racing task one
+/// per live lane (ruling RR-9), a paired task's test writer one on the writer's
+/// runtime (the final fix wave's A-I3), any other writer task one on its route's
+/// runtime. A finished task holds none, whatever its lanes say; a crowned or adopted
+/// race is its task's (task M9.5.13's review).
+pub fn writer_slots(task: &Task) -> Vec<Runtime> {
+    if is_reader_task(task) || task.state.is_finished() {
+        return Vec::new();
+    }
+    // Task 17a's re-review (b): a race `run retry` ended counts as an ordinary task.
+    if let Some(race) = task
+        .race
+        .as_ref()
+        .filter(|r| r.winner.is_none() && !r.ended)
+    {
+        return (race.lanes.iter())
+            .filter(|l| lane_holds_writer(l.state))
+            .map(|l| l.route.runtime)
+            .collect();
+    }
+    // Minor m5, ruling T17a-5: between `Won` and the crown, the race's one slot is the
+    // winning lane's, on that lane's runtime; the crown (adoption included) swaps the
+    // lane's route in, and from then on the task's route is the runtime.
+    let won = (task.race.iter().filter(|r| !r.crowned))
+        .find_map(|r| r.lanes.iter().find(|l| Some(l.lane) == r.winner));
+    // The final fix wave's A-I3: a paired task's test writer holds its slot on its own
+    // route's runtime while it writes.
+    let writer = (task.pair.as_ref()).filter(|_| super::pair::writing(task));
+    let runtime = match (won, writer) {
+        (Some(lane), _) => lane.route.runtime,
+        (None, Some(pair)) => pair.writer_route.runtime,
+        (None, None) => task.route.runtime,
+    };
+    match holds_writer(task.state) {
+        true => vec![runtime],
+        false => Vec::new(),
+    }
+}
+
+/// A lane holds a writer slot in the phases a task does ([`holds_writer`]).
+fn lane_holds_writer(state: LaneState) -> bool {
+    matches!(
+        state,
+        LaneState::Preparing | LaneState::Working | LaneState::Proof | LaneState::Check
+    )
 }
 
 /// A hub task holds a writer slot: nothing else starts, reviews included (decision
@@ -113,26 +158,37 @@ pub fn holds_reader(run: &Run, task: &Task) -> bool {
     if task.state == TaskState::Working && task.spec.kind == TaskKind::Research {
         return true;
     }
+    // Milestone 9.5 (task 17a's re-review, (a)): a crowned race's other lanes hold
+    // their own slots (`race::lane_readers`); only the task's own count here.
+    let own = |lane: Option<proto::RaceLane>| own_lane(task, lane);
     task.state == TaskState::Review
         && (task
             .rounds
             .iter()
-            .any(|r| r.role == AgentRole::Reviewer && !r.ended)
+            .any(|r| r.role == AgentRole::Reviewer && !r.ended && own(r.lane))
             || resumable_reviewer(task)
-            || op_in_flight(run, task.id(), |k| {
-                // Milestone 9 decision 36: a review task's target first.
-                matches!(
-                    k,
-                    OpKind::PrepareReview { .. } | OpKind::ResolveTarget { .. }
-                )
+            || run.pending_ops.values().any(|p| {
+                p.task_id.as_deref() == Some(task.id())
+                    && own(p.lane)
+                    // Milestone 9 decision 36: a review task's target first.
+                    && matches!(
+                        p.kind,
+                        OpKind::PrepareReview { .. } | OpKind::ResolveTarget { .. }
+                    )
             }))
+}
+
+/// Whether a round, record or op of `lane` is task `task`'s own: in a lane's view every
+/// one it shows is; otherwise one of no lane, or of the crowned lane.
+fn own_lane(task: &Task, lane: Option<proto::RaceLane>) -> bool {
+    task.lane_view.is_some() || lane.is_none() || lane == task.crowned_lane()
 }
 
 /// The task's last reviewer round, ended but resumable, with no verdict yet.
 fn resumable_reviewer(task: &Task) -> bool {
     task.rounds
         .iter()
-        .rfind(|r| r.role == AgentRole::Reviewer)
+        .rfind(|r| r.role == AgentRole::Reviewer && own_lane(task, r.lane))
         .is_some_and(|r| {
             r.ended
                 && !r.retiring
@@ -140,7 +196,7 @@ fn resumable_reviewer(task: &Task) -> bool {
                 && !task
                     .reviews
                     .iter()
-                    .any(|rv| rv.round == r.round && rv.verdict.is_some())
+                    .any(|rv| rv.lane == r.lane && rv.round == r.round && rv.verdict.is_some())
         })
 }
 
@@ -155,6 +211,8 @@ pub fn readers_busy(run: &Run) -> usize {
     run.tasks.iter().filter(|t| holds_reader(run, t)).count()
         + deciders
         + super::planners::readers(run)
+        // Milestone 9.5 decision 20: each lane's review.
+        + super::race::lane_readers(run)
 }
 
 /// A task in `review` with no reviewer yet.
@@ -208,12 +266,17 @@ pub fn size_check_pending(task: &Task) -> bool {
     )
 }
 
-/// Decision 41's weights until M9.5's history exists: S = 1, M = 3. An L task never
-/// runs (rule 7.2.4), so its weight only orders the snapshot; it counts as M.
-pub fn weight(task: &Task) -> u32 {
-    match task.size {
-        Size::S => 1,
-        Size::M | Size::L => 3,
+/// A task's weight on the critical path. Milestone 9.5 decision 7: its class's seconds
+/// when the run froze history's weights (a hub task the hub's), else decision 41's
+/// S = 1, M = 3. An L task never runs (rule 7.2.4), so its weight only orders the
+/// snapshot; it counts as M. The one weight function: `run::estimate` calls it too.
+pub fn weight(limits: &RunLimits, task: &Task) -> u64 {
+    match (&limits.path_weights, task.size) {
+        (Some(w), _) if task.hub => w.hub_secs,
+        (Some(w), Size::S) => w.s_secs,
+        (Some(w), Size::M | Size::L) => w.m_secs,
+        (None, Size::S) => 1,
+        (None, Size::M | Size::L) => 3,
     }
 }
 
@@ -242,17 +305,17 @@ fn dependents(run: &Run) -> Vec<Vec<usize>> {
 /// `critical_len(t) = weight(t) + max(critical_len(d))` over the unfinished tasks that
 /// depend on `t`; 0 for a finished task. The combined graph is acyclic (M8a.5's
 /// backstop), and a task on a cycle anyway counts its own weight only.
-pub fn critical_lens(run: &Run) -> Vec<u32> {
+pub fn critical_lens(run: &Run) -> Vec<u64> {
     let deps = dependents(run);
-    let mut memo: Vec<Option<u32>> = vec![None; run.tasks.len()];
+    let mut memo: Vec<Option<u64>> = vec![None; run.tasks.len()];
     let mut visiting = vec![false; run.tasks.len()];
     fn visit(
         i: usize,
         run: &Run,
         deps: &[Vec<usize>],
-        memo: &mut [Option<u32>],
+        memo: &mut [Option<u64>],
         visiting: &mut [bool],
-    ) -> u32 {
+    ) -> u64 {
         if let Some(v) = memo[i] {
             return v;
         }
@@ -266,7 +329,7 @@ pub fn critical_lens(run: &Run) -> Vec<u32> {
             .max()
             .unwrap_or(0);
         visiting[i] = false;
-        let v = weight(&run.tasks[i]) + tail;
+        let v = weight(&run.limits, &run.tasks[i]).saturating_add(tail);
         memo[i] = Some(v);
         v
     }

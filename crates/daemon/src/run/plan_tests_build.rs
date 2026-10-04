@@ -40,6 +40,7 @@ fn yes_records_the_approval() {
         plan,
         preflight(),
         BuildContext {
+            tuning: Default::default(),
             id: RUN_ID.to_string(),
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: PathBuf::from(format!("/tmp/data/runs/{RUN_ID}")),
@@ -190,6 +191,7 @@ fn run_limits_freeze_the_testing_limits() {
         parse_plan(EXAMPLE_PLAN).unwrap(),
         preflight(),
         BuildContext {
+            tuning: Default::default(),
             id: RUN_ID.to_string(),
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: crate::run::journal::runs_dir(data.path()).join(RUN_ID),
@@ -270,6 +272,7 @@ fn limits_are_frozen_at_run_start() {
         parse_plan(EXAMPLE_PLAN).unwrap(),
         preflight(),
         BuildContext {
+            tuning: Default::default(),
             id: RUN_ID.to_string(),
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: crate::run::journal::runs_dir(data.path()).join(RUN_ID),

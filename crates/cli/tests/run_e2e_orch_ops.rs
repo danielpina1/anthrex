@@ -37,8 +37,11 @@ fn waiting() -> (RunHarness, String, u32) {
     );
     let run = h.start_goal_id("rework storage", &[]);
     let window = h.orchestrator_window(&run);
-    // Its hooks have reported its session, which a restart resumes.
+    // Its hooks have reported its session, which a restart resumes once its first turn
+    // is in (milestone 9.5 fix round 1, m2: a session still waiting for it starts fresh).
     h.wait_window(window, "a session", |w| w.session_id.is_some(), ORCH_WAIT);
+    let delivered = || h.run_json(&run)["orch"]["orchestrator"]["first_turn_pending"] != true;
+    wait_until("the first turn is delivered", delivered);
     (h, run, window)
 }
 
@@ -101,6 +104,7 @@ fn create_orchestrator_op_starts_the_window_and_reports_it() {
             task_id: None,
             role: proto::AgentRole::Orchestrator,
             session: 1,
+            lane: None,
         })
     );
     let argv = &argvs(&h, 1)[0];

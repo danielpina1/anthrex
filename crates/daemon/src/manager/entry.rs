@@ -138,6 +138,10 @@ pub(super) struct Entry {
     /// not restarted by a move between the two ([`Entry::note_prompt`]): how long a
     /// wake-up has been held there (`WindowManager::held_at_prompt_for`).
     pub(super) prompt_since: Option<Instant>,
+    /// Milestone 9.5 decision 40: the questions the last tick's footer scan counted;
+    /// only a higher count raises `Attention`, and while it is set only input answers
+    /// that `Attention` (ruling T5b-1). Not persisted.
+    pub(super) codex_question: Option<u32>,
 }
 
 impl Entry {
@@ -174,6 +178,7 @@ impl Entry {
                 None => self.headless().and_then(|spec| spec.run_ref.clone()),
             },
             signals_seen: self.state.signals_seen,
+            placeholder: self.is_placeholder(), // defined in manager/role_window.rs
         }
     }
 
@@ -197,6 +202,10 @@ impl Entry {
 
     pub(super) fn apply_with_context(&mut self, event: StatusEvent, ctx: StatusContext) -> bool {
         use StatusEvent as E;
+        let ctx = StatusContext {
+            codex_question: self.codex_question.is_some(),
+            ..ctx
+        };
         if matches!(
             event,
             E::Stop | E::UserPromptSubmit | E::CodexNotify | E::SessionStart

@@ -116,6 +116,8 @@ pub struct ProfileService {
     live_runs: Mutex<Option<LiveRuns>>,
     /// Milestone 9.2 decision 15: the daemon's code host, for detection (`delivery.rs`).
     pub(super) host: std::sync::OnceLock<Arc<dyn crate::host::CodeHost>>,
+    /// Milestone 9.5 decision 9a: a `spread` scout list's rotation over onboarding scouts.
+    pub(super) onboarding_rotation: std::sync::atomic::AtomicU32,
 }
 
 /// Decision 37: the ids of the runs live in a project (`RunService::live_runs_in`).
@@ -194,6 +196,7 @@ impl ProfileService {
             next_generation: AtomicU64::new(1),
             live_runs: Mutex::new(None),
             host: std::sync::OnceLock::new(),
+            onboarding_rotation: Default::default(),
         })
     }
 

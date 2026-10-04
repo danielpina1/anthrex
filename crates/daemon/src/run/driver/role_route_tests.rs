@@ -49,6 +49,11 @@ impl Rig {
     /// `decider_bin`, and one running run whose only task is blocked (the scheduler
     /// starts nothing).
     fn new(mode: DeciderMode, decider_bin: Option<MakeBin>) -> Rig {
+        Rig::with(mode, decider_bin, None)
+    }
+
+    /// [`Rig::new`] with Codex's command `codex`'s stand-in (installed) when given.
+    fn with(mode: DeciderMode, decider_bin: Option<MakeBin>, codex: Option<MakeBin>) -> Rig {
         let dir = tempfile::Builder::new()
             .prefix("anthrex-role-route-")
             .tempdir_in("/tmp")
@@ -62,7 +67,10 @@ impl Rig {
         block(task_mut(&mut run, "t0"), BlockReason::Question, "which?");
         let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
         config.claude_bin = "/nonexistent/anthrex-test/claude".into();
-        config.codex_bin = "/nonexistent/anthrex-test/codex".into();
+        config.codex_bin = match codex {
+            Some(make) => make(dir.path(), &run.id).display().to_string(),
+            None => "/nonexistent/anthrex-test/codex".into(),
+        };
         config.worktrees_root = dir.path().join("worktrees");
         config.launch_gate = LaunchGate::open_already();
         if let Some(make) = decider_bin {
@@ -147,7 +155,7 @@ impl Rig {
             Default::default(),
             0,
         );
-        let refused = self.runs.keep_record("no-such-run", d).await;
+        let refused = self.runs.keep_record("no-such-run", d, None).await;
         assert!(refused.is_err(), "{refused:?}");
     }
 }
@@ -478,4 +486,42 @@ async fn a_scout_of_a_run_that_is_gone_is_refused() {
         panic!("{result:?}");
     };
     assert_eq!(message, "the run is gone");
+}
+
+/// A stand-in that exits at once: never an agent.
+fn exits(dir: &Path, _run_id: &str) -> PathBuf {
+    let script = dir.join("exits.sh");
+    std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+/// Ruling T10b-1: deciders whose `mode` names Claude, with only Codex installed, are
+/// moved to Codex; the record skips Claude's route as `not installed`, and the run log
+/// says so.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_decider_whose_runtime_is_not_installed_moves_and_says_so() {
+    let rig = Rig::with(DeciderMode::Claude, Some(exits), Some(exits));
+    let result = rig
+        .runs
+        .decide_as(&rig.ctx(), Some((5, vec!["t0".into()])), summary_request())
+        .await;
+    assert!(matches!(result, OpResult::Decided(_)), "{result:?}");
+    rig.settled().await;
+    let records = rig.records(AgentRole::Decider);
+    assert_eq!(records.len(), 1, "{records:#?}");
+    let d = &records[0];
+    assert_eq!(d.chosen.runtime, proto::Runtime::Codex);
+    let first = &d.candidates[0];
+    assert_eq!(
+        (first.route.runtime, first.skipped_reason.as_deref()),
+        (proto::Runtime::Claude, Some("not installed"))
+    );
+    let log: Vec<String> = crate::lock(&rig.runs.state).runs[&rig.run_id]
+        .log
+        .iter()
+        .map(|e| e.text.clone())
+        .collect();
+    let line = "decider: claude is not installed; using codex".to_string();
+    assert!(log.contains(&line), "{log:#?}");
 }

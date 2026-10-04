@@ -5,24 +5,32 @@
 //! the task, numbered `W1…` in the reviewer prompt, and a review must answer each
 //! (decision 42). Pure (design decision 2).
 
-use proto::{Finding, Severity, SignalInfo, Verdict};
+use proto::{Finding, PairPhase, Severity, SignalInfo, Verdict};
 
 use crate::run::contract::{
-    deleted_test_file_message, shown, signal_unjustified, signals_block, signals_unanswered,
+    deleted_test_files_message, shown, signal_unjustified, signals_block, signals_unanswered,
 };
 use crate::run::globs::names_literally;
 use crate::run::model::{Run, Task};
 use crate::run::tiers::{ClaimSignals, Signal, SignalsSpec};
 
-/// What task `i`'s `VerifyDone` reads: `None` for an untiered profile or one with
-/// neither `test_paths` nor `skip_markers` (decisions 6 and 40).
-pub(super) fn spec(run: &Run) -> Option<SignalsSpec> {
+/// What task `task`'s `VerifyDone` reads: `None` for an untiered profile or one with
+/// neither `test_paths` nor `skip_markers` (decisions 6 and 40). Milestone 9.5 ruling
+/// RP-2: a paired task's implementer's signals are read from its red commit, so a
+/// change to the test writer's test shows. Whole-branch review B, I1: an implementer
+/// with a red has them read whatever the profile says (its lists may be empty), since
+/// the writer's paths are test files by definition (`git::pair_signals`).
+pub(super) fn spec(run: &Run, task: &Task) -> Option<SignalsSpec> {
     let tiers = &run.profile.tiers;
     let wanted =
         tiers.is_tiered() && !(tiers.test_paths.is_empty() && tiers.skip_markers.is_empty());
-    wanted.then(|| SignalsSpec {
+    let red = (task.pair.as_ref())
+        .filter(|p| p.phase == PairPhase::Implementing)
+        .and_then(|p| p.red.clone());
+    (wanted || red.is_some()).then(|| SignalsSpec {
         test_paths: tiers.test_paths.clone(),
         skip_markers: tiers.skip_markers.clone(),
+        red,
     })
 }
 
@@ -44,19 +52,49 @@ pub(super) fn bounce(run: &Run, i: usize, signals: &ClaimSignals) -> Option<Stri
     if caught.is_empty() {
         return None;
     }
-    // Ruling C-20: restore from the commit the diff was read from.
+    // Ruling C-20: restore from the commit the diff was read from; milestone 9.5 ruling
+    // T16-8 (b): a paired task's implementer's per file, one checkout per base.
     let base = match signals.base.is_empty() {
         true => run.head_for(task),
         false => signals.base.as_str(),
     };
-    Some(deleted_test_file_message(&caught, base))
+    let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
+    for path in caught {
+        let from = signals.restore_from.get(&path).map_or(base, String::as_str);
+        match groups.iter_mut().find(|(b, _)| *b == from) {
+            Some((_, paths)) => paths.push(path),
+            None => groups.push((from, vec![path])),
+        }
+    }
+    Some(deleted_test_files_message(&groups))
 }
 
-/// Decision 42: an accepted claim's signals replace the task's.
+/// Decision 42: an accepted claim's signals replace the task's. Milestone 9.5 ruling
+/// T16-9 (1): a paired task's implementer's are followed by the test writer's kept ones.
 pub(super) fn keep(task: &mut Task, signals: ClaimSignals) {
-    task.signals = signals.list;
-    task.signals_more = signals.more;
+    let (writer, writer_more) = writer_signals(task).map_or((&[][..], 0), |p| {
+        (&p.writer_signals[..], p.writer_signals_more)
+    });
+    let mut list = signals.list;
+    list.extend_from_slice(writer);
+    task.signals_more = signals.more.saturating_add(writer_more);
+    task.signals = list;
     task.signal_refusals = 0;
+}
+
+/// The pair whose test writer's signals follow the implementer's, if any.
+fn writer_signals(task: &Task) -> Option<&crate::run::model::Pair> {
+    (task.pair.as_ref())
+        .filter(|p| p.phase == PairPhase::Implementing && !p.writer_signals.is_empty())
+}
+
+/// Whether task `task`'s signal `n` is the test writer's (ruling T16-9 (1)).
+fn by_writer(task: &Task, n: usize) -> bool {
+    let Some(pair) = writer_signals(task) else {
+        return false;
+    };
+    let from = task.signals.len().saturating_sub(pair.writer_signals.len());
+    n >= from && task.signals[from..] == pair.writer_signals[..]
 }
 
 /// `W<n>`, 1-based.
@@ -76,8 +114,17 @@ fn place(signal: &Signal) -> (&str, Option<u32>) {
 }
 
 /// One `- W<n> …` line of the reviewer block (Interfaces "Prompts (exact)"). The path
-/// and marker are shown through `contract::shown`: they come from the worker's diff.
-fn line(n: usize, signal: &Signal) -> String {
+/// and marker are shown through `contract::shown`: they come from the worker's diff. A
+/// paired task's test writer's signal ends ` (test writer)` (ruling T16-9 (1)).
+fn line(n: usize, signal: &Signal, writer: bool) -> String {
+    let text = signal_line(n, signal);
+    match writer {
+        true => format!("{text} (test writer)"),
+        false => text,
+    }
+}
+
+fn signal_line(n: usize, signal: &Signal) -> String {
     let id = id(n);
     match signal {
         Signal::DeletedTestFile { path } => format!("- {id} {}: deleted test file", shown(path)),
@@ -116,7 +163,7 @@ pub(crate) fn reviewer_block(task: &Task) -> String {
         .signals
         .iter()
         .enumerate()
-        .map(|(n, s)| line(n, s))
+        .map(|(n, s)| line(n, s, by_writer(task, n)))
         .collect();
     signals_block(&lines, task.signals_more)
 }
@@ -178,7 +225,7 @@ pub(crate) fn signal_infos(task: &Task) -> Vec<SignalInfo> {
         .map(|(n, signal)| {
             let id = id(n);
             let (path, line) = place(signal);
-            let text = self::line(n, signal)
+            let text = self::line(n, signal, by_writer(task, n))
                 .strip_prefix(&format!("- {id} "))
                 .map(str::to_string)
                 .unwrap_or_default();

@@ -65,6 +65,7 @@ fn win(id: u32, worktree: Option<&str>) -> WindowInfo {
         kind: proto::WindowKind::Pty,
         run: None,
         signals_seen: false,
+        placeholder: false,
     }
 }
 

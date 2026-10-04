@@ -98,6 +98,9 @@ pub struct BuildContext<'a> {
     pub delivery: &'a config::Delivery,
     pub now: u64,
     pub yes: bool,
+    /// Milestone 9.5 decision 12: what the start learned from history, frozen into the
+    /// run's limits; `Tuned::default()` builds exactly what milestone 9.3 built.
+    pub tuning: super::refit::Tuned,
 }
 
 /// Parses a plan file. The error is the `toml` crate's, which names the line and the
@@ -197,6 +200,17 @@ pub fn run_limits(
         decider_slot_wait_secs: config.deciders.slot_wait_secs,
         orch: super::orch::OrchLimits::from_config(config),
         testing: testing.into(),
+        // Milestone 9.5: nothing learned until `RunLimits::freeze`.
+        budget_hub: None,
+        class_routes: Default::default(),
+        path_weights: None,
+        thresholds: Default::default(),
+        route_lists: Default::default(),
+        // Decision 16 (ruling T9-2), frozen at start.
+        adaptive_concurrency: config.tuning.table.adaptive_concurrency,
+        recover_after_secs: config.tuning.table.recover_after_mins.saturating_mul(60),
+        halve_hold_secs: config.tuning.table.halve_hold_secs,
+        race_slot_wait_secs: config.tuning.table.race_slot_wait_secs,
     }
 }
 
@@ -344,13 +358,14 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
     profile.confined_localhost_ports = for_repo(&config.confined_localhost_ports, &pre.root)
         .cloned()
         .unwrap_or_default();
-    let limits = run_limits(
+    let mut limits = run_limits(
         config,
         ctx.testing,
         plan.max_writers,
         plan.max_readers,
         plan.max_bounces,
     );
+    limits.freeze(&ctx.tuning, config);
     let mut errors = Vec::new();
     check_plan(&plan, &profile, &mut errors);
 
@@ -366,13 +381,16 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         errors.extend(task_errors);
         errors.extend(super::validate::reserved_new_id(task.id()));
         task.branch = task_branch(&ctx.id, task.id());
-        task.worktree = task_path(&ctx.wt_dir, &ctx.id, task.id());
+        task.worktree = task_path(&ctx.wt_dir, &ctx.id, &task.checkout_name());
         task.notes.extend(super::validate::protected_notes(
             &task.spec.owns,
             &pre.protected_files,
         ));
         tasks.push(task);
     }
+
+    // Milestone 9.5 decision 9a: the class lists route the tasks that leave it to them.
+    super::route_pick::pick_all(&limits, &config.models, &mut tasks);
 
     let touched: BTreeSet<String> = tasks.iter().map(|t| t.spec.id.clone()).collect();
     errors.extend(validate_tasks(
@@ -382,6 +400,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         // Milestone 9.3 decision 14: a new plan is round 1's.
         (limits.max_tasks, proto::first_round()),
         limits.default_runtime,
+        // What is installed is recorded on the run after the build (`make_planned`).
+        (&config.models, &Default::default()),
     ));
     if !errors.is_empty() {
         return Err(errors);
@@ -442,7 +462,13 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         protected_files: pre.protected_files,
         rate_limits: Default::default(),
         outcome: None,
-        log: Vec::new(),
+        // Decision 12's tuning lines open the run's log.
+        log: (ctx.tuning.log.iter())
+            .map(|text| super::model::LogEntry {
+                at: ctx.now,
+                text: text.clone(),
+            })
+            .collect(),
         created_at: ctx.now,
         finish_edit: false,
         round_finish: false,
@@ -503,6 +529,11 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         chain: None,
         continued_by: None,
         chain_left: false,
+        concurrency: Default::default(),
+        tuning_lines: ctx.tuning.log.clone(),
+        paused_at: None,
+        paused_secs: 0,
+        last_step_at: 0,
     })
 }
 

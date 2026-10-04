@@ -428,6 +428,7 @@ fn woken_clears_delivered_notes() {
         digest_revision: revision,
         notes_seq,
         request: None,
+        first_turn: false,
     }));
     let o = fx.run().orch.orchestrator.clone().unwrap();
     assert!(o.notes.is_empty());

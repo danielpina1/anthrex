@@ -10,8 +10,8 @@ use crate::app::App;
 use crate::theme::{self, Glyph, Role, TaskLook};
 use crate::tree::{DisplayRound, NodeKey, Row, RowKind};
 use proto::{
-    AgentRole, FullState, PlannerInfo, PlannerState, RoundOutcome, RunState, ScoutInfo, ScoutState,
-    Status, TaskInfo, TaskState, WindowInfo,
+    AgentRole, FullState, LaneState, PairPhase, PlannerInfo, PlannerState, RaceLane, RoundOutcome,
+    RunState, ScoutInfo, ScoutState, Status, TaskInfo, TaskState, WindowInfo,
 };
 use ratatui::style::{Modifier, Style};
 use std::collections::HashSet;
@@ -186,8 +186,9 @@ fn ended(app: &App) -> (&'static str, Role) {
 }
 
 /// A live agent node: the spinner while its window is `Working`, `⚑` while the window
-/// asks for attention, `⊘` in `Paused` while the round is rate-limited (waiting on
-/// someone else, never "needs you": no alert is raised for it), else `●` (decision 19).
+/// asks for attention, `⊘` in `Paused` while the round is rate-limited or waits out a
+/// failed turn (milestone 9.5 decision 43; waiting on someone else, never "needs you":
+/// no alert is raised for it), else `●` (decision 19).
 fn live(window: Option<&WindowInfo>, rate_limited: bool, app: &App) -> (&'static str, Role) {
     let (frame, ascii) = (app.spinner_frame, app.palette().ascii);
     match window.map(|window| window.status) {
@@ -203,12 +204,15 @@ fn listed(app: &App, window_id: Option<u32>) -> Option<&WindowInfo> {
     app.windows.iter().find(|window| window.id == id)
 }
 
-/// `working` animates only while one of its live worker rounds' windows is `Working`.
+/// `working` animates only while one of its live writing rounds' windows (a worker's,
+/// a racer's or a test writer's) is `Working`.
 fn animating(task: &TaskInfo, app: &App) -> bool {
     task.state == TaskState::Working
         && task.rounds.iter().any(|round| {
-            round.role == AgentRole::Worker
-                && round.ended_at.is_none()
+            matches!(
+                round.role,
+                AgentRole::Worker | AgentRole::Racer | AgentRole::TestWriter
+            ) && round.ended_at.is_none()
                 && listed(app, round.window_id).is_some_and(|w| w.status == Status::Working)
         })
 }
@@ -218,21 +222,43 @@ fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'stati
     let is_live = round.ended_at.is_none();
     match info.role {
         AgentRole::Reviewer => {
-            let review = task
-                .reviews
-                .iter()
-                .find(|review| review.round == info.round && review.verdict.is_some());
+            // Ruling T20-2 (I1): both lanes number their reviews from 1.
+            let review = task.reviews.iter().find(|review| {
+                review.round == info.round && review.lane == info.lane && review.verdict.is_some()
+            });
             match review {
                 Some(review) if review.blocking => cross(app),
                 Some(_) => check(app),
-                None if is_live => live(round.window, app.rate_limited(info), app),
+                None if is_live => live(round.window, app.round_waits(info), app),
                 None => ended(app),
             }
         }
-        AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout | AgentRole::Planner => {
+        // Milestone 9.5 decision 29: an ended racer by its lane's outcome; an ended
+        // test writer fails only as the last writer of a task blocked writing its test.
+        // Live, both follow a worker's rules.
+        AgentRole::Racer if !is_live => match lane_state(task, info.lane) {
+            Some(LaneState::Lost | LaneState::Out) => ended(app),
+            _ => check(app),
+        },
+        AgentRole::TestWriter if !is_live => {
+            let writing = task.pair.as_ref().map(|pair| pair.phase) == Some(PairPhase::Writing);
+            let blocked = writing && task.state == TaskState::Blocked;
+            match blocked && last_round_of(task, round, AgentRole::TestWriter) {
+                true => cross(app),
+                false => check(app),
+            }
+        }
+        AgentRole::Worker
+        | AgentRole::Orchestrator
+        | AgentRole::Scout
+        | AgentRole::Planner
+        | AgentRole::Racer
+        | AgentRole::TestWriter => {
             if is_live {
-                live(round.window, app.rate_limited(info), app)
-            } else if task.state == TaskState::Blocked && last_worker_round(task, round) {
+                live(round.window, app.round_waits(info), app)
+            } else if task.state == TaskState::Blocked
+                && last_round_of(task, round, AgentRole::Worker)
+            {
                 cross(app)
             } else {
                 check(app)
@@ -243,19 +269,26 @@ fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'stati
     }
 }
 
-/// Whether `round` is the task's last worker round: the final piece of its latest
-/// worker session. `DisplayRound::last` alone marks every session's final piece.
-fn last_worker_round(task: &TaskInfo, round: &DisplayRound<'_>) -> bool {
+/// Whether `round` is the task's last round of `role`: the final piece of its latest
+/// session of that role. `DisplayRound::last` alone marks every session's final piece.
+fn last_round_of(task: &TaskInfo, round: &DisplayRound<'_>, role: AgentRole) -> bool {
     let latest = task
         .rounds
         .iter()
-        .filter(|info| info.role == AgentRole::Worker)
+        .filter(|info| info.role == role)
         .max_by_key(|info| (info.started_at, info.session));
     round.last
-        && round.info.role == AgentRole::Worker
+        && round.info.role == role
         && latest.is_some_and(|latest| {
             (latest.session, latest.started_at) == (round.info.session, round.info.started_at)
         })
+}
+
+/// The state of a racing task's `lane`, while the snapshot names it.
+fn lane_state(task: &TaskInfo, lane: Option<RaceLane>) -> Option<LaneState> {
+    let lanes = &task.race.as_ref()?.lanes;
+    let info = lanes.iter().find(|info| Some(info.lane) == lane)?;
+    Some(info.state)
 }
 
 fn scout_glyph(scout: &ScoutInfo, window: Option<&WindowInfo>, app: &App) -> (&'static str, Role) {

@@ -30,10 +30,12 @@ fn judged(ok: Option<bool>) -> Step {
     }
 }
 
-/// The last review with a verdict.
+/// The last review with a verdict, among those the task counts (a crowned race's
+/// loser's left out; ruling T20-2 (m5)).
 fn last_verdict(task: &TaskInfo) -> Option<&ReviewInfo> {
-    task.reviews
-        .iter()
+    let reviews = super::run_patterns::counted_reviews(task);
+    reviews
+        .into_iter()
         .rev()
         .find(|review| review.verdict.is_some())
 }
@@ -124,6 +126,14 @@ pub(crate) fn criteria_rows<S: AsRef<str>>(
         .collect()
 }
 
+/// The review whose verdict marks the acceptance criteria: the last the task counts
+/// (review D, M-2: after the crown the winner's, never the loser's).
+pub(super) fn accept_review(task: &TaskInfo) -> Option<&ReviewInfo> {
+    super::run_patterns::counted_reviews(task)
+        .into_iter()
+        .last()
+}
+
 /// Decision 12's review row: `r<n> ✓ approve · <line>`, `r<n> ✗ changes · <counts>:
 /// <worst finding>` and the summary's first line on the next row, `in review · r<n>`
 /// while a round runs, `not yet` before the first verdict, `none` without a review
@@ -132,8 +142,13 @@ pub(crate) fn review_row(task: &TaskInfo) -> String {
     if task.review_route.is_none() {
         return "none".to_owned();
     }
+    // Ruling T20-2 (m5): per lane before the crown, the winner's after it.
+    if let Some(counts) = super::run_patterns::lane_review_counts(task) {
+        return format!("in review · {counts}");
+    }
     if task.state == TaskState::Review {
-        return format!("in review · r{}", task.reviews.len());
+        let n = super::run_patterns::counted_reviews(task).len();
+        return format!("in review · r{n}");
     }
     let Some(review) = last_verdict(task) else {
         return "not yet".to_owned();
@@ -157,9 +172,11 @@ pub(crate) fn review_row(task: &TaskInfo) -> String {
         });
         ("changes", worst.or(summary))
     };
+    // Task 20b's carry: before a winner, the lane the verdict came from.
+    let lane = super::run_patterns::lane_prefix(task, review.lane);
     match detail {
-        Some(detail) => format!("r{} {mark} {word} · {detail}", review.round),
-        None => format!("r{} {mark} {word}", review.round),
+        Some(detail) => format!("{lane}r{} {mark} {word} · {detail}", review.round),
+        None => format!("{lane}r{} {mark} {word}", review.round),
     }
 }
 
@@ -245,7 +262,7 @@ pub(super) fn outcome(run: &RunInfo, task: &TaskInfo, app: &App, evidence: &Sect
         Some(DetailState::Ready(detail)) => Some(
             criteria_rows(
                 &detail.acceptance,
-                task.reviews.last(),
+                accept_review(task),
                 task.merged_without_approval.as_deref(),
             )
             .join("\n"),

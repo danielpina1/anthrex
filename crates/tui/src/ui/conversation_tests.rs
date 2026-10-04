@@ -50,6 +50,7 @@ fn window(runtime: Runtime) -> WindowInfo {
         kind: proto::WindowKind::Pty,
         run: None,
         signals_seen: false,
+        placeholder: false,
     }
 }
 

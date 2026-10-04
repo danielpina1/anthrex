@@ -30,11 +30,13 @@ pub const RUN_REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 /// `run start`'s reply bound (task M9.2.12 fix round 1, I2): M8a's git preflight
 /// ([`RUN_REQUEST_TIMEOUT`]'s term), then in `pr` mode the host preflight, bounded by the
 /// daemon's own `PREFLIGHT_BOUND` (not a copy), and a 30 s margin for the run's build
-/// after them. A CLI that gave up sooner would report a timeout for a run the daemon then
-/// starts.
+/// after them, plus the build's tuning (milestone 9.5 ruling T9-3: the daemon's
+/// `TUNING_START_BOUND`). A CLI that gave up sooner would report a timeout for a run the
+/// daemon then starts.
 pub const RUN_START_TIMEOUT: Duration = RUN_REQUEST_TIMEOUT
     .saturating_add(daemon::host::PREFLIGHT_BOUND)
-    .saturating_add(Duration::from_secs(30));
+    .saturating_add(Duration::from_secs(30))
+    .saturating_add(daemon::run::driver::tuning::TUNING_START_BOUND);
 
 /// `run accept` and `run discard`'s reply bound (ruling T23-I1): the daemon's merge runs
 /// under `ACCEPT_MERGE_TIMEOUT` and is never shortened (the user's hooks and signing run
@@ -193,6 +195,8 @@ enum RunCommand {
         /// Print the summary as pretty JSON
         #[arg(long)]
         json: bool,
+        #[command(flatten)]
+        tuning: adapt::TuningFlags,
     },
     /// Resume a paused or halted run
     Resume {
@@ -350,7 +354,7 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             let goal = request.expect("read above");
             rounds::iterate(&mut runs, &run, goal).await
         }
-        RunCommand::Stats { json } => adapt::stats(&mut runs, dir, json).await,
+        RunCommand::Stats { json, tuning } => adapt::stats(&mut runs, dir, json, tuning).await,
         RunCommand::Resume { run, rebaseline } => {
             let run_id = runs.resolve(&run).await?;
             runs.done(RunRequest::Resume { run_id, rebaseline }).await

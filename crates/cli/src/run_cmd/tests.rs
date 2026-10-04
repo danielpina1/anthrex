@@ -117,6 +117,12 @@ fn run_start_outwaits_both_preflights() {
         request_timeout(&start)
     );
     assert_eq!(request_timeout(&start), super::RUN_START_TIMEOUT);
+    // Milestone 9.5 ruling T9-3: the build's 30 s and the start's tuning bound.
+    let tuning = daemon::run::driver::tuning::TUNING_START_BOUND;
+    assert_eq!(
+        super::RUN_START_TIMEOUT,
+        preflights + Duration::from_secs(30) + tuning
+    );
     let goal = RunRequest::StartGoal {
         goal: "g".into(),
         dir: "/r".into(),
@@ -151,6 +157,7 @@ fn stats_json_and_the_report_line_are_printable() {
         quarantine_after: 0,
         rounds: 0,
         iterated_runs: 0,
+        tuning: None,
     };
     let json = super::adapt::stats_json(&stats).unwrap();
     // JSON escapes the control character itself; the bidi override and the ZWJ, which

@@ -143,7 +143,13 @@ fn a_cancel_during_a_merge_that_lands_is_too_late() {
     let logged = |text: &str| fx.run().log.iter().any(|l| l.text.contains(text));
     assert!(logged("the cancel of t1 arrived too late"));
     for (op, _) in pending(&fx, "RemoveWorktree", Some("t1")) {
-        fx.done(op, OpResult::Removed { salvage_ref: None });
+        fx.done(
+            op,
+            OpResult::Removed {
+                salvage_ref: None,
+                cleared_locks: Vec::new(),
+            },
+        );
     }
     let (op, _) = pending_one(&fx, "VerifyRefs", None);
     fx.done(op, OpResult::RefsOk);
@@ -437,7 +443,13 @@ fn accept_and_discard_apply_only_to_a_complete_run() {
         },
     );
     for (op, _) in pending(&fx, "RemoveWorktree", Some("t1")) {
-        fx.done(op, OpResult::Removed { salvage_ref: None });
+        fx.done(
+            op,
+            OpResult::Removed {
+                salvage_ref: None,
+                cleared_locks: Vec::new(),
+            },
+        );
     }
     assert_eq!(fx.run().state, RunState::Halted);
     let effects = finish(&mut fx, FinishAction::Accept);

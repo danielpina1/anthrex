@@ -257,7 +257,7 @@ fn salvage_to(
     }
     Ok((
         true,
-        git::salvage(git, path, name, SALVAGE_MESSAGE, timeout)?,
+        git::salvage(git, path, name, SALVAGE_MESSAGE, false, timeout)?,
     ))
 }
 

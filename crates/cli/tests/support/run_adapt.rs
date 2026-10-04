@@ -9,14 +9,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use proto::{
     Effort, ProfileMeta, ProfileReply, ProfileRequest, ProfileStatus, RepoProfile, Route, RunReply,
-    RunRequest, Runtime, ScoutKind, ScoutReport, Strength,
+    RunRequest, Runtime, ScoutKind, ScoutReport, Strength, TaskInfo,
 };
 use serde_json::{Value, json};
 
 use super::RunningCommand;
 use super::fake_agent_bin;
 use super::run_daemon::DAEMON_START_WAIT;
-use super::run_harness::RunHarness;
+use super::run_harness::{RunHarness, RunWatcher};
 
 /// `PROFILE_WAIT` (brief, "Shared test conventions"; `docs/timing-budgets.md`):
 /// `scouts.timeout_secs = 60` + three verification commands at
@@ -30,11 +30,15 @@ pub const PROFILE_LINES: &str =
     "onboarding.auto = true\nonboarding.verify_timeout_secs = 10\nscouts.timeout_secs = 60\n";
 
 /// `GOAL_WAIT` (brief, "Shared test conventions"; `docs/timing-budgets.md`): `run start
-/// --goal`'s reply in a test. `REQUEST_WAIT` (60 s, `build_plan`'s git calls) + the
-/// harness's `deciders.timeout_secs` (5 s) + the kill grace (2 s) + `StartGoal`'s own
-/// preflight and `git ls-files` (the brief's seven calls at 5 s, 35 s) = 102 s, rounded
-/// up. As landed they are nine (M8b.14's count), 112 s in all: still under.
-pub const GOAL_WAIT: Duration = Duration::from_secs(120);
+/// --goal`'s reply in a test. `REQUEST_WAIT` (60 s when the brief was written,
+/// `build_plan`'s git calls) + the harness's `deciders.timeout_secs` (5 s) + the kill
+/// grace (2 s) + `StartGoal`'s own preflight and `git ls-files` (the brief's seven calls
+/// at 5 s, 35 s) = 102 s, rounded up. As landed they are nine (M8b.14's count), 112 s in
+/// all; milestone 9.5's start tuning adds up to `TUNING_START_BOUND` (10 s, ruling T9-3):
+/// 122 s, so 130 s. In today's terms, `REQUEST_WAIT` (75 s, ruling T9-4, the tuning in
+/// it) + 5 + 2 + 45 = 127 s; milestone 9.5's installed probe before the triage call
+/// (`INSTALLED_PROBE_TIMEOUT`, 5 s, ruling I6) makes it 132 s, so 140 s.
+pub const GOAL_WAIT: Duration = Duration::from_secs(140);
 
 /// The brief's stored profile for M8b.18 and M8b.19 (the default `protected`), with
 /// `check_timeout_secs = 10` so every check keeps `RUN_WAIT`'s derivation (a stored
@@ -345,4 +349,99 @@ fn jsonl(path: &Path) -> Vec<Value> {
         .filter(|l| !l.trim().is_empty())
         .map(|l| serde_json::from_str(l).expect("a JSON line"))
         .collect()
+}
+
+// Milestone 9.5 task M9.5.22: what the tuning, race and pair end-to-end tests share
+// (`run_e2e_tuning.rs`, `run_e2e_race.rs`, `run_e2e_pair.rs`, and task 20b's
+// `run_e2e_patterns.rs`).
+
+/// The profile every milestone 9.5 end-to-end test stores (brief M9.5.22), with
+/// `check_timeout_secs = 10` so each check keeps `RUN_WAIT`'s derivation.
+pub const TUNING_PROFILE: &str = "check = \"sh check.sh\"\ncheck_timeout_secs = 10\nsingle_test = \"sh tests/{test}.sh\"\ntest_passed = \"PASS {test}\"\n";
+
+/// How many times a scripted [`RunHarness::wait_release`] polls its file, 0.2 s apart:
+/// 120 s, inside `RUN_WAIT`.
+pub const RELEASE_POLLS: u32 = 600;
+
+/// A step that never ends its turn: the session waits until it is stopped.
+pub fn hang() -> Value {
+    json!({"hang": {}})
+}
+
+/// Task `task` of run `id` in every snapshot `watcher` received, oldest first.
+pub fn seen_task(watcher: &RunWatcher, id: &str, task: &str) -> Vec<TaskInfo> {
+    (watcher.snapshots().into_iter())
+        .flat_map(|s| s.runs)
+        .filter(|r| r.run_id == id)
+        .flat_map(|r| r.tasks)
+        .filter(|t| t.id == task)
+        .collect()
+}
+
+/// The argv of process `pid` while it is alive, as `ps -p <pid>` prints it: a read of
+/// that exact pid, never a signal and never a pattern (the milestone's SAFETY rules).
+pub fn argv_of(pid: u32) -> Option<String> {
+    let out = std::process::Command::new("ps")
+        .args(["-ww", "-o", "args=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !text.is_empty()).then_some(text)
+}
+
+impl RunHarness {
+    /// A harness for the milestone 9.5 scenarios: deciders off, `orchestrator` lines,
+    /// `extra_toml` after the harness's own tables, [`ADAPT_FILES`] and `files` in the
+    /// base commit, and [`TUNING_PROFILE`] stored.
+    pub fn tuning(orchestrator: &str, extra_toml: &str, files: &[(&str, &str)]) -> Self {
+        let mut all: Vec<(&str, &str)> = ADAPT_FILES.to_vec();
+        all.extend_from_slice(files);
+        let h = Self::with_config(orchestrator, extra_toml, &all);
+        h.stored_profile(TUNING_PROFILE);
+        h
+    }
+
+    /// Copies `crates/daemon/tests/fixtures/history/<name>` to this repository's
+    /// `history.jsonl`.
+    pub fn history(&self, name: &str) {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../daemon/tests/fixtures/history")
+            .join(name);
+        let dir = self.repo_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(fixture, dir.join(daemon::run::engine::HISTORY_FILE)).unwrap();
+    }
+
+    /// `<tmp>/release/<name>`: the file a [`Self::wait_release`] step waits for.
+    pub fn release_path(&self, name: &str) -> PathBuf {
+        self.dir.path().join("release").join(name)
+    }
+
+    /// An `sh` step that polls for [`Self::release_path`] up to [`RELEASE_POLLS`] times,
+    /// 0.2 s apart, and goes on either way.
+    pub fn wait_release(&self, name: &str) -> Value {
+        let path = self.release_path(name);
+        json!({"sh": {"cmd": format!(
+            "i=0; while [ ! -e '{}' ] && [ $i -lt {RELEASE_POLLS} ]; do sleep 0.2; i=$((i+1)); done",
+            path.display()
+        )}})
+    }
+
+    /// An `sh` step that creates [`Self::release_path`]: a scripted session's signal to
+    /// another's [`Self::wait_release`].
+    pub fn mark_release(&self, name: &str) -> Value {
+        let path = self.release_path(name);
+        json!({"sh": {"cmd": format!(
+            "mkdir -p '{}' && : > '{}'",
+            path.parent().unwrap().display(),
+            path.display()
+        )}})
+    }
+
+    /// Creates [`Self::release_path`].
+    pub fn release(&self, name: &str) {
+        let path = self.release_path(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "go\n").unwrap();
+    }
 }

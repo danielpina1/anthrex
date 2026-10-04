@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use proto::run_wire::request;
 use proto::{DeliveryMode, RunReply, RunRequest};
 
-use super::super::super::host_ops::tests::{NoRoots, service_with};
+use super::super::super::host_ops::tests::NoRoots;
 use super::{Rig, git};
 use crate::manager::{ManagerConfig, WindowManager};
 use crate::run::driver::{RunContext, RunService};
@@ -49,12 +49,68 @@ fn run_refs(dir: &Path) -> String {
     )
 }
 
-/// `s`'s answer to `req`, within a deadline: a start that wrongly reaches the (here
+/// The start tests' `git_timeout_secs` (milestone 9.5 ruling T9-6): the other harnesses'
+/// 5 s (`run_harness.rs`), so `ask`'s bound can be derived from the calls a start makes.
+const RIG_GIT_TIMEOUT_SECS: u64 = 5;
+
+/// The orchestrator config of every service here: the default with
+/// [`RIG_GIT_TIMEOUT_SECS`].
+fn rig_config() -> config::Orchestrator {
+    config::Orchestrator {
+        git_timeout_secs: RIG_GIT_TIMEOUT_SECS,
+        ..config::Orchestrator::default()
+    }
+}
+
+/// The git calls of a `pr` goal's start at most, counted in the code (ruling T9-6):
+/// `goal_ready`'s preflight (8: the roots, `version`, `symbolic-ref`, `rev-parse`, `var`,
+/// `config`, `status`, the common directory), triage's `ls-files` (1), and two builds,
+/// the fast one and the planned one it falls back to, of 15 each (the preflight's 8,
+/// the protected files, the run refs, the `.codex` tree, and the settings checks:
+/// Claude's `ls-tree` and two `cat-file`, Codex's `ls-tree`).
+const GOAL_START_GIT_CALLS: u32 = 8 + 1 + 2 * 15;
+
+/// `ask`'s bound (milestone 9.5 rulings T9-4 and T9-6; `docs/timing-budgets.md`): a
+/// `pr` goal start's legal worst case on these rigs, the largest request here. Its
+/// [`GOAL_START_GIT_CALLS`] at [`RIG_GIT_TIMEOUT_SECS`] (195 s), the host preflight
+/// (`PREFLIGHT_BOUND`, 365 s), triage (the default `deciders.timeout_secs`, 90 s, and
+/// the decider's `KILL_GRACE`, 2 s, after the installed probe it routes over,
+/// `INSTALLED_PROBE_TIMEOUT`, 5 s), the triage record's write (`TRIAGE_WRITE_TIMEOUT`,
+/// 10 s), the build's tuning (`TUNING_START_BOUND`, 10 s), and 30 s for the engine step
+/// that starts the run and the scheduling: 707 s.
+fn ask_wait() -> Duration {
+    let git = Duration::from_secs(RIG_GIT_TIMEOUT_SECS) * GOAL_START_GIT_CALLS;
+    let triage = Duration::from_secs(rig_config().deciders.timeout_secs)
+        + crate::decider::call::KILL_GRACE
+        + crate::run::driver::INSTALLED_PROBE_TIMEOUT;
+    git + crate::host::PREFLIGHT_BOUND
+        + triage
+        + super::super::super::adapt::TRIAGE_WRITE_TIMEOUT
+        + crate::run::driver::tuning::TUNING_START_BOUND
+        + Duration::from_secs(30)
+}
+
+/// The host-op tests' `service_with`, with [`rig_config`].
+fn service(host: Arc<dyn crate::host::CodeHost>, data: &Path) -> Arc<RunService> {
+    let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let (manager, _events) = WindowManager::new(config);
+    let ctx = RunContext::new(
+        data.to_path_buf(),
+        manager.config(),
+        rig_config(),
+        Arc::new(NoRoots),
+    )
+    .with_host(host);
+    RunService::new(manager, ctx)
+}
+
+/// `s`'s answer to `req`, within [`ask_wait`]: a start that wrongly reaches the (here
 /// unspawned) engine fails the test instead of hanging it.
 async fn ask(s: &RunService, req: RunRequest) -> RunReply {
-    match tokio::time::timeout(Duration::from_secs(60), s.request(req)).await {
+    let bound = ask_wait();
+    match tokio::time::timeout(bound, s.request(req)).await {
         Ok(reply) => reply,
-        Err(_) => panic!("no answer within 60 s"),
+        Err(_) => panic!("no answer within {} s", bound.as_secs()),
     }
 }
 
@@ -71,7 +127,7 @@ async fn preflight_refusal_leaves_nothing_behind() {
     let rig = Rig::new(true);
     rig.ctl.create_repo("fake", "app", &rig.bare, "main");
     let data = rig.tmp.path().join("data");
-    let s = service_with(rig.host(), &data);
+    let s = service(rig.host(), &data);
     let reply = ask(&s, start(&rig, true, Some(DeliveryMode::Pr))).await;
     assert_eq!(reply, RunReply::refused(request::START, LOGGED_OUT));
     assert!(s.current().runs.is_empty(), "no run");
@@ -96,12 +152,13 @@ async fn preflight_refusal_leaves_nothing_behind() {
 #[tokio::test]
 async fn a_pr_run_freezes_its_delivery_at_start() {
     let rig = Rig::ready(true);
-    let s = service_with(rig.host(), &rig.tmp.path().join("data"));
+    let s = service(rig.host(), &rig.tmp.path().join("data"));
     let plan = crate::run::plan::parse_plan(&plan()).unwrap();
     let flags = (false, false, true);
     let asked = super::DeliveryStart::Resolve(Some(DeliveryMode::Pr));
     let shape = super::super::super::build::Shape::PlanFile;
-    let built = s.build_delivered(plan, rig.work.clone(), flags, shape, asked);
+    let once = super::super::super::build::TuneOnce::new();
+    let built = s.build_delivered(plan, rig.work.clone(), flags, shape, asked, &once);
     let run: crate::run::model::Run = match built.await {
         Ok(run) => run,
         Err(error) => panic!("{}", error.text()),
@@ -126,7 +183,7 @@ async fn local_mode_calls_no_host() {
     for asked in [None, Some(DeliveryMode::Local)] {
         let rig = Rig::ready(true);
         let data = rig.tmp.path().join("data");
-        let s = service_with(rig.host(), &data);
+        let s = service(rig.host(), &data);
         let handle = s.spawn(tokio_util::sync::CancellationToken::new());
         let reply = ask(&s, start(&rig, false, asked)).await;
         let RunReply::Started { run_id, .. } = reply else {
@@ -229,19 +286,13 @@ fn goal_service(
     let ctx = RunContext::new(
         data.clone(),
         manager.config(),
-        config::Orchestrator::default(),
+        rig_config(),
         Arc::new(NoRoots),
     )
     .with_host(rig.host());
     let s = RunService::new(manager.clone(), ctx);
     let handle = s.spawn(tokio_util::sync::CancellationToken::new());
-    crate::profile::service::wire(
-        &manager,
-        &s,
-        &data,
-        &socket,
-        &config::Orchestrator::default(),
-    );
+    crate::profile::service::wire(&manager, &s, &data, &socket, &rig_config());
     let pre =
         crate::run::git::preflight("git".as_ref(), &rig.work, Duration::from_secs(30)).unwrap();
     let repo_dir = crate::profile::repo_dir(&data, &pre.project);
@@ -340,7 +391,7 @@ async fn deliver_and_watch_are_routed_to_the_engine() {
     use crate::run::test_support::run_ok;
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path().join("data");
-    let s = service_with(super::super::super::host_ops::tests::real_host(), &data);
+    let s = service(super::super::super::host_ops::tests::real_host(), &data);
     let handle = s.spawn(tokio_util::sync::CancellationToken::new());
     let (mut local, mut pr) = (run_ok(&plan()), run_ok(&plan()));
     pr.id = format!("{}p", pr.id);

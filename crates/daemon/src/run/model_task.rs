@@ -52,6 +52,11 @@ pub struct Task {
     /// fails, cleared when it is removed (M8a.11; the cancel clean-up of M8a.6's F5).
     #[serde(default)]
     pub worktree_live: bool,
+    /// Ruling FW-4: a `PrepareWorktree` of the task's own checkout came back `Failed`.
+    /// Its branch may exist all the same (git makes it before the checkout), so a racing
+    /// task with one never races: the crown could not create the branch.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prepare_failed: bool,
     /// An answer or other message is held for this started task until every dependency
     /// has finished (M8a.6 ruling N5); the task stays `blocked` meanwhile.
     #[serde(default)]
@@ -197,6 +202,50 @@ pub struct Task {
     /// Milestone 9.3 decision 13: the round that added the task.
     #[serde(default = "proto::first_round")]
     pub round: u32,
+    /// Milestone 9.5 decision 19: the race, once the task races.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race: Option<super::Race>,
+    /// Decision 25: the test writer and its red commit, once a paired task starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pair: Option<super::Pair>,
+    /// Decision 18: since when the racing task has waited for its second writer slot,
+    /// on the run's running clock (the time less [`super::Run::paused_total`]; the final
+    /// fix wave's m6), so a pause or a daemon's downtime is no waiting time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race_wait_since: Option<u64>,
+    /// Ruling T17a-1: the race decision, latched once per dispatch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race_decision: Option<super::RaceDecision>,
+    /// Decision 9a: the plan's model-list choice for its worker route (made when the
+    /// task was built or added), when its class has a list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_pick: Option<super::ListPick>,
+    /// Decision 9a: rung 2's list step, beside `escalated_from`; the next worker launch
+    /// records it and clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_escalation: Option<super::ListPick>,
+    /// Milestone 9.5 ruling T12-2: the run's paused time in the task's phases.
+    #[serde(default, skip_serializing_if = "super::TaskPaused::is_zero")]
+    pub paused: super::TaskPaused,
+    /// Milestone 9.5 decision 20: the lane whose view the task is while the reducer
+    /// handles one lane of its race (`engine/race_view.rs`); `None` otherwise, and
+    /// always in a persisted or published run.
+    #[serde(skip)]
+    pub lane_view: Option<proto::RaceLane>,
+    /// Ruling T17a-2: in a lane's view, the reader slots the task's other lanes hold
+    /// (their reviewer rounds and ops wait outside the view); zero otherwise.
+    #[serde(skip)]
+    pub parked_readers: usize,
+    /// The final fix wave's m8: in a lane's view, the lane blocked with no kind, which
+    /// the race leaves unclassified (`done::task_blocked`); its view moves it to
+    /// `LaneGates.unclassified`. False otherwise.
+    #[serde(skip)]
+    pub lane_unclassified: bool,
+    /// Milestone 9.5 ruling m4 of task 17b's review: the highest salvage number handed
+    /// out, reserved when a removal is sent (`merge::reserve_salvage_seq`), so removals
+    /// in flight together never share a number.
+    #[serde(default, skip_serializing_if = "super::is_zero")]
+    pub salvage_seq: u64,
 }
 
 impl Task {
@@ -208,4 +257,55 @@ impl Task {
     pub fn stage(&self) -> u16 {
         self.spec.stage
     }
+
+    /// Milestone 9.5 ruling RR-1: the name of the task's checkout. The task id, or, once
+    /// a lane of its race is crowned (`Won`) or adopted, that lane's stored checkout
+    /// (`Lane.checkout`, `<task>.<lane>` as the race made it; task 15 review m4): every
+    /// path keyed by a checkout name (its repository, objects, engine directory,
+    /// `TMPDIR`, proof and review checkouts) is then the lane's.
+    /// Milestone 9.5 decision 20: in a lane's view, that lane's stored checkout.
+    pub fn checkout_name(&self) -> String {
+        let lane = self.race.as_ref().and_then(|race| {
+            race.lanes.iter().find(|l| match self.lane_view {
+                Some(view) => l.lane == view,
+                None => matches!(l.state, proto::LaneState::Won | proto::LaneState::Adopted),
+            })
+        });
+        match lane {
+            Some(lane) => lane.checkout.clone(),
+            None => self.id().to_string(),
+        }
+    }
+
+    /// Milestone 9.5 decision 23 (task M9.5.17b): the task races. Its race is neither
+    /// crowned nor ended, and has a winner waiting for its crown or a lane still live.
+    /// A race whose lanes are all out with no winner is not racing: the task is blocked,
+    /// and `run retry` ends the race.
+    pub fn racing(&self) -> bool {
+        use proto::LaneState::{Check, Preparing, Proof, Review, Working};
+        self.race.as_ref().is_some_and(|race| {
+            let live =
+                |l: &super::Lane| matches!(l.state, Preparing | Working | Proof | Check | Review);
+            !race.crowned && !race.ended && (race.winner.is_some() || race.lanes.iter().any(live))
+        })
+    }
+
+    /// Milestone 9.5 decision 23: the lane of its race that became the task (crowned or
+    /// adopted, and its crown done), if any.
+    pub fn crowned_lane(&self) -> Option<proto::RaceLane> {
+        let race = self.race.as_ref().filter(|r| r.crowned)?;
+        (race.lanes.iter())
+            .find(|l| matches!(l.state, proto::LaneState::Won | proto::LaneState::Adopted))
+            .map(|l| l.lane)
+    }
 }
+
+/// Decision 19: lane `lane`'s checkout name, `<task>.<lane>`, which a `Lane` is made
+/// with; every reader takes the stored `Lane.checkout` (review m4).
+pub fn lane_checkout(task: &str, lane: proto::RaceLane) -> String {
+    format!("{task}.{}", lane.label())
+}
+
+#[cfg(test)]
+#[path = "checkout_name_tests.rs"]
+mod checkout_name_tests;

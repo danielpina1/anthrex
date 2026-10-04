@@ -77,6 +77,7 @@ impl RunService {
             task_id: None,
             role: AgentRole::Orchestrator,
             session,
+            lane: None,
         };
         let manager = self.manager.clone();
         let done = tokio::task::spawn_blocking(move || {

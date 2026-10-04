@@ -29,6 +29,7 @@ fn review(round: &AgentRoundInfo, verdict: Verdict, blocking: bool) -> ReviewInf
             text: "a finding".into(),
         }],
         blocking,
+        lane: None,
     }
 }
 
@@ -42,6 +43,7 @@ fn pending(round: &AgentRoundInfo) -> ReviewInfo {
         summary: String::new(),
         findings: Vec::new(),
         blocking: false,
+        lane: None,
     }
 }
 

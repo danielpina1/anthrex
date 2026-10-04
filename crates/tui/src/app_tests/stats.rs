@@ -56,7 +56,14 @@ fn the_stats_entry_sends_stats_for_the_runs_project() {
     let dir = project(&app);
     app.open_actions((RUN_ID.into(), ActionTarget::Run), Some(ActionKind::Stats));
     let effects = tap(&mut app, KeyCode::Enter);
-    let id = sent_tagged_id(&effects, |r| *r == RunRequest::Stats { dir: dir.clone() });
+    let id = sent_tagged_id(&effects, |r| {
+        *r == RunRequest::Stats {
+            dir: dir.clone(),
+            apply: Vec::new(),
+            dismiss: Vec::new(),
+            read_only: false,
+        }
+    });
     assert_eq!(effects.len(), 1, "{effects:?}");
     assert!(app.modal.is_none(), "the menu closes");
     assert_eq!(app.toast_text(), None);
@@ -184,7 +191,7 @@ fn a_lost_link_fails_the_screen_and_a_reconnect_asks_again() {
         .filter_map(|e| match e {
             Effect::Send(ClientMsg::RunTagged {
                 id,
-                request: RunRequest::Stats { dir: d },
+                request: RunRequest::Stats { dir: d, .. },
             }) if *d == dir => Some(*id),
             _ => None,
         })
@@ -204,7 +211,12 @@ fn a_refused_send_fails_the_screen() {
     let id = open(&mut app);
     app.on_send_failed(&ClientMsg::RunTagged {
         id,
-        request: RunRequest::Stats { dir },
+        request: RunRequest::Stats {
+            dir,
+            apply: Vec::new(),
+            dismiss: Vec::new(),
+            read_only: false,
+        },
     });
     assert!(!app.replies.contains(id));
     assert_eq!(

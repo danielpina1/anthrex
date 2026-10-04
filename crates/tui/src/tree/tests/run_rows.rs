@@ -49,6 +49,7 @@ fn rd(task: &str, role: AgentRole, session: u32, round: u32) -> NodeKey {
         run: RUN_ID.into(),
         task: task.into(),
         role,
+        lane: None,
         session,
         round,
     }
@@ -470,4 +471,5 @@ fn a_scout_with_a_listed_window_shows_its_sub_agents() {
 }
 
 mod filters;
+mod patterns;
 mod placement;

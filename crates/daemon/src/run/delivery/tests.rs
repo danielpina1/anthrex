@@ -72,6 +72,7 @@ pub(super) fn check_with(record: TierRecord) -> CheckRecord {
         summary: None,
         summary_source: None,
         tier: Some(record),
+        lane: None,
     }
 }
 
@@ -84,6 +85,7 @@ pub(super) fn review(task: &Task, round: u32, verdict: Verdict) -> ReviewRecord 
         verdict: Some(verdict),
         summary: String::new(),
         findings: Vec::new(),
+        lane: None,
     }
 }
 
@@ -388,6 +390,7 @@ fn the_delivery_model_round_trips_through_run_json() {
         }),
         review_rounds: 2,
         review_wait_secs: 77,
+        review_paused_secs: 33,
         history_written: true,
         pushed: Some(HEAD2.into()),
         retry_at: Some(3_000),

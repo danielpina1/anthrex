@@ -14,10 +14,11 @@ use super::engine::actions::{ActionNode, available};
 use super::engine::ladder::{round_spend, total_spend};
 use super::engine::schedule::{critical_path, readers_busy, waves, writers_busy};
 use super::messages::summary;
-use super::model::{AgentRound, Run, Task};
+use super::model::{AgentRound, FailedTurn, Run, Task};
 pub use super::snapshot_orch::PAUSED_ATTENTION_SECS;
 pub use super::snapshot_orch::SNAPSHOT_NOTE_MAX;
 use super::snapshot_orch::{message_line, noted_lines, paused_line, plan_text_shown, task_notes};
+use super::snapshot_patterns as patterns;
 
 /// History entries a task shows, newest first.
 const HISTORY_SHOWN: usize = 10;
@@ -45,6 +46,8 @@ pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot {
 
 fn run_info(run: &Run, now: u64) -> RunInfo {
     let path: Vec<usize> = critical_path(run);
+    // Milestone 9.5 decision 14: the round's estimate and bound ratio.
+    let estimate = super::estimate::estimate(run, now);
     let waves = waves(run);
     let tasks = run
         .tasks
@@ -106,7 +109,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         profile_source: run.profile_source,
         usage: Some(run_usage(run)),
         scouts: Vec::new(),
-        // Milestone 8c; the estimates (M9.5) are placeholders.
+        // Milestone 8c.
         approved_at: run.approved_at,
         plan_edits: run
             .plan_edits
@@ -125,8 +128,8 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
             .collect(),
         plan_edits_since_approval: run.plan_edits_since_approval,
         planners: super::snapshot_orch::planners(run),
-        estimate_left_secs: None,
-        bound_ratio_permille: None,
+        estimate_left_secs: estimate.map(|e| e.left_secs),
+        bound_ratio_permille: estimate.and_then(|e| e.bound_ratio_permille),
         // Milestone 9: the orchestrator and holds (task M9.7), the integration reviews
         // and the research report (task M9.9).
         orchestrator: super::snapshot_orch::orchestrator(run),
@@ -150,6 +153,8 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         chain: run.chain.clone(),
         round: run.round(),
         rounds: run.round_infos(),
+        // Milestone 9.5 decision 16.
+        writer_caps: super::engine::concurrency::writer_caps(run),
     }
 }
 
@@ -171,7 +176,8 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
     let mut credit = |role: &str, u: TokenUsage| *by_role.entry(role.to_string()).or_default() += u;
     for round in run.tasks.iter().flat_map(|t| &t.rounds) {
         let role = match round.role {
-            AgentRole::Worker => "worker",
+            // Milestone 9.5: racers and test writers are worker sessions.
+            AgentRole::Worker | AgentRole::Racer | AgentRole::TestWriter => "worker",
             AgentRole::Reviewer => "reviewer",
             AgentRole::Scout => "scout",
             AgentRole::Orchestrator => "orchestrator",
@@ -240,6 +246,8 @@ pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
     lines.extend(run.stale_profile_line());
     lines.extend(crate::run::engine::integration_attention(run));
     lines.extend(crate::run::engine::delivery::attention(run));
+    // Milestone 9.5 decision 16 (ruling RC-3): a runtime's lowered writer cap.
+    lines.extend(crate::run::engine::concurrency::attention(run));
     // Milestone 9 decision 13: the orchestrator could not start, or its window exited.
     let terminal = run.state.is_terminal();
     lines.extend(
@@ -248,9 +256,8 @@ pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
             .as_ref()
             .and_then(|o| o.attention(terminal)),
     );
-    if run.orch.wake_held && !terminal {
-        lines.push(crate::run::orch::WAKE_HELD.to_string());
-    }
+    // A held wake-up; milestone 9.5 decisions 38 and 39: a start prompt.
+    lines.extend(crate::run::orch::orchestrator_lines(&run.orch, terminal));
     lines
 }
 
@@ -275,6 +282,17 @@ fn round_info(r: &AgentRound, now: u64) -> AgentRoundInfo {
         rate_limited_since: r.rate_limited_since,
         rate_limited_until: r.rate_limited_until,
         sent_back_at: r.sent_back_at.clone(),
+        lane: patterns::round_lane(r),
+        // Milestone 9.5 decision 43: the failed turn's error, and its retry (ruling
+        // T6-1: `at` is already the continue's time).
+        failed_error: r.failed_error.clone(),
+        failed_until: match r.failed_turn {
+            FailedTurn::WaitingContinue {
+                at,
+                rate_limit: false,
+            } => Some(at),
+            _ => None,
+        },
     }
 }
 
@@ -337,32 +355,44 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
                 summary: r.summary.clone(),
                 findings: r.findings.clone(),
                 blocking: r.findings.iter().any(|f| f.severity != Severity::Minor),
+                lane: patterns::review_lane(r),
             })
             .collect(),
-        last_check: t.checks.last().map(|c| CheckInfo {
-            at: c.at,
-            ok: c.ok,
-            code: c.code,
-            timed_out: c.timed_out,
-            secs: c.secs,
-            summary: summary(&c.tail),
-            on_candidate: c.on_candidate,
-            decider_summary: c
-                .summary
-                .clone()
-                .filter(|_| c.summary_source == Some(proto::DeciderSource::Decider)),
-            summary_source: c.summary_source,
-            tier: c.tier.as_ref().map(tier_info),
-        }),
-        last_proof: t.proofs.last().map(|p| ProofInfo {
-            at: p.at,
-            test: p.test.clone(),
-            red: p.red.clone(),
-            red_failed: p.red_failed,
-            head_passed: p.head_passed,
-            matched: p.matched,
-            ok: p.red_failed && p.head_passed && p.matched,
-        }),
+        // Task 20b's carry: before a winner, the last of any lane, naming it; then the
+        // winner's or the task's own (`snapshot_patterns::counts`).
+        last_check: (t.checks.iter().rev())
+            .find(|c| patterns::counts(t, c.lane))
+            .map(|c| CheckInfo {
+                at: c.at,
+                ok: c.ok,
+                code: c.code,
+                timed_out: c.timed_out,
+                secs: c.secs,
+                summary: summary(&c.tail),
+                on_candidate: c.on_candidate,
+                decider_summary: c
+                    .summary
+                    .clone()
+                    .filter(|_| c.summary_source == Some(proto::DeciderSource::Decider)),
+                summary_source: c.summary_source,
+                tier: c.tier.as_ref().map(tier_info),
+                lane: c.lane,
+            }),
+        last_proof: t
+            .proofs
+            .iter()
+            .rev()
+            .find(|p| !p.red_only && patterns::counts(t, p.lane))
+            .map(|p| ProofInfo {
+                at: p.at,
+                test: p.test.clone(),
+                red: p.red.clone(),
+                red_failed: p.red_failed,
+                head_passed: p.head_passed,
+                matched: p.matched,
+                ok: p.red_failed && p.head_passed && p.matched,
+                lane: p.lane,
+            }),
         merge_commit: t.merge_commit.clone(),
         merged_without_approval: t.merged_without_approval.clone(),
         salvage_refs: t.salvage_refs.clone(),
@@ -429,6 +459,9 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         atomic_reason: t.spec.atomic_reason.clone(),
         interface_change: t.spec.interface_change,
         round: t.round,
+        // Milestone 9.5 decision 1 (task 20b).
+        race: patterns::race_info(t),
+        pair: patterns::pair_info(t),
     }
 }
 

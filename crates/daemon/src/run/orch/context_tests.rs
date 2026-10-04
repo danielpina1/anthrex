@@ -381,3 +381,41 @@ fn untrusted_text_stays_inside_its_json_string() {
     });
     assert_contained(&c);
 }
+
+/// Milestone 9.5 decision 13: `limits.sizes` gives the run's frozen line thresholds;
+/// with the defaults, exactly milestone 9's text.
+#[test]
+fn get_context_sizes_follow_the_runs_thresholds() {
+    let mut run = run_of(1);
+    let sizes = |run: &crate::run::model::Run| {
+        let inputs = ContextInputs {
+            run,
+            asker: Asker::Orchestrator,
+            profile: None,
+            reports: Vec::new(),
+            only: None,
+        };
+        context(&inputs)["limits"]["sizes"].clone()
+    };
+    assert_eq!(
+        sizes(&run),
+        json!({
+            "S": "one file, no interface change, a mechanical check exists, about 20 changed lines",
+            "M": "one to three files inside one module, a clear spec, a check exists, about 100 changed lines",
+            "L": "never executed: split it",
+        })
+    );
+    run.limits.thresholds = proto::SizeThresholds {
+        s_lines: 35,
+        m_lines: 140,
+    };
+    let tuned = sizes(&run);
+    assert_eq!(
+        tuned["S"],
+        "one file, no interface change, a mechanical check exists, about 35 changed lines"
+    );
+    assert_eq!(
+        tuned["M"],
+        "one to three files inside one module, a clear spec, a check exists, about 140 changed lines"
+    );
+}

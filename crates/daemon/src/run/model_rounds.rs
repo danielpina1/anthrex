@@ -4,6 +4,31 @@
 
 use super::*;
 
+/// Milestone 9.5 decisions 19 and 25: a role whose session writes a task's code in its
+/// own checkout: a worker, a paired task's test writer, or a racing task's racer. Where
+/// a check is about one task's rounds, [`writes`] decides, since a racer writes the
+/// task only in its lane's view or once its lane is crowned.
+pub fn writes_task(role: AgentRole) -> bool {
+    matches!(
+        role,
+        AgentRole::Worker | AgentRole::TestWriter | AgentRole::Racer
+    )
+}
+
+/// Milestone 9.5 decision 23 (ruling RR-9): whether `round` is one of `task`'s writing
+/// sessions, which every worker check (tool calls, stalls, budgets, deliveries, kills,
+/// fresh sessions, `ladder::worker_round`) acts on. A worker's or a test writer's
+/// always; a racer's while its lane's view is the task (`engine/race_view.rs`, where
+/// the task shows that lane's rounds only), or once its lane is crowned or adopted.
+pub fn writes(task: &Task, round: &AgentRound) -> bool {
+    match round.role {
+        AgentRole::Racer => {
+            task.lane_view.is_some() || round.lane.is_some_and(|l| task.crowned_lane() == Some(l))
+        }
+        role => writes_task(role),
+    }
+}
+
 /// Decision 32's turn-end fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum FallbackState {
@@ -130,6 +155,11 @@ pub struct AgentRound {
     /// process starts.
     #[serde(default)]
     pub exited_pid: Option<u32>,
+    /// Milestone 9.5 ruling T17b-2: a racer round the restore ended (`settle`) with no
+    /// `ProcessExited` for it: its process may outlive the old daemon, so its lane's
+    /// checkout is kept, not cleaned. Cleared when the round is resumed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub orphaned: bool,
     /// M8c: when the current rate limit began; kept by [`AgentRound::set_rate_limited`].
     #[serde(default)]
     pub rate_limited_since: Option<u64>,
@@ -144,6 +174,13 @@ pub struct AgentRound {
     /// its line breaks kept, cut at `proto::WORKER_SUMMARY_MAX`. A counter (decision 6).
     #[serde(default)]
     pub last_text: Option<String>,
+    /// Milestone 9.5 decision 20: the race lane it belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<proto::RaceLane>,
+    /// Milestone 9.5 ruling RL-1: the session ended for an environment reason (its own
+    /// failed turn blocked the task), so rung 2 and `run retry` skip its route.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub environment_failed: bool,
 }
 
 impl AgentRound {
@@ -189,6 +226,9 @@ pub struct CheckRecord {
     /// a tiered profile); `None` for M8a's check.
     #[serde(default)]
     pub tier: Option<TierRecord>,
+    /// Milestone 9.5 decision 20: the race lane it belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<proto::RaceLane>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,6 +244,14 @@ pub struct ProofRecord {
     pub matched: bool,
     pub red_tail: String,
     pub head_tail: String,
+    /// Milestone 9.5 decision 20: the race lane it belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<proto::RaceLane>,
+    /// Milestone 9.5 decision 25 (minor m3 of task 16's review): decision 25's red check
+    /// of a test writer's claim, which runs the test at red only. Not a proof: the
+    /// history tally and the snapshot's last proof leave it out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub red_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,6 +263,9 @@ pub struct ReviewRecord {
     pub verdict: Option<Verdict>,
     pub summary: String,
     pub findings: Vec<Finding>,
+    /// Milestone 9.5 decision 20: the race lane it belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<proto::RaceLane>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

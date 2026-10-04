@@ -61,6 +61,8 @@ pub(super) fn rewrite(fx: &mut Fixture, brief: &str) -> Vec<Effect> {
             size: None,
             deps: None,
             stage: None,
+            race: None,
+            pair: None,
         }],
     )
 }

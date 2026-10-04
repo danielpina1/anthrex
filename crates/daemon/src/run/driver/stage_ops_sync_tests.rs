@@ -140,6 +140,7 @@ async fn a_sync_claims_signals_start_at_its_conflicted_tree() {
     let spec = SignalsSpec {
         test_paths: vec!["tests/**".into()],
         skip_markers: Vec::new(),
+        red: None,
     };
     let result = rig.op(sync.verify(&sync.two, None, Some(spec))).await;
     let (outside, kept, signals) = checked(&result);
@@ -193,6 +194,7 @@ async fn a_path_the_task_changed_after_a_hand_back_is_still_its_own() {
     let spec = SignalsSpec {
         test_paths: vec!["tests/**".into()],
         skip_markers: Vec::new(),
+        red: None,
     };
     let result = rig.op(sync.verify(&h2, Some(&h2), Some(spec))).await;
     let (outside, _, signals) = checked(&result);

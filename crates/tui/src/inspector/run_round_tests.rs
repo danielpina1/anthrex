@@ -16,6 +16,7 @@ fn round_key(task: &str, role: AgentRole, session: u32, round: u32) -> NodeKey {
         run: "r1".into(),
         task: task.into(),
         role,
+        lane: None,
         session,
         round,
     }
@@ -69,6 +70,7 @@ fn failed_check(summary: &str, decider: Option<&str>) -> App {
             decider_summary: decider.map(str::to_owned),
             summary_source: None,
             tier: None,
+            lane: None,
         });
     })
 }
@@ -262,6 +264,78 @@ fn an_expired_rate_limit_is_not_shown() {
         value(&run, "agents"),
         Some("workers 3/3 · readers 1/3 · claude ok · codex rate-limited")
     );
+}
+
+/// Milestone 9.5 decision 43 (FU-F23): a live round waiting out a failed turn is drawn
+/// like a rate-limited one, and its status names the error (one line, cut to 80
+/// characters) and the retry's local time.
+#[test]
+fn a_failed_round_is_drawn_like_a_rate_limited_one() {
+    let failed = |error: &str| {
+        let error = error.to_owned();
+        t7_on_window(move |round| {
+            round.rate_limited = false;
+            round.rate_limited_until = None;
+            round.rate_limited_since = None;
+            round.failed_error = Some(error);
+            round.failed_until = Some(GEMINI_NOW + 600);
+        })
+    };
+    let app = failed("overloaded");
+    let inspection = inspect_node(&app, &round_key("t7", AgentRole::Worker, 1, 1));
+    assert_eq!(inspection.glyph.content, "⊘");
+    assert_eq!(
+        inspection.glyph.style.fg,
+        Some(crate::theme::fg(crate::theme::Role::Paused))
+    );
+    assert_eq!(
+        inspection.right.as_deref(),
+        Some("failed: overloaded · retries 12:50 · 15m · t7")
+    );
+    // A long error on several lines: one line, its first 80 characters and `…`.
+    let long = format!("{}\n{}", "e".repeat(70), "f".repeat(30));
+    let app = failed(&long);
+    let inspection = inspect_node(&app, &round_key("t7", AgentRole::Worker, 1, 1));
+    let shown = format!("{} {}…", "e".repeat(70), "f".repeat(9));
+    assert_eq!(
+        inspection.right.as_deref(),
+        Some(format!("failed: {shown} · retries 12:50 · 15m · t7").as_str())
+    );
+    // Without a failed turn the round is an ordinary live one.
+    let app = t7_on_window(|round| {
+        round.rate_limited_until = None;
+        round.failed_error = Some("overloaded".into());
+    });
+    let inspection = inspect_node(&app, &round_key("t7", AgentRole::Worker, 1, 1));
+    assert_eq!(inspection.right.as_deref(), Some("idle · 15m · t7"));
+}
+
+/// Decision 43, review minors 1 and 4: a retry time already past (a paused run's
+/// round keeps its failed turn) is not shown, and a failed round with no error still
+/// reads as failed; the glyph and the status follow the same predicate.
+#[test]
+fn a_failed_round_hides_a_past_retry_and_a_missing_error() {
+    let failed = |error: Option<&str>, until: u64| {
+        let error = error.map(str::to_owned);
+        t7_on_window(move |round| {
+            round.rate_limited = false;
+            round.rate_limited_until = None;
+            round.rate_limited_since = None;
+            round.failed_error = error;
+            round.failed_until = Some(until);
+        })
+    };
+    let right = |app: &App| {
+        let inspection = inspect_node(app, &round_key("t7", AgentRole::Worker, 1, 1));
+        assert_eq!(inspection.glyph.content, "⊘");
+        inspection.right.unwrap_or_default()
+    };
+    let app = failed(Some("overloaded"), GEMINI_NOW - 60);
+    assert_eq!(right(&app), "failed: overloaded · 15m · t7");
+    let app = failed(None, GEMINI_NOW + 600);
+    assert_eq!(right(&app), "failed · retries 12:50 · 15m · t7");
+    let app = failed(None, GEMINI_NOW - 60);
+    assert_eq!(right(&app), "failed · 15m · t7");
 }
 
 #[test]

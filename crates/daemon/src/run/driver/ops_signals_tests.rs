@@ -186,10 +186,15 @@ impl Rig {
     }
 
     async fn verify(&self, signals: Option<SignalsSpec>) -> OpResult {
+        self.verify_at(&self.start.clone(), signals).await
+    }
+
+    /// [`Rig::verify`] with the op's run head given.
+    async fn verify_at(&self, run_head: &str, signals: Option<SignalsSpec>) -> OpResult {
         let kind = OpKind::VerifyDone {
             worktree: self.worktree.clone(),
             start: self.start.clone(),
-            run_head: self.start.clone(),
+            run_head: run_head.to_string(),
             owns: vec!["**".into()],
             generated: Vec::new(),
             protected: Vec::new(),
@@ -219,6 +224,7 @@ fn spec() -> SignalsSpec {
     SignalsSpec {
         test_paths: vec!["tests/**".into(), "crates/*/tests/**".into()],
         skip_markers: vec!["#[ignore]".into()],
+        red: None,
     }
 }
 
@@ -339,3 +345,7 @@ async fn signals_are_capped_and_ordered() {
 // Ruling C-20's cases, against the same rig.
 #[path = "ops_signals_tests_c20.rs"]
 mod c20;
+
+// Milestone 9.5 ruling RP-2: a paired task's implementer's signals, from red.
+#[path = "ops_signals_tests_pair.rs"]
+mod pair;

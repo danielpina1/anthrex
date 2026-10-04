@@ -151,7 +151,7 @@ fn run(answerer: Answerer, kind: &str, args: &[String], prompt: &str) -> Result<
         None => None,
     };
     let Some(path) = claimed else {
-        eprintln!("fake-agent: no scripted decider answer for {kind}");
+        crate::diag::say!("fake-agent: no scripted decider answer for {kind}");
         return Ok(2);
     };
     let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;

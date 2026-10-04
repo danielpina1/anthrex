@@ -141,6 +141,7 @@ impl Rig {
             window_id,
             socket: self.socket.clone(),
             chain: None,
+            lane: None,
         }
     }
 

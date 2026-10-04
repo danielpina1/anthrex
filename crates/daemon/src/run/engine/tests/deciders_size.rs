@@ -169,6 +169,8 @@ fn an_amend_never_lowers_a_cross_check_raise() {
             size: Some(Size::S),
             deps: None,
             stage: None,
+            race: None,
+            pair: None,
         }],
     );
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
@@ -383,6 +385,8 @@ fn an_edit_cross_checks_only_the_touched_tasks() {
                 size: None,
                 deps: None,
                 stage: None,
+                race: None,
+                pair: None,
             },
         ],
     );

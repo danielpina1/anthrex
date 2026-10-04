@@ -75,6 +75,7 @@ pub fn apply_edits(
         added_deps: BTreeSet::new(),
         errors: Vec::new(),
         consequences: Vec::new(),
+        picks: BTreeSet::new(),
         now,
     };
     for edit in edits {
@@ -86,8 +87,11 @@ pub fn apply_edits(
         added_deps,
         mut errors,
         consequences,
+        picks,
         ..
     } = batch;
+    // Milestone 9.5 decision 9a: added tasks, and routes amended, take the run's lists.
+    super::route_pick::pick_named(&mut edited, &picks);
     errors.extend(validate_tasks_with(
         &edited.tasks,
         &touched,
@@ -95,6 +99,7 @@ pub fn apply_edits(
         scope,
         (edited.limits.max_tasks, edited.round()),
         edited.limits.default_runtime,
+        (&run.roster, &run.orch.installed),
     ));
     errors.extend(super::validate_stages::single_layout_rule(&edited));
     errors.extend(super::orch::rules::apply(&mut edited, run, source));
@@ -156,6 +161,8 @@ pub(super) struct Batch {
     pub(super) added_deps: BTreeSet<(String, String)>,
     pub(super) errors: Vec<PlanError>,
     pub(super) consequences: Vec<EditConsequence>,
+    /// Decision 9a: the tasks whose route the model lists pick after the batch.
+    pub(super) picks: BTreeSet<String>,
     pub(super) now: u64,
 }
 
@@ -203,6 +210,19 @@ impl Batch {
         found
     }
 
+    /// [`Self::refuse`], or for a task that is waiting only because it was dispatched
+    /// as a race, the started-task text with `tail` (ruling T17b-1).
+    fn refuse_unstarted(&mut self, i: usize, tail: &str, why: &str) {
+        let task = &self.run.tasks[i];
+        match super::edits_state::started_refusal(task, tail) {
+            Some(text) => {
+                let id = Some(task.id());
+                self.errors.push(PlanError::new(id, "", "13", text));
+            }
+            None => self.refuse(i, why),
+        }
+    }
+
     /// Decision 13's per-state refusal: `task <id> is <state>; <why>`.
     fn refuse(&mut self, i: usize, why: &str) {
         let task = &self.run.tasks[i];
@@ -232,7 +252,7 @@ impl Batch {
         );
         self.errors.extend(errors);
         task.branch = task_branch(&run.id, task.id());
-        task.worktree = task_path(&run.wt_dir, &run.id, task.id());
+        task.worktree = task_path(&run.wt_dir, &run.id, &task.checkout_name());
         task.notes
             .extend(protected_notes(&task.spec.owns, &run.protected_files));
         // Milestone 9.2 decision 31: `addresses` makes it a review fix; an amend's are
@@ -259,6 +279,7 @@ impl Batch {
         self.errors.extend(reserved_new_id(&spec.id));
         let task = self.resolve(spec);
         self.add_deps_of(&task);
+        self.picks.insert(task.spec.id.clone());
         self.run.tasks.push(task);
         let last = self.run.tasks.len() - 1;
         self.log(last, "added by a plan edit".to_string());
@@ -291,7 +312,9 @@ impl Batch {
             self.log(i, "cancel deferred: its merge is in flight".to_string());
             return;
         }
-        if is_live(&self.run.tasks[i]) {
+        // Task 17b's review, m1: a race's lanes are stopped and salvaged whatever the
+        // task's state (blocked after a failed crown, after a restart).
+        if is_live(&self.run.tasks[i]) || self.run.tasks[i].race.is_some() {
             self.consequences.push(EditConsequence::CancelLive {
                 task_id: id.clone(),
             });
@@ -334,7 +357,8 @@ impl Batch {
     pub(super) fn split(&mut self, id: &str, into: &[PlanTask]) {
         let Some(i) = self.find(id) else { return };
         if !not_started(&self.run.tasks[i]) {
-            return self.refuse(i, "only pending, queued or blocked tasks can be split");
+            let why = "only pending, queued or blocked tasks can be split";
+            return self.refuse_unstarted(i, "it cannot be split", why);
         }
         if into.is_empty() {
             self.errors.push(PlanError::new(
@@ -354,6 +378,7 @@ impl Batch {
         let children: Vec<Task> = specs.into_iter().map(|s| self.resolve(s)).collect();
         for child in &children {
             self.add_deps_of(child);
+            self.picks.insert(child.spec.id.clone());
         }
         let child_ids: Vec<String> = children.iter().map(|c| c.spec.id.clone()).collect();
         for task in self.run.tasks.iter_mut() {
@@ -390,10 +415,8 @@ impl Batch {
             return;
         }
         if !not_started(&self.run.tasks[i]) {
-            return self.refuse(
-                i,
-                "dependencies can be added only on pending, queued or blocked tasks",
-            );
+            let why = "dependencies can be added only on pending, queued or blocked tasks";
+            return self.refuse_unstarted(i, "its deps cannot change", why);
         }
         let task = &mut self.run.tasks[i];
         if !task.spec.deps.iter().any(|d| d == dep) {

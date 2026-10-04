@@ -22,6 +22,8 @@ fn move_to(task: &str, stage: u16) -> PlanEdit {
         priority: None,
         deps: None,
         stage: Some(stage),
+        race: None,
+        pair: None,
     }
 }
 

@@ -6,12 +6,13 @@
 
 use super::rows::{SubagentWalk, emit_subagents, guide_prefix};
 use super::runs::orchestrator_of;
+use super::task_rounds::rounds_with;
 use super::{
-    DisplayRound, NodeKey, Row, RowKind, SubagentNode, TreeState, matches_filter,
-    subagent_branch_matches, subagent_forest,
+    NodeKey, Row, RowKind, SubagentNode, TreeState, matches_filter, subagent_branch_matches,
+    subagent_forest,
 };
 use proto::{
-    AgentRole, PlannerInfo, RunInfo, Runtime, ScoutInfo, ScoutState, TaskInfo, TaskState,
+    AgentRole, PlannerInfo, RaceLane, RunInfo, Runtime, ScoutInfo, ScoutState, TaskInfo, TaskState,
     WindowInfo,
 };
 use std::collections::{HashMap, HashSet};
@@ -28,89 +29,34 @@ pub enum RunFilter {
 
 /// An agent round's label: `worker #1`, `worker #1 r2`, `review #2` (decision 14).
 /// `number` is the display round; the orchestrator role, unreachable on a task, is
-/// labelled by its session so nothing is dropped.
+/// labelled by its session so nothing is dropped. [`round_label_with_lane`] with no lane.
 pub fn round_label(role: AgentRole, session: u32, number: u32) -> String {
+    round_label_with_lane(role, None, session, number)
+}
+
+/// [`round_label`] with a racing task's lane (milestone 9.5 decision 29, Interfaces
+/// "Run view"): `racer a`, `racer a r2`, `review b#1`. Every other role ignores it.
+pub fn round_label_with_lane(
+    role: AgentRole,
+    lane: Option<RaceLane>,
+    session: u32,
+    number: u32,
+) -> String {
+    // ` a`, or nothing without a lane.
+    let lane = lane.map_or(String::new(), |lane| format!(" {}", lane.label()));
     match role {
         AgentRole::Worker if number > 1 => format!("worker #{session} r{number}"),
         AgentRole::Worker => format!("worker #{session}"),
-        AgentRole::Reviewer => format!("review #{number}"),
+        AgentRole::Reviewer => format!("review {}#{number}", lane.trim_start()),
         AgentRole::Orchestrator => format!("orchestrator #{session}"),
         // Milestone 9 decision 35: a scout round on a task is a research session.
         AgentRole::Scout => format!("research #{session}"),
         AgentRole::Planner => format!("planner #{session}"),
         AgentRole::Decider => "decider".to_string(),
-    }
-}
-
-/// A task's agent rounds as the run view draws them, in start order, a worker before a
-/// reviewer on a tie (decisions 13 and 14). A worker session becomes one display round
-/// per piece between its `sent_back_at` bounces; every other round is one. Bounces are
-/// taken in time order and never before the session's start, and a repeated
-/// `(role, session, number)` keeps its earliest copy, so no two rounds share a key.
-pub fn display_rounds<'a>(task: &'a TaskInfo, windows: &'a [WindowInfo]) -> Vec<DisplayRound<'a>> {
-    rounds_with(task, |id| windows.iter().find(|window| window.id == id))
-}
-
-/// [`display_rounds`] with the window lookup given, so `run_rows` looks each id up once
-/// in a map rather than scanning the listed windows per round.
-fn rounds_with<'a>(
-    task: &'a TaskInfo,
-    lookup: impl Fn(u32) -> Option<&'a WindowInfo>,
-) -> Vec<DisplayRound<'a>> {
-    let mut rounds = Vec::new();
-    for info in &task.rounds {
-        let window = info.window_id.and_then(&lookup);
-        let single = |number| DisplayRound {
-            info,
-            number,
-            started_at: info.started_at,
-            ended_at: info.ended_at,
-            last: true,
-            window,
-        };
-        match info.role {
-            AgentRole::Worker => {
-                let mut bounces = info.sent_back_at.clone();
-                bounces.sort_unstable();
-                let mut starts = vec![info.started_at];
-                for at in bounces {
-                    let floor = starts.last().copied().unwrap_or(info.started_at);
-                    starts.push(at.max(floor));
-                }
-                for (index, started_at) in starts.iter().copied().enumerate() {
-                    let next = starts.get(index + 1).copied();
-                    rounds.push(DisplayRound {
-                        number: u32::try_from(index + 1).unwrap_or(u32::MAX),
-                        started_at,
-                        ended_at: next.or(info.ended_at),
-                        last: next.is_none(),
-                        ..single(1)
-                    });
-                }
-            }
-            AgentRole::Reviewer
-            | AgentRole::Orchestrator
-            | AgentRole::Scout
-            | AgentRole::Planner
-            | AgentRole::Decider => {
-                rounds.push(single(info.round));
-            }
-        }
-    }
-    rounds.sort_by_key(|round| (round.started_at, role_rank(round.info.role)));
-    let mut seen = HashSet::new();
-    rounds.retain(|round| seen.insert((round.info.role, round.info.session, round.number)));
-    rounds
-}
-
-fn role_rank(role: AgentRole) -> u8 {
-    match role {
-        AgentRole::Worker => 0,
-        AgentRole::Reviewer => 1,
-        AgentRole::Orchestrator => 2,
-        AgentRole::Scout => 3,
-        AgentRole::Planner => 4,
-        AgentRole::Decider => 5,
+        AgentRole::Racer if number > 1 => format!("racer{lane} r{number}"),
+        AgentRole::Racer => format!("racer{lane}"),
+        AgentRole::TestWriter if number > 1 => format!("test writer #{session} r{number}"),
+        AgentRole::TestWriter => format!("test writer #{session}"),
     }
 }
 
@@ -218,6 +164,7 @@ impl<'a> Builder<'a> {
                 run: run.run_id.clone(),
                 task: task.id.clone(),
                 role: round.info.role,
+                lane: round.info.lane,
                 session: round.info.session,
                 round: round.number,
             };

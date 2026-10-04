@@ -142,7 +142,7 @@ fn a_salvage_never_writes_through_a_linked_index() {
         w.link_index(victim);
 
         let reference = format!("refs/anthrex/salvage/{}/t1/1", w.run);
-        let result = salvage(real_git(), &w.task, &reference, "salvage", T);
+        let result = salvage(real_git(), &w.task, &reference, "salvage", false, T);
         w.assert_untouched(&format!("salvage, link to {}", victim.display()));
         assert_eq!(result.unwrap().as_deref(), Some(reference.as_str()));
         let files = out(&w.repo.root, &["ls-tree", "--name-only", &reference]);
@@ -256,6 +256,7 @@ esac"#,
                 &w.task,
                 &format!("refs/anthrex/salvage/{}/t1/1", w.run),
                 "salvage",
+                false,
                 T,
             )
             .map(|_| ()),

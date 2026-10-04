@@ -304,3 +304,37 @@ fn rewrite_leaves_an_oversized_command_alone() {
     assert!(wrap(Path::new(EXE), &hook, &plain).len() <= WRAPPED_MAX);
     assert!(rewrite(&payload(plain), Path::new(EXE), &hook).is_some());
 }
+
+/// Milestone 9.5 decision 28 (`CodexFilter::Instruction`): the note a Codex worker's
+/// `developer_instructions` gets, word for word, the executable and the log directory
+/// shell-quoted as [`wrap`] quotes them.
+#[test]
+fn codex_filter_note_is_the_exact_text() {
+    let mut tail = hook(&["cargo test", "sh tests/"]);
+    tail.mode = OutputFilter::Tail;
+    tail.log_dir = PathBuf::from("/data/runs/r1/tmp/t 1/anthrex-logs");
+    assert_eq!(
+        codex_filter_note(Path::new(EXE), &tail),
+        "Test output: run every command that starts with cargo test, sh tests/ through \
+         the output filter, as '/opt/anthrex/bin/anthrex' filter-run --mode tail \
+         --log-dir '/data/runs/r1/tmp/t 1/anthrex-logs' -c '<command>'. It prints the \
+         failures and the path of the full log."
+    );
+    let one = hook(&["cargo test"]);
+    assert!(codex_filter_note(Path::new(EXE), &one).starts_with(
+        "Test output: run every command that starts with cargo test through the \
+             output filter, as '/opt/anthrex/bin/anthrex' filter-run --mode failures-only \
+             --log-dir '/tmp/ax/t1/anthrex-logs' -c '<command>'."
+    ));
+    // Task 19 review m3: a `'` and a `$` in either path are quoted, never expanded.
+    let mut odd = hook(&["cargo test"]);
+    odd.log_dir = PathBuf::from("/d/it's $HOME/anthrex-logs");
+    let note = codex_filter_note(Path::new("/opt/an'threx/$bin/anthrex"), &odd);
+    assert!(
+        note.contains(
+            "as '/opt/an'\\''threx/$bin/anthrex' filter-run --mode failures-only \
+             --log-dir '/d/it'\\''s $HOME/anthrex-logs' -c '<command>'."
+        ),
+        "{note}"
+    );
+}

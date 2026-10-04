@@ -52,7 +52,13 @@ pub(super) fn merge_real(fx: &mut Fixture, id: &str, commit: &str) -> Vec<Effect
         .map(|p| p.op)
         .collect();
     for op in removals {
-        effects.extend(fx.done(op, OpResult::Removed { salvage_ref: None }));
+        effects.extend(fx.done(
+            op,
+            OpResult::Removed {
+                salvage_ref: None,
+                cleared_locks: Vec::new(),
+            },
+        ));
     }
     effects
 }

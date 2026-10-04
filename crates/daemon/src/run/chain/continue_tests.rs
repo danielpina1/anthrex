@@ -60,6 +60,7 @@ fn call(run_id: &str, chain: &str, tool: &str) -> ToolCall {
         scout_id: None,
         epic: None,
         chain: Some(chain.into()),
+        lane: None,
     }
 }
 

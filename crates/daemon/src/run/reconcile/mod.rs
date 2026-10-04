@@ -185,7 +185,7 @@ fn check(
         } => git::hand_back(g, worktree, (run_head, *list_merged), notes),
         // Milestone 9.1 decision 53.
         OpKind::CreateStageBranch { root, branch, from } => {
-            git::create_stage_branch(g, root, branch, from)
+            git::created_at(g, root, (branch, from), OpResult::StageCreated)
         }
         // Decision 53: a propagate is reconciled as a merge candidate, its second
         // parent the lower stage's head.
@@ -203,9 +203,23 @@ fn check(
             root,
             path,
             salvage_ref,
+            keep_path,
+            ..
         } => {
             let repo = crate::run::git::checkout_repo_dir(&run.data_dir, path);
-            git::remove_worktree(g, root, path, &repo, salvage_ref, notes)
+            git::remove_worktree(g, root, (path, *keep_path), &repo, salvage_ref, notes)
+        }
+        // Milestone 9.5 decision 27: the task branch alone.
+        OpKind::CrownRacer {
+            root,
+            task_branch,
+            lane_head,
+            ..
+        } => {
+            let crowned = OpResult::Crowned {
+                head: lane_head.clone(),
+            };
+            git::created_at(g, root, (task_branch, lane_head), crowned)
         }
         OpKind::Accept {
             root,
@@ -310,6 +324,7 @@ mod tests {
                 op,
                 task_id: Some("t1".into()),
                 kind,
+                lane: None,
             };
             run.pending_ops.insert(op, pending);
         }
@@ -389,6 +404,7 @@ mod tests {
                 op,
                 task_id: None,
                 kind,
+                lane: None,
             };
             run.pending_ops.insert(op, pending);
         }

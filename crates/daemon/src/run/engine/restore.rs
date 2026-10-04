@@ -32,6 +32,7 @@ use proto::{AgentRole, RunState, TaskState};
 use super::dispatch::history;
 use super::ladder::{self, worker_round};
 use super::requests::log;
+use super::restore_lost::lost;
 use super::signals::end_round;
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, ReplyId, clock, complete, emit_op, merge, next_op,
@@ -39,7 +40,6 @@ use super::{
 };
 use crate::run::contract::{RESUME_REVIEWER, RESUME_WORKER};
 use crate::run::model::{FallbackState, PendingOp, Run, StallState};
-use crate::run::orch::RefreshState;
 use crate::run::role_launch::session_uuid_of;
 
 /// The journal's answers: `(run id, op, result)`.
@@ -81,6 +81,8 @@ pub(super) fn restore(
             continue;
         };
         settle(run, now, fx);
+        // Decision 15 (ruling T12-1): the downtime of a run left stopped is paused time.
+        super::pause::restored(&original, run, now);
         // Decision 47: a run the restore changed bumps its revision (review minor 5);
         // `step` leaves a run new to the state at the revision it arrived with. The
         // digest moves with it (M9.6 review fix I-1); an unchanged run is left as
@@ -117,9 +119,15 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
         }
         return;
     }
-    // Rulings T15-I2, T15-I3: the downtime is no session time.
+    // Rulings T15-I2, T15-I3: the downtime is no session time. The final fix wave's
+    // A-I1 (c): nor is it a racer's, so each lane's clock stops too, in its view.
     for task in run.tasks.iter_mut() {
         clock::stop_at_restore(task);
+    }
+    for (i, lane) in lanes_in_view(run) {
+        super::race_view::in_lane(run, i, lane, fx, |run, _| {
+            clock::stop_at_restore(&mut run.tasks[i]);
+        });
     }
     // Milestone 9 decisions 20 and 32: run scouts and sub-planners are not resumed.
     super::planners::restore(run, now);
@@ -137,6 +145,10 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
         // old daemon's.
         task.claim = None;
         task.override_count = None;
+        // The final fix wave's A-I1 (b): nor does a race lane's.
+        for lane in task.race.iter_mut().flat_map(|r| r.lanes.iter_mut()) {
+            lane.gates.claim = None;
+        }
         for round in task.rounds.iter_mut() {
             if round.fallback == FallbackState::Counting {
                 round.fallback = FallbackState::None;
@@ -167,99 +179,16 @@ fn is_history(kind: &OpKind) -> bool {
     )
 }
 
-/// Decision 44: an op dropped as `NotStarted`, and what its task needs instead.
-fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
-    let PendingOp { op, task_id, kind } = pending;
-    let i = task_id
-        .as_deref()
-        .and_then(|id| run.tasks.iter().position(|t| t.id() == id));
-    match (&kind, i) {
-        // Idempotent git work that starts no session: sent again under a new id.
-        (
-            OpKind::CreateRunBranch { .. }
-            | OpKind::PrepareWorktree { .. }
-            | OpKind::AbortMerge { .. }
-            | OpKind::RemoveWorktree { .. }
-            | OpKind::MeasureDiff { .. }
-            | OpKind::AppendHistory { .. },
-            _,
-        ) => {
-            let again = next_op(run);
-            emit_op(run, again, task_id.as_deref(), kind, fx);
-        }
-        // A session starts only while the run runs (ruling T14-I2): `relaunch`.
-        (OpKind::CreateWindow { .. }, Some(i)) => {
-            if let Some(round) = run.tasks[i].rounds.iter_mut().find(|r| r.launch_op == op) {
-                round.relaunch = Some(Box::new(kind));
-            }
-        }
-        (OpKind::MergeCandidate { .. }, Some(i)) if run.tasks[i].merge_op == Some(op) => {
-            run.tasks[i].merge_op = None;
-        }
-        // Milestone 9.1 decisions 50 and 51: a propagate is due again; a sync task's
-        // hand-back is sent again when the run runs.
-        (OpKind::Propagate(spec), _) => super::propagate::lost(run, spec),
-        (OpKind::HandBack { task_head, .. }, Some(i))
-            if super::propagate::sync_due(&run.tasks[i]) =>
-        {
-            super::propagate::hand_back_lost(run, i, task_head.clone());
-        }
-        // Milestone 9 decision 42e: a lost refresh is due again at the next boundary.
-        (OpKind::HandBack { .. }, Some(i))
-            if run.tasks[i].orch.refresh == Some(RefreshState::InFlight(op)) =>
-        {
-            run.tasks[i].orch.refresh = Some(RefreshState::Due);
-        }
-        // Carry T14-R2: a lost merge-queue hand-back is sent again by the running pass.
-        (OpKind::HandBack { .. }, Some(i)) if run.tasks[i].merge_op == Some(op) => {
-            let task = &mut run.tasks[i];
-            task.merge_op = None;
-            task.handback_due = task.state == TaskState::MergeQueue;
-        }
-        // Carry T13: `start_gates` and `dispatch_reviewers` re-issue a gate's op.
-        // Milestone 9.1 decision 29: tier 1 is a check gate's op too.
-        (
-            OpKind::Proof { .. }
-            | OpKind::Check { .. }
-            | OpKind::PrepareReview { .. }
-            | OpKind::Tier(_),
-            Some(i),
-        ) if run.tasks[i].gate_op == Some(op) => {
-            run.tasks[i].gate_op = None;
-        }
-        // Milestone 9.1 decision 29: a lost tier-3 job is started again by the next
-        // idle or completion pass.
-        (OpKind::Tier(_), None) if run.full_op == Some(op) => run.full_op = None,
-        // Decision 29 (task M9.1.15): a lost bisect probe is issued again by the next
-        // running pass (`bisect::pass`).
-        (OpKind::TestAt(_), None) => {
-            super::bisect::lost(run, op);
-        }
-        // M8b decision 18: a dropped decider is queued again under its own id, so the
-        // task waiting for it still names it.
-        (
-            OpKind::Decide {
-                decider_id,
-                task_ids,
-                request,
-            },
-            _,
-        ) => run.decider_queue.push(crate::run::model::QueuedDecider {
-            decider_id: *decider_id,
-            task_ids: task_ids.clone(),
-            request: request.clone(),
-            queued_at: now,
-        }),
-        (OpKind::CreateOrchestrator { .. }, _) => super::orch_window::launch_lost(run, op),
-        (OpKind::Accept { .. } | OpKind::Discard { .. }, _) => {
-            let text = "an accept or discard did not finish before the restart; request it again";
-            log(run, now, text);
-        }
-        // `VerifyDone`, `CountCommits` and `ResumeSession` had their waiters cleared;
-        // `DiffSoFar`, `VerifyRefs`, the final check and an N5 hand-back are sent again
-        // by the scheduler, which sees none in flight.
-        _ => {}
-    }
+/// Every `(task, lane)` whose events go through the lane's view
+/// (`race_view::view_lane`): each lane of a race but the crowned one.
+fn lanes_in_view(run: &Run) -> Vec<(usize, proto::RaceLane)> {
+    (run.tasks.iter().enumerate())
+        .flat_map(|(i, task)| {
+            (task.race.iter().flat_map(|r| &r.lanes))
+                .filter_map(move |l| super::race_view::view_lane(task, Some(l.lane)))
+                .map(move |l| (i, l))
+        })
+        .collect()
 }
 
 /// After the replay: every session ends (its process died with the old daemon), and a
@@ -282,6 +211,9 @@ fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         // Carry T12-RR4: `end_round` clears `interrupted`; an `Interrupted` stall is
         // settled by the resume (its grace fires, or the restart ended the turn).
         end_round(round, now);
+        // Milestone 9.5 ruling T17b-2: no `ProcessExited` ended a racer's round here,
+        // so its lane's checkout is never cleaned as if it had exited.
+        round.orphaned = round.role == AgentRole::Racer;
         round.open_subagents.clear();
         round.fallback_waiting = false;
         round.in_retry_streak = false;
@@ -415,6 +347,18 @@ fn resumed(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         }
         resume_worker(run, i, restored.is_some(), now, fx);
         resume_reviewer(run, i, restored.is_some(), now);
+        // Milestone 9.5 decision 23: each live lane of a race, in its view.
+        let lanes: Vec<proto::RaceLane> = (run.tasks[i].race.iter())
+            .flat_map(|r| &r.lanes)
+            .filter(|l| super::race_view::live(l.state))
+            .map(|l| l.lane)
+            .collect();
+        for lane in lanes {
+            super::race::with_lane(run, i, lane, now, fx, |run, fx| {
+                resume_worker(run, i, restored.is_some(), now, fx);
+                resume_reviewer(run, i, restored.is_some(), now);
+            });
+        }
     }
 }
 
@@ -478,6 +422,12 @@ fn resume_reviewer(run: &mut Run, i: usize, restored: bool, now: u64) {
 pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     for i in 0..run.tasks.len() {
         for r in 0..run.tasks[i].rounds.len() {
+            // Milestone 9.5 decision 20: a lane's session is relaunched in its view.
+            let task = &run.tasks[i];
+            let lane = super::race_view::view_lane(task, task.rounds[r].lane);
+            if task.lane_view.is_none() && lane.is_some() {
+                continue;
+            }
             let Some(kind) = run.tasks[i].rounds[r].relaunch.take() else {
                 continue;
             };
@@ -485,7 +435,9 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             let round = &task.rounds[r];
             let wanted = !round.retiring
                 && match round.role {
-                    AgentRole::Worker => {
+                    // Milestone 9.5 decisions 19, 26: a test writer and a racer resume as a
+                    // worker does.
+                    AgentRole::Worker | AgentRole::TestWriter | AgentRole::Racer => {
                         matches!(task.state, TaskState::Preparing | TaskState::Working)
                     }
                     // Milestone 9 decision 35: a research task's session.

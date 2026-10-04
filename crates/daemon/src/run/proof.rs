@@ -51,6 +51,9 @@ pub struct ProofOp {
     /// test runs are confined to the proof worktree, its own object store, its
     /// temporary directory and the profile's `cache_dirs` (`super::confine`).
     pub confine: Option<ConfineSpec>,
+    /// Milestone 9.5 decision 25 (ruling RP-1): a paired task's red check, the run at
+    /// `red` alone; the run at `head` never happens.
+    pub red_only: bool,
 }
 
 /// What the two runs showed: `OpResult::Proof`'s fields, which M8a.11 wraps (as
@@ -129,7 +132,7 @@ pub fn unscheduled(_: ProofStep) -> Result<Slot, String> {
 /// Decision 33's proof. Each git step is bounded by `git_timeout` and runs through
 /// `git_write`; `setup` and each test run are bounded by `op.timeout_secs` and run
 /// outside it. The `head` run is skipped when the `red` run did not fail, since the
-/// proof has already failed.
+/// proof has already failed, and always with `op.red_only` (milestone 9.5's red check).
 pub fn run_proof(
     git: &OsStr,
     op: &ProofOp,
@@ -207,7 +210,8 @@ pub fn run_proof_scheduled(
         ..ProofRuns::default()
     };
     runs.red_tail = with_timeout_note(red);
-    if !runs.red_failed {
+    // Milestone 9.5 decision 25: a red-only proof ends here, whatever the red run did.
+    if !runs.red_failed || op.red_only {
         return Ok(runs);
     }
 

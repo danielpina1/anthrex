@@ -94,6 +94,8 @@ fn single_code_goal_takes_the_fast_path() {
             atomic: false,
             atomic_reason: None,
             addresses: Vec::new(),
+            race: false,
+            pair: false,
         }
     );
     // A docs goal is fast too, with the kind carried.
@@ -180,6 +182,7 @@ fn fast_path_disabled_routes_plan() {
 #[test]
 fn fallback_triage_routes_plan_with_the_reason() {
     let request = DeciderRequest::Triage(TriageInput {
+        thresholds: Default::default(),
         goal: "g".into(),
         profile_summary: String::new(),
         report_summary: None,
@@ -233,6 +236,7 @@ fn build_fast(decision: &Decision) -> Result<crate::run::model::Run, Vec<PlanErr
         plan,
         preflight(),
         BuildContext {
+            tuning: Default::default(),
             id: "fix-the-reset-link-3f9a".into(),
             wt_dir: "/tmp/wt".into(),
             data_dir: "/tmp/data/runs/fix-the-reset-link-3f9a".into(),

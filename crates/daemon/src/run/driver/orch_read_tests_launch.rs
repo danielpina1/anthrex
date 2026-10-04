@@ -48,7 +48,7 @@ fn orchestrator_launching(run: &mut Run) {
     (record.window_id, record.launch_op) = (None, Some(ORCH_OP));
     let route = record.route.clone();
     let kind = OpKind::CreateOrchestrator {
-        spec: Box::new(orchestrator_window_spec(run, &route, "plan")),
+        spec: Box::new(orchestrator_window_spec(run, &route, "go")),
         role: Box::new(orchestrator_role(run, &route)),
         project: run.project.clone(),
     };
@@ -60,6 +60,7 @@ fn pending(run: &mut Run, op: u64, kind: OpKind) {
         op,
         task_id: None,
         kind,
+        lane: None,
     };
     run.pending_ops.insert(op, entry);
 }
@@ -242,6 +243,7 @@ fn tool_call(rig: &Rig, role: AgentRole, window: u32, tool: &str, args: Value) -
         scout_id: None,
         epic: (role == AgentRole::Planner).then(|| "mail".to_string()),
         chain: None,
+        lane: None,
     }
 }
 

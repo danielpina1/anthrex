@@ -154,6 +154,8 @@ fn minimal_task(id: &str) -> PlanTask {
         atomic: false,
         atomic_reason: None,
         addresses: Vec::new(),
+        race: false,
+        pair: false,
     }
 }
 
@@ -186,6 +188,8 @@ fn plan_edits_parse_from_an_edit_file() {
             size: Some(Size::L),
             deps: Some(vec!["t0".into()]),
             stage: None,
+            race: None,
+            pair: None,
         },
         PlanEdit::AddDep {
             task_id: "t4".into(),

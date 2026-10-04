@@ -42,6 +42,8 @@ pub fn task_result(_run: &Run, task: &Task, git: Option<&Result<TaskGit, String>
             "deps": spec.deps,
             "implicit_deps": task.implicit_deps,
             "route": task.route,
+            "race": super::digest::race_text(task),
+            "pair": super::digest::pair_text(task),
             "review_route": task.review_route,
             "state": task.state,
             "block": task.block,
@@ -75,7 +77,8 @@ pub fn task_result(_run: &Run, task: &Task, git: Option<&Result<TaskGit, String>
             "at": hh_mm(p.at),
             "test": p.test,
             "red": p.red,
-            "ok": p.red_failed && p.head_passed && p.matched,
+            "ok": p.red_failed && (p.red_only || (p.head_passed && p.matched)),
+            "red_only": p.red_only,
         })).collect::<Vec<_>>(),
         "reviews": task.reviews.iter().map(|r| json!({
             "round": r.round,

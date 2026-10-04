@@ -4,24 +4,26 @@
 //! Pure (design decision 2).
 
 use crate::run::phases::set_state;
-use proto::{AgentRole, BlockReason, Budget, GateKind, Size, Spend, TaskState};
+use proto::{BlockReason, GateKind, TaskState};
 
 use super::dispatch::{block, history, launch_fresh};
 use super::schedule::op_in_flight;
 use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox};
-use crate::run::contract::budget_wrap_up;
-use crate::run::model::{AgentRound, FreshSession, Run, Task};
-use crate::run::roster::{escalate, pick_reviewer};
+use crate::run::model::{AgentRound, FreshSession, Run, Task, writes};
+use crate::run::route_pick::{every_route_failed, review_route, rung2_route};
 use crate::run::validate::resolve_task_lenient;
+
+pub(super) use super::ladder_budget::{breached, ceiling, check_budget, reached};
+pub(crate) use super::ladder_budget::{round_spend, total_spend};
 
 /// The note rung 3 adds to a task it raises (M8a.6's `rung3` fixture uses the same).
 const RAISED_NOTE: &str = "size raised by rung 3 (decision 38)";
 
-/// The task's current worker round, if it has one.
+/// The task's current worker round, if it has one: milestone 9.5 decision 25 counts a
+/// paired task's test writer, and decision 23 (ruling RR-9) a racer in its lane's view
+/// or once its lane is crowned or adopted (`model::writes`).
 pub(super) fn worker_round(task: &Task) -> Option<usize> {
-    task.rounds
-        .iter()
-        .rposition(|r| r.role == AgentRole::Worker)
+    task.rounds.iter().rposition(|r| writes(task, r))
 }
 
 /// A worker round whose session the engine still counts on: started, not ended and
@@ -40,10 +42,10 @@ pub(super) fn kill_worker(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
         fx,
     );
     supersede(run, i);
-    for round in run.tasks[i]
-        .rounds
-        .iter_mut()
-        .filter(|r| r.role == AgentRole::Worker && !r.ended && !r.retiring)
+    let task = &mut run.tasks[i];
+    let writing: Vec<bool> = task.rounds.iter().map(|r| writes(task, r)).collect();
+    for (round, _) in
+        (task.rounds.iter_mut().zip(writing)).filter(|(r, w)| *w && !r.ended && !r.retiring)
     {
         if let Some(window_id) = round.window_id {
             round.retiring = true;
@@ -75,11 +77,9 @@ pub(super) fn reopen_stopped(task: &mut Task) {
 /// messages in flight to them (a `Deliver`'s or a resume's) leave the outbox, so their
 /// `Delivered` finds nothing either.
 pub(super) fn supersede(run: &mut Run, i: usize) {
-    for round in run.tasks[i]
-        .rounds
-        .iter_mut()
-        .filter(|r| r.role == AgentRole::Worker)
-    {
+    let task = &mut run.tasks[i];
+    let writing: Vec<bool> = task.rounds.iter().map(|r| writes(task, r)).collect();
+    for (round, _) in (task.rounds.iter_mut().zip(writing)).filter(|(_, w)| *w) {
         round.resume_op = None;
         round.count_op = None;
     }
@@ -99,7 +99,7 @@ pub(super) fn end_hand_back(task: &mut crate::run::model::Task) {
 
 /// Undelivered messages to task `i`'s worker are dropped when its session is replaced
 /// or stopped: the hand-over prompt carries the failure record instead.
-fn drop_queued(run: &mut Run, i: usize) {
+pub(super) fn drop_queued(run: &mut Run, i: usize) {
     let id = run.tasks[i].id().to_string();
     run.outbox
         .retain(|m| m.task_id != id || m.delivered_at.is_some());
@@ -237,7 +237,7 @@ pub(super) fn stall(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
 }
 
 /// A hard budget breach (decision 38): rung 3 at the second, else rung 2.
-fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut Vec<Effect>) {
+pub(super) fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut Vec<Effect>) {
     let task = &mut run.tasks[i];
     task.budget_exceeded = task.budget_exceeded.saturating_add(1);
     if task.budget_exceeded >= 2 {
@@ -260,8 +260,14 @@ fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut Vec<Effect>)
 }
 
 /// Rung 2: the session killed; a fresh one on `roster::escalate(route)` starts in the
-/// same worktree once the old one has exited ([`start_fresh_sessions`]).
+/// same worktree once the old one has exited ([`start_fresh_sessions`]). Milestone 9.5
+/// decision 9a: a task with a model list takes its next candidate instead, and ruling
+/// RL-1 skips a route that failed in this task (`route_pick::rung2_route`).
 pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.5 decision 20: past rung 1, a lane leaves its race.
+    if run.tasks[i].lane_view.is_some() {
+        return super::race::lane_out(run, i, 2, reason, now, fx);
+    }
     done::drop_claim(
         run,
         i,
@@ -270,14 +276,22 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     );
     kill_worker(run, i, fx);
     drop_queued(run, i);
-    let route = escalate(&run.roster, &run.tasks[i].route);
+    // Milestone 9.5 decision 25: a fresh test writer, while the test is being written.
+    if !super::pair::escalate_writer(run, i, now) {
+        let (route, step) = rung2_route(run, i);
+        if let Some(text) = every_route_failed(run, i, &route) {
+            super::requests::log(run, now, text);
+        }
+        let task = &mut run.tasks[i];
+        task.list_escalation = step;
+        // M8b decision 33a: the next worker launch records this escalation, its pool
+        // stepping from the route the selector stepped from (a second escalation
+        // before the launch overwrites the first: the intermediate route never ran).
+        task.escalated_from = Some(std::mem::replace(&mut task.route, route));
+    }
     let task = &mut run.tasks[i];
     task.rung = 2;
     set_state(task, TaskState::Working, now);
-    // M8b decision 33a: the next worker launch records this escalation, its pool
-    // stepping from the route the selector stepped from (a second escalation before
-    // the launch overwrites the first: the intermediate route never ran).
-    task.escalated_from = Some(std::mem::replace(&mut task.route, route));
     task.fresh_session = Some(FreshSession {
         reason: reason.clone(),
         append: None,
@@ -288,6 +302,10 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
 /// Rung 3: `blocked(mis_sized)`, the size raised one step, the worker killed and the
 /// worktree kept.
 pub(super) fn rung3(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.5 decision 20: the size is the task's; a lane only leaves its race.
+    if run.tasks[i].lane_view.is_some() {
+        return super::race::lane_out(run, i, 3, text, now, fx);
+    }
     kill_worker(run, i, fx);
     drop_queued(run, i);
     let task = &mut run.tasks[i];
@@ -320,133 +338,21 @@ pub(crate) fn reresolve(run: &mut Run, i: usize) -> proto::Route {
     );
     let task = &mut run.tasks[i];
     task.review_level = resolved.review_level;
-    task.review_route = resolved
-        .review_level
-        .map(|level| pick_reviewer(&run.roster, &task.route, level));
+    let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);
+    task.review_route = (resolved.review_level)
+        .map(|level| review_route(lists, &run.roster, &task.route, level, installed));
     task.budget = resolved.budget;
     resolved.route
 }
 
 /// Rung 4: `blocked(human)`, the worker killed.
-fn rung4(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Vec<Effect>) {
+pub(super) fn rung4(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Vec<Effect>) {
     kill_worker(run, i, fx);
     drop_queued(run, i);
     let task = &mut run.tasks[i];
     task.rung = 4;
     task.fresh_session = None;
     block(run, i, BlockReason::Human, text, now);
-}
-
-/// A worker round's session spend (decision 40): its tool calls, its wall-clock
-/// seconds since it started less those its task's clock was stopped (`stopped` is the
-/// open stop, rulings T15-I2 and T15-I3), and its billable tokens.
-pub(crate) fn round_spend(round: &AgentRound, stopped: Option<u64>, now: u64) -> Spend {
-    let end = round.ended_at.unwrap_or(now);
-    let open = stopped.map_or(0, |since| end.saturating_sub(since.max(round.started_at)));
-    Spend {
-        tool_calls: round.tool_calls,
-        secs: end
-            .saturating_sub(round.started_at)
-            .saturating_sub(round.excused_secs + open),
-        tokens: round.usage.billable(),
-    }
-}
-
-/// The task's cumulative spend: tool calls and tokens as counted on the task, and the
-/// seconds of every worker session it has had.
-pub(crate) fn total_spend(task: &Task, now: u64) -> Spend {
-    let secs = task
-        .rounds
-        .iter()
-        .filter(|r| r.role == AgentRole::Worker)
-        .map(|r| round_spend(r, task.clock.stopped, now).secs)
-        .sum();
-    Spend {
-        secs,
-        ..task.spent_total
-    }
-}
-
-/// Some axis reached: `tool_calls`, minutes or (when set) tokens at or past `budget`.
-pub(super) fn reached(spend: Spend, budget: Budget) -> bool {
-    spend.tool_calls >= budget.tool_calls
-        || spend.secs >= u64::from(budget.minutes) * 60
-        || budget.tokens.is_some_and(|t| spend.tokens >= t)
-}
-
-/// Decision 40's hard limit: spend at 1.5 × the budget on any axis is a breach,
-/// compared in integers (`2 × spend >= 3 × budget`, so 7 of 5 tool calls is not and 8
-/// is; 450 seconds of 5 minutes is); what was breached.
-pub(super) fn breached(spend: Spend, budget: Budget) -> Option<String> {
-    if u64::from(spend.tool_calls).saturating_mul(2)
-        >= u64::from(budget.tool_calls).saturating_mul(3)
-    {
-        return Some(format!(
-            "{} tool calls against a budget of {}",
-            spend.tool_calls, budget.tool_calls
-        ));
-    }
-    if spend.secs.saturating_mul(2) >= u64::from(budget.minutes).saturating_mul(180) {
-        return Some(format!(
-            "{} minutes against a budget of {}",
-            spend.secs / 60,
-            budget.minutes
-        ));
-    }
-    match budget.tokens {
-        Some(tokens) if spend.tokens.saturating_mul(2) >= tokens.saturating_mul(3) => Some(
-            format!("{} tokens against a budget of {tokens}", spend.tokens),
-        ),
-        _ => None,
-    }
-}
-
-/// Rung 4's ceiling: the next size's budget (S: M's; M or hub: L's).
-pub(super) fn ceiling(run: &Run, task: &Task) -> Budget {
-    if task.size == Size::S && !task.hub {
-        run.limits.budget_m
-    } else {
-        run.limits.budget_l
-    }
-}
-
-/// Decisions 38 and 40 for task `i`'s live worker session, in order: rung 4 on the
-/// task's total, a hard breach of the session's budget, then the soft wrap-up, once per
-/// session. Returns whether the session was stopped.
-pub(super) fn check_budget(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) -> bool {
-    let task = &run.tasks[i];
-    if task.state != TaskState::Working {
-        return false;
-    }
-    let Some(r) = worker_round(task).filter(|&r| live(&task.rounds[r])) else {
-        return false;
-    };
-    // Ruling T15-C1: the spend since the last retry.
-    let total = super::clock::epoch_spend(task, now);
-    let next = ceiling(run, task);
-    if reached(total, next) {
-        let text = format!(
-            "the task's total spend reached the next size's budget ({}/{} tool calls, {}/{} minutes)",
-            total.tool_calls,
-            next.tool_calls,
-            total.secs / 60,
-            next.minutes
-        );
-        rung4(run, i, text, now, fx);
-        return true;
-    }
-    let spend = round_spend(&task.rounds[r], task.clock.stopped, now);
-    let budget = task.budget;
-    if let Some(what) = breached(spend, budget) {
-        breach(run, i, what, now, fx);
-        return true;
-    }
-    if reached(spend, budget) && !task.rounds[r].wrap_up_sent {
-        run.tasks[i].rounds[r].wrap_up_sent = true;
-        let id = run.tasks[i].id().to_string();
-        outbox::queue(run, &id, budget_wrap_up(spend, budget), now);
-    }
-    false
 }
 
 /// Rung 2, or a resume that failed (decision 28): a working task with a fresh session
@@ -514,7 +420,7 @@ fn fresh_due(task: &Task) -> bool {
         && task
             .rounds
             .iter()
-            .filter(|r| r.role == AgentRole::Worker)
+            .filter(|r| writes(task, r))
             .all(|r| r.ended)
 }
 

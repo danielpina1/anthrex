@@ -243,6 +243,7 @@ fn call(window_id: u32, scout: &str) -> ToolCall {
         scout_id: Some(scout.into()),
         epic: None,
         chain: None,
+        lane: None,
     }
 }
 

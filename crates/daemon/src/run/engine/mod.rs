@@ -36,10 +36,7 @@
 
 use std::collections::BTreeMap;
 
-use proto::{FinishAction, PlanEdit, TokenUsage, ToolCall};
-
 use super::model::{AgentRound, OpId, PendingOp, Run};
-use super::validate::EditScope;
 
 pub(crate) mod actions;
 mod batch;
@@ -47,14 +44,18 @@ mod bisect;
 mod chains;
 mod clock;
 mod complete;
+pub(crate) mod concurrency;
 pub(crate) mod deciders;
 mod deciders_size;
 pub mod delivery;
 mod dispatch;
 mod done;
+mod done_checked;
 pub(crate) mod early;
 mod effect;
+mod event;
 mod fallback;
+mod first_turn;
 mod fixes;
 // Milestone 9.1 decisions 17-19: tier 3 (`request` is 9.2's entry).
 pub(crate) mod full;
@@ -62,25 +63,35 @@ mod gate_holds;
 mod gates;
 mod goal_rounds;
 mod goal_rounds_end;
+mod hand_back;
 mod history;
 mod holds;
 mod integration;
 mod kinds;
 pub(crate) mod ladder;
+mod ladder_budget;
 mod merge;
 mod op_result;
 mod ops;
 mod orch;
 mod orch_window;
 mod outbox;
+mod pair;
+pub(crate) mod pause;
 mod planners;
 mod promote;
 mod propagate;
+mod race;
+mod race_end;
+mod race_salvage;
+mod race_view;
 mod requests;
 mod research;
 mod restore;
+mod restore_lost;
 mod results;
 mod review;
+mod review_session;
 mod rounds;
 mod run_scouts;
 pub(crate) mod schedule;
@@ -93,12 +104,13 @@ pub(crate) mod weakening;
 mod worker_messages;
 
 pub use crate::headless::TurnOutcome;
-pub(crate) use clock::epoch_spend;
 pub use clock::{BudgetEpoch, TaskClock};
+pub(crate) use clock::{epoch_spend, race_cost};
 pub use early::{HOLD_CAP, HOLD_LIMIT_SECS, HOLD_WINDOWS_CAP, HeldEvent, HeldWindow};
 pub use effect::Effect;
+pub use event::{AgentSignal, EventKind};
 pub(crate) use fixes::fix_text;
-pub(crate) use full::attention as full_attention;
+pub(crate) use full::{attention as full_attention, infra_held};
 pub use history::HISTORY_FILE;
 pub(crate) use integration::attention as integration_attention;
 pub use op_result::OpResult;
@@ -135,188 +147,6 @@ pub struct Event {
     /// Unix seconds, read by the driver.
     pub now: u64,
     pub kind: EventKind,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum EventKind {
-    Start {
-        reply: ReplyId,
-        /// Boxed: a whole run dwarfs every other event.
-        run: Box<Run>,
-    },
-    Approve {
-        reply: ReplyId,
-        run_id: String,
-    },
-    Reject {
-        reply: ReplyId,
-        run_id: String,
-    },
-    Edit {
-        reply: ReplyId,
-        run_id: String,
-        edits: Vec<PlanEdit>,
-        scope: EditScope,
-        /// Ruling T22-I1b: decision 50's or 53's refusal for each runtime the run could
-        /// not reach when the request came in and whose checks fail; an edit that makes
-        /// one of them reachable is refused with its text.
-        refusals: Vec<(proto::Runtime, String)>,
-        /// Milestone 9 decision 13: the user submits a planning run's plan after the
-        /// batch (M9.7 review fixes, ruling 5).
-        submit: bool,
-    },
-    Retry {
-        reply: ReplyId,
-        run_id: String,
-        task_id: String,
-    },
-    Override {
-        reply: ReplyId,
-        run_id: String,
-        task_id: String,
-        reason: String,
-    },
-    Cancel {
-        reply: ReplyId,
-        run_id: String,
-    },
-    /// `rebaseline`: the refs the driver read (milestone 9.1: every stage head too).
-    Resume {
-        reply: ReplyId,
-        run_id: String,
-        rebaseline: Option<Rebaseline>,
-    },
-    /// Decision 21: a guard saw the base branch advance.
-    BaseAdvanced {
-        run_id: String,
-        to: String,
-        commits: u32,
-    },
-    Finish {
-        reply: ReplyId,
-        run_id: String,
-        action: FinishAction,
-    },
-    Tool {
-        reply: ReplyId,
-        call: ToolCall,
-    },
-    /// M8b decision 25: `run promote`, which milestone 9 performs (decision 29) with the
-    /// orchestrator the user chose, if any.
-    Promote {
-        reply: ReplyId,
-        run_id: String,
-        orchestrator: Option<proto::OrchestratorChoice>,
-    },
-    /// M8b decision 30: the OTLP ledger's new total for `(run, "orchestrator")`. It
-    /// replaces the one before, on top of the usage restored at the daemon's start.
-    OrchestratorUsage {
-        run_id: String,
-        usage: TokenUsage,
-    },
-    OpDone {
-        run_id: String,
-        op: OpId,
-        result: OpResult,
-    },
-    Signal {
-        window_id: u32,
-        signal: AgentSignal,
-    },
-    Delivered {
-        run_id: String,
-        message_ids: Vec<u64>,
-        ok: bool,
-        error: Option<String>,
-    },
-    Restore {
-        runs: Vec<Run>,
-        replay: Vec<(String, OpId, OpResult)>,
-        /// Ops kept pending with no answer yet: the driver answers them later with an
-        /// ordinary `OpDone` (ruling T22-N3: a replayed accept's clean-up, run once the
-        /// socket is bound).
-        held: Vec<(String, OpId)>,
-    },
-    Stop,
-    Tick,
-    /// Milestone 9: the orchestrator's and sub-planners' events (`orch.rs`).
-    Orch(OrchEvent),
-    /// Milestone 9.2 decision 25: `run deliver` and `run watch` (`delivery/`).
-    Delivery(delivery::DeliveryRequest),
-    /// Milestone 9.3 decision 10: `run iterate` (`goal_rounds.rs`).
-    Iterate {
-        reply: ReplyId,
-        run_id: String,
-        goal: String,
-    },
-}
-
-/// The driver's translation of a window's session events (decision 27).
-///
-/// **Ordering contract** (ruling T13-P1), which `signals::apply` relies on and the
-/// session driver guarantees (`headless::session`'s module doc, carried on the manager's
-/// feed as `WindowSignal.pid`):
-///
-/// - every signal of a process carries, or is sent for, that process's pid;
-/// - `ProcessStarted { pid }` for a new process is delivered before any other signal of
-///   that process;
-/// - a process's `ProcessExited` is delivered after its last stream signal, including a
-///   `TurnEnded { Failed { SandboxUnavailable } }` the driver synthesises from stderr
-///   before `Init` (M8a.12's carry).
-///
-/// Signals of two different processes of one window (a Codex turn's process and the
-/// next, a killed Claude process and its `--resume`) may interleave; the pid tells them
-/// apart. M8a.22's driver forwards the feed in the order it receives it.
-#[derive(Debug, Clone, PartialEq)]
-pub enum AgentSignal {
-    Init {
-        session_id: String,
-    },
-    TurnStarted,
-    ToolUse {
-        name: String,
-        target: Option<String>, // 9.0.5 decision 5: its summary; `None` for a sub-agent's
-    },
-    /// `denials`: the tool names of the result's `permission_denials` (M8a.12 fix round
-    /// 1, review m-4: the Interfaces' `u32` became the names, which `denied_text` needs).
-    TurnEnded {
-        outcome: TurnOutcome,
-        usage: Option<TokenUsage>,
-        denials: Vec<String>,
-    },
-    ApiRetry {
-        error: String,
-        delay_ms: u64,
-    },
-    PermissionDenied {
-        tool: String,
-        reason: String,
-    },
-    SubagentStart {
-        agent_id: String,
-    },
-    SubagentStop {
-        agent_id: String,
-    },
-    /// The usage of a turn Claude Code started by itself while a delivered turn waits
-    /// (`WindowSignalKind::Unprompted`, ruling T7-N1): spend, never a turn end.
-    Spend {
-        usage: TokenUsage,
-    },
-    /// Any other event: a sub-agent's text, a tool result, compaction, an unknown line.
-    Activity,
-    ProcessExited {
-        code: Option<i32>,
-        killed_by_engine: bool,
-        pid: u32,
-    },
-    ProcessStarted {
-        pid: u32,
-    },
-    /// Top-level assistant text, cut at `proto::WORKER_SUMMARY_MAX` (9.0.5 decision 5).
-    Said {
-        text: String,
-    },
 }
 
 /// One reducer step: apply the event, run the scheduler on every run, then bump the
@@ -401,14 +231,21 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         } => merge::base_advanced(&mut state, &run_id, to, commits, now),
         EventKind::OrchestratorUsage { run_id, usage } => {
             // A run that ended keeps the usage it ended with (M8b.15 re-review): a
-            // total that raced its end is dropped.
+            // total that raced its end is dropped. Milestone 9.5 decision 37: so is one
+            // for a run a later run continued (its adoption counted it), and an adopted
+            // session counts from where it was at the adoption.
             let open = state
                 .runs
                 .get_mut(&run_id)
-                .filter(|r| !r.state.is_terminal());
+                .filter(|r| !r.state.is_terminal() && r.continued_by.is_none());
             if let Some(run) = open {
+                let from = run
+                    .orch
+                    .orchestrator
+                    .as_ref()
+                    .and_then(|o| o.usage_at_adopt);
                 run.orchestrator_usage = run.orchestrator_base;
-                run.orchestrator_usage += usage;
+                run.orchestrator_usage += usage.saturating_sub(from.unwrap_or_default());
             }
         }
         EventKind::OpDone { run_id, op, result } => {
@@ -424,7 +261,18 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             error,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                outbox::delivered(run, &message_ids, ok, error, now);
+                // Milestone 9.5 decision 20: a lane's batch, in its lane's view.
+                let lane = (run.outbox.iter().find(|m| message_ids.contains(&m.id)))
+                    .and_then(|m| race::lane_of_address(run, &m.task_id));
+                let delivered = |run: &mut Run, _: &mut Vec<Effect>| {
+                    outbox::delivered(run, &message_ids, ok, error.clone(), now)
+                };
+                match lane {
+                    Some((i, l)) => {
+                        race::with_lane(run, i, l, now, &mut fx, delivered);
+                    }
+                    None => delivered(run, &mut fx),
+                }
             }
         }
         EventKind::Restore { runs, replay, held } => {
@@ -435,7 +283,16 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             return (state, fx);
         }
         // Milestone 9 decision 29: a promotion recorded before milestone 9.
-        EventKind::Tick => promote::on_tick(&mut state, now, &mut fx),
+        EventKind::Tick => {
+            promote::on_tick(&mut state, now, &mut fx);
+            // Milestone 9.5 decision 38: a first turn waiting past its bound.
+            // Decision 16: a quiet runtime gets a writer back, before this step's
+            // scheduler pass.
+            state.runs.values_mut().for_each(|run| {
+                first_turn::tick(run, now);
+                concurrency::on_tick(run, now);
+            });
+        }
     }
     // M9.9 review fixes, I2 and M-b: an orchestrator call's own blocks are compared
     // away (the run before its handler's scheduler pass, `quiet_base`); what the
@@ -465,7 +322,13 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
     // Held events whose launches are over, or that waited too long (`early.rs`).
     early::sweep(&mut state, now, &mut fx);
     let chains_moved = state.chains != chains_before;
-    finish(&mut state, &before, (before_revision, chains_moved), fx)
+    finish(
+        &mut state,
+        &before,
+        (before_revision, chains_moved),
+        now,
+        fx,
+    )
 }
 
 /// Decision 47: a run that changed gets its revision bumped, and the global one with it;
@@ -473,11 +336,13 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
 /// (`AgentRound::clear_counters`) is persisted lazily and published as a counter update
 /// (decisions 43, 47); any other is urgent and structural, and so is a change of the
 /// chain table alone (milestone 9.3: the snapshot's idle orchestrators). `Persist` first,
-/// `Publish` last.
+/// `Publish` last. Milestone 9.5 decision 15: a run that changed records the step's
+/// time, and its pause accounting.
 fn finish(
     state: &mut EngineState,
     before: &BTreeMap<String, Run>,
     (before_revision, chains_moved): (u64, bool),
+    now: u64,
     fx: Vec<Effect>,
 ) -> (EngineState, Vec<Effect>) {
     let mut persist = Vec::new();
@@ -489,6 +354,7 @@ fn finish(
             Some(old) => {
                 run.revision += 1;
                 let urgent = without_counters(old) != without_counters(run);
+                pause::account(old, run, now);
                 // Decision 16: the digest's revision moves only with its fingerprint. A
                 // run new to the state (a restore) is left as loaded (final review B-5).
                 if urgent {
@@ -551,6 +417,7 @@ pub(crate) fn emit_op(
             op,
             task_id: task_id.map(str::to_string),
             kind: kind.clone(),
+            lane: None,
         },
     );
     fx.push(Effect::Op {

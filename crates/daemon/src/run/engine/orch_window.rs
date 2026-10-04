@@ -9,11 +9,14 @@ use super::requests::log;
 use super::{Effect, OpId, OpKind, OpResult, emit_op, history, next_op};
 use crate::run::model::Run;
 use crate::run::orch::contract::orchestrator_first_prompt;
-use crate::run::orch::launch::{orchestrator_role, orchestrator_window_spec};
+use crate::run::orch::launch::{first_turn_pasted, orchestrator_role, orchestrator_window_spec};
 
-/// Decisions 5 and 26: the orchestrator's window, with its first prompt (the planned
-/// run's, unless a promotion set its own). Decision 43: its session's record is opened
-/// first, `start` (`promote` for a promotion), or `retry` after an earlier session.
+/// Decisions 5 and 26: the orchestrator's window, and its first prompt (the planned
+/// run's, unless a promotion or a chain set its own). Decision 43: its session's record
+/// is opened first, `start` (`promote` for a promotion), or `retry` after an earlier
+/// session. Milestone 9.5 decision 38: a Claude window starts with no prompt; the first
+/// prompt waits as the first turn ([`first_turn_waits`]). Ruling T5a-2: a Codex window
+/// has it on its command line, as in 9.3.
 pub(super) fn launch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let Some(o) = run.orch.orchestrator.as_ref() else {
         return;
@@ -40,7 +43,9 @@ pub(super) fn launch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.first_prompt = first;
         o.launch_op = Some(op);
+        o.first_turn_pending = first_turn_pasted(&route);
     }
+    first_turn_waits(run, now);
     let kind = OpKind::CreateOrchestrator {
         spec: Box::new(spec),
         role: Box::new(role),
@@ -66,6 +71,7 @@ pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64, fx: 
             o.start_error = None;
             o.launches += 1;
             run.windows_created += 1;
+            own_session(run);
             log(
                 run,
                 now,
@@ -132,11 +138,20 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<
         return;
     };
     match result {
-        OpResult::Restarted => {
+        OpResult::Restarted | OpResult::RestartedFresh => {
             o.live = true;
             o.exited_at = None;
             o.launches += 1;
+            let pasted = first_turn_pasted(&o.route);
+            own_session(run);
             log(run, now, "the orchestrator restarted");
+            // Milestone 9.5 fix round 1 (m1, m2): a fresh session takes the first
+            // prompt again, and was not resumed. Ruling T5a-2: Claude's only; a Codex
+            // restart is 9.3's (its window's spec carries the first prompt).
+            if result == OpResult::RestartedFresh && pasted {
+                super::first_turn::fresh_session(run, now);
+                super::wake::unnote(run, RESUMED_NOTE);
+            }
         }
         OpResult::Failed { message } => {
             let text = format!("the orchestrator could not restart: {message}");
@@ -161,7 +176,7 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<
 }
 
 /// Whether a `CreateOrchestrator` or `RestartOrchestrator` is in flight.
-fn launching(run: &Run) -> bool {
+pub(super) fn launching(run: &Run) -> bool {
     run.pending_ops.values().any(|p| {
         matches!(
             p.kind,
@@ -182,6 +197,7 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
             if let Some(o) = run.orch.orchestrator.as_mut() {
                 o.session += 1;
             }
+            first_turn_waits(run, now);
             history::orchestrator_dispatched(run, "restart", now);
             let op = next_op(run);
             emit_op(run, op, None, OpKind::RestartOrchestrator { window_id }, fx);
@@ -198,6 +214,20 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
     true
 }
 
+/// Milestone 9.5 decision 38: a launch or relaunch starts a new anthrex server, whose
+/// `McpReady` is still to come; a first turn still pending waits from now.
+fn first_turn_waits(run: &mut Run, now: u64) {
+    run.orch.mcp_ready = false;
+    run.orch.first_turn_late = false;
+    run.orch.first_signal_at = None;
+    let pending = run
+        .orch
+        .orchestrator
+        .as_ref()
+        .is_some_and(|o| o.first_turn_pending);
+    run.orch.first_turn_since = pending.then_some(now);
+}
+
 /// Milestone 9.0.6 decision 42: whether [`relaunch`] would issue anything, changing
 /// nothing: an orchestrator that is not live, of a run that has not ended, with no
 /// launch in flight.
@@ -208,9 +238,26 @@ pub(super) fn relaunchable(run: &Run) -> bool {
 }
 
 /// After a daemon restart the orchestrator's window is dormant (decision 11).
+/// Milestone 9.5 decision 37: the new daemon's OTLP totals count from zero on top of
+/// the restored usage, so an adopted session's counter starts again at zero.
 pub(super) fn restored(run: &mut Run) {
+    super::first_turn::restored(run);
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.live = false;
+        if let Some(at) = o.usage_at_adopt.as_mut() {
+            *at = Default::default();
+        }
+    }
+}
+
+/// Milestone 9.5 decision 37 (review I1): the run's session posts under the run's own
+/// id from now on (a launch, a lost adoption, or a restart, whose `refresh_otlp` re-keys
+/// the window), from zero: what an adopted session was credited becomes the base.
+pub(super) fn own_session(run: &mut Run) {
+    if let Some(o) = run.orch.orchestrator.as_mut()
+        && o.usage_at_adopt.take().is_some()
+    {
+        run.orchestrator_base = run.orchestrator_usage;
     }
 }
 

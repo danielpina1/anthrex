@@ -50,6 +50,7 @@ pub(crate) fn staged_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
         failing: vec!["a::works".into()],
         bisect_fixes: 1,
         note: None,
+        held: false,
     };
     one.fix_tasks = vec!["fix1".into()];
     info.stages = vec![one, stage(2, None, 1, 0)];
@@ -90,6 +91,7 @@ pub(crate) fn two_stage_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
         summary: String::new(),
         findings: vec![],
         blocking: false,
+        lane: None,
     }];
     t2.review_route = Some(t2.route.clone());
     let mut t3 = task("t3", "docs for report_product", Size::S, TaskState::Pending);

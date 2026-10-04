@@ -29,6 +29,8 @@ fn amend_deps(task_id: &str, deps: &[&str]) -> PlanEdit {
             size,
             deps: Some(deps.iter().map(|d| d.to_string()).collect()),
             stage: None,
+            race: None,
+            pair: None,
         },
         other => panic!("an amend: {other:?}"),
     }

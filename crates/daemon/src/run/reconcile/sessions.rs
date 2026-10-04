@@ -93,6 +93,7 @@ fn round_ref(run: &Run, pending: &PendingOp) -> Option<RunRef> {
         task_id: Some(task_id.to_string()),
         role: round.role,
         session: round.session,
+        lane: None,
     })
 }
 

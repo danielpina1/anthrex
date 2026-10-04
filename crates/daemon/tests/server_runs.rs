@@ -158,7 +158,77 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
         })
     );
     assert_eq!(
-        runs.request(RunRequest::Stats { dir: here.clone() }).await,
+        runs.request(RunRequest::Stats {
+            dir: here.clone(),
+            apply: Vec::new(),
+            dismiss: Vec::new(),
+            read_only: false,
+        })
+        .await,
+        proto::RunReply::Refused {
+            request: request::STATS.to_string(),
+            message: format!("not a git repository: {}", here.display()),
+            request_id: None,
+        }
+    );
+}
+
+/// Milestone 9.5 task 2: `McpReady` from a window that is no run's orchestrator is
+/// answered `Done` and changes nothing (task M9.5.5a's caller check). Task M9.5.11: a
+/// read-only `Stats` (decision 48) naming ids is refused before anything is read; one
+/// with none goes on as a plain one would.
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_ready_is_answered_and_a_read_only_stats_takes_no_ids() {
+    use proto::run_wire::request;
+    let dir = tempfile::Builder::new()
+        .prefix("ax-runs95")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let (manager, _events) = WindowManager::new(pinned(dir.path().join("d.sock")));
+    let git = GitWiring::new(config::Git::default());
+    let ctx = RunContext::new(
+        dir.path().join("data"),
+        manager.config(),
+        config::Orchestrator::default(),
+        git.registry.clone(),
+    );
+    let runs = RunService::new(manager, ctx);
+    let before = runs.request(RunRequest::List).await;
+    let ready = RunRequest::McpReady {
+        run_id: "r-3f9a".into(),
+        window_id: 4,
+    };
+    assert_eq!(
+        runs.request(ready).await,
+        proto::RunReply::done(request::MCP_READY, "")
+    );
+    assert_eq!(runs.request(RunRequest::List).await, before);
+    let here = dir.path().to_path_buf();
+    assert_eq!(
+        runs.request(RunRequest::Stats {
+            dir: here.clone(),
+            apply: vec![proto::ProposalValue {
+                id: "threshold-s".into(),
+                value: "35".into(),
+            }],
+            dismiss: vec!["route-m".into()],
+            read_only: true,
+        })
+        .await,
+        proto::RunReply::Refused {
+            request: request::STATS.to_string(),
+            message: "a read-only stats request cannot apply or dismiss a proposal".into(),
+            request_id: None,
+        }
+    );
+    assert_eq!(
+        runs.request(RunRequest::Stats {
+            dir: here.clone(),
+            apply: Vec::new(),
+            dismiss: Vec::new(),
+            read_only: true,
+        })
+        .await,
         proto::RunReply::Refused {
             request: request::STATS.to_string(),
             message: format!("not a git repository: {}", here.display()),
@@ -323,6 +393,9 @@ async fn a_tagged_run_request_is_answered_with_its_id() {
     // `run stats` outside a repository is refused at once, whoever asks.
     let stats = RunRequest::Stats {
         dir: dir.path().to_path_buf(),
+        apply: Vec::new(),
+        dismiss: Vec::new(),
+        read_only: false,
     };
     let tagged = ClientMsg::RunTagged {
         id: 7,

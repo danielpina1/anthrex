@@ -303,8 +303,11 @@ async fn answer(request: Request, shared: &Arc<Shared>, state: &ConnState) -> u1
 ///
 /// Holding the lock from the generation read to the apply means no other request can
 /// evict a run between this one's live check and its apply. A run evicted as not live
-/// never passes the filter again, since a run that ended never becomes live again, so
-/// its total is never rebuilt from a later request's points alone.
+/// does not pass the filter again with a session still posting under it, so its total
+/// is never rebuilt from a later request's points alone: a run that ended stays live
+/// only while its chain is idle and not ended, or as an alias of its chain's current
+/// run while that run holds the adopted session (milestone 9.5 decision 37, ruling
+/// T4b-1); once that stops, no session posting under it is metered again.
 ///
 /// Posting under the lock too (fix round 2) means totals reach the sink in the order
 /// the ledger computed them, so the latest post, which the sink keeps, is the highest.

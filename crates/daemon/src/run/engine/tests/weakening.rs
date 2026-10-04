@@ -30,6 +30,7 @@ fn spec() -> SignalsSpec {
     SignalsSpec {
         test_paths: vec!["tests/**".into(), "crates/*/tests/**".into()],
         skip_markers: vec!["#[ignore]".into()],
+        red: None,
     }
 }
 
@@ -70,6 +71,8 @@ fn checked(fx: &Fixture, signals: Vec<Signal>, more: u32, outside: &[&str]) -> O
             list: signals,
             more,
             base: DIFF_BASE.into(),
+            restore_from: Default::default(),
+            unlimited: 0,
         }));
         *outside_owns = outside.iter().map(|p| p.to_string()).collect();
     }
@@ -180,6 +183,7 @@ fn skip_marker_reaches_the_reviewer_prompt() {
         summary: None,
         summary_source: None,
         tier: None,
+        lane: None,
     };
     fx.task_mut("t1").checks.push(check);
     let (_, kind) = reviewer(&mut fx, op, "diff --git a/x b/x");

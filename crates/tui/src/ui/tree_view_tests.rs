@@ -127,6 +127,7 @@ fn a_deep_name_is_truncated_not_the_guides() {
         kind: proto::WindowKind::Pty,
         run: None,
         signals_seen: false,
+        placeholder: false,
     };
     let app = App::new(vec![window], "/tmp".into(), UiSettings::default());
     let rows = app.rows();
@@ -200,6 +201,7 @@ fn worktree_window(
         kind: proto::WindowKind::Pty,
         run: None,
         signals_seen: false,
+        placeholder: false,
     }
 }
 

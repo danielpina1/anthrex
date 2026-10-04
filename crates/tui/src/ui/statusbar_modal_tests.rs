@@ -115,7 +115,8 @@ fn fixture(name: &str) -> App {
 
 /// M1: with the sidebar hidden the flag names `<p> a` only where `C-b a` opens the
 /// Alerts view; under the open view, a screen or the plan review it keeps the count
-/// alone.
+/// alone (under the plan review, whatever the sidebar: milestone 9.5 decision 42,
+/// `the_plan_review_shows_the_alert_count_with_the_sidebar_visible` below).
 #[test]
 fn the_flag_names_its_key_only_where_it_works() {
     let flag = |name: &str| {
@@ -173,4 +174,25 @@ fn page_down_is_hinted_only_over_a_shown_task_panel() {
         "{}",
         bar(&app, 200, 40)
     );
+}
+
+/// Milestone 9.5 decision 42: under the plan review the count shows with the sidebar
+/// visible too, alone, in the top alert's glyph; ASCII has its twin.
+#[test]
+fn the_plan_review_shows_the_alert_count_with_the_sidebar_visible() {
+    let mut app = fixture("plan review");
+    // A second run, halted: a second alert, at priority 3.
+    let halted = crate::tree::alert_fixtures::at("halt-1", proto::RunState::Halted, 9);
+    app.runs.runs.push(halted);
+    assert!(app.sidebar_visible);
+    assert_eq!(app.key_region(), KeyRegion::Review);
+    let alerts = crate::app::alerts(&app);
+    assert_eq!(alerts.len(), 2, "{alerts:?}");
+    let text = bar(&app, 160, 40);
+    assert!(text.contains("⚑ 2  "), "{text:?}");
+    assert!(!text.contains("C-b a"), "{text:?}");
+    app.settings.badges.ascii = true;
+    let text = bar(&app, 160, 40);
+    assert!(text.is_ascii() && text.contains("! 2  "), "{text:?}");
+    assert!(!text.contains("C-b a"), "{text:?}");
 }

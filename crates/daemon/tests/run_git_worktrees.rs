@@ -281,7 +281,15 @@ fn engine_paths_with_spaces_and_unicode_work() {
 
     // Salvage of the untracked non-ASCII file, then removal of the locked worktree.
     let reference = "refs/anthrex/salvage/sp01/t1/1";
-    let saved = salvage(real_git(), &task, reference, "anthrex salvage sp01/t1", T).unwrap();
+    let saved = salvage(
+        real_git(),
+        &task,
+        reference,
+        "anthrex salvage sp01/t1",
+        false,
+        T,
+    )
+    .unwrap();
     assert_eq!(saved.as_deref(), Some(reference));
     assert_eq!(
         out(&repo.root, &["show", &format!("{reference}:lib/ü new.rs")]),

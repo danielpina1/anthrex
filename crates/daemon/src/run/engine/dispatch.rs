@@ -25,7 +25,10 @@ pub(super) use super::rounds::new_round;
 #[path = "dispatch_launch.rs"]
 mod launch;
 use launch::{dispatch_writers, launch_ready, prepare, prewarm};
-pub(super) use launch::{launch_fresh, launch_worker};
+// The worker sessions, split out of `dispatch_launch.rs` (task M9.5.17a, move-only).
+#[path = "dispatch_session.rs"]
+mod session;
+pub(super) use session::{launch_fresh, launch_implementer, launch_worker};
 
 /// The scheduler, run after every event: runnability, then whatever the run's state
 /// allows to start, then clean-up and delivery.
@@ -34,6 +37,9 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         return;
     }
     clock::watch_open_turns(run, now, fx);
+    super::race::each_lane(run, now, fx, |run, fx| {
+        clock::watch_open_turns(run, now, fx)
+    });
     holds::enforce_holds(run, now, fx);
     requeue(run, now);
     if integration_ready(run) {
@@ -63,11 +69,16 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 // Ruling C-27 (4): a bisect fix task that ended without merging.
                 super::full::fix_ended_pass(run);
                 review::watch(run, now, fx);
+                // Milestone 9.5 ruling T16-3: a confirmed red's implementer.
+                super::pair::launch_due(run, now, fx);
                 launch_ready(run, now, fx);
                 dispatch_writers(run, now, fx);
                 // M8b decision 18: queued deciders take free reader slots first.
                 fx.extend(deciders::dispatch(run, now));
                 review::dispatch_reviewers(run, fx);
+                // Milestone 9.5 decision 20: each lane of a race, in its lane's view.
+                lane_passes(run, now, fx);
+                super::race_end::crown_pass(run, now, fx);
                 // Milestone 9 decision 31: integration reviews go with the reviewers.
                 kinds::dispatch(run, now, true, fx);
             }
@@ -79,14 +90,39 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         kinds::dispatch(run, now, false, fx);
     }
     remove_cancelled_worktrees(run, now, fx);
+    // Milestone 9.5 decision 22: a lane that left its race, once its racer has exited.
+    super::race_salvage::pass(run, now, fx);
     if run.state == RunState::Running {
         super::worker_messages::refresh_pass(run, now, fx);
+        // Ruling RR-4: a racing task's refresh, in each live lane.
+        super::race::each_lane(run, now, fx, |run, fx| {
+            super::worker_messages::refresh_pass(run, now, fx)
+        });
         outbox::deliver(run, now, fx);
+        super::race::each_lane(run, now, fx, |run, fx| outbox::deliver(run, now, fx));
         complete::complete_pass(run, now, fx);
     }
     // Rulings T15-I2, T15-I3, T15-R3: the task clocks, after the pass's changes. A
     // stop still open is subtracted wherever spend is read (`ladder::round_spend`).
     clock::sync(run, now);
+    super::race::each_lane(run, now, fx, |run, _| clock::sync(run, now));
+}
+
+/// Milestone 9.5 decision 20 (ruling RR-3): the scheduler passes a race's lanes take,
+/// each in its lane's view, so each lane relaunches, is watched, and runs every
+/// pre-merge gate on its own. Each pass is idempotent at one `now`, so the tasks that do
+/// not race, which each view shows as they are, see nothing new.
+fn lane_passes(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    super::race::each_lane(run, now, fx, |run, fx| {
+        restore::relaunch(run, now, fx);
+        signals::watch(run, now, fx);
+        ladder::recover_sessionless(run, now);
+        ladder::start_fresh_sessions(run, fx);
+        gates::start_gates(run, now, fx);
+        review::watch(run, now, fx);
+        launch_ready(run, now, fx);
+        review::dispatch_reviewers(run, fx);
+    });
 }
 
 /// A `Discard` or `Accept` in flight, named as a reply says it (`discarded`,
@@ -166,7 +202,12 @@ pub(super) fn window_limit_reached(run: &mut Run, i: usize, now: u64) -> bool {
     if run.windows_created.saturating_sub(before) < run.limits.max_windows {
         return false;
     }
-    let text = format!("run window limit ({}) reached", run.limits.max_windows);
+    // Milestone 9.5 decision 46: a later round's text names the round.
+    let limit = run.limits.max_windows;
+    let text = match run.round() {
+        r if r > 1 => format!("round {r}'s window limit ({limit}) reached"),
+        _ => format!("run window limit ({limit}) reached"),
+    };
     block(run, i, BlockReason::Environment, text, now);
     true
 }
@@ -183,15 +224,20 @@ fn remove_cancelled_worktrees(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         {
             continue;
         }
-        // Review m4: one numbering rule for every salvage (decision 20's `<seq>`).
-        let salvage_ref = salvage_ref(run, task.id(), merge::next_salvage_seq(task));
+        // Review m4: one numbering rule for every salvage (decision 20's `<seq>`),
+        // reserved as the removal is sent (task 17b's review, m4).
         let (id, path) = (task.id().to_string(), task.worktree.clone());
+        let seq = merge::reserve_salvage_seq(&mut run.tasks[i]);
+        let salvage_ref = salvage_ref(run, &id, seq);
         fx.push(Effect::UnwatchWorktree { root: path.clone() });
         let op = next_op(run);
         let kind = OpKind::RemoveWorktree {
             root: run.root.clone(),
             path,
             salvage_ref,
+            keep_head: false,
+            clear_locks: false,
+            keep_path: false,
         };
         emit_op(run, op, Some(&id), kind, fx);
         history(run, i, now, "removing its worktree (salvaged if dirty)");
@@ -259,6 +305,11 @@ pub(super) fn worktree_done(
             block(run, i, BlockReason::Environment, text, now);
         }
         OpResult::Failed { message } if !state.is_finished() => {
+            // Ruling FW-4: the task branch may have been made before the step that
+            // failed; a lane's own failure (in its view) is the race's, not the task's.
+            if run.tasks[i].race.is_none() {
+                run.tasks[i].prepare_failed = true;
+            }
             let text = format!("could not prepare the worktree: {message}");
             block(run, i, BlockReason::Environment, text, now);
         }
@@ -295,7 +346,9 @@ pub(super) fn window_done(
             if state.is_finished() || stale_reviewer {
                 round.retiring = true;
                 fx.push(Effect::KillWindow { window_id });
-            } else if state == TaskState::Preparing && round.role == AgentRole::Worker {
+            } else if state == TaskState::Preparing
+                && crate::run::model::writes(&run.tasks[i], &run.tasks[i].rounds[r])
+            {
                 set_state(&mut run.tasks[i], TaskState::Working, now);
             }
         }
@@ -316,7 +369,7 @@ pub(super) fn window_done(
 /// The result of a `RemoveWorktree`.
 pub(super) fn removed(run: &mut Run, i: usize, path: &Path, result: OpResult, now: u64) {
     match result {
-        OpResult::Removed { salvage_ref } => {
+        OpResult::Removed { salvage_ref, .. } => {
             let task = &mut run.tasks[i];
             // M8a.14: a merged task's review and proof worktrees are removed too.
             if path == task.worktree {

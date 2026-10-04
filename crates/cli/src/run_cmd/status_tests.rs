@@ -36,6 +36,9 @@ fn round(window: u32) -> AgentRoundInfo {
         rate_limited_since: None,
         rate_limited_until: None,
         sent_back_at: vec![],
+        lane: None,
+        failed_error: None,
+        failed_until: None,
     }
 }
 
@@ -125,6 +128,8 @@ fn task(
         atomic_reason: None,
         interface_change: false,
         round: 1,
+        race: None,
+        pair: None,
     }
 }
 
@@ -242,6 +247,7 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         chain: None,
         round: 1,
         rounds: Vec::new(),
+        writer_caps: Default::default(),
     }
 }
 

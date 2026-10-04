@@ -4,7 +4,7 @@
 
 use super::MAX_NODE_WIDTH;
 use crate::theme::{Glyph, glyph};
-use crate::tree::{DisplayRound, round_label, run_progress};
+use crate::tree::{DisplayRound, round_label_with_lane, run_progress};
 use crate::ui::tree_view::truncate_in;
 use proto::{
     FullState, PlannerInfo, RunInfo, RunState, StageInfo, TaskInfo, TaskOrigin, TaskState,
@@ -136,12 +136,14 @@ pub(crate) fn origin_tag(origin: TaskOrigin) -> &'static str {
     }
 }
 
-/// `{round_label} {runtime}`: the runtime as a word, never M6.5's badge (decision 17).
+/// `{round_label} {runtime}`: the runtime as a word, never M6.5's badge (decision 17);
+/// a racer's and a lane reviewer's label names the lane (`racer a claude`, milestone
+/// 9.5 decision 29).
 pub(crate) fn round_text(round: &DisplayRound<'_>) -> String {
     let info = round.info;
     format!(
         "{} {}",
-        round_label(info.role, info.session, round.number),
+        round_label_with_lane(info.role, info.lane, info.session, round.number),
         info.route.runtime.label()
     )
 }

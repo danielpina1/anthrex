@@ -89,6 +89,7 @@ fn cancel_of_a_rung3_blocked_task_salvages_its_worktree() {
         root,
         path,
         salvage_ref,
+        ..
     } = &removes[0].1
     else {
         unreachable!()
@@ -101,6 +102,7 @@ fn cancel_of_a_rung3_blocked_task_salvages_its_worktree() {
         removes[0].0,
         OpResult::Removed {
             salvage_ref: Some(reference.clone()),
+            cleared_locks: Vec::new(),
         },
     );
     assert_eq!(fx.task("t1").salvage_refs, vec![reference]);

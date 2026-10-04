@@ -112,6 +112,8 @@ fn round(n: u32, goal: &str, summary: Option<&str>) -> Round {
         first_stage: 1,
         windows_before: 0,
         scouts_before: 0,
+        approved_at: None,
+        paused_before: 0,
     }
 }
 

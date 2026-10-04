@@ -41,7 +41,7 @@ What you may and may not do
 3. Every change to the plan goes through edit_plan (in Claude: mcp__anthrex__edit_plan). The engine validates every batch; if it returns errors, fix every listed error and call it again.
 
 How a run goes
-4. Call get_context (in Claude: mcp__anthrex__get_context) first: the repository profile, the models you can route to, the limits, and any scout reports.
+4. Call get_context (in Claude: mcp__anthrex__get_context) first: the repository profile, the models you can route to, the limits, and any scout reports. If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting.
 5. Scout before you plan. Call spawn_scout (in Claude: mcp__anthrex__spawn_scout) once per area the goal touches, each with one concrete question. Wait for their reports with run_status (in Claude: mcp__anthrex__run_status), then read them with get_context.
 6. Plan path: write every task yourself with edit_plan, then call edit_plan with submit set to true.
 7. Large path, when the goal needs more than planner_task_cap tasks or several separate areas that each need several tasks: write the interface and hub tasks yourself first, then call spawn_subplanner (in Claude: mcp__anthrex__spawn_subplanner) once per epic, each with its own area that overlaps no other. Each sub-planner adds its epic's tasks and exits. When every sub-planner has finished, read the whole plan in run_status and submit it.
@@ -49,7 +49,7 @@ How a run goes
 9. After that, call run_status with since set to the last revision and wait_secs 50. It returns as soon as something you need to know changes. Messages that start with [anthrex] come from anthrex, not from the user; when one says the run changed, call run_status.
 
 Sizing
-10. Every task is S or M. S: one file, no interface change, a mechanical check exists, about 20 changed lines. M: one to three files inside one module, a clear spec, a check exists, about 100 changed lines. Anything larger is L, and L is never executed: split it.
+10. Every task is S or M. S: one file, no interface change, a mechanical check exists, and about as many changed lines as get_context's limits.sizes gives for S. M: one to three files inside one module, a clear spec, a check exists, and about as many changed lines as limits.sizes gives for M. Anything larger is L, and L is never executed: split it.
 11. Size from evidence, never from time. Name the scout reports a task's size rests on in its scout_refs. Never give minutes, hours or budgets; the engine sets budgets from the size.
 12. Split interfaces first, and keep them additive: an interface or hub change is its own task, first, and every task that uses it depends on it. The interface task adds the new form beside the old one, dependent tasks migrate the callers, and a later task, usually in a later stage, removes the old form. Split one level only; a piece that is still L goes back to whoever planned it, never deeper.
 13. A chain of tasks where each depends only on the previous one, and whose combined size is still M, costs a cold start, a check, a review and a merge per link with nothing running beside it. Prefer one task; split only when a step must be reviewed or merged on its own. This is your judgement; the engine does not check it.
@@ -63,11 +63,11 @@ Ownership and files
 19. Research and review tasks change nothing: leave their owns empty.
 
 Test mode
-20. A task that changes behaviour is tdd: name the test to write in test_to_write, and the worker commits it failing first. A behaviour-preserving change already covered by tests is check, with a one-line reason. Docs, comments and configuration nothing executes are none, with a reason. A code task that touches the profile's source globs is never none.
+20. A task that changes behaviour is tdd: name the test to write in test_to_write, and the worker commits it failing first. A behaviour-preserving change already covered by tests is check, with a one-line reason. Docs, comments and configuration nothing executes are none, with a reason. A code task that touches the profile's source globs is never none. A hub task can set pair to true: a separate test writer commits its failing test first, and a different worker makes it pass.
 
 Routing
-21. Set route on every task: S tasks on the fast or standard strength at low or medium effort, M tasks on standard or frontier at medium or high effort, hub tasks on frontier at high effort. Use only models get_context lists as installed.
-22. Spread independent tasks across claude and codex when both are installed, but never give tasks on different runtimes overlapping owns: the engine rejects it.
+21. Set route on every task: S tasks on the fast or standard strength at low or medium effort, M tasks on standard or frontier at medium or high effort, hub tasks on frontier at high effort. Use only models get_context lists as installed. Model lists are set by the user; leave route empty to use them, or name one of the listed models.
+22. Spread independent tasks across claude and codex when both are installed, but never give tasks on different runtimes overlapping owns: the engine rejects it. A task on the critical path that is not a hub can set race to true: two workers on different runtimes build it at once, and the first to pass every gate wins. It costs twice the tokens and twice the test slots, so use it only where finishing sooner matters.
 
 Kinds
 23. code and docs tasks go through every gate. research tasks investigate and report, with no branch and no merge. review tasks review an existing branch or range named in review_target and report findings, with no merge.
@@ -105,10 +105,10 @@ pub const PLANNER_CONTRACT: &str = r#"You are a sub-planner in an anthrex run. T
 1. You never edit, create or delete files, never run shell commands, and never commit. You may read files in this checkout.
 2. Call the anthrex tool get_context (in Claude: mcp__anthrex__get_context) first: the profile, the models, the limits, the scout reports for your area, and the tasks already planned that you may depend on.
 3. Every task you add owns paths only inside your area, and belongs to your epic.
-4. Every task is S or M. S: one file, no interface change, a mechanical check exists, about 20 changed lines. M: one to three files inside one module, a clear spec, a check exists, about 100 changed lines. L is never executed: split it, interfaces first, one level only. A chain of tasks where each depends only on the previous one, and whose combined size is still M: prefer one task; split only when a step must be reviewed or merged on its own.
+4. Every task is S or M. S: one file, no interface change, a mechanical check exists, and about as many changed lines as get_context's limits.sizes gives for S. M: one to three files inside one module, a clear spec, a check exists, and about as many changed lines as limits.sizes gives for M. L is never executed: split it, interfaces first, one level only. A chain of tasks where each depends only on the previous one, and whose combined size is still M: prefer one task; split only when a step must be reviewed or merged on its own.
 5. Size from evidence, never from time: name the scout reports each task rests on in scout_refs, and never give minutes, hours or budgets.
 6. Depend on the orchestrator's interface and hub tasks where you use them. Never plan a change to a hub file. If your epic needs an interface or hub change that is not planned, say so in the note of submit_epic (in Claude: mcp__anthrex__submit_epic).
-7. A task that changes behaviour is tdd with test_to_write named; a behaviour-preserving change covered by tests is check, and docs are none, each with a one-line reason. Set route on every task, and never give tasks on different runtimes overlapping owns. Generated files change only in a task that owns them; protected files only in a task whose owns names each file exactly.
+7. A task that changes behaviour is tdd with test_to_write named; a behaviour-preserving change covered by tests is check, and docs are none, each with a one-line reason. Set route on every task, and never give tasks on different runtimes overlapping owns. Model lists are set by the user; leave route empty to use them, or name one of the listed models. Generated files change only in a task that owns them; protected files only in a task whose owns names each file exactly.
 8. At most planner_task_cap tasks.
 9. Call submit_epic once with every edit. If it returns errors, fix every listed error and call it again. When it is accepted, end your turn: you are done.
 10. Messages that start with [anthrex] come from anthrex. Do what they say.
@@ -243,7 +243,8 @@ fn first_prompt(run: &Run, goal_line: String) -> String {
         goal_line,
         format!("Path: {path}"),
         format!("Plan gate: {gate}"),
-        "Start with get_context, then scout, then plan.".into(),
+        // Milestone 9.5 decision 38: the first turn may come before the server is up.
+        "Start with get_context, then scout, then plan. If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting.".into(),
     ]
     .join("\n")
 }

@@ -223,6 +223,7 @@ fn tier1_red_bounces_like_check_red() {
             at: fx.now,
             commit: String::new(),
         }),
+        lane: None,
     };
     assert_eq!(t1.checks, vec![record.clone()]);
     let text = check_failed_message(TESTS, &record);

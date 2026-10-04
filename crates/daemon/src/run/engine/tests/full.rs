@@ -82,7 +82,13 @@ pub(super) fn merge_tiered(fx: &mut Fixture, id: &str, window: u32, at: &str) ->
         },
     );
     for (op, _) in pending(fx, "RemoveWorktree", Some(id)) {
-        effects.extend(fx.done(op, OpResult::Removed { salvage_ref: None }));
+        effects.extend(fx.done(
+            op,
+            OpResult::Removed {
+                salvage_ref: None,
+                cleared_locks: Vec::new(),
+            },
+        ));
     }
     effects
 }

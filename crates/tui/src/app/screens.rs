@@ -191,8 +191,12 @@ impl App {
                 }
             }
         }
-        // Decision 36: the Settings screen shows its own save's outcome.
+        // Decision 36: the Settings screen shows its own save's outcome; milestone 9.5
+        // decision 48: a save can make a budget explicit, so its notes are asked again.
         self.settings_screen_reply(id, reply);
+        if screens && matches!(**reply, SettingsReply::Saved { .. }) {
+            effects.extend(self.settings_tuning_ask());
+        }
         Some(effects)
     }
 

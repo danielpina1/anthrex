@@ -69,9 +69,9 @@ pub fn probe(git: &OsStr, root: &Path, timeout: Duration) -> Option<GitState> {
     // as its alternate, so `status` reads them from there, for this display only. No
     // engine decision reads that directory, and nothing here writes
     // (`--no-optional-locks`).
-    command
-        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-        .env_remove("GIT_OBJECT_DIRECTORY");
+    // AGENTS.md rule 11 (W2 re-review N1): the pathspec modes and the location
+    // variables too.
+    subprocess::scrub_inherited_git(&mut command);
     command.args([
         "status",
         "--porcelain=v2",

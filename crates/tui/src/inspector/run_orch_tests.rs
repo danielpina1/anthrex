@@ -201,6 +201,7 @@ fn research_round_label() {
         run: RUN_ID.into(),
         task: "t3".into(),
         role: AgentRole::Scout,
+        lane: None,
         session: 2,
         round: 2,
     };
