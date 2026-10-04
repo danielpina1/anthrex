@@ -113,6 +113,16 @@ pub fn writer_route(run: &Run, i: usize) -> Route {
         .unwrap_or_else(|| task.route.clone())
 }
 
+/// Decision 19 (the final fix wave, review B's M9): a racing task's second racer's
+/// route: the peer route over the roster entries [`open_roster`] leaves open (installed,
+/// and no overlapping task on another runtime), as the test writer's is. `None` when
+/// there is none.
+pub fn racer_route(run: &Run, i: usize) -> Option<Route> {
+    let task = &run.tasks[i];
+    let roster = open_roster(run, i, true);
+    crate::run::validate_patterns::peer_route(&roster, &task.route, &run.orch.installed)
+}
+
 /// Ruling T16-2: rung 2's and `run retry`'s step for a test writer on `current`: the
 /// roster half of [`rung2_route`] from the writer's route (a model list picks the
 /// task's route, which the implementer keeps): a substitute when `current` failed in

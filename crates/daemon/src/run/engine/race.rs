@@ -54,13 +54,19 @@ pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
         return single(run, i, "race skipped: max_writers is 1", now);
     }
     let task = &run.tasks[i];
-    let Some(peer) = peer_route(&run.roster, &task.route, &run.orch.installed) else {
-        // Task M9.5.14's review: a plan file is validated against nothing installed.
-        let text = format!(
-            "race skipped: no installed {} model at strength {} for the second racer",
-            crate::run::roster::peer(task.route.runtime).label(),
-            strength_label(task.route.strength)
-        );
+    // Review B's M9: the second racer keeps the overlap rule too (`racer_route`).
+    let Some(peer) = crate::run::route_pick::racer_route(run, i) else {
+        let runtime = crate::run::roster::peer(task.route.runtime).label();
+        let text = match peer_route(&run.roster, &task.route, &run.orch.installed) {
+            Some(_) => {
+                format!("race skipped: a {runtime} racer would overlap an unfinished task's owns")
+            }
+            // Task M9.5.14's review: a plan file is validated against nothing installed.
+            None => format!(
+                "race skipped: no installed {runtime} model at strength {} for the second racer",
+                strength_label(task.route.strength)
+            ),
+        };
         return single(run, i, &text, now);
     };
     let free = usize::from(run.limits.max_writers).saturating_sub(schedule::writers_busy(run));

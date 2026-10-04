@@ -458,3 +458,22 @@ fn an_adopted_lanes_typed_question_is_not_classified() {
     assert!(ops_in(&effects, "Decide").is_empty(), "{effects:#?}");
     assert!(fx.task("t1").pending_classification.is_none());
 }
+
+/// Review B's M9: the second racer's peer route keeps the overlap rule (contract rule
+/// 22), as the test writer's and rung 2's do. `t2` overlaps `t1`'s owns and waits for it
+/// on Claude, so a Codex racer for `t1` would share owns with an unfinished task on
+/// another runtime: `t1` runs single, saying why.
+#[test]
+fn the_second_racer_keeps_the_overlap_rule() {
+    let tasks = [
+        task("t1", "M", "a", RACING),
+        task_toml("t2", "M", "[\"crates/a/src/**\"]", ""),
+    ];
+    let fx = launched(PROFILE, &tasks, config::Orchestrator::default());
+    assert_eq!(fx.task("t2").implicit_deps, ["t1"]);
+    assert_eq!(fx.task("t2").state, TaskState::Pending);
+    let t1 = fx.task("t1");
+    assert!(t1.race.is_none(), "{:?}", t1.race);
+    let note = "race skipped: a codex racer would overlap an unfinished task's owns";
+    assert!(t1.notes.iter().any(|n| n == note), "{:?}", t1.notes);
+}
