@@ -229,6 +229,15 @@ fn the_state_survives_save_and_load() {
         texts: Vec::new(),
         // Task M9.6.8 fix round 1 (ruling T8-1): a held draft is never written either.
         held: Vec::new(),
+        // Ruling T8-2: the pack's frozen inputs.
+        pack: Some(crate::run::design::pack::FrozenPack {
+            reports: vec!["s1".into()],
+            earlier: Some(crate::run::design::pack::EarlierSpec {
+                run: "prev-run-0001".into(),
+                path: "/tmp/data/runs/prev-run-0001/design/spec-v1.md".into(),
+                version: version(DocKind::Spec, 1),
+            }),
+        }),
     };
     let mut run = old_run();
     run.design_mode = DesignMode::Full;

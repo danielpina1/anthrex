@@ -11,6 +11,7 @@ use proto::{AgentRole, DocAuthor, DocFinding, DocGateKind, DocKind, Route, RunSt
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub use super::pack::FrozenPack;
 pub use super::requirements::Requirement;
 use super::requirements::scan;
 use super::template::kind_name;
@@ -64,6 +65,9 @@ pub struct DesignState {
     /// other brainstormer runs; a restore relaunches its brainstormer instead.
     #[serde(skip)]
     pub held: Vec<(String, String)>,
+    /// Ruling T8-2: the brainstormers' pack inputs, frozen when they were queued.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack: Option<FrozenPack>,
 }
 
 fn is_zero(n: &u32) -> bool {

@@ -140,8 +140,20 @@ fn a_chained_goals_pack_carries_the_previous_spec() {
     let prev = previous("next-run-0002");
     let mut runs = BTreeMap::new();
     runs.insert(prev.id.clone(), prev.clone());
-    let (id, n, path) = previous_spec(runs.values(), "next-run-0002").expect("a previous spec");
+    let earlier = previous_spec(runs.values(), "next-run-0002").expect("a previous spec");
+    let (id, n, path) = (earlier.run, earlier.version.n, earlier.path);
     assert_eq!((id.as_str(), n), ("prev-run-0001", 1));
+    let stored = prev
+        .orch
+        .design
+        .as_ref()
+        .unwrap()
+        .find(DocKind::Spec, Some(1));
+    assert_eq!(
+        Some(&earlier.version),
+        stored,
+        "its index entry, with its sha"
+    );
     assert_eq!(
         path,
         PathBuf::from("/tmp/data/runs/prev-run-0001/design/spec-v1.md")

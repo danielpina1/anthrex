@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use super::orch::refuse;
 use super::requests::log;
 use super::{Effect, ReplyId, design_gate, wake};
+use crate::run::design::pack::EarlierSpec;
 use crate::run::design::requirements;
 use crate::run::design::state::{
     DesignAgentState, DesignState, NewDoc, Revision, gate_doc, not_design,
@@ -82,7 +83,7 @@ pub(super) fn tool(
     run: &mut Run,
     reply: ReplyId,
     call: &ToolCall,
-    parsed: OrchCall,
+    (parsed, earlier): (OrchCall, Option<EarlierSpec>),
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Option<OrchCall> {
@@ -110,7 +111,7 @@ pub(super) fn tool(
         return None;
     }
     let result = match parsed {
-        OrchCall::StartBrainstorm { answers } => start_brainstorm(run, &answers, now),
+        OrchCall::StartBrainstorm { answers } => start_brainstorm(run, &answers, earlier, now),
         OrchCall::SubmitDoc(doc) => submit_doc(run, doc, now, fx),
         other => return Some(other),
     };
@@ -125,8 +126,13 @@ pub(super) fn tool(
 }
 
 /// DF §2: the user's answers, and the brainstormers' launch (task M9.6.8), once, in
-/// brainstorming only.
-fn start_brainstorm(run: &mut Run, answers: &str, now: u64) -> Result<Value, String> {
+/// brainstorming only, with the pack's inputs frozen (`earlier`, ruling T8-2).
+fn start_brainstorm(
+    run: &mut Run,
+    answers: &str,
+    earlier: Option<EarlierSpec>,
+    now: u64,
+) -> Result<Value, String> {
     if run.state != RunState::Brainstorming {
         return Err("start_brainstorm is only for the brainstorming phase".into());
     }
@@ -143,7 +149,7 @@ fn start_brainstorm(run: &mut Run, answers: &str, now: u64) -> Result<Value, Str
     }
     design.answers = Some(safe_text::multi_line(answers));
     log(run, now, "the orchestrator started the brainstorm");
-    super::design_agents::queue_brainstormers(run, now);
+    super::design_agents::queue_brainstormers(run, earlier, now);
     Ok(json!({"accepted": true}))
 }
 

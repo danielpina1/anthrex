@@ -5,7 +5,7 @@
 //! them; a restart relaunches a running one fresh. Their sessions are stubbed by their
 //! ops' results and their ended events.
 
-use proto::{AgentRole, Runtime, TokenUsage, ToolCall};
+use proto::{AgentRole, DocAuthor, DocKind, Runtime, TokenUsage, ToolCall};
 use serde_json::{Value, json};
 
 use super::design_fixture::*;
@@ -226,6 +226,43 @@ fn brainstormers_hold_reader_slots_and_wait_for_them() {
         "the slot is free once the draft is in"
     );
     assert_eq!(launches(&fx)[1].1.kind.label(), "codex");
+}
+
+/// Ruling T8-2: the pack's inputs are frozen when the brainstormers are queued, a
+/// continued goal's previous spec with its index entry: a run scout's report that lands
+/// between the two starts (one reader slot) is not among them.
+#[test]
+fn the_pack_inputs_are_frozen_when_the_brainstormers_are_queued() {
+    use crate::run::design::pack::EarlierSpec;
+    use crate::run::design::state::{self, DesignState, NewDoc};
+    let mut fx = design_launched(false);
+    let mut prev = fx.run().clone();
+    prev.id = "prev-run-0001".into();
+    prev.state = proto::RunState::Complete;
+    prev.continued_by = Some(RUN_ID.into());
+    prev.orch.design = Some(DesignState::default());
+    let doc = NewDoc::new(DocKind::Spec, DocAuthor::Orchestrator, "submitted", DRAFT);
+    let (version, _) = state::store(&mut prev, doc, 5).unwrap();
+    let path = state::design_dir(&prev).join("spec-v1.md");
+    fx.state.runs.insert(prev.id.clone(), prev);
+    fx.run_mut().limits.max_readers = 1;
+    fx.run_mut().scout_reports = vec!["s1".into()];
+    start_brainstorm(&mut fx);
+    let expected = crate::run::design::pack::FrozenPack {
+        reports: vec!["s1".into()],
+        earlier: Some(EarlierSpec {
+            run: "prev-run-0001".into(),
+            path,
+            version,
+        }),
+    };
+    let frozen = |fx: &Fixture| fx.run().orch.design.as_ref().unwrap().pack.clone();
+    assert_eq!(frozen(&fx).as_ref(), Some(&expected));
+    started(&mut fx, "claude", CLAUDE);
+    fx.run_mut().scout_reports.push("s2".into());
+    answered(&submit_draft(&mut fx, CLAUDE, DRAFT));
+    assert_eq!(launches(&fx).len(), 2, "the second start");
+    assert_eq!(frozen(&fx), Some(expected));
 }
 
 /// DF §3.3: a draft is checked against its template; a refused one gets the exact

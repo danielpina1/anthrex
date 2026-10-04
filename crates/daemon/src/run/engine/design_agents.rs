@@ -31,6 +31,7 @@ use super::requests::log;
 use super::{
     Effect, EngineState, OpKind, OpResult, OrchEvent, ScoutEnd, design, emit_op, history, next_op,
 };
+use crate::run::design::pack::{EarlierSpec, freeze};
 use crate::run::design::state::{DesignAgent, DesignAgentState};
 use crate::run::model::Run;
 use crate::run::orch::roles;
@@ -55,12 +56,15 @@ pub(crate) fn readers(run: &Run) -> usize {
 }
 
 /// `start_brainstorm` was accepted: decision 10's two brainstormers, queued for reader
-/// slots.
-pub(super) fn queue_brainstormers(run: &mut Run, now: u64) {
+/// slots, and their pack's inputs frozen (ruling T8-2) with `earlier`, a continued
+/// goal's previous spec.
+pub(super) fn queue_brainstormers(run: &mut Run, earlier: Option<EarlierSpec>, now: u64) {
     let picks = brainstorm_picks(run);
+    let pack = freeze(run, earlier);
     let Some(design) = run.orch.design.as_mut() else {
         return;
     };
+    design.pack = Some(pack);
     design.brainstormers = (picks.iter())
         .map(|p| DesignAgent {
             label: p.label.clone(),

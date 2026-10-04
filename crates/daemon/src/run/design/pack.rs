@@ -1,8 +1,10 @@
 //! Milestone 9.6 decision 11 (DF §3.2): the brainstormers' input pack, the same for
-//! both. The driver reads what it holds off the engine (`driver/design_ops.rs`: the
-//! stored profile and the run's scout reports, as `get_context` reads them, and a
-//! continued goal's previous spec, checked against its index); this module only lays it
-//! out, so it is pure like the rest of `run/design/`.
+//! both. Its inputs are frozen when the brainstormers are queued ([`FrozenPack`],
+//! ruling T8-2): the run's scout report ids and a continued goal's previous spec. The
+//! driver reads them off the engine (`driver/design_ops.rs`: the stored profile and
+//! those reports, as `get_context` reads them, and the previous spec, checked against
+//! its frozen index entry); this module only lays it out, so it is pure like the rest
+//! of `run/design/`.
 //!
 //! **Prompt hygiene.** Every text is cleaned by `safe_text` before it reaches the
 //! prompt, and the repository-derived ones (reports, the profile, the earlier spec) sit
@@ -13,8 +15,9 @@
 use std::path::PathBuf;
 
 use proto::{DocGateKind, DocKind, RunState, ScoutReport, safe_text};
+use serde::{Deserialize, Serialize};
 
-use super::state::design_dir;
+use super::state::{DocVersion, design_dir};
 use super::template::{lines, section};
 use crate::run::contract::floor_boundary;
 use crate::run::model::Run;
@@ -122,19 +125,49 @@ fn indented(text: &str, n: usize) -> String {
         .join("\n")
 }
 
+/// Ruling T8-2: what the pack reads, frozen when the brainstormers are queued, so both
+/// starts, and any relaunch, read exactly the same (`DesignState::pack`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FrozenPack {
+    /// The run's scout reports then (`Run::scout_reports`), in order.
+    pub reports: Vec<String>,
+    /// A continued goal's previous approved spec then.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub earlier: Option<EarlierSpec>,
+}
+
+/// A continued goal's previous approved spec: its run, its file, and its index entry
+/// (its length and SHA-256), against which the file is read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EarlierSpec {
+    pub run: String,
+    pub path: PathBuf,
+    pub version: DocVersion,
+}
+
+/// Ruling T8-2: `run`'s pack inputs now, with `earlier` ([`previous_spec`]).
+pub fn freeze(run: &Run, earlier: Option<EarlierSpec>) -> FrozenPack {
+    FrozenPack {
+        reports: run.scout_reports.clone(),
+        earlier,
+    }
+}
+
 /// Decision 30: the spec a continued goal's pack carries: the run that `run_id`
 /// continued (`continued_by`), its latest spec gate version when that spec was
-/// approved, as `(run id, version, path)`.
+/// approved.
 pub fn previous_spec<'a>(
     runs: impl IntoIterator<Item = &'a Run>,
     run_id: &str,
-) -> Option<(String, u32, PathBuf)> {
+) -> Option<EarlierSpec> {
     let prev = (runs.into_iter()).find(|r| r.continued_by.as_deref() == Some(run_id))?;
     let design = prev.orch.design.as_ref()?;
     let version = design.find(DocKind::Spec, None).filter(|v| v.n > 0)?;
-    spec_approved(prev).then(|| {
-        let path = design_dir(prev).join(design.file_name(version));
-        (prev.id.clone(), version.n, path)
+    spec_approved(prev).then(|| EarlierSpec {
+        run: prev.id.clone(),
+        path: design_dir(prev).join(design.file_name(version)),
+        version: version.clone(),
     })
 }
 

@@ -220,6 +220,10 @@ pub(super) fn tool(
     let EngineState {
         runs, quiet_base, ..
     } = state;
+    // Milestone 9.6 ruling T8-2: the pack's previous spec, frozen at the brainstorm's start.
+    let earlier = (call.tool == "start_brainstorm")
+        .then(|| crate::run::design::pack::previous_spec(runs.values(), &call.run_id))
+        .flatten();
     let Some(run) = runs.get_mut(&call.run_id) else {
         return refuse(fx, reply, format!("unknown run {}", call.run_id));
     };
@@ -266,7 +270,7 @@ pub(super) fn tool(
         Ok(parsed) => parsed,
         Err(text) => return refuse(fx, reply, text),
     };
-    let Some(parsed) = super::design::tool(run, reply, call, parsed, now, fx) else {
+    let Some(parsed) = super::design::tool(run, reply, call, (parsed, earlier), now, fx) else {
         return;
     };
     match parsed {
