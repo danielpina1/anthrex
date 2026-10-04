@@ -62,7 +62,9 @@ fn a_racing_tasks_snapshot_names_its_lanes_and_winner() {
             .is_some_and(|l| l.state == LaneState::Lost);
         complete(run) && lost
     };
-    let run = h.wait_run(&id, done, RUN_WAIT);
+    // Whole-branch review C, I-1: the race rows' bound (`run_e2e_race.rs`): the lanes
+    // side by side, then the crown and merge, plus the loser's exit wait and salvage.
+    let run = h.wait_run(&id, done, 2 * RUN_WAIT);
     let t1 = t(&run, "t1");
     assert_eq!(t1.state, TaskState::Merged);
     let race = t1.race.as_ref().expect("the race is still shown");
@@ -126,7 +128,9 @@ fn a_paired_tasks_snapshot_shows_the_writer_then_the_implementer() {
         "test_mode = \"tdd\"\n",
     );
     let id = h.start(&pair_plan(paired), true);
-    let run = h.wait_run(&id, complete, RUN_WAIT);
+    // Whole-branch review C, I-1: the pair rows' bound (`run_e2e_pair.rs`): the
+    // writer's path, then the implementer's (k = 2).
+    let run = h.wait_run(&id, complete, 2 * RUN_WAIT);
     let t1 = t(&run, "t1");
     assert_eq!(t1.state, TaskState::Merged);
     let pair = t1.pair.as_ref().expect("the pair");
