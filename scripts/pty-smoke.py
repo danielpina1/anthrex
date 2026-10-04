@@ -102,7 +102,9 @@ ENV["ANTHREX_GIT"] = "off"
 # is what makes that an enforced invariant instead of a hope. See the M6.12/fix-wave-11
 # reviews for why a fixed, silently-poisonable path was a Major finding: a stray file
 # here used to fail stage 2 with "timed out waiting for 'new-agent form'", an error that
-# named the form, never this path.
+# named the form, never this path. Since milestone 9.6, `main` writes one table there
+# before any stage, after that check: `[orchestrator.design] default = "off"`, which
+# binds no key (see `write_design_off_config`).
 #
 # Whole-branch-review m20: the path used to be `/tmp/anthrex-smoke-data/config.toml`
 # with no pid in it, the one piece of shared mutable state left after fix wave 11 —
@@ -1292,8 +1294,26 @@ def run_conversation_view_stage():
     )
 
 
+# Milestone 9.6 ruling T3-2: this suite's planned goals (stage 11f) run with the design
+# flow off, as before 9.6. `main` writes the table to `ANTHREX_CONFIG` once the path is
+# proven absent and before any daemon starts; it changes no key bindings. Stage 11t's
+# Settings save edits this file and then removes it, as 12b does its own; the module's
+# `finally` removes it only when this run wrote it and it is still there.
+DESIGN_OFF_CONFIG = '[orchestrator.design]\ndefault = "off"\n'
+WROTE_DESIGN_OFF_CONFIG = False
+
+
+def write_design_off_config():
+    global WROTE_DESIGN_OFF_CONFIG
+    os.makedirs(RESUME_CONFIG_DIR, exist_ok=True)
+    with open(ANTHREX_CONFIG_PATH, "x", encoding="utf-8") as handle:
+        handle.write(DESIGN_OFF_CONFIG)
+    WROTE_DESIGN_OFF_CONFIG = True
+
+
 def main():
     ensure_config_path_absent()
+    write_design_off_config()
     ensure_binary()
     write_fake_agent_script()
 
@@ -1838,7 +1858,10 @@ if __name__ == "__main__":
         # W1 and W2's fixture repository is not the daemon's data, so it is removed
         # unconditionally, keep-flag or not.
         shutil.rmtree(SMOKE_REPO, ignore_errors=True)
-        # ANTHREX_CONFIG's own fixed-path directory is deliberately *not* removed
+        # The design-off config `main` wrote, if a failure left it in place.
+        if WROTE_DESIGN_OFF_CONFIG:
+            shutil.rmtree(RESUME_CONFIG_DIR, ignore_errors=True)
+        # ANTHREX_CONFIG's own fixed-path directory is otherwise deliberately *not* removed
         # here. Unlike DATA_DIR and SMOKE_REPO, this run does not necessarily own
         # whatever is (or isn't) at that path — `ensure_config_path_absent` may have
         # failed before anything below ever ran, in which case a stray file there was

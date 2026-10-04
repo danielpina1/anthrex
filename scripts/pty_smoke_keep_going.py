@@ -86,9 +86,11 @@ SHELL = "kg-smoke"
 # The scripted orchestrator; a chain's later runs keep its session (decision 23).
 ORCH = "orchestrator-run-1"
 
+# Milestone 9.6 ruling T3-2: the design flow is off, so the goal plans at once.
 CONFIG = """[orchestrator]
 git_timeout_secs = {git}
 wake_quiet_secs = 1
+design.default = "off"
 planners.timeout_secs = 120
 {unconfined}
 [orchestrator.profile]

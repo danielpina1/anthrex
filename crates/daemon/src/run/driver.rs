@@ -169,18 +169,17 @@ fn abort_after() -> Option<(String, u32)> {
 
 impl RunService {
     /// A service for `manager` with the default `[orchestrator]` and its data under
-    /// `data_dir`: what a daemon built without `lifecycle::run` (a test's) needs.
+    /// `data_dir`: what a daemon built without `lifecycle::run` (a test's) needs. Its
+    /// design flow is off (milestone 9.6 ruling T3-2), so a planned goal plans at once,
+    /// as before 9.6; a test of the flow builds its own context.
     pub fn for_manager(
         manager: &Arc<WindowManager>,
         data_dir: PathBuf,
         git_roots: Arc<dyn GitRoots>,
     ) -> Arc<Self> {
-        let ctx = RunContext::new(
-            data_dir,
-            manager.config(),
-            config::Orchestrator::default(),
-            git_roots,
-        );
+        let mut orchestrator = config::Orchestrator::default();
+        orchestrator.design.default = proto::DesignMode::Off;
+        let ctx = RunContext::new(data_dir, manager.config(), orchestrator, git_roots);
         Self::new(manager.clone(), ctx)
     }
 

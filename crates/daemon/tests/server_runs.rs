@@ -337,6 +337,8 @@ async fn rig_on(
     });
     let mut orchestrator = config::Orchestrator::default();
     orchestrator.deciders.mode = mode;
+    // Milestone 9.6 ruling T3-2: the design flow is off unless a test opts in.
+    orchestrator.design.default = proto::DesignMode::Off;
     let ctx = RunContext::new(
         data.clone(),
         manager.config(),

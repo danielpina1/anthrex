@@ -174,11 +174,12 @@ impl RunHarness {
             } else {
                 format!("unconfined_checks = true\n{orchestrator}")
             };
-        // M8b decision 36: deciders off and no automatic onboarding, unless the test's
-        // lines say otherwise, so every M8a scenario runs exactly as before.
+        // M8b decision 36 and 9.6 ruling T3-2: deciders, automatic onboarding and the
+        // design flow off unless the test's lines say otherwise, so older scenarios hold.
         for (table, line) in [
             ("deciders", "deciders.mode = \"off\""),
             ("onboarding", "onboarding.auto = false"),
+            ("design", "design.default = \"off\""),
         ] {
             if !orchestrator.contains(table) {
                 orchestrator = format!("{line}\n{orchestrator}");

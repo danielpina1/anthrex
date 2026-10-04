@@ -261,10 +261,12 @@ pub(in crate::run::driver) fn context(
     manager: &Arc<WindowManager>,
     wiring: &GitWiring,
 ) -> RunContext {
-    let orch_config = config::Orchestrator {
+    // Milestone 9.6 ruling T3-2: the design flow is off unless a test opts in.
+    let mut orch_config = config::Orchestrator {
         git_timeout_secs: GIT_TIMEOUT_SECS,
         ..config::Orchestrator::default()
     };
+    orch_config.design.default = proto::DesignMode::Off;
     let data = checkout.tmp.path().join("data");
     let mut ctx = RunContext::new(data, manager.config(), orch_config, wiring.registry.clone())
         .with_host(checkout.host());

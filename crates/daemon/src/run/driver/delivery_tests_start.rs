@@ -55,12 +55,14 @@ fn run_refs(dir: &Path) -> String {
 const RIG_GIT_TIMEOUT_SECS: u64 = 5;
 
 /// The orchestrator config of every service here: the default with
-/// [`RIG_GIT_TIMEOUT_SECS`].
+/// [`RIG_GIT_TIMEOUT_SECS`], and the design flow off (milestone 9.6 ruling T3-2).
 fn rig_config() -> config::Orchestrator {
-    config::Orchestrator {
+    let mut config = config::Orchestrator {
         git_timeout_secs: RIG_GIT_TIMEOUT_SECS,
         ..config::Orchestrator::default()
-    }
+    };
+    config.design.default = proto::DesignMode::Off;
+    config
 }
 
 /// The git calls of a `pr` goal's start at most, counted in the code (ruling T9-6):
