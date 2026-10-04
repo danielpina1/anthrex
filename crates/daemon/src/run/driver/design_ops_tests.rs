@@ -316,3 +316,50 @@ async fn the_rounds_pack_is_written_once_and_every_start_sends_it() {
     let missing = rig.runs.brainstorm_pack(&rig.run_id).await.unwrap_err();
     assert!(missing.contains("pack-r1.md"), "{missing}");
 }
+
+/// Fix round 2: when the canonical paths cannot be resolved in time, the paths as
+/// given are denied, and the fallback is logged as a warning.
+#[tokio::test]
+async fn a_denial_that_cannot_be_resolved_in_time_is_warned() {
+    use crate::run::driver::design_ops::resolved_by;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    #[derive(Clone, Default)]
+    struct Log(Arc<Mutex<Vec<u8>>>);
+    impl Write for Log {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            crate::lock(&self.0).extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let log = Log::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    // The resolver blocks until the test releases it, after the wait has passed, so no
+    // scheduling stall can let it finish in time.
+    static RELEASED: (Mutex<bool>, std::sync::Condvar) =
+        (Mutex::new(false), std::sync::Condvar::new());
+    fn stuck(_: &std::path::Path) -> Option<std::path::PathBuf> {
+        let mut released = crate::lock(&RELEASED.0);
+        while !*released {
+            released = RELEASED.1.wait(released).unwrap_or_else(|e| e.into_inner());
+        }
+        Some("/elsewhere".into())
+    }
+    let given = vec![std::path::PathBuf::from("/data/runs/r1/design")];
+    let wait = std::time::Duration::from_millis(20);
+    let denied = resolved_by(given.clone(), stuck, wait).await;
+    *crate::lock(&RELEASED.0) = true;
+    RELEASED.1.notify_all();
+    assert_eq!(denied, given);
+    let text = String::from_utf8(crate::lock(&log.0).clone()).unwrap();
+    assert!(text.contains("WARN"), "{text}");
+    assert!(text.contains("denied as given"), "{text}");
+}

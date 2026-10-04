@@ -14,6 +14,7 @@ use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use proto::{Runtime, TokenUsage};
 
@@ -214,13 +215,22 @@ pub(super) fn deny_codex_sessions(spec: &mut DesignAgentSpec, sessions: Option<P
 
 /// Ruling T8-3: each denied folder by its path as given and by its canonical path, so
 /// a symlinked data dir (macOS's `/tmp`) is denied however a session names it. Resolved
-/// on `spawn_blocking` within `IO_WAIT`; past it, the paths as given.
+/// on `spawn_blocking` within `IO_WAIT`; past it, the paths as given, with a warning.
 pub(super) async fn with_canonical(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    resolved_by(paths, canonical, IO_WAIT).await
+}
+
+/// [`with_canonical`] with its resolver and its wait.
+pub(super) async fn resolved_by(
+    paths: Vec<PathBuf>,
+    resolve: fn(&Path) -> Option<PathBuf>,
+    wait: Duration,
+) -> Vec<PathBuf> {
     let given = paths.clone();
     let resolve = tokio::task::spawn_blocking(move || {
         let mut out: Vec<PathBuf> = Vec::new();
         for path in paths {
-            let real = canonical(&path);
+            let real = resolve(&path);
             out.push(path);
             if let Some(real) = real.filter(|r| !out.contains(r)) {
                 out.push(real);
@@ -228,10 +238,15 @@ pub(super) async fn with_canonical(paths: Vec<PathBuf>) -> Vec<PathBuf> {
         }
         out
     });
-    match tokio::time::timeout(IO_WAIT, resolve).await {
-        Ok(Ok(out)) => out,
-        _ => given,
-    }
+    let why = match tokio::time::timeout(wait, resolve).await {
+        Ok(Ok(out)) => return out,
+        Ok(Err(error)) => error.to_string(),
+        Err(_) => format!("not resolved within {} ms", wait.as_millis()),
+    };
+    // Fix round 2: the fallback is visible.
+    let shown: Vec<String> = given.iter().map(|p| p.display().to_string()).collect();
+    tracing::warn!(paths = ?shown, %why, "a design agent's read denials are denied as given");
+    given
 }
 
 /// `path` canonical: a folder not made yet (a run's design folder before its first
