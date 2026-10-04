@@ -185,6 +185,7 @@ fn the_state_survives_save_and_load() {
             tokens: 900,
             started: Some(3_000),
             listed: false,
+            unsubmitted: false,
         }],
         reviewer: Some(DesignAgent {
             label: "spec-r1".into(),
@@ -197,6 +198,7 @@ fn the_state_survives_save_and_load() {
             tokens: 100,
             started: None,
             listed: false,
+            unsubmitted: false,
         }),
         reviews: vec![DocReviewRecord {
             doc: DocKind::Spec,

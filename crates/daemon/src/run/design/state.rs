@@ -139,6 +139,10 @@ pub struct DesignAgent {
     /// its routing record's source says (fix round 1, m3).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub listed: bool,
+    /// Ruling T8-7: its previous attempt ended without submitting (a Codex design agent,
+    /// never nudged), so this one is its one relaunch, told so in its first turn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unsubmitted: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

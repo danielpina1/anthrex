@@ -18,6 +18,7 @@ fn planner(max_tool_calls: u32) -> ScoutLimits {
         timeout_secs: 2400,
         max_tool_calls,
         send_mid_turn: true,
+        nudges: true,
         texts: PLANNER_TEXTS,
     }
 }

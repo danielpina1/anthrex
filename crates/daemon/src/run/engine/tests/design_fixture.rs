@@ -144,6 +144,7 @@ fn brainstormer(label: &str, runtime: Runtime) -> DesignAgent {
         tokens: 0,
         started: None,
         listed: false,
+        unsubmitted: false,
     }
 }
 

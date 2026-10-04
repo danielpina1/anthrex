@@ -37,7 +37,8 @@ use crate::run::design::state::{DesignAgent, DesignAgentState};
 use crate::run::model::Run;
 use crate::run::orch::roles;
 use crate::run::orch::roles::lists::{brainstorm_picks_with, unsaved_missing};
-use crate::scout::design_spec::{DesignAgentSpec, brainstormer_spec};
+use crate::scout::design_spec::{BRAINSTORMER_TEXTS, DesignAgentSpec, brainstormer_spec};
+use crate::scout::machine::unsubmitted;
 
 /// A brainstormer's session that ended with no accepted draft and no failure of its own.
 pub const NO_DRAFT: &str = "the brainstormer ended without an accepted draft";
@@ -90,6 +91,7 @@ pub(super) fn queue_brainstormers(
             tokens: 0,
             started: None,
             listed: p.listed,
+            unsubmitted: false,
         })
         .collect();
     let named: Vec<String> = (picks.iter())
@@ -277,6 +279,9 @@ pub(super) fn ended(
     history::close_session(run, (AgentRole::Brainstormer, &record), closed, fx);
     let running = (run.orch.design.as_ref())
         .is_some_and(|d| d.brainstormers[k].state == DesignAgentState::Running);
+    if running && reason == unsubmitted(&BRAINSTORMER_TEXTS) {
+        return relaunch::once(run, k, now, fx);
+    }
     if running {
         fail(run, k, reason, now, fx);
     }
@@ -434,4 +439,6 @@ mod drafts;
 pub(super) use drafts::tool;
 #[path = "design_pack.rs"]
 mod pack;
+#[path = "design_relaunch.rs"]
+mod relaunch;
 pub(super) use pack::awaiting_drafts;

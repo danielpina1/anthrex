@@ -126,6 +126,14 @@ impl DesignAgentKind {
         }
     }
 
+    /// The role's submission tool, as its contract names it (ruling T8-7's line).
+    pub fn submit_tool(&self) -> &'static str {
+        match self {
+            DesignAgentKind::Brainstormer { .. } => "submit_doc",
+            DesignAgentKind::DocReviewer { .. } => "submit_findings",
+        }
+    }
+
     fn texts(&self) -> MachineTexts {
         match self {
             DesignAgentKind::Brainstormer { .. } => BRAINSTORMER_TEXTS,
@@ -186,9 +194,14 @@ pub fn brainstormer_spec(run: &Run, agent: &DesignAgent) -> DesignAgentSpec {
         sandbox.deny_read.push(design_dir(run));
     }
     let budget = run.limits.orch.design.brainstormer;
+    let mut first_turn = brainstormer_first_turn(&agent.label);
+    // Ruling T8-7: the one relaunch after an attempt that ended without submitting.
+    if agent.unsubmitted {
+        first_turn = format!("{first_turn}\n{}", resubmit_line(kind.submit_tool()));
+    }
     DesignAgentSpec {
         run_id: run.id.clone(),
-        first_turn: brainstormer_first_turn(&agent.label),
+        first_turn,
         kind,
         session: agent.session,
         headless,
@@ -197,6 +210,25 @@ pub fn brainstormer_spec(run: &Run, agent: &DesignAgent) -> DesignAgentSpec {
         route: agent.route.clone(),
         max_tool_calls: budget.tool_calls,
         timeout_secs: u64::from(budget.minutes) * 60,
+    }
+}
+
+/// Ruling T8-7: the line a relaunched design agent's first turn ends with, after its
+/// previous attempt ended without submitting.
+pub fn resubmit_line(tool: &str) -> String {
+    format!("Your previous attempt ended without submitting; submit it now with {tool}.")
+}
+
+/// A design agent's machine limits: its budget, and (ruling T8-7) a nudge by resumed
+/// turn only on Claude; a Codex design agent's session is never resumed.
+pub fn design_limits(spec: &DesignAgentSpec) -> ScoutLimits {
+    let claude = spec.route.runtime == proto::Runtime::Claude;
+    ScoutLimits {
+        timeout_secs: spec.timeout_secs,
+        max_tool_calls: spec.max_tool_calls,
+        send_mid_turn: claude,
+        nudges: claude,
+        texts: spec.kind.texts(),
     }
 }
 
@@ -258,12 +290,7 @@ impl ScoutService {
             role: spec.kind.role(),
             epic: spec.kind.label(),
             session: spec.session,
-            limits: ScoutLimits {
-                timeout_secs: spec.timeout_secs,
-                max_tool_calls: spec.max_tool_calls,
-                send_mid_turn: spec.route.runtime == proto::Runtime::Claude,
-                texts: spec.kind.texts(),
-            },
+            limits: design_limits(&spec),
         };
         // The table's bookkeeping spec: a design agent stores no report.
         let entry = ScoutSpec {

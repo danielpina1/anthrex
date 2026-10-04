@@ -88,6 +88,7 @@ impl ScoutService {
                 timeout_secs: spec.timeout_secs,
                 max_tool_calls: spec.max_tool_calls,
                 send_mid_turn: spec.route.runtime == proto::Runtime::Claude,
+                nudges: true,
                 texts: PLANNER_TEXTS,
             },
         };

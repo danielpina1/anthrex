@@ -37,6 +37,7 @@ fn agent(label: &str, runtime: Runtime) -> DesignAgent {
         tokens: 0,
         started: Some(1_000),
         listed: false,
+        unsubmitted: false,
     }
 }
 
@@ -200,6 +201,7 @@ fn a_brainstormer_over_budget_fails() {
         timeout_secs: 900,
         max_tool_calls: 40,
         send_mid_turn: true,
+        nudges: true,
         texts: BRAINSTORMER_TEXTS,
     };
     let (mut machine, _) = step(Default::default(), ScoutEvent::Start { now: 0 }, &limits);
@@ -236,6 +238,7 @@ fn an_unbound_design_session_is_named_by_its_role_and_label() {
         timeout_secs: 1,
         max_tool_calls: 1,
         send_mid_turn: false,
+        nudges: true,
         texts: BRAINSTORMER_TEXTS,
     };
     let tag = |role, key: &str| crate::scout::planner::PlannerTag {
@@ -292,4 +295,39 @@ fn a_design_agents_session_is_not_saved() {
             assert!(saved(args), "{role:?}");
         }
     }
+}
+
+/// Ruling T8-7: a Codex design agent's turn that ends without its submission is not
+/// nudged (no resumed turn); it fails as `unsubmitted`, for the engine to relaunch it
+/// fresh. A Claude design agent keeps the nudge. Every Codex design turn's argv carries
+/// `--ephemeral`.
+#[test]
+fn a_codex_design_agent_is_never_resumed_and_a_claude_one_is_nudged() {
+    use crate::headless::argv::codex_args;
+    use crate::scout::machine::{ScoutEffect, unsubmitted};
+    let run = run();
+    let ended = |runtime, label| {
+        let spec = brainstormer_spec(&run, &agent(label, runtime));
+        let limits = design_limits(&spec);
+        let (machine, _) = step(Default::default(), ScoutEvent::Start { now: 0 }, &limits);
+        step(machine, ScoutEvent::TurnEnded { usage: None }, &limits)
+    };
+    let (claude, effects) = ended(Runtime::Claude, "claude");
+    assert_eq!(effects, [ScoutEffect::Send(BRAINSTORMER_NUDGE.into())]);
+    assert_eq!(claude.failure, None);
+    let (codex, effects) = ended(Runtime::Codex, "codex");
+    assert!(
+        !effects.iter().any(|e| matches!(e, ScoutEffect::Send(_))),
+        "{effects:?}"
+    );
+    let reason = "the brainstormer ended its turn without an accepted draft";
+    assert_eq!(unsubmitted(&BRAINSTORMER_TEXTS), reason);
+    assert_eq!(codex.failure.as_deref(), Some(reason));
+    let spec = brainstormer_spec(&run, &agent("codex", Runtime::Codex)).headless;
+    let resume = SessionArg::Resume {
+        session_id: "th-1".into(),
+    };
+    let (exe, sock) = (Path::new("/opt/anthrex"), Path::new("/tmp/sock"));
+    let args = codex_args(&spec, &resume, "go", exe, 7, sock, &CLI_CAPS);
+    assert!(args.contains(&"--ephemeral".to_string()), "{args:?}");
 }
