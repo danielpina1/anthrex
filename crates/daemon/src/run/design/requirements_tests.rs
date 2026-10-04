@@ -93,22 +93,61 @@ fn a_gap_or_a_repeat_is_refused_exactly() {
                 .to_string()
         )
     );
-    // No requirement at all.
-    assert_eq!(
-        parse(&spec("prose only\n")),
-        Err("requirements must be numbered R1 to R1 without gaps; found none".to_string())
-    );
-    assert_eq!(
-        parse("# Title\n\n## Design\n\nR1 outside\n"),
-        Err("requirements must be numbered R1 to R1 without gaps; found none".to_string())
-    );
 }
 
+/// Ruling T4-1: a spec without a single R-line in its Requirements section.
 #[test]
-fn leading_zeros_are_read_as_their_number() {
+fn a_spec_without_requirements_is_refused_exactly() {
+    let refused = Err("the spec has no requirements; write them as lines R1, R2, …".to_string());
+    assert_eq!(parse(&spec("prose only\n")), refused);
+    assert_eq!(parse("# Title\n\n## Design\n\nR1 outside\n"), refused);
+    assert_eq!(parse(&spec("```\nR1 fenced\n```\n")), refused);
+}
+
+/// Ruling T4-2: ids are kept as written, never normalised, so `R01` is not `R1`.
+#[test]
+fn ids_are_kept_as_written_and_a_leading_zero_fails_the_numbering() {
     assert_eq!(
         parse(&spec("R01 a\nR2 b\n")),
-        Ok(vec![req("R1", "a"), req("R2", "b")])
+        Err("requirements must be numbered R1 to R2 without gaps; found R01, R2".to_string())
+    );
+    assert_eq!(
+        parse_amendment(
+            "## Requirements\n\nR02 changed\n",
+            &[req("R1", "a"), req("R2", "b")]
+        ),
+        Err("the amendment must continue from R3".to_string())
+    );
+    assert_eq!(
+        parse_amendment(
+            "## Requirements\n\nR03 new\n",
+            &[req("R1", "a"), req("R2", "b")]
+        ),
+        Err("the amendment must continue from R3".to_string())
+    );
+    assert_eq!(scan(&spec("R01 a\n")), vec![req("R01", "a")]);
+}
+
+/// Review m6: two-digit ids, an indented R-line and CRLF line ends.
+#[test]
+fn ten_requirements_an_indented_line_and_crlf() {
+    let ten: String = (1..=10).map(|n| format!("R{n} text {n}\n")).collect();
+    let parsed = parse(&spec(&ten)).expect("R1 to R10 parse");
+    assert_eq!(parsed.len(), 10);
+    assert_eq!(parsed[9], req("R10", "text 10"));
+    assert_eq!(
+        parse(&spec("R1 a\nR10 b\n")),
+        Err("requirements must be numbered R1 to R2 without gaps; found R1, R10".to_string())
+    );
+    // An indented R-line does not match `^R(\d+)\b`: it continues the one before.
+    assert_eq!(
+        parse(&spec("R1 a\n  R2 indented\n")),
+        Ok(vec![req("R1", "a\n  R2 indented")])
+    );
+    let crlf = spec("R1 a\nmore of a\nR2 b\n").replace('\n', "\r\n");
+    assert_eq!(
+        parse(&crlf),
+        Ok(vec![req("R1", "a\nmore of a"), req("R2", "b")])
     );
 }
 

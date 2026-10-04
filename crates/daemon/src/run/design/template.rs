@@ -185,7 +185,9 @@ fn single_line(lines: &[DocLine<'_>], ctx: &TemplateCtx) -> Result<(), String> {
 }
 
 /// DF §3.4: every approach heading (`###` under Approaches) carries `[<label>]` or
-/// `[both]`, and the recommendation names a listed approach.
+/// `[both]`, and the recommendation names a listed approach: it holds the approach's
+/// name as a whole word or phrase, ignoring case, or exactly as written for a name
+/// under three characters (ruling T4-3).
 fn approaches(lines: &[DocLine<'_>], ctx: &TemplateCtx) -> Result<(), String> {
     let mut tags: Vec<String> = ctx.labels.iter().map(|l| format!("[{l}]")).collect();
     tags.push("[both]".to_string());
@@ -205,27 +207,37 @@ fn approaches(lines: &[DocLine<'_>], ctx: &TemplateCtx) -> Result<(), String> {
             };
             return Err(format!("approach \"{title}\" has no {named} tag"));
         }
-        names.push(approach_name(&lower, &lower_tags));
+        names.push(approach_name(title, &tags));
     }
     let recommendation: String = section(lines, "## Recommendation")
         .unwrap_or_default()
         .iter()
-        .map(|l| l.text.to_lowercase() + "\n")
+        .map(|l| l.text.to_string() + "\n")
         .collect();
-    if names
-        .iter()
-        .any(|n| !n.is_empty() && recommendation.contains(n.as_str()))
-    {
+    let lower = recommendation.to_lowercase();
+    let named = |name: &String| match name.chars().count() {
+        0 => false,
+        // Ruling T4-3: a name under three characters (`A`) only as written.
+        1 | 2 => has_word(&recommendation, name),
+        _ => has_word(&lower, &name.to_lowercase()),
+    };
+    if names.iter().any(named) {
         return Ok(());
     }
     Err("the recommendation must name one of the listed approaches".to_string())
 }
 
-/// An approach heading without its tags and its leading number (`2.` or `2)`).
-fn approach_name(lower_title: &str, lower_tags: &[String]) -> String {
-    let mut name = lower_title.to_string();
-    for tag in lower_tags {
-        name = name.replace(tag.as_str(), "");
+/// An approach heading without its tags (matched ignoring ASCII case) and its leading
+/// number (`2.` or `2)`), in the heading's own case.
+fn approach_name(title: &str, tags: &[String]) -> String {
+    let mut name = title.to_string();
+    for tag in tags {
+        let tag = tag.to_ascii_lowercase();
+        // ASCII lower-casing keeps every byte offset, so a match in the lowered copy
+        // is the same range of `name`.
+        while let Some(at) = name.to_ascii_lowercase().find(&tag) {
+            name.replace_range(at..at + tag.len(), "");
+        }
     }
     let name = name.trim();
     let digits = name.len() - name.trim_start_matches(|c: char| c.is_ascii_digit()).len();
@@ -245,19 +257,25 @@ pub(crate) struct DocLine<'a> {
     pub code: bool,
 }
 
-/// The lines of `text`, each knowing whether it sits in a ```` ``` ```` or `~~~` fence.
+/// The lines of `text`, each knowing whether it sits in a ```` ``` ```` or `~~~` fence
+/// (review m1, after CommonMark): a fence opens on a line starting with three or more
+/// of one marker character whose info string, for backticks, holds no backtick (so
+/// ```` ```cargo test``` ```` is inline code, not a fence); it closes only on a bare
+/// run of the same character at least as long as the opener's.
 pub(crate) fn lines(text: &str) -> Vec<DocLine<'_>> {
-    let mut fence: Option<&str> = None;
+    // The open fence: its character and its run's length.
+    let mut fence: Option<(char, usize)> = None;
     let mut out = Vec::new();
     for (i, text) in text.lines().enumerate() {
-        let trimmed = text.trim_start();
-        let marker = ["```", "~~~"].into_iter().find(|m| trimmed.starts_with(m));
-        let code = match (fence, marker) {
-            (None, Some(m)) => {
-                fence = Some(m);
+        let run = fence_run(text);
+        let code = match (fence, run) {
+            (None, Some((c, len, info))) if c == '~' || !info.contains('`') => {
+                fence = Some((c, len));
                 true
             }
-            (Some(open), Some(m)) if open == m => {
+            (Some((open, at_least)), Some((c, len, info)))
+                if c == open && len >= at_least && info.trim().is_empty() =>
+            {
                 fence = None;
                 true
             }
@@ -270,6 +288,15 @@ pub(crate) fn lines(text: &str) -> Vec<DocLine<'_>> {
         });
     }
     out
+}
+
+/// A line that starts (after spaces) with three or more backticks or tildes: the
+/// character, the run's length and the rest of the line.
+fn fence_run(line: &str) -> Option<(char, usize, &str)> {
+    let trimmed = line.trim_start();
+    let c = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let len = trimmed.len() - trimmed.trim_start_matches(c).len();
+    (len >= 3).then(|| (c, len, &trimmed[len..]))
 }
 
 /// A markdown heading outside code: its level and its trimmed text.
@@ -299,15 +326,44 @@ pub(crate) fn section<'a>(lines: &[DocLine<'a>], wanted: &str) -> Option<Vec<Doc
     Some(body)
 }
 
-/// `line` with each `` `inline code` `` span blanked out.
+/// `line` with each inline code span blanked out (review m7): a run of backticks opens
+/// a span that the next run of exactly the same length closes. A run with no closer is
+/// plain text, so a lone backtick hides nothing.
 fn without_inline_code(line: &str) -> String {
+    let runs = backtick_runs(line);
     let mut out = String::with_capacity(line.len());
-    for (i, part) in line.split('`').enumerate() {
-        // Even parts are prose, odd parts are inside backticks. An unclosed backtick
-        // leaves its tail as code, which can only hide a placeholder, never invent one.
-        out.push_str(if i % 2 == 0 { part } else { " " });
+    let mut copied = 0;
+    let mut k = 0;
+    while k < runs.len() {
+        let (start, len) = runs[k];
+        match runs[k + 1..].iter().position(|r| r.1 == len) {
+            Some(offset) => {
+                let (close, close_len) = runs[k + 1 + offset];
+                out.push_str(&line[copied..start]);
+                out.push(' ');
+                copied = close + close_len;
+                k += offset + 2;
+            }
+            None => k += 1,
+        }
     }
+    out.push_str(&line[copied..]);
     out
+}
+
+/// Each run of backticks in `line`: its byte offset and length.
+fn backtick_runs(line: &str) -> Vec<(usize, usize)> {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for (at, c) in line.char_indices() {
+        if c != '`' {
+            continue;
+        }
+        match runs.last_mut() {
+            Some((start, len)) if *start + *len == at => *len += 1,
+            _ => runs.push((at, 1)),
+        }
+    }
+    runs
 }
 
 /// `word` in `text` with no letter, digit or `_` on either side.
@@ -323,3 +379,7 @@ fn has_word(text: &str, word: &str) -> bool {
 #[cfg(test)]
 #[path = "template_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "template_tests_text.rs"]
+mod tests_text;

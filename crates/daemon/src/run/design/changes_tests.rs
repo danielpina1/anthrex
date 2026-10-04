@@ -164,3 +164,10 @@ fn a_large_diff_stays_correct_when_it_falls_back() {
     assert_eq!(diff.lines().filter(|l| l.starts_with('-')).count(), 7000);
     assert_eq!(diff.lines().filter(|l| l.starts_with('+')).count(), 7000);
 }
+
+/// Review m6: a missing final newline is no change.
+#[test]
+fn a_final_newline_alone_is_no_change() {
+    assert_eq!(line_diff("a", "a\n"), "");
+    assert_eq!(line_diff("a\n", "a"), "");
+}

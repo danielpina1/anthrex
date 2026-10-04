@@ -3,7 +3,7 @@
 
 use proto::{DesignMode, TaskState};
 
-use super::{BRIEF_HEADINGS, check, table};
+use super::{BRIEF_HEADINGS, check, missing_heading, table};
 use crate::run::design::requirements::Requirement;
 use crate::run::model::{Run, Task};
 use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};
@@ -153,5 +153,26 @@ fn the_table_maps_each_requirement_to_its_tasks_in_run_order() {
             ("R2".to_string(), vec!["t1".to_string()]),
             ("R3".to_string(), vec![]),
         ]
+    );
+}
+
+/// Review m8: the brief is read cleaned, and a heading inside a fenced block is not one.
+#[test]
+fn brief_headings_are_read_on_cleaned_text_outside_fences() {
+    let full = brief("x");
+    assert_eq!(missing_heading(&full), None);
+    // A lone CR separates lines once cleaned; a hidden format character is dropped.
+    let cr = full
+        .replace("Steps:\n", "Steps:\r")
+        .replace("Verify:", "Verify:\u{200b}");
+    assert_eq!(missing_heading(&cr), None);
+    // Headings only inside a fence are missing.
+    let fenced = full.replace("Steps:\n", "```\nSteps:\n```\n");
+    assert_eq!(missing_heading(&fenced), Some("Steps:"));
+    let mut run = design_run([&["R1"], &[], &[]]);
+    task_mut(&mut run, "t2").spec.brief = fenced;
+    assert_eq!(
+        check(&run, &reqs(&["R1"])),
+        Some("task t2's brief is missing the heading \"Steps:\"".to_string())
     );
 }

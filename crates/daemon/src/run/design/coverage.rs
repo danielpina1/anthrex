@@ -6,9 +6,10 @@
 //! The requirements are an argument: they are the approved spec's (`DesignState.
 //! requirements`, Review focus 2), which the engine passes in.
 
-use proto::{DesignMode, PlanTask, TaskState};
+use proto::{DesignMode, PlanTask, TaskState, safe_text};
 
 use super::requirements::Requirement;
+use super::template::lines;
 use crate::run::model::Run;
 
 /// Decision 19: the headings every brief of a design run has, each on its own line.
@@ -43,11 +44,15 @@ pub fn table(run: &Run, requirements: &[Requirement]) -> Vec<(String, Vec<String
         .collect()
 }
 
-/// The first of [`BRIEF_HEADINGS`] that `brief` lacks as a line of its own.
+/// The first of [`BRIEF_HEADINGS`] that `brief` lacks as a line of its own (review m8):
+/// read on the cleaned text (`safe_text::multi_line`, as every agent-written text is
+/// read), outside fenced code blocks.
 pub fn missing_heading(brief: &str) -> Option<&'static str> {
+    let cleaned = safe_text::multi_line(brief);
+    let lines = lines(&cleaned);
     BRIEF_HEADINGS
         .into_iter()
-        .find(|h| !brief.lines().any(|l| l.trim() == *h))
+        .find(|h| !lines.iter().any(|l| !l.code && l.text.trim() == *h))
 }
 
 fn live(run: &Run) -> Vec<&PlanTask> {

@@ -10,10 +10,14 @@ use super::template::{DocLine, heading, lines, section};
 /// Decision 14: a requirement's text is capped at 2 KiB.
 pub const TEXT_CAP: usize = 2 * 1024;
 
+/// Ruling T4-1: a spec whose Requirements section has no R-line.
+pub const NO_REQUIREMENTS: &str = "the spec has no requirements; write them as lines R1, R2, …";
+
 /// How many ids a numbering refusal lists before it stops.
 const LISTED: usize = 40;
 
-/// One requirement of a spec. `id` is `R<n>`, its number without leading zeros.
+/// One requirement of a spec. `id` is kept exactly as written (`R4`), never
+/// normalised (ruling T4-2): `R01` is not `R1`, and fails the numbering check.
 /// (Brief "Interfaces" places it in `state.rs`; it is defined here, beside its parser,
 /// and the design state holds it.)
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,12 +26,20 @@ pub struct Requirement {
     pub text: String,
 }
 
-/// A requirement line as written: its digits, its number (`None` past `u32`), and its
-/// text so far.
+/// A requirement line as written: its digits, its number (`None` with a leading zero
+/// or past `u32`), and its text so far.
 struct Found {
     digits: String,
     number: Option<u32>,
     text: String,
+}
+
+/// `digits` as a number, only when they are its canonical spelling: no leading zero.
+fn number(digits: &str) -> Option<u32> {
+    digits
+        .parse::<u32>()
+        .ok()
+        .filter(|n| n.to_string() == digits)
 }
 
 impl Found {
@@ -36,12 +48,8 @@ impl Found {
     }
 
     fn requirement(&self) -> Requirement {
-        let id = match self.number {
-            Some(n) => format!("R{n}"),
-            None => self.shown(),
-        };
         Requirement {
-            id,
+            id: self.shown(),
             text: capped(self.text.trim()),
         }
     }
@@ -49,24 +57,29 @@ impl Found {
 
 /// The spec's requirements, numbered `R1..Rn` in order without gaps or repeats, or the
 /// exact refusal `requirements must be numbered R1 to R<n> without gaps; found <list>`.
+/// A Requirements section without a single R-line is refused with exactly
+/// [`NO_REQUIREMENTS`] (ruling T4-1).
 pub fn parse(spec: &str) -> Result<Vec<Requirement>, String> {
     let found = find(spec);
+    if found.is_empty() {
+        return Err(NO_REQUIREMENTS.to_string());
+    }
     let in_order = found
         .iter()
         .enumerate()
         .all(|(i, f)| f.number.is_some_and(|n| n as usize == i + 1));
-    if in_order && !found.is_empty() {
+    if in_order {
         return Ok(found.iter().map(Found::requirement).collect());
     }
     let shown: Vec<String> = found.iter().take(LISTED).map(Found::shown).collect();
-    let list = match (shown.is_empty(), found.len() > LISTED) {
-        (true, _) => "none".to_string(),
-        (false, false) => shown.join(", "),
-        (false, true) => format!("{}, …", shown.join(", ")),
+    let list = if found.len() > LISTED {
+        format!("{}, …", shown.join(", "))
+    } else {
+        shown.join(", ")
     };
     Err(format!(
         "requirements must be numbered R1 to R{} without gaps; found {list}",
-        found.len().max(1)
+        found.len()
     ))
 }
 
@@ -77,7 +90,7 @@ pub fn parse(spec: &str) -> Result<Vec<Requirement>, String> {
 pub fn parse_amendment(text: &str, approved: &[Requirement]) -> Result<Vec<Requirement>, String> {
     let last = approved
         .iter()
-        .filter_map(|r| r.id.strip_prefix('R')?.parse::<u32>().ok())
+        .filter_map(|r| number(r.id.strip_prefix('R')?))
         .max()
         .unwrap_or(0);
     let refused = || format!("the amendment must continue from R{}", u64::from(last) + 1);
@@ -120,7 +133,7 @@ fn find(spec: &str) -> Vec<Found> {
     for line in &body {
         if let Some((digits, rest)) = start(line) {
             found.push(Found {
-                number: digits.parse().ok(),
+                number: number(digits),
                 digits: digits.to_string(),
                 text: rest.to_string(),
             });

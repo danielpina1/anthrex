@@ -84,7 +84,7 @@ Mail delays.
 ## Open questions
 ";
 
-fn two() -> TemplateCtx {
+pub(crate) fn two() -> TemplateCtx {
     TemplateCtx {
         labels: vec!["claude".into(), "codex".into()],
         failed: None,
