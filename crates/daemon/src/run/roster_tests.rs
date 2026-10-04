@@ -160,3 +160,39 @@ fn escalate_raises_effort_then_changes_runtime() {
     let escalated = escalate(&default_roster, &r);
     assert_eq!(escalated, r);
 }
+
+/// Milestone 9.6 decision 10 (task M9.6.8, carry M-4): the strongest roster entry of a
+/// runtime, `frontier` first and the first in roster order among ties, which is
+/// `resolve_orchestrator`'s own rule for the orchestrator's default model.
+#[test]
+fn strongest_of_takes_the_strongest_first_in_roster_order() {
+    let entry = |runtime, model: &str, strength| ModelEntry {
+        runtime,
+        model: model.into(),
+        strength,
+        note: String::new(),
+    };
+    let roster = vec![
+        entry(Runtime::Codex, "c-standard", Strength::Standard),
+        entry(Runtime::Claude, "a-standard", Strength::Standard),
+        entry(Runtime::Codex, "c-frontier-1", Strength::Frontier),
+        entry(Runtime::Codex, "c-frontier-2", Strength::Frontier),
+        entry(Runtime::Claude, "a-fast", Strength::Fast),
+        entry(Runtime::Claude, "a-standard-2", Strength::Standard),
+    ];
+    let model = |runtime| strongest_of(&roster, runtime).map(|e| e.model.as_str());
+    assert_eq!(model(Runtime::Codex), Some("c-frontier-1"));
+    assert_eq!(model(Runtime::Claude), Some("a-standard"));
+    assert_eq!(model(Runtime::Shell), None);
+    // The same entry decision 6 gives an orchestrator with no model configured.
+    let agent = config::AgentConfig::default();
+    for runtime in [Runtime::Claude, Runtime::Codex] {
+        for roster in [roster.clone(), config::default_roster()] {
+            let resolved =
+                crate::run::orch::launch::resolve_orchestrator(None, &agent, runtime, &roster)
+                    .unwrap();
+            let strongest = strongest_of(&roster, runtime).unwrap();
+            assert_eq!(resolved.route.model, strongest.model, "{runtime:?}");
+        }
+    }
+}

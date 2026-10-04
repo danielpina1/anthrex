@@ -285,3 +285,65 @@ fn reachable_runtimes_include_the_orchestrator_and_planners() {
         vec![Runtime::Claude, Runtime::Codex]
     );
 }
+
+/// Milestone 9.6 task M9.6.8 (task 3's concern 3): a design run's brainstormers and
+/// document reviewer reach their runtimes, so the start's checks cover them: by default
+/// the strongest model of each installed runtime and the orchestrator's peer; and every
+/// candidate of a `brainstorm` list.
+#[test]
+fn a_design_runs_brainstormers_and_reviewer_reach_their_runtimes() {
+    let both = vec![
+        entry(Runtime::Claude, "claude-opus-5", Strength::Frontier),
+        entry(Runtime::Codex, "gpt-6", Strength::Frontier),
+    ];
+    let mut run = run_of(
+        &config(both, true),
+        "S",
+        r#"["crates/a/**"]"#,
+        "claude",
+        "claude-opus-5",
+        "low",
+    );
+    run.tasks.clear();
+    run.orch.orchestrator = Some(crate::run::orch::OrchestratorRecord::new(
+        proto::Route {
+            runtime: Runtime::Claude,
+            model: "claude-opus-5".into(),
+            strength: Strength::Frontier,
+            effort: proto::Effort::High,
+        },
+        0,
+    ));
+    assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
+    run.design_mode = proto::DesignMode::Full;
+    assert_eq!(
+        reachable_runtimes(&run),
+        vec![Runtime::Claude, Runtime::Codex]
+    );
+    // Codex missing at the start: nothing of the flow reaches it.
+    run.orch.installed = [("codex".to_string(), false)].into();
+    assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
+    // A `brainstorm` list's every candidate can be taken.
+    run.orch.installed.clear();
+    run.roster.retain(|e| e.runtime == Runtime::Claude);
+    assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
+    run.roster
+        .push(entry(Runtime::Codex, "gpt-6", Strength::Frontier));
+    let lists = config::RouteLists {
+        brainstorm: config::RouteList {
+            candidates: vec![config::Candidate {
+                runtime: Runtime::Codex,
+                model: "gpt-6".into(),
+                effort: None,
+            }],
+            pick: config::Pick::First,
+        },
+        ..Default::default()
+    };
+    run.limits.route_lists = crate::run::model::RouteListsFrozen::freeze(&lists, &run.roster);
+    run.roster.retain(|e| e.runtime == Runtime::Claude);
+    assert_eq!(
+        reachable_runtimes(&run),
+        vec![Runtime::Claude, Runtime::Codex]
+    );
+}

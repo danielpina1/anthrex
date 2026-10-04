@@ -238,3 +238,125 @@ fn the_orchestrator_precedence() {
     );
     assert_eq!(Ok(got), before);
 }
+
+/// Milestone 9.6 decision 10: a run with a `brainstorm` list of `candidates`.
+fn brainstorm_run(candidates: Vec<Candidate>) -> Run {
+    let mut run = listed_run();
+    let lists = RouteLists {
+        brainstorm: RouteList {
+            candidates,
+            pick: Pick::First,
+        },
+        ..Default::default()
+    };
+    run.limits.route_lists = RouteListsFrozen::freeze(&lists, &run.roster);
+    run
+}
+
+fn picked(run: &Run) -> Vec<(String, String, Runtime)> {
+    (brainstorm_picks(run).into_iter())
+        .map(|p| (p.label, p.route.model, p.route.runtime))
+        .collect()
+}
+
+fn three(label: &str, model: &str, runtime: Runtime) -> (String, String, Runtime) {
+    (label.to_string(), model.to_string(), runtime)
+}
+
+/// Decision 10: a list's picks are its first two entries on different runtimes, else
+/// its first two; the labels are the runtimes' names on two runtimes, `A` and `B` on
+/// one; a candidate on a runtime the start found missing is passed over.
+#[test]
+fn a_route_list_picks_two_entries_on_different_runtimes_first() {
+    let sonnet = "claude-sonnet-5";
+    let run = brainstorm_run(vec![
+        cand(Runtime::Claude, HAIKU, None),
+        cand(Runtime::Claude, sonnet, None),
+        cand(Runtime::Codex, LUNA, Some(Effort::Low)),
+    ]);
+    assert_eq!(
+        picked(&run),
+        [
+            three("claude", HAIKU, Runtime::Claude),
+            three("codex", LUNA, Runtime::Codex)
+        ]
+    );
+    let picks = brainstorm_picks(&run);
+    assert_eq!(picks[1].route.effort, Effort::Low, "the candidate's effort");
+    let orchestrator = run.orch.orchestrator.as_ref().unwrap().route.effort;
+    assert_eq!(
+        picks[0].route.effort, orchestrator,
+        "else the orchestrator's"
+    );
+    assert!(picks.iter().all(|p| p.listed));
+    // One runtime in the list: its first two entries, with the lenses' labels.
+    let run = brainstorm_run(vec![
+        cand(Runtime::Claude, HAIKU, None),
+        cand(Runtime::Claude, sonnet, None),
+    ]);
+    assert_eq!(
+        picked(&run),
+        [
+            three("A", HAIKU, Runtime::Claude),
+            three("B", sonnet, Runtime::Claude)
+        ]
+    );
+    // A missing runtime's candidate is passed over.
+    let mut run = brainstorm_run(vec![
+        cand(Runtime::Codex, SOL, None),
+        cand(Runtime::Claude, HAIKU, None),
+        cand(Runtime::Claude, sonnet, None),
+    ]);
+    run.orch.installed = [("codex".to_string(), false)].into();
+    assert_eq!(
+        picked(&run),
+        [
+            three("A", HAIKU, Runtime::Claude),
+            three("B", sonnet, Runtime::Claude)
+        ]
+    );
+    // One usable entry runs twice, with the lenses.
+    let run = brainstorm_run(vec![cand(Runtime::Codex, SOL, None)]);
+    assert_eq!(
+        picked(&run),
+        [
+            three("A", SOL, Runtime::Codex),
+            three("B", SOL, Runtime::Codex)
+        ]
+    );
+}
+
+/// Decision 10 without a list: the strongest installed model of each installed runtime
+/// (`roster::strongest_of`), Claude's first; with one runtime, its strongest twice as
+/// `A` and `B`.
+#[test]
+fn without_a_list_the_strongest_of_each_installed_runtime() {
+    let run = brainstorm_run(Vec::new());
+    assert_eq!(
+        picked(&run),
+        [
+            three("claude", "claude-opus-5-5", Runtime::Claude),
+            three("codex", SOL, Runtime::Codex)
+        ]
+    );
+    assert!(brainstorm_picks(&run).iter().all(|p| !p.listed));
+    let mut run = brainstorm_run(Vec::new());
+    run.orch.installed = [("claude".to_string(), false)].into();
+    assert_eq!(
+        picked(&run),
+        [
+            three("A", SOL, Runtime::Codex),
+            three("B", SOL, Runtime::Codex)
+        ]
+    );
+    // A list whose every candidate is missing falls back to the same.
+    let mut run = brainstorm_run(vec![cand(Runtime::Claude, HAIKU, None)]);
+    run.orch.installed = [("claude".to_string(), false)].into();
+    assert_eq!(
+        picked(&run),
+        [
+            three("A", SOL, Runtime::Codex),
+            three("B", SOL, Runtime::Codex)
+        ]
+    );
+}
