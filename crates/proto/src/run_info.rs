@@ -99,6 +99,10 @@ pub struct CheckInfo {
     /// Milestone 9.1: the tier record, when the check was a tier job.
     #[serde(default)]
     pub tier: Option<TierInfo>,
+    /// Milestone 9.5 (task 20b's carry): the race lane whose check this is, while the
+    /// race has no winner; once it has, the winner's or the task's own (no lane).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<RaceLane>,
 }
 
 /// The outcome of one proof (TDD red/green) run.
@@ -111,6 +115,9 @@ pub struct ProofInfo {
     pub head_passed: bool,
     pub matched: bool,
     pub ok: bool,
+    /// Milestone 9.5 (task 20b's carry): as [`CheckInfo::lane`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<RaceLane>,
 }
 
 /// The outcome of one review round.
@@ -160,7 +167,7 @@ pub struct AgentRoundInfo {
     #[serde(default)]
     pub sent_back_at: Vec<u64>,
     // Milestone 9.5; each left out while `None`, so a round is written as 9.3 wrote it.
-    /// A racer's lane; `None` for every other role.
+    /// A racer's or lane reviewer's lane; `None` for every other role (task 20b).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lane: Option<RaceLane>,
     /// Decision 43: the error of a turn that failed and waits to be continued, one line.

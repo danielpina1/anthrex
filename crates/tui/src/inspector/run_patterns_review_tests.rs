@@ -6,10 +6,11 @@
 
 use super::run_patterns::pair_row;
 use super::run_task_outcome::review_row;
+use super::run_task_sections::check_line;
 use super::run_tests::{app_of, inspect_node, value};
 use crate::tree::NodeKey;
 use crate::tree::run_fixtures::{lane_reviews_fixture, pair_fixture, race_fixture};
-use proto::{AgentRole, LaneState, RaceLane, ReviewInfo, TaskInfo, TaskState};
+use proto::{AgentRole, CheckInfo, LaneState, RaceLane, ReviewInfo, TaskInfo, TaskState, Verdict};
 
 fn round_key(role: AgentRole, lane: Option<RaceLane>, session: u32, round: u32) -> NodeKey {
     NodeKey::AgentRound {
@@ -183,4 +184,120 @@ fn a_racing_tasks_review_count_is_per_lane_then_the_winners() {
         inspect_node(&app, &task).right.as_deref(),
         Some("in review · r3")
     );
+}
+
+/// A failed check of the race fixture's `t2`, made in `lane`.
+fn failed_check(lane: Option<RaceLane>, at: u64) -> CheckInfo {
+    CheckInfo {
+        at,
+        ok: false,
+        code: Some(1),
+        timed_out: false,
+        secs: 3,
+        summary: "the expiry test failed".into(),
+        on_candidate: false,
+        decider_summary: None,
+        summary_source: None,
+        tier: None,
+        lane,
+    }
+}
+
+/// A verdict of lane `lane` (or the task's own), `blocking` or approving.
+fn judged(lane: Option<RaceLane>, round: u32, blocking: bool) -> ReviewInfo {
+    let verdict = if blocking {
+        Verdict::Changes
+    } else {
+        Verdict::Approve
+    };
+    ReviewInfo {
+        verdict: Some(verdict),
+        summary: "fix the expiry".into(),
+        blocking,
+        ..review(lane, round)
+    }
+}
+
+/// Task 20b's carry with its review's m2: before a race has a winner, the check row and
+/// the review row name the lane they come from; with a winner they are the winner's
+/// (the daemon sends its check) and name none; a race over with no winner counts only
+/// the task's own reviews.
+#[test]
+fn a_race_names_the_lane_of_its_check_and_review_until_it_has_a_winner() {
+    let (mut snapshot, _) = race_fixture();
+    let run = snapshot.runs[0].clone();
+    let t2 = &mut snapshot.runs[0].tasks[0];
+    t2.last_check = Some(failed_check(Some(RaceLane::B), 9_950));
+    assert_eq!(
+        check_line(&run, t2),
+        "racer b · ✗ failed · the expiry test failed → bounced (check 0/2)"
+    );
+    t2.reviews = vec![judged(Some(RaceLane::B), 1, true)];
+    lane_state(t2, RaceLane::B, LaneState::Working);
+    assert_eq!(review_row(t2), "racer b · r1 ✗ changes · fix the expiry");
+
+    // Lane a won: its check, and no lane review of its own yet.
+    t2.race.as_mut().unwrap().winner = Some(RaceLane::A);
+    lane_state(t2, RaceLane::A, LaneState::Won);
+    lane_state(t2, RaceLane::B, LaneState::Lost);
+    t2.last_check = Some(failed_check(Some(RaceLane::A), 9_960));
+    assert_eq!(
+        check_line(&run, t2),
+        "✗ failed · the expiry test failed → bounced (check 0/2)"
+    );
+    assert_eq!(review_row(t2), "not yet");
+
+    // Both lanes out, no winner, then retried as one worker and reviewed on its own.
+    t2.race.as_mut().unwrap().winner = None;
+    lane_state(t2, RaceLane::A, LaneState::Out);
+    lane_state(t2, RaceLane::B, LaneState::Out);
+    t2.reviews.push(judged(None, 1, false));
+    assert_eq!(review_row(t2), "r1 ✓ approve · fix the expiry");
+    t2.state = TaskState::Review;
+    assert_eq!(review_row(t2), "in review · r1");
+}
+
+/// Task 20b's carry: a racer is never `fixing` another lane's failed check, only its
+/// own lane's.
+#[test]
+fn a_racer_is_not_fixing_another_lanes_check() {
+    let fixing_of_a = |lane: RaceLane| {
+        let (mut snapshot, windows) = lane_reviews_fixture();
+        let now = snapshot.now;
+        let t2 = &mut snapshot.runs[0].tasks[0];
+        t2.last_check = Some(failed_check(Some(lane), now - 50));
+        for round in &mut t2.rounds {
+            if round.role == AgentRole::Racer {
+                round.ended_at = None;
+                round.sent_back_at = vec![now - 30];
+            }
+        }
+        let app = app_of((snapshot, windows));
+        let a = inspect_node(&app, &round_key(AgentRole::Racer, Some(RaceLane::A), 1, 2));
+        value(&a, "fixing").map(str::to_owned)
+    };
+    assert_eq!(
+        fixing_of_a(RaceLane::B),
+        None,
+        "lane b's check is not lane a's"
+    );
+    assert_eq!(
+        fixing_of_a(RaceLane::A).as_deref(),
+        Some("check failed: the expiry test failed")
+    );
+}
+
+/// Review D, M-2: the acceptance marks follow the review the task counts: after the
+/// crown the winner's, even when the loser's review came last.
+#[test]
+fn the_accept_marks_follow_the_winners_review() {
+    let (mut snapshot, _) = race_fixture();
+    let t2 = &mut snapshot.runs[0].tasks[0];
+    t2.race.as_mut().unwrap().winner = Some(RaceLane::B);
+    t2.reviews = vec![
+        judged(Some(RaceLane::B), 1, false),
+        judged(Some(RaceLane::A), 1, true),
+    ];
+    let review = super::run_task_outcome::accept_review(t2).expect("a review");
+    assert_eq!((review.lane, review.blocking), (Some(RaceLane::B), false));
 }

@@ -70,6 +70,7 @@ fn failed_check(summary: &str, decider: Option<&str>) -> App {
             decider_summary: decider.map(str::to_owned),
             summary_source: None,
             tier: None,
+            lane: None,
         });
     })
 }

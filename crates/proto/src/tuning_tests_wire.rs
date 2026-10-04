@@ -430,3 +430,42 @@ fn a_tuning_report_without_its_project_still_decodes() {
     assert!(json.get("project").is_none(), "{json}");
     both_ways(&unset);
 }
+
+/// Task 20b's carry: `CheckInfo.lane` and `ProofInfo.lane` round-trip, are left out
+/// while `None`, and read `None` from a message that has none (protocol 16, no bump).
+#[test]
+fn a_check_and_a_proof_carry_their_lane() {
+    let check = crate::CheckInfo {
+        at: 10,
+        ok: false,
+        code: Some(1),
+        timed_out: false,
+        secs: 3,
+        summary: "failed".into(),
+        on_candidate: false,
+        decider_summary: None,
+        summary_source: None,
+        tier: None,
+        lane: Some(RaceLane::B),
+    };
+    both_ways(&check);
+    let proof = crate::ProofInfo {
+        at: 10,
+        test: "t".into(),
+        red: "a".repeat(40),
+        red_failed: true,
+        head_passed: false,
+        matched: true,
+        ok: false,
+        lane: Some(RaceLane::A),
+    };
+    both_ways(&proof);
+    let none = crate::ProofInfo {
+        lane: None,
+        ..proof
+    };
+    let json = serde_json::to_value(&none).unwrap();
+    assert!(json.get("lane").is_none(), "{json}");
+    let back: crate::ProofInfo = rmp_serde::from_slice(&p15_bytes(&json)).unwrap();
+    assert_eq!(back, none);
+}

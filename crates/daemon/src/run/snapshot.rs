@@ -358,26 +358,31 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
                 lane: patterns::review_lane(r),
             })
             .collect(),
-        last_check: t.checks.last().map(|c| CheckInfo {
-            at: c.at,
-            ok: c.ok,
-            code: c.code,
-            timed_out: c.timed_out,
-            secs: c.secs,
-            summary: summary(&c.tail),
-            on_candidate: c.on_candidate,
-            decider_summary: c
-                .summary
-                .clone()
-                .filter(|_| c.summary_source == Some(proto::DeciderSource::Decider)),
-            summary_source: c.summary_source,
-            tier: c.tier.as_ref().map(tier_info),
-        }),
+        // Task 20b's carry: before a winner, the last of any lane, naming it; then the
+        // winner's or the task's own (`snapshot_patterns::counts`).
+        last_check: (t.checks.iter().rev())
+            .find(|c| patterns::counts(t, c.lane))
+            .map(|c| CheckInfo {
+                at: c.at,
+                ok: c.ok,
+                code: c.code,
+                timed_out: c.timed_out,
+                secs: c.secs,
+                summary: summary(&c.tail),
+                on_candidate: c.on_candidate,
+                decider_summary: c
+                    .summary
+                    .clone()
+                    .filter(|_| c.summary_source == Some(proto::DeciderSource::Decider)),
+                summary_source: c.summary_source,
+                tier: c.tier.as_ref().map(tier_info),
+                lane: c.lane,
+            }),
         last_proof: t
             .proofs
             .iter()
             .rev()
-            .find(|p| !p.red_only)
+            .find(|p| !p.red_only && patterns::counts(t, p.lane))
             .map(|p| ProofInfo {
                 at: p.at,
                 test: p.test.clone(),
@@ -386,6 +391,7 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
                 head_passed: p.head_passed,
                 matched: p.matched,
                 ok: p.red_failed && p.head_passed && p.matched,
+                lane: p.lane,
             }),
         merge_commit: t.merge_commit.clone(),
         merged_without_approval: t.merged_without_approval.clone(),

@@ -185,7 +185,9 @@ fn fixing_text(task: &TaskInfo, lane: Option<RaceLane>, start: u64) -> Option<St
             failures.push((at, finding_text(worst)));
         }
     }
-    if let Some(check) = task.last_check.as_ref().filter(|check| !check.ok) {
+    // Task 20b's carry: a racer's own lane's check and proof only.
+    let ours = |of: Option<RaceLane>| lane.is_none() || of == lane;
+    if let Some(check) = (task.last_check.as_ref()).filter(|check| !check.ok && ours(check.lane)) {
         let first = |text: &str| {
             text.lines()
                 .map(str::trim)
@@ -209,7 +211,7 @@ fn fixing_text(task: &TaskInfo, lane: Option<RaceLane>, start: u64) -> Option<St
         );
         failures.push((check.at, text));
     }
-    if let Some(proof) = task.last_proof.as_ref().filter(|proof| !proof.ok) {
+    if let Some(proof) = (task.last_proof.as_ref()).filter(|proof| !proof.ok && ours(proof.lane)) {
         failures.push((proof.at, "test proof failed".to_owned()));
     }
     failures

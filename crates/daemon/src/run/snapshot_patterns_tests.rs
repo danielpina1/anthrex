@@ -219,3 +219,52 @@ fn the_snapshot_carries_race_pair_and_lanes() {
     assert_eq!(t1.pair.as_ref().map(|p| p.phase), Some(PairPhase::Writing));
     assert_eq!(t1.race, None);
 }
+
+/// A failed check of task `t0`'s run at `at`, made in `lane`.
+fn check(at: u64, lane: Option<RaceLane>) -> crate::run::model::CheckRecord {
+    crate::run::model::CheckRecord {
+        at,
+        ok: false,
+        code: Some(1),
+        timed_out: false,
+        tail: format!("failed at {at}"),
+        secs: 1,
+        on_candidate: false,
+        summary: None,
+        summary_source: None,
+        tier: None,
+        lane,
+    }
+}
+
+/// Task 20b's carry: the snapshot's `last_check` (and `last_proof`, read the same way)
+/// names its lane before the race has a winner; once it has, it is the winner's, and
+/// once the race is over with no winner, the task's own.
+#[test]
+fn the_last_check_names_its_lane_then_is_the_winners() {
+    let last = |run: &Run| {
+        let mut state = EngineState::default();
+        state.runs.insert(run.id.clone(), run.clone());
+        let snap = crate::run::snapshot::snapshot(&state, 5_000);
+        let check = snap.runs[0].tasks[0].last_check.clone();
+        check.map(|c| (c.at, c.lane))
+    };
+    let mut run = racing([LaneState::Working, LaneState::Working]);
+    let t0 = task_mut(&mut run, "t0");
+    t0.checks = vec![check(10, Some(RaceLane::A)), check(20, Some(RaceLane::B))];
+    assert_eq!(last(&run), Some((20, Some(RaceLane::B))));
+    let won = |run: &mut Run, lane| {
+        let race = task_mut(run, "t0").race.as_mut().unwrap();
+        race.winner = Some(lane);
+    };
+    won(&mut run, RaceLane::A);
+    assert_eq!(last(&run), Some((10, Some(RaceLane::A))), "the winner's");
+    task_mut(&mut run, "t0").checks.push(check(30, None));
+    assert_eq!(last(&run), Some((30, None)), "the crowned task's own");
+
+    // Both lanes out, no winner, then the task retried single.
+    let mut over = racing([LaneState::Out, LaneState::Out]);
+    let t0 = task_mut(&mut over, "t0");
+    t0.checks = vec![check(10, None), check(20, Some(RaceLane::B))];
+    assert_eq!(last(&over), Some((10, None)));
+}

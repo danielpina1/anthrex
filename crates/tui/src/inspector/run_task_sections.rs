@@ -140,6 +140,7 @@ pub(super) fn check_line(run: &RunInfo, task: &TaskInfo) -> String {
     if let Some(line) = summary {
         text.push_str(&format!(" · {}", one_line(line)));
     }
+    text.insert_str(0, &super::run_patterns::lane_prefix(task, check.lane));
     match task.state {
         TaskState::Working if !check.ok => text.push_str(&format!(
             " → bounced (check {}/{})",

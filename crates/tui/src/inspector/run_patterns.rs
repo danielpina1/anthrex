@@ -163,14 +163,37 @@ pub(super) fn state_word(task: &TaskInfo) -> Option<&'static str> {
 
 /// The reviews that count for the task (ruling T20-2 (m5)): once its race has a
 /// winner, the winner's and the task's own after the crown (which carry no lane), not
-/// the loser's; for a task that never raced, or a race still undecided, all of them.
+/// the loser's; once it is over with no winner (both lanes out, task 20b's review m2),
+/// the task's own only; for a task that never raced, or a race still undecided, all.
 pub(crate) fn counted_reviews(task: &TaskInfo) -> Vec<&ReviewInfo> {
-    let winner = task.race.as_ref().and_then(|race| race.winner);
-    let counts = |review: &&ReviewInfo| match winner {
-        Some(winner) => review.lane.is_none() || review.lane == Some(winner),
-        None => true,
+    (task.reviews.iter())
+        .filter(|review| counts(task, review.lane))
+        .collect()
+}
+
+/// Whether task `task` shows a gate record made in `lane` (`None`: its own), as the
+/// daemon picks its `last_check` and `last_proof` (`snapshot_patterns::counts`).
+pub(crate) fn counts(task: &TaskInfo, lane: Option<RaceLane>) -> bool {
+    let Some(race) = &task.race else {
+        return true;
     };
-    task.reviews.iter().filter(counts).collect()
+    match (race.winner, lane) {
+        (_, None) => true,
+        (Some(winner), Some(lane)) => lane == winner,
+        (None, Some(_)) => {
+            (race.lanes.iter()).any(|info| !matches!(info.state, LaneState::Lost | LaneState::Out))
+        }
+    }
+}
+
+/// Task 20b's carry: the `racer <x> · ` that names the lane a gate record came from,
+/// while the race has no winner (after it, the record is the winner's or the task's).
+pub(crate) fn lane_prefix(task: &TaskInfo, lane: Option<RaceLane>) -> String {
+    let undecided = task.race.as_ref().is_some_and(|race| race.winner.is_none());
+    match lane.filter(|_| undecided) {
+        Some(lane) => format!("racer {} · ", lane.label()),
+        None => String::new(),
+    }
 }
 
 /// Ruling T20-2 (m5): while a race is undecided and a lane is in review, each lane's

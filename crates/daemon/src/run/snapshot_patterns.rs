@@ -5,7 +5,7 @@
 //! `ReviewInfo.lane`). `run/snapshot.rs` calls these. Pure (design decision 1): no
 //! `std::fs`, `std::process`, `std::thread`, `tokio` or `SystemTime`.
 
-use proto::{AgentRole, LaneInfo, PairInfo, RaceInfo, RaceLane};
+use proto::{AgentRole, LaneInfo, LaneState, PairInfo, RaceInfo, RaceLane};
 
 use super::model::{AgentRound, Lane, ReviewRecord, Task};
 
@@ -57,6 +57,23 @@ pub fn round_lane(round: &AgentRound) -> Option<RaceLane> {
     match round.role {
         AgentRole::Racer | AgentRole::Reviewer => round.lane,
         _ => None,
+    }
+}
+
+/// Task 20b's carry: whether a gate record of task `task` made in `lane` (`None`: the
+/// task's own) is one the task shows. While its race has no winner and a lane is still
+/// in it, every lane's; once it has a winner, the winner's and the task's own; once
+/// the race is over with no winner (both lanes out), the task's own only.
+pub fn counts(task: &Task, lane: Option<RaceLane>) -> bool {
+    let Some(race) = task.race.as_ref() else {
+        return true;
+    };
+    match (race.winner, lane) {
+        (_, None) => true,
+        (Some(winner), Some(lane)) => lane == winner,
+        (None, Some(_)) => {
+            (race.lanes.iter()).any(|l| !matches!(l.state, LaneState::Lost | LaneState::Out))
+        }
     }
 }
 

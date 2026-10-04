@@ -222,6 +222,7 @@ fn new_snapshot_fields_default_when_absent() {
         decider_summary: Some("one test failed".into()),
         summary_source: Some(DeciderSource::Decider),
         tier: None,
+        lane: None,
     });
     let mut v = serde_json::to_value(&run).unwrap();
     let r = v.as_object_mut().unwrap();
