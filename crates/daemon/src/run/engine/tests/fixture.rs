@@ -471,6 +471,7 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::Propagate(_) => "Propagate",
         OpKind::Host { .. } => "Host",
         OpKind::CrownRacer { .. } => "CrownRacer",
+        OpKind::StartDesignAgent { .. } => "StartDesignAgent",
     }
 }
 

@@ -193,4 +193,8 @@ pub enum OpResult {
     Crowned {
         head: String,
     },
+    /// Milestone 9.6: `StartDesignAgent`'s window.
+    DesignAgentStarted {
+        window_id: u32,
+    },
 }

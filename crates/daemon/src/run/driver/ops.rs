@@ -466,6 +466,7 @@ pub(super) async fn run(
         | OpKind::RestartOrchestrator { .. }
         | OpKind::StartScout { .. }
         | OpKind::StartPlanner { .. }
+        | OpKind::StartDesignAgent { .. }
         | OpKind::ResolveTarget { .. }) => super::orch_ops::run(service, ctx, kind).await,
         // Milestone 9.1 (task M9.1.9): a tier job and a bisect probe.
         OpKind::Tier(spec) => {

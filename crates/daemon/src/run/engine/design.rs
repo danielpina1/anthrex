@@ -141,6 +141,7 @@ fn start_brainstorm(run: &mut Run, answers: &str, now: u64) -> Result<Value, Str
     }
     design.answers = Some(safe_text::multi_line(answers));
     log(run, now, "the orchestrator started the brainstorm");
+    super::design_agents::queue_brainstormers(run, now);
     Ok(json!({"accepted": true}))
 }
 
@@ -249,7 +250,6 @@ fn admitted(run: &Run, kind: DocGateKind) -> Result<(), String> {
 /// DF §3.4, for task M9.6.8: both drafts are in, or one draft and one failure,
 /// `(label, reason)`. The brainstorming clock starts now, and the orchestrator is woken
 /// to merge them.
-#[cfg_attr(not(test), allow(dead_code))] // Called by task M9.6.8's brainstormers.
 pub(super) fn drafts_in(run: &mut Run, failed: Option<(&str, &str)>, now: u64) {
     start_clock(run, now);
     let note = match failed {
@@ -331,7 +331,10 @@ pub(super) fn resume_phase(run: &mut Run, now: u64) -> Option<String> {
     run.state = from;
     run.halted_reason = None;
     run.halt_retryable = false;
-    start_clock(run, now);
+    // DF §3.5: both brainstormers failed; they relaunch, and the clock waits for them.
+    if !super::design_agents::relaunch_failed(run, now) {
+        start_clock(run, now);
+    }
     log(run, now, "resumed; the phase's clock restarts");
     Some(format!("run {} resumed", run.id))
 }

@@ -71,7 +71,9 @@ pub(super) fn dispatch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             .position(|e| e.phase == PlannerPhase::Queued)
         {
             start(run, k, now, fx);
-        } else if !run_scouts::start_next(run, now, fx) {
+        } else if !super::design_agents::start_next(run, now, fx)
+            && !run_scouts::start_next(run, now, fx)
+        {
             break;
         }
     }
@@ -224,6 +226,7 @@ pub(super) fn halt_all(run: &mut Run, reason: &str, now: u64, fx: &mut Vec<Effec
         fail(run, k, reason.to_string(), now);
     }
     run_scouts::halt_all(run, reason, now, fx);
+    super::design_agents::halt_all(run, reason, fx);
 }
 
 /// Decision 32 after a daemon restart: a queued or live sub-planner is not resumed; it
@@ -236,6 +239,7 @@ pub(super) fn restore(run: &mut Run, now: u64) {
         }
     }
     run_scouts::restore(run, now);
+    super::design_agents::restore(run, now);
 }
 
 /// Decision 21: `spawn_subplanner`. A new epic's id is checked by the tools' parser;

@@ -391,6 +391,12 @@ pub enum OpKind {
         adopt: bool,
         checkout: PathBuf,
     },
+    /// Milestone 9.6 decision 9: a design agent's session on M8b's scout machine, as
+    /// `StartPlanner`'s (`driver/design_ops.rs` appends the input pack first); never
+    /// replayed, reconciled `NotStarted`. The result is `DesignAgentStarted`, or `Failed`.
+    StartDesignAgent {
+        spec: Box<crate::scout::design_spec::DesignAgentSpec>,
+    },
 }
 
 impl OpKind {
@@ -429,6 +435,7 @@ impl OpKind {
             OpKind::Propagate(_) => "Propagate",
             OpKind::Host { .. } => "Host",
             OpKind::CrownRacer { .. } => "CrownRacer",
+            OpKind::StartDesignAgent { .. } => "StartDesignAgent",
         }
     }
 }

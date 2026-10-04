@@ -42,6 +42,16 @@ pub enum OrchEvent {
         outcome: ScoutEnd,
         usage: TokenUsage,
     },
+    /// Milestone 9.6 decision 9: a design agent's session ended, with what it spent.
+    DesignAgentEnded {
+        run_id: String,
+        role: proto::AgentRole,
+        label: String,
+        session: u32,
+        outcome: ScoutEnd,
+        usage: TokenUsage,
+        calls: u32,
+    },
     /// Decision 39: the driver pasted the wake-up of `digest_revision` into the
     /// orchestrator's window; `notes_seq` is its `Effect::WakeOrchestrator`'s.
     OrchestratorWoken {
@@ -153,6 +163,7 @@ impl OrchEvent {
             | OrchEvent::RoleRoute { reply, .. } => Some(*reply),
             OrchEvent::ScoutEnded { .. }
             | OrchEvent::PlannerEnded { .. }
+            | OrchEvent::DesignAgentEnded { .. }
             | OrchEvent::OrchestratorWoken { .. }
             | OrchEvent::DigestRead { .. }
             | OrchEvent::OrchestratorWindow { .. }

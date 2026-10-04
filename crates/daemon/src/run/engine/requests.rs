@@ -231,6 +231,8 @@ pub(super) fn reject_run(run: &mut Run, note: &str, now: u64, fx: &mut Vec<Effec
     for task in &mut run.tasks {
         task.drop_pending_size_check();
     }
+    // Milestone 9.6: a run rejected while it brainstorms stops its brainstormers.
+    super::design_agents::halt_all(run, super::design_agents::RUN_REJECTED, fx);
     let op = next_op(run);
     let kind = OpKind::Discard {
         root: run.root.clone(),

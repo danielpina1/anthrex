@@ -84,6 +84,10 @@ pub(super) fn on_orch_event(
                 planners::ended(run, (&epic, session), (outcome, usage), now, fx);
             }
         }
+        // Milestone 9.6 decision 9: a design agent's session ended.
+        ended @ OrchEvent::DesignAgentEnded { .. } => {
+            super::design_agents::on_ended(state, ended, now, fx)
+        }
         OrchEvent::OrchestratorWoken {
             run_id,
             digest_revision,
@@ -219,7 +223,11 @@ pub(super) fn tool(
     let Some(run) = runs.get_mut(&call.run_id) else {
         return refuse(fx, reply, format!("unknown run {}", call.run_id));
     };
-    if !matches!(call.role, AgentRole::Orchestrator | AgentRole::Planner) {
+    use AgentRole::{Brainstormer, DocReviewer, Orchestrator, Planner};
+    if !matches!(
+        call.role,
+        Orchestrator | Planner | Brainstormer | DocReviewer
+    ) {
         let text = format!("tool {} is not available to this role", call.tool);
         return refuse(fx, reply, text);
     }
@@ -244,6 +252,10 @@ pub(super) fn tool(
             return refuse(fx, reply, text);
         }
         return planners::tool(run, reply, call, refusals, now, fx);
+    }
+    // Milestone 9.6: a design agent's write (task M9.6.8).
+    if matches!(call.role, Brainstormer | DocReviewer) {
+        return super::design_agents::tool(run, reply, call, (ending, now), fx);
     }
     let window = run.orch.orchestrator.as_ref().and_then(|o| o.window_id);
     if window != Some(call.window_id) {

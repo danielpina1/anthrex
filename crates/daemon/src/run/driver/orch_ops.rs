@@ -81,6 +81,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         }
         OpKind::StartScout { spec } => service.start_scout(ctx, *spec).await,
         OpKind::StartPlanner { spec } => service.start_planner(ctx, *spec).await,
+        OpKind::StartDesignAgent { spec } => service.start_design_agent(ctx, *spec).await,
         OpKind::ResolveTarget {
             root,
             target,
@@ -451,7 +452,7 @@ impl RunService {
     /// Waits, at most [`SETTLE_WAIT`], until no pending op of `run_id` matches `op`: a
     /// session's end reaches the engine after its start's result. The engine's lock is
     /// taken for each look only.
-    async fn settled(&self, run_id: &str, op: impl Fn(&OpKind) -> bool) {
+    pub(super) async fn settled(&self, run_id: &str, op: impl Fn(&OpKind) -> bool) {
         let deadline = tokio::time::Instant::now() + SETTLE_WAIT;
         loop {
             let pending = crate::lock(&self.state)

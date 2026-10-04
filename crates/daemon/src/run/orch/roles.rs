@@ -26,6 +26,7 @@ use proto::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::run::design::state::DesignAgent;
 use crate::run::model::Run;
 use crate::run::roster::peer;
 
@@ -37,6 +38,8 @@ pub const ORCHESTRATOR_POLICY: &str = "m9-orchestrator-v1";
 pub const PLANNER_POLICY: &str = "m9-planner-v1";
 pub const SCOUT_POLICY: &str = "m9-scout-v1";
 pub const DECIDER_POLICY: &str = "m9-decider-v1";
+/// Milestone 9.6 decision 10: a brainstormer's.
+pub const BRAINSTORMER_POLICY: &str = "m9.6-brainstormer-v1";
 
 /// A run record's goal cap (`history::GOAL_CHARS`), which the input's goal shares.
 const GOAL_CHARS: usize = 200;
@@ -294,6 +297,42 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
         lists::mark(&mut decision, (p.pick, p.rotation), p.route.as_ref());
     }
     decision
+}
+
+/// Milestone 9.6 decision 10: the record of brainstormer `agent`'s current session,
+/// `<label>/<session>`: chosen from the run's `brainstorm` list when it has one (every
+/// candidate in the snapshot, a missing runtime's marked so), else the strongest model
+/// of its runtime (`roster_default`).
+pub fn design_agent_record(run: &Run, agent: &DesignAgent, now: u64) -> RoleRoutingDecision {
+    let list = &run.limits.route_lists.brainstorm;
+    let listed = (list.candidates.iter())
+        .map(|c| RoutingCandidate {
+            route: c.route(agent.route.effort),
+            skipped_reason: None,
+        })
+        .collect();
+    let candidates = mark_not_installed(listed, &run.orch.installed);
+    let source = match candidates.iter().any(|c| c.route == agent.route) {
+        true => lists::LIST_SOURCE,
+        false => "roster_default",
+    };
+    let trigger = if agent.session == 1 {
+        "start"
+    } else {
+        "relaunch"
+    };
+    record(
+        Some(run),
+        agent.role,
+        &format!("{}/{}", agent.label, agent.session),
+        trigger,
+        source,
+        BRAINSTORMER_POLICY,
+        input_of(run),
+        candidates,
+        &agent.route,
+        now,
+    )
 }
 
 /// The record of run scout `scout_id`'s session, on the route the driver starts it on

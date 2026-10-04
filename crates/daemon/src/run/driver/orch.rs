@@ -36,6 +36,8 @@ mod promote;
 #[cfg(test)]
 use promote::filled;
 use promote::get_context;
+// Milestone 9.6: the brainstormers' pack reads them too (`design_ops.rs`).
+pub(super) use promote::context_reads;
 
 /// How long `get_context`'s file reads and build may take (the stored profile and the
 /// scout reports, each at most 1 MiB).
@@ -516,6 +518,10 @@ mod read_tests_launch;
 #[cfg(test)]
 #[path = "orch_read_tests_design.rs"]
 mod read_tests_design;
+
+#[cfg(test)]
+#[path = "design_ops_tests.rs"]
+mod design_ops_tests;
 
 #[cfg(test)]
 #[path = "refresh_tests.rs"]

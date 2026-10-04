@@ -25,6 +25,7 @@ mod context;
 mod delivery;
 mod design_files;
 mod design_io;
+mod design_ops;
 mod design_restore;
 mod effects;
 // Milestone 9.1.7: read by the tier executor (M9.1.9); until then only its tests call it.

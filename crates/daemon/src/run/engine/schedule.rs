@@ -211,6 +211,8 @@ pub fn readers_busy(run: &Run) -> usize {
     run.tasks.iter().filter(|t| holds_reader(run, t)).count()
         + deciders
         + super::planners::readers(run)
+        // Milestone 9.6 decision 9: the design agents.
+        + super::design_agents::readers(run)
         // Milestone 9.5 decision 20: each lane's review.
         + super::race::lane_readers(run)
 }
