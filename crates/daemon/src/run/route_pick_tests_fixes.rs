@@ -339,6 +339,7 @@ fn a_roster_substitute_keeps_the_overlap_rule() {
         m("t2", "[\"crates/a/src/**\"]", ""),
     ];
     let mut run = built(&tasks, RouteLists::default());
+    assert_eq!(task(&run, "t2").implicit_deps, ["t1"]);
     run.tasks[0].route = opus(Effort::Medium);
     run.tasks[1].route = sonnet(Effort::Medium);
     run.tasks[0].rounds = vec![failed_round(opus(Effort::Medium))];
@@ -378,6 +379,7 @@ fn a_gate_path_rung_2_keeps_to_installed_and_overlap_free_runtimes() {
         m("t2", "[\"crates/a/src/**\"]", ""),
     ];
     let mut run = built(&tasks, RouteLists::default());
+    assert_eq!(task(&run, "t2").implicit_deps, ["t1"]);
     run.tasks[0].route = sonnet(Effort::High);
     run.tasks[1].route = sonnet(Effort::Medium);
     assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));

@@ -148,7 +148,9 @@ fn escalation_and_review_history_keep_skips() {
             ..Default::default()
         },
     );
-    // Ruling FW-5: for a worker, `t2` holds whatever it waits on.
+    // Ruling FW-5: for a worker, an unfinished overlapping `t2` holds `t1` off its runtime
+    // whatever the dependencies between them.
+    assert_eq!(run.tasks[1].implicit_deps, ["t1"]);
     run.history = true;
     run.tasks[0].rounds = vec![round(AgentRole::Worker, luna(Effort::Medium), true)];
     run.tasks[0].session = 1;
