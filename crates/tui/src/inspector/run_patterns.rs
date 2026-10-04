@@ -4,7 +4,9 @@
 //! snapshot's `TaskInfo` and returns text, its glyphs through 9.0.7's kit.
 
 use crate::theme::{Glyph, glyph};
-use proto::{AgentRole, LaneInfo, LaneState, PairPhase, RaceInfo, RaceLane, TaskInfo, TaskState};
+use proto::{
+    AgentRole, LaneInfo, LaneState, PairPhase, RaceInfo, RaceLane, ReviewInfo, TaskInfo, TaskState,
+};
 
 /// A sha's first seven characters, as git abbreviates it.
 fn short(sha: &str) -> String {
@@ -53,10 +55,15 @@ pub(super) fn pair_row(task: &TaskInfo, ascii: bool) -> Option<String> {
         _ if writing => Glyph::Live,
         _ => Glyph::Passed,
     };
+    // Ruling T20-2 (m4): live only while an implementer's round is open; one that
+    // ended before the merge is ended.
+    let implementers = || (task.rounds.iter()).filter(|r| !writing && r.role == AgentRole::Worker);
     let implementer = if task.state == TaskState::Merged {
         Glyph::Passed
-    } else if !writing && task.rounds.iter().any(|r| r.role == AgentRole::Worker) {
+    } else if implementers().any(|r| r.ended_at.is_none()) {
         Glyph::Live
+    } else if implementers().next().is_some() {
+        Glyph::Ended
     } else {
         Glyph::NotStarted
     };
@@ -152,4 +159,35 @@ pub(super) fn state_word(task: &TaskInfo) -> Option<&'static str> {
         .as_ref()
         .filter(|pair| pair.phase == PairPhase::Writing)
         .map(|_| "writing the test")
+}
+
+/// The reviews that count for the task (ruling T20-2 (m5)): once its race has a
+/// winner, the winner's and the task's own after the crown (which carry no lane), not
+/// the loser's; for a task that never raced, or a race still undecided, all of them.
+pub(crate) fn counted_reviews(task: &TaskInfo) -> Vec<&ReviewInfo> {
+    let winner = task.race.as_ref().and_then(|race| race.winner);
+    let counts = |review: &&ReviewInfo| match winner {
+        Some(winner) => review.lane.is_none() || review.lane == Some(winner),
+        None => true,
+    };
+    task.reviews.iter().filter(counts).collect()
+}
+
+/// Ruling T20-2 (m5): while a race is undecided and a lane is in review, each lane's
+/// review count, `a r1 · b r2` (a lane with no review and not in review left out).
+pub(crate) fn lane_review_counts(task: &TaskInfo) -> Option<String> {
+    let race = task.race.as_ref().filter(|race| race.winner.is_none())?;
+    let in_review = |info: &LaneInfo| info.state == LaneState::Review;
+    if !race.lanes.iter().any(in_review) {
+        return None;
+    }
+    let counts: Vec<String> = (race.lanes.iter())
+        .filter_map(|info| {
+            let n = (task.reviews.iter())
+                .filter(|r| r.lane == Some(info.lane))
+                .count();
+            (n > 0 || in_review(info)).then(|| format!("{} r{n}", info.lane.label()))
+        })
+        .collect();
+    Some(counts.join(" · "))
 }

@@ -472,3 +472,6 @@ mod run_rounds_tests;
 
 #[cfg(test)]
 mod run_patterns_tests;
+
+#[cfg(test)]
+mod run_patterns_review_tests;

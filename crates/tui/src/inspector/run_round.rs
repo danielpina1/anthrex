@@ -9,7 +9,7 @@ use super::run_patterns;
 use super::{Field, Inspection, field};
 use crate::app::App;
 use crate::tree::{DisplayRound, RowKind, display_rounds, round_label_with_lane};
-use proto::{AgentRole, Route, RunInfo, Severity, TaskInfo};
+use proto::{AgentRole, RaceLane, Route, RunInfo, Severity, TaskInfo};
 
 /// An agent round (Interfaces "Agent round").
 pub(crate) fn round_inspection(
@@ -142,7 +142,7 @@ fn worker_fields(
         fields.push(field("activity", activity));
     }
     if (round.number > 1 || info.session > 1)
-        && let Some(fixing) = fixing_text(task, round.started_at)
+        && let Some(fixing) = fixing_text(task, info.lane, round.started_at)
     {
         fields.push(field("fixing", fixing));
     }
@@ -156,18 +156,24 @@ fn worker_fields(
 /// reviewer round's start, strictly before `start` (ruling I1): the daemon sends the
 /// worker back when the reviewer submits, and ends the reviewer's round only when its
 /// process exits, after the send-back. A check or proof is timed by its record's `at`,
-/// at or before `start`: the daemon sends back at or after that `at`.
-fn fixing_text(task: &TaskInfo, start: u64) -> Option<String> {
+/// at or before `start`: the daemon sends back at or after that `at`. A racer's are
+/// its own lane's reviews, any other round's those the task counts (ruling T20-2).
+fn fixing_text(task: &TaskInfo, lane: Option<RaceLane>, start: u64) -> Option<String> {
     let mut failures: Vec<(u64, String)> = Vec::new();
-    for review in task
-        .reviews
-        .iter()
+    let reviews = match lane {
+        Some(_) => task.reviews.iter().filter(|r| r.lane == lane).collect(),
+        None => run_patterns::counted_reviews(task),
+    };
+    for review in reviews
+        .into_iter()
         .filter(|r| r.blocking && r.verdict.is_some())
     {
         let started = task
             .rounds
             .iter()
-            .find(|r| r.role == AgentRole::Reviewer && r.round == review.round)
+            .find(|r| {
+                r.role == AgentRole::Reviewer && r.round == review.round && r.lane == review.lane
+            })
             .map(|r| r.started_at)
             .filter(|at| *at < start);
         let worst = review
@@ -249,10 +255,10 @@ fn reviewer_fields(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> Vec<
             strength_text(author)
         ),
     ));
+    // Ruling T20-2 (I1): a review is its round's and its lane's.
     let of_round = || {
-        task.reviews
-            .iter()
-            .filter(|review| review.round == info.round)
+        (task.reviews.iter())
+            .filter(|review| review.round == info.round && review.lane == info.lane)
     };
     let review = of_round()
         .find(|review| review.verdict.is_some())

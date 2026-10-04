@@ -30,10 +30,12 @@ fn judged(ok: Option<bool>) -> Step {
     }
 }
 
-/// The last review with a verdict.
+/// The last review with a verdict, among those the task counts (a crowned race's
+/// loser's left out; ruling T20-2 (m5)).
 fn last_verdict(task: &TaskInfo) -> Option<&ReviewInfo> {
-    task.reviews
-        .iter()
+    let reviews = super::run_patterns::counted_reviews(task);
+    reviews
+        .into_iter()
         .rev()
         .find(|review| review.verdict.is_some())
 }
@@ -132,8 +134,13 @@ pub(crate) fn review_row(task: &TaskInfo) -> String {
     if task.review_route.is_none() {
         return "none".to_owned();
     }
+    // Ruling T20-2 (m5): per lane before the crown, the winner's after it.
+    if let Some(counts) = super::run_patterns::lane_review_counts(task) {
+        return format!("in review · {counts}");
+    }
     if task.state == TaskState::Review {
-        return format!("in review · r{}", task.reviews.len());
+        let n = super::run_patterns::counted_reviews(task).len();
+        return format!("in review · r{n}");
     }
     let Some(review) = last_verdict(task) else {
         return "not yet".to_owned();

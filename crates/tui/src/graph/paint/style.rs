@@ -222,10 +222,10 @@ fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'stati
     let is_live = round.ended_at.is_none();
     match info.role {
         AgentRole::Reviewer => {
-            let review = task
-                .reviews
-                .iter()
-                .find(|review| review.round == info.round && review.verdict.is_some());
+            // Ruling T20-2 (I1): both lanes number their reviews from 1.
+            let review = task.reviews.iter().find(|review| {
+                review.round == info.round && review.lane == info.lane && review.verdict.is_some()
+            });
             match review {
                 Some(review) if review.blocking => cross(app),
                 Some(_) => check(app),

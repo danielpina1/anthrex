@@ -132,7 +132,9 @@ fn state_stage(task: &TaskInfo) -> String {
         TaskState::Working => "working".to_owned(),
         TaskState::Proof => "test proof".to_owned(),
         TaskState::Check => "check".to_owned(),
-        TaskState::Review => format!("in review · r{}", task.reviews.len()),
+        TaskState::Review => {
+            format!("in review · r{}", run_patterns::counted_reviews(task).len())
+        }
         TaskState::MergeQueue => "merge queue".to_owned(),
         TaskState::Merged => "merged".to_owned(),
         TaskState::Cancelled => "cancelled".to_owned(),

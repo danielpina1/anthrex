@@ -194,3 +194,38 @@ fn a_live_racer_animates_its_task() {
     assert_eq!(role, Role::Working);
     assert_eq!(glyph, theme::spinner(app.spinner_frame, false));
 }
+
+/// Ruling T20-2 (I1): both lanes' first reviewers are review round 1; each reviewer's
+/// glyph is its own lane's verdict. Lane a's is live with none yet, lane b's blocked.
+#[test]
+fn each_lane_reviewer_shows_its_own_lanes_verdict() {
+    let app = app_of(crate::tree::run_fixtures::lane_reviews_fixture());
+    let a = round_key("t2", AgentRole::Reviewer, Some(RaceLane::A), 1, 1);
+    let b = round_key("t2", AgentRole::Reviewer, Some(RaceLane::B), 1, 1);
+    assert_eq!(look(&app, &a), ("●", Role::Working));
+    assert_eq!(look(&app, &b), ("✗", Role::Failed));
+}
+
+/// Ruling T20-2 (m2): a working paired task animates while its live test writer's
+/// window is `Working`, with no worker round at all.
+#[test]
+fn a_live_test_writer_animates_its_task() {
+    use crate::tree::run_fixtures::{PROJECT, headless, run_ref};
+    let (mut snapshot, _) = pair_fixture();
+    let t3 = &mut snapshot.runs[0].tasks[0];
+    t3.rounds
+        .retain(|round| round.role == AgentRole::TestWriter);
+    t3.rounds[0].ended_at = None;
+    t3.pair.as_mut().expect("a pair").phase = PairPhase::Writing;
+    let reference = run_ref("r1", Some("t3"), AgentRole::TestWriter, 1);
+    let mut window = headless(10, "1a2b/t3.t1", PROJECT, Some(reference));
+    window.status = Status::Working;
+    let app = app_of((snapshot, vec![window]));
+    let task = NodeKey::Task {
+        run: "r1".into(),
+        id: "t3".into(),
+    };
+    let (glyph, role) = look(&app, &task);
+    assert_eq!(role, Role::Working);
+    assert_eq!(glyph, theme::spinner(app.spinner_frame, false));
+}

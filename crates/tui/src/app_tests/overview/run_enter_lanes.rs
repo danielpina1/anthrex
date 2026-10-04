@@ -2,7 +2,7 @@
 //! round by its lane (ruling T20-1 (c)), and names it with its lane.
 
 use super::*;
-use crate::tree::run_fixtures::lane_reviews_fixture;
+use crate::tree::run_fixtures::{lane_reviews_fixture, race_fixture};
 use proto::{AgentRole, RaceLane};
 
 use super::super::runs::app_with_runs;
@@ -43,4 +43,20 @@ fn enter_on_a_lane_reviewer_opens_its_own_lanes_round() {
         app.toast_text(),
         Some("review b#1 has finished and its window is gone")
     );
+}
+
+/// Ruling T20-2 (m1): Enter names a racer with its lane (`racer b`, not `racer`).
+#[test]
+fn enter_on_an_ended_racer_names_its_lane() {
+    let (snapshot, windows) = race_fixture();
+    let mut app = app_with_runs(windows, snapshot);
+    let effects = app.activate_run_node(round_key(AgentRole::Racer, Some(RaceLane::B), 2));
+    assert!(effects.is_empty(), "{effects:?}");
+    assert_eq!(
+        app.toast_text(),
+        Some("racer b has finished and its window is gone")
+    );
+    // Lane a's racer is live on window 7: Enter opens it.
+    let effects = app.activate_run_node(round_key(AgentRole::Racer, Some(RaceLane::A), 1));
+    assert_eq!(effects, conversation_of(7));
 }
