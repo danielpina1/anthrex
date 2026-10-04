@@ -18,8 +18,10 @@ pub const FOOTER_ROWS: usize = 3;
 static QUESTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\?\s+(\d+)\s+questions?\b").expect("a valid pattern"));
 
-/// Whether any of `rows` is Codex's queued-question footer.
-pub fn codex_question_footer(rows: &[&str]) -> bool {
+/// Whether any of `rows` is Codex's queued-question footer (tests only: production
+/// reads the count, [`screen_questions`]).
+#[cfg(test)]
+fn codex_question_footer(rows: &[&str]) -> bool {
     question_count(rows).is_some()
 }
 
@@ -44,8 +46,10 @@ pub fn footer_rows(screen: &str) -> Vec<&str> {
     rows
 }
 
-/// Whether `screen` (a window's `Window::screen_text`) ends with the footer.
-pub fn screen_asks(screen: &str) -> bool {
+/// Whether `screen` (a window's `Window::screen_text`) ends with the footer (tests
+/// only).
+#[cfg(test)]
+fn screen_asks(screen: &str) -> bool {
     screen_questions(screen).is_some()
 }
 
