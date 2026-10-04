@@ -108,7 +108,7 @@ fn a_lane_that_passes_after_the_win_gets_no_new_review_round() {
 }
 
 /// An unreviewed racing `t1` (S): each lane's last gate is its check.
-fn unreviewed() -> (Fixture, u32, u32) {
+pub(super) fn unreviewed() -> (Fixture, u32, u32) {
     let config = config::Orchestrator {
         review_small: false,
         ..Default::default()
@@ -120,7 +120,7 @@ fn unreviewed() -> (Fixture, u32, u32) {
 }
 
 /// Lane `l` claims at `head` and passes its proof: its check's op.
-fn to_check(fx: &mut Fixture, l: RaceLane, window: u32, head: &str) -> OpId {
+pub(super) fn to_check(fx: &mut Fixture, l: RaceLane, window: u32, head: &str) -> OpId {
     let effects = claim(fx, l, window, head);
     let (op, _) = only_op(&effects, "Proof");
     let effects = fx.done(op, proof(true));

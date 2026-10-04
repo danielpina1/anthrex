@@ -119,9 +119,15 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
         }
         return;
     }
-    // Rulings T15-I2, T15-I3: the downtime is no session time.
+    // Rulings T15-I2, T15-I3: the downtime is no session time. The final fix wave's
+    // A-I1 (c): nor is it a racer's, so each lane's clock stops too, in its view.
     for task in run.tasks.iter_mut() {
         clock::stop_at_restore(task);
+    }
+    for (i, lane) in lanes_in_view(run) {
+        super::race_view::in_lane(run, i, lane, fx, |run, _| {
+            clock::stop_at_restore(&mut run.tasks[i]);
+        });
     }
     // Milestone 9 decisions 20 and 32: run scouts and sub-planners are not resumed.
     super::planners::restore(run, now);
@@ -139,6 +145,10 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
         // old daemon's.
         task.claim = None;
         task.override_count = None;
+        // The final fix wave's A-I1 (b): nor does a race lane's.
+        for lane in task.race.iter_mut().flat_map(|r| r.lanes.iter_mut()) {
+            lane.gates.claim = None;
+        }
         for round in task.rounds.iter_mut() {
             if round.fallback == FallbackState::Counting {
                 round.fallback = FallbackState::None;
@@ -248,6 +258,18 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         ) if run.tasks[i].gate_op == Some(op) => {
             run.tasks[i].gate_op = None;
         }
+        // The final fix wave's A-I1 (a): a race lane's gate op is the lane's.
+        (
+            OpKind::Proof { .. }
+            | OpKind::Check { .. }
+            | OpKind::PrepareReview { .. }
+            | OpKind::Tier(_),
+            Some(i),
+        ) if lane_gate_op(&mut run.tasks[i], op).is_some() => {
+            if let Some(gate_op) = lane_gate_op(&mut run.tasks[i], op) {
+                *gate_op = None;
+            }
+        }
         // Milestone 9.1 decision 29: a lost tier-3 job is started again by the next
         // idle or completion pass.
         (OpKind::Tier(_), None) if run.full_op == Some(op) => run.full_op = None,
@@ -281,6 +303,25 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         // by the scheduler, which sees none in flight.
         _ => {}
     }
+}
+
+/// The gate op of the race lane whose gate op `op` is.
+fn lane_gate_op(task: &mut crate::run::model::Task, op: OpId) -> Option<&mut Option<OpId>> {
+    let lanes = task.race.iter_mut().flat_map(|r| r.lanes.iter_mut());
+    let mut ops = lanes.map(|l| &mut l.gates.gate_op);
+    ops.find(|o| **o == Some(op))
+}
+
+/// Every `(task, lane)` whose events go through the lane's view
+/// (`race_view::view_lane`): each lane of a race but the crowned one.
+fn lanes_in_view(run: &Run) -> Vec<(usize, proto::RaceLane)> {
+    (run.tasks.iter().enumerate())
+        .flat_map(|(i, task)| {
+            (task.race.iter().flat_map(|r| &r.lanes))
+                .filter_map(move |l| super::race_view::view_lane(task, Some(l.lane)))
+                .map(move |l| (i, l))
+        })
+        .collect()
 }
 
 /// The refresh of the race lane whose refresh `op` is.

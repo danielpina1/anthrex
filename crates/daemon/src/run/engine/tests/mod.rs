@@ -136,6 +136,7 @@ mod race_end_stops;
 mod race_lanes;
 mod race_launch;
 mod race_pair_plan;
+mod race_restore;
 mod race_slots;
 mod refresh;
 mod role_history;
