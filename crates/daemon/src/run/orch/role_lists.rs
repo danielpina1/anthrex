@@ -12,6 +12,9 @@ use crate::run::route_pick::{Installed, LIST_POLICY, RolePick, role};
 /// A role record's source when the role's list chose its route.
 pub const LIST_SOURCE: &str = "configured_list";
 
+/// An orchestrator record's source when the user chose its route (`--orchestrator`).
+pub const EXPLICIT_SOURCE: &str = "explicit_choice";
+
 /// An orchestrator record's source when a continued chain kept its route (ruling RH-5
 /// ranks it on its own, below an explicit choice).
 pub const CHAIN_SOURCE: &str = "continued_chain";

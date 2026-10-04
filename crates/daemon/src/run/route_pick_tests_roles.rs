@@ -243,8 +243,9 @@ fn escalation_and_review_history_keep_skips() {
         .find(|c| c.route.model == OPUS)
         .and_then(|c| c.skipped_reason.as_deref());
     assert_eq!(opus_reason, Some(FAILED_IN_TASK));
-    // Every entry failed, so the selector fell back to the failed model: the record
-    // never calls its own choice's model skipped for it (review 10b, minor 2).
+    // A chosen route on the failed model, built here at another effort (as a fallback
+    // to it would be): the record never calls its own choice's model skipped for it
+    // (review 10b, minor 2).
     let pooled = (d.candidates.iter())
         .find(|c| c.route.model == OPUS)
         .map(|c| c.route.clone())

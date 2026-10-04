@@ -57,7 +57,7 @@ pub fn resolve_orchestrator(
         .and_then(|c| c.model.clone())
         .or_else(|| (!agent.model.is_empty()).then(|| agent.model.clone()));
     let source = if choice.is_some() {
-        "explicit_choice"
+        super::roles::lists::EXPLICIT_SOURCE
     } else if agent.runtime.is_some() || !agent.model.is_empty() {
         "agent_config"
     } else {
