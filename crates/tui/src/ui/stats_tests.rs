@@ -534,3 +534,54 @@ fn the_stats_screen_shows_the_tuning_block_read_only() {
         }
     }
 }
+
+/// Whole-branch review D, M-3: at 80 columns a long tuning line wraps under itself, so
+/// a route proposal's evidence is never cut off; a line that fits is kept as printed.
+#[test]
+fn a_long_tuning_line_wraps_at_80_columns() {
+    let text =
+        "S route standard/low → standard/medium (14 of 34 S tasks, 41%, reached rung 2 or higher)";
+    let mut report = tuning_report();
+    report.proposals[0].id = "route.s".into();
+    report.proposals[0].text = text.into();
+    let stats = HistoryStats {
+        tuning: Some(Box::new(report)),
+        ..history()
+    };
+    let app = app_with(false, StatsState::Ready(Box::new(stats)));
+    let texts: Vec<String> = (super::body_lines(&app, screen(&app), 80).iter())
+        .map(|l| l.to_string())
+        .collect();
+    let at = texts
+        .iter()
+        .position(|t| t == "tuning proposals:")
+        .expect("the block");
+    let end = at
+        + texts[at..]
+            .iter()
+            .position(|t| t.starts_with("apply: "))
+            .expect("the hint");
+    let proposal = &texts[at + 1..end];
+    assert!(proposal.len() >= 2, "wrapped: {proposal:?}");
+    assert!(
+        proposal
+            .iter()
+            .all(|t| unicode_width::UnicodeWidthStr::width(t.as_str()) <= 80),
+        "{proposal:?}"
+    );
+    assert!(
+        proposal[0].starts_with("  route.s ") && proposal[0].contains(" S route "),
+        "{proposal:?}"
+    );
+    for continuation in &proposal[1..] {
+        assert!(continuation.starts_with("      "), "indented: {proposal:?}");
+    }
+    let words: Vec<&str> = proposal.iter().flat_map(|t| t.split_whitespace()).collect();
+    let want: Vec<&str> = format!("route.s {text}")
+        .leak()
+        .split_whitespace()
+        .collect();
+    assert_eq!(words, want, "nothing is cut");
+    // A line that fits keeps its columns.
+    assert!(texts.contains(&"  S      34       40 calls 15m    9m      configured".to_string()));
+}

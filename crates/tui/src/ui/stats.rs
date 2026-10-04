@@ -185,8 +185,11 @@ fn ready_lines(stats: &HistoryStats, width: usize, p: Palette) -> Vec<Line<'stat
     }
     if let Some(tuning) = &stats.tuning {
         out.push(Line::default());
+        // Whole-branch review D, M-3: a long line wraps, its evidence never cut off.
         for (text, style) in tuning_lines(tuning, p) {
-            out.push(line(text, style));
+            for text in wrap_hanging(&text, width) {
+                out.push(line(text, style));
+            }
         }
     }
     if !stats.problems.is_empty() {
@@ -228,6 +231,35 @@ fn tuning_lines(report: &proto::TuningReport, p: Palette) -> Vec<(String, Style)
             (fold(&one_line(l), p.ascii), style)
         })
         .collect()
+}
+
+/// `text` as printed when it fits `width`; otherwise broken at the last space that
+/// fits, the rest word-wrapped under the line's second column (after its first run of
+/// two spaces, as a proposal's text sits after its id), or four past its indent when
+/// that column is past half the width.
+fn wrap_hanging(text: &str, width: usize) -> Vec<String> {
+    if text.width() <= width {
+        return vec![text.to_owned()];
+    }
+    let indent = text.len() - text.trim_start_matches(' ').len();
+    let column = (text[indent..].find("  "))
+        .map(|gap| indent + gap)
+        .map(|gap| gap + text[gap..].len() - text[gap..].trim_start_matches(' ').len())
+        .map(|at| text[..at].width())
+        .filter(|&at| at <= width / 2)
+        .unwrap_or((indent + 4).min(width / 2));
+    let split = (text.char_indices())
+        .filter(|&(i, c)| c == ' ' && i > indent && text[..i].width() <= width)
+        .map(|(i, _)| i)
+        .next_back();
+    let Some(split) = split else {
+        return wrap_words(text, width);
+    };
+    let hang = " ".repeat(column);
+    let rest = wrap_words(text[split..].trim_start(), width - column);
+    let mut out = vec![text[..split].trim_end().to_owned()];
+    out.extend(rest.into_iter().map(|l| format!("{hang}{l}")));
+    out
 }
 
 /// Ruling RH-6's hint, in place of the CLI's `apply with …` line.
