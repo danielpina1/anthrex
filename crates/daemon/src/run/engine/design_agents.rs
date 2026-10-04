@@ -31,11 +31,12 @@ use super::requests::log;
 use super::{
     Effect, EngineState, OpKind, OpResult, OrchEvent, ScoutEnd, design, emit_op, history, next_op,
 };
+use crate::decider::DeciderCaps;
 use crate::run::design::pack::{EarlierSpec, freeze};
 use crate::run::design::state::{DesignAgent, DesignAgentState};
 use crate::run::model::Run;
 use crate::run::orch::roles;
-use crate::run::orch::roles::lists::brainstorm_picks;
+use crate::run::orch::roles::lists::{brainstorm_picks_with, unsaved_missing};
 use crate::scout::design_spec::{DesignAgentSpec, brainstormer_spec};
 
 /// A brainstormer's session that ended with no accepted draft and no failure of its own.
@@ -57,8 +58,20 @@ pub(crate) fn readers(run: &Run) -> usize {
 
 /// `start_brainstorm` was accepted: decision 10's two brainstormers, queued for reader
 /// slots, and their pack's inputs frozen with `earlier` (ruling T8-2).
-pub(super) fn queue_brainstormers(run: &mut Run, earlier: Option<EarlierSpec>, now: u64) {
-    let picks = brainstorm_picks(run);
+pub(super) fn queue_brainstormers(
+    run: &mut Run,
+    earlier: Option<EarlierSpec>,
+    caps: &DeciderCaps,
+    now: u64,
+) {
+    let picks = brainstorm_picks_with(run, caps);
+    for runtime in unsaved_missing(run, caps) {
+        let label = runtime.label();
+        let text = format!(
+            "brainstormer on {label} skipped: its CLI cannot run without saving the session"
+        );
+        log(run, now, text);
+    }
     let pack = freeze(run, earlier);
     let Some(design) = run.orch.design.as_mut() else {
         return;

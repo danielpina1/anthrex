@@ -10,10 +10,11 @@
 //! goal's previous spec, checked against its frozen index entry) are read on
 //! `spawn_blocking`, within `CONTEXT_READ_TIMEOUT` and `IO_WAIT` (AGENTS.md rule 2).
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use proto::TokenUsage;
+use proto::{Runtime, TokenUsage};
 
 use super::design_io::{DOC_READ_CAP, IO_WAIT, cut_text, read_stored};
 use super::ops::failed;
@@ -39,6 +40,7 @@ impl RunService {
             let pack = self.brainstorm_pack(&ctx.run_id).await;
             spec.first_turn = format!("{}\n\n{pack}", spec.first_turn);
         }
+        deny_codex_sessions(&mut spec, codex_sessions_dir(|k| std::env::var_os(k)));
         if let Some(sandbox) = spec.headless.claude_sandbox.as_mut() {
             let given = std::mem::take(&mut sandbox.deny_read);
             sandbox.deny_read = with_canonical(given).await;
@@ -113,6 +115,28 @@ impl RunService {
             _ => tracing::warn!(run = %run_id, "the pack's profile and reports are left out"),
         }
         pack(&inputs)
+    }
+}
+
+/// Ruling T8-4: the folder Codex saves its sessions in, `$CODEX_HOME/sessions`, else
+/// `~/.codex/sessions`, from the daemon's environment (`var`).
+pub(super) fn codex_sessions_dir(var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let set = |key: &str| var(key).filter(|v| !v.is_empty()).map(PathBuf::from);
+    match set("CODEX_HOME") {
+        Some(home) => Some(home.join("sessions")),
+        None => set("HOME").map(|home| home.join(".codex").join("sessions")),
+    }
+}
+
+/// Ruling T8-4: a Claude brainstormer is also denied the Codex sessions folder; a Codex
+/// one gets nothing more, since it cannot be denied reads.
+pub(super) fn deny_codex_sessions(spec: &mut DesignAgentSpec, sessions: Option<PathBuf>) {
+    let brainstormer = matches!(spec.kind, DesignAgentKind::Brainstormer { .. });
+    if !brainstormer || spec.headless.runtime != Runtime::Claude {
+        return;
+    }
+    if let (Some(sandbox), Some(dir)) = (spec.headless.claude_sandbox.as_mut(), sessions) {
+        sandbox.deny_read.push(dir);
     }
 }
 

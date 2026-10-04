@@ -202,6 +202,33 @@ fn with_one_runtime_the_strongest_model_runs_twice_with_lenses_a_and_b() {
     assert_eq!(specs.len(), 2);
 }
 
+/// Ruling T8-4: a runtime whose CLI cannot run without saving the session is skipped,
+/// with its log line, and the other runtime's strongest model runs twice.
+#[test]
+fn a_runtime_that_cannot_run_unsaved_is_skipped_with_its_line() {
+    let mut fx = design_launched(false);
+    let caps = crate::decider::DeciderCaps {
+        claude_no_session_persistence: false,
+        ..crate::decider::DECIDER_CAPS
+    };
+    let now = fx.now;
+    crate::run::engine::design_agents::queue_brainstormers(fx.run_mut(), None, &caps, now);
+    let runtimes: Vec<(String, Runtime)> = (agents(&fx).into_iter())
+        .map(|a| (a.label, a.route.runtime))
+        .collect();
+    assert_eq!(
+        runtimes,
+        [("A".into(), Runtime::Codex), ("B".into(), Runtime::Codex)]
+    );
+    let line = "brainstormer on claude skipped: its CLI cannot run without saving the session";
+    assert_eq!(
+        log_lines(&fx).iter().filter(|l| *l == line).count(),
+        1,
+        "{:?}",
+        log_lines(&fx)
+    );
+}
+
 /// Decision 9: each brainstormer holds a reader slot; with one slot the second waits
 /// until the first has ended.
 #[test]

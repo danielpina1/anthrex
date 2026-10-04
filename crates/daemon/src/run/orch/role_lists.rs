@@ -5,6 +5,7 @@
 
 use proto::{Effort, OrchestratorChoice, RoleRoutingDecision, Route, RoutingCandidate, Runtime};
 
+use crate::decider::{DECIDER_CAPS, DeciderCaps};
 use crate::run::model::{FrozenList, ListPolicy, Run};
 use crate::run::orch::launch::{Resolved, scout_routing};
 use crate::run::roster::strongest_of;
@@ -115,8 +116,35 @@ pub struct BrainstormPick {
 /// orchestrator's effort (no `[orchestrator.design]` key names one). Labels: the
 /// runtimes' names on two runtimes, the lenses `A` and `B` on one.
 pub fn brainstorm_picks(run: &Run) -> Vec<BrainstormPick> {
+    brainstorm_picks_with(run, &DECIDER_CAPS)
+}
+
+/// Ruling T8-4: whether `runtime`'s CLI runs a session without saving it (`claude
+/// --no-session-persistence`, `codex exec --ephemeral`), by the decider's caps.
+pub fn runs_unsaved(runtime: Runtime, caps: &DeciderCaps) -> bool {
+    match runtime {
+        Runtime::Claude => caps.claude_no_session_persistence,
+        Runtime::Codex => caps.codex_ephemeral,
+        Runtime::Shell => false,
+    }
+}
+
+/// Ruling T8-4: the installed runtimes that cannot brainstorm, their CLI unable to run
+/// without saving the session; their picks fall back as an uninstalled runtime's.
+pub fn unsaved_missing(run: &Run, caps: &DeciderCaps) -> Vec<Runtime> {
+    let installed = |runtime: Runtime| run.orch.installed.get(runtime.label()) != Some(&false);
+    [Runtime::Claude, Runtime::Codex]
+        .into_iter()
+        .filter(|&runtime| installed(runtime) && !runs_unsaved(runtime, caps))
+        .collect()
+}
+
+/// [`brainstorm_picks`] by `caps` (ruling T8-4).
+pub fn brainstorm_picks_with(run: &Run, caps: &DeciderCaps) -> Vec<BrainstormPick> {
     let effort = (run.orch.orchestrator.as_ref()).map_or(Effort::High, |o| o.route.effort);
-    let usable = |runtime: Runtime| run.orch.installed.get(runtime.label()) != Some(&false);
+    let usable = |runtime: Runtime| {
+        run.orch.installed.get(runtime.label()) != Some(&false) && runs_unsaved(runtime, caps)
+    };
     let list = &run.limits.route_lists.brainstorm;
     let listed: Vec<Route> = (list.candidates.iter())
         .filter(|c| usable(c.runtime))

@@ -156,7 +156,7 @@ fn start_brainstorm(
     }
     design.answers = Some(safe_text::multi_line(answers));
     log(run, now, "the orchestrator started the brainstorm");
-    super::design_agents::queue_brainstormers(run, earlier, now);
+    super::design_agents::queue_brainstormers(run, earlier, &crate::decider::DECIDER_CAPS, now);
     Ok(json!({"accepted": true}))
 }
 

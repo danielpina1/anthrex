@@ -203,3 +203,59 @@ async fn a_symlinked_data_dir_is_denied_by_both_its_paths() {
         .join("runs/r2/design");
     assert_eq!(with_canonical(vec![plain.clone()]).await, [plain]);
 }
+
+/// Ruling T8-4: a Claude brainstormer cannot read the Codex sessions folder, where a
+/// Codex brainstormer's session would be saved (`$CODEX_HOME/sessions`, else
+/// `~/.codex/sessions`); a Codex brainstormer gets nothing more.
+#[test]
+fn a_claude_brainstormer_is_denied_the_codex_sessions() {
+    use crate::run::design::state::{DesignAgent, DesignAgentState};
+    use crate::run::driver::design_ops::{codex_sessions_dir, deny_codex_sessions};
+    use crate::scout::design_spec::brainstormer_spec;
+    let env = |pairs: &'static [(&'static str, &'static str)]| {
+        move |key: &str| {
+            (pairs.iter())
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| std::ffi::OsString::from(v))
+        }
+    };
+    const HOME: &[(&str, &str)] = &[("HOME", "/Users/u")];
+    const BOTH: &[(&str, &str)] = &[("HOME", "/Users/u"), ("CODEX_HOME", "/opt/codex")];
+    let dir = codex_sessions_dir(env(HOME));
+    assert_eq!(dir, Some("/Users/u/.codex/sessions".into()));
+    assert_eq!(
+        codex_sessions_dir(env(BOTH)),
+        Some("/opt/codex/sessions".into())
+    );
+    assert_eq!(codex_sessions_dir(env(&[])), None);
+    let mut run = crate::run::orch::test_support::run_of(1);
+    run.design_mode = proto::DesignMode::Full;
+    let agent = |label: &str, runtime| DesignAgent {
+        label: label.into(),
+        role: proto::AgentRole::Brainstormer,
+        route: Route {
+            runtime,
+            model: String::new(),
+            strength: Strength::Frontier,
+            effort: Effort::High,
+        },
+        session: 1,
+        window_id: None,
+        state: DesignAgentState::Running,
+        calls: 0,
+        tokens: 0,
+        started: None,
+        listed: false,
+    };
+    let mut claude = brainstormer_spec(&run, &agent("claude", Runtime::Claude));
+    deny_codex_sessions(&mut claude, dir.clone());
+    let denied = &claude.headless.claude_sandbox.as_ref().unwrap().deny_read;
+    assert_eq!(
+        denied,
+        &[state::design_dir(&run), "/Users/u/.codex/sessions".into()]
+    );
+    let mut codex = brainstormer_spec(&run, &agent("codex", Runtime::Codex));
+    let before = codex.clone();
+    deny_codex_sessions(&mut codex, dir);
+    assert_eq!(codex, before);
+}

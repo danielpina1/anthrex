@@ -390,3 +390,36 @@ fn a_brainstormers_record_names_its_picks_source() {
         "roster_default"
     );
 }
+
+/// Ruling T8-4: a runtime whose CLI cannot run without saving the session cannot
+/// brainstorm; its picks fall back as an uninstalled runtime's, list or not.
+#[test]
+fn a_runtime_that_cannot_run_unsaved_cannot_brainstorm() {
+    let caps = crate::decider::DeciderCaps {
+        codex_ephemeral: false,
+        ..crate::decider::DECIDER_CAPS
+    };
+    let run = brainstorm_run(Vec::new());
+    assert_eq!(unsaved_missing(&run, &crate::decider::DECIDER_CAPS), []);
+    assert_eq!(unsaved_missing(&run, &caps), [Runtime::Codex]);
+    let picked = |picks: Vec<BrainstormPick>| -> Vec<(String, Runtime)> {
+        picks
+            .into_iter()
+            .map(|p| (p.label, p.route.runtime))
+            .collect()
+    };
+    let claude_twice = [
+        ("A".to_string(), Runtime::Claude),
+        ("B".to_string(), Runtime::Claude),
+    ];
+    assert_eq!(picked(brainstorm_picks_with(&run, &caps)), claude_twice);
+    let listed = brainstorm_run(vec![
+        cand(Runtime::Codex, SOL, None),
+        cand(Runtime::Claude, HAIKU, None),
+    ]);
+    assert_eq!(picked(brainstorm_picks_with(&listed, &caps)), claude_twice);
+    // An uninstalled runtime is not named twice.
+    let mut gone = brainstorm_run(Vec::new());
+    gone.orch.installed = [("codex".to_string(), false)].into();
+    assert_eq!(unsaved_missing(&gone, &caps), []);
+}

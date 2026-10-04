@@ -2,6 +2,7 @@
 //! installed CLIs can do (`CLI_CAPS`, set from M8a.1's findings). Pure.
 
 use super::{ClaudeSandbox, HeadlessSpec, McpTarget, SessionArg};
+use crate::decider::DECIDER_CAPS;
 use crate::launch;
 use crate::launch::codex::toml_string;
 use proto::{AgentRole, Effort};
@@ -326,8 +327,17 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
     Some(args)
 }
 
+/// Milestone 9.6 ruling T8-4: a design agent's session (a brainstormer's or a document
+/// reviewer's) is not saved, as a decider's is not, when the CLI can run so
+/// (`DECIDER_CAPS`), so no transcript of it exists for another agent to read.
+fn unsaved(spec: &HeadlessSpec) -> bool {
+    let role = spec.mcp.as_ref().map(|m| m.role);
+    matches!(role, Some(AgentRole::Brainstormer | AgentRole::DocReviewer))
+}
+
 /// A Claude session's argv (decision 24), in this order: the stream flags, the
-/// permission-prompt flag, the session argument, the user-settings-only flags (decision
+/// permission-prompt flag, the session argument, a design agent's
+/// `--no-session-persistence` (ruling T8-4), the user-settings-only flags (decision
 /// 53), `--settings`, `--mcp-config`, `--allowedTools`, `--disallowedTools`,
 /// `--append-system-prompt`, `--permission-mode`, `--model`, `--effort`, then the auth
 /// flag (decision 50). Every variadic flag is followed by another flag. The prompt is
@@ -363,6 +373,9 @@ pub fn claude_args(
         SessionArg::Resume { session_id } => {
             args.extend(["--resume".into(), session_id.clone()]);
         }
+    }
+    if unsaved(spec) && DECIDER_CAPS.claude_no_session_persistence {
+        args.push("--no-session-persistence".into());
     }
     if let Some(flags) = caps.claude_user_settings_only {
         args.extend(flags.iter().map(|f| f.to_string()));
@@ -418,8 +431,9 @@ pub fn claude_args(
     args
 }
 
-/// One Codex turn's argv (decision 25): `exec --json` for the first turn, `exec resume
-/// <id> --json` for every later one, then the project-config exclusion when the CLI has
+/// One Codex turn's argv (decision 25): `exec --json` for the first turn (a design
+/// agent's with `--ephemeral`, ruling T8-4), `exec resume <id> --json` for every later
+/// one, then the project-config exclusion when the CLI has
 /// one, the MCP server, the instructions (with M9.5 decision 28's filter note), effort
 /// and approval policy, the sandbox, a worker's writable roots, the model when named,
 /// `--`, and the turn's message. `exec resume` rejects `-s` (M8a.1 item 6), so a resume
@@ -444,6 +458,9 @@ pub fn codex_args(
         SessionArg::New { .. } => false,
     };
     args.push("--json".into());
+    if !resuming && unsaved(spec) && DECIDER_CAPS.codex_ephemeral {
+        args.push("--ephemeral".into());
+    }
     if let Some(flags) = caps.codex_user_config_only {
         args.extend(flags.iter().map(|f| f.to_string()));
     }

@@ -15,7 +15,10 @@
 //! sandbox restricts writes only. As defence in depth, on Claude the run's design
 //! folder is denied to the read tools (`permissions.deny`) and to commands
 //! (`sandbox.filesystem.denyRead`), by its path as given and, added by the driver, its
-//! canonical path (ruling T8-3).
+//! canonical path (ruling T8-3). Ruling T8-4: no design agent's session is saved
+//! (`headless::argv`'s `--no-session-persistence` and `--ephemeral`, keyed on the
+//! role, so the document reviewer has it too), and a Claude brainstormer is also denied
+//! the Codex sessions folder.
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -254,3 +254,42 @@ fn an_unbound_design_session_is_named_by_its_role_and_label() {
     assert!(tag(AgentRole::Planner, "codex").names(&planner));
     assert!(!tag(AgentRole::Brainstormer, "codex").names(&planner));
 }
+
+/// Ruling T8-4: a design agent's session is never saved (`claude
+/// --no-session-persistence`, `codex exec --ephemeral`), so no transcript of it exists
+/// for the other brainstormer to read; a brainstormer's spec and a document reviewer's
+/// role carry it, and a worker's or a sub-planner's does not.
+#[test]
+fn a_design_agents_session_is_not_saved() {
+    use crate::headless::argv::codex_args;
+    let run = run();
+    let new = SessionArg::New { uuid: None };
+    let (exe, sock) = (Path::new("/opt/anthrex"), Path::new("/tmp/sock"));
+    let claude =
+        |spec: &crate::headless::HeadlessSpec| claude_args(spec, &new, exe, 7, sock, &CLI_CAPS);
+    let codex = |spec: &crate::headless::HeadlessSpec| {
+        codex_args(spec, &new, "go", exe, 7, sock, &CLI_CAPS)
+    };
+    let saved = |args: Vec<String>| {
+        !args
+            .iter()
+            .any(|a| a == "--no-session-persistence" || a == "--ephemeral")
+    };
+    let on_claude = brainstormer_spec(&run, &agent("claude", Runtime::Claude)).headless;
+    assert!(claude(&on_claude).contains(&"--no-session-persistence".to_string()));
+    let on_codex = brainstormer_spec(&run, &agent("codex", Runtime::Codex)).headless;
+    assert!(codex(&on_codex).contains(&"--ephemeral".to_string()));
+    let mut reviewer = on_claude.clone();
+    reviewer.mcp.as_mut().unwrap().role = AgentRole::DocReviewer;
+    assert!(!saved(claude(&reviewer)));
+    for role in [AgentRole::Worker, AgentRole::Planner, AgentRole::Scout] {
+        for mut spec in [on_claude.clone(), on_codex.clone()] {
+            spec.mcp.as_mut().unwrap().role = role;
+            let args = match spec.runtime {
+                Runtime::Codex => codex(&spec),
+                _ => claude(&spec),
+            };
+            assert!(saved(args), "{role:?}");
+        }
+    }
+}
