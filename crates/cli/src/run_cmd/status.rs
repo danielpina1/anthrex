@@ -2,7 +2,9 @@
 //! listing (decision 20). Pure: every function takes the snapshot and returns text.
 
 use daemon::run::triage::{kinds_scale, source_label};
-use proto::{BaseMovedInfo, GateCounts, Route, RunInfo, RunState, Size, TaskInfo, TestMode};
+use proto::{
+    BaseMovedInfo, GateCounts, PairPhase, Route, RunInfo, RunState, Size, TaskInfo, TestMode,
+};
 
 use super::status_orch::{orchestrator_lines, state_text};
 
@@ -46,8 +48,11 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
     } else {
         state
     };
+    // Milestone 9.5 decision 30: ` (codex cap 1)` per capped runtime.
+    let cap = |(runtime, cap): (&String, &u8)| format!(" ({} cap {cap})", one_line(runtime));
+    let caps: String = run.writer_caps.iter().map(cap).collect();
     let mut out = format!(
-        "{}  {}  {}/{} merged  base {}@{}  writers {}/{}  readers {}/{}  rev {}\n",
+        "{}  {}  {}/{} merged  base {}@{}  writers {}/{}{caps}  readers {}/{}  rev {}\n",
         run.run_id,
         state,
         merged,
@@ -111,6 +116,7 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
         }
         out.push_str(&line);
         out.push('\n');
+        out.push_str(&pattern_lines(run, task));
     }
     // Review I1 (M8c.1): the snapshot's promotion line carries no time; this is it, local.
     if let Some(at) = run.promote_requested_at {
@@ -119,6 +125,35 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
     }
     for line in &run.attention {
         out.push_str(&format!("  attention: {line}\n"));
+    }
+    out
+}
+
+/// Decision 30: under a racing task each lane's runtime and state; under a paired task
+/// the test writer's progress and the implementer's state.
+fn pattern_lines(run: &RunInfo, task: &TaskInfo) -> String {
+    let mut out = String::new();
+    if let Some(race) = &task.race {
+        let lane = |l: &proto::LaneInfo| {
+            let state = serde_json::to_value(l.state).unwrap_or_default();
+            let state = state.as_str().unwrap_or_default();
+            format!("{} {} {state}", l.lane.label(), l.route.runtime.label())
+        };
+        let lanes: Vec<String> = race.lanes.iter().map(lane).collect();
+        out.push_str(&format!("    race: {}\n", lanes.join(" · ")));
+    }
+    if let Some(pair) = &task.pair {
+        let (writer, implementer) = match pair.phase {
+            PairPhase::Writing => ("working".to_string(), "not started".to_string()),
+            PairPhase::Implementing => {
+                let red =
+                    (pair.red.as_deref()).map_or(String::new(), |r| format!(", red {}", short(r)));
+                (format!("done{red}"), state_text(run, task))
+            }
+        };
+        out.push_str(&format!(
+            "    pair: test writer {writer}; implementer {implementer}\n"
+        ));
     }
     out
 }
@@ -347,3 +382,7 @@ pub fn printable(text: &str) -> String {
 #[cfg(test)]
 #[path = "status_tests_stages.rs"]
 mod tests_stages;
+
+#[cfg(test)]
+#[path = "status_tests_patterns.rs"]
+mod tests_patterns;

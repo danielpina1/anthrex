@@ -17,6 +17,8 @@ use crate::run::routing::{record_reviewer, record_worker};
 #[path = "history_tests_fixtures.rs"]
 mod fixtures;
 use fixtures::*;
+#[path = "history_tests_patterns.rs"]
+mod patterns;
 #[path = "history_tests_routing.rs"]
 mod routing;
 
@@ -220,7 +222,8 @@ fn task_record_from_a_merged_task() {
         race_winner: None,
         race_adopted: false,
         writer_failures: 0,
-        round: 0,
+        // Task M9.5.21: the round that added the task (round 1 for a plan's task).
+        round: 1,
     };
     assert_eq!(record, want);
     assert_eq!(task_record_id(&run.id, "t1"), want.record_id);
