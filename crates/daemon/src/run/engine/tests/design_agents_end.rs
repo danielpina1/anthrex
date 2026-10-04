@@ -286,3 +286,41 @@ fn a_rejected_run_stops_its_brainstormers() {
     ended(&mut fx, "claude", 1, ScoutEnd::Reported);
     assert!(notes(&fx).iter().all(|n| !n.contains("brainstorm draft")));
 }
+
+/// Ruling T8-5: the drafts settle once per brainstorm round. Two pause and resume
+/// cycles after the drafts are in, and a restart, leave the clock, the log line and
+/// the wake note as they were, each single.
+#[test]
+fn the_drafts_settle_once_per_round() {
+    let mut fx = brainstorming();
+    answered(&submit_draft(&mut fx, CLAUDE, DRAFT));
+    answered(&submit_draft(&mut fx, CODEX, DRAFT));
+    let note = "both brainstorm drafts are in; read them with get_doc and submit the merged report";
+    let seen = |fx: &Fixture| {
+        let design = fx.run().orch.design.as_ref().unwrap();
+        let line = "the brainstorm drafts are in";
+        (
+            design.phase_started,
+            design.phase_paused_base,
+            log_lines(fx).iter().filter(|l| *l == line).count(),
+            notes(fx).iter().filter(|n| *n == note).count(),
+        )
+    };
+    let first = seen(&fx);
+    assert_eq!((first.2, first.3), (1, 1));
+    for _ in 0..2 {
+        fx.now += 60;
+        let run = fx.run_mut();
+        run.paused_from = Some(RunState::Brainstorming);
+        run.state = RunState::Paused;
+        resume(&mut fx);
+        assert_eq!(fx.run().state, RunState::Brainstorming);
+        assert_eq!(seen(&fx), first);
+    }
+    fx.now += 60;
+    super::orch_restore::restart(&mut fx);
+    resume(&mut fx);
+    assert_eq!(fx.run().state, RunState::Brainstorming);
+    assert_eq!(seen(&fx), first);
+    assert!(fx.run().orch.design.as_ref().unwrap().drafts_settled);
+}

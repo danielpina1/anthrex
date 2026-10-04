@@ -65,6 +65,10 @@ pub struct DesignState {
     /// other brainstormer runs; a restore relaunches its brainstormer instead.
     #[serde(skip)]
     pub held: Vec<(String, String)>,
+    /// Ruling T8-5: this brainstorm round's drafts are in (`design::drafts_in` ran), so
+    /// the brainstorm never settles again until brainstormers are queued anew.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub drafts_settled: bool,
     /// Ruling T8-2: the brainstormers' pack inputs, frozen when they were queued.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pack: Option<FrozenPack>,

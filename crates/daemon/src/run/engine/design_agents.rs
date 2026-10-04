@@ -77,6 +77,7 @@ pub(super) fn queue_brainstormers(
         return;
     };
     design.pack = Some(pack);
+    design.drafts_settled = false;
     design.brainstormers = (picks.iter())
         .map(|p| DesignAgent {
             label: p.label.clone(),
@@ -284,8 +285,9 @@ fn fail(run: &mut Run, k: usize, reason: String, now: u64, fx: &mut Vec<Effect>)
 /// DF §3.4 and §3.5, once every brainstormer has ended, in brainstorming (a paused
 /// run's brainstorm settles when it resumes, `restore::unpause`, fix round 1's m1): the
 /// held drafts are stored and written (ruling T8-1); a draft or two wake the
-/// orchestrator, with the failure if one failed; two failures halt the run, retryably
-/// (`run resume` relaunches them, [`relaunch_failed`]).
+/// orchestrator, with the failure if one failed, once per brainstorm round
+/// (`drafts_settled`, ruling T8-5, cleared when brainstormers are queued anew); two
+/// failures halt the run, retryably (`run resume` relaunches them, [`relaunch_failed`]).
 pub(super) fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if run.state != RunState::Brainstorming {
         return;
@@ -293,6 +295,10 @@ pub(super) fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let Some(design) = run.orch.design.as_ref() else {
         return;
     };
+    // Ruling T8-5: once per brainstorm round.
+    if design.drafts_settled {
+        return;
+    }
     let ended = |a: &DesignAgent| {
         matches!(
             a.state,
@@ -313,6 +319,9 @@ pub(super) fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         })
         .collect();
     if failed.len() < design.brainstormers.len() {
+        if let Some(design) = run.orch.design.as_mut() {
+            design.drafts_settled = true;
+        }
         let one = failed.first().map(|(l, r)| (l.as_str(), r.as_str()));
         return design::drafts_in(run, one, now);
     }
