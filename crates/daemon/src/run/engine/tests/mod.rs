@@ -68,6 +68,7 @@ mod design_notes;
 mod design_phases;
 mod design_plan_gate;
 mod design_report;
+mod design_report_cut;
 mod design_review;
 mod design_review_agent;
 mod design_review_fixture;

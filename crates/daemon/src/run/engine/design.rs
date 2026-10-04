@@ -177,7 +177,10 @@ pub(super) fn submit_doc(
     let doc = match kind {
         // Task M9.6.9: the merged report, once the drafts are in, with their appendix.
         DocGateKind::Brainstorm => {
-            let (doc, cut) = report::report_doc(run, &doc.text, DocAuthor::Orchestrator, &reason)?;
+            let author = DocAuthor::Orchestrator;
+            let built = report::report_doc(run, &doc.text, author, &reason);
+            // Ruling T9-2(c): a refusal while the drafts are read back is owed a wake.
+            let (doc, cut) = built.inspect_err(|error| report::refused(run, error))?;
             report::warn_cut(run, cut, now);
             doc
         }
@@ -452,6 +455,8 @@ pub(super) fn checked(run: &mut Run, checked: Vec<DocChecked>, now: u64) {
             }
         }
     }
+    // Ruling T9-2(c): a report refused while these drafts were read back is owed a wake.
+    report::read_back(run);
     let Some(gate) = gate.filter(|g| lost && g.revising.is_none()) else {
         return;
     };

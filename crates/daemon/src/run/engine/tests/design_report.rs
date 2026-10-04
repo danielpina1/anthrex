@@ -18,15 +18,15 @@ use crate::run::design::report::{APPENDIX, attach};
 use crate::run::design::state::{self, DesignAgentState, DocVersion, sha256_hex};
 use crate::run::engine::{Effect, EventKind, OrchEvent, ScoutEnd};
 
-const NOT_IN: &str = "the brainstorm drafts are not in yet";
+pub(super) const NOT_IN: &str = "the brainstorm drafts are not in yet";
 
 /// Codex's draft, told apart from Claude's.
-fn codex_draft() -> String {
+pub(super) fn codex_draft() -> String {
     DRAFT.replace("A table. Size M.", "A table, from codex. Size M.")
 }
 
 /// Both brainstormers' drafts in, their sessions ended.
-fn both_drafts(fx: &mut Fixture) {
+pub(super) fn both_drafts(fx: &mut Fixture) {
     let session = |fx: &Fixture, k: usize| agents(fx)[k].session;
     let (claude, codex) = (session(fx, 0), session(fx, 1));
     let window = |fx: &Fixture, k: usize| agents(fx)[k].window_id.unwrap();
@@ -38,7 +38,7 @@ fn both_drafts(fx: &mut Fixture) {
 }
 
 /// Every design document the effects write: `(path, text)`.
-fn writes(effects: &[Effect]) -> Vec<(std::path::PathBuf, String)> {
+pub(super) fn writes(effects: &[Effect]) -> Vec<(std::path::PathBuf, String)> {
     (effects.iter())
         .filter_map(|e| match e {
             Effect::WriteDoc { path, text, .. } => Some((path.clone(), text.clone())),
@@ -444,7 +444,7 @@ fn the_reports_template_is_exact() {
 }
 
 /// The brainstorm gate's latest version's text, as the engine keeps it.
-fn version_text(fx: &Fixture) -> String {
+pub(super) fn version_text(fx: &Fixture) -> String {
     let design = fx.run().orch.design.as_ref().unwrap();
     design.text_of(DocKind::Brainstorm).unwrap().1.to_string()
 }

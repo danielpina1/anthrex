@@ -9,10 +9,11 @@
 use proto::{DocAuthor, DocKind};
 
 use super::super::requests::log;
+use super::super::wake;
 use super::checked_text;
 use crate::run::design::report::{self, attach};
 use crate::run::design::state::{DesignAgentState, NewDoc};
-use crate::run::design::template::tags;
+use crate::run::design::template::{DocLine, REPORT_SECTIONS, heading, lines, section, tags};
 use crate::run::model::Run;
 
 /// The refusal of a report submitted before the drafts are in.
@@ -66,8 +67,9 @@ pub(in crate::run::engine) fn template_note(run: &Run, failed: Option<(&str, &st
 /// engine's appendix is cut from `raw` if it carries one back (a report read with
 /// `get_doc` is the whole file), the rest checked against the template, then the drafts
 /// attached anew (decision 13), with the summary the gate shows (DF §6.1). Also
-/// returns whether the cut part was not the appendix the engine would attach: an
-/// appendix heading of the report's own ([`warn_cut`]).
+/// returns whether the cut part did not have the engine's appendix's shape: an appendix
+/// heading of the report's own ([`warn_cut`]); one that cut off a required section is
+/// refused with [`CUT_REFUSAL`] (ruling T9-2).
 pub(in crate::run::engine) fn report_doc(
     run: &Run,
     raw: &str,
@@ -82,19 +84,88 @@ pub(in crate::run::engine) fn report_doc(
         true => report::split(raw),
         false => (raw, None),
     };
-    let text = checked_text(run, DocKind::Brainstorm, raw, false, true)?;
+    // Ruling T9-2(b): the cut part is the engine's appendix when it has its shape.
+    let own = cut.is_some_and(|cut| !engine_shaped(run, cut));
+    let text = match checked_text(run, DocKind::Brainstorm, raw, false, true) {
+        Ok(text) => text,
+        // Ruling T9-2(a): the report's own heading cut off a required section.
+        Err(error) if own && cut.is_some_and(|cut| cut_off(cut, &error)) => {
+            return Err(CUT_REFUSAL.into());
+        }
+        Err(error) => return Err(error),
+    };
     let labels: Vec<String> = (run.orch.design.iter())
         .flat_map(|d| &d.brainstormers)
         .map(|a| a.label.clone())
         .collect();
     let summary = report::summary(&text, &labels);
     let file = attach(&text, &drafts);
-    let own =
-        cut.is_some_and(|cut| Some(cut.trim_end()) != report::split(&file).1.map(str::trim_end));
     let mut doc = NewDoc::new(DocKind::Brainstorm, author, reason, &file);
     doc.report = Some(summary);
     Ok((doc, own))
 }
+
+/// Ruling T9-2(b): `cut` (from its `## Appendix: the drafts` line on) has the engine's
+/// appendix's shape: right after its heading a `### ` heading, and every heading at
+/// that level or above a brainstormer's label (any round's; a stale appendix sent back
+/// counts).
+fn engine_shaped(run: &Run, cut: &str) -> bool {
+    let Some(design) = run.orch.design.as_ref() else {
+        return false;
+    };
+    let mut labels: Vec<&str> = design
+        .brainstormers
+        .iter()
+        .map(|a| a.label.as_str())
+        .collect();
+    labels.extend(design.versions.iter().filter_map(|v| v.label()));
+    let doc = lines(cut);
+    let mut rest = doc.iter().skip(1).filter(|l| !l.text.trim().is_empty());
+    let labelled =
+        |l: &DocLine<'_>| heading(l).is_some_and(|(n, title)| n == 3 && labels.contains(&title));
+    if !rest.next().is_some_and(labelled) {
+        return false;
+    }
+    (doc.iter().skip(1))
+        .filter(|l| heading(l).is_some_and(|(n, _)| n <= 3))
+        .all(labelled)
+}
+
+/// Ruling T9-2(a): `error` is the template's missing-section refusal for a section
+/// that `cut` holds.
+fn cut_off(cut: &str, error: &str) -> bool {
+    let doc = lines(cut);
+    REPORT_SECTIONS.iter().any(|h| {
+        *error == format!("the brainstorm is missing the section \"{h}\"")
+            && section(&doc, h).is_some()
+    })
+}
+
+/// Ruling T9-2(c): the orchestrator's report was refused with `error`; when it waited
+/// for a restore's read-back of the settled drafts, the orchestrator is owed a wake.
+pub(in crate::run::engine) fn refused(run: &mut Run, error: &str) {
+    if let Some(design) = run.orch.design.as_mut().filter(|d| d.drafts_settled)
+        && error == NOT_IN
+    {
+        design.read_back_owed = true;
+    }
+}
+
+/// Ruling T9-2(c), after a read-back: once every settled draft is loaded or found
+/// unreadable, the wake a refused report is owed, once.
+pub(in crate::run::engine) fn read_back(run: &mut Run) {
+    let owed = run.orch.design.as_ref().is_some_and(|d| d.read_back_owed);
+    if !owed || drafts_not_in(run).is_some() {
+        return;
+    }
+    if let Some(design) = run.orch.design.as_mut() {
+        design.read_back_owed = false;
+    }
+    wake::note(run, READ_BACK.to_string());
+}
+
+/// Ruling T9-2(c)'s wake note.
+pub const READ_BACK: &str = "the brainstorm drafts are read back; submit the report again";
 
 /// Review minor 5: a report whose own `## Appendix: the drafts` heading cut it is said
 /// so in the run's log, since what followed the heading is not stored.
@@ -103,6 +174,10 @@ pub(in crate::run::engine) fn warn_cut(run: &mut Run, own: bool, now: u64) {
         log(run, now, CUT_WARNING);
     }
 }
+
+/// Ruling T9-2(a): the refusal of a report whose own appendix heading cut off one of
+/// its required sections.
+pub const CUT_REFUSAL: &str = "the appendix is the engine's; leave \"## Appendix: the drafts\" out";
 
 /// The run's log line when a report's own appendix heading cut it.
 pub const CUT_WARNING: &str = "design flow: warning: the brainstorm report had its own \"## Appendix: the drafts\" section; it was cut, and anthrex attached the drafts";
@@ -119,7 +194,11 @@ fn drafts(run: &Run) -> Option<Vec<(String, Result<String, String>)>> {
             let draft = match &a.state {
                 DesignAgentState::Failed(reason) => Err(reason.clone()),
                 _ => {
-                    let n = design.draft_from(&a.label)?.n;
+                    // Ruling T9-2's nit: no writer makes a `Done` one without a draft.
+                    let Some(v) = design.draft_from(&a.label) else {
+                        return Some((a.label.clone(), Err(NOT_STORED.to_string())));
+                    };
+                    let n = v.n;
                     match (design.draft_text(n), design.unread_reason(n)) {
                         (Some(text), _) => Ok(text.to_string()),
                         (None, Some(why)) => Err(format!("{UNREAD}: {why}")),
@@ -131,6 +210,9 @@ fn drafts(run: &Run) -> Option<Vec<(String, Result<String, String>)>> {
         })
         .collect()
 }
+
+/// How the appendix names a brainstormer's draft that is not in the index.
+pub const NOT_STORED: &str = "its draft was not stored";
 
 /// How the appendix names a draft a restore could not read back.
 pub const UNREAD: &str = "its draft could not be read back";

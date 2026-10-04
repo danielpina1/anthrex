@@ -74,6 +74,10 @@ pub struct DesignState {
     /// memory only, as [`DesignState::texts`]: the next restore reads it again.
     #[serde(skip)]
     pub unread: Vec<(u32, String)>,
+    /// Ruling T9-2(c): a merged report was refused while a restore's read-back of the
+    /// drafts was pending; the orchestrator is woken once it lands. In memory only.
+    #[serde(skip)]
+    pub read_back_owed: bool,
     /// Ruling T8-5: this brainstorm round's drafts are in (`design::drafts_in` ran), so
     /// the brainstorm never settles again until brainstormers are queued anew.
     #[serde(skip_serializing_if = "std::ops::Not::not")]

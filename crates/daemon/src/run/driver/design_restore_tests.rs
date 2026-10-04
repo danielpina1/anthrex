@@ -257,9 +257,10 @@ mod service {
     /// Review m4 and m5: the read-back is one blocking task for every run, bounded by
     /// its wait. A read that never answers (the seam blocks on a channel this test
     /// holds) times it out: the restore goes on, and the engine is told nothing of its
-    /// gate documents, so the gate stays as it was. Fix round 2: it cannot hang. The test's sender is dropped
-    /// on every exit, a panic's unwinding included, which ends the blocked read; the
-    /// read's own wait is bounded too, and the call has a hard deadline.
+    /// gate documents, so the gate stays as it was. Fix round 2: it cannot hang. The
+    /// test's sender is dropped on every exit, a panic's unwinding included, which ends
+    /// the blocked read; the read's own wait is bounded too, and the call has a hard
+    /// deadline.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_read_back_that_times_out_changes_nothing() {
         const READ_BOUND: Duration = Duration::from_secs(30);

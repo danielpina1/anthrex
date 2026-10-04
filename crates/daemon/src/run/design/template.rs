@@ -35,7 +35,7 @@ const DRAFT_SECTIONS: &[&str] = &[
     "## Questions for you",
 ];
 
-const REPORT_SECTIONS: &[&str] = &[
+pub(crate) const REPORT_SECTIONS: &[&str] = &[
     "## Where they agree",
     "## Where they disagree",
     "## Approaches",
