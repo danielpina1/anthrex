@@ -514,3 +514,32 @@ async fn without_merge_base_the_writers_path_is_kept() {
         "tried"
     );
 }
+
+/// Whole-branch review B, I1: the test writer's paths (`start..red`) are test files by
+/// definition. An implementer that swaps the writer's two assertions for one shows,
+/// whether `test_paths` is empty (an untiered profile) or does not match the file.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_writers_test_is_a_test_file_whatever_test_paths_says() {
+    for test_paths in [Vec::new(), vec!["tests/**".to_string()]] {
+        let rig = Rig::new(&[("src/lib.py", "def f():\n    pass\n")]);
+        rig.commit(&[(
+            "src/x/test_y.py",
+            Some("def test_y():\n    assert one()\n    assert two()\n"),
+        )]);
+        let red = git(&rig.worktree, &["rev-parse", "HEAD"]);
+        rig.commit(&[("src/x/test_y.py", Some("def test_y():\n    assert True\n"))]);
+        let spec = SignalsSpec {
+            test_paths: test_paths.clone(),
+            skip_markers: Vec::new(),
+            red: Some(red),
+        };
+        let weakened = Signal::AssertionLoss {
+            path: "src/x/test_y.py".into(),
+            line: 2,
+            removed: 2,
+            added: 1,
+        };
+        let found = signals(&rig.verify(Some(spec)).await, 2);
+        assert_eq!(found, vec![weakened], "test_paths {test_paths:?}");
+    }
+}

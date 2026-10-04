@@ -2,7 +2,7 @@
 //! the bounce of a gate failure of `done`, and the accepted claim's move to its first
 //! gate. Pure (design decision 2).
 
-use proto::{DoneSignal, GateKind, TaskState};
+use proto::{DoneSignal, GateKind, PairPhase, TaskState};
 
 use super::dispatch::history;
 use super::done::{REPLACED, rejection, reply, session_window, spill_exempt};
@@ -70,7 +70,7 @@ pub(super) fn checked(
     if pending.reply.is_none() && run.tasks[i].rounds[r].turns != pending.turn {
         return fallback::drop_stale(run, i, r, fx);
     }
-    let (outside, generated, protected, head, resolution_only, signals) = match &result {
+    let (outside, generated, protected, head, resolution_only, read) = match &result {
         OpResult::DoneChecked {
             outside_owns,
             generated_outside_owns,
@@ -85,7 +85,7 @@ pub(super) fn checked(
             protected_changed.clone(),
             head.clone(),
             *resolution_only,
-            signals.as_deref().cloned().unwrap_or_default(),
+            signals.as_deref().cloned(),
         ),
         OpResult::Failed { message } => {
             let text = format!("task_done could not be checked: {message}; call task_done again");
@@ -99,6 +99,8 @@ pub(super) fn checked(
         answer(fx, run, Err(text.clone()));
         return reengage(run, i, &pending, text, now);
     }
+    let signals_read = read.is_some();
+    let signals = read.unwrap_or_default();
     let told = pending.reply.is_some();
     if !spill_exempt(run, i) {
         // Decision 56 first: a protected path `owns` does not name literally.
@@ -131,6 +133,10 @@ pub(super) fn checked(
     let (id, mut pending) = (pending.reply, pending);
     super::pair::log_unlimited(run, i, signals.unlimited, now);
     super::weakening::keep(&mut run.tasks[i], signals);
+    if let Some(pair) = (run.tasks[i].pair.as_mut()).filter(|p| p.phase == PairPhase::Implementing)
+    {
+        pair.signals_read = signals_read;
+    }
     // Milestone 9.5 decision 25: a test writer's red is its head, in full, for the
     // red-only proof that `accept`'s first gate runs.
     if super::pair::writing(&run.tasks[i]) {

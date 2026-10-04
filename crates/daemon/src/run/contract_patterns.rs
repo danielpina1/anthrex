@@ -80,11 +80,11 @@ pub fn pair_implementer_note(test: &str, red: &str) -> String {
     )
 }
 
-/// Decision 26 (ruling RP-2): the reviewer prompt's one sentence on the signals, which
-/// are measured from the red commit (exact).
+/// Decision 26 (rulings RP-2, T16-7 to T16-10): the reviewer prompt's one sentence on
+/// how the signals were read (exact; whole-branch review D, M-4).
 pub fn pair_reviewer_note(test: &str, red: &str) -> String {
     format!(
-        "A separate test writer committed the test {test} at {}; the weakening signals above are measured from that commit, so a W-signal on its files means the implementer changed the test.",
+        "A separate test writer committed the test {test} at {}; the test writer's paths are measured from the red commit, everything else from the merge base; signals marked (test writer) are the writer's own.",
         sha7(red)
     )
 }
@@ -137,12 +137,13 @@ pub(crate) fn implementer_note(task: &Task) -> Option<String> {
     ))
 }
 
-/// [`pair_reviewer_note`] for task `task`, once its implementer has a red.
+/// [`pair_reviewer_note`] for task `task`, once its implementer has a red and its
+/// accepted claim's signals were read (whole-branch review B, I1).
 pub(crate) fn reviewer_note(task: &Task) -> Option<String> {
     let pair = task
         .pair
         .as_ref()
-        .filter(|p| p.phase == PairPhase::Implementing)?;
+        .filter(|p| p.phase == PairPhase::Implementing && p.signals_read)?;
     Some(pair_reviewer_note(
         pair.test.as_deref()?,
         pair.red.as_deref()?,

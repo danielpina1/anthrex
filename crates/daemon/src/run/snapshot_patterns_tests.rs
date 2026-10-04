@@ -33,6 +33,7 @@ fn pair(phase: PairPhase) -> Pair {
         escalated_from: None,
         writer_signals: Vec::new(),
         writer_signals_more: 0,
+        signals_read: false,
     }
 }
 

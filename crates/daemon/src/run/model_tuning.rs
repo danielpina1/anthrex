@@ -174,6 +174,10 @@ pub struct Pair {
     /// How many more the writer's claim had past `SIGNALS_MAX`.
     #[serde(default, skip_serializing_if = "no_more")]
     pub writer_signals_more: u32,
+    /// Whole-branch review B, I1: the implementer's accepted claim had its signals read,
+    /// so the reviewer is given `contract_patterns::pair_reviewer_note`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub signals_read: bool,
 }
 
 /// The class default routes a run is frozen with (decisions 9 and 12): M8a's defaults,

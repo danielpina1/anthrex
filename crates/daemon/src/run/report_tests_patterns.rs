@@ -74,6 +74,7 @@ fn report_has_race_pair_concurrency_and_tuning() {
         escalated_from: None,
         writer_signals: Vec::new(),
         writer_signals_more: 0,
+        signals_read: false,
     });
     // Two cap changes on Codex: halved twice from 3 to 1.
     run.limits.adaptive_concurrency = true;
@@ -165,6 +166,7 @@ fn a_running_race_an_ended_race_and_a_writing_pair() {
         escalated_from: None,
         writer_signals: Vec::new(),
         writer_signals_more: 0,
+        signals_read: false,
     });
     let report = render(&run, 2_000);
     assert!(report.contains("\nRace: racing\n"), "{report}");

@@ -184,10 +184,6 @@ fn a_weakened_test_raises_a_signal_from_red() {
         unreachable!()
     };
     let note = pair_reviewer_note(TEST, HEAD);
-    assert_eq!(
-        note,
-        "A separate test writer committed the test a::works at d1d1d1d; the weakening signals above are measured from that commit, so a W-signal on its files means the implementer changed the test."
-    );
     let line = "- W1 crates/a/tests/t.rs:3: 1 assertion lines removed, 0 added";
     let at = first_turn.find(line).expect("the numbered signal");
     let noted = first_turn.find(&note).expect("the pair's note");
@@ -446,4 +442,75 @@ fn the_fallback_restore_text_names_each_files_base() {
         &HEAD[..7]
     );
     assert!(text.contains(&want), "{text}");
+}
+
+/// The reviewer's first turn of `t1`, implementing in `fx` from `window`, after a claim
+/// whose `VerifyDone` carried `signals`.
+fn reviewer_turn(fx: &mut Fixture, window: u32, signals: Option<ClaimSignals>) -> String {
+    let effects = fx.tool(window, "task_done", json!({"summary": "made it pass"}));
+    let (op, _) = only_op(&effects, "VerifyDone");
+    let mut result = at_impl(fx);
+    if let OpResult::DoneChecked { signals: s, .. } = &mut result {
+        *s = signals.map(Box::new);
+    }
+    let effects = fx.done(op, result);
+    assert_eq!(replies(&effects), vec![Ok(DONE_ACCEPTED.to_string())]);
+    fx.turn_completed(window);
+    let (op, _) = only_op(&effects, "Proof");
+    let passed = OpResult::Proof {
+        red_failed: true,
+        head_passed: true,
+        matched: true,
+        red_tail: String::new(),
+        head_tail: format!("test {TEST} ... ok"),
+    };
+    let effects = fx.done(op, passed);
+    let (op, _) = only_op(&effects, "PrepareReview");
+    let (_, kind) = reviewer(fx, op, "diff --git a/x b/x");
+    let OpKind::CreateWindow { first_turn, .. } = kind else {
+        unreachable!()
+    };
+    first_turn
+}
+
+/// Whole-branch review B, I1: an implementing pair's signals are read whatever the
+/// profile says. Untiered, its `VerifyDone` still asks, with red and empty lists.
+#[test]
+fn an_untiered_pairs_implementer_still_has_its_signals_read() {
+    let (mut fx, _, window, _) = implementing();
+    fx.run_mut().profile.tiers = Default::default();
+    let effects = fx.tool(window, "task_done", json!({"summary": "made it pass"}));
+    let (_, kind) = only_op(&effects, "VerifyDone");
+    let OpKind::VerifyDone { signals, .. } = kind else {
+        unreachable!()
+    };
+    let read = SignalsSpec {
+        test_paths: Vec::new(),
+        skip_markers: Vec::new(),
+        red: Some(HEAD.into()),
+    };
+    assert_eq!(signals, Some(read));
+}
+
+/// Whole-branch review B, I1 (3) and review D, M-4: the pair's note goes to the
+/// reviewer only when the accepted claim's signals were read, in the shipped wording.
+#[test]
+fn the_pair_note_is_given_only_when_the_signals_were_read() {
+    let note = pair_reviewer_note(TEST, HEAD);
+    assert_eq!(
+        note,
+        "A separate test writer committed the test a::works at d1d1d1d; the test writer's paths are measured from the red commit, everything else from the merge base; signals marked (test writer) are the writer's own."
+    );
+    for (signals, noted) in [(None, 0), (Some(ClaimSignals::default()), 1)] {
+        let tasks = [task("t1", "S", "a", PAIRED)];
+        let no_check = super::super::gates::no_check();
+        let (mut fx, _, writer) =
+            running(&no_check, &tasks, config::Orchestrator::default(), |_| {});
+        let (op, _) = claim_red(&mut fx, writer, HEAD);
+        let effects = fx.done(op, red_check(true));
+        let (_, _) = only_op(&effects, "CreateWindow");
+        let window = fx.complete_windows()[0].1;
+        let first_turn = reviewer_turn(&mut fx, window, signals);
+        assert_eq!(first_turn.matches(&note).count(), noted, "{first_turn}");
+    }
 }

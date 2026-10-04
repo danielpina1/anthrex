@@ -12,6 +12,7 @@ use super::signals::{
     DiffLimits, NoAttributes, SIGNALS_DIFF_BYTES, merge_base, read_signals, signal_paths,
 };
 use super::{Git, LARGE_OUTPUT_BYTES, nul_fields, os};
+use crate::run::globs::escape_path;
 use crate::run::tiers::{ClaimSignals, SIGNALS_MAX, Signal, SignalsSpec};
 
 /// Ruling T16-9 (2): at most this many paths go on one command line as pathspecs;
@@ -107,10 +108,22 @@ pub fn pair_signals(
         .filter(|p| !brought.contains(p))
         .cloned()
         .collect();
+    // Whole-branch review B, I1: the writer's paths are test files whatever
+    // `test_paths` says (an untiered profile has none).
+    let writers = SignalsSpec {
+        test_paths: (spec.test_paths.iter().cloned())
+            .chain(ours.iter().map(|p| escape_path(p)))
+            .collect(),
+        ..spec.clone()
+    };
+    let of_red_read = |pathspec: &[String]| {
+        let from = (red.to_string(), head, pathspec);
+        read_signals(git, worktree, from, &writers, limits, timeout)
+    };
     let of_red = match (ours.is_empty(), limited) {
         (true, _) => ClaimSignals::default(),
-        (false, true) => read(red.to_string(), &literal(&ours))?,
-        (false, false) => keep_on(read(red.to_string(), &[])?, &ours, true),
+        (false, true) => of_red_read(&literal(&ours))?,
+        (false, false) => keep_on(of_red_read(&[])?, &ours, true),
     };
     note_deleted(&of_red.list, red, &mut restore_from);
     let mut list: Vec<Signal> = of_red.list.into_iter().chain(own.list).collect();
