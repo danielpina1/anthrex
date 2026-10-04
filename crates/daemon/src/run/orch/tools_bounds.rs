@@ -54,6 +54,9 @@ const EDIT: &[(&str, Rule)] = &[
     // Milestone 9.3 decision 30: an `iterate` edit is bounded like `edit_plan`'s
     // `iterate`, then refused by the batch in its source's words.
     ("goal", Rule::Text(1, proto::GOAL_MAX_CHARS)),
+    // Milestone 9.5 decision 32: `amend_task`'s `race` and `pair`.
+    ("race", Rule::Serde),
+    ("pair", Rule::Serde),
 ];
 
 const TASK: &[(&str, Rule)] = &[
@@ -81,6 +84,9 @@ const TASK: &[(&str, Rule)] = &[
     ("atomic_reason", Rule::Text(1, 300)),
     // Milestone 9.2 decision 31: the review threads a fix task addresses.
     ("addresses", Rule::List(0, 20, 64)),
+    // Milestone 9.5 decision 32.
+    ("race", Rule::Serde),
+    ("pair", Rule::Serde),
     // Not in the schema (decision 23.1), but M8a's `PlanTask` reads it and rule 7.1
     // refuses it with its own text, which tells the model what to do.
     ("budget", Rule::Serde),

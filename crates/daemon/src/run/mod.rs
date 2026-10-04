@@ -76,6 +76,7 @@ pub mod tuning_io;
 pub mod validate;
 mod validate_graph;
 mod validate_kinds;
+pub mod validate_patterns;
 mod validate_rounds;
 mod validate_stages;
 

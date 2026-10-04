@@ -282,6 +282,8 @@ fn task_entry(run: &Run, t: &Task) -> Value {
         "rung": t.rung,
         "deps": t.spec.deps,
         "route": route_text(&t.route),
+        "race": race_text(t),
+        "pair": pair_text(t),
         "review": review_text(t),
         "messages": {
             "count": t.orch.messages.len(),
@@ -292,6 +294,30 @@ fn task_entry(run: &Run, t: &Task) -> Value {
             }),
         },
         "last": t.history.last().map(|e| cut(&format!("{} {}", hh_mm(e.at), e.text), LINE_MAX)),
+    })
+}
+
+/// Milestone 9.5 decision 32: `a claude working · b codex review` while the lanes race,
+/// `won by <lane>` once one became the task.
+pub(super) fn race_text(task: &Task) -> Option<String> {
+    let race = task.race.as_ref()?;
+    if let Some(winner) = race.winner {
+        return Some(format!("won by {}", winner.label()));
+    }
+    let lane = |l: &crate::run::model::Lane| {
+        let runtime = l.route.runtime.label();
+        format!("{} {runtime} {}", l.lane.label(), label(&l.state))
+    };
+    Some(race.lanes.iter().map(lane).collect::<Vec<_>>().join(" · "))
+}
+
+/// Decision 32: `writing the test`, then `implementing, red <sha7>`.
+pub(super) fn pair_text(task: &Task) -> Option<String> {
+    let pair = task.pair.as_ref()?;
+    Some(match (pair.phase, &pair.red) {
+        (proto::PairPhase::Writing, _) => "writing the test".to_string(),
+        (proto::PairPhase::Implementing, Some(red)) => format!("implementing, red {}", sha7(red)),
+        (proto::PairPhase::Implementing, None) => "implementing".to_string(),
     })
 }
 
@@ -399,3 +425,7 @@ mod tests_delivery;
 #[cfg(test)]
 #[path = "digest_tests_rounds.rs"]
 mod tests_rounds;
+
+#[cfg(test)]
+#[path = "digest_tests_patterns.rs"]
+mod tests_patterns;

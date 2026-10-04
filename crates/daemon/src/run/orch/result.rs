@@ -42,6 +42,8 @@ pub fn task_result(_run: &Run, task: &Task, git: Option<&Result<TaskGit, String>
             "deps": spec.deps,
             "implicit_deps": task.implicit_deps,
             "route": task.route,
+            "race": super::digest::race_text(task),
+            "pair": super::digest::pair_text(task),
             "review_route": task.review_route,
             "state": task.state,
             "block": task.block,

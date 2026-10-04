@@ -9,11 +9,13 @@ use crate::run::edits_state::{has_live_worker, is_paused, not_started};
 use crate::run::plan::PlanError;
 use crate::run::route_pick::{repicks, review_route};
 use crate::run::validate::resolve_task_lenient;
+use crate::run::validate_patterns;
 
 impl Batch {
     /// `amend_task`: brief, acceptance and priority on any unfinished task; route, test
     /// mode, its reason, size, deps and stage only on a task that has not started (one
-    /// refusal per such field; nothing is applied). An amend naming no field is refused.
+    /// refusal per such field; nothing is applied); race and pair only on one never
+    /// dispatched (milestone 9.5). An amend naming no field is refused.
     /// When route, test mode, its reason or size changed, the task's derived fields are
     /// re-resolved from the spec (decisions 8–10), but never below the engine's own
     /// changes (fix round 1, F1): a size the engine raised (rung 3) is a floor, even for
@@ -63,6 +65,12 @@ impl Batch {
         let state = self.run.tasks[i].state;
         if state.is_finished() {
             return self.refuse(i, "only unfinished tasks can be amended");
+        }
+        // Milestone 9.5 ruling RR-8: race and pair change only before dispatch (after
+        // 9.3's earlier-round refusal, which `apply_edits` runs first, ruling RR-7).
+        let refused = validate_patterns::amend_refusals(&self.run.tasks[i], *race, *pair);
+        if !refused.is_empty() {
+            return self.errors.extend(refused);
         }
         let restricted = [
             ("route", route.is_some()),
@@ -124,8 +132,7 @@ impl Batch {
             spec.stage = *v;
             changed.push("stage");
         }
-        // Milestone 9.5: validated with the spec (refused while true until task
-        // M9.5.14, which adds their own rules).
+        // Milestone 9.5 decisions 17 and 24: validated with the spec.
         if let Some(v) = race {
             spec.race = *v;
             changed.push("race");

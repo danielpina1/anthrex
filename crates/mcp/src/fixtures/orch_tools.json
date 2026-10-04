@@ -300,6 +300,12 @@
                         "minLength": 1,
                         "maxLength": 64
                       }
+                    },
+                    "race": {
+                      "type": "boolean"
+                    },
+                    "pair": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -482,6 +488,12 @@
                           "minLength": 1,
                           "maxLength": 64
                         }
+                      },
+                      "race": {
+                        "type": "boolean"
+                      },
+                      "pair": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
@@ -631,6 +643,12 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 4000
+                },
+                "race": {
+                  "type": "boolean"
+                },
+                "pair": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -927,6 +945,12 @@
                         "minLength": 1,
                         "maxLength": 64
                       }
+                    },
+                    "race": {
+                      "type": "boolean"
+                    },
+                    "pair": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -1109,6 +1133,12 @@
                           "minLength": 1,
                           "maxLength": 64
                         }
+                      },
+                      "race": {
+                        "type": "boolean"
+                      },
+                      "pair": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
@@ -1258,6 +1288,12 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 4000
+                },
+                "race": {
+                  "type": "boolean"
+                },
+                "pair": {
+                  "type": "boolean"
                 }
               },
               "required": [

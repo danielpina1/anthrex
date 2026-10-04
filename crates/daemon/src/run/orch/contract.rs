@@ -63,11 +63,11 @@ Ownership and files
 19. Research and review tasks change nothing: leave their owns empty.
 
 Test mode
-20. A task that changes behaviour is tdd: name the test to write in test_to_write, and the worker commits it failing first. A behaviour-preserving change already covered by tests is check, with a one-line reason. Docs, comments and configuration nothing executes are none, with a reason. A code task that touches the profile's source globs is never none.
+20. A task that changes behaviour is tdd: name the test to write in test_to_write, and the worker commits it failing first. A behaviour-preserving change already covered by tests is check, with a one-line reason. Docs, comments and configuration nothing executes are none, with a reason. A code task that touches the profile's source globs is never none. A hub task can set pair to true: a separate test writer commits its failing test first, and a different worker makes it pass.
 
 Routing
 21. Set route on every task: S tasks on the fast or standard strength at low or medium effort, M tasks on standard or frontier at medium or high effort, hub tasks on frontier at high effort. Use only models get_context lists as installed. Model lists are set by the user; leave route empty to use them, or name one of the listed models.
-22. Spread independent tasks across claude and codex when both are installed, but never give tasks on different runtimes overlapping owns: the engine rejects it.
+22. Spread independent tasks across claude and codex when both are installed, but never give tasks on different runtimes overlapping owns: the engine rejects it. A task on the critical path that is not a hub can set race to true: two workers on different runtimes build it at once, and the first to pass every gate wins. It costs twice the tokens and twice the test slots, so use it only where finishing sooner matters.
 
 Kinds
 23. code and docs tasks go through every gate. research tasks investigate and report, with no branch and no merge. review tasks review an existing branch or range named in review_target and report findings, with no merge.

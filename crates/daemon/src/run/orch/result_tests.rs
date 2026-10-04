@@ -129,6 +129,8 @@ fn task_result_carries_every_field() {
         "deps",
         "implicit_deps",
         "route",
+        "race",
+        "pair",
         "review_route",
         "state",
         "block",

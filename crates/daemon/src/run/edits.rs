@@ -99,6 +99,7 @@ pub fn apply_edits(
         scope,
         (edited.limits.max_tasks, edited.round()),
         edited.limits.default_runtime,
+        (&run.roster, &run.orch.installed),
     ));
     errors.extend(super::validate_stages::single_layout_rule(&edited));
     errors.extend(super::orch::rules::apply(&mut edited, run, source));

@@ -158,25 +158,3 @@ fn research_and_review_force_test_mode_none_with_the_note() {
     // Size is still required and still sets the budget.
     assert_eq!(task(&run, "r1").size, proto::Size::S);
 }
-
-/// Milestone 9.5 task 2: `race` and `pair` parse (protocol 16) but are refused until
-/// task M9.5.14 validates them.
-#[test]
-fn race_and_pair_are_not_available_yet() {
-    let text = plan_with(
-        PROFILE,
-        &[
-            one("t1", "race = true"),
-            one("t2", "pair = true"),
-            one("t3", "race = false\npair = false"),
-        ],
-    );
-    let errors = errors_of(&text);
-    assert_eq!(
-        errors.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        [
-            "task t1: race: not available yet",
-            "task t2: pair: not available yet"
-        ]
-    );
-}

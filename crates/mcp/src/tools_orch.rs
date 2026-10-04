@@ -179,7 +179,8 @@ fn submit_epic() -> Tool {
 
 /// M8a's `PlanEdit` as the model writes it; `stage` is `amend_task`'s (M9.1 decision 43),
 /// `pr`, `thread` and `body` are `reply_comment`'s (M9.2 decision 30). Which keys each `op` needs is the daemon's
-/// serde shape; this schema only bounds them.
+/// serde shape; this schema only bounds them. `race` and `pair` are `amend_task`'s (M9.5
+/// decision 32).
 fn plan_edit() -> JsonObject {
     closed(
         json!({
@@ -209,6 +210,8 @@ fn plan_edit() -> JsonObject {
             "pr": {"type": "integer", "minimum": 1},
             "thread": text(64),
             "body": text(4000),
+            "race": boolean(),
+            "pair": boolean(),
         }),
         &["op"],
     )
@@ -216,7 +219,7 @@ fn plan_edit() -> JsonObject {
 
 /// A task as `add_task` and `split_task` take it. `budget` is deliberately absent
 /// (decision 23.1); `stage`, `atomic` and `atomic_reason` are M9.1 decision 43's,
-/// `addresses` (review thread refs, `<pr>:<key>`) M9.2 decision 31's.
+/// `addresses` (review thread refs, `<pr>:<key>`) M9.2 decision 31's, `race` and `pair` M9.5's.
 fn plan_task() -> JsonObject {
     closed(
         json!({
@@ -241,6 +244,8 @@ fn plan_task() -> JsonObject {
             "atomic": boolean(),
             "atomic_reason": text(300),
             "addresses": array(text(64), None, 20),
+            "race": boolean(),
+            "pair": boolean(),
         }),
         &["id", "title", "size", "owns", "brief", "acceptance"],
     )

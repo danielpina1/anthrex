@@ -149,6 +149,8 @@
         "undelivered": 0
       },
       "origin": "plan",
+      "pair": null,
+      "race": null,
       "review": null,
       "route": "claude claude-opus-5-5 high",
       "rung": 0,
@@ -172,6 +174,8 @@
         "undelivered": 1
       },
       "origin": "plan",
+      "pair": null,
+      "race": null,
       "review": null,
       "route": "codex (default) high",
       "rung": 0,
@@ -200,6 +204,8 @@
         "undelivered": 0
       },
       "origin": "plan",
+      "pair": null,
+      "race": null,
       "review": "r1 changes (1 critical)",
       "route": "claude claude-sonnet-5 medium",
       "rung": 1,
@@ -223,6 +229,8 @@
         "undelivered": 0
       },
       "origin": "plan",
+      "pair": null,
+      "race": null,
       "review": null,
       "route": "claude claude-sonnet-5 low",
       "rung": 0,
