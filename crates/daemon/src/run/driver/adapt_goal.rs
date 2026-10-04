@@ -350,8 +350,10 @@ impl RunService {
         let session = format!("{nanos}/{n}");
         let route = &routed.ctx.route;
         let roster = &adaptation.scouts.context().roster.current();
-        let strength = self.ctx.settings.current().orchestrator.deciders.strength;
-        let chosen = (route, roles::decider_candidates(roster, route, strength));
+        let chosen = (
+            route,
+            roles::decider_candidates(roster, route, routed.strength()),
+        );
         let session = (session.as_str(), "triage");
         let pick = (routed.pick.as_ref(), routed.moved.as_ref());
         let at = (input, unix_now());

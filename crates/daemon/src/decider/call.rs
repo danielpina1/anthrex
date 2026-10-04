@@ -107,6 +107,12 @@ pub struct Routed {
 }
 
 impl Routed {
+    /// The strength the call's route was picked at (`Routing.strength`, frozen at
+    /// daemon start), which its record's ladder lists from (review 10b's carry).
+    pub fn strength(&self) -> proto::Strength {
+        (self.ctx.routing.strength).unwrap_or(self.ctx.route.strength)
+    }
+
     /// Ruling T10b-1: the run log's line for a call the probe moved to the peer
     /// runtime, `decider: <runtime> is not installed; using <peer>`.
     pub fn moved_line(&self) -> Option<String> {

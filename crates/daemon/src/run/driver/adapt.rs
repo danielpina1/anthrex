@@ -178,7 +178,7 @@ impl RunService {
         routed: &crate::decider::call::Routed,
         request: &DeciderRequest,
     ) -> Option<(String, Result<(), String>)> {
-        let strength = self.ctx.settings.current().orchestrator.deciders.strength;
+        let strength = routed.strength();
         let (route, pick) = (&routed.ctx.route, routed.pick.as_ref());
         let decision = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
             let session = (op.to_string(), request.kind().label());
