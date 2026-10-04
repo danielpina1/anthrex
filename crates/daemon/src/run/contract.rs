@@ -92,6 +92,10 @@ pub fn worker_prompt(run: &Run, task: &Task, extract: &str, notes: &str) -> Stri
         out.push_str("\n\n");
         out.push_str(section);
     }
+    // Milestone 9.5 decision 26: a paired task's implementer is told whose test it is.
+    if let Some(note) = super::contract_patterns::implementer_note(task) {
+        out.push_str(&format!("\n\n{note}"));
+    }
     out.push_str("\n\n");
     out.push_str(&task.spec.brief);
     out
@@ -153,8 +157,22 @@ pub fn handover_prompt(
     extract: &str,
     notes: &str,
 ) -> String {
-    let start = task.start_commit.as_deref().unwrap_or(run.head_for(task));
     let mut out = worker_prompt(run, task, extract, notes);
+    out.push_str(&handover_tail(run, task, reason, stat, patch));
+    out
+}
+
+/// [`handover_prompt`] after its worker prompt; a fresh test writer's too (milestone
+/// 9.5 decision 25).
+pub(crate) fn handover_tail(
+    run: &Run,
+    task: &Task,
+    reason: &str,
+    stat: &str,
+    patch: &str,
+) -> String {
+    let start = task.start_commit.as_deref().unwrap_or(run.head_for(task));
+    let mut out = String::new();
     out.push_str(&format!(
         "\n\nThis is session {} of this task.\nWhy a new session: {reason}\n",
         task.session
@@ -240,6 +258,8 @@ pub fn reviewer_prompt(
     if !signals.is_empty() {
         lines.push(signals);
     }
+    // Milestone 9.5 ruling RP-2: a paired task's signals are measured from its red.
+    lines.extend(super::contract_patterns::reviewer_note(task));
     let earlier: Vec<String> = task
         .reviews
         .iter()

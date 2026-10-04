@@ -35,7 +35,7 @@ pub(super) fn on_orch_event(
     match event {
         // Milestone 9 decision 42f: a worker's `task_note` passes M8a's run gate and
         // early hold like its other tools (`done.rs`).
-        OrchEvent::Tool { reply, call, .. } if call.role == AgentRole::Worker => {
+        OrchEvent::Tool { reply, call, .. } if crate::run::model::writes_task(call.role) => {
             super::done::tool(state, reply, call, now, fx)
         }
         OrchEvent::Tool {

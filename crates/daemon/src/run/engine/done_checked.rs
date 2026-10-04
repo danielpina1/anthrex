@@ -128,8 +128,13 @@ pub(super) fn checked(
             return bounce(run, i, &pending, text, told, now, fx);
         }
     }
-    let id = pending.reply;
+    let (id, mut pending) = (pending.reply, pending);
     super::weakening::keep(&mut run.tasks[i], signals);
+    // Milestone 9.5 decision 25: a test writer's red is its head, in full, for the
+    // red-only proof that `accept`'s first gate runs.
+    if super::pair::writing(&run.tasks[i]) {
+        pending.claim.red = Some(head.clone());
+    }
     accept(run, i, pending, head, resolution_only, now);
     if let Some(id) = id {
         reply(fx, id, Ok(DONE_ACCEPTED.to_string()));

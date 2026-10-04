@@ -5,7 +5,7 @@
 //! the task, numbered `W1…` in the reviewer prompt, and a review must answer each
 //! (decision 42). Pure (design decision 2).
 
-use proto::{Finding, Severity, SignalInfo, Verdict};
+use proto::{Finding, PairPhase, Severity, SignalInfo, Verdict};
 
 use crate::run::contract::{
     deleted_test_file_message, shown, signal_unjustified, signals_block, signals_unanswered,
@@ -14,15 +14,22 @@ use crate::run::globs::names_literally;
 use crate::run::model::{Run, Task};
 use crate::run::tiers::{ClaimSignals, Signal, SignalsSpec};
 
-/// What task `i`'s `VerifyDone` reads: `None` for an untiered profile or one with
-/// neither `test_paths` nor `skip_markers` (decisions 6 and 40).
-pub(super) fn spec(run: &Run) -> Option<SignalsSpec> {
+/// What task `task`'s `VerifyDone` reads: `None` for an untiered profile or one with
+/// neither `test_paths` nor `skip_markers` (decisions 6 and 40). Milestone 9.5 ruling
+/// RP-2: a paired task's implementer's signals are read from its red commit, so a
+/// change to the test writer's test shows.
+pub(super) fn spec(run: &Run, task: &Task) -> Option<SignalsSpec> {
     let tiers = &run.profile.tiers;
     let wanted =
         tiers.is_tiered() && !(tiers.test_paths.is_empty() && tiers.skip_markers.is_empty());
+    let red = task
+        .pair
+        .as_ref()
+        .filter(|p| p.phase == PairPhase::Implementing);
     wanted.then(|| SignalsSpec {
         test_paths: tiers.test_paths.clone(),
         skip_markers: tiers.skip_markers.clone(),
+        from: red.and_then(|p| p.red.clone()),
     })
 }
 

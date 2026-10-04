@@ -96,7 +96,7 @@ pub(super) fn note_said(round: &mut AgentRound, text: &str) {
         set_activity(round, &format!("says: {}", first.trim()));
     }
     let text = multi_line(text);
-    if round.role == AgentRole::Worker && !text.trim().is_empty() {
+    if crate::run::model::writes_task(round.role) && !text.trim().is_empty() {
         round.last_text = Some(cut(&text, WORKER_SUMMARY_MAX));
     }
 }

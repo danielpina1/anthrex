@@ -25,7 +25,7 @@ pub(super) use super::rounds::new_round;
 #[path = "dispatch_launch.rs"]
 mod launch;
 use launch::{dispatch_writers, launch_ready, prepare, prewarm};
-pub(super) use launch::{launch_fresh, launch_worker};
+pub(super) use launch::{launch_fresh, launch_implementer, launch_worker};
 
 /// The scheduler, run after every event: runnability, then whatever the run's state
 /// allows to start, then clean-up and delivery.
@@ -303,7 +303,7 @@ pub(super) fn window_done(
             if state.is_finished() || stale_reviewer {
                 round.retiring = true;
                 fx.push(Effect::KillWindow { window_id });
-            } else if state == TaskState::Preparing && round.role == AgentRole::Worker {
+            } else if state == TaskState::Preparing && crate::run::model::writes_task(round.role) {
                 set_state(&mut run.tasks[i], TaskState::Working, now);
             }
         }

@@ -7,7 +7,7 @@
 //! it overlapped. Ruling T15-C1: `run retry` starts a new budget epoch, and rung 4
 //! counts from it; `spent_total` keeps the whole for the report.
 
-use proto::{AgentRole, RunState, Spend, TaskState};
+use proto::{RunState, Spend, TaskState};
 use serde::{Deserialize, Serialize};
 
 use super::dispatch::history;
@@ -177,7 +177,7 @@ pub(super) fn stop_at_restore(task: &mut Task) {
 fn restart(task: &mut Task, since: u64, now: u64) {
     let latest = worker_round(task);
     for (r, round) in task.rounds.iter_mut().enumerate() {
-        if round.role != AgentRole::Worker {
+        if !crate::run::model::writes_task(round.role) {
             continue;
         }
         let from = since.max(round.started_at);
@@ -208,7 +208,7 @@ pub(crate) fn epoch_spend(task: &Task, now: u64) -> Spend {
         .rounds
         .iter()
         .enumerate()
-        .filter(|(r, round)| *r >= epoch.round && round.role == AgentRole::Worker)
+        .filter(|(r, round)| *r >= epoch.round && crate::run::model::writes_task(round.role))
         .map(|(_, round)| round_spend(round, task.clock.stopped, now).secs)
         .sum();
     Spend {

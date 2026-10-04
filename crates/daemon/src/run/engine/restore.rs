@@ -488,7 +488,8 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             let round = &task.rounds[r];
             let wanted = !round.retiring
                 && match round.role {
-                    AgentRole::Worker => {
+                    // Milestone 9.5 decision 26: a test writer resumes as a worker does.
+                    AgentRole::Worker | AgentRole::TestWriter => {
                         matches!(task.state, TaskState::Preparing | TaskState::Working)
                     }
                     // Milestone 9 decision 35: a research task's session.

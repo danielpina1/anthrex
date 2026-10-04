@@ -366,8 +366,17 @@ pub(super) fn rung2(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> &'static str {
-    let (route, step) = crate::run::route_pick::rung2_route(run, i);
-    if let Some(text) = crate::run::route_pick::every_route_failed(run, i, &route) {
+    // Milestone 9.5 decision 26: while the test is being written, the test writer's
+    // route escalates and the implementer's stays.
+    let writer = super::pair::escalate_writer(run, i);
+    let (route, step) = match writer {
+        true => (run.tasks[i].route.clone(), None),
+        false => crate::run::route_pick::rung2_route(run, i),
+    };
+    if let Some(text) = (!writer)
+        .then(|| crate::run::route_pick::every_route_failed(run, i, &route))
+        .flatten()
+    {
         log(run, now, text);
     }
     ladder::kill_worker(run, i, fx);
@@ -388,7 +397,9 @@ pub(super) fn rung2(
     // M8b decision 33a: the next worker launch records this escalation, its pool
     // stepping from the route the selector stepped from (a second escalation before
     // the launch overwrites the first: the intermediate route never ran).
-    task.escalated_from = Some(std::mem::replace(&mut task.route, route));
+    if !writer {
+        task.escalated_from = Some(std::mem::replace(&mut task.route, route));
+    }
     // A research or review task's pick is its `list_pick` (its review records it,
     // ruling RL-4); a worker's escalation is recorded at its next launch.
     match super::schedule::is_reader_task(task) {

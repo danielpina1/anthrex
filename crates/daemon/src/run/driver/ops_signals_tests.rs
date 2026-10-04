@@ -219,6 +219,7 @@ fn spec() -> SignalsSpec {
     SignalsSpec {
         test_paths: vec!["tests/**".into(), "crates/*/tests/**".into()],
         skip_markers: vec!["#[ignore]".into()],
+        from: None,
     }
 }
 
@@ -339,3 +340,7 @@ async fn signals_are_capped_and_ordered() {
 // Ruling C-20's cases, against the same rig.
 #[path = "ops_signals_tests_c20.rs"]
 mod c20;
+
+// Milestone 9.5 ruling RP-2: a paired task's implementer's signals, from red.
+#[path = "ops_signals_tests_pair.rs"]
+mod pair;

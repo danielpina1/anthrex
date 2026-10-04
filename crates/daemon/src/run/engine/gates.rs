@@ -144,7 +144,8 @@ fn start_proof(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
         timeout_secs: run.profile.check_timeout_secs,
         setup: run.profile.setup.clone(),
         env: profile_env(&run.profile, &path),
-        red_only: false,
+        // Milestone 9.5 ruling RP-1: a test writer's claim gets the red run alone.
+        red_only: super::pair::writing(task),
     };
     let op = next_op(run);
     run.tasks[i].gate_op = Some(op);
@@ -210,6 +211,7 @@ pub(super) fn proof_done(
         head,
         command,
         passed: pattern,
+        red_only,
         ..
     } = kind
     else {
@@ -219,6 +221,14 @@ pub(super) fn proof_done(
         return;
     }
     match result {
+        // Milestone 9.5 decision 25: the red check of a test writer's claim.
+        OpResult::Proof {
+            red_failed,
+            red_tail,
+            ..
+        } if *red_only => {
+            super::pair::on_red_checked(run, i, red_failed, &red_tail, command, now, fx)
+        }
         OpResult::Proof {
             red_failed,
             head_passed,

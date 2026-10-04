@@ -1,7 +1,8 @@
 //! Milestone 9.5 task M9.5.14: `race` and `pair` set by the orchestrator mid-run go
-//! through M9's gate holds and the project-trust check (ruling RR-6), and until tasks
-//! M9.5.16 and M9.5.17a land, dispatch runs either as an ordinary worker
-//! (`validate_patterns::PATTERNS_DISPATCH`).
+//! through M9's gate holds and the project-trust check (ruling RR-6), and until task
+//! M9.5.17a lands, a racing task dispatches as an ordinary worker
+//! (`validate_patterns::RACE_DISPATCH`); a paired one starts with its test writer
+//! (task M9.5.16, `pair.rs`).
 
 use proto::{AgentRole, ModelEntry, PlanEdit, Runtime, Strength};
 use serde_json::json;
@@ -13,7 +14,7 @@ use super::orch::{add, answer, edit_plan};
 use crate::headless::McpTarget;
 use crate::run::engine::{EventKind, OpKind};
 use crate::run::validate::EditScope;
-use crate::run::validate_patterns::PATTERNS_DISPATCH;
+use crate::run::validate_patterns::RACE_DISPATCH;
 
 /// RR-6: a racing task the orchestrator adds to an epic still being decided waits under
 /// the epic's hold, a paired one too, and a pair amend on a held task keeps its hold;
@@ -110,11 +111,12 @@ fn a_racing_task_that_widens_the_reach_is_refused_by_the_trust_check() {
     assert_eq!(fx.run().tasks.len(), 1, "a refused edit changes nothing");
 }
 
-/// The addendum's single gate: until tasks M9.5.16 and M9.5.17a land, a racing and a
-/// paired task each start one ordinary worker on the task's own route and checkout.
+/// The addendum's gate, its pair half opened by task M9.5.16: until task M9.5.17a lands,
+/// a racing task starts one ordinary worker on the task's own route and checkout, and a
+/// paired task starts its test writer.
 #[test]
-fn race_and_pair_tasks_dispatch_as_ordinary_workers_for_now() {
-    const { assert!(!PATTERNS_DISPATCH, "flip only when both dispatches land") };
+fn race_tasks_dispatch_as_ordinary_workers_for_now() {
+    const { assert!(!RACE_DISPATCH, "flip only when the race's dispatch lands") };
     let plan = plan_with(
         &profile_with("max_writers = 2"),
         &[
@@ -141,11 +143,9 @@ fn race_and_pair_tasks_dispatch_as_ordinary_workers_for_now() {
         seen,
         [
             (format!("{H4}/t1.w1"), AgentRole::Worker),
-            (format!("{H4}/t2.w1"), AgentRole::Worker),
+            (format!("{H4}/t2.t1"), AgentRole::TestWriter),
         ]
     );
-    for id in ["t1", "t2"] {
-        let task = fx.task(id);
-        assert!(task.race.is_none() && task.pair.is_none(), "{id}");
-    }
+    assert!(fx.task("t1").race.is_none());
+    assert!(fx.task("t2").pair.is_some());
 }

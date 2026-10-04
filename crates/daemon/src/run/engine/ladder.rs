@@ -4,12 +4,12 @@
 //! Pure (design decision 2).
 
 use crate::run::phases::set_state;
-use proto::{AgentRole, BlockReason, GateKind, TaskState};
+use proto::{BlockReason, GateKind, TaskState};
 
 use super::dispatch::{block, history, launch_fresh};
 use super::schedule::op_in_flight;
 use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox};
-use crate::run::model::{AgentRound, FreshSession, Run, Task};
+use crate::run::model::{AgentRound, FreshSession, Run, Task, writes_task};
 use crate::run::route_pick::{every_route_failed, review_route, rung2_route};
 use crate::run::validate::resolve_task_lenient;
 
@@ -19,11 +19,10 @@ pub(crate) use super::ladder_budget::{round_spend, total_spend};
 /// The note rung 3 adds to a task it raises (M8a.6's `rung3` fixture uses the same).
 const RAISED_NOTE: &str = "size raised by rung 3 (decision 38)";
 
-/// The task's current worker round, if it has one.
+/// The task's current worker round, if it has one: milestone 9.5 decision 25 counts a
+/// paired task's test writer (`model::writes_task`).
 pub(super) fn worker_round(task: &Task) -> Option<usize> {
-    task.rounds
-        .iter()
-        .rposition(|r| r.role == AgentRole::Worker)
+    task.rounds.iter().rposition(|r| writes_task(r.role))
 }
 
 /// A worker round whose session the engine still counts on: started, not ended and
@@ -45,7 +44,7 @@ pub(super) fn kill_worker(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
     for round in run.tasks[i]
         .rounds
         .iter_mut()
-        .filter(|r| r.role == AgentRole::Worker && !r.ended && !r.retiring)
+        .filter(|r| writes_task(r.role) && !r.ended && !r.retiring)
     {
         if let Some(window_id) = round.window_id {
             round.retiring = true;
@@ -80,7 +79,7 @@ pub(super) fn supersede(run: &mut Run, i: usize) {
     for round in run.tasks[i]
         .rounds
         .iter_mut()
-        .filter(|r| r.role == AgentRole::Worker)
+        .filter(|r| writes_task(r.role))
     {
         round.resume_op = None;
         round.count_op = None;
@@ -274,18 +273,22 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     );
     kill_worker(run, i, fx);
     drop_queued(run, i);
-    let (route, step) = rung2_route(run, i);
-    if let Some(text) = every_route_failed(run, i, &route) {
-        super::requests::log(run, now, text);
+    // Milestone 9.5 decision 25: a fresh test writer, while the test is being written.
+    if !super::pair::escalate_writer(run, i) {
+        let (route, step) = rung2_route(run, i);
+        if let Some(text) = every_route_failed(run, i, &route) {
+            super::requests::log(run, now, text);
+        }
+        let task = &mut run.tasks[i];
+        task.list_escalation = step;
+        // M8b decision 33a: the next worker launch records this escalation, its pool
+        // stepping from the route the selector stepped from (a second escalation
+        // before the launch overwrites the first: the intermediate route never ran).
+        task.escalated_from = Some(std::mem::replace(&mut task.route, route));
     }
     let task = &mut run.tasks[i];
-    task.list_escalation = step;
     task.rung = 2;
     set_state(task, TaskState::Working, now);
-    // M8b decision 33a: the next worker launch records this escalation, its pool
-    // stepping from the route the selector stepped from (a second escalation before
-    // the launch overwrites the first: the intermediate route never ran).
-    task.escalated_from = Some(std::mem::replace(&mut task.route, route));
     task.fresh_session = Some(FreshSession {
         reason: reason.clone(),
         append: None,
@@ -410,7 +413,7 @@ fn fresh_due(task: &Task) -> bool {
         && task
             .rounds
             .iter()
-            .filter(|r| r.role == AgentRole::Worker)
+            .filter(|r| writes_task(r.role))
             .all(|r| r.ended)
 }
 

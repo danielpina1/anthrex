@@ -30,6 +30,7 @@ fn spec() -> SignalsSpec {
     SignalsSpec {
         test_paths: vec!["tests/**".into(), "crates/*/tests/**".into()],
         skip_markers: vec!["#[ignore]".into()],
+        from: None,
     }
 }
 

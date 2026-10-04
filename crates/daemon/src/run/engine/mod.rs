@@ -76,6 +76,7 @@ mod ops;
 mod orch;
 mod orch_window;
 mod outbox;
+mod pair;
 pub(crate) mod pause;
 mod planners;
 mod promote;

@@ -281,11 +281,10 @@ pub(super) fn task_note(
     let found = run.tasks.iter().position(|t| t.id() == task_id);
     let current = found.is_some_and(|i| {
         let task = &run.tasks[i];
-        call.role == AgentRole::Worker
-            && worker_round(task).is_some_and(|r| {
-                let round = &task.rounds[r];
-                live(round) && round.window_id == Some(call.window_id)
-            })
+        worker_round(task).is_some_and(|r| {
+            let round = &task.rounds[r];
+            round.role == call.role && live(round) && round.window_id == Some(call.window_id)
+        })
     });
     let (Some(i), true) = (found, current) else {
         let text = format!("this window is not the current worker of task {task_id}");

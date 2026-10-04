@@ -355,6 +355,21 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
     push(&mut run.tasks[i], decision);
 }
 
+/// Milestone 9.5 decision 9a: a paired task's test writer session is being launched on
+/// `chosen` (the peer runtime's route at dispatch, or rung 2's), with trigger
+/// `test_writer`. Nothing for a run without history.
+pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
+    if !run.history {
+        return;
+    }
+    let task = &run.tasks[i];
+    let id = (AgentRole::TestWriter, task.session, None);
+    let how = ("test_writer", "class_default", WORKER_POLICY);
+    let pool = worker_pool(&run.roster, chosen, false);
+    let d = decision(run, task, id, how, chosen, pool, now);
+    push(&mut run.tasks[i], d);
+}
+
 /// Review round `round` of task `i` is being launched on `chosen`, which
 /// `pick_reviewer` gave against `author` at `level`. Nothing for a run without history.
 pub fn record_reviewer(

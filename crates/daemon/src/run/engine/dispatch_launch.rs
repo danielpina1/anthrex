@@ -10,15 +10,19 @@ use proto::{AgentRole, Runtime, TaskState};
 
 use super::{history, new_round, window_limit_reached};
 use crate::run::contract::{handover_prompt, worker_prompt};
+use crate::run::contract_patterns::{test_writer_handover, test_writer_prompt};
 use crate::run::engine::schedule::{
     dispatch_order, held_hub_waits_for, hub_started, is_reader_task, may_return_to_working,
     op_in_flight, size_check_pending, writers_busy,
 };
-use crate::run::engine::{Effect, OpKind, concurrency, done, emit_op, gate_holds, ladder, next_op};
+use crate::run::engine::{
+    Effect, OpKind, concurrency, done, emit_op, gate_holds, ladder, next_op, pair,
+};
 use crate::run::env::profile_env;
 use crate::run::model::{FreshSession, Run, Task};
 use crate::run::orch::contract::notes_section;
 use crate::run::role_launch::{jitter_ms, session_uuid_of, worker_spec};
+use crate::run::role_launch_patterns::test_writer_spec;
 
 fn prepare_in_flight(run: &Run, i: usize) -> bool {
     op_in_flight(run, run.tasks[i].id(), |k| {
@@ -118,6 +122,8 @@ pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         }
         set_state(&mut run.tasks[i], TaskState::Preparing, now);
+        // Milestone 9.5 decision 25: a paired task starts with its test writer.
+        pair::begin(run, i);
         history(run, i, now, "dispatched");
         if prepare_in_flight(run, i) {
             // A pre-warm still running: its result continues the dispatch.
@@ -168,9 +174,26 @@ pub(in crate::run::engine) fn launch_worker(
     if super::super::propagate::hand_back_first(run, i, &start, now, fx) {
         return;
     }
+    // Milestone 9.5 decision 25: a paired task's first session is its test writer's.
+    if pair::writing(&run.tasks[i]) {
+        return launch(run, i, Some(start), test_writer_prompt, now, fx);
+    }
     let prompt =
         |run: &Run, task: &Task| worker_prompt(run, task, "", &notes_section(&task.orch.messages));
     launch(run, i, Some(start), prompt, now, fx);
+}
+
+/// Decision 26: a paired task's implementer, once its red is confirmed, in the same
+/// checkout; its first turn is the worker prompt with the pair's note before the brief.
+pub(in crate::run::engine) fn launch_implementer(
+    run: &mut Run,
+    i: usize,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let prompt =
+        |run: &Run, task: &Task| worker_prompt(run, task, "", &notes_section(&task.orch.messages));
+    launch(run, i, None, prompt, now, fx);
 }
 
 /// A fresh worker session for a started task (rung 2, or a resume that failed): its
@@ -186,15 +209,19 @@ pub(in crate::run::engine) fn launch_fresh(
     fx: &mut Vec<Effect>,
 ) {
     let prompt = |run: &Run, task: &Task| {
-        let mut text = handover_prompt(
-            run,
-            task,
-            &fresh.reason,
-            stat,
-            patch,
-            "",
-            &notes_section(&task.orch.messages),
-        );
+        // Milestone 9.5 decision 25: a fresh test writer while the test is being written.
+        let mut text = match pair::writing(task) {
+            true => test_writer_handover(run, task, &fresh.reason, stat, patch),
+            false => handover_prompt(
+                run,
+                task,
+                &fresh.reason,
+                stat,
+                patch,
+                "",
+                &notes_section(&task.orch.messages),
+            ),
+        };
         if let Some(append) = &fresh.append {
             text.push_str("\n\n");
             text.push_str(append);
@@ -206,6 +233,9 @@ pub(in crate::run::engine) fn launch_fresh(
 
 /// Session `n + 1` of task `i`, its first turn built once the session number is known;
 /// `start` is set on the first (a task blocked by the window limit has not started).
+/// Milestone 9.5 decision 25: a paired task's session while its test is being written is
+/// a test writer (`<task>.t<n>`, on the writer's route, with no scout extract and its
+/// messages left for the implementer's notes); every other is a worker.
 fn launch(
     run: &mut Run,
     i: usize,
@@ -231,30 +261,40 @@ fn launch(
         run.tasks[i].start_commit = Some(start);
     }
     run.tasks[i].session += 1;
+    let (role, route) = pair::next_session(&run.tasks[i]);
+    let writer = role == AgentRole::TestWriter;
     // M8b decision 33a: the route is fixed; decided before the session-start op.
-    crate::run::routing::record_worker(run, i, now);
+    match writer {
+        true => {
+            pair::writer_launched(run, i);
+            crate::run::routing::record_test_writer(run, i, &route, now);
+        }
+        false => crate::run::routing::record_worker(run, i, now),
+    }
     let task = &run.tasks[i];
-    let spec = worker_spec(run, task);
+    let spec = match writer {
+        true => test_writer_spec(run, task, &route),
+        false => worker_spec(run, task),
+    };
     let first_turn = first_turn(run, task);
     // Milestone 9 decision 42d: the first turn carries every recorded message.
-    super::super::worker_messages::launched(run, i);
+    if !writer {
+        super::super::worker_messages::launched(run, i);
+    }
     let task = &run.tasks[i];
-    let extract = crate::run::orch::extract::worker_slot(run, task);
-    let name = format!("{}/{}.w{}", run.short(), task.id(), task.session);
-    let uuid = (task.route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
+    let extract = (!writer)
+        .then(|| crate::run::orch::extract::worker_slot(run, task))
+        .flatten();
+    let letter = if writer { "t" } else { "w" };
+    let name = format!("{}/{}.{letter}{}", run.short(), task.id(), task.session);
+    let uuid = (route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
     let jitter = jitter_ms(&run.id, task.id(), task.session);
-    let round = new_round(
-        AgentRole::Worker,
-        task.session,
-        task.route.clone(),
-        op,
-        uuid.clone(),
-        now,
-    );
+    let round = new_round(role, task.session, route, op, uuid.clone(), now);
     let (id, worktree, session) = (task.id().to_string(), task.worktree.clone(), task.session);
     run.tasks[i].rounds.push(round);
     run.windows_created += 1;
-    history(run, i, now, format!("worker session {session} starting"));
+    let who = if writer { "test writer" } else { "worker" };
+    history(run, i, now, format!("{who} session {session} starting"));
     let kind = OpKind::CreateWindow {
         name,
         spec: Box::new(spec),

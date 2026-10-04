@@ -116,6 +116,7 @@ mod orch;
 mod orch_edit;
 mod orch_restore;
 mod orch_window_events;
+mod pair;
 mod plan_stages;
 mod planners;
 mod planners_confine;

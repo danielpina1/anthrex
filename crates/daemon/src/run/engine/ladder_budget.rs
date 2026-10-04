@@ -2,7 +2,7 @@
 //! soft and hard limits, rung 4's ceiling, and the budget check of a live worker
 //! session. Pure (design decision 2).
 
-use proto::{AgentRole, Budget, Size, Spend, TaskState};
+use proto::{Budget, Size, Spend, TaskState};
 
 use super::ladder::{breach, live, rung4, worker_round};
 use super::{Effect, outbox};
@@ -31,7 +31,7 @@ pub(crate) fn total_spend(task: &Task, now: u64) -> Spend {
     let secs = task
         .rounds
         .iter()
-        .filter(|r| r.role == AgentRole::Worker)
+        .filter(|r| crate::run::model::writes_task(r.role))
         .map(|r| round_spend(r, task.clock.stopped, now).secs)
         .sum();
     Spend {

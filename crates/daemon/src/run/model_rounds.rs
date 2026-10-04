@@ -4,6 +4,13 @@
 
 use super::*;
 
+/// Milestone 9.5 decision 25: a role whose session writes the task's code in its own
+/// checkout, a worker or a paired task's test writer. Every worker check (tool calls,
+/// stalls, budgets, deliveries, kills, fresh sessions) treats both alike.
+pub fn writes_task(role: AgentRole) -> bool {
+    matches!(role, AgentRole::Worker | AgentRole::TestWriter)
+}
+
 /// Decision 32's turn-end fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum FallbackState {

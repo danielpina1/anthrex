@@ -14,7 +14,7 @@ use super::dispatch::{block, history};
 use super::signals::end_round;
 use super::{Effect, OpId, OpKind, OpResult, emit_op, kinds, next_op, review, worker_messages};
 use crate::run::messages::{DELIVERY_MAX_FAILURES, DELIVERY_RETRY_SECS, join_turn};
-use crate::run::model::{FailedTurn, FreshSession, Outgoing, Run, StallState};
+use crate::run::model::{FailedTurn, FreshSession, Outgoing, Run, StallState, writes_task};
 use crate::run::role_launch::jitter_ms;
 
 /// Queues `text` for task `task_id`'s current worker. The window is the worker round's
@@ -23,7 +23,7 @@ use crate::run::role_launch::jitter_ms;
 pub(super) fn queue(run: &mut Run, task_id: &str, text: String, now: u64) {
     let window_id = run
         .task(task_id)
-        .and_then(|t| t.rounds.iter().rev().find(|r| r.role == AgentRole::Worker))
+        .and_then(|t| t.rounds.iter().rev().find(|r| writes_task(r.role)))
         .and_then(|r| r.window_id)
         .unwrap_or(0);
     let id = run.next_message;
@@ -82,7 +82,7 @@ fn target(run: &Run, address: &str) -> Option<(usize, Option<usize>, bool)> {
     let r = run.tasks[i]
         .rounds
         .iter()
-        .rposition(|r| r.role == AgentRole::Worker);
+        .rposition(|r| writes_task(r.role));
     Some((i, r, false))
 }
 
@@ -268,7 +268,7 @@ fn delivered_to(
             .rounds
             .iter_mut()
             .rev()
-            .find(|r| r.role == role)
+            .find(|r| r.role == role || (role == AgentRole::Worker && writes_task(r.role)))
         else {
             return;
         };

@@ -2,7 +2,7 @@
 //! things from the run alone (no git), as Interfaces "Exact user-visible text" has
 //! them. `available` sanitises and caps what these return. Pure (design decision 2).
 
-use proto::{ActionKind, AgentRole, Effort, HoldState};
+use proto::{ActionKind, Effort, HoldState};
 
 use super::ActionNode;
 use crate::run::contract::sha7;
@@ -231,7 +231,7 @@ fn hold_tasks(run: &Run, hold: &str) -> usize {
 fn has_worker(task: &Task) -> bool {
     task.rounds
         .iter()
-        .any(|r| r.role == AgentRole::Worker && !r.ended)
+        .any(|r| crate::run::model::writes_task(r.role) && !r.ended)
 }
 
 fn effort_label(effort: Effort) -> &'static str {

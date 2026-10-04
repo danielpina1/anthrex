@@ -124,7 +124,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             round.set_rate_limited(None, now);
         }
     }
-    let worker = round.role == AgentRole::Worker;
+    let worker = crate::run::model::writes_task(round.role);
     match signal {
         AgentSignal::Init { session_id } => round.session_id = Some(session_id),
         AgentSignal::TurnStarted => {
@@ -236,7 +236,7 @@ fn turn_ended(
     fx: &mut Vec<Effect>,
 ) {
     let round = &mut run.tasks[i].rounds[r];
-    let worker = round.role == AgentRole::Worker;
+    let worker = crate::run::model::writes_task(round.role);
     round.turn_open = false;
     round.closed_pid = round.pid;
     if let Some(usage) = usage {
@@ -394,7 +394,7 @@ fn exited(
 ) {
     let working = run.tasks[i].state == TaskState::Working;
     let round = &mut run.tasks[i].rounds[r];
-    let worker = round.role == AgentRole::Worker;
+    let worker = crate::run::model::writes_task(round.role);
     let research = round.role == AgentRole::Scout;
     // Codex runs one process per turn: its exit between turns is the normal end of one,
     // and the round has no process until the next starts. A retiring round's exit ends
