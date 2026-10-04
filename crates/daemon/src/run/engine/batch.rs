@@ -87,7 +87,13 @@ pub(super) fn apply_batch(
     let mut message = None;
     for consequence in consequences {
         match consequence {
-            EditConsequence::CancelLive { task_id } => kill_sessions(run, &task_id, fx),
+            EditConsequence::CancelLive { task_id } => {
+                kill_sessions(run, &task_id, fx);
+                // Milestone 9.5 decision 23: a race's lanes are stopped, then salvaged.
+                if let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) {
+                    super::race_end::cancel(run, i, now, fx);
+                }
+            }
             // A held task keeps its message until it resumes (`dispatch::enforce_holds`).
             EditConsequence::Deliver { task_id, text } => outbox::queue(run, &task_id, text, now),
             // Milestone 9 decision 42b: linked to the message the task recorded.

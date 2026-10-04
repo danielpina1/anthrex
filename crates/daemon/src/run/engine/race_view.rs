@@ -160,6 +160,7 @@ fn exchange(task: &mut Task, lane: &mut Lane) {
     swap(&mut task.ready_from, &mut gates.ready_from);
     swap(&mut task.worktree_live, &mut gates.worktree_live);
     swap(&mut task.clock, &mut gates.clock);
+    swap(&mut task.orch.refresh, &mut gates.refresh);
 }
 
 /// What a view holds while it is open: the task's own values of the fields the lane

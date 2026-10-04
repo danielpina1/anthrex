@@ -4,8 +4,8 @@
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, bisect, complete, deciders, delivery, dispatch,
     done, early, fallback, full, gates, history, holds, kinds, ladder, merge, orch_window, outbox,
-    planners, propagate, race, race_end, race_view, requests, review, run_scouts, stages, tiers,
-    worker_messages,
+    planners, propagate, race, race_end, race_salvage, race_view, requests, review, run_scouts,
+    stages, tiers, worker_messages,
 };
 use crate::run::model::Run;
 
@@ -29,6 +29,13 @@ pub(super) fn op_done(
         .task_id
         .as_deref()
         .and_then(|id| run.tasks.iter().position(|t| t.id() == id));
+    // Milestone 9.5 decision 22: a stopped lane's salvage is the race's, outside views.
+    if let (OpKind::RemoveWorktree { .. }, Some(i), Some(lane)) =
+        (&pending.kind, task, pending.lane)
+        && race_salvage::owns(run, i, Some(lane))
+    {
+        return race_salvage::removed(run, i, lane, result, now);
+    }
     // Milestone 9.5 decision 20: a lane's op is answered in its lane's view; so is a
     // check summary a lane waits for, whichever view started its decider. The crown is
     // the task's: it makes the lane the task (decision 21).
@@ -154,7 +161,7 @@ fn route(
             bound = planners::started(run, &kind, result, now, fx);
         }
         // Milestone 9.5 decision 21: the crown of a race's winner.
-        (OpKind::CrownRacer { .. }, Some(i)) => race_end::crown_done(run, i, result, now),
+        (OpKind::CrownRacer { .. }, Some(i)) => race_end::crown_done(run, i, result, now, fx),
         _ => {}
     }
     bound

@@ -136,6 +136,13 @@ pub(super) fn refresh_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         if run.tasks[i].orch.refresh != Some(RefreshState::Due) {
             continue;
         }
+        // Milestone 9.5 ruling RR-4: a racing task's refresh is each live lane's, done
+        // in its view; one waiting for its crown keeps it until it is the lane's.
+        let task = &run.tasks[i];
+        if task.lane_view.is_none() && !task.state.is_finished() && task.racing() {
+            share_refresh(run, i, now);
+            continue;
+        }
         if run.tasks[i].state.is_finished() {
             run.tasks[i].orch.refresh = None;
             history(run, i, now, "refresh dropped: the task finished");
@@ -157,6 +164,30 @@ pub(super) fn refresh_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         run.tasks[i].orch.refresh = Some(RefreshState::InFlight(op));
         emit_op(run, op, Some(&id), kind, fx);
     }
+}
+
+/// Ruling RR-4: racing task `i`'s due refresh moves to each live lane (a winner waiting
+/// for its crown keeps it on the task, where the crown finds it).
+fn share_refresh(run: &mut Run, i: usize, now: u64) {
+    let lanes = super::race::message_lanes(&run.tasks[i]);
+    let task = &mut run.tasks[i];
+    let Some(race) = task.race.as_mut().filter(|r| r.winner.is_none()) else {
+        return;
+    };
+    for lane in race.lanes.iter_mut().filter(|l| lanes.contains(&l.lane)) {
+        lane.gates.refresh.get_or_insert(RefreshState::Due);
+    }
+    task.orch.refresh = None;
+    let labels: Vec<String> = lanes
+        .iter()
+        .map(|l| format!("racer {}", l.label()))
+        .collect();
+    history(
+        run,
+        i,
+        now,
+        format!("refresh due for {}", labels.join(" and ")),
+    );
 }
 
 /// The worker round's turn is closed, nothing is being delivered, resumed or counted,
@@ -320,6 +351,8 @@ pub(super) fn task_note(
         kind,
         text,
         seq: 0,
+        // Ruling RR-4: a racer's note keeps its lane.
+        lane: task.lane_view,
     };
     add_worker_note(run, &task_id, note);
     history(run, i, now, format!("note ({kind_label}): {first}"));

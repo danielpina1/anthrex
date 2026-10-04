@@ -130,6 +130,8 @@ mod propagate_c21;
 mod propagate_c22;
 mod race;
 mod race_crown;
+mod race_end;
+mod race_end_requests;
 mod race_lanes;
 mod race_pair_plan;
 mod race_slots;

@@ -56,6 +56,7 @@ fn racing() -> Race {
         adopted: false,
         started_at: 0,
         crowned: false,
+        ended: false,
     }
 }
 

@@ -157,6 +157,7 @@ pub(super) fn dispatch_race(
         adopted: false,
         started_at: now,
         crowned: false,
+        ended: false,
     });
     task.race_wait_since = None;
     set_state(task, TaskState::Working, now);
@@ -219,6 +220,25 @@ pub fn lane_of_window(run: &Run, window_id: u32) -> Option<(usize, RaceLane)> {
     })
 }
 
+/// Ruling RR-4: the lanes a message to racing task `task` (not in a lane's view) goes
+/// to: every live lane, or the winner waiting for its crown. None once crowned or when
+/// it does not race.
+pub(super) fn message_lanes(task: &Task) -> Vec<RaceLane> {
+    let Some(race) = task.race.as_ref().filter(|_| task.lane_view.is_none()) else {
+        return Vec::new();
+    };
+    if race.crowned || race.ended {
+        return Vec::new();
+    }
+    match race.winner {
+        Some(winner) => vec![winner],
+        None => (race.lanes.iter())
+            .filter(|l| live(l.state))
+            .map(|l| l.lane)
+            .collect(),
+    }
+}
+
 /// The task and lane an outbox address belongs to (`<task>.<x>`, `<task>.<x>.review`).
 pub(super) fn lane_of_address(run: &Run, address: &str) -> Option<(usize, RaceLane)> {
     let stem = address.strip_suffix(".review").unwrap_or(address);
@@ -248,6 +268,15 @@ pub(super) fn refusal(run: &Run, i: usize, lane: RaceLane, tool: &str) -> Option
     let task = &run.tasks[i];
     let race = task.race.as_ref()?;
     let id = task.id();
+    // Task M9.5.17b: a lane that went out says why, whoever won since.
+    let out = race.lanes.iter().find(|l| l.lane == lane)?;
+    if out.state == LaneState::Out {
+        let reason = out.reason.as_deref().unwrap_or_default();
+        let label = lane.label();
+        return Some(format!(
+            "racer {label} of task {id} is out: {reason}. Stop now."
+        ));
+    }
     if race.winner == Some(lane) {
         let text = format!(
             "racer {} of task {id} won the race; wait for the engine's next message",
@@ -255,20 +284,10 @@ pub(super) fn refusal(run: &Run, i: usize, lane: RaceLane, tool: &str) -> Option
         );
         return Some(text);
     }
-    if let Some(winner) = race.winner.filter(|w| *w != lane) {
-        let winner = winner.label();
-        return Some(format!(
-            "the race for task {id} is over: racer {winner} won. Stop now."
-        ));
-    }
-    let out = race.lanes.iter().find(|l| l.lane == lane)?;
-    (out.state == LaneState::Out).then(|| {
-        let reason = out.reason.as_deref().unwrap_or_default();
-        format!(
-            "racer {} of task {id} is out: {reason}. Stop now.",
-            lane.label()
-        )
-    })
+    let winner = race.winner.filter(|w| *w != lane)?.label();
+    Some(format!(
+        "the race for task {id} is over: racer {winner} won. Stop now."
+    ))
 }
 
 /// The reader slots the lanes' reviews hold (decision 41, counted per lane). Ruling
@@ -289,8 +308,13 @@ pub fn lane_readers(run: &Run) -> usize {
 
 /// Whether lane `lane` of task `task` (not in a view) holds a reader slot: in `review`
 /// with a live reviewer, a resumable one that owes its verdict, or a `PrepareReview`
-/// in flight (`schedule::holds_reader`, per lane).
+/// in flight (`schedule::holds_reader`, per lane). A lane that left the race holds one
+/// while its given-up reviewer has not exited (ruling T13-I2). The crowned lane's
+/// reviewers are the task's (task 17a's re-review, (a): each reviewer counts once).
 pub(super) fn lane_holds_reader(run: &Run, task: &Task, lane: &Lane) -> bool {
+    if (task.race.as_ref()).is_some_and(|r| r.crowned && r.winner == Some(lane.lane)) {
+        return false;
+    }
     let l = Some(lane.lane);
     let reviewer =
         |r: &&crate::run::model::AgentRound| r.role == AgentRole::Reviewer && r.lane == l;
@@ -307,7 +331,11 @@ pub(super) fn lane_holds_reader(run: &Run, task: &Task, lane: &Lane) -> bool {
             && p.lane == l
             && matches!(p.kind, OpKind::PrepareReview { .. })
     });
-    lane.state == LaneState::Review && (live || resumable || preparing)
+    match lane.state {
+        LaneState::Review => live || resumable || preparing,
+        LaneState::Out | LaneState::Lost => live,
+        _ => false,
+    }
 }
 
 /// The window-name stem of task `task`'s sessions: `<task>.` (`t1.w1`, `t1.r1`), or in

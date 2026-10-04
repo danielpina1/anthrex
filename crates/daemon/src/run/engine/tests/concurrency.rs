@@ -493,6 +493,7 @@ fn writer_slots_count_live_lanes_on_their_runtimes() {
         adopted: false,
         started_at: 0,
         crowned: false,
+        ended: false,
     };
     run.tasks[0].race = Some(race(LaneState::Check, None));
     assert_eq!(writers_busy(&run), 2);

@@ -155,8 +155,9 @@ impl Batch {
             self.amend_deps(i, deps, &mut changed);
         }
         // Milestone 9.5 rulings T17a-3, T17a-4: what decides the race changed before
-        // the task started, so its next dispatch decides again.
-        let decides = race.is_some() || pair.is_some() || route.is_some();
+        // the task started, so its next dispatch decides again. A size re-resolves the
+        // route, and with it the second racer (task 17a's second re-review, (d)).
+        let decides = race.is_some() || pair.is_some() || route.is_some() || size.is_some();
         let task = &mut self.run.tasks[i];
         if (decides || stage.is_some() || deps.is_some()) && !has_started(task) {
             task.race_decision = None;

@@ -236,5 +236,6 @@ pub fn race_of(task: &Task, states: [proto::LaneState; 2]) -> super::model::Race
         adopted,
         started_at: 100,
         crowned: winner.is_some(),
+        ended: false,
     }
 }

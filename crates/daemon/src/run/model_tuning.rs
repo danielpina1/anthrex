@@ -102,6 +102,10 @@ pub struct LaneGates {
     pub worktree_live: bool,
     pub clock: crate::run::engine::TaskClock,
     pub block: Option<proto::BlockInfo>,
+    /// Ruling RR-4 (task M9.5.17b): the lane's own refresh of a racing task, the
+    /// task's `orch.refresh` in the lane's view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<crate::run::orch::RefreshState>,
 }
 
 impl LaneGates {
@@ -133,6 +137,11 @@ pub struct Race {
     /// it can do nothing, so no import runs between `Won` and the crown.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub crowned: bool,
+    /// Task M9.5.17b's addendum (b): the race is over without a winner (both lanes
+    /// out) and `run retry` dispatched the task again: it runs single and counts as an
+    /// ordinary task. Its lanes stay, for their salvage and the run's clean-up.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ended: bool,
 }
 
 /// A paired task's test writer and its red commit (decisions 25–26).

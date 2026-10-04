@@ -45,7 +45,7 @@ fn op_path(kind: &OpKind) -> std::path::PathBuf {
 
 /// Lane `l` of `t1`, at `head`, from its claim through proof and check to its
 /// reviewer: the reviewer's window. Every op on the way is the lane's.
-fn to_review(fx: &mut Fixture, l: RaceLane, head: &str) -> u32 {
+pub(super) fn to_review(fx: &mut Fixture, l: RaceLane, head: &str) -> u32 {
     let window = window(fx, l);
     let effects = claim(fx, l, window, head);
     let (op, kind) = only_op(&effects, "Proof");
@@ -98,7 +98,8 @@ pub(super) fn passes(fx: &mut Fixture, l: RaceLane, head: &str) -> Vec<Effect> {
 fn each_lane_runs_every_pre_merge_gate() {
     let (mut fx, _, _) = racing();
     let effects = passes(&mut fx, A, HEAD);
-    assert_eq!(lane(&fx, B).state, LaneState::Working, "lane b races on");
+    // Task M9.5.17b (task 17a's review, m1): the other lane is lost at once.
+    assert_eq!(lane(&fx, B).state, LaneState::Lost, "lane b is stopped");
     // No tier 2 (the candidate) before a crown: the lane is `Won`, then crowned.
     assert!(fx.ops("MergeCandidate").is_empty());
     assert!(fx.run().merge_queue.is_empty());

@@ -145,6 +145,7 @@ fn a_run_with_race_pair_and_caps_round_trips() {
         adopted: false,
         started_at: 100,
         crowned: false,
+        ended: false,
     });
     run.tasks[0].race_wait_since = Some(90);
     run.tasks[1].pair = Some(Pair {

@@ -38,7 +38,12 @@ pub fn writer_slots(task: &Task) -> Vec<Runtime> {
     if is_reader_task(task) || task.state.is_finished() {
         return Vec::new();
     }
-    if let Some(race) = task.race.as_ref().filter(|r| r.winner.is_none()) {
+    // Task 17a's re-review (b): a race `run retry` ended counts as an ordinary task.
+    if let Some(race) = task
+        .race
+        .as_ref()
+        .filter(|r| r.winner.is_none() && !r.ended)
+    {
         return (race.lanes.iter())
             .filter(|l| lane_holds_writer(l.state))
             .map(|l| l.route.runtime)
@@ -144,26 +149,37 @@ pub fn holds_reader(run: &Run, task: &Task) -> bool {
     if task.state == TaskState::Working && task.spec.kind == TaskKind::Research {
         return true;
     }
+    // Milestone 9.5 (task 17a's re-review, (a)): a crowned race's other lanes hold
+    // their own slots (`race::lane_readers`); only the task's own count here.
+    let own = |lane: Option<proto::RaceLane>| own_lane(task, lane);
     task.state == TaskState::Review
         && (task
             .rounds
             .iter()
-            .any(|r| r.role == AgentRole::Reviewer && !r.ended)
+            .any(|r| r.role == AgentRole::Reviewer && !r.ended && own(r.lane))
             || resumable_reviewer(task)
-            || op_in_flight(run, task.id(), |k| {
-                // Milestone 9 decision 36: a review task's target first.
-                matches!(
-                    k,
-                    OpKind::PrepareReview { .. } | OpKind::ResolveTarget { .. }
-                )
+            || run.pending_ops.values().any(|p| {
+                p.task_id.as_deref() == Some(task.id())
+                    && own(p.lane)
+                    // Milestone 9 decision 36: a review task's target first.
+                    && matches!(
+                        p.kind,
+                        OpKind::PrepareReview { .. } | OpKind::ResolveTarget { .. }
+                    )
             }))
+}
+
+/// Whether a round, record or op of `lane` is task `task`'s own: in a lane's view every
+/// one it shows is; otherwise one of no lane, or of the crowned lane.
+fn own_lane(task: &Task, lane: Option<proto::RaceLane>) -> bool {
+    task.lane_view.is_some() || lane.is_none() || lane == task.crowned_lane()
 }
 
 /// The task's last reviewer round, ended but resumable, with no verdict yet.
 fn resumable_reviewer(task: &Task) -> bool {
     task.rounds
         .iter()
-        .rfind(|r| r.role == AgentRole::Reviewer)
+        .rfind(|r| r.role == AgentRole::Reviewer && own_lane(task, r.lane))
         .is_some_and(|r| {
             r.ended
                 && !r.retiring
@@ -171,7 +187,7 @@ fn resumable_reviewer(task: &Task) -> bool {
                 && !task
                     .reviews
                     .iter()
-                    .any(|rv| rv.round == r.round && rv.verdict.is_some())
+                    .any(|rv| rv.lane == r.lane && rv.round == r.round && rv.verdict.is_some())
         })
 }
 

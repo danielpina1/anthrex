@@ -346,6 +346,11 @@ pub(crate) fn retry(run: &Run, task_id: &str) -> Option<String> {
         return Some(format!("unknown task {task_id}"));
     };
     match &task.block {
+        // Milestone 9.5 decision 23: nothing to retry until one racer is left (a
+        // winner whose crown failed is blocked, and retried).
+        _ if task.racing() && task.state != TaskState::Blocked => Some(format!(
+            "task {task_id} is racing: it has nothing to retry until one racer is left"
+        )),
         // Milestone 9 decision 42c.
         _ if worker_messages::paused_refusal(task).is_some() => {
             worker_messages::paused_refusal(task)
@@ -404,6 +409,12 @@ pub(crate) fn override_refusal(run: &Run, i: usize) -> Option<String> {
     if super::super::pair::writing(task) {
         return Some(format!(
             "task {id} is still writing its test; override it once its implementer has started"
+        ));
+    }
+    // Milestone 9.5 decision 23.
+    if task.racing() {
+        return Some(format!(
+            "task {id} is racing: there is no failed gate to override"
         ));
     }
     let dep_cancelled = task

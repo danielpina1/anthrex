@@ -309,8 +309,12 @@ fn merged(
 /// removed at once take consecutive numbers, and only the dirty ones record theirs, so
 /// the next number follows the highest recorded one, not their count.
 pub(super) fn next_salvage_seq(task: &Task) -> usize {
+    // Milestone 9.5 decision 22: a stopped lane's ref is reserved when its salvage is
+    // sent, so a salvage in flight keeps its number.
+    let lanes = (task.race.iter().flat_map(|r| &r.lanes)).filter_map(|l| l.salvage_ref.as_ref());
     task.salvage_refs
         .iter()
+        .chain(lanes)
         .filter_map(|r| r.rsplit('/').next()?.parse::<usize>().ok())
         .max()
         .unwrap_or(0)

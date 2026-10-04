@@ -78,7 +78,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 review::dispatch_reviewers(run, fx);
                 // Milestone 9.5 decision 20: each lane of a race, in its lane's view.
                 lane_passes(run, now, fx);
-                super::race_end::crown_pass(run, fx);
+                super::race_end::crown_pass(run, now, fx);
                 // Milestone 9 decision 31: integration reviews go with the reviewers.
                 kinds::dispatch(run, now, true, fx);
             }
@@ -90,8 +90,14 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         kinds::dispatch(run, now, false, fx);
     }
     remove_cancelled_worktrees(run, now, fx);
+    // Milestone 9.5 decision 22: a lane that left its race, once its racer has exited.
+    super::race_salvage::pass(run, now, fx);
     if run.state == RunState::Running {
         super::worker_messages::refresh_pass(run, now, fx);
+        // Ruling RR-4: a racing task's refresh, in each live lane.
+        super::race::each_lane(run, now, fx, |run, fx| {
+            super::worker_messages::refresh_pass(run, now, fx)
+        });
         outbox::deliver(run, now, fx);
         super::race::each_lane(run, now, fx, |run, fx| outbox::deliver(run, now, fx));
         complete::complete_pass(run, now, fx);

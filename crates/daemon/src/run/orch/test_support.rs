@@ -140,6 +140,7 @@ pub fn note(at: u64, kind: TaskNoteKind, text: &str) -> WorkerNote {
         kind,
         text: text.into(),
         seq: 0,
+        lane: None,
     }
 }
 

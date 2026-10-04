@@ -18,9 +18,10 @@ pub(crate) fn not_started(task: &Task) -> bool {
 
 /// The stage rule's "started" (ruling C-14(d)), which milestone 9.5's race and pair
 /// share (review ruling I9): a task that is not [`not_started`], or one with a start
-/// commit (it was dispatched and has a checkout).
+/// commit (it was dispatched and has a checkout), or one dispatched as a race (task
+/// 17a's second re-review, (c): its start commits are its lanes').
 pub(crate) fn has_started(task: &Task) -> bool {
-    !not_started(task) || task.start_commit.is_some()
+    !not_started(task) || task.start_commit.is_some() || task.race.is_some()
 }
 
 /// Milestone 9 decision 42c: `blocked(message_pause)`, shown as `paused(message)`.

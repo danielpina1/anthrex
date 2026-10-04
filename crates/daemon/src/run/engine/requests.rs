@@ -343,6 +343,22 @@ pub(super) fn retry(
             .unwrap_or_default();
         format!(" (it was blocked({label}): {})", b.text)
     });
+    // Milestone 9.5 decision 21: a winner whose crown failed is crowned again.
+    if super::race_end::retry_crown(run, i, now) {
+        history(
+            run,
+            i,
+            now,
+            format!("retried by the user: its crown is sent again{was}"),
+        );
+        log(
+            run,
+            now,
+            format!("{task_id} retried: its crown is sent again"),
+        );
+        let text = format!("task {task_id} retried: its race's winner is crowned again");
+        return reply(fx, id, Ok(text));
+    }
     // M9.9 second review, M-c: the user's retry lifts decision 25's cap.
     run.tasks[i].orch.rewrite_restarts = 0;
     let how = rung2(run, i, format!("the user retried it{was}"), now, fx);
@@ -420,6 +436,10 @@ pub(super) fn rung2(
         task.fresh_session = None;
         // Ruling T17a-1: a new dispatch decides the race again.
         task.race_decision = None;
+        // Task 17a's re-review (b): a race that ended with both lanes out runs single.
+        if let Some(race) = task.race.as_mut().filter(|r| r.winner.is_none()) {
+            race.ended = true;
+        }
         "it is dispatched again"
     } else {
         task.fresh_session = Some(FreshSession {

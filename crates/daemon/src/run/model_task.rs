@@ -259,6 +259,19 @@ impl Task {
         }
     }
 
+    /// Milestone 9.5 decision 23 (task M9.5.17b): the task races. Its race is neither
+    /// crowned nor ended, and has a winner waiting for its crown or a lane still live.
+    /// A race whose lanes are all out with no winner is not racing: the task is blocked,
+    /// and `run retry` ends the race.
+    pub fn racing(&self) -> bool {
+        use proto::LaneState::{Check, Preparing, Proof, Review, Working};
+        self.race.as_ref().is_some_and(|race| {
+            let live =
+                |l: &super::Lane| matches!(l.state, Preparing | Working | Proof | Check | Review);
+            !race.crowned && !race.ended && (race.winner.is_some() || race.lanes.iter().any(live))
+        })
+    }
+
     /// Milestone 9.5 decision 23: the lane of its race that became the task (crowned or
     /// adopted, and its crown done), if any.
     pub fn crowned_lane(&self) -> Option<proto::RaceLane> {

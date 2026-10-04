@@ -83,6 +83,7 @@ mod promote;
 mod propagate;
 mod race;
 mod race_end;
+mod race_salvage;
 mod race_view;
 mod requests;
 mod research;

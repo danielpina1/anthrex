@@ -104,8 +104,8 @@ fn the_crown_moves_the_tasks_worktree_and_branch() {
     assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
 }
 
-/// The adoption case: lane a `Adopted` (task M9.5.17b's), its crown makes the task
-/// lane a's the same way.
+/// The adoption case: lane a `Adopted` on its racer's question, its crown makes the
+/// task lane a's the same way; then the question blocks the task (task M9.5.17b).
 #[test]
 fn an_adopted_lanes_crown_moves_the_worktree_too() {
     let (mut fx, _, _) = racing();
@@ -113,6 +113,10 @@ fn an_adopted_lanes_crown_moves_the_worktree_too() {
     let mut race = crate::run::test_support::race_of(t1, [LaneState::Adopted, LaneState::Out]);
     race.crowned = false;
     race.lanes[0].head = Some(HEAD.into());
+    race.lanes[0].gates.block = Some(proto::BlockInfo {
+        reason: proto::BlockReason::Question,
+        text: "which API?".into(),
+    });
     t1.race = Some(race);
     let effects = fx.tick();
     let (op, kind) = only_op(&effects, "CrownRacer");
@@ -131,7 +135,7 @@ fn an_adopted_lanes_crown_moves_the_worktree_too() {
         (t1.worktree.clone(), t1.branch.clone()),
         (lane_path(A), task_branch(RUN_ID, "t1"))
     );
-    assert_eq!(t1.state, TaskState::MergeQueue);
+    assert_eq!(t1.state, TaskState::Blocked);
 }
 
 /// Task M9.5.15's review: a crown that finds the task branch moved halts the run, and
@@ -254,7 +258,7 @@ pub(super) fn handed_back(fx: &mut Fixture) {
 }
 
 /// Part 3 after the crown (minor m4), through the reducer: lane b passes and is crowned
-/// while lane a's racer still runs (task M9.5.17b stops it). The task's worker checks
+/// while lane a's racer, stopped at the win (task M9.5.17b), has not exited yet. The task's worker checks
 /// see lane b's racer alone: `worker_round`, `has_live_worker`, the budget and rung 4's
 /// epoch spend; a retry stops lane b's racer only, and its fresh session starts in lane
 /// b's checkout once that racer exits, whatever lane a's still does.
@@ -316,7 +320,33 @@ fn worker_checks_see_the_crowned_lane() {
         }
         other => panic!("{other:?}"),
     }
-    assert!(
-        !(fx.log.iter()).any(|e| matches!(e, Effect::KillWindow { window_id } if *window_id == a))
-    );
+    // Lane a's racer was stopped once, when lane b won (task M9.5.17b), never by the
+    // retry.
+    let killed_a = (fx.log.iter())
+        .filter(|e| matches!(e, Effect::KillWindow { window_id } if *window_id == a))
+        .count();
+    assert_eq!(killed_a, 1);
+}
+
+/// Task M9.5.17b: a crown that fails blocks the task and is not sent again in a loop;
+/// `run retry` has it sent again.
+#[test]
+fn a_failed_crown_waits_for_a_retry() {
+    let (mut fx, _, _) = racing();
+    let effects = passes(&mut fx, B, HEAD_B);
+    let (op, _) = only_op(&effects, "CrownRacer");
+    let failed = OpResult::Failed {
+        message: "disk full".into(),
+    };
+    let effects = fx.done(op, failed);
+    assert!(ops_in(&effects, "CrownRacer").is_empty(), "{effects:#?}");
+    assert_eq!(fx.task("t1").state, TaskState::Blocked);
+    assert!(ops_in(&fx.tick(), "CrownRacer").is_empty());
+    let effects = super::control::retry(&mut fx, "t1");
+    let text = "task t1 retried: its race's winner is crowned again".to_string();
+    assert_eq!(replies(&effects), vec![Ok(text)]);
+    let crowns = ops_in(&effects, "CrownRacer");
+    assert_eq!(crowns.len(), 1, "{effects:#?}");
+    assert!(matches!(&crowns[0].1, OpKind::CrownRacer { lane_head, .. } if lane_head == HEAD_B));
+    assert_eq!(fx.task("t1").state, TaskState::Working);
 }

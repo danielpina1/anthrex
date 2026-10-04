@@ -222,6 +222,12 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         {
             run.tasks[i].orch.refresh = Some(RefreshState::Due);
         }
+        // Milestone 9.5 ruling RR-4: so is a race lane's.
+        (OpKind::HandBack { .. }, Some(i)) if lane_refresh(&mut run.tasks[i], op).is_some() => {
+            if let Some(refresh) = lane_refresh(&mut run.tasks[i], op) {
+                *refresh = Some(RefreshState::Due);
+            }
+        }
         // Carry T14-R2: a lost merge-queue hand-back is sent again by the running pass.
         (OpKind::HandBack { .. }, Some(i)) if run.tasks[i].merge_op == Some(op) => {
             let task = &mut run.tasks[i];
@@ -272,6 +278,13 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         // by the scheduler, which sees none in flight.
         _ => {}
     }
+}
+
+/// The refresh of the race lane whose refresh `op` is.
+fn lane_refresh(task: &mut crate::run::model::Task, op: OpId) -> Option<&mut Option<RefreshState>> {
+    let lanes = task.race.iter_mut().flat_map(|r| r.lanes.iter_mut());
+    let mut refreshes = lanes.map(|l| &mut l.gates.refresh);
+    refreshes.find(|r| **r == Some(RefreshState::InFlight(op)))
 }
 
 /// After the replay: every session ends (its process died with the old daemon), and a
@@ -427,6 +440,18 @@ fn resumed(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         }
         resume_worker(run, i, restored.is_some(), now, fx);
         resume_reviewer(run, i, restored.is_some(), now);
+        // Milestone 9.5 decision 23: each live lane of a race, in its view.
+        let lanes: Vec<proto::RaceLane> = (run.tasks[i].race.iter())
+            .flat_map(|r| &r.lanes)
+            .filter(|l| super::race_view::live(l.state))
+            .map(|l| l.lane)
+            .collect();
+        for lane in lanes {
+            super::race::with_lane(run, i, lane, now, fx, |run, fx| {
+                resume_worker(run, i, restored.is_some(), now, fx);
+                resume_reviewer(run, i, restored.is_some(), now);
+            });
+        }
     }
 }
 

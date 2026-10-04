@@ -5,7 +5,9 @@
 //! `std::time::SystemTime` (M8a design decision 2).
 
 use proto::TaskState;
-use proto::{BlockInfo, BlockReason, HoldState, MessageKind, MessageTarget, PlanEdit, PlanTask};
+use proto::{
+    BlockInfo, BlockReason, HoldState, LaneState, MessageKind, MessageTarget, PlanEdit, PlanTask,
+};
 
 use super::edits::{Batch, EditConsequence, not_started, state_label};
 use super::edits_state::{has_live_worker, is_paused, is_reader};
@@ -75,6 +77,12 @@ pub(crate) fn takes(task: &Task, kind: MessageKind, limit: u32) -> Result<Takes,
     }
     if is_reader(task) {
         return Err(reader_refusal(task, "a message would not reach a worker"));
+    }
+    // Milestone 9.5 ruling RR-4 (review ruling I8): on the request path only.
+    if kind == MessageKind::StopAndWait && task.racing() {
+        return Err(format!(
+            "task {id} is racing: it cannot stop and wait; message it or cancel it"
+        ));
     }
     let question = task
         .block
@@ -364,6 +372,11 @@ pub(crate) fn refresh_refusal(run: &Run, task_id: &str) -> Option<PlanError> {
         && task.gate_op.is_none()
         && task.merge_op.is_none()
         && task.orch.refresh.is_none()
+        // Milestone 9.5 ruling RR-4: nor in any live lane of a racing task (a lane that
+        // left the race keeps its refresh unused).
+        && !(task.race.iter().flat_map(|r| &r.lanes))
+            .filter(|l| task.racing() && !matches!(l.state, LaneState::Out | LaneState::Lost))
+            .any(|l| l.gates.refresh.is_some())
         && !hand_back;
     (!fits).then(|| {
         let text = format!(

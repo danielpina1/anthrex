@@ -60,6 +60,8 @@ pub(super) fn cancel_task(
 /// `cancel_task` edit does. Its worktree is salvaged and removed once no session is
 /// left (`dispatch::remove_cancelled_worktrees`).
 pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.5 decision 23: every lane of a race is stopped, then salvaged.
+    super::race_end::cancel(run, i, now, fx);
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
     super::kinds::stop_research(run, i, fx);

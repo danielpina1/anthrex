@@ -419,6 +419,7 @@ fn task_section_lists_messages_and_worker_notes() {
         kind: proto::TaskNoteKind::Risk,
         text: "the migration may lock".into(),
         seq: 1,
+        lane: None,
     });
     let out = render(&run, 1_000);
     let section = &out[out.find("## t1:").unwrap()..];

@@ -7,7 +7,7 @@ use proto::{AgentRole, LaneState, RaceLane, Runtime, TaskState};
 
 use super::fixture::*;
 use super::gates::{check_result, only_op};
-use super::kinds::{approve, report_args, research, submit_report};
+use super::kinds::{changes, report_args, research, submit_report};
 use super::race::{RACING, claim, lane, launched, racing, window};
 use super::race_lanes::{HEAD_B, passes, proof, submit};
 use crate::run::engine::schedule::writer_slots;
@@ -141,7 +141,9 @@ fn the_slot_wait_gives_up_once() {
 
 /// Ruling T17a-2: a lane holds a reader slot only once its reviewer round or its
 /// `PrepareReview` exists. With one reader slot, held by a research task, both lanes
-/// reach review and wait; once it frees, both are reviewed in turn.
+/// reach review and wait; once it frees, both are reviewed in turn (the first lane's
+/// review asks for changes: one that approved would win, and the other lane would be
+/// lost, task M9.5.17b).
 #[test]
 fn both_lanes_wait_for_one_reader_slot_and_are_reviewed_in_turn() {
     let mut fx = launched(
@@ -169,8 +171,8 @@ fn both_lanes_wait_for_one_reader_slot_and_are_reviewed_in_turn() {
     assert_eq!(prepares.len(), 1, "{effects:#?}");
     let first = fx.run().pending_ops[&prepares[0].0].lane.expect("a lane's");
     let rwindow = reviewer_of(&mut fx, prepares[0].0, first);
-    let effects = submit(&mut fx, rwindow, approve());
-    assert_eq!(lane(&fx, first).state, LaneState::Won);
+    let effects = submit(&mut fx, rwindow, changes());
+    assert_eq!(lane(&fx, first).state, LaneState::Working);
     let other = match first {
         RaceLane::A => RaceLane::B,
         RaceLane::B => RaceLane::A,
@@ -236,8 +238,8 @@ fn a_crowned_race_counts_its_slot_on_the_tasks_route() {
     slot_follows_the_route(&mut fx);
 }
 
-/// Ruling T17a-5, the adoption: lane b `Adopted` (task M9.5.17b's) is crowned through
-/// the reducer, which swaps its route in.
+/// Ruling T17a-5, the adoption: lane b `Adopted` on its racer's question is crowned
+/// through the reducer, which swaps its route in; the answer has the task work again.
 #[test]
 fn an_adopted_lane_b_counts_its_slot_on_the_tasks_route() {
     let (mut fx, _, _) = racing();
@@ -245,11 +247,29 @@ fn an_adopted_lane_b_counts_its_slot_on_the_tasks_route() {
     let mut race = crate::run::test_support::race_of(t1, [LaneState::Out, LaneState::Adopted]);
     race.crowned = false;
     race.lanes[1].head = Some(HEAD_B.into());
+    race.lanes[1].gates.block = Some(proto::BlockInfo {
+        reason: proto::BlockReason::Question,
+        text: "which API?".into(),
+    });
     t1.race = Some(race);
     let effects = fx.tick();
     let (op, _) = only_op(&effects, "CrownRacer");
     super::race_crown::crowned(&mut fx, op, HEAD_B);
-    slot_follows_the_route(&mut fx);
+    assert_eq!(fx.task("t1").state, TaskState::Blocked);
+    super::dispatch::edit(&mut fx, vec![super::holds::answer("use v2")]);
+    let t1 = fx.task("t1");
+    assert_eq!(t1.state, TaskState::Working);
+    assert_eq!(
+        writer_slots(t1),
+        [Runtime::Codex],
+        "the crown swapped the route"
+    );
+    fx.task_mut("t1").route.runtime = Runtime::Claude;
+    assert_eq!(
+        writer_slots(fx.task("t1")),
+        [Runtime::Claude],
+        "the route's"
+    );
 }
 
 /// `amend_task` of `t1` with `race` alone.
@@ -316,4 +336,35 @@ fn a_task_back_to_pending_decides_again() {
     let t1 = fx.task("t1");
     assert!(t1.race_decision.is_some(), "{:?}", t1.state);
     assert!(t1.race.is_some() || lines(&fx, "t1", "race skipped") == 2);
+}
+
+/// Task 17a's second re-review (d): an amend of `size` alone re-resolves the route (and
+/// with it the second racer's model), so it clears the latch like a route amend.
+#[test]
+fn an_amended_size_clears_the_latch() {
+    let mut fx = held_single();
+    let amend = proto::PlanEdit::AmendTask {
+        task_id: "t1".into(),
+        brief: None,
+        acceptance: None,
+        route: None,
+        test_mode: None,
+        test_mode_reason: None,
+        priority: None,
+        size: Some(proto::Size::S),
+        deps: None,
+        stage: None,
+        race: None,
+        pair: None,
+    };
+    let effects = super::dispatch::edit(&mut fx, vec![amend]);
+    assert!(
+        super::dispatch::replies(&effects)[0].is_ok(),
+        "{effects:#?}"
+    );
+    // The latch went: the same pass decides again, with its own line.
+    let t1 = fx.task("t1");
+    assert_eq!((t1.size, t1.state), (proto::Size::S, TaskState::Queued));
+    assert!(t1.race_decision.is_some());
+    assert_eq!(lines(&fx, "t1", "race skipped"), 2, "decided again");
 }

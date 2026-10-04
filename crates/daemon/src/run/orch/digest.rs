@@ -388,12 +388,17 @@ fn task_notes(run: &Run) -> Vec<Value> {
         .rev()
         .take(TASK_NOTES_SHOWN)
         .map(|(t, n)| {
-            json!({
+            let mut entry = json!({
                 "task": t.id(),
                 "kind": label(&n.kind),
                 "text": cut(&n.text, TASK_NOTE_MAX),
                 "at": hh_mm(n.at),
-            })
+            });
+            // Milestone 9.5 ruling RR-4: a racer's note says its lane.
+            if let Some(lane) = n.lane {
+                entry["lane"] = json!(format!("lane {}", lane.label()));
+            }
+            entry
         })
         .collect()
 }

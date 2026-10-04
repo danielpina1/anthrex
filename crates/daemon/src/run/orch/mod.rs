@@ -268,6 +268,9 @@ pub struct WorkerNote {
     /// it existed): the digest breaks a tie on `at` by it, newest first.
     #[serde(default)]
     pub seq: u64,
+    /// Milestone 9.5 decision 19 (ruling RR-4): the race lane whose racer wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<proto::RaceLane>,
 }
 
 /// Appends `note` to task `task`'s notes with the next run-wide `seq`; false when
