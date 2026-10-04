@@ -106,6 +106,24 @@ pub struct RunLimits {
     /// Decision 9a: the user's model lists, frozen with each candidate's strength.
     #[serde(default, skip_serializing_if = "RouteListsFrozen::is_empty")]
     pub route_lists: RouteListsFrozen,
+    /// Decision 16 (ruling T9-2): `[orchestrator.tuning] adaptive_concurrency`. Absent
+    /// from an older run: `false`, so it keeps every cap at `max_writers`, as 9.3 did.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub adaptive_concurrency: bool,
+    /// Decision 16: `recover_after_mins`, in seconds (absent: 0, unused while off).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub recover_after_secs: u64,
+    /// Decision 16: `halve_hold_secs` (absent: 0, unused while off).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub halve_hold_secs: u64,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 fn default_thresholds(t: &SizeThresholds) -> bool {

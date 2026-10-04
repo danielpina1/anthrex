@@ -207,6 +207,10 @@ pub fn run_limits(
         path_weights: None,
         thresholds: Default::default(),
         route_lists: Default::default(),
+        // Decision 16 (ruling T9-2), frozen at start.
+        adaptive_concurrency: config.tuning.table.adaptive_concurrency,
+        recover_after_secs: config.tuning.table.recover_after_mins.saturating_mul(60),
+        halve_hold_secs: config.tuning.table.halve_hold_secs,
     }
 }
 

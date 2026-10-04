@@ -152,7 +152,8 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         chain: run.chain.clone(),
         round: run.round(),
         rounds: run.round_infos(),
-        writer_caps: Default::default(),
+        // Milestone 9.5 decision 16.
+        writer_caps: super::engine::concurrency::writer_caps(run),
     }
 }
 
@@ -244,6 +245,8 @@ pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
     lines.extend(run.stale_profile_line());
     lines.extend(crate::run::engine::integration_attention(run));
     lines.extend(crate::run::engine::delivery::attention(run));
+    // Milestone 9.5 decision 16 (ruling RC-3): a runtime's lowered writer cap.
+    lines.extend(crate::run::engine::concurrency::attention(run));
     // Milestone 9 decision 13: the orchestrator could not start, or its window exited.
     let terminal = run.state.is_terminal();
     lines.extend(

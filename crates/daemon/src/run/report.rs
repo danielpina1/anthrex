@@ -35,6 +35,8 @@ pub fn render(run: &Run, now: u64) -> String {
     super::report_tiers::section(run, &mut out);
     // Milestone 9 decisions 35 and 36.
     super::report_orch::sections(run, &mut out);
+    // Milestone 9.5 decision 16.
+    crate::run::engine::concurrency::report_section(run, &mut out);
     out.push_str("\n## Log\n\n");
     log_section(run, &mut out);
     out

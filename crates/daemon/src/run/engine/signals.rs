@@ -150,7 +150,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             if error == RATE_LIMIT {
                 round.in_retry_streak = true;
                 if !streak {
-                    count_rate_limit(run, i, r);
+                    count_rate_limit(run, i, r, now);
                 }
             }
         }
@@ -193,9 +193,12 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
     }
 }
 
-pub(super) fn count_rate_limit(run: &mut Run, i: usize, r: usize) {
-    let label = runtime_label(run.tasks[i].rounds[r].route.runtime);
-    *run.rate_limits.entry(label).or_insert(0) += 1;
+/// One rate-limit event of a task session (decision 32): counted, and, milestone 9.5
+/// decision 16, its runtime's writer cap halved (`concurrency::on_rate_limit`).
+pub(super) fn count_rate_limit(run: &mut Run, i: usize, r: usize, now: u64) {
+    let runtime = run.tasks[i].rounds[r].route.runtime;
+    *run.rate_limits.entry(runtime_label(runtime)).or_insert(0) += 1;
+    super::concurrency::on_rate_limit(run, runtime, now);
 }
 
 /// Saturating, as `TokenUsage`'s `+=` is (followups file, "From M8b.15"): a session's
@@ -343,7 +346,7 @@ fn failed_turn(
         FailureKind::RateLimit => {
             // One event, unless a retry streak ran straight into this failure.
             if !streak {
-                count_rate_limit(run, i, r);
+                count_rate_limit(run, i, r, now);
             }
             let round = &mut run.tasks[i].rounds[r];
             round.failed_turn = FailedTurn::WaitingContinue {

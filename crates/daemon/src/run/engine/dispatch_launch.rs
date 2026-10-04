@@ -14,7 +14,7 @@ use crate::run::engine::schedule::{
     dispatch_order, held_hub_waits_for, hub_started, is_reader_task, may_return_to_working,
     op_in_flight, size_check_pending, writers_busy,
 };
-use crate::run::engine::{Effect, OpKind, done, emit_op, gate_holds, ladder, next_op};
+use crate::run::engine::{Effect, OpKind, concurrency, done, emit_op, gate_holds, ladder, next_op};
 use crate::run::env::profile_env;
 use crate::run::model::{FreshSession, Run, Task};
 use crate::run::orch::contract::notes_section;
@@ -107,6 +107,10 @@ pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         let busy = writers_busy(run);
         if busy >= usize::from(run.limits.max_writers) || hub_started(run) {
             break;
+        }
+        // Milestone 9.5 decision 16: a task whose runtime is at its cap is skipped.
+        if !concurrency::has_room(run, run.tasks[i].route.runtime) {
+            continue;
         }
         if run.tasks[i].hub
             && (busy > 0 || run.tasks.iter().any(|t| may_return_to_working(t.state)))

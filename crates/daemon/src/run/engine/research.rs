@@ -280,7 +280,7 @@ pub(super) fn turn_ended(
             kind: FailureKind::RateLimit,
         } => {
             if !streak {
-                count_rate_limit(run, i, r);
+                count_rate_limit(run, i, r, now);
             }
             let round = &mut run.tasks[i].rounds[r];
             round.failed_turn = FailedTurn::WaitingContinue {

@@ -94,7 +94,7 @@ fn failed_turn(
     run.tasks[i].rounds[r].failed_error = Some(error);
     // One event, unless a retry streak ran straight into this failure (decision 32).
     if rate_limit && !streak {
-        count_rate_limit(run, i, r);
+        count_rate_limit(run, i, r, now);
     }
 }
 

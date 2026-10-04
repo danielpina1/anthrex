@@ -46,6 +46,7 @@ mod bisect;
 mod chains;
 mod clock;
 mod complete;
+pub(crate) mod concurrency;
 pub(crate) mod deciders;
 mod deciders_size;
 pub mod delivery;
@@ -269,10 +270,12 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         EventKind::Tick => {
             promote::on_tick(&mut state, now, &mut fx);
             // Milestone 9.5 decision 38: a first turn waiting past its bound.
-            state
-                .runs
-                .values_mut()
-                .for_each(|run| first_turn::tick(run, now));
+            // Decision 16: a quiet runtime gets a writer back, before this step's
+            // scheduler pass.
+            state.runs.values_mut().for_each(|run| {
+                first_turn::tick(run, now);
+                concurrency::on_tick(run, now);
+            });
         }
     }
     // M9.9 review fixes, I2 and M-b: an orchestrator call's own blocks are compared

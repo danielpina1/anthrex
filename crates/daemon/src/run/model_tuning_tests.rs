@@ -160,7 +160,7 @@ fn a_run_with_race_pair_and_caps_round_trips() {
             last_rate_limit_at: Some(200),
             last_change_at: Some(200),
             halvings: 2,
-            ..Default::default()
+            recoveries: 0,
         },
     );
     let t1 = &mut run.tasks[0];

@@ -5,7 +5,7 @@
 
 use std::cmp::Reverse;
 
-use proto::{AgentRole, Size, TaskKind, TaskState};
+use proto::{AgentRole, LaneState, Runtime, Size, TaskKind, TaskState};
 
 use super::{OpKind, goal_rounds};
 use crate::run::model::{Run, RunLimits, Task};
@@ -25,11 +25,35 @@ pub fn is_reader_task(task: &Task) -> bool {
     matches!(task.spec.kind, TaskKind::Research | TaskKind::Review)
 }
 
+/// Milestone 9.5 decision 16 and ruling RR-9: the writer slots busy, counting lanes.
 pub fn writers_busy(run: &Run) -> usize {
-    run.tasks
-        .iter()
-        .filter(|t| holds_writer(t.state) && !is_reader_task(t))
-        .count()
+    run.tasks.iter().map(|t| writer_slots(t).len()).sum()
+}
+
+/// The writer slots `task` holds, each with its runtime (decision 16): a racing task one
+/// per live lane (ruling RR-9), any other writer task one on its route's runtime.
+pub fn writer_slots(task: &Task) -> Vec<Runtime> {
+    if is_reader_task(task) {
+        return Vec::new();
+    }
+    if let Some(race) = task.race.as_ref().filter(|r| r.winner.is_none()) {
+        return (race.lanes.iter())
+            .filter(|l| lane_holds_writer(l.state))
+            .map(|l| l.route.runtime)
+            .collect();
+    }
+    match holds_writer(task.state) {
+        true => vec![task.route.runtime],
+        false => Vec::new(),
+    }
+}
+
+/// A lane holds a writer slot in the phases a task does ([`holds_writer`]).
+fn lane_holds_writer(state: LaneState) -> bool {
+    matches!(
+        state,
+        LaneState::Preparing | LaneState::Working | LaneState::Proof | LaneState::Check
+    )
 }
 
 /// A hub task holds a writer slot: nothing else starts, reviews included (decision

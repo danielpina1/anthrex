@@ -18,14 +18,29 @@ use super::DoneClaim;
 
 /// One runtime's writer cap inside a run (decision 16), keyed in `Run.concurrency` by
 /// the runtime label `Run.rate_limits` uses. `cap` starts at `max_writers`; a rate
-/// limit halves it, a quiet `recover_after_secs` raises it one step.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// limit halves it, a quiet `recover_after_secs` raises it one step. No `Default`: an
+/// entry is made by [`RuntimeConcurrency::new`] with the run's `max_writers`, never at
+/// cap 0 (task M9.5.3b review m2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConcurrency {
     pub cap: u8,
     pub last_rate_limit_at: Option<u64>,
     pub last_change_at: Option<u64>,
     pub halvings: u32,
     pub recoveries: u32,
+}
+
+impl RuntimeConcurrency {
+    /// A runtime first seen in a run: at `max_writers`, never changed.
+    pub fn new(max_writers: u8) -> Self {
+        RuntimeConcurrency {
+            cap: max_writers,
+            last_rate_limit_at: None,
+            last_change_at: None,
+            halvings: 0,
+            recoveries: 0,
+        }
+    }
 }
 
 /// One lane of a racing task (decision 19): its own standalone checkout `<task>.<lane>`,
