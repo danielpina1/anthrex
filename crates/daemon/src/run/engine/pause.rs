@@ -26,15 +26,24 @@ fn stopped(state: RunState) -> bool {
 }
 
 /// A step changed `run` (it was `old`): entering `paused` or `halted` records when,
-/// leaving them adds the span to `paused_secs`, and the step's time is recorded. A
-/// task whose phase changed in the step moves the paused time of the active phase it
-/// left into `paused.active`, and starts its new phase from the run's paused total.
+/// leaving them adds the span to `paused_secs` (and moves an open review wait on by
+/// it), and the step's time is recorded. A task whose phase changed in the step moves
+/// the paused time of the active phase it left into `paused.active`, and starts its new
+/// phase from the run's paused total.
 pub(super) fn account(old: &Run, run: &mut Run, now: u64) {
     match (stopped(old.state), stopped(run.state)) {
         (false, true) => run.paused_at = Some(now),
         (true, false) => {
             let since = run.paused_at.take().unwrap_or(now);
-            run.paused_secs = run.paused_secs.saturating_add(now.saturating_sub(since));
+            let span = now.saturating_sub(since);
+            run.paused_secs = run.paused_secs.saturating_add(span);
+            // Task 12's carry N2: a `pr`-mode review wait open across the pause moves
+            // on by it, so the pause is taken off the elapsed time once, as paused time.
+            for stage in run.delivery.stages.iter_mut() {
+                if let Some(from) = stage.wait_from.as_mut() {
+                    *from = (*from).min(since).saturating_add(span);
+                }
+            }
         }
         _ => {}
     }
@@ -81,3 +90,7 @@ pub(super) fn restored(original: &Run, run: &mut Run, now: u64) {
     }
     phases(original, run, now);
 }
+
+#[cfg(test)]
+#[path = "pause_tests.rs"]
+mod tests;
