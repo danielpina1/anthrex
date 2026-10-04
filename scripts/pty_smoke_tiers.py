@@ -1,7 +1,7 @@
 """The tiered-testing stage for the PTY smoke test (milestone 9.1, task M9.1.22): stage 11h.
 
 `scripts/pty-smoke.py` imports `tiers_stage` and calls it with its own `PtyProc`, `BIN`,
-`run_cmd` and `fail`, right after stage 11g (`orch_stage`), so every `anthrex` here runs
+`run_cmd` and `fail`, right after stage 11f (`orch_stage`), so every `anthrex` here runs
 with that script's isolated `ENV`: `ANTHREX_SOCKET` and `ANTHREX_DATA_DIR` under
 `/tmp`, and `fake-agent` as both runtimes and as the decider. Nothing here starts or
 stops a daemon of its own; the script's stage 12 ends with `anthrex daemon stop`. No

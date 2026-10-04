@@ -1805,8 +1805,8 @@ def main():
 def only(stage):
     """`ANTHREX_SMOKE_ONLY=<stage>`: runs that one stage alone, for a stage that needs
     nothing the stages before it set up. Only `11g`, `11i` and `11j` qualify: each runs its own
-    daemon (`scripts/pty_smoke_pr.py`, `scripts/pty_smoke_keep_going.py`). The merge gate
-    is the whole script, without it."""
+    daemon (`scripts/pty_smoke_tuning.py`, `scripts/pty_smoke_pr.py`,
+    `scripts/pty_smoke_keep_going.py`). The merge gate is the whole script, without it."""
     stages = {
         "11i": lambda: pr_stage(PtyProc, BIN, run_cmd, fail, ENV),
         "11j": lambda: keep_going_stage(PtyProc, BIN, run_cmd, fail, ENV),
