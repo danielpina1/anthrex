@@ -9,6 +9,7 @@
 //! on `spawn_blocking`; windows are made through the manager, whose own blocking phase
 //! runs on `spawn_blocking` (AGENTS.md rules 2 and 10).
 
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,7 +21,7 @@ use super::ops::{blocking, failed};
 use super::{GitBudget, OpCtx, RunService, unix_now};
 use crate::launch::role::{RoleLaunch, otlp_env};
 use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent, ScoutEnd};
-use crate::run::model::ClaudeAuth;
+use crate::run::model::{ClaudeAuth, Run};
 use crate::scout::planner::PlannerSpec;
 use crate::scout::service::{ScoutHandle, ScoutOutcome};
 use crate::scout::spec::ScoutSpec;
@@ -193,19 +194,7 @@ impl RunService {
     /// (`run resume`'s op, a client's `anthrex restart`) launches with them. Only the
     /// engine's and the manager's locks, one at a time, and no I/O.
     pub fn refresh_orchestrator_otlp(&self, addr: Option<&str>) {
-        let windows: Vec<(u32, String, Option<String>)> = crate::lock(&self.state)
-            .runs
-            .values()
-            .filter_map(|run| {
-                let o = run.orch.orchestrator.as_ref()?;
-                let claude = o.route.runtime == Runtime::Claude && !o.otlp_token.is_empty();
-                Some((
-                    o.window_id?,
-                    run.id.clone(),
-                    claude.then(|| o.otlp_token.clone()),
-                ))
-            })
-            .collect();
+        let windows = otlp_windows(&crate::lock(&self.state).runs);
         for (window_id, run_id, token) in windows {
             let otlp = addr
                 .zip(token.as_deref())
@@ -494,6 +483,31 @@ async fn ended(
             spent(&handle.id),
         ),
     }
+}
+
+/// Each orchestrator window's key at the daemon's start: the run that owns it and, for
+/// Claude, its token (pure). A window continued chain runs share is keyed by the last
+/// of them in their continue order (review 4b's carry), never by whichever run id
+/// sorts last.
+fn otlp_windows(runs: &BTreeMap<String, Run>) -> Vec<(u32, String, Option<String>)> {
+    let mut sharing: BTreeMap<u32, Vec<&Run>> = BTreeMap::new();
+    for run in runs.values() {
+        if let Some(window) = run.orch.orchestrator.as_ref().and_then(|o| o.window_id) {
+            sharing.entry(window).or_default().push(run);
+        }
+    }
+    let mut out = Vec::new();
+    for (window, list) in sharing {
+        let Some(run) = crate::run::chain::in_order(list).pop() else {
+            continue;
+        };
+        let Some(o) = run.orch.orchestrator.as_ref() else {
+            continue;
+        };
+        let claude = o.route.runtime == Runtime::Claude && !o.otlp_token.is_empty();
+        out.push((window, run.id.clone(), claude.then(|| o.otlp_token.clone())));
+    }
+    out
 }
 
 #[cfg(test)]

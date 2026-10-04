@@ -217,3 +217,42 @@ fn a_restart_refreshes_the_otlp_variables() {
     let got = refreshed_otlp_env(&env, None);
     assert_eq!(got, vec![pair("ANTHREX_KEEP", "1"), pair("OTHER", "2")]);
 }
+
+/// Review 4b's carry: at the daemon's start a window two continued chain runs share is
+/// keyed by the later run of the chain, whichever run id sorts last.
+#[test]
+fn a_shared_window_is_keyed_by_the_chains_later_run() {
+    use crate::run::orch::launch::resolve_orchestrator;
+    use crate::run::orch::make_planned;
+    let with_orchestrator = |id: &str, created_at: u64, token: &str| {
+        let mut run = crate::run::orch::test_support::run_of(1);
+        run.id = id.into();
+        run.created_at = created_at;
+        let agent = config::AgentConfig::default();
+        let resolved =
+            resolve_orchestrator(None, &agent, run.limits.default_runtime, &run.roster).unwrap();
+        make_planned(&mut run, None, resolved, false, Default::default());
+        run.chain = Some("o-zz00".into());
+        let o = run.orch.orchestrator.as_mut().unwrap();
+        o.window_id = Some(90);
+        o.otlp_token = token.into();
+        run
+    };
+    // The chain's first run sorts after the run that continues it.
+    let mut first = with_orchestrator("zz-first-zz00", 100, "first-token");
+    let later = with_orchestrator("aa-later-aa11", 200, "later-token");
+    first.continued_by = Some(later.id.clone());
+    let runs: BTreeMap<String, Run> = [first, later]
+        .into_iter()
+        .map(|run| (run.id.clone(), run))
+        .collect();
+    // Applied in order, as `refresh_orchestrator_otlp` applies them: the last one wins.
+    let mut keyed = BTreeMap::new();
+    for (window, run_id, token) in super::otlp_windows(&runs) {
+        keyed.insert(window, (run_id, token));
+    }
+    assert_eq!(
+        keyed[&90],
+        ("aa-later-aa11".to_string(), Some("later-token".to_string()))
+    );
+}
