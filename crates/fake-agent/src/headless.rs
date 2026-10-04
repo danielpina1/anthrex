@@ -184,6 +184,7 @@ pub fn run(args: &[String], invocation: Invocation) -> Result<i32> {
         &session,
         invocation.resume.is_some(),
     )?;
+    crate::diag::set_script(&script.name);
     roles::record_args(&script.name, args)?;
     let steps = match &script.path {
         None => Vec::new(),
@@ -193,7 +194,7 @@ pub fn run(args: &[String], invocation: Invocation) -> Result<i32> {
             match crate::script::parse_script(io::BufReader::new(file)) {
                 Ok(steps) => steps,
                 Err(error) => {
-                    eprintln!("fake-agent: {error:#}");
+                    crate::diag::say!("fake-agent: {error:#}");
                     return Ok(2);
                 }
             }
@@ -349,7 +350,7 @@ impl Runner {
                         }
                         None if self.input.as_ref().is_some_and(|i| i.eof) => return Ok(0),
                         None => {
-                            eprintln!("fake-agent: read_message timed out");
+                            crate::diag::say!("fake-agent: read_message timed out");
                             return Ok(4);
                         }
                     }
@@ -432,7 +433,7 @@ impl Runner {
             if let Some(expect) = expect
                 && !self.message.contains(expect.as_str())
             {
-                eprintln!(
+                crate::diag::say!(
                     "fake-agent: expected a message containing {expect:?}, got {:?}",
                     self.message
                 );

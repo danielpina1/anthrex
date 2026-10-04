@@ -129,7 +129,7 @@ impl Runner {
         let reply = self.call_tool(&server, tool, args)?;
         if reply.ok == expect_error {
             let wanted = if expect_error { "an error" } else { "success" };
-            eprintln!(
+            crate::diag::say!(
                 "fake-agent: mcp_call {tool} expected {wanted}, got {:?}",
                 reply.text
             );

@@ -12,6 +12,7 @@ pub mod run_pr;
 pub mod run_pr_cli;
 pub mod run_rounds;
 pub mod run_tiers;
+pub mod run_trail;
 pub mod run_watcher;
 
 use std::io::{Read, Write};
