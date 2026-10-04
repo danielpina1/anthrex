@@ -39,6 +39,13 @@ pub(super) fn account(old: &Run, run: &mut Run, now: u64) {
         _ => {}
     }
     run.last_step_at = now;
+    phases(old, run, now);
+}
+
+/// Each task of `run` whose phase changed since `old` moves the paused time of the
+/// active phase it left into `paused.active`, and starts its new phase from the run's
+/// paused total at `now`.
+fn phases(old: &Run, run: &mut Run, now: u64) {
     let total = run.paused_total(now);
     for (i, task) in run.tasks.iter_mut().enumerate() {
         let before = (old.tasks.get(i))
@@ -63,9 +70,14 @@ fn phase_paused(before: Option<&Task>, task: &mut Task, total: u64) {
 /// recorded (one the restart paused, or one stored before milestone 9.5) is paused
 /// from its last change, so the daemon's downtime is not work; with none recorded,
 /// from the restore.
-pub(super) fn restored(run: &mut Run, now: u64) {
+///
+/// Task 12's carry N1: a run new to the state is never `account`ed, so a phase the
+/// restore changed (a replayed result) is re-based here against the run as it was
+/// stored, `original`, once the downtime is paused time.
+pub(super) fn restored(original: &Run, run: &mut Run, now: u64) {
     if stopped(run.state) && run.paused_at.is_none() {
         let last = (run.last_step_at > 0).then_some(run.last_step_at);
         run.paused_at = Some(last.unwrap_or(now));
     }
+    phases(original, run, now);
 }

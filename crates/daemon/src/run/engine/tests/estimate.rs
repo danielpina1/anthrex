@@ -207,3 +207,40 @@ fn a_run_restored_stopped_is_paused_from_its_last_change() {
     resume(&mut fx);
     assert_eq!(fx.run().paused_secs, 4_100);
 }
+
+/// Task 12's carry N1: a check in flight when the daemon stops, its result replayed by
+/// the restore. The phase it closes held the downtime, which is paused time (ruling
+/// T12-1), so it moves into the task's paused seconds and the next phase starts from
+/// the run's paused total, as any step's phase change does.
+#[test]
+fn a_phase_change_replayed_at_a_restore_keeps_the_pause_bookkeeping() {
+    let (mut fx, window) = working_weighted();
+    claim(&mut fx, "t1", window, HEAD);
+    let (op, _) = super::merge::pending_one(&fx, "Check", Some("t1"));
+    assert_eq!(fx.task("t1").state, TaskState::Check);
+    let last = fx.run().last_step_at;
+    let run = fx.run().clone();
+    fx.state = crate::run::engine::EngineState::default();
+    let back = last + 3_000;
+    fx.send(
+        back,
+        crate::run::engine::EventKind::Restore {
+            held: Vec::new(),
+            runs: vec![run],
+            replay: vec![(RUN_ID.into(), op, super::gates::check_result(true))],
+        },
+    );
+    let run = fx.run();
+    let task = fx.task("t1");
+    assert_ne!(
+        task.state,
+        TaskState::Check,
+        "the replayed check moved it on"
+    );
+    assert_eq!(run.paused_total(back), back - last);
+    assert_eq!(
+        (task.paused.active, task.paused.base),
+        (back - last, back - last),
+        "the downtime is paused time, never work"
+    );
+}

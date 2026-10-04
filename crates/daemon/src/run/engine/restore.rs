@@ -82,7 +82,7 @@ pub(super) fn restore(
         };
         settle(run, now, fx);
         // Decision 15 (ruling T12-1): the downtime of a run left stopped is paused time.
-        super::pause::restored(run, now);
+        super::pause::restored(&original, run, now);
         // Decision 47: a run the restore changed bumps its revision (review minor 5);
         // `step` leaves a run new to the state at the revision it arrived with. The
         // digest moves with it (M9.6 review fix I-1); an unchanged run is left as
