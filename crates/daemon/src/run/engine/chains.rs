@@ -99,7 +99,12 @@ fn adopt(run: &mut Run, prev: &Run, window_id: u32, now: u64, fx: &mut Vec<Effec
         o.window_id = Some(window_id);
         o.otlp_token = p.otlp_token.clone();
         o.session = p.session;
-        o.routing = p.routing.clone();
+        // Review 10b's carry: the chain kept the session's route, so its record says
+        // so (ruling RH-5), as a fresh continued session's does.
+        o.routing = crate::run::orch::roles::RoleSnapshot {
+            source: crate::run::orch::roles::lists::CHAIN_SOURCE.to_string(),
+            ..p.routing.clone()
+        };
         o.launches = p.launches;
         o.first_prompt = p.first_prompt.clone();
         o.live = true;

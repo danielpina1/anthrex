@@ -23,6 +23,7 @@ use crate::run::orch::contract::orchestrator_first_prompt;
 use crate::run::orch::contract_rounds::handoff_prompt;
 use crate::run::orch::launch::resolve_orchestrator;
 use crate::run::orch::make_planned;
+use crate::run::orch::roles::lists::CHAIN_SOURCE;
 use crate::run::snapshot::snapshot;
 
 /// The fixture run's chain.
@@ -152,6 +153,14 @@ fn continuing_an_idle_chain_adopts_its_window() {
         o.first_prompt, prev.first_prompt,
         "the session's own first turn"
     );
+    // Review 10b's carry: the adopted session's record says the chain kept its route,
+    // as a fresh continued session's does (ruling RH-5); the rest is the session's own.
+    assert_ne!(prev.routing.source, CHAIN_SOURCE);
+    let kept = crate::run::orch::roles::RoleSnapshot {
+        source: CHAIN_SOURCE.into(),
+        ..prev.routing.clone()
+    };
+    assert_eq!(o.routing, kept);
     assert_eq!(run.orch.request_wake.as_deref(), Some(WAKE));
     assert_eq!(run.state, RunState::Planning);
     let chain = &fx.state.chains[CHAIN];
