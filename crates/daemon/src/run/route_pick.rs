@@ -277,12 +277,16 @@ fn skip(
     if let Some(named) = named {
         return Some(format!("the task names the runtime {named}"));
     }
-    // Ruling FW-1: a task that waits on a member never runs beside it.
-    let waiting: BTreeSet<usize> = group.iter().flat_map(|&i| dependents(tasks, i)).collect();
+    // Ruling FW-1, per member (FW-3): a task that waits on a member never runs beside
+    // that member, but may run beside the others.
+    let waiting: Vec<(usize, BTreeSet<usize>)> =
+        group.iter().map(|&i| (i, dependents(tasks, i))).collect();
     let held = (tasks.iter().enumerate())
-        .filter(|(j, t)| !pending.contains(j) && !t.state.is_finished() && !waiting.contains(j))
+        .filter(|(j, t)| !pending.contains(j) && !t.state.is_finished())
         .filter(|(_, t)| t.route.runtime != runtime)
-        .any(|(_, t)| group.iter().any(|&i| overlap(&tasks[i], t)));
+        .any(|(j, t)| {
+            (waiting.iter()).any(|(i, waits)| !waits.contains(&j) && overlap(&tasks[*i], t))
+        });
     held.then(|| OVERLAPPING_OWNS.to_string())
 }
 

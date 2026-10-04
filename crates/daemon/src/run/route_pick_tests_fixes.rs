@@ -384,3 +384,32 @@ fn a_gate_path_rung_2_keeps_to_installed_and_overlap_free_runtimes() {
     run.tasks[1].route = sonnet(Effort::Medium);
     assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
 }
+
+/// Ruling FW-3 (re-review N-1): a task is left out of the overlap check against one
+/// member only when it waits on that member. `x` waits on `t1` alone and overlaps `t2`,
+/// so the group {t1, t2} stays off Codex, where `t2` would run beside `x`.
+#[test]
+fn a_dependent_of_one_member_still_holds_the_group_by_another() {
+    let lists = RouteLists {
+        m: m_example(Pick::First),
+        ..Default::default()
+    };
+    let run = built(
+        &[
+            m("t1", "[\"crates/a/**\", \"crates/s/**\"]", ""),
+            m("t2", "[\"crates/s/x/**\", \"crates/b/**\"]", ""),
+            m(
+                "x",
+                "[\"crates/b/y/**\"]",
+                "deps = [\"t1\"]\n[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"",
+            ),
+        ],
+        lists,
+    );
+    for id in ["t1", "t2"] {
+        let t = task(&run, id);
+        assert_eq!(t.route, opus(Effort::Medium), "{id}");
+        let pick = t.list_pick.as_ref().expect("a list pick");
+        assert_eq!(reasons(&pick.candidates)[0], Some(OVERLAPPING_OWNS), "{id}");
+    }
+}
