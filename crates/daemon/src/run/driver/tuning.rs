@@ -236,16 +236,50 @@ pub async fn stats_with_tuning(
     .await
 }
 
+/// Task M9.5.11's carry (b): how long `run stats` waits, past its bound, for a tuning
+/// write that had already begun (one atomic write of a small file); past it the answer
+/// is [`TUNING_WRITE_FINISHING`], and the write still lands under the tuning lock.
+pub const TUNING_WRITE_BOUND: Duration = Duration::from_secs(10);
+
+/// `run stats`' refusal when its write had begun but did not end within
+/// [`TUNING_WRITE_BOUND`] (exact).
+pub const TUNING_WRITE_FINISHING: &str =
+    "the tuning write is still finishing; run anthrex run stats again";
+
 /// [`stats_with_tuning`] with its bound given (a test's). Past the bound, the answer is
 /// [`TUNING_STATS_BUSY`] only when the file work is stopped before its write; once the
-/// write has begun, its own result is awaited and returned.
+/// write has begun, its own result is awaited, for at most [`TUNING_WRITE_BOUND`].
 pub async fn stats_within(
+    config: &config::Orchestrator,
+    locks: &TuningLocks,
+    at: (&Path, &Path),
+    ask: StatsAsk<'_>,
+    now: u64,
+    bound: Duration,
+) -> Result<TuningReport, String> {
+    let bounds = (bound, TUNING_WRITE_BOUND);
+    stats_gated(config, locks, at, ask, now, bounds, Gates::default()).await
+}
+
+/// Test hooks of [`stats_gated`] (none in production): what the blocking work runs once
+/// its write is committed, before writing, and what the request awaits once its bound
+/// has passed, before it gives up. Together they force the "write already begun" branch
+/// deterministically (task M9.5.11's carry (a)).
+#[derive(Default)]
+pub(crate) struct Gates {
+    pub committed: Option<Box<dyn FnOnce() + Send>>,
+    pub overdue: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
+}
+
+/// [`stats_within`] with its write bound and [`Gates`] given.
+pub(crate) async fn stats_gated(
     config: &config::Orchestrator,
     locks: &TuningLocks,
     (repo_dir, project): (&Path, &Path),
     ask: StatsAsk<'_>,
     now: u64,
-    bound: Duration,
+    (bound, write_bound): (Duration, Duration),
+    gates: Gates,
 ) -> Result<TuningReport, String> {
     let busy = || Err(TUNING_STATS_BUSY.to_string());
     let deadline = tokio::time::Instant::now() + bound;
@@ -255,8 +289,14 @@ pub async fn stats_within(
     let state = Arc::new(AtomicU8::new(RUNNING));
     let (dir, cfg, shared) = (repo_dir.to_path_buf(), config.clone(), state.clone());
     let (apply, dismiss, read_only) = (ask.apply.to_vec(), ask.dismiss.to_vec(), ask.read_only);
+    let Gates { committed, overdue } = gates;
     let commit = move || {
-        (shared.compare_exchange(RUNNING, COMMITTING, Ordering::SeqCst, Ordering::SeqCst)).is_ok()
+        let ok = (shared.compare_exchange(RUNNING, COMMITTING, Ordering::SeqCst, Ordering::SeqCst))
+            .is_ok();
+        if let Some(committed) = committed.filter(|_| ok) {
+            committed();
+        }
+        ok
     };
     let mut work = tokio::task::spawn_blocking(move || {
         let report = stats_blocking(&dir, &cfg, (&apply, &dismiss), read_only, now, commit);
@@ -265,15 +305,21 @@ pub async fn stats_within(
     });
     let done = match tokio::time::timeout_at(deadline, &mut work).await {
         Ok(done) => done,
-        Err(_)
-            if state
-                .compare_exchange(RUNNING, ABANDONED, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok() =>
-        {
-            return busy();
+        Err(_) => {
+            if let Some(overdue) = overdue {
+                overdue.await;
+            }
+            let abandoned =
+                state.compare_exchange(RUNNING, ABANDONED, Ordering::SeqCst, Ordering::SeqCst);
+            if abandoned.is_ok() {
+                return busy();
+            }
+            // The write had begun: its result is the answer, within the write's bound.
+            match tokio::time::timeout(write_bound, work).await {
+                Ok(done) => done,
+                Err(_) => return Err(TUNING_WRITE_FINISHING.to_string()),
+            }
         }
-        // The write had begun: its result is the answer.
-        Err(_) => work.await,
     };
     match done {
         Ok(report) => report.map(|mut r| {
@@ -357,3 +403,7 @@ fn stats_blocking(
         .collect();
     Ok(report)
 }
+
+#[cfg(test)]
+#[path = "tuning_tests.rs"]
+mod tests;
