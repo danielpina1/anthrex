@@ -325,13 +325,15 @@ pub(super) fn on_crowned(run: &mut Run, i: usize, head: &str, now: u64, fx: &mut
 }
 
 /// Decision 20: the ladder applies to the adopted task the action that took its lane
-/// out, its counters the lane's: rung 3 (a spill, a mis-size, a second budget breach),
-/// rung 2 (a second gate failure, a stall, a budget breach), or the lane's own block
+/// out, its counters the lane's: rung 4 (the total spend at the next size's budget; the
+/// final fix wave's m4), rung 3 (a spill, a mis-size, a second budget breach), rung 2
+/// (a second gate failure, a stall, a budget breach), or the lane's own block
 /// (`task_blocked`: a question waits for its answer in the same session).
 fn after_adoption(run: &mut Run, i: usize, lane: &Lane, now: u64, fx: &mut Vec<Effect>) {
     let reason = lane.reason.clone().unwrap_or_default();
     match (lane.gates.rung, lane.gates.block.clone()) {
-        (3.., _) => ladder::rung3(run, i, reason, now, fx),
+        (4.., _) => ladder::rung4(run, i, reason, now, fx),
+        (3, _) => ladder::rung3(run, i, reason, now, fx),
         (2, _) => ladder::rung2(run, i, reason, now, fx),
         (_, Some(BlockInfo { reason, text })) => block(run, i, reason, text, now),
         (_, None) => block(run, i, BlockReason::Environment, reason, now),

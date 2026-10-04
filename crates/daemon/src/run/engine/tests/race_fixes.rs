@@ -1,8 +1,8 @@
 //! The final fix wave's race items in the reducer: a task with its own checkout never
 //! races (A-I2); a lane view's refresh and `resolving` (m1, m2); the crowned task's
-//! reviewer author (m3).
+//! reviewer author (m3); a lane's rung 4 on adoption (m4).
 
-use proto::{AgentRole, LaneState, PlanEdit, RaceLane, Runtime, TaskState};
+use proto::{AgentRole, BlockReason, LaneState, PlanEdit, RaceLane, Runtime, TaskState};
 use serde_json::json;
 
 use super::dispatch::{edit, replies, task_path};
@@ -12,10 +12,10 @@ use super::gates_review::reviewer;
 use super::kinds::approve;
 use super::race::{RACING, lane, launched, racing, tdd};
 use super::race_crown::{crowned, handed_back};
-use super::race_end::{to_check, unreviewed};
+use super::race_end::{b_out, to_check, unreviewed};
 use super::race_lanes::{HEAD_B, proof, submit, to_review};
 use super::turns::exited;
-use crate::run::engine::{OpKind, OpResult};
+use crate::run::engine::{EventKind, OpKind, OpResult};
 use crate::run::model::task_branch;
 use crate::run::orch::RefreshState;
 
@@ -246,4 +246,24 @@ fn after_the_crown_the_reviewers_author_is_the_winning_racer() {
         OpKind::CreateWindow { spec, .. } => assert_eq!(spec.runtime, Runtime::Codex),
         other => panic!("{other:?}"),
     }
+}
+
+/// Minor m4: lane a, the last lane left, reaches rung 4 (its total spend at the next
+/// size's budget) in its view. It is adopted, and after the crown the task is
+/// `blocked(human)` at rung 4 (decision 38), not rung 3 with its size raised.
+#[test]
+fn a_lanes_rung_4_is_kept_on_adoption() {
+    let (mut fx, _, _) = b_out();
+    let later = fx.now + 1_000_000;
+    let effects = fx.send(later, EventKind::Tick);
+    let (op, _) = only_op(&effects, "CrownRacer");
+    assert_eq!(lane(&fx, A).state, LaneState::Adopted);
+    assert_eq!(lane(&fx, A).gates.rung, 4);
+    crowned(&mut fx, op, BASE);
+    let t1 = fx.task("t1");
+    let block = t1.block.as_ref().expect("blocked");
+    assert_eq!((t1.state, t1.rung), (TaskState::Blocked, 4));
+    assert_eq!(block.reason, BlockReason::Human);
+    assert!(block.text.contains("next size's budget"), "{}", block.text);
+    assert_eq!(t1.size, proto::Size::M, "no size raised");
 }
