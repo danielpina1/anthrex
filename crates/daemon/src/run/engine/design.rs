@@ -367,6 +367,9 @@ pub(super) fn restored(run: &mut Run, now: u64) {
         .and_then(|d| d.phase_started.as_mut());
     if let Some(started) = started {
         *started = started.saturating_add(down).min(now);
+        // Fix round 2: each downtime is credited once; a second restart with no step
+        // between them measures its own from this one.
+        run.last_step_at = now;
     }
 }
 

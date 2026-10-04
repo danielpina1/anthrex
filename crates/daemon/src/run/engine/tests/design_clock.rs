@@ -131,3 +131,35 @@ fn a_revising_gate_across_a_long_restart_does_not_halt_on_its_first_tick() {
     let text = "design flow: the specifying phase passed its 60 min budget";
     assert_eq!(fx.run().halted_reason.as_deref(), Some(text));
 }
+
+/// Fix round 2: two restarts in a row, with no step between them, credit each downtime
+/// once. The clock ran 40 minutes before the first stop (the orchestrator read its note
+/// at minute 40, its last change); after the second restart, 21 more minutes pass the
+/// hour.
+#[test]
+fn two_restarts_in_a_row_credit_each_downtime_once() {
+    let mut fx = at_spec_gate(false);
+    let changes = DocGateAction::Changes {
+        note: "Name the token store.".into(),
+        review: false,
+    };
+    act(&mut fx, DocGateKind::Spec, changes).unwrap();
+    let asked = fx.now;
+    fx.now = asked + 40 * 60;
+    let seq = crate::run::engine::notes_seq(fx.run());
+    fx.next(EventKind::Orch(crate::run::engine::OrchEvent::DigestRead {
+        run_id: RUN_ID.into(),
+        digest_revision: 0,
+        notes_seq: seq,
+    }));
+    assert_eq!(fx.run().last_step_at, fx.now, "the run's last change");
+    fx.now += 10 * 3600;
+    restart(&mut fx);
+    fx.now += 3600;
+    restart(&mut fx);
+    let back = fx.now;
+    fx.send(back + 19 * 60, EventKind::Tick);
+    assert_eq!(fx.run().state, RunState::AwaitingApproval);
+    fx.send(back + 21 * 60, EventKind::Tick);
+    assert_eq!(fx.run().state, RunState::Halted, "{:?}", log_lines(&fx));
+}
