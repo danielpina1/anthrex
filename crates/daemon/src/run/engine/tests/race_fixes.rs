@@ -1,7 +1,8 @@
 //! The final fix wave's race items in the reducer: a task with its own checkout never
 //! races (A-I2); a lane view's refresh and `resolving` (m1, m2); the crowned task's
 //! reviewer author (m3); a lane's rung 4 on adoption (m4); rung 4 after the crown (m5);
-//! the race slot wait (m6); completion and discard wait for a lane's salvage (m7).
+//! the race slot wait (m6); completion and discard wait for a lane's salvage (m7); an
+//! adopted lane's untyped block is classified after the crown (m8).
 
 use proto::{
     AgentRole, BlockReason, FinishAction, LaneState, PlanEdit, RaceLane, RunState, Runtime,
@@ -15,7 +16,7 @@ use super::gates::{check_result, only_op};
 use super::gates_review::reviewer;
 use super::kinds::approve;
 use super::merge::{commit, merge, pending, pending_one};
-use super::race::{RACING, behind_one_slot, lane, launched, racing, tdd, unblock};
+use super::race::{RACING, behind_one_slot, lane, launched, racing, tdd, unblock, window};
 use super::race_crown::{crowned, handed_back};
 use super::race_end::{b_out, to_check, unreviewed};
 use super::race_lanes::{HEAD_B, passes, proof, submit, to_review};
@@ -405,4 +406,55 @@ fn a_halted_cancelled_run_is_not_discarded_beside_a_salvage() {
     assert!(run.pending_ops.is_empty(), "{:#?}", run.pending_ops);
     let refusal = rules::finish(fx.run(), FinishAction::Discard);
     assert!(refusal.is_some(), "the lanes' salvage is due");
+}
+
+/// Minor m8: with the deciders on, lane b goes out on a question, then lane a's racer
+/// blocks with no kind. A lane's block is never classified while it races; once lane
+/// a is adopted and crowned, the task's block is classified like any task's.
+#[test]
+fn an_adopted_lanes_untyped_block_is_classified_after_the_crown() {
+    let plan = plan_with(PROFILE, &[task("t1", "M", "a", RACING)]);
+    let mut fx = Fixture::deciding(&plan, super::deciders::deciding_config());
+    fx.ready(true);
+    fx.launch_all();
+    let (a, b) = (window(&fx, A), window(&fx, B));
+    let typed = json!({"kind": "question", "reason": "which API?"});
+    fx.tool_as(AgentRole::Racer, b, "t1", "task_blocked", typed);
+    assert_eq!(lane(&fx, B).state, LaneState::Out);
+    let untyped = json!({"reason": "which schema?"});
+    let effects = fx.tool_as(AgentRole::Racer, a, "t1", "task_blocked", untyped);
+    assert!(
+        ops_in(&effects, "Decide").is_empty(),
+        "no decider while it races"
+    );
+    let (crown, _) = only_op(&effects, "CrownRacer");
+    let effects = crowned(&mut fx, crown, BASE);
+    let t1 = fx.task("t1");
+    assert_eq!(t1.state, TaskState::Blocked);
+    assert!(t1.pending_classification.is_some(), "{effects:#?}");
+    let (_, _, request) = super::deciders::decide_op(&effects);
+    match request {
+        crate::decider::DeciderRequest::BlockedReason(input) => {
+            assert_eq!(input.reason, "which schema?")
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Minor m8, pinning: a lane's typed question stays a question after the adoption.
+#[test]
+fn an_adopted_lanes_typed_question_is_not_classified() {
+    let plan = plan_with(PROFILE, &[task("t1", "M", "a", RACING)]);
+    let mut fx = Fixture::deciding(&plan, super::deciders::deciding_config());
+    fx.ready(true);
+    fx.launch_all();
+    let (a, b) = (window(&fx, A), window(&fx, B));
+    let typed = json!({"kind": "question", "reason": "which API?"});
+    fx.tool_as(AgentRole::Racer, b, "t1", "task_blocked", typed);
+    let typed = json!({"kind": "question", "reason": "which schema?"});
+    let effects = fx.tool_as(AgentRole::Racer, a, "t1", "task_blocked", typed);
+    let (crown, _) = only_op(&effects, "CrownRacer");
+    let effects = crowned(&mut fx, crown, BASE);
+    assert!(ops_in(&effects, "Decide").is_empty(), "{effects:#?}");
+    assert!(fx.task("t1").pending_classification.is_none());
 }

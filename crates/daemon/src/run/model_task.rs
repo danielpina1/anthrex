@@ -231,6 +231,11 @@ pub struct Task {
     /// (their reviewer rounds and ops wait outside the view); zero otherwise.
     #[serde(skip)]
     pub parked_readers: usize,
+    /// The final fix wave's m8: in a lane's view, the lane blocked with no kind, which
+    /// the race leaves unclassified (`done::task_blocked`); its view moves it to
+    /// `LaneGates.unclassified`. False otherwise.
+    #[serde(skip)]
+    pub lane_unclassified: bool,
     /// Milestone 9.5 ruling m4 of task 17b's review: the highest salvage number handed
     /// out, reserved when a removal is sent (`merge::reserve_salvage_seq`), so removals
     /// in flight together never share a number.

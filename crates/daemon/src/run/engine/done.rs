@@ -273,8 +273,10 @@ fn task_blocked(
         Some(_) => block(run, i, BlockReason::Question, reason, now),
         None => {
             block(run, i, BlockReason::Question, reason.clone(), now);
-            // Milestone 9.5 decision 20: a lane is out of its race whatever the kind.
+            // Milestone 9.5 decision 20: a lane is out of its race whatever the kind; the
+            // final fix wave's m8: an adoption classifies it after the crown.
             let racing = run.tasks[i].lane_view.is_some();
+            run.tasks[i].lane_unclassified = racing;
             if !racing && super::deciders::classify(run, i, reason, now, fx) {
                 return reply(fx, id, Ok(BLOCKED_CLASSIFYING.to_string()));
             }

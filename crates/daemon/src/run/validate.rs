@@ -499,6 +499,7 @@ fn new_task(
         paused: Default::default(),
         lane_view: None,
         parked_readers: 0,
+        lane_unclassified: false,
         salvage_seq: 0,
     }
 }

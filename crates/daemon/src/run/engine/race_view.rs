@@ -277,6 +277,7 @@ fn leave(run: &mut Run, i: usize, k: usize, held: Held) -> Exit {
     let label = task.lane_view.take().expect("a lane's view");
     task.parked_readers = 0;
     let (shown, block) = (task.state, task.block.take());
+    let unclassified = take(&mut task.lane_unclassified);
     unpark(&mut task.rounds, held.rounds, |r| r.lane = Some(label));
     unpark(&mut task.proofs, held.proofs, |r| r.lane = Some(label));
     unpark(&mut task.checks, held.checks, |r| r.lane = Some(label));
@@ -320,6 +321,8 @@ fn leave(run: &mut Run, i: usize, k: usize, held: Held) -> Exit {
                 let reason = block.as_ref().map(|b| b.text.clone()).unwrap_or_default();
                 // Minor m7: past rung 1 the lane's rung says why it is out.
                 lane.gates.block = block.filter(|_| lane.gates.rung < 2);
+                // The final fix wave's m8: an untyped block waits for the adoption.
+                lane.gates.unclassified = lane.gates.block.is_some() && unclassified;
                 Exit::Out(reason)
             }
             other => Exit::Out(format!("its view became {}", other.label())),

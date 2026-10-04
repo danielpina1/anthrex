@@ -110,6 +110,10 @@ pub struct LaneGates {
     /// the task's `resolving` in the lane's view.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub resolving: bool,
+    /// The final fix wave's m8: the lane went out on a `task_blocked` with no kind,
+    /// which a race does not classify; an adoption classifies it after the crown.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unclassified: bool,
 }
 
 impl LaneGates {

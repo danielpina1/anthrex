@@ -335,7 +335,15 @@ fn after_adoption(run: &mut Run, i: usize, lane: &Lane, now: u64, fx: &mut Vec<E
         (4.., _) => ladder::rung4(run, i, reason, now, fx),
         (3, _) => ladder::rung3(run, i, reason, now, fx),
         (2, _) => ladder::rung2(run, i, reason, now, fx),
-        (_, Some(BlockInfo { reason, text })) => block(run, i, reason, text, now),
+        (_, Some(BlockInfo { reason, text })) => {
+            // The final fix wave's m8: a block the race left unclassified (a
+            // `task_blocked` with no kind) is classified now, as any task's is.
+            let classify = lane.gates.unclassified && reason == BlockReason::Question;
+            block(run, i, reason, text.clone(), now);
+            if classify {
+                super::deciders::classify(run, i, text, now, fx);
+            }
+        }
         (_, None) => block(run, i, BlockReason::Environment, reason, now),
     }
 }
