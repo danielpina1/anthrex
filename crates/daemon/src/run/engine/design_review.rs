@@ -43,6 +43,9 @@ pub const REVIEW_ASKED: &str =
 /// DF §4.2: a second review draft of a revision the user asked one review of.
 pub const ASKED_REVIEW_DONE: &str =
     "the spec has had the review the user asked for; submit with ready = true";
+/// Ruling T10-4: a review draft at a spec gate revising after a Back or a failed
+/// read-back, which the user did not send for review.
+pub const NOT_SENT: &str = "not reviewed: this revision was not sent for review";
 /// A spec's first gate version submitted without any review: its `not reviewed` line.
 pub const UNREVIEWED: &str = "the orchestrator submitted it without a review";
 /// Decision 15: reviews before the spec's first gate version, at most.
@@ -71,22 +74,26 @@ pub(in crate::run::engine) fn submit_spec(
     let reviews: Vec<&DocReviewRecord> = (design.reviews.iter())
         .filter(|r| r.doc == DocKind::Spec && r.after == cycle)
         .collect();
-    // At the spec gate the orchestrator revises: whether the user asked for a review.
+    // At the spec gate the orchestrator revises: whether the user asked for a review,
+    // and why the gate reopened (ruling T10-4).
     let asked = design_gate::waiting(run)
         .filter(|g| g.kind == DocGateKind::Spec && g.revising.is_some())
-        .map(|g| g.review);
+        .map(|g| (g.review, g.cause));
     let (count, latest) = (reviews.len(), reviews.last().map(|r| (*r).clone()));
     match doc.ready {
         false => {
             match asked {
-                Some(false) => return Err(NO_REVIEW_ASKED.into()),
-                Some(true) if count >= 1 => return Err(ASKED_REVIEW_DONE.into()),
+                Some((false, Revision::Changes)) => return Err(NO_REVIEW_ASKED.into()),
+                Some((false, _)) => return Err(NOT_SENT.into()),
+                Some((true, _)) if count >= 1 => return Err(ASKED_REVIEW_DONE.into()),
                 None if count >= MAX_REVIEWS => return Err(TWO_REVIEWS.into()),
                 _ => {}
             }
             draft(run, &doc, cycle, now, fx)
         }
-        true if asked == Some(true) && latest.is_none() => Err(REVIEW_ASKED.into()),
+        true if asked.is_some_and(|(review, _)| review) && latest.is_none() => {
+            Err(REVIEW_ASKED.into())
+        }
         true => ready(run, &doc, reason, (cycle, latest), now, fx),
     }
 }
@@ -190,18 +197,19 @@ pub(in crate::run::engine) fn approved(run: &mut Run, n: u32, fx: &mut Vec<Effec
 
 /// The approved spec's text as the driver read it back (after its approval, or after a
 /// restore): its requirements and Goal section are stored. A read that failed is
-/// logged; in planning, the spec gate then reopens for the orchestrator to submit it
-/// again, as a restore's read-back does, since nothing may be planned against it.
-pub(in crate::run::engine) fn requirements_read(run: &mut Run, checked: &[DocChecked], now: u64) {
+/// logged, here only (fix round 1, m3: the version it returns); in planning, the spec
+/// gate then reopens for the orchestrator to submit it again, as a restore's read-back
+/// does, since nothing may be planned against it.
+pub(in crate::run::engine) fn requirements_read(
+    run: &mut Run,
+    checked: &[DocChecked],
+    now: u64,
+) -> Option<u32> {
     let due = (run.orch.design.as_ref())
         .filter(|d| d.requirements.is_empty())
         .and_then(|d| d.approved_spec);
-    let Some(n) = due else {
-        return;
-    };
-    let Some(doc) = (checked.iter()).find(|c| c.kind == DocKind::Spec && c.n == n) else {
-        return;
-    };
+    let n = due?;
+    let doc = (checked.iter()).find(|c| c.kind == DocKind::Spec && c.n == n)?;
     match &doc.read {
         Ok(Some(text)) => {
             let found = requirements::scan(text);
@@ -215,14 +223,15 @@ pub(in crate::run::engine) fn requirements_read(run: &mut Run, checked: &[DocChe
                 ids.join(", ")
             );
             log(run, now, text);
+            None
         }
-        Ok(None) => {}
+        Ok(None) => None,
         Err(reason) => {
             let text =
                 format!("design flow: the approved spec v{n} could not be read back: {reason}");
             log(run, now, text);
             if run.state != RunState::Planning {
-                return;
+                return Some(n);
             }
             if let Some(design) = run.orch.design.as_mut() {
                 design.approved_spec = None;
@@ -233,7 +242,18 @@ pub(in crate::run::engine) fn requirements_read(run: &mut Run, checked: &[DocChe
             design_gate::set_revising(run, DocGateKind::Spec, revising, false, now);
             let text = format!("the approved spec v{n} could not be read back; submit it again");
             wake::note(run, text);
+            Some(n)
         }
+    }
+}
+
+/// Ruling T10-5: a Back reopens the spec or the brainstorm, so the spec is no longer
+/// approved: its approved version, requirements and Goal section are cleared.
+pub(in crate::run::engine) fn unapproved(run: &mut Run) {
+    if let Some(design) = run.orch.design.as_mut() {
+        design.approved_spec = None;
+        design.requirements.clear();
+        design.goal_section.clear();
     }
 }
 

@@ -45,14 +45,16 @@ fn review(design: &DesignState) -> Option<&DocReviewRecord> {
 
 /// Review `k` of `doc`, asked when the document had `after` gate versions: its record,
 /// and its reviewer queued for a reader slot (decision 10's route, [`review_pick`]). A
-/// reviewer on the orchestrator's own runtime is said so in the log.
+/// reviewer on the orchestrator's own runtime is said so in the log, with why (fix
+/// round 1, m1).
 pub(in crate::run::engine) fn queue(run: &mut Run, doc: DocKind, (k, after): (u32, u32), now: u64) {
-    let (route, same_runtime) = review_pick(run, &DECIDER_CAPS);
+    let (route, why) = review_pick(run, &DECIDER_CAPS);
+    let same_runtime = why.is_some();
     let label = label(doc, k);
-    if same_runtime {
+    if let Some(why) = why {
+        let runtime = route.runtime.label();
         let text = format!(
-            "the document reviewer {label} runs on {}, the orchestrator's own runtime: no peer runtime is installed",
-            route.runtime.label()
+            "the document reviewer {label}: no peer reviewer: {why}; reviewing on the same runtime, {runtime}"
         );
         log(run, now, text);
     }

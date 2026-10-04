@@ -179,6 +179,8 @@ pub(crate) fn act(
         DocGateAction::Back { note } => {
             let note = clean_note(&note);
             let prev = previous(kind);
+            // Ruling T10-5: the spec, or what came before it, reopens.
+            super::design::review::unapproved(run);
             set_revising(run, prev, Some((note.clone(), Revision::Back)), false, now);
             log(run, now, format!("the user went back from the {what}"));
             let text = revision_note(prev, n, Revision::Back, &note);

@@ -14,7 +14,7 @@ use super::design_agents::{launches, started};
 use super::design_fixture::*;
 use super::design_review_fixture::*;
 use super::fixture::*;
-use crate::run::design::state::DesignAgentState;
+use crate::run::design::state::{DesignAgentState, Revision};
 use crate::run::engine::{DocChecked, Effect, EventKind, ScoutEnd};
 use crate::run::snapshot::snapshot;
 
@@ -79,16 +79,77 @@ fn no_peer_reviews_on_the_same_runtime_and_says_so() {
     outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap();
     let (_, spec) = launches(&fx).last().cloned().unwrap();
     assert_eq!(spec.route, orchestrator);
-    let said = log_lines(&fx)
-        .into_iter()
-        .any(|l| l.contains("spec-r1") && l.contains("the orchestrator's own runtime"));
-    assert!(said, "{:?}", log_lines(&fx));
+    // Fix round 1 (m1): the true reason.
+    let line = "the document reviewer spec-r1: no peer reviewer: the codex runtime is not installed; reviewing on the same runtime, claude";
+    assert!(
+        log_lines(&fx).contains(&line.to_string()),
+        "{:?}",
+        log_lines(&fx)
+    );
     started(&mut fx, "spec-r1", REVIEWER);
     outcome(&submit_findings(&mut fx, REVIEWER, json!([]))).unwrap();
     outcome(&submit_spec(&mut fx, true, json!([]))).unwrap();
     assert!(spec_v(&fx, 1).same_runtime);
     let snap = snapshot(&fx.state, fx.now);
     assert!(snap.runs[0].doc_gate.as_ref().unwrap().same_runtime);
+}
+
+/// Fix round 1 (m1): the reviewer falls back to the orchestrator's own runtime with its
+/// reason: the peer is not installed, its CLI cannot run a session unsaved (ruling
+/// T8-4), or the roster has no peer model at the orchestrator's strength.
+#[test]
+fn the_same_runtime_fallback_names_its_reason() {
+    use crate::decider::{DECIDER_CAPS, DeciderCaps};
+    use crate::run::orch::roles::lists::review_pick;
+    let mut fx = specifying();
+    let (peer, why) = review_pick(fx.run(), &DECIDER_CAPS);
+    assert_eq!((peer.runtime, why), (Runtime::Codex, None));
+    let unsaved = DeciderCaps {
+        codex_ephemeral: false,
+        ..DECIDER_CAPS
+    };
+    let (own, why) = review_pick(fx.run(), &unsaved);
+    assert_eq!(own.runtime, Runtime::Claude);
+    let line = "the codex CLI cannot run a session without saving it";
+    assert_eq!(why.as_deref(), Some(line));
+    fx.run_mut().roster.retain(|m| m.runtime != Runtime::Codex);
+    let (_, why) = review_pick(fx.run(), &DECIDER_CAPS);
+    let line = "the roster has no codex model at frontier strength";
+    assert_eq!(why.as_deref(), Some(line));
+    fx.run_mut().orch.installed = [("codex".to_string(), false)].into();
+    let (_, why) = review_pick(fx.run(), &unsaved);
+    assert_eq!(why.as_deref(), Some("the codex runtime is not installed"));
+}
+
+/// Ruling T10-4: a spec gate revising after a Back or a failed read-back was not sent
+/// for review, and a review draft is refused with the cause-neutral text.
+#[test]
+fn a_back_or_read_back_revision_is_not_sent_for_review() {
+    let not_sent = "not reviewed: this revision was not sent for review";
+    let mut fx = at_plan_gate(false);
+    let back = DocGateAction::Back {
+        note: "Rethink R2.".into(),
+    };
+    act(&mut fx, DocGateKind::Plan, back).unwrap();
+    let gate = design(&fx).gate.clone().unwrap();
+    assert_eq!((gate.kind, gate.cause), (DocGateKind::Spec, Revision::Back));
+    let draft = outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap_err();
+    assert_eq!(draft, not_sent);
+    let mut fx = at_spec_gate(false);
+    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    let checked = vec![DocChecked {
+        kind: DocKind::Spec,
+        n: 1,
+        read: Err("its file is missing".into()),
+    }];
+    fx.next(EventKind::DesignChecked {
+        run_id: RUN_ID.into(),
+        checked,
+    });
+    let gate = design(&fx).gate.clone().unwrap();
+    assert_eq!(gate.cause, Revision::ReadBack);
+    let draft = outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap_err();
+    assert_eq!(draft, not_sent);
 }
 
 /// Decision 15: the findings are stored and wake the orchestrator with the exact note;

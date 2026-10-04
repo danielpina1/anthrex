@@ -177,27 +177,32 @@ pub fn brainstorm_picks_with(run: &Run, caps: &DeciderCaps) -> Vec<BrainstormPic
     ]
 }
 
-/// Milestone 9.6 decision 10 (task M9.6.10, DF §4.2): the document reviewer's route and
-/// whether it is the orchestrator's own runtime. Its peer (`validate_patterns::
-/// peer_route`: the other runtime's first roster entry at the orchestrator's strength
-/// and effort), unless that runtime is not installed or its CLI cannot run a session
-/// without saving it (ruling T8-4, as for a brainstormer); else the orchestrator's own
-/// route, `same_runtime`.
-pub fn review_pick(run: &Run, caps: &DeciderCaps) -> (Route, bool) {
+/// Milestone 9.6 decision 10 (task M9.6.10, DF §4.2): the document reviewer's route
+/// and, when it is the orchestrator's own route, why (fix round 1, m1). Its peer
+/// (`validate_patterns::peer_route`: the other runtime's first roster entry at the
+/// orchestrator's strength, at its effort), unless that runtime is not installed, its
+/// CLI cannot run a session without saving it (ruling T8-4, as for a brainstormer), or
+/// the roster has no model of it at that strength.
+pub fn review_pick(run: &Run, caps: &DeciderCaps) -> (Route, Option<String>) {
     let own = (run.orch.orchestrator.as_ref()).map_or_else(
         || crate::run::orch::launch::frozen_scout_route(run),
         |o| o.route.clone(),
     );
-    let mut installed = run.orch.installed.clone();
-    for runtime in [Runtime::Claude, Runtime::Codex] {
-        if !runs_unsaved(runtime, caps) {
-            installed.insert(runtime.label().to_string(), false);
-        }
-    }
-    match crate::run::validate_patterns::peer_route(&run.roster, &own, &installed) {
-        Some(peer) => (peer, false),
-        None => (own, true),
-    }
+    let name = crate::run::roster::peer(own.runtime).label();
+    let installed = &run.orch.installed;
+    let why = if installed.get(name) == Some(&false) {
+        format!("the {name} runtime is not installed")
+    } else if !runs_unsaved(crate::run::roster::peer(own.runtime), caps) {
+        format!("the {name} CLI cannot run a session without saving it")
+    } else if let Some(peer) =
+        crate::run::validate_patterns::peer_route(&run.roster, &own, installed)
+    {
+        return (peer, None);
+    } else {
+        let strength = crate::run::validate::strength_label(own.strength);
+        format!("the roster has no {name} model at {strength} strength")
+    };
+    (own, Some(why))
 }
 
 /// Decision 10's defaults: the strongest model of each installed runtime, else (no

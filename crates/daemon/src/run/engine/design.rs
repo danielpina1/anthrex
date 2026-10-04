@@ -422,7 +422,7 @@ pub struct DocChecked {
 /// latest texts refill the change summaries' cache.
 pub(super) fn checked(run: &mut Run, checked: Vec<DocChecked>, now: u64) {
     // Task M9.6.10: the approved spec's requirements, from its text read back.
-    review::requirements_read(run, &checked, now);
+    let logged = review::requirements_read(run, &checked, now);
     let gate = design_gate::waiting(run).cloned();
     let mut lost = false;
     for doc in checked {
@@ -434,12 +434,12 @@ pub(super) fn checked(run: &mut Run, checked: Vec<DocChecked>, now: u64) {
             }
             Ok(None) => {}
             Err(reason) => {
-                let what = format!("{} v{}", kind_name(doc.kind), doc.n);
-                log(
-                    run,
-                    now,
-                    format!("design flow: the {what} could not be read back: {reason}"),
-                );
+                // Fix round 1 (m3): the approved spec's failure is logged once, above.
+                if !(doc.kind == DocKind::Spec && logged == Some(doc.n)) {
+                    let what = format!("{} v{}", kind_name(doc.kind), doc.n);
+                    let text = format!("design flow: the {what} could not be read back: {reason}");
+                    log(run, now, text);
+                }
                 // Ruling T9-1a: the draft is attached as unread; its outcome stands.
                 if let Some(design) =
                     (run.orch.design.as_mut()).filter(|_| doc.kind == DocKind::BrainstormDraft)

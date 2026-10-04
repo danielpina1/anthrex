@@ -17,6 +17,7 @@ use super::fixture::*;
 use super::orch_restore::{restart, resume};
 use crate::headless::SessionArg;
 use crate::headless::argv::{CLI_CAPS, codex_args};
+use crate::run::design::pack::previous_spec;
 use crate::run::design::state::{DesignAgentState, Revision};
 use crate::run::engine::{DocChecked, Effect, EventKind, ScoutEnd};
 use crate::scout::design_spec::DOC_REVIEWER_TEXTS;
@@ -138,6 +139,80 @@ fn a_rejected_run_stops_its_reviewer() {
         reviewer.state,
         DesignAgentState::Failed("the run was rejected".into())
     );
+    // Fix round 1 (m7): the review records it.
+    let failed = design(&fx).reviews.last().unwrap().failed.clone();
+    assert_eq!(failed.as_deref(), Some("the run was rejected"));
+}
+
+/// Fix round 1 (m7): a reviewer still queued for a reader slot when the run is
+/// rejected fails with its review; there is no window to stop.
+#[test]
+fn a_rejected_run_fails_its_queued_reviewer() {
+    let mut fx = specifying();
+    fx.run_mut().limits.max_readers = 0;
+    outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap();
+    let reviewer = design(&fx).reviewer.clone().unwrap();
+    assert_eq!(reviewer.state, DesignAgentState::Queued);
+    let reply = fx.reply();
+    let effects = fx.next(EventKind::Reject {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    let stopped = (effects.iter()).any(|e| matches!(e, Effect::StopPlanner { .. }));
+    assert!(!stopped, "{effects:?}");
+    let reason = "the run was rejected";
+    let reviewer = design(&fx).reviewer.clone().unwrap();
+    assert_eq!(reviewer.state, DesignAgentState::Failed(reason.into()));
+    let failed = design(&fx).reviews.last().unwrap().failed.clone();
+    assert_eq!(failed.as_deref(), Some(reason));
+}
+
+/// Fix round 1 (m7): the next review's reviewer is a fresh agent, its relaunch unused
+/// although the previous review's reviewer used its own.
+#[test]
+fn a_new_reviews_reviewer_starts_with_its_relaunch_unused() {
+    let mut fx = specifying();
+    outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap();
+    started(&mut fx, "spec-r1", REVIEWER);
+    unsubmitted_end(&mut fx, 1);
+    assert!(design(&fx).reviewer.as_ref().unwrap().unsubmitted);
+    started(&mut fx, "spec-r1", REVIEWER + 1);
+    outcome(&submit_findings(&mut fx, REVIEWER + 1, three_findings())).unwrap();
+    reviewer_ended(&mut fx, "spec-r1", 2, ScoutEnd::Reported);
+    outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap();
+    let reviewer = design(&fx).reviewer.clone().unwrap();
+    assert_eq!(reviewer.label, "spec-r2");
+    assert!(!reviewer.unsubmitted);
+}
+
+/// Ruling T10-5: a Back from the plan reopens the spec, so the earlier approval is
+/// gone: a run paused there gives its continuation no approved spec.
+#[test]
+fn a_back_to_the_spec_clears_its_approval() {
+    let mut fx = at_plan_gate(false);
+    fx.next(EventKind::DesignChecked {
+        run_id: RUN_ID.into(),
+        checked: vec![DocChecked {
+            kind: DocKind::Spec,
+            n: 1,
+            read: Ok(Some(SPEC.to_string())),
+        }],
+    });
+    assert!(!design(&fx).requirements.is_empty());
+    fx.run_mut().continued_by = Some("next-run".into());
+    let earlier = |fx: &Fixture| previous_spec(fx.state.runs.values(), "next-run").is_some();
+    assert!(earlier(&fx), "approved");
+    let back = DocGateAction::Back {
+        note: "Rethink R2.".into(),
+    };
+    act(&mut fx, DocGateKind::Plan, back).unwrap();
+    assert_eq!(design(&fx).approved_spec, None);
+    assert!(design(&fx).requirements.is_empty());
+    assert!(design(&fx).goal_section.is_empty());
+    // Paused there (a restore leaves a gate waiting, so the state is set directly).
+    let run = fx.run_mut();
+    (run.paused_from, run.state) = (Some(run.state), RunState::Paused);
+    assert!(!earlier(&fx), "paused after the Back");
 }
 
 /// Decision 10's record of the reviewer's session: `spec-r1/1`, the doc reviewer's
@@ -227,5 +302,9 @@ fn the_approved_spec_is_read_back_and_a_failed_read_reopens_its_gate() {
     let note = "the approved spec v1 could not be read back; submit it again";
     assert!(notes(&fx).contains(&note.to_string()), "{:?}", notes(&fx));
     let logged = "design flow: the approved spec v1 could not be read back: its file differs from what was stored";
-    assert!(log_lines(&fx).contains(&logged.to_string()));
+    // Fix round 1 (m3): logged once.
+    let failed: Vec<String> = (log_lines(&fx).into_iter())
+        .filter(|l| l.contains("could not be read back"))
+        .collect();
+    assert_eq!(failed, [logged]);
 }
