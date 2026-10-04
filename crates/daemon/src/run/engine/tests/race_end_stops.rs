@@ -324,29 +324,47 @@ fn a_losers_launch_lost_at_a_restart_keeps_its_checkout() {
     }
 }
 
-/// Ruling T17b-3: a live lane whose launch the restart lost is relaunched; the new
-/// window's process is the racer's own again.
+/// Ruling T17b-4: a live lane whose launch the restart lost is relaunched, but the old
+/// daemon may have started a racer whose pid was never recorded (decision 28 cannot
+/// stop it): the relaunched racer's lane stays orphaned, and once stopped its checkout
+/// is kept and its locks are left.
 #[test]
-fn a_relaunched_racer_is_no_longer_orphaned() {
+fn a_relaunched_racers_lane_is_still_kept() {
     let (mut fx, _) = lane_a_launching();
     restart(&mut fx, Vec::new());
     let mut effects = super::control::resume(&mut fx);
     effects.extend(fx.tick());
     let (op, _) = only_op(&effects, "CreateWindow");
-    let racer_a = |fx: &Fixture| {
-        let mut rounds = fx.task("t1").rounds.iter();
-        rounds
-            .rfind(|r| r.lane == Some(A))
-            .cloned()
-            .expect("a's racer")
-    };
-    assert!(racer_a(&fx).orphaned, "orphaned while its relaunch runs");
     let window = OpResult::Window {
         window_id: 91,
         pid: None,
     };
     fx.done(op, window);
-    assert!(!racer_a(&fx).orphaned);
+    let racer = (fx.task("t1").rounds.iter()).rfind(|r| r.lane == Some(A));
+    assert!(
+        racer.expect("a's racer").orphaned,
+        "a relaunch clears nothing"
+    );
+    let effects = cancel(&mut fx);
+    assert!(
+        lane_removals(&effects, A).is_empty(),
+        "it waits for its exit"
+    );
+    let (_, kind) = only_removal(&killed_exit(&mut fx, 91), A);
+    assert!(
+        matches!(
+            kind,
+            OpKind::RemoveWorktree {
+                keep_path: true,
+                clear_locks: false,
+                keep_head: true,
+                ..
+            }
+        ),
+        "{kind:?}"
+    );
+    let line = "race t1: kept a checkout: its racer had no process after the restart";
+    assert!(logged(&fx, line), "{:#?}", fx.run().log);
 }
 
 /// Ruling T17b-3 (N2): a restored racer is its own again only once its resume
