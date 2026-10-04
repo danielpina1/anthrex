@@ -10,9 +10,10 @@ mod support;
 use std::process::Output;
 
 use daemon::run::orch::contract::planned_message;
+use proto::run_wire::request;
 use proto::{
-    DaemonMsg, DeciderSource, ProposalOrigin, ProposalState, RunPath, RunReply, RunState, Scale,
-    TaskState,
+    DaemonMsg, DeciderSource, DesignMode, ProposalOrigin, ProposalState, RunPath, RunReply,
+    RunRequest, RunState, Scale, TaskState,
 };
 use serde_json::{Value, json};
 use support::run_adapt::{ADAPT_FILES, PROFILE_LINES, PROFILE_WAIT, STORED_PROFILE, triage_single};
@@ -206,6 +207,39 @@ fn e2e_a_goal_that_falls_back_to_the_plan_path_is_tuned_once() {
         ],
         "each line once (ruling T9-5)"
     );
+}
+
+/// Milestone 9.6 ruling T3-1: the design mode follows triage's own route. A goal
+/// triaged fast whose fast build falls back to the plan path (a hub file) does not run
+/// the design flow under the default `full`, and asking for it is refused naming the
+/// fast path, before anything is built.
+#[test]
+fn e2e_a_fast_goal_that_falls_back_to_the_plan_path_has_no_design_flow() {
+    let h = harness("claude", "hub = [\"core/**\"]\n", &[], &[]);
+    h.decider("triage", 1, triage_single(&["core/x.txt"]));
+    h.decider("triage", 2, triage_single(&["core/x.txt"]));
+    let reply = h.request(RunRequest::StartGoal {
+        goal: "change the core".into(),
+        dir: h.repo.clone(),
+        yes: false,
+        trust_project: false,
+        unconfined_checks: false,
+        orchestrator: None,
+        delivery: None,
+        continue_from: None,
+        design: Some(DesignMode::Full),
+    });
+    let refusal = "the design flow runs only for planned code or docs goals; this goal is fast";
+    assert_eq!(reply, RunReply::refused(request::START_GOAL, refusal));
+    assert!(no_run_branches(&h.repo), "a run branch was created");
+    assert!(h.snapshot().runs.is_empty());
+
+    let out = h.start_goal("change the core", &[]);
+    let reason = "the fast path does not apply: task t1 touches a hub file";
+    planned(&h, &out, Scale::Single, DeciderSource::Decider, reason);
+    let run = h.run(&started(&h, &out)).expect("the run is listed");
+    let json = run_json(&run);
+    assert_eq!(json.get("design_mode"), None, "the run is not a design run");
 }
 
 /// Whole-branch review I1: a fast-path task that owns a protected agent-config file

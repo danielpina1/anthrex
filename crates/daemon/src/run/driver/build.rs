@@ -129,7 +129,7 @@ pub(super) struct Planned {
     pub usage: Option<proto::TokenUsage>,
     pub yes: bool,
     pub choice: Option<proto::OrchestratorChoice>,
-    /// Milestone 9.6: the start's `--design` or goal dialog row, if any.
+    /// Milestone 9.6: the mode the start decided (ruling T3-1); `None`: the build's.
     pub design: Option<proto::DesignMode>,
 }
 

@@ -426,7 +426,6 @@ mod tuning {
         assert_eq!(other.limits.orch.design.phase_minutes, 90);
 
         // The first run keeps its own, as written and read back by a restart.
-        assert_eq!(run.design_mode, proto::DesignMode::Full);
         run.data_dir = crate::run::journal::runs_dir(&tmp.path().join("saved")).join(&run.id);
         crate::run::journal::save_run(&run).unwrap();
         let (mut runs, problems) = crate::run::journal::load_all(&tmp.path().join("saved"));

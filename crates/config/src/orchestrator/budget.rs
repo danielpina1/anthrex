@@ -5,6 +5,10 @@
 use super::Orchestrator;
 use crate::{Problem, not_a_table_problem};
 
+/// A budget table's keys, `[orchestrator.budget.<rung>]`'s and
+/// `[orchestrator.design.budget.<agent>]`'s.
+pub(super) const KNOWN_BUDGET_KEYS: &[&str] = &["tool_calls", "minutes", "tokens"];
+
 pub(super) fn read_budgets(table: &toml::Table, o: &mut Orchestrator, problems: &mut Vec<Problem>) {
     let Some(value) = table.get("budget") else {
         return;

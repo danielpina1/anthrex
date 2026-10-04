@@ -11,7 +11,7 @@
 
 use proto::{Budget, DesignMode};
 
-use super::budget::read_budget;
+use super::budget::{KNOWN_BUDGET_KEYS, read_budget};
 use super::read_u32_in_range;
 use crate::{Problem, not_a_table_problem, read_bool_key, report_unknown_nested};
 
@@ -24,7 +24,6 @@ const KNOWN_DESIGN_KEYS: &[&str] = &[
     "budget",
 ];
 const KNOWN_DESIGN_BUDGET_KEYS: &[&str] = &["brainstormer", "doc_reviewer"];
-const KNOWN_BUDGET_KEYS: &[&str] = &["tool_calls", "minutes", "tokens"];
 
 /// `max_questions`: zero asks nothing.
 const MAX_QUESTIONS_RANGE: std::ops::RangeInclusive<u32> = 0..=20;
@@ -140,28 +139,35 @@ fn read_default(t: &toml::Table, d: &mut DesignConfig, problems: &mut Vec<Proble
 }
 
 /// `docs_dir`: `""`, or a relative path whose every component is a plain name, so the
-/// documents commit (decision 24) writes inside the repository.
+/// documents commit (decision 24) writes inside the repository: never absolute, never
+/// `.`, `..` or an empty part, never `.git` in any case (a case-insensitive file system
+/// takes `.GIT` for `.git`), no backslash and no control character. Trailing `/`s are trimmed.
 fn read_docs_dir(t: &toml::Table, d: &mut DesignConfig, problems: &mut Vec<Problem>) {
     let Some(value) = t.get("docs_dir") else {
         return;
     };
-    match value.as_str().filter(|s| inside_the_repository(s)) {
+    match value.as_str().and_then(docs_dir) {
         Some(s) => d.docs_dir = s.to_string(),
         None => problems.push(Problem {
             key: "orchestrator.design.docs_dir".to_string(),
-            message: "must be a relative path inside the repository, or \"\"".to_string(),
+            message: "must be \"\" or a relative path inside the repository, outside .git, \
+                      without control characters"
+                .to_string(),
             default: format!("{:?}", d.docs_dir),
         }),
     }
 }
 
-fn inside_the_repository(dir: &str) -> bool {
-    dir.is_empty()
-        || (!dir.starts_with('/')
-            && !dir.contains('\\')
-            && dir
-                .split('/')
-                .all(|part| !part.is_empty() && part != "." && part != ".."))
+/// `dir` as it is kept, trailing `/`s trimmed, or `None` when it is refused.
+fn docs_dir(dir: &str) -> Option<&str> {
+    if dir.starts_with('/') || dir.contains('\\') || dir.chars().any(char::is_control) {
+        return None;
+    }
+    let dir = dir.trim_end_matches('/');
+    let plain = |part: &str| {
+        !part.is_empty() && part != "." && part != ".." && !part.eq_ignore_ascii_case(".git")
+    };
+    (dir.is_empty() || dir.split('/').all(plain)).then_some(dir)
 }
 
 /// `[orchestrator.design]`'s unknown keys, its budget table's, and each budget's.

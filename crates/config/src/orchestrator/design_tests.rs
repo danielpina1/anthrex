@@ -220,23 +220,61 @@ minutes = "ten"
     );
 }
 
+/// The refusal of every `docs_dir` the documents commit must not write to.
+const DOCS_DIR_REFUSED: &str = "must be \"\" or a relative path inside the repository, \
+     outside .git, without control characters";
+
 /// The documents are committed into the repository (decision 24), so `docs_dir` is a
-/// relative path that stays inside it.
+/// relative path that stays inside it and outside `.git` (any case: a case-insensitive
+/// file system takes `.GIT` for `.git`), with no control character. Each value is
+/// written as a TOML basic string.
 #[test]
 fn a_docs_dir_outside_the_repository_is_refused() {
-    for dir in ["/etc/anthrex", "../elsewhere", "docs/../../up", "docs\\win"] {
-        let text = format!("[orchestrator.design]\ndocs_dir = {dir:?}\n");
+    for dir in [
+        r#""/etc/anthrex""#,
+        r#""/""#,
+        r#""../elsewhere""#,
+        r#""docs/../../up""#,
+        r#""docs/./x""#,
+        r#""docs//x""#,
+        r#""docs\\win""#,
+        r#"".git""#,
+        r#""docs/.git/hooks""#,
+        r#""docs/.GIT""#,
+        r#""docs/.Git/x/""#,
+        r#""docs/a\u0007b""#,
+        r#""docs/a\nb""#,
+        r#""docs/a\u007fb""#,
+    ] {
+        let text = format!("[orchestrator.design]\ndocs_dir = {dir}\n");
         let (design, problems) = design_of(&text);
         assert_eq!(design.docs_dir, "docs/anthrex", "{dir}");
         assert_eq!(
             problems,
             vec![problem(
                 "orchestrator.design.docs_dir",
-                "must be a relative path inside the repository, or \"\"",
+                DOCS_DIR_REFUSED,
                 "\"docs/anthrex\""
             )],
             "{dir}"
         );
+    }
+}
+
+/// A trailing `/` is trimmed, not refused; a name merely containing `git` is kept.
+#[test]
+fn a_docs_dir_trailing_slash_is_trimmed() {
+    for (dir, kept) in [
+        ("docs/anthrex/", "docs/anthrex"),
+        ("docs//", "docs"),
+        ("design/", "design"),
+        ("docs/.github", "docs/.github"),
+        ("docs/git", "docs/git"),
+    ] {
+        let text = format!("[orchestrator.design]\ndocs_dir = {dir:?}\n");
+        let (design, problems) = design_of(&text);
+        assert!(problems.is_empty(), "{dir}: {problems:?}");
+        assert_eq!(design.docs_dir, kept, "{dir}");
     }
 }
 

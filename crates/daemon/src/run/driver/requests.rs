@@ -49,8 +49,8 @@ impl RunService {
                 // Milestone 9.6 (DF §1): a plan file never runs the design flow.
                 design,
             } => {
-                let live = self.ctx.settings.current();
-                let config = &live.orchestrator.design;
+                // A plan file is off whatever the config says, so its default is enough.
+                let config = &config::DesignConfig::default();
                 if let Err(refusal) = mode_for(GoalOrigin::PlanFile, design, config) {
                     return RunReply::refused(request::START, refusal);
                 }

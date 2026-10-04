@@ -206,11 +206,13 @@ impl RunService {
         // 4. The route.
         let route = triage::route(&decision, config.fast_path);
         let info = triage::info(&decision, &route, unix_now());
-        // Milestone 9.6 decision 3: `--design full` on a goal DF §1 puts off is refused
-        // before any build; a planned build decides the mode itself (`make_planned`).
-        if let Err(refusal) = mode_for(GoalOrigin::Goal(Some(&info)), design, &config.design) {
-            return refused(refusal);
-        }
+        // Milestone 9.6 decision 3: the mode, decided once on triage's own route, before
+        // any build (ruling T3-1: a fast goal whose build falls back to planned stays off;
+        // `--design full` on a goal DF §1 puts off is refused here).
+        let design = match mode_for(GoalOrigin::Goal(Some(&info)), design, &config.design) {
+            Ok(mode) => Some(mode),
+            Err(refusal) => return refused(refusal),
+        };
         // 6. Milestone 9 decision 26: the planned and large paths build a planned run.
         let flags = (trust_project, unconfined_checks);
         let planned = |info: TriageInfo| Planned {
