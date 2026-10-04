@@ -192,15 +192,25 @@ fn agents_text(run: &RunInfo, app: &App) -> String {
         "workers {}/{} · readers {}/{}",
         run.writers_busy, run.max_writers, run.readers_busy, run.max_readers
     );
+    // Milestone 9.5: a race's lanes and a test writer route their own runtimes.
     let routes = || {
-        run.tasks
-            .iter()
-            .flat_map(|task| std::iter::once(&task.route).chain(task.review_route.as_ref()))
+        run.tasks.iter().flat_map(|task| {
+            let lanes = task.race.iter().flat_map(|race| &race.lanes);
+            std::iter::once(&task.route)
+                .chain(task.review_route.as_ref())
+                .chain(lanes.map(|lane| &lane.route))
+                .chain(task.pair.as_ref().map(|pair| &pair.writer_route))
+        })
     };
     for runtime in [Runtime::Claude, Runtime::Codex, Runtime::Shell] {
-        if !routes().any(|route| route.runtime == runtime) {
+        let cap = run.writer_caps.get(runtime.label());
+        if cap.is_none() && !routes().any(|route| route.runtime == runtime) {
             continue;
         }
+        // Milestone 9.5 decision 16: a capped runtime's writers.
+        let cap = cap.map_or(String::new(), |cap| {
+            format!(" (writers {cap}/{})", run.max_writers)
+        });
         let limited: Vec<&AgentRoundInfo> = run
             .tasks
             .iter()
@@ -210,13 +220,14 @@ fn agents_text(run: &RunInfo, app: &App) -> String {
             .collect();
         let label = runtime.label();
         if limited.is_empty() {
-            text.push_str(&format!(" · {label} ok"));
+            text.push_str(&format!(" · {label} ok{cap}"));
             continue;
         }
         text.push_str(&format!(" · {label} rate-limited"));
         if let Some(since) = limited.iter().filter_map(|r| r.rate_limited_since).min() {
             text.push_str(&format!(" {}", format_duration(app.run_age(since))));
         }
+        text.push_str(&cap);
     }
     text
 }

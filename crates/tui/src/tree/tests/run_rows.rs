@@ -470,4 +470,5 @@ fn a_scout_with_a_listed_window_shows_its_sub_agents() {
 }
 
 mod filters;
+mod patterns;
 mod placement;

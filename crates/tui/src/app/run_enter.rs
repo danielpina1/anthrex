@@ -90,7 +90,7 @@ impl App {
                 };
                 Agent {
                     window: shown.info.window_id,
-                    label: tree::round_label(role, session, round),
+                    label: tree::round_label_with_lane(role, shown.info.lane, session, round),
                     ended: shown.info.ended_at.is_some(),
                 }
             }

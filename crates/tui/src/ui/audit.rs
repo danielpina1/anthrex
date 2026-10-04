@@ -211,6 +211,9 @@ pub(crate) fn shows(name: &str) -> Shows {
         "project overview" => row("OVERVIEW", Some("esc back"), &["j/k move"]),
         "run view at the gate" => row("RUN", Some("esc back"), &["a approve", "x reject"]),
         "run view running" | "run view on a task" => row("RUN", Some("esc back"), &["j/k move"]),
+        // Milestone 9.5 decision 29: a racing task's word, and a paired task's.
+        "run view racing" => row("racing", Some("esc back"), &["j/k move"]),
+        "run view pairing" => row("working", Some("esc back"), &["j/k move"]),
         // Milestone 9.0.7 decision 12: the task panel's state word, always shown.
         "run view on a task in review" => row("in review · r2", Some("esc back"), &["j/k move"]),
         // Decision 22: at 80x24 the two-stage run is the compact list; the task panel
@@ -307,6 +310,11 @@ fn running() -> App {
     app_of(windows, snap)
 }
 
+/// Milestone 9.5 task 20: a fixture of `tree::run_fixtures`, as `app_of` loads it.
+fn loaded((snap, windows): (RunsSnapshot, Vec<WindowInfo>)) -> App {
+    app_of(windows, snap)
+}
+
 fn chord(app: &mut App, c: char) {
     app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
     app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
@@ -319,7 +327,7 @@ fn tap(app: &mut App, c: char) {
 /// `C-b T`, the run's node selected, then `l`: the run view.
 fn run_view(mut app: App) -> App {
     chord(&mut app, 'T');
-    let key = tree::NodeKey::Run(RUN_ID.into());
+    let key = tree::NodeKey::Run(app.runs.runs[0].run_id.clone());
     let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
     app.tree.select(&rows, key);
     tap(&mut app, 'l');
@@ -332,7 +340,7 @@ fn on_task(mut app: App, id: &str) -> App {
     let run = app.runs.runs[0].clone();
     let rows = tree::run_rows(&run, &app.windows, &app.tree, tree::RunFilter::All);
     let key = tree::NodeKey::Task {
-        run: RUN_ID.into(),
+        run: run.run_id.clone(),
         id: id.into(),
     };
     let rows: Vec<_> = rows.into_iter().map(|row| row.key).collect();

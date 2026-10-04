@@ -12,7 +12,7 @@ use super::{
     subagent_forest,
 };
 use proto::{
-    AgentRole, PlannerInfo, RunInfo, Runtime, ScoutInfo, ScoutState, TaskInfo, TaskState,
+    AgentRole, PlannerInfo, RaceLane, RunInfo, Runtime, ScoutInfo, ScoutState, TaskInfo, TaskState,
     WindowInfo,
 };
 use std::collections::{HashMap, HashSet};
@@ -29,20 +29,32 @@ pub enum RunFilter {
 
 /// An agent round's label: `worker #1`, `worker #1 r2`, `review #2` (decision 14).
 /// `number` is the display round; the orchestrator role, unreachable on a task, is
-/// labelled by its session so nothing is dropped.
+/// labelled by its session so nothing is dropped. [`round_label_with_lane`] with no lane.
 pub fn round_label(role: AgentRole, session: u32, number: u32) -> String {
+    round_label_with_lane(role, None, session, number)
+}
+
+/// [`round_label`] with a racing task's lane (milestone 9.5 decision 29, Interfaces
+/// "Run view"): `racer a`, `racer a r2`, `review b#1`. Every other role ignores it.
+pub fn round_label_with_lane(
+    role: AgentRole,
+    lane: Option<RaceLane>,
+    session: u32,
+    number: u32,
+) -> String {
+    // ` a`, or nothing without a lane.
+    let lane = lane.map_or(String::new(), |lane| format!(" {}", lane.label()));
     match role {
         AgentRole::Worker if number > 1 => format!("worker #{session} r{number}"),
         AgentRole::Worker => format!("worker #{session}"),
-        AgentRole::Reviewer => format!("review #{number}"),
+        AgentRole::Reviewer => format!("review {}#{number}", lane.trim_start()),
         AgentRole::Orchestrator => format!("orchestrator #{session}"),
         // Milestone 9 decision 35: a scout round on a task is a research session.
         AgentRole::Scout => format!("research #{session}"),
         AgentRole::Planner => format!("planner #{session}"),
         AgentRole::Decider => "decider".to_string(),
-        // Milestone 9.5; task M9.5.20 adds the lane (`racer a`).
-        AgentRole::Racer if number > 1 => format!("racer r{number}"),
-        AgentRole::Racer => "racer".to_string(),
+        AgentRole::Racer if number > 1 => format!("racer{lane} r{number}"),
+        AgentRole::Racer => format!("racer{lane}"),
         AgentRole::TestWriter if number > 1 => format!("test writer #{session} r{number}"),
         AgentRole::TestWriter => format!("test writer #{session}"),
     }

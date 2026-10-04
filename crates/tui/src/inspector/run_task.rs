@@ -6,6 +6,7 @@ use super::run_format::{
     size_letter, strength_text, test_mode_text,
 };
 use super::run_orch::{messages_text, notes_text};
+use super::run_patterns;
 use super::run_task_outcome::{diff_text, pipeline_text, review_row};
 use super::{Inspection, field};
 use crate::actions_request::ActionTarget;
@@ -24,6 +25,10 @@ pub(crate) fn task_inspection(run: &RunInfo, task: &TaskInfo, app: &App) -> Insp
         field("pipeline", pipeline_text(run, task, false)),
         field("route", route_text(task)),
     ];
+    // Milestone 9.5 decision 29: the race's lanes and the pair's two sessions.
+    let ascii = app.palette().ascii;
+    fields.extend(run_patterns::race_row(task, ascii).map(|race| field("race", race)));
+    fields.extend(run_patterns::pair_row(task, ascii).map(|pair| field("pair", pair)));
     fields.extend(super::run_stage::task_fields(run, task));
     // Milestone 9.3 decision 32: DETAIL's `round <r>`, for a run of several rounds.
     if run.rounds.len() > 1 {
@@ -116,6 +121,9 @@ pub(crate) fn state_word(run: &RunInfo, task: &TaskInfo) -> String {
 fn state_stage(task: &TaskInfo) -> String {
     if crate::tree::is_paused(task) {
         return "paused (message)".to_owned();
+    }
+    if let Some(word) = run_patterns::state_word(task) {
+        return word.to_owned();
     }
     match task.state {
         TaskState::Pending => "waiting".to_owned(),

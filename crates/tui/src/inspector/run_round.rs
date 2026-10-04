@@ -5,9 +5,10 @@ use super::run_format::{
     billable, clean, counts_text, effort_text, finding_text, format_duration, format_tokens,
     kind_glyph, local_hhmm, most_severe, rank, rows, session_text, strength_text,
 };
+use super::run_patterns;
 use super::{Field, Inspection, field};
 use crate::app::App;
-use crate::tree::{DisplayRound, RowKind, display_rounds, round_label};
+use crate::tree::{DisplayRound, RowKind, display_rounds, round_label_with_lane};
 use proto::{AgentRole, Route, RunInfo, Severity, TaskInfo};
 
 /// An agent round (Interfaces "Agent round").
@@ -36,7 +37,7 @@ pub(crate) fn round_inspection(
         Some(ended) => ended.saturating_sub(round.started_at),
     };
     let right = format!("{status} · {} · {}", format_duration(duration), task.id);
-    let label = round_label(info.role, info.session, round.number);
+    let label = round_label_with_lane(info.role, info.lane, info.session, round.number);
     let route = &info.route;
     let name = format!(
         "{label}  {} · {} · {}",
@@ -46,12 +47,21 @@ pub(crate) fn round_inspection(
     );
     let fields = match info.role {
         AgentRole::Reviewer => reviewer_fields(task, round, app),
-        AgentRole::Worker
-        | AgentRole::Orchestrator
-        | AgentRole::Scout
-        | AgentRole::Planner
-        | AgentRole::Racer
-        | AgentRole::TestWriter => worker_fields(task, round, limited, app),
+        AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout | AgentRole::Planner => {
+            worker_fields(task, round, limited, app)
+        }
+        // Milestone 9.5 decision 29: the lane's standing, or the test, after `doing`.
+        AgentRole::Racer | AgentRole::TestWriter => {
+            let mut fields = worker_fields(task, round, limited, app);
+            let pattern = match info.role {
+                AgentRole::Racer => run_patterns::race_field(task, info.lane).map(|t| ("race", t)),
+                _ => run_patterns::test_field(task, app.palette().ascii).map(|t| ("test", t)),
+            };
+            if let Some((label, text)) = pattern {
+                fields.insert(1, field(label, text));
+            }
+            fields
+        }
         // A decider has no rounds (decision 43): nothing of a worker's to show.
         AgentRole::Decider => Vec::new(),
     };
@@ -206,14 +216,20 @@ fn fixing_text(task: &TaskInfo, start: u64) -> Option<String> {
 fn reviewer_fields(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> Vec<Field> {
     let info = round.info;
     let workers = display_rounds(task, &app.windows);
+    // Milestone 9.5: a lane's reviewer judges that lane's racer; any other the latest
+    // worker or racer, as the daemon finds the author (`engine/review.rs`).
     let judged = workers
         .iter()
-        .filter(|worker| worker.info.role == AgentRole::Worker)
+        .filter(|worker| match info.lane {
+            Some(lane) => worker.info.role == AgentRole::Racer && worker.info.lane == Some(lane),
+            None => matches!(worker.info.role, AgentRole::Worker | AgentRole::Racer),
+        })
         .filter(|worker| worker.started_at < round.started_at)
         .max_by_key(|worker| (worker.started_at, worker.number));
     let mut fields = Vec::new();
     if let Some(judged) = judged {
-        let label = round_label(judged.info.role, judged.info.session, judged.number);
+        let who = judged.info;
+        let label = round_label_with_lane(who.role, who.lane, who.session, judged.number);
         let route: &Route = &judged.info.route;
         fields.push(field(
             "judging",

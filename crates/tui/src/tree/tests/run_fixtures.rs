@@ -60,7 +60,7 @@ pub(crate) fn task(id: &str, title: &str, size: Size, state: TaskState) -> TaskI
     serde_json::from_value(value).expect("a minimal TaskInfo")
 }
 
-fn round(
+pub(crate) fn round(
     role: AgentRole,
     session: u32,
     window: Option<u32>,
@@ -578,3 +578,7 @@ pub(crate) fn planner_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
     .collect();
     (snapshot(now, vec![info]), vec![])
 }
+
+// Milestone 9.5 task 20: a race and a pair, kept apart so this file stays focused.
+mod patterns;
+pub(crate) use patterns::{pair_fixture, race_fixture};

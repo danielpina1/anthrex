@@ -2,6 +2,7 @@
 //! task 9b, move only): one `App` per key region, built with the audit's helpers.
 
 use super::*;
+use crate::tree::run_fixtures::{pair_fixture, race_fixture};
 use crate::ui::run_pr_tests;
 
 /// One `App` per key region of decision 1 that exists, each reached by the keys a
@@ -40,6 +41,14 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
         ("run view at the gate", run_view(gate())),
         ("run view running", run_view(running())),
         ("run view on a task", on_task(run_view(running()), "t1")),
+        (
+            "run view racing",
+            on_task(run_view(loaded(race_fixture())), "t2"),
+        ),
+        (
+            "run view pairing",
+            on_task(run_view(loaded(pair_fixture())), "t3"),
+        ),
         (
             "run view on a task in review",
             on_task(run_view(with(running(), in_review_r2)), "t1"),

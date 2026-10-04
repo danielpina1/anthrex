@@ -1,13 +1,15 @@
 //! A task's agent rounds as the run view draws them (milestone 8c decisions 13 and 14):
 //! a worker session split at its bounces, in start order. Split out of `run_rows.rs`.
+//! Milestone 9.5 decision 29: a racer and a test writer split as a worker does.
 
 use super::DisplayRound;
-use proto::{AgentRole, TaskInfo, WindowInfo};
+use proto::{AgentRole, AgentRoundInfo, RaceLane, TaskInfo, WindowInfo};
 use std::collections::HashSet;
 
-/// A task's agent rounds as the run view draws them, in start order, a worker before a
-/// reviewer on a tie (decisions 13 and 14). A worker session becomes one display round
-/// per piece between its `sent_back_at` bounces; every other round is one. Bounces are
+/// A task's agent rounds as the run view draws them, in start order, ties broken as
+/// [`rank`] says (decisions 13 and 14; milestone 9.5 decision 29). A worker, racer or
+/// test-writer session becomes one display round per piece between its `sent_back_at`
+/// bounces; every other round is one. Bounces are
 /// taken in time order and never before the session's start, and a repeated
 /// `(role, session, number)` keeps its earliest copy, so no two rounds share a key.
 pub fn display_rounds<'a>(task: &'a TaskInfo, windows: &'a [WindowInfo]) -> Vec<DisplayRound<'a>> {
@@ -32,7 +34,7 @@ pub(super) fn rounds_with<'a>(
             window,
         };
         match info.role {
-            AgentRole::Worker => {
+            AgentRole::Worker | AgentRole::Racer | AgentRole::TestWriter => {
                 let mut bounces = info.sent_back_at.clone();
                 bounces.sort_unstable();
                 let mut starts = vec![info.started_at];
@@ -55,30 +57,30 @@ pub(super) fn rounds_with<'a>(
             | AgentRole::Orchestrator
             | AgentRole::Scout
             | AgentRole::Planner
-            | AgentRole::Decider
-            // Milestone 9.5: split at `sent_back_at` by task M9.5.20.
-            | AgentRole::Racer
-            | AgentRole::TestWriter => {
+            | AgentRole::Decider => {
                 rounds.push(single(info.round));
             }
         }
     }
-    rounds.sort_by_key(|round| (round.started_at, role_rank(round.info.role)));
+    rounds.sort_by_key(|round| (round.started_at, rank(round.info)));
     let mut seen = HashSet::new();
     rounds.retain(|round| seen.insert((round.info.role, round.info.session, round.number)));
     rounds
 }
 
-fn role_rank(role: AgentRole) -> u8 {
-    match role {
-        AgentRole::Worker => 0,
-        AgentRole::Reviewer => 1,
-        AgentRole::Orchestrator => 2,
-        AgentRole::Scout => 3,
-        AgentRole::Planner => 4,
-        AgentRole::Decider => 5,
-        // Milestone 9.5: ordered by task M9.5.20.
-        AgentRole::Racer => 6,
-        AgentRole::TestWriter => 7,
+/// The order of rounds that start together: test writer, worker, racer a, racer b,
+/// then reviewers, lane a's before lane b's (milestone 9.5 decision 29); then the
+/// roles a task rarely carries.
+fn rank(info: &AgentRoundInfo) -> u8 {
+    let lane_b = u8::from(info.lane == Some(RaceLane::B));
+    match info.role {
+        AgentRole::TestWriter => 0,
+        AgentRole::Worker => 1,
+        AgentRole::Racer => 2 + lane_b,
+        AgentRole::Reviewer => 4 + lane_b,
+        AgentRole::Orchestrator => 6,
+        AgentRole::Scout => 7,
+        AgentRole::Planner => 8,
+        AgentRole::Decider => 9,
     }
 }

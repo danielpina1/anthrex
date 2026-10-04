@@ -416,6 +416,7 @@ mod panel;
 mod run;
 pub(crate) mod run_format;
 mod run_orch;
+mod run_patterns;
 mod run_round;
 mod run_stage;
 mod run_stage_pr;
@@ -468,3 +469,6 @@ mod run_task_outcome_tests;
 
 #[cfg(test)]
 mod run_rounds_tests;
+
+#[cfg(test)]
+mod run_patterns_tests;
