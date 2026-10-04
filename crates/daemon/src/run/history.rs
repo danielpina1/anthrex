@@ -157,10 +157,12 @@ fn severities(task: &Task) -> SeverityTally {
 /// phases include the time in its current state up to `now`; `wall_secs` is their sum.
 pub fn task_record(run: &Run, task: &Task, outcome: TaskOutcome, now: u64) -> TaskRecord {
     // Decision 30: the race or pair it ran as. A raced task records the winning lane's
-    // route, whether or not the crown has swapped it in yet.
+    // route until the crown; from then the task is the lane's, and its own route holds
+    // any later escalation (fix round 1, review m1).
     let race = super::snapshot_patterns::race_info(task);
     let winner = race.as_ref().and_then(|r| r.winner);
-    let route = (race.as_ref().zip(winner))
+    let crowned = task.race.as_ref().is_some_and(|r| r.crowned);
+    let route = (race.as_ref().zip(winner).filter(|_| !crowned))
         .and_then(|(r, w)| r.lanes.iter().find(|l| l.lane == w))
         .map_or_else(|| task.route.clone(), |l| l.route.clone());
     let pattern = match (&race, &task.pair) {

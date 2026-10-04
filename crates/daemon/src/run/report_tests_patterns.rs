@@ -4,7 +4,7 @@
 use proto::{Effort, LaneState, PairPhase, Route, Runtime, Strength};
 
 use super::render;
-use crate::run::model::{LogEntry, Pair, Run, RuntimeConcurrency};
+use crate::run::model::{Pair, Run, RuntimeConcurrency};
 use crate::run::test_support::{PROFILE, plan_with, race_of, run_ok, task_toml};
 
 fn route(runtime: Runtime, model: &str) -> Route {
@@ -83,15 +83,8 @@ fn report_has_race_pair_concurrency_and_tuning() {
         "tuning: budget S 40 calls 15m configured (refit would be 55 calls 18m)",
         "tuning: path weights S 550s, M 1650s (derived), hub 1650s (derived)",
     ];
-    let mut log: Vec<LogEntry> = start
-        .iter()
-        .map(|text| LogEntry {
-            at: 1_000,
-            text: text.to_string(),
-        })
-        .collect();
-    log.append(&mut run.log);
-    run.log = log;
+    // As the start freezes them (ruling T21-1); they also open its log.
+    run.tuning_lines = start.iter().map(|text| text.to_string()).collect();
 
     let report = render(&run, 2_000);
 
@@ -100,7 +93,7 @@ fn report_has_race_pair_concurrency_and_tuning() {
         [
             "Race: racer a won",
             "- racer a: claude claude-opus-5-5 (standard/medium); won",
-            "- racer b: codex gpt-6.1-sol (standard/medium); lost; salvaged refs/anthrex/salvage/r1/t1/2; removed stale index.lock, HEAD.lock; reason: racer a won",
+            "- racer b: codex gpt-6.1-sol (standard/medium); lost; salvaged `refs/anthrex/salvage/r1/t1/2`; removed stale index.lock, HEAD.lock; reason: racer a won",
         ]
     );
     let t2 = &report[report.find("## t2:").unwrap()..];
@@ -108,7 +101,7 @@ fn report_has_race_pair_concurrency_and_tuning() {
         block(t2, "Race: "),
         [
             "Race: racer b adopted after racer a went out",
-            "- racer a: claude claude-opus-5-5 (standard/medium); out; salvaged refs/anthrex/salvage/r1/t2/1; checkout kept; reason: the check failed twice",
+            "- racer a: claude claude-opus-5-5 (standard/medium); out; salvaged `refs/anthrex/salvage/r1/t2/1`; checkout kept; reason: the check failed twice",
             "- racer b: codex gpt-6.1-sol (standard/medium); adopted",
         ]
     );
@@ -132,7 +125,7 @@ fn report_has_race_pair_concurrency_and_tuning() {
         )),
         "{report}"
     );
-    // The sections come before the log, which still carries the lines.
+    // The sections come before the log.
     assert!(report.find("## Tuning") < report.find("## Log"));
     assert!(report.find("## Concurrency") < report.find("## Log"));
 }

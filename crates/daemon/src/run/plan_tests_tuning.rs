@@ -170,7 +170,8 @@ fn default_tuning_reproduces_today() {
     // `none == today` and `the_brief_example_builds_a_run`, not a comparison of the two.
     let run = built(EXAMPLE_PLAN, &config, Tuned::default());
     assert!(run.log.is_empty());
-    // What a start with nothing learned freezes is the same run, but for its log line.
+    // What a start with nothing learned freezes is the same run, but for its log line
+    // and the same line kept for the report (ruling T21-1).
     let mut none = built(
         EXAMPLE_PLAN,
         &config,
@@ -181,6 +182,8 @@ fn default_tuning_reproduces_today() {
         log,
         ["tuning: none (history has fewer than 30 samples per class)"]
     );
+    assert_eq!(std::mem::take(&mut none.tuning_lines), log);
+    assert!(run.tuning_lines.is_empty());
     assert_eq!(none, today);
     let limits = &run.limits;
     assert_eq!(
@@ -202,4 +205,31 @@ fn default_tuning_reproduces_today() {
     ] {
         assert!(json.get(key).is_none(), "{key}: {json}");
     }
+}
+
+/// Ruling T21-1: `REPORT.md`'s `## Tuning` reads the lines the start froze, not the
+/// run log, which keeps only its last 500 entries (`engine/requests.rs::LOG_MAX`).
+#[test]
+fn the_tuning_section_survives_a_full_log() {
+    let config = config::Orchestrator::default();
+    let text = plan(&[task_toml("t1", "S", "[\"crates/a/src/x.rs\"]", "")]);
+    let file = refit_file(&[("s", 55, 18)]);
+    let mut run = built(&text, &config, tuned(&file, &config));
+    let line = "tuning: budget S 55 calls 18m from 34 samples";
+    assert_eq!(run.log[0].text, line);
+    // 600 more entries, then the log's cap, as the engine's `log` applies it.
+    for n in 0..600 {
+        run.log.push(crate::run::model::LogEntry {
+            at: 2_000 + n,
+            text: format!("entry {n}"),
+        });
+    }
+    let excess = run.log.len() - 500;
+    run.log.drain(..excess);
+    assert!(run.log.iter().all(|e| !e.text.starts_with("tuning: ")));
+    let report = crate::run::report::render(&run, 3_000);
+    assert!(
+        report.contains(&format!("\n## Tuning\n\n- {line}\n\n")),
+        "{report}"
+    );
 }

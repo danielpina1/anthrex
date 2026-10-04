@@ -41,10 +41,11 @@ fn merged(task: &mut Task) {
 #[test]
 fn task_record_marks_the_pattern_and_round() {
     let mut run = run_of(&["t1", "t2", "t3", "t4", "t5", "t6"]);
-    // t1: lane b (Codex) won and was crowned; the task's own route is still lane a's.
+    // t1: lane b (Codex) won, its crown not back yet; the task's route is still lane a's.
     let raced = &mut run.tasks[0];
     merged(raced);
     raced.race = Some(race_of(raced, [LaneState::Lost, LaneState::Won]));
+    raced.race.as_mut().unwrap().crowned = false;
     let winner_route = raced.race.as_ref().unwrap().lanes[1].route.clone();
     assert_ne!(raced.route, winner_route, "the fixture's lanes differ");
     // t2: lane a went out, lane b was adopted.
@@ -78,7 +79,7 @@ fn task_record_marks_the_pattern_and_round() {
     assert!(!r.race_adopted);
     assert_eq!(
         r.route, winner_route,
-        "a raced task records the winner's route"
+        "before the crown, a raced task records the winner's route"
     );
     assert_eq!(r.writer_failures, 0);
     // HISTORY_VERSION stays 5: the line it writes reads back unchanged.
@@ -108,6 +109,26 @@ fn task_record_marks_the_pattern_and_round() {
     let r = record(5);
     assert_eq!((r.pattern, r.round), (None, 1));
     assert_eq!(r.route, run.tasks[5].route);
+}
+
+/// Fix round 1 (review m1): once crowned, the task is the lane's, and its route is the
+/// task's own, a later escalation (an adopted lane's rung 2) included.
+#[test]
+fn a_crowned_race_records_the_tasks_route() {
+    let mut run = run_of(&["t1"]);
+    let raced = &mut run.tasks[0];
+    raced.race = Some(race_of(raced, [LaneState::Out, LaneState::Adopted]));
+    assert!(raced.race.as_ref().unwrap().crowned);
+    raced.route = route(
+        Runtime::Codex,
+        "gpt-6.1-sol",
+        proto::Strength::Frontier,
+        proto::Effort::High,
+    );
+    let lane = raced.race.as_ref().unwrap().lanes[1].route.clone();
+    assert_ne!(raced.route, lane, "the escalation moved the task's route");
+    let r = task_record(&run, &run.tasks[0], TaskOutcome::Blocked, 1_000);
+    assert_eq!(r.route, run.tasks[0].route);
 }
 
 /// Ruling RH-1 reads a record's origin: an engine-made fix task's record says so.

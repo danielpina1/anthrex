@@ -387,6 +387,11 @@ pub struct Run {
     /// Milestone 9.5 decision 16: the writer cap per runtime label, once one is tracked.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub concurrency: BTreeMap<String, RuntimeConcurrency>,
+    /// Decision 12's `tuning:` lines the start froze, which also open the run's log;
+    /// `REPORT.md`'s `## Tuning` reads them here, since the log keeps only its last
+    /// 500 entries (ruling T21-1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tuning_lines: Vec<String>,
     /// Milestone 9.5 decision 15: since when the run is `paused` or `halted`, while it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused_at: Option<u64>,

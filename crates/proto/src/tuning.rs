@@ -55,6 +55,23 @@ pub enum LaneState {
     Out,
 }
 
+impl LaneState {
+    /// The state's serde name, as `run status` and `REPORT.md` print it (task M9.5.21).
+    pub fn label(self) -> &'static str {
+        match self {
+            LaneState::Preparing => "preparing",
+            LaneState::Working => "working",
+            LaneState::Proof => "proof",
+            LaneState::Check => "check",
+            LaneState::Review => "review",
+            LaneState::Won => "won",
+            LaneState::Adopted => "adopted",
+            LaneState::Lost => "lost",
+            LaneState::Out => "out",
+        }
+    }
+}
+
 /// One lane of a racing task, as shown to a client.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneInfo {

@@ -531,6 +531,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         continued_by: None,
         chain_left: false,
         concurrency: Default::default(),
+        tuning_lines: ctx.tuning.log.clone(),
         paused_at: None,
         paused_secs: 0,
         last_step_at: 0,

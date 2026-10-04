@@ -135,9 +135,8 @@ fn pattern_lines(run: &RunInfo, task: &TaskInfo) -> String {
     let mut out = String::new();
     if let Some(race) = &task.race {
         let lane = |l: &proto::LaneInfo| {
-            let state = serde_json::to_value(l.state).unwrap_or_default();
-            let state = state.as_str().unwrap_or_default();
-            format!("{} {} {state}", l.lane.label(), l.route.runtime.label())
+            let (lane, runtime) = (l.lane.label(), l.route.runtime.label());
+            format!("{lane} {runtime} {}", l.state.label())
         };
         let lanes: Vec<String> = race.lanes.iter().map(lane).collect();
         out.push_str(&format!("    race: {}\n", lanes.join(" · ")));

@@ -266,17 +266,16 @@ fn tasks_table(run: &Run, out: &mut String) {
     }
 }
 
-/// Decision 12's `tuning:` lines, which the start wrote first in the run's log: the
-/// moved file's, the refit-write lines and the start lines. None for a run started
-/// without tuning (history off, or before 9.5).
+/// Decision 12's `tuning:` lines as the start froze them (`Run.tuning_lines`, ruling
+/// T21-1): the moved file's, the refit-write lines and the start lines. None for a run
+/// started without tuning (history off, or before 9.5).
 fn tuning_section(run: &Run, out: &mut String) {
-    let mut lines = run.log.iter().filter(|e| e.text.starts_with("tuning: "));
-    let Some(first) = lines.next() else {
+    if run.tuning_lines.is_empty() {
         return;
-    };
+    }
     out.push_str("\n## Tuning\n\n");
-    for entry in std::iter::once(first).chain(lines) {
-        out.push_str(&format!("- {}\n", list_item_text("", &entry.text)));
+    for line in &run.tuning_lines {
+        out.push_str(&format!("- {}\n", list_item_text("", line)));
     }
 }
 

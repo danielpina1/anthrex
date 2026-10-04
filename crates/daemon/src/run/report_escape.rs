@@ -143,6 +143,21 @@ pub(super) fn list_item_text(prefix: &str, text: &str) -> String {
 /// block's lines are the parser's lines), then wrapped in `fence_for`'s fence, with a
 /// trailing newline before the closing fence when the tail lacks one. The tail itself
 /// is never escaped — inside a fence nothing but a long-enough fence line is special.
+/// An engine-made name (a ref) inside a list item, as an inline code span: one line,
+/// delimited by one backtick more than its longest run of them, so nothing in it is
+/// read as Markdown (task M9.5.21 fix round 1, review m2).
+pub(super) fn code_span(text: &str) -> String {
+    let text = text.replace(['\n', '\r'], " ");
+    let longest = (text.split(|c| c != '`')).map(str::len).max().unwrap_or(0);
+    let ticks = "`".repeat(longest + 1);
+    let pad = if text.starts_with('`') || text.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{ticks}{pad}{text}{pad}{ticks}")
+}
+
 pub(crate) fn fenced(tail: &str) -> String {
     let tail = normalize_line_endings(tail);
     let fence = fence_for(&tail);

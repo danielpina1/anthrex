@@ -170,7 +170,7 @@ fn e2e_race_loser_is_stopped_and_salvaged() {
     let report = report_with(&run, &salvage);
     assert!(
         (report.lines())
-            .any(|l| l.starts_with("- racer b: ") && l.contains(&format!("; salvaged {salvage}"))),
+            .any(|l| l.starts_with("- racer b: ") && l.contains(&format!("; salvaged `{salvage}`"))),
         "lane b's line: {report}"
     );
 }

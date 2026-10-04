@@ -9,9 +9,10 @@ use super::contract::{mode_label, sha7, size_label};
 use super::engine::{epoch_spend, ladder};
 use super::history::writer_failures;
 use super::model::{SizeCheckState, Task};
-use super::orch::json;
 use super::report::{format_utc, verdict_label};
-use super::report_escape::{escape_cell, escape_heading, fenced, list_item_text, plain_text_line};
+use super::report_escape::{
+    code_span, escape_cell, escape_heading, fenced, list_item_text, plain_text_line,
+};
 
 pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
     out.push_str(&format!(
@@ -162,9 +163,9 @@ fn race_lines(task: &Task, out: &mut String) {
     out.push_str(&format!("Race: {head}\n"));
     let stored = task.race.iter().flat_map(|r| r.lanes.iter());
     for (lane, stored) in race.lanes.iter().zip(stored) {
-        let mut parts = vec![route_line(&lane.route), json::label(&lane.state)];
+        let mut parts = vec![route_line(&lane.route), lane.state.label().to_string()];
         if let Some(salvage) = &lane.salvage_ref {
-            parts.push(format!("salvaged {}", escape_cell(salvage)));
+            parts.push(format!("salvaged {}", code_span(salvage)));
         }
         if !stored.cleared_locks.is_empty() {
             parts.push(format!("removed stale {}", stored.cleared_locks.join(", ")));
