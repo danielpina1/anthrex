@@ -390,7 +390,7 @@ pub struct Run {
     /// Milestone 9.5 decision 15: since when the run is `paused` or `halted`, while it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused_at: Option<u64>,
-    /// Decision 15: seconds paused or halted since the current round's approval.
+    /// Decision 15: seconds paused or halted, closed spans only ([`Run::paused_total`]).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub paused_secs: u64,
     /// Decision 15: the time of the last step that changed the run.
@@ -398,6 +398,6 @@ pub struct Run {
     pub last_step_at: u64,
 }
 
-fn is_zero(n: &u64) -> bool {
+pub(crate) fn is_zero(n: &u64) -> bool {
     *n == 0
 }

@@ -501,6 +501,7 @@ fn new_task(
         race_wait_since: None,
         list_pick: None,
         list_escalation: None,
+        paused: Default::default(),
     }
 }
 

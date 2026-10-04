@@ -105,6 +105,7 @@ pub(super) fn iterate(
         windows_before: run.windows_created,
         scouts_before: u32::try_from(run.orch.run_scouts.len()).unwrap_or(u32::MAX),
         approved_at: None,
+        paused_before: 0,
     };
     run.rounds.push(round);
     // KG §2.5 (task 5): above landed PRs only, the round's first stage absorbs the

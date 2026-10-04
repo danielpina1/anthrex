@@ -33,6 +33,9 @@ pub struct Round {
     /// round 1's is `Run.approved_at`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved_at: Option<u64>,
+    /// Decision 15: the run's paused seconds at the round's approval.
+    #[serde(default, skip_serializing_if = "super::is_zero")]
+    pub paused_before: u64,
 }
 
 impl Round {
@@ -51,6 +54,7 @@ impl Round {
             windows_before: 0,
             scouts_before: 0,
             approved_at: None,
+            paused_before: 0,
         }
     }
 

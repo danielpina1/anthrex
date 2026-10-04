@@ -2,8 +2,9 @@
 //! bound ratio, round-aware. Pure: no I/O and no clock (design decision 2).
 //!
 //! Over the **counted tasks** (the current round's, plus earlier rounds' unfinished
-//! fix tasks; never a cancelled one), with `w(t)` = `schedule::weight` and `done(t)`
-//! its active seconds so far:
+//! fix tasks; never a cancelled one; none counted, no estimate), with `w(t)` =
+//! `schedule::weight` and `done(t)` its active seconds so far, never paused time
+//! (ruling T12-2):
 //! - `remaining(t)` = 0 once merged or reported, else `max(w − done, ⌈w / 10⌉)`;
 //! - `left = max(RCP, ⌈Σ_writers remaining / max_writers⌉)`, RCP the longest path of
 //!   `remaining` over the unfinished counted tasks; readers count on paths only (RE-3);
@@ -14,6 +15,9 @@
 
 use proto::{DeliveryMode, TaskState};
 
+use std::collections::HashMap;
+
+use super::engine::pause::active;
 use super::engine::schedule::{is_reader_task, weight};
 use super::model::{Run, Task};
 use super::refit::active_secs;
@@ -27,8 +31,8 @@ pub struct Estimate {
 }
 
 /// Decision 14's estimate of `run` at `now`: `None` without history's weights, before
-/// the current round is approved, and while a `pr` run is delivering with no task
-/// running.
+/// the current round is approved, with no counted task (ruling T12-3), and while a
+/// `pr` run is delivering with no task running.
 pub fn estimate(run: &Run, now: u64) -> Option<Estimate> {
     run.limits.path_weights.as_ref()?;
     let approved = approved_at(run)?;
@@ -41,6 +45,9 @@ pub fn estimate(run: &Run, now: u64) -> Option<Estimate> {
         .and_then(|r| r.ended_at)
         .map_or(now, |at| at.min(now));
     let counted = counted(run);
+    if counted.is_empty() {
+        return None;
+    }
     let w: Vec<u64> = (run.tasks.iter()).map(|t| weight(&run.limits, t)).collect();
     let remaining: Vec<u64> = (run.tasks.iter().enumerate())
         .map(|(i, t)| remaining(run, t, w[i], end))
@@ -57,12 +64,17 @@ pub fn estimate(run: &Run, now: u64) -> Option<Estimate> {
         .collect();
     let left = longest(run, &unfinished, &remaining).max(work(&remaining));
     let bound = longest(run, &counted, &w).max(work(&w));
-    let elapsed = elapsed(run, approved, end);
+    let elapsed = elapsed(run, (approved, paused_before(run)), end);
     let ratio = elapsed.saturating_add(left).saturating_mul(1000) / bound.max(1);
     Some(Estimate {
         left_secs: left,
         bound_ratio_permille: u32::try_from(ratio).ok(),
     })
+}
+
+/// The run's paused seconds at the current round's approval (decision 15).
+fn paused_before(run: &Run) -> u64 {
+    run.current_round().map_or(0, |r| r.paused_before)
 }
 
 /// The current round's approval (ruling RE-1): round 1's is the run's.
@@ -100,37 +112,29 @@ fn remaining(run: &Run, task: &Task, w: u64, end: u64) -> u64 {
     w.saturating_sub(done(run, task, end)).max(w.div_ceil(10))
 }
 
-/// Decision 5's active seconds, plus the open phase's when it is an active one. While
-/// the run is paused the open phase counts up to the pause.
+/// Decision 5's active seconds, plus the open phase's when it is an active one, less
+/// the run's paused time inside them (ruling T12-2).
 fn done(run: &Run, task: &Task, end: u64) -> u64 {
-    let active = matches!(
-        task.state,
-        TaskState::Preparing
-            | TaskState::Working
-            | TaskState::Proof
-            | TaskState::Check
-            | TaskState::Review
-            | TaskState::MergeQueue
-    );
-    let open = if active && task.phase_since > 0 {
-        let until = run.paused_at.map_or(end, |at| at.min(end));
-        until.saturating_sub(task.phase_since)
+    let closed = active_secs(&task.phases).saturating_sub(task.paused.active);
+    let open = if active(task.state) && task.phase_since > 0 {
+        let paused = run.paused_total(end).saturating_sub(task.paused.base);
+        end.saturating_sub(task.phase_since).saturating_sub(paused)
     } else {
         0
     };
-    active_secs(&task.phases).saturating_add(open)
+    closed.saturating_add(open)
 }
 
 /// The longest path of `value` over `nodes`, along declared and implicit dependencies
 /// between them. A cycle (which validation forbids) counts each task once.
 fn longest(run: &Run, nodes: &[usize], value: &[u64]) -> u64 {
-    let index = |id: &str| run.tasks.iter().position(|t| t.id() == id);
+    let index: HashMap<&str, usize> = (nodes.iter()).map(|&i| (run.tasks[i].id(), i)).collect();
     // For each node, the nodes that depend on it.
     let mut next: Vec<Vec<usize>> = vec![Vec::new(); run.tasks.len()];
     for &j in nodes {
         let task = &run.tasks[j];
         for dep in task.spec.deps.iter().chain(&task.implicit_deps) {
-            if let Some(i) = index(dep).filter(|i| nodes.contains(i) && *i != j) {
+            if let Some(&i) = index.get(dep.as_str()).filter(|&&i| i != j) {
                 next[i].push(j);
             }
         }
@@ -167,19 +171,18 @@ fn longest(run: &Run, nodes: &[usize], value: &[u64]) -> u64 {
 
 /// Seconds since the round's approval, less the time paused since (decision 15) and,
 /// in `pr` mode, the round's stages' human review time (ruling RE-2), with the wait in
-/// progress.
-fn elapsed(run: &Run, approved: u64, end: u64) -> u64 {
-    let mut secs = end.saturating_sub(approved).saturating_sub(run.paused_secs);
-    if let Some(at) = run.paused_at {
-        secs = secs.saturating_sub(end.saturating_sub(at));
-    }
+/// progress up to a pause, so that wait is not taken off twice.
+fn elapsed(run: &Run, (approved, paused_before): (u64, u64), end: u64) -> u64 {
+    let paused = run.paused_total(end).saturating_sub(paused_before);
+    let mut secs = end.saturating_sub(approved).saturating_sub(paused);
+    let until = run.paused_at.map_or(end, |at| at.min(end));
     if run.delivery.mode == DeliveryMode::Pr {
         let n = run.round();
         let review = (1..=stage_count(run))
             .filter(|&s| run.round_of_stage(s) == n)
             .filter_map(|s| run.delivery.stage(s))
             .map(|d| {
-                let open = d.wait_from.map_or(0, |from| end.saturating_sub(from));
+                let open = d.wait_from.map_or(0, |from| until.saturating_sub(from));
                 d.review_wait_secs.saturating_add(open)
             })
             .fold(0u64, u64::saturating_add);

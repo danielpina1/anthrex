@@ -310,3 +310,21 @@ impl ListPick {
 #[cfg(test)]
 #[path = "model_tuning_tests.rs"]
 mod tests;
+
+/// Ruling T12-2: a task's share of its run's paused time (`engine/pause.rs`), which the
+/// estimate's `done` leaves out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskPaused {
+    /// The run's paused total ([`super::Run::paused_total`]) when the phase began.
+    #[serde(default)]
+    pub base: u64,
+    /// The paused seconds inside the task's earlier active phases.
+    #[serde(default)]
+    pub active: u64,
+}
+
+impl TaskPaused {
+    pub fn is_zero(&self) -> bool {
+        *self == TaskPaused::default()
+    }
+}

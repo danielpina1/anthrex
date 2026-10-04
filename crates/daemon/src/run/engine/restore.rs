@@ -81,12 +81,8 @@ pub(super) fn restore(
             continue;
         };
         settle(run, now, fx);
-        // Decision 15 (ruling RE-4): a run the restart paused counts its downtime as
-        // paused, from `restored`, else its last change (a run from before 9.5: now).
-        if run.state == RunState::Paused && original.state != RunState::Paused {
-            let last = (run.last_step_at > 0).then_some(run.last_step_at);
-            run.paused_at = Some(run.restored.or(last).unwrap_or(now));
-        }
+        // Decision 15 (ruling T12-1): the downtime of a run left stopped is paused time.
+        super::pause::restored(run, now);
         // Decision 47: a run the restore changed bumps its revision (review minor 5);
         // `step` leaves a run new to the state at the revision it arrived with. The
         // digest moves with it (M9.6 review fix I-1); an unchanged run is left as

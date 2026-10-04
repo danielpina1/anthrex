@@ -12,6 +12,7 @@ use super::dispatch::edit;
 use super::fixture::*;
 use super::goal_rounds_stages::{add_in, plan_round};
 use super::goal_rounds_start::{complete, iterate, reply, started};
+use super::merge::{claim, doc_task};
 use crate::run::estimate::estimate;
 use crate::run::refit::Tuned;
 
@@ -32,27 +33,22 @@ fn weighted(s_secs: u64, m_secs: u64) -> Tuned {
     }
 }
 
-/// One S task (6000 s) working in its window, its plan approved by `--yes`.
-fn working_weighted() -> Fixture {
-    let plan = plan_with(
-        &profile_with("max_writers = 1"),
-        &[task("t1", "S", "a", "")],
-    );
+/// One S task (6000 s) working in its window, its plan approved by `--yes`. Its own
+/// budget is roomy; rung 4's ceiling (M's 60 minutes) still bounds a test's span.
+fn working_weighted() -> (Fixture, u32) {
+    let roomy = "[task.budget]\ntool_calls = 1000\nminutes = 1000";
+    let plan = plan_with(&profile_with("max_writers = 1"), &[doc_task("t1", roomy)]);
     let mut fx = Fixture::with_tuning(&plan, weighted(6_000, 18_000));
     fx.ready(true);
-    fx.launch_all();
+    let window = fx.launch_all()[0].1;
     assert_eq!(fx.task("t1").state, TaskState::Working);
-    fx
+    (fx, window)
 }
 
-/// The bound ratio at `now`, t1 having done `done` seconds by then.
-fn ratio_at(fx: &mut Fixture, now: u64, done: u64) -> u32 {
-    let task = fx.task_mut("t1");
-    task.phases = Default::default();
-    task.phase_since = now - done;
-    estimate(fx.run(), now)
-        .and_then(|e| e.bound_ratio_permille)
-        .expect("a ratio")
+/// `(left, ratio)` at `now`.
+fn at(fx: &Fixture, now: u64) -> (u64, Option<u32>) {
+    let e = estimate(fx.run(), now).expect("an estimate");
+    (e.left_secs, e.bound_ratio_permille)
 }
 
 #[test]
@@ -77,44 +73,61 @@ fn weights_change_dispatch_order() {
 
 #[test]
 fn paused_time_is_not_work() {
-    let mut fx = working_weighted();
+    let (mut fx, window) = working_weighted();
     let approved = fx.run().approved_at.expect("approved by --yes");
-    fx.now = 3_000;
+    assert_eq!(approved, 2_001);
+    // t1 has worked since 2101 (its phase's start; no pause yet). Every step below
+    // comes within `stall_after_secs` of the worker's last event, so no stall, and
+    // within rung 4's 60 minutes of session time.
+    let task = fx.task_mut("t1");
+    (task.phases, task.phase_since) = (Default::default(), 2_101);
+    fx.now = 2_500;
     edit(&mut fx, vec![PlanEdit::Pause]);
     assert_eq!(fx.run().state, RunState::Paused);
-    assert_eq!((fx.run().paused_at, fx.run().paused_secs), (Some(3_001), 0));
-    // While paused the elapsed time stands at 1000 s past the approval, and the open
-    // phase counts only up to the pause: 500 s done at 3001 is all that is done at
-    // 7001 (left 5500: (1000 + 5500) × 1000 / 6000).
-    assert_eq!(approved, 2_001);
-    let task = fx.task_mut("t1");
-    (task.phases, task.phase_since) = (Default::default(), 2_501);
-    let paused = estimate(fx.run(), 7_001).unwrap();
-    assert_eq!(
-        (paused.left_secs, paused.bound_ratio_permille),
-        (5_500, Some(1_083))
-    );
-    fx.now = 8_000;
+    assert_eq!((fx.run().paused_at, fx.run().paused_secs), (Some(2_501), 0));
+    // While paused neither the elapsed time (500 s) nor t1's work (400 s) grows:
+    // left 5600, (500 + 5600) × 1000 / 6000.
+    assert_eq!(at(&fx, 2_501), (5_600, Some(1_016)));
+    assert_eq!(at(&fx, 4_001), (5_600, Some(1_016)));
+    fx.now = 4_500;
     edit(&mut fx, vec![PlanEdit::Resume]);
     assert_eq!(fx.run().state, RunState::Running);
-    assert_eq!((fx.run().paused_at, fx.run().paused_secs), (None, 5_000));
-    // 9001 is 7000 s after the approval, 5000 of them paused: (2000 + 6000) / 6000.
-    assert_eq!(ratio_at(&mut fx, 9_001, 0), 1_333);
+    assert_eq!((fx.run().paused_at, fx.run().paused_secs), (None, 2_000));
+    // Ruling T12-2: at 5001, with the same phase still open, t1 has done 2900 − 2000
+    // seconds, so `left` does not collapse to 3100: it is 5100, and the run is as far
+    // behind as before the pause.
+    assert_eq!(fx.task("t1").phase_since, 2_101);
+    assert_eq!(at(&fx, 5_001), (5_100, Some(1_016)));
+    // The phase ends: its paused seconds move with it, and the next phase starts from
+    // the run's paused total, so the pause is never counted as work later either.
+    fx.now = 5_000;
+    claim(&mut fx, "t1", window, HEAD);
+    let task = fx.task("t1");
+    assert_ne!(task.state, TaskState::Working);
+    assert_eq!((task.paused.active, task.paused.base), (2_000, 2_000));
+    let now = fx.now + 10;
+    assert_eq!(at(&fx, now).0, 6_000 - (now - 4_101));
 }
 
 #[test]
 fn a_restart_counts_downtime_as_paused() {
-    // A run whose sessions the restart ended: from `Run.restored`.
-    let mut fx = working_weighted();
+    // Ruling T12-1: a run whose sessions the restart ended is paused from its last
+    // change, not from the restore.
+    let (mut fx, _) = working_weighted();
+    let last = fx.run().last_step_at;
+    assert_eq!(last, fx.now);
     fx.now = 4_999;
     restart(&mut fx, Vec::new());
     assert_eq!(fx.run().state, RunState::Paused);
     assert_eq!(fx.run().restored, Some(5_000));
-    assert_eq!(fx.run().paused_at, Some(5_000));
+    assert_eq!(fx.run().paused_at, Some(last));
     fx.now = 9_099;
     resume(&mut fx);
     assert_eq!(fx.run().state, RunState::Running);
-    assert_eq!((fx.run().paused_at, fx.run().paused_secs), (None, 4_100));
+    assert_eq!(
+        (fx.run().paused_at, fx.run().paused_secs),
+        (None, 9_100 - last)
+    );
 
     // A run with no session yet: from the last step that changed it.
     let plan = plan_with(
@@ -136,7 +149,7 @@ fn a_restart_counts_downtime_as_paused() {
 
 #[test]
 fn tick_without_a_due_change_still_changes_nothing() {
-    let mut fx = working_weighted();
+    let (mut fx, _) = working_weighted();
     assert_eq!(fx.run().last_step_at, fx.now);
     let (before, revision) = (fx.run().clone(), fx.state.revision);
     fx.now += 5;
@@ -166,4 +179,31 @@ fn a_later_rounds_approval_is_recorded() {
         (TaskState::Working, approved, Default::default());
     let e = estimate(fx.run(), approved + 300).unwrap();
     assert_eq!((e.left_secs, e.bound_ratio_permille), (300, Some(1_000)));
+}
+
+/// Review m1: a run the restore leaves halted, and a paused one stored before 9.5
+/// (no `paused_at`, no `last_step_at`), are paused from their last change, else from
+/// the restore.
+#[test]
+fn a_run_restored_stopped_is_paused_from_its_last_change() {
+    let (mut fx, _) = working_weighted();
+    let last = fx.run().last_step_at;
+    let run = fx.run_mut();
+    run.state = RunState::Halted;
+    run.halted_reason = Some("refs/heads/main was deleted".into());
+    fx.now = 4_999;
+    restart(&mut fx, Vec::new());
+    assert_eq!(fx.run().state, RunState::Halted);
+    assert_eq!(fx.run().paused_at, Some(last));
+
+    let (mut fx, _) = working_weighted();
+    let run = fx.run_mut();
+    (run.state, run.paused_from) = (RunState::Paused, Some(RunState::Running));
+    run.last_step_at = 0;
+    fx.now = 4_999;
+    restart(&mut fx, Vec::new());
+    assert_eq!(fx.run().paused_at, Some(5_000));
+    fx.now = 9_099;
+    resume(&mut fx);
+    assert_eq!(fx.run().paused_secs, 4_100);
 }

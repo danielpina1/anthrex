@@ -18,6 +18,13 @@ impl Run {
         rebased == *other
     }
 
+    /// Milestone 9.5 decision 15: every second the run has been paused or halted by
+    /// `at`, the span in progress included.
+    pub fn paused_total(&self, at: u64) -> u64 {
+        let open = self.paused_at.map_or(0, |p| at.saturating_sub(p));
+        self.paused_secs.saturating_add(open)
+    }
+
     /// `anthrex/<id>/integration`.
     pub fn run_branch(&self) -> String {
         format!("anthrex/{}/integration", self.id)

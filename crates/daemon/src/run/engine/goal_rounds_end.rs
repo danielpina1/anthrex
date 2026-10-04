@@ -57,12 +57,14 @@ pub(super) fn approved(run: &mut Run, by: &str, now: u64) {
         run.approved_by = Some(by.to_string());
         run.approved_at = Some(now);
         stages::fix_layout(run, now);
-    } else if let Some(round) = run.rounds.last_mut() {
-        // Milestone 9.5 ruling RE-1: a later round's estimate runs from its approval.
-        round.approved_at = Some(now);
     }
-    // Decision 15: the estimate's paused time counts from the round's approval.
-    run.paused_secs = 0;
+    // Milestone 9.5 ruling RE-1 and decision 15: a later round's estimate runs from its
+    // approval, and every round's counts the time paused since.
+    let (later, paused) = (run.round() > 1, run.paused_secs);
+    if let Some(round) = run.rounds.last_mut() {
+        round.approved_at = later.then_some(now);
+        round.paused_before = paused;
+    }
     for q in &mut run.decider_queue {
         q.queued_at = now;
     }

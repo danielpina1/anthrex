@@ -36,8 +36,6 @@
 
 use std::collections::BTreeMap;
 
-use proto::RunState;
-
 use super::model::{AgentRound, OpId, PendingOp, Run};
 
 pub(crate) mod actions;
@@ -78,6 +76,7 @@ mod ops;
 mod orch;
 mod orch_window;
 mod outbox;
+pub(crate) mod pause;
 mod planners;
 mod promote;
 mod propagate;
@@ -338,7 +337,7 @@ fn finish(
             Some(old) => {
                 run.revision += 1;
                 let urgent = without_counters(old) != without_counters(run);
-                paused(old.state, run, now);
+                pause::account(old, run, now);
                 // Decision 16: the digest's revision moves only with its fingerprint. A
                 // run new to the state (a restore) is left as loaded (final review B-5).
                 if urgent {
@@ -370,21 +369,6 @@ fn finish(
         out.push(Effect::Publish { structural });
     }
     (std::mem::take(state), out)
-}
-
-/// Decision 15: a run entering `paused` or `halted` records when; leaving them, it adds
-/// the span to `paused_secs`. Every change records the step's time (`last_step_at`).
-fn paused(was: RunState, run: &mut Run, now: u64) {
-    let stopped = |s: RunState| matches!(s, RunState::Paused | RunState::Halted);
-    match (stopped(was), stopped(run.state)) {
-        (false, true) => run.paused_at = Some(now),
-        (true, false) => {
-            let since = run.paused_at.take().unwrap_or(now);
-            run.paused_secs = run.paused_secs.saturating_add(now.saturating_sub(since));
-        }
-        _ => {}
-    }
-    run.last_step_at = now;
 }
 
 /// `run` with every round's and task's counters zeroed and its revision fixed, to tell

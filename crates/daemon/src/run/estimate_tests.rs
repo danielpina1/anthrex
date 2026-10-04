@@ -173,6 +173,11 @@ fn a_later_round_is_estimated_from_its_own_approval() {
     // Counted: n1 (600), n2 (1800) and round 1's unfinished fix task (600): 3000.
     // 300 s since round 2's approval: (300 + 3000) × 1000 / 3000 = 1100.
     assert_eq!(est(&run, APPROVED + 300), (3_000, Some(1_100)));
+    // Only the time paused since round 2's approval is taken off: 100 of the 1000.
+    let mut paused = round_two();
+    paused.paused_secs = 1_000;
+    paused.rounds[1].paused_before = 900;
+    assert_eq!(est(&paused, APPROVED + 300), (3_000, Some(1_066)));
     // Before round 2 is approved there is no estimate, whatever round 1's approval.
     let mut planning = round_two();
     planning.rounds[1].approved_at = None;
@@ -245,4 +250,15 @@ fn snapshot_fills_estimate_fields() {
     let info = &snapshot(&state, APPROVED + 1_200).runs[0];
     assert_eq!(info.estimate_left_secs, Some(1_800));
     assert_eq!(info.bound_ratio_permille, Some(1_666));
+}
+
+/// Ruling T12-3: a round whose every counted task was cancelled has no estimate, not a
+/// ratio in the millions.
+#[test]
+fn no_counted_task_no_estimate() {
+    let mut run = round_two();
+    for id in ["fix", "n1", "n2"] {
+        task(&mut run, id).state = TaskState::Cancelled;
+    }
+    assert_eq!(estimate(&run, APPROVED + 300), None);
 }

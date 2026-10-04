@@ -214,6 +214,9 @@ pub struct Task {
     /// records it and clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub list_escalation: Option<super::ListPick>,
+    /// Milestone 9.5 ruling T12-2: the run's paused time in the task's phases.
+    #[serde(default, skip_serializing_if = "super::TaskPaused::is_zero")]
+    pub paused: super::TaskPaused,
 }
 
 impl Task {
