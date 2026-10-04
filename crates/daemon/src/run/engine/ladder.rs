@@ -277,7 +277,7 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     kill_worker(run, i, fx);
     drop_queued(run, i);
     // Milestone 9.5 decision 25: a fresh test writer, while the test is being written.
-    if !super::pair::escalate_writer(run, i) {
+    if !super::pair::escalate_writer(run, i, now) {
         let (route, step) = rung2_route(run, i);
         if let Some(text) = every_route_failed(run, i, &route) {
             super::requests::log(run, now, text);

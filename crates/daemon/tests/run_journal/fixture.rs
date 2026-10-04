@@ -405,6 +405,7 @@ pub fn full_run(data_dir: &Path) -> Run {
         red_tail: "red".into(),
         head_tail: "green".into(),
         lane: None,
+        red_only: false,
     });
     task.salvage_refs = vec!["refs/anthrex/salvage/x".into()];
     task.failure_log = vec!["a failure".into()];

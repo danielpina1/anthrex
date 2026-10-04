@@ -69,6 +69,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 // Ruling C-27 (4): a bisect fix task that ended without merging.
                 super::full::fix_ended_pass(run);
                 review::watch(run, now, fx);
+                // Milestone 9.5 ruling T16-3: a confirmed red's implementer.
+                super::pair::launch_due(run, now, fx);
                 launch_ready(run, now, fx);
                 dispatch_writers(run, now, fx);
                 // M8b decision 18: queued deciders take free reader slots first.

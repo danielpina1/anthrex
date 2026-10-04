@@ -154,6 +154,7 @@ fn a_run_with_race_pair_and_caps_round_trips() {
         red_checked: Some(true),
         writer_failures: 1,
         writer_sessions: 2,
+        escalated_from: None,
     });
     run.concurrency.insert(
         "codex".into(),

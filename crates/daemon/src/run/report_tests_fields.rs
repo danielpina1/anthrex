@@ -87,6 +87,7 @@ const FIELDS: &[Field] = &[
                 red_tail: String::new(),
                 head_tail: String::new(),
                 lane: None,
+                red_only: false,
             })
         },
         new_lists: 0,

@@ -394,11 +394,18 @@ pub(crate) fn override_task(run: &Run, task_id: &str) -> Option<String> {
         .then(|| format!("task {task_id} has no commits; {OVERRIDE_APPLIES}"))
 }
 
-/// Why task `i` cannot be overridden now, if it cannot: a held or `dep_cancelled` task
-/// waits for its dependencies; any task but one in `review` or `blocked` is refused.
+/// Why task `i` cannot be overridden now, if it cannot: a paired task whose test is
+/// still being written waits for its implementer (milestone 9.5 ruling T16-5: a failing
+/// test alone never merges); a held or `dep_cancelled` task waits for its dependencies;
+/// any task but one in `review` or `blocked` is refused.
 pub(crate) fn override_refusal(run: &Run, i: usize) -> Option<String> {
     let task = &run.tasks[i];
     let id = task.id();
+    if super::super::pair::writing(task) {
+        return Some(format!(
+            "task {id} is still writing its test; override it once its implementer has started"
+        ));
+    }
     let dep_cancelled = task
         .block
         .as_ref()

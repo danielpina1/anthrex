@@ -238,6 +238,7 @@ fn proof_test_field_with_a_newline_does_not_split_its_line_n2() {
         red_tail: String::new(),
         head_tail: String::new(),
         lane: None,
+        red_only: false,
     });
     let out = render(&run, 2_000);
     let proof_line = out

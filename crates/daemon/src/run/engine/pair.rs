@@ -9,15 +9,16 @@
 use proto::{AgentRole, GateKind, PairPhase, Route, Runtime, TaskState};
 
 use super::dispatch::{history, launch_implementer};
+use super::schedule::op_in_flight;
 use super::signals::end_round;
 use super::tools::DoneArgs;
-use super::{Effect, clock, ladder, requests};
+use super::{Effect, OpKind, clock, ladder, requests};
 use crate::run::contract_patterns::{
     implementer_wrong_test, red_check_failed_message, red_confirmed_line, writer_not_on_red,
 };
-use crate::run::model::{Pair, Run, Task};
+use crate::run::model::{Pair, ProofRecord, Run, Task};
 use crate::run::phases::set_state;
-use crate::run::validate_patterns::peer_route;
+use crate::run::route_pick::{every_route_failed, writer_route, writer_step};
 
 /// Whether task `task` is a paired task whose test writer is (or will be) at work.
 pub(crate) fn writing(task: &Task) -> bool {
@@ -36,16 +37,16 @@ fn handed(task: &Task) -> Option<(&str, &str)> {
 }
 
 /// Decision 25, at dispatch: a paired task starts in `Writing`, its test writer on the
-/// peer runtime at the task's strength and effort when the roster has one (after the
-/// installed skip), else on the task's own route. A task already paired keeps its pair
-/// (a retry that dispatches it again resumes the phase it was in).
+/// peer runtime at the task's strength and effort when the roster has one, after the
+/// workers' installed and overlap skips (ruling T16-2, `route_pick::writer_route`),
+/// else on the task's own route. A task already paired keeps its pair (a retry that
+/// dispatches it again resumes the phase it was in).
 pub(super) fn begin(run: &mut Run, i: usize) {
     let task = &run.tasks[i];
     if !task.spec.pair || task.pair.is_some() {
         return;
     }
-    let writer_route = peer_route(&run.roster, &task.route, &run.orch.installed)
-        .unwrap_or_else(|| task.route.clone());
+    let writer_route = writer_route(run, i);
     run.tasks[i].pair = Some(Pair {
         phase: PairPhase::Writing,
         writer_route,
@@ -54,6 +55,7 @@ pub(super) fn begin(run: &mut Run, i: usize) {
         red_checked: None,
         writer_failures: 0,
         writer_sessions: 0,
+        escalated_from: None,
     });
 }
 
@@ -73,15 +75,23 @@ pub(super) fn writer_launched(run: &mut Run, i: usize) {
 }
 
 /// Decision 38's rung 2 (and `run retry`) while the test writer works: the fresh
-/// session is a test writer on `roster::escalate` of its route; the implementer's route
-/// is left as it is. Returns whether it applied.
-pub(super) fn escalate_writer(run: &mut Run, i: usize) -> bool {
-    if !writing(&run.tasks[i]) {
+/// session is a test writer on the workers' skipping ladder from its route (ruling
+/// T16-2, `route_pick::writer_step`, with the every-route-failed line); the
+/// implementer's route is left as it is. Returns whether it applied.
+pub(super) fn escalate_writer(run: &mut Run, i: usize, now: u64) -> bool {
+    let Some(current) = (run.tasks[i].pair.as_ref())
+        .filter(|p| p.phase == PairPhase::Writing)
+        .map(|p| p.writer_route.clone())
+    else {
         return false;
+    };
+    let next = writer_step(run, i, &current);
+    if let Some(text) = every_route_failed(run, i, &next) {
+        requests::log(run, now, text);
     }
-    let roster = &run.roster;
     if let Some(pair) = run.tasks[i].pair.as_mut() {
-        pair.writer_route = crate::run::roster::escalate(roster, &pair.writer_route);
+        pair.writer_route = next;
+        pair.escalated_from = Some(current);
     }
     true
 }
@@ -97,7 +107,8 @@ pub(super) fn writer_rejection(task: &Task, red: Option<&str>, head: &str) -> Op
 /// writer's is refused.
 pub(super) fn implementer_mismatch(task: &Task, args: &DoneArgs) -> Option<String> {
     let (test, red) = handed(task)?;
-    let red_ok = (args.red.as_deref()).is_none_or(|r| r.len() >= 4 && red.starts_with(r));
+    let red_ok = (args.red.as_deref())
+        .is_none_or(|r| r.len() >= 4 && red.starts_with(&r.to_ascii_lowercase()));
     let test_ok = args.test.as_deref().is_none_or(|t| t == test);
     (!(red_ok && test_ok)).then(|| implementer_wrong_test(test, red))
 }
@@ -117,7 +128,8 @@ pub(super) fn fill(task: &Task, args: DoneArgs) -> DoneArgs {
 
 /// Decision 25: the red-only proof's result for task `i`. A test that passed at red is
 /// a gate failure of `proof` for the test writer; one that failed, as it should, hands
-/// the red commit to a fresh implementer in the same checkout.
+/// the red commit to a fresh implementer in the same checkout, which the running pass
+/// launches ([`launch_due`]; ruling T16-3: never while the run is paused or halted).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn on_red_checked(
     run: &mut Run,
@@ -128,9 +140,25 @@ pub(super) fn on_red_checked(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
-    let claim = run.tasks[i].done.as_ref();
+    let task = &run.tasks[i];
+    let claim = task.done.as_ref();
     let test = claim.and_then(|c| c.test.clone()).unwrap_or_default();
     let red = claim.and_then(|c| c.red.clone()).unwrap_or_default();
+    // Minor m3: the red check is on record, marked red-only.
+    let record = ProofRecord {
+        at: now,
+        test: test.clone(),
+        red: red.clone(),
+        head: task.head.clone().unwrap_or_default(),
+        red_failed,
+        head_passed: false,
+        matched: false,
+        red_tail: tail.to_string(),
+        head_tail: String::new(),
+        lane: None,
+        red_only: true,
+    };
+    run.tasks[i].proofs.push(record);
     if !red_failed {
         let text = red_check_failed_message(&red, &test, command, tail);
         ladder::gate_failure(run, i, GateKind::Proof, text, false, now, fx);
@@ -159,7 +187,24 @@ pub(super) fn on_red_checked(
     let line = red_confirmed_line(task.id(), &red);
     history(run, i, now, line.clone());
     requests::log(run, now, line);
-    launch_implementer(run, i, now, fx);
+}
+
+/// Ruling T16-3 (as ruling T14-I2 for every launch an op result asks for): each running
+/// pass launches the implementer of a paired task whose red was confirmed and that has
+/// had none yet. A task blocked meanwhile, or given a fresh session, goes the usual way.
+pub(super) fn launch_due(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    for i in 0..run.tasks.len() {
+        let task = &run.tasks[i];
+        let due = handed(task).is_some()
+            && task.state == TaskState::Working
+            && !task.awaiting_deps
+            && task.fresh_session.is_none()
+            && !task.rounds.iter().any(|r| r.role == AgentRole::Worker)
+            && !op_in_flight(run, task.id(), |k| matches!(k, OpKind::CreateWindow { .. }));
+        if due {
+            launch_implementer(run, i, now, fx);
+        }
+    }
 }
 
 /// The test writer's session is done with: retired, as a merged task's worker is.

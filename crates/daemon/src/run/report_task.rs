@@ -58,8 +58,10 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
     ));
     budget_and_spend(task, now, out);
     for (i, p) in task.proofs.iter().enumerate() {
+        // Milestone 9.5 minor m3: decision 25's red check of a test writer's claim.
+        let kind = if p.red_only { "Red check" } else { "Proof" };
         out.push_str(&format!(
-            "Proof {}: test={} red={} red_failed={} head_passed={} matched={} ({})\n",
+            "{kind} {}: test={} red={} red_failed={} head_passed={} matched={} ({})\n",
             i + 1,
             escape_cell(&p.test),
             sha7(&p.red),

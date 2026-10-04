@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use super::tiers::range_words;
 use super::{DIFF_FLAGS, Git, PATCH_PREFIXES, failure, nul_fields, os};
 use crate::run::tiers::weakening::{self, SignalInput};
-use crate::run::tiers::{ClaimSignals, SignalsSpec};
+use crate::run::tiers::{ClaimSignals, SIGNALS_MAX, Signal, SignalsSpec};
 use crate::worktree::{WorktreeError, run_git_head_tail};
 
 /// At most this much of decision 40's `-U0` diff is read; the rest is read and dropped
@@ -299,4 +299,76 @@ fn read_signals(
         more: u32::try_from(more).unwrap_or(u32::MAX),
         base,
     })
+}
+
+/// Milestone 9.5 rulings RP-2 and T16-1: a paired task's implementer's signals. While no
+/// merge has landed on the checkout's first-parent line after `red` (the engine's
+/// refresh or merge-queue hand-back), they are read over `red..head`. Once one has, the
+/// newest such merge is the base, so the run head's changes it carries are never the
+/// implementer's; the paths `start..red` touched (the writer's test) are still read
+/// over `red..head`, those paths only, in place of the merge-based read's. Deleted test
+/// files and `DiffTooLarge` first; at most [`SIGNALS_MAX`], `more` counting both reads'
+/// overflow (the merge-based read's may include a dropped signal on a red path).
+pub fn pair_signals(
+    git: &OsStr,
+    worktree: &Path,
+    (start, red, head): (&str, &str, &str),
+    spec: &SignalsSpec,
+    timeout: Duration,
+) -> Result<ClaimSignals, String> {
+    if [start, red, head].iter().any(|r| r.starts_with('-')) {
+        return Err(format!("not a diff range: {start:?} {red:?} {head:?}"));
+    }
+    let g = Git::new(git, timeout);
+    let range = format!("{red}..{head}");
+    let merges = [os("rev-list"), os("--first-parent"), os("--merges")];
+    let mut args = merges.to_vec();
+    args.extend([os("-n"), os("1"), os(&range)]);
+    let merge = g.ok(worktree, &args)?.trim().to_string();
+    if merge.is_empty() {
+        return done_signals_from(git, worktree, (red, head), spec, timeout);
+    }
+    let attrs = NoAttributes::probe(git, worktree, timeout)?;
+    let red_paths = signal_paths(
+        git,
+        worktree,
+        &format!("{start}..{red}"),
+        None,
+        &attrs,
+        timeout,
+    )?;
+    let on_red = |s: &Signal| path_of(s).is_some_and(|p| red_paths.iter().any(|r| r == p));
+    let since = done_signals_from(git, worktree, (&merge, head), spec, timeout)?;
+    let of_red = done_signals_from(git, worktree, (red, head), spec, timeout)?;
+    let mut list: Vec<Signal> = (since.list.into_iter().filter(|s| !on_red(s)))
+        .chain(of_red.list.into_iter().filter(|s| on_red(s)))
+        .collect();
+    let first = |s: &Signal| match s {
+        Signal::DeletedTestFile { .. } => 0,
+        Signal::DiffTooLarge => 1,
+        _ => 2,
+    };
+    list.sort_by_key(first);
+    let mut seen = false;
+    list.retain(|s| !matches!(s, Signal::DiffTooLarge) || !std::mem::replace(&mut seen, true));
+    let over = list.len().saturating_sub(SIGNALS_MAX);
+    list.truncate(SIGNALS_MAX);
+    let more = (since.more.saturating_add(of_red.more))
+        .saturating_add(u32::try_from(over).unwrap_or(u32::MAX));
+    Ok(ClaimSignals {
+        list,
+        more,
+        base: merge,
+    })
+}
+
+/// The path a signal is on (`DiffTooLarge` has none).
+fn path_of(signal: &Signal) -> Option<&str> {
+    match signal {
+        Signal::DeletedTestFile { path }
+        | Signal::SkipMarker { path, .. }
+        | Signal::AssertionLoss { path, .. }
+        | Signal::TestCodeRemoved { path, .. } => Some(path),
+        Signal::DiffTooLarge => None,
+    }
 }

@@ -368,7 +368,7 @@ pub(super) fn rung2(
 ) -> &'static str {
     // Milestone 9.5 decision 26: while the test is being written, the test writer's
     // route escalates and the implementer's stays.
-    let writer = super::pair::escalate_writer(run, i);
+    let writer = super::pair::escalate_writer(run, i, now);
     let (route, step) = match writer {
         true => (run.tasks[i].route.clone(), None),
         false => crate::run::route_pick::rung2_route(run, i),

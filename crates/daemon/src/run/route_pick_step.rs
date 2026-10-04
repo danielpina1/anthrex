@@ -102,6 +102,30 @@ pub fn rung2_route(run: &Run, i: usize) -> (Route, Option<ListPick>) {
     (escalate_skipping(&roster, &task.route, &failed), None)
 }
 
+/// Milestone 9.5 decision 25 (ruling T16-2): a paired task's test writer's route at
+/// dispatch: the peer runtime's first entry at the task's strength and effort among
+/// those [`open_roster`] leaves open (installed, and no overlapping task on another
+/// runtime), else the task's own route.
+pub fn writer_route(run: &Run, i: usize) -> Route {
+    let task = &run.tasks[i];
+    let roster = open_roster(run, i, true);
+    crate::run::validate_patterns::peer_route(&roster, &task.route, &run.orch.installed)
+        .unwrap_or_else(|| task.route.clone())
+}
+
+/// Ruling T16-2: rung 2's and `run retry`'s step for a test writer on `current`: the
+/// roster half of [`rung2_route`] from the writer's route (a model list picks the
+/// task's route, which the implementer keeps): a substitute when `current` failed in
+/// this task, else `escalate_skipping`, both over [`open_roster`].
+pub fn writer_step(run: &Run, i: usize, current: &Route) -> Route {
+    let failed = failed_routes(&run.tasks[i]);
+    let roster = open_roster(run, i, true);
+    if failed_in(&failed, current) {
+        return roster_substitute(&roster, current, &failed).unwrap_or_else(|| current.clone());
+    }
+    escalate_skipping(&roster, current, &failed)
+}
+
 /// Ruling T10a-6: the roster entries task `i` may move to: those on its own runtime,
 /// and those on a runtime installed for the run that, with `overlap`, no unfinished
 /// task on another runtime holds by overlapping the task's `owns` (M8a decision 11,

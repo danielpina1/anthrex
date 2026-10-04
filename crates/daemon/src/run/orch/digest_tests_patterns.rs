@@ -68,6 +68,7 @@ fn pair(phase: PairPhase, red: Option<&str>) -> Pair {
         red_checked: red.map(|_| true),
         writer_failures: 0,
         writer_sessions: 1,
+        escalated_from: None,
     }
 }
 

@@ -508,12 +508,14 @@ fn verify_done(
     });
     // Milestone 9.1 decision 40: only when the op asks (never for an untiered profile).
     // Controller ruling C-21 (2): a sync task's from its conflicted tree.
-    // Milestone 9.5 ruling RP-2: a paired task's implementer's from its red commit.
-    let from = signals
-        .and_then(|s| s.from.as_deref())
-        .or(spill_base.as_deref());
+    // Milestone 9.5 rulings RP-2 and T16-1: a paired task's implementer's from its red
+    // commit, or from the newest merge after it with red's own paths from red.
+    let red_at = signals.and_then(|s| s.red.as_deref());
     let mut signals =
-        match (signals, from) {
+        match (signals, red_at.or(spill_base.as_deref())) {
+            (Some(spec), Some(red)) if red_at.is_some() && !d.head.is_empty() => Some(Box::new(
+                git::pair_signals(git, worktree, (start, red, &d.head), spec, t)?,
+            )),
             (Some(spec), Some(base)) if !d.head.is_empty() => Some(Box::new(
                 git::done_signals_from(git, worktree, (base, &d.head), spec, t)?,
             )),

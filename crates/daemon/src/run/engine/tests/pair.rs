@@ -176,6 +176,8 @@ fn a_paired_task_starts_with_a_test_writer_on_the_peer_runtime() {
         (decision.trigger.as_str(), &decision.chosen),
         ("test_writer", &pair.writer_route)
     );
+    // Fix round 1, minor m1: the source names the peer pick.
+    assert_eq!(decision.source, "peer_route");
     // The prompt, exactly.
     let want = format!(
         "[anthrex] Test for task t1: Title t1\nRun goal: Engine test\nWorktree: {}\n\
@@ -459,7 +461,15 @@ fn a_restart_resumes_the_test_writer() {
     assert_eq!(launch.name, format!("{H4}/t1.t1"));
     assert_eq!(role_of(&launch), AgentRole::TestWriter);
     assert_eq!(fx.task("t1").rounds.len(), 1, "the same round, relaunched");
+    // Fix round 1, minor m1: a same-route fresh session records no second pick.
+    let writers = (fx.task("t1").routing_decisions.iter())
+        .filter(|d| d.role == AgentRole::TestWriter)
+        .count();
+    assert_eq!(writers, 1);
 }
 
 #[path = "pair_implementer.rs"]
 mod implementer;
+
+#[path = "pair_fixes.rs"]
+mod fixes;

@@ -356,17 +356,49 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
 }
 
 /// Milestone 9.5 decision 9a: a paired task's test writer session is being launched on
-/// `chosen` (the peer runtime's route at dispatch, or rung 2's), with trigger
-/// `test_writer`. Nothing for a run without history.
+/// `chosen`. Its first session records trigger `test_writer`, its source naming the
+/// pick (`peer_route` for the peer runtime's route, else the task route's own source);
+/// a session after rung 2 or `run retry` records `escalation` from the route it stepped
+/// from; any other fresh session (a lost resume, say) records nothing, as a worker's.
+/// Nothing for a run without history.
 pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
+    let from = (run.tasks[i].pair.as_mut()).and_then(|p| p.escalated_from.take());
     if !run.history {
         return;
     }
     let task = &run.tasks[i];
     let id = (AgentRole::TestWriter, task.session, None);
-    let how = ("test_writer", "class_default", WORKER_POLICY);
-    let pool = worker_pool(&run.roster, chosen, false);
-    let d = decision(run, task, id, how, chosen, pool, now);
+    let first = !(task.routing_decisions.iter()).any(|d| d.role == AgentRole::TestWriter);
+    let d = match from {
+        Some(from) => decision(
+            run,
+            task,
+            id,
+            ("escalation", "escalation_policy", ESCALATE_POLICY),
+            chosen,
+            mark_failed(escalation_pool(&run.roster, &from), task, chosen),
+            now,
+        ),
+        None if first => {
+            let explicit = task.spec.route.model.is_some();
+            let source = match (*chosen != task.route, explicit) {
+                (true, _) => "peer_route",
+                (false, true) => "explicit_task",
+                (false, false) => "class_default",
+            };
+            let pool = worker_pool(&run.roster, chosen, explicit);
+            decision(
+                run,
+                task,
+                id,
+                ("test_writer", source, WORKER_POLICY),
+                chosen,
+                pool,
+                now,
+            )
+        }
+        None => return,
+    };
     push(&mut run.tasks[i], d);
 }
 

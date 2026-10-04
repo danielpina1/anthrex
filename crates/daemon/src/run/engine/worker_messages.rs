@@ -122,9 +122,11 @@ fn once(list: &[String]) -> Vec<String> {
 }
 
 /// Decision 42e: the outbox holds a task's mail while its refresh is due or in flight,
-/// so the refresh's result and a message sent in the next call go out as one turn.
+/// so the refresh's result and a message sent in the next call go out as one turn. A
+/// test writer's mail is never held: its refresh waits for the implementer (milestone
+/// 9.5 ruling T16-6).
 pub(super) fn holds_mail(task: &Task) -> bool {
-    task.orch.refresh.is_some()
+    task.orch.refresh.is_some() && !super::pair::writing(task)
 }
 
 /// Decision 42e: at its worker's turn boundary, each due refresh becomes M8a's
@@ -139,7 +141,8 @@ pub(super) fn refresh_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             history(run, i, now, "refresh dropped: the task finished");
             continue;
         }
-        if !at_boundary(run, i) {
+        // Ruling T16-6: nothing is merged into a test writer's checkout.
+        if super::pair::writing(&run.tasks[i]) || !at_boundary(run, i) {
             continue;
         }
         let task = &run.tasks[i];

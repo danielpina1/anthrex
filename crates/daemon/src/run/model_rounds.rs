@@ -242,6 +242,11 @@ pub struct ProofRecord {
     /// Milestone 9.5 decision 20: the race lane it belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lane: Option<proto::RaceLane>,
+    /// Milestone 9.5 decision 25 (minor m3 of task 16's review): decision 25's red check
+    /// of a test writer's claim, which runs the test at red only. Not a proof: the
+    /// history tally and the snapshot's last proof leave it out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub red_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

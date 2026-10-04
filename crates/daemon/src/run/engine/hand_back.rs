@@ -113,7 +113,8 @@ pub(super) fn hand_back_due(run: &mut Run, i: usize, now: u64) {
 pub(super) fn start_due_hand_backs(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
-        if task.state == TaskState::MergeQueue && task.handback_due {
+        // Milestone 9.5 ruling T16-6: never into a test writer's checkout.
+        if task.state == TaskState::MergeQueue && task.handback_due && !super::pair::writing(task) {
             send_due(run, i, now, fx);
         }
     }

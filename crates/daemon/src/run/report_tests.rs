@@ -106,6 +106,7 @@ fn report_has_every_section() {
             red_tail: "red tail".to_string(),
             head_tail: "head tail".to_string(),
             lane: None,
+            red_only: false,
         });
         t.checks.push(CheckRecord {
             at: 1_700,

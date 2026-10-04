@@ -372,15 +372,20 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
             summary_source: c.summary_source,
             tier: c.tier.as_ref().map(tier_info),
         }),
-        last_proof: t.proofs.last().map(|p| ProofInfo {
-            at: p.at,
-            test: p.test.clone(),
-            red: p.red.clone(),
-            red_failed: p.red_failed,
-            head_passed: p.head_passed,
-            matched: p.matched,
-            ok: p.red_failed && p.head_passed && p.matched,
-        }),
+        last_proof: t
+            .proofs
+            .iter()
+            .rev()
+            .find(|p| !p.red_only)
+            .map(|p| ProofInfo {
+                at: p.at,
+                test: p.test.clone(),
+                red: p.red.clone(),
+                red_failed: p.red_failed,
+                head_passed: p.head_passed,
+                matched: p.matched,
+                ok: p.red_failed && p.head_passed && p.matched,
+            }),
         merge_commit: t.merge_commit.clone(),
         merged_without_approval: t.merged_without_approval.clone(),
         salvage_refs: t.salvage_refs.clone(),

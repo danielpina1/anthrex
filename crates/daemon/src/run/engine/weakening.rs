@@ -29,7 +29,7 @@ pub(super) fn spec(run: &Run, task: &Task) -> Option<SignalsSpec> {
     wanted.then(|| SignalsSpec {
         test_paths: tiers.test_paths.clone(),
         skip_markers: tiers.skip_markers.clone(),
-        from: red.and_then(|p| p.red.clone()),
+        red: red.and_then(|p| p.red.clone()),
     })
 }
 

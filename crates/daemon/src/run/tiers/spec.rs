@@ -127,9 +127,10 @@ pub struct ClaimSignals {
 pub struct SignalsSpec {
     pub test_paths: Vec<String>,
     pub skip_markers: Vec<String>,
-    /// Milestone 9.5 ruling RP-2: the commit the signals are read from instead of the
-    /// merge base with the run head; a paired task's implementer's is the red commit, so
-    /// a change to the test writer's test shows.
+    /// Milestone 9.5 rulings RP-2 and T16-1: a paired task's implementer's red commit.
+    /// Its signals are read from red, or from the newest merge after red once one has
+    /// landed, and the paths red's own commits touched are read from red as well
+    /// (`git::pair_signals`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub from: Option<String>,
+    pub red: Option<String>,
 }

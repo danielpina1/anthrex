@@ -10,6 +10,7 @@ use super::schedule::{deps_done, op_in_flight, unfinished_deps};
 use super::{Effect, OpKind, OpResult, emit_op, next_op, outbox};
 use crate::run::contract::{conflict_message, is_conflict_message};
 use crate::run::model::Run;
+use crate::run::orch::RefreshState;
 
 /// M8a.6 ruling N5 as task state (ruling T11-I1..I3): a started task that has an
 /// unfinished dependency carries the hold (`awaiting_deps`) from the moment it gains
@@ -122,6 +123,10 @@ pub(super) fn resume_held(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             relax(run, i, now);
             continue;
         }
+        if super::pair::writing(task) {
+            lift_writing(run, i, now);
+            continue;
+        }
         let (id, worktree) = (task.id().to_string(), task.worktree.clone());
         let task_head = task.head.clone();
         let op = next_op(run);
@@ -133,6 +138,26 @@ pub(super) fn resume_held(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         };
         emit_op(run, op, Some(&id), kind, fx);
     }
+}
+
+/// Milestone 9.5 ruling T16-6: a held task whose test is still being written gets no
+/// run head merged into the writer's checkout. Once its dependencies finish, the hold is
+/// lifted without a hand-back, and the run head follows as decision 42e's refresh once
+/// its implementer works (`worker_messages::refresh_pass` skips a writing task).
+fn lift_writing(run: &mut Run, i: usize, now: u64) {
+    let task = &mut run.tasks[i];
+    task.awaiting_deps = false;
+    task.orch.refresh.get_or_insert(RefreshState::Due);
+    if std::mem::take(&mut task.held_answered) {
+        set_state(task, TaskState::Working, now);
+        task.block = None;
+    }
+    history(
+        run,
+        i,
+        now,
+        "dependencies merged; the test writer resumes, the run head follows its implementer",
+    );
 }
 
 /// Ruling T14-I3: a held task whose worker was resolving a conflict the merge queue

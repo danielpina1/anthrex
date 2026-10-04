@@ -137,6 +137,10 @@ pub struct Pair {
     /// The test writer's gate failures, moved here when the implementer starts.
     pub writer_failures: u8,
     pub writer_sessions: u32,
+    /// Ruling T16-2 (decision 9a): the route rung 2 or `run retry` stepped the writer
+    /// from; the next writer launch records that escalation and clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escalated_from: Option<Route>,
 }
 
 /// The class default routes a run is frozen with (decisions 9 and 12): M8a's defaults,

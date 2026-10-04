@@ -91,16 +91,18 @@ fn count(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-fn gates(task: &Task) -> GateTally {
+/// A task's gate tally. Milestone 9.5 minor m3: a red-only check (decision 25's, of a
+/// test writer's claim) is not a proof.
+pub(crate) fn gates(task: &Task) -> GateTally {
     let own = || task.checks.iter().filter(|c| !c.on_candidate);
+    let proofs = || task.proofs.iter().filter(|p| !p.red_only);
     // A generated-file bounce (decision 55) is known by its message's opening words.
     let message = generated_files_message(&[]);
     let generated = &message[..message.find(" outside").unwrap_or(message.len())];
     GateTally {
-        proofs: count(task.proofs.len()),
+        proofs: count(proofs().count()),
         proofs_failed: count(
-            task.proofs
-                .iter()
+            proofs()
                 .filter(|p| !(p.red_failed && p.head_passed && p.matched))
                 .count(),
         ),

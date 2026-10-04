@@ -89,6 +89,7 @@ pub(super) fn passed_proof(at: u64) -> ProofRecord {
         red_tail: String::new(),
         head_tail: String::new(),
         lane: None,
+        red_only: false,
     }
 }
 

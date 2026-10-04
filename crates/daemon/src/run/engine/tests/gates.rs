@@ -291,6 +291,7 @@ fn turn_end_fallback_on_a_tdd_task_fails_the_proof_with_the_missing_names_messag
         red_tail: String::new(),
         head_tail: String::new(),
         lane: None,
+        red_only: false,
     };
     assert_eq!(t1.proofs, vec![record.clone()]);
     let text = proof_failed_message("cargo test -- --exact {test}", &record, "{test}");

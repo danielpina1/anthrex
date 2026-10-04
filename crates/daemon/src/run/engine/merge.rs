@@ -9,7 +9,7 @@
 //! correlation). Pure (design decision 2).
 
 use crate::run::phases::set_state;
-use proto::{AgentRole, BlockReason, GateKind, RunState, Runtime, TaskState};
+use proto::{BlockReason, GateKind, RunState, Runtime, TaskState};
 
 use super::actions::rules;
 use super::dispatch::{block, history, salvage_ref};
@@ -259,9 +259,10 @@ fn merged(
     set_state(task, TaskState::Merged, now);
     task.block = None;
     task.merge_commit = Some(commit.clone());
-    // Milestone 9.5 decision 23: a crowned racer is the task's worker.
+    // Milestone 9.5 decision 23: a crowned racer is the task's worker. Ruling T16-4: a
+    // paired task's test writer is retired with it.
     let writing: Vec<bool> = (task.rounds.iter())
-        .map(|r| r.role != AgentRole::TestWriter && crate::run::model::writes(task, r))
+        .map(|r| crate::run::model::writes(task, r))
         .collect();
     for (round, _) in
         (task.rounds.iter_mut().zip(writing)).filter(|(r, w)| *w && !r.ended && !r.retiring)

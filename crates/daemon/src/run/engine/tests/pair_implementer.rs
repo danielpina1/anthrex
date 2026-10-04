@@ -99,11 +99,11 @@ fn signalled() -> String {
     )
 }
 
-fn spec(from: Option<&str>) -> SignalsSpec {
+fn spec(red: Option<&str>) -> SignalsSpec {
     SignalsSpec {
         test_paths: vec!["tests/**".into(), "crates/*/tests/**".into()],
         skip_markers: vec!["#[ignore]".into()],
-        from: from.map(str::to_string),
+        red: red.map(str::to_string),
     }
 }
 

@@ -77,7 +77,8 @@ pub fn task_result(_run: &Run, task: &Task, git: Option<&Result<TaskGit, String>
             "at": hh_mm(p.at),
             "test": p.test,
             "red": p.red,
-            "ok": p.red_failed && p.head_passed && p.matched,
+            "ok": p.red_failed && (p.red_only || (p.head_passed && p.matched)),
+            "red_only": p.red_only,
         })).collect::<Vec<_>>(),
         "reviews": task.reviews.iter().map(|r| json!({
             "round": r.round,
