@@ -4,6 +4,16 @@
 //!
 //! Task M9.6.3 adds [`mode_for`], DF §1's table: whether a run uses the flow, decided
 //! once at the start and frozen as `Run.design_mode`.
+//!
+//! Task M9.6.4 adds the pure checks and renderers: the spec's requirements, the
+//! documents' templates, the plan's coverage and brief shape, `plan.md`, and the change
+//! summary and line diff a gate shows.
+
+pub mod changes;
+pub mod coverage;
+pub mod plan_md;
+pub mod requirements;
+pub mod template;
 
 use proto::{DesignMode, RunPath, TaskKind, TriageInfo};
 
