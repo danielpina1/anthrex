@@ -23,6 +23,7 @@ pub(crate) mod build;
 mod cleanup;
 mod context;
 mod delivery;
+mod design_io;
 mod effects;
 // Milestone 9.1.7: read by the tier executor (M9.1.9); until then only its tests call it.
 #[cfg_attr(not(test), allow(dead_code))]

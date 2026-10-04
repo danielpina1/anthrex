@@ -8,11 +8,15 @@
 //! Task M9.6.4 adds the pure checks and renderers: the spec's requirements, the
 //! documents' templates, the plan's coverage and brief shape, `plan.md`, and the change
 //! summary and line diff a gate shows.
+//!
+//! Task M9.6.5 adds [`state`]: the design state on `RunOrch.design` and the index of the
+//! documents, whose files the driver writes (`Effect::WriteDoc`, `driver/design_io.rs`).
 
 pub mod changes;
 pub mod coverage;
 pub mod plan_md;
 pub mod requirements;
+pub mod state;
 pub mod template;
 
 use proto::{DesignMode, RunPath, TaskKind, TriageInfo};

@@ -97,4 +97,12 @@ pub enum Effect {
         window_id: u32,
         name: String,
     },
+    /// Milestone 9.6 decision 12: write a design document, `text`, to `path`, a new
+    /// file (a temp file, fsync, then a link that never replaces one: versions are
+    /// immutable), then rewrite `index`'s `versions.json` (`driver/design_io.rs`).
+    WriteDoc {
+        path: PathBuf,
+        text: String,
+        index: Option<(PathBuf, String)>,
+    },
 }

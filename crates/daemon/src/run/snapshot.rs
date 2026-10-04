@@ -63,6 +63,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
             info
         })
         .collect();
+    let (design, doc_gate, docs) = super::snapshot_design::design_fields(run);
     RunInfo {
         actions: available(run, &ActionNode::Run),
         run_id: run.id.clone(),
@@ -155,10 +156,10 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         rounds: run.round_infos(),
         // Milestone 9.5 decision 16.
         writer_caps: super::engine::concurrency::writer_caps(run),
-        // Milestone 9.6: filled from the design state from task M9.6.5.
-        design: Default::default(),
-        doc_gate: None,
-        docs: Vec::new(),
+        // Milestone 9.6 (`snapshot_design.rs`).
+        design,
+        doc_gate,
+        docs,
     }
 }
 
@@ -469,8 +470,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         // Milestone 9.5 decision 1 (task 20b).
         race: patterns::race_info(t),
         pair: patterns::pair_info(t),
-        // Milestone 9.6: shown from task M9.6.11.
-        covers: Vec::new(),
+        // Milestone 9.6 decision 17.
+        covers: t.spec.covers.clone(),
     }
 }
 

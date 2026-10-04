@@ -122,6 +122,10 @@ pub struct RunOrch {
     /// list over (taken by the promotion).
     #[serde(skip)]
     pub promote_window: Option<BTreeMap<String, bool>>,
+    /// Milestone 9.6 decision 2: a design run's state; `None` (and not written) for a
+    /// run without the design flow, which behaves as 9.5's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub design: Option<crate::run::design::state::DesignState>,
 }
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.

@@ -58,6 +58,7 @@ mod delivery_sync;
 mod delivery_watch;
 mod delivery_watch_adopt;
 mod delivery_watch_fixes;
+mod design_snapshot;
 mod detail_claims;
 mod digest;
 mod dispatch;

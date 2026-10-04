@@ -132,3 +132,107 @@ candidates = [
     assert_eq!(loaded.limits.route_lists, frozen);
     assert!(text.contains("\"brainstorm\""), "{text}");
 }
+
+/// Task M9.6.5: a design run's state (`RunOrch.design`) survives a save and load: the
+/// open gate, the version index, a review, an agent and the approved requirements.
+/// A run without it writes no design state.
+#[test]
+fn the_state_survives_save_and_load() {
+    use crate::run::design::state::{
+        DesignAgent, DesignAgentState, DesignState, DocGate, DocReviewRecord, DocVersion,
+        Requirement,
+    };
+    use proto::{AgentRole, DocAuthor, DocFinding, DocGateKind, DocKind, DocSeverity, Route};
+
+    let finding = DocFinding {
+        id: "F1".into(),
+        severity: DocSeverity::Minor,
+        place: "R1".into(),
+        text: "vague".into(),
+    };
+    let version = |kind, n| DocVersion {
+        kind,
+        n,
+        author: DocAuthor::Orchestrator,
+        reason: "ready".into(),
+        bytes: 40,
+        sha256: "ab".repeat(32),
+        at: 3_000 + u64::from(n),
+        requirements: vec!["R1".into()],
+        disputed: vec![finding.clone()],
+        not_reviewed: Some("the reviewer timed out".into()),
+        changes: vec!["+ R1".into()],
+        same_runtime: true,
+    };
+    let route = Route {
+        runtime: Runtime::Codex,
+        model: "gpt-6".into(),
+        strength: Strength::Frontier,
+        effort: Effort::High,
+    };
+    let design = DesignState {
+        phase_started: Some(3_100),
+        phase_paused_base: 12,
+        answers: Some("keep it small".into()),
+        brainstormers: vec![DesignAgent {
+            label: "codex".into(),
+            role: AgentRole::Brainstormer,
+            route: route.clone(),
+            session: 1,
+            window_id: Some(9),
+            state: DesignAgentState::Failed("timed out".into()),
+            calls: 4,
+            tokens: 900,
+            started: Some(3_000),
+        }],
+        reviewer: Some(DesignAgent {
+            label: "spec-r1".into(),
+            role: AgentRole::DocReviewer,
+            route,
+            session: 1,
+            window_id: None,
+            state: DesignAgentState::Done,
+            calls: 2,
+            tokens: 100,
+            started: None,
+        }),
+        reviews: vec![DocReviewRecord {
+            doc: DocKind::Spec,
+            n: 1,
+            findings: vec![finding.clone()],
+            failed: None,
+        }],
+        versions: vec![version(DocKind::Brainstorm, 1), version(DocKind::Spec, 2)],
+        gate: Some(DocGate {
+            kind: DocGateKind::Spec,
+            version: 2,
+            opened_at: 3_200,
+            revising: Some("shorter".into()),
+        }),
+        requirements: vec![Requirement {
+            id: "R1".into(),
+            text: "one".into(),
+        }],
+        goal_section: "Reset passwords.".into(),
+        plan_review_done: true,
+        commit_due: true,
+        committed: Some("c".repeat(40)),
+    };
+    let mut run = old_run();
+    run.design_mode = DesignMode::Full;
+    run.state = proto::RunState::AwaitingApproval;
+    run.orch.design = Some(design.clone());
+    let dir = tmp();
+    let (loaded, text) = save_and_load(&mut run, dir.path());
+    assert_eq!(loaded.orch.design, Some(design));
+    assert_eq!(loaded, run);
+    let json: serde_json::Value = serde_json::from_str(&text).expect("run.json is JSON");
+    assert_eq!(json["orch"]["design"]["gate"]["kind"], "spec");
+
+    // Without it, `orch` has no `design` key.
+    let mut plain = old_run();
+    let (loaded, text) = save_and_load(&mut plain, dir.path());
+    assert_eq!(loaded.orch.design, None);
+    let json: serde_json::Value = serde_json::from_str(&text).expect("run.json is JSON");
+    assert!(json["orch"].get("design").is_none(), "{}", json["orch"]);
+}

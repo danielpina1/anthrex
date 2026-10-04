@@ -14,6 +14,7 @@ use super::RunService;
 use super::adapt::BuildError;
 use super::build::Shape;
 use super::delivery::{DeliveryRequestOf, DeliveryStart};
+use super::design_io::DocQuery;
 use crate::run::design::{GoalOrigin, mode_for};
 use crate::run::engine::actions::{self, ActionNode};
 use crate::run::engine::{EventKind, OrchEvent};
@@ -176,7 +177,11 @@ impl RunService {
             }
             // Milestone 9.3 decision 10: a round of a settled run.
             // Milestone 9.6: `design` is read from task M9.6.15.
-            RunRequest::Iterate { run, goal, .. } => answer(
+            RunRequest::Iterate {
+                run,
+                goal,
+                design: _,
+            } => answer(
                 request::ITERATE,
                 self.ask(|reply| EventKind::Iterate {
                     reply,
@@ -203,12 +208,27 @@ impl RunService {
                 }
                 RunReply::done(request::MCP_READY, "")
             }
-            // Milestone 9.6: the document gates arrive with tasks M9.6.5 and M9.6.7.
+            // Milestone 9.6: the document gates arrive with task M9.6.7.
             RunRequest::DocGate { .. } => {
                 RunReply::refused(request::DOC_GATE, actions::DOC_GATES_NOT_YET)
             }
-            RunRequest::ShowDoc { .. } => {
-                RunReply::refused(request::SHOW_DOC, actions::DOC_GATES_NOT_YET)
+            // Milestone 9.6 (DF §7): one document version, read off the engine.
+            RunRequest::ShowDoc {
+                run,
+                kind,
+                version,
+                diff,
+                findings,
+            } => {
+                let from = None;
+                let query = DocQuery {
+                    kind,
+                    version,
+                    from,
+                    diff,
+                    findings,
+                };
+                self.show_doc(run, query).await
             }
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")

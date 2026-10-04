@@ -245,8 +245,8 @@ pub struct PlanTask {
     /// a plan, a `run.json` and a snapshot without review fixes are written as 9.1's.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub addresses: Vec<String>,
-    /// Milestone 9.5 decision 17: race two workers on different runtimes. Left out
-    /// while false, so a plan, a `run.json` and a snapshot are written as 9.3's.
+    /// Milestone 9.5 decision 17: race two workers on different runtimes. Left out while
+    /// false, so a plan, a `run.json` and a snapshot without it are written as 9.3's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub race: bool,
     /// Milestone 9.5 decision 24: a test writer commits the failing test, then a
