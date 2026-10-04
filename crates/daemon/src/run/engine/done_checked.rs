@@ -129,6 +129,7 @@ pub(super) fn checked(
         }
     }
     let (id, mut pending) = (pending.reply, pending);
+    super::pair::log_unlimited(run, i, signals.unlimited, now);
     super::weakening::keep(&mut run.tasks[i], signals);
     // Milestone 9.5 decision 25: a test writer's red is its head, in full, for the
     // red-only proof that `accept`'s first gate runs.

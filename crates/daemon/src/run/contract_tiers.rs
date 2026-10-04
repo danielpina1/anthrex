@@ -285,11 +285,20 @@ pub(crate) fn deleted_test_files_message(groups: &[(&str, Vec<String>)]) -> Stri
     let plain = !paths.iter().any(|p| p.chars().any(char::is_control));
     let how = if plain && command.chars().count() <= RESTORE_COMMAND_MAX {
         format!("Restore it ({command}, then commit)")
-    } else {
-        let bases: Vec<&str> = groups.iter().map(|(b, _)| super::sha7(b)).collect();
+    } else if let [(base, _)] = groups {
         format!(
             "Restore the deleted test files from {}, then commit,",
-            bases.join(" or ")
+            super::sha7(base)
+        )
+    } else {
+        // Milestone 9.5 re-review 3's NI-3: each file with its own commit.
+        let each: Vec<String> = (groups.iter())
+            .flat_map(|(base, paths)| paths.iter().map(move |p| (base, p)))
+            .map(|(base, p)| format!("{} from {}", shown(p), super::sha7(base)))
+            .collect();
+        format!(
+            "Restore each deleted test file from its commit ({}), then commit,",
+            each.join("; ")
         )
     };
     lines.push(format!(

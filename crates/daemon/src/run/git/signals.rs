@@ -318,5 +318,6 @@ pub(super) fn read_signals(
         more: u32::try_from(more).unwrap_or(u32::MAX),
         base,
         restore_from: Default::default(),
+        unlimited: 0,
     })
 }

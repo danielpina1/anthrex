@@ -68,11 +68,32 @@ pub(super) fn bounce(run: &Run, i: usize, signals: &ClaimSignals) -> Option<Stri
     Some(deleted_test_files_message(&groups))
 }
 
-/// Decision 42: an accepted claim's signals replace the task's.
+/// Decision 42: an accepted claim's signals replace the task's. Milestone 9.5 ruling
+/// T16-9 (1): a paired task's implementer's are followed by the test writer's kept ones.
 pub(super) fn keep(task: &mut Task, signals: ClaimSignals) {
-    task.signals = signals.list;
-    task.signals_more = signals.more;
+    let (writer, writer_more) = writer_signals(task).map_or((&[][..], 0), |p| {
+        (&p.writer_signals[..], p.writer_signals_more)
+    });
+    let mut list = signals.list;
+    list.extend_from_slice(writer);
+    task.signals_more = signals.more.saturating_add(writer_more);
+    task.signals = list;
     task.signal_refusals = 0;
+}
+
+/// The pair whose test writer's signals follow the implementer's, if any.
+fn writer_signals(task: &Task) -> Option<&crate::run::model::Pair> {
+    (task.pair.as_ref())
+        .filter(|p| p.phase == PairPhase::Implementing && !p.writer_signals.is_empty())
+}
+
+/// Whether task `task`'s signal `n` is the test writer's (ruling T16-9 (1)).
+fn by_writer(task: &Task, n: usize) -> bool {
+    let Some(pair) = writer_signals(task) else {
+        return false;
+    };
+    let from = task.signals.len().saturating_sub(pair.writer_signals.len());
+    n >= from && task.signals[from..] == pair.writer_signals[..]
 }
 
 /// `W<n>`, 1-based.
@@ -92,8 +113,17 @@ fn place(signal: &Signal) -> (&str, Option<u32>) {
 }
 
 /// One `- W<n> …` line of the reviewer block (Interfaces "Prompts (exact)"). The path
-/// and marker are shown through `contract::shown`: they come from the worker's diff.
-fn line(n: usize, signal: &Signal) -> String {
+/// and marker are shown through `contract::shown`: they come from the worker's diff. A
+/// paired task's test writer's signal ends ` (test writer)` (ruling T16-9 (1)).
+fn line(n: usize, signal: &Signal, writer: bool) -> String {
+    let text = signal_line(n, signal);
+    match writer {
+        true => format!("{text} (test writer)"),
+        false => text,
+    }
+}
+
+fn signal_line(n: usize, signal: &Signal) -> String {
     let id = id(n);
     match signal {
         Signal::DeletedTestFile { path } => format!("- {id} {}: deleted test file", shown(path)),
@@ -132,7 +162,7 @@ pub(crate) fn reviewer_block(task: &Task) -> String {
         .signals
         .iter()
         .enumerate()
-        .map(|(n, s)| line(n, s))
+        .map(|(n, s)| line(n, s, by_writer(task, n)))
         .collect();
     signals_block(&lines, task.signals_more)
 }
@@ -194,7 +224,7 @@ pub(crate) fn signal_infos(task: &Task) -> Vec<SignalInfo> {
         .map(|(n, signal)| {
             let id = id(n);
             let (path, line) = place(signal);
-            let text = self::line(n, signal)
+            let text = self::line(n, signal, by_writer(task, n))
                 .strip_prefix(&format!("- {id} "))
                 .map(str::to_string)
                 .unwrap_or_default();

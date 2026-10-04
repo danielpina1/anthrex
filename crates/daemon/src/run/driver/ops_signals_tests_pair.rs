@@ -350,3 +350,167 @@ async fn reverting_the_writers_change_to_a_shared_test_is_caught() {
     };
     assert_eq!(found, vec![loss]);
 }
+
+/// Whether `git <args>` in `dir` succeeded (a merge that may conflict).
+fn git_ok(dir: &std::path::Path, args: &[&str]) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_PREFIX")
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+/// Ruling T16-10 (re-review 3's NI-1): the head equals the run head on a shared writer
+/// path, but only because the implementer resolved a refresh conflict with `--theirs`,
+/// dropping the writer's `fn extra`. The clean 3-way merge of (start, red, run head)
+/// conflicts there, so the path is read over `red..head` and the loss is a W-signal.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_theirs_resolution_dropping_the_writers_test_is_caught() {
+    let api = "#[test]\nfn a() {\n    assert!(one());\n}\n";
+    let rig = Rig::new(&[("src/lib.rs", "pub fn f() {}\n"), ("tests/api.rs", api)]);
+    let extra = format!("{api}#[test]\nfn extra() {{\n    assert!(two());\n}}\n");
+    rig.commit(&[("tests/api.rs", Some(&extra)), ("tests/w.rs", Some(W1))]);
+    let red = git(&rig.worktree, &["rev-parse", "HEAD"]);
+    let other = format!("{api}#[test]\nfn other() {{}}\n");
+    let run_head = on_run_head(&rig, &[("tests/api.rs", Some(&other))]);
+    let who = ["-c", "user.name=Agent", "-c", "user.email=a@test"];
+    let merge = [
+        &who[..],
+        &["merge", "-q", "--no-ff", "-m", "refresh", &run_head],
+    ]
+    .concat();
+    assert!(!git_ok(&rig.worktree, &merge), "the refresh conflicts");
+    git(
+        &rig.worktree,
+        &["checkout", "--theirs", "--", "tests/api.rs"],
+    );
+    git(&rig.worktree, &["add", "--", "tests/api.rs"]);
+    git(
+        &rig.worktree,
+        &[&who[..], &["commit", "-q", "--no-edit"]].concat(),
+    );
+    let result = rig.verify_at(&run_head, Some(from(&red))).await;
+    let OpResult::DoneChecked { signals, .. } = result else {
+        panic!("{result:?}")
+    };
+    let list = signals.expect("signals").list;
+    assert!(
+        list.iter().any(|s| matches!(
+            s,
+            Signal::AssertionLoss { path, removed: 1, .. } if path == "tests/api.rs"
+        )),
+        "{list:?}"
+    );
+}
+
+/// Ruling T16-9 (2): over 256 writer paths, the writer-path read runs without a
+/// pathspec and is filtered; the claim says how many paths there were.
+#[tokio::test(flavor = "multi_thread")]
+async fn over_256_writer_paths_are_read_without_a_pathspec() {
+    let rig = base_rig();
+    let names: Vec<String> = (0..257).map(|n| format!("data/f{n:03}.txt")).collect();
+    let mut files: Vec<(&str, Option<&str>)> =
+        names.iter().map(|n| (n.as_str(), Some("x\n"))).collect();
+    files.push(("tests/w.rs", Some(W2)));
+    rig.commit(&files);
+    let red = git(&rig.worktree, &["rev-parse", "HEAD"]);
+    rig.commit(&[("tests/w.rs", Some(W1))]);
+    let run_head = other_task(&rig);
+    merge_in(&rig, &run_head, "refresh");
+    let result = rig.verify_at(&run_head, Some(from(&red))).await;
+    let OpResult::DoneChecked { signals, .. } = result else {
+        panic!("{result:?}")
+    };
+    let signals = signals.expect("signals");
+    let loss = Signal::AssertionLoss {
+        path: "tests/w.rs".into(),
+        line: 4,
+        removed: 1,
+        added: 0,
+    };
+    assert_eq!(
+        (signals.list, signals.more),
+        (vec![loss], 0),
+        "nothing of other.rs"
+    );
+    assert_eq!(signals.unlimited, 258);
+}
+
+/// Re-review 3's out-of-scope item: the writer's paths' signals come first within
+/// their rank, so twenty of the implementer's own signals never push a writer-test
+/// loss into `more`.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_writers_test_loss_is_listed_ahead_of_the_implementers_own() {
+    let names: Vec<String> = (0..21).map(|n| format!("tests/o{n:02}.rs")).collect();
+    let mut base: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), W2)).collect();
+    base.push(("src/lib.rs", "pub fn f() {}\n"));
+    let rig = Rig::new(&base);
+    rig.commit(&[("tests/w.rs", Some(W2))]);
+    let red = git(&rig.worktree, &["rev-parse", "HEAD"]);
+    let mut weakened: Vec<(&str, Option<&str>)> =
+        names.iter().map(|n| (n.as_str(), Some(W1))).collect();
+    weakened.push(("tests/w.rs", Some(W1)));
+    rig.commit(&weakened);
+    let result = rig.verify(Some(from(&red))).await;
+    let OpResult::DoneChecked { signals, .. } = result else {
+        panic!("{result:?}")
+    };
+    let signals = signals.expect("signals");
+    let loss = Signal::AssertionLoss {
+        path: "tests/w.rs".into(),
+        line: 4,
+        removed: 1,
+        added: 0,
+    };
+    assert_eq!(signals.list.first(), Some(&loss), "{:?}", signals.list);
+    assert_eq!((signals.list.len(), signals.more), (20, 2));
+}
+
+/// Ruling T16-10: a git without `merge-tree --merge-base` (before 2.40; the run
+/// engine's minimum is 2.38) gives no clean merge, so the writer's path is read over
+/// `red..head` (the safe direction): (c)'s run-head change shows again.
+#[tokio::test(flavor = "multi_thread")]
+async fn without_merge_base_the_writers_path_is_kept() {
+    let old =
+        "case \" $* \" in *\" --merge-base=\"*) echo 'error: unknown option' >&2; exit 129;; esac";
+    let rig = Rig::with_wrapper(
+        &[
+            ("src/lib.rs", "pub fn f() {}\n"),
+            (
+                "tests/old.rs",
+                "#[test]\nfn o() {\n    assert!(a());\n    assert!(b());\n}\n",
+            ),
+        ],
+        Some(old),
+    );
+    let shared = "#[test]\nfn o() {\n    assert!(a());\n    assert!(b());\n}\n// shared\n";
+    rig.commit(&[("tests/w.rs", Some(W2)), ("tests/old.rs", Some(shared))]);
+    let red = git(&rig.worktree, &["rev-parse", "HEAD"]);
+    let theirs = "#[test]\nfn o() {\n    assert!(a());\n}\n// shared\n";
+    let run_head = on_run_head(&rig, &[("tests/old.rs", Some(theirs))]);
+    merge_in(&rig, &run_head, "refresh");
+    let result = rig.verify_at(&run_head, Some(from(&red))).await;
+    let OpResult::DoneChecked { signals, .. } = result else {
+        panic!("{result:?}")
+    };
+    let list = signals.expect("signals").list;
+    assert!(
+        list.iter()
+            .any(|s| matches!(s, Signal::AssertionLoss { path, .. } if path == "tests/old.rs")),
+        "{list:?}"
+    );
+    assert!(
+        rig.logged().iter().any(|l| l.contains("--merge-base=")),
+        "tried"
+    );
+}

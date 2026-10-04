@@ -160,6 +160,14 @@ pub struct Pair {
     /// from; the next writer launch records that escalation and clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub escalated_from: Option<Route>,
+    /// Milestone 9.5 ruling T16-9 (1): the test writer's accepted claim's signals, kept
+    /// at the hand-over and shown to the implementer's reviewer after the implementer's
+    /// own, labelled `test writer`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub writer_signals: Vec<crate::run::tiers::Signal>,
+    /// How many more the writer's claim had past `SIGNALS_MAX`.
+    #[serde(default, skip_serializing_if = "no_more")]
+    pub writer_signals_more: u32,
 }
 
 /// The class default routes a run is frozen with (decisions 9 and 12): M8a's defaults,
@@ -387,4 +395,8 @@ impl TaskPaused {
     pub fn is_zero(&self) -> bool {
         *self == TaskPaused::default()
     }
+}
+
+fn no_more(n: &u32) -> bool {
+    *n == 0
 }

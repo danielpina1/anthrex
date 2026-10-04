@@ -15,6 +15,7 @@ use super::tools::DoneArgs;
 use super::{Effect, OpKind, clock, ladder, requests};
 use crate::run::contract_patterns::{
     implementer_wrong_test, red_check_failed_message, red_confirmed_line, writer_not_on_red,
+    writer_paths_unlimited_line,
 };
 use crate::run::model::{Pair, ProofRecord, Run, Task};
 use crate::run::phases::set_state;
@@ -56,6 +57,8 @@ pub(super) fn begin(run: &mut Run, i: usize) {
         writer_failures: 0,
         writer_sessions: 0,
         escalated_from: None,
+        writer_signals: Vec::new(),
+        writer_signals_more: 0,
     });
 }
 
@@ -174,6 +177,14 @@ pub(super) fn on_red_checked(
         pair.red_checked = Some(true);
         pair.writer_failures = writer_failures;
     }
+    // Ruling T16-9 (1): the writer's kept signals go to the implementer's reviewer.
+    let (kept, more) = (
+        std::mem::take(&mut task.signals),
+        std::mem::take(&mut task.signals_more),
+    );
+    if let Some(pair) = task.pair.as_mut() {
+        (pair.writer_signals, pair.writer_signals_more) = (kept, more);
+    }
     // The implementer starts afresh: the writer's counters are the pair's now.
     task.failures = 0;
     task.bounces = Default::default();
@@ -187,6 +198,15 @@ pub(super) fn on_red_checked(
     let line = red_confirmed_line(task.id(), &red);
     history(run, i, now, line.clone());
     requests::log(run, now, line);
+}
+
+/// Ruling T16-9 (2): a claim whose writer-path read ran without a pathspec says so in
+/// the run log, once per claim.
+pub(super) fn log_unlimited(run: &mut Run, i: usize, paths: u32, now: u64) {
+    if paths > 0 {
+        let line = writer_paths_unlimited_line(run.tasks[i].id(), paths);
+        requests::log(run, now, line);
+    }
 }
 
 /// Ruling T16-3 (as ruling T14-I2 for every launch an op result asks for): each running

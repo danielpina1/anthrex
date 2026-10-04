@@ -161,6 +161,7 @@ fn a_weakened_test_raises_a_signal_from_red() {
             more: 0,
             base: HEAD.into(),
             restore_from: Default::default(),
+            unlimited: 0,
         }));
     }
     let effects = fx.done(op, result);
@@ -314,6 +315,7 @@ fn each_deleted_test_restores_from_its_own_base() {
                 (theirs.to_string(), base.to_string()),
             ]
             .into(),
+            unlimited: 0,
         }));
     }
     let effects = fx.done(op, result);
@@ -326,4 +328,122 @@ fn each_deleted_test_restores_from_its_own_base() {
         &base[..7]
     );
     assert!(text.contains(&command), "{text}");
+}
+
+/// Ruling T16-9 (1): the reviewer of a paired task sees the test writer's kept signals,
+/// labelled, after the implementer's; the implementer's claim no longer discards them.
+#[test]
+fn the_reviewer_sees_the_writers_signals_too() {
+    let tasks = [task("t1", "S", "a", PAIRED)];
+    let (mut fx, _, writer) = running(
+        &signalled(),
+        &tasks,
+        config::Orchestrator::default(),
+        |_| {},
+    );
+    let loss = |path: &str, line: u32| Signal::AssertionLoss {
+        path: path.into(),
+        line,
+        removed: 1,
+        added: 0,
+    };
+    let with = |mut result: OpResult, signal: Signal| {
+        if let OpResult::DoneChecked { signals, .. } = &mut result {
+            *signals = Some(Box::new(ClaimSignals {
+                list: vec![signal],
+                more: 1,
+                base: HEAD.into(),
+                restore_from: Default::default(),
+                unlimited: 0,
+            }));
+        }
+        result
+    };
+    let args = json!({"summary": "the failing test", "test": TEST, "red": HEAD});
+    let effects = writer_tool(&mut fx, writer, "task_done", args);
+    let (op, _) = only_op(&effects, "VerifyDone");
+    let theirs = loss("crates/a/tests/old.rs", 4);
+    let effects = fx.done(op, with(fx.clean_check("t1"), theirs.clone()));
+    fx.turn_completed(writer);
+    let (op, _) = only_op(&effects, "Proof");
+    fx.done(op, red_check(true));
+    let window = fx.complete_windows()[0].1;
+    let effects = fx.tool(window, "task_done", json!({"summary": "made it pass"}));
+    let (op, _) = only_op(&effects, "VerifyDone");
+    let ours = loss("crates/a/tests/t.rs", 3);
+    let effects = fx.done(op, with(at_impl(&fx), ours.clone()));
+    assert_eq!(replies(&effects), vec![Ok(DONE_ACCEPTED.to_string())]);
+    fx.turn_completed(window);
+    let t1 = fx.task("t1");
+    assert_eq!(t1.signals, vec![ours, theirs]);
+    assert_eq!(t1.signals_more, 2, "both claims' overflow");
+    let (op, _) = only_op(&effects, "Proof");
+    let passed = OpResult::Proof {
+        red_failed: true,
+        head_passed: true,
+        matched: true,
+        red_tail: String::new(),
+        head_tail: format!("test {TEST} ... ok"),
+    };
+    let effects = fx.done(op, passed);
+    let (op, _) = only_op(&effects, "PrepareReview");
+    let (_, kind) = reviewer(&mut fx, op, "diff --git a/x b/x");
+    let OpKind::CreateWindow { first_turn, .. } = kind else {
+        unreachable!()
+    };
+    assert!(
+        first_turn.contains("- W1 crates/a/tests/t.rs:3: 1 assertion lines removed, 0 added\n"),
+        "{first_turn}"
+    );
+    assert!(
+        first_turn.contains(
+            "- W2 crates/a/tests/old.rs:4: 1 assertion lines removed, 0 added (test writer)"
+        ),
+        "{first_turn}"
+    );
+}
+
+/// Ruling T16-9 (2): a claim whose writer-path read ran without a pathspec (over 256
+/// writer paths) leaves one run-log line naming the count.
+#[test]
+fn an_unlimited_writer_path_read_is_logged() {
+    let (mut fx, _, window, _) = implementing();
+    let effects = fx.tool(window, "task_done", json!({"summary": "made it pass"}));
+    let (op, _) = only_op(&effects, "VerifyDone");
+    let mut result = at_impl(&fx);
+    if let OpResult::DoneChecked { signals, .. } = &mut result {
+        *signals = Some(Box::new(ClaimSignals {
+            unlimited: 300,
+            ..ClaimSignals::default()
+        }));
+    }
+    fx.done(op, result);
+    let line = crate::run::contract_patterns::writer_paths_unlimited_line("t1", 300);
+    assert_eq!(
+        line,
+        "task t1's test writer changed 300 paths, over the pathspec limit of 256; its signals were read without one and filtered"
+    );
+    let logged = (fx.run().log.iter()).filter(|l| l.text == line).count();
+    assert_eq!(logged, 1);
+}
+
+/// Re-review 3's NI-3: past the restore command's limit, the fallback text still says
+/// which file comes from which commit.
+#[test]
+fn the_fallback_restore_text_names_each_files_base() {
+    let long = format!("crates/a/tests/{}.rs", "w".repeat(990));
+    let groups = [
+        (HEAD, vec![long.clone()]),
+        (
+            "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+            vec!["crates/a/tests/x.rs".to_string()],
+        ),
+    ];
+    let text = crate::run::contract::deleted_test_files_message(&groups);
+    let want = format!(
+        "Restore each deleted test file from its commit ({} from {}; crates/a/tests/x.rs from e5e5e5e), then commit,",
+        crate::run::contract::shown(&long),
+        &HEAD[..7]
+    );
+    assert!(text.contains(&want), "{text}");
 }

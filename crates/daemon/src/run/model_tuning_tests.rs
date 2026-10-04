@@ -157,6 +157,8 @@ fn a_run_with_race_pair_and_caps_round_trips() {
         writer_failures: 1,
         writer_sessions: 2,
         escalated_from: None,
+        writer_signals: Vec::new(),
+        writer_signals_more: 0,
     });
     run.concurrency.insert(
         "codex".into(),

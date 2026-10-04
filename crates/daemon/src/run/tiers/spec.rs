@@ -123,6 +123,15 @@ pub struct ClaimSignals {
     /// deleted test file: `red` for a test writer's path, the merge base otherwise.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub restore_from: std::collections::BTreeMap<String, String>,
+    /// Milestone 9.5 ruling T16-9 (2): how many paths the test writer changed when they
+    /// were over the pathspec limit, so the writer-path read ran without one and was
+    /// filtered (the engine logs it once); 0 otherwise.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unlimited: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// What `OpKind::VerifyDone` needs to read decision 40's test-weakening signals: the

@@ -70,6 +70,8 @@ fn pair(phase: PairPhase, red: Option<&str>) -> Pair {
         writer_failures: 0,
         writer_sessions: 1,
         escalated_from: None,
+        writer_signals: Vec::new(),
+        writer_signals_more: 0,
     }
 }
 

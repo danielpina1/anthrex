@@ -148,3 +148,12 @@ pub(crate) fn reviewer_note(task: &Task) -> Option<String> {
         pair.red.as_deref()?,
     ))
 }
+
+/// Milestone 9.5 ruling T16-9 (2): the run-log line when a paired task's test writer
+/// changed more paths than a pathspec may carry, so its implementer's writer-path read
+/// ran without one and was filtered.
+pub fn writer_paths_unlimited_line(task_id: &str, paths: u32) -> String {
+    format!(
+        "task {task_id}'s test writer changed {paths} paths, over the pathspec limit of 256; its signals were read without one and filtered"
+    )
+}

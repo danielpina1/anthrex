@@ -417,7 +417,14 @@ fn run_git_capturing(
         // Final fix batch F1b: the daemon's git reads and writes the repository's own
         // object store only, whatever the daemon's environment says.
         .env_remove("GIT_OBJECT_DIRECTORY")
-        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        // Milestone 9.5 (task 16 re-review 3, NI-2): an inherited pathspec mode would
+        // make the run engine's `:(literal)`/`:(exclude,literal)` pathspecs match
+        // nothing (or fold case); every read takes them as written.
+        .env_remove("GIT_LITERAL_PATHSPECS")
+        .env_remove("GIT_GLOB_PATHSPECS")
+        .env_remove("GIT_NOGLOB_PATHSPECS")
+        .env_remove("GIT_ICASE_PATHSPECS");
     if let Some(staged) = &staged {
         // Set deliberately; `subprocess::scrub_git_env` removes only an inherited one.
         command.env("GIT_INDEX_FILE", staged.path());
