@@ -117,6 +117,11 @@ pub struct RunOrch {
     /// Decision 39, in memory only: the driver reports the window at a start prompt.
     #[serde(skip)]
     pub start_prompt: bool,
+    /// Whole-branch review B, M8, in memory only: what `run promote`'s check found the
+    /// orchestrator's window has installed, which the promotion reads its `orchestrator`
+    /// list over (taken by the promotion).
+    #[serde(skip)]
+    pub promote_window: Option<BTreeMap<String, bool>>,
 }
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.

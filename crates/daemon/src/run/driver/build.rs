@@ -135,6 +135,7 @@ pub(super) struct Planned {
 /// `window` is for the orchestrator, whose window starts the agent through
 /// `/bin/sh -c 'exec "$0" "$@"'`; `headless` for the sub-planners and scouts, spawned
 /// directly, and it is the map a run records (`run.orch.installed`).
+#[derive(Debug, Clone)]
 pub(crate) struct Found {
     pub window: BTreeMap<String, bool>,
     pub headless: BTreeMap<String, bool>,
@@ -425,13 +426,15 @@ impl RunService {
     ///
     /// M9.17 fix round 2: it also repeats decision 26's installed check, for the new
     /// orchestrator's runtime (the engine resolves it the same way, with no fallback)
-    /// and the sub-planners'. `Ok(Some(installed))` is what the promoted run records as
-    /// `orch.installed`, so its planners' route at spawn agrees with this check.
+    /// and the sub-planners'. `Ok(Some(found))`: its `headless` map is what the promoted
+    /// run records as `orch.installed`, so its planners' route at spawn agrees with this
+    /// check, and its `window` map is what the promotion reads the `orchestrator` list
+    /// over (whole-branch review B, M8, as a planned start does).
     pub(super) async fn promote_refusal(
         &self,
         run_id: &str,
         choice: Option<&proto::OrchestratorChoice>,
-    ) -> Result<Option<BTreeMap<String, bool>>, String> {
+    ) -> Result<Option<Found>, String> {
         let run = crate::lock(&self.state).runs.get(run_id).cloned();
         let Some(run) = run.filter(|r| {
             r.path == Some(proto::RunPath::Fast)
@@ -444,8 +447,9 @@ impl RunService {
         let bins = (config.claude_bin.clone(), config.codex_bin.clone());
         let (claude, codex) = bins.clone();
         let found = blocking(move || Ok(found(&claude, &codex))).await?;
-        // Milestone 9.5: over the map the engine resolves the promotion with.
-        let Ok(resolved) = resolve_promoted(&run, choice, &found.headless) else {
+        // Milestone 9.5: over the map the engine resolves the promotion with, the
+        // window's (whole-branch review B, M8).
+        let Ok(resolved) = resolve_promoted(&run, choice, &found.window) else {
             return Ok(None);
         };
         let window = missing_in(&found.window, &bins);
@@ -479,7 +483,7 @@ impl RunService {
             }
         }
         if refusals.is_empty() {
-            Ok(Some(promoted.orch.installed))
+            Ok(Some(found.clone()))
         } else {
             Err(refusals.join("\n"))
         }

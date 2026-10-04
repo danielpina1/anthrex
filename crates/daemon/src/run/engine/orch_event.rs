@@ -84,10 +84,13 @@ pub enum OrchEvent {
     StartPrompt { run_id: String, waiting: bool },
     /// M9.17 fix round 2: `run promote`'s installed check found `installed` (decision
     /// 17's map); a fast-path run with no orchestrator yet records it, so its promoted
-    /// sub-planners' route agrees with the check.
+    /// sub-planners' route agrees with the check. Whole-branch review B, M8: `window` is
+    /// what the orchestrator's window finds, which the promotion's `orchestrator` list
+    /// is read over, as a planned start's is.
     Installed {
         run_id: String,
         installed: std::collections::BTreeMap<String, bool>,
+        window: std::collections::BTreeMap<String, bool>,
     },
     /// Decision 43: the record of a session the driver dispatches (a run-bound decider,
     /// a run scout), sent before the session starts.

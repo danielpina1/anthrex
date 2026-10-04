@@ -153,11 +153,16 @@ pub(super) fn on_orch_event(
                 o.otlp_token = token;
             }
         }
-        OrchEvent::Installed { run_id, installed } => {
+        OrchEvent::Installed {
+            run_id,
+            installed,
+            window,
+        } => {
             if let Some(run) = state.runs.get_mut(&run_id)
                 && run.orch.orchestrator.is_none()
             {
                 run.orch.installed = installed;
+                run.orch.promote_window = Some(window);
             }
         }
         OrchEvent::RoleRoute {

@@ -87,8 +87,11 @@ fn perform(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Result<(), String> {
-    // Milestone 9.5 rulings RH-5, RL-3: the choice, then the list, then decision 6.
-    let resolved = resolve_promoted(run, choice, &run.orch.installed)?;
+    // Milestone 9.5 rulings RH-5, RL-3: the choice, then the list, then decision 6; the
+    // list over the window's map when the check sent one (whole-branch review B, M8).
+    let window = run.orch.promote_window.take();
+    let over = window.as_ref().unwrap_or(&run.orch.installed);
+    let resolved = resolve_promoted(run, choice, over)?;
     run.path = Some(RunPath::Plan);
     run.promote_requested_at.get_or_insert(now);
     let mut record = OrchestratorRecord::new(resolved.route, now);
