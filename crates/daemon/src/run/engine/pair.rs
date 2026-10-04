@@ -226,31 +226,39 @@ pub(super) fn log_unlimited(run: &mut Run, i: usize, paths: u32, now: u64) {
 /// had none yet. A task blocked meanwhile, or given a fresh session, goes the usual way.
 /// Ruling FW-2 (c): the pair's slot is the task's runtime's from the hand-over, so the
 /// implementer waits, as a dispatch does, until that runtime's cap has room for it.
+/// Ruling FW-4 (I): the waiting ones launch one at a time in task order, each launch
+/// counted as live before the next is checked.
 pub(super) fn launch_due(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
-        let due = handed(task).is_some()
-            && task.state == TaskState::Working
-            && !task.awaiting_deps
-            && task.fresh_session.is_none()
-            && !task.rounds.iter().any(|r| r.role == AgentRole::Worker)
-            && !op_in_flight(run, task.id(), |k| matches!(k, OpKind::CreateWindow { .. }))
-            && implementer_room(run, task);
-        if due {
+        if awaiting_implementer(run, task) && implementer_room(run, task) {
             launch_implementer(run, i, now, fx);
         }
     }
 }
 
-/// Whether `task`'s runtime has room for its implementer: the writer slots held on it by
-/// other tasks are under its cap (the task's own slot already counts there once handed).
+/// Whether `task` is a paired task whose red was confirmed and whose implementer
+/// [`launch_due`] has yet to launch: no worker round and no launch in flight.
+fn awaiting_implementer(run: &Run, task: &Task) -> bool {
+    handed(task).is_some()
+        && task.state == TaskState::Working
+        && !task.awaiting_deps
+        && task.fresh_session.is_none()
+        && !task.rounds.iter().any(|r| r.role == AgentRole::Worker)
+        && !op_in_flight(run, task.id(), |k| matches!(k, OpKind::CreateWindow { .. }))
+}
+
+/// Whether `task`'s runtime has room for its implementer. Ruling FW-4 (I): only live
+/// sessions count, so the writer slots of tasks whose implementer still waits (`task`'s
+/// own included) are left out; a waiting implementer never holds back another.
 fn implementer_room(run: &Run, task: &Task) -> bool {
     let runtime = task.route.runtime;
-    let own = (writer_slots(task).iter())
-        .filter(|r| **r == runtime)
+    let live = (run.tasks.iter())
+        .filter(|t| !awaiting_implementer(run, t))
+        .flat_map(writer_slots)
+        .filter(|r| *r == runtime)
         .count();
-    let busy = usize::from(concurrency::writers_busy_on(run, runtime)).saturating_sub(own);
-    busy < usize::from(concurrency::cap(run, runtime))
+    live < usize::from(concurrency::cap(run, runtime))
 }
 
 /// The test writer's session is done with: retired, as a merged task's worker is.

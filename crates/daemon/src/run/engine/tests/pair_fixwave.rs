@@ -1,24 +1,37 @@
 //! The final fix wave's pair items in the reducer: a test writer's writer slot and cap
 //! are its own runtime's (A-I3); its rung 2 is not the task's escalation (review B's
 //! M2); the retry preview names its route (M3); the snapshot's writer failures (M7);
-//! the implementer waits for room on the task's runtime (ruling FW-2 (c)).
+//! the implementer waits for room on the task's runtime (ruling FW-2 (c)), and waiting
+//! implementers do not hold each other back (ruling FW-4 (I)).
 
-use proto::{AgentRole, PairPhase, Runtime, TaskState};
+use proto::{AgentRole, PairPhase, PlanEdit, Runtime, TaskState};
 
+use super::super::control::resume;
+use super::super::dispatch::edit;
 use super::super::merge::window_of;
 use super::*;
 use crate::run::engine::concurrency::writers_busy_on;
 use crate::run::engine::schedule::writer_slots;
 use crate::run::model::RuntimeConcurrency;
 
-/// Codex's cap brought down to 1 by a rate limit at the fixture's start.
-fn codex_capped(run: &mut crate::run::model::Run) {
+/// `runtime`'s cap brought down to 1 by a rate limit at the fixture's start.
+fn capped(run: &mut crate::run::model::Run, runtime: &str) {
     let held = RuntimeConcurrency {
         cap: 1,
         last_rate_limit_at: Some(2_000),
         ..RuntimeConcurrency::new(run.limits.max_writers)
     };
-    run.concurrency.insert("codex".into(), held);
+    run.concurrency.insert(runtime.into(), held);
+}
+
+/// Codex's cap brought down to 1 by a rate limit at the fixture's start.
+fn codex_capped(run: &mut crate::run::model::Run) {
+    capped(run, "codex");
+}
+
+/// Claude's cap brought down to 1 by a rate limit at the fixture's start.
+fn claude_capped(run: &mut crate::run::model::Run) {
+    capped(run, "claude");
 }
 
 /// A-I3: two paired Claude tasks whose test writers would both run on Codex, with
@@ -130,14 +143,6 @@ fn the_implementer_waits_for_room_on_the_tasks_runtime() {
     let tasks = [task("t1", "S", "a", PAIRED), task("t2", "S", "b", "")];
     let plan = plan_with(&profile_with("max_writers = 3"), &tasks);
     let mut fx = Fixture::new(&plan);
-    let claude_capped = |run: &mut crate::run::model::Run| {
-        let held = RuntimeConcurrency {
-            cap: 1,
-            last_rate_limit_at: Some(2_000),
-            ..RuntimeConcurrency::new(run.limits.max_writers)
-        };
-        run.concurrency.insert("claude".into(), held);
-    };
     fx.start_with(true, claude_capped);
     let (op, _) = fx.op("CreateRunBranch");
     fx.done(op, OpResult::Worktree { head: BASE.into() });
@@ -173,4 +178,66 @@ fn the_implementer_waits_for_room_on_the_tasks_runtime() {
     let launch = launch_of(launches[0].1.clone());
     assert_eq!(role_of(&launch), AgentRole::Worker);
     assert_eq!(launch.spec.runtime, Runtime::Claude);
+}
+
+/// Task `id`'s test writer's `task_done` naming red, accepted by a clean `VerifyDone`,
+/// then its turn's end; the red check's `Proof` op.
+fn claim_red_of(fx: &mut Fixture, id: &str, window: u32) -> OpId {
+    let args = serde_json::json!({"summary": "the failing test", "test": TEST, "red": &HEAD[..7]});
+    let effects = fx.tool_as(AgentRole::TestWriter, window, id, "task_done", args);
+    let (op, _) = only_op(&effects, "VerifyDone");
+    let result = fx.clean_check(id);
+    let effects = fx.done(op, result);
+    fx.turn_completed(window);
+    only_op(&effects, "Proof").0
+}
+
+/// The tasks a launch effect list starts a worker session for.
+fn worker_launches(effects: &[Effect]) -> Vec<String> {
+    (ops_in(effects, "CreateWindow").into_iter())
+        .map(|(_, kind)| launch_of(kind))
+        .inspect(|l| assert_eq!(role_of(l), AgentRole::Worker, "{}", l.name))
+        .inspect(|l| assert_eq!(l.spec.runtime, Runtime::Claude, "{}", l.name))
+        .map(|l| l.name)
+        .collect()
+}
+
+/// Ruling FW-4 (I): a handed implementer that is still waiting holds no live session,
+/// so it never counts against another's room. Claude is capped at 1; two paired Claude
+/// tasks whose test writers ran on Codex hand over before a running pass (the run is
+/// paused). On resume exactly one implementer launches, counted before the second is
+/// checked; when it ends, the other launches.
+#[test]
+fn waiting_implementers_do_not_hold_each_other_back() {
+    let tasks = [task("t1", "S", "a", PAIRED), task("t2", "S", "b", PAIRED)];
+    let plan = plan_with(&profile_with("max_writers = 3"), &tasks);
+    let mut fx = Fixture::new(&plan);
+    fx.start_with(true, claude_capped);
+    let (op, _) = fx.op("CreateRunBranch");
+    fx.done(op, OpResult::Worktree { head: BASE.into() });
+    let windows = fx.launch_all();
+    for id in ["t1", "t2"] {
+        assert_eq!(writer_slots(fx.task(id)), [Runtime::Codex], "{id}");
+    }
+    let proofs: Vec<OpId> = ["t1", "t2"]
+        .map(|id| claim_red_of(&mut fx, id, window_of(&windows, id)))
+        .into();
+    edit(&mut fx, vec![PlanEdit::Pause]);
+    assert_eq!(fx.run().state, proto::RunState::Paused);
+    for op in proofs {
+        fx.done(op, red_check(true));
+    }
+    for id in ["t1", "t2"] {
+        let phase = fx.task(id).pair.as_ref().map(|p| p.phase);
+        assert_eq!(phase, Some(PairPhase::Implementing), "{id}");
+    }
+    let launched = worker_launches(&resume(&mut fx));
+    assert_eq!(launched, [format!("{H4}/t1.w2")], "one, in task order");
+    fx.complete_windows();
+    assert!(
+        worker_launches(&fx.tick()).is_empty(),
+        "t1 holds Claude's slot"
+    );
+    let launched = worker_launches(&fx.merge("t1", "m1m1m1m"));
+    assert_eq!(launched, [format!("{H4}/t2.w2")], "t1 ended");
 }
