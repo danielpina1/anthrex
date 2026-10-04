@@ -523,3 +523,31 @@ fn an_ended_run_keeps_its_caps_quietly() {
     assert_eq!(cap(&run, Runtime::Codex), 1);
     assert!(crate::run::snapshot::attention(&run, at + 600).is_empty());
 }
+
+/// Task 13's carries, through the reducer: a `Tick` that recovers Codex's cap lets the
+/// held Codex task take the slot in that same step (the cap moves before the
+/// scheduler's pass), and every quiet `Tick` before it changes nothing, not even the
+/// revision.
+#[test]
+fn a_recovered_slot_is_used_in_the_same_tick_and_a_quiet_tick_changes_nothing() {
+    let tasks = [codex("c1", "a"), codex("c2", "b"), codex("c3", "c")];
+    let mut fx = running(2, &tasks, config(60, 10));
+    limited(&mut fx, "c1");
+    let limited_at = fx.now;
+    fx.force("c2", TaskState::Review);
+    assert_eq!(cap(fx.run(), Runtime::Codex), 1);
+    assert_eq!(fx.task("c3").state, TaskState::Queued);
+    let (before, revision) = (fx.run().clone(), fx.state.revision);
+    let effects = fx.send(limited_at + 599, EventKind::Tick);
+    assert!(effects.is_empty(), "{effects:#?}");
+    assert_eq!(fx.run(), &before);
+    assert_eq!(fx.state.revision, revision);
+    let effects = fx.send(limited_at + 600, EventKind::Tick);
+    assert_eq!(cap(fx.run(), Runtime::Codex), 2);
+    assert_eq!(
+        tasks_of(&effects, "PrepareWorktree"),
+        ["c3"],
+        "{effects:#?}"
+    );
+    assert_eq!(fx.task("c3").state, TaskState::Preparing);
+}
