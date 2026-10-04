@@ -139,10 +139,6 @@ pub(super) fn list_item_text(prefix: &str, text: &str) -> String {
     out
 }
 
-/// A check's raw tail as a fenced code block: line endings normalized first (so the
-/// block's lines are the parser's lines), then wrapped in `fence_for`'s fence, with a
-/// trailing newline before the closing fence when the tail lacks one. The tail itself
-/// is never escaped — inside a fence nothing but a long-enough fence line is special.
 /// An engine-made name (a ref) inside a list item, as an inline code span: one line,
 /// delimited by one backtick more than its longest run of them, so nothing in it is
 /// read as Markdown (task M9.5.21 fix round 1, review m2).
@@ -158,6 +154,10 @@ pub(super) fn code_span(text: &str) -> String {
     format!("{ticks}{pad}{text}{pad}{ticks}")
 }
 
+/// A check's raw tail as a fenced code block: line endings normalized first (so the
+/// block's lines are the parser's lines), then wrapped in `fence_for`'s fence, with a
+/// trailing newline before the closing fence when the tail lacks one. The tail itself
+/// is never escaped — inside a fence nothing but a long-enough fence line is special.
 pub(crate) fn fenced(tail: &str) -> String {
     let tail = normalize_line_endings(tail);
     let fence = fence_for(&tail);
@@ -318,5 +318,21 @@ mod tests {
         assert_eq!(fence_for("a `` run"), "```");
         assert_eq!(fence_for("a ``` run"), "````");
         assert_eq!(fence_for("````\nfour"), "`````");
+    }
+
+    /// Task 21 re-review carry: a ref with backticks in it is one code span, its
+    /// delimiters one backtick longer than its longest run, padded when it starts or
+    /// ends with one, and on one line.
+    #[test]
+    fn code_span_outlasts_the_backticks_in_its_text() {
+        assert_eq!(
+            code_span("refs/anthrex/salvage/t1-1"),
+            "`refs/anthrex/salvage/t1-1`"
+        );
+        assert_eq!(code_span("a`b"), "``a`b``");
+        assert_eq!(code_span("a``b`c"), "```a``b`c```");
+        assert_eq!(code_span("`edge"), "`` `edge ``");
+        assert_eq!(code_span("edge`"), "`` edge` ``");
+        assert_eq!(code_span("x\ny\rz"), "`x y z`");
     }
 }
