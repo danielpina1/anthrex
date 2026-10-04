@@ -135,6 +135,7 @@ fn a_confined_proof_cannot_write_the_users_git() {
         setup: None,
         env: vec![("HOME".to_string(), home.display().to_string())],
         confine: Some(w.spec(&[])),
+        red_only: false,
     };
     let index_before = std::fs::read(w.common().join("index")).unwrap();
     let runs = run_proof(real_git(), &op, T, &direct).unwrap();
@@ -180,6 +181,7 @@ fn a_worker_committed_setup_at_the_proof_checkout_is_confined() {
         setup: Some("sh setup.sh".to_string()),
         env: vec![("HOME".to_string(), home.display().to_string())],
         confine: Some(w.spec(&[])),
+        red_only: false,
     };
     let index_before = std::fs::read(w.common().join("index")).unwrap();
     let runs = run_proof(real_git(), &op, T, &direct).unwrap();

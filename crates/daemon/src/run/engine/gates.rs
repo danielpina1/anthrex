@@ -133,7 +133,7 @@ fn start_proof(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
     };
     let passed = run.profile.test_passed.as_deref().unwrap_or(NAME_ONLY);
     let id = task.id().to_string();
-    let path = run.proof_path(&id);
+    let path = run.proof_path(&task.checkout_name());
     let kind = OpKind::Proof {
         root: run.root.clone(),
         path: path.clone(),
@@ -144,6 +144,7 @@ fn start_proof(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
         timeout_secs: run.profile.check_timeout_secs,
         setup: run.profile.setup.clone(),
         env: profile_env(&run.profile, &path),
+        red_only: false,
     };
     let op = next_op(run);
     run.tasks[i].gate_op = Some(op);
@@ -165,7 +166,7 @@ fn start_check(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
     // whatever the branch tip has become since the claim.
     let task = &run.tasks[i];
     let id = task.id().to_string();
-    let dir = run.proof_path(&id);
+    let dir = run.proof_path(&task.checkout_name());
     let kind = OpKind::Check {
         env: profile_env(&run.profile, &dir),
         dir,

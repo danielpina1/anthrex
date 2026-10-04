@@ -221,7 +221,13 @@ fn merged_task_measures_then_appends_once() {
     );
     assert_eq!(fx.task("t1").state, TaskState::Merged);
     for (op, _) in pending(&fx, "RemoveWorktree", Some("t1")) {
-        let effects = fx.done(op, OpResult::Removed { salvage_ref: None });
+        let effects = fx.done(
+            op,
+            OpResult::Removed {
+                salvage_ref: None,
+                cleared_locks: Vec::new(),
+            },
+        );
         assert!(appends(&effects).is_empty());
     }
     let stats = DiffStats {

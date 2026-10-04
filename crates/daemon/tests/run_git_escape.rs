@@ -105,6 +105,7 @@ fn engine_calls(w: &World) {
         &w.task,
         "refs/anthrex/salvage/x/t1/1",
         "anthrex salvage x/t1",
+        false,
         T,
     );
 }
@@ -205,6 +206,7 @@ fn a_rewritten_commondir_refuses_every_call() {
         &w.task,
         "refs/anthrex/salvage/x/t1/2",
         "anthrex salvage x/t1",
+        false,
         T,
     )
     .unwrap_err();
@@ -260,9 +262,18 @@ fn a_restart_pins_existing_worktrees_before_any_call() {
         &restarted,
         "refs/anthrex/salvage/x/t2/1",
         "s",
+        false,
         T,
     );
     assert_eq!(out(&w.repo.root, &["diff", "--cached", "--name-only"]), "");
-    let err = salvage(real_git(), &stray, "refs/anthrex/salvage/x/s/1", "s", T).unwrap_err();
+    let err = salvage(
+        real_git(),
+        &stray,
+        "refs/anthrex/salvage/x/s/1",
+        "s",
+        false,
+        T,
+    )
+    .unwrap_err();
     assert!(err.contains("is not a linked worktree of"), "{err}");
 }

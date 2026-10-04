@@ -50,17 +50,20 @@ pub(super) async fn remove_worktree(
     path: PathBuf,
     reference: String,
 ) -> Result<Option<String>, String> {
-    let salvaged = if path.exists() {
-        let message = salvage_message(&ctx.run_id, &reference);
-        let at = path.clone();
-        service
-            .write(ctx, move |g, t| {
-                git::salvage(g, &at, &reference, &message, t)
-            })
-            .await?
-    } else {
-        None
-    };
+    remove_keeping(service, ctx, root, path, reference, false).await
+}
+
+/// [`remove_worktree`], salvaging a clean checkout at its head too when `keep_head`
+/// (milestone 9.5 decision 22, a race lane's).
+pub(super) async fn remove_keeping(
+    service: &Arc<RunService>,
+    ctx: &OpCtx,
+    root: PathBuf,
+    path: PathBuf,
+    reference: String,
+    keep_head: bool,
+) -> Result<Option<String>, String> {
+    let salvaged = salvage_in(service, ctx, path.clone(), reference, keep_head).await?;
     // Final fix batch F1c: a standalone checkout goes with its repository (the
     // worker's private objects, the engine's own files, its temporary directory).
     let repo = git::checkout_repo_dir(&ctx.data_dir, &path);
@@ -70,6 +73,26 @@ pub(super) async fn remove_worktree(
         })
         .await?;
     Ok(salvaged)
+}
+
+/// Decision 20's salvage alone, `keep_head` as [`remove_keeping`]'s: `Some(ref)` when
+/// it made one. A worktree already gone has nothing to salvage.
+pub(super) async fn salvage_in(
+    service: &Arc<RunService>,
+    ctx: &OpCtx,
+    path: PathBuf,
+    reference: String,
+    keep_head: bool,
+) -> Result<Option<String>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let message = salvage_message(&ctx.run_id, &reference);
+    service
+        .write(ctx, move |g, t| {
+            git::salvage(g, &path, &reference, &message, keep_head, t)
+        })
+        .await
 }
 
 /// `anthrex salvage <run>/<task>`, the task read from the ref

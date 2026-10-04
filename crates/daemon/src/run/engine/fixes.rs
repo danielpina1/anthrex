@@ -98,7 +98,7 @@ pub(crate) fn add_fix(
         run.limits.default_runtime,
     );
     task.branch = task_branch(&run.id, &id);
-    task.worktree = task_path(&run.wt_dir, &run.id, &id);
+    task.worktree = task_path(&run.wt_dir, &run.id, &task.checkout_name());
     task.notes
         .extend(protected_notes(&task.spec.owns, &run.protected_files));
     task.origin = spec.origin;

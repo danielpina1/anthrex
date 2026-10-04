@@ -131,6 +131,10 @@ pub enum OpResult {
     MergeAborted,
     Removed {
         salvage_ref: Option<String>,
+        /// Milestone 9.5 decision 22: the stale lock files `clear_locks` removed from a
+        /// race lane's git directory (`index.lock`, `HEAD.lock`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        cleared_locks: Vec<String>,
     },
     RefsOk,
     /// `kept_branches` (M8a.14, carry T9): the branches `delete_branches` skipped
@@ -184,4 +188,9 @@ pub enum OpResult {
     StageCreated,
     /// Milestone 9.2 decision 8: an `OpKind::Host` call's answer.
     Host(crate::run::delivery::ops::HostResult),
+    /// Milestone 9.5 decision 21: `CrownRacer` created the task branch at `head`, or
+    /// found it there already (ruling T1-2).
+    Crowned {
+        head: String,
+    },
 }

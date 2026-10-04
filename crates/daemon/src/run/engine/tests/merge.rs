@@ -164,7 +164,13 @@ pub(super) fn merge(fx: &mut Fixture, id: &str, at: &str) -> Vec<Effect> {
         },
     );
     for (op, _) in pending(fx, "RemoveWorktree", Some(id)) {
-        effects.extend(fx.done(op, OpResult::Removed { salvage_ref: None }));
+        effects.extend(fx.done(
+            op,
+            OpResult::Removed {
+                salvage_ref: None,
+                cleared_locks: Vec::new(),
+            },
+        ));
     }
     effects
 }
@@ -265,6 +271,7 @@ fn merged_updates_run_head_cleans_up_and_retires_the_worker() {
                 root,
                 path,
                 salvage_ref,
+                ..
             } => {
                 assert_eq!(root, std::path::PathBuf::from("/tmp/x"));
                 (path, salvage_ref)
@@ -314,7 +321,13 @@ fn merged_updates_run_head_cleans_up_and_retires_the_worker() {
     // Only the task's own worktree clears `worktree_live`.
     for (op, kind) in pending(&fx, "RemoveWorktree", Some("t1")) {
         if matches!(&kind, OpKind::RemoveWorktree { path, .. } if *path != task_path("t1")) {
-            fx.done(op, OpResult::Removed { salvage_ref: None });
+            fx.done(
+                op,
+                OpResult::Removed {
+                    salvage_ref: None,
+                    cleared_locks: Vec::new(),
+                },
+            );
         }
     }
     assert!(fx.task("t1").worktree_live);
@@ -323,6 +336,7 @@ fn merged_updates_run_head_cleans_up_and_retires_the_worker() {
         op,
         OpResult::Removed {
             salvage_ref: Some(salvage(1)),
+            cleared_locks: Vec::new(),
         },
     );
     assert!(!fx.task("t1").worktree_live);

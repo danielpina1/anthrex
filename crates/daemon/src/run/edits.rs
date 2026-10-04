@@ -239,7 +239,7 @@ impl Batch {
         );
         self.errors.extend(errors);
         task.branch = task_branch(&run.id, task.id());
-        task.worktree = task_path(&run.wt_dir, &run.id, task.id());
+        task.worktree = task_path(&run.wt_dir, &run.id, &task.checkout_name());
         task.notes
             .extend(protected_notes(&task.spec.owns, &run.protected_files));
         // Milestone 9.2 decision 31: `addresses` makes it a review fix; an amend's are

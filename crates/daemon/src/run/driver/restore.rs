@@ -13,7 +13,7 @@ use super::{OpCtx, RunService, cleanup, effects, unix_now};
 use crate::run::engine::{Event, EventKind, OpKind, OpResult};
 use crate::run::git;
 use crate::run::journal;
-use crate::run::model::{LogEntry, OpId, Run};
+use crate::run::model::{LogEntry, OpId, Run, task_branch};
 use crate::run::reconcile;
 use crate::run::test_cache::CACHE_FILE;
 use crate::run::tuning_io::TUNING_FILE;
@@ -367,7 +367,9 @@ fn hold_unreconciled(run: &mut Run, now: u64) {
 /// Every engine worktree `run` can have, each with what it is pinned as: its
 /// integration worktree (its `HEAD` on the run branch), each task's worktree (detached,
 /// with the task's engine-owned branch and private object directory; final fix batch
-/// F1b), and its review and proof (detached) worktrees.
+/// F1b), and its review and proof (detached) worktrees. Milestone 9.5 (ruling T1-3):
+/// a racing task's lane checkouts too, each under its own branch, the crowned (or
+/// adopted) lane's under the task's branch, which the crown made.
 fn run_worktree_paths(run: &Run) -> Vec<(std::path::PathBuf, PinAs)> {
     let mut paths = vec![(
         run.integration_path(),
@@ -377,28 +379,40 @@ fn run_worktree_paths(run: &Run) -> Vec<(std::path::PathBuf, PinAs)> {
         },
     )];
     for task in &run.tasks {
-        // Final fix batch F1c (3a): each checkout is its own repository in the run's
-        // data directory.
-        let repo = git::Repo::at(&git::checkout_repo_dir(&run.data_dir, &task.worktree));
-        paths.push((
-            task.worktree.clone(),
-            PinAs {
+        // The crowned lane's checkout is the task's (`Task.worktree` once the reducer
+        // moved it there; its path from the start, should a restart come first).
+        let name = task.checkout_name();
+        let own = match name == task.id() {
+            true => task.worktree.clone(),
+            false => run.task_path(&name),
+        };
+        let mut checkouts = vec![(own, name.clone(), task.branch.clone())];
+        for lane in task.race.iter().flat_map(|race| &race.lanes) {
+            if lane.checkout != name {
+                let branch = task_branch(&run.id, &lane.checkout);
+                checkouts.push((run.task_path(&lane.checkout), lane.checkout.clone(), branch));
+            }
+        }
+        for (path, name, branch) in checkouts {
+            // Final fix batch F1c (3a): each checkout is its own repository in the run's
+            // data directory.
+            let repo = git::Repo::at(&git::checkout_repo_dir(&run.data_dir, &path));
+            let own = PinAs {
                 head: None,
-                own: Some(format!("refs/heads/{}", task.branch)),
+                own: Some(format!("refs/heads/{branch}")),
                 objects: Some(repo.objects()),
                 engine: Some(repo.engine()),
                 repo: Some(repo.git_dir()),
-            },
-        ));
-        for path in [run.review_path(task.id()), run.proof_path(task.id())] {
-            let repo = git::Repo::at(&git::checkout_repo_dir(&run.data_dir, &path));
-            paths.push((
-                path,
-                PinAs {
+            };
+            paths.push((path, own));
+            for path in [run.review_path(&name), run.proof_path(&name)] {
+                let repo = git::Repo::at(&git::checkout_repo_dir(&run.data_dir, &path));
+                let read_only = PinAs {
                     repo: Some(repo.git_dir()),
                     ..PinAs::default()
-                },
-            ));
+                };
+                paths.push((path, read_only));
+            }
         }
     }
     paths
@@ -434,6 +448,10 @@ fn replayed_accept(run: &Run, answers: &[(String, u64, OpResult)]) -> Option<Acc
 #[cfg(test)]
 #[path = "restore_sweep_tests.rs"]
 mod sweep_tests;
+
+#[cfg(test)]
+#[path = "restore_lanes_tests.rs"]
+mod lanes_tests;
 
 #[cfg(test)]
 mod tests {

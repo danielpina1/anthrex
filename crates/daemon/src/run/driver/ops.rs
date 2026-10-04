@@ -25,6 +25,8 @@ use proto::AgentRole;
 // 600-line rule).
 #[path = "gate_ops.rs"]
 mod gate_ops;
+#[path = "lane_ops.rs"]
+mod lane_ops;
 #[path = "sync_done.rs"]
 mod sync_done;
 use gate_ops::{check, proof};
@@ -131,16 +133,22 @@ async fn worker_git_dirs(
         .run_ref
         .as_ref()
         .filter(|r| r.role == AgentRole::Worker)
-        .and_then(|r| r.task_id.clone());
-    let Some(task) = task else {
+        .and_then(|r| Some((r.task_id.clone()?, r.lane)));
+    let Some((task, lane)) = task else {
         return Ok(());
     };
-    let common = crate::lock(&service.state)
+    // Milestone 9.5 ruling RR-1: the session's checkout, a lane's or the task's.
+    let (common, checkout) = crate::lock(&service.state)
         .runs
         .get(&ctx.run_id)
-        .map(|run| run.git_common_dir.clone())
+        .map(|run| {
+            (
+                run.git_common_dir.clone(),
+                lane_ops::checkout_of(run, &task, lane),
+            )
+        })
         .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
-    let roots = worker_git_roots(&ctx.data_dir, &task);
+    let roots = worker_git_roots(&ctx.data_dir, &checkout);
     let sandboxed = spec
         .claude_sandbox
         .as_ref()
@@ -347,6 +355,7 @@ pub(super) async fn run(
             timeout_secs,
             setup,
             env,
+            red_only,
         } => {
             let op_id = op;
             let op = ProofOp {
@@ -361,6 +370,7 @@ pub(super) async fn run(
                 setup,
                 env,
                 confine: ctx.confine.as_deref().cloned(),
+                red_only,
             };
             proof(service, ctx, op_id, op).await
         }
@@ -425,15 +435,8 @@ pub(super) async fn run(
                 .await
                 .map(|()| OpResult::MergeAborted),
         ),
-        OpKind::RemoveWorktree {
-            root,
-            path,
-            salvage_ref,
-        } => settle(
-            cleanup::remove_worktree(service, ctx, root, path, salvage_ref)
-                .await
-                .map(|salvage_ref| OpResult::Removed { salvage_ref }),
-        ),
+        // Milestone 9.5 decision 22: with a race lane's variants.
+        OpKind::RemoveWorktree { .. } => settle(lane_ops::remove_lane(service, ctx, kind).await),
         OpKind::VerifyRefs { .. } => stage_ops::verify_refs(service, ctx, kind).await,
         // Milestone 9.1 decision 48.
         OpKind::CreateStageBranch { .. } => stage_ops::create(service, ctx, kind).await,
@@ -467,6 +470,8 @@ pub(super) async fn run(
         }
         // Milestone 9.2 decision 8 (`driver/host_ops.rs`).
         OpKind::Host { repo, op } => service.host_op(ctx, repo, op).await,
+        // Milestone 9.5 decision 21.
+        OpKind::CrownRacer { .. } => lane_ops::crown_racer(service, ctx, kind).await,
     }
 }
 

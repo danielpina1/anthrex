@@ -190,7 +190,13 @@ fn cancel_leaves_prs_open_and_completes_with_the_outcome() {
         },
     );
     let (op, _) = pending_one(&fx, "RemoveWorktree", Some("t2"));
-    fx.done(op, OpResult::Removed { salvage_ref: None });
+    fx.done(
+        op,
+        OpResult::Removed {
+            salvage_ref: None,
+            cleared_locks: Vec::new(),
+        },
+    );
     // Stage 2 merged nothing and the run is cancelled: no PR waits.
     verify_ok(&mut fx);
     let run = fx.run();

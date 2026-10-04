@@ -197,6 +197,9 @@ fn remove_cancelled_worktrees(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             root: run.root.clone(),
             path,
             salvage_ref,
+            keep_head: false,
+            clear_locks: false,
+            keep_path: false,
         };
         emit_op(run, op, Some(&id), kind, fx);
         history(run, i, now, "removing its worktree (salvaged if dirty)");
@@ -321,7 +324,7 @@ pub(super) fn window_done(
 /// The result of a `RemoveWorktree`.
 pub(super) fn removed(run: &mut Run, i: usize, path: &Path, result: OpResult, now: u64) {
     match result {
-        OpResult::Removed { salvage_ref } => {
+        OpResult::Removed { salvage_ref, .. } => {
             let task = &mut run.tasks[i];
             // M8a.14: a merged task's review and proof worktrees are removed too.
             if path == task.worktree {

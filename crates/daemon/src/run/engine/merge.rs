@@ -280,10 +280,12 @@ fn merged(
     fx.push(Effect::UnwatchWorktree {
         root: task.worktree.clone(),
     });
+    // Milestone 9.5 ruling RR-1: a crowned task's checkouts are its lane's.
+    let name = task.checkout_name();
     let paths = [
         task.worktree.clone(),
-        run.review_path(&id),
-        run.proof_path(&id),
+        run.review_path(&name),
+        run.proof_path(&name),
     ];
     let seq = next_salvage_seq(task);
     for (k, path) in paths.into_iter().enumerate() {
@@ -291,6 +293,9 @@ fn merged(
             root: run.root.clone(),
             path,
             salvage_ref: salvage_ref(run, &id, seq + k),
+            keep_head: false,
+            clear_locks: false,
+            keep_path: false,
         };
         let op = next_op(run);
         emit_op(run, op, Some(&id), kind, fx);

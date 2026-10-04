@@ -385,7 +385,7 @@ fn staged_work_in_the_private_directory_is_judged_and_salvaged() {
     assert!(r.dirty_tracked > 0, "{r:?}");
 
     let reference = format!("refs/anthrex/salvage/{}/t1", w.run);
-    let saved = salvage(real_git(), &w.task, &reference, "salvage", T)
+    let saved = salvage(real_git(), &w.task, &reference, "salvage", false, T)
         .unwrap()
         .expect("something to save");
     assert_eq!(out(&w.repo.root, &["rev-parse", &format!("{saved}^")]), tip);

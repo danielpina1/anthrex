@@ -114,6 +114,7 @@ fn proof_passes_to_check() {
             timeout_secs: 1800,
             setup: Some("make deps".into()),
             env: vec![("TARGET".into(), format!("{}/target", proof_path.display()))],
+            red_only: false,
         }
     );
     assert_eq!(fx.task("t1").gate_op, Some(op));

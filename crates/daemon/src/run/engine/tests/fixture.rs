@@ -470,6 +470,7 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::CreateStageBranch { .. } => "CreateStageBranch",
         OpKind::Propagate(_) => "Propagate",
         OpKind::Host { .. } => "Host",
+        OpKind::CrownRacer { .. } => "CrownRacer",
     }
 }
 

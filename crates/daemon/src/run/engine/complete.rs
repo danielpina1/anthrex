@@ -354,17 +354,26 @@ pub(super) fn cancel(
 
 /// Every engine-owned worktree of the run, each with its next salvage ref: every
 /// task's own, review and proof worktrees (the executor skips one that no longer
-/// exists), then the integration worktree.
+/// exists), then the integration worktree. Milestone 9.5 (ruling RR-1, decision 22):
+/// a task's by its `checkout_name`, then every other lane checkout of its race, a
+/// loser's kept checkout included.
 fn run_worktrees(run: &Run) -> Vec<(std::path::PathBuf, String)> {
     let mut out = Vec::new();
     for task in &run.tasks {
         let id = task.id();
         let seq = next_salvage_seq(task);
-        let paths = [
+        let name = task.checkout_name();
+        let mut paths = vec![
             task.worktree.clone(),
-            run.review_path(id),
-            run.proof_path(id),
+            run.review_path(&name),
+            run.proof_path(&name),
         ];
+        let lanes = task.race.iter().flat_map(|race| &race.lanes);
+        for lane in lanes.filter(|lane| lane.checkout != name) {
+            let checkout = &lane.checkout;
+            paths.push(run.task_path(checkout));
+            paths.extend([run.review_path(checkout), run.proof_path(checkout)]);
+        }
         for (k, path) in paths.into_iter().enumerate() {
             out.push((path, salvage_ref(run, id, seq + k)));
         }

@@ -228,4 +228,29 @@ impl Task {
     pub fn stage(&self) -> u16 {
         self.spec.stage
     }
+
+    /// Milestone 9.5 ruling RR-1: the name of the task's checkout. The task id, or, once
+    /// a lane of its race is crowned (`Won`) or adopted, that lane's `<task>.<lane>`:
+    /// every path keyed by a checkout name (its repository, objects, engine directory,
+    /// `TMPDIR`, proof and review checkouts) is then the lane's.
+    pub fn checkout_name(&self) -> String {
+        let crowned = self.race.as_ref().and_then(|race| {
+            race.lanes
+                .iter()
+                .find(|l| matches!(l.state, proto::LaneState::Won | proto::LaneState::Adopted))
+        });
+        match crowned {
+            Some(lane) => lane_checkout(self.id(), lane.lane),
+            None => self.id().to_string(),
+        }
+    }
 }
+
+/// Decision 19: lane `lane`'s checkout name, `<task>.<lane>`.
+pub fn lane_checkout(task: &str, lane: proto::RaceLane) -> String {
+    format!("{task}.{}", lane.label())
+}
+
+#[cfg(test)]
+#[path = "checkout_name_tests.rs"]
+mod checkout_name_tests;

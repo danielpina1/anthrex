@@ -188,3 +188,51 @@ pub fn err(task: Option<&str>, field: &str, rule: &str, message: &str) -> PlanEr
 pub fn record_fixture(path: &str, text: &str) {
     std::fs::write(path, text).unwrap_or_else(|e| panic!("could not write {path}: {e}"));
 }
+
+/// Milestone 9.5: `task`'s race with lane a on `route`, lane b on Codex, each in
+/// `states`' state, with `winner` set when a lane is `Won` or `Adopted` (task M9.5.15's
+/// checkout tests; the reducer that fills a race is M9.5.17a's).
+pub fn race_of(task: &Task, states: [proto::LaneState; 2]) -> super::model::Race {
+    use proto::{LaneState, RaceLane};
+    let lane = |lane: RaceLane, state: LaneState| {
+        let mut route = task.route.clone();
+        if lane == RaceLane::B {
+            route.runtime = proto::Runtime::Codex;
+        }
+        super::model::Lane {
+            lane,
+            route,
+            review_route: None,
+            checkout: super::model::lane_checkout(task.id(), lane),
+            state,
+            session: if lane == RaceLane::A { 1 } else { 2 },
+            start_commit: None,
+            head: None,
+            done: None,
+            failures: 0,
+            bounces: proto::GateCounts::default(),
+            stalls: 0,
+            budget_exceeded: 0,
+            spent: proto::Spend::default(),
+            reason: None,
+            salvage_ref: None,
+            cleared_locks: Vec::new(),
+            kill_sent_at: None,
+            exited: false,
+            removed: false,
+            kept: false,
+        }
+    };
+    let lanes = vec![lane(RaceLane::A, states[0]), lane(RaceLane::B, states[1])];
+    let winner = lanes
+        .iter()
+        .find(|l| matches!(l.state, LaneState::Won | LaneState::Adopted))
+        .map(|l| l.lane);
+    let adopted = lanes.iter().any(|l| l.state == LaneState::Adopted);
+    super::model::Race {
+        lanes,
+        winner,
+        adopted,
+        started_at: 100,
+    }
+}

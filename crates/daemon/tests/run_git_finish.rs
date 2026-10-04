@@ -56,6 +56,7 @@ fn salvage_of_a_clean_worktree_writes_nothing() {
         &task,
         "refs/anthrex/salvage/sv01/t1/1",
         "anthrex salvage sv01/t1",
+        false,
         T,
     )
     .unwrap();
@@ -67,7 +68,15 @@ fn salvage_of_a_clean_worktree_writes_nothing() {
     out(&repo.root, &["config", "status.showUntrackedFiles", "no"]);
     write(&task, "notes.txt", "untracked\n");
     let reference = "refs/anthrex/salvage/sv01/t1/1";
-    let saved = salvage(real_git(), &task, reference, "anthrex salvage sv01/t1", T).unwrap();
+    let saved = salvage(
+        real_git(),
+        &task,
+        reference,
+        "anthrex salvage sv01/t1",
+        false,
+        T,
+    )
+    .unwrap();
     assert_eq!(saved.as_deref(), Some(reference));
     assert!(tree_names(&repo.root, reference).contains(&"notes.txt".to_string()));
 }
@@ -92,7 +101,7 @@ fn salvage_captures_tracked_and_untracked_changes_but_not_ignored_files() {
 
     let reference = "refs/anthrex/salvage/sv02/t1/1";
     let message = "anthrex salvage sv02/t1";
-    let saved = salvage(real_git(), &task, reference, message, T).unwrap();
+    let saved = salvage(real_git(), &task, reference, message, false, T).unwrap();
     assert_eq!(saved.as_deref(), Some(reference));
 
     let names = tree_names(&repo.root, reference);
@@ -125,18 +134,18 @@ fn salvage_captures_tracked_and_untracked_changes_but_not_ignored_files() {
     // replayed op); a second, different salvage takes the next sequence number, and
     // never overwrites the first.
     assert_eq!(
-        salvage(real_git(), &task, reference, message, T)
+        salvage(real_git(), &task, reference, message, false, T)
             .unwrap()
             .as_deref(),
         Some(reference)
     );
     write(&task, "more.txt", "more\n");
     let first = out(&repo.root, &["rev-parse", reference]);
-    assert!(salvage(real_git(), &task, reference, message, T).is_err());
+    assert!(salvage(real_git(), &task, reference, message, false, T).is_err());
     assert_eq!(out(&repo.root, &["rev-parse", reference]), first);
     let second = "refs/anthrex/salvage/sv02/t1/2";
     assert_eq!(
-        salvage(real_git(), &task, second, message, T)
+        salvage(real_git(), &task, second, message, false, T)
             .unwrap()
             .as_deref(),
         Some(second)
@@ -158,7 +167,15 @@ fn salvage_of_a_conflicted_hand_back_keeps_the_markers() {
     );
 
     let reference = "refs/anthrex/salvage/sv03/t1/1";
-    let saved = salvage(real_git(), &task, reference, "anthrex salvage sv03/t1", T).unwrap();
+    let saved = salvage(
+        real_git(),
+        &task,
+        reference,
+        "anthrex salvage sv03/t1",
+        false,
+        T,
+    )
+    .unwrap();
     assert_eq!(saved.as_deref(), Some(reference));
     let text = out(&repo.root, &["show", &format!("{reference}:shared.txt")]);
     assert!(text.contains("<<<<<<<"), "{text}");
@@ -193,7 +210,15 @@ fn remove_refuses_nothing_after_salvage() {
     std::os::unix::fs::symlink(&outside, task.join("link")).unwrap();
 
     let reference = "refs/anthrex/salvage/rm01/t1/1";
-    let saved = salvage(real_git(), &task, reference, "anthrex salvage rm01/t1", T).unwrap();
+    let saved = salvage(
+        real_git(),
+        &task,
+        reference,
+        "anthrex salvage rm01/t1",
+        false,
+        T,
+    )
+    .unwrap();
     assert_eq!(saved.as_deref(), Some(reference));
     remove_worktree(real_git(), &repo.root, &task, T).unwrap();
 
@@ -346,7 +371,14 @@ fn a_refused_salvage_leaves_the_index_untouched() {
     let unmerged = || out(&task, &["diff", "--name-only", "--diff-filter=U"]);
     assert_eq!(unmerged(), "shared.txt");
 
-    let refused = salvage(real_git(), &task, reference, "anthrex salvage sv04/t1", T);
+    let refused = salvage(
+        real_git(),
+        &task,
+        reference,
+        "anthrex salvage sv04/t1",
+        false,
+        T,
+    );
     assert!(refused.is_err(), "{refused:?}");
     assert_eq!(unmerged(), "shared.txt", "the conflict is still unresolved");
     assert_eq!(out(&repo.root, &["rev-parse", reference]), task_head);
@@ -377,6 +409,7 @@ done"#,
         &task,
         reference,
         "anthrex salvage sv05/t1",
+        false,
         T,
     );
     assert!(result.is_err(), "{result:?}");

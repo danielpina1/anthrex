@@ -76,9 +76,13 @@ pub(super) fn settle_ops(fx: &mut Fixture) {
                     Some((p.op, OpResult::DiffMeasured(Default::default())))
                 }
                 OpKind::AppendHistory { .. } => Some((p.op, OpResult::HistoryAppended)),
-                OpKind::RemoveWorktree { .. } => {
-                    Some((p.op, OpResult::Removed { salvage_ref: None }))
-                }
+                OpKind::RemoveWorktree { .. } => Some((
+                    p.op,
+                    OpResult::Removed {
+                        salvage_ref: None,
+                        cleared_locks: Vec::new(),
+                    },
+                )),
                 _ => None,
             })
             .collect();

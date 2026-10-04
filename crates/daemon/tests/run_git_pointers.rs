@@ -186,6 +186,7 @@ fn a_git_symlink_to_another_worktree_never_moves_the_pin_or_the_grant() {
         &w.task,
         "refs/anthrex/salvage/hp02/t1/1",
         "anthrex salvage hp02/t1",
+        false,
         T,
     )
     .unwrap();

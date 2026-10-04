@@ -176,7 +176,7 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
         run.limits.default_runtime,
     );
     task.branch = task_branch(&run.id, &id);
-    task.worktree = task_path(&run.wt_dir, &run.id, &id);
+    task.worktree = task_path(&run.wt_dir, &run.id, &task.checkout_name());
     let author = author.unwrap_or_else(|| task.route.clone());
     // Milestone 9.5 ruling RL-4: the `review` list's first qualifying candidate.
     let (lists, installed) = (&run.limits.route_lists, &run.orch.installed);

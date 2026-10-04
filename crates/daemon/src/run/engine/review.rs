@@ -77,6 +77,7 @@ pub(super) fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
             (head, run.head_for(task).to_string())
         };
         let id = task.id().to_string();
+        let path = run.review_path(&task.checkout_name());
         // Controller ruling C-21 (6): a sync task's resolution only.
         let base_tree = task.sync.as_ref().map(|s| s.base_tree.clone());
         let op = next_op(run);
@@ -84,7 +85,7 @@ pub(super) fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
             root: run.root.clone(),
             head_ref,
             base_ref,
-            path: run.review_path(&id),
+            path,
             base_tree,
         };
         run.tasks[i].gate_op = Some(op);
@@ -198,7 +199,7 @@ pub(super) fn review_ready(
     );
     round.round = round_no;
     let id = task.id().to_string();
-    let worktree = run.review_path(&id);
+    let worktree = run.review_path(&task.checkout_name());
     // M8b decision 33a: decided before the session-start op.
     match listed {
         Some((_, list)) => routing::record_listed_reviewer(run, i, list, &route, round_no, now),

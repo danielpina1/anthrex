@@ -402,7 +402,13 @@ fn s2_flaky_tier2_in_stage2_while_stage1_tier3_goes_red() {
     );
     assert_eq!(fx.task("t3").rounds.len(), rounds_before);
     for (op, _) in pending(&fx, "RemoveWorktree", Some("t3")) {
-        fx.done(op, OpResult::Removed { salvage_ref: None });
+        fx.done(
+            op,
+            OpResult::Removed {
+                salvage_ref: None,
+                cleared_locks: Vec::new(),
+            },
+        );
     }
     answer(&mut fx, 2);
     invariants(&fx, "bisect done");

@@ -154,7 +154,13 @@ fn a_cancelled_bisect_fix_task_is_an_attention_line_and_one_wake() {
     for _ in 0..5 {
         later(&mut fx, 200);
         for (op, _) in pending(&fx, "RemoveWorktree", Some("fix1")) {
-            fx.done(op, OpResult::Removed { salvage_ref: None });
+            fx.done(
+                op,
+                OpResult::Removed {
+                    salvage_ref: None,
+                    cleared_locks: Vec::new(),
+                },
+            );
         }
     }
     let head = fx.run().stage_head(1).unwrap().to_string();

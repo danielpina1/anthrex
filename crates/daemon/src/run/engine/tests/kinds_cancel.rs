@@ -70,7 +70,10 @@ pub(super) fn settle_all(fx: &mut Fixture) {
         for (op, kind) in ops {
             let result = match kind {
                 OpKind::PrepareWorktree { .. } => OpResult::Worktree { head: BASE.into() },
-                OpKind::RemoveWorktree { .. } => OpResult::Removed { salvage_ref: None },
+                OpKind::RemoveWorktree { .. } => OpResult::Removed {
+                    salvage_ref: None,
+                    cleared_locks: Vec::new(),
+                },
                 OpKind::VerifyRefs { .. } => OpResult::RefsOk,
                 _ => OpResult::Failed {
                     message: "gone".into(),

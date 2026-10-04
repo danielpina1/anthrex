@@ -16,6 +16,7 @@ mod chains_delivered;
 mod chains_delivered_table;
 mod chains_usage;
 mod chains_wave;
+mod checkout_name;
 mod concurrency;
 mod control;
 mod control_clock;

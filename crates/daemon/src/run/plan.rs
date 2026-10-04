@@ -381,7 +381,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         errors.extend(task_errors);
         errors.extend(super::validate::reserved_new_id(task.id()));
         task.branch = task_branch(&ctx.id, task.id());
-        task.worktree = task_path(&ctx.wt_dir, &ctx.id, task.id());
+        task.worktree = task_path(&ctx.wt_dir, &ctx.id, &task.checkout_name());
         task.notes.extend(super::validate::protected_notes(
             &task.spec.owns,
             &pre.protected_files,

@@ -135,7 +135,9 @@ fn worker_env(run: &Run, task: &Task) -> Vec<(String, String)> {
     env.extend(caps);
     env.push((
         TASK_TMPDIR.to_string(),
-        task_tmp_dir(&run.data_dir, task.id()).display().to_string(),
+        task_tmp_dir(&run.data_dir, &task.checkout_name())
+            .display()
+            .to_string(),
     ));
     env
 }
@@ -223,14 +225,14 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
         claude_permission_mode: claude.then(|| limits.worker_permission_mode.clone()),
         claude_disallowed_tools: Vec::new(),
         claude_sandbox: (claude && limits.worker_sandbox).then(|| ClaudeSandbox {
-            writable_roots: worker_git_roots(&run.data_dir, task.id()),
+            writable_roots: worker_git_roots(&run.data_dir, &task.checkout_name()),
             deny_write: protected_write_denials(&task.worktree, &task.spec.owns),
         }),
         codex_sandbox: limits.worker_codex_sandbox.clone(),
         codex_writable_roots: if claude {
             Vec::new()
         } else {
-            worker_git_roots(&run.data_dir, task.id())
+            worker_git_roots(&run.data_dir, &task.checkout_name())
         },
         env: worker_env(run, task),
         claude_auth: limits.claude_auth.into(),
@@ -257,7 +259,7 @@ fn output_filter(run: &Run, task: &Task) -> Option<FilterHook> {
     filters.then(|| FilterHook {
         mode: run.output_filter,
         prefixes: run.filter_prefixes.clone(),
-        log_dir: task_tmp_dir(&run.data_dir, task.id()).join(LOG_DIR_NAME),
+        log_dir: task_tmp_dir(&run.data_dir, &task.checkout_name()).join(LOG_DIR_NAME),
     })
 }
 
@@ -265,7 +267,7 @@ fn output_filter(run: &Run, task: &Task) -> Option<FilterHook> {
 /// `RunRef.session` is the review round.
 pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
     let claude = route.runtime == Runtime::Claude;
-    let path = run.review_path(task.id());
+    let path = run.review_path(&task.checkout_name());
     let round = task
         .rounds
         .iter()

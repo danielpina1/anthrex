@@ -391,7 +391,13 @@ fn a_paused_stage_whose_tasks_are_cancelled_counts_as_skipped() {
         if !add {
             // Its worktrees go; nothing else waits: the run completes.
             for (op, _) in pending(&fx, "RemoveWorktree", Some("t2")) {
-                fx.done(op, OpResult::Removed { salvage_ref: None });
+                fx.done(
+                    op,
+                    OpResult::Removed {
+                        salvage_ref: None,
+                        cleared_locks: Vec::new(),
+                    },
+                );
             }
             verify_ok(&mut fx);
             assert_eq!(fx.run().state, proto::RunState::Complete);

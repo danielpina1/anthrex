@@ -23,6 +23,9 @@ use super::{DIFF_FLAGS, Git, NO_NESTED, checkout, failure, import, nul_fields, o
 /// branch (`add -A`, `write-tree`, `commit-tree -p HEAD`), and `reference` is created
 /// at that commit; the result is `Some(reference)`.
 ///
+/// With `keep_head` (milestone 9.5 decision 22, a race lane's), a clean worktree is
+/// saved too: `reference` is created at its head.
+///
 /// A salvage ref is never overwritten. If `reference` already exists and holds the
 /// same tree, this is the same salvage replayed (an op re-run after a crash) and gives
 /// `Some(reference)` again; if it holds other work, this is an error, and the caller
@@ -32,6 +35,7 @@ pub fn salvage(
     worktree: &Path,
     reference: &str,
     message: &str,
+    keep_head: bool,
     timeout: Duration,
 ) -> Result<Option<String>, String> {
     let g = Git::new(git, timeout);
@@ -78,7 +82,10 @@ pub fn salvage(
         return Err(failure(&args, &output));
     }
     if kept.total == 0 {
-        return Ok(None);
+        return match keep_head {
+            true => keep_at_head(g, (worktree, refs_at), reference, &parent),
+            false => Ok(None),
+        };
     }
     // Whether this salvage is refused is decided before `add -A` touches the index
     // (ruling T9-m4): a refused salvage leaves a hand-back's unmerged entries unmerged.
@@ -134,6 +141,36 @@ pub fn salvage(
         ],
     )?;
     Ok(Some(reference.to_string()))
+}
+
+/// Milestone 9.5 decision 22's `keep_head`: a clean checkout's salvage ref is its head
+/// (`parent`), so a race loser's commits outlive its lane branch. A ref already there is
+/// this salvage replayed; one elsewhere is an error.
+fn keep_at_head(
+    g: Git<'_>,
+    (worktree, refs_at): (&Path, &Path),
+    reference: &str,
+    parent: &str,
+) -> Result<Option<String>, String> {
+    let head = match parent {
+        "HEAD" => read(g, worktree, "HEAD")?.ok_or("the checkout has no HEAD to keep")?,
+        commit => commit.to_string(),
+    };
+    match read(g, refs_at, reference)? {
+        Some(saved) if saved != head => Err(format!("salvage ref {reference} holds other work")),
+        Some(_) => Ok(Some(reference.to_string())),
+        None => {
+            let args = [
+                os("update-ref"),
+                os("--no-deref"),
+                os(reference),
+                os(&head),
+                os(""),
+            ];
+            g.write(refs_at, &args)?;
+            Ok(Some(reference.to_string()))
+        }
+    }
 }
 
 /// Final fix batch F1c (C1): removes `<git_dir>/index` when it is not a plain file (a

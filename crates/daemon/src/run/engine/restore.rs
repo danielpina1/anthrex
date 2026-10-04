@@ -182,6 +182,7 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
             | OpKind::PrepareWorktree { .. }
             | OpKind::AbortMerge { .. }
             | OpKind::RemoveWorktree { .. }
+            | OpKind::CrownRacer { .. }
             | OpKind::MeasureDiff { .. }
             | OpKind::AppendHistory { .. },
             _,
