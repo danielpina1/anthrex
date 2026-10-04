@@ -180,4 +180,14 @@ fn a_running_race_an_ended_race_and_a_writing_pair() {
         ),
         "{report}"
     );
+    // Ruling FW-3 (re-review N-2): before the red check, the test the spec names, as the
+    // TUI and the snapshot show it.
+    run.tasks[2].spec.test_to_write = Some("t_feat".into());
+    let report = render(&run, 2_000);
+    assert!(
+        report.contains(
+            "\nPair: test writer codex gpt-6.1-sol (standard/medium); test t_feat; writer failures 1; writing the test\n"
+        ),
+        "{report}"
+    );
 }

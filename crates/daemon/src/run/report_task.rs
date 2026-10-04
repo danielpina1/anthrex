@@ -195,6 +195,8 @@ fn race_lines(task: &Task, out: &mut String) {
 }
 
 /// Decision 30: a paired task's test writer, its test and red commit, and its failures.
+/// Its test is `pair_info`'s: before the red check, the one the spec names (review D,
+/// M-1; ruling FW-3), as the TUI and the snapshot show it.
 fn pair_line(task: &Task, out: &mut String) {
     let Some(pair) = super::snapshot_patterns::pair_info(task) else {
         return;
