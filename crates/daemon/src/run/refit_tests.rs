@@ -5,10 +5,10 @@
 use std::path::{Path, PathBuf};
 
 use proto::{
-    Budget, ClassBudget, DiffStats, Effort, GateCounts, GateTally, HISTORY_VERSION, HistoryLine,
-    PathWeights, PhaseSecs, RefitState, RevertRecord, Route, RunPath, Runtime, SeverityTally, Size,
-    Strength, TaskKind, TaskOrigin, TaskOutcome, TaskPattern, TaskRecord, TestMode, TokenUsage,
-    TuningFile,
+    AgentRole, Budget, ClassBudget, DiffStats, Effort, GateCounts, GateTally, HISTORY_VERSION,
+    HistoryLine, PathWeights, PhaseSecs, RefitState, RevertRecord, Route, RoutingCandidate,
+    RoutingDecision, RoutingInput, RunPath, Runtime, SeverityTally, Size, Strength, TaskKind,
+    TaskOrigin, TaskOutcome, TaskPattern, TaskRecord, TestMode, TokenUsage, TuningFile,
 };
 
 use super::{
@@ -16,12 +16,19 @@ use super::{
     report, route_samples, threshold_samples, tuned,
 };
 
+/// The S class default the fixture records ran on.
+pub(super) const S_AT: proto::ClassRoute = proto::ClassRoute {
+    strength: Strength::Standard,
+    effort: Effort::Low,
+};
+
 /// `refit_budget`'s `now`, and the CLI block's (review ruling I5): 2026-09-27 09:06:40
 /// UTC.
 pub(super) const NOW: u64 = 1_790_500_000;
 
 /// One fixture record (the brief's common rule): a merged plan code task of size S
-/// with `tool_calls`, `w` working seconds and `lines` added lines.
+/// with `tool_calls`, `w` working seconds and `lines` added lines. Its one worker took
+/// the class default (whole-branch review B, I2: only such a record is a route sample).
 pub(super) fn record(
     run: &str,
     task: u32,
@@ -30,6 +37,12 @@ pub(super) fn record(
     w: u64,
     lines: u32,
 ) -> TaskRecord {
+    let route = Route {
+        runtime: Runtime::Claude,
+        model: "claude-sonnet-5".into(),
+        strength: Strength::Standard,
+        effort: Effort::Low,
+    };
     TaskRecord {
         v: HISTORY_VERSION,
         record_id: format!("{run}/t{task}"),
@@ -43,14 +56,9 @@ pub(super) fn record(
         planned_size: Size::S,
         final_size: Size::S,
         size_check: None,
-        route: Route {
-            runtime: Runtime::Claude,
-            model: "claude-sonnet-5".into(),
-            strength: Strength::Standard,
-            effort: Effort::Low,
-        },
+        routing_decisions: vec![worker_decision(at, &route)],
+        route,
         review_routes: Vec::new(),
-        routing_decisions: Vec::new(),
         outcome: TaskOutcome::Merged,
         block: None,
         diff: Some(DiffStats {
@@ -95,12 +103,52 @@ pub(super) fn record(
     }
 }
 
+/// The class default's routing decision of a record's first worker at `route`.
+fn worker_decision(at: u64, route: &Route) -> RoutingDecision {
+    RoutingDecision {
+        seq: 1,
+        at,
+        role: AgentRole::Worker,
+        session: 1,
+        round: None,
+        lane: None,
+        trigger: "initial".into(),
+        source: "class_default".into(),
+        policy_version: "m8a-worker-v1".into(),
+        pick_policy: None,
+        input: RoutingInput {
+            title: String::new(),
+            brief: String::new(),
+            acceptance: Vec::new(),
+            owns: Vec::new(),
+            kind: TaskKind::Code,
+            size: Size::S,
+            hub: false,
+            interface_change: false,
+            test_mode: TestMode::Tdd,
+            languages: Vec::new(),
+        },
+        chosen: route.clone(),
+        selected_index: 0,
+        candidates: vec![RoutingCandidate {
+            route: route.clone(),
+            skipped_reason: None,
+        }],
+    }
+}
+
 /// `record` made size M (`hub` or not), with M's route.
-fn sized_m(mut r: TaskRecord, hub: bool) -> TaskRecord {
+pub(super) fn sized_m(mut r: TaskRecord, hub: bool) -> TaskRecord {
     r.planned_size = Size::M;
     r.final_size = Size::M;
     r.hub = hub;
     r.route.effort = Effort::Medium;
+    for d in &mut r.routing_decisions {
+        d.input.size = Size::M;
+        d.input.hub = hub;
+        d.chosen.effort = Effort::Medium;
+        d.candidates[0].route.effort = Effort::Medium;
+    }
     r
 }
 
@@ -257,7 +305,7 @@ fn samples_take_plan_code_tasks_only() {
     let only = vec![plan.record_id.clone()];
     assert_eq!(ids(&budget_samples(&lines, SizeClass::S, &t)), only);
     assert_eq!(ids(&threshold_samples(&lines, SizeClass::S, &t)), only);
-    assert_eq!(ids(&route_samples(&lines, SizeClass::S, &t)), only);
+    assert_eq!(ids(&route_samples(&lines, SizeClass::S, &t, S_AT)), only);
 }
 
 #[test]
@@ -316,7 +364,7 @@ fn samples_filter_cap_and_window() {
     assert_eq!(ids(&threshold_samples(&lines, s, &t)), ["r1/t0", "r1/t4"]);
     // Route samples: whatever the outcome, with a session; a race never.
     assert_eq!(
-        ids(&route_samples(&lines, s, &t)),
+        ids(&route_samples(&lines, s, &t, S_AT)),
         [
             "r1/t0", "r1/t1", "r1/t2", "r1/t4", "r1/t6", "r1/t7", "r2/t0"
         ]

@@ -189,14 +189,14 @@ fn route_down_needs_no_escalation_and_no_quality_failure() {
     // The evidence, record by record.
     let t = config::Tuning::default();
     let lines = &variants[2].1;
-    let failed: Vec<&str> = route_samples(lines, SizeClass::S, &t)
+    let failed: Vec<&str> = route_samples(lines, SizeClass::S, &t, super::tests::S_AT)
         .into_iter()
         .filter(|r| failed_on_quality(r, lines))
         .map(|r| r.record_id.as_str())
         .collect();
     assert_eq!(failed, ["q2/t3"]);
     let lines = &variants[3].1;
-    let failed = route_samples(lines, SizeClass::S, &t)
+    let failed = route_samples(lines, SizeClass::S, &t, super::tests::S_AT)
         .into_iter()
         .filter(|r| failed_on_quality(r, lines))
         .count();
@@ -231,28 +231,46 @@ fn route_ladders_stop_at_their_ends() {
         ]
     );
     let cfg = config::Orchestrator::default();
-    // All quiet at the bottom of S: no step down (only its threshold, 20 → 10).
+    let at = |route: ClassRoute| {
+        let mut file = TuningFile::default();
+        file.routes.insert("s".into(), route);
+        file
+    };
+    // All quiet at the bottom of S, run there: no step down (only its threshold).
     let quiet = fixture_records("quality");
-    let mut bottom = TuningFile::default();
-    bottom.routes.insert("s".into(), S_ROUTE_LADDER[0]);
-    assert_eq!(ids(&quiet, &bottom, &cfg), ["thresholds.s"]);
-    // Escalating at the top of S: no step up.
+    let bottom = S_ROUTE_LADDER[0];
+    assert_eq!(
+        ids(&ran_on(&quiet, bottom), &at(bottom), &cfg),
+        ["thresholds.s"]
+    );
+    // Escalating at the top of S, run there: no step up.
     let busy = fixture_records("refit");
-    let mut top = TuningFile::default();
-    top.routes.insert("s".into(), S_ROUTE_LADDER[3]);
-    assert_eq!(ids(&busy, &top, &cfg), ["thresholds.s"]);
+    let top = S_ROUTE_LADDER[3];
+    assert_eq!(ids(&ran_on(&busy, top), &at(top), &cfg), ["thresholds.s"]);
     // A route outside the ladder (a hand edit) proposes nothing.
-    let mut outside = TuningFile::default();
-    outside
-        .routes
-        .insert("s".into(), route(Strength::Frontier, Effort::High));
-    assert_eq!(ids(&busy, &outside, &cfg), ["thresholds.s"]);
-    // From an applied step, the next one.
-    let mut middle = TuningFile::default();
-    middle.routes.insert("s".into(), S_ROUTE_LADDER[1]);
-    let p = proposals(&busy, &middle, &cfg);
+    let outside = route(Strength::Frontier, Effort::High);
+    let on_outside = ran_on(&busy, outside);
+    assert_eq!(ids(&on_outside, &at(outside), &cfg), ["thresholds.s"]);
+    // From an applied step, the next one once samples ran on it (whole-branch review
+    // B, I2); the samples of the step before are no evidence about it.
+    let middle = S_ROUTE_LADDER[1];
+    let p = proposals(&ran_on(&busy, middle), &at(middle), &cfg);
     assert_eq!(p[1].proposed, "standard/low");
     assert_eq!(p[1].current, "fast/medium");
+    assert_eq!(ids(&busy, &at(middle), &cfg), ["thresholds.s"]);
+}
+
+/// `lines` with every record's first worker on `route` (the class default there).
+fn ran_on(lines: &[HistoryLine], route: ClassRoute) -> Vec<HistoryLine> {
+    let mut lines = lines.to_vec();
+    for line in &mut lines {
+        if let HistoryLine::Task(r) = line {
+            for d in &mut r.routing_decisions {
+                (d.chosen.strength, d.chosen.effort) = (route.strength, route.effort);
+            }
+        }
+    }
+    lines
 }
 
 #[test]
@@ -374,4 +392,49 @@ fn an_unknown_id_is_refused_whole() {
     let refusal = "no current proposal route.m; run anthrex run stats to see the proposals";
     assert_eq!(apply(&file, &current, &named), Err(refusal.to_string()));
     assert_eq!(dismiss(&file, &current, &named), Err(refusal.to_string()));
+}
+
+/// Whole-branch review B, I2: a route proposal is evidence about the route its samples
+/// ran on. Once `--apply` moves M up a step, the same history proposes nothing more for
+/// M; S walks down one step the same way, and no further. A sample whose first worker
+/// took an explicit route is never evidence about the class default.
+#[test]
+fn an_applied_route_step_is_not_proposed_again_on_the_same_history() {
+    let cfg = config::Orchestrator::default();
+    let m: Vec<HistoryLine> = (0..30u32)
+        .map(|j| {
+            let mut r =
+                super::tests::sized_m(record(&format!("m{}", j / 10), j, 100, 60, 1500, 50), false);
+            r.max_rung = if j < 12 { 2 } else { 0 };
+            HistoryLine::Task(r)
+        })
+        .collect();
+    let file = TuningFile::default();
+    let current = proposals(&m, &file, &cfg);
+    let up: Vec<&str> = current.iter().map(|p| p.id.as_str()).collect();
+    assert!(up.contains(&"route.m"), "{current:?}");
+    let applied = apply(&file, &current, &["route.m".to_string()]).unwrap();
+    assert_eq!(applied.routes["m"], M_ROUTE_LADDER[1]);
+    assert!(!ids(&m, &applied, &cfg).contains(&"route.m".to_string()));
+
+    let quiet = fixture_records("quality");
+    let current = proposals(&quiet, &file, &cfg);
+    let down = current
+        .iter()
+        .find(|p| p.id == "route.s")
+        .expect("S steps down");
+    assert_eq!(down.proposed, "fast/medium");
+    let applied = apply(&file, &current, &["route.s".to_string()]).unwrap();
+    assert!(!ids(&quiet, &applied, &cfg).contains(&"route.s".to_string()));
+
+    // The planner's own routes: no sample, so no proposal.
+    let explicit: Vec<HistoryLine> = (quiet.into_iter())
+        .map(|mut line| {
+            if let HistoryLine::Task(r) = &mut line {
+                r.routing_decisions[0].source = "explicit_task".into();
+            }
+            line
+        })
+        .collect();
+    assert!(!ids(&explicit, &file, &cfg).contains(&"route.s".to_string()));
 }

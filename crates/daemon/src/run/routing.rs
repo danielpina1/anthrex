@@ -21,6 +21,8 @@ pub use lists::record_listed_reviewer;
 pub const WORKER_POLICY: &str = "m8a-worker-v1";
 pub const REVIEW_POLICY: &str = "m8a-review-v1";
 pub const ESCALATE_POLICY: &str = "m8a-escalate-v1";
+/// A decision's `source` when the task took its class's default route (decision 33a).
+pub const CLASS_DEFAULT: &str = "class_default";
 
 /// The reason given to a selectable candidate after the chosen one.
 pub const RANKED_AFTER: &str = "ranked after the selected route";
@@ -338,7 +340,7 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
             let source = if explicit {
                 "explicit_task"
             } else {
-                "class_default"
+                CLASS_DEFAULT
             };
             decision(
                 run,
@@ -392,7 +394,7 @@ pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
             let source = match (*chosen != task.route, explicit) {
                 (true, _) => "peer_route",
                 (false, true) => "explicit_task",
-                (false, false) => "class_default",
+                (false, false) => CLASS_DEFAULT,
             };
             let pool = worker_pool(&run.roster, chosen, explicit);
             decision(

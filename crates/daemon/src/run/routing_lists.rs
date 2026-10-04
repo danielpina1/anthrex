@@ -5,7 +5,7 @@
 
 use proto::{AgentRole, Route, RoutingCandidate, RoutingDecision};
 
-use super::{ESCALATE_POLICY, REVIEW_POLICY, Raw, WORKER_POLICY, decision, push};
+use super::{CLASS_DEFAULT, ESCALATE_POLICY, REVIEW_POLICY, Raw, WORKER_POLICY, decision, push};
 use crate::run::model::{ListPick, Run, Task};
 use crate::run::route_pick::{FIRST_QUALIFYING, LIST_POLICY};
 
@@ -31,7 +31,7 @@ fn over_list(
         (true, _) => ("configured_list", LIST_POLICY),
         (false, "escalation") => ("escalation_policy", ESCALATE_POLICY),
         (false, _) if explicit => ("explicit_task", LIST_POLICY),
-        (false, _) => ("class_default", WORKER_POLICY),
+        (false, _) => (CLASS_DEFAULT, WORKER_POLICY),
     };
     let pool = raw(pick.candidates.clone());
     let mut d = decision(run, task, id, (trigger, source, policy), chosen, pool, now);

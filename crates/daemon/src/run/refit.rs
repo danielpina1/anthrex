@@ -11,11 +11,12 @@ use std::collections::{HashMap, HashSet};
 
 use config::{ConfiguredBudgets, Tuning};
 use proto::{
-    Budget, ClassBudget, ClassRoute, Effort, HistoryLine, PathWeights, PhaseSecs, Size, Strength,
-    TaskKind, TaskOrigin, TaskOutcome, TaskPattern, TaskRecord, TokenUsage, TuningFile,
+    AgentRole, Budget, ClassBudget, ClassRoute, Effort, HistoryLine, PathWeights, PhaseSecs, Size,
+    Strength, TaskKind, TaskOrigin, TaskOutcome, TaskPattern, TaskRecord, TokenUsage, TuningFile,
 };
 
 use super::history_io::effective_reverts;
+use super::routing::CLASS_DEFAULT;
 
 /// A task class the refit learns per (decision 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -173,17 +174,34 @@ pub fn threshold_samples<'a>(
     cap_and_window(records, t)
 }
 
-/// Route samples: every task that ran a session, whatever its outcome (the tasks that
-/// escalated and never merged are what a routing rule needs).
+/// Route samples at the class's current route `cur`: every task that ran a session,
+/// whatever its outcome (the tasks that escalated and never merged are what a routing
+/// rule needs), whose first worker took the class default at `cur`'s strength and
+/// effort. Whole-branch review B, I2: a sample on another route, or on the planner's
+/// explicit one, is no evidence about `cur`, so an applied step is not climbed again on
+/// the history that proposed it.
 pub fn route_samples<'a>(
     lines: &'a [HistoryLine],
     class: SizeClass,
     t: &Tuning,
+    cur: ClassRoute,
 ) -> Vec<&'a TaskRecord> {
     let records = task_records(lines)
-        .filter(|r| plan_code(r, class) && r.sessions >= 1)
+        .filter(|r| plan_code(r, class) && r.sessions >= 1 && ran_on(r, cur))
         .collect();
     cap_and_window(records, t)
+}
+
+/// Whether `record`'s first worker routing decision took the class default at `cur`.
+fn ran_on(record: &TaskRecord, cur: ClassRoute) -> bool {
+    (record.routing_decisions.iter())
+        .filter(|d| d.role == AgentRole::Worker)
+        .min_by_key(|d| d.seq)
+        .is_some_and(|d| {
+            d.source == CLASS_DEFAULT
+                && d.chosen.strength == cur.strength
+                && d.chosen.effort == cur.effort
+        })
 }
 
 /// Ruling RH-2's quality evidence for `record`: a revert in effect names it (or its

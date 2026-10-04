@@ -122,11 +122,11 @@ fn route_proposal(
     if !list_of(&cfg.tuning.routes, class).candidates.is_empty() {
         return None;
     }
-    let samples = route_samples(lines, class, t);
+    let cur = current_route(file, class);
+    let samples = route_samples(lines, class, t, cur);
     if !qualifies(&samples, t) {
         return None;
     }
-    let cur = current_route(file, class);
     let at = ladder.iter().position(|r| *r == cur)?;
     let n = samples.len() as u64;
     let escalated = samples.iter().filter(|r| r.max_rung >= 2).count() as u64;

@@ -185,6 +185,9 @@ fn refit_excludes_race_records_it_wrote() {
             removed: 0,
         });
     }
+    for i in 0..run.tasks.len() {
+        crate::run::routing::record_worker(&mut run, i, 10);
+    }
     let raced = &mut run.tasks[0];
     raced.race = Some(race_of(raced, [LaneState::Won, LaneState::Lost]));
     let lines: Vec<HistoryLine> = run
@@ -199,5 +202,9 @@ fn refit_excludes_race_records_it_wrote() {
     let single = vec!["t2".to_string()];
     assert_eq!(ids(budget_samples(&lines, SizeClass::S, &t)), single);
     assert_eq!(ids(threshold_samples(&lines, SizeClass::S, &t)), single);
-    assert_eq!(ids(route_samples(&lines, SizeClass::S, &t)), single);
+    let at = proto::ClassRoute {
+        strength: run.tasks[1].route.strength,
+        effort: run.tasks[1].route.effort,
+    };
+    assert_eq!(ids(route_samples(&lines, SizeClass::S, &t, at)), single);
 }
