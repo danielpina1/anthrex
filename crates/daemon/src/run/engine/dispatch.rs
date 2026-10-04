@@ -25,7 +25,10 @@ pub(super) use super::rounds::new_round;
 #[path = "dispatch_launch.rs"]
 mod launch;
 use launch::{dispatch_writers, launch_ready, prepare, prewarm};
-pub(super) use launch::{launch_fresh, launch_implementer, launch_worker};
+// The worker sessions, split out of `dispatch_launch.rs` (task M9.5.17a, move-only).
+#[path = "dispatch_session.rs"]
+mod session;
+pub(super) use session::{launch_fresh, launch_implementer, launch_worker};
 
 /// The scheduler, run after every event: runnability, then whatever the run's state
 /// allows to start, then clean-up and delivery.
