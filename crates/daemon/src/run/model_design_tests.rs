@@ -239,6 +239,12 @@ fn the_state_survives_save_and_load() {
                 path: "/tmp/data/runs/prev-run-0001/design/spec-v1.md".into(),
                 version: version(DocKind::Spec, 1),
             }),
+            // Ruling T8-6: the round and its written pack.
+            round: 2,
+            file: Some(crate::run::design::pack::PackFile {
+                bytes: 120,
+                sha256: "c".repeat(64),
+            }),
         }),
     };
     let mut run = old_run();

@@ -10,7 +10,7 @@ use super::dispatch::replies;
 use super::fixture::*;
 use super::orch_restore::resume;
 use crate::run::design::state::DesignAgentState;
-use crate::run::engine::{Effect, EngineState, EventKind, ScoutEnd};
+use crate::run::engine::{Effect, EngineState, EventKind, OpResult, ScoutEnd};
 
 /// DF §3.4: both drafts in wake the orchestrator once, exactly, and the brainstorming
 /// clock starts then.
@@ -323,4 +323,52 @@ fn the_drafts_settle_once_per_round() {
     assert_eq!(fx.run().state, RunState::Brainstorming);
     assert_eq!(seen(&fx), first);
     assert!(fx.run().orch.design.as_ref().unwrap().drafts_settled);
+}
+
+/// Ruling T8-6: the round's first start reports its pack file, and the round records
+/// it, for every later start to be checked against.
+#[test]
+fn the_first_start_records_the_rounds_pack() {
+    let fx = brainstorming();
+    let frozen = fx.run().orch.design.as_ref().unwrap().pack.clone().unwrap();
+    assert_eq!((frozen.round, frozen.file), (1, Some(PACK_FILE.clone())));
+}
+
+/// Ruling T8-6: a start whose pack cannot be read back halts the brainstorm with the
+/// exact text, retryably; `run resume` relaunches that brainstormer, and the clock still
+/// waits for the drafts.
+#[test]
+fn a_pack_that_cannot_be_read_back_halts_the_brainstorm() {
+    let mut fx = design_launched(false);
+    start_brainstorm(&mut fx);
+    started(&mut fx, "claude", CLAUDE);
+    let (op, _) = launches(&fx)[1].clone();
+    let reason = "design/brainstorm/pack-r1.md: No such file or directory".to_string();
+    fx.done(
+        op,
+        OpResult::DesignPackUnreadable {
+            reason: reason.clone(),
+        },
+    );
+    let text = format!("design flow: the brainstorm's input pack could not be read back: {reason}");
+    assert_eq!(fx.run().state, RunState::Halted);
+    assert_eq!(fx.run().halted_reason.as_deref(), Some(text.as_str()));
+    assert!(fx.run().halt_retryable);
+    assert_eq!(
+        states(&fx),
+        [DesignAgentState::Running, DesignAgentState::Queued]
+    );
+    let record = (fx.run().role_routing_decisions.iter())
+        .find(|d| d.session_id == "codex/1")
+        .unwrap();
+    assert_eq!(record.outcome, Some(proto::RoleOutcome::Failed));
+    let effects = resume(&mut fx);
+    assert_eq!(replies(&effects), vec![Ok(format!("run {RUN_ID} resumed"))]);
+    assert_eq!(fx.run().state, RunState::Brainstorming);
+    let last = launches(&fx)
+        .last()
+        .map(|(_, s)| (s.kind.label(), s.session));
+    assert_eq!(last, Some(("codex".into(), 2)));
+    assert_eq!(fx.run().orch.design.as_ref().unwrap().phase_started, None);
+    assert!(log_lines(&fx).contains(&"resumed; the brainstormers are relaunched".to_string()));
 }

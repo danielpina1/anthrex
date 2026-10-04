@@ -135,6 +135,25 @@ pub struct FrozenPack {
     /// A continued goal's previous approved spec then.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub earlier: Option<EarlierSpec>,
+    /// Ruling T8-6: the brainstorm round these inputs are for (a rethink is a new one),
+    /// whose pack is written once, to [`pack_path`].
+    pub round: u32,
+    /// Ruling T8-6: the round's pack file as its first start wrote it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<PackFile>,
+}
+
+/// Ruling T8-6: a written pack's length and SHA-256, against which every later start of
+/// its round reads it back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackFile {
+    pub bytes: u64,
+    pub sha256: String,
+}
+
+/// Ruling T8-6: round `round`'s pack file, `design/brainstorm/pack-r<round>.md`.
+pub fn pack_path(run: &Run, round: u32) -> PathBuf {
+    design_dir(run).join(format!("brainstorm/pack-r{round}.md"))
 }
 
 /// A continued goal's previous approved spec: its run, its file, and its index entry
@@ -151,6 +170,8 @@ pub fn freeze(run: &Run, earlier: Option<EarlierSpec>) -> FrozenPack {
     FrozenPack {
         reports: run.scout_reports.clone(),
         earlier,
+        round: (run.orch.design.as_ref()).map_or(1, |d| d.rethinks + 1),
+        file: None,
     }
 }
 

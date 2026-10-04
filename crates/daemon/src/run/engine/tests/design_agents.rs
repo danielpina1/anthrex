@@ -51,12 +51,26 @@ pub(super) fn launches(fx: &Fixture) -> Vec<(crate::run::model::OpId, DesignAgen
         .collect()
 }
 
-/// `label`'s latest launch answered with its window.
+/// The round's pack file a start reports (ruling T8-6).
+pub(super) static PACK_FILE: std::sync::LazyLock<crate::run::design::pack::PackFile> =
+    std::sync::LazyLock::new(|| crate::run::design::pack::PackFile {
+        bytes: 4,
+        sha256: "ab".repeat(32),
+    });
+
+/// `label`'s latest launch answered with its window and the round's pack file.
 pub(super) fn started(fx: &mut Fixture, label: &str, window: u32) -> Vec<Effect> {
     let (op, _) = (launches(fx).into_iter().rev())
         .find(|(_, s)| s.kind.label() == label)
         .unwrap_or_else(|| panic!("no launch of {label}"));
-    fx.done(op, OpResult::DesignAgentStarted { window_id: window })
+    let pack = Some(PACK_FILE.clone());
+    fx.done(
+        op,
+        OpResult::DesignAgentStarted {
+            window_id: window,
+            pack,
+        },
+    )
 }
 
 /// A brainstormer's `submit_doc` from `window`.
@@ -282,6 +296,8 @@ fn the_pack_inputs_are_frozen_when_the_brainstormers_are_queued() {
             path,
             version,
         }),
+        round: 1,
+        file: None,
     };
     let frozen = |fx: &Fixture| fx.run().orch.design.as_ref().unwrap().pack.clone();
     assert_eq!(frozen(&fx).as_ref(), Some(&expected));
@@ -289,7 +305,11 @@ fn the_pack_inputs_are_frozen_when_the_brainstormers_are_queued() {
     fx.run_mut().scout_reports.push("s2".into());
     answered(&submit_draft(&mut fx, CLAUDE, DRAFT));
     assert_eq!(launches(&fx).len(), 2, "the second start");
-    assert_eq!(frozen(&fx), Some(expected));
+    let file = Some(PACK_FILE.clone());
+    assert_eq!(
+        frozen(&fx),
+        Some(crate::run::design::pack::FrozenPack { file, ..expected })
+    );
 }
 
 /// DF §3.3: a draft is checked against its template; a refused one gets the exact

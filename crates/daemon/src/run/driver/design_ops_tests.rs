@@ -97,10 +97,23 @@ fn previous(rig: &Rig) {
         .insert(prev.id.clone(), prev);
 }
 
+/// The round's pack file, `design/brainstorm/pack-r1.md`.
+fn pack_file(rig: &Rig) -> std::path::PathBuf {
+    let engine = crate::lock(&rig.runs.state);
+    state::design_dir(&engine.runs[&rig.run_id]).join("brainstorm/pack-r1.md")
+}
+
+/// The pack built anew from the frozen inputs: the round's file is removed first, as
+/// if no start of the round had written it yet (ruling T8-6 sends that file after).
+async fn built(rig: &Rig) -> String {
+    let _ = std::fs::remove_file(pack_file(rig));
+    rig.runs.brainstorm_pack(&rig.run_id).await.unwrap().0
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_pack_reads_the_reports_and_the_previous_spec_off_the_engine() {
     let rig = Rig::new(brainstorming).await;
-    let pack = rig.runs.brainstorm_pack(&rig.run_id).await;
+    let pack = built(&rig).await;
     for needle in [
         "Links live an hour.",
         "Scout report s1 (Where are tokens kept?)",
@@ -113,7 +126,7 @@ async fn the_pack_reads_the_reports_and_the_previous_spec_off_the_engine() {
     assert!(!pack.contains("Related earlier work"));
     previous(&rig);
     freeze_previous(&rig);
-    let pack = rig.runs.brainstorm_pack(&rig.run_id).await;
+    let pack = built(&rig).await;
     assert!(pack.contains("Related earlier work"), "{pack}");
     assert!(pack.contains("prev/design/spec-v1.md"), "{pack}");
     assert!(pack.contains("R1 Tokens expire. Check: a clock test."));
@@ -134,7 +147,7 @@ async fn the_pack_reads_the_reports_and_the_previous_spec_off_the_engine() {
         SPEC.replace("an hour", "a day").replace("expire", "lapse"),
     )
     .unwrap();
-    let pack = rig.runs.brainstorm_pack(&rig.run_id).await;
+    let pack = built(&rig).await;
     assert!(!pack.contains("Related earlier work"), "{pack}");
 }
 
@@ -144,7 +157,7 @@ async fn the_pack_reads_the_reports_and_the_previous_spec_off_the_engine() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_pack_reads_exactly_its_frozen_inputs() {
     let rig = Rig::new(brainstorming).await;
-    let first = rig.runs.brainstorm_pack(&rig.run_id).await;
+    let first = built(&rig).await;
     assert!(first.contains("Scout report s1"), "{first}");
     let scouts = {
         let mut engine = crate::lock(&rig.runs.state);
@@ -155,7 +168,7 @@ async fn the_pack_reads_exactly_its_frozen_inputs() {
     let text = serde_json::to_string(&report("s2")).unwrap();
     std::fs::write(scouts.join("s2.json"), text).unwrap();
     previous(&rig);
-    let second = rig.runs.brainstorm_pack(&rig.run_id).await;
+    let second = built(&rig).await;
     assert_eq!(first, second);
     assert!(!second.contains("Scout report s2"));
 }
@@ -258,4 +271,48 @@ fn a_claude_brainstormer_is_denied_the_codex_sessions() {
     let before = codex.clone();
     deny_codex_sessions(&mut codex, dir);
     assert_eq!(codex, before);
+}
+
+/// Ruling T8-6: the first start of a round writes its pack to
+/// `design/brainstorm/pack-r<k>.md` and reports its length and SHA-256; every later
+/// start sends exactly that file, read back against them, whatever changed since (a new
+/// report, a new profile); a file missing or changed is never replaced by another pack.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_rounds_pack_is_written_once_and_every_start_sends_it() {
+    use crate::run::design::pack::PackFile;
+    use crate::run::design::state::sha256_hex;
+    let rig = Rig::new(brainstorming).await;
+    let (first, file) = rig.runs.brainstorm_pack(&rig.run_id).await.unwrap();
+    let path = pack_file(&rig);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), first);
+    let expected = PackFile {
+        bytes: first.len() as u64,
+        sha256: sha256_hex(first.as_bytes()),
+    };
+    assert_eq!(file.as_ref(), Some(&expected));
+    // A start that raced the first, or followed a failed launch, sends the same file.
+    let (again, _) = rig.runs.brainstorm_pack(&rig.run_id).await.unwrap();
+    assert_eq!(again, first);
+    // The engine recorded it; a later start reads it back, and reports nothing new.
+    let scouts = {
+        let mut engine = crate::lock(&rig.runs.state);
+        let run = engine.runs.get_mut(&rig.run_id).unwrap();
+        let design = run.orch.design.as_mut().unwrap();
+        design.pack.as_mut().unwrap().file = Some(expected);
+        run.scout_reports.push("s2".into());
+        run.data_dir.join("scouts")
+    };
+    std::fs::write(
+        scouts.join("s2.json"),
+        serde_json::to_string(&report("s2")).unwrap(),
+    )
+    .unwrap();
+    let (later, none) = rig.runs.brainstorm_pack(&rig.run_id).await.unwrap();
+    assert_eq!((later.as_str(), none), (first.as_str(), None));
+    std::fs::write(&path, first.replace("an hour", "a day")).unwrap();
+    let changed = rig.runs.brainstorm_pack(&rig.run_id).await.unwrap_err();
+    assert!(changed.contains("does not match"), "{changed}");
+    std::fs::remove_file(&path).unwrap();
+    let missing = rig.runs.brainstorm_pack(&rig.run_id).await.unwrap_err();
+    assert!(missing.contains("pack-r1.md"), "{missing}");
 }

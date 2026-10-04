@@ -384,7 +384,10 @@ pub(super) fn resume_phase(run: &mut Run, now: u64) -> Option<String> {
     run.halted_reason = None;
     run.halt_retryable = false;
     // DF §3.5: both brainstormers failed; they relaunch, and the clock waits for them.
-    let text = match super::design_agents::relaunch_failed(run, now) {
+    // Ruling T8-6: so does one a pack that could not be read back stopped.
+    let relaunched = super::design_agents::relaunch_failed(run, now)
+        || super::design_agents::awaiting_drafts(run);
+    let text = match relaunched {
         true => "resumed; the brainstormers are relaunched",
         false => {
             start_clock(run, now);

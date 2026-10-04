@@ -173,16 +173,28 @@ pub(super) fn started(
         (run.orch.design.as_ref())
             .is_some_and(|d| d.brainstormers[k].state == DesignAgentState::Running)
     };
+    if let OpResult::DesignAgentStarted {
+        pack: Some(file), ..
+    } = &result
+    {
+        pack::record(run, file.clone());
+    }
     match (result, k) {
-        (OpResult::DesignAgentStarted { window_id }, Some(k)) if live(run, k) => {
+        (OpResult::DesignAgentStarted { window_id, .. }, Some(k)) if live(run, k) => {
             if let Some(design) = run.orch.design.as_mut() {
                 design.brainstormers[k].window_id = Some(window_id);
             }
             Some(window_id)
         }
-        (OpResult::DesignAgentStarted { window_id }, _) => {
+        (OpResult::DesignAgentStarted { window_id, .. }, _) => {
             let reason = "the brainstormer is no longer running".to_string();
             fx.push(Effect::StopPlanner { window_id, reason });
+            None
+        }
+        (OpResult::DesignPackUnreadable { reason }, k) => {
+            let session = format!("{}/{}", spec.kind.label(), spec.session);
+            let k = k.filter(|&k| live(run, k));
+            pack::unreadable(run, (&session, k), reason, now, fx);
             None
         }
         (OpResult::Failed { message }, k) => {
@@ -420,3 +432,6 @@ pub(super) fn halt_all(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
 #[path = "design_drafts.rs"]
 mod drafts;
 pub(super) use drafts::tool;
+#[path = "design_pack.rs"]
+mod pack;
+pub(super) use pack::awaiting_drafts;
