@@ -263,6 +263,15 @@ pub struct TuningProposal {
     pub change: TuningChange,
 }
 
+/// A proposal named with a value (whole-branch review C, m-2): in `run stats --apply`,
+/// the proposed value the user confirmed, which the daemon refuses to apply once the
+/// proposal has changed; in [`TuningReport::dismissed`], the value stored as dismissed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposalValue {
+    pub id: String,
+    pub value: String,
+}
+
 /// The tuning block of `run stats` (`HistoryStats.tuning`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TuningReport {
@@ -273,7 +282,8 @@ pub struct TuningReport {
     pub proposals: Vec<TuningProposal>,
     pub moved_bad_file: Option<PathBuf>,
     pub applied: Vec<String>,
-    pub dismissed: Vec<String>,
+    /// Each dismissed proposal with the value stored for it (whole-branch review C, m-2).
+    pub dismissed: Vec<ProposalValue>,
     /// Ruling RH-5: the first candidate of `[orchestrator.routes.orchestrator]`.
     pub orchestrator_list: Option<String>,
     /// Ruling T8-2: why the moved bad file did not parse (decision 10's `(<error>)`).

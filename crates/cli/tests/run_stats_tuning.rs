@@ -532,7 +532,12 @@ fn a_refused_request_writes_no_tuning_file() {
     seed(&h, &[]);
     let reply = h.request(RunRequest::Stats {
         dir: h.repo.clone(),
-        apply: vec!["thresholds.s".into(), "thresholds.x".into()],
+        apply: ["thresholds.s", "thresholds.x"]
+            .map(|id| proto::ProposalValue {
+                id: id.into(),
+                value: "35".into(),
+            })
+            .into(),
         dismiss: Vec::new(),
         read_only: false,
     });

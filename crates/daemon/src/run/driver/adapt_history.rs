@@ -134,7 +134,7 @@ impl RunService {
     pub(in crate::run::driver) async fn stats(
         &self,
         dir: PathBuf,
-        apply: Vec<String>,
+        apply: Vec<proto::ProposalValue>,
         dismiss: Vec<String>,
         read_only: bool,
     ) -> RunReply {

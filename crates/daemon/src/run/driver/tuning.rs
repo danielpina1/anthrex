@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use proto::{TuningFile, TuningReport};
+use proto::{ProposalValue, TuningFile, TuningReport};
 use tokio::sync::OwnedMutexGuard;
 
 use crate::run::engine::HISTORY_FILE;
@@ -187,13 +187,20 @@ fn tune_blocking(repo_dir: &Path, cfg: &config::Orchestrator, now: u64) -> Tuned
     tuned
 }
 
-/// What `run stats` asks of the tuning (decisions 11 and 48): the proposal ids to apply
-/// and to dismiss, and whether nothing may be recorded or written.
+/// What `run stats` asks of the tuning (decisions 11 and 48): the proposals to apply,
+/// each with the value the user confirmed (whole-branch review C, m-2), the ids to
+/// dismiss, and whether nothing may be recorded or written.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StatsAsk<'a> {
-    pub apply: &'a [String],
+    pub apply: &'a [ProposalValue],
     pub dismiss: &'a [String],
     pub read_only: bool,
+}
+
+/// `run stats --apply`'s refusal of a proposal whose value is no longer the one the
+/// user confirmed (whole-branch review C, m-2; exact).
+pub fn proposal_changed(id: &str) -> String {
+    format!("proposal {id} changed since you saw it; run anthrex run stats again; nothing applied")
 }
 
 /// Where the blocking work stands, so a request that gave up at its bound is never
@@ -283,7 +290,7 @@ pub async fn stats_within(
 fn stats_blocking(
     repo_dir: &Path,
     cfg: &config::Orchestrator,
-    (apply, dismiss): (&[String], &[String]),
+    (apply, dismiss): (&[ProposalValue], &[String]),
     read_only: bool,
     now: u64,
     commit: impl FnOnce() -> bool,
@@ -308,7 +315,15 @@ fn stats_blocking(
     let (lines, _) = read_history(&repo_dir.join(HISTORY_FILE));
     let (refitted, written) = refit::refit(&lines, &file, cfg, now);
     let current = refit::proposals(&lines, &refitted, cfg);
-    let decided = refit::apply(&refitted, &current, apply)?;
+    // Whole-branch review C, m-2: only the value the user confirmed is applied.
+    let changed = apply
+        .iter()
+        .find(|a| (current.iter()).any(|p| p.id == a.id && p.proposed != a.value));
+    if let Some(a) = changed {
+        return Err(proposal_changed(&a.id));
+    }
+    let ids: Vec<String> = apply.iter().map(|a| a.id.clone()).collect();
+    let decided = refit::apply(&refitted, &current, &ids)?;
     let decided = refit::dismiss(&decided, &current, dismiss)?;
     let path = repo_dir.join(TUNING_FILE);
     let mut report = if read_only {
@@ -333,7 +348,12 @@ fn stats_blocking(
     };
     report.moved_bad_file = moved;
     report.parse_error = parse_error;
-    report.applied = apply.to_vec();
-    report.dismissed = dismiss.to_vec();
+    report.applied = ids;
+    report.dismissed = (dismiss.iter())
+        .map(|id| ProposalValue {
+            id: id.clone(),
+            value: decided.dismissed.get(id).cloned().unwrap_or_default(),
+        })
+        .collect();
     Ok(report)
 }

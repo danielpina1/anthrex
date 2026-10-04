@@ -339,7 +339,7 @@ async fn a_configured_class_start_line_shows_the_history_refit() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_busy_stats_answer_never_hides_a_write() {
     use daemon::run::driver::tuning::{StatsAsk, TUNING_STATS_BUSY, stats_within};
-    let apply = vec!["thresholds.s".to_string()];
+    let apply = vec![threshold_s("35")];
     let ask = StatsAsk {
         apply: &apply,
         dismiss: &[],
@@ -364,7 +364,7 @@ async fn a_busy_stats_answer_never_hides_a_write() {
             }
             Ok(report) => {
                 assert!(written, "answered applied, yet nothing was written");
-                assert_eq!(report.applied, apply);
+                assert_eq!(report.applied, ["thresholds.s"]);
                 assert_eq!(report.project.as_deref(), Some(Path::new("/r/demo")));
                 applied += 1;
             }
@@ -392,4 +392,59 @@ async fn a_busy_stats_answer_never_hides_a_write() {
     assert_eq!(answer, Err(TUNING_STATS_BUSY.to_string()));
     drop(held);
     assert!(!dir.join(TUNING_FILE).exists());
+}
+
+/// `thresholds.s` confirmed at `value`.
+fn threshold_s(value: &str) -> proto::ProposalValue {
+    proto::ProposalValue {
+        id: "thresholds.s".into(),
+        value: value.into(),
+    }
+}
+
+/// Whole-branch review C, m-2: `--apply` sends the value the user confirmed. A proposal
+/// that changed since (history moved it) is refused with nothing written; the one
+/// confirmed applies, and a dismissed proposal is reported with the value stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_apply_of_a_changed_proposal_is_refused() {
+    use daemon::run::driver::tuning::{StatsAsk, stats_with_tuning};
+    let cfg = config::Orchestrator::default();
+    let (_tmp, dir) = repo_dir(true);
+    let locks = TuningLocks::default();
+    let at = (dir.as_path(), Path::new("/r/demo"));
+    let stale = [threshold_s("30")];
+    let ask = |apply| StatsAsk {
+        apply,
+        dismiss: &[],
+        read_only: false,
+    };
+    let answer = stats_with_tuning(&cfg, &locks, at, ask(&stale), NOW).await;
+    assert_eq!(
+        answer,
+        Err("proposal thresholds.s changed since you saw it; run anthrex run stats again; nothing applied".to_string())
+    );
+    let unchanged = |dir: &Path| match load(dir, NOW).unwrap() {
+        Loaded::File(f) => f.thresholds.is_none(),
+        _ => true,
+    };
+    assert!(unchanged(&dir), "nothing applied");
+    let current = [threshold_s("35")];
+    let report = stats_with_tuning(&cfg, &locks, at, ask(&current), NOW)
+        .await
+        .unwrap();
+    assert_eq!(report.applied, ["thresholds.s"]);
+    assert!(!unchanged(&dir), "applied");
+
+    let dismiss = vec!["route.s".to_string()];
+    let ask = StatsAsk {
+        apply: &[],
+        dismiss: &dismiss,
+        read_only: false,
+    };
+    let report = stats_with_tuning(&cfg, &locks, at, ask, NOW).await.unwrap();
+    let stored = proto::ProposalValue {
+        id: "route.s".into(),
+        value: "standard/medium".into(),
+    };
+    assert_eq!(report.dismissed, [stored]);
 }

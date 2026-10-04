@@ -94,7 +94,10 @@ fn a_tuning_report() -> TuningReport {
         moved_bad_file: Some(PathBuf::from("/tmp/data/repos/p-1234/tuning.toml.bad-1")),
         parse_error: Some("TOML parse error at line 1, column 1".into()),
         applied: vec!["route-m".into()],
-        dismissed: vec!["threshold-s".into()],
+        dismissed: vec![ProposalValue {
+            id: "threshold-s".into(),
+            value: "35".into(),
+        }],
         orchestrator_list: Some("codex/gpt-6.1-sol high".into()),
         project: Some(PathBuf::from("/r/demo")),
     }
@@ -130,7 +133,16 @@ fn a_window(placeholder: bool) -> WindowInfo {
 fn every_new_or_changed_message_round_trips() {
     request_both_ways(RunRequest::Stats {
         dir: "/tmp/repo".into(),
-        apply: vec!["threshold-s".into(), "route-m".into()],
+        apply: vec![
+            ProposalValue {
+                id: "threshold-s".into(),
+                value: "35".into(),
+            },
+            ProposalValue {
+                id: "route-m".into(),
+                value: "frontier/high".into(),
+            },
+        ],
         dismiss: vec!["route-s".into()],
         read_only: true,
     });

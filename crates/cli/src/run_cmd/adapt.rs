@@ -132,24 +132,19 @@ const TUNING_UNAVAILABLE: &str =
 
 /// What the daemon took, one line each, naming the repository the tuning belongs to
 /// (`dir` only from a daemon that does not say); a dismissed proposal's value is the
-/// one fetched before the request.
-fn taken(
-    report: Option<&proto::TuningReport>,
-    fetched: &[proto::TuningProposal],
-    dir: &Path,
-) -> Vec<String> {
+/// one the daemon stored (whole-branch review C, m-2).
+fn taken(report: Option<&proto::TuningReport>, dir: &Path) -> Vec<String> {
     let Some(report) = report else {
         return Vec::new();
     };
     let project = report.project.as_deref().unwrap_or(dir);
     let applied = (report.applied.iter())
         .map(|id| format!("applied {id}: new runs in {} use it", project.display()));
-    let dismissed = (report.dismissed.iter()).filter_map(|id| {
-        let p = fetched.iter().find(|p| &p.id == id)?;
-        Some(format!(
-            "dismissed {id}: it is not proposed again while it would propose {}",
-            p.proposed
-        ))
+    let dismissed = (report.dismissed.iter()).map(|d| {
+        format!(
+            "dismissed {}: it is not proposed again while it would propose {}",
+            d.id, d.value
+        )
     });
     applied.chain(dismissed).collect()
 }
@@ -161,10 +156,10 @@ const NOT_A_TERMINAL_APPLY: &str = "stdin is not a terminal; pass --yes";
 /// `stats::render` lays it out and then the tuning block (`refit_render::render`), or
 /// with `--json` as `HistoryStats`. With `--apply` or `--dismiss` (milestone 9.5
 /// decision 11) the current proposals are fetched first; each applied one is asked
-/// `apply <id>: <text>? [y/N]` unless `--yes`, and the ids answered yes, with every
-/// dismissed one, go to the daemon, which takes only proposals still current and
-/// refuses the whole request over an unknown id. What was applied or dismissed is
-/// printed before the stats.
+/// `apply <id>: <text>? [y/N]` unless `--yes`, and the ids answered yes, each with the
+/// value it was confirmed at, with every dismissed one, go to the daemon, which takes
+/// only proposals still current at that value and refuses the whole request over an
+/// unknown or changed one. What was applied or dismissed is printed before the stats.
 pub(super) async fn stats(
     runs: &mut Runs,
     dir: Option<PathBuf>,
@@ -172,7 +167,7 @@ pub(super) async fn stats(
     flags: TuningFlags,
 ) -> anyhow::Result<()> {
     let dir = crate::resolve_dir(dir)?;
-    let request = |apply: Vec<String>, dismiss: Vec<String>| RunRequest::Stats {
+    let request = |apply: Vec<proto::ProposalValue>, dismiss: Vec<String>| RunRequest::Stats {
         dir: dir.clone(),
         apply,
         dismiss,
@@ -183,13 +178,11 @@ pub(super) async fn stats(
         dismiss,
         yes,
     } = flags;
-    // The proposals as fetched before the ids are sent (`--dismiss`'s values).
-    let mut current = Vec::new();
     let reply = if apply.is_empty() && dismiss.is_empty() {
-        runs.request(request(apply, dismiss)).await?
+        runs.request(request(Vec::new(), dismiss)).await?
     } else {
         // Review I1: with no tuning block, nothing can be confirmed, so nothing is sent.
-        current = match runs.request(request(Vec::new(), Vec::new())).await? {
+        let current = match runs.request(request(Vec::new(), Vec::new())).await? {
             RunReply::Stats { stats, .. } => match stats.tuning {
                 Some(tuning) => tuning.proposals,
                 None => anyhow::bail!(TUNING_UNAVAILABLE),
@@ -198,14 +191,18 @@ pub(super) async fn stats(
         };
         let mut chosen = Vec::new();
         for id in apply {
-            // An id not current is sent as it is: the daemon refuses it with its text.
-            if let Some(p) = current.iter().find(|p| p.id == id).filter(|_| !yes) {
+            // An id not current is sent with no value: the daemon refuses it with its
+            // text. Whole-branch review C, m-2: a current one goes with the value the
+            // user confirmed, which the daemon refuses once the proposal has changed.
+            let fetched = current.iter().find(|p| p.id == id);
+            if let Some(p) = fetched.filter(|_| !yes) {
                 let question = format!("apply {id}: {}? [y/N] ", p.text);
                 if !super::finish::ask_yes(&question, NOT_A_TERMINAL_APPLY).await? {
                     continue;
                 }
             }
-            chosen.push(id);
+            let value = fetched.map(|p| p.proposed.clone()).unwrap_or_default();
+            chosen.push(proto::ProposalValue { id, value });
         }
         if chosen.is_empty() && dismiss.is_empty() {
             anyhow::bail!("nothing applied");
@@ -214,7 +211,7 @@ pub(super) async fn stats(
     };
     match reply {
         RunReply::Stats { stats, .. } => {
-            for line in taken(stats.tuning.as_deref(), &current, &dir) {
+            for line in taken(stats.tuning.as_deref(), &dir) {
                 if json {
                     eprintln!("{}", super::status::printable(&line));
                 } else {
@@ -245,6 +242,32 @@ mod tests {
     use super::super::{RunCommand, request_timeout};
     use super::GOAL_REQUEST_TIMEOUT;
     use std::time::Duration;
+
+    /// Whole-branch review C, m-2: the `dismissed` line prints the value the daemon
+    /// stored, not the one fetched before the request.
+    #[test]
+    fn the_dismissed_line_prints_the_stored_value() {
+        let report = proto::TuningReport {
+            path: "/d/tuning.toml".into(),
+            min_samples: 30,
+            refit_budgets: true,
+            classes: Vec::new(),
+            proposals: Vec::new(),
+            moved_bad_file: None,
+            applied: Vec::new(),
+            dismissed: vec![proto::ProposalValue {
+                id: "thresholds.s".into(),
+                value: "38".into(),
+            }],
+            orchestrator_list: None,
+            parse_error: None,
+            project: None,
+        };
+        assert_eq!(
+            super::taken(Some(&report), std::path::Path::new("/r")),
+            ["dismissed thresholds.s: it is not proposed again while it would propose 38"]
+        );
+    }
 
     #[derive(Parser, Debug)]
     struct Cli {

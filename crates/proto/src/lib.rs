@@ -194,8 +194,8 @@ pub use task_detail::{ACTIVITY_MAX, SummarySource, TaskDetailInfo, WORKER_SUMMAR
 pub use tiers::{FullInfo, FullState, SignalInfo, StageInfo, TaskOrigin, TierInfo};
 pub use tuning::{
     ClassBudget, ClassRoute, ClassTuning, LaneInfo, LaneState, PairInfo, PairPhase, PathWeights,
-    RaceInfo, RaceLane, RefitState, SizeThresholds, TUNING_VERSION, TaskPattern, TuningChange,
-    TuningFile, TuningProposal, TuningReport,
+    ProposalValue, RaceInfo, RaceLane, RefitState, SizeThresholds, TUNING_VERSION, TaskPattern,
+    TuningChange, TuningFile, TuningProposal, TuningReport,
 };
 pub use types::{
     ClientKind, ExitInfo, GitOperation, GitState, Head, Runtime, Status, SubagentInfo,

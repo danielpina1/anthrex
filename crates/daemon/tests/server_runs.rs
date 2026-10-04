@@ -207,7 +207,10 @@ async fn mcp_ready_is_answered_and_a_read_only_stats_takes_no_ids() {
     assert_eq!(
         runs.request(RunRequest::Stats {
             dir: here.clone(),
-            apply: vec!["threshold-s".into()],
+            apply: vec![proto::ProposalValue {
+                id: "threshold-s".into(),
+                value: "35".into(),
+            }],
             dismiss: vec!["route-m".into()],
             read_only: true,
         })

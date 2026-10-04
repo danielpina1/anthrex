@@ -120,11 +120,13 @@ pub enum RunRequest {
         orchestrator: Option<OrchestratorChoice>,
     },
     /// Milestone 9.5 decisions 11 and 48: `apply` and `dismiss` name proposals;
-    /// `read_only` records no revert and writes no file (the Settings screen's).
+    /// `read_only` records no revert and writes no file (the Settings screen's). Each
+    /// `apply` entry carries the proposed value the user confirmed (whole-branch review
+    /// C, m-2): the daemon refuses an id whose proposal has changed since.
     Stats {
         dir: PathBuf,
         #[serde(default)]
-        apply: Vec<String>,
+        apply: Vec<crate::tuning::ProposalValue>,
         #[serde(default)]
         dismiss: Vec<String>,
         #[serde(default)]
