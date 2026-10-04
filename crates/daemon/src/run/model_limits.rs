@@ -116,6 +116,11 @@ pub struct RunLimits {
     /// Decision 16: `halve_hold_secs` (absent: 0, unused while off).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub halve_hold_secs: u64,
+    /// Decision 18: how long a racing task at the head of the line waits for its
+    /// second writer slot (`[orchestrator.tuning] race_slot_wait_secs`; absent from an
+    /// older run, which has no racing task: 0).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub race_slot_wait_secs: u64,
 }
 
 fn is_false(b: &bool) -> bool {

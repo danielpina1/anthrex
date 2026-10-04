@@ -58,7 +58,9 @@ pub(super) fn enter(run: &mut Run, i: usize, state: TaskState, now: u64) {
     set_state(&mut run.tasks[i], state, now);
     run.tasks[i].gate_op = None;
     let id = run.tasks[i].id().to_string();
-    if state == TaskState::MergeQueue && !run.merge_queue.contains(&id) {
+    // Milestone 9.5 decision 21: a lane past its last gate is crowned first.
+    let lane = run.tasks[i].lane_view.is_some();
+    if state == TaskState::MergeQueue && !lane && !run.merge_queue.contains(&id) {
         run.merge_queue.push(id);
     }
 }

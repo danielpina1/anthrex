@@ -211,6 +211,7 @@ pub fn run_limits(
         adaptive_concurrency: config.tuning.table.adaptive_concurrency,
         recover_after_secs: config.tuning.table.recover_after_mins.saturating_mul(60),
         halve_hold_secs: config.tuning.table.halve_hold_secs,
+        race_slot_wait_secs: config.tuning.table.race_slot_wait_secs,
     }
 }
 

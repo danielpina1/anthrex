@@ -10,6 +10,7 @@ use proto::TaskState;
 
 use super::history;
 use super::session::launch_worker;
+use crate::run::engine::race::Start;
 use crate::run::engine::schedule::{
     dispatch_order, held_hub_waits_for, hub_started, is_reader_task, may_return_to_working,
     op_in_flight, size_check_pending, writers_busy,
@@ -74,6 +75,8 @@ pub(super) fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             || !task.spec.deps.is_empty()
             || !task.implicit_deps.is_empty()
             || prepare_in_flight(run, i)
+            // Milestone 9.5 decision 18: a racing task's checkouts are its lanes'.
+            || (crate::run::validate_patterns::RACE_DISPATCH && task.spec.race)
         {
             continue;
         }
@@ -88,6 +91,9 @@ pub(super) fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     // F3 review N1: a held hub task lets only what it waits for start.
     let only = held_hub_waits_for(run);
+    // Milestone 9.5 decision 18: a race waiting for its second slot at the head of the
+    // line holds it.
+    let mut first = true;
     for i in dispatch_order(run) {
         // M8b decision 19: a task waiting for its size cross-check is not runnable;
         // milestone 9 decision 28: nor is one whose approval hold is not approved.
@@ -105,6 +111,17 @@ pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         let busy = writers_busy(run);
         if busy >= usize::from(run.limits.max_writers) || hub_started(run) {
             break;
+        }
+        let head_of_line = std::mem::replace(&mut first, false);
+        match super::super::race::start(run, i, now) {
+            Start::Single => {}
+            Start::Wait if head_of_line => break,
+            Start::Wait => continue,
+            Start::Race(peer) => {
+                history(run, i, now, "dispatched");
+                super::super::race::dispatch_race(run, i, peer, now, fx, prepare);
+                continue;
+            }
         }
         // Milestone 9.5 decision 16: a task whose runtime is at its cap is skipped.
         if !concurrency::has_room(run, run.tasks[i].route.runtime) {

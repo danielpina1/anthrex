@@ -76,6 +76,38 @@ pub struct Lane {
     pub removed: bool,
     /// The lane's checkout was kept: its racer did not exit in time.
     pub kept: bool,
+    /// The rest of the lane's gate state (task M9.5.17a).
+    #[serde(default, skip_serializing_if = "LaneGates::is_idle")]
+    pub gates: LaneGates,
+}
+
+/// Milestone 9.5 decision 20: the task fields a lane keeps for itself besides those of
+/// [`Lane`], each with the meaning of the `Task` field of the same name. While the
+/// reducer handles one lane (`engine/race_view.rs`), these and the lane's own
+/// `start_commit`, `head`, `done`, counters, `spent`, `route` and `review_route` are
+/// the task's. `block` is why the lane went out, with `rung` the rung that took it out.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LaneGates {
+    pub rung: u8,
+    pub gate_op: Option<super::OpId>,
+    pub claim: Option<super::PendingClaim>,
+    pub review_misses: u8,
+    pub pending_failure: Option<super::PendingFailure>,
+    pub signals: Vec<crate::run::tiers::Signal>,
+    pub signals_more: u32,
+    pub signal_refusals: u8,
+    pub fresh_session: Option<super::FreshSession>,
+    pub ready_from: Option<String>,
+    pub worktree_live: bool,
+    pub clock: crate::run::engine::TaskClock,
+    pub block: Option<proto::BlockInfo>,
+}
+
+impl LaneGates {
+    pub fn is_idle(&self) -> bool {
+        *self == LaneGates::default()
+    }
 }
 
 /// A racing task's two lanes and, once decided, the lane that became the task.
@@ -86,6 +118,11 @@ pub struct Race {
     /// The winner was adopted (the other lane was out), not crowned by passing.
     pub adopted: bool,
     pub started_at: u64,
+    /// The winner's `CrownRacer` came back `Crowned` (task M9.5.17a): the task is the
+    /// winning lane's from then on. Until then the winner is shown its own view, where
+    /// it can do nothing, so no import runs between `Won` and the crown.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub crowned: bool,
 }
 
 /// A paired task's test writer and its red commit (decisions 25–26).

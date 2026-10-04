@@ -9,7 +9,7 @@ use proto::{BlockReason, GateKind, TaskState};
 use super::dispatch::{block, history, launch_fresh};
 use super::schedule::op_in_flight;
 use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox};
-use crate::run::model::{AgentRound, FreshSession, Run, Task, writes_task};
+use crate::run::model::{AgentRound, FreshSession, Run, Task, writes};
 use crate::run::route_pick::{every_route_failed, review_route, rung2_route};
 use crate::run::validate::resolve_task_lenient;
 
@@ -20,9 +20,10 @@ pub(crate) use super::ladder_budget::{round_spend, total_spend};
 const RAISED_NOTE: &str = "size raised by rung 3 (decision 38)";
 
 /// The task's current worker round, if it has one: milestone 9.5 decision 25 counts a
-/// paired task's test writer (`model::writes_task`).
+/// paired task's test writer, and decision 23 (ruling RR-9) a racer in its lane's view
+/// or once its lane is crowned or adopted (`model::writes`).
 pub(super) fn worker_round(task: &Task) -> Option<usize> {
-    task.rounds.iter().rposition(|r| writes_task(r.role))
+    task.rounds.iter().rposition(|r| writes(task, r))
 }
 
 /// A worker round whose session the engine still counts on: started, not ended and
@@ -41,10 +42,10 @@ pub(super) fn kill_worker(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
         fx,
     );
     supersede(run, i);
-    for round in run.tasks[i]
-        .rounds
-        .iter_mut()
-        .filter(|r| writes_task(r.role) && !r.ended && !r.retiring)
+    let task = &mut run.tasks[i];
+    let writing: Vec<bool> = task.rounds.iter().map(|r| writes(task, r)).collect();
+    for (round, _) in
+        (task.rounds.iter_mut().zip(writing)).filter(|(r, w)| *w && !r.ended && !r.retiring)
     {
         if let Some(window_id) = round.window_id {
             round.retiring = true;
@@ -76,11 +77,9 @@ pub(super) fn reopen_stopped(task: &mut Task) {
 /// messages in flight to them (a `Deliver`'s or a resume's) leave the outbox, so their
 /// `Delivered` finds nothing either.
 pub(super) fn supersede(run: &mut Run, i: usize) {
-    for round in run.tasks[i]
-        .rounds
-        .iter_mut()
-        .filter(|r| writes_task(r.role))
-    {
+    let task = &mut run.tasks[i];
+    let writing: Vec<bool> = task.rounds.iter().map(|r| writes(task, r)).collect();
+    for (round, _) in (task.rounds.iter_mut().zip(writing)).filter(|(_, w)| *w) {
         round.resume_op = None;
         round.count_op = None;
     }
@@ -100,7 +99,7 @@ pub(super) fn end_hand_back(task: &mut crate::run::model::Task) {
 
 /// Undelivered messages to task `i`'s worker are dropped when its session is replaced
 /// or stopped: the hand-over prompt carries the failure record instead.
-fn drop_queued(run: &mut Run, i: usize) {
+pub(super) fn drop_queued(run: &mut Run, i: usize) {
     let id = run.tasks[i].id().to_string();
     run.outbox
         .retain(|m| m.task_id != id || m.delivered_at.is_some());
@@ -265,6 +264,10 @@ pub(super) fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut V
 /// decision 9a: a task with a model list takes its next candidate instead, and ruling
 /// RL-1 skips a route that failed in this task (`route_pick::rung2_route`).
 pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.5 decision 20: past rung 1, a lane leaves its race.
+    if run.tasks[i].lane_view.is_some() {
+        return super::race::lane_out(run, i, 2, BlockReason::Human, reason, now, fx);
+    }
     done::drop_claim(
         run,
         i,
@@ -299,6 +302,10 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
 /// Rung 3: `blocked(mis_sized)`, the size raised one step, the worker killed and the
 /// worktree kept.
 pub(super) fn rung3(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.5 decision 20: the size is the task's; a lane only leaves its race.
+    if run.tasks[i].lane_view.is_some() {
+        return super::race::lane_out(run, i, 3, BlockReason::MisSized, text, now, fx);
+    }
     kill_worker(run, i, fx);
     drop_queued(run, i);
     let task = &mut run.tasks[i];
@@ -413,7 +420,7 @@ fn fresh_due(task: &Task) -> bool {
         && task
             .rounds
             .iter()
-            .filter(|r| writes_task(r.role))
+            .filter(|r| writes(task, r))
             .all(|r| r.ended)
 }
 

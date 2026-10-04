@@ -57,7 +57,7 @@ pub(crate) fn has_live_worker(task: &Task) -> bool {
         || task
             .rounds
             .iter()
-            .any(|r| super::model::writes_task(r.role) && !r.ended)
+            .any(|r| super::model::writes(task, r) && !r.ended)
 }
 
 fn block_label(reason: BlockReason) -> &'static str {

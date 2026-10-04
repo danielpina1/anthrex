@@ -171,7 +171,12 @@ fn is_history(kind: &OpKind) -> bool {
 
 /// Decision 44: an op dropped as `NotStarted`, and what its task needs instead.
 fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
-    let (op, task_id, kind, lane) = (pending.op, pending.task_id, pending.kind, pending.lane);
+    let PendingOp {
+        op,
+        task_id,
+        kind,
+        lane,
+    } = pending;
     let i = task_id
         .as_deref()
         .and_then(|id| run.tasks.iter().position(|t| t.id() == id));
@@ -485,6 +490,12 @@ fn resume_reviewer(run: &mut Run, i: usize, restored: bool, now: u64) {
 pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     for i in 0..run.tasks.len() {
         for r in 0..run.tasks[i].rounds.len() {
+            // Milestone 9.5 decision 20: a lane's session is relaunched in its view.
+            let task = &run.tasks[i];
+            let lane = super::race_view::view_lane(task, task.rounds[r].lane);
+            if task.lane_view.is_none() && lane.is_some() {
+                continue;
+            }
             let Some(kind) = run.tasks[i].rounds[r].relaunch.take() else {
                 continue;
             };
@@ -492,8 +503,9 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             let round = &task.rounds[r];
             let wanted = !round.retiring
                 && match round.role {
-                    // Milestone 9.5 decision 26: a test writer resumes as a worker does.
-                    AgentRole::Worker | AgentRole::TestWriter => {
+                    // Milestone 9.5 decisions 19, 26: a test writer and a racer resume as a
+                    // worker does.
+                    AgentRole::Worker | AgentRole::TestWriter | AgentRole::Racer => {
                         matches!(task.state, TaskState::Preparing | TaskState::Working)
                     }
                     // Milestone 9 decision 35: a research task's session.

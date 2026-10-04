@@ -45,7 +45,18 @@ pub(super) fn on_signal(
                 .map(|r| (i, r))
         });
         if let Some((i, r)) = found {
-            apply(run, i, r, signal, now, fx);
+            // Milestone 9.5 decision 20: a lane's session, in its lane's view.
+            let lane = super::race_view::view_lane(&run.tasks[i], run.tasks[i].rounds[r].lane);
+            let Some(lane) = lane else {
+                return apply(run, i, r, signal, now, fx);
+            };
+            let in_view = |run: &mut Run, fx: &mut Vec<Effect>| {
+                let rounds = &run.tasks[i].rounds;
+                if let Some(r) = rounds.iter().rposition(|r| r.window_id == Some(window_id)) {
+                    apply(run, i, r, signal, now, fx);
+                }
+            };
+            super::race::with_lane(run, i, lane, now, fx, in_view);
             return;
         }
     }
@@ -61,6 +72,7 @@ fn runtime_label(runtime: Runtime) -> String {
 }
 
 fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &mut Vec<Effect>) {
+    let worker = crate::run::model::writes(&run.tasks[i], &run.tasks[i].rounds[r]);
     let round = &mut run.tasks[i].rounds[r];
     if round.ended {
         return;
@@ -124,7 +136,6 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             round.set_rate_limited(None, now);
         }
     }
-    let worker = crate::run::model::writes_task(round.role);
     match signal {
         AgentSignal::Init { session_id } => round.session_id = Some(session_id),
         AgentSignal::TurnStarted => {
@@ -235,8 +246,8 @@ fn turn_ended(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    let worker = crate::run::model::writes(&run.tasks[i], &run.tasks[i].rounds[r]);
     let round = &mut run.tasks[i].rounds[r];
-    let worker = crate::run::model::writes_task(round.role);
     round.turn_open = false;
     round.closed_pid = round.pid;
     if let Some(usage) = usage {
@@ -393,8 +404,8 @@ fn exited(
     fx: &mut Vec<Effect>,
 ) {
     let working = run.tasks[i].state == TaskState::Working;
+    let worker = crate::run::model::writes(&run.tasks[i], &run.tasks[i].rounds[r]);
     let round = &mut run.tasks[i].rounds[r];
-    let worker = crate::run::model::writes_task(round.role);
     let research = round.role == AgentRole::Scout;
     // Codex runs one process per turn: its exit between turns is the normal end of one,
     // and the round has no process until the next starts. A retiring round's exit ends

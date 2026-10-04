@@ -176,8 +176,11 @@ pub(super) fn stop_at_restore(task: &mut Task) {
 /// The clock restarts at `now` after a stop at `since`.
 fn restart(task: &mut Task, since: u64, now: u64) {
     let latest = worker_round(task);
+    let writing: Vec<bool> = (task.rounds.iter())
+        .map(|r| crate::run::model::writes(task, r))
+        .collect();
     for (r, round) in task.rounds.iter_mut().enumerate() {
-        if !crate::run::model::writes_task(round.role) {
+        if !writing[r] {
             continue;
         }
         let from = since.max(round.started_at);
@@ -208,7 +211,7 @@ pub(crate) fn epoch_spend(task: &Task, now: u64) -> Spend {
         .rounds
         .iter()
         .enumerate()
-        .filter(|(r, round)| *r >= epoch.round && crate::run::model::writes_task(round.role))
+        .filter(|(r, round)| *r >= epoch.round && crate::run::model::writes(task, round))
         .map(|(_, round)| round_spend(round, task.clock.stopped, now).secs)
         .sum();
     Spend {

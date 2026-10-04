@@ -221,6 +221,7 @@ pub fn race_of(task: &Task, states: [proto::LaneState; 2]) -> super::model::Race
             exited: false,
             removed: false,
             kept: false,
+            gates: Default::default(),
         }
     };
     let lanes = vec![lane(RaceLane::A, states[0]), lane(RaceLane::B, states[1])];
@@ -234,5 +235,6 @@ pub fn race_of(task: &Task, states: [proto::LaneState; 2]) -> super::model::Race
         winner,
         adopted,
         started_at: 100,
+        crowned: winner.is_some(),
     }
 }

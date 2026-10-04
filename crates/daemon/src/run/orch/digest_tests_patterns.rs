@@ -42,6 +42,7 @@ fn lane(lane: RaceLane, runtime: Runtime, state: LaneState) -> Lane {
         exited: false,
         removed: false,
         kept: false,
+        gates: Default::default(),
     }
 }
 
@@ -54,6 +55,7 @@ fn racing() -> Race {
         winner: None,
         adopted: false,
         started_at: 0,
+        crowned: false,
     }
 }
 

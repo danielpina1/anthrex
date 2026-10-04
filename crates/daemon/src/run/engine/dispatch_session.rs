@@ -12,7 +12,7 @@ use crate::run::engine::{Effect, OpKind, done, emit_op, ladder, next_op, pair};
 use crate::run::model::{FreshSession, Run, Task};
 use crate::run::orch::contract::notes_section;
 use crate::run::role_launch::{jitter_ms, session_uuid_of, worker_spec};
-use crate::run::role_launch_patterns::test_writer_spec;
+use crate::run::role_launch_patterns::{racer_spec, test_writer_spec};
 
 /// A new worker session for task `i`, starting at `start` (decisions 24–26, 30); a
 /// sync task's merge is handed back into its worktree first (milestone 9.1 decision 51).
@@ -113,7 +113,11 @@ fn launch(
         run.tasks[i].start_commit = Some(start);
     }
     run.tasks[i].session += 1;
-    let (role, route) = pair::next_session(&run.tasks[i]);
+    // Milestone 9.5 decision 19: in a lane's view, the lane's racer on the lane's route.
+    let (role, route) = match run.tasks[i].lane_view {
+        Some(_) => (AgentRole::Racer, run.tasks[i].route.clone()),
+        None => pair::next_session(&run.tasks[i]),
+    };
     let writer = role == AgentRole::TestWriter;
     // M8b decision 33a: the route is fixed; decided before the session-start op.
     match writer {
@@ -124,9 +128,11 @@ fn launch(
         false => crate::run::routing::record_worker(run, i, now),
     }
     let task = &run.tasks[i];
-    let spec = match writer {
-        true => test_writer_spec(run, task, &route),
-        false => worker_spec(run, task),
+    let racer = (task.race.iter().flat_map(|r| &r.lanes)).find(|l| Some(l.lane) == task.lane_view);
+    let spec = match (writer, racer) {
+        (true, _) => test_writer_spec(run, task, &route),
+        (false, Some(lane)) => racer_spec(run, task, lane),
+        (false, None) => worker_spec(run, task),
     };
     let first_turn = first_turn(run, task);
     // Milestone 9 decision 42d: the first turn carries every recorded message.
@@ -138,14 +144,20 @@ fn launch(
         .then(|| crate::run::orch::extract::worker_slot(run, task))
         .flatten();
     let letter = if writer { "t" } else { "w" };
-    let name = format!("{}/{}.{letter}{}", run.short(), task.id(), task.session);
+    let stem = super::super::race::stem(task);
+    let name = format!("{}/{stem}{letter}{}", run.short(), task.session);
     let uuid = (route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
     let jitter = jitter_ms(&run.id, task.id(), task.session);
-    let round = new_round(role, task.session, route, op, uuid.clone(), now);
+    let mut round = new_round(role, task.session, route, op, uuid.clone(), now);
+    round.lane = task.lane_view;
     let (id, worktree, session) = (task.id().to_string(), task.worktree.clone(), task.session);
     run.tasks[i].rounds.push(round);
     run.windows_created += 1;
-    let who = if writer { "test writer" } else { "worker" };
+    let who = match role {
+        AgentRole::TestWriter => "test writer",
+        AgentRole::Racer => "racer",
+        _ => "worker",
+    };
     history(run, i, now, format!("{who} session {session} starting"));
     let kind = OpKind::CreateWindow {
         name,

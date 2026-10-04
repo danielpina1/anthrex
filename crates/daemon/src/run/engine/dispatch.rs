@@ -37,6 +37,9 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         return;
     }
     clock::watch_open_turns(run, now, fx);
+    super::race::each_lane(run, now, fx, |run, fx| {
+        clock::watch_open_turns(run, now, fx)
+    });
     holds::enforce_holds(run, now, fx);
     requeue(run, now);
     if integration_ready(run) {
@@ -71,6 +74,9 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 // M8b decision 18: queued deciders take free reader slots first.
                 fx.extend(deciders::dispatch(run, now));
                 review::dispatch_reviewers(run, fx);
+                // Milestone 9.5 decision 20: each lane of a race, in its lane's view.
+                lane_passes(run, now, fx);
+                super::race::crown_pass(run, fx);
                 // Milestone 9 decision 31: integration reviews go with the reviewers.
                 kinds::dispatch(run, now, true, fx);
             }
@@ -85,11 +91,30 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if run.state == RunState::Running {
         super::worker_messages::refresh_pass(run, now, fx);
         outbox::deliver(run, now, fx);
+        super::race::each_lane(run, now, fx, |run, fx| outbox::deliver(run, now, fx));
         complete::complete_pass(run, now, fx);
     }
     // Rulings T15-I2, T15-I3, T15-R3: the task clocks, after the pass's changes. A
     // stop still open is subtracted wherever spend is read (`ladder::round_spend`).
     clock::sync(run, now);
+    super::race::each_lane(run, now, fx, |run, _| clock::sync(run, now));
+}
+
+/// Milestone 9.5 decision 20 (ruling RR-3): the scheduler passes a race's lanes take,
+/// each in its lane's view, so each lane relaunches, is watched, and runs every
+/// pre-merge gate on its own. Each pass is idempotent at one `now`, so the tasks that do
+/// not race, which each view shows as they are, see nothing new.
+fn lane_passes(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    super::race::each_lane(run, now, fx, |run, fx| {
+        restore::relaunch(run, now, fx);
+        signals::watch(run, now, fx);
+        ladder::recover_sessionless(run, now);
+        ladder::start_fresh_sessions(run, fx);
+        gates::start_gates(run, now, fx);
+        review::watch(run, now, fx);
+        launch_ready(run, now, fx);
+        review::dispatch_reviewers(run, fx);
+    });
 }
 
 /// A `Discard` or `Accept` in flight, named as a reply says it (`discarded`,
@@ -306,7 +331,9 @@ pub(super) fn window_done(
             if state.is_finished() || stale_reviewer {
                 round.retiring = true;
                 fx.push(Effect::KillWindow { window_id });
-            } else if state == TaskState::Preparing && crate::run::model::writes_task(round.role) {
+            } else if state == TaskState::Preparing
+                && crate::run::model::writes(&run.tasks[i], &run.tasks[i].rounds[r])
+            {
                 set_state(&mut run.tasks[i], TaskState::Working, now);
             }
         }

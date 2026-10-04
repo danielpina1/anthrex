@@ -94,6 +94,7 @@ fn lane(lane: RaceLane, route: Route) -> Lane {
         exited: false,
         removed: false,
         kept: false,
+        gates: Default::default(),
     }
 }
 
@@ -142,6 +143,7 @@ fn a_run_with_race_pair_and_caps_round_trips() {
         winner: Some(RaceLane::A),
         adopted: false,
         started_at: 100,
+        crowned: false,
     });
     run.tasks[0].race_wait_since = Some(90);
     run.tasks[1].pair = Some(Pair {

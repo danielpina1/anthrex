@@ -4,11 +4,29 @@
 
 use super::*;
 
-/// Milestone 9.5 decision 25: a role whose session writes the task's code in its own
-/// checkout, a worker or a paired task's test writer. Every worker check (tool calls,
-/// stalls, budgets, deliveries, kills, fresh sessions) treats both alike.
+/// Milestone 9.5 decisions 19 and 25: a role whose session writes a task's code in its
+/// own checkout: a worker, a paired task's test writer, or a racing task's racer. Where
+/// a check is about one task's rounds, [`writes`] decides, since a racer writes the
+/// task only in its lane's view or once its lane is crowned.
 pub fn writes_task(role: AgentRole) -> bool {
-    matches!(role, AgentRole::Worker | AgentRole::TestWriter)
+    matches!(
+        role,
+        AgentRole::Worker | AgentRole::TestWriter | AgentRole::Racer
+    )
+}
+
+/// Milestone 9.5 decision 23 (ruling RR-9): whether `round` is one of `task`'s writing
+/// sessions, which every worker check (tool calls, stalls, budgets, deliveries, kills,
+/// fresh sessions, `ladder::worker_round`) acts on. A worker's or a test writer's
+/// always; a racer's while its lane's view is the task (`engine/race_view.rs`, where
+/// the task shows that lane's rounds only), or once its lane is crowned or adopted.
+pub fn writes(task: &Task, round: &AgentRound) -> bool {
+    match round.role {
+        AgentRole::Racer => {
+            task.lane_view.is_some() || round.lane.is_some_and(|l| task.crowned_lane() == Some(l))
+        }
+        role => writes_task(role),
+    }
 }
 
 /// Decision 32's turn-end fallback.

@@ -128,6 +128,8 @@ mod promote_installed;
 mod propagate;
 mod propagate_c21;
 mod propagate_c22;
+mod race;
+mod race_lanes;
 mod race_pair_plan;
 mod refresh;
 mod role_history;

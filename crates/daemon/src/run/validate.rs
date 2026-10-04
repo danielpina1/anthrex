@@ -496,6 +496,7 @@ fn new_task(
         list_pick: None,
         list_escalation: None,
         paused: Default::default(),
+        lane_view: None,
     }
 }
 

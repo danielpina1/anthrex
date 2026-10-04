@@ -231,7 +231,7 @@ fn hold_tasks(run: &Run, hold: &str) -> usize {
 fn has_worker(task: &Task) -> bool {
     task.rounds
         .iter()
-        .any(|r| crate::run::model::writes_task(r.role) && !r.ended)
+        .any(|r| crate::run::model::writes(task, r) && !r.ended)
 }
 
 fn effort_label(effort: Effort) -> &'static str {

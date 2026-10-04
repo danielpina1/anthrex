@@ -31,7 +31,7 @@ pub(crate) fn total_spend(task: &Task, now: u64) -> Spend {
     let secs = task
         .rounds
         .iter()
-        .filter(|r| crate::run::model::writes_task(r.role))
+        .filter(|r| crate::run::model::writes(task, r))
         .map(|r| round_spend(r, task.clock.stopped, now).secs)
         .sum();
     Spend {

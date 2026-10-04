@@ -81,6 +81,8 @@ pub(crate) mod pause;
 mod planners;
 mod promote;
 mod propagate;
+mod race;
+mod race_view;
 mod requests;
 mod research;
 mod restore;
@@ -256,7 +258,18 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             error,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                outbox::delivered(run, &message_ids, ok, error, now);
+                // Milestone 9.5 decision 20: a lane's batch, in its lane's view.
+                let lane = (run.outbox.iter().find(|m| message_ids.contains(&m.id)))
+                    .and_then(|m| race::lane_of_address(run, &m.task_id));
+                let delivered = |run: &mut Run, _: &mut Vec<Effect>| {
+                    outbox::delivered(run, &message_ids, ok, error.clone(), now)
+                };
+                match lane {
+                    Some((i, l)) => {
+                        race::with_lane(run, i, l, now, &mut fx, delivered);
+                    }
+                    None => delivered(run, &mut fx),
+                }
             }
         }
         EventKind::Restore { runs, replay, held } => {

@@ -1,8 +1,7 @@
 //! Milestone 9.5 task M9.5.14: `race` and `pair` set by the orchestrator mid-run go
-//! through M9's gate holds and the project-trust check (ruling RR-6), and until task
-//! M9.5.17a lands, a racing task dispatches as an ordinary worker
-//! (`validate_patterns::RACE_DISPATCH`); a paired one starts with its test writer
-//! (task M9.5.16, `pair.rs`).
+//! through M9's gate holds and the project-trust check (ruling RR-6), and the dispatch
+//! gate (`validate_patterns::RACE_DISPATCH`): a racing task races (task M9.5.17a), a
+//! paired one starts with its test writer (task M9.5.16, `pair.rs`).
 
 use proto::{AgentRole, ModelEntry, PlanEdit, Runtime, Strength};
 use serde_json::json;
@@ -111,14 +110,14 @@ fn a_racing_task_that_widens_the_reach_is_refused_by_the_trust_check() {
     assert_eq!(fx.run().tasks.len(), 1, "a refused edit changes nothing");
 }
 
-/// The addendum's gate, its pair half opened by task M9.5.16: until task M9.5.17a lands,
-/// a racing task starts one ordinary worker on the task's own route and checkout, and a
-/// paired task starts its test writer.
+/// The addendum's gate, opened by tasks M9.5.16 (the pair) and M9.5.17a (the race): a
+/// racing task starts two racers in its two lane checkouts, and a paired task starts its
+/// test writer.
 #[test]
-fn race_tasks_dispatch_as_ordinary_workers_for_now() {
-    const { assert!(!RACE_DISPATCH, "flip only when the race's dispatch lands") };
+fn race_tasks_race_and_paired_tasks_start_their_test_writer() {
+    const { assert!(RACE_DISPATCH, "the race's dispatch has landed") };
     let plan = plan_with(
-        &profile_with("max_writers = 2"),
+        &profile_with("max_writers = 3"),
         &[
             task("t1", "S", "a", "race = true"),
             task("t2", "S", "b", "pair = true\ntest_to_write = \"b::works\""),
@@ -142,10 +141,11 @@ fn race_tasks_dispatch_as_ordinary_workers_for_now() {
     assert_eq!(
         seen,
         [
-            (format!("{H4}/t1.w1"), AgentRole::Worker),
+            (format!("{H4}/t1.aw1"), AgentRole::Racer),
+            (format!("{H4}/t1.bw2"), AgentRole::Racer),
             (format!("{H4}/t2.t1"), AgentRole::TestWriter),
         ]
     );
-    assert!(fx.task("t1").race.is_none());
+    assert!(fx.task("t1").race.is_some());
     assert!(fx.task("t2").pair.is_some());
 }

@@ -158,10 +158,11 @@ pub(super) fn review_ready(
         // claimed commit, the last worker round's (an escalation to the peer runtime
         // included), so it stays on the other runtime. A route amended while that
         // session lived applies from the next fresh session (final review A-6).
+        // Milestone 9.5 decision 20: a lane's view shows its own racer only.
         let author = task
             .rounds
             .iter()
-            .rfind(|r| r.role == AgentRole::Worker)
+            .rfind(|r| matches!(r.role, AgentRole::Worker | AgentRole::Racer))
             .map_or(&task.route, |r| &r.route)
             .clone();
         // Milestone 9.5 decision 9a: the `review` list's first qualifying candidate.
@@ -173,11 +174,15 @@ pub(super) fn review_ready(
             first.unwrap_or_else(|| pick_reviewer_skipping(&run.roster, &author, level, &failed));
         (author, level, route)
     };
-    let spec = if reader {
+    let mut spec = if reader {
         crate::run::orch::launch::review_task_spec(run, task, &route)
     } else {
         reviewer_spec(run, task, &route)
     };
+    // Milestone 9.5 decision 19: a lane's reviewer names its lane.
+    if let Some(run_ref) = spec.run_ref.as_mut() {
+        run_ref.lane = task.lane_view;
+    }
     let round_no = spec.run_ref.as_ref().map_or(1, |r| r.session);
     let first_turn = if reader {
         super::kinds::review_first_turn(run, i, (&base, &head, &patch))
@@ -186,7 +191,7 @@ pub(super) fn review_ready(
         let messages = worker_messages_for_review(&task.orch.messages);
         reviewer_prompt(run, task, round_no, &base, &head, &patch, &messages)
     };
-    let name = format!("{}/{}.r{round_no}", run.short(), task.id());
+    let name = format!("{}/{}r{round_no}", run.short(), super::race::stem(task));
     let uuid = (route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
     let jitter = jitter_ms(&run.id, &format!("{}.r", task.id()), round_no);
     let mut round = new_round(
@@ -198,6 +203,7 @@ pub(super) fn review_ready(
         now,
     );
     round.round = round_no;
+    round.lane = task.lane_view;
     let id = task.id().to_string();
     let worktree = run.review_path(&task.checkout_name());
     // M8b decision 33a: decided before the session-start op.

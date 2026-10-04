@@ -16,12 +16,10 @@ use super::route_pick::Installed;
 use super::validate::strength_label;
 
 /// The gate between the race rule and the scheduler (task M9.5.14's addendum, which
-/// named it `PATTERNS_DISPATCH` for both patterns). While it is false, dispatch does not
-/// read `race`: a racing task that passed validation starts one ordinary worker on its
-/// own route and checkout (`engine/tests/race_pair_plan.rs` pins it). Task M9.5.16 opened
-/// the pair's half: a paired task starts with its test writer (`engine/pair.rs`). Task
-/// M9.5.17a branches the race's dispatch on this constant and sets it to true.
-pub const RACE_DISPATCH: bool = false;
+/// named it `PATTERNS_DISPATCH` for both patterns). Task M9.5.16 opened the pair's half
+/// (a paired task starts with its test writer, `engine/pair.rs`); task M9.5.17a opened
+/// the race's: `engine/race.rs::start` and the pre-warm read it.
+pub const RACE_DISPATCH: bool = true;
 
 /// Where the second racer and the test writer come from: the run's roster and what its
 /// start found installed (`run.orch.installed`; empty for a plan file, so every runtime

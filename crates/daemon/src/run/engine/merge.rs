@@ -259,10 +259,12 @@ fn merged(
     set_state(task, TaskState::Merged, now);
     task.block = None;
     task.merge_commit = Some(commit.clone());
-    for round in task
-        .rounds
-        .iter_mut()
-        .filter(|r| r.role == AgentRole::Worker && !r.ended && !r.retiring)
+    // Milestone 9.5 decision 23: a crowned racer is the task's worker.
+    let writing: Vec<bool> = (task.rounds.iter())
+        .map(|r| r.role != AgentRole::TestWriter && crate::run::model::writes(task, r))
+        .collect();
+    for (round, _) in
+        (task.rounds.iter_mut().zip(writing)).filter(|(r, w)| *w && !r.ended && !r.retiring)
     {
         round.retiring = true;
         if let Some(window_id) = round.window_id {

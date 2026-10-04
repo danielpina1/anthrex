@@ -14,7 +14,7 @@ use super::dispatch::{block, history};
 use super::signals::end_round;
 use super::{Effect, OpId, OpKind, OpResult, emit_op, kinds, next_op, review, worker_messages};
 use crate::run::messages::{DELIVERY_MAX_FAILURES, DELIVERY_RETRY_SECS, join_turn};
-use crate::run::model::{FailedTurn, FreshSession, Outgoing, Run, StallState, writes_task};
+use crate::run::model::{FailedTurn, FreshSession, Outgoing, Run, StallState, writes};
 use crate::run::role_launch::jitter_ms;
 
 /// Queues `text` for task `task_id`'s current worker. The window is the worker round's
@@ -23,7 +23,7 @@ use crate::run::role_launch::jitter_ms;
 pub(super) fn queue(run: &mut Run, task_id: &str, text: String, now: u64) {
     let window_id = run
         .task(task_id)
-        .and_then(|t| t.rounds.iter().rev().find(|r| writes_task(r.role)))
+        .and_then(|t| t.rounds.iter().rev().find(|r| writes(t, r)))
         .and_then(|r| r.window_id)
         .unwrap_or(0);
     let id = run.next_message;
@@ -79,10 +79,8 @@ fn target(run: &Run, address: &str) -> Option<(usize, Option<usize>, bool)> {
         return Some((i, kinds::research_round(run, i), true));
     }
     let i = run.tasks.iter().position(|t| t.id() == address)?;
-    let r = run.tasks[i]
-        .rounds
-        .iter()
-        .rposition(|r| writes_task(r.role));
+    let task = &run.tasks[i];
+    let r = task.rounds.iter().rposition(|r| writes(task, r));
     Some((i, r, false))
 }
 
@@ -264,14 +262,14 @@ fn delivered_to(
     now: u64,
 ) {
     {
-        let Some(round) = run.tasks[i]
-            .rounds
-            .iter_mut()
-            .rev()
-            .find(|r| r.role == role || (role == AgentRole::Worker && writes_task(r.role)))
-        else {
+        let task = &run.tasks[i];
+        let wanted = |r: &crate::run::model::AgentRound| {
+            r.role == role || (role == AgentRole::Worker && writes(task, r))
+        };
+        let Some(r) = task.rounds.iter().rposition(wanted) else {
             return;
         };
+        let round = &mut run.tasks[i].rounds[r];
         if ok {
             round.delivery_failures = 0;
             round.delivery_retry_at = None;

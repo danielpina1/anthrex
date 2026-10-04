@@ -31,9 +31,11 @@ pub fn writers_busy(run: &Run) -> usize {
 }
 
 /// The writer slots `task` holds, each with its runtime (decision 16): a racing task one
-/// per live lane (ruling RR-9), any other writer task one on its route's runtime.
+/// per live lane (ruling RR-9), any other writer task one on its route's runtime. A
+/// finished task holds none, whatever its lanes say; a crowned or adopted race is its
+/// task's (task M9.5.13's review).
 pub fn writer_slots(task: &Task) -> Vec<Runtime> {
-    if is_reader_task(task) {
+    if is_reader_task(task) || task.state.is_finished() {
         return Vec::new();
     }
     if let Some(race) = task.race.as_ref().filter(|r| r.winner.is_none()) {
@@ -179,6 +181,8 @@ pub fn readers_busy(run: &Run) -> usize {
     run.tasks.iter().filter(|t| holds_reader(run, t)).count()
         + deciders
         + super::planners::readers(run)
+        // Milestone 9.5 decision 20: each lane's review.
+        + super::race::lane_readers(run)
 }
 
 /// A task in `review` with no reviewer yet.

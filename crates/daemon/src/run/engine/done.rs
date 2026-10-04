@@ -61,13 +61,28 @@ pub(super) fn answer(
             return reply(fx, id, Err(text));
         }
     }
+    // Milestone 9.5 decision 20: a lane's session is answered in its lane's view; a
+    // lane that left the race is refused (Interfaces, "MCP").
+    if let Some((i, lane)) = super::race::lane_of_window(run, call.window_id) {
+        if let Some(text) = super::race::refusal(run, i, lane, &call.tool) {
+            return reply(fx, id, Err(text));
+        }
+        let call = |run: &mut Run, fx: &mut Vec<Effect>| tool_call(run, id, &call, now, fx);
+        super::race::with_lane(run, i, lane, now, fx, call);
+        return;
+    }
+    tool_call(run, id, &call, now, fx)
+}
+
+/// The tool, by name.
+fn tool_call(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: &mut Vec<Effect>) {
     match call.tool.as_str() {
-        "task_done" | "task_blocked" => worker_tool(run, id, &call, now, fx),
-        "submit_review" => super::review::submit(run, id, &call, now, fx),
+        "task_done" | "task_blocked" => worker_tool(run, id, call, now, fx),
+        "submit_review" => super::review::submit(run, id, call, now, fx),
         // Milestone 9 decision 42f, past M8a's run gate above.
-        "task_note" => super::worker_messages::task_note(run, id, &call, now, fx),
+        "task_note" => super::worker_messages::task_note(run, id, call, now, fx),
         // Milestone 9 decision 35: a research task's report.
-        "submit_scout_report" => super::kinds::submit_research(run, id, &call, now, fx),
+        "submit_scout_report" => super::kinds::submit_research(run, id, call, now, fx),
         other => {
             let role = serde_json::to_value(call.role)
                 .ok()
@@ -258,7 +273,9 @@ fn task_blocked(
         Some(_) => block(run, i, BlockReason::Question, reason, now),
         None => {
             block(run, i, BlockReason::Question, reason.clone(), now);
-            if super::deciders::classify(run, i, reason, now, fx) {
+            // Milestone 9.5 decision 20: a lane is out of its race whatever the kind.
+            let racing = run.tasks[i].lane_view.is_some();
+            if !racing && super::deciders::classify(run, i, reason, now, fx) {
                 return reply(fx, id, Ok(BLOCKED_CLASSIFYING.to_string()));
             }
         }

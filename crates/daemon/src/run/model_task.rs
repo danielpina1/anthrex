@@ -217,6 +217,11 @@ pub struct Task {
     /// Milestone 9.5 ruling T12-2: the run's paused time in the task's phases.
     #[serde(default, skip_serializing_if = "super::TaskPaused::is_zero")]
     pub paused: super::TaskPaused,
+    /// Milestone 9.5 decision 20: the lane whose view the task is while the reducer
+    /// handles one lane of its race (`engine/race_view.rs`); `None` otherwise, and
+    /// always in a persisted or published run.
+    #[serde(skip)]
+    pub lane_view: Option<proto::RaceLane>,
 }
 
 impl Task {
@@ -233,16 +238,27 @@ impl Task {
     /// a lane of its race is crowned (`Won`) or adopted, that lane's `<task>.<lane>`:
     /// every path keyed by a checkout name (its repository, objects, engine directory,
     /// `TMPDIR`, proof and review checkouts) is then the lane's.
+    /// Milestone 9.5 decision 20: in a lane's view, that lane's checkout.
     pub fn checkout_name(&self) -> String {
-        let crowned = self.race.as_ref().and_then(|race| {
-            race.lanes
-                .iter()
-                .find(|l| matches!(l.state, proto::LaneState::Won | proto::LaneState::Adopted))
+        let lane = self.race.as_ref().and_then(|race| {
+            race.lanes.iter().find(|l| match self.lane_view {
+                Some(view) => l.lane == view,
+                None => matches!(l.state, proto::LaneState::Won | proto::LaneState::Adopted),
+            })
         });
-        match crowned {
+        match lane {
             Some(lane) => lane.checkout.clone(),
             None => self.id().to_string(),
         }
+    }
+
+    /// Milestone 9.5 decision 23: the lane of its race that became the task (crowned or
+    /// adopted, and its crown done), if any.
+    pub fn crowned_lane(&self) -> Option<proto::RaceLane> {
+        let race = self.race.as_ref().filter(|r| r.crowned)?;
+        (race.lanes.iter())
+            .find(|l| matches!(l.state, proto::LaneState::Won | proto::LaneState::Adopted))
+            .map(|l| l.lane)
     }
 }
 
