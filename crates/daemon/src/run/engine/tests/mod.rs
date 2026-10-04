@@ -45,6 +45,7 @@ mod delivery_land_race;
 mod delivery_land_reopen;
 mod delivery_open;
 mod delivery_open_host;
+mod delivery_pause;
 mod delivery_requests;
 mod delivery_review;
 mod delivery_review_amend;

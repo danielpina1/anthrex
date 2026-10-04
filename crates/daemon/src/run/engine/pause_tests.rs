@@ -70,3 +70,28 @@ fn a_review_wait_open_across_a_pause_is_not_subtracted_twice() {
     let e = estimate(&run, end).expect("an estimate");
     assert_eq!((e.left_secs, e.bound_ratio_permille), (600, Some(1_166)));
 }
+
+/// Ruling FW-2 (b): the resume step's delivery pass runs before the pause is
+/// accounted, so it books the wait across the pause into `review_wait_secs` (decision
+/// 43: a pause does not stop a person's wait) and reopens it at the resume. The
+/// estimate still takes the pause off once.
+#[test]
+fn a_review_wait_booked_across_a_pause_is_not_subtracted_twice() {
+    let mut run = waiting_on_review();
+    step_to(&mut run, RunState::Paused, APPROVED + 400);
+    // The resume step: its pass books the wait since `APPROVED + 100`, then accounts.
+    let old = run.clone();
+    run.state = RunState::Running;
+    let stage = &mut run.delivery.stages[0];
+    stage.review_wait_secs = 1_300;
+    stage.wait_from = Some(APPROVED + 1_400);
+    account(&old, &mut run, APPROVED + 1_400);
+    assert_eq!(run.paused_secs, 1_000);
+    assert_eq!(run.delivery.stages[0].review_wait_secs, 1_300, "wall time");
+    let end = APPROVED + 1_500;
+    let a = &mut run.tasks[0];
+    (a.state, a.phase_since) = (TaskState::Working, end);
+    // As above: 100 s elapsed outside both the pause and the wait.
+    let e = estimate(&run, end).expect("an estimate");
+    assert_eq!((e.left_secs, e.bound_ratio_permille), (600, Some(1_166)));
+}

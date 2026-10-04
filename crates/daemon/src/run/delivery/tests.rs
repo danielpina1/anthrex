@@ -390,6 +390,7 @@ fn the_delivery_model_round_trips_through_run_json() {
         }),
         review_rounds: 2,
         review_wait_secs: 77,
+        review_paused_secs: 33,
         history_written: true,
         pushed: Some(HEAD2.into()),
         retry_at: Some(3_000),

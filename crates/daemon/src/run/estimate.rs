@@ -171,7 +171,8 @@ fn longest(run: &Run, nodes: &[usize], value: &[u64]) -> u64 {
 
 /// Seconds since the round's approval, less the time paused since (decision 15) and,
 /// in `pr` mode, the round's stages' human review time (ruling RE-2), with the wait in
-/// progress up to a pause, so that wait is not taken off twice.
+/// progress up to a pause and less the wait inside past pauses, so no wait is taken
+/// off twice.
 fn elapsed(run: &Run, (approved, paused_before): (u64, u64), end: u64) -> u64 {
     let paused = run.paused_total(end).saturating_sub(paused_before);
     let mut secs = end.saturating_sub(approved).saturating_sub(paused);
@@ -183,7 +184,8 @@ fn elapsed(run: &Run, (approved, paused_before): (u64, u64), end: u64) -> u64 {
             .filter_map(|s| run.delivery.stage(s))
             .map(|d| {
                 let open = d.wait_from.map_or(0, |from| until.saturating_sub(from));
-                d.review_wait_secs.saturating_add(open)
+                // Ruling FW-2 (b): the wait inside a pause is already paused time.
+                (d.review_wait_secs.saturating_add(open)).saturating_sub(d.review_paused_secs)
             })
             .fold(0u64, u64::saturating_add);
         secs = secs.saturating_sub(review);

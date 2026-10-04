@@ -26,8 +26,8 @@ fn stopped(state: RunState) -> bool {
 }
 
 /// A step changed `run` (it was `old`): entering `paused` or `halted` records when,
-/// leaving them adds the span to `paused_secs` (and moves an open review wait on by
-/// it), and the step's time is recorded. A task whose phase changed in the step moves
+/// leaving them adds the span to `paused_secs` (and a review wait open across it to the
+/// stage's `review_paused_secs`), and the step's time is recorded. A task whose phase changed in the step moves
 /// the paused time of the active phase it left into `paused.active`, and starts its new
 /// phase from the run's paused total.
 pub(super) fn account(old: &Run, run: &mut Run, now: u64) {
@@ -37,18 +37,26 @@ pub(super) fn account(old: &Run, run: &mut Run, now: u64) {
             let since = run.paused_at.take().unwrap_or(now);
             let span = now.saturating_sub(since);
             run.paused_secs = run.paused_secs.saturating_add(span);
-            // Task 12's carry N2: a `pr`-mode review wait open across the pause moves
-            // on by it, so the pause is taken off the elapsed time once, as paused time.
-            for stage in run.delivery.stages.iter_mut() {
-                if let Some(from) = stage.wait_from.as_mut() {
-                    *from = (*from).min(since).saturating_add(span);
-                }
-            }
+            overlap(old, run, since, now);
         }
         _ => {}
     }
     run.last_step_at = now;
     phases(old, run, now);
+}
+
+/// Ruling FW-2 (b): a `pr`-mode review wait open across a pause still counts as the
+/// person's wait (milestone 9.2 decision 43), so the pause stays in `review_wait_secs`;
+/// its overlap with the pause, `since..now`, is recorded so the estimate takes it off
+/// once. Passes run only while the run is running, so `old` holds the wait's start as
+/// of the pause; the resume step's own pass may already have booked it.
+fn overlap(old: &Run, run: &mut Run, since: u64, now: u64) {
+    for (stage, before) in run.delivery.stages.iter_mut().zip(&old.delivery.stages) {
+        if let Some(from) = before.wait_from {
+            let secs = now.saturating_sub(from.max(since));
+            stage.review_paused_secs = stage.review_paused_secs.saturating_add(secs);
+        }
+    }
 }
 
 /// Each task of `run` whose phase changed since `old` moves the paused time of the
