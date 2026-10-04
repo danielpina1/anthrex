@@ -4,7 +4,7 @@
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, bisect, complete, deciders, delivery, dispatch,
     done, early, fallback, full, gates, history, holds, kinds, ladder, merge, orch_window, outbox,
-    planners, propagate, race, race_view, requests, review, run_scouts, stages, tiers,
+    planners, propagate, race, race_end, race_view, requests, review, run_scouts, stages, tiers,
     worker_messages,
 };
 use crate::run::model::Run;
@@ -154,7 +154,7 @@ fn route(
             bound = planners::started(run, &kind, result, now, fx);
         }
         // Milestone 9.5 decision 21: the crown of a race's winner.
-        (OpKind::CrownRacer { .. }, Some(i)) => race::crown_done(run, i, result, now),
+        (OpKind::CrownRacer { .. }, Some(i)) => race_end::crown_done(run, i, result, now),
         _ => {}
     }
     bound

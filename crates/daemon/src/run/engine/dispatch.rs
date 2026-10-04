@@ -78,7 +78,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 review::dispatch_reviewers(run, fx);
                 // Milestone 9.5 decision 20: each lane of a race, in its lane's view.
                 lane_passes(run, now, fx);
-                super::race::crown_pass(run, fx);
+                super::race_end::crown_pass(run, fx);
                 // Milestone 9 decision 31: integration reviews go with the reviewers.
                 kinds::dispatch(run, now, true, fx);
             }
