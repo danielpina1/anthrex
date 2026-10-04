@@ -427,6 +427,17 @@ impl RunHarness {
         )}})
     }
 
+    /// An `sh` step that creates [`Self::release_path`]: a scripted session's signal to
+    /// another's [`Self::wait_release`].
+    pub fn mark_release(&self, name: &str) -> Value {
+        let path = self.release_path(name);
+        json!({"sh": {"cmd": format!(
+            "mkdir -p '{}' && : > '{}'",
+            path.parent().unwrap().display(),
+            path.display()
+        )}})
+    }
+
     /// Creates [`Self::release_path`].
     pub fn release(&self, name: &str) {
         let path = self.release_path(name);

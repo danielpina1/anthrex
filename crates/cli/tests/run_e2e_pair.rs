@@ -165,6 +165,14 @@ fn e2e_a_red_that_passes_goes_back_to_the_test_writer() {
         "{}",
         bounces[0]
     );
+    // The second red sits directly on the first (review m4): the bounce names that
+    // parent, and not the second red.
+    let first_red = h.git(&["rev-parse", &format!("{red}^")]);
+    assert!(
+        bounces[0].contains(&format!("at your red commit {} ", &first_red[..7])),
+        "the bounce names the first red {first_red}: {}",
+        bounces[0]
+    );
     assert!(
         !bounces[0].contains(&red[..7]),
         "the bounce names the first red, not the second: {}",

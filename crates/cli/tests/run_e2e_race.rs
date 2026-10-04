@@ -60,20 +60,19 @@ fn merges(h: &RunHarness, id: &str) -> Vec<String> {
 /// 3).
 fn meeting_reviewers(h: &RunHarness) {
     for (me, other) in [("r1", "r2"), ("r2", "r1")] {
-        let mark = h.release_path(me);
         let n = &me[1..];
         h.script(
             &format!("reviewer-t1-{n}"),
-            &[
-                sh(&format!(
-                    "mkdir -p '{}' && : > '{}'",
-                    mark.parent().unwrap().display(),
-                    mark.display()
-                )),
-                h.wait_release(other),
-                approve(),
-            ],
+            &[h.mark_release(me), h.wait_release(other), approve()],
         );
+    }
+}
+
+/// Both meeting reviewers ran: each one's mark is there (a misnamed script would leave
+/// its reviewer's mark missing, and the other would approve after its wait alone).
+fn reviewers_met(h: &RunHarness) {
+    for me in ["r1", "r2"] {
+        assert!(h.release_path(me).exists(), "reviewer {me} never marked");
     }
 }
 
@@ -99,10 +98,13 @@ fn e2e_race_loser_is_stopped_and_salvaged() {
         &[
             commit("b-note.txt", "b\n"),
             sh("echo unfinished > wip.txt"),
+            h.mark_release("b-wip"),
             hang(),
         ],
     );
-    h.script("reviewer-t1-1", &[approve()]);
+    // Lane a's reviewer approves only once lane b has committed and written `wip.txt`,
+    // so the salvage has both whatever the two racers' speeds (review m1).
+    h.script("reviewer-t1-1", &[h.wait_release("b-wip"), approve()]);
     let base = h.git(&["rev-parse", "HEAD"]);
     let id = h.start(
         &plan_of(&[racing(&["a.txt", "b-note.txt", "wip.txt"])]),
@@ -160,9 +162,18 @@ fn e2e_race_loser_is_stopped_and_salvaged() {
         !pids.is_empty(),
         "lane b's racer recorded a pid: {racers_b:?}"
     );
+    // Review m3: a recycled pid could be another test's `fake-agent`; lane b's racer
+    // is the one whose argv names this run (its anthrex server's `--run <id>`, which
+    // its recorded argv shows).
+    let launched = h.io_lines("racer-t1-b-1", "args").concat();
+    assert!(
+        launched.contains(&id),
+        "lane b's argv names the run: {launched}"
+    );
     for pid in pids {
         if let Some(argv) = argv_of(pid) {
-            assert!(!argv.contains("fake-agent"), "pid {pid} is alive: {argv}");
+            let ours = argv.contains("fake-agent") && argv.contains(&id);
+            assert!(!ours, "lane b's racer, pid {pid}, is alive: {argv}");
         }
     }
 
@@ -202,6 +213,7 @@ fn e2e_race_both_pass_crowns_one() {
         2 * RUN_WAIT,
     );
     let t1 = t(&run, "t1");
+    reviewers_met(&h);
     assert_eq!(t1.state, TaskState::Merged);
     let winner = race(t1).winner.expect("a winner");
     let loser = match winner {
@@ -271,6 +283,7 @@ fn e2e_race_on_a_tiered_profile() {
         2 * TIER_WAIT,
     );
     let t1 = t(&run, "t1");
+    reviewers_met(&h);
     assert_eq!(t1.state, TaskState::Merged);
 
     // Each lane ran tier 1 in its own proof checkout, each command on a slot grant.
