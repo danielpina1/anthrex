@@ -6,25 +6,13 @@
 mod support;
 
 use proto::{AgentRole, LaneState, PairPhase, RaceLane, RunInfo, Runtime, TaskInfo, TaskState};
-use serde_json::{Value, json};
+use support::run_adapt::{hang, seen_task};
 use support::run_harness::{RUN_WAIT, RunHarness, RunWatcher};
 use support::run_plans::*;
 
-/// A racer that never finishes its turn: it is stopped when the other lane wins.
-fn hang() -> Value {
-    json!({"hang": {}})
-}
-
 /// `t1` of every snapshot `watcher` received, oldest first.
 fn seen(watcher: &RunWatcher, id: &str) -> Vec<TaskInfo> {
-    watcher
-        .snapshots()
-        .into_iter()
-        .flat_map(|s| s.runs)
-        .filter(|r| r.run_id == id)
-        .flat_map(|r| r.tasks)
-        .filter(|t| t.id == "t1")
-        .collect()
+    seen_task(watcher, id, "t1")
 }
 
 fn lane_rounds(task: &TaskInfo) -> Vec<(AgentRole, Option<RaceLane>)> {
