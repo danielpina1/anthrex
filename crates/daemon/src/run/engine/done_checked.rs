@@ -94,6 +94,10 @@ pub(super) fn checked(
         }
         _ => return,
     };
+    // Task 16 re-review 4's nit: logged on the read, whether or not the claim passes.
+    if let Some(read) = &read {
+        super::pair::log_unlimited(run, i, read.unlimited, now);
+    }
     if let Some(text) = rejection(run, i, &pending, &result) {
         history(run, i, now, text.clone());
         answer(fx, run, Err(text.clone()));
@@ -131,7 +135,6 @@ pub(super) fn checked(
         }
     }
     let (id, mut pending) = (pending.reply, pending);
-    super::pair::log_unlimited(run, i, signals.unlimited, now);
     super::weakening::keep(&mut run.tasks[i], signals);
     if let Some(pair) = (run.tasks[i].pair.as_mut()).filter(|p| p.phase == PairPhase::Implementing)
     {

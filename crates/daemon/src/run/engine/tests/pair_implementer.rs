@@ -423,6 +423,36 @@ fn an_unlimited_writer_path_read_is_logged() {
     assert_eq!(logged, 1);
 }
 
+/// Task 16 re-review 4's nit: the line is written on the read, so a claim bounced after
+/// it (here for a generated file outside `owns`) still logs it.
+#[test]
+fn an_unlimited_read_of_a_bounced_claim_is_logged() {
+    let (mut fx, _, window, _) = implementing();
+    let effects = fx.tool(window, "task_done", json!({"summary": "made it pass"}));
+    let (op, _) = only_op(&effects, "VerifyDone");
+    let mut result = at_impl(&fx);
+    if let OpResult::DoneChecked {
+        signals,
+        generated_outside_owns,
+        ..
+    } = &mut result
+    {
+        *signals = Some(Box::new(ClaimSignals {
+            unlimited: 300,
+            ..ClaimSignals::default()
+        }));
+        *generated_outside_owns = vec!["crates/z/gen.rs".into()];
+    }
+    let effects = fx.done(op, result);
+    assert!(
+        ops_in(&effects, "PrepareReview").is_empty(),
+        "the claim is bounced"
+    );
+    let line = crate::run::contract_patterns::writer_paths_unlimited_line("t1", 300);
+    let logged = (fx.run().log.iter()).filter(|l| l.text == line).count();
+    assert_eq!(logged, 1, "{:?}", fx.run().log);
+}
+
 /// Re-review 3's NI-3: past the restore command's limit, the fallback text still says
 /// which file comes from which commit.
 #[test]
