@@ -31,9 +31,9 @@ pub fn writing(task: &Task) -> bool {
 
 /// Moves `task` to `state` at `now`: the time since `phase_since` is added to the
 /// phase of the state it leaves, `phase_since` becomes `now`, and `max_rung` takes the
-/// task's rung (not a test writer's). Setting the state it is already in only tracks the rung, so a pass
-/// that re-asserts a state changes nothing. A `phase_since` of 0 (a task from before
-/// milestone 8b) counts nothing.
+/// task's rung (not a test writer's). Setting the state it is already in only tracks
+/// the rung, so a pass that re-asserts a state changes nothing. A `phase_since` of 0 (a
+/// task from before milestone 8b) counts nothing.
 pub fn set_state(task: &mut Task, state: TaskState, now: u64) {
     // The final fix wave (review B's M2): a test writer's rung is the writer's own
     // escalation, never the task's class route's.
