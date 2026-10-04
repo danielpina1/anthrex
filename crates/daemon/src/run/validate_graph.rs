@@ -356,9 +356,10 @@ impl<'a> Tarjan<'a> {
     }
 }
 
-/// A task that has started, for decision 41: any state from `preparing` to
-/// `merge_queue`, or `blocked` with a start commit (its worktree exists).
-fn has_started(task: &Task) -> bool {
+/// A task that has started, for decision 41's implicit dependencies: any state from
+/// `preparing` to `merge_queue`, or `blocked` with a start commit (its worktree exists).
+/// Named apart from `edits_state::has_started`, whose meaning differs (task 14's carry).
+fn under_way(task: &Task) -> bool {
     matches!(
         task.state,
         TaskState::Preparing
@@ -429,7 +430,7 @@ pub fn implicit_deps(tasks: &[Task]) -> Vec<Vec<String>> {
             // stages the later stage waits for the earlier, whatever the plan order,
             // unless it has started; an earlier stage never waits for a later one.
             let stages = earlier.spec.stage.cmp(&task.spec.stage);
-            let (w, on) = match (stages, has_started(earlier), has_started(task)) {
+            let (w, on) = match (stages, under_way(earlier), under_way(task)) {
                 (Ordering::Less, _, true) | (Ordering::Greater, true, _) => continue,
                 (Ordering::Less, _, false) => (i, j),
                 (Ordering::Greater, false, _) => (j, i),
