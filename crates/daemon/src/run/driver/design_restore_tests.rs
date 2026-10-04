@@ -178,4 +178,56 @@ mod service {
         );
         shutdown.cancel();
     }
+
+    /// Review m4 and m5: the read-back is one blocking task for every run, bounded by
+    /// its wait. A file that never answers (a FIFO with no writer) times it out: the
+    /// restore goes on, and the engine is told nothing, so the gate stays as it was.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_read_back_that_times_out_changes_nothing() {
+        let data = tempfile::tempdir().unwrap();
+        let made = std::sync::Mutex::new(None);
+        let fifo = |path: &Path| {
+            std::fs::remove_file(path).unwrap();
+            let status = std::process::Command::new("mkfifo").arg(path).status();
+            assert!(status.unwrap().success(), "mkfifo {}", path.display());
+            *made.lock().unwrap() = Some(path.to_path_buf());
+        };
+        let s = at_spec_gate(data.path(), fifo).await;
+        let fifo = made.lock().unwrap().clone().unwrap();
+        let shutdown = CancellationToken::new();
+        s.spawn(shutdown.clone());
+        let gate_of = |s: &RunService| {
+            let state = crate::lock(&s.state);
+            let design = state.runs[RUN_ID].orch.design.clone();
+            design.and_then(|d| d.gate)
+        };
+        let before = gate_of(&s);
+        let started = Instant::now();
+        s.check_design_docs_within(Duration::from_millis(300)).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "bounded by its wait"
+        );
+        // The service still answers, and nothing reached the engine.
+        let reply = s
+            .request(RunRequest::DocGate {
+                run: RUN_ID.into(),
+                kind: DocGateKind::Spec,
+                action: DocGateAction::Rethink { note: "r".into() },
+            })
+            .await;
+        let refused = "rethink is only for the brainstorm gate";
+        assert_eq!(reply, RunReply::refused(request::DOC_GATE, refused));
+        assert_eq!(gate_of(&s), before, "the gate is unchanged");
+        // The blocked read gets its end of file, so the blocking thread ends. Opened
+        // without blocking: with no reader waiting, it fails instead of hanging.
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut open = std::fs::OpenOptions::new();
+        open.write(true).custom_flags(libc::O_NONBLOCK);
+        drop(
+            open.open(&fifo)
+                .expect("the read-back still waits on the FIFO"),
+        );
+        shutdown.cancel();
+    }
 }

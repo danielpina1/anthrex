@@ -5,10 +5,13 @@
 //! file is logged, an open gate whose version is one reopens as revising, and the
 //! latest text of each gate document refills its change summaries' cache.
 //!
-//! The engine lock is taken only to list the versions; every read runs on
-//! `spawn_blocking`, bounded by [`IO_WAIT`] per run (AGENTS.md rule 2).
+//! The engine lock is taken only to list the versions; every run's reads run as one
+//! `spawn_blocking` task, bounded by [`IO_WAIT`] (AGENTS.md rule 2), after the rest of
+//! the restore (task M9.6.7 fix round 1, m5). A read-back that times out tells the
+//! engine nothing: the gates stay as they were stored.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use proto::DocKind;
 
@@ -22,19 +25,30 @@ pub type ToCheck = (DocVersion, PathBuf, bool);
 
 impl RunService {
     /// Reads back every design run's versions and sends each run's result to the
-    /// engine. Called by `restore`, once its effects ran.
+    /// engine. Called last by `restore`.
     pub(super) async fn check_design_docs(&self) {
-        for (run_id, docs) in self.design_docs() {
-            let checked =
-                tokio::time::timeout(IO_WAIT, tokio::task::spawn_blocking(move || check(docs)))
-                    .await;
-            match checked {
-                Ok(Ok(checked)) => self.send(EventKind::DesignChecked { run_id, checked }),
-                Ok(Err(error)) => {
-                    tracing::error!(run = %run_id, %error, "checking the design documents panicked")
+        self.check_design_docs_within(IO_WAIT).await;
+    }
+
+    /// [`Self::check_design_docs`], bounded by `wait`.
+    pub(super) async fn check_design_docs_within(&self, wait: Duration) {
+        let runs = self.design_docs();
+        if runs.is_empty() {
+            return;
+        }
+        let read = move || -> Vec<(String, Vec<DocChecked>)> {
+            (runs.into_iter())
+                .map(|(run_id, docs)| (run_id, check(docs)))
+                .collect()
+        };
+        match tokio::time::timeout(wait, tokio::task::spawn_blocking(read)).await {
+            Ok(Ok(all)) => {
+                for (run_id, checked) in all {
+                    self.send(EventKind::DesignChecked { run_id, checked });
                 }
-                Err(_) => tracing::error!(run = %run_id, "checking the design documents timed out"),
             }
+            Ok(Err(error)) => tracing::error!(%error, "checking the design documents panicked"),
+            Err(_) => tracing::error!("checking the design documents timed out"),
         }
     }
 
