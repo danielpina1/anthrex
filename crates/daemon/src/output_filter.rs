@@ -15,8 +15,17 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::headless::argv::CodexFilter;
 use crate::launch::shell_quote;
+
+/// Milestone 9.5 decision 28: how a Codex worker, racer or test writer gets the output
+/// filter (`headless::argv::CliCaps::codex_filter`). `CLI_CAPS` holds `Instruction`:
+/// task M9.5.1's Codex hook facts (items 4–5) are not recorded, so `Hook` (with
+/// `codex_hook_args` and `codex_rewrite`) is not built. `Instruction`: the note after
+/// the contract, by instruction only (the CLI cannot rewrite commands).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexFilter {
+    Instruction,
+}
 
 /// The lines `failures-only` keeps with their context (decision 26).
 pub const FAILURE_RE: &str = r"(?i)\b(fail(ed|ure|ures|s)?|error(s)?|panic(ked|s)?|assert(ion)?|expected|traceback|exception)\b";

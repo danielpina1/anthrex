@@ -326,4 +326,15 @@ fn codex_filter_note_is_the_exact_text() {
              output filter, as '/opt/anthrex/bin/anthrex' filter-run --mode failures-only \
              --log-dir '/tmp/ax/t1/anthrex-logs' -c '<command>'."
     ));
+    // Task 19 review m3: a `'` and a `$` in either path are quoted, never expanded.
+    let mut odd = hook(&["cargo test"]);
+    odd.log_dir = PathBuf::from("/d/it's $HOME/anthrex-logs");
+    let note = codex_filter_note(Path::new("/opt/an'threx/$bin/anthrex"), &odd);
+    assert!(
+        note.contains(
+            "as '/opt/an'\\''threx/$bin/anthrex' filter-run --mode failures-only \
+             --log-dir '/d/it'\\''s $HOME/anthrex-logs' -c '<command>'."
+        ),
+        "{note}"
+    );
 }

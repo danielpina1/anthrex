@@ -35,14 +35,9 @@ pub struct CliCaps {
     pub codex_filter: CodexFilter,
 }
 
-/// Milestone 9.5 decision 28. `CLI_CAPS` holds `Instruction`: task M9.5.1's Codex hook
-/// facts (items 4–5) are not recorded, so `Hook` (with `codex_hook_args` and
-/// `codex_rewrite`) is not built. `Instruction`: the note after the contract, by
-/// instruction only (the CLI cannot rewrite commands).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CodexFilter {
-    Instruction,
-}
+// Milestone 9.5 decision 28's `CodexFilter` lives with the filter it selects (task 19
+// review m4: `output_filter` stays a leaf that imports nothing of `headless`).
+pub use crate::output_filter::CodexFilter;
 
 /// Decision 54's key names under `"sandbox"`. `write_allow` is a dotted path into
 /// nested objects.
