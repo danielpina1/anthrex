@@ -226,6 +226,18 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
             format!("the {kind} has had its {MAX_VERSIONS} versions; {ways}")
         })
     };
+    // Fix round 2: with both caps reached, only approve and reject are left.
+    let both =
+        kind == DocGateKind::Brainstorm && design.rethinks >= MAX_RETHINKS && full(kind).is_some();
+    let revises = matches!(
+        action,
+        DocGateAction::Changes { .. } | DocGateAction::Edit { .. } | DocGateAction::Rethink { .. }
+    );
+    if both && revises {
+        return Some(format!(
+            "the brainstorm has been rethought {MAX_RETHINKS} times and has had its {MAX_VERSIONS} versions; approve or reject"
+        ));
+    }
     match action {
         DocGateAction::Changes { .. } | DocGateAction::Edit { .. } => full(kind),
         DocGateAction::Back { .. } => full(previous(kind)),

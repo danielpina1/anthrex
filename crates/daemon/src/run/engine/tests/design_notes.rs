@@ -154,3 +154,28 @@ fn a_full_gate_still_takes_its_other_actions() {
     let reply = act(&mut fx, DocGateKind::Spec, DocGateAction::Reject);
     assert_eq!(reply, Ok(format!("run {RUN_ID} rejected; discarding it")));
 }
+
+/// Fix round 2: with both caps reached at the brainstorm gate, the refusal offers only
+/// what is left, approve or reject, for a rethink and for a change alike.
+#[test]
+fn both_caps_reached_offer_approve_or_reject() {
+    let mut fx = at_brainstorm_gate(false);
+    for _ in 0..3 {
+        let rethink = DocGateAction::Rethink { note: "r".into() };
+        act(&mut fx, DocGateKind::Brainstorm, rethink).unwrap();
+        submitted(&mut fx, "brainstorm", REPORT);
+    }
+    for n in 5..=6 {
+        act(&mut fx, DocGateKind::Brainstorm, changes("again")).unwrap();
+        let text = REPORT.replace("A table.", &format!("A table {n}."));
+        assert_eq!(submitted(&mut fx, "brainstorm", &text)["version"], n);
+    }
+    let both = Err(
+        "the brainstorm has been rethought 3 times and has had its 6 versions; approve or reject"
+            .to_string(),
+    );
+    let rethink = DocGateAction::Rethink { note: "r".into() };
+    assert_eq!(act(&mut fx, DocGateKind::Brainstorm, rethink), both);
+    assert_eq!(act(&mut fx, DocGateKind::Brainstorm, changes("c")), both);
+    assert!(act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).is_ok());
+}
