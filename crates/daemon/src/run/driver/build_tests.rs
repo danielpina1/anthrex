@@ -223,6 +223,9 @@ mod tuning {
         let work = tmp.join("work");
         std::fs::create_dir_all(work.join("crates/a/src")).unwrap();
         git(&work, &["init", "-q", "-b", "main"]);
+        // The repository's own identity: preflight needs one, and CI has no global one.
+        git(&work, &["config", "user.name", "t"]);
+        git(&work, &["config", "user.email", "t@t"]);
         std::fs::write(work.join("crates/a/src/lib.rs"), "// a\n").unwrap();
         git(&work, &["add", "-A"]);
         git(&work, &["commit", "-q", "-m", "base"]);
