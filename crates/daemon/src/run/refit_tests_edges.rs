@@ -335,3 +335,25 @@ fn nothing_learned_still_says_none_after_the_configured_lines() {
     let t = tuned_with(&lines, &file, &cfg);
     assert!(!t.log.iter().any(|l| l == none), "{:?}", t.log);
 }
+
+/// Whole-branch review B, M4: the `none` line blames too few samples only when that is
+/// true. A class that qualifies but whose refit stayed near the default, or a refit
+/// that is off, says so instead.
+#[test]
+fn the_none_line_says_why_nothing_was_learned() {
+    let lines = super::tests::fixture_records("refit");
+    let mut cfg = config::Orchestrator::default();
+    cfg.tuning.table.path_weights = false;
+    cfg.tuning.table.min_change_percent = 100;
+    let (file, _) = refit(&lines, &TuningFile::default(), &cfg, NOW);
+    assert!(file.budgets.is_empty(), "kept: {file:?}");
+    assert_eq!(
+        tuned_with(&lines, &file, &cfg).log,
+        ["tuning: none (history's refit is within 100% of the default budgets)"]
+    );
+    cfg.tuning.table.refit_budgets = false;
+    assert_eq!(
+        tuned_with(&lines, &file, &cfg).log,
+        ["tuning: none (the budget refit is off)"]
+    );
+}

@@ -125,10 +125,7 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
     // Decision 12 and ruling T8-8: with nothing learned, say so, after any `configured`
     // lines.
     if log.len() == bare {
-        log.push(format!(
-            "tuning: none (history has fewer than {} samples per class)",
-            t.min_samples
-        ));
+        log.push(none_line(lines, cfg));
     }
     Tuned {
         budget_s,
@@ -140,6 +137,26 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
         routes,
         lists: cfg.tuning.routes.clone(),
         log,
+    }
+}
+
+/// Decision 12's `none` line, with why nothing was learned (whole-branch review B, M4):
+/// too few samples only when no class the refit may write qualifies.
+fn none_line(lines: &[HistoryLine], cfg: &config::Orchestrator) -> String {
+    let t = &cfg.tuning.table;
+    let refittable = |c: &SizeClass| !configured(cfg.tuning.configured, *c);
+    let qualified = (SizeClass::ALL.into_iter().filter(refittable))
+        .any(|c| qualifies(&budget_samples(lines, c, t), t));
+    match (qualified, t.refit_budgets) {
+        (false, _) => format!(
+            "tuning: none (history has fewer than {} samples per class)",
+            t.min_samples
+        ),
+        (true, false) => "tuning: none (the budget refit is off)".to_string(),
+        (true, true) => format!(
+            "tuning: none (history's refit is within {}% of the default budgets)",
+            t.min_change_percent
+        ),
     }
 }
 
