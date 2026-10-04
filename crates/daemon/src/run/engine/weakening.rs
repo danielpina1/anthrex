@@ -8,7 +8,7 @@
 use proto::{Finding, PairPhase, Severity, SignalInfo, Verdict};
 
 use crate::run::contract::{
-    deleted_test_file_message, shown, signal_unjustified, signals_block, signals_unanswered,
+    deleted_test_files_message, shown, signal_unjustified, signals_block, signals_unanswered,
 };
 use crate::run::globs::names_literally;
 use crate::run::model::{Run, Task};
@@ -51,12 +51,21 @@ pub(super) fn bounce(run: &Run, i: usize, signals: &ClaimSignals) -> Option<Stri
     if caught.is_empty() {
         return None;
     }
-    // Ruling C-20: restore from the commit the diff was read from.
+    // Ruling C-20: restore from the commit the diff was read from; milestone 9.5 ruling
+    // T16-8 (b): a paired task's implementer's per file, one checkout per base.
     let base = match signals.base.is_empty() {
         true => run.head_for(task),
         false => signals.base.as_str(),
     };
-    Some(deleted_test_file_message(&caught, base))
+    let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
+    for path in caught {
+        let from = signals.restore_from.get(&path).map_or(base, String::as_str);
+        match groups.iter_mut().find(|(b, _)| *b == from) {
+            Some((_, paths)) => paths.push(path),
+            None => groups.push((from, vec![path])),
+        }
+    }
+    Some(deleted_test_files_message(&groups))
 }
 
 /// Decision 42: an accepted claim's signals replace the task's.

@@ -34,6 +34,7 @@ mod salvage;
 mod sandbox;
 mod settings;
 mod signals;
+mod signals_pair;
 mod summary;
 mod tiers;
 mod tmp;
@@ -62,8 +63,9 @@ pub use salvage::{delete_branches, remove_checkout, remove_worktree, salvage};
 pub use settings::{codex_config_tree, project_settings};
 pub use signals::{
     DiffLimits, NoAttributes, SIGNALS_DIFF_BYTES, Zero, cfg_test_files, done_signals,
-    done_signals_from, done_signals_with, pair_signals, signal_paths, unified_zero,
+    done_signals_from, done_signals_with, signal_paths, unified_zero,
 };
+pub use signals_pair::pair_signals;
 pub use summary::{resolve_target, task_summary, task_summary_excluding};
 pub use tiers::{changed_paths, checkout_tree, show_stat, sync_read, tree_of, tree_patch};
 

@@ -160,6 +160,7 @@ fn a_weakened_test_raises_a_signal_from_red() {
             list: vec![weakened.clone()],
             more: 0,
             base: HEAD.into(),
+            restore_from: Default::default(),
         }));
     }
     let effects = fx.done(op, result);
@@ -290,4 +291,39 @@ fn a_test_writers_rate_limit_counts_for_its_runtime() {
     assert_eq!(run.rate_limits.get("claude"), None);
     assert_eq!(run.concurrency["codex"].cap, 1, "Codex's cap is halved");
     assert!(!run.concurrency.contains_key("claude"));
+}
+
+/// Ruling T16-8 (b): the done gate's restore command restores each deleted test file
+/// from its own base, one `git checkout` per base, joined by `&&`.
+#[test]
+fn each_deleted_test_restores_from_its_own_base() {
+    let (mut fx, _, window, _) = implementing();
+    let effects = fx.tool(window, "task_done", json!({"summary": "made it pass"}));
+    let (op, _) = only_op(&effects, "VerifyDone");
+    let (writers, theirs) = ("crates/a/tests/w.rs", "crates/a/tests/x.rs");
+    let deleted = |path: &str| Signal::DeletedTestFile { path: path.into() };
+    let mut result = at_impl(&fx);
+    let base = "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5";
+    if let OpResult::DoneChecked { signals, .. } = &mut result {
+        *signals = Some(Box::new(ClaimSignals {
+            list: vec![deleted(writers), deleted(theirs)],
+            more: 0,
+            base: base.into(),
+            restore_from: [
+                (writers.to_string(), HEAD.to_string()),
+                (theirs.to_string(), base.to_string()),
+            ]
+            .into(),
+        }));
+    }
+    let effects = fx.done(op, result);
+    let [Err(text)] = &replies(&effects)[..] else {
+        panic!("{effects:#?}")
+    };
+    let command = format!(
+        "git checkout {} -- '{writers}' && git checkout {} -- '{theirs}'",
+        &HEAD[..7],
+        &base[..7]
+    );
+    assert!(text.contains(&command), "{text}");
 }

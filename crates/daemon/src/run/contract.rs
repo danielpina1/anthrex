@@ -17,9 +17,11 @@ use super::model::{CheckRecord, ProofRecord, ReviewLevel, ReviewRecord, Run, Tas
 // Milestone 9.1's tier texts (decision 13 and the tier line of a bounce).
 #[path = "contract_tiers.rs"]
 mod tiers;
+#[cfg(test)]
+pub(crate) use tiers::deleted_test_file_message;
 pub(crate) use tiers::{
     BisectFix, bisect_fix_acceptance, bisect_fix_brief, bisect_fix_title,
-    deleted_test_file_message, shown, signal_unjustified, signals_block, signals_unanswered,
+    deleted_test_files_message, shown, signal_unjustified, signals_block, signals_unanswered,
     sync_fix_acceptance, sync_fix_brief, sync_fix_title,
 };
 

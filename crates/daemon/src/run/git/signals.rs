@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use super::tiers::range_words;
 use super::{DIFF_FLAGS, Git, PATCH_PREFIXES, failure, nul_fields, os};
 use crate::run::tiers::weakening::{self, SignalInput};
-use crate::run::tiers::{ClaimSignals, SIGNALS_MAX, Signal, SignalsSpec};
+use crate::run::tiers::{ClaimSignals, SignalsSpec};
 use crate::worktree::{WorktreeError, run_git_head_tail};
 
 /// At most this much of decision 40's `-U0` diff is read; the rest is read and dropped
@@ -70,12 +70,12 @@ pub enum Zero {
     TimedOut,
 }
 
-/// `git diff -U0 --no-renames --text <range>` in `dir` (with [`DIFF_FLAGS`] and the
-/// `a/`/`b/` prefixes), keeping at most `bytes`.
+/// `git diff -U0 --no-renames --text <range> -- <pathspec>` in `dir` (with
+/// [`DIFF_FLAGS`] and the `a/`/`b/` prefixes), keeping at most `bytes`.
 pub fn unified_zero(
     git: &OsStr,
     dir: &Path,
-    range: &str,
+    (range, pathspec): (&str, &[String]),
     attrs: &NoAttributes,
     bytes: usize,
     timeout: Duration,
@@ -87,6 +87,7 @@ pub fn unified_zero(
     rest.extend([os("--text"), os("-U0"), os("--no-renames")]);
     rest.extend(range_words(range)?.into_iter().map(os));
     rest.push(os("--"));
+    rest.extend(pathspec.iter().map(|p| os(p)));
     let args = Git::unhooked(&attrs.args(&rest));
     let ran = run_git_head_tail(g.program, dir, &args, Instant::now() + timeout, bytes, 0);
     let (output, kept) = match ran {
@@ -103,12 +104,13 @@ pub fn unified_zero(
     })
 }
 
-/// The paths `range` changes (`git diff --name-only -z --no-renames`), only those of
-/// `filter` (`--diff-filter=<filter>`) when given, in git's order.
+/// The paths `range` changes (`git diff --name-only -z --no-renames`) within
+/// `pathspec`, only those of `filter` (`--diff-filter=<filter>`) when given, in git's
+/// order.
 pub fn signal_paths(
     git: &OsStr,
     dir: &Path,
-    range: &str,
+    (range, pathspec): (&str, &[String]),
     filter: Option<&str>,
     attrs: &NoAttributes,
     timeout: Duration,
@@ -126,6 +128,7 @@ pub fn signal_paths(
     rest.extend(filter.as_deref().map(os));
     rest.extend(range_words(range)?.into_iter().map(os));
     rest.push(os("--"));
+    rest.extend(pathspec.iter().map(|p| os(p)));
     let out = g.ok(dir, &attrs.args(&rest))?;
     Ok(nul_fields(&out).map(str::to_string).collect())
 }
@@ -216,12 +219,20 @@ pub fn done_signals_with(
     if run_head.starts_with('-') || head.starts_with('-') {
         return Err(format!("not a diff range: {run_head:?} {head:?}"));
     }
+    let base = merge_base(git, worktree, (run_head, head), timeout)?;
+    read_signals(git, worktree, (base, head, &[]), spec, limits, timeout)
+}
+
+/// `git merge-base <run_head> <head>`.
+pub(super) fn merge_base(
+    git: &OsStr,
+    worktree: &Path,
+    (run_head, head): (&str, &str),
+    timeout: Duration,
+) -> Result<String, String> {
     let g = Git::new(git, timeout);
-    let base = g
-        .ok(worktree, &[os("merge-base"), os(run_head), os(head)])?
-        .trim()
-        .to_string();
-    read_signals(git, worktree, (base, head), spec, limits, timeout)
+    let base = g.ok(worktree, &[os("merge-base"), os(run_head), os(head)])?;
+    Ok(base.trim().to_string())
 }
 
 /// Controller ruling C-21 (2): a sync task's signals, read from `base` (its conflicted
@@ -243,26 +254,34 @@ pub fn done_signals_from(
     read_signals(
         git,
         worktree,
-        (base.to_string(), head),
+        (base.to_string(), head, &[]),
         spec,
         limits,
         timeout,
     )
 }
 
-/// The signals of `<base>..<head>` (`base` may be a tree).
-fn read_signals(
+/// The signals of `<base>..<head>` (`base` may be a tree) within `pathspec` (every
+/// path when empty).
+pub(super) fn read_signals(
     git: &OsStr,
     worktree: &Path,
-    (base, head): (String, &str),
+    (base, head, pathspec): (String, &str, &[String]),
     spec: &SignalsSpec,
     limits: DiffLimits,
     timeout: Duration,
 ) -> Result<ClaimSignals, String> {
     let attrs = NoAttributes::probe(git, worktree, timeout)?;
     let range = format!("{base}..{head}");
-    let zero = unified_zero(git, worktree, &range, &attrs, limits.bytes, limits.timeout)?;
-    let rs: Vec<String> = signal_paths(git, worktree, &range, None, &attrs, timeout)?
+    let zero = unified_zero(
+        git,
+        worktree,
+        (&range, pathspec),
+        &attrs,
+        limits.bytes,
+        limits.timeout,
+    )?;
+    let rs: Vec<String> = signal_paths(git, worktree, (&range, pathspec), None, &attrs, timeout)?
         .into_iter()
         .filter(|p| p.ends_with(".rs"))
         .collect();
@@ -279,7 +298,7 @@ fn read_signals(
         true => Some(signal_paths(
             git,
             worktree,
-            &range,
+            (&range, pathspec),
             Some("DT"),
             &attrs,
             timeout,
@@ -298,72 +317,6 @@ fn read_signals(
         list,
         more: u32::try_from(more).unwrap_or(u32::MAX),
         base,
+        restore_from: Default::default(),
     })
-}
-
-/// Milestone 9.5 rulings RP-2, T16-1 and T16-7: a paired task's implementer's signals.
-/// No merge commit is ever a base. The paths `start..red` touched (the writer's test)
-/// are read over `red..head`, those paths only; every other path is read with
-/// [`done_signals`]'s merge-base read (`<merge-base of run_head and head>..head`),
-/// which no merge can move past the implementer's own commits. Deleted test files and
-/// `DiffTooLarge` first; at most [`SIGNALS_MAX`], `more` counting both reads' overflow
-/// (either read's may include a signal the other side's paths drop). The base is `red`
-/// when a deleted test file is on a writer's path (decision 41's restore command names
-/// a commit that has it, ruling T16-7 N2), else the merge base.
-pub fn pair_signals(
-    git: &OsStr,
-    worktree: &Path,
-    (start, red, run_head, head): (&str, &str, &str, &str),
-    spec: &SignalsSpec,
-    timeout: Duration,
-) -> Result<ClaimSignals, String> {
-    if [start, red, run_head, head]
-        .iter()
-        .any(|r| r.starts_with('-'))
-    {
-        return Err(format!("not a diff range: {start:?} {red:?} {head:?}"));
-    }
-    let attrs = NoAttributes::probe(git, worktree, timeout)?;
-    let range = format!("{start}..{red}");
-    let red_paths = signal_paths(git, worktree, &range, None, &attrs, timeout)?;
-    let on_red = |s: &Signal| path_of(s).is_some_and(|p| red_paths.iter().any(|r| r == p));
-    let own = done_signals(git, worktree, run_head, head, spec, timeout)?;
-    let of_red = done_signals_from(git, worktree, (red, head), spec, timeout)?;
-    let mut list: Vec<Signal> = (own.list.into_iter().filter(|s| !on_red(s)))
-        .chain(of_red.list.into_iter().filter(|s| on_red(s)))
-        .collect();
-    let first = |s: &Signal| match s {
-        Signal::DeletedTestFile { .. } => 0,
-        Signal::DiffTooLarge => 1,
-        _ => 2,
-    };
-    list.sort_by_key(first);
-    let mut seen = false;
-    list.retain(|s| !matches!(s, Signal::DiffTooLarge) || !std::mem::replace(&mut seen, true));
-    let red_deleted =
-        (list.iter()).any(|s| matches!(s, Signal::DeletedTestFile { .. }) && on_red(s));
-    let over = list.len().saturating_sub(SIGNALS_MAX);
-    list.truncate(SIGNALS_MAX);
-    let more = (own.more.saturating_add(of_red.more))
-        .saturating_add(u32::try_from(over).unwrap_or(u32::MAX));
-    Ok(ClaimSignals {
-        list,
-        more,
-        base: if red_deleted {
-            red.to_string()
-        } else {
-            own.base
-        },
-    })
-}
-
-/// The path a signal is on (`DiffTooLarge` has none).
-fn path_of(signal: &Signal) -> Option<&str> {
-    match signal {
-        Signal::DeletedTestFile { path }
-        | Signal::SkipMarker { path, .. }
-        | Signal::AssertionLoss { path, .. }
-        | Signal::TestCodeRemoved { path, .. } => Some(path),
-        Signal::DiffTooLarge => None,
-    }
 }

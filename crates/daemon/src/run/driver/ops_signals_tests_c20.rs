@@ -173,6 +173,7 @@ async fn a_cut_diff_catches_a_test_file_replaced_by_a_link() {
             ],
             more: 0,
             base: rig.start.clone(),
+            restore_from: Default::default(),
         }
     );
 }

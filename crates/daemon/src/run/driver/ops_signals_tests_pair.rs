@@ -200,27 +200,153 @@ async fn a_weakening_before_the_agents_own_merge_is_caught() {
     );
 }
 
-/// Ruling T16-7 (N2): a writer's test the implementer deleted is restored from red,
-/// where it exists, not from the merge base, where it never did.
+/// A commit on the run head by another task, with `files` written (`None` deletes):
+/// its head.
+fn on_run_head(rig: &Rig, files: &[(&str, Option<&str>)]) -> String {
+    for (path, text) in files {
+        match text {
+            Some(text) => {
+                let full = rig.root.join(path);
+                std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+                std::fs::write(&full, text).unwrap();
+                git(&rig.root, &["add", "--", path]);
+            }
+            None => {
+                git(&rig.root, &["rm", "-q", "--", path]);
+            }
+        }
+    }
+    let who = ["-c", "user.name=Other", "-c", "user.email=other@test"];
+    git(
+        &rig.root,
+        &[&who[..], &["commit", "-q", "-m", "other task"]].concat(),
+    );
+    git(&rig.root, &["rev-parse", "HEAD"])
+}
+
+const W2: &str = "#[test]\nfn w() {\n    assert!(one());\n    assert!(two());\n}\n";
+const W1: &str = "#[test]\nfn w() {\n    assert!(one());\n}\n";
+
+/// Ruling T16-8 (a): each read is limited by a pathspec, so the run head's signals
+/// that a refresh merge brings into `red..head` cannot crowd the implementer's
+/// weakening of the writer's test out of the cap, and `more` counts nothing of theirs.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_deleted_writers_test_is_restored_from_red() {
-    let rig = base_rig();
-    rig.commit(&[(
-        "tests/w.rs",
-        Some("#[test]\nfn w() {\n    assert!(one());\n}\n"),
-    )]);
+async fn run_head_signals_cannot_crowd_out_the_writers_test() {
+    let names: Vec<String> = (0..21).map(|n| format!("tests/o{n:02}.rs")).collect();
+    let text = "#[test]\nfn o() {\n    assert!(true);\n}\n";
+    let mut base: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), text)).collect();
+    base.push(("src/lib.rs", "pub fn f() {}\n"));
+    let rig = Rig::new(&base);
+    rig.commit(&[("tests/w.rs", Some(W2))]);
     let red = git(&rig.worktree, &["rev-parse", "HEAD"]);
-    rig.commit(&[("tests/w.rs", None)]);
-    let run_head = other_task(&rig);
+    rig.commit(&[("tests/w.rs", Some(W1))]);
+    let gone: Vec<(&str, Option<&str>)> = names.iter().map(|n| (n.as_str(), None)).collect();
+    let run_head = on_run_head(&rig, &gone);
     merge_in(&rig, &run_head, "refresh");
     let result = rig.verify_at(&run_head, Some(from(&red))).await;
     let OpResult::DoneChecked { signals, .. } = result else {
         panic!("{result:?}")
     };
     let signals = signals.expect("signals");
-    let deleted = Signal::DeletedTestFile {
+    let loss = Signal::AssertionLoss {
         path: "tests/w.rs".into(),
+        line: 4,
+        removed: 1,
+        added: 0,
     };
-    assert!(signals.list.contains(&deleted), "{:?}", signals.list);
-    assert_eq!(signals.base, red);
+    assert_eq!((signals.list, signals.more), (vec![loss], 0));
+}
+
+/// Ruling T16-8 (b): each deleted test file has its own restore base, red for the
+/// writer's test and the merge base for a test the run head brought.
+#[tokio::test(flavor = "multi_thread")]
+async fn each_deleted_test_file_has_its_own_restore_base() {
+    let rig = base_rig();
+    rig.commit(&[("tests/w.rs", Some(W1))]);
+    let red = git(&rig.worktree, &["rev-parse", "HEAD"]);
+    let run_head = on_run_head(&rig, &[("tests/x.rs", Some(W1))]);
+    merge_in(&rig, &run_head, "refresh");
+    rig.commit(&[("tests/w.rs", None), ("tests/x.rs", None)]);
+    let result = rig.verify_at(&run_head, Some(from(&red))).await;
+    let OpResult::DoneChecked { signals, .. } = result else {
+        panic!("{result:?}")
+    };
+    let signals = signals.expect("signals");
+    let want: std::collections::BTreeMap<String, String> = [
+        ("tests/w.rs".to_string(), red.clone()),
+        ("tests/x.rs".to_string(), run_head.clone()),
+    ]
+    .into();
+    assert_eq!(signals.restore_from, want, "{:?}", signals.list);
+    assert_eq!(signals.base, run_head, "the merge base");
+}
+
+/// Ruling T16-8 (c): a change the run head made to a writer's path, which the head
+/// holds exactly as the run head does, is not the implementer's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_head_change_on_a_writers_path_is_not_the_implementers() {
+    let rig = base_rig();
+    // The writer adds its test and a line to the shared `tests/old.rs`.
+    let shared = "#[test]\nfn o() {\n    assert!(a());\n    assert!(b());\n}\n// shared\n";
+    rig.commit(&[("tests/w.rs", Some(W2)), ("tests/old.rs", Some(shared))]);
+    let red = git(&rig.worktree, &["rev-parse", "HEAD"]);
+    rig.commit(&[("tests/w.rs", Some(W1))]);
+    // Another task makes the same addition and drops an assertion of its own.
+    let theirs = "#[test]\nfn o() {\n    assert!(a());\n}\n// shared\n";
+    let run_head = on_run_head(&rig, &[("tests/old.rs", Some(theirs))]);
+    merge_in(&rig, &run_head, "refresh");
+    let result = rig.verify_at(&run_head, Some(from(&red))).await;
+    let OpResult::DoneChecked { signals, .. } = result else {
+        panic!("{result:?}")
+    };
+    let loss = Signal::AssertionLoss {
+        path: "tests/w.rs".into(),
+        line: 4,
+        removed: 1,
+        added: 0,
+    };
+    assert_eq!(signals.expect("signals").list, vec![loss]);
+}
+
+/// Ruling T16-8 (d): the test writer's own claim reads as any worker's (the merge-base
+/// read over `start..red`), so its weakening of an existing test is caught.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_writers_claim_catches_its_weakening_of_an_existing_test() {
+    let rig = base_rig();
+    rig.commit(&[
+        ("tests/w.rs", Some(W2)),
+        (
+            "tests/old.rs",
+            Some("#[test]\nfn o() {\n    assert!(a());\n}\n"),
+        ),
+    ]);
+    let found = signals(&rig.verify(Some(spec())).await, 1);
+    let loss = Signal::AssertionLoss {
+        path: "tests/old.rs".into(),
+        line: 4,
+        removed: 1,
+        added: 0,
+    };
+    assert_eq!(found, vec![loss]);
+}
+
+/// Ruling T16-8 (c)'s bound: a writer's path the head holds as the run head does is
+/// dropped only when the run head changed it. An implementer that reverts the writer's
+/// assertion in a shared test, with no refresh, is still caught.
+#[tokio::test(flavor = "multi_thread")]
+async fn reverting_the_writers_change_to_a_shared_test_is_caught() {
+    let rig = base_rig();
+    let added = "#[test]\nfn o() {\n    assert!(a());\n    assert!(b());\n    assert!(c());\n}\n";
+    rig.commit(&[("tests/w.rs", Some(W2)), ("tests/old.rs", Some(added))]);
+    let red = git(&rig.worktree, &["rev-parse", "HEAD"]);
+    let start = "#[test]\nfn o() {\n    assert!(a());\n    assert!(b());\n}\n";
+    rig.commit(&[("tests/old.rs", Some(start))]);
+    let found = signals(&rig.verify(Some(from(&red))).await, 2);
+    let loss = Signal::AssertionLoss {
+        path: "tests/old.rs".into(),
+        line: 5,
+        removed: 1,
+        added: 0,
+    };
+    assert_eq!(found, vec![loss]);
 }

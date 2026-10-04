@@ -115,9 +115,14 @@ pub struct ClaimSignals {
     pub list: Vec<super::Signal>,
     pub more: u32,
     /// The commit the diff was read from (the merge base of the op's `run_head` and
-    /// the head): what decision 41's restore command checks out (ruling C-20).
+    /// the head): what decision 41's restore command checks out (ruling C-20), for
+    /// every deleted file `restore_from` does not name.
     #[serde(default)]
     pub base: String,
+    /// Milestone 9.5 ruling T16-8 (b): a paired task's implementer's restore base per
+    /// deleted test file: `red` for a test writer's path, the merge base otherwise.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub restore_from: std::collections::BTreeMap<String, String>,
 }
 
 /// What `OpKind::VerifyDone` needs to read decision 40's test-weakening signals: the
@@ -127,10 +132,10 @@ pub struct ClaimSignals {
 pub struct SignalsSpec {
     pub test_paths: Vec<String>,
     pub skip_markers: Vec<String>,
-    /// Milestone 9.5 rulings RP-2 and T16-1: a paired task's implementer's red commit.
-    /// Its signals are read from red, or from the newest merge after red once one has
-    /// landed, and the paths red's own commits touched are read from red as well
-    /// (`git::pair_signals`).
+    /// Milestone 9.5 rulings RP-2, T16-7 and T16-8: a paired task's implementer's red
+    /// commit. The paths red's own commits touched (the test writer's) are read over
+    /// `red..head`, every other path with the merge-base read from the run head, each
+    /// read limited by a pathspec (`git::pair_signals`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub red: Option<String>,
 }

@@ -71,6 +71,7 @@ fn checked(fx: &Fixture, signals: Vec<Signal>, more: u32, outside: &[&str]) -> O
             list: signals,
             more,
             base: DIFF_BASE.into(),
+            restore_from: Default::default(),
         }));
         *outside_owns = outside.iter().map(|p| p.to_string()).collect();
     }
