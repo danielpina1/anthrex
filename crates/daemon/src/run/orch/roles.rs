@@ -300,9 +300,9 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
 }
 
 /// Milestone 9.6 decision 10: the record of brainstormer `agent`'s current session,
-/// `<label>/<session>`: chosen from the run's `brainstorm` list when it has one (every
-/// candidate in the snapshot, a missing runtime's marked so), else the strongest model
-/// of its runtime (`roster_default`).
+/// `<label>/<session>`: chosen from the run's `brainstorm` list when its pick was
+/// (`DesignAgent.listed`; every candidate in the snapshot, a missing runtime's marked
+/// so), else the strongest model of its runtime (`roster_default`).
 pub fn design_agent_record(run: &Run, agent: &DesignAgent, now: u64) -> RoleRoutingDecision {
     let list = &run.limits.route_lists.brainstorm;
     let listed = (list.candidates.iter())
@@ -312,7 +312,8 @@ pub fn design_agent_record(run: &Run, agent: &DesignAgent, now: u64) -> RoleRout
         })
         .collect();
     let candidates = mark_not_installed(listed, &run.orch.installed);
-    let source = match candidates.iter().any(|c| c.route == agent.route) {
+    // Fix round 1 (m3): the pick's own source, carried on the agent.
+    let source = match agent.listed {
         true => lists::LIST_SOURCE,
         false => "roster_default",
     };

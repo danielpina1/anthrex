@@ -5,7 +5,7 @@
 //! them; a restart relaunches a running one fresh. Their sessions are stubbed by their
 //! ops' results and their ended events.
 
-use proto::{AgentRole, DocKind, Runtime, TokenUsage, ToolCall};
+use proto::{AgentRole, Runtime, TokenUsage, ToolCall};
 use serde_json::{Value, json};
 
 use super::design_fixture::*;
@@ -171,6 +171,10 @@ fn two_brainstormers_launch_on_two_runtimes_with_the_same_prompt() {
         .map(|d| d.session_id.clone())
         .collect();
     assert_eq!(ids, ["claude/1", "codex/1"]);
+    assert!(
+        agents(&fx).iter().all(|a| !a.listed),
+        "the roster's defaults"
+    );
 }
 
 /// Decision 10: with one runtime installed, its strongest model runs twice, as `A` with
@@ -225,8 +229,9 @@ fn brainstormers_hold_reader_slots_and_wait_for_them() {
 }
 
 /// DF §3.3: a draft is checked against its template; a refused one gets the exact
-/// reason and may be resubmitted within the budget; the accepted one is stored as the
-/// brainstormer's draft and its session retired.
+/// reason and may be resubmitted within the budget; the accepted one is held, and its
+/// session retired. Ruling T8-1: while the other brainstormer runs, the held draft is
+/// neither written nor indexed, so no file of it exists and `get_doc` cannot find it.
 #[test]
 fn a_draft_is_checked_and_a_refused_draft_may_be_resubmitted() {
     let mut fx = brainstorming();
@@ -247,22 +252,21 @@ fn a_draft_is_checked_and_a_refused_draft_may_be_resubmitted() {
     let effects = submit_draft(&mut fx, CODEX, DRAFT);
     let (ok, value) = answered(&effects);
     assert!(ok, "{value}");
-    assert_eq!(value["version"], 1);
-    let write = effects.iter().find_map(|e| match e {
-        Effect::WriteDoc { path, text, .. } => Some((path.clone(), text.clone())),
-        _ => None,
-    });
-    let (path, text) = write.expect("the draft is written");
+    assert_eq!(value, json!({"accepted": true, "kind": "brainstorm_draft"}));
     assert!(
-        path.ends_with("design/brainstorm/draft-codex.md"),
-        "{path:?}"
+        !(effects.iter()).any(|e| matches!(e, Effect::WriteDoc { .. })),
+        "held, not written: {effects:?}"
     );
-    assert_eq!(text, DRAFT);
     assert!(effects.contains(&Effect::PlannerAccepted { window_id: CODEX }));
-    assert_eq!(states(&fx)[1], DesignAgentState::Done);
+    assert_eq!(states(&fx)[1], DesignAgentState::Submitted);
     let design = fx.run().orch.design.as_ref().unwrap();
-    let draft = design.draft_from("codex").expect("stored");
-    assert_eq!(draft.kind, DocKind::BrainstormDraft);
+    assert!(
+        design.versions.is_empty(),
+        "not indexed: {:?}",
+        design.versions
+    );
+    assert_eq!(design.draft_from("codex"), None);
+    assert_eq!(design.held, [("codex".to_string(), DRAFT.to_string())]);
     // Its one draft is in: a second is refused, from a window no longer live.
     let (ok, value) = answered(&submit_draft(&mut fx, CODEX, DRAFT));
     assert!(!ok);
@@ -301,7 +305,7 @@ fn a_draft_before_its_window_is_bound_is_held_then_applied() {
     let effects = started(&mut fx, "claude", CLAUDE);
     let (ok, value) = answered(&effects);
     assert!(ok, "{value}");
-    assert_eq!(states(&fx)[0], DesignAgentState::Done);
+    assert_eq!(states(&fx)[0], DesignAgentState::Submitted);
 }
 
 /// DF §3.2: neither brainstormer can read the other's draft: `get_doc` is not its tool,

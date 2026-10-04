@@ -360,3 +360,33 @@ fn without_a_list_the_strongest_of_each_installed_runtime() {
         ]
     );
 }
+
+/// Task M9.6.8 fix round 1 (m3): a brainstormer's routing record takes its source from
+/// its pick (`BrainstormPick.listed`), never from comparing its route with the list's.
+#[test]
+fn a_brainstormers_record_names_its_picks_source() {
+    use crate::run::design::state::{DesignAgent, DesignAgentState};
+    use crate::run::orch::roles::design_agent_record;
+    let run = brainstorm_run(vec![cand(Runtime::Codex, SOL, None)]);
+    let pick = &brainstorm_picks(&run)[0];
+    assert!(pick.listed);
+    let mut agent = DesignAgent {
+        label: pick.label.clone(),
+        role: proto::AgentRole::Brainstormer,
+        route: pick.route.clone(),
+        session: 1,
+        window_id: None,
+        state: DesignAgentState::Queued,
+        calls: 0,
+        tokens: 0,
+        started: None,
+        listed: true,
+    };
+    assert_eq!(design_agent_record(&run, &agent, 5).source, LIST_SOURCE);
+    // The same route, not chosen by the list, is the roster's default.
+    agent.listed = false;
+    assert_eq!(
+        design_agent_record(&run, &agent, 5).source,
+        "roster_default"
+    );
+}

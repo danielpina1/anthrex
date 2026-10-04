@@ -10,7 +10,7 @@ use super::dispatch::replies;
 use super::fixture::*;
 use super::orch_restore::resume;
 use crate::run::design::state::DesignAgentState;
-use crate::run::engine::{EngineState, EventKind, ScoutEnd};
+use crate::run::engine::{Effect, EngineState, EventKind, ScoutEnd};
 
 /// DF §3.4: both drafts in wake the orchestrator once, exactly, and the brainstorming
 /// clock starts then.
@@ -90,8 +90,9 @@ fn both_failures_halt_and_resume_relaunches() {
     assert_eq!(fx.run().state, RunState::Halted);
     assert_eq!(fx.run().halted_reason.as_deref(), Some(text));
     assert!(fx.run().halt_retryable);
-    assert!(log_lines(&fx).contains(&text.to_string()));
-    assert!(notes(&fx).is_empty());
+    // Task 7's concern 5: halted as every halt is, its log line and its wake note.
+    assert!(log_lines(&fx).contains(&format!("halted: {text}")));
+    assert_eq!(notes(&fx), [format!("the run halted: {text}")]);
     let effects = resume(&mut fx);
     assert_eq!(replies(&effects), vec![Ok(format!("run {RUN_ID} resumed"))]);
     assert_eq!(fx.run().state, RunState::Brainstorming);
@@ -104,6 +105,10 @@ fn both_failures_halt_and_resume_relaunches() {
         [DesignAgentState::Running, DesignAgentState::Running]
     );
     assert_eq!(fx.run().orch.design.as_ref().unwrap().phase_started, None);
+    // Fix round 1 (m5): the log says the brainstormers relaunch, not that a clock runs.
+    let lines = log_lines(&fx);
+    assert!(lines.contains(&"resumed; the brainstormers are relaunched".to_string()));
+    assert!(!lines.contains(&"resumed; the phase's clock restarts".to_string()));
 }
 
 /// DF §2.2: a brainstormer over its budget (the scout machine stops it past its calls
@@ -134,11 +139,11 @@ fn over_budget_counts_as_failed() {
     assert_eq!(record.result.as_deref(), Some(reason.as_str()));
 }
 
-/// DF §3.5 and §8.4: a brainstormer running at a daemon restart is relaunched fresh
-/// with the same pack (its answers are kept), as a new session, once the run resumes;
-/// a draft already in is kept.
+/// DF §3.5 and §8.4, ruling T8-1: at a daemon restart a running brainstormer, and one
+/// whose draft was held (lost with the old daemon's memory), are both relaunched fresh
+/// with the same pack (its answers are kept), as new sessions, once the run resumes.
 #[test]
-fn a_restart_relaunches_running_brainstormers_fresh() {
+fn a_restart_with_one_draft_held_relaunches_both_brainstormers() {
     let mut fx = brainstorming();
     answered(&submit_draft(&mut fx, CLAUDE, DRAFT));
     let stored = serde_json::to_string(fx.run()).unwrap();
@@ -150,26 +155,106 @@ fn a_restart_relaunches_running_brainstormers_fresh() {
         held: Vec::new(),
     });
     assert_eq!(fx.run().state, RunState::Paused);
-    let codex = agents(&fx)[1].clone();
-    assert_eq!(
-        (codex.state, codex.window_id),
-        (DesignAgentState::Queued, None)
-    );
+    let windows: Vec<(DesignAgentState, Option<u32>)> = (agents(&fx).into_iter())
+        .map(|a| (a.state, a.window_id))
+        .collect();
+    let queued = (DesignAgentState::Queued, None);
+    assert_eq!(windows, [queued.clone(), queued]);
     let before = launches(&fx).len();
     resume(&mut fx);
     assert_eq!(fx.run().state, RunState::Brainstorming);
     let relaunched: Vec<(String, u32)> = (launches(&fx).into_iter().skip(before))
         .map(|(_, s)| (s.kind.label(), s.session))
         .collect();
-    assert_eq!(relaunched, [("codex".into(), 2)]);
-    assert_eq!(states(&fx)[0], DesignAgentState::Done, "its draft is kept");
+    assert_eq!(relaunched, [("claude".into(), 2), ("codex".into(), 2)]);
     let design = fx.run().orch.design.as_ref().unwrap();
+    assert!(
+        design.versions.is_empty(),
+        "the held draft was never stored"
+    );
     assert_eq!(design.answers.as_deref(), Some("skip"));
-    // The old session's record was closed by the restore.
+    // The old sessions' records were closed by the restore.
     let old = (fx.run().role_routing_decisions.iter())
         .find(|d| d.session_id == "codex/1")
         .unwrap();
     assert_eq!(old.outcome, Some(proto::RoleOutcome::Interrupted));
+}
+
+/// Ruling T8-1: no draft's file exists while the other brainstormer runs; both are
+/// written, and indexed, when the drafts are in, and a failure's partner's draft too.
+#[test]
+fn the_drafts_are_written_only_once_both_brainstormers_have_ended() {
+    let written = |effects: &[Effect]| -> Vec<String> {
+        (effects.iter())
+            .filter_map(|e| match e {
+                Effect::WriteDoc { path, .. } => {
+                    Some(path.file_name()?.to_string_lossy().into_owned())
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let mut fx = brainstorming();
+    let codex = DRAFT.replace("Stored tokens.", "Signed links.");
+    assert_eq!(
+        written(&submit_draft(&mut fx, CLAUDE, DRAFT)),
+        [] as [&str; 0]
+    );
+    let effects = submit_draft(&mut fx, CODEX, &codex);
+    assert_eq!(written(&effects), ["draft-claude.md", "draft-codex.md"]);
+    let texts: Vec<&str> = (effects.iter())
+        .filter_map(|e| match e {
+            Effect::WriteDoc { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, [DRAFT, codex.as_str()]);
+    let design = fx.run().orch.design.as_ref().unwrap();
+    let labels: Vec<Option<&str>> = design.versions.iter().map(|v| v.label()).collect();
+    assert_eq!(labels, [Some("claude"), Some("codex")]);
+    assert!(design.held.is_empty());
+    assert_eq!(
+        states(&fx),
+        [DesignAgentState::Done, DesignAgentState::Done]
+    );
+    // One draft and one failure: the draft is written when the failure ends the wait.
+    let mut fx = brainstorming();
+    assert_eq!(
+        written(&submit_draft(&mut fx, CODEX, DRAFT)),
+        [] as [&str; 0]
+    );
+    let failed = ScoutEnd::Failed { reason: "x".into() };
+    assert_eq!(
+        written(&ended(&mut fx, "claude", 1, failed)),
+        ["draft-codex.md"]
+    );
+}
+
+/// Fix round 1 (m1): the brainstorm does not settle while its run is paused; the
+/// drafts are written and the orchestrator woken when it resumes.
+#[test]
+fn a_paused_run_settles_its_brainstorm_on_resume() {
+    let mut fx = brainstorming();
+    answered(&submit_draft(&mut fx, CLAUDE, DRAFT));
+    let run = fx.run_mut();
+    run.paused_from = Some(RunState::Brainstorming);
+    run.state = RunState::Paused;
+    let failed = ScoutEnd::Failed { reason: "x".into() };
+    let effects = ended(&mut fx, "codex", 1, failed);
+    assert!(
+        !(effects.iter()).any(|e| matches!(e, Effect::WriteDoc { .. })),
+        "{effects:?}"
+    );
+    assert!(notes(&fx).is_empty());
+    let effects = resume(&mut fx);
+    assert_eq!(fx.run().state, RunState::Brainstorming);
+    assert!(
+        (effects.iter()).any(|e| matches!(e, Effect::WriteDoc { path, .. }
+            if path.ends_with("brainstorm/draft-claude.md"))),
+        "{effects:?}"
+    );
+    assert_eq!(notes(&fx).len(), 1, "{:?}", notes(&fx));
+    assert!(notes(&fx)[0].starts_with("one brainstormer failed (codex: x)"));
 }
 
 /// A run rejected while it brainstorms stops its brainstormers: each live session is

@@ -180,6 +180,7 @@ fn a_live_agent_runs_in_its_window_in_its_role() {
         calls: 0,
         tokens: 0,
         started: None,
+        listed: false,
     };
     let design = DesignState {
         brainstormers: vec![

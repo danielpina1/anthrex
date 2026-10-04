@@ -143,6 +143,7 @@ fn brainstormer(label: &str, runtime: Runtime) -> DesignAgent {
         calls: 0,
         tokens: 0,
         started: None,
+        listed: false,
     }
 }
 

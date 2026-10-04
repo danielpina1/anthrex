@@ -11,15 +11,17 @@
 //! - **The draft.** A brainstormer's one write, `submit_doc` kind `brainstorm_draft`, is
 //!   accepted only from its live window ([`tool`], task 6's review c; a call that comes
 //!   before its launch's result is held, `early.rs`), checked against its template and
-//!   stored; its session is then retired (`Effect::PlannerAccepted`, which the scout
-//!   service applies to any tagged session).
-//! - **The end.** Each brainstormer ends `Done` (its draft in) or `Failed` (a launch
-//!   failure, a crash, over budget; [`ended`]). When both have ended, one draft or two
-//!   wake the orchestrator (`design::drafts_in`), and two failures halt the run,
-//!   retryably; `run resume` relaunches them ([`relaunch_failed`], DF §3.5).
-//! - **Restart.** A brainstormer running at a daemon restart is queued again and
-//!   relaunched fresh, as a new session, with the same pack once the run resumes
-//!   ([`restore`], DF §8.4).
+//!   held in memory, neither stored nor written while the other brainstormer runs
+//!   (ruling T8-1); its session is then retired (`Effect::PlannerAccepted`, which the
+//!   scout service applies to any tagged session).
+//! - **The end.** Each brainstormer ends `Submitted` (its draft held) or `Failed` (a
+//!   launch failure, a crash, over budget; [`ended`]). When both have ended, the held
+//!   drafts are stored and written (`Done`), and one draft or two wake the orchestrator
+//!   (`design::drafts_in`); two failures halt the run, retryably; `run resume`
+//!   relaunches them ([`relaunch_failed`], DF §3.5).
+//! - **Restart.** A brainstormer running, or holding its draft, at a daemon restart is
+//!   queued again and relaunched fresh, as a new session, with the same pack once the
+//!   run resumes ([`restore`], DF §8.4).
 //!
 //! Pure (design decision 2).
 
@@ -70,6 +72,7 @@ pub(super) fn queue_brainstormers(run: &mut Run, now: u64) {
             calls: 0,
             tokens: 0,
             started: None,
+            listed: p.listed,
         })
         .collect();
     let named: Vec<String> = (picks.iter())
@@ -171,7 +174,7 @@ pub(super) fn started(
             let failed = (RoleOutcome::Failed, Some(why.clone()));
             history::close_session(run, (AgentRole::Brainstormer, &session), failed, fx);
             if let Some(k) = k.filter(|&k| live(run, k)) {
-                fail(run, k, why, now);
+                fail(run, k, why, now, fx);
             }
             None
         }
@@ -229,7 +232,10 @@ pub(super) fn ended(
     }
     agent.tokens += usage.input + usage.output + usage.cache_read + usage.cache_write;
     agent.calls = calls;
-    let done = agent.state == DesignAgentState::Done;
+    let done = matches!(
+        agent.state,
+        DesignAgentState::Submitted | DesignAgentState::Done
+    );
     let reason = match outcome {
         ScoutEnd::Failed { reason } => reason,
         ScoutEnd::Reported => NO_DRAFT.to_string(),
@@ -243,12 +249,12 @@ pub(super) fn ended(
     let running = (run.orch.design.as_ref())
         .is_some_and(|d| d.brainstormers[k].state == DesignAgentState::Running);
     if running {
-        fail(run, k, reason, now);
+        fail(run, k, reason, now, fx);
     }
 }
 
 /// Brainstormer `k` fails with `reason` (DF §3.5), and the brainstorm settles.
-fn fail(run: &mut Run, k: usize, reason: String, now: u64) {
+fn fail(run: &mut Run, k: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
     let Some(design) = run.orch.design.as_mut() else {
         return;
     };
@@ -256,14 +262,16 @@ fn fail(run: &mut Run, k: usize, reason: String, now: u64) {
     agent.state = DesignAgentState::Failed(reason.clone());
     let text = format!("brainstormer {} failed: {reason}", agent.label);
     log(run, now, text);
-    settle(run, now);
+    settle(run, now, fx);
 }
 
-/// DF §3.4 and §3.5, once every brainstormer has ended: a draft or two wake the
+/// DF §3.4 and §3.5, once every brainstormer has ended, in brainstorming (a paused
+/// run's brainstorm settles when it resumes, `restore::unpause`, fix round 1's m1): the
+/// held drafts are stored and written (ruling T8-1); a draft or two wake the
 /// orchestrator, with the failure if one failed; two failures halt the run, retryably
 /// (`run resume` relaunches them, [`relaunch_failed`]).
-fn settle(run: &mut Run, now: u64) {
-    if !matches!(run.state, RunState::Brainstorming | RunState::Paused) {
+pub(super) fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    if run.state != RunState::Brainstorming {
         return;
     }
     let Some(design) = run.orch.design.as_ref() else {
@@ -272,12 +280,16 @@ fn settle(run: &mut Run, now: u64) {
     let ended = |a: &DesignAgent| {
         matches!(
             a.state,
-            DesignAgentState::Done | DesignAgentState::Failed(_)
+            DesignAgentState::Submitted | DesignAgentState::Done | DesignAgentState::Failed(_)
         )
     };
     if design.brainstormers.is_empty() || !design.brainstormers.iter().all(ended) {
         return;
     }
+    drafts::flush(run, now, fx);
+    let Some(design) = run.orch.design.as_ref() else {
+        return;
+    };
     let failed: Vec<(String, String)> = (design.brainstormers.iter())
         .filter_map(|a| match &a.state {
             DesignAgentState::Failed(reason) => Some((a.label.clone(), reason.clone())),
@@ -297,10 +309,9 @@ fn settle(run: &mut Run, now: u64) {
         design.halted_from = Some(RunState::Brainstorming);
         design.phase_started = None;
     }
-    run.state = RunState::Halted;
-    run.halted_reason = Some(text.clone());
+    // Task 7's concern 5: halted as every halt is (its log line and wake note).
+    super::merge::halt(run, text, now);
     run.halt_retryable = true;
-    log(run, now, text);
 }
 
 /// DF §3.5: `run resume` of a run both brainstormers' failures halted queues them both
@@ -324,22 +335,27 @@ pub(super) fn relaunch_failed(run: &mut Run, now: u64) -> bool {
     true
 }
 
-/// Decision 9 after a daemon restart (DF §8.4): a brainstormer that was running is
-/// queued again, so it is relaunched fresh, as a new session with the same pack, once
-/// the run resumes; nothing is killed (its `StartDesignAgent` reconciles as
-/// `NotStarted`, and its record is finished `interrupted` by the restore).
+/// Decision 9 after a daemon restart (DF §8.4): a brainstormer that was running, or
+/// whose draft was held (ruling T8-1: lost with the old daemon's memory), is queued
+/// again, so it is relaunched fresh, as a new session with the same pack, once the run
+/// resumes; nothing is killed (its `StartDesignAgent` reconciles as `NotStarted`, and
+/// its record is finished `interrupted` by the restore).
 pub(super) fn restore(run: &mut Run, now: u64) {
     let Some(design) = run.orch.design.as_mut() else {
         return;
     };
     let mut again = Vec::new();
     for agent in design.brainstormers.iter_mut() {
-        if agent.state == DesignAgentState::Running {
+        if matches!(
+            agent.state,
+            DesignAgentState::Running | DesignAgentState::Submitted
+        ) {
             agent.state = DesignAgentState::Queued;
             agent.window_id = None;
             again.push(agent.label.clone());
         }
     }
+    design.held.clear();
     for label in again {
         let text = format!("brainstormer {label} relaunches after a daemon restart");
         log(run, now, text);
@@ -357,7 +373,7 @@ pub(super) fn halt_all(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
     for agent in design.brainstormers.iter_mut() {
         if !matches!(
             agent.state,
-            DesignAgentState::Running | DesignAgentState::Queued
+            DesignAgentState::Running | DesignAgentState::Queued | DesignAgentState::Submitted
         ) {
             continue;
         }
@@ -370,6 +386,7 @@ pub(super) fn halt_all(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
         }
         agent.state = DesignAgentState::Failed(reason.to_string());
     }
+    design.held.clear();
     for session in stopped {
         history::session_stopped(run, (AgentRole::Brainstormer, &session), fx);
     }

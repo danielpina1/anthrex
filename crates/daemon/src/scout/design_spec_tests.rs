@@ -36,6 +36,7 @@ fn agent(label: &str, runtime: Runtime) -> DesignAgent {
         calls: 0,
         tokens: 0,
         started: Some(1_000),
+        listed: false,
     }
 }
 

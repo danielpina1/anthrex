@@ -1,6 +1,7 @@
 //! Milestone 9.6 task M9.6.8: a design agent's write (task 6's review c), part of
 //! `design_agents.rs`: a brainstormer's draft, accepted only from its live window,
-//! checked against its template and stored. Pure (design decision 2).
+//! checked against its template and held until the brainstorm settles (ruling T8-1),
+//! then stored and written ([`flush`]). Pure (design decision 2).
 
 use proto::{AgentRole, DocAuthor, DocKind, RunState, ToolCall};
 use serde_json::json;
@@ -35,12 +36,9 @@ pub(in crate::run::engine) fn tool(
     let Some(design) = run.orch.design.as_ref() else {
         return refuse(fx, reply, not_design(&run.id));
     };
-    let live = (design.brainstormers.iter()).position(|a| {
-        a.role == call.role
-            && a.window_id == Some(call.window_id)
-            && a.state == DesignAgentState::Running
-    });
-    let (Some(k), AgentRole::Brainstormer) = (live, call.role) else {
+    let live = design.live_agent(call.role, call.window_id);
+    let k = live.and_then(|a| (design.brainstormers.iter()).position(|b| b.label == a.label));
+    let (Some(k), AgentRole::Brainstormer) = (k, call.role) else {
         let who = match call.role {
             AgentRole::Brainstormer => "a brainstormer",
             _ => "the document reviewer",
@@ -53,9 +51,9 @@ pub(in crate::run::engine) fn tool(
     };
     match parsed {
         OrchCall::SubmitDoc(doc) if doc.kind == DocKind::BrainstormDraft => {
-            match submit_draft(run, k, &doc.text, now, fx) {
-                Ok(n) => {
-                    let text = json!({"accepted": true, "kind": "brainstorm_draft", "version": n});
+            match submit_draft(run, k, &doc.text, now) {
+                Ok(()) => {
+                    let text = json!({"accepted": true, "kind": "brainstorm_draft"});
                     fx.push(Effect::Reply {
                         reply,
                         result: Ok(text.to_string()),
@@ -63,7 +61,7 @@ pub(in crate::run::engine) fn tool(
                     fx.push(Effect::PlannerAccepted {
                         window_id: call.window_id,
                     });
-                    settle(run, now);
+                    settle(run, now, fx);
                 }
                 Err(text) => refuse(fx, reply, text),
             }
@@ -73,30 +71,21 @@ pub(in crate::run::engine) fn tool(
 }
 
 /// DF §3.3: brainstormer `k`'s draft, checked against its template (capped, then
-/// cleaned), stored as its draft and written by the driver. Its version number.
-fn submit_draft(
-    run: &mut Run,
-    k: usize,
-    raw: &str,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) -> Result<u32, String> {
+/// cleaned) and held (ruling T8-1): neither stored nor written until the brainstorm
+/// settles, so the other brainstormer cannot read it by any path.
+fn submit_draft(run: &mut Run, k: usize, raw: &str, now: u64) -> Result<(), String> {
     if run.state != RunState::Brainstorming {
         return Err(format!("run {} is {}", run.id, run.state.label()));
     }
     let text = template::admit(DocKind::BrainstormDraft, raw, &TemplateCtx::default())?;
-    let label =
-        (run.orch.design.as_ref()).map_or_else(String::new, |d| d.brainstormers[k].label.clone());
-    let author = DocAuthor::Brainstormer {
-        label: label.clone(),
+    let Some(design) = run.orch.design.as_mut() else {
+        return Err(not_design(&run.id));
     };
-    let doc = NewDoc::new(DocKind::BrainstormDraft, author, "submitted", &text);
-    let (version, write) = store(run, doc, now)?;
-    fx.push(write);
-    if let Some(design) = run.orch.design.as_mut() {
-        design.brainstormers[k].state = DesignAgentState::Done;
-    }
-    let session = (run.orch.design.as_ref()).map_or(0, |d| d.brainstormers[k].session);
+    let agent = &mut design.brainstormers[k];
+    agent.state = DesignAgentState::Submitted;
+    let (label, session) = (agent.label.clone(), agent.session);
+    design.held.retain(|(l, _)| *l != label);
+    design.held.push((label.clone(), text));
     let record = format!("{label}/{session}");
     history::note_result(run, (AgentRole::Brainstormer, &record), DRAFT_ACCEPTED);
     log(
@@ -104,5 +93,43 @@ fn submit_draft(
         now,
         format!("brainstormer {label} submitted its draft"),
     );
-    Ok(version.n)
+    Ok(())
+}
+
+/// Ruling T8-1, when the brainstorm settles: each held draft, in the brainstormers'
+/// order, is stored as its brainstormer's draft and written by the driver. A draft the
+/// store refuses fails its brainstormer.
+pub(super) fn flush(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    let Some(design) = run.orch.design.as_mut() else {
+        return;
+    };
+    let mut held = std::mem::take(&mut design.held);
+    let submitted: Vec<usize> = (design.brainstormers.iter().enumerate())
+        .filter(|(_, a)| a.state == DesignAgentState::Submitted)
+        .map(|(k, _)| k)
+        .collect();
+    for k in submitted {
+        let label = (run.orch.design.as_ref())
+            .map_or_else(String::new, |d| d.brainstormers[k].label.clone());
+        let text = (held.iter().position(|(l, _)| *l == label)).map(|i| held.remove(i).1);
+        let stored = text
+            .ok_or_else(|| "its held draft was lost".to_string())
+            .and_then(|text| {
+                let author = DocAuthor::Brainstormer {
+                    label: label.clone(),
+                };
+                let doc = NewDoc::new(DocKind::BrainstormDraft, author, "submitted", &text);
+                store(run, doc, now)
+            });
+        let state = match stored {
+            Ok((_, write)) => {
+                fx.push(write);
+                DesignAgentState::Done
+            }
+            Err(reason) => DesignAgentState::Failed(reason),
+        };
+        if let Some(design) = run.orch.design.as_mut() {
+            design.brainstormers[k].state = state;
+        }
+    }
 }

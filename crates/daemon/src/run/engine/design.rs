@@ -135,7 +135,7 @@ fn start_brainstorm(run: &mut Run, answers: &str, now: u64) -> Result<Value, Str
     let live = (design.brainstormers.iter()).any(|a| {
         matches!(
             a.state,
-            DesignAgentState::Queued | DesignAgentState::Running
+            DesignAgentState::Queued | DesignAgentState::Running | DesignAgentState::Submitted
         )
     });
     if design.answers.is_some() || live {
@@ -368,10 +368,14 @@ pub(super) fn resume_phase(run: &mut Run, now: u64) -> Option<String> {
     run.halted_reason = None;
     run.halt_retryable = false;
     // DF §3.5: both brainstormers failed; they relaunch, and the clock waits for them.
-    if !super::design_agents::relaunch_failed(run, now) {
-        start_clock(run, now);
-    }
-    log(run, now, "resumed; the phase's clock restarts");
+    let text = match super::design_agents::relaunch_failed(run, now) {
+        true => "resumed; the brainstormers are relaunched",
+        false => {
+            start_clock(run, now);
+            "resumed; the phase's clock restarts"
+        }
+    };
+    log(run, now, text);
     Some(format!("run {} resumed", run.id))
 }
 

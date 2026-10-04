@@ -351,6 +351,8 @@ fn retry_held(run: &mut Run, now: u64) -> Option<String> {
 pub(super) fn unpause(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     run.state = run.paused_from.take().unwrap_or(RunState::Running);
     log(run, now, "resumed");
+    // Milestone 9.6 task M9.6.8 (m1): a brainstorm that ended while paused settles.
+    super::design_agents::settle(run, now, fx);
     resumed(run, now, fx);
     // Milestone 9 decisions 11 and 29: the orchestrator restarts, and a promotion
     // recorded before milestone 9 is performed.

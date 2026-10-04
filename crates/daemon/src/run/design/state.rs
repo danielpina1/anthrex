@@ -58,6 +58,12 @@ pub struct DesignState {
     /// files (`driver/design_restore.rs`), and without it a summary is empty.
     #[serde(skip)]
     pub texts: Vec<(DocKind, u32, String)>,
+    /// Ruling T8-1: each brainstormer's accepted draft, `(label, text)`, held until
+    /// both brainstormers have ended, then stored and written (`design_agents::settle`).
+    /// In memory only, so no draft's file exists, and `get_doc` finds none, while the
+    /// other brainstormer runs; a restore relaunches its brainstormer instead.
+    #[serde(skip)]
+    pub held: Vec<(String, String)>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -121,6 +127,10 @@ pub struct DesignAgent {
     pub tokens: u64,
     #[serde(default)]
     pub started: Option<u64>,
+    /// Its route came from the run's `brainstorm` list (`BrainstormPick.listed`), as
+    /// its routing record's source says (fix round 1, m3).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub listed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +139,10 @@ pub enum DesignAgentState {
     #[default]
     Queued,
     Running,
+    /// Its draft is accepted and held (ruling T8-1), in memory only, until the
+    /// brainstorm settles; a restore queues it again.
+    Submitted,
+    /// Its draft is stored.
     Done,
     Failed(String),
 }

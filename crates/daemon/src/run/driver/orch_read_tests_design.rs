@@ -32,6 +32,7 @@ fn agent(label: &str, role: AgentRole, window: u32) -> DesignAgent {
         calls: 0,
         tokens: 0,
         started: Some(1_000),
+        listed: false,
     }
 }
 

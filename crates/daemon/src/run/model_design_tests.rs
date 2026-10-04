@@ -184,6 +184,7 @@ fn the_state_survives_save_and_load() {
             calls: 4,
             tokens: 900,
             started: Some(3_000),
+            listed: false,
         }],
         reviewer: Some(DesignAgent {
             label: "spec-r1".into(),
@@ -195,6 +196,7 @@ fn the_state_survives_save_and_load() {
             calls: 2,
             tokens: 100,
             started: None,
+            listed: false,
         }),
         reviews: vec![DocReviewRecord {
             doc: DocKind::Spec,
@@ -225,6 +227,8 @@ fn the_state_survives_save_and_load() {
         halted_from: Some(proto::RunState::Specifying),
         rethinks: 2,
         texts: Vec::new(),
+        // Task M9.6.8 fix round 1 (ruling T8-1): a held draft is never written either.
+        held: Vec::new(),
     };
     let mut run = old_run();
     run.design_mode = DesignMode::Full;
