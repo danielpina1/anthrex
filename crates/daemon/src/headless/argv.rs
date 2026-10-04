@@ -216,9 +216,7 @@ pub fn claude_settings(
             let shown = |p: &PathBuf| p.display().to_string();
             let denied = sandbox.deny_read.iter().map(|p| Value::String(shown(p)));
             insert_path(&mut block, keys.read_deny, Value::Array(denied.collect()));
-            let rules = sandbox.deny_read.iter();
-            let rules = rules.map(|p| Value::String(format!("Read(/{}/**)", shown(p))));
-            settings["permissions"] = json!({ "deny": rules.collect::<Vec<_>>() });
+            deny_reads(&mut settings, &sandbox.deny_read);
         }
         for (path, pin) in keys.pins {
             let value = match pin {
@@ -230,6 +228,24 @@ pub fn claude_settings(
         settings["sandbox"] = Value::Object(block);
     }
     settings
+}
+
+/// Each of `paths` denied to the read tools, a `permissions.deny` rule `Read(/<path>/**)`,
+/// after any the settings already deny (task M9.6.8 fix round 1, m2).
+fn deny_reads(settings: &mut Value, paths: &[PathBuf]) {
+    let rules = paths.iter();
+    let rules = rules.map(|p| Value::String(format!("Read(/{}/**)", p.display())));
+    let permissions = &mut settings["permissions"];
+    if !permissions.is_object() {
+        *permissions = json!({});
+    }
+    let deny = &mut permissions["deny"];
+    if !deny.is_array() {
+        *deny = json!([]);
+    }
+    if let Value::Array(deny) = deny {
+        deny.extend(rules);
+    }
 }
 
 /// Inserts `value` at the dotted `path`, creating the objects on the way.

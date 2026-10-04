@@ -2,7 +2,7 @@
 //! argv, and ruling T1-O3's `--agent-label`, which only a design agent's argv names.
 
 use super::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn strs(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
@@ -95,5 +95,32 @@ fn agent_label_appears_in_argv_when_set_and_is_absent_otherwise() {
             "--socket",
             "/s"
         ]))
+    );
+}
+
+/// Task M9.6.8 fix round 1 (m2): the read denials join the settings' own permissions,
+/// never replace them.
+#[test]
+fn read_denials_merge_into_the_settings_permissions() {
+    let mut settings = serde_json::json!({
+        "permissions": {"allow": ["Read"], "deny": ["Bash(rm:*)"]},
+        "hooks": {}
+    });
+    deny_reads(&mut settings, &[PathBuf::from("/d"), PathBuf::from("/e")]);
+    assert_eq!(
+        settings,
+        serde_json::json!({
+            "permissions": {
+                "allow": ["Read"],
+                "deny": ["Bash(rm:*)", "Read(//d/**)", "Read(//e/**)"]
+            },
+            "hooks": {}
+        })
+    );
+    let mut bare = serde_json::json!({"hooks": {}});
+    deny_reads(&mut bare, &[PathBuf::from("/d")]);
+    assert_eq!(
+        bare["permissions"],
+        serde_json::json!({"deny": ["Read(//d/**)"]})
     );
 }

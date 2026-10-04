@@ -1,6 +1,7 @@
 //! Milestone 9.6 decision 9, the driver's half (task M9.6.8): `OpKind::StartDesignAgent`
 //! executed as a sub-planner's start is (`orch_ops.rs::start_planner`). A brainstormer's
-//! first turn gets decision 11's input pack, read off the engine; the session starts on
+//! first turn gets decision 11's input pack, read off the engine; each folder its
+//! Claude sandbox denies is denied by its canonical path too (ruling T8-3); the session starts on
 //! the scout service; its end is sent as `OrchEvent::DesignAgentEnded`, with its usage
 //! and tool calls, after the op's result reached the engine.
 //!
@@ -9,6 +10,7 @@
 //! goal's previous spec, checked against its frozen index entry) are read on
 //! `spawn_blocking`, within `CONTEXT_READ_TIMEOUT` and `IO_WAIT` (AGENTS.md rule 2).
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use proto::TokenUsage;
@@ -36,6 +38,10 @@ impl RunService {
         if matches!(spec.kind, DesignAgentKind::Brainstormer { .. }) {
             let pack = self.brainstorm_pack(&ctx.run_id).await;
             spec.first_turn = format!("{}\n\n{pack}", spec.first_turn);
+        }
+        if let Some(sandbox) = spec.headless.claude_sandbox.as_mut() {
+            let given = std::mem::take(&mut sandbox.deny_read);
+            sandbox.deny_read = with_canonical(given).await;
         }
         let (kind, session) = (spec.kind.clone(), spec.session);
         match scouts.start_design_agent(spec).await {
@@ -108,6 +114,41 @@ impl RunService {
         }
         pack(&inputs)
     }
+}
+
+/// Ruling T8-3: each denied folder by its path as given and by its canonical path, so
+/// a symlinked data dir (macOS's `/tmp`) is denied however a session names it. Resolved
+/// on `spawn_blocking` within `IO_WAIT`; past it, the paths as given.
+pub(super) async fn with_canonical(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let given = paths.clone();
+    let resolve = tokio::task::spawn_blocking(move || {
+        let mut out: Vec<PathBuf> = Vec::new();
+        for path in paths {
+            let real = canonical(&path);
+            out.push(path);
+            if let Some(real) = real.filter(|r| !out.contains(r)) {
+                out.push(real);
+            }
+        }
+        out
+    });
+    match tokio::time::timeout(IO_WAIT, resolve).await {
+        Ok(Ok(out)) => out,
+        _ => given,
+    }
+}
+
+/// `path` canonical: a folder not made yet (a run's design folder before its first
+/// document) through its nearest existing ancestor. Blocking.
+fn canonical(path: &Path) -> Option<PathBuf> {
+    let mut rest = Vec::new();
+    for ancestor in path.ancestors() {
+        if let Ok(real) = std::fs::canonicalize(ancestor) {
+            return Some(rest.iter().rev().fold(real, |at, part| at.join(part)));
+        }
+        rest.push(ancestor.file_name()?);
+    }
+    None
 }
 
 /// How a design agent's session ended, what it spent and how many tools it called.

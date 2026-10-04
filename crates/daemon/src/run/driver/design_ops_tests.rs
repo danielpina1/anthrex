@@ -159,3 +159,47 @@ async fn the_pack_reads_exactly_its_frozen_inputs() {
     assert_eq!(first, second);
     assert!(!second.contains("Scout report s2"));
 }
+
+/// Ruling T8-3: a design folder under a symlinked data dir is denied by both its paths,
+/// as given and canonical (resolved through its nearest existing ancestor, since the
+/// folder is made later), in `permissions.deny` and `sandbox.filesystem.denyRead`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_symlinked_data_dir_is_denied_by_both_its_paths() {
+    use crate::headless::ClaudeSandbox;
+    use crate::headless::argv::{CLI_CAPS, claude_settings};
+    use crate::run::driver::design_ops::with_canonical;
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real");
+    std::fs::create_dir_all(real.join("runs/r1")).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let design = link.join("runs/r1/design");
+    let canonical = std::fs::canonicalize(&real).unwrap().join("runs/r1/design");
+    assert_ne!(design, canonical);
+    let denied = with_canonical(vec![design.clone()]).await;
+    assert_eq!(denied, [design.clone(), canonical.clone()]);
+    let sandbox = ClaudeSandbox {
+        writable_roots: Vec::new(),
+        deny_write: Vec::new(),
+        deny_read: denied,
+    };
+    let path = std::path::Path::new("/opt/anthrex");
+    let settings = claude_settings(path, 7, Some(&sandbox), &CLI_CAPS);
+    let shown = |p: &std::path::Path| p.display().to_string();
+    assert_eq!(
+        settings["permissions"]["deny"],
+        serde_json::json!([
+            format!("Read(/{}/**)", shown(&design)),
+            format!("Read(/{}/**)", shown(&canonical))
+        ])
+    );
+    assert_eq!(
+        settings["sandbox"]["filesystem"]["denyRead"],
+        serde_json::json!([shown(&design), shown(&canonical)])
+    );
+    // A path with nothing to resolve is denied as given, once.
+    let plain = std::fs::canonicalize(dir.path())
+        .unwrap()
+        .join("runs/r2/design");
+    assert_eq!(with_canonical(vec![plain.clone()]).await, [plain]);
+}

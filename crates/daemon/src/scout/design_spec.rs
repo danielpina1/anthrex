@@ -9,12 +9,13 @@
 //! `OpKind::StartDesignAgent`; the driver appends the input pack to its first turn
 //! (`run::design::pack`), and [`ScoutService::start_design_agent`] launches it.
 //!
-//! **Independence on disk** (task 6's review a). A brainstormer reads nothing under the
-//! run's design folder, where the other brainstormer's draft is written. On Claude the
+//! **Independence on disk** (task 6's review a). No draft's file exists while either
+//! brainstormer runs: the engine holds each draft until both have ended (ruling T8-1),
+//! which is what keeps a Codex brainstormer independent, since Codex's `read-only`
+//! sandbox restricts writes only. As defence in depth, on Claude the run's design
 //! folder is denied to the read tools (`permissions.deny`) and to commands
-//! (`sandbox.filesystem.denyRead`). Codex's `read-only` sandbox restricts writes only
-//! and this code knows no read restriction for it (see the brief's implementation
-//! notes, task M9.6.8).
+//! (`sandbox.filesystem.denyRead`), by its path as given and, added by the driver, its
+//! canonical path (ruling T8-3).
 
 use std::path::PathBuf;
 use std::sync::Arc;
