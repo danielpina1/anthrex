@@ -62,6 +62,19 @@ pub(super) fn begin(run: &mut Run, i: usize) {
     });
 }
 
+/// The final fix wave's A-I3: the runtime task `i`'s first session at dispatch runs on,
+/// which its cap is checked against: a paired task's test writer's (the route [`begin`]
+/// gives it), else the task's.
+pub(super) fn dispatch_runtime(run: &Run, i: usize) -> Runtime {
+    let task = &run.tasks[i];
+    match task.pair.as_ref() {
+        Some(pair) if writing(task) => pair.writer_route.runtime,
+        Some(_) => task.route.runtime,
+        None if task.spec.pair => writer_route(run, i).runtime,
+        None => task.route.runtime,
+    }
+}
+
 /// The role and route of task `task`'s next writing session.
 pub(super) fn next_session(task: &Task) -> (AgentRole, Route) {
     match task.pair.as_ref().filter(|_| writing(task)) {

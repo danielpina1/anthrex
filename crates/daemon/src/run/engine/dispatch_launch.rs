@@ -123,8 +123,9 @@ pub(super) fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 continue;
             }
         }
-        // Milestone 9.5 decision 16: a task whose runtime is at its cap is skipped.
-        if !concurrency::has_room(run, run.tasks[i].route.runtime) {
+        // Milestone 9.5 decision 16: a task whose runtime is at its cap is skipped; a
+        // paired task's is its test writer's (the final fix wave's A-I3).
+        if !concurrency::has_room(run, pair::dispatch_runtime(run, i)) {
             continue;
         }
         if run.tasks[i].hub

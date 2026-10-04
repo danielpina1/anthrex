@@ -473,3 +473,6 @@ mod implementer;
 
 #[path = "pair_fixes.rs"]
 mod fixes;
+
+#[path = "pair_fixwave.rs"]
+mod fixwave;

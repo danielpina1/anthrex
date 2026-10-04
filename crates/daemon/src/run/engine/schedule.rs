@@ -31,9 +31,10 @@ pub fn writers_busy(run: &Run) -> usize {
 }
 
 /// The writer slots `task` holds, each with its runtime (decision 16): a racing task one
-/// per live lane (ruling RR-9), any other writer task one on its route's runtime. A
-/// finished task holds none, whatever its lanes say; a crowned or adopted race is its
-/// task's (task M9.5.13's review).
+/// per live lane (ruling RR-9), a paired task's test writer one on the writer's
+/// runtime (the final fix wave's A-I3), any other writer task one on its route's
+/// runtime. A finished task holds none, whatever its lanes say; a crowned or adopted
+/// race is its task's (task M9.5.13's review).
 pub fn writer_slots(task: &Task) -> Vec<Runtime> {
     if is_reader_task(task) || task.state.is_finished() {
         return Vec::new();
@@ -54,8 +55,16 @@ pub fn writer_slots(task: &Task) -> Vec<Runtime> {
     // lane's route in, and from then on the task's route is the runtime.
     let won = (task.race.iter().filter(|r| !r.crowned))
         .find_map(|r| r.lanes.iter().find(|l| Some(l.lane) == r.winner));
+    // The final fix wave's A-I3: a paired task's test writer holds its slot on its own
+    // route's runtime while it writes.
+    let writer = (task.pair.as_ref()).filter(|_| super::pair::writing(task));
+    let runtime = match (won, writer) {
+        (Some(lane), _) => lane.route.runtime,
+        (None, Some(pair)) => pair.writer_route.runtime,
+        (None, None) => task.route.runtime,
+    };
     match holds_writer(task.state) {
-        true => vec![won.map_or(task.route.runtime, |l| l.route.runtime)],
+        true => vec![runtime],
         false => Vec::new(),
     }
 }
