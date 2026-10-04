@@ -381,9 +381,10 @@ fn the_last_lane_out_after_a_second_failure_is_adopted_at_rung_2() {
     let race = fx.task("t1").race.clone().expect("a race");
     assert_eq!((race.winner, race.adopted), (Some(A), true));
     assert_eq!(lane(&fx, A).state, LaneState::Adopted);
-    let adopted = |l: &&crate::run::model::LogEntry| l.text.starts_with("race t1: racer a adopted");
+    // Whole-branch review B, M6: Interfaces' exact words, as REPORT.md has them.
+    let line = "race t1: racer a adopted after racer b went out";
     assert!(
-        fx.run().log.iter().any(|l| adopted(&l)),
+        fx.run().log.iter().any(|l| l.text == line),
         "{:#?}",
         fx.run().log
     );

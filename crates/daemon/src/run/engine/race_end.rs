@@ -169,7 +169,12 @@ fn adopt(run: &mut Run, i: usize, lane: RaceLane, reason: &str, now: u64, fx: &m
         race.winner = Some(lane);
         race.adopted = true;
     }
-    let line = format!("race {id}: racer {} adopted: {reason}", lane.label());
+    // Interfaces' exact words (whole-branch review B, M6); the reason stays on the lane.
+    let line = format!(
+        "race {id}: racer {} adopted after racer {} went out",
+        lane.label(),
+        lane.other().label()
+    );
     history(run, i, now, line.clone());
     requests::log(run, now, line);
     crown(run, i, now, fx);
