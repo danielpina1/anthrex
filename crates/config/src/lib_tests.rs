@@ -122,6 +122,17 @@ fn bad_ignore_entries_are_dropped_and_the_rest_survive() {
     );
     assert_eq!(problems.len(), 6, "one problem per rejected entry");
     assert!(problems.iter().all(|p| p.key == "git.ignore"));
+    // Task 7 re-review: a dropped entry prints `(entry skipped)`, as decision 9a's do,
+    // never `(using entry dropped)`.
+    let shown: Vec<String> = problems.iter().map(ToString::to_string).collect();
+    assert!(
+        shown.contains(&"git.ignore: expected a string (entry skipped)".to_string()),
+        "{shown:?}"
+    );
+    assert!(
+        shown.iter().all(|p| p.ends_with(" (entry skipped)")),
+        "{shown:?}"
+    );
 }
 
 #[test]

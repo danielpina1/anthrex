@@ -125,7 +125,7 @@ pub struct Problem {
 
 /// A [`Problem`]'s `default` for a list entry that was dropped: printed `(entry
 /// skipped)`, not `(using entry skipped)` (milestone 9.5 decision 9a).
-const ENTRY_SKIPPED: &str = "entry skipped";
+pub(crate) const ENTRY_SKIPPED: &str = "entry skipped";
 
 impl std::fmt::Display for Problem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
