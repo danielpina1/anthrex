@@ -245,13 +245,15 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
             lane: None,
         }),
         codex_config_guard: codex_config_guard(run, route.runtime),
-        output_filter: output_filter(run, task).filter(|_| claude),
+        output_filter: output_filter(run, task),
     }
 }
 
-/// Milestone 8b decision 28: a Claude worker's filter hook, when the run's profile is
-/// stored, filters, and has a prefix. Its log goes under the task's `TMPDIR`, already
-/// in the worker's grant: no new writable root.
+/// Milestone 8b decision 28: a worker's filter hook, when the run's profile is stored,
+/// filters, and has a prefix; since milestone 9.5 decision 28 for a Codex worker too
+/// (and so for racers and test writers on either runtime). Its log goes under the
+/// checkout's `TMPDIR`, already in the worker's grant on both runtimes: no new
+/// writable root.
 fn output_filter(run: &Run, task: &Task) -> Option<FilterHook> {
     let filters = run.profile_source == Some(proto::ProfileSource::Stored)
         && run.output_filter != proto::OutputFilter::None

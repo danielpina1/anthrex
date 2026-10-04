@@ -2,7 +2,9 @@
 //! reads of a long test or check command. A `PreToolUse` hook (`anthrex filter-hook`)
 //! rewrites a matching `Bash` command into `anthrex filter-run … -c '<command>'`, which
 //! runs it unchanged, logs every byte under the task's `TMPDIR`, and prints only the
-//! view [`apply`] keeps. Pure: no filesystem, process or clock access.
+//! view [`apply`] keeps. A Codex worker is told to run it so instead
+//! ([`codex_filter_note`], milestone 9.5 decision 28). Pure: no filesystem, process or
+//! clock access.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -13,6 +15,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::headless::argv::CodexFilter;
 use crate::launch::shell_quote;
 
 /// The lines `failures-only` keeps with their context (decision 26).
@@ -41,7 +44,8 @@ const FAILURE_TAIL: usize = 20;
 static FAILURE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(FAILURE_RE).expect("FAILURE_RE compiles"));
 
-/// A Claude worker's filter hook (`HeadlessSpec.output_filter`).
+/// A worker-like session's filter hook (`HeadlessSpec.output_filter`): a Claude
+/// session's `PreToolUse` hook, a Codex session's [`codex_filter_note`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilterHook {
     pub mode: OutputFilter,
@@ -298,6 +302,40 @@ pub fn add_hook(settings: &mut Value, exe: &Path, hook: Option<&FilterHook>) {
     match groups {
         Value::Array(groups) => groups.push(group),
         _ => *groups = json!([group]),
+    }
+}
+
+/// Milestone 9.5 decision 28 (`CodexFilter::Instruction`): what a Codex worker,
+/// racer or test writer is told after its contract, since the Codex CLI cannot rewrite
+/// its commands (Interfaces, "`codex_filter_note`"). The executable and the log
+/// directory are shell-quoted as [`wrap`] quotes them, so the command it names runs as
+/// written.
+pub fn codex_filter_note(exe: &Path, hook: &FilterHook) -> String {
+    format!(
+        "Test output: run every command that starts with {} through the output filter, \
+         as {} filter-run --mode {} --log-dir {} -c '<command>'. It prints the failures \
+         and the path of the full log.",
+        hook.prefixes.join(", "),
+        shell_quote(&exe.display().to_string()),
+        mode_label(hook.mode),
+        shell_quote(&hook.log_dir.display().to_string()),
+    )
+}
+
+/// Milestone 9.5 decision 28: a Codex session's `developer_instructions`, its
+/// `instructions` followed, for a session with a filter hook, by [`codex_filter_note`]
+/// after a blank line (`CodexFilter::Instruction`).
+pub fn codex_instructions(
+    instructions: &str,
+    exe: &Path,
+    hook: Option<&FilterHook>,
+    filter: CodexFilter,
+) -> String {
+    match (hook, filter) {
+        (Some(hook), CodexFilter::Instruction) => {
+            format!("{instructions}\n\n{}", codex_filter_note(exe, hook))
+        }
+        (None, _) => instructions.to_string(),
     }
 }
 

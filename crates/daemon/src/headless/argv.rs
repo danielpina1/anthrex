@@ -31,6 +31,17 @@ pub struct CliCaps {
     pub codex_project_config_paths: &'static [&'static str],
     /// The flags that stop Codex loading project config; `None`: impossible.
     pub codex_user_config_only: Option<&'static [&'static str]>,
+    /// How a Codex worker, racer or test writer gets the output filter (M9.5 decision 28).
+    pub codex_filter: CodexFilter,
+}
+
+/// Milestone 9.5 decision 28. `CLI_CAPS` holds `Instruction`: task M9.5.1's Codex hook
+/// facts (items 4–5) are not recorded, so `Hook` (with `codex_hook_args` and
+/// `codex_rewrite`) is not built. `Instruction`: the note after the contract, by
+/// instruction only (the CLI cannot rewrite commands).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexFilter {
+    Instruction,
 }
 
 /// Decision 54's key names under `"sandbox"`. `write_allow` is a dotted path into
@@ -117,6 +128,7 @@ pub const CLI_CAPS: CliCaps = CliCaps {
     codex_loads_project_config: true,
     codex_project_config_paths: &[".codex/config.toml", ".codex/hooks.json"],
     codex_user_config_only: None,
+    codex_filter: CodexFilter::Instruction,
 };
 
 /// Which of decision 53's three Codex branches a run started under (ruling T23-C1):
@@ -375,12 +387,12 @@ pub fn claude_args(
 
 /// One Codex turn's argv (decision 25): `exec --json` for the first turn, `exec resume
 /// <id> --json` for every later one, then the project-config exclusion when the CLI has
-/// one, the MCP server, the instructions, effort and approval policy, the sandbox, a
-/// worker's writable roots, the model when named, `--`, and the turn's message. `exec
-/// resume` rejects `-s` (M8a.1 item 6), so a resume passes `-c sandbox_mode=…` unless
-/// the caps say otherwise. Since final fix batch F1d Codex's network, `$TMPDIR` and
-/// `/tmp` are pinned off ([`CODEX_SANDBOX_PINS`]). Every TOML string comes from
-/// `launch::codex::toml_string`.
+/// one, the MCP server, the instructions (with M9.5 decision 28's filter note), effort
+/// and approval policy, the sandbox, a worker's writable roots, the model when named,
+/// `--`, and the turn's message. `exec resume` rejects `-s` (M8a.1 item 6), so a resume
+/// passes `-c sandbox_mode=…` unless the caps say otherwise. Since final fix batch F1d
+/// Codex's network, `$TMPDIR` and `/tmp` are pinned off ([`CODEX_SANDBOX_PINS`]). Every
+/// TOML string comes from `launch::codex::toml_string`.
 pub fn codex_args(
     spec: &HeadlessSpec,
     session: &SessionArg,
@@ -421,7 +433,12 @@ pub fn codex_args(
     }
     config(format!(
         "developer_instructions={}",
-        toml_string(&spec.instructions)
+        toml_string(&crate::output_filter::codex_instructions(
+            &spec.instructions,
+            exe,
+            spec.output_filter.as_ref(),
+            caps.codex_filter
+        ))
     ));
     config(format!(
         "model_reasoning_effort={}",
