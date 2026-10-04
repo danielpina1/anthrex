@@ -60,10 +60,7 @@ pub(crate) fn readers(run: &Run) -> usize {
 /// (task M9.9). Planners and scouts start while the run is being planned, at the gate
 /// and while it runs; nothing starts in any other state.
 pub(super) fn dispatch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    if !matches!(
-        run.state,
-        RunState::Planning | RunState::AwaitingApproval | RunState::Running
-    ) {
+    if !super::design::readers_start(run.state) {
         return;
     }
     while super::schedule::readers_busy(run) < usize::from(run.limits.max_readers) {

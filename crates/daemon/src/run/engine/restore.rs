@@ -132,7 +132,10 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
     // Milestone 9 decisions 20 and 32: run scouts and sub-planners are not resumed.
     super::planners::restore(run, now);
     // Milestone 9 decision 26: a planning run has live agents too.
-    if matches!(run.state, RunState::Running | RunState::Planning) {
+    if matches!(
+        run.state,
+        RunState::Running | RunState::Planning | RunState::Brainstorming | RunState::Specifying
+    ) {
         run.paused_from = Some(run.state);
         run.state = RunState::Paused;
         log(run, now, "restored after a daemon restart; paused");
@@ -265,10 +268,26 @@ pub(super) fn resume(
         .get(run_id)
         .is_some_and(|r| r.state == RunState::Paused);
     if !paused {
-        // Milestone 9 decision 11: a run at the gate (or planning) keeps its state, and
-        // its dormant orchestrator restarts.
+        // Milestone 9.6 decision 8: a run a design phase's budget halted goes back to it.
         if let Some(run) = state.runs.get_mut(run_id)
-            && matches!(run.state, RunState::AwaitingApproval | RunState::Planning)
+            && rebaseline.is_none()
+            && let Some(text) = super::design::resume_phase(run, now)
+        {
+            return fx.push(Effect::Reply {
+                reply,
+                result: Ok(text),
+            });
+        }
+        // Milestone 9 decision 11: a run at the gate (or planning, or in a design
+        // phase) keeps its state, and its dormant orchestrator restarts.
+        if let Some(run) = state.runs.get_mut(run_id)
+            && matches!(
+                run.state,
+                RunState::AwaitingApproval
+                    | RunState::Planning
+                    | RunState::Brainstorming
+                    | RunState::Specifying
+            )
             && super::orch_window::relaunch(run, now, fx)
         {
             let text = format!("run {run_id}: its orchestrator restarts");

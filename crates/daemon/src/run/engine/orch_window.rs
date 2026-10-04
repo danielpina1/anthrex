@@ -151,6 +151,7 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<
             if result == OpResult::RestartedFresh && pasted {
                 super::first_turn::fresh_session(run, now);
                 super::wake::unnote(run, RESUMED_NOTE);
+                super::design_gate::renote(run);
             }
         }
         OpResult::Failed { message } => {

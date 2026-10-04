@@ -208,6 +208,7 @@ fn the_state_survives_save_and_load() {
             version: 2,
             opened_at: 3_200,
             revising: Some("shorter".into()),
+            review: true,
         }),
         requirements: vec![Requirement {
             id: "R1".into(),
@@ -217,6 +218,11 @@ fn the_state_survives_save_and_load() {
         plan_review_done: true,
         commit_due: true,
         committed: Some("c".repeat(40)),
+        // Task M9.6.7: a budget halt's state and the rethinks; the texts' cache is
+        // never written.
+        halted_from: Some(proto::RunState::Specifying),
+        rethinks: 2,
+        texts: Vec::new(),
     };
     let mut run = old_run();
     run.design_mode = DesignMode::Full;
@@ -228,6 +234,8 @@ fn the_state_survives_save_and_load() {
     assert_eq!(loaded, run);
     let json: serde_json::Value = serde_json::from_str(&text).expect("run.json is JSON");
     assert_eq!(json["orch"]["design"]["gate"]["kind"], "spec");
+    assert_eq!(json["orch"]["design"]["halted_from"], "specifying");
+    assert!(json["orch"]["design"].get("texts").is_none());
 
     // Without it, `orch` has no `design` key.
     let mut plain = old_run();

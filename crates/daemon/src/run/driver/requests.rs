@@ -208,10 +208,17 @@ impl RunService {
                 }
                 RunReply::done(request::MCP_READY, "")
             }
-            // Milestone 9.6: the document gates arrive with task M9.6.7.
-            RunRequest::DocGate { .. } => {
-                RunReply::refused(request::DOC_GATE, actions::DOC_GATES_NOT_YET)
-            }
+            // Milestone 9.6 decision 7: an action at a document gate.
+            RunRequest::DocGate { run, kind, action } => answer(
+                request::DOC_GATE,
+                (self.ask(|reply| EventKind::DocGate {
+                    reply,
+                    run_id: run,
+                    kind,
+                    action,
+                }))
+                .await,
+            ),
             // Milestone 9.6 (DF §7): one document version, read off the engine.
             RunRequest::ShowDoc {
                 run,

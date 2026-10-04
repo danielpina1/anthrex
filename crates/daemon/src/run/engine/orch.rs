@@ -224,7 +224,9 @@ pub(super) fn tool(
         return refuse(fx, reply, text);
     }
     match run.state {
-        RunState::Planning
+        RunState::Brainstorming
+        | RunState::Specifying
+        | RunState::Planning
         | RunState::AwaitingApproval
         | RunState::Running
         | RunState::Complete => {}
@@ -251,6 +253,9 @@ pub(super) fn tool(
     let parsed = match parse_call(call.role, &call.tool, &call.args) {
         Ok(parsed) => parsed,
         Err(text) => return refuse(fx, reply, text),
+    };
+    let Some(parsed) = super::design::tool(run, reply, call, parsed, now, fx) else {
+        return;
     };
     match parsed {
         OrchCall::EditPlan { edits, submit, .. }
@@ -380,6 +385,8 @@ fn edit_plan(
         record_rejected(run, edits, &source, text.clone(), now);
         return refuse(fx, reply, text);
     }
+    let author = submit.then_some(proto::DocAuthor::Orchestrator);
+    super::design_gate::plan_submitted(&mut edited, author, now, &mut effects);
     if let Some(summary) = summary {
         write_summary(&mut edited, summary, now, &mut effects);
     }

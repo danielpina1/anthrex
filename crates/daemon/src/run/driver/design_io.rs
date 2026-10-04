@@ -60,7 +60,7 @@ struct Found {
 
 /// Why a read gave nothing: the file differs from the index (refused as it is), or it
 /// could not be read.
-enum ReadError {
+pub(super) enum ReadError {
     Mismatch(String),
     Io(String),
 }
@@ -209,7 +209,7 @@ fn read_view(found: Found, query: &DocQuery) -> Result<DocView, ReadError> {
 
 /// `path`'s bytes, when they are the version's: its length and its SHA-256 (I-1). A
 /// file that changed since it was written is never shown.
-fn read_stored(path: &Path, version: &DocVersion) -> Result<Vec<u8>, ReadError> {
+pub(super) fn read_stored(path: &Path, version: &DocVersion) -> Result<Vec<u8>, ReadError> {
     let shown = |e: std::io::Error| ReadError::Io(format!("{}: {e}", path.display()));
     let mut bytes = Vec::new();
     let file = File::open(path).map_err(shown)?;

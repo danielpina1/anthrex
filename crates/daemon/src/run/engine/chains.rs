@@ -171,6 +171,8 @@ pub(super) fn adopt_lost(
     // Re-review N1: the goal is in the fresh session's prompt; round 1's request
     // wake would give it twice.
     super::wake::clear_request(run, 1);
+    // Milestone 9.6 review focus 1: the fresh session owes the revision, and its note.
+    super::design_gate::renote(run);
     // The final fix wave (A-M3): a restart of the run's own window found it gone; the
     // restart's failure launches the fresh session (`orch_window::restarted`).
     let restarting = run.pending_ops.values().any(

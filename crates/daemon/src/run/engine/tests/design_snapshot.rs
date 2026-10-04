@@ -56,6 +56,7 @@ fn a_design_run_shows_its_mode_gate_and_documents() {
         version: 1,
         opened_at: 2_001,
         revising: Some("tighter".into()),
+        review: false,
     });
 
     let snap = snapshot(&fx.state, fx.now);

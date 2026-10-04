@@ -138,7 +138,14 @@ pub(super) fn stage_rules(tasks: &[Task], by_id: &BTreeMap<&str, &Task>) -> Vec<
 
 /// Decision 46: once a `Single` run is approved, its tasks stay in stage 1.
 pub(super) fn single_layout_rule(run: &Run) -> Vec<PlanError> {
-    let approved = !matches!(run.state, RunState::Planning | RunState::AwaitingApproval);
+    // Milestone 9.6: nor is a design run's in brainstorming or specifying.
+    let approved = !matches!(
+        run.state,
+        RunState::Brainstorming
+            | RunState::Specifying
+            | RunState::Planning
+            | RunState::AwaitingApproval
+    );
     if run.stage_layout != StageLayout::Single || !approved {
         return Vec::new();
     }

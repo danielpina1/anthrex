@@ -23,7 +23,9 @@ pub const ROUND_CANCELLED: &str = "the round was cancelled";
 /// started with approve at once and the current round is the user's; a round the
 /// orchestrator started always waits for the user.
 pub(super) fn skips_gate(run: &Run) -> bool {
+    // Milestone 9.6 decision 6: `--yes` skips none of a design run's gates.
     run.orch.yes
+        && run.design_mode != proto::DesignMode::Full
         && run
             .current_round()
             .is_none_or(|r| r.origin == RoundOrigin::User)

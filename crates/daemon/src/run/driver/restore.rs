@@ -155,6 +155,8 @@ impl RunService {
             _ => true,
         });
         self.execute(prepared, now).await;
+        // Milestone 9.6: each design run's documents, read back off the engine.
+        self.check_design_docs().await;
         self.compact_after_restore(&quiet).await;
         self.watch_live_worktrees();
         // Milestone 9.3 task 6b fix round 1 (m1): an adoption the stop cut short.

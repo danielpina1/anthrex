@@ -175,6 +175,9 @@ fn edit_entry(e: &crate::run::edit_log::PlanEditRecord) -> Value {
 /// the orchestrator has not taken over), and the holds.
 fn gate(run: &Run, for_fingerprint: bool) -> Value {
     let (state, at) = match run.state {
+        // Milestone 9.6 decision 4 (M-2): the design phases, by name.
+        RunState::Brainstorming => ("brainstorming", None),
+        RunState::Specifying => ("specifying", None),
         RunState::Planning => ("planning", None),
         RunState::AwaitingApproval => ("awaiting_approval", None),
         _ if run.path == Some(RunPath::Fast) && run.orch.orchestrator.is_none() => ("none", None),
@@ -196,7 +199,13 @@ fn gate(run: &Run, for_fingerprint: bool) -> Value {
         })
         .map(|h| json!({"id": h.id, "state": label(&h.state), "tasks": h.tasks.len()}))
         .collect();
-    json!({"state": state, "at": at, "holds": holds})
+    let mut gate = json!({"state": state, "at": at, "holds": holds});
+    // Milestone 9.6: the document gate the run waits at (kind, version, the user's
+    // note while the orchestrator revises, disputed findings).
+    if let Some(doc) = crate::run::engine::design_gate::digest(run) {
+        gate["doc_gate"] = doc;
+    }
+    gate
 }
 
 /// The hold a task waits on: its hold, while that hold is not approved.

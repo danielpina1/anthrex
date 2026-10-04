@@ -51,6 +51,10 @@ pub(crate) fn approve(run: &Run) -> Option<String> {
     if let Some(text) = being_finished(run) {
         return Some(text);
     }
+    // Milestone 9.6 ruling T1-O1: the brainstorm and spec gates take `--gate`.
+    if let Some(text) = crate::run::engine::design_gate::plain_approve_refusal(run) {
+        return Some(text);
+    }
     if run.state == RunState::Planning {
         return Some(format!(
             "run {run_id} is still being planned; approve it when the orchestrator has submitted the plan"
@@ -66,7 +70,8 @@ pub(crate) fn reject(run: &Run) -> Option<String> {
         return Some(text);
     }
     let planning = run.state == RunState::Planning
-        || (run.state == RunState::Paused && run.paused_from == Some(RunState::Planning));
+        || (run.state == RunState::Paused && run.paused_from == Some(RunState::Planning))
+        || crate::run::engine::design_gate::in_doc_phase(run);
     (!planning && run.state != RunState::AwaitingApproval).then(|| {
         let label = run.state.label();
         format!(
@@ -159,7 +164,10 @@ pub(crate) fn resume(run: &Run, rebaseline: bool) -> Option<String> {
     let retries = match run.state {
         RunState::Running => full::retryable(run) || delivery::held(run),
         RunState::Paused => true,
-        RunState::AwaitingApproval | RunState::Planning => orch_window::relaunchable(run),
+        RunState::AwaitingApproval
+        | RunState::Planning
+        | RunState::Brainstorming
+        | RunState::Specifying => orch_window::relaunchable(run),
         _ => false,
     };
     if retries {

@@ -1,9 +1,9 @@
 //! The reducer's input events: [`EventKind`] and a window's [`AgentSignal`]s.
 
-use proto::{FinishAction, PlanEdit, TokenUsage, ToolCall};
+use proto::{DocGateAction, DocGateKind, FinishAction, PlanEdit, TokenUsage, ToolCall};
 
 use super::delivery;
-use super::{OpResult, OrchEvent, Rebaseline, ReplyId, TurnOutcome};
+use super::{DocChecked, OpResult, OrchEvent, Rebaseline, ReplyId, TurnOutcome};
 use crate::run::model::{OpId, Run};
 use crate::run::validate::EditScope;
 
@@ -118,6 +118,19 @@ pub enum EventKind {
         reply: ReplyId,
         run_id: String,
         goal: String,
+    },
+    /// Milestone 9.6 decision 7: `RunRequest::DocGate` (`design_gate.rs`).
+    DocGate {
+        reply: ReplyId,
+        run_id: String,
+        kind: DocGateKind,
+        action: DocGateAction,
+    },
+    /// Milestone 9.6 (task 5's carry): a restored design run's documents, read back off
+    /// the engine (`driver/design_restore.rs`).
+    DesignChecked {
+        run_id: String,
+        checked: Vec<DocChecked>,
     },
 }
 

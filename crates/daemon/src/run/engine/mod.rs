@@ -48,6 +48,9 @@ pub(crate) mod concurrency;
 pub(crate) mod deciders;
 mod deciders_size;
 pub mod delivery;
+// Milestone 9.6: the design flow's phases and gates.
+pub(crate) mod design;
+pub(crate) mod design_gate;
 mod dispatch;
 mod done;
 mod done_checked;
@@ -106,6 +109,7 @@ mod worker_messages;
 pub use crate::headless::TurnOutcome;
 pub use clock::{BudgetEpoch, TaskClock};
 pub(crate) use clock::{epoch_spend, race_cost};
+pub use design::DocChecked;
 pub use early::{HOLD_CAP, HOLD_LIMIT_SECS, HOLD_WINDOWS_CAP, HeldEvent, HeldWindow};
 pub use effect::Effect;
 pub use event::{AgentSignal, EventKind};
@@ -224,6 +228,18 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             run_id,
             goal,
         } => goal_rounds::request(&mut state, reply, (&run_id, &goal), now, &mut fx),
+        // Milestone 9.6 decision 7: an action at a document gate.
+        EventKind::DocGate {
+            reply,
+            run_id,
+            kind,
+            action,
+        } => design_gate::request(&mut state, reply, (&run_id, kind, action), now, &mut fx),
+        EventKind::DesignChecked { run_id, checked } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                design::checked(run, checked, now);
+            }
+        }
         EventKind::BaseAdvanced {
             run_id,
             to,
@@ -291,6 +307,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             state.runs.values_mut().for_each(|run| {
                 first_turn::tick(run, now);
                 concurrency::on_tick(run, now);
+                // Milestone 9.6 decision 8: a design phase's budget.
+                design::tick(run, now);
             });
         }
     }

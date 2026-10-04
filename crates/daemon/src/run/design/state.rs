@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use proto::{AgentRole, DocAuthor, DocFinding, DocGateKind, DocKind, Route};
+use proto::{AgentRole, DocAuthor, DocFinding, DocGateKind, DocKind, Route, RunState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -47,6 +47,21 @@ pub struct DesignState {
     pub commit_due: bool,
     /// The documents commit's sha, once made.
     pub committed: Option<String>,
+    /// The state a phase-budget halt left (decision 8): `run resume` returns to it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub halted_from: Option<RunState>,
+    /// The brainstorm's rethinks so far (brief ruling BD-2: at most 3).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub rethinks: u32,
+    /// The latest text of each gate document, `(kind, n, text)`: what the next version's
+    /// change summary compares against. In memory only; a restore refills it from the
+    /// files (`driver/design_restore.rs`), and without it a summary is empty.
+    #[serde(skip)]
+    pub texts: Vec<(DocKind, u32, String)>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// The open document gate (decision 5).
@@ -58,6 +73,10 @@ pub struct DocGate {
     /// The user's note while the orchestrator writes the next version.
     #[serde(default)]
     pub revising: Option<String>,
+    /// The user's `Changes { review: true }`: the revision is reviewed again (decision
+    /// 15, task M9.6.10).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub review: bool,
 }
 
 /// A brainstormer or a document reviewer: a headless, read-only session (decision 9).
@@ -194,6 +213,24 @@ impl DesignState {
             },
             (kind, _) => format!("{}-v{n}.md", kind.label()),
         }
+    }
+
+    /// The cached latest text of `kind`, with its version number.
+    pub fn text_of(&self, kind: DocKind) -> Option<(u32, &str)> {
+        let found = self.texts.iter().find(|(k, _, _)| *k == kind);
+        found.map(|(_, n, text)| (*n, text.as_str()))
+    }
+
+    /// Caches `text` as `kind`'s latest, version `n`.
+    pub fn keep_text(&mut self, kind: DocKind, n: u32, text: String) {
+        self.texts.retain(|(k, _, _)| *k != kind);
+        self.texts.push((kind, n, text));
+    }
+
+    /// How many gate versions `kind` has had (a spec's review drafts, `n = 0`, are not).
+    pub fn gate_versions(&self, kind: DocKind) -> u32 {
+        let of_kind = self.versions.iter().filter(|v| v.kind == kind && v.n > 0);
+        of_kind.count() as u32
     }
 
     fn earlier_draft(&self, v: &DocVersion) -> bool {

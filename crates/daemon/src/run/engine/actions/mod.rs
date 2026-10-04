@@ -8,16 +8,12 @@ mod effects;
 pub(crate) mod rules;
 
 pub(crate) use effects::label;
-
-/// Milestone 9.6 task M9.6.2: the refusal of a document gate's request or action until
-/// task M9.6.7 implements them.
-pub(crate) const DOC_GATES_NOT_YET: &str = "run doc gates are not available yet";
 use proto::{
     ActionInfo, ActionKind, ActionNeeds, BlockReason, FinishAction, HoldState, MessageKind,
     MessageTarget, PlanEdit, RunPath, RunState, TaskState,
 };
 
-use super::{delivery, full, orch, schedule};
+use super::{delivery, design_gate, full, orch, schedule};
 use crate::run::edits_state::is_paused;
 use crate::run::model::{Run, StageLayout};
 
@@ -58,8 +54,12 @@ pub(crate) fn available(run: &Run, node: &ActionNode) -> Vec<ActionInfo> {
     if run.state.is_terminal() {
         return Vec::new();
     }
+    // Milestone 9.6 decision 34: a document gate's review opens a screen; the daemon
+    // lists it, and no request backs it.
+    let review = (*node == ActionNode::Run).then_some(ActionKind::ReviewDoc);
     request_kinds(run, node)
         .into_iter()
+        .chain(review)
         .filter(|kind| relevant(run, node, kind))
         .map(|kind| ActionInfo {
             label: clean(&label_on(run, &kind)),
@@ -119,7 +119,11 @@ fn relevant(run: &Run, node: &ActionNode, kind: &ActionKind) -> bool {
         // A complete run lists accept and discard only.
         (ActionNode::Run, Accept | Discard) => live || complete,
         (_, _) if complete => false,
-        (ActionNode::Run, Approve | Reject) => at_gate,
+        // Milestone 9.6 ruling T1-O1: a design run's document phases and gates list
+        // reject and the document's review, never the plan gate's approve.
+        (ActionNode::Run, Approve) => at_gate && !design_gate::in_doc_phase(run),
+        (ActionNode::Run, Reject) => at_gate || design_gate::in_doc_phase(run),
+        (ActionNode::Run, ReviewDoc) => design_gate::review_doc_refusal(run).is_none(),
         (ActionNode::Run, Submit) => {
             state == RunState::Planning || rules::promoted_unsubmitted(run)
         }
@@ -243,8 +247,8 @@ pub(crate) fn check(run: &Run, node: &ActionNode, kind: &ActionKind) -> Result<(
         ReviewPlan | Stats | OpenConversation => None,
         // Milestone 9.3 decision 9.
         Iterate => rules::iterate(run),
-        // Milestone 9.6: the document gates arrive with task M9.6.7.
-        ReviewDoc => Some(DOC_GATES_NOT_YET.into()),
+        // Milestone 9.6 decision 34.
+        ReviewDoc => design_gate::review_doc_refusal(run),
     };
     refusal.map_or(Ok(()), Err)
 }

@@ -92,7 +92,8 @@ pub(super) fn reply_of(kind: &EventKind) -> Option<ReplyId> {
         | EventKind::Finish { reply, .. }
         | EventKind::Tool { reply, .. }
         | EventKind::Promote { reply, .. }
-        | EventKind::Iterate { reply, .. } => Some(*reply),
+        | EventKind::Iterate { reply, .. }
+        | EventKind::DocGate { reply, .. } => Some(*reply),
         EventKind::Orch(event) => event.reply(),
         EventKind::Delivery(request) => Some(request.reply()),
         EventKind::BaseAdvanced { .. }
@@ -101,6 +102,7 @@ pub(super) fn reply_of(kind: &EventKind) -> Option<ReplyId> {
         | EventKind::Signal { .. }
         | EventKind::Delivered { .. }
         | EventKind::Restore { .. }
+        | EventKind::DesignChecked { .. }
         | EventKind::Stop
         | EventKind::Tick => None,
     }

@@ -496,6 +496,10 @@ pub fn make_planned(
         candidates: resolved.candidates,
     };
     run.orch.orchestrator = Some(record);
+    // Milestone 9.6 decision 4: a design run brainstorms first.
+    if run.design_mode == proto::DesignMode::Full {
+        crate::run::engine::design::enter(run);
+    }
 }
 
 impl OrchestratorRecord {

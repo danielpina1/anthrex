@@ -229,7 +229,8 @@ fn first_prompt(run: &Run, goal_line: String) -> String {
         None => path.to_string(),
     };
     // Milestone 9.3 decision 12: `--yes` holds for the user's goal and rounds only.
-    let gate = if run.orch.yes {
+    // Milestone 9.6 decision 6: `--yes` skips no gate of a design run.
+    let gate = if run.orch.yes && run.design_mode == proto::DesignMode::Off {
         "off: the run was started with --yes, so your submitted plan starts at once; a round you start with iterate and a goal you start with start_goal still stop at the gate for the user (rules 43 and 45)"
     } else {
         "the user approves your submitted plan in the run view"
