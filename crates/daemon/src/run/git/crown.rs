@@ -90,6 +90,14 @@ pub fn crown(
 /// itself, never followed; a directory under a lock's name is left. A git directory that
 /// is itself a link is refused: the engine made it a directory.
 pub fn clear_stale_locks(checkout_git_dir: &Path) -> std::io::Result<Vec<String>> {
+    clear_locks_with(checkout_git_dir, |lock| std::fs::remove_file(lock))
+}
+
+/// [`clear_stale_locks`] with `remove` for `std::fs::remove_file` (a test seam).
+fn clear_locks_with(
+    checkout_git_dir: &Path,
+    mut remove: impl FnMut(&Path) -> std::io::Result<()>,
+) -> std::io::Result<Vec<String>> {
     let meta = std::fs::symlink_metadata(checkout_git_dir)?;
     if !meta.is_dir() {
         return Err(std::io::Error::other(format!(
@@ -102,13 +110,67 @@ pub fn clear_stale_locks(checkout_git_dir: &Path) -> std::io::Result<Vec<String>
         let lock = checkout_git_dir.join(name);
         match std::fs::symlink_metadata(&lock) {
             Ok(meta) if meta.is_dir() => {}
-            Ok(_) => {
-                std::fs::remove_file(&lock)?;
-                removed.push(name.to_string());
-            }
+            Ok(_) => match remove(&lock) {
+                Ok(()) => removed.push(name.to_string()),
+                Err(error) => return Err(partly(removed, error)),
+            },
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err),
+            Err(error) => return Err(partly(removed, error)),
         }
     }
     Ok(removed)
+}
+
+/// A [`clear_stale_locks`] that failed after removing `removed` (task 15 re-review N2:
+/// the record of a lock already gone is kept).
+#[derive(Debug)]
+struct PartlyCleared {
+    removed: Vec<String>,
+    error: std::io::Error,
+}
+
+impl std::fmt::Display for PartlyCleared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl std::error::Error for PartlyCleared {}
+
+/// `error`, carrying `removed` when any lock was already removed.
+fn partly(removed: Vec<String>, error: std::io::Error) -> std::io::Error {
+    match removed.is_empty() {
+        true => error,
+        false => std::io::Error::new(error.kind(), PartlyCleared { removed, error }),
+    }
+}
+
+/// The locks a failed [`clear_stale_locks`] had removed before it failed.
+pub fn cleared_of(error: &std::io::Error) -> Vec<String> {
+    (error.get_ref())
+        .and_then(|inner| inner.downcast_ref::<PartlyCleared>())
+        .map(|partly| partly.removed.clone())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Task 15 re-review N2: when `HEAD.lock` cannot be removed, the `index.lock`
+    /// already removed is still reported.
+    #[test]
+    fn a_failed_lock_removal_keeps_the_record_of_the_ones_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in STALE_LOCKS {
+            std::fs::write(dir.path().join(name), "").unwrap();
+        }
+        let result = clear_locks_with(dir.path(), |lock| match lock.ends_with("HEAD.lock") {
+            true => Err(std::io::Error::other("busy")),
+            false => std::fs::remove_file(lock),
+        });
+        let error = result.expect_err("HEAD.lock stays");
+        assert!(!dir.path().join("index.lock").exists());
+        assert_eq!(cleared_of(&error), ["index.lock"], "{error}");
+    }
 }

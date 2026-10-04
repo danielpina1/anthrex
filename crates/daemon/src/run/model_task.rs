@@ -254,10 +254,11 @@ impl Task {
     }
 
     /// Milestone 9.5 ruling RR-1: the name of the task's checkout. The task id, or, once
-    /// a lane of its race is crowned (`Won`) or adopted, that lane's `<task>.<lane>`:
-    /// every path keyed by a checkout name (its repository, objects, engine directory,
+    /// a lane of its race is crowned (`Won`) or adopted, that lane's stored checkout
+    /// (`Lane.checkout`, `<task>.<lane>` as the race made it; task 15 review m4): every
+    /// path keyed by a checkout name (its repository, objects, engine directory,
     /// `TMPDIR`, proof and review checkouts) is then the lane's.
-    /// Milestone 9.5 decision 20: in a lane's view, that lane's checkout.
+    /// Milestone 9.5 decision 20: in a lane's view, that lane's stored checkout.
     pub fn checkout_name(&self) -> String {
         let lane = self.race.as_ref().and_then(|race| {
             race.lanes.iter().find(|l| match self.lane_view {

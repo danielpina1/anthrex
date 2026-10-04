@@ -4,12 +4,13 @@
 //! becomes the task branch, so every later import moves the task branch and the lane
 //! branch stays where the crown found it (review ruling I2). A lane's `RemoveWorktree`
 //! clears the stale locks a stopped racer can leave in its checkout's own git
-//! directory, salvages (a clean checkout too, at its head, with `keep_head`), and
+//! directory (never with `keep_path`), salvages (a clean checkout too, at its head, with `keep_head`), and
 //! removes the checkout unless `keep_path`. No kill, signal or probe (ruling RR-2):
 //! the engine emits the removal only after the racer's exit.
 //!
-//! Every git write goes through the run's `GitQueue`; the lock clearing runs on a
-//! blocking thread. No lock is held here.
+//! Every git write goes through the run's `GitQueue`, the lock clearing too (its first
+//! write, review m2). With `keep_path` (the racer did not exit, ruling RR-2) no lock is
+//! cleared. No lock is held here.
 
 use std::sync::Arc;
 
@@ -74,8 +75,14 @@ pub(super) async fn remove_lane(
         cleared_locks = service
             .write(ctx, move |_, _| {
                 git::clear_stale_locks(&git_dir).map_err(|error| {
+                    // Task 15 re-review N2: a lock already removed is still named.
+                    let removed = git::cleared_of(&error);
+                    let after = match removed.is_empty() {
+                        true => String::new(),
+                        false => format!(" (after it {})", cleared_text(&removed)),
+                    };
                     format!(
-                        "cannot clear the stale locks in {}: {error}",
+                        "cannot clear the stale locks in {}: {error}{after}",
                         git_dir.display()
                     )
                 })
