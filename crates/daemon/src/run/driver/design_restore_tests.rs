@@ -121,6 +121,7 @@ mod service {
             opened_at: 2_000,
             revising: None,
             review: false,
+            cause: Default::default(),
         });
         let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
         let (manager, _events) = WindowManager::new(config);
@@ -159,7 +160,7 @@ mod service {
         };
         assert_eq!(
             revising.as_deref(),
-            Some("the stored spec v1 could not be read back; submit it again")
+            Some("anthrex could not read back the stored spec v1; submit it again")
         );
         let reply = s
             .request(RunRequest::DocGate {

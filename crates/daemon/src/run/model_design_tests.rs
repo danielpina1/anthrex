@@ -209,6 +209,8 @@ fn the_state_survives_save_and_load() {
             opened_at: 3_200,
             revising: Some("shorter".into()),
             review: true,
+            // Task M9.6.7 fix round 1 (m3).
+            cause: crate::run::design::state::Revision::Back,
         }),
         requirements: vec![Requirement {
             id: "R1".into(),
@@ -235,6 +237,7 @@ fn the_state_survives_save_and_load() {
     let json: serde_json::Value = serde_json::from_str(&text).expect("run.json is JSON");
     assert_eq!(json["orch"]["design"]["gate"]["kind"], "spec");
     assert_eq!(json["orch"]["design"]["halted_from"], "specifying");
+    assert_eq!(json["orch"]["design"]["gate"]["cause"], "back");
     assert!(json["orch"]["design"].get("texts").is_none());
 
     // Without it, `orch` has no `design` key.

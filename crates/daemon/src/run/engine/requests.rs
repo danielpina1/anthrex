@@ -204,7 +204,10 @@ pub(super) fn reject(
         let result = super::design_gate::act(run, kind, action, now, fx);
         return reply(fx, id, result);
     }
-    let text = reject_run(run, "the user rejected the plan; run discarded", now, fx);
+    // Milestone 9.6 (fix round 1, m6): before its plan, the phase's document.
+    let what = super::design_gate::phase_doc(run).map_or("plan", |k| k.label());
+    let note = format!("the user rejected the {what}; run discarded");
+    let text = reject_run(run, &note, now, fx);
     reply(fx, id, Ok(text));
 }
 

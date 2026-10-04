@@ -16,7 +16,7 @@ use super::requests::log;
 use super::{Effect, EngineState, ReplyId, goal_rounds_end, wake};
 use crate::run::design::changes;
 use crate::run::design::plan_md;
-use crate::run::design::state::{DocGate, NewDoc, gate_doc, not_design, store};
+use crate::run::design::state::{DocGate, NewDoc, Revision, gate_doc, not_design, store};
 use crate::run::model::Run;
 
 /// Brief ruling BD-2: a gate's versions at most.
@@ -126,13 +126,14 @@ pub(crate) fn act(
         DocGateAction::Approve => Ok(approve(run, kind, &what, now)),
         DocGateAction::Changes { note, review } => {
             let note = clean_note(&note);
-            set_revising(run, kind, Some(note.clone()), review, now);
+            let revising = (note.clone(), Revision::Changes);
+            set_revising(run, kind, Some(revising), review, now);
             log(
                 run,
                 now,
                 format!("the user asked for changes to the {what}"),
             );
-            let text = format!("the user asked for changes to the {what}: {note}");
+            let text = revision_note(kind, n, Revision::Changes, &note);
             wake::note(run, text);
             Ok(format!(
                 "run {}: the orchestrator revises the {what}",
@@ -163,9 +164,9 @@ pub(crate) fn act(
         DocGateAction::Back { note } => {
             let note = clean_note(&note);
             let prev = previous(kind);
-            set_revising(run, prev, Some(note.clone()), false, now);
+            set_revising(run, prev, Some((note.clone(), Revision::Back)), false, now);
             log(run, now, format!("the user went back from the {what}"));
-            let text = format!("the user went back to the {}: {note}", prev.label());
+            let text = revision_note(prev, n, Revision::Back, &note);
             wake::note(run, text);
             Ok(format!("run {}: back to the {}", run.id, prev.label()))
         }
@@ -221,22 +222,25 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
             gate.version
         ));
     }
+    // Ruling T7-6: at the brainstorm gate the way on is a rethink, not a back.
     let full = |kind: DocGateKind| {
+        let ways = match kind {
+            DocGateKind::Brainstorm => "approve, rethink or reject",
+            _ => "approve, go back or reject",
+        };
         (design.gate_versions(gate_doc(kind)) >= MAX_VERSIONS).then(|| {
-            format!(
-                "the {} has had its {MAX_VERSIONS} versions; approve, go back or reject",
-                kind.label()
-            )
+            let kind = kind.label();
+            format!("the {kind} has had its {MAX_VERSIONS} versions; {ways}")
         })
     };
     match action {
         DocGateAction::Changes { .. } | DocGateAction::Edit { .. } => full(kind),
         DocGateAction::Back { .. } => full(previous(kind)),
+        // A rethink's own cap: the brainstorm's rethinks (ruling T7-6's text offers it).
         DocGateAction::Rethink { .. } if design.rethinks >= MAX_RETHINKS => Some(format!(
             "the brainstorm has been rethought {MAX_RETHINKS} times; approve, change or reject"
         )),
-        DocGateAction::Rethink { .. } => full(kind),
-        DocGateAction::Approve | DocGateAction::Reject => None,
+        DocGateAction::Rethink { .. } | DocGateAction::Approve | DocGateAction::Reject => None,
     }
 }
 
@@ -273,15 +277,17 @@ fn approve(run: &mut Run, kind: DocGateKind, what: &str, now: u64) -> String {
     format!("run {}: the {what} is approved; {}", run.id, next.label())
 }
 
-/// The gate of `kind` waits with `revising` (a changes request or a back), at its latest
-/// version; the phase it returns to restarts its clock (decision 8).
+/// The gate of `kind` waits with `revising` (a changes request, a back, or a read-back,
+/// with its note), at its latest version; the phase it returns to restarts its clock
+/// (decision 8).
 pub(super) fn set_revising(
     run: &mut Run,
     kind: DocGateKind,
-    note: Option<String>,
+    revising: Option<(String, Revision)>,
     review: bool,
     now: u64,
 ) {
+    let (note, cause) = revising.map_or((None, Revision::Changes), |(n, c)| (Some(n), c));
     let Some(design) = run.orch.design.as_mut() else {
         return;
     };
@@ -292,6 +298,7 @@ pub(super) fn set_revising(
         opened_at: now,
         revising: note,
         review,
+        cause,
     });
     run.state = RunState::AwaitingApproval;
     start_clock(run, now);
@@ -331,6 +338,7 @@ pub(super) fn open(
             opened_at: now,
             revising: None,
             review: false,
+            cause: Revision::Changes,
         });
         design.phase_started = None;
     }
@@ -373,7 +381,7 @@ pub(super) fn plan_submitted(
 
 /// Review focus 1: a fresh orchestrator session (a lost window's handoff, a fresh
 /// restart) gets the note of the revision it owes again, since its predecessor may have
-/// read it.
+/// read it, in the words it was first told (fix round 1, m3).
 pub(super) fn renote(run: &mut Run) {
     let Some(gate) = waiting(run).cloned() else {
         return;
@@ -381,10 +389,35 @@ pub(super) fn renote(run: &mut Run) {
     let Some(note) = gate.revising else {
         return;
     };
-    let what = format!("{} v{}", gate.kind.label(), gate.version);
-    let text = format!("the user asked for changes to the {what}: {note}");
+    let text = revision_note(gate.kind, gate.version, gate.cause, &note);
     wake::unnote(run, &text);
     wake::note(run, text);
+}
+
+/// The wake note of a revision of the `kind` gate's v`n`, by its cause.
+pub(super) fn revision_note(kind: DocGateKind, n: u32, cause: Revision, note: &str) -> String {
+    let what = format!("{} v{n}", kind.label());
+    match cause {
+        Revision::Changes => format!("the user asked for changes to the {what}: {note}"),
+        Revision::Back => format!("the user went back to the {}: {note}", kind.label()),
+        Revision::ReadBack => {
+            format!("the {what} could not be read back after a restart; submit it again")
+        }
+    }
+}
+
+/// Review m6: the document of the phase a run is in (or paused in) before its plan:
+/// brainstorming's brainstorm or specifying's spec.
+pub(super) fn phase_doc(run: &Run) -> Option<DocGateKind> {
+    let state = match run.state {
+        RunState::Paused => run.paused_from?,
+        state => state,
+    };
+    match state {
+        RunState::Brainstorming => Some(DocGateKind::Brainstorm),
+        RunState::Specifying => Some(DocGateKind::Spec),
+        _ => None,
+    }
 }
 
 /// The digest's document gate (`orch/digest.rs::gate`): its kind, version, the user's

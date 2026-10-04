@@ -63,6 +63,7 @@ mod design_agents_end;
 mod design_clock;
 mod design_fixture;
 mod design_gate;
+mod design_notes;
 mod design_phases;
 mod design_plan_gate;
 mod design_snapshot;

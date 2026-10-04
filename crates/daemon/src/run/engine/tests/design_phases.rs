@@ -328,7 +328,8 @@ fn a_gate_whose_version_cannot_be_read_back_reopens_revising() {
         "design flow: the spec v1 could not be read back: its file differs from what was stored";
     let lines: Vec<_> = log_lines(&fx).into_iter().filter(|l| l == line).collect();
     assert_eq!(lines.len(), 1);
-    let note = "the stored spec v1 could not be read back; submit it again".to_string();
+    // Fix round 1 (m3): the engine's note.
+    let note = "anthrex could not read back the stored spec v1; submit it again".to_string();
     assert_eq!(gate(&fx), Some((DocGateKind::Spec, 1, Some(note))));
     let wake = "the spec v1 could not be read back after a restart; submit it again";
     assert!(notes(&fx).contains(&wake.to_string()));

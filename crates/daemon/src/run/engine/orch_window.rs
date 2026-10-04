@@ -151,6 +151,10 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<
             if result == OpResult::RestartedFresh && pasted {
                 super::first_turn::fresh_session(run, now);
                 super::wake::unnote(run, RESUMED_NOTE);
+            }
+            // Milestone 9.6 review focus 1 (fix round 1): any fresh session, Claude's or
+            // Codex's, is told its revision again.
+            if result == OpResult::RestartedFresh {
                 super::design_gate::renote(run);
             }
         }

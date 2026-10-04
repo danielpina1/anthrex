@@ -169,6 +169,7 @@ fn a_chained_goals_pack_carries_the_previous_spec() {
                 opened_at: 10,
                 revising: None,
                 review: false,
+                cause: Default::default(),
             };
             stopped.orch.design.as_mut().unwrap().gate = Some(gate);
         }

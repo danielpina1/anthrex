@@ -18,7 +18,9 @@ use super::orch::refuse;
 use super::requests::log;
 use super::{Effect, ReplyId, design_gate, wake};
 use crate::run::design::requirements;
-use crate::run::design::state::{DesignAgentState, DesignState, NewDoc, gate_doc, not_design};
+use crate::run::design::state::{
+    DesignAgentState, DesignState, NewDoc, Revision, gate_doc, not_design,
+};
 use crate::run::design::template::kind_name;
 use crate::run::design::template::{self, TemplateCtx};
 use crate::run::model::Run;
@@ -415,9 +417,14 @@ pub(super) fn checked(run: &mut Run, checked: Vec<DocChecked>, now: u64) {
     let Some(gate) = gate.filter(|g| lost && g.revising.is_none()) else {
         return;
     };
+    // Fix round 1 (m3): the engine's note, never the user's.
     let what = format!("{} v{}", gate.kind.label(), gate.version);
-    let note = format!("the stored {what} could not be read back; submit it again");
-    design_gate::set_revising(run, gate.kind, Some(note), false, now);
-    let text = format!("the {what} could not be read back after a restart; submit it again");
-    wake::note(run, text);
+    let note = format!("anthrex could not read back the stored {what}; submit it again");
+    let revising = Some((note.clone(), Revision::ReadBack));
+    design_gate::set_revising(run, gate.kind, revising, false, now);
+    let cause = Revision::ReadBack;
+    wake::note(
+        run,
+        design_gate::revision_note(gate.kind, gate.version, cause, &note),
+    );
 }

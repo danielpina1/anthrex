@@ -70,13 +70,37 @@ pub struct DocGate {
     pub kind: DocGateKind,
     pub version: u32,
     pub opened_at: u64,
-    /// The user's note while the orchestrator writes the next version.
+    /// The note the orchestrator writes the next version to: the user's, or the
+    /// engine's after a read-back ([`Revision::ReadBack`]).
     #[serde(default)]
     pub revising: Option<String>,
     /// The user's `Changes { review: true }`: the revision is reviewed again (decision
     /// 15, task M9.6.10).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub review: bool,
+    /// What `revising` came from, so a fresh session is told it again in its own words
+    /// (task M9.6.7 fix round 1, m3).
+    #[serde(default, skip_serializing_if = "Revision::is_changes")]
+    pub cause: Revision,
+}
+
+/// Why the orchestrator revises a gate's version.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Revision {
+    /// The user asked for changes.
+    #[default]
+    Changes,
+    /// The user went back to this gate from the next one.
+    Back,
+    /// The restore could not read the version back (`design::checked`).
+    ReadBack,
+}
+
+impl Revision {
+    fn is_changes(&self) -> bool {
+        *self == Revision::Changes
+    }
 }
 
 /// A brainstormer or a document reviewer: a headless, read-only session (decision 9).
