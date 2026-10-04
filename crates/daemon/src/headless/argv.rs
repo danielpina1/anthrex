@@ -267,8 +267,9 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
     if let Some(chain) = &target.chain {
         args.extend(["--chain".into(), chain.clone()]);
     }
-    // Milestone 9.5: a racer names its lane.
-    if let Some(lane) = target.lane {
+    // Milestone 9.5: a racer names its lane, and no other role does (the CLI refuses
+    // `--lane` for any other, task 2 review m2).
+    if let Some(lane) = target.lane.filter(|_| target.role == AgentRole::Racer) {
         args.extend(["--lane".into(), lane.label().into()]);
     }
     args.extend([

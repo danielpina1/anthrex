@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use proto::RaceLane;
+use proto::{AgentRole, RaceLane};
 
 use super::super::{OpCtx, RunService, cleanup};
 use super::failed;
@@ -110,16 +110,40 @@ fn cleared_text(locks: &[String]) -> String {
 
 /// The checkout a session of task `task` works in (ruling RR-1): lane `lane`'s stored
 /// checkout (`Lane.checkout`, review m4) while it races, else the task's
-/// (`Task::checkout_name`, the crowned lane's once there is one).
-pub(super) fn checkout_of(run: &Run, task: &str, lane: Option<RaceLane>) -> String {
-    let Some(t) = run.task(task) else {
-        return task.to_string();
+/// (`Task::checkout_name`, the crowned lane's once there is one). Task M9.5.18 (task 15
+/// re-review N3): a lane the run stores no `Lane` for has no checkout here, never the
+/// task's own, so its session is given no other checkout's sandbox roots.
+pub(super) fn checkout_of(run: &Run, task: &str, lane: Option<RaceLane>) -> Result<String, String> {
+    let t = run.task(task);
+    let Some(lane) = lane else {
+        return Ok(t.map_or_else(|| task.to_string(), |t| t.checkout_name()));
     };
-    let mut lanes = t.race.iter().flat_map(|race| &race.lanes);
-    match lanes.find(|l| Some(l.lane) == lane) {
-        Some(stored) => stored.checkout.clone(),
-        None => t.checkout_name(),
+    let mut lanes = t
+        .into_iter()
+        .flat_map(|t| &t.race)
+        .flat_map(|race| &race.lanes);
+    match lanes.find(|l| l.lane == lane) {
+        Some(stored) => Ok(stored.checkout.clone()),
+        None => Err(format!(
+            "task {task} has no lane {}; its racer gets no sandbox roots",
+            lane.label()
+        )),
     }
+}
+
+/// [`checkout_of`] for a session in `role`: a racer must name a lane the run stores.
+pub(super) fn session_checkout(
+    run: &Run,
+    task: &str,
+    role: AgentRole,
+    lane: Option<RaceLane>,
+) -> Result<String, String> {
+    if role == AgentRole::Racer && lane.is_none() {
+        return Err(format!(
+            "a racer of task {task} names no lane; it gets no sandbox roots"
+        ));
+    }
+    checkout_of(run, task, lane)
 }
 
 #[cfg(test)]

@@ -19,7 +19,6 @@ use crate::run::proof::ProofOp;
 use crate::run::role_launch::worker_git_roots;
 use crate::run::slots::{Priority, Want};
 use crate::run::tiers::SignalsSpec;
-use proto::AgentRole;
 
 // Decision 33's proof and decision 34's check (split out to keep this file under the
 // 600-line rule).
@@ -40,6 +39,11 @@ use scheduled::scheduled;
 #[cfg(test)]
 #[path = "ops_signals_tests.rs"]
 mod signals_tests;
+
+// Task M9.5.18: racers' and test writers' sandboxes and calls.
+#[cfg(test)]
+#[path = "racer_launch_tests.rs"]
+mod racer_launch_tests;
 
 pub(super) fn failed(message: impl Into<String>) -> OpResult {
     OpResult::Failed {
@@ -123,7 +127,9 @@ impl RunService {
 /// through a link, and named by appending to the engine's own directory, never by
 /// resolving a path the worker could have swapped: I1), plus the commit's files in the
 /// checkout's own git directory. Nothing of the git common directory. Any other session
-/// (a reviewer) is left as it is.
+/// (a reviewer) is left as it is. Milestone 9.5 (task M9.5.18): a racer's and a test
+/// writer's too, a racer's on its own lane's stored checkout; a racer whose lane the
+/// run does not store is refused, with a logged error.
 async fn worker_git_dirs(
     service: &Arc<RunService>,
     ctx: &OpCtx,
@@ -132,9 +138,9 @@ async fn worker_git_dirs(
     let task = spec
         .run_ref
         .as_ref()
-        .filter(|r| r.role == AgentRole::Worker)
-        .and_then(|r| Some((r.task_id.clone()?, r.lane)));
-    let Some((task, lane)) = task else {
+        .filter(|r| crate::run::model::writes_task(r.role))
+        .and_then(|r| Some((r.task_id.clone()?, r.role, r.lane)));
+    let Some((task, role, lane)) = task else {
         return Ok(());
     };
     // Milestone 9.5 ruling RR-1: the session's checkout, a lane's or the task's.
@@ -144,10 +150,13 @@ async fn worker_git_dirs(
         .map(|run| {
             (
                 run.git_common_dir.clone(),
-                lane_ops::checkout_of(run, &task, lane),
+                lane_ops::session_checkout(run, &task, role, lane),
             )
         })
         .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
+    let checkout = checkout.inspect_err(|error| {
+        tracing::error!(run = %ctx.run_id, %task, %error, "a racer's launch was refused");
+    })?;
     let roots = worker_git_roots(&ctx.data_dir, &checkout);
     let sandboxed = spec
         .claude_sandbox

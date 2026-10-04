@@ -57,3 +57,28 @@ fn mcp_args_carry_the_lane() {
         ]))
     );
 }
+
+/// Task M9.5.18 (task 2 review m2): only a racer's `anthrex mcp` names a lane, since
+/// the CLI refuses `--lane` for any other role. A lane left on another role's target is
+/// not written.
+#[test]
+fn only_a_racer_names_its_lane() {
+    for role in [
+        AgentRole::Worker,
+        AgentRole::TestWriter,
+        AgentRole::Reviewer,
+        AgentRole::Orchestrator,
+    ] {
+        let target = McpTarget {
+            role,
+            run_id: "r-3f9a".into(),
+            task_id: Some("t1".into()),
+            scout_id: None,
+            epic: None,
+            chain: None,
+            lane: Some(proto::RaceLane::A),
+        };
+        let args = mcp_args(&target, 4, Path::new("/s")).unwrap();
+        assert!(!args.iter().any(|a| a == "--lane"), "{role:?}: {args:?}");
+    }
+}

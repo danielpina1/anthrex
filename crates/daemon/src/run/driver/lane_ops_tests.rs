@@ -390,7 +390,7 @@ fn a_racers_checkout_is_its_lanes_stored_one() {
     run.tasks[0].race = Some(race);
     assert_eq!(
         super::checkout_of(&run, "t1", Some(RaceLane::B)),
-        "t1.lane-b"
+        Ok("t1.lane-b".to_string())
     );
-    assert_eq!(super::checkout_of(&run, "t1", None), "t1");
+    assert_eq!(super::checkout_of(&run, "t1", None), Ok("t1".to_string()));
 }
