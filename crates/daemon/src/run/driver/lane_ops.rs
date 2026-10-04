@@ -16,10 +16,10 @@ use std::sync::Arc;
 use proto::RaceLane;
 
 use super::super::{OpCtx, RunService, cleanup};
-use super::{blocking, failed};
+use super::failed;
 use crate::run::engine::{OpKind, OpResult};
 use crate::run::git;
-use crate::run::model::{Run, lane_checkout};
+use crate::run::model::Run;
 use crate::worktree::pinned::repin_own;
 
 /// `OpKind::CrownRacer`'s executor contract. The re-pin runs inside the same queued
@@ -65,39 +65,60 @@ pub(super) async fn remove_lane(
     else {
         unreachable!("remove_lane takes a RemoveWorktree");
     };
+    // Ruling RR-2: with `keep_path` the racer did not exit, so a lock there may be a
+    // live process's; it is never cleared. Otherwise the clearing is the first write
+    // in the repository's queue (review m2).
     let mut cleared_locks = Vec::new();
-    if clear_locks && path.exists() {
-        let repo = git::Repo::at(&git::checkout_repo_dir(&ctx.data_dir, &path));
-        let git_dir = repo.git_dir();
-        cleared_locks = blocking(move || {
-            git::clear_stale_locks(&git_dir).map_err(|error| {
-                format!(
-                    "cannot clear the stale locks in {}: {error}",
-                    git_dir.display()
-                )
+    if clear_locks && !keep_path && path.exists() {
+        let git_dir = git::Repo::at(&git::checkout_repo_dir(&ctx.data_dir, &path)).git_dir();
+        cleared_locks = service
+            .write(ctx, move |_, _| {
+                git::clear_stale_locks(&git_dir).map_err(|error| {
+                    format!(
+                        "cannot clear the stale locks in {}: {error}",
+                        git_dir.display()
+                    )
+                })
             })
-        })
-        .await?;
+            .await?;
     }
-    let salvage_ref = if keep_path {
-        cleanup::salvage_in(service, ctx, path, reference, keep_head).await?
+    let salvaged = if keep_path {
+        cleanup::salvage_in(service, ctx, path, reference, keep_head).await
     } else {
-        cleanup::remove_keeping(service, ctx, root, path, reference, keep_head).await?
+        cleanup::remove_keeping(service, ctx, root, path, reference, keep_head).await
     };
+    // Review m3: the locks are gone whatever follows; a failure names them.
+    let salvage_ref = salvaged.map_err(|error| match cleared_locks.is_empty() {
+        true => error,
+        false => format!("{error} (after it {})", cleared_text(&cleared_locks)),
+    })?;
     Ok(OpResult::Removed {
         salvage_ref,
         cleared_locks,
     })
 }
 
-/// The checkout a session of task `task` works in (ruling RR-1): lane `lane`'s own
-/// while it races, else the task's (`Task::checkout_name`, the crowned lane's once
-/// there is one).
+/// Decision 22's record of cleared locks: `removed a stale index.lock left by the
+/// stopped racer, removed a stale HEAD.lock …`.
+fn cleared_text(locks: &[String]) -> String {
+    let each: Vec<String> = locks
+        .iter()
+        .map(|lock| format!("removed a stale {lock} left by the stopped racer"))
+        .collect();
+    each.join(", ")
+}
+
+/// The checkout a session of task `task` works in (ruling RR-1): lane `lane`'s stored
+/// checkout (`Lane.checkout`, review m4) while it races, else the task's
+/// (`Task::checkout_name`, the crowned lane's once there is one).
 pub(super) fn checkout_of(run: &Run, task: &str, lane: Option<RaceLane>) -> String {
-    match (lane, run.task(task)) {
-        (Some(lane), _) => lane_checkout(task, lane),
-        (None, Some(t)) => t.checkout_name(),
-        (None, None) => task.to_string(),
+    let Some(t) = run.task(task) else {
+        return task.to_string();
+    };
+    let mut lanes = t.race.iter().flat_map(|race| &race.lanes);
+    match lanes.find(|l| Some(l.lane) == lane) {
+        Some(stored) => stored.checkout.clone(),
+        None => t.checkout_name(),
     }
 }
 

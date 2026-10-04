@@ -197,4 +197,8 @@ fn a_lost_crown_is_sent_again() {
     assert_eq!(crowns.len(), 1, "{effects:#?}");
     assert_ne!(crowns[0].0, op, "under a new id");
     assert_eq!(crowns[0].1, kind);
+    // Review m1: still the lane's op.
+    let again = &fx.run().pending_ops[&crowns[0].0];
+    assert_eq!(again.lane, Some(proto::RaceLane::B));
+    assert_eq!(again.task_id.as_deref(), Some("t1"));
 }

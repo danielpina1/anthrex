@@ -240,13 +240,14 @@ impl Task {
                 .find(|l| matches!(l.state, proto::LaneState::Won | proto::LaneState::Adopted))
         });
         match crowned {
-            Some(lane) => lane_checkout(self.id(), lane.lane),
+            Some(lane) => lane.checkout.clone(),
             None => self.id().to_string(),
         }
     }
 }
 
-/// Decision 19: lane `lane`'s checkout name, `<task>.<lane>`.
+/// Decision 19: lane `lane`'s checkout name, `<task>.<lane>`, which a `Lane` is made
+/// with; every reader takes the stored `Lane.checkout` (review m4).
 pub fn lane_checkout(task: &str, lane: proto::RaceLane) -> String {
     format!("{task}.{}", lane.label())
 }

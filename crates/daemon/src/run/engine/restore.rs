@@ -171,7 +171,7 @@ fn is_history(kind: &OpKind) -> bool {
 
 /// Decision 44: an op dropped as `NotStarted`, and what its task needs instead.
 fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
-    let (op, task_id, kind) = (pending.op, pending.task_id, pending.kind);
+    let (op, task_id, kind, lane) = (pending.op, pending.task_id, pending.kind, pending.lane);
     let i = task_id
         .as_deref()
         .and_then(|id| run.tasks.iter().position(|t| t.id() == id));
@@ -189,6 +189,10 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         ) => {
             let again = next_op(run);
             emit_op(run, again, task_id.as_deref(), kind, fx);
+            // Review m1: a race lane's op (its crown, its removal) stays the lane's.
+            if let Some(pending) = run.pending_ops.get_mut(&again) {
+                pending.lane = lane;
+            }
         }
         // A session starts only while the run runs (ruling T14-I2): `relaunch`.
         (OpKind::CreateWindow { .. }, Some(i)) => {

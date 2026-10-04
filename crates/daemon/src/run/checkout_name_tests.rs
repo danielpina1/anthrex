@@ -37,6 +37,17 @@ fn checkout_name_is_the_task_until_a_lane_is_crowned() {
     assert_eq!(task.checkout_name(), "t1.a", "lane a adopted");
 }
 
+/// Review m4: a lane's checkout name has one source, the stored `Lane.checkout`.
+#[test]
+fn checkout_name_is_the_stored_lanes_checkout() {
+    let run = run();
+    let mut task = run.tasks[0].clone();
+    let mut race = race_of(&task, [LaneState::Lost, LaneState::Won]);
+    race.lanes[1].checkout = "t1.lane-b".into();
+    task.race = Some(race);
+    assert_eq!(task.checkout_name(), "t1.lane-b");
+}
+
 /// The crowned task, as the reducer leaves it (decision 21; ruling T1-3): lane b won,
 /// and `task.worktree` is the lane's checkout.
 fn crowned(run: &Run) -> crate::run::model::Task {

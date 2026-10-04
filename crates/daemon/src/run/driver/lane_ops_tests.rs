@@ -234,14 +234,18 @@ fn removal(rig: &Rig, keep_path: bool, clear_locks: bool) -> OpKind {
     }
 }
 
+/// Ruling RR-2: `keep_path` means the racer did not exit, so a lock in its checkout
+/// may be a live process's. It is never cleared then, even with `clear_locks`.
 #[test]
 fn keep_path_salvages_and_leaves_the_checkout() {
     let rig = Rig::new();
     let head = rig.racer_commits("one.txt");
-    let lock = lane_git_dir(&rig).join("index.lock");
-    std::fs::write(&lock, "").unwrap();
+    let locks = ["index.lock", "HEAD.lock"].map(|name| lane_git_dir(&rig).join(name));
+    for lock in &locks {
+        std::fs::write(lock, "").unwrap();
+    }
 
-    let result = rig.run(removal(&rig, true, false));
+    let result = rig.run(removal(&rig, true, true));
     assert_eq!(
         result,
         OpResult::Removed {
@@ -252,7 +256,100 @@ fn keep_path_salvages_and_leaves_the_checkout() {
     let salvaged = git(&rig.root, &["rev-parse", "refs/anthrex/salvage/r1/t1/1"]);
     assert_eq!(salvaged, head, "a clean checkout is salvaged at its head");
     assert!(rig.lane.join("one.txt").is_file(), "the checkout is kept");
-    assert!(lock.is_file(), "every lock in it is left");
+    for lock in &locks {
+        assert!(
+            lock.is_file(),
+            "every lock in it is left: {}",
+            lock.display()
+        );
+    }
+}
+
+/// Review m3: the locks are already gone when a later step fails, so the failure
+/// names them.
+#[test]
+fn a_failed_removal_still_names_the_locks_it_cleared() {
+    let rig = Rig::new();
+    rig.racer_commits("one.txt");
+    let base = git(&rig.root, &["rev-parse", "main"]);
+    // Another salvage already holds this ref: the clean checkout's keep_head refuses.
+    git(
+        &rig.root,
+        &["update-ref", "refs/anthrex/salvage/r1/t1/1", &base],
+    );
+    for name in ["index.lock", "HEAD.lock"] {
+        std::fs::write(lane_git_dir(&rig).join(name), "").unwrap();
+    }
+
+    let result = rig.run(removal(&rig, false, true));
+    let OpResult::Failed { message } = result else {
+        panic!("the salvage cannot succeed: {result:?}");
+    };
+    assert!(message.contains("holds other work"), "{message}");
+    for name in ["index.lock", "HEAD.lock"] {
+        assert!(
+            message.contains(&format!("removed a stale {name}")),
+            "{message}"
+        );
+        assert!(!lane_git_dir(&rig).join(name).exists());
+    }
+    assert!(rig.lane.exists(), "nothing is removed without its salvage");
+}
+
+/// Review m2: the locks are cleared inside the repository's git write queue, never
+/// beside a write that holds it.
+#[test]
+fn the_locks_are_cleared_inside_the_write_queue() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let rig = Rig::new();
+    rig.racer_commits("one.txt");
+    let locks = ["index.lock", "HEAD.lock"].map(|name| lane_git_dir(&rig).join(name));
+    for lock in &locks {
+        std::fs::write(lock, "").unwrap();
+    }
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (held, release) = (
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let (h, r) = (held.clone(), release.clone());
+    let queue = rig.service.queue.clone();
+    let project = rig.ctx.project.clone();
+    let holder = rt.spawn(async move {
+        queue
+            .write(&project, move || {
+                h.store(true, Ordering::SeqCst);
+                let deadline = std::time::Instant::now() + Duration::from_secs(30);
+                while !r.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(())
+            })
+            .await
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !held.load(Ordering::SeqCst) {
+        assert!(std::time::Instant::now() < deadline, "the holder never ran");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let (service, ctx) = (rig.service.clone(), rig.ctx.clone());
+    let kind = removal(&rig, false, true);
+    let removal = rt.spawn(async move { super::super::run(&service, &ctx, 1, kind).await });
+    // A clearing outside the queue happens at once; give it the time to show.
+    std::thread::sleep(Duration::from_millis(300));
+    for lock in &locks {
+        assert!(lock.is_file(), "cleared while another write held the queue");
+    }
+    release.store(true, Ordering::SeqCst);
+    rt.block_on(holder).unwrap().unwrap();
+    let result = rt.block_on(removal).unwrap();
+    let OpResult::Removed { cleared_locks, .. } = result else {
+        panic!("not removed: {result:?}");
+    };
+    assert_eq!(cleared_locks, vec!["index.lock", "HEAD.lock"]);
 }
 
 #[test]
@@ -277,4 +374,23 @@ fn a_lanes_removal_clears_its_stale_locks_first() {
     assert!(!rig.lane.exists(), "the checkout is removed");
     let tree = git(&rig.root, &["show", "refs/anthrex/salvage/r1/t1/1:one.txt"]);
     assert_eq!(tree, "changed", "the salvage holds the dirty file");
+}
+
+/// Review m4: a racer's session works in its lane's stored checkout.
+#[test]
+fn a_racers_checkout_is_its_lanes_stored_one() {
+    use crate::run::test_support::{PROFILE, plan_with, race_of, run_ok, task_toml};
+    use proto::{LaneState, RaceLane};
+    let mut run = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+    ));
+    let mut race = race_of(&run.tasks[0], [LaneState::Working, LaneState::Review]);
+    race.lanes[1].checkout = "t1.lane-b".into();
+    run.tasks[0].race = Some(race);
+    assert_eq!(
+        super::checkout_of(&run, "t1", Some(RaceLane::B)),
+        "t1.lane-b"
+    );
+    assert_eq!(super::checkout_of(&run, "t1", None), "t1");
 }
