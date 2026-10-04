@@ -146,11 +146,14 @@ pub enum OrchEvent {
 }
 
 /// How a run scout's or sub-planner's session ended: its report or epic accepted, or
-/// the machine's failure.
+/// the machine's failure. Milestone 9.6 ruling T8-7: a design agent's turn that ended
+/// without its submission, unnudged (`scout::machine::unsubmitted`), is its own cause,
+/// so the engine relaunches it by its type, never by its text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScoutEnd {
     Reported,
     Failed { reason: String },
+    Unsubmitted { reason: String },
 }
 
 impl OrchEvent {

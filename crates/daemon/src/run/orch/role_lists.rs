@@ -177,6 +177,29 @@ pub fn brainstorm_picks_with(run: &Run, caps: &DeciderCaps) -> Vec<BrainstormPic
     ]
 }
 
+/// Milestone 9.6 decision 10 (task M9.6.10, DF §4.2): the document reviewer's route and
+/// whether it is the orchestrator's own runtime. Its peer (`validate_patterns::
+/// peer_route`: the other runtime's first roster entry at the orchestrator's strength
+/// and effort), unless that runtime is not installed or its CLI cannot run a session
+/// without saving it (ruling T8-4, as for a brainstormer); else the orchestrator's own
+/// route, `same_runtime`.
+pub fn review_pick(run: &Run, caps: &DeciderCaps) -> (Route, bool) {
+    let own = (run.orch.orchestrator.as_ref()).map_or_else(
+        || crate::run::orch::launch::frozen_scout_route(run),
+        |o| o.route.clone(),
+    );
+    let mut installed = run.orch.installed.clone();
+    for runtime in [Runtime::Claude, Runtime::Codex] {
+        if !runs_unsaved(runtime, caps) {
+            installed.insert(runtime.label().to_string(), false);
+        }
+    }
+    match crate::run::validate_patterns::peer_route(&run.roster, &own, &installed) {
+        Some(peer) => (peer, false),
+        None => (own, true),
+    }
+}
+
 /// Decision 10's defaults: the strongest model of each installed runtime, else (no
 /// roster entry on any) the orchestrator's route twice.
 fn default_pair(run: &Run, effort: Effort, usable: &dyn Fn(Runtime) -> bool) -> (Route, Route) {

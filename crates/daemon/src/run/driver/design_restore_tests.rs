@@ -24,6 +24,7 @@ fn version(kind: DocKind, n: u32, text: &str) -> DocVersion {
         changes: Vec::new(),
         same_runtime: false,
         report: None,
+        draft_review: None,
     }
 }
 
@@ -121,6 +122,34 @@ fn the_latest_draft_of_each_brainstormer_is_kept() {
     );
 }
 
+/// Task M9.6.10: the approved spec is kept while its requirements are not stored (a
+/// restore between the approval and its read-back), even when it is not the latest
+/// spec; once they are stored, only the latest is.
+#[test]
+fn the_approved_spec_is_kept_until_its_requirements_are_stored() {
+    use crate::run::design::state::{DesignState, Requirement};
+    let mut design = DesignState {
+        versions: vec![
+            version(DocKind::Spec, 1, "v1"),
+            version(DocKind::Spec, 2, "v2"),
+        ],
+        approved_spec: Some(1),
+        ..DesignState::default()
+    };
+    let kept = |design: &DesignState| -> Vec<u32> {
+        (design.versions.iter())
+            .filter(|v| super::kept(design, v))
+            .map(|v| v.n)
+            .collect()
+    };
+    assert_eq!(kept(&design), [1, 2]);
+    design.requirements = vec![Requirement {
+        id: "R1".into(),
+        text: "one".into(),
+    }];
+    assert_eq!(kept(&design), [2]);
+}
+
 mod service {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -145,12 +174,21 @@ mod service {
     /// A design run at its spec gate, v1, whose file the service wrote; then `edit`
     /// applied to that file.
     async fn at_spec_gate(data: &Path, edit: impl FnOnce(&Path)) -> Arc<RunService> {
+        at_spec_gate_with(data, "# S\n", edit).await
+    }
+
+    /// [`at_spec_gate`], its spec v1 `text`.
+    async fn at_spec_gate_with(
+        data: &Path,
+        text: &str,
+        edit: impl FnOnce(&Path),
+    ) -> Arc<RunService> {
         let mut run = run_ok(&plan_with(PROFILE, &[task_toml("t1", "S", "[\"a\"]", "")]));
         run.data_dir = data.join("runs").join(RUN_ID);
         run.design_mode = proto::DesignMode::Full;
         run.orch.design = Some(DesignState::default());
         run.state = RunState::AwaitingApproval;
-        let doc = NewDoc::new(DocKind::Spec, DocAuthor::Orchestrator, "submitted", "# S\n");
+        let doc = NewDoc::new(DocKind::Spec, DocAuthor::Orchestrator, "submitted", text);
         let (_, write) = state::store(&mut run, doc, 2_000).unwrap();
         run.orch.design.as_mut().unwrap().gate = Some(DocGate {
             kind: DocGateKind::Spec,
@@ -267,6 +305,68 @@ mod service {
         assert_eq!(reply, RunReply::refused(request::DOC_GATE, refused));
         assert_eq!(gate_of(&s), before, "the gate is unchanged");
         drop(release);
+        shutdown.cancel();
+    }
+
+    /// The spec's approval through the service (task M9.6.10): the engine asks for the
+    /// approved version's text (`Effect::ReadBack`), the driver reads it off the engine
+    /// lock against its index entry, and the engine stores its requirements and Goal
+    /// section from that read; a file changed since it was stored is never used, and
+    /// the spec gate reopens instead.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_approved_spec_is_read_back_and_its_requirements_stored() {
+        const SPEC: &str = "# S\n\n## Goal and success criteria\nReset passwords.\n\n\
+                            ## Requirements\nR1 one\nR2 two\n";
+        let approve = RunRequest::DocGate {
+            run: RUN_ID.into(),
+            kind: DocGateKind::Spec,
+            action: DocGateAction::Approve,
+        };
+        let design = |s: &RunService| {
+            let state = crate::lock(&s.state);
+            (
+                state.runs[RUN_ID].orch.design.clone().unwrap(),
+                state.runs[RUN_ID].state,
+            )
+        };
+        let settled = async |s: &RunService, done: &dyn Fn(&DesignState, RunState) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let (d, state) = design(s);
+                if done(&d, state) || Instant::now() >= deadline {
+                    return (d, state);
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        let data = tempfile::tempdir().unwrap();
+        let s = at_spec_gate_with(data.path(), SPEC, |_| {}).await;
+        let shutdown = CancellationToken::new();
+        s.spawn(shutdown.clone());
+        assert!(matches!(
+            s.request(approve.clone()).await,
+            RunReply::Done { .. }
+        ));
+        let (d, _) = settled(&s, &|d, _| !d.requirements.is_empty()).await;
+        let ids: Vec<&str> = d.requirements.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["R1", "R2"]);
+        assert_eq!(d.goal_section, "Reset passwords.");
+        shutdown.cancel();
+
+        let data = tempfile::tempdir().unwrap();
+        let changed = |path: &Path| std::fs::write(path, "# S, edited by hand\n").unwrap();
+        let s = at_spec_gate_with(data.path(), SPEC, changed).await;
+        let shutdown = CancellationToken::new();
+        s.spawn(shutdown.clone());
+        assert!(matches!(s.request(approve).await, RunReply::Done { .. }));
+        let (d, state) = settled(&s, &|_, state| state == RunState::AwaitingApproval).await;
+        assert_eq!(state, RunState::AwaitingApproval);
+        assert!(d.requirements.is_empty());
+        let gate = d.gate.unwrap();
+        assert_eq!(
+            (gate.kind, gate.cause),
+            (DocGateKind::Spec, state::Revision::ReadBack)
+        );
         shutdown.cancel();
     }
 }

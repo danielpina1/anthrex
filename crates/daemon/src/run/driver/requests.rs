@@ -232,6 +232,7 @@ impl RunService {
                     kind,
                     version,
                     from,
+                    draft: None,
                     diff,
                     findings,
                 };

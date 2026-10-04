@@ -66,6 +66,13 @@ pub const BRAINSTORMER_TEXTS: MachineTexts = MachineTexts {
     missing: "an accepted draft",
 };
 
+/// A document reviewer's instructions (Contracts: under 1 KiB; task M9.6.10).
+pub const DOC_REVIEWER_CONTRACT: &str = "You are a document reviewer in an anthrex run. You read and judge; you never change anything.
+1. Your first message names the document to review. Read it with the anthrex tool get_doc (in Claude: mcp__anthrex__get_doc), and the approved brainstorm report with get_doc kind \"brainstorm\". Check its claims against the repository.
+2. Do not edit, create or delete files. Your session cannot write anything.
+3. Submit your findings once with submit_findings (in Claude: mcp__anthrex__submit_findings): each with an id (F1, F2, ...), a severity, its place and what is wrong. Then stop.
+4. Use severity blocking only for placeholders, contradictions, untestable requirements, scope beyond the approved approach, dropped brainstorm decisions, a requirement without an acceptance check, or a plan task that does not deliver its covers. Everything else is minor. No findings is a valid review.";
+
 /// Sent once when a document reviewer's turn ends without findings (task M9.6.10).
 pub const DOC_REVIEWER_NUDGE: &str =
     "[anthrex] Your turn ended without findings. Call submit_findings now, then stop.";
@@ -134,7 +141,8 @@ impl DesignAgentKind {
         }
     }
 
-    fn texts(&self) -> MachineTexts {
+    /// Its machine's texts: its nudge, its wrap-up and its failures' words.
+    pub fn texts(&self) -> MachineTexts {
         match self {
             DesignAgentKind::Brainstormer { .. } => BRAINSTORMER_TEXTS,
             DesignAgentKind::DocReviewer { .. } => DOC_REVIEWER_TEXTS,
@@ -195,6 +203,48 @@ pub fn brainstormer_spec(run: &Run, agent: &DesignAgent) -> DesignAgentSpec {
     }
     let budget = run.limits.orch.design.brainstormer;
     let mut first_turn = brainstormer_first_turn(&agent.label);
+    // Ruling T8-7: the one relaunch after an attempt that ended without submitting.
+    if agent.unsubmitted {
+        first_turn = format!("{first_turn}\n{}", resubmit_line(kind.submit_tool()));
+    }
+    DesignAgentSpec {
+        run_id: run.id.clone(),
+        first_turn,
+        kind,
+        session: agent.session,
+        headless,
+        project: run.project.clone(),
+        cwd: run.root.clone(),
+        route: agent.route.clone(),
+        max_tool_calls: budget.tool_calls,
+        timeout_secs: u64::from(budget.minutes) * 60,
+    }
+}
+
+/// The first turn of the reviewer of review `k` of the spec: its draft, named
+/// explicitly (ruling T5-1), and its one submission.
+pub fn reviewer_first_turn(k: u32) -> String {
+    format!(
+        "[anthrex] Review the spec draft sent to review {k}: read it with get_doc, kind \"spec\", draft {k}. Then submit your findings once with submit_findings."
+    )
+}
+
+/// Decision 9 (task M9.6.10): the document reviewer `agent` of review `k`, launched
+/// read-only as a brainstormer is, with its own contract, tools and budget
+/// (`[orchestrator.design.budget] doc_reviewer`), named `<doc>-r<k>` (ruling T1-O3).
+pub fn reviewer_spec(run: &Run, agent: &DesignAgent, k: u32) -> DesignAgentSpec {
+    let kind = DesignAgentKind::DocReviewer {
+        doc: agent.label.clone(),
+    };
+    let headless = crate::run::orch::launch::read_only(
+        run,
+        &agent.route,
+        (DOC_REVIEWER_CONTRACT, DOC_REVIEWER_ALLOWED_TOOLS),
+        mcp_target(run, &kind),
+        run_ref(run, &kind, agent.session),
+    );
+    let budget = run.limits.orch.design.doc_reviewer;
+    let mut first_turn = reviewer_first_turn(k);
     // Ruling T8-7: the one relaunch after an attempt that ended without submitting.
     if agent.unsubmitted {
         first_turn = format!("{first_turn}\n{}", resubmit_line(kind.submit_tool()));

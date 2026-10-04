@@ -19,10 +19,11 @@ use crate::scout::machine::unsubmitted;
 
 const LINE: &str = "Your previous attempt ended without submitting; submit it now with submit_doc.";
 
-/// `label`'s session `session` ended a turn without its draft, unnudged.
+/// `label`'s session `session` ended a turn without its draft, unnudged: the driver's
+/// typed cause (task 8's re-review), never a failure's text.
 fn unsubmitted_end(fx: &mut Fixture, label: &str, session: u32) -> Vec<Effect> {
     let reason = unsubmitted(&BRAINSTORMER_TEXTS);
-    ended(fx, label, session, ScoutEnd::Failed { reason })
+    ended(fx, label, session, ScoutEnd::Unsubmitted { reason })
 }
 
 /// Its relaunch is a fresh session (never `codex exec resume`, with `--ephemeral`),
@@ -104,4 +105,38 @@ fn a_relaunch_survives_a_restore_once() {
     assert_eq!(codex.len(), 1, "{codex:?}");
     assert_eq!(codex[0].0, 3);
     assert!(codex[0].1.ends_with(LINE), "{}", codex[0].1);
+}
+
+/// Both brainstormers ending twice without submitting is DF §3.5's both-failed halt,
+/// with that reason each (task 8's test gap). Task 8's re-review (m1): `run resume` then
+/// relaunches both with their one relaunch given back, so a Codex brainstormer's first
+/// end without submitting relaunches it again instead of failing it.
+#[test]
+fn both_ending_twice_halts_and_a_resume_gives_each_its_relaunch_again() {
+    let mut fx = brainstorming();
+    unsubmitted_end(&mut fx, "claude", 1);
+    unsubmitted_end(&mut fx, "codex", 1);
+    started(&mut fx, "claude", 803);
+    started(&mut fx, "codex", 804);
+    unsubmitted_end(&mut fx, "claude", 2);
+    unsubmitted_end(&mut fx, "codex", 2);
+    let reason = "ended twice without submitting";
+    let halted = format!("design flow: both brainstormers failed: {reason}; {reason}");
+    assert_eq!(fx.run().state, RunState::Halted);
+    assert_eq!(fx.run().halted_reason.as_deref(), Some(halted.as_str()));
+    resume(&mut fx);
+    assert_eq!(fx.run().state, RunState::Brainstorming);
+    assert!(
+        agents(&fx).iter().all(|a| !a.unsubmitted),
+        "{:?}",
+        agents(&fx)
+    );
+    started(&mut fx, "codex", 805);
+    let before = launches(&fx).len();
+    unsubmitted_end(&mut fx, "codex", 3);
+    assert_eq!(launches(&fx).len(), before + 1, "relaunched, not failed");
+    let (_, spec) = launches(&fx).last().cloned().unwrap();
+    assert_eq!((spec.kind.label(), spec.session), ("codex".to_string(), 4));
+    assert!(spec.first_turn.ends_with(LINE), "{}", spec.first_turn);
+    assert_eq!(states(&fx)[1], DesignAgentState::Running);
 }

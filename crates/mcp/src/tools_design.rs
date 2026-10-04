@@ -39,9 +39,10 @@ pub fn brainstormer_tools() -> Vec<Tool> {
     vec![submit_draft()]
 }
 
-/// `tools_for(DocReviewer)`: read the document, then submit the findings once.
+/// `tools_for(DocReviewer)`: read the document (its review draft by `draft`, ruling
+/// T5-1), then submit the findings once.
 pub fn doc_reviewer_tools() -> Vec<Tool> {
-    vec![get_doc(), submit_findings()]
+    vec![reviewers_get_doc(), submit_findings()]
 }
 
 /// `[{id, answer}]`: the orchestrator's answer to each finding of the latest review,
@@ -116,6 +117,21 @@ fn get_doc() -> Tool {
             }),
             &["kind"],
         ),
+    )
+}
+
+/// The document reviewer's `get_doc` (task M9.6.10): also a spec's review draft by its
+/// review's number, `draft`.
+fn reviewers_get_doc() -> Tool {
+    let mut schema = get_doc().input_schema.as_ref().clone();
+    if let Some(Value::Object(properties)) = schema.get_mut("properties") {
+        properties.insert("draft".into(), json!({"type": "integer", "minimum": 1}));
+    }
+    Tool::new(
+        GET_DOC,
+        "Read a design document: the latest of a kind, one version, or the spec's review \
+         draft your first message names (draft).",
+        schema,
     )
 }
 

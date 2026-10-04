@@ -312,6 +312,7 @@ impl RunService {
             } => self.adopt(run_id, window_id, name),
             // Milestone 9.6 decision 12 (`driver/design_io.rs`), off every lock.
             Effect::WriteDoc { path, text, index } => self.write_doc(path, text, index).await,
+            Effect::ReadBack { run_id, docs } => self.read_back(run_id, docs),
             Effect::Persist { .. } | Effect::Op { .. } | Effect::Publish { .. } => {}
         }
     }

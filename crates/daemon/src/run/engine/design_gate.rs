@@ -118,7 +118,14 @@ pub(crate) fn act(
     let n = waiting(run).map_or(0, |g| g.version);
     let what = format!("{} v{n}", kind.label());
     match action {
-        DocGateAction::Approve => Ok(approve(run, kind, &what, now)),
+        DocGateAction::Approve => {
+            let text = approve(run, kind, &what, now);
+            // Task M9.6.10: the approved spec's requirements, from its stored text.
+            if kind == DocGateKind::Spec {
+                super::design::review::approved(run, n, fx);
+            }
+            Ok(text)
+        }
         DocGateAction::Changes { note, review } => {
             let note = clean_note(&note);
             let revising = (note.clone(), Revision::Changes);
@@ -141,7 +148,7 @@ pub(crate) fn act(
                 // Task M9.6.9: the user's report takes the drafts' appendix as well.
                 DocGateKind::Brainstorm => report_doc(run, &text, user, reason)?,
                 _ => {
-                    let text = checked_text(run, gate_doc(kind), &text, false)?;
+                    let text = checked_text(run, gate_doc(kind), &text, false, true)?;
                     NewDoc::new(gate_doc(kind), user, reason, &text)
                 }
             };

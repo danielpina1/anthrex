@@ -82,3 +82,39 @@ async fn a_codex_design_agents_next_turn_is_refused() {
     assert!(all[0].contains(&"--ephemeral".to_string()), "{:?}", all[0]);
     assert!(!all[0].contains(&"resume".to_string()), "{:?}", all[0]);
 }
+
+/// Milestone 9.6 task M9.6.10 (task 8's test gap): a Codex document reviewer, like a
+/// Codex brainstormer, runs one `--ephemeral` process and is never resumed.
+#[tokio::test]
+async fn a_codex_document_reviewer_is_ephemeral_and_never_resumed() {
+    let dir = tempfile::tempdir().unwrap();
+    let codex = codex_recorder(dir.path(), "");
+    let m = manager(&codex, &codex, |_| {});
+    let _cleanup = Cleanup(m.clone());
+    let mut feed = m.signals();
+    let mut spec = brainstormer(Runtime::Codex, dir.path());
+    let mcp = spec.mcp.as_mut().unwrap();
+    (mcp.role, mcp.agent_label) = (AgentRole::DocReviewer, Some("spec-r1".into()));
+    let info = create(&m, "r", spec, "first").await;
+    next_signal(&mut feed, "the first exit", is_exit).await;
+    let error = m
+        .headless_send(info.id, "second")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("never resumed"), "{error}");
+    let error = (m
+        .headless_resume(info.id, CODEX_THREAD, "again", Duration::ZERO)
+        .await)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("never resumed"), "{error}");
+    let all = argvs(dir.path());
+    assert_eq!(all.len(), 1, "{all:?}");
+    assert!(all[0].contains(&"--ephemeral".to_string()), "{:?}", all[0]);
+    let mcp = all[0]
+        .iter()
+        .any(|a| a.contains(r#""doc_reviewer","--run","r-3f9a","--agent-label","spec-r1""#));
+    assert!(mcp, "{:?}", all[0]);
+    assert!(!all[0].contains(&"resume".to_string()), "{:?}", all[0]);
+}

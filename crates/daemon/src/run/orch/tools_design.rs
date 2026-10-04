@@ -74,15 +74,20 @@ pub(super) fn parse(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCal
             }))
         }
         "get_doc" => {
-            let map = object(args, &["kind", "version", "from"])?;
+            // Ruling T5-1: the document reviewer also names its review draft.
+            let fields: &[&str] = match role {
+                AgentRole::DocReviewer => &["kind", "version", "from", "draft"],
+                _ => &["kind", "version", "from"],
+            };
+            let map = object(args, fields)?;
             let kind = kind(map)?;
-            let version = match map.get("version") {
-                None => None,
-                Some(v) => Some(
-                    (v.as_u64().filter(|n| *n >= 1))
-                        .and_then(|n| u32::try_from(n).ok())
-                        .ok_or("version: must be a positive integer")?,
-                ),
+            let version = positive(map, "version")?;
+            let draft = match positive(map, "draft")? {
+                Some(_) if kind != DocKind::Spec => {
+                    return Err("draft: only with kind spec".into());
+                }
+                Some(_) if version.is_some() => return Err("draft: not with version".into()),
+                draft => draft,
             };
             let from = match map.get("from") {
                 None => None,
@@ -97,6 +102,7 @@ pub(super) fn parse(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCal
                 kind,
                 version,
                 from,
+                draft,
             })
         }
         "submit_findings" => {
@@ -166,6 +172,16 @@ pub(super) fn responses(map: &Map<String, Value>) -> Result<Vec<FindingAnswer>, 
         answers.push(FindingAnswer { id, answer });
     }
     Ok(answers)
+}
+
+/// `field`, when given: a positive `u32`.
+fn positive(map: &Map<String, Value>, field: &str) -> Result<Option<u32>, String> {
+    let Some(value) = map.get(field) else {
+        return Ok(None);
+    };
+    let n = (value.as_u64().filter(|n| *n >= 1)).and_then(|n| u32::try_from(n).ok());
+    n.map(Some)
+        .ok_or_else(|| format!("{field}: must be a positive integer"))
 }
 
 fn kind(map: &Map<String, Value>) -> Result<DocKind, String> {

@@ -40,6 +40,8 @@ pub const SCOUT_POLICY: &str = "m9-scout-v1";
 pub const DECIDER_POLICY: &str = "m9-decider-v1";
 /// Milestone 9.6 decision 10: a brainstormer's.
 pub const BRAINSTORMER_POLICY: &str = "m9.6-brainstormer-v1";
+/// Milestone 9.6 decision 10 (task M9.6.10): the document reviewer's policy.
+pub const DOC_REVIEWER_POLICY: &str = "m9.6-doc-reviewer-v1";
 
 /// A run record's goal cap (`history::GOAL_CHARS`), which the input's goal shares.
 const GOAL_CHARS: usize = 200;
@@ -302,8 +304,33 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
 /// Milestone 9.6 decision 10: the record of brainstormer `agent`'s current session,
 /// `<label>/<session>`: chosen from the run's `brainstorm` list when its pick was
 /// (`DesignAgent.listed`; every candidate in the snapshot, a missing runtime's marked
-/// so), else the strongest model of its runtime (`roster_default`).
+/// so), else the strongest model of its runtime (`roster_default`). A document reviewer
+/// (task M9.6.10) is the orchestrator's peer (`peer_route`), else its own runtime
+/// (`same_runtime`), with no list.
 pub fn design_agent_record(run: &Run, agent: &DesignAgent, now: u64) -> RoleRoutingDecision {
+    if agent.role == AgentRole::DocReviewer {
+        let same = (run.orch.orchestrator.as_ref()).is_some_and(|o| o.route == agent.route);
+        let source = if same { "same_runtime" } else { "peer_route" };
+        let trigger = if agent.session == 1 {
+            "start"
+        } else {
+            "relaunch"
+        };
+        let session = format!("{}/{}", agent.label, agent.session);
+        let (input, route) = (input_of(run), &agent.route);
+        return record(
+            Some(run),
+            agent.role,
+            &session,
+            trigger,
+            source,
+            DOC_REVIEWER_POLICY,
+            input,
+            Vec::new(),
+            route,
+            now,
+        );
+    }
     let list = &run.limits.route_lists.brainstorm;
     let listed = (list.candidates.iter())
         .map(|c| RoutingCandidate {

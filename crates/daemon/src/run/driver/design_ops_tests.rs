@@ -88,6 +88,10 @@ fn previous(rig: &Rig) {
     prev.continued_by = Some(rig.run_id.clone());
     let doc = NewDoc::new(DocKind::Spec, DocAuthor::Orchestrator, "submitted", SPEC);
     let (_, effect) = state::store(&mut prev, doc, 10).unwrap();
+    // Task M9.6.10: approved, so its requirements are stored.
+    let design = prev.orch.design.as_mut().unwrap();
+    design.approved_spec = Some(1);
+    design.requirements = crate::run::design::requirements::scan(SPEC);
     let Effect::WriteDoc { path, text, .. } = effect else {
         panic!("not a write");
     };
@@ -429,4 +433,38 @@ async fn a_rethinks_pack_reads_the_previous_report_off_the_engine() {
         "{read}"
     );
     assert!(!read.contains("Changed."), "{read}");
+}
+
+/// Task 8's re-review: the driver gives the engine the end's cause by type. The
+/// machine's unnudged end without the submission, in the agent's own words, is
+/// `Unsubmitted`; any other failure, or the other role's words, is `Failed`.
+#[test]
+fn an_unsubmitted_end_reaches_the_engine_as_its_own_cause() {
+    use super::super::design_ops::design_end;
+    use crate::run::engine::ScoutEnd;
+    use crate::scout::design_spec::{BRAINSTORMER_TEXTS, DOC_REVIEWER_TEXTS, DesignAgentKind};
+    use crate::scout::machine::unsubmitted;
+    use crate::scout::service::ScoutOutcome;
+    let reviewer = DesignAgentKind::DocReviewer {
+        doc: "spec-r1".into(),
+    };
+    let failed = |reason: String| Some(ScoutOutcome::Failed { reason });
+    let own = unsubmitted(&DOC_REVIEWER_TEXTS);
+    assert_eq!(
+        design_end(&reviewer, failed(own.clone())),
+        ScoutEnd::Unsubmitted { reason: own }
+    );
+    let other = unsubmitted(&BRAINSTORMER_TEXTS);
+    assert_eq!(
+        design_end(&reviewer, failed(other.clone())),
+        ScoutEnd::Failed { reason: other }
+    );
+    assert_eq!(
+        design_end(&reviewer, Some(ScoutOutcome::Accepted)),
+        ScoutEnd::Reported
+    );
+    assert!(matches!(
+        design_end(&reviewer, None),
+        ScoutEnd::Failed { .. }
+    ));
 }

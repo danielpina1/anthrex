@@ -76,6 +76,10 @@ pub struct DesignState {
     /// Ruling T8-2: the brainstormers' pack inputs, frozen when they were queued.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pack: Option<FrozenPack>,
+    /// The spec version the user approved (task M9.6.10): its requirements and Goal
+    /// section are stored once the driver has read its text back.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_spec: Option<u32>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -163,7 +167,8 @@ pub enum DesignAgentState {
     Failed(String),
 }
 
-/// One document review (`submit_findings`), or why it failed.
+/// One document review (`submit_findings`), or why it failed: review `n` of `doc`,
+/// numbered from 1 (task M9.6.10).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocReviewRecord {
     pub doc: DocKind,
@@ -172,6 +177,13 @@ pub struct DocReviewRecord {
     pub findings: Vec<DocFinding>,
     #[serde(default)]
     pub failed: Option<String>,
+    /// The document's gate versions when the review was asked: the review belongs to the
+    /// next gate version, whose `ready` submit answers it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub after: u32,
+    /// Its reviewer ran on the orchestrator's own runtime (no peer installed).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub same_runtime: bool,
 }
 
 /// One stored version: its index entry. The text is the file, never `run.json`.
@@ -205,6 +217,10 @@ pub struct DocVersion {
     /// M9.6.9): the gate's Review panel shows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report: Option<ReportSummary>,
+    /// Ruling T5-1: a spec's review draft, sent to review `k`: stored with `n = 0`,
+    /// never a gate version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_review: Option<u32>,
 }
 
 impl DocVersion {
@@ -225,9 +241,14 @@ impl DesignState {
     pub fn find(&self, kind: DocKind, n: Option<u32>) -> Option<&DocVersion> {
         let mut of_kind = self.versions.iter().filter(|v| v.kind == kind);
         match n {
-            Some(n) => of_kind.find(|v| v.n == n),
+            Some(n) => of_kind.find(|v| v.n == n && v.draft_review.is_none()),
             None => of_kind.max_by_key(|v| v.n),
         }
+    }
+
+    /// Ruling T5-1: `kind`'s review draft for review `k` (`get_doc`'s `draft`).
+    pub fn draft(&self, kind: DocKind, k: u32) -> Option<&DocVersion> {
+        (self.versions.iter()).find(|v| v.kind == kind && v.draft_review == Some(k))
     }
 
     /// The live design agent of `role` in `window`: a brainstormer, or the document
@@ -247,9 +268,18 @@ impl DesignState {
 
     /// The version a diff of `v` compares against: the latest earlier version of its
     /// kind (for a draft, from the same brainstormer). `None` for a first version.
+    /// A review draft's is the draft before it (ruling T5-1), and a gate version never
+    /// compares against a draft.
     pub fn previous(&self, v: &DocVersion) -> Option<&DocVersion> {
+        if let Some(k) = v.draft_review {
+            let earlier = self.versions.iter().filter(|p| p.kind == v.kind);
+            return earlier
+                .filter(|p| p.draft_review.is_some_and(|j| j < k))
+                .max_by_key(|p| p.draft_review);
+        }
         (self.versions.iter())
             .filter(|p| p.kind == v.kind && p.n < v.n && p.label() == v.label())
+            .filter(|p| p.draft_review.is_none())
             .max_by_key(|p| p.n)
     }
 
@@ -262,8 +292,12 @@ impl DesignState {
     /// `v`'s file, relative to the design folder (decision 12): `spec-v<n>.md`, and a
     /// draft's `brainstorm/draft-<label>.md`. A brainstormer's later draft (after a
     /// rethink) is `brainstorm/draft-<label>-v<n>.md`, so no draft is overwritten.
+    /// A spec's review draft is `spec-draft-r<k>.md` (ruling T5-1).
     pub fn file_name(&self, v: &DocVersion) -> String {
         let n = v.n;
+        if let Some(k) = v.draft_review {
+            return format!("{}-draft-r{k}.md", v.kind.label());
+        }
         match (v.kind, v.label()) {
             (DocKind::BrainstormDraft, Some(label)) => match self.earlier_draft(v) {
                 false => format!("brainstorm/draft-{label}.md"),
@@ -346,6 +380,8 @@ pub struct NewDoc {
     pub changes: Vec<String>,
     pub same_runtime: bool,
     pub report: Option<ReportSummary>,
+    /// Ruling T5-1: a spec's review draft for review `k`, stored with `n = 0`.
+    pub draft_review: Option<u32>,
 }
 
 impl NewDoc {
@@ -360,6 +396,7 @@ impl NewDoc {
             changes: Vec::new(),
             same_runtime: false,
             report: None,
+            draft_review: None,
         }
     }
 }
@@ -384,13 +421,20 @@ pub fn store(run: &mut Run, doc: NewDoc, now: u64) -> Result<(DocVersion, Effect
         }
         _ => {}
     }
+    if doc.draft_review.is_some() && doc.kind != DocKind::Spec {
+        return Err("only a spec has review drafts".into());
+    }
     let requirements = match doc.kind {
         DocKind::Spec => scan(&doc.text).into_iter().map(|r| r.id).collect(),
         _ => Vec::new(),
     };
     let version = DocVersion {
         kind: doc.kind,
-        n: design.next_n(doc.kind),
+        // Ruling T5-1: a review draft is never numbered among the gate versions.
+        n: match doc.draft_review {
+            Some(_) => 0,
+            None => design.next_n(doc.kind),
+        },
         author: doc.author,
         reason: doc.reason,
         bytes: doc.text.len() as u64,
@@ -402,6 +446,7 @@ pub fn store(run: &mut Run, doc: NewDoc, now: u64) -> Result<(DocVersion, Effect
         changes: doc.changes,
         same_runtime: doc.same_runtime,
         report: doc.report,
+        draft_review: doc.draft_review,
     };
     design.versions.push(version.clone());
     let effect = Effect::WriteDoc {

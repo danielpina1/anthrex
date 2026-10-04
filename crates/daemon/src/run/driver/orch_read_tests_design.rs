@@ -191,3 +191,38 @@ async fn design_agents_are_checked_by_window_and_role() {
         format!("run {} does not use the design flow", plain.run_id)
     );
 }
+
+/// Ruling T5-1 (task M9.6.10): the reviewer reads its review draft by `draft`; a draft
+/// that does not exist is refused; `get_doc { kind: "spec" }` with no version reads the
+/// latest draft while no gate version exists.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_reviewer_reads_its_review_draft() {
+    let rig = Rig::new(design_run).await;
+    for (k, text) in [(1, "# Draft one\n"), (2, "# Draft two\n")] {
+        let effect = {
+            let mut engine = crate::lock(&rig.runs.state);
+            let run = engine.runs.get_mut(&rig.run_id).expect("the run");
+            let doc = NewDoc {
+                draft_review: Some(k),
+                ..NewDoc::new(DocKind::Spec, DocAuthor::Orchestrator, "draft", text)
+            };
+            state::store(run, doc, 2_000).expect("stored").1
+        };
+        let Effect::WriteDoc { path, text, .. } = effect else {
+            panic!("not a write: {effect:?}");
+        };
+        assert!(path.ends_with(format!("spec-draft-r{k}.md")), "{path:?}");
+        write_new(&path, &text).expect("written");
+    }
+    let read = |args| raw(&rig, AgentRole::DocReviewer, REVIEWER, args);
+    let (ok, text) = read(json!({"kind": "spec", "draft": 1})).await;
+    assert_eq!((ok, text.as_str()), (true, "# Draft one\n"));
+    let (ok, text) = read(json!({"kind": "spec"})).await;
+    assert_eq!((ok, text.as_str()), (true, "# Draft two\n"));
+    let (ok, text) = read(json!({"kind": "spec", "draft": 3})).await;
+    assert!(!ok);
+    assert_eq!(
+        error(&text),
+        format!("run {} has no spec draft for review 3", rig.run_id)
+    );
+}

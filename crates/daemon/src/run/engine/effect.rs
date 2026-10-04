@@ -105,4 +105,12 @@ pub enum Effect {
         text: String,
         index: Option<(PathBuf, String)>,
     },
+    /// Milestone 9.6 task M9.6.10: read stored versions back, each checked against its
+    /// index entry, and send their texts as `EventKind::DesignChecked`
+    /// (`driver/design_restore.rs`): the approved spec's, whose requirements the engine
+    /// stores from it.
+    ReadBack {
+        run_id: String,
+        docs: Vec<(crate::run::design::state::DocVersion, PathBuf)>,
+    },
 }

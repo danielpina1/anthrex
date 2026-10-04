@@ -25,6 +25,8 @@
 //! - **Rethink.** The user's rethink queues both again for the next brainstorm round,
 //!   with the note and the report it replaces in the round's pack (task M9.6.9,
 //!   [`rethink`]).
+//! - **The document reviewer** (task M9.6.10, `design_reviewer.rs`): one per review,
+//!   on the orchestrator's peer runtime, in the same reader slots, ending the same ways.
 //!
 //! Pure (design decision 2).
 
@@ -40,8 +42,7 @@ use crate::run::design::state::{DesignAgent, DesignAgentState};
 use crate::run::model::Run;
 use crate::run::orch::roles;
 use crate::run::orch::roles::lists::{brainstorm_picks_with, unsaved_missing};
-use crate::scout::design_spec::{BRAINSTORMER_TEXTS, DesignAgentSpec, brainstormer_spec};
-use crate::scout::machine::unsubmitted;
+use crate::scout::design_spec::{DesignAgentSpec, brainstormer_spec};
 
 /// A brainstormer's session that ended with no accepted draft and no failure of its own.
 pub const NO_DRAFT: &str = "the brainstormer ended without an accepted draft";
@@ -114,9 +115,13 @@ fn show_route(route: &proto::Route) -> String {
     }
 }
 
-/// One queued brainstormer starts in a free reader slot, while the run brainstorms;
-/// false when none is queued (`planners::dispatch`'s loop then tries the run scouts).
+/// One queued design agent starts in a free reader slot: a brainstormer while the run
+/// brainstorms, the document reviewer while its review is asked; false when none is
+/// queued (`planners::dispatch`'s loop then tries the run scouts).
 pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
+    if reviewer::start_next(run, now, fx) {
+        return true;
+    }
     if run.state != RunState::Brainstorming {
         return false;
     }
@@ -173,6 +178,9 @@ pub(super) fn started(
     let OpKind::StartDesignAgent { spec } = kind else {
         return None;
     };
+    if spec.kind.role() == AgentRole::DocReviewer {
+        return reviewer::started(run, spec, result, now, fx);
+    }
     let k = latest(run, spec);
     let live = |run: &Run, k: usize| {
         (run.orch.design.as_ref())
@@ -251,6 +259,9 @@ pub(super) fn ended(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    if role == AgentRole::DocReviewer {
+        return reviewer::ended(run, (label, session), (outcome, usage, calls), now, fx);
+    }
     if role != AgentRole::Brainstormer {
         return;
     }
@@ -270,9 +281,11 @@ pub(super) fn ended(
         agent.state,
         DesignAgentState::Submitted | DesignAgentState::Done
     );
-    let reason = match outcome {
-        ScoutEnd::Failed { reason } => reason,
-        ScoutEnd::Reported => NO_DRAFT.to_string(),
+    // Ruling T8-7: an unnudged end without the draft is its own cause, by type.
+    let (reason, unsubmitted) = match outcome {
+        ScoutEnd::Failed { reason } => (reason, false),
+        ScoutEnd::Unsubmitted { reason } => (reason, true),
+        ScoutEnd::Reported => (NO_DRAFT.to_string(), false),
     };
     let record = format!("{label}/{session}");
     let closed = match done {
@@ -282,8 +295,8 @@ pub(super) fn ended(
     history::close_session(run, (AgentRole::Brainstormer, &record), closed, fx);
     let running = (run.orch.design.as_ref())
         .is_some_and(|d| d.brainstormers[k].state == DesignAgentState::Running);
-    if running && reason == unsubmitted(&BRAINSTORMER_TEXTS) {
-        return relaunch::once(run, k, now, fx);
+    if running && unsubmitted {
+        return relaunch::once(run, relaunch::Agent::Brainstormer(k), now, fx);
     }
     if running {
         fail(run, k, reason, now, fx);
@@ -372,6 +385,8 @@ pub(super) fn relaunch_failed(run: &mut Run, now: u64) -> bool {
     for agent in design.brainstormers.iter_mut() {
         agent.state = DesignAgentState::Queued;
         agent.window_id = None;
+        // Task 8's re-review (m1): the resume gives each its one relaunch again.
+        agent.unsubmitted = false;
     }
     design.phase_started = None;
     log(run, now, "the brainstormers relaunch");
@@ -384,6 +399,7 @@ pub(super) fn relaunch_failed(run: &mut Run, now: u64) -> bool {
 /// resumes; nothing is killed (its `StartDesignAgent` reconciles as `NotStarted`, and
 /// its record is finished `interrupted` by the restore).
 pub(super) fn restore(run: &mut Run, now: u64) {
+    reviewer::restore(run, now);
     let Some(design) = run.orch.design.as_mut() else {
         return;
     };
@@ -409,6 +425,7 @@ pub(super) fn restore(run: &mut Run, now: u64) {
 /// brainstormers too. A live one is stopped, a queued one never starts; each fails
 /// with `reason`, and the brainstorm does not settle (the run is ending).
 pub(super) fn halt_all(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
+    reviewer::halt_all(run, reason, fx);
     let Some(design) = run.orch.design.as_mut() else {
         return;
     };
@@ -435,14 +452,30 @@ pub(super) fn halt_all(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
     }
 }
 
+/// A design agent's tool (task 6's review c), after `orch::tool`'s run-state gate: a
+/// brainstormer's draft, or the document reviewer's findings (task M9.6.10).
+pub(super) fn tool(
+    run: &mut Run,
+    reply: super::ReplyId,
+    call: &proto::ToolCall,
+    ending: (Option<String>, u64),
+    fx: &mut Vec<Effect>,
+) {
+    match call.role {
+        AgentRole::DocReviewer => reviewer::tool(run, reply, call, ending, fx),
+        _ => drafts::tool(run, reply, call, ending, fx),
+    }
+}
+
 #[path = "design_drafts.rs"]
 mod drafts;
-pub(super) use drafts::tool;
 #[path = "design_pack.rs"]
 mod pack;
 #[path = "design_relaunch.rs"]
 mod relaunch;
 #[path = "design_rethink.rs"]
 mod rethink;
+#[path = "design_reviewer.rs"]
+pub(super) mod reviewer;
 pub(super) use pack::awaiting_drafts;
 pub(super) use rethink::rethink;

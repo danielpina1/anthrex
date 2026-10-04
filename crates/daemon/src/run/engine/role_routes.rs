@@ -256,10 +256,12 @@ pub(in crate::run::engine) fn planner_ended(
         (Ok(ScoutEnd::Reported), false) => {
             (RoleOutcome::Failed, "ended without an accepted epic".into())
         }
-        (Ok(ScoutEnd::Failed { reason }), true) => {
+        (Ok(ScoutEnd::Failed { reason } | ScoutEnd::Unsubmitted { reason }), true) => {
             (RoleOutcome::Failed, format!("{ACCEPTED}; then {reason}"))
         }
-        (Ok(ScoutEnd::Failed { reason }), false) => (RoleOutcome::Failed, reason.clone()),
+        (Ok(ScoutEnd::Failed { reason } | ScoutEnd::Unsubmitted { reason }), false) => {
+            (RoleOutcome::Failed, reason.clone())
+        }
         (Err(why), _) => (RoleOutcome::Failed, why),
     };
     let (outcome, text) = ended;

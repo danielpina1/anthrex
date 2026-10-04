@@ -44,6 +44,8 @@ pub struct DocQuery {
     pub version: Option<u32>,
     /// A brainstorm draft's label (`get_doc`'s `from`): that brainstormer's latest.
     pub from: Option<String>,
+    /// A spec's review draft for review `k` (`get_doc`'s `draft`, ruling T5-1).
+    pub draft: Option<u32>,
     pub diff: bool,
     pub findings: bool,
 }
@@ -114,13 +116,13 @@ impl RunService {
         &self,
         run_id: &str,
         kind: DocKind,
-        version: Option<u32>,
-        from: Option<String>,
+        (version, from, draft): (Option<u32>, Option<String>, Option<u32>),
     ) -> Result<String, String> {
         let query = DocQuery {
             kind,
             version,
             from,
+            draft,
             diff: false,
             findings: false,
         };
@@ -154,14 +156,17 @@ impl RunService {
         let run = (state.runs.get(run_id)).ok_or_else(|| format!("unknown run {run_id}"))?;
         let design = (run.orch.design.as_ref()).ok_or_else(|| state::not_design(run_id))?;
         let name = kind_name(query.kind);
-        let version = match (&query.from, query.version) {
-            (Some(label), _) => design
+        let version = match (&query.from, query.version, query.draft) {
+            (None, None, Some(k)) => design
+                .draft(query.kind, k)
+                .ok_or_else(|| format!("run {run_id} has no {name} draft for review {k}"))?,
+            (Some(label), _, _) => design
                 .draft_from(label)
                 .ok_or_else(|| format!("run {run_id} has no {name} from {label}"))?,
-            (None, Some(n)) => design
+            (None, Some(n), _) => design
                 .find(query.kind, Some(n))
                 .ok_or_else(|| format!("run {run_id} has no {name} v{n}"))?,
-            (None, None) => design
+            (None, None, None) => design
                 .find(query.kind, None)
                 .ok_or_else(|| format!("run {run_id} has no {name} yet"))?,
         };

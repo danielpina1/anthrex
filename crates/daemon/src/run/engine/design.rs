@@ -19,9 +19,7 @@ use super::requests::log;
 use super::{Effect, ReplyId, design_gate, wake};
 use crate::run::design::pack::EarlierSpec;
 use crate::run::design::requirements;
-use crate::run::design::state::{
-    DesignAgentState, DesignState, NewDoc, Revision, gate_doc, not_design,
-};
+use crate::run::design::state::{DesignAgentState, DesignState, Revision, gate_doc, not_design};
 use crate::run::design::template::kind_name;
 use crate::run::design::template::{self, TemplateCtx};
 use crate::run::model::Run;
@@ -29,10 +27,6 @@ use crate::run::orch::tools::{OrchCall, SubmitDoc};
 
 /// Decision 6: said once, at the start of a design run started with `--yes`.
 pub const YES_LINE: &str = "design flow: --yes does not skip the brainstorm, spec or plan gates";
-
-/// Until task M9.6.10 sends a spec draft to its review, a spec is submitted ready.
-pub const SPEC_REVIEW_NOT_YET: &str =
-    "a spec review draft (ready = false) is not available yet; submit with ready = true";
 
 /// Decision 4: a design run enters `brainstorming` with an empty design state, where a
 /// run without the flow enters `planning` (`orch::make_planned`). Decision 6: `--yes`
@@ -176,9 +170,6 @@ pub(super) fn submit_doc(
         _ => return Err("the orchestrator submits the brainstorm report and the spec".into()),
     };
     admitted(run, kind)?;
-    if kind == DocGateKind::Spec && !doc.ready {
-        return Err(SPEC_REVIEW_NOT_YET.into());
-    }
     let reason = match design_gate::revising(run) {
         Some(note) => format!("revised: {}", design_gate::note_head(&note)),
         None => "submitted".to_string(),
@@ -189,24 +180,24 @@ pub(super) fn submit_doc(
             Some(text) => return Err(text),
             None => report::report_doc(run, &doc.text, DocAuthor::Orchestrator, &reason)?,
         },
-        _ => {
-            let text = checked_text(run, doc.kind, &doc.text, doc.amend)?;
-            NewDoc::new(doc.kind, DocAuthor::Orchestrator, &reason, &text)
-        }
+        // Task M9.6.10: a review draft, or the gate's next version after its review.
+        _ => return review::submit_spec(run, doc, &reason, now, fx),
     };
     let n = design_gate::open(run, doc, now, fx)?;
     Ok(json!({"accepted": true, "kind": kind.label(), "version": n, "awaiting_approval": true}))
 }
 
 /// `raw` as `kind`'s template admits it (capped on its raw bytes, then cleaned and
-/// checked), and a spec's requirements numbered (decision 14): the text to store.
+/// checked, its Open questions empty when `ready`), and a spec's requirements numbered
+/// (decision 14): the text to store.
 pub(super) fn checked_text(
     run: &Run,
     kind: DocKind,
     raw: &str,
     amend: bool,
+    ready: bool,
 ) -> Result<String, String> {
-    let text = template::admit(kind, raw, &template_ctx(run, true))?;
+    let text = template::admit(kind, raw, &template_ctx(run, ready))?;
     if kind == DocKind::Spec {
         let approved = run.orch.design.as_ref().map(|d| &d.requirements[..]);
         match (amend, approved) {
@@ -429,6 +420,8 @@ pub struct DocChecked {
 /// orchestrator is woken to submit it again, so that version is never shown. The
 /// latest texts refill the change summaries' cache.
 pub(super) fn checked(run: &mut Run, checked: Vec<DocChecked>, now: u64) {
+    // Task M9.6.10: the approved spec's requirements, from its text read back.
+    review::requirements_read(run, &checked, now);
     let gate = design_gate::waiting(run).cloned();
     let mut lost = false;
     for doc in checked {
@@ -469,3 +462,5 @@ pub(super) fn checked(run: &mut Run, checked: Vec<DocChecked>, now: u64) {
 
 #[path = "design_report.rs"]
 pub(super) mod report;
+#[path = "design_review.rs"]
+pub(crate) mod review;

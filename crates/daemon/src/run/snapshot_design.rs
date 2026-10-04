@@ -32,9 +32,11 @@ fn doc_gate(design: &DesignState) -> Option<DocGateInfo> {
     })
 }
 
-/// Every stored version, in the order stored.
+/// Every stored version, in the order stored; a spec's review drafts are not among the
+/// versions (ruling T5-1).
 fn docs(design: &DesignState) -> Vec<DocInfo> {
     (design.versions.iter())
+        .filter(|v| v.draft_review.is_none())
         .map(|v| DocInfo {
             kind: v.kind,
             version: v.n,

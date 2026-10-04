@@ -12,6 +12,8 @@
 //! engine nothing: the gates stay as they were stored.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use proto::DocKind;
@@ -53,7 +55,34 @@ impl RunService {
         }
     }
 
-    /// Each design run's versions, looked up under the engine lock.
+    /// `Effect::ReadBack` (task M9.6.10): `docs` read back off the engine lock, on its
+    /// own task, each checked against its index entry and its text kept, then sent as
+    /// `EventKind::DesignChecked`. A read that failed, panicked or passed [`IO_WAIT`] is
+    /// sent as each version's error, so the engine never waits for it.
+    pub(super) fn read_back(self: &Arc<Self>, run_id: String, docs: Vec<(DocVersion, PathBuf)>) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            let named: Vec<(DocKind, u32)> = docs.iter().map(|(v, _)| (v.kind, v.n)).collect();
+            let docs = (docs.into_iter())
+                .map(|(v, path)| (v, path, true))
+                .collect();
+            let read = tokio::task::spawn_blocking(move || check(docs));
+            let checked = match tokio::time::timeout(IO_WAIT, read).await {
+                Ok(Ok(checked)) => checked,
+                Ok(Err(error)) => unread(&named, format!("its read failed: {error}")),
+                Err(_) => unread(
+                    &named,
+                    format!("its read took over {} s", IO_WAIT.as_secs()),
+                ),
+            };
+            if !service.stopped.load(Ordering::SeqCst) {
+                service.send(EventKind::DesignChecked { run_id, checked });
+            }
+        });
+    }
+
+    /// Each design run's versions, looked up under the engine lock. A spec's review
+    /// drafts are not gate documents (ruling T5-1) and are not checked.
     fn design_docs(&self) -> Vec<(String, Vec<ToCheck>)> {
         let state = crate::lock(&self.state); // lookup only; no file access under it
         let runs = state.runs.values().filter(|r| !r.state.is_terminal());
@@ -61,6 +90,7 @@ impl RunService {
             let design = run.orch.design.as_ref()?;
             let dir = state::design_dir(run);
             let docs = (design.versions.iter())
+                .filter(|v| v.draft_review.is_none())
                 .map(|v| (v.clone(), dir.join(design.file_name(v)), kept(design, v)))
                 .collect();
             Some((run.id.clone(), docs))
@@ -72,14 +102,31 @@ impl RunService {
 /// Whether `v`'s text is kept once read back: it is the latest version of a gate's
 /// document (what the next version's change summary compares against), or its
 /// brainstormer's latest draft (what the merged report's appendix attaches, task
-/// M9.6.9).
+/// M9.6.9), or the approved spec whose requirements are not stored yet (task M9.6.10).
 pub(super) fn kept(design: &DesignState, v: &DocVersion) -> bool {
+    let due = design
+        .approved_spec
+        .filter(|_| design.requirements.is_empty());
+    if v.kind == DocKind::Spec && due == Some(v.n) {
+        return true;
+    }
     let latest = match (v.kind, v.label()) {
         (DocKind::BrainstormDraft, Some(label)) => design.draft_from(label),
         (DocKind::BrainstormDraft, None) => None,
         (kind, _) => design.find(kind, None),
     };
     v.n > 0 && latest.is_some_and(|l| l.n == v.n)
+}
+
+/// Every one of `named`'s versions, unread for `reason`.
+fn unread(named: &[(DocKind, u32)], reason: String) -> Vec<DocChecked> {
+    (named.iter())
+        .map(|&(kind, n)| DocChecked {
+            kind,
+            n,
+            read: Err(reason.clone()),
+        })
+        .collect()
 }
 
 /// The blocking half for every run: [`check`] each run's versions.

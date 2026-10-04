@@ -267,3 +267,44 @@ fn a_tool_outside_its_role_is_refused_exactly() {
         Err("tool submit_doc is not available to the doc_reviewer role".into())
     );
 }
+
+/// Ruling T5-1 (task M9.6.10): `get_doc`'s `draft: <k>`, a spec's review draft, is the
+/// document reviewer's only; with kind spec, without `version` or `from`.
+#[test]
+fn get_docs_draft_is_the_document_reviewers_only() {
+    let reviewer = |args: Value| parse_call(AgentRole::DocReviewer, "get_doc", &args);
+    assert_eq!(
+        reviewer(json!({"kind": "spec", "draft": 2})),
+        Ok(OrchCall::GetDoc {
+            kind: proto::DocKind::Spec,
+            version: None,
+            from: None,
+            draft: Some(2),
+        })
+    );
+    assert_eq!(
+        orch("get_doc", json!({"kind": "spec", "draft": 2})),
+        Err("invalid arguments: draft: unknown field".into())
+    );
+    for (args, refused) in [
+        (
+            json!({"kind": "plan", "draft": 1}),
+            "draft: only with kind spec",
+        ),
+        (
+            json!({"kind": "spec", "draft": 1, "version": 1}),
+            "draft: not with version",
+        ),
+        (
+            json!({"kind": "spec", "draft": 0}),
+            "draft: must be a positive integer",
+        ),
+        (
+            json!({"kind": "spec", "draft": "1"}),
+            "draft: must be a positive integer",
+        ),
+    ] {
+        let refused = format!("invalid arguments: {refused}");
+        assert_eq!(reviewer(args.clone()), Err(refused), "{args}");
+    }
+}

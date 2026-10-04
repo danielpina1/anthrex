@@ -284,6 +284,13 @@ fn the_pack_inputs_are_frozen_when_the_brainstormers_are_queued() {
     prev.orch.design = Some(DesignState::default());
     let doc = NewDoc::new(DocKind::Spec, DocAuthor::Orchestrator, "submitted", DRAFT);
     let (version, _) = state::store(&mut prev, doc, 5).unwrap();
+    // Task M9.6.10: approved, so its requirements are stored.
+    let design = prev.orch.design.as_mut().unwrap();
+    design.approved_spec = Some(1);
+    design.requirements = vec![state::Requirement {
+        id: "R1".into(),
+        text: "one".into(),
+    }];
     let path = state::design_dir(&prev).join("spec-v1.md");
     fx.state.runs.insert(prev.id.clone(), prev);
     fx.run_mut().limits.max_readers = 1;

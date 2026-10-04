@@ -373,7 +373,11 @@ impl RunService {
                 kind,
                 version,
                 from,
-            } => match self.get_doc(&call.run_id, kind, version, from).await {
+                draft,
+            } => match self
+                .get_doc(&call.run_id, kind, (version, from, draft))
+                .await
+            {
                 Ok(text) => RunReply::tool_result(true, text),
                 Err(text) => refused(text),
             },

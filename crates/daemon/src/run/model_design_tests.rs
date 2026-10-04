@@ -171,6 +171,7 @@ fn the_state_survives_save_and_load() {
                 tag: "both".into(),
             }],
         }),
+        draft_review: None,
     };
     let route = Route {
         runtime: Runtime::Codex,
@@ -201,20 +202,33 @@ fn the_state_survives_save_and_load() {
             route,
             session: 1,
             window_id: None,
-            state: DesignAgentState::Done,
+            state: DesignAgentState::Running,
             calls: 2,
             tokens: 100,
             started: None,
             listed: false,
-            unsubmitted: false,
+            // Task 8's re-review (m2): a relaunch's mark goes to disk and back.
+            unsubmitted: true,
         }),
         reviews: vec![DocReviewRecord {
             doc: DocKind::Spec,
             n: 1,
             findings: vec![finding.clone()],
             failed: None,
+            // Task M9.6.10: the cycle the review belongs to, and its runtime.
+            after: 1,
+            same_runtime: true,
         }],
-        versions: vec![version(DocKind::Brainstorm, 1), version(DocKind::Spec, 2)],
+        versions: vec![
+            version(DocKind::Brainstorm, 1),
+            version(DocKind::Spec, 2),
+            // Ruling T5-1: a review draft.
+            DocVersion {
+                n: 0,
+                draft_review: Some(2),
+                ..version(DocKind::Spec, 0)
+            },
+        ],
         gate: Some(DocGate {
             kind: DocGateKind::Spec,
             version: 2,
@@ -262,6 +276,8 @@ fn the_state_survives_save_and_load() {
                 version: version(DocKind::Brainstorm, 1),
             }),
         }),
+        // Task M9.6.10: the approved spec, whose requirements are stored.
+        approved_spec: Some(2),
     };
     let mut run = old_run();
     run.design_mode = DesignMode::Full;
@@ -275,6 +291,10 @@ fn the_state_survives_save_and_load() {
     assert_eq!(json["orch"]["design"]["gate"]["kind"], "spec");
     assert_eq!(json["orch"]["design"]["halted_from"], "specifying");
     assert_eq!(json["orch"]["design"]["gate"]["cause"], "back");
+    assert_eq!(json["orch"]["design"]["reviewer"]["unsubmitted"], true);
+    assert_eq!(json["orch"]["design"]["versions"][2]["draft_review"], 2);
+    assert_eq!(json["orch"]["design"]["reviews"][0]["after"], 1);
+    assert_eq!(json["orch"]["design"]["approved_spec"], 2);
     assert!(json["orch"]["design"].get("texts").is_none());
 
     // Without it, `orch` has no `design` key.

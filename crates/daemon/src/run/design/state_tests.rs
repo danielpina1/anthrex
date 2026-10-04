@@ -197,3 +197,42 @@ fn a_live_agent_runs_in_its_window_in_its_role() {
     assert!(design.live_agent(AgentRole::DocReviewer, 7).is_none());
     assert!(design.live_agent(AgentRole::Brainstormer, 9).is_none());
 }
+
+/// Ruling T5-1 (task M9.6.10): a spec's review draft is stored with `n = 0` and its
+/// review's number, as `spec-draft-r<k>.md`; it takes no gate number, `find(Some(n))`
+/// never returns it, `draft(kind, k)` does, and a gate version's diff never compares
+/// against a draft (a draft's compares against the draft before it).
+#[test]
+fn a_review_draft_is_stored_outside_the_gate_versions() {
+    let mut run = run(true);
+    let spec = |text: &str, draft_review| NewDoc {
+        draft_review,
+        ..NewDoc::new(DocKind::Spec, DocAuthor::Orchestrator, "r", text)
+    };
+    let (d1, write) = store(&mut run, spec("d1", Some(1)), 1).unwrap();
+    assert_eq!((d1.n, d1.draft_review), (0, Some(1)));
+    let Effect::WriteDoc { path, .. } = write else {
+        panic!("a write");
+    };
+    assert!(path.ends_with("design/spec-draft-r1.md"), "{path:?}");
+    let (d2, _) = store(&mut run, spec("d2", Some(2)), 2).unwrap();
+    let (v1, _) = store(&mut run, spec("v1", None), 3).unwrap();
+    assert_eq!(v1.n, 1, "drafts take no gate number");
+    let design = run.orch.design.as_ref().unwrap();
+    assert_eq!(design.gate_versions(DocKind::Spec), 1);
+    assert_eq!(design.find(DocKind::Spec, Some(0)), None);
+    assert_eq!(design.find(DocKind::Spec, Some(1)), Some(&v1));
+    assert_eq!(design.draft(DocKind::Spec, 2), Some(&d2));
+    assert_eq!(design.draft(DocKind::Spec, 3), None);
+    assert_eq!(design.previous(&v1), None);
+    assert_eq!(design.previous(&d2), Some(&d1));
+    assert_eq!(design.previous(&d1), None);
+    let brainstorm = NewDoc {
+        draft_review: Some(1),
+        ..NewDoc::new(DocKind::Brainstorm, DocAuthor::Orchestrator, "r", "b")
+    };
+    assert_eq!(
+        store(&mut run, brainstorm, 4).unwrap_err(),
+        "only a spec has review drafts"
+    );
+}

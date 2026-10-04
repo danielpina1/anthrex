@@ -175,7 +175,7 @@ pub(super) fn ended(
         return;
     }
     let reason = match outcome {
-        ScoutEnd::Failed { reason } => reason,
+        ScoutEnd::Failed { reason } | ScoutEnd::Unsubmitted { reason } => reason,
         ScoutEnd::Reported => "the sub-planner ended without an accepted epic".to_string(),
     };
     fail(run, k, reason, now);

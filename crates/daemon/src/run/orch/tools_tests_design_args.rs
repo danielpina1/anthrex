@@ -85,7 +85,8 @@ fn design_tools_parse_into_their_calls() {
             Ok(OrchCall::GetDoc {
                 kind: DocKind::Spec,
                 version: None,
-                from: None
+                from: None,
+                draft: None,
             })
         );
     }
@@ -94,7 +95,8 @@ fn design_tools_parse_into_their_calls() {
         Ok(OrchCall::GetDoc {
             kind: DocKind::Plan,
             version: Some(3),
-            from: None
+            from: None,
+            draft: None,
         })
     );
     assert_eq!(
@@ -105,7 +107,8 @@ fn design_tools_parse_into_their_calls() {
         Ok(OrchCall::GetDoc {
             kind: DocKind::BrainstormDraft,
             version: None,
-            from: Some("codex".into())
+            from: Some("codex".into()),
+            draft: None,
         })
     );
     let finding = |id: &str, severity| DocFinding {

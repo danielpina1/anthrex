@@ -71,7 +71,7 @@ pub(in crate::run::engine) fn report_doc(
         true => report::split(raw).0,
         false => raw,
     };
-    let text = checked_text(run, DocKind::Brainstorm, raw, false)?;
+    let text = checked_text(run, DocKind::Brainstorm, raw, false, true)?;
     let labels: Vec<String> = (run.orch.design.iter())
         .flat_map(|d| &d.brainstormers)
         .map(|a| a.label.clone())

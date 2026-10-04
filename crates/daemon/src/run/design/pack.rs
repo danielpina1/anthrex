@@ -231,7 +231,8 @@ pub fn previous_spec<'a>(
 ) -> Option<EarlierSpec> {
     let prev = (runs.into_iter()).find(|r| r.continued_by.as_deref() == Some(run_id))?;
     let design = prev.orch.design.as_ref()?;
-    let version = design.find(DocKind::Spec, None).filter(|v| v.n > 0)?;
+    // Task M9.6.10: the version the user approved.
+    let version = design.find(DocKind::Spec, design.approved_spec)?;
     spec_approved(prev).then(|| EarlierSpec {
         run: prev.id.clone(),
         path: design_dir(prev).join(design.file_name(version)),
@@ -239,22 +240,16 @@ pub fn previous_spec<'a>(
     })
 }
 
-/// Whether `run`'s spec was approved: the run is past brainstorming and specifying (not
-/// in them, paused or halted there, nor waiting at the brainstorm or spec gate), and
-/// was not discarded.
+/// Whether `run`'s spec was approved: its requirements are stored, which happens only
+/// at the spec's approval (task 7's carry, task M9.6.10), and the run was not
+/// discarded nor sent back to its spec gate.
 fn spec_approved(run: &Run) -> bool {
     let Some(design) = run.orch.design.as_ref() else {
         return false;
     };
-    let doc_phase =
-        |s: Option<RunState>| matches!(s, Some(RunState::Brainstorming | RunState::Specifying));
     let at_doc_gate = run.state == RunState::AwaitingApproval
         && (design.gate.as_ref()).is_some_and(|g| g.kind != DocGateKind::Plan);
-    let before = doc_phase(Some(run.state))
-        || doc_phase(run.paused_from)
-        || doc_phase(design.halted_from)
-        || at_doc_gate;
-    !before && run.state != RunState::Discarded
+    !design.requirements.is_empty() && !at_doc_gate && run.state != RunState::Discarded
 }
 
 #[cfg(test)]

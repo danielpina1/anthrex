@@ -1,6 +1,6 @@
 //! Task M9.6.4: decision 14's requirement parsing, with the exact refusal texts.
 
-use super::{Requirement, TEXT_CAP, parse, parse_amendment, scan};
+use super::{GOAL_CAP, Requirement, TEXT_CAP, goal_section, parse, parse_amendment, scan};
 
 fn req(id: &str, text: &str) -> Requirement {
     Requirement {
@@ -209,4 +209,19 @@ fn an_amendment_continues_the_numbering() {
 fn scan_is_lenient_and_keeps_the_first_of_a_repeat() {
     let text = spec("R3 c\nR1 a\nR3 again\n");
     assert_eq!(scan(&text), vec![req("R3", "c"), req("R1", "a")]);
+}
+
+/// Decision 12 (task M9.6.10): the Goal section the approved spec's requirements travel
+/// with, trimmed, outside code, and cut to 8 KiB on a character.
+#[test]
+fn the_goal_section_is_read_trimmed_and_capped() {
+    let text = "# T\n\n## Goal and success criteria\n\n  Users reset.\nDone when mailed.\n\n## Non-goals\nSSO.\n";
+    assert_eq!(goal_section(text), "Users reset.\nDone when mailed.");
+    assert_eq!(goal_section("# T\n\n## Design\nx\n"), "");
+    let long = format!(
+        "## Goal and success criteria\n{}é\n",
+        "a".repeat(GOAL_CAP - 1)
+    );
+    let cut = goal_section(&long);
+    assert_eq!(cut.len(), GOAL_CAP - 1, "the é would cross the cap");
 }

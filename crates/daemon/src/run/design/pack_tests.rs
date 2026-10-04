@@ -128,6 +128,10 @@ fn previous(next: &str) -> Run {
         &spec_text(),
     );
     store(&mut run, doc, 10).unwrap();
+    // Task M9.6.10: approved, its requirements stored from its text.
+    let design = run.orch.design.as_mut().unwrap();
+    design.approved_spec = Some(1);
+    design.requirements = crate::run::design::requirements::scan(&spec_text());
     run.state = RunState::Complete;
     run.continued_by = Some(next.into());
     run
@@ -189,6 +193,24 @@ fn a_chained_goals_pack_carries_the_previous_spec() {
         let runs = BTreeMap::from([(stopped.id.clone(), stopped)]);
         assert_eq!(previous_spec(runs.values(), "next-run-0002"), None);
     }
+    // Task 7's carry (task M9.6.10): approved is "its requirements are stored"; a run
+    // whose approved spec never had them stored carries none.
+    let mut unread = prev.clone();
+    unread.orch.design.as_mut().unwrap().requirements.clear();
+    let runs = BTreeMap::from([(unread.id.clone(), unread)]);
+    assert_eq!(previous_spec(runs.values(), "next-run-0002"), None);
+    // The approved version is carried, not a later one.
+    let mut later = prev.clone();
+    let doc = NewDoc::new(
+        DocKind::Spec,
+        DocAuthor::User,
+        "edited by you",
+        &spec_text(),
+    );
+    store(&mut later, doc, 11).unwrap();
+    let runs = BTreeMap::from([(later.id.clone(), later)]);
+    let earlier = previous_spec(runs.values(), "next-run-0002").unwrap();
+    assert_eq!(earlier.version.n, 1);
 }
 
 /// Task M9.6.9 (decision 7, DF §2.1): a rethink's pack carries the user's note and the

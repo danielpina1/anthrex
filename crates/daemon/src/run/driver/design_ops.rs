@@ -30,6 +30,7 @@ use crate::run::design::pack::{
 use crate::run::design::state::sha256_hex;
 use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent, ScoutEnd};
 use crate::scout::design_spec::{DesignAgentKind, DesignAgentSpec};
+use crate::scout::machine::unsubmitted;
 use crate::scout::service::{ScoutHandle, ScoutOutcome, ScoutService};
 
 impl RunService {
@@ -63,7 +64,7 @@ impl RunService {
                 let window_id = handle.window_id;
                 let (service, run_id) = (self.clone(), ctx.run_id.clone());
                 tokio::spawn(async move {
-                    let (outcome, usage, calls) = ended(&scouts, handle).await;
+                    let (outcome, usage, calls) = ended(&scouts, &kind, handle).await;
                     let k = kind.clone();
                     service
                         .settled(&run_id, move |op| {
@@ -287,15 +288,31 @@ fn canonical(path: &Path) -> Option<PathBuf> {
 }
 
 /// How a design agent's session ended, what it spent and how many tools it called.
-async fn ended(scouts: &ScoutService, handle: ScoutHandle) -> (ScoutEnd, TokenUsage, u32) {
+async fn ended(
+    scouts: &ScoutService,
+    kind: &DesignAgentKind,
+    handle: ScoutHandle,
+) -> (ScoutEnd, TokenUsage, u32) {
     let info = |id: &str| scouts.info(id).map(|i| (i.usage, i.tool_calls));
-    let outcome = match handle.outcome.await {
-        Ok(ScoutOutcome::Accepted | ScoutOutcome::Report(_)) => ScoutEnd::Reported,
-        Ok(ScoutOutcome::Failed { reason }) => ScoutEnd::Failed { reason },
-        Err(_) => ScoutEnd::Failed {
-            reason: "the session ended without an outcome".to_string(),
-        },
-    };
+    let outcome = design_end(kind, handle.outcome.await.ok());
     let (usage, calls) = info(&handle.id).unwrap_or_default();
     (outcome, usage, calls)
+}
+
+/// A design agent's session's end as the engine takes it (`None`: no outcome came).
+/// Ruling T8-7: the machine fails a turn that ended unnudged without the submission
+/// with exactly `scout::machine::unsubmitted` of the agent's texts, its one producer;
+/// that failure is `ScoutEnd::Unsubmitted`, so the engine relaunches by the cause's
+/// type and never compares a reason's text.
+pub(super) fn design_end(kind: &DesignAgentKind, outcome: Option<ScoutOutcome>) -> ScoutEnd {
+    match outcome {
+        Some(ScoutOutcome::Accepted | ScoutOutcome::Report(_)) => ScoutEnd::Reported,
+        Some(ScoutOutcome::Failed { reason }) if reason == unsubmitted(&kind.texts()) => {
+            ScoutEnd::Unsubmitted { reason }
+        }
+        Some(ScoutOutcome::Failed { reason }) => ScoutEnd::Failed { reason },
+        None => ScoutEnd::Failed {
+            reason: "the session ended without an outcome".to_string(),
+        },
+    }
 }

@@ -331,3 +331,52 @@ fn a_codex_design_agent_is_never_resumed_and_a_claude_one_is_nudged() {
     let args = codex_args(&spec, &resume, "go", exe, 7, sock, &CLI_CAPS);
     assert!(args.contains(&"--ephemeral".to_string()), "{args:?}");
 }
+
+/// Task M9.6.10: the document reviewer's launch. Its contract (under 1 KiB) and first
+/// turn, which names its review draft (ruling T5-1); its tools and budget; and, on Codex
+/// (task 8's test gap), an argv with `--ephemeral` and never `resume`, first turn and
+/// relaunch alike (ruling T8-7).
+#[test]
+fn a_document_reviewer_is_launched_read_only_and_never_resumed() {
+    use crate::headless::argv::codex_args;
+    assert!(
+        DOC_REVIEWER_CONTRACT.len() < 1024,
+        "{}",
+        DOC_REVIEWER_CONTRACT.len()
+    );
+    let run = run();
+    let mut reviewer = agent("spec-r2", Runtime::Codex);
+    reviewer.role = AgentRole::DocReviewer;
+    let spec = reviewer_spec(&run, &reviewer, 2);
+    assert_eq!(
+        spec.first_turn,
+        "[anthrex] Review the spec draft sent to review 2: read it with get_doc, kind \"spec\", draft 2. Then submit your findings once with submit_findings."
+    );
+    assert_eq!(spec.kind.role(), AgentRole::DocReviewer);
+    assert_eq!(spec.headless.instructions, DOC_REVIEWER_CONTRACT);
+    let budget = run.limits.orch.design.doc_reviewer;
+    assert_eq!(spec.max_tool_calls, budget.tool_calls);
+    assert_eq!(spec.timeout_secs, u64::from(budget.minutes) * 60);
+    let mcp = spec.headless.mcp.as_ref().unwrap();
+    assert_eq!(mcp.agent_label.as_deref(), Some("spec-r2"));
+    assert!(
+        !design_limits(&spec).nudges,
+        "a Codex reviewer is never nudged"
+    );
+    let (exe, sock) = (Path::new("/opt/anthrex"), Path::new("/tmp/sock"));
+    let new = SessionArg::New { uuid: None };
+    let args = codex_args(&spec.headless, &new, "go", exe, 7, sock, &CLI_CAPS);
+    assert!(args.contains(&"--ephemeral".to_string()), "{args:?}");
+    assert!(!args.contains(&"resume".to_string()), "{args:?}");
+    reviewer.unsubmitted = true;
+    let again = reviewer_spec(&run, &reviewer, 2);
+    assert!(
+        again.first_turn.ends_with(
+            "\nYour previous attempt ended without submitting; submit it now with submit_findings."
+        ),
+        "{}",
+        again.first_turn
+    );
+    let on_claude = reviewer_spec(&run, &agent("spec-r2", Runtime::Claude), 2);
+    assert_eq!(on_claude.headless.allowed_tools, DOC_REVIEWER_ALLOWED_TOOLS);
+}

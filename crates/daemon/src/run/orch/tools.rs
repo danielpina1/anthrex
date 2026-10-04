@@ -75,6 +75,8 @@ pub enum OrchCall {
         kind: DocKind,
         version: Option<u32>,
         from: Option<String>,
+        /// Ruling T5-1: a spec's review draft, the document reviewer's only.
+        draft: Option<u32>,
     },
     SubmitFindings {
         findings: Vec<DocFinding>,

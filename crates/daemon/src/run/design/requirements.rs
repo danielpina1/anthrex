@@ -13,6 +13,9 @@ pub const TEXT_CAP: usize = 2 * 1024;
 /// Ruling T4-1: a spec whose Requirements section has no R-line.
 pub const NO_REQUIREMENTS: &str = "the spec has no requirements; write them as lines R1, R2, …";
 
+/// Decision 12: the approved spec's Goal section is kept to 8 KiB.
+pub const GOAL_CAP: usize = 8 * 1024;
+
 /// How many ids a numbering refusal lists before it stops.
 const LISTED: usize = 40;
 
@@ -122,6 +125,15 @@ pub fn scan(spec: &str) -> Vec<Requirement> {
     out
 }
 
+/// Decision 12: the spec's `## Goal and success criteria` section, trimmed and cut to
+/// [`GOAL_CAP`] bytes: what workers and reviewers get beside their requirements.
+pub fn goal_section(spec: &str) -> String {
+    let lines = lines(spec);
+    let body = section(&lines, "## Goal and success criteria").unwrap_or_default();
+    let text: Vec<&str> = body.iter().map(|l| l.text).collect();
+    cut(text.join("\n").trim(), GOAL_CAP)
+}
+
 fn find(spec: &str) -> Vec<Found> {
     let lines = lines(spec);
     let Some(body) = section(&lines, "## Requirements") else {
@@ -179,10 +191,15 @@ fn start<'a>(line: &DocLine<'a>) -> Option<(&'a str, &'a str)> {
 
 /// `text` cut to [`TEXT_CAP`] bytes on a char boundary.
 fn capped(text: &str) -> String {
-    if text.len() <= TEXT_CAP {
+    cut(text, TEXT_CAP)
+}
+
+/// `text` cut to `cap` bytes on a char boundary.
+fn cut(text: &str, cap: usize) -> String {
+    if text.len() <= cap {
         return text.to_string();
     }
-    let mut end = TEXT_CAP;
+    let mut end = cap;
     while !text.is_char_boundary(end) {
         end -= 1;
     }

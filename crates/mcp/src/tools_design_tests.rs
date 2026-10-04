@@ -148,7 +148,10 @@ fn design_tool_schemas_are_exact() {
         "required": ["kind"],
     });
     assert_eq!(schema(orch, "get_doc"), get_doc);
-    assert_eq!(schema(AgentRole::DocReviewer, "get_doc"), get_doc);
+    // Ruling T5-1 (task M9.6.10): the reviewer also names its spec's review draft.
+    let mut reviewers = get_doc.clone();
+    reviewers["properties"]["draft"] = json!({"type": "integer", "minimum": 1});
+    assert_eq!(schema(AgentRole::DocReviewer, "get_doc"), reviewers);
     assert_eq!(
         schema(AgentRole::DocReviewer, "submit_findings"),
         json!({
@@ -211,13 +214,16 @@ fn design_tools_say_what_they_do() {
         "Submit your brainstorm draft (kind brainstorm_draft) in the six-section template. \
          If it is refused, fix what the refusal names and submit again."
     );
-    for role in [orch, AgentRole::DocReviewer] {
-        assert_eq!(
-            described(role, "get_doc"),
-            "Read a design document: the latest of a kind, one version, or a brainstormer's \
-             draft (from)."
-        );
-    }
+    assert_eq!(
+        described(orch, "get_doc"),
+        "Read a design document: the latest of a kind, one version, or a brainstormer's \
+         draft (from)."
+    );
+    assert_eq!(
+        described(AgentRole::DocReviewer, "get_doc"),
+        "Read a design document: the latest of a kind, one version, or the spec's review \
+         draft your first message names (draft)."
+    );
     assert_eq!(
         described(AgentRole::DocReviewer, "submit_findings"),
         "Submit your review's findings once, then stop. Use blocking only for placeholders, \
