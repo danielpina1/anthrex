@@ -1,9 +1,11 @@
 //! The final fix wave's pair items in the reducer: a test writer's writer slot and cap
 //! are its own runtime's (A-I3); its rung 2 is not the task's escalation (review B's
-//! M2); the retry preview names its route (M3); the snapshot's writer failures (M7).
+//! M2); the retry preview names its route (M3); the snapshot's writer failures (M7);
+//! the implementer waits for room on the task's runtime (ruling FW-2 (c)).
 
-use proto::{Runtime, TaskState};
+use proto::{AgentRole, PairPhase, Runtime, TaskState};
 
+use super::super::merge::window_of;
 use super::*;
 use crate::run::engine::concurrency::writers_busy_on;
 use crate::run::engine::schedule::writer_slots;
@@ -118,4 +120,57 @@ fn the_snapshots_writer_failures_match_the_report_while_writing() {
     assert_eq!(crate::run::history::writer_failures(t1), 1);
     let info = crate::run::snapshot_patterns::pair_info(t1).expect("a pair");
     assert_eq!(info.writer_failures, 1);
+}
+
+/// Ruling FW-2 (c): at the hand-over the pair's slot moves from the writer's runtime to
+/// the task's. With Claude's cap at 1 and held by `t2`, `t1`'s Claude implementer waits
+/// as a dispatch would, and launches once Claude has room.
+#[test]
+fn the_implementer_waits_for_room_on_the_tasks_runtime() {
+    let tasks = [task("t1", "S", "a", PAIRED), task("t2", "S", "b", "")];
+    let plan = plan_with(&profile_with("max_writers = 3"), &tasks);
+    let mut fx = Fixture::new(&plan);
+    let claude_capped = |run: &mut crate::run::model::Run| {
+        let held = RuntimeConcurrency {
+            cap: 1,
+            last_rate_limit_at: Some(2_000),
+            ..RuntimeConcurrency::new(run.limits.max_writers)
+        };
+        run.concurrency.insert("claude".into(), held);
+    };
+    fx.start_with(true, claude_capped);
+    let (op, _) = fx.op("CreateRunBranch");
+    fx.done(op, OpResult::Worktree { head: BASE.into() });
+    let windows = fx.launch_all();
+    let writer = window_of(&windows, "t1");
+    assert_eq!(writer_slots(fx.task("t1")), [Runtime::Codex]);
+    assert_eq!(fx.task("t2").state, TaskState::Working);
+    assert_eq!(writers_busy_on(fx.run(), Runtime::Claude), 1, "t2's");
+    let (op, _) = claim_red(&mut fx, writer, &HEAD[..7]);
+    let effects = fx.done(op, red_check(true));
+    let t1 = fx.task("t1");
+    assert_eq!(
+        t1.pair.as_ref().map(|p| p.phase),
+        Some(PairPhase::Implementing)
+    );
+    assert!(ops_in(&effects, "CreateWindow").is_empty(), "{effects:#?}");
+    let effects = fx.tick();
+    assert!(
+        ops_in(&effects, "CreateWindow").is_empty(),
+        "Claude has no room"
+    );
+    assert!(
+        !fx.task("t1")
+            .rounds
+            .iter()
+            .any(|r| r.role == AgentRole::Worker)
+    );
+    // Claude's cap comes back up: the implementer launches.
+    fx.run_mut().concurrency.get_mut("claude").unwrap().cap = 2;
+    let effects = fx.tick();
+    let launches = ops_in(&effects, "CreateWindow");
+    assert_eq!(launches.len(), 1, "{launches:#?}");
+    let launch = launch_of(launches[0].1.clone());
+    assert_eq!(role_of(&launch), AgentRole::Worker);
+    assert_eq!(launch.spec.runtime, Runtime::Claude);
 }

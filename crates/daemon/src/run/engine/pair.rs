@@ -9,10 +9,10 @@
 use proto::{AgentRole, GateKind, PairPhase, Route, Runtime, TaskState};
 
 use super::dispatch::{history, launch_implementer};
-use super::schedule::op_in_flight;
+use super::schedule::{op_in_flight, writer_slots};
 use super::signals::end_round;
 use super::tools::DoneArgs;
-use super::{Effect, OpKind, clock, ladder, requests};
+use super::{Effect, OpKind, clock, concurrency, ladder, requests};
 use crate::run::contract_patterns::{
     implementer_wrong_test, red_check_failed_message, red_confirmed_line, writer_not_on_red,
     writer_paths_unlimited_line,
@@ -224,6 +224,8 @@ pub(super) fn log_unlimited(run: &mut Run, i: usize, paths: u32, now: u64) {
 /// Ruling T16-3 (as ruling T14-I2 for every launch an op result asks for): each running
 /// pass launches the implementer of a paired task whose red was confirmed and that has
 /// had none yet. A task blocked meanwhile, or given a fresh session, goes the usual way.
+/// Ruling FW-2 (c): the pair's slot is the task's runtime's from the hand-over, so the
+/// implementer waits, as a dispatch does, until that runtime's cap has room for it.
 pub(super) fn launch_due(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
@@ -232,11 +234,23 @@ pub(super) fn launch_due(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             && !task.awaiting_deps
             && task.fresh_session.is_none()
             && !task.rounds.iter().any(|r| r.role == AgentRole::Worker)
-            && !op_in_flight(run, task.id(), |k| matches!(k, OpKind::CreateWindow { .. }));
+            && !op_in_flight(run, task.id(), |k| matches!(k, OpKind::CreateWindow { .. }))
+            && implementer_room(run, task);
         if due {
             launch_implementer(run, i, now, fx);
         }
     }
+}
+
+/// Whether `task`'s runtime has room for its implementer: the writer slots held on it by
+/// other tasks are under its cap (the task's own slot already counts there once handed).
+fn implementer_room(run: &Run, task: &Task) -> bool {
+    let runtime = task.route.runtime;
+    let own = (writer_slots(task).iter())
+        .filter(|r| **r == runtime)
+        .count();
+    let busy = usize::from(concurrency::writers_busy_on(run, runtime)).saturating_sub(own);
+    busy < usize::from(concurrency::cap(run, runtime))
 }
 
 /// The test writer's session is done with: retired, as a merged task's worker is.
