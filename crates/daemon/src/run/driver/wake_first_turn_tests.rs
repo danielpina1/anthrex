@@ -242,6 +242,58 @@ async fn mcp_ready_from_another_window_is_refused() {
     let _ = rig.manager.kill(other);
 }
 
+/// Whole-branch review C, m-1: a chain's orchestrator window adopted by a continued
+/// run keeps its anthrex server's `--run` (the chain's first run). Its notice is read,
+/// as its tool calls are, for the chain's current run, which the window now serves; a
+/// run of no chain still gets nothing for another run's window.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_ready_from_an_adopted_chain_window_counts_for_its_current_run() {
+    let mut rig = rig();
+    let window = rig.orchestrator_window("r1").await;
+    {
+        let mut state = crate::lock(&rig.runs.state);
+        for id in ["r1", "r2"] {
+            let mut run = crate::run::orch::test_support::run_of(1);
+            run.id = id.into();
+            run.chain = Some("o-1".into());
+            state.runs.insert(id.into(), run);
+        }
+        let chain = crate::run::chain::Chain {
+            id: "o-1".into(),
+            project: rig._dir.path().to_path_buf(),
+            runs: vec!["r1".into(), "r2".into()],
+            window_id: window,
+            runtime: Runtime::Claude,
+            model: String::new(),
+            state: crate::run::chain::ChainState::Active,
+            ended: false,
+        };
+        state.chains.insert("o-1".into(), chain);
+    }
+    let r2 = RunRef {
+        run_id: "r2".into(),
+        task_id: None,
+        role: AgentRole::Orchestrator,
+        session: 1,
+        lane: None,
+    };
+    rig.manager.rebind_run_window(window, r2).unwrap();
+    for run_id in ["r1", "r3"] {
+        let reply = (rig.runs)
+            .request(RunRequest::McpReady {
+                run_id: run_id.into(),
+                window_id: window,
+            })
+            .await;
+        assert_eq!(
+            reply,
+            RunReply::done(proto::run_wire::request::MCP_READY, "")
+        );
+    }
+    assert_eq!(rig.sent(), vec![("ready", "r2".to_string(), window)]);
+    let _ = rig.manager.kill(window);
+}
+
 /// Review ruling C1: an `Idle`, quiet window with no attention open but no signal yet
 /// is a start or trust prompt; the first turn is never pasted into it, however often
 /// the driver looks, and the wait is logged once. A signal delivers it at the next look.

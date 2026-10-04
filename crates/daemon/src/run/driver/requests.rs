@@ -177,7 +177,11 @@ impl RunService {
             ),
             // Milestone 9.5 decision 38: only the run's orchestrator window, as the
             // manager has it, tells the engine; any other notice changes nothing.
+            // Whole-branch review C, m-1: a chain's run is read as the chain's current
+            // run, as a chain window's tool calls are (an adopted window's server keeps
+            // the `--run` it was launched with).
             RunRequest::McpReady { run_id, window_id } => {
+                let run_id = self.chain_current(&run_id).unwrap_or(run_id);
                 let ours = self.manager.list().iter().any(|w| {
                     w.id == window_id
                         && w.run.as_ref().is_some_and(|r| {
@@ -193,6 +197,15 @@ impl RunService {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }
         }
+    }
+
+    /// The current run of `run_id`'s chain, when it is one of the chain's runs. The
+    /// engine lock is taken only for the lookup.
+    fn chain_current(&self, run_id: &str) -> Option<String> {
+        let state = crate::lock(&self.state); // lookup
+        let chain = state.runs.get(run_id)?.chain.as_deref()?;
+        let chain = state.chains.get(chain)?;
+        (chain.runs.iter().any(|r| r == run_id)).then(|| chain.current().to_string())
     }
 
     /// Milestone 9.0.5 decision 7: a task's brief, acceptance and worker summary, built
