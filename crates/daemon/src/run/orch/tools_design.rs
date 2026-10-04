@@ -156,7 +156,8 @@ pub(super) fn responses(map: &Map<String, Value>) -> Result<Vec<FindingAnswer>, 
             return Err(format!("{at}.id: {id} is answered twice"));
         }
         let answer = item_text(item, &at, "answer", 2000)?;
-        let kept = (answer.strip_prefix("kept:")).is_some_and(|reason| !reason.trim().is_empty());
+        // Ruling T6-1 (m1): exactly `fixed`, or `kept: ` with its space and a reason.
+        let kept = (answer.strip_prefix("kept: ")).is_some_and(|reason| !reason.trim().is_empty());
         if answer != "fixed" && !kept {
             return Err(format!(
                 "{at}.answer: must be \"fixed\" or \"kept: <reason>\""

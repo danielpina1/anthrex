@@ -166,12 +166,17 @@ fn fields(map: &Map<String, Value>, rules: &[(&str, Rule)], path: &str) -> Resul
             }
             Rule::Route => object(value, ROUTE, &format!("{at}: "))?,
             Rule::Covers => {
+                let mut seen = std::collections::BTreeSet::new();
                 for (i, item) in array(value, &at, 0, 32)?.iter().enumerate() {
                     text(item, &format!("{at}[{i}]"), 1, 8)?;
                     let id = item.as_str().unwrap_or_default();
                     let digits = id.strip_prefix('R').unwrap_or_default();
                     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
                         return Err(format!("{path}covers entries look like R4"));
+                    }
+                    // Milestone 9.6 ruling T6-1 (m2): each id once.
+                    if !seen.insert(id) {
+                        return Err(format!("{path}covers lists {id} twice"));
                     }
                 }
             }

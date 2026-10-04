@@ -183,9 +183,9 @@ impl RunService {
     }
 
     /// Decision 15's routing: `get_context`, `run_status`, `task_result` and (milestone
-    /// 9.6) `get_doc` go to the driver's read path; every other call, with the runtime refusals an `edit_plan`
-    /// or `submit_epic` batch needs (ruling T22-I1b), goes to the engine as
-    /// `OrchEvent::Tool`.
+    /// 9.6) `get_doc` go to the driver's read path; every other call, with the runtime
+    /// refusals an `edit_plan` or `submit_epic` batch needs (ruling T22-I1b), goes to the
+    /// engine as `OrchEvent::Tool`.
     pub(super) async fn orch_tool(&self, call: ToolCall) -> RunReply {
         self.orch_tool_within(call, LAUNCH_WAIT).await
     }

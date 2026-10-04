@@ -129,6 +129,11 @@ fn covers_and_responses_parse_and_are_bounded() {
         refused(json!("R1")),
         "invalid arguments: edits[0]: task: covers: must be an array"
     );
+    // Ruling T6-1 (m2): an id once.
+    assert_eq!(
+        refused(json!(["R1", "R2", "R1"])),
+        "invalid arguments: edits[0]: task: covers lists R1 twice"
+    );
     // The sub-planner's tasks are bounded the same way.
     let epic = parse_call(
         AgentRole::Planner,
@@ -165,6 +170,15 @@ fn covers_and_responses_parse_and_are_bounded() {
         ),
         (
             json!([{"id": "F1", "answer": "kept:  "}]),
+            "responses[0].answer: must be \"fixed\" or \"kept: <reason>\"",
+        ),
+        // Ruling T6-1 (m1): exactly `fixed`, or `kept: ` with its space.
+        (
+            json!([{"id": "F1", "answer": "kept:no space"}]),
+            "responses[0].answer: must be \"fixed\" or \"kept: <reason>\"",
+        ),
+        (
+            json!([{"id": "F1", "answer": "fixed "}]),
             "responses[0].answer: must be \"fixed\" or \"kept: <reason>\"",
         ),
         (
