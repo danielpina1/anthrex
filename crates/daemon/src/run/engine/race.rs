@@ -29,11 +29,18 @@ pub(super) enum Start {
 /// writer slots within the runtimes' caps (decision 16); with one, it waits up to
 /// `race_slot_wait_secs` from when it first waited. Ruling T17a-1: the first decision
 /// is latched (`Task.race_decision`), so a fallback to one worker is noted and logged
-/// once, and a task decided single stays single for this dispatch.
+/// once, and a task decided single stays single for this dispatch. A task with its own
+/// checkout never races (the final fix wave's A-I2).
 pub(super) fn start(run: &mut Run, i: usize, now: u64) -> Start {
     let task = &run.tasks[i];
     if !RACE_DISPATCH || !task.spec.race || task.race.is_some() || task.race_decision.is_some() {
         return Start::Single;
+    }
+    // The final fix wave's A-I2: a task that has its own checkout (a start commit, a
+    // live worktree, a pre-warm) works there; its lanes would race from the stage
+    // head, and the crown could not create a task branch that already exists.
+    if task.start_commit.is_some() || task.worktree_live || task.prewarmed {
+        return single(run, i, "race skipped: the task already has a checkout", now);
     }
     if !schedule::critical_path(run).contains(&i) {
         return single(
