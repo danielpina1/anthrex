@@ -10,7 +10,7 @@ use proto::{DocAuthor, DocFinding, DocKind, DocSeverity, DocView, RunReply, RunR
 use sha2::{Digest, Sha256};
 
 use super::super::RunService;
-use super::{DOC_READ_CAP, read_capped, write_new};
+use super::{DOC_READ_CAP, cut_text, write_new};
 use crate::manager::{GitRoots, ManagerConfig, WindowManager};
 use crate::run::design::changes::line_diff;
 use crate::run::design::state::{self, DesignState, DocVersion, NewDoc};
@@ -24,12 +24,12 @@ impl GitRoots for NoRoots {
     fn unregister(&self, _: &Path) {}
 }
 
-const SPEC_1: &str = "# Reset\n\n## Requirements\nR1 A user can ask for a reset link.\n";
-const SPEC_2: &str =
+pub(super) const SPEC_1: &str = "# Reset\n\n## Requirements\nR1 A user can ask for a reset link.\n";
+pub(super) const SPEC_2: &str =
     "# Reset\n\n## Requirements\nR1 A user can ask for a reset link.\nR2 The link expires.\n";
 
 /// A design run (`run.orch.design` set) whose data directory is under `data`.
-fn design_run(data: &Path) -> Run {
+pub(super) fn design_run(data: &Path) -> Run {
     let mut run = run_ok(&plan_with(PROFILE, &[task_toml("t1", "S", "[\"a\"]", "")]));
     run.data_dir = data.join("runs").join(RUN_ID);
     run.design_mode = proto::DesignMode::Full;
@@ -37,7 +37,7 @@ fn design_run(data: &Path) -> Run {
     run
 }
 
-fn service(data: &Path, run: Run) -> Arc<RunService> {
+pub(super) fn service(data: &Path, run: Run) -> Arc<RunService> {
     let config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
     let (manager, _events) = WindowManager::new(config);
     let s = RunService::for_manager(&manager, data.to_path_buf(), Arc::new(NoRoots));
@@ -46,18 +46,18 @@ fn service(data: &Path, run: Run) -> Arc<RunService> {
 }
 
 /// `state::store` on the service's run, under the engine lock, as the engine does.
-fn store(s: &RunService, doc: NewDoc) -> (DocVersion, Effect) {
+pub(super) fn store(s: &RunService, doc: NewDoc) -> (DocVersion, Effect) {
     let mut engine = crate::lock(&s.state);
     let run = engine.runs.get_mut(RUN_ID).expect("the run");
     state::store(run, doc, 2_000).expect("stored")
 }
 
-fn spec(text: &str) -> NewDoc {
+pub(super) fn spec(text: &str) -> NewDoc {
     NewDoc::new(DocKind::Spec, DocAuthor::Orchestrator, "ready", text)
 }
 
 /// Applies a `WriteDoc` the way `driver/effects.rs::apply` does.
-async fn apply(s: &RunService, effect: Effect) -> PathBuf {
+pub(super) async fn apply(s: &RunService, effect: Effect) -> PathBuf {
     let Effect::WriteDoc { path, text, index } = effect else {
         panic!("not a write: {effect:?}");
     };
@@ -65,7 +65,7 @@ async fn apply(s: &RunService, effect: Effect) -> PathBuf {
     path
 }
 
-fn names(dir: &Path) -> Vec<String> {
+pub(super) fn names(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -74,7 +74,7 @@ fn names(dir: &Path) -> Vec<String> {
     names
 }
 
-fn tmp() -> tempfile::TempDir {
+pub(super) fn tmp() -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix("ax-design-io-")
         .tempdir_in("/tmp")
@@ -316,15 +316,20 @@ async fn show_doc_of_a_missing_version_is_refused() {
 
 #[test]
 fn a_long_document_is_capped_at_64_kib() {
-    let dir = tmp();
-    let path = dir.path().join("long.md");
-    let text = "é".repeat(DOC_READ_CAP); // two bytes each
-    std::fs::write(&path, &text).unwrap();
-    let read = read_capped(&path, DOC_READ_CAP).unwrap();
-    assert!(read.len() <= DOC_READ_CAP, "{}", read.len());
-    let (head, marker) = read.rsplit_once('\n').unwrap();
-    assert!(text.starts_with(head));
-    assert_eq!(marker, format!("[cut: {} bytes]", text.len() - head.len()));
-    std::fs::write(&path, "short").unwrap();
-    assert_eq!(read_capped(&path, DOC_READ_CAP).unwrap(), "short");
+    // Fix round 1, m1: three bytes a character, after 0, 1 and 2 ASCII bytes, so for one
+    // of them the cut splits a character, and the replacement character that leaves is
+    // dropped.
+    for lead in ["", "x", "xy"] {
+        let text = format!("{lead}{}", "€".repeat(DOC_READ_CAP));
+        let read = cut_text(text.as_bytes(), DOC_READ_CAP, "cut");
+        assert!(read.len() <= DOC_READ_CAP, "{}", read.len());
+        let (head, marker) = read.rsplit_once('\n').unwrap();
+        assert!(
+            text.starts_with(head),
+            "{lead:?}: ends {:?}",
+            head.chars().last()
+        );
+        assert_eq!(marker, format!("[cut: {} bytes]", text.len() - head.len()));
+    }
+    assert_eq!(cut_text(b"short", DOC_READ_CAP, "cut"), "short");
 }

@@ -4,29 +4,37 @@
 //!
 //! Every write and read runs on `spawn_blocking`, bounded by [`IO_WAIT`], and the engine
 //! lock is taken only to look a version up, never across a file access (AGENTS.md rule
-//! 2). A version's file is written once: a temp file, fsynced, then hard-linked into
-//! place, which fails rather than replace a file (DF §5.3, versions are immutable).
+//! 2). A version's file is written once (`driver/design_files.rs`), and it is shown only
+//! while its bytes are the ones the index recorded (fix round 1, I-1).
 
 use std::fs::File;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use proto::run_wire::request;
-use proto::{DocFinding, DocKind, DocView, RunReply};
+use proto::{DocFinding, DocKind, DocSeverity, DocView, RunReply};
 
 use super::RunService;
+pub use super::design_files::{DocWrites, write_new};
+#[cfg(test)]
+pub use super::design_files::{make_dirs, temp_name, write_new_at};
 use crate::run::design::changes::line_diff;
-use crate::run::design::state::{self, DocVersion};
+use crate::run::design::state::{self, DocVersion, sha256_hex};
 use crate::run::design::template::kind_name;
 
 /// How long a design file's write or read may take before it is given up.
 pub const IO_WAIT: Duration = Duration::from_secs(10);
 /// A document's text in a reply (`run show`, `get_doc`) is capped at 64 KiB.
 pub const DOC_READ_CAP: usize = 64 * 1024;
-/// What a diff or a findings file reads at most: past it, the line diff reports the
-/// text too large.
+/// A reply's findings are capped at 32 KiB of JSON (fix round 1, m5).
+pub const FINDINGS_CAP: usize = 32 * 1024;
+/// What a findings file reads at most.
 const RAW_READ_CAP: u64 = 1024 * 1024;
+/// Room kept under a cap for its marker.
+const MARKER_ROOM: usize = 40;
+/// Room kept under [`FINDINGS_CAP`] for the cut's own entry.
+const FINDING_ROOM: usize = 256;
 
 /// What to read of one version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,13 +53,22 @@ struct Found {
     run: String,
     version: DocVersion,
     path: PathBuf,
-    previous: Option<PathBuf>,
+    /// The previous version and its file, for a diff.
+    previous: Option<(DocVersion, PathBuf)>,
     findings: PathBuf,
 }
 
+/// Why a read gave nothing: the file differs from the index (refused as it is), or it
+/// could not be read.
+enum ReadError {
+    Mismatch(String),
+    Io(String),
+}
+
 impl RunService {
-    /// `Effect::WriteDoc`: the file, then the index. A failure is logged; the version
-    /// stays in the run's index, and reading it then names the error.
+    /// `Effect::WriteDoc`: the file, then the index, which is numbered now so an older
+    /// index never replaces a newer (m2). A failure is logged; the version stays in the
+    /// run's index, and reading it then names the error.
     pub(super) async fn write_doc(
         &self,
         path: PathBuf,
@@ -59,14 +76,12 @@ impl RunService {
         index: Option<(PathBuf, String)>,
     ) {
         let shown = path.clone();
+        let index = index.map(|(index, text)| self.doc_writes.index_writer(index, text));
         let wrote = tokio::time::timeout(
             IO_WAIT,
             tokio::task::spawn_blocking(move || {
                 write_new(&path, &text)?;
-                match index {
-                    Some((index, text)) => write_replace(&index, &text),
-                    None => Ok(()),
-                }
+                index.map_or(Ok(()), |write| write())
             }),
         )
         .await;
@@ -123,7 +138,9 @@ impl RunService {
         )
         .await;
         match read {
-            Ok(Ok(view)) => view.map_err(|error| format!("could not read the {what}: {error}")),
+            Ok(Ok(Ok(view))) => Ok(view),
+            Ok(Ok(Err(ReadError::Mismatch(text)))) => Err(text),
+            Ok(Ok(Err(ReadError::Io(error)))) => Err(format!("could not read the {what}: {error}")),
             Ok(Err(error)) => Err(format!("could not read the {what}: {error}")),
             Err(_) => Err(format!(
                 "reading the {what} took over {} s",
@@ -152,126 +169,121 @@ impl RunService {
         Ok(Found {
             run: run_id.to_string(),
             path: dir.join(design.file_name(version)),
-            previous: (design.previous(version)).map(|p| dir.join(design.file_name(p))),
+            previous: (design.previous(version))
+                .map(|p| (p.clone(), dir.join(design.file_name(p)))),
             findings: dir.join(state::findings_name(version.kind, version.n)),
             version: version.clone(),
         })
     }
 }
 
-/// The blocking half of [`RunService::doc_view`].
-fn read_view(found: Found, query: &DocQuery) -> Result<DocView, String> {
-    let text = read_capped(&found.path, DOC_READ_CAP)?;
+/// The blocking half of [`RunService::doc_view`]: each file read whole and checked
+/// against its index entry, then capped.
+fn read_view(found: Found, query: &DocQuery) -> Result<DocView, ReadError> {
+    let bytes = read_stored(&found.path, &found.version)?;
     let diff = match (&found.previous, query.diff) {
-        (Some(previous), true) => {
-            let old = read_raw(previous)?;
-            Some(line_diff(&old, &read_raw(&found.path)?))
+        (Some((previous, path)), true) => {
+            let old = read_stored(path, previous)?;
+            let (old, new) = (
+                String::from_utf8_lossy(&old),
+                String::from_utf8_lossy(&bytes),
+            );
+            let diff = line_diff(&old, &new);
+            Some(cut_text(diff.as_bytes(), DOC_READ_CAP, "diff cut"))
         }
         _ => None,
     };
     let findings = match query.findings {
-        true => read_findings(&found.findings)?,
+        true => cap_findings(read_findings(&found.findings).map_err(ReadError::Io)?),
         false => Vec::new(),
     };
     Ok(DocView {
         run: found.run,
         kind: found.version.kind,
         version: found.version.n,
-        text,
+        text: cut_text(&bytes, DOC_READ_CAP, "cut"),
         diff,
         findings,
     })
 }
 
-/// A version's stored findings, each with its answer; none until a review stored them.
-fn read_findings(path: &Path) -> Result<Vec<(DocFinding, Option<String>)>, String> {
-    match File::open(path) {
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error.to_string()),
-        Ok(_) => serde_json::from_str(&read_raw(path)?).map_err(|e| e.to_string()),
-    }
-}
-
-/// Writes `text` to `path`, which must not exist: a temp file beside it, fsynced, then
-/// a hard link to `path` (which fails if `path` exists, unlike a rename), then the temp
-/// file removed and the folder fsynced. A reader sees no file or the whole file.
-pub fn write_new(path: &Path, text: &str) -> Result<(), String> {
-    let (dir, tmp) = temp_beside(path)?;
-    write_synced(&tmp, text)?;
-    let linked = std::fs::hard_link(&tmp, path);
-    let _ = std::fs::remove_file(&tmp);
-    match linked {
-        Ok(()) => sync_dir(&dir),
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => Err(format!(
-            "{} exists; a design document is never rewritten",
-            path.display()
-        )),
-        Err(error) => Err(format!("{}: {error}", path.display())),
-    }
-}
-
-/// Replaces `path` with `text` atomically: a temp file, fsync, rename (the index).
-pub fn write_replace(path: &Path, text: &str) -> Result<(), String> {
-    let (dir, tmp) = temp_beside(path)?;
-    write_synced(&tmp, text)?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))?;
-    sync_dir(&dir)
-}
-
-fn temp_beside(path: &Path) -> Result<(PathBuf, PathBuf), String> {
-    let dir = (path.parent()).ok_or_else(|| format!("{} has no folder", path.display()))?;
-    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let name = (path.file_name()).ok_or_else(|| format!("{} has no name", path.display()))?;
-    let mut tmp = name.to_os_string();
-    tmp.push(".tmp");
-    Ok((dir.to_path_buf(), dir.join(tmp)))
-}
-
-fn write_synced(tmp: &Path, text: &str) -> Result<(), String> {
-    let shown = |e: std::io::Error| format!("{}: {e}", tmp.display());
-    let mut file = File::create(tmp).map_err(shown)?;
-    file.write_all(text.as_bytes()).map_err(shown)?;
-    file.sync_all().map_err(shown)
-}
-
-fn sync_dir(dir: &Path) -> Result<(), String> {
-    (File::open(dir).and_then(|d| d.sync_all())).map_err(|e| format!("{}: {e}", dir.display()))
-}
-
-/// `path`'s text, at most `cap` bytes: a longer file keeps its head, cut at a
-/// character, and ends `[cut: <n> bytes]`.
-pub fn read_capped(path: &Path, cap: usize) -> Result<String, String> {
-    let shown = |e: std::io::Error| format!("{}: {e}", path.display());
-    let file = File::open(path).map_err(shown)?;
-    let total = file.metadata().map_err(shown)?.len();
+/// `path`'s bytes, when they are the version's: its length and its SHA-256 (I-1). A
+/// file that changed since it was written is never shown.
+fn read_stored(path: &Path, version: &DocVersion) -> Result<Vec<u8>, ReadError> {
+    let shown = |e: std::io::Error| ReadError::Io(format!("{}: {e}", path.display()));
     let mut bytes = Vec::new();
-    (file.take(cap as u64 + 1))
+    let file = File::open(path).map_err(shown)?;
+    (file.take(version.bytes.saturating_add(1)))
         .read_to_end(&mut bytes)
         .map_err(shown)?;
-    if bytes.len() <= cap {
-        return Ok(String::from_utf8_lossy(&bytes).into_owned());
+    if bytes.len() as u64 != version.bytes || sha256_hex(&bytes) != version.sha256 {
+        return Err(ReadError::Mismatch(format!(
+            "document {} v{} does not match what was stored; it was not shown",
+            kind_name(version.kind),
+            version.n
+        )));
     }
-    // Room for the marker, so the whole reply stays within the cap.
-    let mut text = String::from_utf8_lossy(&bytes[..cap - 32]).into_owned();
+    Ok(bytes)
+}
+
+/// `bytes` as text, at most `cap` bytes: a longer text keeps its head, cut at a
+/// character, and ends `[<marker>: <n> bytes]`, `n` the bytes left out.
+pub fn cut_text(bytes: &[u8], cap: usize, marker: &str) -> String {
+    if bytes.len() <= cap {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    let mut text = String::from_utf8_lossy(&bytes[..cap - MARKER_ROOM]).into_owned();
+    // A character the cut split is one replacement character at the end.
     while text.ends_with('\u{fffd}') {
         text.pop();
     }
-    let cut = total.saturating_sub(text.len() as u64);
-    text.push_str(&format!("\n[cut: {cut} bytes]"));
-    Ok(text)
+    let cut = bytes.len().saturating_sub(text.len());
+    text.push_str(&format!("\n[{marker}: {cut} bytes]"));
+    text
 }
 
-/// `path`'s text, up to [`RAW_READ_CAP`], for a diff or a findings file.
-fn read_raw(path: &Path) -> Result<String, String> {
+/// The findings that fit in [`FINDINGS_CAP`] of JSON, in order; when some do not, a
+/// last entry says how many were left out (m5).
+fn cap_findings(all: Vec<(DocFinding, Option<String>)>) -> Vec<(DocFinding, Option<String>)> {
+    let mut used: usize = 2; // `[]`
+    let total = all.len();
+    let mut kept = Vec::new();
+    for item in all {
+        let size = serde_json::to_string(&item).map_or(usize::MAX, |t| t.len() + 1);
+        if used.saturating_add(size) > FINDINGS_CAP - FINDING_ROOM {
+            let cut = DocFinding {
+                id: "cut".into(),
+                severity: DocSeverity::Minor,
+                place: String::new(),
+                text: format!("[findings cut: {} more]", total - kept.len()),
+            };
+            kept.push((cut, None));
+            return kept;
+        }
+        used += size;
+        kept.push(item);
+    }
+    kept
+}
+
+/// A version's stored findings, each with its answer; none until a review stored them.
+fn read_findings(path: &Path) -> Result<Vec<(DocFinding, Option<String>)>, String> {
     let shown = |e: std::io::Error| format!("{}: {e}", path.display());
+    let file = match File::open(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        file => file.map_err(shown)?,
+    };
     let mut bytes = Vec::new();
-    let file = File::open(path).map_err(shown)?;
     (file.take(RAW_READ_CAP))
         .read_to_end(&mut bytes)
         .map_err(shown)?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 #[path = "design_io_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "design_io_tests_files.rs"]
+mod tests_files;

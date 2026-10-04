@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 
 pub use super::requirements::Requirement;
 use super::requirements::scan;
+use super::template::kind_name;
 use crate::run::engine::Effect;
 use crate::run::model::Run;
 
@@ -261,7 +262,8 @@ pub fn store(run: &mut Run, doc: NewDoc, now: u64) -> Result<(DocVersion, Effect
     let id = run.id.clone();
     let design = run.orch.design.as_mut().ok_or_else(|| not_design(&id))?;
     match (doc.kind, &doc.author) {
-        (DocKind::BrainstormDraft, DocAuthor::Brainstormer { label }) if file_safe(label) => {}
+        (DocKind::BrainstormDraft, DocAuthor::Brainstormer { label })
+            if LABELS.contains(&label.as_str()) => {}
         (DocKind::BrainstormDraft, _) => {
             return Err("a brainstorm draft needs its brainstormer's label".into());
         }
@@ -277,7 +279,7 @@ pub fn store(run: &mut Run, doc: NewDoc, now: u64) -> Result<(DocVersion, Effect
         author: doc.author,
         reason: doc.reason,
         bytes: doc.text.len() as u64,
-        sha256: sha256_hex(&doc.text),
+        sha256: sha256_hex(doc.text.as_bytes()),
         at: now,
         requirements,
         disputed: doc.disputed,
@@ -308,7 +310,7 @@ pub fn store_findings(
         .as_ref()
         .ok_or_else(|| not_design(&run.id))?;
     if design.find(kind, Some(n)).is_none() {
-        return Err(format!("run {} has no {} v{n}", run.id, kind.label()));
+        return Err(format!("run {} has no {} v{n}", run.id, kind_name(kind)));
     }
     let text = serde_json::to_string_pretty(findings).map_err(|e| e.to_string())?;
     Ok(Effect::WriteDoc {
@@ -323,17 +325,16 @@ pub fn index_text(design: &DesignState) -> String {
     serde_json::to_string_pretty(&design.versions).unwrap_or_else(|_| "[]".into())
 }
 
-fn sha256_hex(text: &str) -> String {
-    let digest = Sha256::digest(text.as_bytes());
+/// `bytes`' SHA-256, lower-case hex, as `DocVersion.sha256` records it.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// A label used in a file name: ASCII letters, digits, `-` and `_`, at most 32.
-fn file_safe(label: &str) -> bool {
-    !label.is_empty()
-        && label.len() <= 32
-        && (label.bytes()).all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
+/// The labels a brainstormer can have (decision 10): the runtimes' names with two
+/// runtimes, `A` and `B` with one. A draft's file is named by it, so nothing else is
+/// stored (fix round 1, m6).
+pub const LABELS: [&str; 4] = ["claude", "codex", "A", "B"];
 
 #[cfg(test)]
 #[path = "state_tests.rs"]

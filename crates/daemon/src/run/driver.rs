@@ -23,6 +23,7 @@ pub(crate) mod build;
 mod cleanup;
 mod context;
 mod delivery;
+mod design_files;
 mod design_io;
 mod effects;
 // Milestone 9.1.7: read by the tier executor (M9.1.9); until then only its tests call it.
@@ -127,6 +128,8 @@ pub struct RunService {
     /// The debug builds' test holds on op `done` lines (M8a.25; `effects::DoneHolds`).
     done_holds: effects::DoneHolds,
     writes: effects::RunWrites,
+    /// Milestone 9.6: orders each run's `versions.json` writes (`driver/design_files.rs`).
+    doc_writes: design_io::DocWrites,
     /// Replayed accepts whose clean-up waits for the event loop (ruling T22-N3).
     held_accepts: Mutex<Vec<restore::AcceptCleanUp>>,
     /// Milestone 8b's services, set once by the daemon (`set_adaptation`).
@@ -220,6 +223,7 @@ impl RunService {
             abort_after: abort_after(),
             done_holds: effects::DoneHolds::from_env(),
             writes: effects::RunWrites::default(),
+            doc_writes: design_io::DocWrites::default(),
             held_accepts: Mutex::new(Vec::new()),
             adaptation: std::sync::OnceLock::new(),
             metered: Default::default(),

@@ -70,11 +70,16 @@ fn store_refuses_a_run_without_the_design_flow_and_an_unnamed_draft() {
 
     let mut run = run(true);
     let anonymous = NewDoc::new(DocKind::BrainstormDraft, DocAuthor::Orchestrator, "r", "t");
-    for doc in [anonymous, draft("../x"), draft(""), draft("a b")] {
+    // Fix round 1, m6: only the four labels the daemon gives, exactly.
+    let others = ["../x", "", "a b", "C", "Claude", "claude2", "a", "codex-1"].map(draft);
+    for doc in std::iter::once(anonymous).chain(others) {
         let refusal = store(&mut run, doc, 1).unwrap_err();
         assert_eq!(refusal, "a brainstorm draft needs its brainstormer's label");
     }
     assert!(run.orch.design.as_ref().unwrap().versions.is_empty());
+    for label in ["claude", "codex", "A", "B"] {
+        store(&mut run, draft(label), 1).unwrap();
+    }
 }
 
 #[test]
@@ -121,6 +126,11 @@ fn findings_are_written_beside_their_version_only() {
     assert_eq!(
         store_findings(&run, DocKind::Plan, 2, &[]).unwrap_err(),
         format!("run {} has no plan v2", run.id)
+    );
+    // Fix round 1, m7: the kind as a refusal names it.
+    assert_eq!(
+        store_findings(&run, DocKind::BrainstormDraft, 1, &[]).unwrap_err(),
+        format!("run {} has no brainstorm draft v1", run.id)
     );
 }
 
