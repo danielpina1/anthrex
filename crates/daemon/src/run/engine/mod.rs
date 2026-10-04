@@ -88,6 +88,7 @@ mod race_view;
 mod requests;
 mod research;
 mod restore;
+mod restore_lost;
 mod results;
 mod review;
 mod review_session;
