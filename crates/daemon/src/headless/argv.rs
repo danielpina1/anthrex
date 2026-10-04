@@ -6,7 +6,7 @@ use crate::launch;
 use crate::launch::codex::toml_string;
 use proto::{AgentRole, Effort};
 use serde_json::{Map, Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// What the installed `claude` and `codex` accept, as M8a.1 found it (the "`CLI_CAPS`"
 /// table in the milestone's implementation notes). Every argv builder takes one, so tests
@@ -50,6 +50,8 @@ pub struct SandboxKeys {
     /// 2.1.280's `sandbox.filesystem.denyWrite`, from its settings schema; the user's own
     /// entries are merged with it, the safe direction).
     pub write_deny: &'static str,
+    /// Milestone 9.6: paths commands may not read (`sandbox.filesystem.denyRead`).
+    pub read_deny: &'static str,
     /// M8a.1 item 4b: without it a sandbox that cannot start only warns and runs
     /// commands unsandboxed.
     pub fail_if_unavailable: &'static str,
@@ -117,6 +119,7 @@ pub const CLI_CAPS: CliCaps = CliCaps {
         allow_unsandboxed: "allowUnsandboxedCommands",
         write_allow: "filesystem.allowWrite",
         write_deny: "filesystem.denyWrite",
+        read_deny: "filesystem.denyRead",
         fail_if_unavailable: "failIfUnavailable",
         pins: CLAUDE_SANDBOX_PINS,
     },
@@ -208,6 +211,14 @@ pub fn claude_settings(
                 .map(|p| Value::String(p.display().to_string()))
                 .collect();
             insert_path(&mut block, keys.write_deny, Value::Array(denied));
+        }
+        if !sandbox.deny_read.is_empty() {
+            let shown = |p: &PathBuf| p.display().to_string();
+            let denied = sandbox.deny_read.iter().map(|p| Value::String(shown(p)));
+            insert_path(&mut block, keys.read_deny, Value::Array(denied.collect()));
+            let rules = sandbox.deny_read.iter();
+            let rules = rules.map(|p| Value::String(format!("Read(/{}/**)", shown(p))));
+            settings["permissions"] = json!({ "deny": rules.collect::<Vec<_>>() });
         }
         for (path, pin) in keys.pins {
             let value = match pin {

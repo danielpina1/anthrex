@@ -74,6 +74,12 @@ pub struct ClaudeSandbox {
     /// may not write (final fix batch F2 round 2, `role_launch::protected_write_denials`).
     #[serde(default)]
     pub deny_write: Vec<PathBuf>,
+    /// Milestone 9.6 (task M9.6.8, task 6's review a): paths the session may not read,
+    /// each denied to the read tools as a `permissions.deny` rule `Read(/<path>/**)`
+    /// (`//` is the filesystem root in Claude's rule syntax) and to commands as
+    /// `sandbox.filesystem.denyRead`. A brainstormer's is the run's design folder.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny_read: Vec<PathBuf>,
 }
 
 /// Who the session's `anthrex mcp` server speaks for.

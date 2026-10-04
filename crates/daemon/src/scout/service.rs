@@ -246,15 +246,15 @@ impl ScoutService {
         let mut table = crate::lock(&self.table);
         let scout_id = target.and_then(|t| match t.role {
             proto::AgentRole::Scout => t.scout_id,
-            // Milestone 9 decision 31: a sub-planner's unbound session of its epic.
-            proto::AgentRole::Planner => table
+            // Milestone 9 decision 31: a sub-planner's unbound session of its epic; 9.6's
+            // design agents', of their label.
+            proto::AgentRole::Planner
+            | proto::AgentRole::Brainstormer
+            | proto::AgentRole::DocReviewer => table
                 .scouts
                 .iter()
                 .find(|(_, s)| {
-                    s.window_id.is_none()
-                        && s.planner.as_ref().is_some_and(|p| {
-                            p.run_id == t.run_id && t.epic.as_ref() == Some(&p.epic)
-                        })
+                    s.window_id.is_none() && s.planner.as_ref().is_some_and(|p| p.names(&t))
                 })
                 .map(|(id, _)| id.clone()),
             _ => None,

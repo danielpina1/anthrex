@@ -366,8 +366,9 @@ pub fn review_task_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
 /// A read-only session in the user's checkout (decisions 20a, 31): an explicit
 /// `--permission-mode` with the reviewers' denials, an empty-root Claude sandbox
 /// denying the checkout and every repository path, Codex `read-only` with the run's
-/// config guard, no output filter.
-fn read_only(
+/// config guard, no output filter. Milestone 9.6: the design agents' too
+/// (`scout::design_spec`).
+pub(crate) fn read_only(
     run: &Run,
     route: &Route,
     (instructions, tools): (&str, &[&str]),
@@ -395,6 +396,7 @@ fn read_only(
             false => Vec::new(),
         },
         claude_sandbox: claude.then(|| ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: Vec::new(),
             deny_write: deny,
         }),

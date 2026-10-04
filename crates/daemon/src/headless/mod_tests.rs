@@ -121,6 +121,7 @@ fn a_headless_spec_round_trips_through_json() {
         claude_permission_mode: Some("acceptEdits".into()),
         claude_disallowed_tools: vec![],
         claude_sandbox: Some(ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: vec!["/tmp/x/.git".into()],
             deny_write: vec![],
         }),

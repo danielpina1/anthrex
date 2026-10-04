@@ -6,6 +6,7 @@
 //! through the window manager.
 
 pub mod contract;
+pub mod design_spec;
 pub mod machine;
 pub mod planner;
 pub mod report;
