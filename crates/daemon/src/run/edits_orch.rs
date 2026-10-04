@@ -407,6 +407,10 @@ pub(crate) fn apply_amend_deps(
         ));
     };
     let task = &run.tasks[i];
+    // Ruling T17b-1: a race dispatched has started.
+    if let Some(text) = super::edits_state::started_refusal(task, "its deps cannot change") {
+        return Err(PlanError::new(Some(task_id), "", "13", text));
+    }
     if !not_started(task) {
         let text = format!(
             "task {task_id} is {}; deps can be amended only on pending, queued or blocked tasks",

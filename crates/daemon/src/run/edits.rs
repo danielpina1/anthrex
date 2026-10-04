@@ -211,6 +211,19 @@ impl Batch {
     }
 
     /// Decision 13's per-state refusal: `task <id> is <state>; <why>`.
+    /// [`Self::refuse`], or for a task that is waiting only because it was dispatched
+    /// as a race, the started-task text with `tail` (ruling T17b-1).
+    fn refuse_unstarted(&mut self, i: usize, tail: &str, why: &str) {
+        let task = &self.run.tasks[i];
+        match super::edits_state::started_refusal(task, tail) {
+            Some(text) => {
+                let id = Some(task.id());
+                self.errors.push(PlanError::new(id, "", "13", text));
+            }
+            None => self.refuse(i, why),
+        }
+    }
+
     fn refuse(&mut self, i: usize, why: &str) {
         let task = &self.run.tasks[i];
         self.errors.push(PlanError::new(
@@ -299,7 +312,9 @@ impl Batch {
             self.log(i, "cancel deferred: its merge is in flight".to_string());
             return;
         }
-        if is_live(&self.run.tasks[i]) {
+        // Task 17b's review, m1: a race's lanes are stopped and salvaged whatever the
+        // task's state (blocked after a failed crown, after a restart).
+        if is_live(&self.run.tasks[i]) || self.run.tasks[i].race.is_some() {
             self.consequences.push(EditConsequence::CancelLive {
                 task_id: id.clone(),
             });
@@ -342,7 +357,8 @@ impl Batch {
     pub(super) fn split(&mut self, id: &str, into: &[PlanTask]) {
         let Some(i) = self.find(id) else { return };
         if !not_started(&self.run.tasks[i]) {
-            return self.refuse(i, "only pending, queued or blocked tasks can be split");
+            let why = "only pending, queued or blocked tasks can be split";
+            return self.refuse_unstarted(i, "it cannot be split", why);
         }
         if into.is_empty() {
             self.errors.push(PlanError::new(
@@ -399,10 +415,8 @@ impl Batch {
             return;
         }
         if !not_started(&self.run.tasks[i]) {
-            return self.refuse(
-                i,
-                "dependencies can be added only on pending, queued or blocked tasks",
-            );
+            let why = "dependencies can be added only on pending, queued or blocked tasks";
+            return self.refuse_unstarted(i, "its deps cannot change", why);
         }
         let task = &mut self.run.tasks[i];
         if !task.spec.deps.iter().any(|d| d == dep) {

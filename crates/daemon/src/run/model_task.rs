@@ -229,6 +229,11 @@ pub struct Task {
     /// (their reviewer rounds and ops wait outside the view); zero otherwise.
     #[serde(skip)]
     pub parked_readers: usize,
+    /// Milestone 9.5 ruling m4 of task 17b's review: the highest salvage number handed
+    /// out, reserved when a removal is sent (`merge::reserve_salvage_seq`), so removals
+    /// in flight together never share a number.
+    #[serde(default, skip_serializing_if = "super::is_zero")]
+    pub salvage_seq: u64,
 }
 
 impl Task {

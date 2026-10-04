@@ -336,3 +336,94 @@ fn a_dispatched_race_has_started() {
     assert!(reply.as_ref().is_err_and(|e| e.contains(text)), "{reply:?}");
     assert!(fx.task("t1").spec.race);
 }
+
+/// An amend of `t1` setting only `size` or only `deps` (the started-task rule's fields).
+fn amend(size: Option<proto::Size>, deps: Option<Vec<String>>, route: bool) -> PlanEdit {
+    let route = route.then_some(proto::RouteSpec {
+        runtime: None,
+        model: None,
+        strength: None,
+        effort: None,
+    });
+    PlanEdit::AmendTask {
+        task_id: "t1".into(),
+        brief: None,
+        acceptance: None,
+        route,
+        test_mode: None,
+        test_mode_reason: None,
+        priority: None,
+        size,
+        deps,
+        stage: None,
+        race: None,
+        pair: None,
+    }
+}
+
+/// Ruling T17b-1: a race that was dispatched has started whatever its state, so a
+/// blocked one refuses an added dependency, a split, and a route, size or deps amend
+/// with the started-task text, and nothing changes.
+#[test]
+fn a_blocked_race_refuses_deps_splits_and_amends_as_started() {
+    let cases = [
+        (
+            PlanEdit::AddDep {
+                task_id: "t1".into(),
+                dep: "t0".into(),
+            },
+            "task t1 has started: its deps cannot change",
+        ),
+        (
+            PlanEdit::SplitTask {
+                task_id: "t1".into(),
+                into: vec![super::holds::plan_task("t1x", "[\"crates/a/**\"]")],
+            },
+            "task t1 has started: it cannot be split",
+        ),
+        (
+            amend(Some(proto::Size::S), None, false),
+            "task t1 has started: its size cannot change",
+        ),
+        (
+            amend(None, None, true),
+            "task t1 has started: its route cannot change",
+        ),
+        (
+            amend(None, Some(Vec::new()), false),
+            "task t1 has started: its deps cannot change",
+        ),
+    ];
+    for (change, text) in cases {
+        let mut fx = never_prepared();
+        assert_eq!(fx.task("t1").state, TaskState::Blocked);
+        assert!(!crate::run::edits_state::not_started(fx.task("t1")));
+        let before = fx.task("t1").spec.clone();
+        let effects = edit(&mut fx, vec![change]);
+        let reply = replies(&effects).pop().expect("a reply");
+        assert!(
+            reply.as_ref().is_err_and(|e| e.contains(text)),
+            "{text}: {reply:?}"
+        );
+        assert_eq!(fx.task("t1").spec, before);
+        assert_eq!(fx.run().tasks.len(), 1, "no split");
+    }
+}
+
+/// Task 17b's review, m2: `run retry` refuses a racing task with a live lane whatever
+/// its state (a blocked one here, a constructed state no path reaches today), and
+/// never re-dispatches it single while its lanes run.
+#[test]
+fn retry_refuses_a_blocked_race_with_a_live_lane() {
+    let (mut fx, _, _) = racing();
+    fx.task_mut("t1").state = TaskState::Blocked;
+    let effects = retry(&mut fx, "t1");
+    let text = "task t1 is racing: it has nothing to retry until one racer is left";
+    assert_eq!(replies(&effects), vec![Err(text.to_string())]);
+    let race = fx.task("t1").race.clone().expect("a race");
+    assert!(!race.ended);
+    assert_eq!(
+        (lane(&fx, A).state, lane(&fx, B).state),
+        (LaneState::Working, LaneState::Working)
+    );
+}

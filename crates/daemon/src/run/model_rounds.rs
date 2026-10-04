@@ -155,6 +155,11 @@ pub struct AgentRound {
     /// process starts.
     #[serde(default)]
     pub exited_pid: Option<u32>,
+    /// Milestone 9.5 ruling T17b-2: a racer round the restore ended (`settle`) with no
+    /// `ProcessExited` for it: its process may outlive the old daemon, so its lane's
+    /// checkout is kept, not cleaned. Cleared when the round is resumed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub orphaned: bool,
     /// M8c: when the current rate limit began; kept by [`AgentRound::set_rate_limited`].
     #[serde(default)]
     pub rate_limited_since: Option<u64>,

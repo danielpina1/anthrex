@@ -307,6 +307,9 @@ fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         // Carry T12-RR4: `end_round` clears `interrupted`; an `Interrupted` stall is
         // settled by the resume (its grace fires, or the restart ended the turn).
         end_round(round, now);
+        // Milestone 9.5 ruling T17b-2: no `ProcessExited` ended a racer's round here,
+        // so its lane's checkout is never cleaned as if it had exited.
+        round.orphaned = round.role == AgentRole::Racer;
         round.open_subagents.clear();
         round.fallback_waiting = false;
         round.in_retry_streak = false;

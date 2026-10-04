@@ -43,32 +43,46 @@ fn op_in_flight(run: &Run, task: &Task, lane: RaceLane) -> bool {
         .any(|p| p.task_id.as_deref() == Some(task.id()) && p.lane == Some(lane))
 }
 
+/// Why lane `lane`'s checkout must be kept, or `None` when its racer is known to have
+/// finished; `Err(())` while it may still exit in time. Ruling T17b-2 (RR-2): a racer has
+/// finished only by its `ProcessExited` (a real exit, or the engine's for a window with
+/// no process), or when it never had a process (a launch that failed, or one the
+/// restart lost: no window, ruling m5). A round the restore ended (`orphaned`) has not.
+fn kept_because(task: &Task, lane: &Lane, now: u64) -> Result<Option<&'static str>, ()> {
+    let racers =
+        (task.rounds.iter()).filter(|r| r.lane == Some(lane.lane) && r.role == AgentRole::Racer);
+    let open = racers.clone().any(|r| !r.ended && r.window_id.is_some());
+    let orphaned = racers.clone().any(|r| r.ended && r.orphaned);
+    let waited = now >= lane.kill_sent_at.unwrap_or(now) + LANE_EXIT_WAIT_SECS;
+    match (open, orphaned) {
+        (true, _) if waited => Ok(Some("its racer did not exit")),
+        (true, _) => Err(()),
+        (false, true) => Ok(Some("its racer had no process after the restart")),
+        (false, false) => Ok(None),
+    }
+}
+
 fn salvage(run: &mut Run, i: usize, lane: RaceLane, now: u64, fx: &mut Vec<Effect>) {
     let task = &run.tasks[i];
     let id = task.id().to_string();
-    let exited = !(task.rounds.iter())
-        .any(|r| r.lane == Some(lane) && r.role == AgentRole::Racer && !r.ended);
     let Some(stopped) = (task.race.iter().flat_map(|r| &r.lanes)).find(|l| l.lane == lane) else {
         return;
     };
-    let waited = now >= stopped.kill_sent_at.unwrap_or(now) + LANE_EXIT_WAIT_SECS;
-    if !exited && !waited {
+    let Ok(why_kept) = kept_because(task, stopped, now) else {
         return;
-    }
+    };
     let path = run.task_path(&stopped.checkout);
-    let reference = salvage_ref(run, &id, merge::next_salvage_seq(task));
-    let kept = !exited;
+    let kept = why_kept.is_some();
+    // Task 17b's review, m4: the number is reserved now, from the task's one counter;
+    // m3: the lane records the ref only once the salvage has succeeded.
+    let seq = merge::reserve_salvage_seq(&mut run.tasks[i]);
+    let reference = salvage_ref(run, &id, seq);
     if let Some(stopped) = lane_mut(&mut run.tasks[i], lane) {
-        stopped.exited = exited;
+        stopped.exited = !kept;
         stopped.kept = kept;
-        // Reserved now, so the next salvage of the task takes the next number.
-        stopped.salvage_ref = Some(reference.clone());
     }
-    if kept {
-        let line = format!(
-            "race {id}: kept {} checkout: its racer did not exit",
-            lane.label()
-        );
+    if let Some(why) = why_kept {
+        let line = format!("race {id}: kept {} checkout: {why}", lane.label());
         history(run, i, now, line.clone());
         requests::log(run, now, line);
     }
@@ -143,6 +157,7 @@ pub(super) fn removed(run: &mut Run, i: usize, lane: RaceLane, result: OpResult,
         }
         OpResult::Failed { message } => {
             stopped.kept = true;
+            stopped.salvage_ref = None;
             let text = format!("racer {label}: could not salvage its checkout: {message}");
             history(run, i, now, text);
         }

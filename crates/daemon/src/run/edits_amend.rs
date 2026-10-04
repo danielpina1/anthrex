@@ -83,10 +83,8 @@ impl Batch {
         let reresolve = restricted[..4].iter().any(|(_, set)| *set);
         if restricted.iter().any(|(_, set)| *set) && !not_started(&self.run.tasks[i]) {
             for (name, _) in restricted.iter().filter(|(_, set)| *set) {
-                self.refuse(
-                    i,
-                    &format!("{name} can be amended only on pending, queued or blocked tasks"),
-                );
+                let why = format!("{name} can be amended only on pending, queued or blocked tasks");
+                self.refuse_unstarted(i, &format!("its {name} cannot change"), &why);
             }
             return;
         }

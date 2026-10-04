@@ -119,9 +119,22 @@ fn the_merge_removes_the_lanes_checkouts() {
 /// run's other checkouts) for a complete run whose `t1` raced in `states`: the task's
 /// own checkouts by `checkout_name`, then every lane checkout not already listed.
 fn discarded_worktrees(states: Option<[LaneState; 2]>, crowned: bool) -> Vec<PathBuf> {
+    finished_worktrees(FinishAction::Discard, states, crowned, |_| {})
+}
+
+/// [`discarded_worktrees`] for `action`, with `lanes` applied to the race's lanes.
+fn finished_worktrees(
+    action: FinishAction,
+    states: Option<[LaneState; 2]>,
+    crowned: bool,
+    lanes: impl Fn(&mut [crate::run::model::Lane]),
+) -> Vec<PathBuf> {
     let mut fx = super::actions_fixtures::complete();
     let task = fx.task_mut("t1");
     task.race = states.map(|states| race_of(task, states));
+    if let Some(race) = task.race.as_mut() {
+        lanes(&mut race.lanes);
+    }
     if crowned {
         task.worktree = task_path("t1.b");
     }
@@ -129,13 +142,36 @@ fn discarded_worktrees(states: Option<[LaneState; 2]>, crowned: bool) -> Vec<Pat
     fx.next(EventKind::Finish {
         reply,
         run_id: RUN_ID.into(),
-        action: FinishAction::Discard,
+        action,
     });
-    let (_, kind) = fx.op("Discard");
-    let OpKind::Discard { worktrees, .. } = kind else {
-        unreachable!()
+    let worktrees = match action {
+        FinishAction::Discard => match fx.op("Discard").1 {
+            OpKind::Discard { worktrees, .. } => worktrees,
+            other => panic!("{other:?}"),
+        },
+        _ => match fx.op("Accept").1 {
+            OpKind::Accept { worktrees, .. } => worktrees,
+            other => panic!("{other:?}"),
+        },
     };
     worktrees.into_iter().map(|(path, _)| path).collect()
+}
+
+/// Task 17b's fix round 1: accept and discard alike remove a kept loser's checkout and
+/// every lane's review and proof checkouts (decision 22).
+#[test]
+fn accept_and_discard_remove_a_kept_lanes_checkouts() {
+    let keep_a = |lanes: &mut [crate::run::model::Lane]| {
+        lanes[0].kept = true;
+        lanes[0].salvage_ref = Some(format!("refs/anthrex/salvage/{RUN_ID}/t1/1"));
+    };
+    for action in [FinishAction::Accept, FinishAction::Discard] {
+        let states = Some([LaneState::Lost, LaneState::Won]);
+        let paths = finished_worktrees(action, states, true, keep_a);
+        let mut names = vec!["t1.b", "t1.b.review", "t1.b.proof"];
+        names.extend(["t1.a", "t1.a.review", "t1.a.proof"]);
+        assert_eq!(paths, listed(&names), "{action:?}");
+    }
 }
 
 /// `names`' checkouts, then `t2`'s, the integration worktree and the tier-3 checkout.

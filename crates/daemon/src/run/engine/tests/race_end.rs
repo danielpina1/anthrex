@@ -33,18 +33,18 @@ pub(super) fn kills(effects: &[Effect]) -> Vec<u32> {
         .collect()
 }
 
-fn sorted(mut windows: Vec<u32>) -> Vec<u32> {
+pub(super) fn sorted(mut windows: Vec<u32>) -> Vec<u32> {
     windows.sort();
     windows
 }
 
 /// `t1`'s salvage ref number `n`.
-fn salvage(n: u32) -> String {
+pub(super) fn salvage(n: u32) -> String {
     format!("refs/anthrex/salvage/{RUN_ID}/t1/{n}")
 }
 
 /// A lane's salvage and removal (decision 22).
-fn removal(lane: RaceLane, n: u32, kept: bool) -> OpKind {
+pub(super) fn removal(lane: RaceLane, n: u32, kept: bool) -> OpKind {
     OpKind::RemoveWorktree {
         root: "/tmp/x".into(),
         path: lane_path(lane),

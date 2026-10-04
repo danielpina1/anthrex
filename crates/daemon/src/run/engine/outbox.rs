@@ -202,6 +202,8 @@ pub(super) fn deliver(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         if resumable {
             round.ended = false;
             round.ended_at = None;
+            // Ruling T17b-2: a resumed round's next exit is its own.
+            round.orphaned = false;
             round.carried = message_ids;
             let session_id = round.session_id.clone().unwrap_or_default();
             let session = if reviewer {

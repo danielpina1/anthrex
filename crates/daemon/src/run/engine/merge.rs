@@ -290,12 +290,13 @@ fn merged(
         run.review_path(&name),
         run.proof_path(&name),
     ];
-    let seq = next_salvage_seq(task);
-    for (k, path) in paths.into_iter().enumerate() {
+    for path in paths {
+        // Task 17b's review, m4: each number reserved as its removal is sent.
+        let seq = reserve_salvage_seq(&mut run.tasks[i]);
         let kind = OpKind::RemoveWorktree {
             root: run.root.clone(),
             path,
-            salvage_ref: salvage_ref(run, &id, seq + k),
+            salvage_ref: salvage_ref(run, &id, seq),
             keep_head: false,
             clear_locks: false,
             keep_path: false,
@@ -307,19 +308,24 @@ fn merged(
 
 /// The next unused `<seq>` of the task's salvage refs (decision 20). Several worktrees
 /// removed at once take consecutive numbers, and only the dirty ones record theirs, so
-/// the next number follows the highest recorded one, not their count.
+/// the next number follows the highest recorded one, not their count, and the highest
+/// one already handed out (`Task.salvage_seq`, task 17b's review, m4).
 pub(super) fn next_salvage_seq(task: &Task) -> usize {
-    // Milestone 9.5 decision 22: a stopped lane's ref is reserved when its salvage is
-    // sent, so a salvage in flight keeps its number.
-    let lanes = (task.race.iter().flat_map(|r| &r.lanes)).filter_map(|l| l.salvage_ref.as_ref());
-    task.salvage_refs
-        .iter()
-        .chain(lanes)
+    let recorded = (task.salvage_refs.iter())
         .filter_map(|r| r.rsplit('/').next()?.parse::<usize>().ok())
         .max()
         .unwrap_or(0)
-        .max(task.salvage_refs.len())
-        + 1
+        .max(task.salvage_refs.len());
+    recorded.max(usize::try_from(task.salvage_seq).unwrap_or(usize::MAX)) + 1
+}
+
+/// Task 17b's review, m4: hands out the task's next salvage number, reserving it at
+/// once (one counter for every removal: a cancelled task's, a merge's three, a stopped
+/// race lane's), so removals in flight together never share a number.
+pub(super) fn reserve_salvage_seq(task: &mut Task) -> usize {
+    let seq = next_salvage_seq(task);
+    task.salvage_seq = seq as u64;
+    seq
 }
 
 /// Decision 36 step 6: the first conflict hands the run head back to the task's

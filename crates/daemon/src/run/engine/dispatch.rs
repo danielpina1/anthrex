@@ -224,9 +224,11 @@ fn remove_cancelled_worktrees(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         {
             continue;
         }
-        // Review m4: one numbering rule for every salvage (decision 20's `<seq>`).
-        let salvage_ref = salvage_ref(run, task.id(), merge::next_salvage_seq(task));
+        // Review m4: one numbering rule for every salvage (decision 20's `<seq>`),
+        // reserved as the removal is sent (task 17b's review, m4).
         let (id, path) = (task.id().to_string(), task.worktree.clone());
+        let seq = merge::reserve_salvage_seq(&mut run.tasks[i]);
+        let salvage_ref = salvage_ref(run, &id, seq);
         fx.push(Effect::UnwatchWorktree { root: path.clone() });
         let op = next_op(run);
         let kind = OpKind::RemoveWorktree {
