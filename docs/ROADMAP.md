@@ -4,6 +4,7 @@ anthrex is built in twenty milestones. Milestones 1 to 6.5, 8a, 8b and 8c are me
 
 The design is layered, newest first:
 
+-1. `docs/superpowers/specs/2026-10-04-design-flow-design.md` — milestone 9.6: the design flow (two independent brainstorms merged into one report, a peer-reviewed spec with numbered requirements, a plan whose coverage the engine checks, each approved by the user). Where it disagrees with anything below on a matter it covers, it wins.
 0. `docs/superpowers/specs/2026-10-01-tui-end-to-end-design.md` — milestones 9.0.6 and 9.0.7: the TUI end to end (the daemon-computed action menu, its forms and confirmation pages, the Profile and Settings screens, run stats, the settings protocol and live reload) and a design kit, then the polish of every existing screen to that kit. Builds on the milestone 9.0.5 brief and the adaptive orchestrator spec; where they disagree on a TUI matter, it wins.
 1. `docs/superpowers/specs/2026-09-26-tiered-testing-and-pr-delivery-design.md` — milestones 9.1 and 9.2: tiered testing and stacked-PR delivery, plus orchestrator-to-worker messaging (its §12), which joins milestone 9. Amends the adaptive orchestrator spec below; its §11 lists exactly what it replaces. Where the two disagree, it wins.
 2. `docs/superpowers/specs/2026-09-22-adaptive-orchestrator-design.md` — milestones 8a, 8b, 8c, 9 and 9.5: the adaptive orchestrator. Replaces the orchestration parts of every document below (its §18 lists exactly what), and replaces the old milestone 8 and 9 briefs.
@@ -53,8 +54,10 @@ The protocol version is **10** once milestone 9 merges, raised from 9 (milestone
 | 9.2 | Stacked-PR delivery: CI and review comments become fix tasks; anthrex never merges | `docs/milestones/M9.2-pr-delivery.md` | 9.0.7 | `done` |
 | 9.3 | Keep going: a nano-like goal editor, rounds that iterate a complete run, and next goals on the same orchestrator | `docs/milestones/M9.3-keep-going.md` | 9.2 | `done` |
 | 9.5 | Tuning: adaptive concurrency, threshold and budget refit, race and test-writer patterns | `docs/milestones/M9.5-tuning.md` | 9.3 | `ready` |
+| 9.6 | Design flow: brainstorm (two models, merged), spec (peer-reviewed, numbered requirements), plan (engine-checked coverage), each approved by the user; protocol 17 | `docs/milestones/M9.6-design-flow.md` | 9.5 | `blocked` (ready once 9.5 merges) |
+| 9.7 | Delivery hardening (moved here from after 9.5 at the user's request) | brief not yet written | 9.6 | `blocked` |
 
-Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.0.5 → 9.1 → 9.0.6 → 9.0.7 → 9.2 → 9.3 → 9.5**, then 7. Milestones 9.0.6 and 9.0.7 go before the rest of 9.2 by the user's choice (spec `2026-10-01-tui-end-to-end-design.md` §0). Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
+Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.0.5 → 9.1 → 9.0.6 → 9.0.7 → 9.2 → 9.3 → 9.5 → 9.6 → 9.7**, then 7. Milestones 9.0.6 and 9.0.7 go before the rest of 9.2 by the user's choice (spec `2026-10-01-tui-end-to-end-design.md` §0). Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
 
 Only one milestone should be in progress at a time: they all touch the protocol and the client state.
 
@@ -83,6 +86,8 @@ flowchart LR
   M907 --> M92[9.2 Stacked-PR delivery]
   M92 --> M93[9.3 Keep going]
   M93 --> M95[9.5 Tuning]
+  M95 --> M96[9.6 Design flow]
+  M96 --> M97[9.7 Delivery hardening]
 ```
 
 ## Why this order
