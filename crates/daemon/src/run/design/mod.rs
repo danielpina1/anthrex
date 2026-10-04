@@ -23,6 +23,7 @@ pub mod report;
 pub mod requirements;
 pub mod state;
 pub mod template;
+pub mod versions;
 
 use proto::{DesignMode, RunPath, TaskKind, TriageInfo};
 
