@@ -210,10 +210,21 @@ fn overlap(a: &Task, b: &Task) -> bool {
     any_intersect(&a.spec.owns, &b.spec.owns)
 }
 
+/// Whose route the overlap rule checks (ruling FW-5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mover {
+    /// A task's worker. Validation rule 9 refuses overlapping tasks on different
+    /// runtimes whatever their deps, so every unfinished overlapping task counts.
+    Worker,
+    /// A racer or a test writer: a transient session rule 9 never sees. A task that
+    /// waits on the routed one never runs beside it and does not count (ruling FW-1).
+    Transient,
+}
+
 /// Ruling FW-1: the tasks that wait on task `i`, directly, transitively, or through an
-/// implicit `owns` dependency. They never run alongside it, so the overlap rule (for a
-/// worker, a racer and a test writer alike) does not count them.
-pub(super) fn dependents(tasks: &[Task], i: usize) -> BTreeSet<usize> {
+/// implicit `owns` dependency. They never run alongside it, so the overlap rule for a
+/// racer or a test writer does not count them.
+fn dependents(tasks: &[Task], i: usize) -> BTreeSet<usize> {
     let mut found = BTreeSet::new();
     let mut frontier = vec![i];
     while let Some(k) = frontier.pop() {
@@ -228,10 +239,14 @@ pub(super) fn dependents(tasks: &[Task], i: usize) -> BTreeSet<usize> {
     found
 }
 
-/// The tasks that may run beside task `i`: every other unfinished one but those that
-/// wait on it (ruling FW-1).
-fn alongside(tasks: &[Task], i: usize) -> impl Iterator<Item = (usize, &Task)> {
-    let waiting = dependents(tasks, i);
+/// The tasks the overlap rule counts against task `i` for `mover`: every other
+/// unfinished one, but for a racer or a test writer not those that wait on it (rulings
+/// FW-1, FW-5).
+fn alongside(tasks: &[Task], i: usize, mover: Mover) -> impl Iterator<Item = (usize, &Task)> {
+    let waiting = match mover {
+        Mover::Worker => BTreeSet::new(),
+        Mover::Transient => dependents(tasks, i),
+    };
     (tasks.iter().enumerate())
         .filter(move |(j, t)| *j != i && !t.state.is_finished() && !waiting.contains(j))
 }
@@ -277,16 +292,11 @@ fn skip(
     if let Some(named) = named {
         return Some(format!("the task names the runtime {named}"));
     }
-    // Ruling FW-1, per member (FW-3): a task that waits on a member never runs beside
-    // that member, but may run beside the others.
-    let waiting: Vec<(usize, BTreeSet<usize>)> =
-        group.iter().map(|&i| (i, dependents(tasks, i))).collect();
+    // Ruling FW-5: a worker's pick, which rule 9 re-validates, exempts no dependent.
     let held = (tasks.iter().enumerate())
         .filter(|(j, t)| !pending.contains(j) && !t.state.is_finished())
         .filter(|(_, t)| t.route.runtime != runtime)
-        .any(|(j, t)| {
-            (waiting.iter()).any(|(i, waits)| !waits.contains(&j) && overlap(&tasks[*i], t))
-        });
+        .any(|(_, t)| group.iter().any(|&i| overlap(&tasks[i], t)));
     held.then(|| OVERLAPPING_OWNS.to_string())
 }
 

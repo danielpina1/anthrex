@@ -36,8 +36,8 @@ pub fn next_candidate(
         .collect();
     let same = |r: &Route| r.runtime == current.runtime && r.model == current.model;
     let at = (routes.iter().position(|r| r == current)).or_else(|| routes.iter().position(same))?;
-    let held =
-        alongside(tasks, i).any(|(_, t)| t.route.runtime == current.runtime && overlap(t, task));
+    let held = alongside(tasks, i, Mover::Worker)
+        .any(|(_, t)| t.route.runtime == current.runtime && overlap(t, task));
     let reasons: Vec<Option<&str>> = (routes.iter())
         .map(|route| {
             if route == current {
@@ -93,7 +93,7 @@ pub fn rung2_route(run: &Run, i: usize) -> (Route, Option<ListPick>) {
         return (route, Some(step));
     }
     let failed = failed_routes(task);
-    let roster = open_roster(run, i, true);
+    let roster = open_roster(run, i, Some(Mover::Worker));
     if failed_in(&failed, &task.route) {
         let route = roster_substitute(&roster, &task.route, &failed);
         return (route.unwrap_or_else(|| task.route.clone()), None);
@@ -107,7 +107,7 @@ pub fn rung2_route(run: &Run, i: usize) -> (Route, Option<ListPick>) {
 /// runtime), else the task's own route.
 pub fn writer_route(run: &Run, i: usize) -> Route {
     let task = &run.tasks[i];
-    let roster = open_roster(run, i, true);
+    let roster = open_roster(run, i, Some(Mover::Transient));
     crate::run::validate_patterns::peer_route(&roster, &task.route, &run.orch.installed)
         .unwrap_or_else(|| task.route.clone())
 }
@@ -118,7 +118,7 @@ pub fn writer_route(run: &Run, i: usize) -> Route {
 /// there is none.
 pub fn racer_route(run: &Run, i: usize) -> Option<Route> {
     let task = &run.tasks[i];
-    let roster = open_roster(run, i, true);
+    let roster = open_roster(run, i, Some(Mover::Transient));
     crate::run::validate_patterns::peer_route(&roster, &task.route, &run.orch.installed)
 }
 
@@ -128,7 +128,7 @@ pub fn racer_route(run: &Run, i: usize) -> Option<Route> {
 /// this task, else `escalate_skipping`, both over [`open_roster`].
 pub fn writer_step(run: &Run, i: usize, current: &Route) -> Route {
     let failed = failed_routes(&run.tasks[i]);
-    let roster = open_roster(run, i, true);
+    let roster = open_roster(run, i, Some(Mover::Transient));
     if failed_in(&failed, current) {
         return roster_substitute(&roster, current, &failed).unwrap_or_else(|| current.clone());
     }
@@ -136,19 +136,19 @@ pub fn writer_step(run: &Run, i: usize, current: &Route) -> Route {
 }
 
 /// Ruling T10a-6: the roster entries task `i` may move to: those on its own runtime,
-/// and those on a runtime installed for the run that, with `overlap`, no unfinished
-/// task on another runtime holds by overlapping the task's `owns` (M8a decision 11,
-/// contract rule 22: as the lists' `overlapping owns` skip). A task that waits on task
-/// `i` never runs beside it and holds nothing (ruling FW-1). With none on another
-/// runtime, rung 2 escalates within its own.
-fn open_roster(run: &Run, i: usize, overlap_rule: bool) -> Vec<ModelEntry> {
+/// and those on a runtime installed for the run that no unfinished task on another
+/// runtime holds by overlapping the task's `owns` (M8a decision 11, contract rule 22: as
+/// the lists' `overlapping owns` skip). Which tasks hold is `rule`'s mover's
+/// ([`alongside`], rulings FW-1 and FW-5); `None` leaves the overlap rule out. With none
+/// on another runtime, rung 2 escalates within its own.
+fn open_roster(run: &Run, i: usize, rule: Option<Mover>) -> Vec<ModelEntry> {
     let task = &run.tasks[i];
-    let held = |runtime: Runtime| {
-        alongside(&run.tasks, i).any(|(_, t)| t.route.runtime != runtime && overlap(t, task))
+    let held = |runtime: Runtime, mover: Mover| {
+        alongside(&run.tasks, i, mover).any(|(_, t)| t.route.runtime != runtime && overlap(t, task))
     };
     let open = |runtime: Runtime| {
         runtime == task.route.runtime
-            || !(missing(&run.orch.installed, runtime) || overlap_rule && held(runtime))
+            || !(missing(&run.orch.installed, runtime) || rule.is_some_and(|m| held(runtime, m)))
     };
     (run.roster.iter())
         .filter(|e| open(e.runtime))
@@ -203,7 +203,7 @@ fn route_failed_line(run: &Run, i: usize, from: &Route, route: &Route) -> Option
         return None;
     }
     let (id, runtime, model) = (task.id(), route.runtime.label(), &route.model);
-    let held = roster_substitute(&open_roster(run, i, false), from, &failed).is_some();
+    let held = roster_substitute(&open_roster(run, i, None), from, &failed).is_some();
     Some(if held {
         format!(
             "no route for task {id} keeps the overlap rule and has not failed in this task; \

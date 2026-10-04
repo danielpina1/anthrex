@@ -148,8 +148,7 @@ fn escalation_and_review_history_keep_skips() {
             ..Default::default()
         },
     );
-    // Ruling FW-1: `t2` may run beside `t1` (it does not wait on it).
-    run.tasks[1].implicit_deps.clear();
+    // Ruling FW-5: for a worker, `t2` holds whatever it waits on.
     run.history = true;
     run.tasks[0].rounds = vec![round(AgentRole::Worker, luna(Effort::Medium), true)];
     run.tasks[0].session = 1;

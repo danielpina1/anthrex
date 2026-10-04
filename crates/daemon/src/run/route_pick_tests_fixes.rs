@@ -331,7 +331,7 @@ fn a_failed_unlisted_explicit_route_is_substituted_from_the_roster() {
 /// Ruling T10a-6: the roster's substitute keeps the overlap rule (M8a decision 11,
 /// contract rule 22): with `t2`, unfinished, on Claude and overlapping `t1`'s `owns`,
 /// `t1`'s failed opus stays off Codex's Frontier peer and takes Claude's strongest left.
-/// Ruling FW-1: `t2` may run beside `t1` (it does not wait on it).
+/// Ruling FW-5: for a worker, `t2` holds although it waits on `t1` (implicitly).
 #[test]
 fn a_roster_substitute_keeps_the_overlap_rule() {
     let tasks = [
@@ -339,7 +339,6 @@ fn a_roster_substitute_keeps_the_overlap_rule() {
         m("t2", "[\"crates/a/src/**\"]", ""),
     ];
     let mut run = built(&tasks, RouteLists::default());
-    run.tasks[1].implicit_deps.clear();
     run.tasks[0].route = opus(Effort::Medium);
     run.tasks[1].route = sonnet(Effort::Medium);
     run.tasks[0].rounds = vec![failed_round(opus(Effort::Medium))];
@@ -372,22 +371,21 @@ fn a_gate_path_rung_2_keeps_to_installed_and_overlap_free_runtimes() {
     assert_eq!(rung2_route(&run, 0), (codex_default, None));
     run.orch.installed = installed(true, false);
     assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
-    // Codex installed, but an unfinished overlapping task that may run beside it (ruling
-    // FW-1: it does not wait on `t1`) holds `t1` to Claude.
+    // Codex installed, but an unfinished overlapping task holds `t1` to Claude (ruling
+    // FW-5: for a worker, even one that waits on `t1`, here by an implicit dependency).
     let tasks = [
         m("t1", "[\"crates/a/**\"]", ""),
         m("t2", "[\"crates/a/src/**\"]", ""),
     ];
     let mut run = built(&tasks, RouteLists::default());
-    run.tasks[1].implicit_deps.clear();
     run.tasks[0].route = sonnet(Effort::High);
     run.tasks[1].route = sonnet(Effort::Medium);
     assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
 }
 
-/// Ruling FW-3 (re-review N-1): a task is left out of the overlap check against one
-/// member only when it waits on that member. `x` waits on `t1` alone and overlaps `t2`,
-/// so the group {t1, t2} stays off Codex, where `t2` would run beside `x`.
+/// Ruling FW-3 (re-review N-1), narrowed by FW-5: a worker's group pick exempts no
+/// dependent. `x` waits on `t1` alone and overlaps `t2`, so the group {t1, t2} stays off
+/// Codex, where `t2` would run beside `x`.
 #[test]
 fn a_dependent_of_one_member_still_holds_the_group_by_another() {
     let lists = RouteLists {
@@ -412,4 +410,61 @@ fn a_dependent_of_one_member_still_holds_the_group_by_another() {
         let pick = t.list_pick.as_ref().expect("a list pick");
         assert_eq!(reasons(&pick.candidates)[0], Some(OVERLAPPING_OWNS), "{id}");
     }
+}
+
+/// Ruling FW-5 (O-1): a worker's route always satisfies validation rule 9, which refuses
+/// overlapping tasks on different runtimes whatever their deps. `x` waits on `a`, names
+/// Claude and overlaps `a`, so `a` stays off the list's Codex candidate and the build
+/// passes.
+#[test]
+fn a_dependent_on_claude_holds_its_dependency_off_codex() {
+    let lists = RouteLists {
+        m: m_example(Pick::First),
+        ..Default::default()
+    };
+    let run = built(
+        &[
+            m("a", "[\"crates/a/**\"]", ""),
+            m(
+                "x",
+                "[\"crates/a/x/**\"]",
+                "deps = [\"a\"]\n[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"",
+            ),
+        ],
+        lists,
+    );
+    let a = task(&run, "a");
+    assert_eq!(a.route, opus(Effort::Medium));
+    let pick = a.list_pick.as_ref().expect("a list pick");
+    assert_eq!(reasons(&pick.candidates)[0], Some(OVERLAPPING_OWNS));
+}
+
+/// Ruling FW-5 (O-1): rung 2's list step for a worker exempts no dependent. `t3` waits
+/// on `t1` and overlaps it on Codex, so `t1` keeps to Codex.
+#[test]
+fn a_dependent_holds_rung_2s_list_step() {
+    let run = built(&[m("t1", "[\"crates/a/**\"]", "")], ladder_lists());
+    let run = add(&run, &[m("t3", "[\"crates/a/x/**\"]", "deps = [\"t1\"]")]);
+    assert_eq!(task(&run, "t3").route.runtime, Runtime::Codex);
+    let (next, step) =
+        next_candidate(&run.limits, &run.tasks, 0, &Installed::new()).expect("a step");
+    assert_eq!(next, sol(Effort::High));
+    assert_eq!(
+        reasons(&step.candidates),
+        [Some(CURRENT_ROUTE), Some(OVERLAPPING_OWNS), None]
+    );
+}
+
+/// Ruling FW-5 (O-1): rung 2's roster step for a worker exempts no dependent. `t2`
+/// waits on `t1` and overlaps it on Claude, so `t1` escalates within Claude.
+#[test]
+fn a_dependent_holds_rung_2s_roster_step() {
+    let tasks = [
+        m("t1", "[\"crates/a/**\"]", ""),
+        m("t2", "[\"crates/a/src/**\"]", "deps = [\"t1\"]"),
+    ];
+    let mut run = built(&tasks, RouteLists::default());
+    run.tasks[0].route = sonnet(Effort::High);
+    run.tasks[1].route = sonnet(Effort::Medium);
+    assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
 }
