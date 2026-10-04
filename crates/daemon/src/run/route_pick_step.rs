@@ -36,9 +36,8 @@ pub fn next_candidate(
         .collect();
     let same = |r: &Route| r.runtime == current.runtime && r.model == current.model;
     let at = (routes.iter().position(|r| r == current)).or_else(|| routes.iter().position(same))?;
-    let held = (tasks.iter().enumerate())
-        .filter(|(j, t)| *j != i && !t.state.is_finished())
-        .any(|(_, t)| t.route.runtime == current.runtime && overlap(t, task));
+    let held =
+        alongside(tasks, i).any(|(_, t)| t.route.runtime == current.runtime && overlap(t, task));
     let reasons: Vec<Option<&str>> = (routes.iter())
         .map(|route| {
             if route == current {
@@ -139,14 +138,13 @@ pub fn writer_step(run: &Run, i: usize, current: &Route) -> Route {
 /// Ruling T10a-6: the roster entries task `i` may move to: those on its own runtime,
 /// and those on a runtime installed for the run that, with `overlap`, no unfinished
 /// task on another runtime holds by overlapping the task's `owns` (M8a decision 11,
-/// contract rule 22: as the lists' `overlapping owns` skip). With none on another
+/// contract rule 22: as the lists' `overlapping owns` skip). A task that waits on task
+/// `i` never runs beside it and holds nothing (ruling FW-1). With none on another
 /// runtime, rung 2 escalates within its own.
 fn open_roster(run: &Run, i: usize, overlap_rule: bool) -> Vec<ModelEntry> {
     let task = &run.tasks[i];
     let held = |runtime: Runtime| {
-        (run.tasks.iter().enumerate())
-            .filter(|(j, t)| *j != i && !t.state.is_finished())
-            .any(|(_, t)| t.route.runtime != runtime && overlap(t, task))
+        alongside(&run.tasks, i).any(|(_, t)| t.route.runtime != runtime && overlap(t, task))
     };
     let open = |runtime: Runtime| {
         runtime == task.route.runtime

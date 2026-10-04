@@ -115,14 +115,16 @@ fn a_writer_that_failed_in_this_task_is_substituted_on_retry() {
 }
 
 /// T16-2 (ruling T10a-6): at dispatch, the writer does not take the peer runtime while
-/// an unfinished task on the task's runtime overlaps its `owns`.
+/// an unfinished task on the task's runtime overlaps its `owns` and may run beside it
+/// (ruling FW-1: `t2` does not wait on `t1`).
 #[test]
 fn the_writers_dispatch_route_keeps_the_overlap_rule() {
     let tasks = [
         task("t1", "S", "a", PAIRED),
-        task_toml("t2", "S", "[\"crates/a/src/**\"]", "deps = [\"t1\"]"),
+        task_toml("t2", "S", "[\"crates/a/src/**\"]", ""),
     ];
-    let (fx, launch, _) = running(PROFILE, &tasks, config::Orchestrator::default(), |_| {});
+    let clear = |run: &mut crate::run::model::Run| run.tasks[1].implicit_deps.clear();
+    let (fx, launch, _) = running(PROFILE, &tasks, config::Orchestrator::default(), clear);
     assert_eq!(fx.task("t2").route.runtime, Runtime::Claude);
     assert_eq!(
         launch.spec.runtime,

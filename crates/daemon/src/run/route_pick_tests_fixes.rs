@@ -331,6 +331,7 @@ fn a_failed_unlisted_explicit_route_is_substituted_from_the_roster() {
 /// Ruling T10a-6: the roster's substitute keeps the overlap rule (M8a decision 11,
 /// contract rule 22): with `t2`, unfinished, on Claude and overlapping `t1`'s `owns`,
 /// `t1`'s failed opus stays off Codex's Frontier peer and takes Claude's strongest left.
+/// Ruling FW-1: `t2` may run beside `t1` (it does not wait on it).
 #[test]
 fn a_roster_substitute_keeps_the_overlap_rule() {
     let tasks = [
@@ -338,6 +339,7 @@ fn a_roster_substitute_keeps_the_overlap_rule() {
         m("t2", "[\"crates/a/src/**\"]", ""),
     ];
     let mut run = built(&tasks, RouteLists::default());
+    run.tasks[1].implicit_deps.clear();
     run.tasks[0].route = opus(Effort::Medium);
     run.tasks[1].route = sonnet(Effort::Medium);
     run.tasks[0].rounds = vec![failed_round(opus(Effort::Medium))];
@@ -370,12 +372,14 @@ fn a_gate_path_rung_2_keeps_to_installed_and_overlap_free_runtimes() {
     assert_eq!(rung2_route(&run, 0), (codex_default, None));
     run.orch.installed = installed(true, false);
     assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));
-    // Codex installed, but an unfinished overlapping task holds `t1` to Claude.
+    // Codex installed, but an unfinished overlapping task that may run beside it (ruling
+    // FW-1: it does not wait on `t1`) holds `t1` to Claude.
     let tasks = [
         m("t1", "[\"crates/a/**\"]", ""),
         m("t2", "[\"crates/a/src/**\"]", ""),
     ];
     let mut run = built(&tasks, RouteLists::default());
+    run.tasks[1].implicit_deps.clear();
     run.tasks[0].route = sonnet(Effort::High);
     run.tasks[1].route = sonnet(Effort::Medium);
     assert_eq!(rung2_route(&run, 0), (opus(Effort::High), None));

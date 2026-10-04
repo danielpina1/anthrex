@@ -210,6 +210,32 @@ fn overlap(a: &Task, b: &Task) -> bool {
     any_intersect(&a.spec.owns, &b.spec.owns)
 }
 
+/// Ruling FW-1: the tasks that wait on task `i`, directly, transitively, or through an
+/// implicit `owns` dependency. They never run alongside it, so the overlap rule (for a
+/// worker, a racer and a test writer alike) does not count them.
+pub(super) fn dependents(tasks: &[Task], i: usize) -> BTreeSet<usize> {
+    let mut found = BTreeSet::new();
+    let mut frontier = vec![i];
+    while let Some(k) = frontier.pop() {
+        let id = tasks[k].id();
+        for (j, t) in tasks.iter().enumerate() {
+            let waits = (t.spec.deps.iter().chain(&t.implicit_deps)).any(|d| d == id);
+            if j != i && waits && found.insert(j) {
+                frontier.push(j);
+            }
+        }
+    }
+    found
+}
+
+/// The tasks that may run beside task `i`: every other unfinished one but those that
+/// wait on it (ruling FW-1).
+fn alongside(tasks: &[Task], i: usize) -> impl Iterator<Item = (usize, &Task)> {
+    let waiting = dependents(tasks, i);
+    (tasks.iter().enumerate())
+        .filter(move |(j, t)| *j != i && !t.state.is_finished() && !waiting.contains(j))
+}
+
 /// The targets that take their class list, grouped by `owns` intersection within a
 /// class (contract rule 22: two runtimes never share overlapping `owns`), in plan order
 /// of each group's first task.
@@ -251,8 +277,10 @@ fn skip(
     if let Some(named) = named {
         return Some(format!("the task names the runtime {named}"));
     }
+    // Ruling FW-1: a task that waits on a member never runs beside it.
+    let waiting: BTreeSet<usize> = group.iter().flat_map(|&i| dependents(tasks, i)).collect();
     let held = (tasks.iter().enumerate())
-        .filter(|(j, t)| !pending.contains(j) && !t.state.is_finished())
+        .filter(|(j, t)| !pending.contains(j) && !t.state.is_finished() && !waiting.contains(j))
         .filter(|(_, t)| t.route.runtime != runtime)
         .any(|(_, t)| group.iter().any(|&i| overlap(&tasks[i], t)));
     held.then(|| OVERLAPPING_OWNS.to_string())

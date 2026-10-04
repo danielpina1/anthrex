@@ -459,12 +459,12 @@ fn an_adopted_lanes_typed_question_is_not_classified() {
     assert!(fx.task("t1").pending_classification.is_none());
 }
 
-/// Review B's M9: the second racer's peer route keeps the overlap rule (contract rule
-/// 22), as the test writer's and rung 2's do. `t2` overlaps `t1`'s owns and waits for it
-/// on Claude, so a Codex racer for `t1` would share owns with an unfinished task on
-/// another runtime: `t1` runs single, saying why.
+/// Review B's M9 with ruling FW-1: the second racer's peer route keeps the overlap rule
+/// (contract rule 22) only against tasks that may run beside it. `t2` overlaps `t1`'s
+/// owns but waits for it (an implicit dependency), so it never runs alongside: `t1`
+/// races.
 #[test]
-fn the_second_racer_keeps_the_overlap_rule() {
+fn a_later_dependent_overlapping_task_does_not_skip_the_race() {
     let tasks = [
         task("t1", "M", "a", RACING),
         task_toml("t2", "M", "[\"crates/a/src/**\"]", ""),
@@ -472,6 +472,32 @@ fn the_second_racer_keeps_the_overlap_rule() {
     let fx = launched(PROFILE, &tasks, config::Orchestrator::default());
     assert_eq!(fx.task("t2").implicit_deps, ["t1"]);
     assert_eq!(fx.task("t2").state, TaskState::Pending);
+    let t1 = fx.task("t1");
+    assert!(t1.race.is_some(), "{:?}", t1.notes);
+    assert!(
+        !t1.notes.iter().any(|n| n.starts_with("race skipped")),
+        "{:?}",
+        t1.notes
+    );
+}
+
+/// Ruling FW-1's other half: an overlapping task that may run beside `t1` (no declared
+/// or implicit dependency between them, as for two tasks that have both started, which
+/// `implicit_deps` leaves unordered) still holds the peer runtime off, since a Codex
+/// racer would share owns with it on Claude: `t1` runs single, saying why.
+#[test]
+fn a_concurrent_overlapping_task_still_skips_the_race() {
+    let tasks = [
+        task("t1", "M", "a", RACING),
+        task_toml("t2", "M", "[\"crates/a/src/**\"]", ""),
+    ];
+    let plan = plan_with(PROFILE, &tasks);
+    let mut fx = Fixture::with_config(&plan, config::Orchestrator::default());
+    fx.start_with(true, |run| run.tasks[1].implicit_deps.clear());
+    let (op, _) = fx.op("CreateRunBranch");
+    fx.done(op, OpResult::Worktree { head: BASE.into() });
+    fx.launch_all();
+    assert!(fx.task("t2").implicit_deps.is_empty());
     let t1 = fx.task("t1");
     assert!(t1.race.is_none(), "{:?}", t1.race);
     let note = "race skipped: a codex racer would overlap an unfinished task's owns";

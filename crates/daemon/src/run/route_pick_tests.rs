@@ -335,8 +335,10 @@ fn rung_2_takes_the_next_candidate_and_never_breaks_the_overlap_rule() {
     assert_eq!(step.chosen, Some(1));
     assert_eq!(reasons(&step.candidates)[0], Some(CURRENT_ROUTE));
 
-    // An unfinished task on codex overlaps t1: the claude candidate is skipped.
+    // An unfinished task on codex overlaps t1: the claude candidate is skipped. Ruling
+    // FW-1: one that may run beside t1 (no wait on it, as for one already started).
     let mut overlapped = add(&run, &[m("t3", "[\"crates/a/x/**\"]", "")]);
+    overlapped.tasks[2].implicit_deps.clear();
     assert_eq!(task(&overlapped, "t3").route.runtime, Runtime::Codex);
     let (next, step) =
         next_candidate(&overlapped.limits, &overlapped.tasks, 0, &none).expect("the codex step");
