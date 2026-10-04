@@ -122,7 +122,13 @@ pub(super) fn flush(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 store(run, doc, now)
             });
         let state = match stored {
-            Ok((_, write)) => {
+            Ok((version, write)) => {
+                // Task M9.6.9: kept for the merged report's appendix.
+                if let (Effect::WriteDoc { text, .. }, Some(design)) =
+                    (&write, run.orch.design.as_mut())
+                {
+                    design.keep_text(version.kind, version.n, text.clone());
+                }
                 fx.push(write);
                 DesignAgentState::Done
             }

@@ -7,7 +7,8 @@
 //!
 //! No lock is held across an await: the engine's state is looked up and cloned under
 //! its lock, and the files (the stored profile, the frozen scout reports, a continued
-//! goal's previous spec, checked against its frozen index entry) are read on
+//! goal's previous spec and a rethink's previous report, each checked against its
+//! frozen index entry) are read on
 //! `spawn_blocking`, within `CONTEXT_READ_TIMEOUT` and `IO_WAIT` (AGENTS.md rule 2).
 
 use std::ffi::OsString;
@@ -23,7 +24,8 @@ use super::ops::failed;
 use super::orch::{CONTEXT_READ_TIMEOUT, context_reads};
 use super::{OpCtx, RunService};
 use crate::run::design::pack::{
-    Earlier, EarlierSpec, PACK_MAX, PackFile, PackInputs, pack, pack_path,
+    Earlier, EarlierSpec, FrozenRethink, PACK_MAX, PackFile, PackInputs, RethinkInput, pack,
+    pack_path,
 };
 use crate::run::design::state::sha256_hex;
 use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent, ScoutEnd};
@@ -128,6 +130,28 @@ impl RunService {
                 }
                 _ => tracing::warn!(run = %run_id, "the earlier spec is left out"),
             }
+        }
+        // Task M9.6.9: a rethink's note, and the report it replaces, read as stored.
+        if let Some(FrozenRethink {
+            note,
+            path,
+            version,
+        }) = frozen.rethink
+        {
+            let n = version.n;
+            let read = tokio::task::spawn_blocking(move || read_stored(&path, &version));
+            let report = match tokio::time::timeout(IO_WAIT, read).await {
+                Ok(Ok(Ok(bytes))) => Some(cut_text(&bytes, DOC_READ_CAP, "cut")),
+                _ => {
+                    tracing::warn!(run = %run_id, "the previous brainstorm report is left out");
+                    None
+                }
+            };
+            inputs.rethink = Some(RethinkInput {
+                version: n,
+                note,
+                report,
+            });
         }
         run.scout_reports = frozen.reports;
         let read = tokio::task::spawn_blocking(move || context_reads(&run));

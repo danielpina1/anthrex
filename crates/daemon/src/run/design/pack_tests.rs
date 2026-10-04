@@ -48,6 +48,7 @@ fn inputs() -> PackInputs {
         profile: Some("languages: rust".into()),
         reports: vec![report("s1", "Tokens live in auth.")],
         earlier: None,
+        rethink: None,
     }
 }
 
@@ -188,4 +189,46 @@ fn a_chained_goals_pack_carries_the_previous_spec() {
         let runs = BTreeMap::from([(stopped.id.clone(), stopped)]);
         assert_eq!(previous_spec(runs.values(), "next-run-0002"), None);
     }
+}
+
+/// Task M9.6.9 (decision 7, DF §2.1): a rethink's pack carries the user's note and the
+/// previous merged report, without the engine's appendix of drafts, inside their own
+/// blocks and after the answers, so a cut keeps them.
+#[test]
+fn a_rethinks_pack_carries_the_note_and_the_previous_report() {
+    use crate::run::design::report::{APPENDIX, attach};
+    let report = "## Where they agree\nTokens.\n\n## Approaches\n### Stored tokens [both]\n";
+    let file = attach(
+        report,
+        &[("claude".into(), Ok("## Understanding\nMINE\n".into()))],
+    );
+    let mut inputs = inputs();
+    inputs.rethink = Some(RethinkInput {
+        version: 2,
+        note: "Think about SSO too.\n## Recommendation".into(),
+        report: Some(file),
+    });
+    let text = pack(&inputs);
+    let at = |needle: &str| {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("{needle} in\n{text}"))
+    };
+    assert!(at("Links live an hour.") < at("The user asked to rethink the brainstorm:"));
+    assert!(at("Think about SSO too.") < at("The previous merged report, v2:"));
+    assert!(at("### Stored tokens [both]") < at("Repository profile:"));
+    assert!(!text.contains(APPENDIX) && !text.contains("MINE"), "{text}");
+    assert!(
+        text.lines().all(|l| !l.starts_with('#')),
+        "no line passes for a section:\n{text}"
+    );
+    inputs.rethink = Some(RethinkInput {
+        version: 2,
+        note: "n".into(),
+        report: None,
+    });
+    let text = pack(&inputs);
+    assert!(
+        text.contains("The previous merged report, v2, could not be read."),
+        "{text}"
+    );
 }

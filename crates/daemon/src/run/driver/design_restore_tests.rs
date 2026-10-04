@@ -23,6 +23,7 @@ fn version(kind: DocKind, n: u32, text: &str) -> DocVersion {
         not_reviewed: None,
         changes: Vec::new(),
         same_runtime: false,
+        report: None,
     }
 }
 
@@ -82,6 +83,42 @@ fn every_version_is_read_back_and_checked_against_its_index() {
     );
     let missing = checked[3].read.clone().unwrap_err();
     assert!(missing.contains("plan-v1.md"), "{missing}");
+}
+
+/// Task M9.6.9: the texts a restore keeps are each gate document's latest version and
+/// each brainstormer's latest draft (the merged report's appendix attaches it); older
+/// drafts, older versions and a spec's review draft are checked, not kept.
+#[test]
+fn the_latest_draft_of_each_brainstormer_is_kept() {
+    use crate::run::design::state::DesignState;
+    let draft = |label: &str, n: u32| DocVersion {
+        author: DocAuthor::Brainstormer {
+            label: label.into(),
+        },
+        ..version(DocKind::BrainstormDraft, n, label)
+    };
+    let design = DesignState {
+        versions: vec![
+            draft("claude", 1),
+            draft("codex", 2),
+            version(DocKind::Brainstorm, 1, "report"),
+            draft("claude", 3),
+            version(DocKind::Spec, 0, "review draft"),
+        ],
+        ..DesignState::default()
+    };
+    let kept: Vec<(DocKind, u32)> = (design.versions.iter())
+        .filter(|v| super::kept(&design, v))
+        .map(|v| (v.kind, v.n))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            (DocKind::BrainstormDraft, 2),
+            (DocKind::Brainstorm, 1),
+            (DocKind::BrainstormDraft, 3)
+        ]
+    );
 }
 
 mod service {

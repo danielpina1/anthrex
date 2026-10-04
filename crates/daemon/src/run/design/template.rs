@@ -189,8 +189,7 @@ fn single_line(lines: &[DocLine<'_>], ctx: &TemplateCtx) -> Result<(), String> {
 /// name as a whole word or phrase, ignoring case, or exactly as written for a name
 /// under three characters (ruling T4-3).
 fn approaches(lines: &[DocLine<'_>], ctx: &TemplateCtx) -> Result<(), String> {
-    let mut tags: Vec<String> = ctx.labels.iter().map(|l| format!("[{l}]")).collect();
-    tags.push("[both]".to_string());
+    let tags = tags(&ctx.labels);
     let lower_tags: Vec<String> = tags.iter().map(|t| t.to_lowercase()).collect();
     let body = section(lines, "## Approaches").unwrap_or_default();
     let mut names = Vec::new();
@@ -227,16 +226,32 @@ fn approaches(lines: &[DocLine<'_>], ctx: &TemplateCtx) -> Result<(), String> {
     Err("the recommendation must name one of the listed approaches".to_string())
 }
 
+/// The tags an approach heading may carry: each label's, then `[both]`.
+pub(crate) fn tags(labels: &[String]) -> Vec<String> {
+    let mut tags: Vec<String> = labels.iter().map(|l| format!("[{l}]")).collect();
+    tags.push("[both]".to_string());
+    tags
+}
+
 /// An approach heading without its tags (matched ignoring ASCII case) and its leading
-/// number (`2.` or `2)`), in the heading's own case.
-fn approach_name(title: &str, tags: &[String]) -> String {
-    let mut name = title.to_string();
-    for tag in tags {
-        let tag = tag.to_ascii_lowercase();
-        // ASCII lower-casing keeps every byte offset, so a match in the lowered copy
-        // is the same range of `name`.
-        while let Some(at) = name.to_ascii_lowercase().find(&tag) {
-            name.replace_range(at..at + tag.len(), "");
+/// number (`2.` or `2)`), in the heading's own case. Task 4's carry: the title is
+/// lower-cased once and the name rebuilt in one pass, so the check stays linear in the
+/// capped report however many tags a heading repeats; a tag that removing another
+/// would join is text.
+pub(crate) fn approach_name(title: &str, tags: &[String]) -> String {
+    let tags: Vec<String> = tags.iter().map(|t| t.to_ascii_lowercase()).collect();
+    // ASCII lower-casing keeps every byte offset, so a tag found in the lowered copy is
+    // the same range of `title`; a tag is ASCII, so its end is a character boundary.
+    let lower = title.to_ascii_lowercase();
+    let mut name = String::with_capacity(title.len());
+    let mut at = 0;
+    while let Some(c) = title[at..].chars().next() {
+        match tags.iter().find(|t| lower[at..].starts_with(t.as_str())) {
+            Some(tag) => at += tag.len(),
+            None => {
+                name.push(c);
+                at += c.len_utf8();
+            }
         }
     }
     let name = name.trim();
@@ -258,12 +273,25 @@ pub(crate) struct DocLine<'a> {
 }
 
 /// The lines of `text`, each knowing whether it sits in a ```` ``` ```` or `~~~` fence
-/// (review m1, after CommonMark): a fence opens on a line starting with three or more
-/// of one marker character whose info string, for backticks, holds no backtick (so
-/// ```` ```cargo test``` ```` is inline code, not a fence); it closes only on a bare
-/// run of the same character at least as long as the opener's.
+/// (review m1, after CommonMark): a fence opens on a line starting, after at most three
+/// spaces, with three or more of one marker character whose info string, for
+/// backticks, holds no backtick (so ```` ```cargo test``` ```` is inline code, not a
+/// fence); it closes only on a bare run of the same character at least as long as the
+/// opener's, also after at most three spaces. A fence that never closes runs to the end
+/// of the document (task 4's carry).
 pub(crate) fn lines(text: &str) -> Vec<DocLine<'_>> {
-    // The open fence: its character and its run's length.
+    scan(text).0
+}
+
+/// The closing line a document whose last fence never closes needs (its marker
+/// repeated to the opener's length), so that text appended after it is not code.
+pub(crate) fn open_fence(text: &str) -> Option<String> {
+    let (c, len) = scan(text).1?;
+    Some(c.to_string().repeat(len))
+}
+
+/// [`lines`], and the fence still open at the end: its character and its run's length.
+fn scan(text: &str) -> (Vec<DocLine<'_>>, Option<(char, usize)>) {
     let mut fence: Option<(char, usize)> = None;
     let mut out = Vec::new();
     for (i, text) in text.lines().enumerate() {
@@ -287,13 +315,20 @@ pub(crate) fn lines(text: &str) -> Vec<DocLine<'_>> {
             code,
         });
     }
-    out
+    (out, fence)
 }
 
-/// A line that starts (after spaces) with three or more backticks or tildes: the
-/// character, the run's length and the rest of the line.
+/// CommonMark: a fence or a heading sits after at most three spaces; four or more make
+/// an indented code line, which is neither (task 4's carry). The line after them.
+fn unindented(line: &str) -> Option<&str> {
+    let rest = line.trim_start_matches(' ');
+    (line.len() - rest.len() <= 3).then_some(rest)
+}
+
+/// A line that starts (after at most three spaces) with three or more backticks or
+/// tildes: the character, the run's length and the rest of the line.
 fn fence_run(line: &str) -> Option<(char, usize, &str)> {
-    let trimmed = line.trim_start();
+    let trimmed = unindented(line)?;
     let c = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'))?;
     let len = trimmed.len() - trimmed.trim_start_matches(c).len();
     (len >= 3).then(|| (c, len, &trimmed[len..]))
@@ -304,20 +339,21 @@ pub(crate) fn heading<'a>(line: &DocLine<'a>) -> Option<(usize, &'a str)> {
     if line.code {
         return None;
     }
-    let level = line.text.len() - line.text.trim_start_matches('#').len();
-    let rest = &line.text[level..];
+    let text = unindented(line.text)?;
+    let level = text.len() - text.trim_start_matches('#').len();
+    let rest = &text[level..];
     let spaced = rest.is_empty() || rest.starts_with([' ', '\t']);
     (level > 0 && spaced).then(|| (level, rest.trim()))
 }
 
 /// The body of the first section whose heading line is `wanted` (`## Requirements`),
-/// trailing spaces aside: its lines up to the next heading of the same or a higher
+/// up to three leading and any trailing spaces aside: its lines up to the next heading of the same or a higher
 /// level. `None` when there is no such heading.
 pub(crate) fn section<'a>(lines: &[DocLine<'a>], wanted: &str) -> Option<Vec<DocLine<'a>>> {
     let level = wanted.len() - wanted.trim_start_matches('#').len();
     let start = lines
         .iter()
-        .position(|l| !l.code && l.text.trim_end() == wanted)?;
+        .position(|l| !l.code && unindented(l.text).is_some_and(|t| t.trim_end() == wanted))?;
     let body = lines[start + 1..]
         .iter()
         .take_while(|l| heading(l).is_none_or(|(n, _)| n > level))
@@ -328,21 +364,37 @@ pub(crate) fn section<'a>(lines: &[DocLine<'a>], wanted: &str) -> Option<Vec<Doc
 
 /// `line` with each inline code span blanked out (review m7): a run of backticks opens
 /// a span that the next run of exactly the same length closes. A run with no closer is
-/// plain text, so a lone backtick hides nothing.
+/// plain text, so a lone backtick hides nothing. CommonMark (task 4's carry): outside a
+/// span, a backslash makes the backtick after it text, and the rest of its run is still
+/// a run; inside a span a backslash is text, so a closer is never escaped. Each run's
+/// next run of a length is looked up, not searched for, so the masking is linear.
 fn without_inline_code(line: &str) -> String {
     let runs = backtick_runs(line);
+    // For each run: the nearest later run as long as it, and as long as it less one
+    // (the closer of an escaped opener).
+    let mut next: Vec<(Option<usize>, Option<usize>)> = vec![(None, None); runs.len()];
+    let mut nearest: std::collections::HashMap<usize, usize> = Default::default();
+    for (k, &(_, len, _)) in runs.iter().enumerate().rev() {
+        next[k] = (nearest.get(&len).copied(), nearest.get(&(len - 1)).copied());
+        nearest.insert(len, k);
+    }
     let mut out = String::with_capacity(line.len());
     let mut copied = 0;
     let mut k = 0;
     while k < runs.len() {
-        let (start, len) = runs[k];
-        match runs[k + 1..].iter().position(|r| r.1 == len) {
-            Some(offset) => {
-                let (close, close_len) = runs[k + 1 + offset];
-                out.push_str(&line[copied..start]);
+        let (start, len, escaped) = runs[k];
+        let (open, close) = match escaped {
+            false => (start, next[k].0),
+            true if len > 1 => (start + 1, next[k].1),
+            true => (start, None),
+        };
+        match close {
+            Some(j) => {
+                let (close, close_len, _) = runs[j];
+                out.push_str(&line[copied..open]);
                 out.push(' ');
                 copied = close + close_len;
-                k += offset + 2;
+                k = j + 1;
             }
             None => k += 1,
         }
@@ -351,17 +403,21 @@ fn without_inline_code(line: &str) -> String {
     out
 }
 
-/// Each run of backticks in `line`: its byte offset and length.
-fn backtick_runs(line: &str) -> Vec<(usize, usize)> {
-    let mut runs: Vec<(usize, usize)> = Vec::new();
+/// Each run of backticks in `line`: its byte offset, its length, and whether an odd
+/// number of backslashes stands right before it (its first backtick is escaped).
+fn backtick_runs(line: &str) -> Vec<(usize, usize, bool)> {
+    let mut runs: Vec<(usize, usize, bool)> = Vec::new();
+    let mut slashes = 0;
     for (at, c) in line.char_indices() {
         if c != '`' {
+            slashes = if c == '\\' { slashes + 1 } else { 0 };
             continue;
         }
         match runs.last_mut() {
-            Some((start, len)) if *start + *len == at => *len += 1,
-            _ => runs.push((at, 1)),
+            Some((start, len, _)) if *start + *len == at => *len += 1,
+            _ => runs.push((at, 1, slashes % 2 == 1)),
         }
+        slashes = 0;
     }
     runs
 }
@@ -378,8 +434,12 @@ fn has_word(text: &str, word: &str) -> bool {
 
 #[cfg(test)]
 #[path = "template_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 #[path = "template_tests_text.rs"]
 mod tests_text;
+
+#[cfg(test)]
+#[path = "template_tests_linear.rs"]
+mod tests_linear;

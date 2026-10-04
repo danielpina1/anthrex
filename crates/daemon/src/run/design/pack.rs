@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use proto::{DocGateKind, DocKind, RunState, ScoutReport, safe_text};
 use serde::{Deserialize, Serialize};
 
+use super::report;
 use super::state::{DocVersion, design_dir};
 use super::template::{lines, section};
 use crate::run::contract::floor_boundary;
@@ -41,6 +42,17 @@ pub struct PackInputs {
     pub reports: Vec<ScoutReport>,
     /// A continued goal's previous run's approved spec (decision 30).
     pub earlier: Option<Earlier>,
+    /// A rethink's note and the report it replaces (decision 7, task M9.6.9).
+    pub rethink: Option<RethinkInput>,
+}
+
+/// What a rethink adds to its round's pack: the user's note and the previous merged
+/// report (its text as stored, `None` when it could not be read back).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RethinkInput {
+    pub version: u32,
+    pub note: String,
+    pub report: Option<String>,
 }
 
 /// The previous run's approved spec: where it is, and its text.
@@ -67,6 +79,9 @@ fn pack_uncapped(inputs: &PackInputs) -> String {
         "The user's answers:\n{}",
         indented(answers.unwrap_or("none"), 2)
     ));
+    if let Some(rethink) = &inputs.rethink {
+        blocks.push(rethink_block(rethink));
+    }
     if let Some(earlier) = &inputs.earlier {
         let path = safe_text::one_line(&earlier.path.display().to_string());
         let mut block = format!("Related earlier work: the previous run's approved spec, {path}");
@@ -85,6 +100,24 @@ fn pack_uncapped(inputs: &PackInputs) -> String {
         blocks.push(report(r));
     }
     blocks.join("\n\n")
+}
+
+/// A rethink's block: the user's note, then the previous report without the engine's
+/// appendix of drafts (task M9.6.9).
+fn rethink_block(rethink: &RethinkInput) -> String {
+    let n = rethink.version;
+    let note = indented(&rethink.note, 2);
+    let mut block = format!("The user asked to rethink the brainstorm:\n{note}");
+    match &rethink.report {
+        Some(text) => {
+            let report = indented(report::split(text).0.trim_end(), 2);
+            block.push_str(&format!("\nThe previous merged report, v{n}:\n{report}"));
+        }
+        None => block.push_str(&format!(
+            "\nThe previous merged report, v{n}, could not be read."
+        )),
+    }
+    block
 }
 
 /// One scout report: its summary and findings (`files`, `interfaces`, `risks`; the
@@ -141,6 +174,19 @@ pub struct FrozenPack {
     /// Ruling T8-6: the round's pack file as its first start wrote it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<PackFile>,
+    /// Task M9.6.9 (decision 7): a rethink's round also carries the user's note and the
+    /// report it replaces.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rethink: Option<FrozenRethink>,
+}
+
+/// A rethink's frozen inputs: the user's note, and the previous merged report's file and
+/// index entry, against which the driver reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrozenRethink {
+    pub note: String,
+    pub path: PathBuf,
+    pub version: DocVersion,
 }
 
 /// Ruling T8-6: a written pack's length and SHA-256, against which every later start of
@@ -172,6 +218,7 @@ pub fn freeze(run: &Run, earlier: Option<EarlierSpec>) -> FrozenPack {
         earlier,
         round: (run.orch.design.as_ref()).map_or(1, |d| d.rethinks + 1),
         file: None,
+        rethink: None,
     }
 }
 

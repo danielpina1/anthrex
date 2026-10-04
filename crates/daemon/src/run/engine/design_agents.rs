@@ -22,6 +22,9 @@
 //! - **Restart.** A brainstormer running, or holding its draft, at a daemon restart is
 //!   queued again and relaunched fresh, as a new session, with the same pack once the
 //!   run resumes ([`restore`], DF §8.4).
+//! - **Rethink.** The user's rethink queues both again for the next brainstorm round,
+//!   with the note and the report it replaces in the round's pack (task M9.6.9,
+//!   [`rethink`]).
 //!
 //! Pure (design decision 2).
 
@@ -336,9 +339,7 @@ pub(super) fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         })
         .collect();
     if failed.len() < design.brainstormers.len() {
-        if let Some(design) = run.orch.design.as_mut() {
-            design.drafts_settled = true;
-        }
+        // `drafts_in` sets `drafts_settled` (ruling T8-5).
         let one = failed.first().map(|(l, r)| (l.as_str(), r.as_str()));
         return design::drafts_in(run, one, now);
     }
@@ -441,4 +442,7 @@ pub(super) use drafts::tool;
 mod pack;
 #[path = "design_relaunch.rs"]
 mod relaunch;
+#[path = "design_rethink.rs"]
+mod rethink;
 pub(super) use pack::awaiting_drafts;
+pub(super) use rethink::rethink;

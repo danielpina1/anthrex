@@ -179,12 +179,21 @@ pub(super) fn submit_doc(
     if kind == DocGateKind::Spec && !doc.ready {
         return Err(SPEC_REVIEW_NOT_YET.into());
     }
-    let text = checked_text(run, doc.kind, &doc.text, doc.amend)?;
     let reason = match design_gate::revising(run) {
         Some(note) => format!("revised: {}", design_gate::note_head(&note)),
         None => "submitted".to_string(),
     };
-    let doc = NewDoc::new(doc.kind, DocAuthor::Orchestrator, &reason, &text);
+    let doc = match kind {
+        // Task M9.6.9: the merged report, once the drafts are in, with their appendix.
+        DocGateKind::Brainstorm => match report::drafts_not_in(run) {
+            Some(text) => return Err(text),
+            None => report::report_doc(run, &doc.text, DocAuthor::Orchestrator, &reason)?,
+        },
+        _ => {
+            let text = checked_text(run, doc.kind, &doc.text, doc.amend)?;
+            NewDoc::new(doc.kind, DocAuthor::Orchestrator, &reason, &text)
+        }
+    };
     let n = design_gate::open(run, doc, now, fx)?;
     Ok(json!({"accepted": true, "kind": kind.label(), "version": n, "awaiting_approval": true}))
 }
@@ -264,9 +273,14 @@ fn admitted(run: &Run, kind: DocGateKind) -> Result<(), String> {
 
 /// DF §3.4, for task M9.6.8: both drafts are in, or one draft and one failure,
 /// `(label, reason)`. The brainstorming clock starts now, and the orchestrator is woken
-/// to merge them.
+/// to merge them, with the report's template (task M9.6.9).
 pub(super) fn drafts_in(run: &mut Run, failed: Option<(&str, &str)>, now: u64) {
+    // Ruling T8-5: once per brainstorm round; the merged report waits for it.
+    if let Some(design) = run.orch.design.as_mut() {
+        design.drafts_settled = true;
+    }
     start_clock(run, now);
+    let template = report::template_note(run, failed);
     let note = match failed {
         None => {
             "both brainstorm drafts are in; read them with get_doc and submit the merged report"
@@ -278,6 +292,7 @@ pub(super) fn drafts_in(run: &mut Run, failed: Option<(&str, &str)>, now: u64) {
     };
     log(run, now, "the brainstorm drafts are in");
     wake::note(run, note);
+    wake::note(run, template);
 }
 
 /// Decision 8: the current phase's clock starts (or restarts) now.
@@ -451,3 +466,6 @@ pub(super) fn checked(run: &mut Run, checked: Vec<DocChecked>, now: u64) {
         design_gate::revision_note(gate.kind, gate.version, cause, &note),
     );
 }
+
+#[path = "design_report.rs"]
+pub(super) mod report;

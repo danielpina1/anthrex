@@ -11,11 +11,13 @@
 use proto::{DocAuthor, DocGateAction, DocGateKind, DocKind, RunState, safe_text};
 use serde_json::{Value, json};
 
+use super::design::report::report_doc;
 use super::design::{checked_text, start_clock};
 use super::requests::log;
 use super::{Effect, EngineState, ReplyId, goal_rounds_end, wake};
 use crate::run::design::changes;
 use crate::run::design::plan_md;
+use crate::run::design::report;
 use crate::run::design::state::{DocGate, NewDoc, Revision, gate_doc, not_design, store};
 use crate::run::model::Run;
 
@@ -134,8 +136,15 @@ pub(crate) fn act(
             ))
         }
         DocGateAction::Edit { text } => {
-            let text = checked_text(run, gate_doc(kind), &text, false)?;
-            let doc = NewDoc::new(gate_doc(kind), DocAuthor::User, "edited by you", &text);
+            let (user, reason) = (DocAuthor::User, "edited by you");
+            let doc = match kind {
+                // Task M9.6.9: the user's report takes the drafts' appendix as well.
+                DocGateKind::Brainstorm => report_doc(run, &text, user, reason)?,
+                _ => {
+                    let text = checked_text(run, gate_doc(kind), &text, false)?;
+                    NewDoc::new(gate_doc(kind), user, reason, &text)
+                }
+            };
             let n = open(run, doc, now, fx)?;
             let note = format!("the user edited the {} (now v{n})", kind.label());
             wake::note(run, note);
@@ -150,6 +159,8 @@ pub(crate) fn act(
             }
             run.state = RunState::Brainstorming;
             log(run, now, format!("the user asked to rethink the {what}"));
+            // Task M9.6.9: both brainstormers run again, with the note and the report.
+            super::design_agents::rethink(run, &note, now);
             let text = format!("the user asked to rethink the brainstorm: {note}");
             wake::note(run, text);
             Ok(format!("run {}: the brainstorm is rethought", run.id))
@@ -329,8 +340,13 @@ pub(super) fn open(
         .design
         .as_ref()
         .ok_or_else(|| not_design(&run.id))?;
+    // A report's appendix of drafts is not the report: the summary compares the reports.
     if let Some((_, before)) = design.text_of(doc.kind) {
-        doc.changes = changes::summary(before, &doc.text);
+        let (before, after) = (
+            report::body(doc.kind, before),
+            report::body(doc.kind, &doc.text),
+        );
+        doc.changes = changes::summary(before, after);
     }
     let text = doc.text.clone();
     let (version, write) = store(run, doc, now)?;

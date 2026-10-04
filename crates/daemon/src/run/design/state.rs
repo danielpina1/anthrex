@@ -7,7 +7,9 @@
 
 use std::path::PathBuf;
 
-use proto::{AgentRole, DocAuthor, DocFinding, DocGateKind, DocKind, Route, RunState};
+use proto::{
+    AgentRole, DocAuthor, DocFinding, DocGateKind, DocKind, ReportSummary, Route, RunState,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -55,8 +57,10 @@ pub struct DesignState {
     #[serde(skip_serializing_if = "is_zero")]
     pub rethinks: u32,
     /// The latest text of each gate document, `(kind, n, text)`: what the next version's
-    /// change summary compares against. In memory only; a restore refills it from the
-    /// files (`driver/design_restore.rs`), and without it a summary is empty.
+    /// change summary compares against; and of each brainstormer's latest draft, which
+    /// the merged report's appendix attaches (task M9.6.9). In memory only; a restore
+    /// refills it from the files (`driver/design_restore.rs`), and without it a summary
+    /// is empty and an appendix names the draft as unread.
     #[serde(skip)]
     pub texts: Vec<(DocKind, u32, String)>,
     /// Ruling T8-1: each brainstormer's accepted draft, `(label, text)`, held until
@@ -197,6 +201,10 @@ pub struct DocVersion {
     /// Its reviewer ran on the orchestrator's own runtime (no peer installed).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub same_runtime: bool,
+    /// A merged brainstorm report as the engine read it (`report::summary`, task
+    /// M9.6.9): the gate's Review panel shows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<ReportSummary>,
 }
 
 impl DocVersion {
@@ -265,15 +273,33 @@ impl DesignState {
         }
     }
 
-    /// The cached latest text of `kind`, with its version number.
+    /// The cached latest text of `kind`, with its version number (a gate document's;
+    /// for drafts, [`DesignState::draft_text`]).
     pub fn text_of(&self, kind: DocKind) -> Option<(u32, &str)> {
         let found = self.texts.iter().find(|(k, _, _)| *k == kind);
         found.map(|(_, n, text)| (*n, text.as_str()))
     }
 
-    /// Caches `text` as `kind`'s latest, version `n`.
+    /// The cached text of brainstorm draft `n`, when it is cached.
+    pub fn draft_text(&self, n: u32) -> Option<&str> {
+        let found = (self.texts.iter()).find(|(k, m, _)| *k == DocKind::BrainstormDraft && *m == n);
+        found.map(|(_, _, text)| text.as_str())
+    }
+
+    /// Caches `text` as `kind`'s latest, version `n`: for a draft, its brainstormer's
+    /// latest.
     pub fn keep_text(&mut self, kind: DocKind, n: u32, text: String) {
-        self.texts.retain(|(k, _, _)| *k != kind);
+        let label = |n: u32| {
+            self.find(kind, Some(n))
+                .and_then(|v| v.label().map(String::from))
+        };
+        let mine = label(n);
+        let stale: Vec<u32> = (self.texts.iter())
+            .filter(|(k, m, _)| *k == kind && label(*m) == mine)
+            .map(|(_, m, _)| *m)
+            .collect();
+        self.texts
+            .retain(|(k, m, _)| *k != kind || !stale.contains(m));
         self.texts.push((kind, n, text));
     }
 
@@ -319,6 +345,7 @@ pub struct NewDoc {
     pub not_reviewed: Option<String>,
     pub changes: Vec<String>,
     pub same_runtime: bool,
+    pub report: Option<ReportSummary>,
 }
 
 impl NewDoc {
@@ -332,6 +359,7 @@ impl NewDoc {
             not_reviewed: None,
             changes: Vec::new(),
             same_runtime: false,
+            report: None,
         }
     }
 }
@@ -373,6 +401,7 @@ pub fn store(run: &mut Run, doc: NewDoc, now: u64) -> Result<(DocVersion, Effect
         not_reviewed: doc.not_reviewed,
         changes: doc.changes,
         same_runtime: doc.same_runtime,
+        report: doc.report,
     };
     design.versions.push(version.clone());
     let effect = Effect::WriteDoc {

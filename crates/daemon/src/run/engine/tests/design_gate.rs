@@ -146,7 +146,9 @@ fn rethink_only_at_brainstorm() {
     assert_eq!(gate(&fx), None);
     let wake = "the user asked to rethink the brainstorm: n".to_string();
     assert!(notes(&fx).contains(&wake));
-    // The merged report is submitted again in brainstorming: v2.
+    // The merged report is submitted again in brainstorming, once the brainstormers'
+    // new drafts are in (task M9.6.9): v2.
+    redrafts_in(&mut fx);
     assert_eq!(submitted(&mut fx, "brainstorm", REPORT)["version"], 2);
 }
 
@@ -271,6 +273,7 @@ fn a_sixth_version_and_a_fourth_rethink_are_refused_exactly() {
     for _ in 0..3 {
         let rethink = DocGateAction::Rethink { note: "r".into() };
         act(&mut fx, DocGateKind::Brainstorm, rethink).unwrap();
+        redrafts_in(&mut fx);
         submitted(&mut fx, "brainstorm", REPORT);
     }
     let rethink = DocGateAction::Rethink { note: "r".into() };

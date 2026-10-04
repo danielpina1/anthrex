@@ -163,6 +163,7 @@ fn both_caps_reached_offer_approve_or_reject() {
     for _ in 0..3 {
         let rethink = DocGateAction::Rethink { note: "r".into() };
         act(&mut fx, DocGateKind::Brainstorm, rethink).unwrap();
+        redrafts_in(&mut fx);
         submitted(&mut fx, "brainstorm", REPORT);
     }
     for n in 5..=6 {

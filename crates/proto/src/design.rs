@@ -176,6 +176,30 @@ pub struct DocGateInfo {
     /// The reviewer ran on the orchestrator's own runtime (no peer installed).
     #[serde(default)]
     pub same_runtime: bool,
+    /// At the brainstorm gate, the merged report as the engine read it when it stored
+    /// the version (DF §6.1's Review panel; task M9.6.9, appended).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<ReportSummary>,
+}
+
+/// The merged brainstorm report, parsed: how many points its two comparison sections
+/// make, and each approach with its tag (DF §3.4, §6.1).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportSummary {
+    /// The points under `## Where they agree`.
+    pub agree: u32,
+    /// The points under `## Where they disagree`.
+    pub disagree: u32,
+    #[serde(default)]
+    pub approaches: Vec<ApproachTag>,
+}
+
+/// One approach of a merged report: its name, and the label its heading is tagged with
+/// (`claude`, `codex`, `A`, `B` or `both`), without the brackets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApproachTag {
+    pub name: String,
+    pub tag: String,
 }
 
 /// One document version, answered to `RunRequest::ShowDoc` (`RunReply::Doc`).

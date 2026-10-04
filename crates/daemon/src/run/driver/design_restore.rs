@@ -3,7 +3,8 @@
 //! checks them (`design_io.rs`); the engine gets the result as
 //! `EventKind::DesignChecked` (`engine/design_gate.rs::checked`): a missing or changed
 //! file is logged, an open gate whose version is one reopens as revising, and the
-//! latest text of each gate document refills its change summaries' cache.
+//! latest text of each gate document, and each brainstormer's latest draft, refills the
+//! engine's cache of texts.
 //!
 //! The engine lock is taken only to list the versions; every run's reads run as one
 //! `spawn_blocking` task, bounded by [`IO_WAIT`] (AGENTS.md rule 2), after the rest of
@@ -17,7 +18,7 @@ use proto::DocKind;
 
 use super::RunService;
 use super::design_io::{IO_WAIT, ReadError, read_stored};
-use crate::run::design::state::{self, DocVersion};
+use crate::run::design::state::{self, DesignState, DocVersion};
 use crate::run::engine::{DocChecked, EventKind};
 
 /// One version to read back: its index entry, its file, and whether its text is kept.
@@ -59,18 +60,26 @@ impl RunService {
         runs.filter_map(|run| {
             let design = run.orch.design.as_ref()?;
             let dir = state::design_dir(run);
-            let latest = |v: &DocVersion| {
-                let gate_doc =
-                    matches!(v.kind, DocKind::Brainstorm | DocKind::Spec | DocKind::Plan);
-                gate_doc && v.n > 0 && design.find(v.kind, None).is_some_and(|l| l.n == v.n)
-            };
             let docs = (design.versions.iter())
-                .map(|v| (v.clone(), dir.join(design.file_name(v)), latest(v)))
+                .map(|v| (v.clone(), dir.join(design.file_name(v)), kept(design, v)))
                 .collect();
             Some((run.id.clone(), docs))
         })
         .collect()
     }
+}
+
+/// Whether `v`'s text is kept once read back: it is the latest version of a gate's
+/// document (what the next version's change summary compares against), or its
+/// brainstormer's latest draft (what the merged report's appendix attaches, task
+/// M9.6.9).
+pub(super) fn kept(design: &DesignState, v: &DocVersion) -> bool {
+    let latest = match (v.kind, v.label()) {
+        (DocKind::BrainstormDraft, Some(label)) => design.draft_from(label),
+        (DocKind::BrainstormDraft, None) => None,
+        (kind, _) => design.find(kind, None),
+    };
+    v.n > 0 && latest.is_some_and(|l| l.n == v.n)
 }
 
 /// The blocking half for every run: [`check`] each run's versions.

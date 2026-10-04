@@ -28,6 +28,7 @@ fn doc_gate(design: &DesignState) -> Option<DocGateInfo> {
         not_reviewed: version.and_then(|v| v.not_reviewed.clone()),
         changes_summary: version.map(|v| v.changes.clone()).unwrap_or_default(),
         same_runtime: version.is_some_and(|v| v.same_runtime),
+        report: version.and_then(|v| v.report.clone()),
     })
 }
 

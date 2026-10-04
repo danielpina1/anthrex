@@ -73,6 +73,7 @@ fn a_design_run_shows_its_mode_gate_and_documents() {
             not_reviewed: None,
             changes_summary: vec!["+ R2".into()],
             same_runtime: true,
+            report: None,
         })
     );
     let docs: Vec<_> = (info.docs.iter())

@@ -22,13 +22,15 @@ fn both_drafts_in_wakes_the_orchestrator() {
     assert_eq!(fx.run().orch.design.as_ref().unwrap().phase_started, None);
     answered(&submit_draft(&mut fx, CODEX, DRAFT));
     let note = "both brainstorm drafts are in; read them with get_doc and submit the merged report";
-    assert_eq!(notes(&fx), [note]);
+    // Task M9.6.9: with the merged report's template.
+    let wake = [note.to_string(), template(&fx, None)];
+    assert_eq!(notes(&fx), wake);
     let design = fx.run().orch.design.as_ref().unwrap();
     assert_eq!(design.phase_started, Some(fx.now));
     // Their sessions end after the retire; that changes nothing but their usage.
     ended(&mut fx, "claude", 1, ScoutEnd::Reported);
     ended(&mut fx, "codex", 1, ScoutEnd::Reported);
-    assert_eq!(notes(&fx), [note]);
+    assert_eq!(notes(&fx), wake);
     let a = &agents(&fx)[0];
     assert_eq!(
         (a.state.clone(), a.calls, a.tokens),
@@ -61,9 +63,12 @@ fn one_failure_continues_with_the_other() {
     assert_eq!(states(&fx)[1], DesignAgentState::Failed(reason.into()));
     assert_eq!(
         notes(&fx),
-        [format!(
-            "one brainstormer failed (codex: {reason}); read the other draft with get_doc and submit the merged report"
-        )]
+        [
+            format!(
+                "one brainstormer failed (codex: {reason}); read the other draft with get_doc and submit the merged report"
+            ),
+            template(&fx, Some(("codex", reason)))
+        ]
     );
     assert_eq!(fx.run().state, RunState::Brainstorming);
     // A session that ends without a draft, and with no failure of its own, fails too.
@@ -253,8 +258,10 @@ fn a_paused_run_settles_its_brainstorm_on_resume() {
             if path.ends_with("brainstorm/draft-claude.md"))),
         "{effects:?}"
     );
-    assert_eq!(notes(&fx).len(), 1, "{:?}", notes(&fx));
+    // The wake and the merged report's template (task M9.6.9).
+    assert_eq!(notes(&fx).len(), 2, "{:?}", notes(&fx));
     assert!(notes(&fx)[0].starts_with("one brainstormer failed (codex: x)"));
+    assert_eq!(notes(&fx)[1], template(&fx, Some(("codex", "x"))));
 }
 
 /// A run rejected while it brainstorms stops its brainstormers: each live session is

@@ -364,3 +364,69 @@ async fn a_denial_that_cannot_be_resolved_in_time_is_warned() {
     assert!(text.contains("WARN"), "{text}");
     assert!(text.contains("denied as given"), "{text}");
 }
+
+/// Task M9.6.9 (decision 7): a rethink's round reads the previous merged report through
+/// its index entry's check, and the pack carries it, without the appendix of drafts,
+/// with the user's note; a report changed since it was stored is not carried.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rethinks_pack_reads_the_previous_report_off_the_engine() {
+    use crate::run::design::pack::FrozenRethink;
+    use crate::run::design::report::attach;
+    let rig = Rig::new(brainstorming).await;
+    let report = "## Where they agree\nTokens.\n\n## Approaches\n### Stored tokens [both]\n";
+    let file = attach(
+        report,
+        &[("claude".into(), Ok("## Understanding\nMINE\n".into()))],
+    );
+    let path = {
+        let mut engine = crate::lock(&rig.runs.state);
+        let run = engine.runs.get_mut(&rig.run_id).unwrap();
+        let doc = NewDoc::new(
+            DocKind::Brainstorm,
+            DocAuthor::Orchestrator,
+            "submitted",
+            &file,
+        );
+        let (version, effect) = state::store(run, doc, 10).unwrap();
+        let Effect::WriteDoc { path, text, .. } = effect else {
+            panic!("not a write");
+        };
+        write_new(&path, &text).unwrap();
+        let design = run.orch.design.as_mut().unwrap();
+        design.rethinks = 1;
+        let mut frozen = design.pack.clone().unwrap();
+        frozen.round = 2;
+        frozen.rethink = Some(FrozenRethink {
+            note: "Think about SSO too.".into(),
+            path: path.clone(),
+            version,
+        });
+        design.pack = Some(frozen);
+        path
+    };
+    let read = rig.runs.brainstorm_pack(&rig.run_id).await.unwrap().0;
+    for needle in [
+        "Think about SSO too.",
+        "The previous merged report, v1:",
+        "Tokens.",
+    ] {
+        assert!(read.contains(needle), "{needle} in\n{read}");
+    }
+    assert!(
+        !read.contains("MINE") && !read.contains("Appendix"),
+        "{read}"
+    );
+    assert!(read.contains("Scout report s1"), "the same reports: {read}");
+    // The round's own pack file, pack-r2.md, holds it.
+    let round = path.parent().unwrap().join("brainstorm/pack-r2.md");
+    assert_eq!(std::fs::read_to_string(&round).unwrap(), read);
+    std::fs::remove_file(&round).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, file.replace("Tokens.", "Changed.")).unwrap();
+    let read = rig.runs.brainstorm_pack(&rig.run_id).await.unwrap().0;
+    assert!(
+        read.contains("The previous merged report, v1, could not be read."),
+        "{read}"
+    );
+    assert!(!read.contains("Changed."), "{read}");
+}

@@ -67,6 +67,7 @@ mod design_gate;
 mod design_notes;
 mod design_phases;
 mod design_plan_gate;
+mod design_report;
 mod design_snapshot;
 mod detail_claims;
 mod digest;

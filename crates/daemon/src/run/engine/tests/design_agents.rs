@@ -298,6 +298,7 @@ fn the_pack_inputs_are_frozen_when_the_brainstormers_are_queued() {
         }),
         round: 1,
         file: None,
+        rethink: None,
     };
     let frozen = |fx: &Fixture| fx.run().orch.design.as_ref().unwrap().pack.clone();
     assert_eq!(frozen(&fx).as_ref(), Some(&expected));

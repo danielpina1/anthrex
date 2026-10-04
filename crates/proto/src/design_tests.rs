@@ -88,6 +88,7 @@ fn a_gate_info() -> DocGateInfo {
         not_reviewed: Some("the reviewer's session failed".into()),
         changes_summary: vec!["+ R4a, R4b".into(), "~ Testing: 2 lines".into()],
         same_runtime: true,
+        report: None,
     }
 }
 

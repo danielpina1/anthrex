@@ -163,6 +163,14 @@ fn the_state_survives_save_and_load() {
         not_reviewed: Some("the reviewer timed out".into()),
         changes: vec!["+ R1".into()],
         same_runtime: true,
+        report: Some(proto::ReportSummary {
+            agree: 1,
+            disagree: 2,
+            approaches: vec![proto::ApproachTag {
+                name: "Stored tokens".into(),
+                tag: "both".into(),
+            }],
+        }),
     };
     let route = Route {
         runtime: Runtime::Codex,
@@ -246,6 +254,12 @@ fn the_state_survives_save_and_load() {
             file: Some(crate::run::design::pack::PackFile {
                 bytes: 120,
                 sha256: "c".repeat(64),
+            }),
+            // Task M9.6.9: a rethink's note and the report it replaces.
+            rethink: Some(crate::run::design::pack::FrozenRethink {
+                note: "think about SSO".into(),
+                path: "/tmp/data/runs/r/design/brainstorm-v1.md".into(),
+                version: version(DocKind::Brainstorm, 1),
             }),
         }),
     };

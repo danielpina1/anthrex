@@ -265,3 +265,38 @@ fn appended_variants_keep_their_indices() {
     let names = tagged_names::<HistoryLine>("type");
     assert_eq!(names[names.len() - 2..], ["round", "phase"], "{names:?}");
 }
+
+/// Task M9.6.9 (task 5's concern 2): the brainstorm gate's report summary, the Review
+/// panel's agree and disagree counts and each approach's tag, rides on `DocGateInfo`,
+/// appended; a gate info without it (an earlier 17 build, or any other gate) reads
+/// `None` and writes no key.
+#[test]
+fn a_gate_info_carries_the_reports_summary() {
+    let summary = ReportSummary {
+        agree: 2,
+        disagree: 1,
+        approaches: vec![
+            ApproachTag {
+                name: "Signed tokens".into(),
+                tag: "claude".into(),
+            },
+            ApproachTag {
+                name: "Stored tokens".into(),
+                tag: "both".into(),
+            },
+        ],
+    };
+    let info = DocGateInfo {
+        kind: DocGateKind::Brainstorm,
+        report: Some(summary.clone()),
+        ..a_gate_info()
+    };
+    both_ways(&info);
+    both_ways(&summary);
+    let plain = serde_json::to_value(a_gate_info()).unwrap();
+    assert!(plain.get("report").is_none(), "{plain}");
+    let mut old = plain.clone();
+    old.as_object_mut().unwrap().remove("report");
+    let back: DocGateInfo = rmp_serde::from_slice(&p16_bytes(&old)).unwrap();
+    assert_eq!(back, a_gate_info());
+}

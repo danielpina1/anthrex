@@ -162,6 +162,18 @@ pub(super) fn drafts_in(fx: &mut Fixture) {
     design::drafts_in(run, None, now);
 }
 
+/// After a rethink (task M9.6.9 relaunches both brainstormers): both drafts in again,
+/// stubbing their sessions as [`drafts_in`] does.
+pub(super) fn redrafts_in(fx: &mut Fixture) {
+    let now = fx.now;
+    let run = fx.run_mut();
+    let design = run.orch.design.as_mut().expect("a design run");
+    for agent in design.brainstormers.iter_mut() {
+        agent.state = DesignAgentState::Done;
+    }
+    design::drafts_in(run, None, now);
+}
+
 pub(super) fn start_brainstorm(fx: &mut Fixture) -> Vec<Effect> {
     let effects = orch_tool(fx, ORCH, "start_brainstorm", json!({"answers": "skip"}));
     assert_eq!(replies(&effects).len(), 1);
@@ -270,6 +282,12 @@ pub(super) fn gate(fx: &Fixture) -> Option<(DocGateKind, u32, Option<String>)> {
 pub(super) fn notes(fx: &Fixture) -> Vec<String> {
     let o = fx.run().orch.orchestrator.as_ref().unwrap();
     o.notes.clone()
+}
+
+/// Task M9.6.9: the merged report's template, the second note of the drafts-in wake,
+/// with the failed brainstormer when one failed.
+pub(super) fn template(fx: &Fixture, failed: Option<(&str, &str)>) -> String {
+    design::report::template_note(fx.run(), failed)
 }
 
 /// The run's log lines.

@@ -77,9 +77,12 @@ fn a_second_end_without_submitting_fails_it() {
     answered(&submit_draft(&mut fx, CLAUDE, DRAFT));
     assert_eq!(
         notes(&fx),
-        [format!(
-            "one brainstormer failed (codex: {reason}); read the other draft with get_doc and submit the merged report"
-        )]
+        [
+            format!(
+                "one brainstormer failed (codex: {reason}); read the other draft with get_doc and submit the merged report"
+            ),
+            template(&fx, Some(("codex", reason)))
+        ]
     );
     assert_eq!(fx.run().state, RunState::Brainstorming);
 }

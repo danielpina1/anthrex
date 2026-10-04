@@ -539,6 +539,12 @@ The bounds the fix wave's code (`e0e1bd5e..34313dbd`) added, from its W1a and W1
 |---|---|---|---|---|
 | `a_read_back_that_times_out_changes_nothing` | `crates/daemon/src/run/driver/design_restore_tests.rs` | the read-back's wait `300ms`; `elapsed < 5s`; the call under `tokio::time::timeout(10s)`; the seam's own `recv_timeout(30s)`; the read's start awaited with `recv_timeout(5s)` | `check_design_docs_with` returns at its wait (300 ms) plus one `spawn_blocking` start and the engine lock's version listing; the seam blocks on a channel the test holds, so the timeout is the condition under test, not a synchronisation. The test cannot hang: its sender is dropped on every exit (a panic's unwinding included), which ends the blocked read, the read's own wait is bounded, and the call's 10 s deadline fails the test instead of waiting (probed: with the wait ignored, it fails at 10.05 s). Replaces a FIFO, whose blocked `open` could outlive the test when the read had not reached it in time. | **Recorded.** |
 
+### Recorded, from M9.6.9 (2026-10-04)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `tag_removal_is_linear_on_a_32_kib_heading` | `crates/daemon/src/run/design/template_tests_linear.rs` (`LINEAR_BOUND`) | `40 ms` | Pure CPU, no daemon constant: one brainstorm template check (`template::check`) of a report at the 32 KiB cap whose second approach heading is `[both]` repeated about 5,400 times. The bound separates linear from quadratic tag removal, so it sits well above the linear cost and well below the quadratic one. | **Recorded** (task 4's carry). Measured in a debug build: 0.95 ms with the one-pass removal; 180 to 186 ms over 3 runs with the old remove-and-search-again loop, which fails it. About 40x margin on the linear side, 4.5x on the quadratic side. |
+
 ### Fixed, from M9.5.8's flake fix (ruling F-1, 2026-10-03)
 
 | Test | File | Bound | Derivation | Status |

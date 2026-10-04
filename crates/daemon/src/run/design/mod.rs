@@ -11,11 +11,15 @@
 //!
 //! Task M9.6.5 adds [`state`]: the design state on `RunOrch.design` and the index of the
 //! documents, whose files the driver writes (`Effect::WriteDoc`, `driver/design_io.rs`).
+//!
+//! Task M9.6.9 adds [`report`]: the merged brainstorm report's appendix of drafts, and
+//! what its gate reads from it.
 
 pub mod changes;
 pub mod coverage;
 pub mod pack;
 pub mod plan_md;
+pub mod report;
 pub mod requirements;
 pub mod state;
 pub mod template;
