@@ -235,7 +235,10 @@ fn first_prompt(run: &Run, goal_line: String) -> String {
     } else {
         "the user approves your submitted plan in the run view"
     };
-    [
+    // Milestone 9.6 task M9.6.14: a design run's phases, tools, start and rules 47 to 53.
+    let design = super::contract_design::first_prompt_lines(run);
+    let start = design.map_or("Start with get_context, then scout, then plan.", |d| d.1);
+    let mut lines = vec![
         format!(
             "[anthrex] You are the orchestrator of run {} in {}.",
             run.id,
@@ -244,10 +247,18 @@ fn first_prompt(run: &Run, goal_line: String) -> String {
         goal_line,
         format!("Path: {path}"),
         format!("Plan gate: {gate}"),
-        // Milestone 9.5 decision 38: the first turn may come before the server is up.
-        "Start with get_context, then scout, then plan. If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting.".into(),
-    ]
-    .join("\n")
+    ];
+    lines.extend(design.map(|d| d.0.to_string()));
+    // Milestone 9.5 decision 38: the first turn may come before the server is up.
+    lines.push(format!("{start} If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting."));
+    if let Some(rules) = super::contract_design::design_rules(run) {
+        lines.extend([
+            String::new(),
+            super::contract_design::RULES_HEAD.into(),
+            rules,
+        ]);
+    }
+    lines.join("\n")
 }
 
 /// The orchestrator's first turn on a promoted fast-path run (decision 29).

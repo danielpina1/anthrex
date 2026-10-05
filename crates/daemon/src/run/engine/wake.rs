@@ -8,6 +8,7 @@ use super::Effect;
 use crate::run::messages::one_line;
 use crate::run::model::Run;
 use crate::run::orch::contract::wake_text;
+use crate::run::orch::contract_design::session_prompt;
 
 /// Decision 39: the most notes kept; the oldest become one `+<n> earlier changes`.
 pub const NOTES_MAX: usize = 20;
@@ -134,7 +135,8 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
         return (o.live && run.orch.mcp_ready).then(|| Effect::WakeOrchestrator {
             run_id: run.id.clone(),
             window_id,
-            text: o.first_prompt.clone(),
+            // Ruling T14-1: in a design run, where the run is, as of this turn.
+            text: session_prompt(run, &o.first_prompt),
             digest_revision: run.orch.digest_rev,
             notes_seq: 0,
             request: None,

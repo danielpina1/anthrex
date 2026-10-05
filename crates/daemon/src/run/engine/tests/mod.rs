@@ -79,6 +79,7 @@ mod design_report_cut;
 mod design_review;
 mod design_review_agent;
 mod design_review_fixture;
+mod design_session_prompt;
 mod design_snapshot;
 mod detail_claims;
 mod digest;
