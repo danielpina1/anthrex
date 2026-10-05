@@ -8,7 +8,7 @@
 //! The snapshot shows the gate (`snapshot_design.rs`, the Alerts' data) and the
 //! orchestrator's digest names it ([`digest`]).
 
-use proto::{DocAuthor, DocGateAction, DocGateKind, DocKind, RunState, safe_text};
+use proto::{DocAuthor, DocGateAction, DocGateKind, DocKind, RoundDesign, RunState, safe_text};
 use serde_json::{Value, json};
 
 use super::design::report::report_doc;
@@ -17,7 +17,9 @@ use super::requests::log;
 use super::{Effect, EngineState, ReplyId, goal_rounds_end, wake};
 use crate::run::design::changes;
 use crate::run::design::report;
-use crate::run::design::state::{DocGate, NewDoc, Revision, gate_doc, not_design, store};
+use crate::run::design::state::{
+    DesignState, DocGate, NewDoc, Revision, gate_doc, not_design, store,
+};
 use crate::run::model::Run;
 
 /// Brief ruling BD-2: a gate's versions at most.
@@ -272,6 +274,10 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
     }
     match action {
         DocGateAction::Changes { .. } | DocGateAction::Edit { .. } => full(kind),
+        // Ruling T15-7 (m6): an `amend` round never brainstormed.
+        DocGateAction::Back { .. } if kind == DocGateKind::Spec && amend_round(design) => {
+            Some(NO_BRAINSTORM.into())
+        }
         DocGateAction::Back { .. } => full(previous(kind)),
         // A rethink's own cap: the brainstorm's rethinks (ruling T7-6's text offers it).
         DocGateAction::Rethink { .. } if design.round_rethinks() >= MAX_RETHINKS => Some(format!(
@@ -283,6 +289,14 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
         }
         DocGateAction::Rethink { .. } | DocGateAction::Approve | DocGateAction::Reject => None,
     }
+}
+
+/// Ruling T15-7 (m6): a back from an `amend` round's spec gate.
+pub const NO_BRAINSTORM: &str = "this round has no brainstorm to go back to";
+
+/// The current round amends the spec with no brainstorm of its own.
+fn amend_round(design: &DesignState) -> bool {
+    (design.round.as_ref()).is_some_and(|r| r.mode == RoundDesign::Amend)
 }
 
 /// The gate a back from `kind` reopens.

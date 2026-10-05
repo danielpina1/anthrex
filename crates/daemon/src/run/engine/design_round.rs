@@ -22,6 +22,7 @@ use super::requests::log;
 use super::{Effect, design, design_agents, design_spend, wake};
 use crate::run::design::round::DesignRound;
 use crate::run::model::Run;
+use crate::run::orch::contract_design::{ASK_STEP, NO_QUESTIONS_STEP};
 
 /// Decision 28: `amend` or `full` on a run without the flow.
 pub const NO_SPEC: &str = "this run has no spec to amend; iterate with --design off";
@@ -72,31 +73,45 @@ pub(super) fn start(run: &mut Run, mode: RoundDesign, now: u64) {
     if mode == RoundDesign::Amend {
         design::start_clock(run, now);
     }
-    let how = match mode {
-        RoundDesign::Amend => "amends the spec",
-        RoundDesign::Full => "brainstorms, then amends the spec",
-        RoundDesign::Off => "plans without the design flow",
-    };
-    log(run, now, format!("round {n} {how}"));
-    if let Some(note) = note(mode, n, last) {
+    // Ruling T15-7 (m1): an `off` round is 9.3's, with no line and no note.
+    let questions = run.limits.orch.design.max_questions > 0;
+    if let Some((line, note)) = said(mode, n, last, questions) {
+        log(run, now, line);
         wake::note(run, note);
     }
 }
 
-/// The orchestrator's note of how round `n` writes its spec (`last`: the base's last
+/// Ruling T15-7 (m1): how a later round's spec is written (`last`: the base's last
 /// requirement number).
-fn note(mode: RoundDesign, n: u32, last: usize) -> Option<String> {
-    let amendment = format!(
-        "submit_doc kind \"spec\" with amend true: new requirements continue from R{}, a changed one keeps its number",
+fn how(last: usize) -> String {
+    format!(
+        "submit only its new and changed requirements with submit_doc kind \"spec\" and amend true, new ones from R{} on and a changed one under its own number, and plan only those",
         last + 1
-    );
+    )
+}
+
+/// Round `n`'s log line and the orchestrator's note; `None` for an `off` round. A full
+/// round's first step is ruling T14-3's (`questions`: the run asks the user's).
+fn said(mode: RoundDesign, n: u32, last: usize, questions: bool) -> Option<(String, String)> {
+    let how = how(last);
     match mode {
-        RoundDesign::Amend => Some(format!(
-            "round {n} amends the spec: write the amendment with {amendment}; then plan only the new and changed requirements"
+        RoundDesign::Amend => Some((
+            format!("round {n} amends the spec"),
+            format!("round {n} amends the spec: {how}"),
         )),
-        RoundDesign::Full => Some(format!(
-            "round {n} starts at the brainstorm: ask your questions (rule 48) and call start_brainstorm; its spec is an amendment, {amendment}"
-        )),
+        RoundDesign::Full => {
+            let step = if questions {
+                ASK_STEP
+            } else {
+                NO_QUESTIONS_STEP
+            };
+            Some((
+                format!("round {n} brainstorms, then amends the spec"),
+                format!(
+                    "round {n} starts at the brainstorm. {step} Its spec is then an amendment: {how}"
+                ),
+            ))
+        }
         RoundDesign::Off => None,
     }
 }
