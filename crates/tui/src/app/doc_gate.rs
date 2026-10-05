@@ -34,12 +34,12 @@ pub const LEAVE_DOC_FIRST: &str = "leave the document first (esc)";
 const PAGE: usize = 10;
 
 /// The daemon's refusal while the orchestrator revises `kind` v`version` (brief
-/// "Messages"), said before a request it would refuse.
+/// "Messages"), said before a request it would refuse. `version` is the gate's, the
+/// version being revised, as the daemon names it (final fix wave FW-75).
 pub(crate) fn revising_text(kind: DocGateKind, version: u32) -> String {
     format!(
-        "the orchestrator is revising {} v{}; wait for it",
-        kind.label(),
-        version + 1
+        "the orchestrator is revising {} v{version}; wait for it",
+        kind.label()
     )
 }
 

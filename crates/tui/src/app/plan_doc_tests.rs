@@ -245,6 +245,8 @@ fn c_and_b_send_the_gate_screens_requests_after_its_pages() {
     }
 }
 
+/// Final fix wave FW-75 (WB-D m1): the client's refusal is the daemon's text, naming
+/// the gate's version as the daemon does (`plan v2` while v2 is revised).
 #[test]
 fn while_the_plan_is_revised_c_and_b_say_so() {
     let mut run = plan_run(2);
@@ -257,7 +259,7 @@ fn while_the_plan_is_revised_c_and_b_say_so() {
         assert!(app.modal.is_none(), "{c}");
         assert_eq!(
             app.toast_text(),
-            Some("the orchestrator is revising plan v3; wait for it")
+            Some("the orchestrator is revising plan v2; wait for it")
         );
     }
 }
