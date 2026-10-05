@@ -71,6 +71,11 @@ pub struct DesignState {
     /// other brainstormer runs; a restore relaunches its brainstormer instead.
     #[serde(skip)]
     pub held: Vec<(String, String)>,
+    /// Ruling WB-A-W1: the document reviewer's findings, taken while the run was halted
+    /// or paused in a design phase, applied when it resumes. In memory only, as
+    /// [`DesignState::held`]: a restore relaunches the reviewer instead.
+    #[serde(skip)]
+    pub held_findings: Option<Vec<proto::DocFinding>>,
     /// Ruling T9-1a: brainstorm drafts a restore could not read back, `(n, reason)`.
     /// Such a draft is attached as unread; its brainstormer's outcome is unchanged. In
     /// memory only, as [`DesignState::texts`]: the next restore reads it again.

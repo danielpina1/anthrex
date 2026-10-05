@@ -74,7 +74,10 @@ pub(in crate::run::engine) fn tool(
 /// cleaned) and held (ruling T8-1): neither stored nor written until the brainstorm
 /// settles, so the other brainstormer cannot read it by any path.
 fn submit_draft(run: &mut Run, k: usize, raw: &str, now: u64) -> Result<(), String> {
-    if run.state != RunState::Brainstorming {
+    // Ruling WB-A-W1: also while halted or paused in brainstorming; it is held anyway.
+    let brainstorming = run.state == RunState::Brainstorming
+        || super::held::phase(run) == Some(RunState::Brainstorming);
+    if !brainstorming {
         return Err(format!("run {} is {}", run.id, run.state.label()));
     }
     let text = template::admit(DocKind::BrainstormDraft, raw, &TemplateCtx::default())?;

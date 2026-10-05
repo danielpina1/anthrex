@@ -207,8 +207,12 @@ pub(super) fn ended(
     // Ruling T13-1: its calls are summed over its sessions, as its tokens are.
     agent.tokens += usage.input + usage.output + usage.cache_read + usage.cache_write;
     agent.calls += calls;
+    // Ruling WB-A-W1: held findings are submitted ones.
     let (done, running) = (
-        agent.state == DesignAgentState::Done,
+        matches!(
+            agent.state,
+            DesignAgentState::Done | DesignAgentState::Submitted
+        ),
         agent.state == DesignAgentState::Running,
     );
     let ended = agent.clone();
@@ -291,7 +295,10 @@ pub(super) fn tool(
     }
     match parsed {
         OrchCall::SubmitFindings { findings } => {
-            let value = findings_in(run, findings, now);
+            let value = match super::held::phase(run) {
+                Some(_) => hold(run, findings),
+                None => findings_in(run, findings, now),
+            };
             fx.push(Effect::Reply {
                 reply,
                 result: Ok(value.to_string()),
@@ -301,6 +308,33 @@ pub(super) fn tool(
             });
         }
         _ => refuse(fx, reply, "a document reviewer submits its findings"),
+    }
+}
+
+/// Ruling WB-A-W1: the findings of a run halted or paused in a design phase, held for
+/// [`apply_held`]; the reviewer has submitted, so its end is not a failure.
+fn hold(run: &mut Run, findings: Vec<DocFinding>) -> Value {
+    let n = findings.len();
+    let Some(design) = run.orch.design.as_mut() else {
+        return json!({"accepted": false});
+    };
+    let Some(agent) = design.reviewer.as_mut() else {
+        return json!({"accepted": false});
+    };
+    agent.state = DesignAgentState::Submitted;
+    design.held_findings = Some(findings);
+    json!({"accepted": true, "findings": n})
+}
+
+/// Ruling WB-A-W1, on resume: held findings are taken as if they came now.
+pub(super) fn apply_held(run: &mut Run, now: u64) {
+    let held = run
+        .orch
+        .design
+        .as_mut()
+        .and_then(|d| d.held_findings.take());
+    if let Some(findings) = held {
+        findings_in(run, findings, now);
     }
 }
 
@@ -350,12 +384,19 @@ fn findings_in(run: &mut Run, findings: Vec<DocFinding>, now: u64) -> Value {
     json!({"accepted": true, "findings": n})
 }
 
-/// Decision 9 after a daemon restart (DF §8.4): a running reviewer is queued again and
+/// Decision 9 after a daemon restart (DF §8.4): a running reviewer, or one whose held
+/// findings (ruling WB-A-W1) were lost with the old daemon's memory, is queued again and
 /// relaunched fresh, as a new session on the same draft (its one relaunch, if it was
 /// that, stays its one relaunch).
 pub(super) fn restore(run: &mut Run, now: u64) {
     let agent = run.orch.design.as_mut().and_then(|d| d.reviewer.as_mut());
-    let Some(agent) = agent.filter(|a| a.state == DesignAgentState::Running) else {
+    let again = |a: &&mut DesignAgent| {
+        matches!(
+            a.state,
+            DesignAgentState::Running | DesignAgentState::Submitted
+        )
+    };
+    let Some(agent) = agent.filter(again) else {
         return;
     };
     agent.state = DesignAgentState::Queued;
@@ -377,7 +418,12 @@ pub(super) fn halt_all(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
         return;
     };
     let was = agent.state.clone();
-    if !matches!(was, DesignAgentState::Running | DesignAgentState::Queued) {
+    // Ruling WB-A-W1: held findings are dropped with their reviewer.
+    design.held_findings = None;
+    if !matches!(
+        was,
+        DesignAgentState::Running | DesignAgentState::Queued | DesignAgentState::Submitted
+    ) {
         return;
     }
     agent.state = DesignAgentState::Failed(reason.to_string());

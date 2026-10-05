@@ -484,6 +484,8 @@ pub(super) fn tool(
 
 #[path = "design_drafts.rs"]
 mod drafts;
+#[path = "design_held.rs"]
+pub(super) mod held;
 #[path = "design_pack.rs"]
 mod pack;
 #[path = "design_relaunch.rs"]

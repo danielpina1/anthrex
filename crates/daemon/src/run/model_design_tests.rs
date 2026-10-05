@@ -258,6 +258,7 @@ fn the_state_survives_save_and_load() {
         texts: Vec::new(),
         // Task M9.6.8 fix round 1 (ruling T8-1): a held draft is never written either.
         held: Vec::new(),
+        held_findings: None,
         // Ruling T9-1a: in memory only.
         unread: Vec::new(),
         read_back_owed: false,
