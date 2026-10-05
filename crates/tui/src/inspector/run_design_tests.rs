@@ -81,3 +81,48 @@ fn a_design_agents_inspection_names_its_state_runtime_and_sessions() {
         ]
     );
 }
+
+/// Ruling T18-5 (final fix wave FW-57): at a design gate the inspector's `gate` line
+/// lists that gate kind's own keys, as its screen offers them (the brainstorm and spec
+/// gates' document screen, the plan gate's plan review), never 9.5's task-gate keys.
+/// While the orchestrator revises, only the reject acts.
+#[test]
+fn the_gate_line_lists_the_design_gates_own_keys() {
+    let gate_value = |kind: proto::DocGateKind, revising: Option<&str>| {
+        let (mut snap, windows) = gate_fixture();
+        let run = &mut snap.runs[0];
+        run.design = DesignMode::Full;
+        run.state = RunState::AwaitingApproval;
+        run.doc_gate = Some(proto::DocGateInfo {
+            kind,
+            version: 2,
+            revising: revising.map(str::to_owned),
+            disputed: Vec::new(),
+            not_reviewed: None,
+            changes_summary: Vec::new(),
+            same_runtime: false,
+            report: None,
+            revising_cause: proto::RevisingCause::Changes,
+        });
+        let app = app_of((snap, windows));
+        let run = inspect_node(&app, &NodeKey::Run(RUN_ID.into()));
+        value(&run, "gate").map(str::to_owned)
+    };
+    use proto::DocGateKind::{Brainstorm, Plan, Spec};
+    assert_eq!(
+        gate_value(Brainstorm, None).as_deref(),
+        Some("brainstorm v2 · a approve · c changes · e edit · r rethink · x reject · g drafts")
+    );
+    assert_eq!(
+        gate_value(Spec, None).as_deref(),
+        Some("spec v2 · a approve · c changes · e edit · b back · x reject")
+    );
+    assert_eq!(
+        gate_value(Plan, None).as_deref(),
+        Some("plan v2 · a approve · c changes · e edit · b back · x reject · d remove")
+    );
+    assert_eq!(
+        gate_value(Spec, Some("split R1")).as_deref(),
+        Some("spec v2 being revised · x reject")
+    );
+}

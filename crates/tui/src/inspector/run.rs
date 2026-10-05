@@ -291,6 +291,10 @@ fn gate_text(run: &RunInfo, app: &App) -> String {
         return "planning · s submits the plan yourself".to_owned();
     }
     if run.state == RunState::AwaitingApproval {
+        // Ruling T18-5: a design gate's own keys.
+        if let Some(text) = super::run_design::design_gate_keys(run) {
+            return text;
+        }
         return "awaiting approval · a approve · x reject · e edit · d remove".to_owned();
     }
     if run.path == Some(RunPath::Fast) {

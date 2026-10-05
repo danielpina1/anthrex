@@ -6,7 +6,7 @@ use super::run_format::{clean, kind_glyph, rows, session_text};
 use super::{Inspection, field};
 use crate::app::App;
 use crate::tree::RowKind;
-use proto::{AgentRole, DesignAgentInfo, DesignAgentStatus, RunInfo, WindowInfo};
+use proto::{AgentRole, DesignAgentInfo, DesignAgentStatus, DocGateKind, RunInfo, WindowInfo};
 
 /// The agent's state as its inspection and the run status name it.
 pub(crate) fn design_state_word(state: DesignAgentStatus) -> &'static str {
@@ -17,6 +17,26 @@ pub(crate) fn design_state_word(state: DesignAgentStatus) -> &'static str {
         DesignAgentStatus::Done => "done",
         DesignAgentStatus::Failed => "failed",
     }
+}
+
+/// Ruling T18-5 (final fix wave FW-57): the `gate` line at a design gate, the gate's
+/// kind and version then the keys its screen offers (the brainstorm and spec gates' document
+/// screen, the plan gate's plan review); while the orchestrator revises, only the
+/// reject. `None` for a run not at a design gate.
+pub(crate) fn design_gate_keys(run: &RunInfo) -> Option<String> {
+    let gate = run.doc_gate.as_ref()?;
+    let head = format!("{} v{}", gate.kind.label(), gate.version);
+    if gate.revising.is_some() {
+        return Some(format!("{head} being revised · x reject"));
+    }
+    let keys = match gate.kind {
+        DocGateKind::Brainstorm => {
+            "a approve · c changes · e edit · r rethink · x reject · g drafts"
+        }
+        DocGateKind::Spec => "a approve · c changes · e edit · b back · x reject",
+        DocGateKind::Plan => "a approve · c changes · e edit · b back · x reject · d remove",
+    };
+    Some(format!("{head} · {keys}"))
 }
 
 pub(crate) fn design_agent_inspection(
