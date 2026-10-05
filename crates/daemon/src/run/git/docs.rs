@@ -24,11 +24,13 @@
 
 use std::ffi::OsStr;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::merge::short;
-use super::{NO_HOOKS, WRITE_FLAGS, failure, os};
-use crate::worktree::{GitOutput, run_git_with_index};
+
+#[path = "docs_call.rs"]
+mod call;
+use call::{Call, Mode};
 
 /// Passed on every call of the documents commit, after the read or write flags.
 pub const PROTECT_FLAGS: [&str; 4] = ["-c", "core.protectHFS=true", "-c", "core.protectNTFS=true"];
@@ -468,64 +470,4 @@ fn own(
         short(docs.expected),
         short(now)
     ))
-}
-
-/// How a call is flagged: a read, a write, or a write in the caller's index.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    Read,
-    Write,
-    Indexed,
-}
-
-struct Call<'a> {
-    git: &'a OsStr,
-    timeout: Duration,
-    index: &'a Path,
-}
-
-impl Call<'_> {
-    /// `args` with the mode's flags and [`PROTECT_FLAGS`] first.
-    fn full<'b>(mode: Mode, args: &[&'b str]) -> Vec<&'b str> {
-        let flags: &[&'static str] = match mode {
-            Mode::Read => &NO_HOOKS,
-            Mode::Write | Mode::Indexed => &WRITE_FLAGS,
-        };
-        let mut full: Vec<&str> = flags.iter().chain(&PROTECT_FLAGS).copied().collect();
-        full.extend_from_slice(args);
-        full
-    }
-
-    fn run(
-        &self,
-        dir: &Path,
-        mode: Mode,
-        args: &[&str],
-        input: Option<&[u8]>,
-    ) -> Result<GitOutput, String> {
-        let full: Vec<&OsStr> = Self::full(mode, args).into_iter().map(os).collect();
-        let index = (mode == Mode::Indexed).then_some(self.index);
-        let deadline = Instant::now() + self.timeout;
-        run_git_with_index(self.git, dir, &full, deadline, input, index).map_err(|e| e.to_string())
-    }
-
-    /// A call that must succeed; its stdout.
-    fn ok(
-        &self,
-        dir: &Path,
-        mode: Mode,
-        args: &[&str],
-        input: Option<&[u8]>,
-    ) -> Result<String, String> {
-        let output = self.run(dir, mode, args, input)?;
-        match output.success {
-            true => Ok(output.stdout),
-            false => Err(self.failure(mode, args, &output)),
-        }
-    }
-
-    fn failure(&self, mode: Mode, args: &[&str], output: &GitOutput) -> String {
-        let full: Vec<&OsStr> = Self::full(mode, args).into_iter().map(os).collect();
-        failure(&full, output)
-    }
 }
