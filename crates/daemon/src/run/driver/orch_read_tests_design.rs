@@ -323,3 +323,56 @@ async fn the_plan_reviewer_reads_its_own_draft_in_round_2() {
     );
     assert_eq!(orch.await, (true, "# Plan: round 1\n".to_string()));
 }
+
+/// Ruling T20-2 (the final fix wave's FW-30): a live brainstormer's `get_doc` never
+/// returns a brainstorm draft, of any round, nor the report: every read is refused with
+/// the role-admission text, and no text comes back. Round 2's brainstormer, with
+/// round 1's and round 2's drafts on disk.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_brainstormer_can_never_read_a_draft() {
+    let rig = Rig::new(design_run).await;
+    let secret = "SECRET-DRAFT-TEXT";
+    {
+        let mut engine = crate::lock(&rig.runs.state);
+        let run = engine.runs.get_mut(&rig.run_id).expect("the run");
+        let mut writes = Vec::new();
+        for (label, round) in [("claude", 1), ("codex", 1), ("claude", 2), ("codex", 2)] {
+            let author = DocAuthor::Brainstormer {
+                label: label.into(),
+            };
+            let text = format!("## Understanding\n{secret} {label} {round}\n");
+            let doc = NewDoc::new(DocKind::BrainstormDraft, author, "submitted", &text);
+            writes.push(state::store(run, doc, 2_000).expect("stored").1);
+        }
+        let report = NewDoc::new(
+            DocKind::Brainstorm,
+            DocAuthor::Orchestrator,
+            "submitted",
+            &format!("## Recommendation\n{secret}\n"),
+        );
+        writes.push(state::store(run, report, 2_000).expect("stored").1);
+        let design = run.orch.design.as_mut().unwrap();
+        design.brainstormers[0].round = 2;
+        for effect in writes {
+            let Effect::WriteDoc { path, text, .. } = effect else {
+                panic!("not a write: {effect:?}");
+            };
+            write_new(&path, &text).expect("written");
+        }
+    }
+    let refused = "tool get_doc is not available to the brainstormer role";
+    for args in [
+        json!({"kind": "brainstorm_draft"}),
+        json!({"kind": "brainstorm_draft", "from": "claude"}),
+        json!({"kind": "brainstorm_draft", "from": "codex"}),
+        json!({"kind": "brainstorm_draft", "version": 1}),
+        json!({"kind": "brainstorm_draft", "version": 3}),
+        json!({"kind": "brainstorm"}),
+        json!({"kind": "brainstorm", "version": 1}),
+    ] {
+        let (ok, text) = raw(&rig, AgentRole::Brainstormer, BRAINSTORMER, args.clone()).await;
+        assert!(!ok, "{args}");
+        assert!(!text.contains(secret), "{args}: {text}");
+        assert_eq!(error(&text), refused, "{args}");
+    }
+}
