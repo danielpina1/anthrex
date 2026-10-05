@@ -277,6 +277,10 @@ fn a_phase_record_sums_every_session_of_an_agent() {
         )
     );
     assert_eq!(record.gate_versions, 2);
+    // Ruling T13-3, as the engine writes it (the final fix wave's FW-14): codex ran
+    // three sessions, claude two.
+    let sessions = (record.agents[0].sessions, record.agents[1].sessions);
+    assert_eq!(sessions, (3, 2));
     // The agents' own counts are summed too, not the last session's.
     let a = &agents(&fx)[1];
     assert_eq!((a.calls, a.tokens), (21, 4_700));
