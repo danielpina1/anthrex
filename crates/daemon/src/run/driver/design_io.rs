@@ -202,6 +202,10 @@ impl RunService {
         let design = (run.orch.design.as_ref()).ok_or_else(|| state::not_design(run_id))?;
         let name = kind_name(query.kind);
         let version = match (&query.from, query.version, query.draft) {
+            // WB-B m5 (FW-43): a draft is read alone, whatever reached here.
+            (Some(_), _, Some(_)) | (_, Some(_), Some(_)) => {
+                return Err("a review draft is read without a version or a label".into());
+            }
             (None, None, Some(k)) => design
                 .draft(query.kind, k)
                 .ok_or_else(|| format!("run {run_id} has no {name} draft for review {k}"))?,

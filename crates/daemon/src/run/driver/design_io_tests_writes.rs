@@ -169,3 +169,25 @@ async fn a_version_being_written_is_shown_with_the_retry_text() {
     assert_eq!(revising_now(&s), None);
     shutdown.cancel();
 }
+
+/// WB-B m5 (the final fix wave's FW-43): the driver's read refuses a draft together with
+/// a version, or with a label, whatever the parser let through.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_draft_is_never_read_with_a_version_or_a_label() {
+    let dir = tmp();
+    let (s, write) = at_spec_gate(dir.path());
+    s.write_doc_with(write, IO_WAIT, super::write_new).await;
+    let query = |version, from: Option<&str>| super::DocQuery {
+        kind: DocKind::Spec,
+        version,
+        from: from.map(String::from),
+        draft: Some(1),
+        diff: false,
+        findings: false,
+        reviewer: true,
+    };
+    let refused = "a review draft is read without a version or a label";
+    for q in [query(Some(1), None), query(None, Some("claude"))] {
+        assert_eq!(s.doc_view(RUN_ID, q).await, Err(refused.to_string()));
+    }
+}
