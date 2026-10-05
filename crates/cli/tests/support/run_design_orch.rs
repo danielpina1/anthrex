@@ -83,6 +83,16 @@ pub fn merge(labels: &[String; 2], report: &str) -> Vec<Value> {
     steps
 }
 
+/// [`merge`] for a later brainstorm round (a rethink): the drafts-in wake note is
+/// waited for with `read_message`'s `skip`, passing over the notes before it (the
+/// user's rethink), and never with a `run_status` poll, whose read would clear the note
+/// once the drafts are in (decision 39; the final fix wave's e2e_rethink flake).
+pub fn merge_again(labels: &[String; 2], report: &str) -> Vec<Value> {
+    let mut steps = vec![json!({"read_message": {"expect": DRAFTS_IN, "skip": true}})];
+    steps.extend(submit_merged(labels, report));
+    steps
+}
+
 /// Rule 49's reads and submit: each draft of `labels` with `get_doc`, then the merged
 /// `report`.
 pub fn submit_merged(labels: &[String; 2], report: &str) -> Vec<Value> {

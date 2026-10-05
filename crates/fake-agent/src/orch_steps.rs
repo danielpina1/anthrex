@@ -159,14 +159,23 @@ impl Pty {
     fn run(&mut self) -> Result<i32> {
         let mut output = io::stdout();
         while let Some(step) = self.steps.get(self.pos).cloned() {
-            if let Step::ReadMessage { timeout_ms, expect } = step {
+            if let Step::ReadMessage {
+                timeout_ms,
+                expect,
+                skip,
+            } = step
+            {
                 // The position stays at the read until a message is taken, so a resumed
                 // session reads again.
                 self.script.save_pos(self.pos)?;
                 match self.read_message(timeout_ms)? {
                     Read::Message(text) => {
+                        let wanted = expect.as_ref().is_none_or(|e| text.contains(e.as_str()));
+                        if !wanted && skip {
+                            continue;
+                        }
                         if let Some(expect) = expect
-                            && !text.contains(expect.as_str())
+                            && !wanted
                         {
                             crate::diag::say!(
                                 "fake-agent: expected a message containing {expect:?}, got {text:?}"

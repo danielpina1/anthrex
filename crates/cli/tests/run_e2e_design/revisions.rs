@@ -209,12 +209,13 @@ fn e2e_rethink() {
     }
     // The orchestrator reads each round's drafts from their wake-up (ruling T20-1: a
     // wake note is pasted once, so a duplicate of the first can never pass for the
-    // second).
+    // second). The second is waited for by reading, never by polling `run_status`: a
+    // poll that lands after the drafts would clear their note (the final fix wave's
+    // flake fix).
     let report_v2 = report_v2();
     let mut steps = ask(None);
     steps.extend(merge(&labels(), &report(LABELS)));
-    steps.push(until("/gate/state", json!("brainstorming"), ORCH_WAIT));
-    steps.extend(merge(&labels(), &report_v2));
+    steps.extend(merge_again(&labels(), &report_v2));
     steps.push(approved("brainstorm"));
     steps.extend([marker(), read(None)]);
     let (run, _) = start(&h, &steps, &[]);
@@ -229,6 +230,11 @@ fn e2e_rethink() {
     let drafts = (log.iter()).filter(|l| *l == "the brainstorm drafts are in");
     assert_eq!(drafts.count(), 2, "{log:#?}");
     wait_passed(&h, 1);
+    // Ruling T20-1: each round's drafts-in note reached the orchestrator once. The
+    // script's reads record every message it took, the passed-over ones included.
+    let pasted = h.io_lines(ORCH, "stdin");
+    let notes = (pasted.iter()).filter(|l| l.contains(DRAFTS_IN));
+    assert_eq!(notes.count(), 2, "{pasted:#?}");
     assert_eq!(h.run(&run).unwrap().state, RunState::Specifying);
     let sessions: Vec<_> = (info.design_agents.iter())
         .map(|a| (a.label.as_str(), a.sessions))

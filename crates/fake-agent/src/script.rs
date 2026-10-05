@@ -35,6 +35,9 @@ pub enum Step {
     ReadMessage {
         timeout_ms: Option<u64>,
         expect: Option<String>,
+        /// PTY mode only (a headless session refuses it): messages without `expect`
+        /// are passed over, each one's turn ended, until one has it.
+        skip: bool,
     },
     EndTurn,
     Sh(String),
@@ -101,6 +104,8 @@ struct McpCallStep {
 struct ReadMessageStep {
     timeout_ms: Option<u64>,
     expect: Option<String>,
+    #[serde(default)]
+    skip: bool,
 }
 
 #[derive(Deserialize)]
@@ -211,6 +216,7 @@ fn parse_step(value: Value) -> Result<Step> {
             Ok(Step::ReadMessage {
                 timeout_ms: step.timeout_ms,
                 expect: step.expect,
+                skip: step.skip,
             })
         }
         Some("end_turn") if has_keys(object, &["end_turn"]) => {
@@ -365,10 +371,12 @@ mod tests {
                 Step::ReadMessage {
                     timeout_ms: Some(50),
                     expect: Some("go".into()),
+                    skip: false,
                 },
                 Step::ReadMessage {
                     timeout_ms: None,
                     expect: None,
+                    skip: false,
                 },
                 Step::EndTurn,
                 Step::Sh("true".into()),

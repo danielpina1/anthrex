@@ -429,7 +429,8 @@ impl Runner {
     fn take_message(&mut self, message: String) -> Result<Option<i32>> {
         self.message = message;
         self.open_turn()?;
-        if let Some(Step::ReadMessage { expect, .. }) = self.steps.get(self.pos) {
+        if let Some(Step::ReadMessage { expect, skip, .. }) = self.steps.get(self.pos) {
+            anyhow::ensure!(!skip, "read_message's skip is for PTY sessions only");
             if let Some(expect) = expect
                 && !self.message.contains(expect.as_str())
             {
