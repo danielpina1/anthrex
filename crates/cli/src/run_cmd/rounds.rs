@@ -32,10 +32,14 @@ pub(super) fn request_text(
 
 /// `run iterate <run>`: `Done`'s message on stdout; every refusal (decision 9's, D17's)
 /// is the daemon's text, the command's error (exit 1).
-pub(super) async fn iterate(runs: &mut Runs, run: &str, goal: String) -> anyhow::Result<()> {
+/// Milestone 9.6 (decision 28): `design` is `--design`'s, `None` the daemon's default.
+pub(super) async fn iterate(
+    runs: &mut Runs,
+    run: &str,
+    goal: String,
+    design: Option<proto::RoundDesign>,
+) -> anyhow::Result<()> {
     let run = runs.resolve(run).await?;
-    // Milestone 9.6: `--design` arrives with task M9.6.16.
-    let design = None;
     runs.done(RunRequest::Iterate { run, goal, design }).await
 }
 

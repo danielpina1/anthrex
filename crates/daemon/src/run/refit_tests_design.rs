@@ -313,3 +313,79 @@ fn a_design_class_has_no_class_route_or_list() {
         assert!(list_of(&lists, class).is_some(), "{class:?}");
     }
 }
+
+/// Task M9.6.16 (carried from M9.6.13): `run stats` lists the design classes after the
+/// task classes, as `brainstorm` and `doc review`, with their samples, budgets and
+/// refits, `-` for a route (none exists) and for a weight, and never a proposal (ruling
+/// T13-2). The class column widens to fit their labels.
+#[test]
+fn stats_list_the_design_classes_without_proposals() {
+    use super::super::refit_render::render;
+    let cfg = config::Orchestrator::default();
+    let lines = history();
+    let (file, _) = refit(&lines, &TuningFile::default(), &cfg, NOW);
+    let r = super::report(&lines, &file, &cfg, std::path::Path::new("/tmp/t/t.toml"));
+    let rows: Vec<(&str, u32, &str)> = (r.classes.iter())
+        .map(|c| (c.class.as_str(), c.samples, c.route.as_str()))
+        .collect();
+    assert_eq!(rows.len(), 5, "{rows:?}");
+    assert_eq!(
+        rows[3..],
+        [("brainstorm", 64, "-"), ("doc review", 64, "-")]
+    );
+    let brainstorm = &r.classes[3];
+    assert_eq!(brainstorm.budget, budget(75, 38));
+    assert_eq!(brainstorm.refit, proto::RefitState::Written { at: NOW });
+    assert_eq!(brainstorm.weight_secs, None);
+    let names = |p: &proto::TuningProposal| p.id.contains("brainstorm") || p.id.contains("doc");
+    assert!(!r.proposals.iter().any(names), "{:?}", r.proposals);
+    let text = render(&r);
+    assert!(
+        text.contains("\n  CLASS       SAMPLES  BUDGET          WEIGHT  REFIT\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n  S           0/30     40 calls 15m"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n  brainstorm  64       75 calls 38m    -       "),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n  doc review  64       15 calls 10m    -       "),
+        "{text}"
+    );
+    // A design class below the minimum shows its count against it.
+    let few: Vec<HistoryLine> = lines.into_iter().take(9).collect();
+    let r = super::report(
+        &few,
+        &TuningFile::default(),
+        &cfg,
+        std::path::Path::new("/t"),
+    );
+    assert_eq!(
+        (r.classes[3].samples, r.classes[3].refit),
+        (6, proto::RefitState::NotYet)
+    );
+    assert!(render(&r).contains("\n  brainstorm  6/30     40 calls 15m    -       not yet\n"));
+}
+
+/// Task M9.6.16: a history with no design phase reports as 9.5 did: the three task
+/// classes only, in the five-wide class column.
+#[test]
+fn stats_without_design_history_keep_the_task_classes_only() {
+    use super::super::refit_render::render;
+    let cfg = config::Orchestrator::default();
+    let lines = super::tests::fixture_records("refit");
+    assert!(!lines.iter().any(|l| matches!(l, HistoryLine::Phase(_))));
+    let (file, _) = refit(&lines, &TuningFile::default(), &cfg, NOW);
+    let r = super::report(&lines, &file, &cfg, std::path::Path::new("/tmp/t/t.toml"));
+    let classes: Vec<&str> = r.classes.iter().map(|c| c.class.as_str()).collect();
+    assert_eq!(classes, ["S", "M", "hub"]);
+    let text = render(&r);
+    assert!(
+        text.contains("\n  CLASS  SAMPLES  BUDGET          WEIGHT  REFIT\n"),
+        "{text}"
+    );
+}

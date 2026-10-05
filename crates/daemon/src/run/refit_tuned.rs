@@ -210,17 +210,26 @@ pub fn report(
     let t = &cfg.tuning.table;
     let tuned = tuned_with(lines, file, cfg);
     let weights = tuned.weights.as_ref();
+    // Task M9.6.16: the design classes follow, once history has a design phase, so a
+    // repository without one reports as 9.5 did.
+    let design = lines.iter().any(|l| matches!(l, HistoryLine::Phase(_)));
     let classes = SizeClass::ALL
         .into_iter()
+        .chain(SizeClass::DESIGN.into_iter().filter(|_| design))
         .map(|class| {
-            let samples = budget_samples(lines, class, t);
+            let samples = match class.design_role() {
+                Some(role) => super::design::samples(lines, role, t).len(),
+                None => budget_samples(lines, class, t).len(),
+            };
             let is_configured = configured(cfg.tuning.configured, class);
             let written = written(file, t, class);
             let refit = match (t.refit_budgets, is_configured, written) {
                 (false, _, _) => RefitState::Off,
                 (true, true, _) => RefitState::Configured,
                 (true, false, Some(b)) => RefitState::Written { at: b.at },
-                (true, false, None) if qualifies(&samples, t) => RefitState::Kept,
+                (true, false, None) if samples as u64 >= u64::from(t.min_samples) => {
+                    RefitState::Kept
+                }
                 (true, false, None) => RefitState::NotYet,
             };
             let weight_secs = weights.and_then(|w| match class {
@@ -235,7 +244,7 @@ pub fn report(
             let route = current_route(file, class);
             ClassTuning {
                 class: class.label().to_string(),
-                samples: samples.len() as u32,
+                samples: samples as u32,
                 budget: tuned.effective(cfg, class),
                 refit,
                 configured: is_configured,
@@ -246,11 +255,12 @@ pub fn report(
                 },
                 weight_secs,
                 weight_derived,
-                // A task class always has both (`ALL`); a design class neither.
+                // A task class always has both (`ALL`); a design class neither, so its
+                // route reads `-` (task M9.6.16).
                 route: match (list, route) {
                     (Some(l), Some(r)) if !l.candidates.is_empty() => list_text(l, r.effort),
                     (_, Some(r)) => route_text(r),
-                    (_, None) => String::new(),
+                    (_, None) => "-".to_string(),
                 },
             }
         })

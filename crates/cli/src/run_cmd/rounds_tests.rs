@@ -66,6 +66,7 @@ fn iterate_takes_exactly_one_source() {
                 run,
                 text: t,
                 file: f,
+                design: None,
             }) => {
                 assert_eq!(run, "3f9a", "{args:?}");
                 assert_eq!(t.as_deref(), text, "{args:?}");
@@ -200,7 +201,7 @@ fn continue_sends_continue_from() {
         "next".into(),
         "/r".into(),
         (true, true, false),
-        (None, Some(proto::DeliveryMode::Pr)),
+        (None, Some(proto::DeliveryMode::Pr), None),
         Some(resolved),
     );
     assert_eq!(
@@ -229,7 +230,7 @@ fn continue_sends_continue_from() {
         "g".into(),
         "/r".into(),
         (false, false, false),
-        (Some(choice.clone()), None),
+        (Some(choice.clone()), None, None),
         None,
     );
     assert_eq!(

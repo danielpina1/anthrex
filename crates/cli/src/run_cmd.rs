@@ -4,6 +4,7 @@
 
 mod adapt;
 mod delivery;
+mod design;
 mod finish;
 mod orch;
 mod rounds;
@@ -96,6 +97,9 @@ enum RunCommand {
         #[arg(long = "continue", value_name = "RUN", requires = "goal",
             conflicts_with_all = ["plan", "orchestrator"])]
         continue_from: Option<String>,
+        /// Brainstorm, specify and plan the goal, each approved by you (full), or not (off)
+        #[arg(long, value_enum)]
+        design: Option<design::DesignArg>,
     },
     /// Show each stage's pull request: its state, CI, threads and fix tasks
     Prs(delivery::PrsArgs),
@@ -112,12 +116,14 @@ enum RunCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Approve a run's plan, or with --hold one hold of work added after it
+    /// Approve a run's plan, one hold of work added after it (--hold), or a design gate (--gate)
     Approve {
         run: String,
         /// The hold to approve (`anthrex run status` lists them)
         #[arg(long)]
         hold: Option<String>,
+        #[arg(long, value_enum, conflicts_with = "hold")]
+        gate: Option<design::GateArg>,
     },
     /// Reject a run's plan: remove its worktrees and delete its branches; with --hold,
     /// cancel that hold's tasks, none of which has started
@@ -182,6 +188,9 @@ enum RunCommand {
         /// Read the request from this file
         #[arg(long)]
         file: Option<PathBuf>,
+        /// A design run's round: amend its spec (its default), brainstorm again, or off
+        #[arg(long, value_enum)]
+        design: Option<design::RoundArg>,
     },
     /// Promote a fast-path run to a planned run with an orchestrator
     Promote {
@@ -222,11 +231,16 @@ enum RunCommand {
         #[arg(long)]
         confirm: Option<String>,
     },
+    #[command(flatten)]
+    Design(design::DesignCommand),
 }
 
 /// Runs one `anthrex run` command; any error is printed as it is and exits 1.
 pub async fn main(args: RunArgs, socket: PathBuf, dir: Option<PathBuf>) -> anyhow::Result<()> {
     if let Err(error) = dispatch(args.command, &socket, dir).await {
+        if let Some(usage) = error.downcast_ref::<clap::Error>() {
+            usage.exit();
+        }
         eprintln!("{}", status::printable(&error.to_string()));
         std::process::exit(1);
     }
@@ -243,16 +257,17 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
         orchestrator,
         delivery,
         continue_from,
+        design,
     } = command
     {
         let delivery = delivery::mode(delivery.as_deref())?;
         let choice = orch::start_orchestrator(plan.as_ref(), orchestrator.as_deref())?;
         let flags = (yes, trust_project, unconfined_checks);
         return match (plan, goal) {
-            (Some(plan), _) => start(socket, dir, &plan, flags, delivery).await,
+            (Some(plan), _) => start(socket, dir, &plan, flags, (delivery, design)).await,
             (None, goal) => {
                 let goal = goal.unwrap_or_default();
-                let options = (choice, delivery, continue_from);
+                let options = (choice, delivery, continue_from, design.map(Into::into));
                 adapt::start_goal(socket, dir, goal, flags, options).await
             }
         };
@@ -260,6 +275,9 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
     // Decision 14: the fake GitHub's control, which talks to no daemon.
     if let RunCommand::FakeGithub(args) = command {
         return delivery::fake_github(args);
+    }
+    if let RunCommand::Design(command) = command {
+        return design::run(socket, command).await;
     }
     // Every flag is checked before the daemon is asked anything.
     let promote_choice = match &command {
@@ -282,7 +300,9 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
     };
     let mut runs = Runs::connect(socket).await?;
     match command {
-        RunCommand::Start { .. } | RunCommand::FakeGithub(_) => unreachable!("handled above"),
+        RunCommand::Start { .. } | RunCommand::FakeGithub(_) | RunCommand::Design(_) => {
+            unreachable!("handled above")
+        }
         RunCommand::Prs(args) => delivery::prs(&mut runs, args).await,
         RunCommand::Deliver(args) => delivery::deliver(&mut runs, args).await,
         RunCommand::Watch(args) => delivery::watch(&mut runs, args).await,
@@ -304,7 +324,9 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             }
             Ok(())
         }
-        RunCommand::Approve { run, hold } => orch::approve(&mut runs, &run, hold).await,
+        RunCommand::Approve { run, hold, gate } => {
+            design::approve(&mut runs, &run, hold, gate).await
+        }
         RunCommand::Reject {
             run,
             hold: Some(hold),
@@ -350,9 +372,9 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             runs.done(RunRequest::Cancel { run_id }).await
         }
         RunCommand::Promote { run, .. } => orch::promote(&mut runs, &run, promote_choice).await,
-        RunCommand::Iterate { run, .. } => {
+        RunCommand::Iterate { run, design, .. } => {
             let goal = request.expect("read above");
-            rounds::iterate(&mut runs, &run, goal).await
+            rounds::iterate(&mut runs, &run, goal, design.map(Into::into)).await
         }
         RunCommand::Stats { json, tuning } => adapt::stats(&mut runs, dir, json, tuning).await,
         RunCommand::Resume { run, rebaseline } => {
@@ -390,7 +412,7 @@ async fn start(
     dir: Option<PathBuf>,
     plan: &Path,
     (yes, trust_project, unconfined_checks): (bool, bool, bool),
-    delivery: Option<proto::DeliveryMode>,
+    (delivery, design): (Option<proto::DeliveryMode>, Option<design::DesignArg>),
 ) -> anyhow::Result<()> {
     let plan_toml = std::fs::read_to_string(plan)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", plan.display()))?;
@@ -405,7 +427,7 @@ async fn start(
             trust_project,
             unconfined_checks,
             delivery,
-            design: None,
+            design: design.map(Into::into),
         })
         .await?;
     let run_id = match reply {
