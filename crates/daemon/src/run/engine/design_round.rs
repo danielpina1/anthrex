@@ -16,7 +16,7 @@
 //!
 //! Pure (design decision 2).
 
-use proto::{RoundDesign, RunState};
+use proto::{DocKind, RoundDesign, RunState};
 
 use super::requests::log;
 use super::{Effect, design, design_agents, design_commit, design_spend, wake};
@@ -180,6 +180,12 @@ pub(super) fn dropped(run: &mut Run) {
     }
     // A halt in the dropped round no longer returns to its phase or gate.
     design.halted_from = None;
+    // Review A's M-7: the next spec version is summarised against the approved one,
+    // never the dropped round's (with the text lost to a restart, against nothing).
+    design.texts.retain(|(k, _, _)| *k != DocKind::Spec);
+    if let Some((n, text)) = round.spec_text_before {
+        design.texts.push((DocKind::Spec, n, text));
+    }
 }
 
 /// Task 7's carry: a halt of a design run before its plan is approved (in a design

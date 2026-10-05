@@ -193,3 +193,23 @@ fn an_amending_rounds_spec_submit_is_an_amendment() {
     let owed: Vec<String> = design.owed().into_iter().map(|r| r.id).collect();
     assert_eq!(owed, ["R1", "R6"]);
 }
+
+/// The final fix wave's FW-23 (review A's M-7): round 2 is rejected at its spec gate
+/// with its v2 stored; round 3's first spec version is summarised against v1, the spec
+/// approved before both rounds, never against the dropped v2.
+#[test]
+fn a_dropped_rounds_spec_is_never_summarised_against() {
+    let mut fx = amendment_at_gate();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::Reject).unwrap();
+    assert_eq!(fx.run().state, RunState::Complete);
+    iterate_with(&mut fx, None).unwrap();
+    let answer = submit_amendment(&mut fx, AMENDMENT).unwrap();
+    assert_eq!(answer["version"], 3, "{answer}");
+    let design = fx.run().orch.design.as_ref().unwrap();
+    let (n, v3) = design.text_of(proto::DocKind::Spec).unwrap();
+    assert_eq!(n, 3);
+    let against_v1 = crate::run::design::changes::summary(SPEC, v3);
+    assert!(!against_v1.is_empty());
+    let stored = design.find(proto::DocKind::Spec, Some(3)).unwrap();
+    assert_eq!(stored.changes, against_v1);
+}

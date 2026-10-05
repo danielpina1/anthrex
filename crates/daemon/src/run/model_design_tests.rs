@@ -339,6 +339,7 @@ fn the_state_survives_save_and_load() {
             packs_before: 0,
             amended: vec!["R1".into()],
             reviews_before: 1,
+            spec_text_before: None,
         }),
         committed_round: 1,
         // Ruling T15-1: the specs approved before round 2.

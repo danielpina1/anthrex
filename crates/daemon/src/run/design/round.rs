@@ -47,6 +47,11 @@ pub struct DesignRound {
     /// (rulings T15-2 and T15-9).
     #[serde(default)]
     pub reviews_before: usize,
+    /// Review A's M-7: the approved spec's text as the change summaries' cache held it
+    /// when the round started, `(n, text)`, so a dropped round puts it back and the next
+    /// spec version is summarised against it. In memory only, as `DesignState::texts`.
+    #[serde(skip)]
+    pub spec_text_before: Option<(u32, String)>,
 }
 
 /// Ruling T15-1: a spec the user approved: the round it was approved in (round 1's, or a
@@ -89,6 +94,9 @@ impl DesignRound {
             packs_before: packs.saturating_sub(design.rethinks),
             amended: Vec::new(),
             reviews_before: design.reviews.len(),
+            spec_text_before: (design.text_of(DocKind::Spec))
+                .filter(|(n, _)| Some(*n) == design.approved_spec)
+                .map(|(n, text)| (n, text.to_string())),
         }
     }
 }
