@@ -296,3 +296,54 @@ fn a_symlinked_documents_folder_is_its_own_result() {
     );
     assert_eq!(rig.branch_head(), head);
 }
+
+/// Ruling WB-B-I2: a same-day, same-slug second run. The run head already tracks the
+/// slug's spec path: its blob is kept, and the spec, plan and report all land at the
+/// first free `-<n>` (here `-2`); the result names that spec path, which the engine
+/// records for the PR body and later rounds. Sent again (a restart's resend), the
+/// same names give the same commit.
+#[test]
+fn a_tracked_slug_path_is_never_replaced() {
+    let rig = Rig::new(None);
+    let earlier = "# Password reset, the first run\n";
+    let tracked = rig.root.join(SPEC_PATH);
+    std::fs::create_dir_all(tracked.parent().unwrap()).unwrap();
+    std::fs::write(&tracked, earlier).unwrap();
+    git(&rig.root, &["add", "-A"]);
+    git(&rig.root, &["commit", "-q", "-m", "the first run's spec"]);
+    let head = git(&rig.root, &["rev-parse", "HEAD"]);
+    git(
+        &rig.root,
+        &["update-ref", &format!("refs/heads/{}", branch()), &head],
+    );
+    let mut spec = rig.spec_and_plan();
+    spec.expected_head = head;
+    spec.files
+        .push(rig.stored("brainstorms", "brainstorm-v1.md", REPORT));
+    let second = "docs/anthrex/specs/2026-10-05-password-reset-2.md";
+    let (commit, path) = match rig.run(spec.clone()) {
+        OpResult::DocsCommitted { head, spec } => (head, spec),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(path, second);
+    assert_eq!(
+        rig.show(&commit, SPEC_PATH),
+        earlier,
+        "the tracked blob is kept"
+    );
+    assert_eq!(rig.show(&commit, second), SPEC);
+    let plan = "docs/anthrex/plans/2026-10-05-password-reset-2.md";
+    assert_eq!(rig.show(&commit, plan), PLAN);
+    let report = "docs/anthrex/brainstorms/2026-10-05-password-reset-2.md";
+    assert_eq!(rig.show(&commit, report), REPORT);
+    let listed = git(&rig.root, &["ls-tree", "-r", "--name-only", &commit]);
+    assert!(!listed.contains(PLAN_PATH), "{listed}");
+    let again = rig.run(spec);
+    assert_eq!(
+        again,
+        OpResult::DocsCommitted {
+            head: commit,
+            spec: second.into()
+        }
+    );
+}

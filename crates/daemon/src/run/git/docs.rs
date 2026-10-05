@@ -65,6 +65,8 @@ pub enum DocsOutcome {
     Committed {
         head: String,
         reattach: Option<String>,
+        /// The paths `files` were committed at, in order ([`free_names`]).
+        files: Vec<String>,
     },
     /// `path`, a folder on the way to a document, is a tracked symbolic link.
     Symlink { path: String },
@@ -89,7 +91,8 @@ pub fn commit_docs(
     if let Some(path) = walk(&c, docs.root, docs.expected, &folders)? {
         return Ok(DocsOutcome::Symlink { path });
     }
-    let tree = build_tree(&c, docs)?;
+    let named = free_names(&c, docs)?;
+    let tree = build_tree(&c, docs, &named)?;
     let refname = format!("refs/heads/{}", docs.branch);
     let head = match docs.stage {
         Some(stage) => on_stage(&c, docs, (&tree, &refname), stage)?,
@@ -97,7 +100,53 @@ pub fn commit_docs(
     };
     let checkout = ["checkout", "-q", "--force", docs.branch, "--"];
     let reattach = c.ok(docs.integration, Mode::Write, &checkout, None).err();
-    Ok(DocsOutcome::Committed { head, reattach })
+    let files = named.into_iter().map(|(path, _)| path).collect();
+    Ok(DocsOutcome::Committed {
+        head,
+        reattach,
+        files,
+    })
+}
+
+/// The most `-<n>` suffixes tried before the commit gives up ([`free_names`]).
+const MAX_SUFFIX: u32 = 99;
+
+/// Ruling WB-B-I2: the documents commit never replaces a tracked file. `docs.files` at
+/// their names when the run head tracks none of them, else each with the first `-<n>`
+/// (n ≥ 2) before its `.md` that leaves every one of them untracked, the same `n` for
+/// all. The run head decides, so a resend after a restart finds the same names.
+/// Appends are not renamed: they extend a tracked file on purpose.
+fn free_names<'d>(
+    c: &Call<'_>,
+    docs: &'d DocsCommit<'_>,
+) -> Result<Vec<(String, &'d [u8])>, String> {
+    for n in std::iter::once(None).chain((2..=MAX_SUFFIX).map(Some)) {
+        let named: Vec<(String, &[u8])> = (docs.files.iter())
+            .map(|(path, bytes)| (suffixed(path, n), bytes.as_slice()))
+            .collect();
+        if named.is_empty() {
+            return Ok(named);
+        }
+        let mut args = vec!["ls-tree", "-z", "--name-only", docs.expected, "--"];
+        args.extend(named.iter().map(|(path, _)| path.as_str()));
+        if c.ok(docs.root, Mode::Read, &args, None)?.is_empty() {
+            return Ok(named);
+        }
+    }
+    Err(format!(
+        "the documents' names are tracked up to -{MAX_SUFFIX}; none is free"
+    ))
+}
+
+/// `path` with `-<n>` before its `.md` (at its end when it has none).
+fn suffixed(path: &str, n: Option<u32>) -> String {
+    let Some(n) = n else {
+        return path.to_string();
+    };
+    match path.strip_suffix(".md") {
+        Some(stem) => format!("{stem}-{n}.md"),
+        None => format!("{path}-{n}"),
+    }
 }
 
 /// Ruling T12-1: the first tracked symbolic link on the way to any of `folders` in
@@ -188,7 +237,11 @@ fn entries(
 
 /// The tree of the run head with the documents added, built in the caller's index,
 /// which is removed before and after, whatever happened.
-fn build_tree(c: &Call<'_>, docs: &DocsCommit<'_>) -> Result<String, String> {
+fn build_tree(
+    c: &Call<'_>,
+    docs: &DocsCommit<'_>,
+    files: &[(String, &[u8])],
+) -> Result<String, String> {
     remove_index(docs.index)?;
     let built = (|| {
         let root = docs.root;
@@ -196,11 +249,21 @@ fn build_tree(c: &Call<'_>, docs: &DocsCommit<'_>) -> Result<String, String> {
         let appended = (docs.appends.iter())
             .map(|(path, tail)| Ok((path.clone(), appended(c, docs, path, tail)?)))
             .collect::<Result<Vec<_>, String>>()?;
-        for (path, bytes) in docs.files.iter().chain(&appended) {
+        let appended = appended
+            .iter()
+            .map(|(path, bytes)| (path.clone(), bytes.as_slice()));
+        for (path, bytes) in files.iter().cloned().chain(appended) {
             let hashed = ["hash-object", "-w", "--stdin"];
             let blob = c.ok(root, Mode::Write, &hashed, Some(bytes))?;
             let blob = blob.trim();
-            let add = ["update-index", "--add", "--cacheinfo", "100644", blob, path];
+            let add = [
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "100644",
+                blob,
+                &path,
+            ];
             c.ok(root, Mode::Indexed, &add, None)?;
         }
         c.ok(root, Mode::Indexed, &["write-tree"], None)

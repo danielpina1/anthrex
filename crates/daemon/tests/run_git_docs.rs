@@ -108,7 +108,7 @@ fn branch() -> String {
 
 fn committed(outcome: Result<DocsOutcome, String>) -> String {
     match outcome {
-        Ok(DocsOutcome::Committed { head, reattach }) => {
+        Ok(DocsOutcome::Committed { head, reattach, .. }) => {
             assert_eq!(reattach, None, "the integration worktree went back");
             head
         }
@@ -171,6 +171,41 @@ fn the_documents_are_one_commit_on_the_run_branch() {
     );
     assert_eq!(out(rig.root(), &["status", "--porcelain"]), "");
     assert!(!rig.index().exists(), "the temporary index is removed");
+}
+
+/// Ruling WB-B-I2: the commit never replaces a tracked file. The run head tracks the
+/// spec's name and the plan's `-2`: every document takes the first suffix free for all
+/// of them, `-3`, the tracked blobs are kept, and the outcome names the paths used.
+#[test]
+fn the_documents_take_the_first_suffix_free_for_all_of_them() {
+    let spec = "docs/anthrex/specs/2026-10-05-password-reset.md";
+    let plan = "docs/anthrex/plans/2026-10-05-password-reset.md";
+    let rig = Rig::with(|root| {
+        for (path, text) in [
+            (spec, "old spec\n"),
+            (&plan.replace(".md", "-2.md")[..], "old plan\n"),
+        ] {
+            let at = root.join(path);
+            std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::fs::write(at, text).unwrap();
+        }
+    });
+    let outcome = rig.commit(&[(spec, SPEC), (plan, PLAN)]).unwrap();
+    let DocsOutcome::Committed {
+        head: new, files, ..
+    } = outcome
+    else {
+        panic!("{outcome:?}");
+    };
+    let third = |p: &str| p.replace(".md", "-3.md");
+    assert_eq!(files, [third(spec), third(plan)]);
+    let show = |path: &str| out(rig.root(), &["show", &format!("{new}:{path}")]);
+    assert_eq!(show(spec), "old spec");
+    assert_eq!(show(&plan.replace(".md", "-2.md")), "old plan");
+    assert_eq!(show(&third(spec)), SPEC.trim());
+    assert_eq!(show(&third(plan)), PLAN.trim());
+    let again = committed(rig.commit(&[(spec, SPEC), (plan, PLAN)]));
+    assert_eq!(again, new, "sent again: the same names, its own commit");
 }
 
 /// A commit sent again after a restart, whose first send moved the branch, finds its

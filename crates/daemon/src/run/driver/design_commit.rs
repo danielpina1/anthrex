@@ -66,6 +66,9 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
     let spec_path =
         spec_path.unwrap_or_else(|| repo_path(&spec.docs_dir, SPEC_FOLDER, &spec.date, &slug));
     let (mut files, mut appends) = (Vec::new(), Vec::new());
+    // Ruling WB-B-I2: where the spec is among the files written whole, the commit may
+    // rename it (`git::commit_docs` never replaces a tracked file).
+    let mut spec_at = None;
     for (f, text) in spec.files.iter().zip(texts) {
         match &f.append {
             // Decision 24, round k: the heading, then the amendment, after the file.
@@ -73,7 +76,12 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 path(f),
                 [format!("{heading}\n\n").into_bytes(), text].concat(),
             )),
-            None => files.push((path(f), text)),
+            None => {
+                if f.folder == SPEC_FOLDER && spec_at.is_none() {
+                    spec_at = Some(files.len());
+                }
+                files.push((path(f), text));
+            }
         }
     }
     let index = ctx.data_dir.join(DESIGN_DIR).join(INDEX_FILE);
@@ -94,7 +102,11 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         })
         .await;
     match committed {
-        Ok(DocsOutcome::Committed { head, reattach }) => {
+        Ok(DocsOutcome::Committed {
+            head,
+            reattach,
+            files,
+        }) => {
             // As a merge: the branch holds the commit whatever the reattach did.
             if let Some(error) = reattach {
                 tracing::warn!(
@@ -103,9 +115,10 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                     "committed the documents, but the integration worktree could not go back on its branch"
                 );
             }
+            let spec = spec_at.and_then(|k| files.get(k).cloned());
             OpResult::DocsCommitted {
                 head,
-                spec: spec_path,
+                spec: spec.unwrap_or(spec_path),
             }
         }
         Ok(DocsOutcome::Symlink { path }) => OpResult::DocsThroughSymlink { path },
