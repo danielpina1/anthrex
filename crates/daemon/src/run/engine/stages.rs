@@ -210,10 +210,12 @@ pub(crate) fn ready_in_stage(run: &Run, i: usize) -> bool {
 /// would be runnable there. One at a time, and never beside a merge, so `integration`
 /// (the highest stage's alias) is always at the head a new stage starts from.
 pub(super) fn create_pass(run: &mut Run, fx: &mut Vec<Effect>) {
+    // Milestone 9.6 decision 23: no stage before the documents commit lands.
     if run.stage_layout != StageLayout::Multi
         || run.state != RunState::Running
         || creating(run)
         || merge::merging(run)
+        || super::design_commit::due(run)
     {
         return;
     }

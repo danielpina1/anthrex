@@ -205,4 +205,15 @@ pub enum OpResult {
     DesignPackUnreadable {
         reason: String,
     },
+    /// Milestone 9.6 decision 23: `CommitDesignDocs` moved the run branch to `head`;
+    /// `spec` is the committed spec's path in the repository (decision 31).
+    DocsCommitted {
+        head: String,
+        spec: String,
+    },
+    /// The task's addendum: the documents folder goes through `path`, a symbolic link
+    /// tracked in the run head's tree; nothing was written.
+    DocsThroughSymlink {
+        path: String,
+    },
 }

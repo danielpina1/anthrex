@@ -26,8 +26,37 @@ pub fn run_git_with_stdin_file(
         deadline,
         Capture::Capped(MAX_OUTPUT_BYTES),
         Some(file),
+        None,
     )
     .map(|(output, _)| output)
+}
+
+/// As [`super::run_git_with_input`] (or [`super::run_git_with_cap`] without `input`),
+/// with `GIT_INDEX_FILE` set to `index` after the inherited one is scrubbed: milestone
+/// 9.6's documents commit builds its tree in an index the driver owns (task M9.6.12),
+/// never the user's or a checkout's. Refused in an engine checkout, which has its own.
+pub fn run_git_with_index(
+    git: &OsStr,
+    dir: &Path,
+    args: &[&OsStr],
+    deadline: Instant,
+    input: Option<&[u8]>,
+    index: Option<&Path>,
+) -> Result<GitOutput, WorktreeError> {
+    let file = match input {
+        Some(input) => Some(input_file(input).map_err(|err| {
+            WorktreeError::Git {
+                action: (args.iter().map(|arg| arg.to_string_lossy()))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                stderr: format!("cannot stage git's input: {err}"),
+            }
+        })?),
+        None => None,
+    };
+    let capture = Capture::Capped(MAX_OUTPUT_BYTES);
+    run_git_capturing(git, dir, args, deadline, capture, file.as_ref(), index)
+        .map(|(output, _)| output)
 }
 
 /// `input` in a new file under the temporary directory, created exclusively (`0600`),

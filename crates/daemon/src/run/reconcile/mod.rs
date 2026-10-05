@@ -263,6 +263,8 @@ fn check(
         | OpKind::StartScout { .. }
         | OpKind::StartPlanner { .. }
         | OpKind::StartDesignAgent { .. } => Ok(Reconciled::NotStarted),
+        // Milestone 9.6 decision 23: sent again, its executor finds a commit that landed.
+        OpKind::CommitDesignDocs(_) => Ok(Reconciled::NotStarted),
         // M8b decision 32: a diff is only read, and simply measured again.
         OpKind::MeasureDiff { .. } => Ok(Reconciled::NotStarted),
         // M8b decision 33: a history line is appended again unless the file holds its

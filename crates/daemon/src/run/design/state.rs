@@ -47,6 +47,9 @@ pub struct DesignState {
     pub commit_due: bool,
     /// The documents commit's sha, once made.
     pub committed: Option<String>,
+    /// The committed spec's path in the repository: a stage PR names it (decision 31).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spec_path: Option<String>,
     /// The state a phase-budget halt left (decision 8): `run resume` returns to it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub halted_from: Option<RunState>,

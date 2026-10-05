@@ -163,6 +163,8 @@ fn route(
         (kind @ OpKind::StartDesignAgent { .. }, _) => {
             bound = super::design_agents::started(run, &kind, result, now, fx);
         }
+        // Milestone 9.6 decision 23: the documents commit.
+        (OpKind::CommitDesignDocs(_), _) => super::design_commit::done(run, result, now),
         // Milestone 9.5 decision 21: the crown of a race's winner.
         (OpKind::CrownRacer { .. }, Some(i)) => race_end::crown_done(run, i, result, now, fx),
         _ => {}

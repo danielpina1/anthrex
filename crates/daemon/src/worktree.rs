@@ -28,7 +28,7 @@ mod ops;
 pub mod pinned;
 
 pub use dirty::{DirtyReason, dirty_reason};
-pub use input::run_git_with_stdin_file;
+pub use input::{run_git_with_index, run_git_with_stdin_file};
 pub use ops::{
     Created, ManagedWorktree, create, create_with_cleanup_timeout, discard_and_describe,
     discard_and_describe_with, discard_new, discard_new_with, remove,
@@ -259,6 +259,7 @@ pub fn run_git_with_cap(
         deadline,
         Capture::Capped(max_output_bytes),
         None,
+        None,
     )
     .map(|(output, _)| output)
 }
@@ -279,6 +280,7 @@ pub fn run_git_keeping_stdout(
         args,
         deadline,
         Capture::Keeping(max_output_bytes),
+        None,
         None,
     )
     .map(|(output, _)| output)
@@ -311,6 +313,7 @@ pub fn run_git_with_input(
         deadline,
         Capture::Capped(MAX_OUTPUT_BYTES),
         Some(&file),
+        None,
     )
     .map(|(output, _)| output)
 }
@@ -333,6 +336,7 @@ pub fn run_git_head_tail(
         args,
         deadline,
         Capture::HeadTail(head_bytes, tail_bytes),
+        None,
         None,
     )
 }
@@ -357,6 +361,7 @@ fn run_git_capturing(
     deadline: Instant,
     capture: Capture,
     input: Option<&std::fs::File>,
+    index: Option<&Path>,
 ) -> Result<(GitOutput, HeadTail), WorktreeError> {
     let now = Instant::now();
     let joined_args = args
@@ -420,9 +425,22 @@ fn run_git_capturing(
     // `:(literal)`/`:(exclude,literal)` pathspecs match nothing (or fold case); every
     // read takes them as written. One helper for every such git (W2 re-review N1).
     crate::subprocess::scrub_inherited_git(&mut command);
-    if let Some(staged) = &staged {
+    match (&staged, index) {
         // Set deliberately; `subprocess::scrub_git_env` removes only an inherited one.
-        command.env("GIT_INDEX_FILE", staged.path());
+        (Some(staged), None) => {
+            command.env("GIT_INDEX_FILE", staged.path());
+        }
+        // Milestone 9.6 (task M9.6.12): the documents commit's own temporary index.
+        (None, Some(index)) => {
+            command.env("GIT_INDEX_FILE", index);
+        }
+        (None, None) => {}
+        (Some(_), Some(_)) => {
+            return Err(WorktreeError::Git {
+                action: joined_args,
+                stderr: format!("refusing a second index in {}", dir.display()),
+            });
+        }
     }
     if let Some(pin) = pinned_as.as_ref().filter(|pin| pin.standalone) {
         // Final fix batch F1c (3a): a standalone checkout's own object directory is the

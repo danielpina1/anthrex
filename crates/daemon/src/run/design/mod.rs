@@ -14,8 +14,11 @@
 //!
 //! Task M9.6.9 adds [`report`]: the merged brainstorm report's appendix of drafts, and
 //! what its gate reads from it.
+//!
+//! Task M9.6.12 adds [`commit`]: what the documents commit carries, and its paths.
 
 pub mod changes;
+pub mod commit;
 pub mod coverage;
 pub mod epic;
 pub mod pack;

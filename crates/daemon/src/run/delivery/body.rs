@@ -75,16 +75,42 @@ pub fn pr_body(run: &Run, stage: u16) -> String {
     };
     let goal: String = one_line(&run.goal).chars().take(500).collect();
     let head = format!(
-        "<!-- anthrex:pr {} stage {stage} -->\n**Goal:** {}\n\n**Stage {stage} of {}:** {}\n**Stack:** {stack}\n\n### Look here first\n{}\n### Tasks\n{TABLE_HEAD}",
+        "<!-- anthrex:pr {} stage {stage} -->\n**Goal:** {}\n\n**Stage {stage} of {}:** {}\n**Stack:** {stack}\n{}\n### Look here first\n{}\n### Tasks\n{TABLE_HEAD}",
         run.id,
         md(&goal),
         stage_count(run),
         stage_title(&tasks, md),
+        covers(run, &tasks),
         look_here(run, &tasks),
     );
     let rows: Vec<String> = tasks.iter().copied().map(row).collect();
     let tail = format!("\n{}\n{}", evidence(run, stage, &tasks), footer(run));
     fit(&head, &rows, &tail)
+}
+
+/// Milestone 9.6 decision 31: `Covers <ids> (spec: <path>)` and its line break, when
+/// the run committed its spec and the stage's tasks cover requirements; the ids
+/// verbatim (ruling T4-2), in the spec's order. Empty otherwise, so the body is 9.5's.
+fn covers(run: &Run, tasks: &[&Task]) -> String {
+    let Some(design) = run.orch.design.as_ref() else {
+        return String::new();
+    };
+    let Some(path) = design
+        .spec_path
+        .as_ref()
+        .filter(|_| design.committed.is_some())
+    else {
+        return String::new();
+    };
+    let covered = |id: &str| tasks.iter().any(|t| t.spec.covers.iter().any(|c| c == id));
+    let ids: Vec<&str> = (design.requirements.iter())
+        .map(|r| r.id.as_str())
+        .filter(|id| covered(id))
+        .collect();
+    match ids.is_empty() {
+        true => String::new(),
+        false => format!("Covers {} (spec: {})\n", md(&ids.join(", ")), md(path)),
+    }
 }
 
 /// The tasks of stage `stage` its PR carries: every one not cancelled, in plan order.
@@ -386,3 +412,7 @@ pub(crate) fn code(text: &str, in_table: bool) -> String {
     };
     format!("{fence}{inner}{fence}")
 }
+
+#[cfg(test)]
+#[path = "tests_body_covers.rs"]
+mod tests_covers;

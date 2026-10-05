@@ -51,6 +51,7 @@ pub mod delivery;
 // Milestone 9.6: the design flow's phases and gates.
 pub(crate) mod design;
 mod design_agents;
+mod design_commit;
 pub(crate) mod design_gate;
 mod dispatch;
 mod done;

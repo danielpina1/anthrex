@@ -23,6 +23,7 @@ pub(crate) mod build;
 mod cleanup;
 mod context;
 mod delivery;
+mod design_commit;
 mod design_files;
 mod design_io;
 mod design_ops;

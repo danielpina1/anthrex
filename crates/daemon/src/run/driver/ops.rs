@@ -482,6 +482,8 @@ pub(super) async fn run(
         OpKind::Host { repo, op } => service.host_op(ctx, repo, op).await,
         // Milestone 9.5 decision 21.
         OpKind::CrownRacer { .. } => lane_ops::crown_racer(service, ctx, kind).await,
+        // Milestone 9.6 decision 23.
+        OpKind::CommitDesignDocs(_) => super::design_commit::run(service, ctx, kind).await,
     }
 }
 

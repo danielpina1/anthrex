@@ -43,8 +43,13 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     holds::enforce_holds(run, now, fx);
     requeue(run, now);
     if integration_ready(run) {
+        // Milestone 9.6 decision 23: nothing branches from the run head before the
+        // documents commit lands (Review focus 3); ruling T1-O2: nor is it pre-warmed.
+        let held = super::design_commit::hold(run, now, fx);
         match run.state {
+            RunState::AwaitingApproval if super::design_commit::skips_prewarm(run) => {}
             RunState::AwaitingApproval => prewarm(run, now, fx),
+            RunState::Running if held => {}
             RunState::Running => {
                 restore::relaunch(run, now, fx);
                 holds::resume_held(run, now, fx);
@@ -87,7 +92,9 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         // Milestone 9 decision 31: sub-planners, then run scouts, in free reader slots.
         super::planners::dispatch(run, now, fx);
         // Then research and review tasks (decisions 35, 36).
-        kinds::dispatch(run, now, false, fx);
+        if !held {
+            kinds::dispatch(run, now, false, fx);
+        }
     }
     remove_cancelled_worktrees(run, now, fx);
     // Milestone 9.5 decision 22: a lane that left its race, once its racer has exited.

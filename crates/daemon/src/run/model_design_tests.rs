@@ -246,6 +246,7 @@ fn the_state_survives_save_and_load() {
         plan_review_done: true,
         commit_due: true,
         committed: Some("c".repeat(40)),
+        spec_path: Some("docs/anthrex/specs/2026-10-05-reset.md".into()),
         // Task M9.6.7: a budget halt's state and the rethinks; the texts' cache is
         // never written.
         halted_from: Some(proto::RunState::Specifying),

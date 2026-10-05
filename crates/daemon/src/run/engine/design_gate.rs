@@ -301,6 +301,8 @@ fn approve(run: &mut Run, kind: DocGateKind, what: &str, now: u64) -> String {
             // Milestone 9.1 decision 46 and 9.3 decision 12, as `requests::approve`.
             goal_rounds_end::approved(run, "user", now);
             log(run, now, "approved by the user");
+            // Decision 23: the documents are committed before anything branches.
+            super::design_commit::approved(run, now);
             return format!("run {} approved", run.id);
         }
     };
