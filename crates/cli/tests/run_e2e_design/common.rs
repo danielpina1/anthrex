@@ -2,7 +2,7 @@
 //! the user's gate commands, and readers of what the run stored and committed.
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::Duration;
 
 use proto::{DocGateKind, RunInfo};
@@ -164,28 +164,23 @@ pub fn stored(h: &RunHarness, run: &str, name: &str) -> String {
     String::from_utf8(bytes).expect("a stored document is UTF-8")
 }
 
-/// `git <args>` in `dir`'s repository, isolated as the harness's git is: its stdout,
-/// byte for byte (never trimmed; UTF-8).
+/// [`stored`], once the file exists and is UTF-8, within `wait`: a version whose write
+/// is its own effect, read as soon as its gate shows.
+pub fn stored_within(h: &RunHarness, run: &str, name: &str, wait: Duration) -> String {
+    let path = h.data().join("runs").join(run).join("design").join(name);
+    crate::support::run_plans::until(name, wait, || {
+        let bytes = std::fs::read(&path).ok()?;
+        String::from_utf8(bytes)
+            .ok()
+            .filter(|text| !text.is_empty())
+    })
+}
+
+/// `git <args>` in `dir`'s repository, isolated as the harness's git is (AGENTS.md hard
+/// rule 11's scrub, `--no-optional-locks`): its stdout, byte for byte (never trimmed;
+/// UTF-8).
 pub fn git_text(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("--no-optional-locks")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_PREFIX")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).expect("git's output is UTF-8")
+    crate::support::run_git::git_raw_in(dir, args)
 }
 
 /// The repository path of a committed document: `<docs_dir>/<folder>/<date>-<slug>.md`

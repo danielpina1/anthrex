@@ -84,7 +84,9 @@ fn e2e_a_goal_through_three_gates() {
     // and the report the user saw carries both drafts in the engine's appendix.
     let pack = stored(&h, &run, "brainstorm/pack-r1.md");
     assert!(pack.contains(ANSWER), "{pack}");
-    let shown = stored(&h, &run, "brainstorm-v1.md");
+    // The version's file is written by its own effect: read within a deadline (the
+    // final fix wave's FW-61).
+    let shown = stored_within(&h, &run, "brainstorm-v1.md", ORCH_WAIT);
     let appendix = format!(
         "{}\n## Appendix: the drafts\n\n### claude\n",
         report(LABELS)
@@ -154,5 +156,7 @@ fn e2e_a_goal_through_three_gates() {
     // The accept lands the documents on main with the work.
     h.accept(&run);
     assert_eq!(blob("main", &spec_path), stored_spec);
+    // Final fix wave FW-62: the plan document lands on main too.
+    assert_eq!(blob("main", &plan_path), stored(&h, &run, "plan-v1.md"));
     assert_eq!(h.git(&["show", &format!("main:{PLAN_FILE}")]), "t1");
 }

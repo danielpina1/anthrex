@@ -13,7 +13,8 @@ use crate::support::run_orch::ORCH_WAIT;
 
 /// What one run of the planned goal showed: the states its snapshots went through,
 /// and every request made of its agents (each session's argv and every message its
-/// terminal or stdin got, and every tool call the orchestrator made), normalised.
+/// terminal or stdin got, every tool call the orchestrator made, and the triage
+/// decider's request), normalised.
 #[derive(Debug, PartialEq)]
 struct Seen {
     states: Vec<RunState>,
@@ -170,6 +171,11 @@ fn planned(h: &RunHarness, flags: &[&str]) -> Seen {
         .collect();
     calls.dedup();
     requests.push(("orchestrator tool calls".into(), calls));
+    // Final fix wave FW-64: the triage decider's request (its kind, argv and prompt).
+    let deciders = (h.decider_calls().iter())
+        .map(|c| normalise(&c.to_string(), h, &run))
+        .collect();
+    requests.push(("decider calls".into(), timeless(deciders)));
     let saved = h.run_json(&run);
     Seen {
         states,
@@ -217,6 +223,13 @@ fn e2e_design_off_is_9_5() {
         assert_eq!(a, b, "{name}");
     }
     assert_eq!(off.requests.len(), nine_five.requests.len());
+    let (name, deciders) = nine_five.requests.last().unwrap();
+    assert_eq!(name, "decider calls");
+    assert_eq!(
+        deciders.len(),
+        1,
+        "the triage decider's one call: {deciders:?}"
+    );
     assert_eq!(off.status_keys, nine_five.status_keys);
     for key in ["design", "doc_gate", "docs", "design_agents"] {
         assert!(

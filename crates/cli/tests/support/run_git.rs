@@ -22,21 +22,44 @@ pub fn init_repo(path: &Path, files: &[(&str, &str)]) {
     git_in(path, &["commit", "-q", "-m", "initial"]);
 }
 
-/// `git <args>` in `dir`, isolated from the user's configuration; its trimmed stdout.
-pub fn git_in(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(args)
+/// `git <args>` in `dir`, isolated from the user's configuration and with AGENTS.md
+/// hard rule 11's environment scrubbed (the final fix wave's FW-63); its output, which
+/// must be a success.
+fn isolated_git(dir: &Path, args: &[&str]) -> std::process::Output {
+    let mut git = Command::new("git");
+    git.args(args)
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .output()
-        .unwrap();
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    for var in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_PREFIX",
+    ] {
+        git.env_remove(var);
+    }
+    let output = git.output().unwrap();
     assert!(
         output.status.success(),
         "git {args:?} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    output
+}
+
+/// `git <args>` in `dir`, isolated from the user's configuration; its trimmed stdout.
+pub fn git_in(dir: &Path, args: &[&str]) -> String {
+    let output = isolated_git(dir, args);
     String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// [`git_in`] as a reader (`--no-optional-locks`, AGENTS.md hard rule 11): its stdout
+/// byte for byte, never trimmed, as UTF-8.
+pub fn git_raw_in(dir: &Path, args: &[&str]) -> String {
+    let mut all = vec!["--no-optional-locks"];
+    all.extend_from_slice(args);
+    let output = isolated_git(dir, &all);
+    String::from_utf8(output.stdout).expect("git's output is UTF-8")
 }

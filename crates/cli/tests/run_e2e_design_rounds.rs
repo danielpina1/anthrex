@@ -145,6 +145,9 @@ fn e2e_round_amend() {
         .map(|r| (r["id"].as_str().unwrap(), r["text"].as_str().unwrap()))
         .collect();
     assert_eq!(ids[1], ("R2", R2_CHANGED), "{ids:#?}");
+    // Final fix wave FW-62: R1's text is round 1's, unmarked.
+    let r1 = "a.txt exists at the repository root. Acceptance: `test -f a.txt` succeeds.";
+    assert_eq!(ids[0], ("R1", r1), "{ids:#?}");
     assert_eq!(
         ids.iter().map(|r| r.0).collect::<Vec<_>>(),
         ["R1", "R2", "R3"]
