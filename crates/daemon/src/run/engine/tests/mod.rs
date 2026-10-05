@@ -63,6 +63,7 @@ mod design_agents_end;
 mod design_agents_relaunch;
 mod design_clock;
 mod design_commit;
+mod design_commit_rounds;
 mod design_fixture;
 mod design_gate;
 mod design_notes;

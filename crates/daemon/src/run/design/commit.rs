@@ -8,6 +8,10 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// The folders under `docs_dir` the documents go to (decision 24): the spec's, the
+/// plan's and the brainstorm report's.
+pub const FOLDERS: [&str; 3] = ["specs", "plans", "brainstorms"];
+
 /// The slug's most characters (decision 24).
 pub const SLUG_MAX: usize = 48;
 

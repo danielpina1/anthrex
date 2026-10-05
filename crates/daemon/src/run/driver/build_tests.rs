@@ -438,6 +438,42 @@ mod tuning {
         assert_eq!(loaded.limits.orch.design.phase_minutes, 30);
     }
 
+    /// Ruling T12-1: a design run whose documents folder goes through a symbolic link
+    /// tracked at the base is refused at its start with the commit's own text, before
+    /// any run exists; with `docs_dir = ""` (nothing is committed) it starts.
+    #[tokio::test]
+    async fn a_design_start_through_a_symlinked_docs_dir_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, _repo_dir, service) = rig(tmp.path());
+        std::fs::create_dir_all(work.join("elsewhere")).unwrap();
+        std::fs::write(work.join("elsewhere/keep"), "k\n").unwrap();
+        std::os::unix::fs::symlink("elsewhere", work.join("docs")).unwrap();
+        git(&work, &["add", "-A"]);
+        git(&work, &["commit", "-q", "-m", "a link"]);
+        let build = |config: config::Orchestrator| {
+            let once = super::super::TuneOnce::with_config(config);
+            let (service, work) = (service.clone(), work.clone());
+            async move {
+                let delivery = crate::run::driver::delivery::DeliveryStart::Resolve(None);
+                let flags = (false, false, true);
+                (service.build_delivered(plan(false), work, flags, planned(true), delivery, &once))
+                    .await
+                    .map_err(|e| e.text())
+            }
+        };
+        let refused = build(config::Orchestrator::default()).await;
+        assert_eq!(
+            refused.err().as_deref(),
+            Some(
+                "design flow: the documents folder docs/anthrex goes through a symlink in the repository; change [orchestrator.design].docs_dir"
+            )
+        );
+        let mut none = config::Orchestrator::default();
+        none.design.docs_dir = String::new();
+        let run = build(none).await.unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(run.design_mode, proto::DesignMode::Full);
+    }
+
     /// Decision 3: a planned build refuses `--design full` for a goal DF §1 puts off,
     /// with the exact text, and builds nothing.
     #[tokio::test]

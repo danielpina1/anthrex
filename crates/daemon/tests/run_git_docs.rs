@@ -10,7 +10,8 @@
 mod support;
 
 use daemon::run::git::{
-    AcceptOutcome, DocsCommit, DocsOutcome, accept, commit_docs, create_run_branch, delete_branches,
+    AcceptOutcome, DocsCommit, DocsOutcome, accept, commit_docs, create_run_branch,
+    delete_branches, docs_symlink,
 };
 use std::path::{Path, PathBuf};
 use support::TempRepo;
@@ -182,6 +183,51 @@ fn a_commit_sent_again_finds_its_own_commit() {
     assert_eq!(rig.branch_head(), first);
 }
 
+/// Review m2 (ruling T12-3): a commit with the same tree on the run head but another
+/// message is someone else's, not this commit's: the branch moved.
+#[test]
+fn a_commit_of_the_same_tree_with_another_message_is_not_adopted() {
+    let rig = Rig::new();
+    let files = [("docs/specs/a.md", SPEC)];
+    let ours = committed(rig.commit(&files));
+    let tree = out(rig.root(), &["rev-parse", &format!("{ours}^{{tree}}")]);
+    let theirs = out(
+        rig.root(),
+        &[
+            "commit-tree",
+            &tree,
+            "-p",
+            &rig.base,
+            "-m",
+            "a user's commit",
+        ],
+    );
+    let refname = format!("refs/heads/{}", branch());
+    out(rig.root(), &["update-ref", &refname, &theirs]);
+    match rig.commit(&files) {
+        Err(error) => assert!(error.contains("moved"), "{error}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(rig.branch_head(), theirs);
+}
+
+/// Review m5 (ruling T12-3): a run branch git cannot read is an error with git's text,
+/// not a branch that does not exist.
+#[test]
+fn an_unreadable_run_branch_is_an_error_not_a_missing_branch() {
+    let rig = Rig::new();
+    let file = rig.root().join(format!(".git/refs/heads/{}", branch()));
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "not a sha\n").unwrap();
+    match rig.commit(&[("docs/specs/a.md", SPEC)]) {
+        Err(error) => {
+            assert!(!error.contains("does not exist"), "{error}");
+            assert!(error.contains("rev-parse"), "{error}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
 /// A branch moved by anyone else is a failure that names it; nothing is written.
 #[test]
 fn a_run_branch_moved_elsewhere_fails() {
@@ -227,6 +273,31 @@ fn a_folder_through_a_tracked_symlink_is_refused() {
             path: "docs/anthrex".into()
         })
     );
+}
+
+/// Review m3 (ruling T12-3): the walk compares path components ignoring case, so a
+/// tracked `Docs` link is found for `docs` (macOS's `core.ignorecase` would write
+/// through it in a checkout), and the start check (ruling T12-1) finds the same.
+#[test]
+fn a_symlink_that_differs_only_in_case_is_refused() {
+    let rig = Rig::with(|root| {
+        std::fs::create_dir_all(root.join("elsewhere")).unwrap();
+        std::fs::write(root.join("elsewhere/keep"), "k\n").unwrap();
+        std::os::unix::fs::symlink("elsewhere", root.join("Docs")).unwrap();
+    });
+    let outcome = rig.commit(&[("docs/anthrex/specs/a.md", SPEC)]);
+    assert_eq!(
+        outcome,
+        Ok(DocsOutcome::Symlink {
+            path: "Docs".into()
+        })
+    );
+    let folders = ["docs/anthrex/specs".to_string()];
+    let found = docs_symlink(real_git(), rig.root(), &rig.base, &folders, T).unwrap();
+    assert_eq!(found.as_deref(), Some("Docs"));
+    let plain = Rig::new();
+    let found = docs_symlink(real_git(), plain.root(), &plain.base, &folders, T).unwrap();
+    assert_eq!(found, None);
 }
 
 /// Git's own `verify_path`, with `core.protectHFS` and `core.protectNTFS`, refuses a

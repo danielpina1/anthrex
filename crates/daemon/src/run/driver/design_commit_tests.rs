@@ -169,8 +169,18 @@ impl Rig {
         )
     }
 
+    /// The committed blob's bytes as text, untrimmed (review m6).
     fn show(&self, commit: &str, path: &str) -> String {
-        git(&self.root, &["show", &format!("{commit}:{path}")])
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&self.root)
+            .args(["cat-file", "blob", &format!("{commit}:{path}")])
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_INDEX_FILE")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8(out.stdout).unwrap()
     }
 }
 
@@ -199,8 +209,8 @@ fn approval_commits_the_spec_and_plan_on_the_run_branch() {
     assert_eq!(rig.branch_head(), head);
     let parents = git(&rig.root, &["rev-list", "--parents", "-n", "1", &head]);
     assert_eq!(parents, format!("{head} {}", rig.base));
-    assert_eq!(rig.show(&head, SPEC_PATH), SPEC.trim_end());
-    assert_eq!(rig.show(&head, PLAN_PATH), PLAN.trim_end());
+    assert_eq!(rig.show(&head, SPEC_PATH), SPEC);
+    assert_eq!(rig.show(&head, PLAN_PATH), PLAN);
     let message = git(&rig.root, &["log", "-1", "--format=%B", &head]);
     assert_eq!(message, "docs: spec and plan for Reset passwords");
     let on_disk = std::fs::read_to_string(rig.integration.join(PLAN_PATH)).unwrap();
@@ -224,7 +234,7 @@ fn the_brainstorm_report_goes_to_brainstorms_with_its_appendix() {
         other => panic!("{other:?}"),
     };
     let path = "docs/anthrex/brainstorms/2026-10-05-password-reset.md";
-    assert_eq!(rig.show(&head, path), REPORT.trim_end());
+    assert_eq!(rig.show(&head, path), REPORT);
 }
 
 /// The addendum: only the stored, approved bytes are committed. A file that changed

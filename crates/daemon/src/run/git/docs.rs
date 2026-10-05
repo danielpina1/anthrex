@@ -9,10 +9,11 @@
 //! (git's own `verify_path`), then `write-tree`. Every call carries
 //! `core.protectHFS` and `core.protectNTFS`, so a path HFS+ or NTFS would read as
 //! `.git` is refused by git itself; `mktree` is never used. A folder that goes through a
-//! symbolic link tracked in the run head's tree is refused before anything is written.
-//! The commit's one parent is the run head; the branch moves by compare-and-swap, and a
-//! branch already at a commit of the same tree on the run head (the same commit sent
-//! again after a restart) is that commit. The integration worktree is then put back on
+//! symbolic link tracked in the run head's tree, in any case, is refused before
+//! anything is written ([`docs_symlink`], which a design run's start asks too). The
+//! commit's one parent is the run head; the branch moves by compare-and-swap, and a
+//! branch already at a commit of the same tree and message on the run head (the same
+//! commit sent again after a restart) is that commit. The integration worktree is then put back on
 //! the branch, as a merge leaves it.
 
 use std::ffi::OsStr;
@@ -28,6 +29,8 @@ pub const PROTECT_FLAGS: [&str; 4] = ["-c", "core.protectHFS=true", "-c", "core.
 
 /// A tree entry's mode for a symbolic link.
 const SYMLINK_MODE: &str = "120000";
+/// A tree entry's mode for a folder.
+const TREE_MODE: &str = "040000";
 
 /// One documents commit: `files` (repository path, bytes) on top of `expected`'s tree,
 /// committed with `message` on `branch`, whose checkout is `integration`; the tree is
@@ -67,7 +70,11 @@ pub fn commit_docs(
         timeout,
         index: docs.index,
     };
-    if let Some(path) = symlink_on_the_way(&c, docs)? {
+    let mut folders: Vec<String> = (docs.files.iter())
+        .filter_map(|(path, _)| path.rsplit_once('/').map(|(dir, _)| dir.to_string()))
+        .collect();
+    folders.dedup();
+    if let Some(path) = walk(&c, docs.root, docs.expected, &folders)? {
         return Ok(DocsOutcome::Symlink { path });
     }
     let tree = build_tree(&c, docs)?;
@@ -97,30 +104,90 @@ pub fn commit_docs(
     Ok(DocsOutcome::Committed { head, reattach })
 }
 
-/// The first folder on the way to a document that is a symbolic link in the run head's
-/// tree (`ls-tree` per path component), in the documents' order.
-fn symlink_on_the_way(c: &Call<'_>, docs: &DocsCommit<'_>) -> Result<Option<String>, String> {
-    let mut seen: Vec<String> = Vec::new();
-    for (path, _) in docs.files {
-        let parts: Vec<&str> = path.split('/').collect();
-        for end in 1..parts.len() {
-            let folder = parts[..end].join("/");
-            if seen.contains(&folder) {
-                continue;
+/// Ruling T12-1: the first tracked symbolic link on the way to any of `folders` in
+/// `head`'s tree, by its path there; `None` when every component is a plain folder or
+/// absent. The run's start asks it against the base head (`driver/design_commit.rs`),
+/// and [`commit_docs`] against the run head. Ruling T12-3 (m3): components compare
+/// ignoring case, so a `Docs` link is found for `docs` (with `core.ignorecase`, as on
+/// macOS, a checkout would write through it), and every case variant is followed.
+pub fn docs_symlink(
+    git: &OsStr,
+    root: &Path,
+    head: &str,
+    folders: &[String],
+    timeout: Duration,
+) -> Result<Option<String>, String> {
+    let c = Call {
+        git,
+        timeout,
+        index: Path::new(""),
+    };
+    walk(&c, root, head, folders)
+}
+
+/// [`docs_symlink`]'s walk: per folder, per component, the tree entries that match it
+/// ignoring case, each tree listed once.
+fn walk(
+    c: &Call<'_>,
+    root: &Path,
+    head: &str,
+    folders: &[String],
+) -> Result<Option<String>, String> {
+    let mut listed: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    for folder in folders {
+        // The trees reached so far, by their paths in `head`; the root first.
+        let mut at = vec![String::new()];
+        for part in folder.split('/') {
+            let mut next = Vec::new();
+            for tree in &at {
+                let entries = match listed.iter().find(|(t, _)| t == tree) {
+                    Some((_, entries)) => entries.clone(),
+                    None => {
+                        let entries = entries(c, root, head, tree)?;
+                        listed.push((tree.clone(), entries.clone()));
+                        entries
+                    }
+                };
+                let part = part.to_lowercase();
+                for (mode, name) in entries.iter().filter(|(_, n)| n.to_lowercase() == part) {
+                    let path = match tree.is_empty() {
+                        true => name.clone(),
+                        false => format!("{tree}/{name}"),
+                    };
+                    match mode.as_str() {
+                        SYMLINK_MODE => return Ok(Some(path)),
+                        TREE_MODE => next.push(path),
+                        _ => {}
+                    }
+                }
             }
-            seen.push(folder.clone());
-            let args = ["ls-tree", "-z", docs.expected, "--", &folder];
-            let listed = c.ok(docs.root, Mode::Read, &args, None)?;
-            let Some(entry) = listed.split('\0').find(|e| !e.is_empty()) else {
+            if next.is_empty() {
                 // Not in the tree: nothing below it is either.
                 break;
-            };
-            if entry.split(' ').next() == Some(SYMLINK_MODE) {
-                return Ok(Some(folder));
             }
+            at = next;
         }
     }
     Ok(None)
+}
+
+/// The `(mode, name)` entries of the tree at `tree` (`""`: the root) in `head`.
+fn entries(
+    c: &Call<'_>,
+    root: &Path,
+    head: &str,
+    tree: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let at = match tree.is_empty() {
+        true => head.to_string(),
+        false => format!("{head}:{tree}"),
+    };
+    let listed = c.ok(root, Mode::Read, &["ls-tree", "-z", &at], None)?;
+    let entry = |e: &str| {
+        let (meta, name) = e.split_once('\t')?;
+        Some((meta.split(' ').next()?.to_string(), name.to_string()))
+    };
+    Ok(listed.split('\0').filter_map(entry).collect())
 }
 
 /// The tree of the run head with the documents added, built in the caller's index,
@@ -162,16 +229,17 @@ fn remove_index(index: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The commit `refname` points at, `None` when it does not exist.
+/// The commit `refname` points at, `None` when it does not exist. Ruling T12-3 (m5):
+/// `-q` keeps a missing ref quiet, so anything git says is an error.
 fn read_ref(c: &Call<'_>, root: &Path, refname: &str) -> Result<Option<String>, String> {
     let wanted = format!("{refname}^{{commit}}");
-    let output = c.run(
-        root,
-        Mode::Read,
-        &["rev-parse", "-q", "--verify", &wanted],
-        None,
-    )?;
-    Ok(output.success.then(|| output.stdout.trim().to_string()))
+    let args = ["rev-parse", "-q", "--verify", &wanted];
+    let output = c.run(root, Mode::Read, &args, None)?;
+    match (output.success, output.stderr.trim().is_empty()) {
+        (true, _) => Ok(Some(output.stdout.trim().to_string())),
+        (false, true) => Ok(None),
+        (false, false) => Err(c.failure(Mode::Read, &args, &output)),
+    }
 }
 
 /// `update-ref --no-deref <refname> <new> <old>`: `None` when it moved, else where the
@@ -195,7 +263,8 @@ fn swap(
 }
 
 /// The branch is at `now`, not the run head: this commit's own (one parent, the run
-/// head; the same tree), or a branch someone else moved.
+/// head; the same tree; the same message, ruling T12-3 m2), or a branch someone else
+/// moved.
 fn own(
     c: &Call<'_>,
     docs: &DocsCommit<'_>,
@@ -203,11 +272,13 @@ fn own(
     refname: &str,
     now: &str,
 ) -> Result<String, String> {
-    let args = ["show", "-s", "--format=%T %P", now];
+    let args = ["show", "-s", "--format=%T %P%n%B", now];
     let shown = c.ok(docs.root, Mode::Read, &args, None)?;
-    let mut fields = shown.split_whitespace();
+    let (first, message) = shown.split_once('\n').unwrap_or((shown.as_str(), ""));
+    let mut fields = first.split_whitespace();
     let (t, parents) = (fields.next(), fields.collect::<Vec<_>>());
-    if t == Some(tree) && parents == [docs.expected] {
+    let same = message.trim_end_matches('\n') == docs.message.trim_end_matches('\n');
+    if t == Some(tree) && parents == [docs.expected] && same {
         return Ok(now.to_string());
     }
     Err(format!(

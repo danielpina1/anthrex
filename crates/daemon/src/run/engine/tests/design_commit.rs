@@ -21,10 +21,10 @@ use crate::run::engine::{Effect, EventKind, OpKind, OpResult};
 use crate::run::model::StageLayout;
 
 /// The commit's new head in these tests.
-const DOCS: &str = "dddddddddddddddddddddddddddddddddddddddd";
+pub(super) const DOCS: &str = "dddddddddddddddddddddddddddddddddddddddd";
 const SPEC_PATH: &str = "docs/anthrex/specs/1970-01-01-password-reset.md";
 
-fn commits(effects: &[Effect]) -> Vec<(u64, DocsCommitSpec)> {
+pub(super) fn commits(effects: &[Effect]) -> Vec<(u64, DocsCommitSpec)> {
     ops_in(effects, "CommitDesignDocs")
         .into_iter()
         .map(|(op, kind)| match kind {
@@ -35,7 +35,7 @@ fn commits(effects: &[Effect]) -> Vec<(u64, DocsCommitSpec)> {
 }
 
 /// The pending `CommitDesignDocs`.
-fn pending_commit(fx: &Fixture) -> (u64, DocsCommitSpec) {
+pub(super) fn pending_commit(fx: &Fixture) -> (u64, DocsCommitSpec) {
     let mut pending: Vec<(u64, DocsCommitSpec)> = (fx.run().pending_ops.values())
         .filter_map(|p| match &p.kind {
             OpKind::CommitDesignDocs(spec) => Some((p.op, (**spec).clone())),
@@ -46,7 +46,7 @@ fn pending_commit(fx: &Fixture) -> (u64, DocsCommitSpec) {
     pending.remove(0)
 }
 
-fn committed(fx: &mut Fixture, op: u64) -> Vec<Effect> {
+pub(super) fn committed(fx: &mut Fixture, op: u64) -> Vec<Effect> {
     let result = OpResult::DocsCommitted {
         head: DOCS.into(),
         spec: SPEC_PATH.into(),
@@ -65,7 +65,7 @@ fn branching(effects: &[Effect]) -> Vec<&'static str> {
 
 /// [`at_plan_gate`], with `edit` applied to the run while it is at the spec gate, and
 /// `tasks` (each covering both requirements) as the plan.
-fn plan_gate_with(
+pub(super) fn plan_gate_with(
     edit: impl FnOnce(&mut crate::run::model::Run),
     tasks: &[serde_json::Value],
 ) -> Fixture {
@@ -87,7 +87,7 @@ fn one_task() -> Vec<serde_json::Value> {
     vec![covering("t1", &["R1", "R2"])]
 }
 
-fn approve(fx: &mut Fixture) -> Vec<Effect> {
+pub(super) fn approve(fx: &mut Fixture) -> Vec<Effect> {
     let reply = fx.reply();
     let effects = fx.next(EventKind::DocGate {
         reply,
@@ -362,4 +362,14 @@ fn a_documents_folder_through_a_symlink_halts() {
     assert_eq!(run.halted_reason.as_deref(), Some(text));
     assert!(run.orch.design.as_ref().unwrap().commit_due);
     assert_eq!(fx.run().run_head, BASE);
+    // Ruling T12-1: the frozen docs_dir means a resume cannot succeed.
+    assert!(!run.halt_retryable);
+    let reply = fx.reply();
+    let effects = fx.next(EventKind::Resume {
+        reply,
+        run_id: RUN_ID.into(),
+        rebaseline: None,
+    });
+    assert!(replies(&effects)[0].is_err(), "{effects:?}");
+    assert!(commits(&effects).is_empty());
 }

@@ -19,7 +19,7 @@ use super::ops::blocking;
 use super::{RunService, unix_now};
 use crate::run::chain::suffix_taken;
 use crate::run::confine;
-use crate::run::design::{GoalOrigin, mode_for};
+use crate::run::design::GoalOrigin;
 use crate::run::git::{self, Git, os};
 use crate::run::globs::ProtectedMatcher;
 use crate::run::journal::runs_dir;
@@ -251,8 +251,8 @@ impl RunService {
         design: &config::DesignConfig,
     ) -> Result<(), String> {
         // Milestone 9.6 decision 3: the mode, from the start's settings read, frozen.
-        let origin = GoalOrigin::Goal(planned.triage.as_ref());
-        run.design_mode = mode_for(origin, planned.design, design)?;
+        let asked = (GoalOrigin::Goal(planned.triage.as_ref()), planned.design);
+        run.design_mode = self.design_mode(run, asked, design).await?;
         let config = self.manager.config();
         let (claude, codex) = (config.claude_bin.clone(), config.codex_bin.clone());
         let bins = (claude.clone(), codex.clone());

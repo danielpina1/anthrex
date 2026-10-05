@@ -1,14 +1,16 @@
 //! Milestone 9.6 decision 23 (DF §5.3, task M9.6.12), engine side: the documents
 //! commit. The plan gate's approval marks it due ([`approved`]) when the run commits
-//! its documents (`[orchestrator.design] docs_dir` not empty). While it is due the
-//! scheduler starts nothing that branches from the run head: no worktree, no stage
-//! branch, no review checkout (Review focus 3; [`hold`], called first in
-//! `dispatch::schedule`, and `stages::create_pass`), and it sends the one
-//! `CommitDesignDocs` while the run runs and none is in flight. A restart sends a lost
-//! one again as it was (`restore_lost`'s git arm). Its reply moves the run head through
-//! `stages::set_stage_head`, so the bottom stage holds it in every layout; a failure
-//! halts the run retryably, and `run resume` sends it again. Ruling T1-O2: such a run
-//! skips 9.5's plan-gate pre-warm, so no checkout is built on a head the commit moves.
+//! its documents (`[orchestrator.design] docs_dir` not empty; round 1 only, ruling
+//! T12-2). While it is due the scheduler starts nothing that branches from the run
+//! head: no worktree, no stage branch, no review checkout (Review focus 3; [`hold`],
+//! called first in `dispatch::schedule`, and `stages::create_pass`), and it sends the
+//! one `CommitDesignDocs` while the run runs and none is in flight. A restart sends a
+//! lost one again as it was (`restore_lost`'s git arm). Its reply moves the run head
+//! through `stages::set_stage_head`, so the bottom stage holds it in every layout. A
+//! failure halts the run retryably, and `run resume` sends it again; a documents
+//! folder through a symbolic link halts it for good (ruling T12-1, which checks it at
+//! the start too). Ruling T1-O2: such a run skips 9.5's plan-gate pre-warm, so no
+//! checkout is built on a head the commit moves.
 //! Pure (design decision 2).
 
 use proto::{DesignMode, DocKind, RunState};
@@ -16,17 +18,20 @@ use proto::{DesignMode, DocKind, RunState};
 use super::requests::log;
 use super::{Effect, OpKind, OpResult, emit_op, merge, next_op, stages};
 use crate::run::contract::sha7;
-use crate::run::design::commit::{DocSource, DocsCommitSpec};
+use crate::run::design::commit::{DocSource, DocsCommitSpec, FOLDERS};
 use crate::run::design::plan_md::goal_head;
-use crate::run::design::state::design_dir;
+use crate::run::design::state::{DesignState, design_dir};
 use crate::run::design::template::kind_name;
 use crate::run::model::Run;
 use crate::run::report::format_utc;
 
-/// Whether the run commits its documents: a design run with a `docs_dir`.
+/// Whether the run commits its documents: a design run with a `docs_dir`, in round 1,
+/// not yet committed. Ruling T12-2: until M9.6.15 places a later round's commit, a
+/// later round commits nothing and leaves the stage stack as it is.
 fn commits(run: &Run) -> bool {
+    let first = |d: &DesignState| d.committed.is_none() && run.round() == 1;
     run.design_mode == DesignMode::Full
-        && run.orch.design.is_some()
+        && run.orch.design.as_ref().is_some_and(first)
         && !run.limits.orch.design.docs_dir.is_empty()
 }
 
@@ -70,7 +75,8 @@ pub(super) fn hold(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
                 let op = next_op(run);
                 emit_op(run, op, None, OpKind::CommitDesignDocs(Box::new(spec)), fx);
             }
-            Err(message) => halt(run, message, now),
+            // Ruling T12-3 (m1): decision 23's text.
+            Err(message) => halt(run, failure(&message), now),
         }
     }
     true
@@ -96,11 +102,11 @@ fn spec(run: &Run) -> Result<DocsCommitSpec, String> {
         })
     };
     let mut files = vec![
-        source("specs", DocKind::Spec, design.approved_spec)?,
-        source("plans", DocKind::Plan, None)?,
+        source(FOLDERS[0], DocKind::Spec, design.approved_spec)?,
+        source(FOLDERS[1], DocKind::Plan, None)?,
     ];
     if limits.commit_brainstorm {
-        files.push(source("brainstorms", DocKind::Brainstorm, None)?);
+        files.push(source(FOLDERS[2], DocKind::Brainstorm, None)?);
     }
     let started = format_utc(run.created_at);
     Ok(DocsCommitSpec {
@@ -118,7 +124,8 @@ fn spec(run: &Run) -> Result<DocsCommitSpec, String> {
 
 /// `CommitDesignDocs`' result: the run head moves to the commit (stage 1's head in a
 /// `Single` run; a `Multi` run's stage 1 is then created from it), and the work starts
-/// from there; or the run halts with decision 23's text, retryably.
+/// from there; or the run halts with decision 23's text, retryably (a symbolic link on
+/// the way, for good).
 pub(super) fn done(run: &mut Run, result: OpResult, now: u64) {
     if run.state.is_terminal() || !due(run) {
         return;
@@ -148,14 +155,20 @@ pub(super) fn done(run: &mut Run, result: OpResult, now: u64) {
         }
         OpResult::DocsThroughSymlink { .. } => {
             let dir = &run.limits.orch.design.docs_dir;
-            let text = format!(
-                "design flow: the documents folder {dir} goes through a symlink in the repository; change [orchestrator.design].docs_dir"
-            );
-            halt(run, text, now);
+            let text = symlink_halt(dir);
+            // Ruling T12-1: the frozen `docs_dir` means a resume cannot succeed.
+            merge::halt(run, text, now);
         }
         OpResult::Failed { message } => halt(run, failure(&message), now),
         other => halt(run, failure(&format!("unexpected result {other:?}")), now),
     }
+}
+
+/// Ruling T12-1's text, at a design run's start and at its commit.
+pub(crate) fn symlink_halt(docs_dir: &str) -> String {
+    format!(
+        "design flow: the documents folder {docs_dir} goes through a symlink in the repository; change [orchestrator.design].docs_dir"
+    )
 }
 
 fn failure(message: &str) -> String {

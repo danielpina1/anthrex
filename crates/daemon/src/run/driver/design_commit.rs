@@ -11,19 +11,25 @@
 use std::fs::File;
 use std::io::Read;
 use std::sync::Arc;
+use std::time::Duration;
+
+use proto::DesignMode;
 
 use super::design_io::IO_WAIT;
-use super::ops::failed;
+use super::ops::{blocking, failed};
 use super::{OpCtx, RunService};
-use crate::run::design::commit::{DocSource, repo_path, slug};
+use crate::run::design::commit::{DocSource, FOLDERS, repo_path, slug};
 use crate::run::design::state::{DESIGN_DIR, sha256_hex};
+use crate::run::design::{GoalOrigin, mode_for};
+use crate::run::engine::design_commit::symlink_halt;
 use crate::run::engine::{OpKind, OpResult};
 use crate::run::git::{self, DocsCommit, DocsOutcome};
+use crate::run::model::Run;
 
 /// The driver's own index for the documents commit, in the run's design folder.
 pub const INDEX_FILE: &str = "commit.index";
 /// The folder the spec goes to: its title names every document (decision 24).
-const SPEC_FOLDER: &str = "specs";
+const SPEC_FOLDER: &str = FOLDERS[0];
 
 /// `CommitDesignDocs`' executor contract (`engine/ops.rs`).
 pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) -> OpResult {
@@ -86,6 +92,35 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         }
         Ok(DocsOutcome::Symlink { path }) => OpResult::DocsThroughSymlink { path },
         Err(error) => failed(error),
+    }
+}
+
+impl RunService {
+    /// Decision 3's mode for a planned start (`mode_for`), and ruling T12-1: a design
+    /// run that will commit its documents is refused when a folder on their way is a
+    /// symbolic link tracked at the base head (`git::docs_symlink`, on `spawn_blocking`,
+    /// each git call within the run's timeout), with the commit's own halt text, before
+    /// the run exists.
+    pub(super) async fn design_mode(
+        &self,
+        run: &Run,
+        (origin, requested): (GoalOrigin<'_>, Option<DesignMode>),
+        config: &config::DesignConfig,
+    ) -> Result<DesignMode, String> {
+        let mode = mode_for(origin, requested, config)?;
+        let dir = run.limits.orch.design.docs_dir.clone();
+        if mode != DesignMode::Full || dir.is_empty() {
+            return Ok(mode);
+        }
+        let folders: Vec<String> = FOLDERS.iter().map(|f| format!("{dir}/{f}")).collect();
+        let (git, root, base) = (self.git(), run.root.clone(), run.base_sha.clone());
+        let timeout = Duration::from_secs(run.limits.git_timeout_secs);
+        let found =
+            blocking(move || git::docs_symlink(&git, &root, &base, &folders, timeout)).await?;
+        match found {
+            Some(_) => Err(symlink_halt(&dir)),
+            None => Ok(mode),
+        }
     }
 }
 

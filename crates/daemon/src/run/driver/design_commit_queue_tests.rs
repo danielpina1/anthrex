@@ -4,56 +4,30 @@
 //! 2, 10 and 11 and the task's addendum).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::tests::{Rig, T};
 use crate::run::engine::{OpKind, OpResult};
 
-/// A `git` stand-in that logs each call's arguments and `GIT_` variables, and `early`
-/// when it runs before the test released the queue, then runs the real git. It is run
-/// once before it is used ([`settle`]): macOS stalls the first exec of a new script
-/// for a few hundred milliseconds, which would hide an early call.
+/// A `git` stand-in that logs each call's arguments and `GIT_` variables, then runs
+/// the real git.
 fn recording(dir: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let script = dir.join("recording-git");
-    let (log, released) = (dir.join("git.log"), dir.join("released"));
     std::fs::write(
         &script,
         format!(
             "#!/bin/sh\n\
-             [ -n \"$ANTHREX_TEST_SETTLE\" ] && exit 0\n\
              log='{log}'\n\
-             [ -e '{released}' ] || echo early >> \"$log\"\n\
              {{ printf 'argv'; for a in \"$@\"; do printf '\\t%s' \"$a\"; done; printf '\\n'; }} >> \"$log\"\n\
              env | grep '^GIT_' | while IFS= read -r l; do printf 'env\\t%s\\n' \"$l\"; done >> \"$log\"\n\
              exec git \"$@\"\n",
-            log = log.display(),
-            released = released.display(),
+            log = dir.join("git.log").display(),
         ),
     )
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    settle(&script);
     script
-}
-
-/// Runs `script` once, exiting at once, until it runs (`ETXTBSY` on Linux, a fork in
-/// another test thread holding the fd that wrote it, is waited out within a deadline).
-fn settle(script: &Path) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        let probe = Command::new(script)
-            .env("ANTHREX_TEST_SETTLE", "1")
-            .status();
-        match probe {
-            Ok(status) => return assert!(status.success(), "the settle probe: {status}"),
-            Err(e) if e.raw_os_error() == Some(26) && std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(e) => panic!("{} does not run: {e}", script.display()),
-        }
-    }
 }
 
 /// Hard rules 2, 10 and 11 and the addendum: the commit waits for the project's git
@@ -70,12 +44,11 @@ fn the_commit_uses_the_queue_no_optional_locks_and_the_scrubbed_env() {
         .enable_all()
         .build()
         .unwrap();
-    let released = scripts.path().join("released");
+    let log_path = scripts.path().join("git.log");
     let result = rt.block_on(async {
         let (held_tx, held_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         let release_rx = std::sync::Mutex::new(release_rx);
-        let marker = released.clone();
         let queue = rig.service.queue.clone();
         let project = rig.ctx.project.clone();
         let holder = tokio::spawn(async move {
@@ -83,7 +56,7 @@ fn the_commit_uses_the_queue_no_optional_locks_and_the_scrubbed_env() {
                 .write(&project, move || {
                     let _ = held_tx.send(());
                     let _ = crate::lock(&release_rx).recv_timeout(T);
-                    std::fs::write(&marker, "").map_err(|e| e.to_string())
+                    Ok(())
                 })
                 .await
         });
@@ -93,8 +66,25 @@ fn the_commit_uses_the_queue_no_optional_locks_and_the_scrubbed_env() {
             let kind = OpKind::CommitDesignDocs(Box::new(spec));
             super::super::ops::run(&service, &ctx, 1, kind).await
         });
-        // The commit has had time to reach the queue: still nothing has run.
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // Ruling T12-3 (m4): the commit is parked on the held queue, or a git call ran
+        // without it, whichever comes first; a deadline only guards a hang.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while rig.service.queue.waiters() == 0 && !log_path.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "the commit neither waited nor ran"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(
+            !log_path.exists(),
+            "a git call ran while the queue was held"
+        );
+        assert_eq!(
+            rig.service.queue.waiters(),
+            1,
+            "the commit waits for the queue"
+        );
         assert!(!op.is_finished());
         release_tx.send(()).unwrap();
         holder.await.unwrap().unwrap();
@@ -105,10 +95,6 @@ fn the_commit_uses_the_queue_no_optional_locks_and_the_scrubbed_env() {
         "{result:?}"
     );
     let log = std::fs::read_to_string(scripts.path().join("git.log")).unwrap();
-    assert!(
-        !log.contains("early"),
-        "a git call ran while the queue was held:\n{log}"
-    );
     let index = format!(
         "GIT_INDEX_FILE={}",
         rig.ctx.data_dir.join("design/commit.index").display()
