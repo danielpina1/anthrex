@@ -403,7 +403,13 @@ fn new_version(
     if stored.is_some_and(|v| v.sha256 == sha256_hex(text.as_bytes())) {
         return None;
     }
-    let doc = NewDoc::new(DocKind::Plan, author, reason, &text);
+    let mut doc = NewDoc::new(DocKind::Plan, author, reason, &text);
+    // Review A's M-2: no review came between, so the gate version's review lines stay.
+    if let Some(v) = stored {
+        doc.disputed = v.disputed.clone();
+        doc.not_reviewed = v.not_reviewed.clone();
+        doc.same_runtime = v.same_runtime;
+    }
     match design_gate::open(run, doc, now, fx) {
         Ok(n) => Some(n),
         Err(error) => {

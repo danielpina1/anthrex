@@ -239,3 +239,53 @@ fn responses_in_a_run_without_the_design_flow_are_refused() {
     );
     assert!(fx.run().task("t1").is_none());
 }
+
+/// The plan gate's version `n`: its disputed finding ids and its `not reviewed` line.
+fn review_lines(fx: &Fixture, n: u32) -> (Vec<String>, Option<String>) {
+    let design = fx.run().orch.design.as_ref().unwrap();
+    let v = design.find(DocKind::Plan, Some(n)).unwrap();
+    let disputed = v.disputed.iter().map(|f| f.id.clone()).collect();
+    (disputed, v.not_reviewed.clone())
+}
+
+/// A user's edit at the open plan gate (ruling T7-7), then the engine's update: each
+/// is the next version.
+fn user_then_engine(fx: &mut Fixture) {
+    let amend = json!({"op": "amend_task", "task_id": "t1", "size": "M"});
+    super::dispatch::edit(fx, vec![serde_json::from_value(amend).unwrap()]);
+    let t1 = (fx.run_mut().tasks.iter_mut()).find(|t| t.id() == "t1");
+    t1.unwrap().size = proto::Size::L;
+    let now = fx.now + 1;
+    fx.send(now, crate::run::engine::EventKind::Tick);
+    assert_eq!(gate(fx).map(|g| g.1), Some(3));
+}
+
+/// The final fix wave's FW-19 (review A's M-2): a user's or the engine's plan version
+/// keeps the plan review's disputed findings and its `not reviewed` line, as no review
+/// came between.
+#[test]
+fn user_and_engine_plan_versions_keep_the_reviews_lines() {
+    let mut fx = planning();
+    plan_submit(&mut fx, json!([covering("t1", &["R1", "R2"])]), Value::Null).unwrap();
+    plan_reviewed(&mut fx, three_findings());
+    let all = answers(&["F1", "F2", "F3"], &["F2"]);
+    plan_submit(&mut fx, json!([]), all).unwrap();
+    user_then_engine(&mut fx);
+    for n in [2, 3] {
+        assert_eq!(review_lines(&fx, n), (vec!["F2".to_string()], None), "v{n}");
+    }
+    // A failed review's `not reviewed` line too.
+    let mut fx = planning();
+    plan_submit(&mut fx, json!([covering("t1", &["R1", "R2"])]), Value::Null).unwrap();
+    super::design_agents::started(&mut fx, "plan-r1", PLAN_REVIEWER);
+    let failed = crate::run::engine::ScoutEnd::Failed {
+        reason: "it crashed".into(),
+    };
+    super::design_review_fixture::reviewer_ended(&mut fx, "plan-r1", 1, failed);
+    plan_submit(&mut fx, json!([]), Value::Null).unwrap();
+    user_then_engine(&mut fx);
+    for n in [2, 3] {
+        let lines = (Vec::new(), Some("it crashed".to_string()));
+        assert_eq!(review_lines(&fx, n), lines, "v{n}");
+    }
+}
