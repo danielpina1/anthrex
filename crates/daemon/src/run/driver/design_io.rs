@@ -277,20 +277,33 @@ fn read_view(found: Found, query: &DocQuery) -> Result<DocView, ReadError> {
 /// `path`'s bytes, when they are the version's: its length and its SHA-256 (I-1). A
 /// file that changed since it was written is never shown.
 pub(super) fn read_stored(path: &Path, version: &DocVersion) -> Result<Vec<u8>, ReadError> {
-    let shown = |e: std::io::Error| ReadError::Io(format!("{}: {e}", path.display()));
-    let mut bytes = Vec::new();
-    let file = File::open(path).map_err(shown)?;
-    (file.take(version.bytes.saturating_add(1)))
-        .read_to_end(&mut bytes)
-        .map_err(shown)?;
-    if bytes.len() as u64 != version.bytes || sha256_hex(&bytes) != version.sha256 {
-        return Err(ReadError::Mismatch(format!(
+    read_checked(path, (version.bytes, &version.sha256)).map_err(|error| match error {
+        ReadError::Mismatch(_) => ReadError::Mismatch(format!(
             "document {} v{} does not match what was stored; it was not shown",
             kind_name(version.kind),
             version.n
-        )));
+        )),
+        io => io,
+    })
+}
+
+/// The driver's one checked read (the final fix wave's FW-42): `path`'s bytes when they
+/// are exactly `bytes` long with SHA-256 `sha256`, reading at most one byte more; a
+/// file that differs is `Mismatch` (each caller says so in its own words). Blocking.
+pub(super) fn read_checked(
+    path: &Path,
+    (bytes, sha256): (u64, &str),
+) -> Result<Vec<u8>, ReadError> {
+    let shown = |e: std::io::Error| ReadError::Io(format!("{}: {e}", path.display()));
+    let mut read = Vec::new();
+    let file = File::open(path).map_err(shown)?;
+    (file.take(bytes.saturating_add(1)))
+        .read_to_end(&mut read)
+        .map_err(shown)?;
+    if read.len() as u64 != bytes || sha256_hex(&read) != sha256 {
+        return Err(ReadError::Mismatch(format!("{} differs", path.display())));
     }
-    Ok(bytes)
+    Ok(read)
 }
 
 /// `bytes` as text, at most `cap` bytes: a longer text keeps its head, cut at a

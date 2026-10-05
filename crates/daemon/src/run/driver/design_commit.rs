@@ -8,18 +8,16 @@
 //! temporary index in the run's design folder. No lock is held here (AGENTS.md rules
 //! 2, 10 and 11).
 
-use std::fs::File;
-use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 
 use proto::DesignMode;
 
-use super::design_io::IO_WAIT;
+use super::design_io::{IO_WAIT, ReadError, read_checked};
 use super::ops::{blocking, failed};
 use super::{OpCtx, RunService};
 use crate::run::design::commit::{DocSource, FOLDERS, repo_path, slug};
-use crate::run::design::state::{DESIGN_DIR, sha256_hex};
+use crate::run::design::state::DESIGN_DIR;
 use crate::run::design::{GoalOrigin, mode_for};
 use crate::run::engine::design_commit::symlink_halt;
 use crate::run::engine::{OpKind, OpResult};
@@ -155,7 +153,8 @@ impl RunService {
     }
 }
 
-/// `source`'s bytes, when they are what its index entry recorded.
+/// `source`'s bytes, when they are what its index entry recorded (the driver's one
+/// checked read, `design_io::read_checked`).
 fn read_back(source: &DocSource) -> Result<Vec<u8>, String> {
     let fail = |reason: String| {
         format!(
@@ -163,19 +162,10 @@ fn read_back(source: &DocSource) -> Result<Vec<u8>, String> {
             source.what
         )
     };
-    let shown = |e: std::io::Error| fail(format!("{}: {e}", source.path.display()));
-    let mut bytes = Vec::new();
-    let file = File::open(&source.path).map_err(shown)?;
-    (file.take(source.bytes.saturating_add(1)))
-        .read_to_end(&mut bytes)
-        .map_err(shown)?;
-    if bytes.len() as u64 != source.bytes || sha256_hex(&bytes) != source.sha256 {
-        return Err(fail(format!(
-            "{} is not what was stored",
-            source.path.display()
-        )));
-    }
-    Ok(bytes)
+    read_checked(&source.path, (source.bytes, &source.sha256)).map_err(|error| match error {
+        ReadError::Io(error) => fail(error),
+        ReadError::Mismatch(_) => fail(format!("{} is not what was stored", source.path.display())),
+    })
 }
 
 #[cfg(test)]

@@ -316,17 +316,11 @@ fn run_ref(run: &Run, kind: &DesignAgentKind, session: u32) -> RunRef {
     }
 }
 
-/// A run's `<h4>` (`Run::short`): the last four characters of its id.
-fn short(run_id: &str) -> &str {
-    let cut = run_id.len().saturating_sub(4);
-    run_id.get(cut..).unwrap_or(run_id)
-}
-
 /// A design agent's internal id `<h4>-design-<label>-<n>` (lower case, as scout ids
 /// are) and window name: `<h4>/brainstorm-<label>.<n>` for a brainstormer,
 /// `<h4>/review-<doc>.<n>` for a document reviewer.
 pub fn design_names(run_id: &str, kind: &DesignAgentKind, session: u32) -> (String, String) {
-    let h4 = short(run_id);
+    let h4 = crate::scout::planner::short(run_id);
     let label = kind.label();
     let id = format!("{h4}-design-{}-{session}", label.to_ascii_lowercase());
     let name = match kind {

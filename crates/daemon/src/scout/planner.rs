@@ -59,7 +59,7 @@ impl PlannerTag {
 }
 
 /// A run's `<h4>` (`Run::short`): the last four characters of its id.
-fn short(run_id: &str) -> &str {
+pub(crate) fn short(run_id: &str) -> &str {
     let cut = run_id.len().saturating_sub(4);
     run_id.get(cut..).unwrap_or(run_id)
 }

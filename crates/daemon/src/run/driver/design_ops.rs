@@ -19,7 +19,9 @@ use std::time::Duration;
 
 use proto::{Runtime, TokenUsage};
 
-use super::design_io::{DOC_READ_CAP, IO_WAIT, cut_text, read_stored, write_new};
+use super::design_io::{
+    DOC_READ_CAP, IO_WAIT, ReadError, cut_text, read_checked, read_stored, write_new,
+};
 use super::ops::failed;
 use super::orch::{CONTEXT_READ_TIMEOUT, context_reads};
 use super::{OpCtx, RunService};
@@ -175,14 +177,10 @@ impl RunService {
         }) = frozen.rethink
         {
             let n = version.n;
-            let read = tokio::task::spawn_blocking(move || read_stored(&path, &version));
-            let report = match tokio::time::timeout(IO_WAIT, read).await {
-                Ok(Ok(Ok(bytes))) => Some(cut_text(&bytes, DOC_READ_CAP, "cut")),
-                _ => {
-                    tracing::warn!(run = %run_id, "the previous brainstorm report is left out");
-                    None
-                }
-            };
+            let report = stored_text(path, version).await;
+            if report.is_none() {
+                tracing::warn!(run = %run_id, "the previous brainstorm report is left out");
+            }
             inputs.rethink = Some(RethinkInput {
                 version: n,
                 note,
@@ -275,17 +273,27 @@ impl RunService {
 /// exactly its length and SHA-256. Blocking.
 fn read_pack(path: &Path, expected: Option<&PackFile>) -> Result<String, String> {
     let shown = |e: std::io::Error| format!("{}: {e}", path.display());
-    let mut bytes = Vec::new();
-    let file = std::fs::File::open(path).map_err(shown)?;
-    (file.take(PACK_MAX as u64 + 1))
-        .read_to_end(&mut bytes)
-        .map_err(shown)?;
-    let differs = |f: &PackFile| bytes.len() as u64 != f.bytes || sha256_hex(&bytes) != f.sha256;
-    if bytes.len() > PACK_MAX || expected.is_some_and(differs) {
+    let mismatch = || {
         let path = path.display();
-        return Err(format!(
-            "{path} does not match the pack this round's first start wrote"
-        ));
+        format!("{path} does not match the pack this round's first start wrote")
+    };
+    // The driver's one checked read (FW-42) when the round's first start recorded it.
+    let bytes = match expected {
+        Some(f) => read_checked(path, (f.bytes, &f.sha256)).map_err(|error| match error {
+            ReadError::Io(error) => error,
+            ReadError::Mismatch(_) => mismatch(),
+        })?,
+        None => {
+            let mut bytes = Vec::new();
+            let file = std::fs::File::open(path).map_err(shown)?;
+            (file.take(PACK_MAX as u64 + 1))
+                .read_to_end(&mut bytes)
+                .map_err(shown)?;
+            bytes
+        }
+    };
+    if bytes.len() > PACK_MAX {
+        return Err(mismatch());
     }
     String::from_utf8(bytes).map_err(|_| format!("{} is not UTF-8", path.display()))
 }
