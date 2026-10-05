@@ -300,3 +300,31 @@ fn a_gate_info_carries_the_reports_summary() {
     let back: DocGateInfo = rmp_serde::from_slice(&p16_bytes(&old)).unwrap();
     assert_eq!(back, a_gate_info());
 }
+
+/// Task M9.6.11 fix round 1 (ruling T11-1): a sub-planner's `covers`, the requirement
+/// ids its epic owns, appended: left out while empty, so a protocol-16 snapshot's
+/// planner decodes and a run without the design flow writes 9.5's bytes.
+#[test]
+fn planner_info_covers_defaults_and_skips() {
+    let old = json!({
+        "epic": "mail", "title": "Mail", "area": ["crates/mail/**"],
+        "route": a_route(Runtime::Claude, Strength::Frontier, Effort::High, "m"),
+        "window_id": null, "state": "planning",
+        "started_at": 1, "ended_at": null, "edits_accepted": 0, "edits_rejected": 0,
+        "last_rejection": null, "replans": [],
+    });
+    let planner: PlannerInfo = serde_json::from_value(old).expect("a 9.5 planner");
+    assert!(planner.covers.is_empty());
+    let json = serde_json::to_value(&planner).unwrap();
+    assert!(json.get("covers").is_none(), "{json}");
+    both_ways(&planner);
+    let owned = PlannerInfo {
+        covers: vec!["R2".into(), "R5".into()],
+        ..planner
+    };
+    assert_eq!(
+        serde_json::to_value(&owned).unwrap()["covers"],
+        json!(["R2", "R5"])
+    );
+    both_ways(&owned);
+}

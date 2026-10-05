@@ -69,6 +69,7 @@ mod design_notes;
 mod design_phases;
 mod design_plan;
 mod design_plan_edits;
+mod design_plan_epics;
 mod design_plan_fixture;
 mod design_plan_gate;
 mod design_report;

@@ -62,6 +62,7 @@ fn parse_call_for_each_tool() {
             area: vec!["crates/daemon/**".into()],
             brief: "Plan it.".into(),
             scout_refs: vec!["3f9a-daemon".into()],
+            covers: Vec::new(),
         })
     );
     assert_eq!(

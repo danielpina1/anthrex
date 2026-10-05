@@ -33,6 +33,8 @@ pub enum OrchCall {
         area: Vec<String>,
         brief: String,
         scout_refs: Vec<String>,
+        /// Milestone 9.6 ruling T11-1: the requirement ids the epic owns.
+        covers: Vec<String>,
     },
     EditPlan {
         edits: Vec<PlanEdit>,
@@ -139,13 +141,15 @@ fn parse(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCall, String> 
             })
         }
         "spawn_subplanner" => {
-            let map = object(args, &["epic", "title", "area", "brief", "scout_refs"])?;
+            let fields = ["epic", "title", "area", "brief", "scout_refs", "covers"];
+            let map = object(args, &fields)?;
             Ok(OrchCall::SpawnSubplanner {
                 epic: id(map, "epic", 10)?,
                 title: required(text(map, "title", 80)?, "title")?,
                 area: required(list(map, "area", 1, 20, 300)?, "area")?,
                 brief: required(text(map, "brief", 8000)?, "brief")?,
                 scout_refs: list(map, "scout_refs", 0, 20, 48)?.unwrap_or_default(),
+                covers: design::covers(map)?,
             })
         }
         "edit_plan" => {

@@ -70,3 +70,13 @@ pub(super) fn plan_reviewed(fx: &mut Fixture, findings: Value) {
     started(fx, &label, PLAN_REVIEWER);
     outcome(&submit_findings(fx, PLAN_REVIEWER, findings)).unwrap();
 }
+
+/// Ruling T11-1: `spawn_subplanner` of `epic` over `crates/<epic>/**` in a design run,
+/// owning `covers`, which must be accepted.
+pub(super) fn spawn_covering(fx: &mut Fixture, epic: &str, covers: &[&str]) {
+    let area = format!("crates/{epic}/**");
+    let mut args = super::planners::spawn_args(epic, &[&area], &format!("Plan {epic}"));
+    args["covers"] = json!(covers);
+    let effects = orch_tool(fx, ORCH, "spawn_subplanner", args);
+    outcome(&effects).unwrap_or_else(|e| panic!("the spawn was refused: {e}"));
+}

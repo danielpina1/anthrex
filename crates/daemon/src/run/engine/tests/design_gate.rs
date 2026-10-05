@@ -118,7 +118,7 @@ fn edit_makes_a_user_version_that_still_needs_approve() {
     let edit = DocGateAction::Edit { text: "x".into() };
     assert_eq!(
         act(&mut fx, DocGateKind::Plan, edit),
-        Err("the plan is edited task by task with anthrex run edit".into())
+        Err("the plan is made from its tasks; change them with anthrex run edit".into())
     );
 }
 

@@ -99,6 +99,8 @@ fn spawn_subplanner() -> Tool {
                 "area": array(text(300), Some(1), 20),
                 "brief": text(8000),
                 "scout_refs": array(text(48), None, 20),
+                // Milestone 9.6 ruling T11-1: the requirement ids the epic owns.
+                "covers": crate::tools_design::covers(),
             }),
             &["epic", "title", "area", "brief"],
         ),

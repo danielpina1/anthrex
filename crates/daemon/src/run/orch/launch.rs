@@ -257,7 +257,7 @@ pub fn planner_spec(run: &Run, epic: &EpicRecord, session: u32) -> PlannerSpec {
     };
     // Milestone 9.6 decision 22: the approved spec's part for this epic, after the
     // extract's slot.
-    first_turn.push_str(&crate::run::design::epic::block(run, &epic.epic));
+    first_turn.push_str(&crate::run::design::epic::block(run, epic));
     let at = planner_extract_at(run, epic, replan);
     let mcp = McpTarget {
         role: AgentRole::Planner,

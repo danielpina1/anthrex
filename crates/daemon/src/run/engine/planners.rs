@@ -274,6 +274,7 @@ pub(super) fn spawn_subplanner(
         e.phase = PlannerPhase::Queued;
         e.replans.push(spec.brief.chars().take(40).collect());
         e.request = spec.brief;
+        e.covers = spec.covers;
         e.ended_at = None;
         hold = gate_holds::replan_epic_hold(run, &epic, now);
     } else {

@@ -290,6 +290,12 @@ pub(in crate::run::engine) fn unapproved(run: &mut Run) {
 /// Ruling T10-3: the approved spec's second failed read-back halts the run, retryably;
 /// its plain `run resume` returns it to the phase it left and reads the spec again.
 fn unread_halt(run: &mut Run, text: String, now: u64) {
+    // Ruling T11-2: a run already halted (a restore's read-back failed again) keeps the
+    // phase it left, its reason and its retry; the failure is only logged.
+    if run.state == RunState::Halted {
+        run.halt_retryable = true;
+        return log(run, now, text);
+    }
     let from = match run.state {
         RunState::Paused => run.paused_from.take(),
         state => Some(state),

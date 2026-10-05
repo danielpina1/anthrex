@@ -15,7 +15,7 @@ use super::design_plan_fixture::*;
 use super::dispatch::{edit, replies};
 use super::fixture::*;
 use super::orch::{ORCH, orch_tool};
-use super::planners::{PLANNER, planner_started, spawn, submit_epic};
+use super::planners::{PLANNER, planner_started, submit_epic};
 use crate::run::engine::actions::{self, ActionNode};
 use crate::run::engine::{DocChecked, Effect, EventKind};
 
@@ -128,7 +128,7 @@ fn a_sub_planner_at_a_revising_gate_clears_it_and_the_review_is_not_repeated() {
         review: false,
     };
     act(&mut fx, DocGateKind::Plan, changes).unwrap();
-    spawn(&mut fx, "mail");
+    spawn_covering(&mut fx, "mail", &["R2"]);
     assert_eq!(fx.run().state, RunState::Planning);
     assert_eq!(gate(&fx), None);
     planner_started(&mut fx, PLANNER);
@@ -168,6 +168,13 @@ fn a_users_submit_passes_the_same_checks() {
     submit(&mut fx, vec![t1]).unwrap();
     assert_eq!(gate(&fx), Some((DocGateKind::Plan, 1, None)));
     assert_eq!(version(&fx, 1), (DocAuthor::User, "submitted".into()));
+    // Ruling T11-3 (m2): the user's v1 never had the plan review, and says so.
+    let design = fx.run().orch.design.as_ref().unwrap();
+    let v1 = design.find(DocKind::Plan, Some(1)).unwrap();
+    assert_eq!(
+        v1.not_reviewed.as_deref(),
+        Some("you submitted it yourself")
+    );
 }
 
 const PENDING: &str =
@@ -244,4 +251,86 @@ fn a_failed_read_back_is_retried_on_resume_and_a_second_failure_halts() {
     assert_eq!(design.requirements.len(), 2);
     let reply = plan_submit(&mut fx, json!([covering("t1", &["R1", "R2"])]), Value::Null);
     assert_eq!(reply.unwrap()["awaiting_review"], true);
+}
+
+/// Ruling T11-2: a run the unread spec halted, restored, whose read-back fails again,
+/// stays halted as it was: the phase it left, its reason and its retry are kept, and the
+/// failure is only logged. Its `run resume` then really resumes, and reads the spec
+/// again.
+#[test]
+fn a_second_unread_halt_after_a_restore_keeps_the_halt_and_resumes() {
+    let mut fx = at_spec_gate(false);
+    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    super::control_restore::restart(&mut fx, Vec::new());
+    assert_eq!(fx.run().state, RunState::Paused);
+    read_failed(&mut fx);
+    resume(&mut fx);
+    read_failed(&mut fx);
+    assert_eq!(fx.run().state, RunState::Halted);
+    let halted_from = |fx: &Fixture| fx.run().orch.design.as_ref().unwrap().halted_from;
+    assert_eq!(halted_from(&fx), Some(RunState::Planning));
+    let woken = notes(&fx).len();
+    super::control_restore::restart(&mut fx, Vec::new());
+    read_failed(&mut fx);
+    assert_eq!(fx.run().state, RunState::Halted);
+    assert_eq!(halted_from(&fx), Some(RunState::Planning));
+    assert_eq!(fx.run().halted_reason.as_deref(), Some(UNREAD));
+    assert!(fx.run().halt_retryable);
+    assert_eq!(notes(&fx).len(), woken, "no second halt note");
+    assert_eq!(log_lines(&fx).last().map(String::as_str), Some(UNREAD));
+    let effects = resume(&mut fx);
+    assert_eq!(replies(&effects), vec![Ok(format!("run {RUN_ID} resumed"))]);
+    assert!(asks_read_back(&effects));
+    assert_eq!(fx.run().state, RunState::Planning);
+    read_back(&mut fx, 1, SPEC);
+    let design = fx.run().orch.design.as_ref().unwrap();
+    assert_eq!(design.requirements.len(), 2);
+}
+
+/// Ruling T11-3 (m1): the open gate's engine pass renders `plan.md` again only when a
+/// task's size, route or test mode changed; a change of anything else outside the
+/// user's edits makes no version.
+#[test]
+fn only_a_size_route_or_test_mode_change_makes_an_engine_version() {
+    let mut fx = at_plan_gate(false);
+    let t1 = (fx.run_mut().tasks.iter_mut())
+        .find(|t| t.id() == "t1")
+        .unwrap();
+    t1.spec.brief.push_str("\nmore");
+    let now = fx.now + 1;
+    fx.send(now, EventKind::Tick);
+    assert_eq!(gate(&fx), Some((DocGateKind::Plan, 1, None)));
+    let t1 = (fx.run_mut().tasks.iter_mut())
+        .find(|t| t.id() == "t1")
+        .unwrap();
+    t1.size = Size::M;
+    fx.send(now + 1, EventKind::Tick);
+    assert_eq!(gate(&fx), Some((DocGateKind::Plan, 2, None)));
+    let reason = "updated by anthrex: sizes and routes".to_string();
+    assert_eq!(version(&fx, 2), (DocAuthor::Engine, reason));
+}
+
+/// Ruling T11-3 (m5): a user's edit whose `plan.md` has the stored version's SHA-256
+/// stores nothing, also when a restore has not read the gate's text back yet.
+#[test]
+fn a_user_edit_that_leaves_plan_md_unchanged_stores_nothing() {
+    let mut fx = at_plan_gate(false);
+    super::control_restore::restart(&mut fx, Vec::new());
+    // The restore's read-back of the texts has not landed (the fixture's run is a
+    // clone, so its cache is cleared by hand, as a real restore starts without one).
+    let design = fx.run_mut().orch.design.as_mut().unwrap();
+    design.texts.clear();
+    assert!(
+        design.text_of(DocKind::Plan).is_none(),
+        "nothing read back yet"
+    );
+    let amend = json!({"op": "amend_task", "task_id": "t1", "acceptance": ["Other"]});
+    let reply = replies(&user_edit(&mut fx, amend)).remove(0).unwrap();
+    assert!(!reply.contains("the plan is now"), "{reply}");
+    assert_eq!(gate(&fx), Some((DocGateKind::Plan, 1, None)));
+    user_edit(
+        &mut fx,
+        json!({"op": "amend_task", "task_id": "t1", "size": "M"}),
+    );
+    assert_eq!(gate(&fx), Some((DocGateKind::Plan, 2, None)));
 }

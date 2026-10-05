@@ -308,3 +308,36 @@ fn get_docs_draft_is_the_document_reviewers_only() {
         assert_eq!(reviewer(args.clone()), Err(refused), "{args}");
     }
 }
+
+/// Ruling T11-1: `spawn_subplanner` takes `covers`, the requirement ids the epic owns,
+/// bounded as `plan_task.covers`; absent, it is empty (the engine decides whether a
+/// design run needs it).
+#[test]
+fn a_spawns_covers_parse_and_are_bounded() {
+    let spawn = |covers: Option<Value>| {
+        let mut args = json!({"epic": "mail", "title": "Mail", "area": ["crates/mail/**"],
+                              "brief": "Plan mail"});
+        if let Some(covers) = covers {
+            args["covers"] = covers;
+        }
+        orch("spawn_subplanner", args)
+    };
+    let Ok(OrchCall::SpawnSubplanner { covers, .. }) = spawn(Some(json!(["R2", "R10"]))) else {
+        panic!("covers refused");
+    };
+    assert_eq!(covers, ["R2", "R10"]);
+    let Ok(OrchCall::SpawnSubplanner { covers, .. }) = spawn(None) else {
+        panic!("no covers refused");
+    };
+    assert!(covers.is_empty());
+    assert_eq!(
+        spawn(Some(json!(["2"]))).unwrap_err(),
+        "invalid arguments: covers entries look like R4"
+    );
+    assert_eq!(
+        spawn(Some(json!(["R2", "R2"]))).unwrap_err(),
+        "invalid arguments: covers lists R2 twice"
+    );
+    let many: Vec<String> = (1..=33).map(|n| format!("R{n}")).collect();
+    assert!(spawn(Some(json!(many))).is_err());
+}

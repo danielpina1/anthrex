@@ -15,8 +15,6 @@ use super::design_review_fixture::{answers, outcome, three_findings, written};
 use super::dispatch::replies;
 use super::fixture::*;
 use super::orch::{ORCH, add, launched, orch_tool};
-use super::planners::{PLANNER, planner_started, spawn, submit_epic};
-use crate::run::engine::OpKind;
 
 /// The number of plan reviews launched so far.
 fn plan_reviews(fx: &Fixture) -> usize {
@@ -205,42 +203,6 @@ fn a_plan_citing_a_requirement_only_in_an_unapproved_spec_version_is_refused() {
         refused.unwrap_err(),
         "task t2 covers R3, which the spec does not have"
     );
-}
-
-/// Decision 22: a sub-planner's first turn carries the approved spec's requirements
-/// its epic covers, verbatim, then its Goal and Interfaces sections. A new epic, whose
-/// tasks cover nothing yet, gets every requirement; its re-plan gets only those its
-/// tasks cover.
-#[test]
-fn a_sub_planner_gets_its_epics_requirements() {
-    let mut fx = planning();
-    spawn(&mut fx, "mail");
-    let turn = planner_turn(&fx, "mail");
-    let every = "\n\nSpec requirements this epic delivers:\n\
-                 R1  Tokens expire after an hour. Check: a clock test.\n\
-                 R2  Links are single use. Check: a reuse test.\n\
-                 Goal (from the spec): Users reset their password.\n\
-                 Interfaces (from the spec):\n`reset(token)`.";
-    assert!(turn.ends_with(every), "{turn}");
-    planner_started(&mut fx, PLANNER);
-    let effects = submit_epic(&mut fx, json!([covering("mail", &["R2"])]));
-    assert!(replies(&effects)[0].is_ok(), "{effects:?}");
-    spawn(&mut fx, "mail");
-    let turn = planner_turn(&fx, "mail");
-    let mine = "\n\nSpec requirements this epic delivers:\n\
-                R2  Links are single use. Check: a reuse test.\n\
-                Goal (from the spec): Users reset their password.\n\
-                Interfaces (from the spec):\n`reset(token)`.";
-    assert!(turn.ends_with(mine), "{turn}");
-}
-
-/// The first turn of `epic`'s latest sub-planner launch.
-fn planner_turn(fx: &Fixture, epic: &str) -> String {
-    let found = (fx.ops("StartPlanner").into_iter().rev()).find_map(|(_, kind)| match kind {
-        OpKind::StartPlanner { spec } if spec.epic == epic => Some(spec.first_turn),
-        _ => None,
-    });
-    found.unwrap_or_else(|| panic!("no sub-planner of {epic} launched"))
 }
 
 /// Decision 18's guard: a run without the design flow submits as in 9.5, with the same

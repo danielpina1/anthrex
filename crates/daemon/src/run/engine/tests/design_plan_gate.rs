@@ -12,7 +12,7 @@ use super::design_fixture::*;
 use super::dispatch::replies;
 use super::fixture::*;
 use super::orch::{ORCH, orch_tool};
-use super::planners::{PLANNER, planner_started, spawn, submit_epic};
+use super::planners::{PLANNER, planner_started, submit_epic};
 use crate::run::engine::actions::{self, ActionNode};
 
 fn plan_version(fx: &Fixture, n: u32) -> String {
@@ -104,7 +104,8 @@ fn changes_then_edits_then_a_submit_make_the_next_version() {
 fn a_sub_planner_while_revising_is_in_the_next_version() {
     let mut fx = at_plan_gate(false);
     act(&mut fx, DocGateKind::Plan, changes("Add mail.")).unwrap();
-    spawn(&mut fx, "mail");
+    // Ruling T11-1: a design run's spawn names the requirements its epic owns.
+    super::design_plan_fixture::spawn_covering(&mut fx, "mail", &["R2"]);
     assert_eq!(fx.run().state, RunState::Planning);
     assert!(!plan_submitted(&fx));
     planner_started(&mut fx, PLANNER);

@@ -115,6 +115,13 @@ pub(super) fn tool(
         refuse(fx, reply, text);
         return None;
     }
+    // Ruling T11-1 and T11-3 (m4): a sub-planner names the requirements its epic owns.
+    if let OrchCall::SpawnSubplanner { epic, covers, .. } = &parsed
+        && let Some(text) = plan::spawn_refusal(run, epic, covers)
+    {
+        refuse(fx, reply, text);
+        return None;
+    }
     let result = match parsed {
         OrchCall::StartBrainstorm { answers } => start_brainstorm(run, &answers, earlier, now),
         OrchCall::SubmitDoc(doc) => submit_doc(run, doc, now, fx),

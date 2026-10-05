@@ -315,8 +315,10 @@ pub(super) fn tool(
             area,
             brief,
             scout_refs,
+            covers,
         } => {
             let spec = EpicRecord::requested(&epic, &title, area, &brief, scout_refs);
+            let spec = EpicRecord { covers, ..spec };
             planners::spawn_subplanner(run, reply, spec, (now, quiet_base), fx)
         }
         OrchCall::SpawnScout {

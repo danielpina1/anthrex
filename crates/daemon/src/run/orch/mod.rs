@@ -368,6 +368,10 @@ pub struct EpicRecord {
     /// once a merge came after it (decision 37).
     #[serde(default)]
     pub integration_reviewed: u32,
+    /// Milestone 9.6 ruling T11-1: in a design run, the requirement ids the epic owns,
+    /// as its latest `spawn_subplanner` named them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covers: Vec<String>,
 }
 
 impl EpicRecord {
@@ -408,6 +412,7 @@ impl EpicRecord {
             integration_state: IntegrationState::default(),
             integration_rounds: 0,
             integration_reviewed: 0,
+            covers: Vec::new(),
         }
     }
 
@@ -469,6 +474,7 @@ impl EpicRecord {
             integration_state: IntegrationState::default(),
             integration_rounds: 0,
             integration_reviewed: 0,
+            covers: Vec::new(),
         }
     }
 }

@@ -287,6 +287,7 @@ fn the_state_survives_save_and_load() {
         interfaces_section: "`reset(token)`".into(),
         spec_unread: true,
         plan_revision: Some("Add mail.".into()),
+        plan_fingerprint: None,
     };
     let mut run = old_run();
     run.design_mode = DesignMode::Full;

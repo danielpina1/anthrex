@@ -512,6 +512,7 @@ fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
         last_rejection: None,
         replans: vec![],
         note: None,
+        covers: Vec::new(),
     };
     run.planners = vec![
         planner("mail", PlannerState::Finished),

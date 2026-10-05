@@ -19,7 +19,7 @@
 //!
 //! Pure (design decision 2).
 
-use proto::{DocAuthor, DocFinding, DocGateKind, DocKind, FindingAnswer, RunState};
+use proto::{DocAuthor, DocFinding, DocGateKind, DocKind, FindingAnswer, RunState, TaskState};
 use serde_json::{Value, json};
 
 use super::super::design_agents::reviewer;
@@ -28,7 +28,7 @@ use super::super::requests::log;
 use super::super::{Effect, design_gate};
 use crate::run::design::coverage;
 use crate::run::design::plan_md;
-use crate::run::design::state::{NewDoc, store, store_findings};
+use crate::run::design::state::{NewDoc, sha256_hex, store, store_findings};
 use crate::run::model::{Run, Task};
 
 /// Ruling T10-2: a plan submit before the approved spec's requirements are stored.
@@ -40,6 +40,14 @@ pub const RESPONSES_ONLY: &str = "responses are only for a design run's plan rev
 pub const ENGINE_UPDATE: &str = "updated by anthrex: sizes and routes";
 /// Ruling T7-7: the reason of a user's edit's version.
 const USER_EDIT: &str = "edited by you";
+/// Ruling T11-3 (m2): the `not reviewed` line of a v1 the user submitted.
+pub const USER_SUBMITTED: &str = "you submitted it yourself";
+/// Ruling T11-1: a design run's spawn without the requirement ids its epic owns.
+pub const NEEDS_COVERS: &str =
+    "in a design run, spawn_subplanner needs covers: the requirement ids this epic owns";
+/// Ruling T11-3 (m4): a spawn before the approved spec's requirements are stored.
+pub const SPAWN_PENDING: &str =
+    "the approved spec is still being read back; spawn the sub-planner again in a moment";
 
 /// What the plan's first gate version shows of its review.
 #[derive(Default)]
@@ -163,12 +171,16 @@ fn answered(run: &Run, author: &DocAuthor, responses: &[FindingAnswer]) -> Resul
     let Some(design) = run.orch.design.as_ref() else {
         return Ok(opening);
     };
+    // Ruling T11-3 (m2): a v1 the user submitted never had the plan review.
+    if *author == DocAuthor::User && design.gate_versions(DocKind::Plan) == 0 {
+        opening.not_reviewed = Some(USER_SUBMITTED.into());
+    }
     let review = (design.reviews.iter().rev()).find(|r| r.doc == DocKind::Plan);
     let Some(review) = review.filter(|_| design.gate_versions(DocKind::Plan) == 0) else {
         return Ok(opening);
     };
     if let Some(reason) = &review.failed {
-        opening.not_reviewed = Some(reason.clone());
+        opening.not_reviewed.get_or_insert_with(|| reason.clone());
         return Ok(opening);
     }
     let answer = |id: &str| responses.iter().find(|a| a.id == id);
@@ -279,13 +291,52 @@ pub(in crate::run::engine) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>
     {
         design.plan_revision = gate.revising.or(design.plan_revision.take());
     }
-    let Some(gate) = design_gate::waiting(run).filter(|_| open_gate(run)) else {
+    if !open_gate(run) {
+        return;
+    }
+    // Ruling T11-3 (m1): `plan.md` is rendered again only when a size, a route or a
+    // test mode changed since the last pass.
+    let print = fingerprint(run);
+    let Some(design) = run.orch.design.as_mut() else {
         return;
     };
-    let kept = (run.orch.design.as_ref()).and_then(|d| d.text_of(DocKind::Plan));
-    if kept.is_some_and(|(n, _)| n == gate.version) {
-        new_version(run, DocAuthor::Engine, ENGINE_UPDATE, now, fx);
+    if design.plan_fingerprint.as_ref() == Some(&print) {
+        return;
     }
+    design.plan_fingerprint = Some(print);
+    new_version(run, DocAuthor::Engine, ENGINE_UPDATE, now, fx);
+}
+
+/// Each live task's id, size, route and test mode: what the engine can change at the
+/// gate (ruling T11-3, m1).
+fn fingerprint(run: &Run) -> String {
+    let live = run.tasks.iter().filter(|t| t.state != TaskState::Cancelled);
+    let lines = live.map(|t| format!("{} {:?} {:?} {:?}\n", t.id(), t.size, t.route, t.test_mode));
+    lines.collect()
+}
+
+/// Ruling T11-1 and T11-3 (m4): a design run's `spawn_subplanner` waits for the
+/// approved spec's read-back, and then names the requirement ids its epic owns, each
+/// one the spec has.
+pub(in crate::run::engine) fn spawn_refusal(
+    run: &Run,
+    epic: &str,
+    covers: &[String],
+) -> Option<String> {
+    let design = run.orch.design.as_ref()?;
+    if design.approved_spec.is_some() && design.requirements.is_empty() {
+        return Some(SPAWN_PENDING.into());
+    }
+    if design.requirements.is_empty() {
+        return None;
+    }
+    if covers.is_empty() {
+        return Some(NEEDS_COVERS.into());
+    }
+    let unknown = (covers.iter()).find(|c| !design.requirements.iter().any(|r| &r.id == *c))?;
+    Some(format!(
+        "epic {epic} covers {unknown}, which the spec does not have"
+    ))
 }
 
 /// `plan.md`'s next version at the open gate, when its text differs from the gate
@@ -300,8 +351,10 @@ fn new_version(
     let design = run.orch.design.as_ref()?;
     let version = design_gate::waiting(run)?.version;
     let text = plan_md::render(run, &design.requirements);
-    let kept = design.text_of(DocKind::Plan);
-    if kept.is_some_and(|(n, kept)| n == version && kept == text) {
+    // Ruling T11-3 (m5): compared with the stored version's SHA-256, so a restore that
+    // has not read the gate's text back yet stores no identical version.
+    let stored = design.find(DocKind::Plan, Some(version));
+    if stored.is_some_and(|v| v.sha256 == sha256_hex(text.as_bytes())) {
         return None;
     }
     let doc = NewDoc::new(DocKind::Plan, author, reason, &text);

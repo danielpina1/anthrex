@@ -101,6 +101,10 @@ pub struct DesignState {
     /// M9.6.11): the stale gate is cleared, and the next plan version keeps the note.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_revision: Option<String>,
+    /// Ruling T11-3 (m1): each live task's size, route and test mode when the open plan
+    /// gate's engine pass last rendered `plan.md`. In memory only.
+    #[serde(skip)]
+    pub plan_fingerprint: Option<String>,
 }
 
 fn is_zero(n: &u32) -> bool {

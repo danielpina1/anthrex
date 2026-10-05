@@ -216,7 +216,10 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
             return Some("back is only for the spec and plan gates".into());
         }
         (DocGateAction::Edit { .. }, DocGateKind::Plan) => {
-            return Some("the plan is edited task by task with anthrex run edit".into());
+            // Ruling T11-3 (m3): `plan.md` is generated from the tasks, never edited.
+            return Some(
+                "the plan is made from its tasks; change them with anthrex run edit".into(),
+            );
         }
         _ => {}
     }

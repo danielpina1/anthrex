@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use proto::{AgentRole, DocFinding, DocKind, DocSeverity, FindingAnswer};
 use serde_json::{Map, Value};
 
-use super::{OrchCall, array, flag, object, one_text, required};
+use super::{OrchCall, array, flag, list, object, one_text, required};
 
 /// `start_brainstorm`'s `answers`, in bytes; it may be empty.
 const ANSWERS_MAX: usize = 8 * 1024;
@@ -172,6 +172,24 @@ pub(super) fn responses(map: &Map<String, Value>) -> Result<Vec<FindingAnswer>, 
         answers.push(FindingAnswer { id, answer });
     }
     Ok(answers)
+}
+
+/// Ruling T11-1: `spawn_subplanner`'s `covers`, bounded as `plan_task.covers`
+/// (decision 17): at most 32 ids of at most 8 characters, each `R<n>`, each once; empty
+/// when absent.
+pub(super) fn covers(map: &Map<String, Value>) -> Result<Vec<String>, String> {
+    let ids = list(map, "covers", 0, 32, 8)?.unwrap_or_default();
+    let mut seen = BTreeSet::new();
+    for id in &ids {
+        let digits = id.strip_prefix('R').unwrap_or_default();
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return Err("covers entries look like R4".into());
+        }
+        if !seen.insert(id) {
+            return Err(format!("covers lists {id} twice"));
+        }
+    }
+    Ok(ids)
 }
 
 /// `field`, when given: a positive `u32`.
