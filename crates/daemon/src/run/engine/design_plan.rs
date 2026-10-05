@@ -312,8 +312,11 @@ pub(in crate::run::engine) fn user_edited(
 /// Every step, for a design run (`engine::step`): a plan gate a sub-planner left for
 /// planning is cleared, its note kept for the next version (ruling T7-4's carry); and a
 /// change the engine made at the open plan gate is `plan.md`'s next version, authored by
-/// the engine. It is compared with the gate version's text, so a run whose text a
-/// restore has not read back yet is left as it is.
+/// the engine. `plan.md` is rendered only when the live tasks' sizes, routes or test
+/// modes differ from the last pass's in-memory fingerprint (ruling T11-3, m1), so it is
+/// rendered once after a restore, which starts without one; the rendering is then
+/// compared with the gate version's stored SHA-256, not its text (m5), so no identical
+/// version is stored, whether or not the restore has read the text back.
 pub(in crate::run::engine) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let Some(design) = run.orch.design.as_mut() else {
         return;
