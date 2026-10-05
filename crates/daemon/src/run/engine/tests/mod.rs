@@ -62,6 +62,7 @@ mod delivery_watch_fixes;
 mod design_agents;
 mod design_agents_end;
 mod design_agents_relaunch;
+mod design_cap_counts;
 mod design_clock;
 mod design_commit;
 mod design_commit_rounds;

@@ -265,7 +265,8 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
             _ => "approve, go back or reject",
         };
         // Task M9.6.15: the round's own versions and rethinks.
-        (design.round_versions(gate_doc(kind)) >= MAX_VERSIONS).then(|| {
+        // Ruling T7-10: only the versions that followed a user action, and v1.
+        (design.round_capped(gate_doc(kind)) >= MAX_VERSIONS).then(|| {
             let kind = kind.label();
             format!("the {kind} has had its {MAX_VERSIONS} versions; {ways}")
         })
@@ -394,6 +395,10 @@ pub(super) fn open(
         .design
         .as_ref()
         .ok_or_else(|| not_design(&run.id))?;
+    // Ruling T7-10: a read-back's resubmit and the engine's update are not the user's.
+    let read_back = (design.gate.as_ref())
+        .is_some_and(|g| g.kind == kind && g.revising.is_some() && g.cause == Revision::ReadBack);
+    doc.uncapped = read_back || doc.author == DocAuthor::Engine;
     // A report's appendix of drafts is not the report: the summary compares the reports.
     if let Some((_, before)) = design.text_of(doc.kind) {
         let (before, after) = (

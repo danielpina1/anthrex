@@ -172,6 +172,7 @@ fn the_state_survives_save_and_load() {
             }],
         }),
         draft_review: None,
+        uncapped: false,
     };
     let route = Route {
         runtime: Runtime::Codex,

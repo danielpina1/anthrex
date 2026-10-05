@@ -29,6 +29,7 @@ fn version(kind: DocKind, n: u32) -> DocVersion {
         same_runtime: false,
         report: None,
         draft_review: None,
+        uncapped: false,
     }
 }
 

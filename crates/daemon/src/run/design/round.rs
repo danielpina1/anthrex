@@ -103,6 +103,17 @@ impl DesignState {
         self.gate_versions(kind).saturating_sub(before)
     }
 
+    /// Ruling T7-10: of [`DesignState::round_versions`], those brief ruling BD-2's cap
+    /// counts: v1 and each that followed a user action, never a read-back's or the
+    /// engine's.
+    pub fn round_capped(&self, kind: DocKind) -> u32 {
+        let before = (self.round.as_ref())
+            .and_then(|r| slot(kind).map(|i| r.versions_before[i]))
+            .unwrap_or(0);
+        let gate = (self.versions.iter()).filter(|v| v.kind == kind && v.n > 0);
+        gate.skip(before as usize).filter(|v| !v.uncapped).count() as u32
+    }
+
     /// The brainstorm's rethinks in the current round.
     pub fn round_rethinks(&self) -> u32 {
         let before = self.round.as_ref().map_or(0, |r| r.rethinks_before);

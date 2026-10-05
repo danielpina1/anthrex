@@ -47,6 +47,10 @@ pub struct DocVersion {
     /// never a gate version. Task M9.6.11: the plan review's draft too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft_review: Option<u32>,
+    /// Ruling T7-10: opened by a read-back resubmit or an engine update, so brief ruling
+    /// BD-2's cap does not count it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uncapped: bool,
 }
 
 impl DocVersion {
@@ -164,6 +168,8 @@ pub struct NewDoc {
     pub report: Option<ReportSummary>,
     /// Ruling T5-1: a spec's review draft for review `k`, stored with `n = 0`.
     pub draft_review: Option<u32>,
+    /// Ruling T7-10: not counted by brief ruling BD-2's cap.
+    pub uncapped: bool,
 }
 
 impl NewDoc {
@@ -179,6 +185,7 @@ impl NewDoc {
             same_runtime: false,
             report: None,
             draft_review: None,
+            uncapped: false,
         }
     }
 }
@@ -225,6 +232,7 @@ pub fn store(run: &mut Run, doc: NewDoc, now: u64) -> Result<(DocVersion, Effect
         same_runtime: doc.same_runtime,
         report: doc.report,
         draft_review: doc.draft_review,
+        uncapped: doc.uncapped,
     };
     design.versions.push(version.clone());
     let effect = Effect::WriteDoc {
