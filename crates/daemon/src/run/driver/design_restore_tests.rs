@@ -258,6 +258,41 @@ mod service {
         shutdown.cancel();
     }
 
+    /// The final fix wave's FW-32: an in-place fallback write a crash interrupted
+    /// leaves a prefix of the version's bytes. The restore's read-back logs it once and
+    /// reopens the gate as revising.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_partial_in_place_write_is_reconciled_at_restore() {
+        let data = tempfile::tempdir().unwrap();
+        let text = "# S\n\n## Requirements\nR1 one\n";
+        let partial = |path: &Path| std::fs::write(path, &text[..9]).unwrap();
+        let s = at_spec_gate_with(data.path(), text, partial).await;
+        let shutdown = CancellationToken::new();
+        s.spawn(shutdown.clone());
+        s.check_design_docs().await;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (revising, log) = loop {
+            let (revising, log) = {
+                let state = crate::lock(&s.state);
+                let run = &state.runs[RUN_ID];
+                let design = run.orch.design.clone();
+                let log: Vec<String> = run.log.iter().map(|e| e.text.clone()).collect();
+                (design.and_then(|d| d.gate).and_then(|g| g.revising), log)
+            };
+            if revising.is_some() || Instant::now() >= deadline {
+                break (revising, log);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        assert_eq!(
+            revising.as_deref(),
+            Some("anthrex could not read back the stored spec v1; submit it again")
+        );
+        let line = "design flow: the spec v1 could not be read back: its file differs from what was stored";
+        assert_eq!(log.iter().filter(|l| *l == line).count(), 1, "{log:?}");
+        shutdown.cancel();
+    }
+
     /// Review m4 and m5: the read-back is one blocking task for every run, bounded by
     /// its wait. A read that never answers (the seam blocks on a channel this test
     /// holds) times it out: the restore goes on, and the engine is told nothing of its
