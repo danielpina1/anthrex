@@ -30,8 +30,8 @@ pub struct McpArgs {
     #[arg(long = "lane", value_enum)]
     lane: Option<LaneArg>,
     /// A design agent's label (milestone 9.6 ruling T1-O3): accepted only with
-    /// `brainstormer` and `doc_reviewer`, and otherwise ignored. It names the session in
-    /// its argv; the server sends it nowhere.
+    /// `brainstormer` and `doc_reviewer`, and refused otherwise; the server never sends
+    /// it on. It names the session in its argv.
     #[arg(long = "agent-label")]
     agent_label: Option<String>,
     #[arg(long = "window")]
