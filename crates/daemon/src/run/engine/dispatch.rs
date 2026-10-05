@@ -36,6 +36,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if run.state.is_terminal() || finishing(run) {
         return;
     }
+    // Ruling T15-18: a round's due documents commit with no task of the round left.
+    super::design_commit::abandon(run, now);
     clock::watch_open_turns(run, now, fx);
     super::race::each_lane(run, now, fx, |run, fx| {
         clock::watch_open_turns(run, now, fx)

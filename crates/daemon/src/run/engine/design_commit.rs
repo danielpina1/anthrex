@@ -104,6 +104,31 @@ pub(crate) fn holds_docs(run: &Run, n: u16) -> bool {
     creating || (run.rounds.iter()).any(|r| r.committed_stage == Some(n))
 }
 
+/// Ruling T15-18: a later round's documents commit that is due, with none in flight
+/// and no live task of the round left (the `finish` edit, or `cancel_task` on every
+/// task, before it was sent or during a commit-failure halt), has moved nothing in git
+/// and nothing would send it: the round is dropped as a reject drops it, its commit no
+/// longer due. True when it was. Every scheduler pass runs it first, in any state, and
+/// `complete::complete_pass` before it completes a run.
+pub(super) fn abandon(run: &mut Run, now: u64) -> bool {
+    let k = run.round();
+    if k < 2 || !due(run) || in_flight(run) {
+        return false;
+    }
+    if (run.tasks.iter()).any(|t| t.round == k && !t.state.is_finished()) {
+        return false;
+    }
+    super::design_round::dropped(run);
+    if let Some(design) = run.orch.design.as_mut() {
+        design.commit_due = false;
+    }
+    let text = format!(
+        "round {k}'s documents were not committed: no task of the round remains; the round is dropped"
+    );
+    log(run, now, text);
+    true
+}
+
 /// The scheduler's guard: whether the commit is due, in which case the run's running
 /// passes wait. While the run runs and none is in flight, the commit is sent (the
 /// approval's, or a retry after `run resume`).

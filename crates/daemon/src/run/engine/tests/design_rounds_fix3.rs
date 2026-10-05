@@ -23,7 +23,7 @@ use crate::run::engine::OpResult;
 /// Round 3 (`amend`) of a run back at `complete`: its amendment (round 2's text, from
 /// the restored base) approved and read back as spec `v`, [`t3`] planned and reviewed
 /// by `reviewer`.
-fn round_three_at_plan_gate(fx: &mut Fixture, v: u32, reviewer: &str) {
+pub(super) fn round_three_at_plan_gate(fx: &mut Fixture, v: u32, reviewer: &str) {
     iterate_with(fx, None).unwrap();
     let answer = submit_amendment(fx, AMENDMENT).unwrap();
     assert_eq!(answer["version"], v, "{answer}");
