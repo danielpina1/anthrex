@@ -1,5 +1,8 @@
 //! Task M9.2.14: `run prs`'s table, `run status`'s delivery lines and `--delivery`'s
-//! parse, on constructed snapshots (pure).
+//! parse, on constructed snapshots (pure); task M9.7.12's bounded `git` check.
+
+use std::os::unix::fs::PermissionsExt;
+use std::time::{Duration, Instant};
 
 use proto::{
     CiState, DeliveryInfo, DeliveryMode, FullInfo, PrState, RunInfo, RunState, StageInfo,
@@ -7,7 +10,7 @@ use proto::{
 };
 
 use super::super::status::{run_block, tests::example};
-use super::{mode, prs_table, status_lines};
+use super::{bare_under, mode, prs_table, status_lines};
 
 fn stage(n: u16, pr: Option<StagePrInfo>) -> StageInfo {
     StageInfo {
@@ -177,4 +180,51 @@ fn delivery_flag_parses_pr_and_local_only() {
             "{wrong}: {error}"
         );
     }
+}
+
+fn process_exists(pid: libc::pid_t) -> bool {
+    // SAFETY: signal 0 sends nothing; it only asks whether the pid exists.
+    (unsafe { libc::kill(pid, 0) } == 0)
+        || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+/// Task M9.7.12 (decision 15, rulings R2 and R2a): a `git` that never answers is given
+/// up on at the bound passed in, the message names that bound, and the stand-in (the
+/// exact child `subprocess::run` spawned, never a pattern) is gone afterwards.
+#[test]
+fn create_repo_gives_up_on_a_git_that_does_not_answer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("github");
+    let bare = dir.join("r.git");
+    std::fs::create_dir_all(&bare).unwrap();
+    let pid_file = tmp.path().join("git.pid");
+    let git = tmp.path().join("git");
+    std::fs::write(
+        &git,
+        format!(
+            "#!/bin/sh\necho $$ > '{}'\nexec sleep 30\n",
+            pid_file.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let started = Instant::now();
+    let error = bare_under(&dir, &bare, git.as_os_str(), Duration::from_secs(1))
+        .unwrap_err()
+        .to_string();
+    let took = started.elapsed();
+    assert!(took < Duration::from_secs(5), "took {took:?}");
+    assert_eq!(error, "fake-github: git did not answer within 1s");
+
+    let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while process_exists(pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!process_exists(pid), "the stand-in {pid} is still running");
 }

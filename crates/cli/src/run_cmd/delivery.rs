@@ -4,11 +4,14 @@
 //! `run fake-github` (decision 14), which edits a fake GitHub's `github.json` and talks
 //! to no daemon and never to GitHub.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use clap::{Args, Subcommand, ValueEnum};
-use daemon::host::RepoPermission;
 use daemon::host::fake::{CiRule, FakeGithubCtl, MergeMethodArg};
+use daemon::host::{HOST_READ_TIMEOUT, RepoPermission};
+use daemon::subprocess::Outcome;
 use proto::{CiState, DeliveryMode, PrState, RunInfo, RunRequest, RunState, StageInfo};
 
 use super::Runs;
@@ -321,7 +324,7 @@ pub(super) fn fake_github(args: FakeGithubArgs) -> anyhow::Result<()> {
         _ => None,
     };
     if let FakeVerb::CreateRepo { bare, .. } = &args.verb {
-        bare_under(&args.dir, bare)?;
+        bare_under(&args.dir, bare, "git".as_ref(), HOST_READ_TIMEOUT)?;
     }
     // Ruling m3: the hook in place before is put back, not the default.
     let before = std::panic::take_hook();
@@ -345,8 +348,9 @@ pub(super) fn fake_github(args: FakeGithubArgs) -> anyhow::Result<()> {
 
 /// Ruling m2: `create-repo`'s `bare` must be a bare repository (its own git directory)
 /// inside `dir`, so the later verbs never write objects or move branches in a
-/// repository the fake does not own. A local `git rev-parse`, never a remote.
-fn bare_under(dir: &Path, bare: &Path) -> anyhow::Result<()> {
+/// repository the fake does not own. A local `git rev-parse`, never a remote, run as
+/// `program` under `bound` (decision 15, rulings R2 and R2a: given, not from `PATH`).
+fn bare_under(dir: &Path, bare: &Path, program: &OsStr, bound: Duration) -> anyhow::Result<()> {
     let refuse = || {
         anyhow::anyhow!(
             "fake-github: {} is not a bare repository under {}",
@@ -360,7 +364,7 @@ fn bare_under(dir: &Path, bare: &Path) -> anyhow::Result<()> {
     if !path.starts_with(&dir) || path == dir {
         return Err(refuse());
     }
-    let mut git = std::process::Command::new("git");
+    let mut git = std::process::Command::new(program);
     git.arg("-C").arg(&path).args([
         "--no-optional-locks",
         "rev-parse",
@@ -369,15 +373,23 @@ fn bare_under(dir: &Path, bare: &Path) -> anyhow::Result<()> {
     ]);
     // AGENTS.md rule 11 (W2 re-review N1): every inherited git variable dropped.
     daemon::subprocess::scrub_inherited_git(&mut git);
-    let output = git.output().map_err(|_| refuse())?;
-    let text = String::from_utf8_lossy(&output.stdout);
+    // `run` kills and reaps the child's group at the bound; `Complete` means a zero exit.
+    let stdout = match daemon::subprocess::run(&mut git, 64 * 1024, bound) {
+        Outcome::Complete(stdout) => stdout,
+        Outcome::TimedOut(_) => anyhow::bail!(
+            "fake-github: git did not answer within {}s",
+            bound.as_secs()
+        ),
+        Outcome::Failed | Outcome::Truncated(_) => return Err(refuse()),
+    };
+    let text = String::from_utf8_lossy(&stdout);
     let mut lines = text.lines();
     let bare_repo = lines.next() == Some("true");
     let own = lines
         .next()
         .and_then(|d| Path::new(d).canonicalize().ok())
         .is_some_and(|d| d == path);
-    if !(output.status.success() && bare_repo && own) {
+    if !(bare_repo && own) {
         return Err(refuse());
     }
     Ok(())
