@@ -125,3 +125,54 @@ fn an_open_rounds_failed_commit_still_halts() {
     assert!(run.orch.design.as_ref().unwrap().commit_due);
     assert!(!run.rounds[1].dropped);
 }
+
+/// The final fix wave's FW-16 (re-review m2): ruling T15-15 through 9.2's `open::empty`
+/// directly, with no round cancel. Round 2's independent `t3` (stage 3, created at the
+/// amendment's head) is cancelled on its own; at the next ticks stage 3 is skipped as
+/// empty, with no `OpenPr`, and stage 2, holding the amendment, is not.
+#[test]
+fn an_emptied_stage_above_the_amendment_is_skipped_without_a_cancel() {
+    let mut t3 = round_task("t3", &["R3"]);
+    t3["task"]["stage"] = json!(3);
+    let edits = json!([round_task("t2", &["R2", "R3"]), t3]);
+    let mut fx = plan_gate_of(pr_complete(), edits);
+    approve(&mut fx);
+    let (op, _) = fx.op("CreateStageBranch");
+    let effects = fx.done(op, OpResult::StageCreated);
+    let (op, _) = commits(&effects).remove(0);
+    let result = OpResult::DocsCommitted {
+        head: ROUND_DOCS.into(),
+        spec: "docs/anthrex/specs/1970-01-01-password-reset.md".into(),
+    };
+    let mut all = fx.done(op, result);
+    all.extend(fx.tick());
+    let (op, _) = fx.op("CreateStageBranch");
+    all.extend(fx.done(op, OpResult::StageCreated));
+    let cancel = proto::PlanEdit::CancelTask {
+        task_id: "t3".into(),
+    };
+    assert!(reply(&super::dispatch::edit(&mut fx, vec![cancel])).is_ok());
+    assert_eq!(fx.task("t3").state, TaskState::Cancelled);
+    assert!(!fx.run().rounds[1].dropped, "no round was cancelled");
+    // Stage 2's PR open at its head (as `pr_complete` opens stage 1's), so stage 3 is
+    // ready: its one task is finished and the stage below has its PR.
+    let head = fx.run().stage_head(2).unwrap().to_string();
+    let mut pr = super::delivery_land::pr_record(13, proto::PrState::Open);
+    pr.pushed_head = head;
+    let run = fx.run_mut();
+    run.delivery.stages.resize(2, Default::default());
+    run.delivery.stages[1].pr = Some(pr);
+    for _ in 0..3 {
+        all.extend(fx.tick());
+    }
+    let skipped = |n: u16| fx.run().delivery.stage(n).is_some_and(|s| s.skipped);
+    assert!(skipped(3), "{:#?}", fx.run().log);
+    assert!(!skipped(2), "{:#?}", fx.run().log);
+    assert!(!opened(&all).contains(&3), "{all:?}");
+    let line = "stage 3: skipped (no changes)";
+    assert!(
+        fx.run().log.iter().any(|l| l.text == line),
+        "{:#?}",
+        fx.run().log
+    );
+}
