@@ -117,27 +117,96 @@ const MAX_SUFFIX: u32 = 99;
 /// their names when the run head tracks none of them, else each with the first `-<n>`
 /// (n ≥ 2) before its `.md` that leaves every one of them untracked, the same `n` for
 /// all. The run head decides, so a resend after a restart finds the same names.
-/// Appends are not renamed: they extend a tracked file on purpose.
+/// Appends are not renamed: they extend a tracked file on purpose. Names compare
+/// ignoring case (the W2 re-review), as [`walk`]'s components do: a checkout with
+/// `core.ignorecase` would write one over a tracked name in another case.
 fn free_names<'d>(
     c: &Call<'_>,
     docs: &'d DocsCommit<'_>,
 ) -> Result<Vec<(String, &'d [u8])>, String> {
+    let mut listed = Listed::new();
     for n in std::iter::once(None).chain((2..=MAX_SUFFIX).map(Some)) {
         let named: Vec<(String, &[u8])> = (docs.files.iter())
             .map(|(path, bytes)| (suffixed(path, n), bytes.as_slice()))
             .collect();
-        if named.is_empty() {
-            return Ok(named);
+        let mut free = true;
+        for (path, _) in &named {
+            if tracked(c, (docs.root, docs.expected), path, &mut listed)? {
+                free = false;
+                break;
+            }
         }
-        let mut args = vec!["ls-tree", "-z", "--name-only", docs.expected, "--"];
-        args.extend(named.iter().map(|(path, _)| path.as_str()));
-        if c.ok(docs.root, Mode::Read, &args, None)?.is_empty() {
+        if free {
             return Ok(named);
         }
     }
     Err(format!(
         "the documents' names are tracked up to -{MAX_SUFFIX}; none is free"
     ))
+}
+
+/// Whether `head` tracks `path` in any case: each folder on the way matched ignoring
+/// case, as [`walk`] does, then an entry of any kind with its name.
+fn tracked(
+    c: &Call<'_>,
+    (root, head): (&Path, &str),
+    path: &str,
+    listed: &mut Listed,
+) -> Result<bool, String> {
+    let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let mut at = vec![String::new()];
+    for part in folder.split('/').filter(|p| !p.is_empty()) {
+        let part = part.to_lowercase();
+        let mut next = Vec::new();
+        for tree in &at {
+            for (mode, entry) in listing(c, (root, head), tree, listed)? {
+                if mode == TREE_MODE && entry.to_lowercase() == part {
+                    next.push(joined(tree, &entry));
+                }
+            }
+        }
+        if next.is_empty() {
+            return Ok(false);
+        }
+        at = next;
+    }
+    let name = name.to_lowercase();
+    for tree in &at {
+        let entries = listing(c, (root, head), tree, listed)?;
+        if entries
+            .iter()
+            .any(|(_, entry)| entry.to_lowercase() == name)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The tree listings read so far in one head, by their paths there (`""`: the root).
+type Listed = Vec<(String, Vec<(String, String)>)>;
+
+/// The `(mode, name)` entries of `tree` in `head`, each tree listed once.
+fn listing(
+    c: &Call<'_>,
+    (root, head): (&Path, &str),
+    tree: &str,
+    listed: &mut Listed,
+) -> Result<Vec<(String, String)>, String> {
+    if let Some((_, entries)) = listed.iter().find(|(t, _)| t == tree) {
+        return Ok(entries.clone());
+    }
+    let entries = entries(c, root, head, tree)?;
+    listed.push((tree.to_string(), entries.clone()));
+    Ok(entries)
+}
+
+/// `name` in the tree at `tree` (`""`: the root).
+fn joined(tree: &str, name: &str) -> String {
+    match tree.is_empty() {
+        true => name.to_string(),
+        false => format!("{tree}/{name}"),
+    }
 }
 
 /// `path` with `-<n>` before its `.md` (at its end when it has none).
@@ -180,27 +249,17 @@ fn walk(
     head: &str,
     folders: &[String],
 ) -> Result<Option<String>, String> {
-    let mut listed: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    let mut listed = Listed::new();
     for folder in folders {
         // The trees reached so far, by their paths in `head`; the root first.
         let mut at = vec![String::new()];
         for part in folder.split('/') {
             let mut next = Vec::new();
             for tree in &at {
-                let entries = match listed.iter().find(|(t, _)| t == tree) {
-                    Some((_, entries)) => entries.clone(),
-                    None => {
-                        let entries = entries(c, root, head, tree)?;
-                        listed.push((tree.clone(), entries.clone()));
-                        entries
-                    }
-                };
+                let entries = listing(c, (root, head), tree, &mut listed)?;
                 let part = part.to_lowercase();
                 for (mode, name) in entries.iter().filter(|(_, n)| n.to_lowercase() == part) {
-                    let path = match tree.is_empty() {
-                        true => name.clone(),
-                        false => format!("{tree}/{name}"),
-                    };
+                    let path = joined(tree, name);
                     match mode.as_str() {
                         SYMLINK_MODE => return Ok(Some(path)),
                         TREE_MODE => next.push(path),

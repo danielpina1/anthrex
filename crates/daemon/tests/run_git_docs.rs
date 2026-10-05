@@ -218,6 +218,34 @@ fn the_documents_take_the_first_suffix_free_for_all_of_them() {
     assert_eq!(again, new, "sent again: the same names, its own commit");
 }
 
+/// The W2 re-review: the probe compares names ignoring case, as the symbolic-link walk
+/// does (ruling T12-3 m3). The run head tracks the spec's name in another case, which a
+/// checkout with `core.ignorecase` (as on macOS) would write over: every document takes
+/// `-2`, and the tracked blob is kept.
+#[test]
+fn a_tracked_name_in_another_case_is_not_free() {
+    let spec = "docs/anthrex/specs/2026-10-05-password-reset.md";
+    let plan = "docs/anthrex/plans/2026-10-05-password-reset.md";
+    let other = "Docs/Anthrex/Specs/2026-10-05-Password-Reset.md";
+    let rig = Rig::with(|root| {
+        let at = root.join(other);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, "old spec\n").unwrap();
+    });
+    let outcome = rig.commit(&[(spec, SPEC), (plan, PLAN)]).unwrap();
+    let DocsOutcome::Committed {
+        head: new, files, ..
+    } = outcome
+    else {
+        panic!("{outcome:?}");
+    };
+    let second = |p: &str| p.replace(".md", "-2.md");
+    assert_eq!(files, [second(spec), second(plan)]);
+    let show = |path: &str| out(rig.root(), &["show", &format!("{new}:{path}")]);
+    assert_eq!(show(other), "old spec");
+    assert_eq!(show(&second(spec)), SPEC.trim());
+}
+
 /// Ruling WB-B m1 (the final fix wave's FW-40): the spec a later round appends to is
 /// read as raw bytes, up to 1 MiB. One over git's default 256 KiB output commits, a
 /// byte that is not UTF-8 kept as it was; one over 1 MiB is refused with its text.
