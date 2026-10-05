@@ -47,6 +47,7 @@ impl App {
             KeyRegion::Screen => match &self.screen {
                 Some(Screen::Profile(_)) => "profile",
                 Some(Screen::Settings(_)) => "settings",
+                Some(Screen::DocGate(_)) => "document gate",
                 _ => "global",
             },
             KeyRegion::Pane | KeyRegion::Dialog => "global",

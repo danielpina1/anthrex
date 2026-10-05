@@ -103,6 +103,20 @@ fn help_opens_on_the_contexts_group() {
         "plan review",
         "the plan review",
     );
+    // Final fix wave FW-76: the document gate screen's own group.
+    opens_on(
+        with(gate_app(), |a| {
+            let run = &mut a.runs.runs[0];
+            run.state = proto::RunState::AwaitingApproval;
+            run.design = proto::DesignMode::Full;
+            run.doc_gate =
+                crate::ui::doc_gate::tests::design_run(proto::DocGateKind::Spec).doc_gate;
+            a.open_doc_gate(RUN_ID);
+            assert!(matches!(a.screen, Some(Screen::DocGate(_))));
+        }),
+        "document gate",
+        "the document gate screen",
+    );
     opens_on(
         with(three_runs(), |a| {
             chord(a, 'a');
@@ -185,13 +199,14 @@ fn j_k_and_pages_scroll_and_esc_closes() {
         assert!(tap(&mut app, code).is_empty(), "{code:?}");
         assert_eq!(scroll(&app), 0, "{code:?} does nothing");
     }
-    // The end: 99 lines from line 79 fill (task M9.6.18 added three, ruling T18-4) the 21 rows under the `↑` mark.
+    // The end: 112 lines from line 92 fill (task M9.6.18 added three, ruling T18-4; the
+    // final fix wave's FW-76 thirteen) the 21 rows under the `↑` mark.
     for _ in 0..10 {
         tap(&mut app, KeyCode::PageDown);
     }
-    assert_eq!(scroll(&app), 79);
+    assert_eq!(scroll(&app), 92);
     tap(&mut app, KeyCode::Char('j'));
-    assert_eq!(scroll(&app), 79, "j stops where the view stops");
+    assert_eq!(scroll(&app), 92, "j stops where the view stops");
     tap(&mut app, KeyCode::Char('q'));
     assert!(app.modal.is_none(), "q closes");
     chord(&mut app, '?');
@@ -231,7 +246,7 @@ fn tab_jumps_between_groups() {
     for _ in 0..12 {
         tap(&mut app, KeyCode::Tab);
     }
-    assert_eq!(scroll(&app), 79);
+    assert_eq!(scroll(&app), 92);
 }
 
 /// Task 6's ruling: `C-b ?` works over the Alerts view, and closing the help gives the
@@ -264,7 +279,7 @@ fn an_opened_group_past_the_end_holds_its_place() {
     app.set_body_area(Rect::new(0, 0, 120, 39));
     chord(&mut app, 'S');
     chord(&mut app, '?');
-    let settings = group_tops(&help_groups("C-b"))[8];
+    let settings = group_tops(&help_groups("C-b"))[9];
     assert_eq!(usize::from(scroll(&app)), settings);
     tap(&mut app, KeyCode::Char('j'));
     tap(&mut app, KeyCode::PageDown);
@@ -291,7 +306,7 @@ fn an_opened_group_past_the_end_holds_its_place() {
     for _ in 0..12 {
         tap(&mut app, KeyCode::Tab);
     }
-    assert_eq!(scroll(&app), 79);
+    assert_eq!(scroll(&app), 92);
 }
 
 /// Minor 1: Shift+Tab goes back a group, whether it arrives as BackTab or as Tab with
