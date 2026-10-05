@@ -156,8 +156,9 @@ pub fn bar(filled: usize, empty: usize, ascii: bool) -> String {
 }
 
 /// Every glyph of the table (`Glyph`), the spinner's frames and the git marks as
-/// their one-column ASCII twins: for text composed from many glyph literals at once
-/// (an inspection), folded in one place rather than at each literal.
+/// their ASCII twins, one column each except `Glyph::Gate`'s `||` (two): for text
+/// composed from many glyph literals at once (an inspection), folded in one place
+/// rather than at each literal.
 pub fn ascii_twins(text: &str) -> String {
     const GLYPHS: [Glyph; 22] = [
         Glyph::Passed,
