@@ -229,12 +229,22 @@ fn entries(
         true => head.to_string(),
         false => format!("{head}:{tree}"),
     };
-    let listed = c.ok(root, Mode::Read, &["ls-tree", "-z", &at], None)?;
-    let entry = |e: &str| {
+    // Ruling WB-B m1: the listing has the earlier spec's cap.
+    let listed = match c.bytes(root, &["ls-tree", "-z", &at])? {
+        Ok(listed) => listed,
+        Err(total) => {
+            let tree = if tree.is_empty() { "/" } else { tree };
+            return Err(format!(
+                "the listing of {tree} is over 1 MiB ({total} bytes)"
+            ));
+        }
+    };
+    let entry = |e: &[u8]| {
+        let e = String::from_utf8_lossy(e);
         let (meta, name) = e.split_once('\t')?;
         Some((meta.split(' ').next()?.to_string(), name.to_string()))
     };
-    Ok(listed.split('\0').filter_map(entry).collect())
+    Ok(listed.split(|b| *b == 0).filter_map(entry).collect())
 }
 
 /// The tree of the run head with the documents added, built in the caller's index,
@@ -288,10 +298,17 @@ fn appended(
     let entry = c.ok(docs.root, Mode::Read, &listed, None)?;
     let regular = entry.starts_with("100644 ") || entry.starts_with("100755 ");
     let mut out = match regular {
+        // Ruling WB-B m1: raw bytes, never converted, up to 1 MiB.
         true => {
             let at = format!("{}:{path}", docs.expected);
-            c.ok(docs.root, Mode::Read, &["cat-file", "blob", &at], None)?
-                .into_bytes()
+            match c.bytes(docs.root, &["cat-file", "blob", &at])? {
+                Ok(bytes) => bytes,
+                Err(total) => {
+                    return Err(format!(
+                        "the committed spec {path} is over 1 MiB ({total} bytes)"
+                    ));
+                }
+            }
         }
         false => Vec::new(),
     };

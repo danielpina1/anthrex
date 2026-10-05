@@ -74,6 +74,16 @@ impl Rig {
         expected: &str,
         files: &[(&str, &str)],
     ) -> Result<DocsOutcome, String> {
+        self.commit_appending(git, expected, files, &[])
+    }
+
+    fn commit_appending(
+        &self,
+        git: &std::ffi::OsStr,
+        expected: &str,
+        files: &[(&str, &str)],
+        appends: &[(String, Vec<u8>)],
+    ) -> Result<DocsOutcome, String> {
         let files: Vec<(String, Vec<u8>)> = files
             .iter()
             .map(|(p, t)| (p.to_string(), t.as_bytes().to_vec()))
@@ -87,7 +97,7 @@ impl Rig {
             expected,
             integration: &self.integration,
             files: &files,
-            appends: &[],
+            appends,
             stage: None,
             message: "docs: spec and plan for Reset passwords",
         };
@@ -206,6 +216,45 @@ fn the_documents_take_the_first_suffix_free_for_all_of_them() {
     assert_eq!(show(&third(plan)), PLAN.trim());
     let again = committed(rig.commit(&[(spec, SPEC), (plan, PLAN)]));
     assert_eq!(again, new, "sent again: the same names, its own commit");
+}
+
+/// Ruling WB-B m1 (the final fix wave's FW-40): the spec a later round appends to is
+/// read as raw bytes, up to 1 MiB. One over git's default 256 KiB output commits, a
+/// byte that is not UTF-8 kept as it was; one over 1 MiB is refused with its text.
+#[test]
+fn an_earlier_spec_is_appended_as_raw_bytes_up_to_1_mib() {
+    let spec = "docs/anthrex/specs/2026-10-05-password-reset.md";
+    let amendment = b"## Round 2 amendment\n\nR3 Links expire sooner.\n".to_vec();
+    let mut earlier = b"# Password reset\n\xff not UTF-8\n".to_vec();
+    earlier.extend(b"R1 Tokens expire.\n".repeat(300 * 1024 / 18));
+    assert!(earlier.len() > 256 * 1024 && earlier.len() < 1024 * 1024);
+    let written = earlier.clone();
+    let rig = Rig::with(move |root| {
+        std::fs::create_dir_all(root.join("docs/anthrex/specs")).unwrap();
+        std::fs::write(root.join(spec), &written).unwrap();
+    });
+    let appends = [(spec.to_string(), amendment.clone())];
+    let new = committed(rig.commit_appending(real_git(), &rig.base, &[], &appends));
+    let blob = try_git(rig.root(), &["cat-file", "blob", &format!("{new}:{spec}")]);
+    assert!(blob.status.success());
+    let mut expected = earlier;
+    expected.extend(b"\n");
+    expected.extend(&amendment);
+    assert_eq!(
+        blob.stdout, expected,
+        "the earlier bytes, then the amendment"
+    );
+
+    let mut over = b"# Password reset\n".to_vec();
+    over.resize(1024 * 1024 + 1, b'x');
+    let rig = Rig::with(move |root| {
+        std::fs::create_dir_all(root.join("docs/anthrex/specs")).unwrap();
+        std::fs::write(root.join(spec), &over).unwrap();
+    });
+    let refused = rig.commit_appending(real_git(), &rig.base, &[], &appends);
+    let text = format!("the committed spec {spec} is over 1 MiB (1048577 bytes)");
+    assert_eq!(refused, Err(text));
+    assert_eq!(rig.branch_head(), rig.base, "nothing committed");
 }
 
 /// A commit sent again after a restart, whose first send moved the branch, finds its
