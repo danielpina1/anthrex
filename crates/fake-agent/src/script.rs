@@ -35,8 +35,9 @@ pub enum Step {
     ReadMessage {
         timeout_ms: Option<u64>,
         expect: Option<String>,
-        /// PTY mode only (a headless session refuses it): messages without `expect`
-        /// are passed over, each one's turn ended, until one has it.
+        /// PTY sessions only (a headless session reads as without it, so a message
+        /// without `expect` still exits 3): messages without `expect` are passed over,
+        /// each one's turn ended, until one has it.
         skip: bool,
     },
     EndTurn,
