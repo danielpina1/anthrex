@@ -149,7 +149,7 @@ fn a_marked_change_is_not_marked_twice() {
     iterate_with(&mut fx, None).unwrap();
     let marked = AMENDMENT.replace("in the app too.", "in the app too (changed in round 2).");
     submit_amendment(&mut fx, &marked).unwrap();
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     super::design_plan_fixture::read_back(&mut fx, 2, &marked);
     let design = fx.run().orch.design.as_ref().unwrap();
     let r2 = &design.requirements[1].text;
@@ -226,7 +226,7 @@ fn a_spec_after_a_brainstorm_back_is_marked_not_reviewed() {
     };
     act(&mut fx, DocGateKind::Spec, back).unwrap();
     submitted(&mut fx, "brainstorm", REPORT);
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     assert_eq!(fx.run().state, RunState::Specifying);
     let answer = submitted(&mut fx, "spec", SPEC);
     let n = answer["version"].as_u64().unwrap() as u32;
@@ -269,7 +269,7 @@ fn a_rounds_phase_record_counts_the_rounds_versions() {
     run.history = true;
     run.repo_dir = "/tmp/data/repos/x-3f9a".into();
     let fx = &mut amended(fx);
-    act(fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     let records: Vec<proto::PhaseRecord> = (fx.ops("AppendHistory").into_iter())
         .filter_map(|(_, kind)| match kind {
             crate::run::engine::OpKind::AppendHistory { line, .. } => match *line {

@@ -71,7 +71,7 @@ pub(crate) fn plain_approve_refusal(run: &Run) -> Option<String> {
 /// revises it, refused as the plan gate's approve is ([`refusal`]).
 pub(crate) fn plan_approve_refusal(run: &Run) -> Option<String> {
     let gate = waiting(run).filter(|g| g.kind == DocGateKind::Plan && g.revising.is_some())?;
-    refusal(run, gate.kind, &DocGateAction::Approve)
+    refusal(run, gate.kind, &DocGateAction::APPROVE)
 }
 
 /// Ruling T7-8 (replacing T7-4's scope): at a design run's open plan gate that the
@@ -119,7 +119,7 @@ pub(crate) fn act(
     let n = waiting(run).map_or(0, |g| g.version);
     let what = format!("{} v{n}", kind.label());
     match action {
-        DocGateAction::Approve => {
+        DocGateAction::Approve { .. } => {
             // Decision 32 (task M9.6.13): the phase's history record.
             super::design_spend::approved(run, (kind, n), now, fx);
             let text = approve(run, kind, &what, now);
@@ -247,6 +247,17 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
             gate.version
         ));
     }
+    // Ruling T17-1: an approve of a version the user saw, when the gate has moved on.
+    if let DocGateAction::Approve {
+        version: Some(seen),
+    } = action
+        && *seen != gate.version
+    {
+        let (kind, now) = (kind.label(), gate.version);
+        return Some(format!(
+            "the {kind} is now v{now}; review it before approving"
+        ));
+    }
     // Ruling T7-6: at the brainstorm gate the way on is a rethink, not a back.
     let full = |kind: DocGateKind| {
         let ways = match kind {
@@ -284,10 +295,12 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
             "the brainstorm has been rethought {MAX_RETHINKS} times; approve, change or reject"
         )),
         // Decision 18 (task M9.6.11): the plan's checks again at its approval.
-        DocGateAction::Approve if kind == DocGateKind::Plan => {
+        DocGateAction::Approve { .. } if kind == DocGateKind::Plan => {
             super::design::plan::approve_refusal(run)
         }
-        DocGateAction::Rethink { .. } | DocGateAction::Approve | DocGateAction::Reject => None,
+        DocGateAction::Rethink { .. } | DocGateAction::Approve { .. } | DocGateAction::Reject => {
+            None
+        }
     }
 }
 

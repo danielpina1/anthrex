@@ -158,7 +158,7 @@ fn a_relaunch_in_specifying_is_not_sent_back_to_rule_48() {
     act(
         &mut fx,
         proto::DocGateKind::Brainstorm,
-        proto::DocGateAction::Approve,
+        proto::DocGateAction::APPROVE,
     )
     .unwrap();
     assert_eq!(fx.run().state, RunState::Specifying);

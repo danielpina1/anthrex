@@ -68,8 +68,9 @@ fn design_commands_reach_the_daemon_and_print_its_refusals() {
     std::fs::write(&doc, "# Reset\n").unwrap();
     let doc = doc.display().to_string();
     let not_design = format!("run {id} does not use the design flow");
-    let commands: [&[&str]; 7] = [
+    let commands: [&[&str]; 8] = [
         &["run", "approve", h4, "--gate", "spec"],
+        &["run", "approve", h4, "--gate", "spec", "--version", "2"],
         &["run", "changes", h4, "--gate", "spec", "--note", "n"],
         &["run", "edit-doc", h4, "--gate", "spec", "--file", &doc],
         &["run", "rethink", h4, "--note", "n"],

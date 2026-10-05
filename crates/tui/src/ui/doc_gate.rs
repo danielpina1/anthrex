@@ -65,6 +65,10 @@ fn gate_of<'a>(app: &'a App, s: &DocGateScreen) -> Option<&'a DocGateInfo> {
 /// while the orchestrator revises, scrolling and `esc` in a view.
 pub(crate) fn hints(app: &App, s: &DocGateScreen) -> Vec<Hint> {
     let esc = hint("esc", "close", u8::MAX);
+    // Ruling T17-2: a closed gate leaves only `q` and Esc.
+    if app.doc_gate_closed().is_some() {
+        return vec![esc];
+    }
     if s.pane != DocPane::Document {
         return vec![hint("j/k", "scroll", 6), hint("esc", "back", u8::MAX)];
     }
@@ -135,9 +139,11 @@ pub(crate) fn revising_text(gate: &DocGateInfo, p: Palette) -> Option<String> {
     })
 }
 
-/// The message line's rows at `width`, at most [`MESSAGE_ROWS`].
-fn message_lines(s: &DocGateScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
-    let Some((tone, text)) = &s.message else {
+/// The message line's rows at `width`, at most [`MESSAGE_ROWS`]: a closed gate's
+/// `the <kind> gate is closed` (ruling T17-2), else the screen's message.
+fn message_lines(app: &App, s: &DocGateScreen, width: u16, p: Palette) -> Vec<Line<'static>> {
+    let closed = app.doc_gate_closed().map(|text| (Tone::Note, text));
+    let Some((tone, text)) = closed.as_ref().or(s.message.as_ref()) else {
         return Vec::new();
     };
     let style = match tone {
@@ -195,7 +201,7 @@ pub(crate) fn areas(app: &App, s: &DocGateScreen, area: Rect) -> Areas {
         }
     };
     let revising = take_top(&mut rest, u16::from(app.doc_revising().is_some()));
-    let message_rows = message_lines(s, inner.width, p).len() as u16;
+    let message_rows = message_lines(app, s, inner.width, p).len() as u16;
     let message = take_bottom(&mut rest, message_rows);
     let wide = area.width >= WIDE;
     let mut out = Areas {
@@ -282,7 +288,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &DocGateScreen, area: Rect) {
         );
         frame.render_widget(Paragraph::new(line), row);
     }
-    let message = message_lines(s, a.message.width, p);
+    let message = message_lines(app, s, a.message.width, p);
     frame.render_widget(Paragraph::new(message), a.message);
 }
 

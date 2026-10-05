@@ -271,7 +271,7 @@ fn the_approved_spec_is_read_back_and_a_failed_read_reopens_its_gate() {
         reply,
         run_id: RUN_ID.into(),
         kind: DocGateKind::Spec,
-        action: DocGateAction::Approve,
+        action: DocGateAction::APPROVE,
     });
     let asked: Vec<(DocKind, u32, String)> = (effects.iter())
         .filter_map(|e| match e {

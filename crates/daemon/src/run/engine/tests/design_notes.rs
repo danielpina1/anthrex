@@ -111,7 +111,7 @@ fn a_reject_before_any_plan_names_the_phase_document() {
     assert!(notes(&fx).contains(&wake), "{:?}", notes(&fx));
 
     let mut fx = at_brainstorm_gate(false);
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     restart(&mut fx);
     assert_eq!(fx.run().state, RunState::Paused);
     reject(&mut fx);
@@ -178,5 +178,5 @@ fn both_caps_reached_offer_approve_or_reject() {
     let rethink = DocGateAction::Rethink { note: "r".into() };
     assert_eq!(act(&mut fx, DocGateKind::Brainstorm, rethink), both);
     assert_eq!(act(&mut fx, DocGateKind::Brainstorm, changes("c")), both);
-    assert!(act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).is_ok());
+    assert!(act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).is_ok());
 }

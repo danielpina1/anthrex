@@ -27,7 +27,7 @@ fn changes(note: &str) -> DocGateAction {
 fn approve_moves_brainstorm_to_specifying_and_spec_to_planning() {
     let mut fx = at_brainstorm_gate(false);
     assert_eq!(gate(&fx), Some((DocGateKind::Brainstorm, 1, None)));
-    let reply = act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve);
+    let reply = act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE);
     assert_eq!(
         reply,
         Ok(format!(
@@ -42,7 +42,7 @@ fn approve_moves_brainstorm_to_specifying_and_spec_to_planning() {
     assert_eq!(reply["version"], 1);
     assert_eq!(gate(&fx), Some((DocGateKind::Spec, 1, None)));
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     assert_eq!(fx.run().state, RunState::Planning);
     assert!(notes(&fx).contains(&"the user approved the spec v1".to_string()));
 }
@@ -217,26 +217,26 @@ fn reject_discards_round_one() {
 fn an_action_at_the_wrong_gate_or_while_revising_is_refused_exactly() {
     let mut fx = design_launched(false);
     assert_eq!(
-        act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve),
+        act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE),
         Err(format!(
             "run {RUN_ID} is not waiting at the brainstorm gate"
         ))
     );
     let mut fx = at_spec_gate(false);
     assert_eq!(
-        act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve),
+        act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE),
         Err(format!(
             "run {RUN_ID} is not waiting at the brainstorm gate"
         ))
     );
     assert_eq!(
-        act(&mut fx, DocGateKind::Plan, DocGateAction::Approve),
+        act(&mut fx, DocGateKind::Plan, DocGateAction::APPROVE),
         Err(format!("run {RUN_ID} is not waiting at the plan gate"))
     );
     act(&mut fx, DocGateKind::Spec, changes("more")).unwrap();
     let revising = Err("the orchestrator is revising spec v1; wait for it".to_string());
     for action in [
-        DocGateAction::Approve,
+        DocGateAction::APPROVE,
         changes("again"),
         DocGateAction::Edit { text: SPEC.into() },
         DocGateAction::Back { note: "b".into() },
@@ -247,7 +247,7 @@ fn an_action_at_the_wrong_gate_or_while_revising_is_refused_exactly() {
     // A run without the flow has no document gate.
     let mut plain = super::orch::launched(false);
     assert_eq!(
-        act(&mut plain, DocGateKind::Plan, DocGateAction::Approve),
+        act(&mut plain, DocGateKind::Plan, DocGateAction::APPROVE),
         Err(format!("run {RUN_ID} does not use the design flow"))
     );
 }
@@ -267,7 +267,7 @@ fn a_sixth_version_and_a_fourth_rethink_are_refused_exactly() {
     let edit = DocGateAction::Edit { text: SPEC.into() };
     assert_eq!(act(&mut fx, DocGateKind::Spec, edit), full);
     // Approve, back and reject still pass.
-    assert!(act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).is_ok());
+    assert!(act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).is_ok());
 
     let mut fx = at_brainstorm_gate(false);
     for _ in 0..3 {
@@ -365,4 +365,31 @@ fn changes_at_the_plan_gate_make_the_next_submit_v2() {
     let effects = orch_tool(&mut fx, ORCH, "edit_plan", json!({"submit": true}));
     assert!(replies(&effects)[0].is_ok());
     assert_eq!(gate(&fx), Some((DocGateKind::Plan, 2, None)));
+}
+
+/// Ruling T17-1: an approve naming the version the user saw is refused once the gate
+/// has moved past it (an `edit-doc` from elsewhere opened v2 while the TUI's confirm
+/// page showed v1), and nothing changes; naming the open version, or none, approves.
+#[test]
+fn an_approve_of_a_version_no_longer_open_is_refused() {
+    let mut fx = at_spec_gate(false);
+    let text = SPEC.replace("Mail delays.", "Mail delays.\nSpam filters.");
+    act(&mut fx, DocGateKind::Spec, DocGateAction::Edit { text }).unwrap();
+    let stale = DocGateAction::Approve { version: Some(1) };
+    assert_eq!(
+        act(&mut fx, DocGateKind::Spec, stale),
+        Err("the spec is now v2; review it before approving".into())
+    );
+    assert_eq!(gate(&fx), Some((DocGateKind::Spec, 2, None)));
+    assert_eq!(fx.run().state, RunState::AwaitingApproval);
+    let seen = DocGateAction::Approve { version: Some(2) };
+    assert_eq!(
+        act(&mut fx, DocGateKind::Spec, seen),
+        Ok(format!("run {RUN_ID}: the spec v2 is approved; planning"))
+    );
+    // No version: approves whatever is open, as before.
+    let mut fx = at_brainstorm_gate(false);
+    let plain = DocGateAction::APPROVE;
+    act(&mut fx, DocGateKind::Brainstorm, plain).unwrap();
+    assert_eq!(fx.run().state, RunState::Specifying);
 }

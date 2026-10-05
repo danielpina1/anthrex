@@ -103,12 +103,14 @@ pub(crate) fn render_with(frame: &mut Frame, app: &App, area: Rect, all: &[crate
     }
 
     // Milestone 9.6 (DF §6.2): `⏸ <kind> v<n>` while a design gate waits for the user,
-    // in the `Attention` role (it needs you), measured before the hints.
-    if let Some((kind, version)) = crate::app::doc_gate::waiting_gate(app) {
+    // measured before the hints. Ruling T17-3: in the `Paused` role (9.0.7 keeps
+    // `Attention` for `⚑`), and none under a dialog, whose bar stays ` DIALOG  esc back`.
+    let dialog = statusbar_modes::badge(app) == Some(" DIALOG ");
+    if let Some((kind, version)) = crate::app::doc_gate::waiting_gate(app).filter(|_| !dialog) {
         let mark = theme::glyph(Glyph::Gate, palette.ascii);
         spans.push(Span::styled(
             format!("{mark} {} v{version}", kind.label()),
-            role(Role::Attention, palette),
+            role(Role::Paused, palette),
         ));
         spans.push(Span::raw("  "));
     }

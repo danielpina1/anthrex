@@ -108,7 +108,7 @@ impl App {
     ) -> (u64, Effect) {
         let closes = matches!(
             action,
-            DocGateAction::Approve
+            DocGateAction::Approve { .. }
                 | DocGateAction::Reject
                 | DocGateAction::Rethink { .. }
                 | DocGateAction::Back { .. }
@@ -245,6 +245,22 @@ impl App {
         };
         self.doc_give_up(None, why);
         effects
+    }
+
+    /// `expire_replies`' share (review m6): the part loading on the expired `ShowDoc`
+    /// `id` says `why`; `true` when one did, so no toast repeats it.
+    pub(super) fn doc_show_failed(&mut self, id: u64, why: &str) -> bool {
+        let Some(s) = self.doc_screen() else {
+            return false;
+        };
+        let waits = std::iter::once(&s.doc)
+            .chain(s.diff.as_ref())
+            .chain(s.drafts.iter().flatten().map(|d| &d.load))
+            .any(|l| *l == DocLoad::Loading(id));
+        if waits {
+            self.doc_give_up(Some(id), why);
+        }
+        waits
     }
 
     /// Every part loading on a request no longer awaited (on `id`, when given) fails

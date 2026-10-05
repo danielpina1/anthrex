@@ -40,7 +40,7 @@ fn a_design_goal_enters_brainstorming_and_scouts_run() {
     let again = orch_tool(&mut fx, ORCH, "start_brainstorm", json!({"answers": ""}));
     assert_eq!(refused(&again), "the brainstormers are already running");
     let mut fx = at_spec_gate(false);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     let late = orch_tool(&mut fx, ORCH, "start_brainstorm", json!({"answers": ""}));
     assert_eq!(
         refused(&late),
@@ -111,7 +111,7 @@ fn plan_tools_before_planning_are_refused_exactly_and_the_run_stays() {
         (fx.run().state, &fx.run().tasks),
         (before.state, &before.tasks)
     );
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     let effects = orch_tool(&mut fx, ORCH, "spawn_subplanner", subplanner);
     assert_eq!(
         refused(&effects),
@@ -189,7 +189,7 @@ fn the_brainstorming_clock_starts_when_the_drafts_are_in() {
 #[test]
 fn a_phase_over_budget_halts_and_resume_restarts_its_clock() {
     let mut fx = at_brainstorm_gate(false);
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     let started = fx.now;
     fx.send(started + 60 * 60, EventKind::Tick);
     assert_eq!(
@@ -239,7 +239,7 @@ fn gate_wait_and_pause_do_not_count_toward_the_phase_budget() {
     // A day at the gate.
     fx.send(fx.now + 24 * 3600, EventKind::Tick);
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     assert_eq!(fx.run().state, RunState::Planning);
     let started = fx.now;
     // A restart at once: the run is paused, and its downtime of three hours is paused
@@ -298,7 +298,7 @@ fn the_gate_survives_a_restart() {
     assert_eq!(design.versions.len(), 4);
     let effects = resume(&mut fx);
     assert_eq!(ops_in(&effects, "RestartOrchestrator").len(), 1);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     assert_eq!(fx.run().state, RunState::Planning);
 }
 
@@ -373,7 +373,7 @@ fn a_lost_window_while_revising_hands_off_with_the_note_and_x_still_works() {
     assert_eq!(o.first_prompt, "the handoff");
     assert!(notes(&fx).contains(&wake));
     // Every other action waits for the revision; reject does not.
-    assert!(act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).is_err());
+    assert!(act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).is_err());
     let reply = act(&mut fx, DocGateKind::Spec, DocGateAction::Reject);
     assert_eq!(reply, Ok(format!("run {RUN_ID} rejected; discarding it")));
     assert!(matches!(fx.op("Discard").1, OpKind::Discard { .. }));

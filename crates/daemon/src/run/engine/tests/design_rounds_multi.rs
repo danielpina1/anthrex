@@ -34,7 +34,7 @@ fn stage_created(fx: &mut Fixture) -> String {
 /// `C1`, then `t1b` (which needs it) into stage 2 at `C2`.
 fn multi_complete() -> Fixture {
     let mut fx = at_spec_gate(false);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     read_back(&mut fx, 1, SPEC);
     let mut t1b = staged("t1b", 2, &["R2"]);
     t1b["task"]["deps"] = json!(["t1"]);

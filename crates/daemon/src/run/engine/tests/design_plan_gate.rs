@@ -152,7 +152,7 @@ fn orchestrator_churn_does_not_use_up_the_plan_cap() {
 #[test]
 fn plan_tools_before_planning_are_refused() {
     let mut fx = at_brainstorm_gate(false);
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     assert_eq!(fx.run().state, RunState::Specifying);
     let args = json!({"edits": [add_task("t1")]});
     let effects = orch_tool(&mut fx, ORCH, "edit_plan", args);

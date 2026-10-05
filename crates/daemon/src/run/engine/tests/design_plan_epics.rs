@@ -97,7 +97,7 @@ fn a_re_plan_gets_its_spawns_and_its_tasks_requirements() {
 #[test]
 fn a_spawn_waits_for_the_approved_specs_read_back() {
     let mut fx = at_spec_gate(false);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     let early = spawn_owning(&mut fx, "mail", Some(json!(["R1"])));
     assert_eq!(
         early.unwrap_err(),

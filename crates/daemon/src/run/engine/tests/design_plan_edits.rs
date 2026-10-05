@@ -59,7 +59,7 @@ fn removing_a_task_at_the_gate_rechecks_coverage_and_blocks_approve() {
     assert_eq!(replies(&fx.approve()), vec![Err(uncovered.clone())]);
     let check = actions::check(fx.run(), &ActionNode::Run, &ActionKind::Approve);
     assert_eq!(check, Err(uncovered.clone()));
-    let gate_approve = act(&mut fx, DocGateKind::Plan, DocGateAction::Approve);
+    let gate_approve = act(&mut fx, DocGateKind::Plan, DocGateAction::APPROVE);
     assert_eq!(gate_approve, Err(uncovered));
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
     user_edit(&mut fx, covering("t3", &["R2"]));
@@ -185,7 +185,7 @@ const PENDING: &str =
 #[test]
 fn a_plan_submit_waits_for_the_approved_specs_read_back() {
     let mut fx = at_spec_gate(false);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     let edits = json!([covering("t1", &["R1", "R2"])]);
     let refused = plan_submit(&mut fx, edits.clone(), Value::Null);
     assert_eq!(refused.unwrap_err(), PENDING);
@@ -227,7 +227,7 @@ fn asks_read_back(effects: &[Effect]) -> bool {
 #[test]
 fn a_failed_read_back_is_retried_on_resume_and_a_second_failure_halts() {
     let mut fx = at_spec_gate(false);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     let run = fx.run_mut();
     run.state = RunState::Paused;
     run.paused_from = Some(RunState::Planning);
@@ -260,7 +260,7 @@ fn a_failed_read_back_is_retried_on_resume_and_a_second_failure_halts() {
 #[test]
 fn a_second_unread_halt_after_a_restore_keeps_the_halt_and_resumes() {
     let mut fx = at_spec_gate(false);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     super::control_restore::restart(&mut fx, Vec::new());
     assert_eq!(fx.run().state, RunState::Paused);
     read_failed(&mut fx);

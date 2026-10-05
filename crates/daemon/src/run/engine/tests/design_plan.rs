@@ -186,7 +186,7 @@ fn a_plan_citing_a_requirement_only_in_an_unapproved_spec_version_is_refused() {
         "R2 Links are single use. Check: a reuse test.\nR3 Old links expire. Check: a test.\n",
     );
     let mut fx = at_brainstorm_gate(false);
-    let (spec, approve) = (proto::DocGateKind::Spec, proto::DocGateAction::Approve);
+    let (spec, approve) = (proto::DocGateKind::Spec, proto::DocGateAction::APPROVE);
     act(&mut fx, proto::DocGateKind::Brainstorm, approve.clone()).unwrap();
     submitted(&mut fx, "spec", &three);
     let changes = proto::DocGateAction::Changes {

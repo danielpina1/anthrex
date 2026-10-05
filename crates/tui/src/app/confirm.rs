@@ -46,7 +46,7 @@ impl PendingAction {
             PendingAction::RejectHold { .. } => "reject hold",
             PendingAction::SubmitPlan(_) => "submit",
             PendingAction::DocGate { action, .. } => match action {
-                proto::DocGateAction::Approve => "approve",
+                proto::DocGateAction::Approve { .. } => "approve",
                 proto::DocGateAction::Reject => "reject",
                 proto::DocGateAction::Rethink { .. } => "rethink",
                 proto::DocGateAction::Back { .. } => "go back",

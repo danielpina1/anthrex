@@ -216,7 +216,7 @@ fn an_orchestrator_started_round_or_goal_stops_at_every_gate() {
     submit_amendment(&mut fx, AMENDMENT).unwrap();
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
     assert_eq!(gate(&fx).map(|g| g.0), Some(DocGateKind::Spec));
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     super::design_plan_fixture::read_back(&mut fx, 2, AMENDMENT);
     round_submit(&mut fx, json!([round_task("t2", &["R2", "R3"])])).unwrap();
     round_reviewed(&mut fx);

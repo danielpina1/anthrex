@@ -167,7 +167,7 @@ pub(super) fn approve(
     }
     // Milestone 9.6 decision 7: a design run's plan gate is its document gate's.
     if super::design_gate::waiting(run).is_some() {
-        let (kind, action) = (proto::DocGateKind::Plan, proto::DocGateAction::Approve);
+        let (kind, action) = (proto::DocGateKind::Plan, proto::DocGateAction::APPROVE);
         let result = super::design_gate::act(run, kind, action, now, fx);
         return reply(fx, id, result);
     }

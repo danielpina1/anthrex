@@ -140,7 +140,7 @@ fn a_phase_record() -> PhaseRecord {
 
 fn actions() -> [DocGateAction; 6] {
     [
-        DocGateAction::Approve,
+        DocGateAction::APPROVE,
         DocGateAction::Changes {
             note: "split R2".into(),
             review: true,

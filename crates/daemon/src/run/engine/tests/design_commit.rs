@@ -71,7 +71,7 @@ pub(super) fn plan_gate_with(
 ) -> Fixture {
     let mut fx = at_spec_gate(false);
     edit(fx.run_mut());
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     super::design_plan_fixture::read_back(&mut fx, 1, SPEC);
     let args = json!({"edits": tasks, "submit": true});
     let effects = orch_tool(&mut fx, ORCH, "edit_plan", args);
@@ -93,7 +93,7 @@ pub(super) fn approve(fx: &mut Fixture) -> Vec<Effect> {
         reply,
         run_id: RUN_ID.into(),
         kind: DocGateKind::Plan,
-        action: DocGateAction::Approve,
+        action: DocGateAction::APPROVE,
     });
     assert_eq!(
         replies(&effects),

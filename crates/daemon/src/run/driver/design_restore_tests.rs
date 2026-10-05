@@ -241,7 +241,7 @@ mod service {
             .request(RunRequest::DocGate {
                 run: RUN_ID.into(),
                 kind: DocGateKind::Spec,
-                action: DocGateAction::Approve,
+                action: DocGateAction::APPROVE,
             })
             .await;
         assert_eq!(
@@ -388,7 +388,7 @@ mod service {
         let approve = RunRequest::DocGate {
             run: RUN_ID.into(),
             kind: DocGateKind::Spec,
-            action: DocGateAction::Approve,
+            action: DocGateAction::APPROVE,
         };
         let design = |s: &RunService| {
             let state = crate::lock(&s.state);

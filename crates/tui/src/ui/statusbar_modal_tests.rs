@@ -41,9 +41,8 @@ fn expected(name: &str) -> &'static str {
         | "goal form over the pane"
         | "goal form continuing"
         | "goal form discard page"
-        | "iterate dialog over the run view" => " DIALOG  esc back",
-        // Milestone 9.6 (DF §6.2): the waiting gate's mark is no key; it stays.
-        "doc gate note" => " DIALOG  ⏸ spec v2  esc back",
+        | "iterate dialog over the run view"
+        | "doc gate note" => " DIALOG  esc back",
         other => panic!("the Dialog-region fixture {other:?} has no expected bar"),
     }
 }
@@ -77,10 +76,9 @@ fn a_modal_hides_the_flags_key() {
         let text = bar(&app, 120, 40);
         let badge = expected(name).split("  ").next().unwrap();
         let count = crate::app::alerts(&app).len();
-        // What follows the badge: `esc`, after a waiting design gate's mark (9.6).
-        let rest = expected(name)[badge.len()..].trim_start();
+        let esc = expected(name).rsplit("  ").next().unwrap();
         let want = if count > 0 {
-            format!("{badge}  ⚑ {count}  {rest}")
+            format!("{badge}  ⚑ {count}  {esc}")
         } else {
             expected(name).to_string()
         };

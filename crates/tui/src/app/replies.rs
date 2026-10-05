@@ -303,7 +303,7 @@ impl App {
         }
         // The open Settings screen shows its own save's expiry (`settings_flow.rs`), the
         // stats screen its request's (`stats.rs`), the Profile screen its views' and the
-        // answer form its brief's (final review): no toast for any of them.
+        // answer form its brief's (final review), the gate screen its documents': no toast.
         let mut owned = usize::from(screens && !self.settings_saving())
             + usize::from(stats.is_some() && self.stats_awaited().is_none());
         self.stats_tick();
@@ -333,6 +333,7 @@ impl App {
                 self.fail_form_brief(id, run_id, task_id, why)
             }
             PendingWhat::Profile { dir, ask } => self.profile_view_failed(id, dir, *ask, why),
+            PendingWhat::DocShow { .. } => self.doc_show_failed(id, why),
             _ => false,
         }
     }

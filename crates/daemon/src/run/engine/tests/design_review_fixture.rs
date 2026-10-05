@@ -28,7 +28,7 @@ pub(super) fn specifying() -> Fixture {
         strength: proto::Strength::Frontier,
         note: String::new(),
     });
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     assert_eq!(fx.run().state, RunState::Specifying);
     fx
 }

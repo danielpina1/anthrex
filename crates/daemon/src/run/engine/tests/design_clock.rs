@@ -20,7 +20,7 @@ const PLANNING_HALT: &str = "design flow: the planning phase passed its 60 min b
 /// A design run in planning (its spec approved), halted by the planning phase's budget.
 fn halted_in_planning() -> Fixture {
     let mut fx = at_spec_gate(false);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     assert_eq!(fx.run().state, RunState::Planning);
     let late = fx.now + 60 * 60 + 1;
     fx.send(late, EventKind::Tick);

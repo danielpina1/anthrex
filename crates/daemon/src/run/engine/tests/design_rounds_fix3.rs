@@ -27,7 +27,7 @@ fn round_three_at_plan_gate(fx: &mut Fixture, v: u32, reviewer: &str) {
     iterate_with(fx, None).unwrap();
     let answer = submit_amendment(fx, AMENDMENT).unwrap();
     assert_eq!(answer["version"], v, "{answer}");
-    act(fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     read_back(fx, v, AMENDMENT);
     round_submit(fx, json!([t3()])).unwrap();
     round_reviewed_as(fx, reviewer);
@@ -120,7 +120,7 @@ fn a_dropped_rounds_plan_review_number_is_never_reused() {
     assert_eq!(fx.run().state, RunState::Complete);
     iterate_with(&mut fx, None).unwrap();
     submit_amendment(&mut fx, AMENDMENT).unwrap();
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     read_back(&mut fx, 3, AMENDMENT);
     let effects = round_submit_effects(&mut fx);
     assert!(

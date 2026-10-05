@@ -29,7 +29,10 @@ pub(crate) fn panel_lines(app: &App, s: &DocGateScreen, width: u16) -> Vec<Line<
     let muted = role(Role::Muted, p);
     let mut out = vec![Line::styled("Review", bold())];
     let Some(gate) = gate_of(app, s) else {
-        out.push(Line::styled(fold("loading…", p.ascii), muted));
+        // A closed gate says so on the message line (ruling T17-2); nothing loads here.
+        if app.doc_gate_closed().is_none() {
+            out.push(Line::styled(fold("loading…", p.ascii), muted));
+        }
         return out;
     };
     let indent = |text: &str, style: Style, depth: u16| -> Vec<Line<'static>> {

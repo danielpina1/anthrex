@@ -136,7 +136,7 @@ fn a_phase_record_is_written_per_phase_with_agents_and_versions() {
     submitted(&mut fx, "brainstorm", REPORT);
     assert!(phase_lines(&fx).is_empty(), "none before the approval");
     later(&mut fx, 900);
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     let lines = phase_lines(&fx);
     assert_eq!(lines.len(), 1, "{lines:?}");
     let (id, record) = &lines[0];
@@ -166,7 +166,7 @@ fn a_phase_record_is_written_per_phase_with_agents_and_versions() {
     end_after(&mut fx, reviewer, ScoutEnd::Reported, (60, 5, 1_000));
     let responses = answers(&["F1", "F2", "F3"], &["F2"]);
     outcome(&submit_spec(&mut fx, true, responses)).unwrap();
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     let lines = phase_lines(&fx);
     assert_eq!(lines.len(), 2, "{lines:?}");
     let (id, record) = &lines[1];
@@ -189,7 +189,7 @@ fn a_phase_record_is_written_per_phase_with_agents_and_versions() {
     let effects = orch_tool(&mut fx, ORCH, "edit_plan", json!({"submit": true}));
     outcome(&effects).unwrap();
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
-    act(&mut fx, DocGateKind::Plan, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Plan, DocGateAction::APPROVE).unwrap();
     let lines = phase_lines(&fx);
     let (id, record) = &lines[2];
     assert_eq!(id, &format!("{RUN_ID}/phase/1/planning/v1"));
@@ -202,7 +202,7 @@ fn a_phase_record_is_written_per_phase_with_agents_and_versions() {
 #[test]
 fn a_run_without_history_writes_no_phase_line() {
     let mut fx = at_brainstorm_gate(false);
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     assert!(phase_lines(&fx).is_empty());
 }
 
@@ -253,7 +253,7 @@ fn a_rethink_is_routed_as_rethink_and_a_relaunch_as_relaunch() {
 #[test]
 fn a_phase_record_sums_every_session_of_an_agent() {
     let mut fx = relaunched_and_rethought();
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     let lines = phase_lines(&fx);
     assert_eq!(lines.len(), 1, "{lines:?}");
     let record = &lines[0].1;
@@ -319,7 +319,7 @@ fn a_reapproval_after_a_back_is_a_new_record() {
     fx.run_mut().repo_dir = REPO.into();
     drafts(&mut fx, (300, 12, 4_000), (400, 20, 8_000));
     submitted(&mut fx, "brainstorm", REPORT);
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     submitted(&mut fx, "spec", SPEC);
     let back = DocGateAction::Back {
         note: "Reconsider SSO.".into(),
@@ -327,7 +327,7 @@ fn a_reapproval_after_a_back_is_a_new_record() {
     act(&mut fx, DocGateKind::Spec, back).unwrap();
     later(&mut fx, 70);
     submitted(&mut fx, "brainstorm", REPORT);
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     let lines = phase_lines(&fx);
     let ids: Vec<&str> = lines.iter().map(|(id, _)| id.as_str()).collect();
     let first = format!("{RUN_ID}/phase/1/brainstorming/v1");

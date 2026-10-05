@@ -121,10 +121,19 @@ pub struct FindingAnswer {
 
 /// What the user does at a gate (decision 7). Rethink is the brainstorm gate's only;
 /// Back is the spec and plan gates' only.
+///
+/// Ruling T17-1 appended `Approve`'s `version` under protocol 17: an approve of no
+/// particular version is still written as the bare `"approve"`, and the bare name an
+/// earlier build wrote still reads as one (the `Serialize` and `Deserialize` impls
+/// below wrap the derived ones).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(remote = "Self", rename_all = "snake_case")]
 pub enum DocGateAction {
-    Approve,
+    /// `version`: the gate version the user reviewed (ruling T17-1).
+    Approve {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<u32>,
+    },
     /// `review`: send the revision to the document reviewer again.
     Changes {
         note: String,
@@ -141,6 +150,43 @@ pub enum DocGateAction {
         note: String,
     },
     Reject,
+}
+
+impl DocGateAction {
+    /// An approve of whatever version is open (a plain `run approve --gate`).
+    pub const APPROVE: DocGateAction = DocGateAction::Approve { version: None };
+}
+
+impl Serialize for DocGateAction {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            DocGateAction::Approve { version: None } => {
+                serializer.serialize_unit_variant("DocGateAction", 0, "approve")
+            }
+            _ => DocGateAction::serialize(self, serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for DocGateAction {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        /// The bare name, as an approve of no version was always written.
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum Bare {
+            Approve,
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Bare(Bare),
+            Full(#[serde(deserialize_with = "DocGateAction::deserialize")] DocGateAction),
+        }
+        Ok(match Wire::deserialize(deserializer)? {
+            Wire::Bare(Bare::Approve) => DocGateAction::APPROVE,
+            Wire::Full(action) => action,
+        })
+    }
 }
 
 /// One gate version's index entry, as a client sees it (`RunInfo.docs`).

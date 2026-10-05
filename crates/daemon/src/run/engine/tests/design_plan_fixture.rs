@@ -33,7 +33,7 @@ pub(super) fn read_back(fx: &mut Fixture, n: u32, text: &str) -> Vec<Effect> {
 /// (R1, R2) are stored.
 pub(super) fn planning() -> Fixture {
     let mut fx = at_spec_gate(false);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     read_back(&mut fx, 1, SPEC);
     assert_eq!(fx.run().state, RunState::Planning);
     let design = fx.run().orch.design.as_ref().unwrap();

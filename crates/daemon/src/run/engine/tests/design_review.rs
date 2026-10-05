@@ -137,7 +137,7 @@ fn a_back_or_read_back_revision_is_not_sent_for_review() {
     let draft = outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap_err();
     assert_eq!(draft, not_sent);
     let mut fx = at_spec_gate(false);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     let checked = vec![DocChecked {
         kind: DocKind::Spec,
         n: 1,
@@ -350,7 +350,7 @@ fn approving_the_spec_stores_its_requirements_and_goal_section() {
     let stale = SPEC.replace("R2 Links are single use. Check: a reuse test.\n", "");
     let cached = (design(&fx).texts.iter()).position(|(k, _, _)| *k == DocKind::Spec);
     fx.run_mut().orch.design.as_mut().unwrap().texts[cached.unwrap()].2 = stale;
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     assert_eq!(fx.run().state, RunState::Planning);
     assert!(design(&fx).requirements.is_empty(), "not from the cache");
     let checked = vec![DocChecked {

@@ -120,11 +120,16 @@ async fn each_command_sends_its_request() {
     let cases: Vec<(Vec<&str>, RunRequest)> = vec![
         (
             vec!["approve", "3f9a", "--gate", "spec"],
-            gate(spec, DocGateAction::Approve),
+            gate(spec, DocGateAction::APPROVE),
+        ),
+        // Ruling T17-1: the version the user reviewed.
+        (
+            vec!["approve", "3f9a", "--gate", "spec", "--version", "2"],
+            gate(spec, DocGateAction::Approve { version: Some(2) }),
         ),
         (
             vec!["approve", "3f9a", "--gate", "plan"],
-            gate(DocGateKind::Plan, DocGateAction::Approve),
+            gate(DocGateKind::Plan, DocGateAction::APPROVE),
         ),
         // A plain approve is 9.5's request; the daemon decides what it means here.
         (

@@ -157,6 +157,16 @@ impl App {
         (gate.kind == s.kind && gate.revising.is_some()).then_some(gate)
     }
 
+    /// Ruling T17-2: `the <kind> gate is closed` once the gate the screen shows has
+    /// closed (approved or rejected elsewhere, the run gone) or the run waits at another
+    /// gate. Every key but `q` and Esc then does nothing.
+    pub(crate) fn doc_gate_closed(&self) -> Option<String> {
+        let s = self.doc_screen()?;
+        let gate = self.run_named(&s.run_id).and_then(|r| r.doc_gate.as_ref());
+        let open = gate.is_some_and(|g| g.kind == s.kind);
+        (!open).then(|| format!("the {} gate is closed", s.kind.label()))
+    }
+
     /// A bare key while the screen is open (`KeyAction::Screen`).
     pub(super) fn on_doc_gate_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         let Some(s) = self.doc_screen() else {
@@ -174,6 +184,9 @@ impl App {
                 DocPane::Document => self.set_screen(None),
                 _ => self.doc_pane(DocPane::Document),
             }
+            return vec![];
+        }
+        if self.doc_gate_closed().is_some() {
             return vec![];
         }
         if let Some(effects) = self.doc_scroll(key.code) {
@@ -208,7 +221,13 @@ impl App {
             vec![]
         };
         match c {
-            'a' => confirm(self, DocGateAction::Approve),
+            // Ruling T17-1: the approve names the version its page shows.
+            'a' => confirm(
+                self,
+                DocGateAction::Approve {
+                    version: Some(version),
+                },
+            ),
             'x' => confirm(self, DocGateAction::Reject),
             'c' => {
                 let text = match kind {

@@ -122,9 +122,8 @@ enum RunCommand {
         /// The hold to approve (`anthrex run status` lists them)
         #[arg(long)]
         hold: Option<String>,
-        /// The design gate to approve: brainstorm, spec or plan
-        #[arg(long, value_enum, conflicts_with = "hold")]
-        gate: Option<design::GateArg>,
+        #[command(flatten)]
+        gate: design::ApproveGate,
     },
     /// Reject a run's plan: remove its worktrees and delete its branches; with --hold,
     /// cancel that hold's tasks, none of which has started

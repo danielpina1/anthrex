@@ -118,7 +118,8 @@
 /// and history still load (`HISTORY_VERSION` stays 5). Derivation: `PROTO_VERSION`
 /// was 16 at `crates/proto/src/lib.rs:110` before this change (set by M9.5);
 /// 16 + 1 = 17. Later 9.6 tasks append, still under 17 (unreleased), each defaulted:
-/// `DocGateInfo.{report, revising_cause}` and `RunInfo.{round_design, halted_phase}`.
+/// `DocGateInfo.{report, revising_cause}`, `RunInfo.{round_design, halted_phase}` and
+/// `DocGateAction::Approve`'s `version` (still written as `"approve"` without one).
 pub const PROTO_VERSION: u32 = 17;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a

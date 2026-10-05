@@ -449,3 +449,54 @@ fn run_info_carries_the_rounds_design_and_the_halted_phase() {
     assert_eq!(json["round_design"], "off");
     assert_eq!(json["halted_phase"], "specifying");
 }
+
+/// Ruling T17-1: `Approve` names, optionally, the version the user saw. Without it the
+/// action is written as before (`"approve"`), and what an earlier build sent (the bare
+/// `"approve"`) decodes as an approve of no particular version, in both encodings.
+#[test]
+fn approve_carries_the_version_the_user_saw() {
+    let plain = DocGateAction::APPROVE;
+    let seen = DocGateAction::Approve { version: Some(3) };
+    both_ways(&plain);
+    both_ways(&seen);
+    assert_eq!(serde_json::to_value(&plain).unwrap(), "approve");
+    assert_eq!(
+        serde_json::to_value(&seen).unwrap(),
+        serde_json::json!({"approve": {"version": 3}})
+    );
+    // MessagePack: the bare name, byte for byte what an earlier build wrote.
+    assert_eq!(
+        rmp_serde::to_vec_named(&plain).unwrap(),
+        rmp_serde::to_vec_named("approve").unwrap()
+    );
+    let old = serde_json::json!("approve");
+    let json: DocGateAction = serde_json::from_value(old.clone()).unwrap();
+    let packed: DocGateAction = rmp_serde::from_slice(&p16_bytes(&old)).unwrap();
+    assert_eq!(json, plain);
+    assert_eq!(packed, plain);
+    // Inside its request, tagged and untagged.
+    let request = RunRequest::DocGate {
+        run: "r".into(),
+        kind: DocGateKind::Spec,
+        action: seen.clone(),
+    };
+    both_ways(&request);
+    let mut old = serde_json::to_value(&request).unwrap();
+    old["DocGate"]["action"] = serde_json::json!("approve");
+    let back: RunRequest = rmp_serde::from_slice(&p16_bytes(&old)).unwrap();
+    let RunRequest::DocGate { action, .. } = back else {
+        panic!("{back:?}");
+    };
+    assert_eq!(action, plain);
+    // Every other action is written as it was.
+    for (action, json) in [
+        (DocGateAction::Reject, serde_json::json!("reject")),
+        (
+            DocGateAction::Rethink { note: "n".into() },
+            serde_json::json!({"rethink": {"note": "n"}}),
+        ),
+    ] {
+        both_ways(&action);
+        assert_eq!(serde_json::to_value(&action).unwrap(), json);
+    }
+}

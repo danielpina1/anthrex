@@ -54,7 +54,10 @@ fn each_key_sends_its_request_after_its_confirm() {
     assert_eq!(message, "Approve spec v2? Planning starts next.");
     assert!(sent(&app.on_key(key('n'))).is_empty(), "n leaves the page");
     app.on_key(key('a'));
-    assert_eq!(gate_sent(&app.on_key(key('y'))).1, DocGateAction::Approve);
+    assert_eq!(
+        gate_sent(&app.on_key(key('y'))).1,
+        DocGateAction::Approve { version: Some(2) }
+    );
 
     // x: reject, destructive (Enter does not confirm it).
     let mut app = opened(DocGateKind::Spec, 120, 40);
@@ -299,3 +302,6 @@ fn the_screen_follows_its_gate_to_a_newer_version() {
     assert_eq!(screen(&app).version, 3);
     assert!(matches!(screen(&app).doc, DocLoad::Loading(_)));
 }
+
+#[path = "doc_gate_tests_keys.rs"]
+mod keys;

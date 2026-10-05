@@ -80,7 +80,7 @@ pub fn confirm_text(
 ) -> String {
     let word = kind.label();
     match action {
-        DocGateAction::Approve => {
+        DocGateAction::Approve { .. } => {
             let next = match kind {
                 DocGateKind::Brainstorm => "Spec",
                 DocGateKind::Spec => "Planning",

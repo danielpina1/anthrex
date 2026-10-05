@@ -180,7 +180,7 @@ fn an_amending_rounds_spec_submit_is_an_amendment() {
     let args = json!({"kind": "spec", "text": text, "ready": true, "amend": false});
     let answer = outcome(&orch_tool(&mut fx, ORCH, "submit_doc", args));
     assert_eq!(answer.unwrap()["version"], 2);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     read_back(&mut fx, 2, &text);
     let design = fx.run().orch.design.as_ref().unwrap();
     let mut expected = base;

@@ -427,7 +427,7 @@ fn design_flags_are_parsed() {
 
     match parse(&["approve", "r", "--gate", "brainstorm"]).unwrap() {
         RunCommand::Approve { gate, hold, .. } => {
-            assert_eq!((gate, hold), (Some(GateArg::Brainstorm), None))
+            assert_eq!((gate.gate, hold), (Some(GateArg::Brainstorm), None))
         }
         other => panic!("{other:?}"),
     }
@@ -481,4 +481,35 @@ fn changes_help_names_the_review_default() {
     let changes = cli.find_subcommand_mut("changes").expect("run changes");
     let help = changes.render_long_help().to_string();
     assert!(help.contains("(default: --no-review)"), "{help}");
+}
+
+/// Ruling T17-1: `run approve --gate <kind> --version <n>` names the version reviewed;
+/// `--version` needs `--gate`, and without it the approve is unchanged.
+#[test]
+fn approve_takes_the_version_reviewed() {
+    let version = |args: &[&str]| match parse(args).unwrap() {
+        RunCommand::Approve { gate, .. } => (gate.gate, gate.version),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        version(&["approve", "r", "--gate", "spec", "--version", "2"]),
+        (Some(GateArg::Spec), Some(2))
+    );
+    assert_eq!(
+        version(&["approve", "r", "--gate", "spec"]),
+        (Some(GateArg::Spec), None)
+    );
+    assert_eq!(version(&["approve", "r"]), (None, None));
+    assert_eq!(
+        parse(&["approve", "r", "--version", "2"]).unwrap_err(),
+        ErrorKind::MissingRequiredArgument
+    );
+    assert_eq!(
+        parse(&["approve", "r", "--gate", "spec", "--version", "v2"]).unwrap_err(),
+        ErrorKind::ValueValidation
+    );
+    assert_eq!(
+        parse(&["approve", "r", "--gate", "spec", "--hold", "h"]).unwrap_err(),
+        ErrorKind::ArgumentConflict
+    );
 }

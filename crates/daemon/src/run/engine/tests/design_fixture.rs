@@ -239,7 +239,7 @@ pub(super) fn at_brainstorm_gate(yes: bool) -> Fixture {
 /// A design run at the spec gate, v1.
 pub(super) fn at_spec_gate(yes: bool) -> Fixture {
     let mut fx = at_brainstorm_gate(yes);
-    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
     submitted(&mut fx, "spec", SPEC);
     fx
 }
@@ -260,7 +260,7 @@ pub(super) fn add_task(id: &str) -> Value {
 /// review taken (no findings) before the submit that opens the gate.
 pub(super) fn at_plan_gate(yes: bool) -> Fixture {
     let mut fx = at_spec_gate(yes);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     super::design_plan_fixture::read_back(&mut fx, 1, SPEC);
     let t1 = super::design_plan_fixture::covering("t1", &["R1", "R2"]);
     let args = json!({"edits": [t1], "submit": true});
@@ -286,7 +286,7 @@ pub(super) fn plan_revising() -> Fixture {
 /// [`at_spec_gate`], the spec approved, then halted by the planning phase's budget.
 pub(super) fn budget_halted() -> Fixture {
     let mut fx = at_spec_gate(false);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     let late = fx.now + u64::from(fx.run().limits.orch.design.phase_minutes) * 60 + 1;
     fx.send(late, EventKind::Tick);
     assert_eq!(fx.run().state, RunState::Halted);

@@ -115,7 +115,7 @@ pub(super) fn amendment_at_gate() -> Fixture {
 /// [`amended`] `fx`, approved and read back: round 2 plans.
 pub(super) fn planned(fx: Fixture) -> Fixture {
     let mut fx = amended(fx);
-    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
     read_back(&mut fx, 2, AMENDMENT);
     assert_eq!(fx.run().state, RunState::Planning);
     fx

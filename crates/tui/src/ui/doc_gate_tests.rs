@@ -162,3 +162,6 @@ fn f_lists_findings_with_severities() {
     );
     assert_eq!(buffer[(4, 6)].fg, role(Role::Muted, p).fg.unwrap(), "minor");
 }
+
+#[path = "doc_gate_tests_rows.rs"]
+mod gate_rows;

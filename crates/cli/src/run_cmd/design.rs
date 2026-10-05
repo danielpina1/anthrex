@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::{Subcommand, ValueEnum};
+use clap::{Args, Subcommand, ValueEnum};
 use proto::{
     DesignMode, DocGateAction, DocGateKind, DocKind, RoundDesign, RunInfo, RunReply, RunRequest,
     RunState, safe_text,
@@ -20,6 +20,18 @@ pub(super) enum GateArg {
     Brainstorm,
     Spec,
     Plan,
+}
+
+/// `run approve`'s design gate, and the version the user reviewed (ruling T17-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Args)]
+pub(super) struct ApproveGate {
+    /// The design gate to approve: brainstorm, spec or plan
+    #[arg(long, value_enum, conflicts_with = "hold")]
+    pub gate: Option<GateArg>,
+    /// The gate version you reviewed; the daemon refuses the approve if the gate has
+    /// moved past it
+    #[arg(long, requires = "gate")]
+    pub version: Option<u32>,
 }
 
 impl From<GateArg> for DocGateKind {
@@ -241,15 +253,18 @@ pub(super) async fn run(socket: &Path, command: DesignCommand) -> anyhow::Result
 
 /// `run approve <run> --gate <kind>`: the gate's approve (decision 7). Without `--gate`
 /// it is 9.5's `run approve` (`orch::approve`), which the daemon refuses at the
-/// brainstorm and spec gates in its own words (ruling T1-O1).
+/// brainstorm and spec gates in its own words (ruling T1-O1). `--version` names the
+/// version reviewed, which the daemon refuses once the gate has moved past it (ruling
+/// T17-1).
 pub(super) async fn approve(
     runs: &mut Runs,
     run: &str,
     hold: Option<String>,
-    gate: Option<GateArg>,
+    gate: ApproveGate,
 ) -> anyhow::Result<()> {
-    match gate {
-        Some(gate) => act(runs, run, gate, DocGateAction::Approve).await,
+    let version = gate.version;
+    match gate.gate {
+        Some(gate) => act(runs, run, gate, DocGateAction::Approve { version }).await,
         None => super::orch::approve(runs, run, hold).await,
     }
 }
