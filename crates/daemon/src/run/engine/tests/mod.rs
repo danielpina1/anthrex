@@ -42,6 +42,7 @@ mod delivery_ci_repro;
 mod delivery_digest;
 mod delivery_land;
 mod delivery_land_fixes;
+mod delivery_land_merged;
 mod delivery_land_race;
 mod delivery_land_reopen;
 mod delivery_open;

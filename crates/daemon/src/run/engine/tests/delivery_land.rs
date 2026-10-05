@@ -263,7 +263,7 @@ fn closing() -> (Fixture, Vec<(String, u32)>) {
 }
 
 /// A `ci` fix task of stage 1, as task M9.2.9 adds one.
-fn ci_fix(fx: &mut Fixture) -> String {
+pub(super) fn ci_fix(fx: &mut Fixture) -> String {
     let spec = super::super::fixes::FixSpec {
         origin: TaskOrigin::Ci,
         fixes: FixOf::Ci {

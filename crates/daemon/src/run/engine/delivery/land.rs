@@ -25,7 +25,7 @@ use proto::{
 
 use super::super::requests::log;
 use super::super::{Effect, wake};
-use super::land_judge::{missed_merge, unpushed};
+use super::land_judge::{cancel_fixes, merged_head, missed_merge, unpushed};
 use super::open::remote_branch;
 use super::watch::{named, pr_mut};
 use super::{emit, host_busy, stage_mut};
@@ -82,9 +82,9 @@ fn landing(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
         // first, so the closed line goes and the merge gets its own history line.
         (PrState::Merged, Some(PrState::Closed)) => {
             reopened(run, n, &pr, now);
-            merged(run, n, &pr, now);
+            merged(run, n, &pr, now, fx);
         }
-        (PrState::Merged, _) => merged(run, n, &pr, now),
+        (PrState::Merged, _) => merged(run, n, &pr, now, fx),
         (PrState::Closed, _) => closed(run, n, &pr, now, fx),
         (PrState::Open, Some(_)) => reopened(run, n, &pr, now),
     }
@@ -97,11 +97,13 @@ fn landing(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
 /// after the user's merge counts for nothing. The local head was delivered when it is
 /// that head, or when a view of the open PR showed it (`PrRecord.confirmed`; a PR head
 /// only fast-forwards). Otherwise it is not delivered ([`unpushed`]), and each reply
-/// whose fix missed the merge is dropped with an attention line.
-fn merged(run: &mut Run, n: u16, pr: &PrRecord, now: u64) {
+/// whose fix missed the merge is dropped with an attention line. A top stage's
+/// unfinished fix tasks are cancelled ([`cancel_fixes`], milestone 9.7 decision 2).
+fn merged(run: &mut Run, n: u16, pr: &PrRecord, now: u64, fx: &mut Vec<Effect>) {
     let stage = stage_mut(run, n);
     stage.landed = Some(PrState::Merged);
     stage.held = None;
+    cancel_fixes(run, n, now, fx);
     let commit = pr.merge_commit.as_deref().map_or("an unknown commit", sha7);
     log(
         run,
@@ -117,10 +119,7 @@ fn merged(run: &mut Run, n: u16, pr: &PrRecord, now: u64) {
     }
     run.delivery.base_fetch_due = true;
     let head = run.stage_head(n).unwrap_or_default().to_string();
-    let at = match pr.watermark.head.as_str() {
-        "" => pr.pushed_head.clone(),
-        reported => reported.to_string(),
-    };
+    let at = merged_head(pr);
     let delivered = head == at || pr.confirmed.as_deref() == Some(head.as_str());
     let missed = super::reply::landed(run, n, &at, delivered);
     if !delivered {

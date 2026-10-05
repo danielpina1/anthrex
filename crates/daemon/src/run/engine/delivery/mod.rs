@@ -23,7 +23,7 @@ mod ci_repro;
 mod ci_trigger;
 mod fix;
 pub(super) mod land;
-mod land_judge;
+pub(super) mod land_judge;
 mod open;
 mod reply;
 mod review;
