@@ -373,3 +373,25 @@ fn a_documents_folder_through_a_symlink_halts() {
     assert!(replies(&effects)[0].is_err(), "{effects:?}");
     assert!(commits(&effects).is_empty());
 }
+
+/// The final fix wave's FW-21 (review A's M-4): with `docs_dir = ""` the pre-warm runs
+/// at the plan gate only. A back from the plan gate to the spec gate, with a writer slot
+/// free there, pre-warms nothing for a plan the orchestrator is about to rewrite.
+#[test]
+fn no_prewarm_at_the_spec_gate() {
+    let no_docs = |run: &mut crate::run::model::Run| {
+        run.limits.orch.design.docs_dir.clear();
+        run.limits.max_writers = 0;
+    };
+    let mut fx = plan_gate_with(no_docs, &one_task());
+    assert!(ops_in(&fx.log, "PrepareWorktree").is_empty(), "no slot yet");
+    let back = DocGateAction::Back { note: "b".into() };
+    act(&mut fx, DocGateKind::Plan, back).unwrap();
+    assert_eq!(gate(&fx).map(|g| g.0), Some(DocGateKind::Spec));
+    fx.run_mut().limits.max_writers = 1;
+    let effects = fx.tick();
+    assert!(
+        ops_in(&effects, "PrepareWorktree").is_empty(),
+        "{effects:?}"
+    );
+}

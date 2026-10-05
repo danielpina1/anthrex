@@ -64,9 +64,12 @@ pub(crate) fn holds_stages(run: &Run) -> bool {
     due(run) && !on_stage(run)
 }
 
-/// Ruling T1-O2: the plan gate pre-warms nothing in a run that will commit documents.
+/// Ruling T1-O2: the plan gate pre-warms nothing in a run that will commit documents;
+/// and (review A's M-4) a design run pre-warms only at its plan gate, never at its
+/// brainstorm or spec gate.
 pub(super) fn skips_prewarm(run: &Run) -> bool {
-    commits(run)
+    let doc_gate = super::design_gate::waiting(run).map(|g| g.kind);
+    commits(run) || doc_gate.is_some_and(|k| k != proto::DocGateKind::Plan)
 }
 
 /// Decision 23: the plan gate's approval; the commit is due when the run commits its
