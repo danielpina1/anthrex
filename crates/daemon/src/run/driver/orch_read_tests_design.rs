@@ -34,6 +34,7 @@ fn agent(label: &str, role: AgentRole, window: u32) -> DesignAgent {
         started: Some(1_000),
         listed: false,
         unsubmitted: false,
+        round: 1,
     }
 }
 

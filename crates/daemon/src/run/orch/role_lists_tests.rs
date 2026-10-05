@@ -382,6 +382,7 @@ fn a_brainstormers_record_names_its_picks_source() {
         started: None,
         listed: true,
         unsubmitted: false,
+        round: 1,
     };
     assert_eq!(
         design_agent_record(&run, &agent, false, 5).source,

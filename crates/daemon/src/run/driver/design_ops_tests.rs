@@ -314,6 +314,7 @@ fn a_claude_brainstormer_is_denied_the_codex_sessions() {
         started: None,
         listed: false,
         unsubmitted: false,
+        round: 1,
     };
     let mut claude = brainstormer_spec(&run, &agent("claude", Runtime::Claude));
     deny_codex_sessions(&mut claude, dir.clone());

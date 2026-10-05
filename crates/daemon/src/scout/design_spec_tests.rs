@@ -38,6 +38,7 @@ fn agent(label: &str, runtime: Runtime) -> DesignAgent {
         started: Some(1_000),
         listed: false,
         unsubmitted: false,
+        round: 1,
     }
 }
 

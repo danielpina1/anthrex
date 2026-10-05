@@ -78,6 +78,7 @@ pub(super) fn queue_brainstormers(
         log(run, now, text);
     }
     let pack = freeze(run, earlier);
+    let round = run.round();
     let Some(design) = run.orch.design.as_mut() else {
         return;
     };
@@ -97,6 +98,7 @@ pub(super) fn queue_brainstormers(
             started: None,
             listed: p.listed,
             unsubmitted: false,
+            round,
         })
         .collect();
     let named: Vec<String> = (picks.iter())

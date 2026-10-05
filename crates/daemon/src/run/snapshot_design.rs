@@ -79,11 +79,21 @@ fn docs(design: &DesignState) -> Vec<DocInfo> {
 /// document reviewer, one entry an agent with its session count (a ruling T8-7
 /// relaunch is its second session, not a second agent). A reviewer's document and
 /// review number are its label's, `<doc>-r<n>` (ruling T1-O3).
+///
+/// Ruling T18-6: only the current round's. The engine keeps round 1's brainstormers
+/// through an `amend` or `off` round and its last reviewer until the next is queued
+/// (spend and history read them), so the brainstormers are listed in round 1 or a
+/// `full` current round only, and the reviewer only when it was queued this round.
 pub fn design_agents(run: &Run) -> Vec<DesignAgentInfo> {
     let Some(design) = &run.orch.design else {
         return Vec::new();
     };
-    (design.brainstormers.iter().chain(&design.reviewer))
+    let n = run.round();
+    let brainstorming =
+        n == 1 || (design.round.as_ref()).is_some_and(|r| r.n == n && r.mode == RoundDesign::Full);
+    let brainstormers = design.brainstormers.iter().filter(|_| brainstorming);
+    let reviewer = design.reviewer.iter().filter(|r| r.round == n);
+    (brainstormers.chain(reviewer))
         .map(|agent| {
             let (doc, review) = match agent.role {
                 proto::AgentRole::DocReviewer => reviewed(&agent.label),

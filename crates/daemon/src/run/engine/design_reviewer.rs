@@ -53,6 +53,7 @@ pub(in crate::run::engine) fn queue(run: &mut Run, doc: DocKind, (k, after): (u3
     let (route, why) = review_pick(run, &DECIDER_CAPS);
     let same_runtime = why.is_some();
     let label = label(doc, k);
+    let round = run.round();
     if let Some(why) = why {
         let runtime = route.runtime.label();
         let text = format!(
@@ -84,6 +85,7 @@ pub(in crate::run::engine) fn queue(run: &mut Run, doc: DocKind, (k, after): (u3
         started: None,
         listed: false,
         unsubmitted: false,
+        round,
     });
     log(run, now, format!("document reviewer {label} queued"));
 }

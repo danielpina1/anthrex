@@ -182,6 +182,7 @@ fn a_live_agent_runs_in_its_window_in_its_role() {
         started: None,
         listed: false,
         unsubmitted: false,
+        round: 1,
     };
     let design = DesignState {
         brainstormers: vec![
@@ -196,6 +197,24 @@ fn a_live_agent_runs_in_its_window_in_its_role() {
     assert!(design.live_agent(AgentRole::DocReviewer, 9).is_some());
     assert!(design.live_agent(AgentRole::DocReviewer, 7).is_none());
     assert!(design.live_agent(AgentRole::Brainstormer, 9).is_none());
+}
+
+/// Ruling T18-6: a design agent records the round it was queued in; one saved before
+/// the field reads as round 1, and the field round-trips.
+#[test]
+fn a_design_agent_saved_before_its_round_reads_as_round_one() {
+    use super::DesignAgent;
+    let old = serde_json::json!({
+        "label": "spec-r1",
+        "role": "doc_reviewer",
+        "route": {"runtime": "codex", "model": "m", "strength": "frontier", "effort": "high"},
+        "session": 1,
+    });
+    let agent: DesignAgent = serde_json::from_value(old).unwrap();
+    assert_eq!(agent.round, 1);
+    let later = DesignAgent { round: 3, ..agent };
+    let back: DesignAgent = serde_json::from_value(serde_json::to_value(&later).unwrap()).unwrap();
+    assert_eq!(back.round, 3);
 }
 
 /// Ruling T5-1 (task M9.6.10): a spec's review draft is stored with `n = 0` and its

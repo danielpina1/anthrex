@@ -145,6 +145,7 @@ pub(super) fn brainstormer(label: &str, runtime: Runtime) -> DesignAgent {
         started: None,
         listed: false,
         unsubmitted: false,
+        round: 1,
     }
 }
 

@@ -195,6 +195,7 @@ fn the_state_survives_save_and_load() {
             started: Some(3_000),
             listed: false,
             unsubmitted: false,
+            round: 1,
         }],
         reviewer: Some(DesignAgent {
             label: "spec-r1".into(),
@@ -209,6 +210,7 @@ fn the_state_survives_save_and_load() {
             listed: false,
             // Task 8's re-review (m2): a relaunch's mark goes to disk and back.
             unsubmitted: true,
+            round: 1,
         }),
         reviews: vec![DocReviewRecord {
             doc: DocKind::Spec,

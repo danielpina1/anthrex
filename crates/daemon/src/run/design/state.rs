@@ -197,6 +197,14 @@ pub struct DesignAgent {
     /// never nudged), so this one is its one relaunch, told so in its first turn.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unsubmitted: bool,
+    /// Ruling T18-6: the goal round it was queued in, so the snapshot lists only the
+    /// current round's agents. A state saved before it reads as round 1.
+    #[serde(default = "first_round")]
+    pub round: u32,
+}
+
+fn first_round() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
