@@ -15,6 +15,10 @@ use super::screens::Screen;
 use super::{App, Effect, Modal, ToastLevel};
 use proto::{DocGateAction, DocGateKind, DocKind, RunReply, RunRequest};
 
+/// What a `ShowDoc` answered with neither a document nor a refusal shows (final fix
+/// wave FW-80).
+pub(crate) const UNEXPECTED_REPLY: &str = "unexpected reply from daemon";
+
 /// What a tagged `DocGate` of ours was, for its reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GateAsk {
@@ -138,7 +142,8 @@ impl App {
                 let load = match reply {
                     RunReply::Doc { doc, .. } => DocLoad::Ready(doc.clone()),
                     RunReply::Refused { message, .. } => DocLoad::Failed(message.clone()),
-                    _ => DocLoad::Failed(format!("{reply:?}")),
+                    // Final fix wave FW-80 (WB-D m8): one plain text, no Debug dump.
+                    _ => DocLoad::Failed(UNEXPECTED_REPLY.to_owned()),
                 };
                 self.fill_doc(id, load);
                 Some(vec![])

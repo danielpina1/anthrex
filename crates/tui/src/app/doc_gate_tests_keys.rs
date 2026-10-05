@@ -49,7 +49,10 @@ fn an_approve_names_the_version_its_page_showed() {
     let mut edited = design_run(DocGateKind::Spec);
     edited.doc_gate.as_mut().unwrap().version = 3;
     deliver(&mut app, edited);
-    app.screens_tick(Instant::now());
+    let load = app.screens_tick(Instant::now());
+    let [(load, RunRequest::ShowDoc { .. })] = sent(&load)[..] else {
+        panic!("v3 is asked for: {load:?}");
+    };
     assert_eq!(screen(&app).version, 3, "the screen follows the gate");
     let effects = app.on_key(key('y'));
     assert_eq!(
@@ -72,6 +75,25 @@ fn an_approve_names_the_version_its_page_showed() {
         screen(&app).message,
         Some((Tone::Refused, refusal.to_owned()))
     );
+    // Final fix wave FW-54 (T17 carry 2): v3's text is still loading, so `a` waits for
+    // it, as `e` does: no page, nothing sent.
+    assert!(app.on_key(key('a')).is_empty());
+    assert!(app.modal.is_none());
+    assert_eq!(
+        screen(&app).message,
+        Some((
+            Tone::Note,
+            "the document is not loaded; a approves it once it is".to_owned()
+        ))
+    );
+    let v3 = crate::ui::doc_gate::tests::view(proto::DocKind::Spec, 3, "# Reset v3\n");
+    reply(
+        &mut app,
+        RunReply::Doc {
+            doc: Box::new(v3),
+            request_id: Some(load),
+        },
+    );
     app.on_key(key('a'));
     assert_eq!(
         confirm_message(&app),
@@ -93,8 +115,27 @@ fn a_closed_gate_leaves_only_q_and_esc() {
     planning.state = proto::RunState::Planning;
     let mut at_plan = design_run(DocGateKind::Plan);
     at_plan.doc_gate.as_mut().unwrap().version = 1;
+    // Final fix wave FW-55 (T17 carry 3): a document long enough to scroll, so the
+    // `j` below is refused for the closed gate, not for a short page.
+    let long: String = (1..=120).map(|i| format!("line {i}\n")).collect();
     for (what, run) in [("closed", planning), ("another gate", at_plan)] {
         let mut app = opened(DocGateKind::Spec, 120, 40);
+        if let Some(s) = app.doc_screen_mut() {
+            s.doc = DocLoad::Ready(Box::new(crate::ui::doc_gate::tests::view(
+                proto::DocKind::Spec,
+                2,
+                &long,
+            )));
+        }
+        // The body the last frame drew, as the renderer reports it.
+        app.set_body_area(ratatui::layout::Rect::new(0, 0, 120, 39));
+        app.on_key(key('j'));
+        assert_eq!(
+            screen(&app).scroll,
+            1,
+            "{what}: the page scrolls while open"
+        );
+        app.on_key(key('k'));
         deliver(&mut app, run);
         assert!(
             sent(&app.screens_tick(Instant::now())).is_empty(),
@@ -117,6 +158,11 @@ fn a_closed_gate_leaves_only_q_and_esc() {
             rows[37].starts_with("│the spec gate is closed "),
             "{what}: {rows:#?}"
         );
+        // The Review panel loads nothing for a closed gate.
+        assert!(
+            !rows.iter().any(|r| r.contains("loading")),
+            "{what}: {rows:#?}"
+        );
         let bar = rows[39].trim_end();
         assert!(
             bar.starts_with(" REVIEW ") && bar.ends_with("  esc close"),
@@ -133,9 +179,43 @@ fn a_closed_gate_leaves_only_q_and_esc() {
     let mut app = opened(DocGateKind::Spec, 120, 40);
     let mut gone = design_run(DocGateKind::Spec);
     gone.doc_gate = None;
-    deliver(&mut app, gone);
+    deliver(&mut app, gone.clone());
     app.on_key(code(KeyCode::Esc));
     assert!(app.screen.is_none());
+    // Final fix wave FW-56 (T17 carry 4): in a view (the findings here), Esc first goes
+    // back to the document, and the hint says so.
+    let mut app = opened(DocGateKind::Spec, 120, 40);
+    app.on_key(key('f'));
+    deliver(&mut app, gone);
+    let bar = rows(&app, 120, 40)[39].trim_end().to_owned();
+    assert!(bar.ends_with("  esc back"), "{bar:?}");
+    app.on_key(code(KeyCode::Esc));
+    assert_eq!(screen(&app).pane, DocPane::Document);
+    let bar = rows(&app, 120, 40)[39].trim_end().to_owned();
+    assert!(bar.ends_with("  esc close"), "{bar:?}");
+}
+
+/// Final fix wave FW-80 (WB-D m8): a reply to a `ShowDoc` that is neither the document
+/// nor a refusal is shown as one plain text, never as a Debug dump.
+#[test]
+fn an_unexpected_show_doc_reply_is_plain() {
+    let mut app = app_with(design_run(DocGateKind::Spec), 120, 40);
+    let effects = app.open_doc_gate(RUN_ID);
+    let [(id, _)] = &sent(&effects)[..] else {
+        panic!("{effects:?}");
+    };
+    reply(
+        &mut app,
+        RunReply::Done {
+            request: "run show".into(),
+            message: "ok".into(),
+            request_id: Some(*id),
+        },
+    );
+    assert_eq!(
+        screen(&app).doc,
+        DocLoad::Failed("unexpected reply from daemon".to_owned())
+    );
 }
 
 /// Review m3: the keys the client refuses itself say why on the message line, send

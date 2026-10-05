@@ -65,9 +65,13 @@ fn gate_of<'a>(app: &'a App, s: &DocGateScreen) -> Option<&'a DocGateInfo> {
 /// while the orchestrator revises, scrolling and `esc` in a view.
 pub(crate) fn hints(app: &App, s: &DocGateScreen) -> Vec<Hint> {
     let esc = hint("esc", "close", u8::MAX);
-    // Ruling T17-2: a closed gate leaves only `q` and Esc.
+    // Ruling T17-2: a closed gate leaves only `q` and Esc; in a view, Esc first goes
+    // back to the document (final fix wave FW-56).
     if app.doc_gate_closed().is_some() {
-        return vec![esc];
+        return match s.pane {
+            DocPane::Document => vec![esc],
+            _ => vec![hint("esc", "back", u8::MAX)],
+        };
     }
     if s.pane != DocPane::Document {
         return vec![hint("j/k", "scroll", 6), hint("esc", "back", u8::MAX)];

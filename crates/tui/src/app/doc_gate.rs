@@ -276,7 +276,15 @@ impl App {
             vec![]
         };
         match c {
-            // Ruling T17-1: the approve names the version its page shows.
+            // Ruling T17-1: the approve names the version its page shows, once that
+            // version's text has loaded (final fix wave FW-54), as `e` waits for it.
+            'a' if self.doc_screen().and_then(|s| s.doc.ready()).is_none() => {
+                self.doc_message(
+                    Tone::Note,
+                    "the document is not loaded; a approves it once it is",
+                );
+                vec![]
+            }
             'a' => confirm(
                 self,
                 DocGateAction::Approve {
