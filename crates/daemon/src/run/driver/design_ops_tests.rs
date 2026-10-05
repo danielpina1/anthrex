@@ -157,7 +157,7 @@ async fn the_pack_reads_the_reports_and_the_previous_spec_off_the_engine() {
 
 /// Ruling T15-1: a previous run that iterated is carried as round 1's spec then each
 /// approved amendment, each read against its index entry; one that no longer matches
-/// is left out, round 1's spec staying.
+/// is a line saying so, round 1's spec staying.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_pack_reads_round_ones_spec_and_each_amendment() {
     let rig = Rig::new(brainstorming).await;
@@ -197,7 +197,12 @@ async fn the_pack_reads_round_ones_spec_and_each_amendment() {
     std::fs::write(&path, amendment.replace("links", "pages")).unwrap();
     let pack = built(&rig).await;
     assert!(pack.contains("R1 Tokens expire."), "{pack}");
-    assert!(!pack.contains("amendment"), "{pack}");
+    assert!(!pack.contains("R2 The app opens links."), "{pack}");
+    // Ruling T15-11 (N4): its place says so.
+    assert!(
+        pack.contains("/prev/design/spec-v2.md: could not be read back"),
+        "{pack}"
+    );
 }
 
 /// Ruling T8-2: the pack reads exactly the inputs frozen when the brainstormers were

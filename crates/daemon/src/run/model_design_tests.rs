@@ -218,6 +218,8 @@ fn the_state_survives_save_and_load() {
             // Task M9.6.10: the cycle the review belongs to, and its runtime.
             after: 1,
             same_runtime: true,
+            // Ruling T15-9: a dropped round's review is kept, marked.
+            dropped: true,
         }],
         versions: vec![
             version(DocKind::Brainstorm, 1),

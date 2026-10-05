@@ -67,12 +67,13 @@ pub struct Earlier {
 }
 
 /// One approved amendment of [`Earlier`]: its round, where it is, and its text (`None`
-/// once the pack's cap cut it, [`pack`]).
+/// once the pack's cap cut it, [`pack`], or when it could not be read back, `unread`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EarlierText {
     pub round: u32,
     pub path: PathBuf,
     pub text: Option<String>,
+    pub unread: bool,
 }
 
 /// The pack, at most [`PACK_MAX`] bytes. Ruling T15-1: over it, the earlier spec's
@@ -118,7 +119,7 @@ fn pack_uncapped(inputs: &PackInputs) -> String {
 
 /// Decision 30 and ruling T15-1: the earlier spec's block: round 1's spec, then each
 /// approved amendment under its own heading, each with its Goal and Requirements
-/// sections; an amendment the cap cut is a note.
+/// sections; an amendment the cap cut, or one that could not be read back, is a note.
 fn earlier_block(earlier: &Earlier) -> String {
     let whose = if earlier.own { "this" } else { "the previous" };
     let path = safe_text::one_line(&earlier.path.display().to_string());
@@ -132,6 +133,10 @@ fn earlier_block(earlier: &Earlier) -> String {
                 block.push_str(&format!("\n  Its round {k} amendment, {path}"));
                 block.push_str(&sections(text));
             }
+            // Ruling T15-11 (N4): never a silent gap.
+            None if amendment.unread => block.push_str(&format!(
+                "\n  Its round {k} amendment, {path}: could not be read back"
+            )),
             None => block.push_str(&format!(
                 "\n  Its round {k} amendment, {path}: cut to fit the pack"
             )),

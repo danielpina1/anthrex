@@ -321,6 +321,7 @@ fn a_chains_earlier_spec_is_round_ones_then_each_amendment() {
             round: 2,
             path: amendments[0].2.clone(),
             text: Some(amendment_text()),
+            unread: false,
         }],
     });
     let text = pack(&inputs);
@@ -392,6 +393,7 @@ fn the_cap_cuts_the_oldest_amendments_first_with_a_note() {
                 round: k,
                 path: format!("/s/spec-v{k}.md").into(),
                 text: Some(filler(k)),
+                unread: false,
             })
             .collect(),
     });
@@ -409,4 +411,33 @@ fn the_cap_cuts_the_oldest_amendments_first_with_a_note() {
     assert!(text.contains("Round 4."));
     assert!(!text.contains("[cut:"), "nothing else is cut");
     assert!(text.contains("R1 Tokens expire."), "round 1's spec stays");
+}
+
+/// Ruling T15-11 (N4): an amendment that could not be read back leaves a line in its
+/// place, not a silent gap.
+#[test]
+fn an_unread_amendment_leaves_a_line() {
+    let mut inputs = inputs();
+    let amendment = |k: u32, text: Option<String>| EarlierText {
+        round: k,
+        path: format!("/s/spec-v{k}.md").into(),
+        unread: text.is_none(),
+        text,
+    };
+    inputs.earlier = Some(Earlier {
+        path: "/s/spec-v1.md".into(),
+        text: spec_text(),
+        own: false,
+        amendments: vec![amendment(2, None), amendment(3, Some(amendment_text()))],
+    });
+    let text = pack(&inputs);
+    let at = |needle: &str| {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("{needle} in\n{text}"))
+    };
+    assert!(
+        at("  Its round 2 amendment, /s/spec-v2.md: could not be read back\n")
+            < at("  Its round 3 amendment, /s/spec-v3.md\n")
+    );
+    assert!(!text.contains("cut to fit"), "{text}");
 }

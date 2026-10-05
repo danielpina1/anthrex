@@ -230,6 +230,11 @@ pub struct DocReviewRecord {
     /// Its reviewer ran on the orchestrator's own runtime (no peer installed).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub same_runtime: bool,
+    /// Ruling T15-9: asked in a round since dropped (rejected, or cancelled before its
+    /// plan's approval); kept, so no review number is reused, and skipped by every
+    /// cycle's reader.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dropped: bool,
 }
 
 impl DesignState {

@@ -82,6 +82,7 @@ mod design_review_agent;
 mod design_review_fixture;
 mod design_rounds;
 mod design_rounds_commit;
+mod design_rounds_fix2;
 mod design_rounds_fixes;
 mod design_rounds_fixture;
 mod design_rounds_halts;

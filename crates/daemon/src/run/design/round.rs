@@ -43,8 +43,8 @@ pub struct DesignRound {
     /// The ids new or changed in its approved amendment, in the amendment's order.
     #[serde(default)]
     pub amended: Vec<String>,
-    /// The document reviews asked before it: a dropped round's own are removed (ruling
-    /// T15-2, m7).
+    /// The document reviews asked before it: a dropped round's own are marked dropped
+    /// (rulings T15-2 and T15-9).
     #[serde(default)]
     pub reviews_before: usize,
 }

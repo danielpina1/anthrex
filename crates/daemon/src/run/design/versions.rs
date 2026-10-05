@@ -74,7 +74,15 @@ impl DesignState {
 
     /// Ruling T5-1: `kind`'s review draft for review `k` (`get_doc`'s `draft`).
     pub fn draft(&self, kind: DocKind, k: u32) -> Option<&DocVersion> {
-        (self.versions.iter()).find(|v| v.kind == kind && v.draft_review == Some(k))
+        // Ruling T15-9: the latest entry with that number.
+        (self.versions.iter()).rfind(|v| v.kind == kind && v.draft_review == Some(k))
+    }
+
+    /// Ruling T15-9: the number of `kind`'s next review: one past the highest review
+    /// draft stored, so a dropped round's number is never taken again.
+    pub fn next_review(&self, kind: DocKind) -> u32 {
+        let drafts = (self.versions.iter()).filter(|v| v.kind == kind);
+        drafts.filter_map(|v| v.draft_review).max().unwrap_or(0) + 1
     }
 
     /// The latest brainstorm draft from `label` (`get_doc`'s `from`).

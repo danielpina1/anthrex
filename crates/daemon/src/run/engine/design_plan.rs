@@ -163,8 +163,7 @@ fn start_review(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Result<(), Str
         return Ok(());
     };
     let text = plan_text(run);
-    let reviews = (design.reviews.iter()).filter(|r| r.doc == DocKind::Plan);
-    let k = reviews.count() as u32 + 1;
+    let k = design.next_review(DocKind::Plan);
     // Task M9.6.15: the review belongs to the plan's versions before this round's.
     let cycle = design.gate_versions(DocKind::Plan);
     let reason = format!("draft for review {k}");
@@ -416,5 +415,6 @@ pub(crate) fn digest(run: &Run) -> Option<Value> {
 /// had the gate versions it had before this round.
 fn round_review(design: &DesignState) -> Option<&DocReviewRecord> {
     let cycle = design.gate_versions(DocKind::Plan) - design.round_versions(DocKind::Plan);
-    (design.reviews.iter().rev()).find(|r| r.doc == DocKind::Plan && r.after == cycle)
+    // Ruling T15-9: never a dropped round's.
+    (design.reviews.iter().rev()).find(|r| r.doc == DocKind::Plan && r.after == cycle && !r.dropped)
 }

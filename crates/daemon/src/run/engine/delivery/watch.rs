@@ -190,7 +190,9 @@ fn adopt(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) -> bool {
     let (Some(remote), Some(head)) = (due, run.stage_head(n).map(str::to_string)) else {
         return false;
     };
-    if !free(run, n, now) {
+    // Milestone 9.6 ruling T15-11: never while a later round's documents commit, made
+    // from a stage's head, is due.
+    if !free(run, n, now) || crate::run::engine::design_commit::due(run) {
         return false;
     }
     let branch = remote_branch(run, n);

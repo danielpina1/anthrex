@@ -226,7 +226,7 @@ fn an_orchestrator_started_round_or_goal_stops_at_every_gate() {
 
 /// Round 2 of a `pr` run whose stage 1's PR is open, at its plan gate, approved: the
 /// round's commit asked (`approved_round`).
-fn pr_round_approved() -> (Fixture, u64, DocsCommitSpec) {
+pub(super) fn pr_round_approved() -> (Fixture, u64, DocsCommitSpec) {
     let mut fx = design_complete();
     let head = fx.run().run_head.clone();
     let run = fx.run_mut();

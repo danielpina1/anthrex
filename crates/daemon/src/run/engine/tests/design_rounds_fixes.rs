@@ -88,7 +88,11 @@ fn assert_dropped(fx: &Fixture, before: &crate::run::design::round::DesignRound)
     assert!(design.round.is_none());
     assert!(design.phase_started.is_none(), "no clock");
     assert!(!design.commit_due);
-    assert_eq!(design.reviews.len(), before.reviews_before, "m7");
+    // m7 and ruling T15-9: the round's reviews are kept, marked dropped.
+    let dropped: Vec<bool> = design.reviews.iter().map(|r| r.dropped).collect();
+    let mut expected = vec![false; before.reviews_before];
+    expected.resize(design.reviews.len(), true);
+    assert_eq!(dropped, expected, "m7");
     let live = (design.brainstormers.iter().chain(&design.reviewer))
         .filter(|a| a.state == crate::run::design::state::DesignAgentState::Running)
         .count();
@@ -129,7 +133,8 @@ fn cancelling_a_round_while_it_specifies_drops_the_round() {
 fn cancelling_a_round_at_its_plan_gate_drops_the_round_and_its_review() {
     let mut fx = round_plan_gate(json!([round_task("t2", &["R2", "R3"])]));
     let before = round_of(&fx);
-    assert!(fx.run().orch.design.as_ref().unwrap().reviews.len() > before.reviews_before);
+    let reviews = fx.run().orch.design.as_ref().unwrap().reviews.len();
+    assert!(reviews > before.reviews_before);
     let now = fx.now;
     crate::run::engine::merge::halt(fx.run_mut(), "remote stage branch moved".into(), now);
     fx.run_mut().halt_retryable = true;

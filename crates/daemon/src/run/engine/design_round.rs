@@ -116,11 +116,27 @@ fn said(mode: RoundDesign, n: u32, last: usize, questions: bool) -> Option<(Stri
     }
 }
 
-/// Decision 29 (9.3's rule): round `n`'s reject, or (ruling T15-2) its cancel, drops
-/// only the round. Its brainstormers and reviewer stop, and the design state is the
-/// approval before it again: its requirements, approved spec and sections, with no gate
-/// and no clock, and none of the round's document reviews (m7), so a later round's
-/// digest and checks never read them.
+/// Rulings T15-2 and T15-10: round `n`'s cancel. Before the round's plan is approved,
+/// with no documents commit due or landed for it, the round is dropped as a reject
+/// drops it ([`rejected`]); after, only its design agents stop, and the approval, the
+/// commit state and the reviews stay, so an in-flight commit's reply is still recorded.
+pub(super) fn cancelled(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
+    let approved = run.current_round().is_some_and(|r| r.approved_at.is_some());
+    let k = run.round();
+    let committing =
+        (run.orch.design.as_ref()).is_some_and(|d| d.commit_due || d.committed_round >= k);
+    if approved || committing {
+        return design_agents::halt_all(run, reason, fx);
+    }
+    rejected(run, reason, fx);
+}
+
+/// Decision 29 (9.3's rule): round `n`'s reject, or (ruling T15-10) its cancel before its
+/// plan's approval, drops only the round. Its brainstormers and reviewer stop, and the
+/// design state is the approval before it again: its requirements, approved spec and
+/// sections, with no gate and no clock. The round's document reviews are kept, marked
+/// dropped (ruling T15-9), so a later round's digest and checks never read them and no
+/// review number is reused.
 pub(super) fn rejected(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
     design_agents::halt_all(run, reason, fx);
     let Some(design) = run.orch.design.as_mut() else {
@@ -137,7 +153,10 @@ pub(super) fn rejected(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
     design.phase_started = None;
     design.commit_due = false;
     design.spec_unread = false;
-    design.reviews.truncate(round.reviews_before);
+    // Ruling T15-9: kept, so no review number is reused, and skipped as dropped.
+    for review in design.reviews.iter_mut().skip(round.reviews_before) {
+        review.dropped = true;
+    }
     // A halt in the dropped round no longer returns to its phase or gate.
     design.halted_from = None;
 }
@@ -163,7 +182,8 @@ pub(super) fn halting(run: &mut Run, now: u64) {
                 | RunState::AwaitingApproval
         )
     );
-    if design.halted_from.is_some() || !before {
+    // Ruling T15-12: an `off` round halts as 9.3's.
+    if design.halted_from.is_some() || !before || design.round_off() {
         return;
     }
     design_spend::stop_clock(run, now);

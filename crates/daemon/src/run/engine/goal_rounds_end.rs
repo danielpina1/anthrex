@@ -23,9 +23,11 @@ pub const ROUND_CANCELLED: &str = "the round was cancelled";
 /// started with approve at once and the current round is the user's; a round the
 /// orchestrator started always waits for the user.
 pub(super) fn skips_gate(run: &Run) -> bool {
-    // Milestone 9.6 decision 6: `--yes` skips none of a design run's gates.
+    // Milestone 9.6 decision 6: `--yes` skips none of a design run's gates; ruling T15-8:
+    // an `off` round's is 9.3's, so the round's mode decides.
+    let off = (run.orch.design.as_ref()).is_some_and(|d| d.round_off());
     run.orch.yes
-        && run.design_mode != proto::DesignMode::Full
+        && (run.design_mode != proto::DesignMode::Full || off)
         && run
             .current_round()
             .is_none_or(|r| r.origin == RoundOrigin::User)
@@ -157,9 +159,9 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
         o.plan_submitted = true;
     }
     planners::halt_all(run, ROUND_CANCELLED, now, fx);
-    // Milestone 9.6 ruling T15-2: its design agents too, and the approval before it, as
-    // a reject leaves them.
-    super::design_round::rejected(run, ROUND_CANCELLED, fx);
+    // Milestone 9.6 rulings T15-2 and T15-10: its design agents too, and before its
+    // plan's approval the approval before it, as a reject leaves them.
+    super::design_round::cancelled(run, ROUND_CANCELLED, fx);
     if delivery::pr(run) {
         unused_stages(run, now);
     }

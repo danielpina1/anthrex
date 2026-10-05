@@ -75,7 +75,7 @@ pub(in crate::run::engine) fn submit_spec(
     };
     let cycle = design.gate_versions(DocKind::Spec);
     let reviews: Vec<&DocReviewRecord> = (design.reviews.iter())
-        .filter(|r| r.doc == DocKind::Spec && r.after == cycle)
+        .filter(|r| r.doc == DocKind::Spec && r.after == cycle && !r.dropped)
         .collect();
     // At the spec gate the orchestrator revises: whether the user asked for a review,
     // and why the gate reopened (ruling T10-4).
@@ -111,8 +111,7 @@ fn draft(
     fx: &mut Vec<Effect>,
 ) -> Result<Value, String> {
     let text = checked_text(run, DocKind::Spec, &doc.text, amends(run, doc), false)?;
-    let reviews = (run.orch.design.iter()).flat_map(|d| &d.reviews);
-    let k = reviews.filter(|r| r.doc == DocKind::Spec).count() as u32 + 1;
+    let k = (run.orch.design.as_ref()).map_or(1, |d| d.next_review(DocKind::Spec));
     let reason = format!("draft for review {k}");
     let mut new = NewDoc::new(DocKind::Spec, DocAuthor::Orchestrator, &reason, &text);
     new.draft_review = Some(k);
@@ -326,7 +325,7 @@ pub(crate) fn digest(run: &Run) -> Option<Value> {
     let cycle = design.gate_versions(DocKind::Spec);
     let review = (design.reviews.iter())
         .rev()
-        .find(|r| r.doc == DocKind::Spec && r.after == cycle)?;
+        .find(|r| r.doc == DocKind::Spec && r.after == cycle && !r.dropped)?;
     let writing = matches!(run.state, RunState::Specifying)
         || design_gate::waiting(run).is_some_and(|g| g.kind == DocGateKind::Spec);
     if !writing {

@@ -48,17 +48,17 @@ async fn earlier_read(run_id: &str, earlier: EarlierSpec) -> Option<Earlier> {
         amendments: Vec::new(),
     };
     for a in earlier.amendments {
-        match stored_text(a.path.clone(), a.version).await {
-            Some(text) => read.amendments.push(EarlierText {
-                round: a.round,
-                path: a.path,
-                text: Some(text),
-            }),
-            None => {
-                let k = a.round;
-                tracing::warn!(run = %run_id, "the round {k} amendment is left out");
-            }
+        let text = stored_text(a.path.clone(), a.version).await;
+        if text.is_none() {
+            let k = a.round;
+            tracing::warn!(run = %run_id, "the round {k} amendment could not be read back");
         }
+        read.amendments.push(EarlierText {
+            round: a.round,
+            path: a.path,
+            unread: text.is_none(),
+            text,
+        });
     }
     Some(read)
 }

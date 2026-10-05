@@ -70,6 +70,7 @@ pub(in crate::run::engine) fn queue(run: &mut Run, doc: DocKind, (k, after): (u3
         failed: None,
         after,
         same_runtime,
+        dropped: false,
     });
     design.reviewer = Some(DesignAgent {
         label: label.clone(),
