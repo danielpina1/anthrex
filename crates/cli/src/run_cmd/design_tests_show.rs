@@ -64,3 +64,39 @@ fn show_heads_a_review_draft_by_its_review() {
     );
     assert_eq!(DocKind::Spec, first.kind);
 }
+
+/// The W3 carry: `run show --findings` of a review draft prints that review's findings
+/// (the daemon sends them), or `no findings yet` while it has given none; a gate
+/// version with none still prints `findings: none`.
+#[test]
+fn show_prints_a_review_drafts_findings_or_none_yet() {
+    let mut info = design_run();
+    info.doc_gate = None;
+    let draft = DocView {
+        version: 0,
+        draft_review: Some(1),
+        findings: Vec::new(),
+        ..spec_v2()
+    };
+    let (out, _) = show_text(&info, &draft, (false, true), true);
+    assert_eq!(out, "# Reset\n=== no findings yet ===\n");
+    let finding = proto::DocFinding {
+        id: "F1".into(),
+        severity: proto::DocSeverity::Blocking,
+        place: "R1".into(),
+        text: "The link's lifetime is missing.".into(),
+    };
+    let reviewed = DocView {
+        findings: vec![(finding, None)],
+        ..draft
+    };
+    let (out, _) = show_text(&info, &reviewed, (false, true), true);
+    let want = "# Reset\n=== findings: 1 ===\nF1 blocking at R1: The link's lifetime is missing.\n  no answer\n";
+    assert_eq!(out, want);
+    let gate = DocView {
+        findings: Vec::new(),
+        ..spec_v2()
+    };
+    let (out, _) = show_text(&info, &gate, (false, true), true);
+    assert!(out.ends_with("=== findings: none ===\n"), "{out}");
+}

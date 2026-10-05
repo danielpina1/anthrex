@@ -207,11 +207,11 @@ fn e2e_rethink() {
     for label in LABELS {
         h.brainstormer(label, 2, Draft::Text(&second(label)));
     }
-    // The orchestrator reads each round's drafts from their wake-up (ruling T20-1: a
-    // wake note is pasted once, so a duplicate of the first can never pass for the
-    // second). The second is waited for by reading, never by polling `run_status`: a
-    // poll that lands after the drafts would clear their note (the final fix wave's
-    // flake fix).
+    // The orchestrator reads each round's drafts from their wake-up. The second is
+    // waited for by reading, never by polling `run_status`: a poll that lands after the
+    // drafts would clear their note (the final fix wave's flake fix). This run does not
+    // reproduce ruling T20-1's duplicate paste (it passes with the dedup disabled); the
+    // daemon's `driver/wake_notes_tests.rs` pins that.
     let report_v2 = report_v2();
     let mut steps = ask(None);
     steps.extend(merge(&labels(), &report(LABELS)));
@@ -230,8 +230,8 @@ fn e2e_rethink() {
     let drafts = (log.iter()).filter(|l| *l == "the brainstorm drafts are in");
     assert_eq!(drafts.count(), 2, "{log:#?}");
     wait_passed(&h, 1);
-    // Ruling T20-1: each round's drafts-in note reached the orchestrator once. The
-    // script's reads record every message it took, the passed-over ones included.
+    // Each round's drafts-in note reached the orchestrator once here. The script's
+    // reads record every message it took, the passed-over ones included.
     let pasted = h.io_lines(ORCH, "stdin");
     let notes = (pasted.iter()).filter(|l| l.contains(DRAFTS_IN));
     assert_eq!(notes.count(), 2, "{pasted:#?}");

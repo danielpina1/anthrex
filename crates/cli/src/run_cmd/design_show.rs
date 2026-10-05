@@ -9,8 +9,9 @@ use crate::run_cmd::status::printable;
 /// `run show`'s two texts. stdout: the version's text exactly as stored (so it can be
 /// edited and sent back with `edit-doc`), then with `--diff` the line diff against the
 /// previous version and with `--findings` its review's findings, each with the
-/// orchestrator's answer; through `printable` only when stdout is a `terminal` (ruling
-/// T16-3: piped or redirected, the bytes as stored). stderr, always through
+/// orchestrator's answer (a review draft's: that review's, or `no findings yet`);
+/// through `printable` only when stdout is a `terminal` (ruling T16-3: piped or
+/// redirected, the bytes as stored). stderr, always through
 /// `printable`: the header (`<Kind> · run <id> · v<n> of <m> · <reason>`, or a review
 /// draft's `<Kind> · run <id> · draft r<k>`), and when the version is the one waiting
 /// at its gate, the gate's change summary, why it went unreviewed, its disputed
@@ -44,7 +45,11 @@ pub(in crate::run_cmd) fn show_text(
         }
     }
     if findings {
-        out.push_str(&findings_text(&doc.findings));
+        // The W3 carry: a review draft's are its review's, none until it gives some.
+        match doc.draft_review.is_some() && doc.findings.is_empty() {
+            true => out.push_str("=== no findings yet ===\n"),
+            false => out.push_str(&findings_text(&doc.findings)),
+        }
     }
     let out = if terminal { printable(&out) } else { out };
     (out, printable(&header(info, doc)))
