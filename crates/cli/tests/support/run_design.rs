@@ -7,8 +7,8 @@
 //!   ended without submitting (ruling T8-7) is a new session, which claims `n + 1`. A
 //!   Claude one's nudge arrives on the same session's stdin (ruling T8-4).
 //! - **The orchestrator** runs [`orch_design_steps`] (`run_design_orch.rs`, re-exported
-//!   here), gate by gate, each step waiting on the wake note that follows the user's
-//!   decision.
+//!   here), gate by gate, each step waiting on the digest's state that follows the
+//!   user's decision or the review (task M9.6.20).
 //! - **The fixtures** pass the real template, numbering and brief checks of task M9.6.4
 //!   (`run_design_fixtures.rs` holds the test that says so).
 //!

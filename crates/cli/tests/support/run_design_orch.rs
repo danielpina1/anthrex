@@ -2,13 +2,18 @@
 //! scripted orchestrator's design path, gate by gate, and the run harness's helpers for
 //! a design run: its configuration, the agents' scripts, the answer to the
 //! orchestrator's question, and the waits on and approvals of each document gate.
+//!
+//! The scripted orchestrator waits for each user decision and each review on the
+//! digest's state (`until` on `run_status`, task M9.6.20), keeping its turn open; it
+//! reads a message only for the typed answer and for the brainstorm drafts' wake, which
+//! no digest field shows.
 
 use std::time::Duration;
 
 use proto::{DocGateKind, RunInfo};
 use serde_json::{Value, json};
 
-use super::orch_script::{call, edit_plan, marker, passed, prompt, read};
+use super::orch_script::{call, edit_plan, expect, marker, passed, prompt, read, until};
 use super::run_design::{
     ANSWER, DESIGN_LINES, DRAFTS_IN, Draft, Findings, QUESTION, SPEC, brainstormer_name,
     brainstormer_script, plan_edits, report, reviewer_name, reviewer_script,
@@ -70,9 +75,18 @@ pub fn ask(answer: Option<&str>) -> Vec<Value> {
     steps
 }
 
-/// Rule 49: once both drafts are in, read each and submit the merged `report`.
+/// Rule 49: once both drafts are in (their wake-up read: no digest field shows them),
+/// read each and submit the merged `report`.
 pub fn merge(labels: &[String; 2], report: &str) -> Vec<Value> {
     let mut steps = vec![read(Some(DRAFTS_IN))];
+    steps.extend(submit_merged(labels, report));
+    steps
+}
+
+/// Rule 49's reads and submit: each draft of `labels` with `get_doc`, then the merged
+/// `report`.
+pub fn submit_merged(labels: &[String; 2], report: &str) -> Vec<Value> {
+    let mut steps = Vec::new();
     for label in labels {
         let args = json!({"kind": "brainstorm_draft", "from": label});
         steps.push(call("get_doc", args));
@@ -84,19 +98,35 @@ pub fn merge(labels: &[String; 2], report: &str) -> Vec<Value> {
     steps
 }
 
-/// Waits for the wake note that the user approved `kind` v`n`.
-pub fn approved(kind: &str, n: u32) -> Value {
-    read(Some(&format!("the user approved the {kind} v{n}")))
+/// Waits, the turn kept open, until the user approved the `kind` gate: the phase after
+/// it is the digest's gate state (`brainstorm` → `specifying`, `spec` → `planning`,
+/// `plan` → `approved`). A wait on state, never on the wake note's text (task M9.6.20,
+/// from the task 19 review): a `run_status` read clears the note it covers.
+pub fn approved(kind: &str) -> Value {
+    let next = match kind {
+        "brainstorm" => "specifying",
+        "spec" => "planning",
+        _ => "approved",
+    };
+    until("/gate/state", json!(next), ORCH_WAIT)
 }
 
-/// Rule 50: the spec sent to review `k` (`ready: false`), then its findings' wake.
+/// Waits, the turn kept open, until the user asked for changes to (or went back to)
+/// the open gate's document with `note`: the digest's `/gate/doc_gate/revising`.
+pub fn revising(note: &str) -> Value {
+    until("/gate/doc_gate/revising", json!(note), ORCH_WAIT)
+}
+
+/// Rule 50: the spec sent to review `k` (`ready: false`), then the wait, on state, for
+/// that review's findings: the digest's spec review `k`, no longer running.
 pub fn spec_for_review(text: &str, k: u32) -> Vec<Value> {
     vec![
         call(
             "submit_doc",
             json!({"kind": "spec", "text": text, "ready": false}),
         ),
-        read(Some(&format!("spec review {k} is in"))),
+        until("/gate/spec_review/running", json!(false), ORCH_WAIT),
+        expect("/gate/spec_review/review", json!(k)),
     ]
 }
 
@@ -109,11 +139,13 @@ pub fn spec_ready(text: &str, responses: &[Value]) -> Value {
 }
 
 /// Rule 51: the plan's tasks submitted, which sends the plan to its review, then the
-/// findings' wake.
+/// wait, on state, for the review's findings: the digest's plan review, no longer
+/// running.
 pub fn plan_for_review(edits: Vec<Value>) -> Vec<Value> {
     vec![
         edit_plan(edits, json!({"submit": true})),
-        read(Some("plan review is in")),
+        expect("/awaiting_review", json!(true)),
+        until("/gate/plan_review/running", json!(false), ORCH_WAIT),
     ]
 }
 
@@ -129,13 +161,13 @@ pub fn plan_ready(responses: &[Value]) -> Value {
 pub fn orch_design_steps(d: &OrchDesign) -> Vec<Value> {
     let mut steps = ask(d.answer.as_deref());
     steps.extend(merge(&d.labels, &d.report));
-    steps.push(approved("brainstorm", 1));
+    steps.push(approved("brainstorm"));
     steps.extend(spec_for_review(&d.spec_draft, 1));
     steps.push(spec_ready(&d.spec, &d.spec_responses));
-    steps.push(approved("spec", 1));
+    steps.push(approved("spec"));
     steps.extend(plan_for_review(d.plan.clone()));
     steps.push(plan_ready(&d.plan_responses));
-    steps.push(approved("plan", 1));
+    steps.push(approved("plan"));
     steps
 }
 

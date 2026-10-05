@@ -12,6 +12,7 @@ mod headless_support;
 use std::path::{Path, PathBuf};
 
 use daemon::headless::McpTarget;
+use daemon::scout::design_spec::BRAINSTORMER_NUDGE;
 use headless_support::*;
 use proto::AgentRole;
 use serde_json::{Value, json};
@@ -64,7 +65,7 @@ fn fake_agent_claims_brainstormer_scripts_by_label() {
     let repo = repo(dir.path());
     // Claude's turn ends without a draft, and its nudge arrives on the same process's
     // stdin (ruling T8-4): the same script goes on.
-    let nudge = json!({"read_message": {"expect": "Your turn ended without an accepted draft"}});
+    let nudge = json!({"read_message": {"expect": BRAINSTORMER_NUDGE}});
     let claude_steps = [
         print("claude 1"),
         json!({"end_turn": {}}),
@@ -113,8 +114,7 @@ fn fake_agent_claims_brainstormer_scripts_by_label() {
     let mut agent = Agent::spawn(&argv, &repo, &[]);
     agent.send(&user_message("brainstorm", CLAUDE_ID));
     agent.until(RUN, is_result);
-    let nudge = "[anthrex] Your turn ended without an accepted draft. Call submit_doc now.";
-    agent.send(&user_message(nudge, CLAUDE_ID));
+    agent.send(&user_message(BRAINSTORMER_NUDGE, CLAUDE_ID));
     agent.until(RUN, is_result);
     agent.close_stdin();
     assert!(agent.wait(RUN).success(), "{}", agent.stderr());
