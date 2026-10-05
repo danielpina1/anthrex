@@ -84,6 +84,7 @@ mod design_rounds;
 mod design_rounds_commit;
 mod design_rounds_fixes;
 mod design_rounds_fixture;
+mod design_rounds_halts;
 mod design_session_prompt;
 mod design_snapshot;
 mod detail_claims;

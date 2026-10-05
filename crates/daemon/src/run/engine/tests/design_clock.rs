@@ -28,7 +28,7 @@ fn halted_in_planning() -> Fixture {
     fx
 }
 
-fn resume_rebaselined(fx: &mut Fixture) -> Vec<Result<String, String>> {
+pub(super) fn resume_rebaselined(fx: &mut Fixture) -> Vec<Result<String, String>> {
     let reply = fx.reply();
     replies(&fx.next(EventKind::Resume {
         reply,

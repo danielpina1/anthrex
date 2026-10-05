@@ -323,29 +323,45 @@ fn phase_name(run: &Run) -> Option<&'static str> {
 pub(super) fn phase_of(run: &Run, state: RunState) -> Option<&'static str> {
     let design = run.orch.design.as_ref()?;
     match state {
+        RunState::AwaitingApproval => {
+            let gate = design.gate.as_ref().filter(|g| g.revising.is_some())?;
+            Some(gate_phase(gate.kind))
+        }
+        state => own_phase(state),
+    }
+}
+
+/// The phase whose own state `state` is.
+fn own_phase(state: RunState) -> Option<&'static str> {
+    match state {
         RunState::Brainstorming => Some("brainstorming"),
         RunState::Specifying => Some("specifying"),
         RunState::Planning => Some("planning"),
-        RunState::AwaitingApproval => {
-            let gate = design.gate.as_ref().filter(|g| g.revising.is_some())?;
-            Some(match gate.kind {
-                DocGateKind::Brainstorm => "brainstorming",
-                DocGateKind::Spec => "specifying",
-                DocGateKind::Plan => "planning",
-            })
-        }
         _ => None,
     }
 }
 
+/// The phase a design gate of `kind` belongs to.
+fn gate_phase(kind: DocGateKind) -> &'static str {
+    match kind {
+        DocGateKind::Brainstorm => "brainstorming",
+        DocGateKind::Spec => "specifying",
+        DocGateKind::Plan => "planning",
+    }
+}
+
 /// Ruling T7-1: the phase a halted design run returns to on its plain `run resume`
-/// (`halted_from`), which `rules::resume` names when it refuses `--rebaseline`.
+/// (`halted_from`), which `rules::resume` names when it refuses `--rebaseline`. Ruling
+/// T15-4: a design gate, open or revising, is its phase's.
 pub(crate) fn halted_phase(run: &Run) -> Option<&'static str> {
     if run.state != RunState::Halted {
         return None;
     }
-    let from = run.orch.design.as_ref()?.halted_from?;
-    phase_of(run, from)
+    let design = run.orch.design.as_ref()?;
+    match design.halted_from? {
+        RunState::AwaitingApproval => design.gate.as_ref().map(|g| gate_phase(g.kind)),
+        from => own_phase(from),
+    }
 }
 
 /// Decision 8, on every tick: a phase past its `phase_minutes` of unpaused wall-clock
@@ -409,6 +425,23 @@ pub(super) fn resume_phase(run: &mut Run, now: u64) -> Option<String> {
     run.halt_retryable = false;
     // DF §3.5: both brainstormers failed; they relaunch, and the clock waits for them.
     // Ruling T8-6: so does one a pack that could not be read back stopped.
+    // Ruling T15-4: back at an open gate, which waits for the user, no clock runs.
+    let open = (run.orch.design.as_ref())
+        .and_then(|d| d.gate.as_ref())
+        .filter(|g| from == RunState::AwaitingApproval && g.revising.is_none());
+    if let Some(gate) = open {
+        let kind = match gate.kind {
+            DocGateKind::Brainstorm => "brainstorm",
+            DocGateKind::Spec => "spec",
+            DocGateKind::Plan => "plan",
+        };
+        log(
+            run,
+            now,
+            format!("resumed; the run waits at its {kind} gate again"),
+        );
+        return Some(format!("run {} resumed", run.id));
+    }
     let relaunched = super::design_agents::relaunch_failed(run, now)
         || super::design_agents::awaiting_drafts(run);
     let text = match relaunched {
