@@ -3,7 +3,7 @@
 //!
 //! - **The checks.** A plan submit that would take a version (in planning, or at the
 //!   plan gate the orchestrator revises) waits for the approved spec's read-back (ruling
-//!   T10-2), then passes `coverage::check` against the approved requirements only
+//!   T10-2), then passes `coverage::check_round` against the approved requirements only
 //!   (Review focus 2): coverage, dangling `covers`, brief shape ([`refusal`]). Approval
 //!   re-checks the gate's plan ([`approve_refusal`]).
 //! - **The plan review.** The orchestrator's first passing submit stores the rendered

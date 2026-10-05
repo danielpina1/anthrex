@@ -27,6 +27,9 @@ pub fn goal_head(goal: &str) -> String {
         .collect()
 }
 
+/// Round 1's `plan.md`. Tests only (review A's M-5): the engine renders with
+/// [`render_round`].
+#[cfg(test)]
 pub fn render(run: &Run, requirements: &[Requirement]) -> String {
     render_round(run, requirements, None)
 }

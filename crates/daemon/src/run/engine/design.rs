@@ -430,11 +430,7 @@ pub(super) fn resume_phase(run: &mut Run, now: u64) -> Option<String> {
         .and_then(|d| d.gate.as_ref())
         .filter(|g| from == RunState::AwaitingApproval && g.revising.is_none());
     if let Some(gate) = open {
-        let kind = match gate.kind {
-            DocGateKind::Brainstorm => "brainstorm",
-            DocGateKind::Spec => "spec",
-            DocGateKind::Plan => "plan",
-        };
+        let kind = gate.kind.label();
         log(
             run,
             now,

@@ -16,7 +16,9 @@ use crate::run::model::Run;
 pub const BRIEF_HEADINGS: [&str; 5] =
     ["Files:", "Tests first:", "Steps:", "Acceptance:", "Verify:"];
 
-/// `None` when the plan passes, else the exact refusal.
+/// `None` when the plan passes, else the exact refusal. Tests only (review A's M-5):
+/// the engine checks with [`check_round`].
+#[cfg(test)]
 pub fn check(run: &Run, requirements: &[Requirement]) -> Option<String> {
     check_round(run, (requirements, requirements), None)
 }
@@ -40,7 +42,9 @@ pub fn check_round(
 }
 
 /// Requirement → the live tasks that cover it, in requirement order then run order:
-/// `plan.md`'s table and the gate's.
+/// `plan.md`'s table and the gate's. Tests only (review A's M-5): the engine reads
+/// [`table_in`].
+#[cfg(test)]
 pub fn table(run: &Run, requirements: &[Requirement]) -> Vec<(String, Vec<String>)> {
     table_in(run, requirements, None)
 }
