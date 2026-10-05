@@ -22,11 +22,10 @@ use super::super::{
     Effect, OpKind, OpResult, ReplyId, ScoutEnd, design_gate, emit_op, history, next_op, wake,
 };
 use super::relaunch::{self, Agent};
-use crate::decider::DECIDER_CAPS;
 use crate::run::design::state::{DesignAgent, DesignAgentState, DesignState, DocReviewRecord};
 use crate::run::model::Run;
 use crate::run::orch::roles;
-use crate::run::orch::roles::lists::review_pick;
+use crate::run::orch::roles::lists::{UNSAVED_REVIEWER, review_pick};
 use crate::run::orch::tools::{OrchCall, parse_call};
 use crate::scout::design_spec::{DesignAgentSpec, reviewer_spec};
 
@@ -45,12 +44,37 @@ fn review(design: &DesignState) -> Option<&DocReviewRecord> {
     design.reviews.last()
 }
 
+/// The reviewer's route and, on the orchestrator's own runtime, why (decision 10,
+/// [`review_pick`]), asked before its draft is stored. Ruling WB-A-W2: when no installed
+/// runtime can run it unsaved, the run halts with [`UNSAVED_REVIEWER`], the error.
+pub(in crate::run::engine) fn route(run: &mut Run, now: u64) -> Result<Pick, String> {
+    review_pick(run, &crate::decider::caps()).ok_or_else(|| {
+        super::super::merge::halt(run, UNSAVED_REVIEWER.to_string(), now);
+        UNSAVED_REVIEWER.to_string()
+    })
+}
+
+/// Ruling WB-A-W2 for the plan's review: `edit_plan` works on a copy of the run and
+/// drops it with a refusal, so the halt [`route`] made on the copy is made on the run.
+pub(in crate::run::engine) fn refused(run: &mut Run, text: &str, now: u64) {
+    if text == UNSAVED_REVIEWER && run.state != RunState::Halted {
+        super::super::merge::halt(run, text.to_string(), now);
+    }
+}
+
+/// A reviewer's route and why it is the orchestrator's own ([`route`]).
+pub(in crate::run::engine) type Pick = (proto::Route, Option<String>);
+
 /// Review `k` of `doc`, asked when the document had `after` gate versions: its record,
-/// and its reviewer queued for a reader slot (decision 10's route, [`review_pick`]). A
-/// reviewer on the orchestrator's own runtime is said so in the log, with why (fix
-/// round 1, m1).
-pub(in crate::run::engine) fn queue(run: &mut Run, doc: DocKind, (k, after): (u32, u32), now: u64) {
-    let (route, why) = review_pick(run, &DECIDER_CAPS);
+/// and its reviewer queued for a reader slot on `pick` ([`route`]). A reviewer on the
+/// orchestrator's own runtime is said so in the log, with why (fix round 1, m1).
+pub(in crate::run::engine) fn queue(
+    run: &mut Run,
+    doc: DocKind,
+    (k, after): (u32, u32),
+    (route, why): Pick,
+    now: u64,
+) {
     let same_runtime = why.is_some();
     let label = label(doc, k);
     let round = run.round();

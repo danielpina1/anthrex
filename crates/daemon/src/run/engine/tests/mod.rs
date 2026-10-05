@@ -98,6 +98,7 @@ mod design_session_prompt;
 mod design_snapshot;
 mod design_snapshot_agents;
 mod design_snapshot_gate;
+mod design_unsaved;
 mod detail_claims;
 mod digest;
 mod dispatch;

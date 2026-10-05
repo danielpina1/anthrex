@@ -111,6 +111,7 @@ fn draft(
     fx: &mut Vec<Effect>,
 ) -> Result<Value, String> {
     let text = checked_text(run, DocKind::Spec, &doc.text, amends(run, doc), false)?;
+    let pick = reviewer::route(run, now)?;
     let k = (run.orch.design.as_ref()).map_or(1, |d| d.next_review(DocKind::Spec));
     let reason = format!("draft for review {k}");
     let mut new = NewDoc::new(DocKind::Spec, DocAuthor::Orchestrator, &reason, &text);
@@ -118,7 +119,7 @@ fn draft(
     let (_, write) = store(run, new, now)?;
     fx.push(write);
     log(run, now, format!("the spec draft for review {k} is stored"));
-    reviewer::queue(run, DocKind::Spec, (k, cycle), now);
+    reviewer::queue(run, DocKind::Spec, (k, cycle), pick, now);
     Ok(json!({"accepted": true, "kind": "spec", "review": k, "awaiting_review": true}))
 }
 

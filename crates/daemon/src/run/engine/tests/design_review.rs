@@ -102,22 +102,22 @@ fn the_same_runtime_fallback_names_its_reason() {
     use crate::decider::{DECIDER_CAPS, DeciderCaps};
     use crate::run::orch::roles::lists::review_pick;
     let mut fx = specifying();
-    let (peer, why) = review_pick(fx.run(), &DECIDER_CAPS);
+    let (peer, why) = review_pick(fx.run(), &DECIDER_CAPS).unwrap();
     assert_eq!((peer.runtime, why), (Runtime::Codex, None));
     let unsaved = DeciderCaps {
         codex_ephemeral: false,
         ..DECIDER_CAPS
     };
-    let (own, why) = review_pick(fx.run(), &unsaved);
+    let (own, why) = review_pick(fx.run(), &unsaved).unwrap();
     assert_eq!(own.runtime, Runtime::Claude);
     let line = "the codex CLI cannot run a session without saving it";
     assert_eq!(why.as_deref(), Some(line));
     fx.run_mut().roster.retain(|m| m.runtime != Runtime::Codex);
-    let (_, why) = review_pick(fx.run(), &DECIDER_CAPS);
+    let (_, why) = review_pick(fx.run(), &DECIDER_CAPS).unwrap();
     let line = "the roster has no codex model at frontier strength";
     assert_eq!(why.as_deref(), Some(line));
     fx.run_mut().orch.installed = [("codex".to_string(), false)].into();
-    let (_, why) = review_pick(fx.run(), &unsaved);
+    let (_, why) = review_pick(fx.run(), &unsaved).unwrap();
     assert_eq!(why.as_deref(), Some("the codex runtime is not installed"));
 }
 

@@ -160,6 +160,10 @@ fn review_due(run: &Run, author: &DocAuthor) -> bool {
 /// reviewer starts, so the reviewer's `get_doc { kind: "plan" }` reads it (the latest
 /// plan before any gate version, ruling T5-1's seam).
 fn start_review(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Result<(), String> {
+    if run.orch.design.is_none() {
+        return Ok(());
+    }
+    let pick = reviewer::route(run, now)?;
     let Some(design) = run.orch.design.as_ref() else {
         return Ok(());
     };
@@ -176,7 +180,7 @@ fn start_review(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Result<(), Str
         design.plan_review_done = true;
     }
     log(run, now, format!("the plan draft for review {k} is stored"));
-    reviewer::queue(run, DocKind::Plan, (k, cycle), now);
+    reviewer::queue(run, DocKind::Plan, (k, cycle), pick, now);
     Ok(())
 }
 

@@ -226,7 +226,7 @@ fn a_runtime_that_cannot_run_unsaved_is_skipped_with_its_line() {
         ..crate::decider::DECIDER_CAPS
     };
     let now = fx.now;
-    crate::run::engine::design_agents::queue_brainstormers(fx.run_mut(), None, &caps, now);
+    crate::run::engine::design_agents::queue_brainstormers(fx.run_mut(), None, &caps, now).unwrap();
     let runtimes: Vec<(String, Runtime)> = (agents(&fx).into_iter())
         .map(|a| (a.label, a.route.runtime))
         .collect();

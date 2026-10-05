@@ -41,7 +41,9 @@ use crate::run::design::pack::{EarlierSpec, freeze};
 use crate::run::design::state::{DesignAgent, DesignAgentState};
 use crate::run::model::Run;
 use crate::run::orch::roles;
-use crate::run::orch::roles::lists::{brainstorm_picks_with, unsaved_missing};
+use crate::run::orch::roles::lists::{
+    UNSAVED_BRAINSTORMER, brainstorm_picks_with, unsaved_missing,
+};
 use crate::scout::design_spec::{DesignAgentSpec, brainstormer_spec};
 
 /// A brainstormer's session that ended with no accepted draft and no failure of its own.
@@ -62,14 +64,19 @@ pub(crate) fn readers(run: &Run) -> usize {
 }
 
 /// `start_brainstorm` was accepted: decision 10's two brainstormers, queued for reader
-/// slots, and their pack's inputs frozen with `earlier` (ruling T8-2).
+/// slots, and their pack's inputs frozen with `earlier` (ruling T8-2). Ruling WB-A-W2:
+/// when no installed runtime can run one unsaved, none is queued and the run halts with
+/// [`UNSAVED_BRAINSTORMER`], the error.
 pub(super) fn queue_brainstormers(
     run: &mut Run,
     earlier: Option<EarlierSpec>,
     caps: &DeciderCaps,
     now: u64,
-) {
-    let picks = brainstorm_picks_with(run, caps);
+) -> Result<(), String> {
+    let Some(picks) = brainstorm_picks_with(run, caps) else {
+        super::merge::halt(run, UNSAVED_BRAINSTORMER.to_string(), now);
+        return Err(UNSAVED_BRAINSTORMER.to_string());
+    };
     for runtime in unsaved_missing(run, caps) {
         let label = runtime.label();
         let text = format!(
@@ -80,7 +87,7 @@ pub(super) fn queue_brainstormers(
     let pack = freeze(run, earlier);
     let round = run.round();
     let Some(design) = run.orch.design.as_mut() else {
-        return;
+        return Ok(());
     };
     design.pack = Some(pack);
     design.drafts_settled = false;
@@ -111,6 +118,7 @@ pub(super) fn queue_brainstormers(
         now,
         format!("brainstormers queued: {}", named.join(", ")),
     );
+    Ok(())
 }
 
 fn show_route(route: &proto::Route) -> String {

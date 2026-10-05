@@ -163,7 +163,13 @@ fn start_brainstorm(
     }
     design.answers = Some(safe_text::multi_line(answers));
     log(run, now, "the orchestrator started the brainstorm");
-    super::design_agents::queue_brainstormers(run, earlier, &crate::decider::DECIDER_CAPS, now);
+    let caps = crate::decider::caps();
+    // Ruling WB-A-W2: halted, with the answers not taken, so a resume can start again.
+    super::design_agents::queue_brainstormers(run, earlier, &caps, now).inspect_err(|_| {
+        if let Some(design) = run.orch.design.as_mut() {
+            design.answers = None;
+        }
+    })?;
     Ok(json!({"accepted": true}))
 }
 

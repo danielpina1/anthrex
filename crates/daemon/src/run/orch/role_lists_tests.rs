@@ -417,12 +417,18 @@ fn a_runtime_that_cannot_run_unsaved_cannot_brainstorm() {
         ("A".to_string(), Runtime::Claude),
         ("B".to_string(), Runtime::Claude),
     ];
-    assert_eq!(picked(brainstorm_picks_with(&run, &caps)), claude_twice);
+    assert_eq!(
+        picked(brainstorm_picks_with(&run, &caps).unwrap()),
+        claude_twice
+    );
     let listed = brainstorm_run(vec![
         cand(Runtime::Codex, SOL, None),
         cand(Runtime::Claude, HAIKU, None),
     ]);
-    assert_eq!(picked(brainstorm_picks_with(&listed, &caps)), claude_twice);
+    assert_eq!(
+        picked(brainstorm_picks_with(&listed, &caps).unwrap()),
+        claude_twice
+    );
     // An uninstalled runtime is not named twice.
     let mut gone = brainstorm_run(Vec::new());
     gone.orch.installed = [("codex".to_string(), false)].into();

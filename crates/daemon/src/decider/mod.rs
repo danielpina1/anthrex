@@ -13,7 +13,7 @@ pub mod parse;
 pub mod prompt;
 pub mod schema;
 
-pub use argv::{AnswerSource, DECIDER_CAPS, DeciderCaps};
+pub use argv::{AnswerSource, DECIDER_CAPS, DeciderCaps, caps};
 pub use ci::{CI_SUMMARY_INPUT_BYTES, CiSummaryInput};
 
 use crate::headless::argv::CliCaps;
