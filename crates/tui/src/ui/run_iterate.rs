@@ -20,7 +20,7 @@ use crate::safe_text::one_line;
 use crate::theme::{Glyph, Palette, Role, dot_sep, ellipsis, glyph, role};
 use crate::ui::goal_editor::{dialog_rect, footer, is_large, render_discard};
 use crate::ui::kit::{self, Hint};
-use crate::ui::run_goal::GOAL_ROWS;
+use crate::ui::run_goal::{GOAL_ROWS, LABEL_W, MARK_W};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -46,9 +46,6 @@ pub const DESIGN_FOOTER: [(&str, &str); 5] = [
 /// The rows beside the text in the large dialog: the prompt, the position row and the
 /// footer (the error row and the design row are counted while drawn).
 const FIXED_ROWS: u16 = 3;
-/// The design row's selection mark and label columns, the goal dialog's.
-const MARK_W: usize = 2;
-const LABEL_W: usize = 18;
 
 /// The compact dialog's interior width in a terminal `cols` wide.
 fn compact_width(cols: u16) -> u16 {

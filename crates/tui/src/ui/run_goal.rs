@@ -28,9 +28,9 @@ use unicode_width::UnicodeWidthStr;
 pub const GOAL_ROWS: u16 = 4;
 /// What the empty goal field shows, muted (milestone 9.0.7 decision 35).
 pub const PLACEHOLDER: &str = "what should the run achieve?";
-/// The focus marker's columns, then the label's.
-const MARK_W: usize = 2;
-const LABEL_W: usize = 18;
+/// The focus marker's columns, then the label's: the iterate dialog's design row too.
+pub(crate) const MARK_W: usize = 2;
+pub(crate) const LABEL_W: usize = 18;
 
 fn hint(key: &str, word: &str, priority: u8) -> Hint {
     Hint {

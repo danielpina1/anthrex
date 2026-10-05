@@ -301,3 +301,21 @@ fn an_expired_load_says_so_once() {
         Some(&DocLoad::Failed(crate::app::replies::NO_REPLY.into()))
     );
 }
+
+/// Review m2: on the Plan doc tab `e` and `d` would edit or drop a task the tab hides,
+/// so they are refused there with a line naming the tasks tab; on the task list they
+/// are the review's own again.
+#[test]
+fn e_and_d_on_the_tab_point_to_the_tasks_tab() {
+    let mut app = on_tab(plan_run(2), PLAN, 120, 40);
+    for c in ['e', 'd'] {
+        assert!(app.on_key(key(c)).is_empty(), "{c}");
+        assert!(app.modal.is_none(), "{c}: {:?}", app.modal);
+        assert_eq!(app.toast_text(), Some(super::TASKS_TAB_TEXT));
+        assert!(shown(&app), "{c} leaves the tab shown");
+    }
+    assert!(app.on_key(code(KeyCode::Tab)).is_empty());
+    assert!(!shown(&app));
+    app.on_key(key('e'));
+    assert!(app.modal.is_some(), "e edits a task on the task list");
+}

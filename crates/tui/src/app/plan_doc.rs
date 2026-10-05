@@ -34,6 +34,9 @@ pub struct PlanDoc {
     pub shown: bool,
 }
 
+/// Review m2: `e` and `d` on the Plan doc tab, which hides the tasks they act on.
+pub(crate) const TASKS_TAB_TEXT: &str = "e and d act on the tasks: tab shows them";
+
 impl App {
     /// The reviewed run's id and its design plan gate, while the review is that gate's.
     pub(crate) fn plan_doc_gate(&self) -> Option<(&str, &DocGateInfo)> {
@@ -51,8 +54,8 @@ impl App {
     }
 
     /// The plan review's keys at a design run's plan gate, tried before its own: Tab,
-    /// `c` and `b`, and while the tab shows the scroll keys. `None`: not one of them,
-    /// or no design plan gate, so the review's own keys apply.
+    /// `c` and `b`, and while the tab shows the scroll keys and `e`/`d`'s refusal.
+    /// `None`: not one of them, or no design plan gate, so the review's own keys apply.
     pub(crate) fn on_plan_doc_key(&mut self, key: KeyEvent) -> Option<Vec<Effect>> {
         if key
             .modifiers
@@ -77,6 +80,11 @@ impl App {
                 };
                 let form = DocNoteForm::new(run_id, (DocGateKind::Plan, version), purpose, "");
                 self.modal = Some(Modal::DocNote(Box::new(form)));
+                Some(vec![])
+            }
+            // Review m2: the tab hides the tasks `e` and `d` would act on.
+            KeyCode::Char('e' | 'd') if self.plan_doc().is_some() => {
+                self.toast(TASKS_TAB_TEXT);
                 Some(vec![])
             }
             code if self.plan_doc().is_some() => self.scroll_plan_doc(code),

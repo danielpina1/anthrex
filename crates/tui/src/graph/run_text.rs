@@ -80,8 +80,6 @@ fn run_short(run_id: &str) -> String {
     run_id.chars().skip(skip).collect()
 }
 
-/// `planner {epic} {title}  {merged}/{total}` over the tasks of its epic, or
-/// `planner {epic}  {merged}/{total}` when the title is blank.
 /// Milestone 9.6 ruling T18-1: a design agent's node, `brainstormer <label>` (its
 /// runtime too when the label is not the runtime's name) or `doc reviewer <label>
 /// <runtime>`, then `  <n> sessions` once a relaunch (ruling T8-7) gave it more than one.
@@ -98,6 +96,8 @@ pub(crate) fn design_agent_text(agent: &DesignAgentInfo) -> String {
     text
 }
 
+/// `planner {epic} {title}  {merged}/{total}` over the tasks of its epic, or
+/// `planner {epic}  {merged}/{total}` when the title is blank.
 pub(crate) fn planner_text(run: &RunInfo, planner: &PlannerInfo) -> String {
     let (merged, total) = run
         .tasks
