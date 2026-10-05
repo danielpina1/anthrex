@@ -386,11 +386,14 @@ pub(super) fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 /// again (a fresh session each, with the same pack). True when it did; the
 /// brainstorming clock then waits for their drafts again.
 pub(super) fn relaunch_failed(run: &mut Run, now: u64) -> bool {
+    let round = run.round();
     let Some(design) = run.orch.design.as_mut() else {
         return false;
     };
+    // Ruling WB-A-I1: only the current round's.
     let all_failed = !design.brainstormers.is_empty()
-        && (design.brainstormers.iter()).all(|a| matches!(a.state, DesignAgentState::Failed(_)));
+        && (design.brainstormers.iter())
+            .all(|a| a.round == round && matches!(a.state, DesignAgentState::Failed(_)));
     if !all_failed {
         return false;
     }

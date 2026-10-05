@@ -442,14 +442,21 @@ pub(super) fn resume_phase(run: &mut Run, now: u64) -> Option<String> {
         );
         return Some(format!("run {} resumed", run.id));
     }
-    let relaunched = super::design_agents::relaunch_failed(run, now)
-        || super::design_agents::awaiting_drafts(run);
-    let text = match relaunched {
-        true => "resumed; the brainstormers are relaunched",
-        false => {
-            start_clock(run, now);
-            "resumed; the phase's clock restarts"
-        }
+    // Ruling WB-A-I1: only the phase the run left, in the current round. Brainstorming
+    // relaunches its own round's failed brainstormers, and has a clock only once the
+    // drafts are in (decision 8).
+    let brainstorming = from == RunState::Brainstorming;
+    let relaunched = brainstorming
+        && (super::design_agents::relaunch_failed(run, now)
+            || super::design_agents::awaiting_drafts(run));
+    let settled = (run.orch.design.as_ref()).is_some_and(|d| d.drafts_settled);
+    let text = if relaunched {
+        "resumed; the brainstormers are relaunched"
+    } else if brainstorming && !settled {
+        "resumed; the brainstorm waits for its drafts"
+    } else {
+        start_clock(run, now);
+        "resumed; the phase's clock restarts"
     };
     log(run, now, text);
     Some(format!("run {} resumed", run.id))

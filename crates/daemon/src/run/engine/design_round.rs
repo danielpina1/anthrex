@@ -168,6 +168,12 @@ pub(super) fn dropped(run: &mut Run) {
     design.phase_started = None;
     design.commit_due = false;
     design.spec_unread = false;
+    // Ruling WB-A-I1: the round's design agents leave the live set (their sessions
+    // stay in the history records).
+    design.brainstormers.retain(|a| a.round != round.n);
+    if design.reviewer.as_ref().is_some_and(|a| a.round == round.n) {
+        design.reviewer = None;
+    }
     // Ruling T15-9: kept, so no review number is reused, and skipped as dropped.
     for review in design.reviews.iter_mut().skip(round.reviews_before) {
         review.dropped = true;
