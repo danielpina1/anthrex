@@ -221,8 +221,8 @@ fn design_tools_say_what_they_do() {
     );
     assert_eq!(
         described(AgentRole::DocReviewer, "get_doc"),
-        "Read a design document: the latest of a kind, one version, or the spec's review \
-         draft your first message names (draft)."
+        "Read a design document: the latest of a kind, one version, or the review draft \
+         your first message names (draft)."
     );
     assert_eq!(
         described(AgentRole::DocReviewer, "submit_findings"),

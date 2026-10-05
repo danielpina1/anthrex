@@ -282,14 +282,24 @@ fn get_docs_draft_is_the_document_reviewers_only() {
             draft: Some(2),
         })
     );
+    // Ruling WB-A-I2: the plan reviewer's draft too.
+    assert_eq!(
+        reviewer(json!({"kind": "plan", "draft": 2})),
+        Ok(OrchCall::GetDoc {
+            kind: proto::DocKind::Plan,
+            version: None,
+            from: None,
+            draft: Some(2),
+        })
+    );
     assert_eq!(
         orch("get_doc", json!({"kind": "spec", "draft": 2})),
         Err("invalid arguments: draft: unknown field".into())
     );
     for (args, refused) in [
         (
-            json!({"kind": "plan", "draft": 1}),
-            "draft: only with kind spec",
+            json!({"kind": "brainstorm", "draft": 1}),
+            "draft: only with kind spec or plan",
         ),
         (
             json!({"kind": "spec", "draft": 1, "version": 1}),

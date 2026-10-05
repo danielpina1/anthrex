@@ -1543,7 +1543,7 @@
   "doc_reviewer": [
     {
       "name": "get_doc",
-      "description": "Read a design document: the latest of a kind, one version, or the spec's review draft your first message names (draft).",
+      "description": "Read a design document: the latest of a kind, one version, or the review draft your first message names (draft).",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,

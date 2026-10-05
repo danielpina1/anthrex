@@ -257,3 +257,69 @@ async fn the_plan_reviewer_reads_the_plan_sent_to_it() {
     let (ok, text) = read(json!({"kind": "plan"})).await;
     assert_eq!((ok, text.as_str()), (true, "# Plan: x\n"));
 }
+
+/// Ruling WB-A-I2 (the final fix wave's FW-29), round 2: the plan already has round 1's
+/// gate version, and review 2's draft is stored. The plan reviewer's first turn names
+/// its draft, and its `get_doc { kind: "plan" }` with no draft and with `draft: 2` both
+/// read the draft, never round 1's version; the approved spec still reads as itself.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_plan_reviewer_reads_its_own_draft_in_round_2() {
+    use crate::run::design::state::DocReviewRecord;
+    use crate::scout::design_spec::reviewer_first_turn;
+    let turn = reviewer_first_turn(DocKind::Plan, 2);
+    assert!(turn.contains("kind \"plan\", draft 2"), "{turn}");
+    let rig = Rig::new(design_run).await;
+    spec(&rig, "# Reset\n\n## Requirements\nR1 x\n");
+    let plans = [
+        (None, "# Plan: round 1\n", "plan-v1.md"),
+        (Some(2), "# Plan: round 2\n", "plan-draft-r2.md"),
+    ];
+    for (draft, text, name) in plans {
+        let effect = {
+            let mut engine = crate::lock(&rig.runs.state);
+            let run = engine.runs.get_mut(&rig.run_id).expect("the run");
+            let doc = NewDoc {
+                draft_review: draft,
+                ..NewDoc::new(DocKind::Plan, DocAuthor::Orchestrator, "plan", text)
+            };
+            let effect = state::store(run, doc, 2_000).expect("stored").1;
+            let design = run.orch.design.as_mut().unwrap();
+            if let Some(k) = draft {
+                design.reviews.push(DocReviewRecord {
+                    doc: DocKind::Plan,
+                    n: k,
+                    findings: Vec::new(),
+                    failed: None,
+                    after: 1,
+                    same_runtime: false,
+                    dropped: false,
+                });
+                design.reviewer.as_mut().unwrap().label = format!("plan-r{k}");
+            }
+            effect
+        };
+        let Effect::WriteDoc { path, text, .. } = effect else {
+            panic!("not a write: {effect:?}");
+        };
+        assert!(path.ends_with(name), "{path:?}");
+        write_new(&path, &text).expect("written");
+    }
+    let read = |args| raw(&rig, AgentRole::DocReviewer, REVIEWER, args);
+    for args in [json!({"kind": "plan"}), json!({"kind": "plan", "draft": 2})] {
+        let (ok, text) = read(args.clone()).await;
+        assert_eq!((ok, text.as_str()), (true, "# Plan: round 2\n"), "{args}");
+    }
+    let (ok, text) = read(json!({"kind": "spec"})).await;
+    assert_eq!(
+        (ok, text.as_str()),
+        (true, "# Reset\n\n## Requirements\nR1 x\n")
+    );
+    // The orchestrator's latest plan is still the gate's.
+    let orch = raw(
+        &rig,
+        AgentRole::Orchestrator,
+        super::read_rig::ORCH,
+        json!({"kind": "plan"}),
+    );
+    assert_eq!(orch.await, (true, "# Plan: round 1\n".to_string()));
+}

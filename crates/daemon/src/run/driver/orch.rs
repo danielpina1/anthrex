@@ -375,7 +375,7 @@ impl RunService {
                 from,
                 draft,
             } => match self
-                .get_doc(&call.run_id, kind, (version, from, draft))
+                .get_doc((&call.run_id, call.role), kind, (version, from, draft))
                 .await
             {
                 Ok(text) => RunReply::tool_result(true, text),

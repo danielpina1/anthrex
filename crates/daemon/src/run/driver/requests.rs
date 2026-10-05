@@ -234,6 +234,7 @@ impl RunService {
                     draft: None,
                     diff,
                     findings,
+                    reviewer: false,
                 };
                 self.show_doc(run, query).await
             }

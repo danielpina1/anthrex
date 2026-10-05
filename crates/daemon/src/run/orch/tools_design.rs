@@ -74,7 +74,8 @@ pub(super) fn parse(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCal
             }))
         }
         "get_doc" => {
-            // Ruling T5-1: the document reviewer also names its review draft.
+            // Ruling T5-1: the document reviewer also names its review draft (a spec's,
+            // or a plan's, ruling WB-A-I2).
             let fields: &[&str] = match role {
                 AgentRole::DocReviewer => &["kind", "version", "from", "draft"],
                 _ => &["kind", "version", "from"],
@@ -83,8 +84,8 @@ pub(super) fn parse(role: AgentRole, tool: &str, args: &Value) -> Result<OrchCal
             let kind = kind(map)?;
             let version = positive(map, "version")?;
             let draft = match positive(map, "draft")? {
-                Some(_) if kind != DocKind::Spec => {
-                    return Err("draft: only with kind spec".into());
+                Some(_) if !matches!(kind, DocKind::Spec | DocKind::Plan) => {
+                    return Err("draft: only with kind spec or plan".into());
                 }
                 Some(_) if version.is_some() => return Err("draft: not with version".into()),
                 draft => draft,

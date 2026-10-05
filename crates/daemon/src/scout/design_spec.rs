@@ -223,12 +223,12 @@ pub fn brainstormer_spec(run: &Run, agent: &DesignAgent) -> DesignAgentSpec {
 
 /// The first turn of the reviewer of review `k` of the spec: its draft, named
 /// explicitly (ruling T5-1), and its one submission.
-/// Task M9.6.11: the plan's review reads the plan sent to it, the only plan stored
-/// before its first gate version, and the approved spec it must cover.
+/// Task M9.6.11: the plan's review reads the plan sent to it, named explicitly too
+/// (ruling WB-A-I2), and the approved spec it must cover.
 pub fn reviewer_first_turn(doc: proto::DocKind, k: u32) -> String {
     match doc {
         proto::DocKind::Plan => format!(
-            "[anthrex] Review the plan sent to review {k}: read it with get_doc, kind \"plan\", and the approved spec with get_doc, kind \"spec\". Then submit your findings once with submit_findings."
+            "[anthrex] Review the plan sent to review {k}: read it with get_doc, kind \"plan\", draft {k}, and the approved spec with get_doc, kind \"spec\". Then submit your findings once with submit_findings."
         ),
         _ => format!(
             "[anthrex] Review the spec draft sent to review {k}: read it with get_doc, kind \"spec\", draft {k}. Then submit your findings once with submit_findings."

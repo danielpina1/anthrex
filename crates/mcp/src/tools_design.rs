@@ -120,8 +120,8 @@ fn get_doc() -> Tool {
     )
 }
 
-/// The document reviewer's `get_doc` (task M9.6.10): also a spec's review draft by its
-/// review's number, `draft`.
+/// The document reviewer's `get_doc` (task M9.6.10): also its review's draft (a spec's,
+/// or a plan's, ruling WB-A-I2) by the review's number, `draft`.
 fn reviewers_get_doc() -> Tool {
     let mut schema = get_doc().input_schema.as_ref().clone();
     if let Some(Value::Object(properties)) = schema.get_mut("properties") {
@@ -129,8 +129,8 @@ fn reviewers_get_doc() -> Tool {
     }
     Tool::new(
         GET_DOC,
-        "Read a design document: the latest of a kind, one version, or the spec's review \
-         draft your first message names (draft).",
+        "Read a design document: the latest of a kind, one version, or the review draft \
+         your first message names (draft).",
         schema,
     )
 }

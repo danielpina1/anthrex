@@ -51,6 +51,9 @@ pub struct DocQuery {
     pub draft: Option<u32>,
     pub diff: bool,
     pub findings: bool,
+    /// The document reviewer's read (ruling WB-A-I2): with no version, label or draft,
+    /// its own review's draft when it reviews this kind.
+    pub reviewer: bool,
 }
 
 /// The files one read needs, found under the engine lock.
@@ -155,7 +158,7 @@ impl RunService {
     /// no diff and no findings; a refusal is the read's own text.
     pub(super) async fn get_doc(
         &self,
-        run_id: &str,
+        (run_id, role): (&str, proto::AgentRole),
         kind: DocKind,
         (version, from, draft): (Option<u32>, Option<String>, Option<u32>),
     ) -> Result<String, String> {
@@ -166,6 +169,7 @@ impl RunService {
             draft,
             diff: false,
             findings: false,
+            reviewer: role == proto::AgentRole::DocReviewer,
         };
         Ok(self.doc_view(run_id, query).await?.text)
     }
@@ -207,9 +211,9 @@ impl RunService {
             (None, Some(n), _) => design
                 .find(query.kind, Some(n))
                 .ok_or_else(|| format!("run {run_id} has no {name} v{n}"))?,
-            (None, None, None) => design
-                .find(query.kind, None)
-                .ok_or_else(|| format!("run {run_id} has no {name} yet"))?,
+            (None, None, None) => (own_draft(design, query)
+                .or_else(|| design.find(query.kind, None)))
+            .ok_or_else(|| format!("run {run_id} has no {name} yet"))?,
         };
         let dir = state::design_dir(run);
         let path = dir.join(design.file_name(version));
@@ -229,6 +233,15 @@ impl RunService {
             version: version.clone(),
         })
     }
+}
+
+/// Ruling WB-A-I2: the draft of the review a document reviewer works on (the last one
+/// asked), when the query is its reviewer's and of that review's kind.
+fn own_draft<'d>(design: &'d state::DesignState, query: &DocQuery) -> Option<&'d DocVersion> {
+    let review = design.reviews.last().filter(|_| query.reviewer)?;
+    (review.doc == query.kind && !review.dropped)
+        .then(|| design.draft(query.kind, review.n))
+        .flatten()
 }
 
 /// The blocking half of [`RunService::doc_view`]: each file read whole and checked
