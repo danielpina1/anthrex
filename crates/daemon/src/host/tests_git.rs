@@ -231,6 +231,7 @@ fn fetch_adopts_only_a_descendant() {
                 also_integration,
             }),
             parents_of: None,
+            contains: None,
             deadline: None,
         })
     };
@@ -289,6 +290,7 @@ fn fetch_adopts_only_a_descendant() {
             into: format!("refs/anthrex/{RUN}/remote/base"),
             adopt: None,
             parents_of: None,
+            contains: None,
             deadline: None,
         })
     };
@@ -300,6 +302,7 @@ fn fetch_adopts_only_a_descendant() {
     let fetched = FetchOutcome::Fetched {
         sha: a.clone(),
         parents: None,
+        contains: None,
     };
     assert_eq!(base(), Ok(fetched));
     assert_eq!(rig.local("main"), main_before);
@@ -333,6 +336,7 @@ fn a_base_fetch_counts_the_merge_commits_parents() {
             into: format!("refs/anthrex/{RUN}/remote/base"),
             adopt: None,
             parents_of: oid.map(str::to_string),
+            contains: None,
             deadline: None,
         })
     };
@@ -340,6 +344,7 @@ fn a_base_fetch_counts_the_merge_commits_parents() {
         Ok(FetchOutcome::Fetched {
             sha: squash.clone(),
             parents,
+            contains: None,
         })
     };
     assert_eq!(fetch(Some(&merge)), fetched(Some(2)));
@@ -431,6 +436,7 @@ fn an_adoption_past_its_deadline_moves_nothing() {
                 also_integration: true,
             }),
             parents_of: None,
+            contains: None,
             deadline,
         })
     };
@@ -478,13 +484,15 @@ fn a_users_prune_config_prunes_nothing() {
         into: format!("refs/anthrex/{RUN}/remote/base"),
         adopt: None,
         parents_of: None,
+        contains: None,
         deadline: None,
     });
     assert_eq!(
         fetched,
         Ok(FetchOutcome::Fetched {
             sha: a.clone(),
-            parents: None
+            parents: None,
+            contains: None,
         })
     );
     assert_eq!(

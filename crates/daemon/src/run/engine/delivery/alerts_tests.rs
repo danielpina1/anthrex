@@ -85,6 +85,7 @@ fn op_names_are_every_ops_name() {
             into: s(),
             adopt: None,
             parents_of: None,
+            contains: None,
         },
         HostOp::OpenPr {
             stage: 1,

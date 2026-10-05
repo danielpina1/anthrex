@@ -197,6 +197,11 @@ pub struct StageDelivery {
     /// the newest). The branch only fast-forwards, so a later head holds every earlier
     /// one: a reply's push at or before the merged head reached the merge.
     pub pushes: Vec<String>,
+    /// Milestone 9.7 (DH §1.2): a merge at neither the local head nor a confirmed one,
+    /// as (local head, merged head), judged once git says whether it holds the head.
+    pub undecided: Option<(String, String)>,
+    /// Ruling R1a: the `contains` checks failed in a row (the third decides `None`).
+    pub undecided_fails: u8,
 }
 
 /// The dropped replies' markers a stage keeps (`StageDelivery::maybe_sent`).

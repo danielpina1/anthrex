@@ -429,6 +429,7 @@ fn a_held_stage_lands_only_what_it_pushed() {
     set_stage_head(fx.run_mut(), 1, &commit(80));
     land_propagates(&mut fx);
     poll_stage(&mut fx, 1, merged_view(11, &pushed, &commit(70)));
+    fetched(&mut fx, &commit(71), Some(1)); // 9.7: no `contains` answer decides (BR-4)
     let line = format!(
         "stage 1 (PR #11): merged at {}, without 80eeeee, so its commits go up with stage 2",
         &pushed[..7]

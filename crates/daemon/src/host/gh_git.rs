@@ -101,7 +101,12 @@ impl<R: Runner> GhHost<R> {
                     Some(oid) => self.parents(&ctx, req, oid)?,
                     None => None,
                 };
-                Ok(FetchOutcome::Fetched { sha, parents })
+                // Milestone 9.7: `contains` is answered by task M9.7.6's git steps.
+                Ok(FetchOutcome::Fetched {
+                    sha,
+                    parents,
+                    contains: None,
+                })
             }
             Some(adopt) => self.adopt(req, &ctx, adopt, &sha),
         }

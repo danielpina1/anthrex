@@ -144,6 +144,17 @@ pub struct Adopt {
     pub also_integration: bool,
 }
 
+/// Milestone 9.7 decision 5 (DH §1.2): the base fetch also asks whether merged head
+/// `merged` holds stage `stage`'s local head `head`, fetching `branch` into `into`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Contains {
+    pub stage: u16,
+    pub branch: String, // anthrex/<run>/stage-<n>
+    pub into: String,   // refs/anthrex/<run>/remote/stage-<n>
+    pub head: String,   // the local stage head
+    pub merged: String, // the host's merged head
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchReq {
     pub repo: HostRepo,
@@ -157,6 +168,9 @@ pub struct FetchReq {
     /// locally (`git rev-list --parents -n 1 <oid>`), for decision 44's merge method.
     #[serde(default)]
     pub parents_of: Option<String>,
+    /// Milestone 9.7 (DH §1.2): after the fetch, whether the merge holds a stage head.
+    #[serde(default)]
+    pub contains: Option<Contains>,
     /// Fix wave A2 (review A, M2): when the op's bound ends, counted from the moment it
     /// took the project's git queue. An adoption checks it just before its
     /// compare-and-swap and answers `TimedOut` rather than move a ref after the op's
@@ -173,6 +187,9 @@ pub enum FetchOutcome {
         /// known locally after the fetch.
         #[serde(default)]
         parents: Option<u32>,
+        /// Milestone 9.7: `FetchReq.contains`'s answer; `None` when not asked or unknown.
+        #[serde(default)]
+        contains: Option<bool>,
     },
     Adopted {
         sha: String,

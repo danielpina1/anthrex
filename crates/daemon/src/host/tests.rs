@@ -180,6 +180,7 @@ fn every_method(root: &Path) -> GhHost<ScriptedRunner> {
         into: into.clone(),
         adopt: None,
         parents_of: None,
+        contains: None,
         deadline: None,
     };
     assert_eq!(
@@ -187,6 +188,7 @@ fn every_method(root: &Path) -> GhHost<ScriptedRunner> {
         FetchOutcome::Fetched {
             sha: SHA.to_string(),
             parents: None,
+            contains: None,
         }
     );
     let adopting = FetchReq {

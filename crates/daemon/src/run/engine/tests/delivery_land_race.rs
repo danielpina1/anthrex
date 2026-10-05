@@ -11,10 +11,12 @@ use super::delivery_open::{answer, host_ops};
 use super::delivery_review::state;
 use super::delivery_review::{noted, on, said};
 use super::delivery_review_reply::{by_alice, merge_fix, one_reply, push_lands, reply_ops, shown};
+use super::delivery_sync::base_fetch;
 use super::delivery_watch::{PR, next_poll, poll_with, polls, view, view_answer};
 use super::fixture::*;
 use super::full::attention;
 use super::merge::commit;
+use crate::host::FetchOutcome;
 use crate::run::delivery::ThreadState;
 use crate::run::delivery::ops::{HostOp, HostResult};
 use crate::run::engine::EventKind;
@@ -39,6 +41,18 @@ fn merged_at(fx: &mut Fixture, head: &str) {
     fx.tick();
 }
 
+/// Milestone 9.7 (DH §1.2): the base fetch answers that the merge does not contain the
+/// local head (a merged head neither local nor confirmed is undecided until then).
+fn not_contained(fx: &mut Fixture) {
+    let (op, _) = base_fetch(fx);
+    let outcome = FetchOutcome::Fetched {
+        sha: commit(91),
+        parents: Some(1),
+        contains: Some(false),
+    };
+    answer(fx, op, HostResult::Fetched(outcome));
+}
+
 const MISSED: &str = "PR #7 was merged at 1eeeeee before fix task fix1 reached it: the fix missed the merge, so thread 7:c5 gets no reply";
 const UNLANDED: &str = "stage 1 PR #7 was merged at 1eeeeee, without 2eeeeee; that work is not delivered (anthrex run cancel gives up)";
 
@@ -55,6 +69,7 @@ fn a_push_answered_after_the_users_merge_delivers_nothing_and_its_replies_drop()
         "an answered push alone is not a reply"
     );
     merged_at(&mut fx, &commit(1));
+    not_contained(&mut fx);
     assert!(
         reply_ops(&fx).is_empty(),
         "the fix missed the merge: no reply"
@@ -133,6 +148,7 @@ fn a_merge_at_a_later_push_holds_every_earlier_push() {
     fx.tick();
     push_lands(&mut fx, &commit(4));
     merged_at(&mut fx, &commit(3));
+    not_contained(&mut fx);
     let lines = attention(&fx);
     let unlanded = "stage 1 PR #7 was merged at 3eeeeee, without 4eeeeee; that work is not delivered (anthrex run cancel gives up)";
     assert!(lines.contains(&unlanded.to_string()), "{lines:#?}");
@@ -174,6 +190,7 @@ fn a_merged_view_before_the_push_answer_drops_the_reply() {
     let now = fx.now;
     let merged = merged_view(PR, &commit(1), &commit(90));
     view_answer(&mut fx, now, HostResult::PrViewed(Box::new(merged)));
+    not_contained(&mut fx);
     for _ in 0..3 {
         fx.tick();
         assert_eq!(pushes(&fx), 0, "{:#?}", host_ops(&fx));

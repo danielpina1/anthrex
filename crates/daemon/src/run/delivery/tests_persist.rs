@@ -167,6 +167,8 @@ fn the_delivery_model_round_trips_through_run_json() {
         local_moved: None,
         maybe_sent: vec!["<!-- anthrex:reply r 7:c5 1a2b3c4 -->".into()],
         pushes: vec![HEAD2.into()],
+        undecided: Some((HEAD2.into(), "f".repeat(40))),
+        undecided_fails: 2,
     };
     run.delivery.permission_retry_at = Some(6_000);
     run.delivery.base_fetch_due = true;
@@ -214,6 +216,7 @@ fn host_ops_and_results_round_trip_through_the_journal() {
                 also_integration: true,
             }),
             parents_of: Some(HEAD2.into()),
+            contains: None,
         },
         HostOp::OpenPr {
             stage: 1,
@@ -346,4 +349,81 @@ fn sync_policy_is_persisted_in_snake_case() {
             serde_json::from_value(serde_json::json!({ "sync": text })).unwrap();
         assert_eq!(back.sync, sync);
     }
+}
+
+/// Removes every `key` from `value`, at any depth: the form an older binary wrote.
+fn strip(value: &mut serde_json::Value, key: &str) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.remove(key);
+            map.values_mut().for_each(|v| strip(v, key));
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(|v| strip(v, key)),
+        _ => {}
+    }
+}
+
+/// Milestone 9.7 (DH §1.2, ruling R1a): an undecided stage, its failed checks, the base
+/// fetch's question and its answer round-trip through `run.json` and the journal; a
+/// `run.json` or journal line written before them loads with none.
+#[test]
+fn an_undecided_delivery_round_trips_and_older_forms_load() {
+    let stage = StageDelivery {
+        undecided: Some((HEAD2.into(), "f".repeat(40))),
+        undecided_fails: 2,
+        ..StageDelivery::default()
+    };
+    let mut json = serde_json::to_value(&stage).unwrap();
+    assert_eq!(
+        json["undecided"],
+        serde_json::json!([HEAD2, "f".repeat(40)])
+    );
+    assert_eq!(json["undecided_fails"], 2);
+    assert_eq!(
+        serde_json::from_value::<StageDelivery>(json.clone()).unwrap(),
+        stage
+    );
+    strip(&mut json, "undecided");
+    strip(&mut json, "undecided_fails");
+    assert_eq!(
+        serde_json::from_value::<StageDelivery>(json).unwrap(),
+        StageDelivery::default()
+    );
+    let asked = |contains| HostOp::Fetch {
+        stage: None,
+        branch: "main".into(),
+        into: format!("refs/anthrex/{RUN}/remote/base"),
+        adopt: None,
+        parents_of: None,
+        contains,
+    };
+    let question = crate::host::Contains {
+        stage: 1,
+        branch: format!("anthrex/{RUN}/stage-1"),
+        into: format!("refs/anthrex/{RUN}/remote/stage-1"),
+        head: HEAD2.into(),
+        merged: "f".repeat(40),
+    };
+    let answered = |contains| {
+        OpResult::Host(HostResult::Fetched(FetchOutcome::Fetched {
+            sha: "b".repeat(40),
+            parents: Some(1),
+            contains,
+        }))
+    };
+    let op = asked(Some(question));
+    let text = serde_json::to_string(&op).unwrap();
+    assert_eq!(serde_json::from_str::<HostOp>(&text).unwrap(), op);
+    let result = answered(Some(false));
+    let text = serde_json::to_string(&result).unwrap();
+    assert_eq!(serde_json::from_str::<OpResult>(&text).unwrap(), result);
+    let mut old = serde_json::to_value(asked(None)).unwrap();
+    strip(&mut old, "contains");
+    assert_eq!(serde_json::from_value::<HostOp>(old).unwrap(), asked(None));
+    let mut old = serde_json::to_value(answered(None)).unwrap();
+    strip(&mut old, "contains");
+    assert_eq!(
+        serde_json::from_value::<OpResult>(old).unwrap(),
+        answered(None)
+    );
 }

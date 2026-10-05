@@ -271,6 +271,7 @@ fn call(
             into,
             adopt,
             parents_of,
+            contains,
             ..
         } => host
             .fetch(&FetchReq {
@@ -280,6 +281,7 @@ fn call(
                 into,
                 adopt,
                 parents_of,
+                contains,
                 deadline,
             })
             .map(HostResult::Fetched),

@@ -21,7 +21,7 @@ use super::super::{Effect, OpId, OpKind, OpResult, emit_op, next_op, stages, wak
 use super::watch::{stage_busy, stage_paused};
 use super::{emit, pr, stage_mut};
 use crate::host::allow::is_object_id;
-use crate::host::{FetchOutcome, Mergeable};
+use crate::host::{Contains, FetchOutcome, Mergeable};
 use crate::run::contract::sha7;
 use crate::run::delivery::ops::HostOp;
 use crate::run::delivery::snapshot::stage_count;
@@ -136,13 +136,31 @@ fn method_due(run: &Run) -> Option<String> {
         .and_then(|p| p.merge_commit.clone())
 }
 
+/// Milestone 9.7 decision 5: the question about the oldest undecided stage, which the
+/// base fetch asks while any is left (one per fetch, as `method_due`).
+fn contains_due(run: &Run) -> Option<Contains> {
+    let (n, (head, merged)) = (1..=stage_count(run)).find_map(|n| {
+        let pair = run.delivery.stage(n)?.undecided.clone()?;
+        Some((n, pair))
+    })?;
+    Some(Contains {
+        stage: n,
+        branch: super::open::remote_branch(run, n),
+        into: format!("refs/anthrex/{}/remote/stage-{n}", run.id),
+        head,
+        merged,
+    })
+}
+
 /// The pass: the due base fetch, one at a time, after a failed one's wait. It asks for
-/// the parents of `method_due`'s merge commit.
+/// the parents of `method_due`'s merge commit and `contains_due`'s question.
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let d = &run.delivery;
     let waiting = d.base_fetch_retry_at.is_some_and(|t| t > now);
     let parents_of = method_due(run);
-    if !(d.base_fetch_due || parents_of.is_some()) || waiting || fetching(run) {
+    let contains = contains_due(run);
+    let due = d.base_fetch_due || parents_of.is_some() || contains.is_some();
+    if !due || waiting || fetching(run) {
         return;
     }
     let op = HostOp::Fetch {
@@ -151,18 +169,31 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         into: base_ref(run),
         adopt: None,
         parents_of,
+        contains,
     };
     emit(run, op, fx);
 }
 
-/// A base fetch failed (decision 11): it is tried again one poll interval later.
-pub(super) fn fetch_failed(run: &mut Run, now: u64, wait: u64) {
+/// A base fetch failed (decision 11): it is tried again one poll interval later. Its
+/// question counts a failed check (milestone 9.7 ruling R1).
+pub(super) fn fetch_failed(run: &mut Run, contains: Option<&Contains>, now: u64, wait: u64) {
     run.delivery.base_fetch_retry_at = Some(now.saturating_add(wait));
+    if let Some(c) = contains {
+        super::land_judge::check_failed(run, c, now);
+    }
 }
 
-/// The base fetch answered: the merge method it counted (ruling R-4), then a base sync
-/// of the lowest delivering stage when the base moved past what the stages hold.
-pub(super) fn fetched(run: &mut Run, parents_of: Option<String>, outcome: FetchOutcome, now: u64) {
+/// The base fetch answered: the merge method it counted (ruling R-4), the verdict of
+/// its question (milestone 9.7 decision 7: no answer decides as not delivered), then a
+/// base sync of the lowest delivering stage when the base moved past what the stages
+/// hold.
+pub(super) fn fetched(
+    run: &mut Run,
+    parents_of: Option<String>,
+    contains: Option<Contains>,
+    outcome: FetchOutcome,
+    now: u64,
+) {
     run.delivery.base_fetch_due = false;
     run.delivery.base_fetch_retry_at = None;
     let parents = match &outcome {
@@ -171,6 +202,13 @@ pub(super) fn fetched(run: &mut Run, parents_of: Option<String>, outcome: FetchO
     };
     if let Some(oid) = parents_of {
         super::land::method(run, &oid, parents, now);
+    }
+    if let Some(c) = contains {
+        let answer = match &outcome {
+            FetchOutcome::Fetched { contains, .. } => *contains,
+            _ => None,
+        };
+        super::land_judge::decided(run, &c, answer, now);
     }
     match outcome {
         FetchOutcome::Fetched { sha, .. } => queue(run, sha, now),

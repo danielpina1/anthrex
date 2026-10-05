@@ -36,6 +36,7 @@ pub(super) fn base_fetch_op(parents_of: Option<String>) -> HostOp {
         into: base_ref(),
         adopt: None,
         parents_of,
+        contains: None,
     }
 }
 
@@ -58,6 +59,7 @@ pub(super) fn fetched(fx: &mut Fixture, sha: &str, parents: Option<u32>) -> Vec<
     let outcome = FetchOutcome::Fetched {
         sha: sha.into(),
         parents,
+        contains: None,
     };
     answer(fx, op, HostResult::Fetched(outcome))
 }

@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::host::{
-    Adopt, FetchOutcome, HostError, LogFile, PrRef, PrView, PushOutcome, ReplyTarget,
+    Adopt, Contains, FetchOutcome, HostError, LogFile, PrRef, PrView, PushOutcome, ReplyTarget,
     RepoPermission,
 };
 
@@ -27,6 +27,9 @@ pub enum HostOp {
         adopt: Option<Adopt>,
         #[serde(default)]
         parents_of: Option<String>,
+        /// Milestone 9.7 decision 5: the base fetch's question (`FetchReq.contains`).
+        #[serde(default)]
+        contains: Option<Contains>,
     },
     /// Decision 20; `body` is [`super::body::pr_body`]'s text.
     OpenPr {

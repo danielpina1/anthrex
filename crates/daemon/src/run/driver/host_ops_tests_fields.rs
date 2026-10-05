@@ -53,6 +53,7 @@ async fn every_op_reaches_its_request() {
         into: format!("refs/anthrex/{RUN_ID}/remote/base"),
         adopt: None,
         parents_of: Some(SHA.into()),
+        contains: None,
     })
     .await;
     assert!(matches!(

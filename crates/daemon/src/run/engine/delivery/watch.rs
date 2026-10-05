@@ -207,6 +207,7 @@ fn adopt(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) -> bool {
             also_integration: multi && n >= highest(run),
         }),
         parents_of: None,
+        contains: None,
     };
     let sent = emit(run, op, fx);
     if sent {

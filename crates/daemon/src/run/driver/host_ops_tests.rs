@@ -106,6 +106,7 @@ impl CodeHost for Stub {
         Ok(FetchOutcome::Fetched {
             sha: SHA.into(),
             parents: Some(2),
+            contains: None,
         })
     }
     fn open_pr(&self, req: &OpenPrReq) -> Result<PrRef, HostError> {
@@ -467,6 +468,7 @@ async fn push_and_fetch_go_through_the_git_queue() {
             into: format!("refs/anthrex/{RUN_ID}/remote/stage-1"),
             adopt: Some(adopt.clone()),
             parents_of: None,
+            contains: None,
         },
         HostOp::DeleteBranch { stage: 1 },
     ];

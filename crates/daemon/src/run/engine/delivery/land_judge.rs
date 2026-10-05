@@ -1,6 +1,8 @@
 use super::super::requests::log;
 use super::super::{Effect, complete, wake};
+use super::stage_mut;
 use super::watch::named;
+use crate::host::Contains;
 use crate::run::contract::sha7;
 use crate::run::delivery::PrRecord;
 use crate::run::delivery::snapshot::stage_count;
@@ -36,15 +38,106 @@ pub(super) fn cancel_fixes(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>
 /// late merged into stage `n` after the host merged the stage's PR, so the merge
 /// cannot hold the new stage head: it goes up with a live stage above, or it is not
 /// delivered, with an attention line. Nothing is dropped silently.
+///
+/// An undecided stage (milestone 9.7 BR-6) is decided as not delivered at once, its
+/// held judgment released for the new head.
 pub(in crate::run::engine) fn merged_late(run: &mut Run, n: u16, now: u64) {
     let Some(pr) = run.delivery.pr(n).cloned() else {
         return;
     };
     let head = run.stage_head(n).unwrap_or_default().to_string();
     let at = merged_head(&pr);
-    if head != at {
+    if take_undecided(run, n).is_some() {
+        judge(run, n, &pr, &head, &at, false, now);
+    } else if head != at {
         unpushed(run, n, &pr, &head, &at, now);
     }
+}
+
+/// Ruling R1: the `contains` checks that may fail in a row before the stage decides.
+const CHECK_TRIES: u8 = 3;
+
+/// Milestone 9.7 decision 4: stage `n` merged at `at`, which is neither its local head
+/// `head` nor a confirmed one. The verdict, the replies and the line wait for the base
+/// fetch to say whether `at` holds `head` (`sync::contains_due`).
+pub(super) fn hold(run: &mut Run, n: u16, head: String, at: String) {
+    let stage = stage_mut(run, n);
+    stage.undecided = Some((head, at));
+    stage.undecided_fails = 0;
+}
+
+/// Stage `n`'s undecided pair, cleared with its failed checks.
+fn take_undecided(run: &mut Run, n: u16) -> Option<(String, String)> {
+    let stage = stage_mut(run, n);
+    stage.undecided_fails = 0;
+    stage.undecided.take()
+}
+
+/// The judgment of stage `n`'s merge at `at` against local head `head` (`land::merged`'s,
+/// held while undecided): the replies, the "not delivered" line, the missed replies.
+pub(super) fn judge(
+    run: &mut Run,
+    n: u16,
+    pr: &PrRecord,
+    head: &str,
+    at: &str,
+    delivered: bool,
+    now: u64,
+) {
+    let missed = super::reply::landed(run, n, at, delivered);
+    if !delivered {
+        unpushed(run, n, pr, head, at, now);
+    }
+    if !missed.is_empty() {
+        missed_merge(run, n, pr, at, &missed, now);
+    }
+}
+
+/// Milestone 9.7 decision 7: the base fetch's answer for stage `contains.stage`. Only
+/// `Some(true)` delivers. An answer about another pair than the stage's undecided one
+/// is stale and ignored (the next pass asks again).
+pub(super) fn decided(run: &mut Run, contains: &Contains, answer: Option<bool>, now: u64) {
+    let n = contains.stage;
+    let asked = (contains.head.clone(), contains.merged.clone());
+    let current = run.delivery.stage(n).and_then(|s| s.undecided.as_ref());
+    let Some(pr) = run.delivery.pr(n).cloned() else {
+        return;
+    };
+    if current != Some(&asked) {
+        return;
+    }
+    take_undecided(run, n);
+    judge(
+        run,
+        n,
+        &pr,
+        &contains.head,
+        &contains.merged,
+        answer == Some(true),
+        now,
+    );
+}
+
+/// Ruling R1 (BR-4): the base fetch carrying `contains` failed. The stage stays
+/// undecided and is asked again after the wait; the third failure in a row decides it
+/// as not delivered, saying it could not be checked.
+pub(super) fn check_failed(run: &mut Run, contains: &Contains, now: u64) {
+    let n = contains.stage;
+    let asked = (contains.head.clone(), contains.merged.clone());
+    if run.delivery.stage(n).and_then(|s| s.undecided.as_ref()) != Some(&asked) {
+        return;
+    }
+    let stage = stage_mut(run, n);
+    stage.undecided_fails = stage.undecided_fails.saturating_add(1);
+    if stage.undecided_fails < CHECK_TRIES {
+        return;
+    }
+    let text = format!(
+        "stage {n}: could not check whether {} is in the merge; treating it as not delivered",
+        sha7(&contains.head)
+    );
+    log(run, now, text);
+    decided(run, contains, None, now);
 }
 
 /// Stage `n` was merged at `at`, the host's head, which does not hold its local head

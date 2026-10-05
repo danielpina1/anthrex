@@ -42,6 +42,7 @@ pub(super) fn fetch(n: u16, local_ref: String, expected: &str, also_integration:
             also_integration,
         }),
         parents_of: None,
+        contains: None,
     }
 }
 

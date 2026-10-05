@@ -6,14 +6,19 @@
 use proto::TaskState;
 
 use super::delivery_land::{ci_fix, head, logged, merged_view};
+use super::delivery_open::answer;
 use super::delivery_open::{green, open_stage, pr_on};
+use super::delivery_sync::base_fetch;
 use super::delivery_watch::fast;
 use super::delivery_watch_adopt::poll_stage;
 use super::fixture::*;
 use super::full::attention;
 use super::merge::{commit, doc_task, merge, to_queue, window_of};
 use super::propagate::land_propagates;
+use crate::host::FetchOutcome;
 use crate::run::contract::sha7;
+use crate::run::delivery::ops::HostResult;
+use crate::run::engine::stages::set_stage_head;
 
 /// A `pr` run of `tasks` with two writers: `t1` merged into stage 1, its PR #11 open
 /// (polled every second), and a CI fix task of stage 1 working in its window.
@@ -111,5 +116,46 @@ fn a_deferred_fix_task_that_lands_after_the_merge_says_it_is_not_delivered() {
         Some(&unlanded),
         "{:#?}",
         fx.run().delivery.alerts
+    );
+}
+
+/// BR-6 (task M9.7.5): a deferred fix task that lands on an undecided merged stage
+/// decides it as not delivered at once: its commit was made after the host's merge,
+/// so the merge cannot hold it. The check's later answer is stale and changes nothing.
+#[test]
+fn a_deferred_fix_that_lands_on_an_undecided_merge_decides_it_not_delivered() {
+    let (mut fx, fix, windows) = one_stage_with_a_fix();
+    to_queue(&mut fx, &fix, window_of(&windows, &fix));
+    // The local head moved past what any view showed, so the merge is undecided.
+    fx.run_mut().delivery.stages[0].held = Some("protected branch".into());
+    set_stage_head(fx.run_mut(), 1, &commit(60));
+    poll_stage(&mut fx, 1, merged_view(11, &commit(80), &commit(70)));
+    let undecided = |fx: &Fixture| fx.run().delivery.stage(1).unwrap().undecided.clone();
+    assert_eq!(undecided(&fx), Some((commit(60), commit(80))));
+    assert!(fx.task(&fix).cancel_deferred);
+    let landed = commit(5);
+    merge(&mut fx, &fix, &landed);
+    assert_eq!(undecided(&fx), None);
+    let unlanded = format!(
+        "stage 1 PR #11 was merged at 80eeeee, without {}; that work is not delivered (anthrex run cancel gives up)",
+        sha7(&landed)
+    );
+    assert_eq!(
+        fx.run().delivery.alerts.get("1/unlanded"),
+        Some(&unlanded),
+        "{:#?}",
+        fx.run().log
+    );
+    let (op, _) = base_fetch(&fx);
+    let outcome = FetchOutcome::Fetched {
+        sha: commit(71),
+        parents: Some(1),
+        contains: Some(true),
+    };
+    answer(&mut fx, op, HostResult::Fetched(outcome));
+    assert_eq!(
+        fx.run().delivery.alerts.get("1/unlanded"),
+        Some(&unlanded),
+        "a stale answer"
     );
 }
