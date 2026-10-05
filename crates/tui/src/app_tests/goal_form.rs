@@ -48,6 +48,7 @@ pub(super) fn doc(models: Vec<ModelEntry>) -> SettingsDoc {
             max_readers: 2,
             max_bounces: 2,
         },
+        design_default: None,
     }
 }
 

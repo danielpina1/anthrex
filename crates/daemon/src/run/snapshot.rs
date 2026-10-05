@@ -163,6 +163,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         docs,
         round_design,
         halted_phase,
+        design_agents: super::snapshot_design::design_agents(run),
     }
 }
 

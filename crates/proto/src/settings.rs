@@ -81,6 +81,11 @@ pub struct SettingsDoc {
     pub models: Vec<ModelEntry>,
     pub orchestrator: OrchestratorDefault,
     pub limits: SettingsLimits,
+    /// Ruling T18-2: `[orchestrator.design].default`, which the goal dialog's
+    /// `configured` names. Read-only here: a save never writes it. `None` from a daemon
+    /// that did not say; left out while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub design_default: Option<crate::design::DesignMode>,
 }
 
 /// Whether a key's value came from the file or is the built-in default.

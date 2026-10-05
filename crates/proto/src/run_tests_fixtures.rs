@@ -270,6 +270,7 @@ pub(super) fn a_run_info() -> RunInfo {
         docs: Vec::new(),
         round_design: None,
         halted_phase: None,
+        design_agents: Vec::new(),
     }
 }
 

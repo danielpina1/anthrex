@@ -3,9 +3,12 @@
 //! without the design flow shows `Off`, no gate and no documents, so its `RunInfo` is
 //! written as 9.5's.
 
-use proto::{DesignMode, DocGateInfo, DocInfo, RevisingCause, RoundDesign, RunState};
+use proto::{
+    DesignAgentInfo, DesignAgentStatus, DesignMode, DocGateInfo, DocInfo, DocKind, RevisingCause,
+    RoundDesign, RunState,
+};
 
-use super::design::state::{DesignState, Revision, gate_doc};
+use super::design::state::{DesignAgentState, DesignState, Revision, gate_doc};
 use super::model::Run;
 
 /// `RunInfo.{design, doc_gate, docs}`.
@@ -70,4 +73,53 @@ fn docs(design: &DesignState) -> Vec<DocInfo> {
             requirements: v.requirements.clone(),
         })
         .collect()
+}
+
+/// Ruling T18-1: `RunInfo.design_agents`: the current round's brainstormers, then its
+/// document reviewer, one entry an agent with its session count (a ruling T8-7
+/// relaunch is its second session, not a second agent). A reviewer's document and
+/// review number are its label's, `<doc>-r<n>` (ruling T1-O3).
+pub fn design_agents(run: &Run) -> Vec<DesignAgentInfo> {
+    let Some(design) = &run.orch.design else {
+        return Vec::new();
+    };
+    (design.brainstormers.iter().chain(&design.reviewer))
+        .map(|agent| {
+            let (doc, review) = match agent.role {
+                proto::AgentRole::DocReviewer => reviewed(&agent.label),
+                _ => (None, None),
+            };
+            DesignAgentInfo {
+                role: agent.role,
+                label: agent.label.clone(),
+                runtime: agent.route.runtime,
+                state: match agent.state {
+                    DesignAgentState::Queued => DesignAgentStatus::Queued,
+                    DesignAgentState::Running => DesignAgentStatus::Running,
+                    DesignAgentState::Submitted => DesignAgentStatus::Submitted,
+                    DesignAgentState::Done => DesignAgentStatus::Done,
+                    DesignAgentState::Failed(_) => DesignAgentStatus::Failed,
+                },
+                sessions: agent.session,
+                window_id: agent.window_id,
+                doc,
+                review,
+            }
+        })
+        .collect()
+}
+
+/// A reviewer label's document and review number: `spec-r2` is the spec's review 2.
+fn reviewed(label: &str) -> (Option<DocKind>, Option<u32>) {
+    let Some((doc, n)) = label.rsplit_once("-r") else {
+        return (None, None);
+    };
+    let kinds = [
+        DocKind::BrainstormDraft,
+        DocKind::Brainstorm,
+        DocKind::Spec,
+        DocKind::Plan,
+    ];
+    let doc = kinds.into_iter().find(|k| k.label() == doc);
+    (doc, n.parse().ok())
 }

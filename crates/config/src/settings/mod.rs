@@ -49,6 +49,8 @@ pub fn doc_of(o: &Orchestrator) -> SettingsDoc {
             max_readers: o.max_readers,
             max_bounces: o.max_bounces,
         },
+        // Ruling T18-2: read-only in the settings; a save never writes it.
+        design_default: Some(o.design.default),
     }
 }
 

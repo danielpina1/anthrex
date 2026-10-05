@@ -484,6 +484,10 @@ pub struct RunInfo {
     pub round_design: Option<RoundDesign>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub halted_phase: Option<RunState>,
+    /// Ruling T18-1: the current round's brainstormers and document reviewer, left out
+    /// while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub design_agents: Vec<crate::design::DesignAgentInfo>,
 }
 
 /// Every run the daemon knows about, at one revision.

@@ -376,3 +376,6 @@ fn doc_gate_and_show_doc_round_trip() {
 
 #[path = "design_tests_wire.rs"]
 mod wire;
+
+#[path = "design_tests_agents.rs"]
+mod agents;

@@ -49,6 +49,7 @@ pub(crate) fn sample() -> SettingsDoc {
             max_readers: 4,
             max_bounces: 3,
         },
+        design_default: None,
     }
 }
 

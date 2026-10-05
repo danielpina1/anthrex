@@ -310,6 +310,7 @@ impl SettingsScreen {
                 max_readers: 0,
                 max_bounces: 0,
             },
+            design_default: None,
         };
         let mut s = Self {
             section: SettingsSection::Claude,
@@ -421,6 +422,8 @@ impl SettingsScreen {
                 model: self.model.clone(),
             },
             limits,
+            // Ruling T18-2: read-only here; the screen carries what the daemon said.
+            design_default: self.base.design_default,
         }
     }
 

@@ -57,6 +57,7 @@ fn a_doc() -> SettingsDoc {
             max_readers: 4,
             max_bounces: 2,
         },
+        design_default: None,
     }
 }
 

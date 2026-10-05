@@ -168,9 +168,9 @@ pub use delivery::{
     DeliveryMode, DeliveryProfile, MergeMethod, PrState, StageOutcome, StagePrInfo, ThreadCounts,
 };
 pub use design::{
-    ApproachTag, DesignMode, DocAuthor, DocFinding, DocGateAction, DocGateInfo, DocGateKind,
-    DocInfo, DocKind, DocSeverity, DocView, FindingAnswer, PhaseAgent, PhaseRecord, ReportSummary,
-    RevisingCause, RoundDesign,
+    ApproachTag, DesignAgentInfo, DesignAgentStatus, DesignMode, DocAuthor, DocFinding,
+    DocGateAction, DocGateInfo, DocGateKind, DocInfo, DocKind, DocSeverity, DocView, FindingAnswer,
+    PhaseAgent, PhaseRecord, ReportSummary, RevisingCause, RoundDesign,
 };
 pub use history::{
     BisectLine, FlakyProposal, FlakyRecord, GateTally, HISTORY_VERSION, HistoryLine, HistoryStats,

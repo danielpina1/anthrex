@@ -127,7 +127,7 @@ pub(super) fn design_launched(yes: bool) -> Fixture {
     fx
 }
 
-fn brainstormer(label: &str, runtime: Runtime) -> DesignAgent {
+pub(super) fn brainstormer(label: &str, runtime: Runtime) -> DesignAgent {
     DesignAgent {
         label: label.into(),
         role: AgentRole::Brainstormer,

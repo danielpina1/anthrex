@@ -189,6 +189,37 @@ impl<'de> Deserialize<'de> for DocGateAction {
     }
 }
 
+/// Where a design agent stands (ruling T18-1), as a client sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DesignAgentStatus {
+    Queued,
+    Running,
+    /// A brainstormer's draft is accepted and held until both have ended (ruling T8-1).
+    Submitted,
+    Done,
+    Failed,
+}
+
+/// One of the current round's brainstormers or its document reviewer (ruling T18-1,
+/// `RunInfo.design_agents`): one entry an agent, however many sessions it took (a
+/// ruling T8-7 relaunch is its second). A reviewer names its document and review number.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DesignAgentInfo {
+    pub role: AgentRole,
+    /// A brainstormer's label (`claude`, `codex`, `A`, `B`), a reviewer's `<doc>-r<n>`.
+    pub label: String,
+    pub runtime: crate::Runtime,
+    pub state: DesignAgentStatus,
+    pub sessions: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc: Option<DocKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<u32>,
+}
+
 /// One gate version's index entry, as a client sees it (`RunInfo.docs`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocInfo {
