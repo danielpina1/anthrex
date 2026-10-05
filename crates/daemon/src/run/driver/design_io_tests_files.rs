@@ -134,6 +134,34 @@ fn an_unsupported_hard_link_falls_back_to_a_new_file() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), SPEC_1);
 }
 
+/// The final fix wave's FW-31: a link refused with EPERM (FAT, some FUSE mounts), or
+/// with ENOTSUP or EOPNOTSUPP (macOS exFAT, FAT and FUSE), takes the in-place fallback
+/// too; another error does not.
+#[test]
+fn a_link_refused_as_unsupported_falls_back_to_a_new_file() {
+    for (name, errno) in [
+        ("EPERM", libc::EPERM),
+        ("ENOTSUP", libc::ENOTSUP),
+        ("EOPNOTSUPP", libc::EOPNOTSUPP),
+    ] {
+        let dir = tmp();
+        let path = dir.path().join("spec-v1.md");
+        let refused = |_: &Path, _: &Path| Err(Error::from_raw_os_error(errno));
+        write_new_at(&path, SPEC_1, 1, &refused).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), SPEC_1, "{name}");
+        assert_eq!(
+            names(dir.path()),
+            ["spec-v1.md"],
+            "{name}: no temp file left"
+        );
+    }
+    let dir = tmp();
+    let path = dir.path().join("spec-v1.md");
+    let eio = |_: &Path, _: &Path| Err(Error::from_raw_os_error(libc::EIO));
+    assert!(write_new_at(&path, SPEC_1, 1, &eio).is_err());
+    assert!(!path.exists(), "no fallback for another error");
+}
+
 #[test]
 fn missing_folders_are_created_one_by_one_and_listed() {
     let dir = tmp();

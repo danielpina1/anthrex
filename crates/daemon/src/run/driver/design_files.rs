@@ -119,9 +119,12 @@ pub fn write_new_at(path: &Path, text: &str, seq: u64, link: Link<'_>) -> Result
 }
 
 /// A link the file system does not offer: unsupported, or refused with `EPERM` (some
-/// file systems, FAT and certain FUSE mounts, refuse links so).
+/// file systems, FAT and certain FUSE mounts, refuse links so), `ENOTSUP` or
+/// `EOPNOTSUPP` (macOS exFAT, FAT and FUSE; the final fix wave's FW-31).
 fn no_links(error: &io::Error) -> bool {
-    error.kind() == ErrorKind::Unsupported || error.raw_os_error() == Some(libc::EPERM)
+    let refused = [libc::EPERM, libc::ENOTSUP, libc::EOPNOTSUPP];
+    error.kind() == ErrorKind::Unsupported
+        || (error.raw_os_error()).is_some_and(|errno| refused.contains(&errno))
 }
 
 fn in_place(path: &Path, text: &str, dir: &Path) -> Result<(), String> {
