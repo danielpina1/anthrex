@@ -61,7 +61,7 @@ pub(super) fn roster() -> Vec<ModelEntry> {
     ]
 }
 
-fn reply(reply: SettingsReply, id: u64) -> DaemonMsg {
+pub(super) fn reply(reply: SettingsReply, id: u64) -> DaemonMsg {
     DaemonMsg::Run(RunReply::Settings {
         reply: Box::new(reply),
         request_id: Some(id),
@@ -87,7 +87,7 @@ fn get() -> RunRequest {
     RunRequest::Settings(SettingsRequest::Get)
 }
 
-fn gets(effects: &[Effect]) -> Vec<u64> {
+pub(super) fn gets(effects: &[Effect]) -> Vec<u64> {
     effects
         .iter()
         .filter_map(|e| match e {

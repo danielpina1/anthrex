@@ -224,4 +224,12 @@ fn the_goal_dialog_has_a_design_row_defaulting_from_config() {
     form.design = None;
     form.focus = GoalField::Goal;
     assert_eq!(row(&form).trim_end(), "  design            ‹ configured ›");
+    // Ruling T18-2: with the settings' default known, `configured` names it, and still
+    // sends no mode.
+    form.design_default = Some(proto::DesignMode::Full);
+    assert_eq!(
+        row(&form).trim_end(),
+        "  design            ‹ configured (full) ›"
+    );
+    assert_eq!(design(&form), None);
 }

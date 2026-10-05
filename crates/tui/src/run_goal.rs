@@ -94,6 +94,9 @@ pub struct GoalForm {
     /// Milestone 9.6: `None` is `configured`, the daemon's choice (DF §1's table, then
     /// `[orchestrator.design].default`), else `full` or `off` (`StartGoal.design`).
     pub design: Option<proto::DesignMode>,
+    /// Ruling T18-2: the settings' `[orchestrator.design].default` as of the last
+    /// `set_roster`, which `configured` names; `None` while no cache has arrived.
+    pub design_default: Option<proto::DesignMode>,
     /// The text typed after `custom…`; kept while the picker moves away and back.
     pub custom: TextInput,
     /// The settings cache's roster as of the last `set_roster` (decision 24); empty
@@ -163,6 +166,7 @@ impl GoalForm {
             model: GoalModel::Default,
             delivery: None,
             design: None,
+            design_default: None,
             custom: TextInput::default(),
             roster: Vec::new(),
             trust_project: false,

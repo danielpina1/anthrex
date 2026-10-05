@@ -99,6 +99,7 @@ impl App {
         let mut form = GoalForm::new(project);
         if let Some(cache) = &self.settings_cache {
             form.set_roster(cache.doc.models.clone());
+            form.design_default = cache.doc.design_default;
         }
         if let Some(draft) = draft {
             form.goal = TextArea::editor(&draft);

@@ -244,13 +244,18 @@ pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<
         Some(proto::DeliveryMode::Pr) => "pr",
     };
     body.push(choice_line(form, GoalField::Delivery, delivery, value_w, p));
-    // Milestone 9.6: `configured` is `[orchestrator.design].default`, the daemon's.
-    let design = match form.design {
-        None => "configured",
-        Some(proto::DesignMode::Full) => "full",
-        Some(proto::DesignMode::Off) => "off",
+    // Milestone 9.6: `configured` is `[orchestrator.design].default`, the daemon's,
+    // named once the settings cache says it (ruling T18-2).
+    let mode = |mode| match mode {
+        proto::DesignMode::Full => "full",
+        proto::DesignMode::Off => "off",
     };
-    body.push(choice_line(form, GoalField::Design, design, value_w, p));
+    let design = match (form.design, form.design_default) {
+        (None, None) => "configured".to_owned(),
+        (None, Some(default)) => format!("configured ({})", mode(default)),
+        (Some(chosen), _) => mode(chosen).to_owned(),
+    };
+    body.push(choice_line(form, GoalField::Design, &design, value_w, p));
     body.push(choice_line(
         form,
         GoalField::Trust,

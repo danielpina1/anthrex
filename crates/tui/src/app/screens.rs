@@ -210,6 +210,7 @@ impl App {
     fn set_cache(&mut self, cache: SettingsCache) {
         if let Some(Modal::StartGoal(form)) = &mut self.modal {
             form.set_roster(cache.doc.models.clone());
+            form.design_default = cache.doc.design_default;
         }
         self.settings_cache = Some(cache);
         self.sync_settings_screen();

@@ -56,6 +56,9 @@ mod goal_form;
 #[path = "../app_tests/goal_form_render.rs"]
 mod goal_form_render;
 
+#[path = "../app_tests/goal_form_design.rs"]
+mod goal_form_design;
+
 #[path = "../app_tests/run_goal.rs"]
 mod run_goal;
 
