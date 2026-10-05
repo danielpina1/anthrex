@@ -373,3 +373,19 @@ fn the_state_survives_save_and_load() {
     let json: serde_json::Value = serde_json::from_str(&text).expect("run.json is JSON");
     assert!(json["orch"].get("design").is_none(), "{}", json["orch"]);
 }
+
+/// The final fix wave's FW-15 (ruling T15-15, re-review m1): a later round's landed
+/// documents commit (`Round.committed_stage`) survives a save and load.
+#[test]
+fn a_rounds_committed_stage_survives_save_and_load() {
+    let mut run = old_run();
+    let mut round = super::Round::first(&run);
+    round.n = 2;
+    round.committed_stage = Some(2);
+    run.rounds = vec![super::Round::first(&run), round];
+    let dir = tmp();
+    let (loaded, text) = save_and_load(&mut run, dir.path());
+    let stages: Vec<Option<u16>> = loaded.rounds.iter().map(|r| r.committed_stage).collect();
+    assert_eq!(stages, [None, Some(2)]);
+    assert!(text.contains("\"committed_stage\":2"), "{text}");
+}
