@@ -211,6 +211,7 @@ pub fn run_limits(
         recover_after_secs: config.tuning.table.recover_after_mins.saturating_mul(60),
         halve_hold_secs: config.tuning.table.halve_hold_secs,
         race_slot_wait_secs: config.tuning.table.race_slot_wait_secs,
+        design_tuning: Default::default(),
     }
 }
 

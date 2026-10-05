@@ -26,21 +26,16 @@ pub(super) fn route_text(r: ClassRoute) -> String {
     format!("{}/{}", strength_label(r.strength), effort_label(r.effort))
 }
 
-pub(super) fn list_of(lists: &RouteLists, class: SizeClass) -> &RouteList {
+/// A task class's model list; `None` for a design class (ruling T13-5, m6), whose
+/// agents' routes are decision 10's, never a class's.
+pub(super) fn list_of(lists: &RouteLists, class: SizeClass) -> Option<&RouteList> {
     match class {
-        SizeClass::S => &lists.s,
-        SizeClass::M => &lists.m,
-        SizeClass::Hub => &lists.hub,
-        SizeClass::Brainstorm => &lists.brainstorm,
-        // The document reviewer has no list (decision 10: the orchestrator's peer).
-        SizeClass::DocReview => &NO_LIST,
+        SizeClass::S => Some(&lists.s),
+        SizeClass::M => Some(&lists.m),
+        SizeClass::Hub => Some(&lists.hub),
+        SizeClass::Brainstorm | SizeClass::DocReview => None,
     }
 }
-
-static NO_LIST: RouteList = RouteList {
-    candidates: Vec::new(),
-    pick: config::Pick::First,
-};
 
 /// `list (config): <runtime>/<model> <effort>, …`, a candidate without `effort` taking
 /// the class's.
@@ -103,15 +98,15 @@ fn threshold_proposal(
     })
 }
 
-/// The class's route without a list: an applied `route.<class>`, else M8a's default.
-pub(super) fn current_route(file: &TuningFile, class: SizeClass) -> ClassRoute {
+/// A task class's route without a list: an applied `route.<class>`, else M8a's
+/// default. `None` for a design class (ruling T13-5, m6): it has no class route.
+pub(super) fn current_route(file: &TuningFile, class: SizeClass) -> Option<ClassRoute> {
     let defaults = ClassRoutes::default();
     match class {
-        SizeClass::S => file.routes.get("s").copied().unwrap_or(defaults.s),
-        SizeClass::M => file.routes.get("m").copied().unwrap_or(defaults.m),
-        SizeClass::Hub => defaults.hub,
-        // Never asked: a design agent's route is decision 10's, not a class route.
-        SizeClass::Brainstorm | SizeClass::DocReview => defaults.m,
+        SizeClass::S => Some(file.routes.get("s").copied().unwrap_or(defaults.s)),
+        SizeClass::M => Some(file.routes.get("m").copied().unwrap_or(defaults.m)),
+        SizeClass::Hub => Some(defaults.hub),
+        SizeClass::Brainstorm | SizeClass::DocReview => None,
     }
 }
 
@@ -129,10 +124,10 @@ fn route_proposal(
         SizeClass::M => &M_ROUTE_LADDER,
         SizeClass::Hub | SizeClass::Brainstorm | SizeClass::DocReview => return None,
     };
-    if !list_of(&cfg.tuning.routes, class).candidates.is_empty() {
+    if list_of(&cfg.tuning.routes, class).is_none_or(|l| !l.candidates.is_empty()) {
         return None;
     }
-    let cur = current_route(file, class);
+    let cur = current_route(file, class)?;
     let samples = route_samples(lines, class, t, cur);
     if !qualifies(&samples, t) {
         return None;

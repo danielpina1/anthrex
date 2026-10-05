@@ -34,6 +34,8 @@ pub const YES_LINE: &str = "design flow: --yes does not skip the brainstorm, spe
 pub(crate) fn enter(run: &mut Run) {
     run.state = RunState::Brainstorming;
     run.orch.design = Some(DesignState::default());
+    // Ruling T13-5 (m5): the design classes' tuning, a design run's only.
+    super::design_spend::tuned(run);
     if run.orch.yes {
         let at = run.created_at;
         log(run, at, YES_LINE);

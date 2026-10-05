@@ -77,18 +77,11 @@ pub(super) fn breached(spend: Spend, budget: Budget) -> Option<String> {
 /// Rung 4's ceiling (milestone 9.5 rulings RH-4 and T9-1), from the run's frozen
 /// budgets: `refit::ceiling`, the one rule.
 pub(super) fn ceiling(run: &Run, task: &Task) -> Budget {
-    let class = match (task.hub, task.size) {
-        (true, _) => SizeClass::Hub,
-        (false, Size::S) => SizeClass::S,
-        _ => SizeClass::M,
-    };
     let l = &run.limits;
-    let own = match class {
-        SizeClass::S => l.budget_s,
-        SizeClass::M => l.budget_m,
-        SizeClass::Hub => l.budget_hub.unwrap_or(l.budget_m),
-        // Never a task's class.
-        SizeClass::Brainstorm | SizeClass::DocReview => l.budget_m,
+    let (class, own) = match (task.hub, task.size) {
+        (true, _) => (SizeClass::Hub, l.budget_hub.unwrap_or(l.budget_m)),
+        (false, Size::S) => (SizeClass::S, l.budget_s),
+        _ => (SizeClass::M, l.budget_m),
     };
     refit::ceiling(class, own, l.budget_m, l.budget_l)
 }

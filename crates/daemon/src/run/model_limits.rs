@@ -118,6 +118,21 @@ pub struct RunLimits {
     /// older run, which has no racing task: 0).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub race_slot_wait_secs: u64,
+    /// Milestone 9.6 ruling T13-5 (m5): the design classes' refit budgets and tuning
+    /// lines the start learned, held until the run enters the design flow
+    /// (`engine::design::enter`), which applies them; a run without the flow never does,
+    /// so its log, its REPORT.md and its design limits are 9.5's. Never written: it is
+    /// taken in the start's own build.
+    #[serde(skip)]
+    pub design_tuning: DesignTuning,
+}
+
+/// [`RunLimits::design_tuning`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DesignTuning {
+    pub brainstormer: Option<Budget>,
+    pub doc_reviewer: Option<Budget>,
+    pub lines: Vec<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -140,14 +155,27 @@ impl RunLimits {
         self.budget_s = tuned.effective(config, SizeClass::S);
         self.budget_m = tuned.effective(config, SizeClass::M);
         self.budget_hub = tuned.budget_hub;
-        // Milestone 9.6 decision 33: the design agents' effective budgets.
-        self.orch.design.brainstormer = tuned.effective(config, SizeClass::Brainstorm);
-        self.orch.design.doc_reviewer = tuned.effective(config, SizeClass::DocReview);
+        // Milestone 9.6 decision 33 and ruling T13-5 (m5): a design run's only.
+        self.design_tuning = DesignTuning {
+            brainstormer: tuned.budget_brainstorm,
+            doc_reviewer: tuned.budget_doc_review,
+            lines: tuned.design_lines.clone(),
+        };
         self.class_routes = tuned.routes;
         self.path_weights = tuned.weights.clone();
         self.thresholds = tuned.thresholds;
         // Ruling T9-2: the lists against the roster the run freezes (`Run.roster`).
         self.route_lists = RouteListsFrozen::freeze(&tuned.lists, &config.models);
+    }
+
+    /// Ruling T13-5 (m5): a run entering the design flow takes the design classes'
+    /// refit budgets (ruling RH-8) and returns their tuning lines, once.
+    pub fn take_design_tuning(&mut self) -> Vec<String> {
+        let tuning = std::mem::take(&mut self.design_tuning);
+        let design = &mut self.orch.design;
+        design.brainstormer = tuning.brainstormer.unwrap_or(design.brainstormer);
+        design.doc_reviewer = tuning.doc_reviewer.unwrap_or(design.doc_reviewer);
+        tuning.lines
     }
 }
 

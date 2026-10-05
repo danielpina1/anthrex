@@ -8,9 +8,12 @@ use proto::{DocKind, TaskState};
 use super::model::{Run, Task};
 use super::report_escape::escape_cell;
 
+/// An approved spec whose requirements the driver could not read back (ruling T10-3).
+const NOT_READ_BACK: &str = "The approved spec's requirements could not be read back.\n";
+
 /// The section, after the tasks (`report.rs::render`): the table of the approved
-/// spec's requirements (none before its approval), then the spend line, exactly
-/// `design phases: <calls> calls, <tokens> tokens, <m> min, <v> gate versions`: the
+/// spec's requirements (none before its approval or its read-back), then the spend
+/// line, exactly `design phases: <calls> calls, <tokens> tokens, <m> min, <v> gate versions`: the
 /// design agents' calls and tokens, the orchestrator phases' clock time in whole
 /// minutes, and the three gates' versions.
 pub fn section(run: &Run, out: &mut String) {
@@ -18,12 +21,22 @@ pub fn section(run: &Run, out: &mut String) {
         return;
     };
     out.push_str("\n## Requirements\n\n");
-    if design.requirements.is_empty() {
-        out.push_str("No spec was approved.\n");
-    } else {
-        out.push_str("| Req | Tasks | Outcome |\n|---|---|---|\n");
-    }
-    for requirement in &design.requirements {
+    // Ruling T13-5 (m3): keyed on the approval; its requirements come with the read-back.
+    let rows = match (design.approved_spec, design.requirements.is_empty()) {
+        (None, _) => {
+            out.push_str("No spec was approved.\n");
+            &[][..]
+        }
+        (Some(_), true) => {
+            out.push_str(NOT_READ_BACK);
+            &[][..]
+        }
+        (Some(_), false) => {
+            out.push_str("| Req | Tasks | Outcome |\n|---|---|---|\n");
+            &design.requirements[..]
+        }
+    };
+    for requirement in rows {
         let tasks: Vec<&Task> = (run.tasks.iter())
             .filter(|t| t.spec.covers.contains(&requirement.id))
             .collect();

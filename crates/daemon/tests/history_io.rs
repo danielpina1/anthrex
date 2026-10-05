@@ -294,6 +294,70 @@ fn history_append_is_reconciled_exactly_once() {
     assert_eq!(ops, vec![(7, Reconciled::NotStarted)]);
 }
 
+/// Milestone 9.6 ruling T13-4: a phase approved again after a back is appended under
+/// its own id (`…/v<n>`), so a restart with that append pending writes it although the
+/// first approval's line is there; the refit then counts the latest approval only.
+#[test]
+fn a_reapproved_phase_pending_at_a_restart_is_appended_and_counted_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.jsonl");
+    let agent = |calls: u32| proto::PhaseAgent {
+        role: proto::AgentRole::DocReviewer,
+        route: proto::Route {
+            runtime: proto::Runtime::Codex,
+            model: "gpt-6".into(),
+            strength: proto::Strength::Frontier,
+            effort: proto::Effort::High,
+        },
+        calls,
+        tokens: 0,
+        outcome: "ok".into(),
+        secs: 240,
+        sessions: 1,
+    };
+    let record = |run: u32, n: u32, calls: u32| {
+        HistoryLine::Phase(proto::PhaseRecord {
+            v: proto::HISTORY_VERSION,
+            record_id: format!("history-{run}/phase/1/specifying/v{n}"),
+            at: u64::from(run) * 10 + u64::from(n),
+            run_id: format!("history-{run}"),
+            round: 1,
+            phase: "specifying".into(),
+            secs: 60,
+            agents: vec![agent(calls)],
+            gate_versions: n,
+            disputed: 0,
+        })
+    };
+    for run in 0..30 {
+        append_line(&path, &record(run, 1, 2)).unwrap();
+        append_line(&path, &record(run, 2, 12)).unwrap();
+    }
+    append_line(&path, &record(30, 1, 2)).unwrap();
+    // Run 30's re-approval was pending when the daemon stopped.
+    let (mut run, _) = run_appending(dir.path(), &path);
+    let kind = OpKind::AppendHistory {
+        path: path.clone(),
+        record_id: "history-30/phase/1/specifying/v2".into(),
+        line: Box::new(record(30, 2, 12)),
+    };
+    run.pending_ops.get_mut(&7).unwrap().kind = kind.clone();
+    let journal = vec![JournalLine::Intent { op: 7, kind }];
+    let git = std::ffi::OsStr::new("/nonexistent/anthrex-test/git");
+    let ops = reconcile(git, &run, &journal, &[], T).ops;
+    assert_eq!(ops, vec![(7, Reconciled::NotStarted)], "appended again");
+    append_line(&path, &record(30, 2, 12)).unwrap();
+    let (lines, problems) = read_history(&path);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(lines.len(), 62, "both approvals of every run");
+    let cfg = config::Orchestrator::default();
+    let (file, _) = daemon::run::refit::refit(&lines, &proto::TuningFile::default(), &cfg, 1);
+    let fit = &file.budgets["doc_review"];
+    // The 31 latest approvals at 12 calls (× 250% = 30); the first ones (2 calls) would
+    // have pulled the median to the floor.
+    assert_eq!((fit.samples, fit.tool_calls), (31, 30));
+}
+
 /// Decision 33: the driver fills an accepted run's `accepted_commit` from the base
 /// branch; nothing else is touched, and a failed read leaves it unset.
 #[test]

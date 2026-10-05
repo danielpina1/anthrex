@@ -178,6 +178,29 @@ fn a_phase_agent_without_secs_decodes() {
     assert_eq!((record.agents[0].secs, record.agents[1].secs), (0, 240));
 }
 
+/// Task M9.6.13 fix round 1 (ruling T13-3): a phase agent's sessions, read as one on a
+/// line written before them; the current shape round-trips.
+#[test]
+fn a_phase_agent_without_sessions_reads_as_one() {
+    let line = HistoryLine::Phase(a_phase_record());
+    both_ways(&line);
+    let mut json = serde_json::to_value(&line).unwrap();
+    assert_eq!(json["agents"][0]["sessions"], 2);
+    for agent in json["agents"].as_array_mut().unwrap() {
+        let agent = agent.as_object_mut().unwrap();
+        agent.remove("sessions");
+        agent.remove("secs");
+    }
+    let older: HistoryLine = serde_json::from_value(json).unwrap();
+    let HistoryLine::Phase(record) = older else {
+        panic!("{older:?}");
+    };
+    let read: Vec<(u32, u64)> = (record.agents.iter())
+        .map(|a| (a.sessions, a.secs))
+        .collect();
+    assert_eq!(read, [(1, 0), (1, 0)]);
+}
+
 #[test]
 fn appended_variants_keep_their_indices() {
     // A unit variant also decodes from its index in MessagePack.

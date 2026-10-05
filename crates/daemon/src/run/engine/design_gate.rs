@@ -119,7 +119,7 @@ pub(crate) fn act(
     match action {
         DocGateAction::Approve => {
             // Decision 32 (task M9.6.13): the phase's history record.
-            super::design_spend::approved(run, kind, now, fx);
+            super::design_spend::approved(run, (kind, n), now, fx);
             let text = approve(run, kind, &what, now);
             // Task M9.6.10: the approved spec's requirements, from its stored text.
             if kind == DocGateKind::Spec {

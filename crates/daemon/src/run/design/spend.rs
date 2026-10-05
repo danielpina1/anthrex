@@ -68,6 +68,7 @@ impl AgentSpend {
             tokens: self.tokens,
             outcome: self.outcome.clone(),
             secs: self.secs,
+            sessions: self.sessions,
         }
     }
 }

@@ -140,7 +140,7 @@ fn a_phase_record_is_written_per_phase_with_agents_and_versions() {
     let lines = phase_lines(&fx);
     assert_eq!(lines.len(), 1, "{lines:?}");
     let (id, record) = &lines[0];
-    assert_eq!(id, &format!("{RUN_ID}/phase/1/brainstorming"));
+    assert_eq!(id, &format!("{RUN_ID}/phase/1/brainstorming/v2"));
     assert_eq!(record.record_id, *id);
     assert_eq!((record.run_id.as_str(), record.round), (RUN_ID, 1));
     assert_eq!(
@@ -170,7 +170,7 @@ fn a_phase_record_is_written_per_phase_with_agents_and_versions() {
     let lines = phase_lines(&fx);
     assert_eq!(lines.len(), 2, "{lines:?}");
     let (id, record) = &lines[1];
-    assert_eq!(id, &format!("{RUN_ID}/phase/1/specifying"));
+    assert_eq!(id, &format!("{RUN_ID}/phase/1/specifying/v1"));
     assert_eq!((record.gate_versions, record.disputed), (1, 1));
     assert_eq!(record.agents.len(), 1);
     assert_eq!(
@@ -192,7 +192,7 @@ fn a_phase_record_is_written_per_phase_with_agents_and_versions() {
     act(&mut fx, DocGateKind::Plan, DocGateAction::Approve).unwrap();
     let lines = phase_lines(&fx);
     let (id, record) = &lines[2];
-    assert_eq!(id, &format!("{RUN_ID}/phase/1/planning"));
+    assert_eq!(id, &format!("{RUN_ID}/phase/1/planning/v1"));
     assert_eq!((record.gate_versions, record.disputed), (1, 0));
     assert_eq!(agent(record, 0), (AgentRole::DocReviewer, 2, 500, 40, "ok"));
     assert_eq!(lines.len(), 3);
@@ -308,4 +308,33 @@ fn a_failed_session_is_recorded_failed_or_over_budget() {
             ("codex", 60, "over budget")
         ]
     );
+}
+
+/// Ruling T13-4: a phase approved again after a back is a new record, its id naming
+/// the version approved, so a restart cannot take it for the first (`contains_record`);
+/// its sums hold everything since the first.
+#[test]
+fn a_reapproval_after_a_back_is_a_new_record() {
+    let mut fx = brainstorming();
+    fx.run_mut().repo_dir = REPO.into();
+    drafts(&mut fx, (300, 12, 4_000), (400, 20, 8_000));
+    submitted(&mut fx, "brainstorm", REPORT);
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    submitted(&mut fx, "spec", SPEC);
+    let back = DocGateAction::Back {
+        note: "Reconsider SSO.".into(),
+    };
+    act(&mut fx, DocGateKind::Spec, back).unwrap();
+    later(&mut fx, 70);
+    submitted(&mut fx, "brainstorm", REPORT);
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::Approve).unwrap();
+    let lines = phase_lines(&fx);
+    let ids: Vec<&str> = lines.iter().map(|(id, _)| id.as_str()).collect();
+    let first = format!("{RUN_ID}/phase/1/brainstorming/v1");
+    let second = format!("{RUN_ID}/phase/1/brainstorming/v2");
+    assert_eq!(ids, [first.as_str(), second.as_str()]);
+    let (a, b) = (&lines[0].1, &lines[1].1);
+    assert_eq!(b.secs, a.secs + 70, "the revision's clock is added");
+    assert_eq!(b.agents, a.agents, "no new session");
+    assert_eq!((a.gate_versions, b.gate_versions), (1, 2));
 }

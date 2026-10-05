@@ -43,6 +43,7 @@ fn design_run() -> Run {
     };
     run.orch.design = Some(DesignState {
         requirements: ["R1", "R2", "R3", "R4"].map(requirement).to_vec(),
+        approved_spec: Some(1),
         ..DesignState::default()
     });
     let covers = [vec!["R1", "R2"], vec!["R1"], vec!["R3"]];
@@ -126,6 +127,24 @@ fn a_design_run_without_an_approved_spec_shows_only_the_spend() {
     assert_eq!(
         out,
         "\n## Requirements\n\nNo spec was approved.\n\ndesign phases: 0 calls, 0 tokens, 0 min, 0 gate versions\n"
+    );
+}
+
+/// Ruling T13-5 (m3): a spec approved whose requirements were not read back (its
+/// read-back failed, `spec_unread`) is said so, not called unapproved.
+#[test]
+fn an_approved_spec_not_read_back_is_said_so() {
+    let mut run = plain_run();
+    run.orch.design = Some(DesignState {
+        approved_spec: Some(2),
+        spec_unread: true,
+        ..DesignState::default()
+    });
+    let mut out = String::new();
+    section(&run, &mut out);
+    assert_eq!(
+        out,
+        "\n## Requirements\n\nThe approved spec's requirements could not be read back.\n\ndesign phases: 0 calls, 0 tokens, 0 min, 0 gate versions\n"
     );
 }
 

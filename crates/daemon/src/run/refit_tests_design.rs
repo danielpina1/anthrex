@@ -30,13 +30,19 @@ fn agent(role: AgentRole, (calls, secs, tokens): (u32, u64, u64), outcome: &str)
         tokens,
         outcome: outcome.into(),
         secs,
+        sessions: 1,
     }
 }
 
 fn phase(run: u32, phase: &str, at: u64, agents: Vec<PhaseAgent>) -> HistoryLine {
+    approved(run, phase, (at, 1), agents)
+}
+
+/// Run `run`'s `phase` record of its gate's v`n` (ruling T13-4).
+fn approved(run: u32, phase: &str, (at, n): (u64, u32), agents: Vec<PhaseAgent>) -> HistoryLine {
     HistoryLine::Phase(PhaseRecord {
         v: HISTORY_VERSION,
-        record_id: format!("run-{run}/phase/1/{phase}"),
+        record_id: format!("run-{run}/phase/1/{phase}/v{n}"),
         at,
         run_id: format!("run-{run}"),
         round: 1,
@@ -127,12 +133,10 @@ fn design_budgets_refit_from_phase_records() {
     let t = tuned(&file, &cfg);
     assert_eq!(t.effective(&cfg, SizeClass::Brainstorm), budget(75, 38));
     assert_eq!(t.effective(&cfg, SizeClass::DocReview), budget(15, 10));
-    assert!(
-        t.log
-            .contains(&"tuning: budget brainstorm 75 calls 38m from 64 samples".to_string()),
-        "{:?}",
-        t.log
-    );
+    // Ruling T13-5 (m5): a design class's lines are a design run's only.
+    let line = "tuning: budget brainstorm 75 calls 38m from 64 samples".to_string();
+    assert!(t.design_lines.contains(&line), "{:?}", t.design_lines);
+    assert!(!t.log.contains(&line), "{:?}", t.log);
 
     // Ruling RH-3: at most `per_run_cap` samples per run and round.
     let mut capped = cfg.clone();
@@ -158,12 +162,154 @@ fn design_budgets_refit_from_phase_records() {
         budget(40, 15)
     );
     let line = "tuning: budget brainstorm 40 calls 15m configured (refit would be 75 calls 38m)";
-    assert!(t.log.contains(&line.to_string()), "{:?}", t.log);
+    assert!(t.design_lines.contains(&line.to_string()), "{t:?}");
 
-    // Ruling RH-8: a run freezes them at its start.
+    // Ruling RH-8: a design run freezes them at its start (ruling T13-5, m5: when it
+    // enters the design flow).
     let (file, _) = refit(&history(), &TuningFile::default(), &cfg, NOW);
     let plan = crate::run::test_support::EXAMPLE_PLAN;
-    let run = crate::run::test_support::build_tuned(plan, &cfg, tuned(&file, &cfg)).unwrap();
+    let mut run = crate::run::test_support::build_tuned(plan, &cfg, tuned(&file, &cfg)).unwrap();
+    run.design_mode = proto::DesignMode::Full;
+    crate::run::engine::design::enter(&mut run);
     assert_eq!(run.limits.orch.design.brainstormer, budget(75, 38));
     assert_eq!(run.limits.orch.design.doc_reviewer, budget(15, 10));
+}
+
+/// Ruling T13-5 (m5): a run without the design flow, in a repository whose
+/// `tuning.toml` holds only design budgets, starts as 9.5 did: its log and REPORT.md's
+/// `## Tuning` lines are those of an empty file, and the design budgets are not
+/// frozen. A design run gets the design lines after them, the `none` line dropped.
+#[test]
+fn a_non_design_run_keeps_9_5s_tuning_lines() {
+    let cfg = config::Orchestrator::default();
+    let (file, _) = refit(&history(), &TuningFile::default(), &cfg, NOW);
+    let none = tuned(&TuningFile::default(), &cfg).log;
+    assert_eq!(tuned(&file, &cfg).log, none);
+    let plan = crate::run::test_support::EXAMPLE_PLAN;
+    let build = |file: &TuningFile| {
+        crate::run::test_support::build_tuned(plan, &cfg, tuned(file, &cfg)).unwrap()
+    };
+    let (run, nine_five) = (build(&file), build(&TuningFile::default()));
+    assert_eq!(run.tuning_lines, none);
+    assert_eq!(run.tuning_lines, nine_five.tuning_lines);
+    assert_eq!(run.log, nine_five.log);
+    assert_eq!(run.limits.orch.design, nine_five.limits.orch.design);
+    let tuning = |run: &crate::run::model::Run| {
+        let report = crate::run::report::render(run, 2_000);
+        let at = report.find("## Tuning").unwrap();
+        let rest = &report[at..];
+        rest[..rest[1..].find("\n## ").map_or(rest.len(), |n| n + 1)].to_string()
+    };
+    assert_eq!(tuning(&run), tuning(&nine_five));
+
+    let mut design = build(&file);
+    design.design_mode = proto::DesignMode::Full;
+    crate::run::engine::design::enter(&mut design);
+    let starts = [
+        "tuning: budget brainstorm 75 calls 38m from 64 samples",
+        "tuning: budget doc review 15 calls 10m from 64 samples",
+    ];
+    assert_eq!(design.tuning_lines, starts);
+    let logged: Vec<&str> = (design.log.iter()).map(|e| e.text.as_str()).collect();
+    assert!(starts.iter().all(|l| logged.contains(l)), "{logged:?}");
+    assert!(
+        !logged.iter().any(|l| l.starts_with("tuning: none")),
+        "{logged:?}"
+    );
+}
+
+/// Ruling T13-3: a design agent's budget is per session, so an agent whose sums cover
+/// several sessions contributes its per-session mean, rounded.
+#[test]
+fn a_two_session_agent_contributes_its_per_session_mean() {
+    let cfg = config::Orchestrator::default();
+    let two = |calls, secs| PhaseAgent {
+        sessions: 2,
+        ..agent(AgentRole::Brainstormer, (calls, secs, 0), "ok")
+    };
+    let history = |calls, secs| -> Vec<HistoryLine> {
+        (0..32)
+            .map(|run| {
+                phase(
+                    run,
+                    "brainstorming",
+                    1_000 + u64::from(run),
+                    vec![two(calls, secs)],
+                )
+            })
+            .collect()
+    };
+    let (file, _) = refit(&history(60, 1_801), &TuningFile::default(), &cfg, NOW);
+    // 30 calls and 901 s a session (1 801 / 2, rounded): 75 calls, 38 min.
+    let fit = &file.budgets["brainstorm"];
+    assert_eq!((fit.tool_calls, fit.minutes, fit.samples), (75, 38, 32));
+    // 30.5 calls round to 31: × 250% is 77.5, rounded up to 78.
+    let (file, _) = refit(&history(61, 1_800), &TuningFile::default(), &cfg, NOW);
+    assert_eq!(file.budgets["brainstorm"].tool_calls, 78);
+}
+
+/// Ruling T13-4: a phase approved again after a back is a new record, `…/v<n>`; the
+/// refit keeps only the highest version per run, round and phase.
+#[test]
+fn only_the_latest_approval_of_a_phase_is_a_sample() {
+    let cfg = config::Orchestrator::default();
+    let mut lines = Vec::new();
+    for run in 0..32u32 {
+        let at = 1_000 + u64::from(run) * 100;
+        let early = agent(AgentRole::Brainstormer, (2, 60, 0), "ok");
+        lines.push(approved(
+            run,
+            "brainstorming",
+            (at, 1),
+            vec![early.clone(), early],
+        ));
+        let late = agent(AgentRole::Brainstormer, (30, 900, 0), "ok");
+        lines.push(approved(
+            run,
+            "brainstorming",
+            (at + 50, 2),
+            vec![late.clone(), late],
+        ));
+    }
+    // The version decides, not the order in the file.
+    lines.swap(0, 1);
+    let (file, _) = refit(&lines, &TuningFile::default(), &cfg, NOW);
+    let fit = &file.budgets["brainstorm"];
+    assert_eq!((fit.tool_calls, fit.minutes, fit.samples), (75, 38, 64));
+}
+
+/// Ruling T13-5 (m4): a design class is held to decision 6's floor and ceiling.
+#[test]
+fn a_design_class_is_held_to_the_floor_and_the_ceiling() {
+    let cfg = config::Orchestrator::default();
+    let lines = |calls, secs| -> Vec<HistoryLine> {
+        (0..32)
+            .map(|run| {
+                let review = agent(AgentRole::DocReviewer, (calls, secs, 0), "ok");
+                phase(run, "specifying", 1_000 + u64::from(run), vec![review])
+            })
+            .collect()
+    };
+    let (file, _) = refit(&lines(1, 30), &TuningFile::default(), &cfg, NOW);
+    let fit = &file.budgets["doc_review"];
+    assert_eq!((fit.tool_calls, fit.minutes), (10, 5));
+    let (file, _) = refit(&lines(5_000, 100_000), &TuningFile::default(), &cfg, NOW);
+    let fit = &file.budgets["doc_review"];
+    assert_eq!((fit.tool_calls, fit.minutes), (2_000, 1_440));
+}
+
+/// Ruling T13-5 (m6): a design class has no class route and no class model list; the
+/// task-class helpers answer `None` for it, never M's values.
+#[test]
+fn a_design_class_has_no_class_route_or_list() {
+    use super::propose::{current_route, list_of};
+    let (file, lists) = (TuningFile::default(), config::RouteLists::default());
+    for class in SizeClass::DESIGN {
+        assert_eq!(current_route(&file, class), None, "{class:?}");
+        assert!(list_of(&lists, class).is_none(), "{class:?}");
+    }
+    for class in SizeClass::ALL {
+        assert!(current_route(&file, class).is_some(), "{class:?}");
+        assert!(list_of(&lists, class).is_some(), "{class:?}");
+    }
 }

@@ -536,7 +536,7 @@ mod tuned;
 #[path = "refit_weights.rs"]
 mod weights;
 pub use propose::{apply, dismiss, proposals};
-pub use tuned::{Tuned, report, tuned, tuned_with};
+pub use tuned::{Tuned, is_design_line, is_none_line, report, tuned, tuned_with};
 
 #[cfg(test)]
 #[path = "refit_tests.rs"]

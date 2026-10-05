@@ -37,6 +37,8 @@ pub struct Tuned {
     pub lists: RouteLists,
     /// Decision 12's start lines.
     pub log: Vec<String>,
+    /// Ruling T13-5 (m5): the design classes' lines, a design run's only.
+    pub design_lines: Vec<String>,
 }
 
 impl Tuned {
@@ -77,11 +79,16 @@ pub fn tuned(file: &TuningFile, cfg: &config::Orchestrator) -> Tuned {
 pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orchestrator) -> Tuned {
     let t = &cfg.tuning.table;
     let conf = cfg.tuning.configured;
-    let mut log = Vec::new();
+    let (mut log, mut design_lines) = (Vec::new(), Vec::new());
     // The bare `configured` lines, which say nothing history taught (ruling T8-8).
     let mut bare = 0;
     let mut used = |class: SizeClass| {
         let c = class.label();
+        // Ruling T13-5 (m5): a design class's lines are a design run's only.
+        let log = match class.design_role() {
+            Some(_) => &mut design_lines,
+            None => &mut log,
+        };
         if configured(conf, class) {
             let own = budget_text(&default_budget(cfg, class));
             match shown_refit(lines, cfg, class) {
@@ -120,10 +127,11 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
             th.s_lines, th.m_lines
         ));
     }
+    let defaults = ClassRoutes::default();
     let routes = ClassRoutes {
-        s: current_route(file, SizeClass::S),
-        m: current_route(file, SizeClass::M),
-        ..ClassRoutes::default()
+        s: current_route(file, SizeClass::S).unwrap_or(defaults.s),
+        m: current_route(file, SizeClass::M).unwrap_or(defaults.m),
+        ..defaults
     };
     for class in [SizeClass::S, SizeClass::M] {
         if let Some(r) = file.routes.get(class.key()) {
@@ -151,7 +159,24 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
         routes,
         lists: cfg.tuning.routes.clone(),
         log,
+        design_lines,
     }
+}
+
+/// Ruling T13-5 (m5): whether `line` is a design class's (`tuning: budget brainstorm …`
+/// or `tuning: budget doc review …`, as [`refit`](super::refit) and [`tuned_with`] write
+/// them), which only a design run logs.
+pub fn is_design_line(line: &str) -> bool {
+    let label = line.strip_prefix("tuning: budget ").unwrap_or_default();
+    SizeClass::DESIGN
+        .iter()
+        .any(|c| label.starts_with(&format!("{} ", c.label())))
+}
+
+/// Whether `line` is a `tuning: none (…)` line: a design run that learned its design
+/// budgets drops it.
+pub fn is_none_line(line: &str) -> bool {
+    line.starts_with("tuning: none (")
 }
 
 /// Decision 12's `none` line, with why nothing was learned (whole-branch review B, M4):
@@ -221,10 +246,11 @@ pub fn report(
                 },
                 weight_secs,
                 weight_derived,
-                route: if list.candidates.is_empty() {
-                    route_text(route)
-                } else {
-                    list_text(list, route.effort)
+                // A task class always has both (`ALL`); a design class neither.
+                route: match (list, route) {
+                    (Some(l), Some(r)) if !l.candidates.is_empty() => list_text(l, r.effort),
+                    (_, Some(r)) => route_text(r),
+                    (_, None) => String::new(),
                 },
             }
         })

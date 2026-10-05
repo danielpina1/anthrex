@@ -249,6 +249,14 @@ pub struct PhaseAgent {
     /// written before it: 0.
     #[serde(default)]
     pub secs: u64,
+    /// Ruling T13-3 (task M9.6.13 fix round 1): how many sessions its sums cover, so the
+    /// refit can take per-session values. Absent from a line written before it: 1.
+    #[serde(default = "one_session")]
+    pub sessions: u32,
+}
+
+fn one_session() -> u32 {
+    1
 }
 
 #[cfg(test)]
