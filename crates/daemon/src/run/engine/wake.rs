@@ -89,6 +89,20 @@ pub(super) fn unnote(run: &mut Run, text: &str) {
     (o.notes, o.note_seqs) = keep.into_iter().unzip();
 }
 
+/// Milestone 9.7 ruling T3-1: how far before its clone a digest read is recorded.
+/// The engine stamps an event's `now` before it takes the lock, so an approval stamped
+/// at second `s` can wait while `run_status` clones the run and land after the clone,
+/// whose own `now` is already `s + 1`. Recording the read this much earlier keeps such
+/// an approval shown; one decided up to this long before the clone is shown on further
+/// reads too, which is harmless (DH §2.2).
+pub const READ_MARGIN_SECS: u64 = 5;
+
+/// Ruling T3-1: the `at` of a `DigestRead` whose clone was taken at or after
+/// `now_before_clone`.
+pub fn read_at(now_before_clone: u64) -> u64 {
+    now_before_clone.saturating_sub(READ_MARGIN_SECS)
+}
+
 /// Decisions 16 and 39: the orchestrator read a digest whose answer included the
 /// notes up to `notes_seq`; those are dropped, so an orchestrator that polls is never
 /// pasted at. Milestone 9.7 decision 11: the read is recorded at `at`, the time its

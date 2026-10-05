@@ -20,7 +20,7 @@ use tokio::sync::broadcast::error::RecvError;
 use super::{RunService, unix_now};
 use crate::run::chain::{idle_refusal, resolve};
 use crate::run::engine::early::{awaits_launch, holds_planner_call};
-use crate::run::engine::{EventKind, HOLD_LIMIT_SECS, OrchEvent, notes_seq};
+use crate::run::engine::{EventKind, HOLD_LIMIT_SECS, OrchEvent, notes_seq, read_at};
 use crate::run::model::{Run, task_branch};
 use crate::run::orch::context::Asker;
 use crate::run::orch::result::{TaskGit, task_result};
@@ -420,14 +420,15 @@ impl RunService {
 
     /// The digest of a clone of the run, built on `spawn_blocking`; then the read
     /// receipt with that clone's revision and wake-note seq (decision 16; M9.9 review
-    /// M6), so a note added after the clone stays.
+    /// M6), so a note added after the clone stays. The read is recorded at
+    /// `read_at(now)`, `now` taken before the clone (milestone 9.7 ruling T3-1).
     async fn run_status(&self, call: &ToolCall) -> RunReply {
+        let now = unix_now();
         let run = match self.looked_up(call, Run::clone) {
             Ok(run) => run,
             Err(text) => return refused(text),
         };
         let (run_id, digest_revision, seq) = (run.id.clone(), run.orch.digest_rev, notes_seq(&run));
-        let now = unix_now();
         let built = tokio::task::spawn_blocking(move || {
             crate::run::orch::digest::digest(&run, now).to_string()
         })
@@ -440,7 +441,7 @@ impl RunService {
                     run_id,
                     digest_revision,
                     notes_seq: seq,
-                    at: now,
+                    at: read_at(now),
                 }));
                 RunReply::tool_result(true, text)
             }
