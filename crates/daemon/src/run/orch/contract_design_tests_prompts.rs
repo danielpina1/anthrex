@@ -126,8 +126,9 @@ fn rules_47_to_52_are_exact_and_only_in_design_runs() {
 }
 
 /// The first prompt names the phases, the design tools by their Claude ids, and where to
-/// start (rule 48 carries the questions limit), then rules 47 to 53. `--yes` leaves the
-/// plan gate's line as it is (decision 6).
+/// start, then rules 47 to 53. `--yes` leaves the plan gate's line as it is (decision
+/// 6). Ruling T14-3: the step after scouting is the session's own (`session_prompt`),
+/// never stored, so a later session is not sent back to rule 48.
 #[test]
 fn the_first_prompt_names_the_phases() {
     let mut run = design_run();
@@ -137,7 +138,7 @@ fn the_first_prompt_names_the_phases() {
          Path: plan\n\
          Plan gate: the user approves your submitted plan in the run view\n\
          Design flow: brainstorming, then specifying, then planning, under rules 47 to 53 below. Its tools: start_brainstorm (in Claude: mcp__anthrex__start_brainstorm), submit_doc (in Claude: mcp__anthrex__submit_doc) and get_doc (in Claude: mcp__anthrex__get_doc).\n\
-         Start with get_context, then scout, then follow rule 48. {RETRY}\n\
+         Start with get_context, then scout. {RETRY}\n\
          \n\
          Your contract's rules continue, for this run:\n\
          {RULES_47_TO_52}\n\
@@ -250,6 +251,40 @@ fn the_where_line_follows_the_run() {
     );
 }
 
+/// Ruling T14-3: a session asking the user's questions (brainstorming, no answers
+/// recorded) is sent rule 48's step after where the run is; with a questions limit of 0
+/// it is told to start the brainstorm with empty answers, rule 48 kept exact; once the
+/// answers are recorded, or in a later phase, no step follows.
+#[test]
+fn the_session_step_follows_the_questions_limit_and_the_phase() {
+    let mut run = design_run();
+    let first = orchestrator_first_prompt(&run);
+    let line = where_the_run_is(&run).unwrap();
+    assert_eq!(
+        session_prompt(&run, &first),
+        format!("{first}\n{line}\nThen follow rule 48.")
+    );
+    run.limits.orch.design.max_questions = 0;
+    let first = orchestrator_first_prompt(&run);
+    let rule48 = "48. In brainstorming, ask the user at most 0 short questions in your window, one at a time; when they answer or say skip, call start_brainstorm with their answers.";
+    assert!(first.contains(rule48), "{first}");
+    let sent = session_prompt(&run, &first);
+    assert_eq!(
+        sent,
+        format!(
+            "{first}\n{line}\nThen call start_brainstorm with empty answers: this run asks no questions."
+        )
+    );
+    assert!(!sent.contains("follow rule 48"), "{sent}");
+    run.limits.orch.design.max_questions = 5;
+    run.orch.design.as_mut().unwrap().answers = Some("skip".into());
+    assert_eq!(session_prompt(&run, &first), format!("{first}\n{line}"));
+    run.orch.design.as_mut().unwrap().answers = None;
+    run.state = RunState::Specifying;
+    let line = where_the_run_is(&run).unwrap();
+    assert_eq!(session_prompt(&run, &first), format!("{first}\n{line}"));
+}
+
 /// A run without the design flow: 9.5's contract (its SHA-256 at 9.5's head `f4df79c4`)
 /// and first prompt byte for byte, no where line, and a handoff sent as built.
 #[test]
@@ -281,6 +316,6 @@ fn a_non_design_contract_is_unchanged() {
 
 /// `ORCHESTRATOR_CONTRACT`'s SHA-256 at 9.5's head (`f4df79c4`), whose text this branch
 /// has not changed (`git diff f4df79c4 -- crates/daemon/src/run/orch/contract.rs` touches
-/// only the first prompt's gate line).
+/// only `first_prompt`'s body, never the constant).
 const NINE_FIVE_CONTRACT_SHA256: &str =
     "e1cd7e404e7c0e23d464dd1406bceca58fe3535a4bd9a45208e14ed4943154ed";

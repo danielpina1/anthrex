@@ -80,8 +80,17 @@ pub const RULES_HEAD: &str = "Your contract's rules continue, for this run:";
 /// at its first mention (the tool-search fix's form).
 pub const DESIGN_LINE: &str = "Design flow: brainstorming, then specifying, then planning, under rules 47 to 53 below. Its tools: start_brainstorm (in Claude: mcp__anthrex__start_brainstorm), submit_doc (in Claude: mcp__anthrex__submit_doc) and get_doc (in Claude: mcp__anthrex__get_doc).";
 
-/// Where a design run's orchestrator starts: rule 48 holds the questions limit.
-pub const DESIGN_START: &str = "Start with get_context, then scout, then follow rule 48.";
+/// Where a design run's orchestrator starts. The step after it is the session's own
+/// ([`session_step`], ruling T14-3), so a stored prompt never sends a later session back.
+pub const DESIGN_START: &str = "Start with get_context, then scout.";
+
+/// Ruling T14-3: the step of a session that asks the user's questions (rule 48 holds the
+/// limit).
+pub const ASK_STEP: &str = "Then follow rule 48.";
+
+/// Ruling T14-3: the step of a session whose run asks no questions (`max_questions = 0`).
+pub const NO_QUESTIONS_STEP: &str =
+    "Then call start_brainstorm with empty answers: this run asks no questions.";
 
 /// Whether `run` uses the design flow (its frozen mode; a continued goal's first prompt
 /// is built before its design state is).
@@ -171,14 +180,34 @@ fn approved_count(run: &Run, gate: Option<DocGateKind>, state: Option<RunState>)
     }
 }
 
+/// Ruling T14-3: the next step of a session that starts while the run still asks the
+/// user's questions (brainstorming, no gate, no answers recorded; paused there too):
+/// [`ASK_STEP`], or [`NO_QUESTIONS_STEP`] with a limit of 0. `None` past them: the where
+/// line names the phase.
+pub fn session_step(run: &Run) -> Option<&'static str> {
+    let design = run.orch.design.as_ref()?;
+    let state = match run.state {
+        RunState::Paused => run.paused_from,
+        state => Some(state),
+    };
+    let asking =
+        state == Some(RunState::Brainstorming) && design.gate.is_none() && design.answers.is_none();
+    let none = run.limits.orch.design.max_questions == 0;
+    asking.then_some(if none { NO_QUESTIONS_STEP } else { ASK_STEP })
+}
+
 /// Ruling T14-1: what a session of `run`'s orchestrator is first sent: `first` (the
 /// stored first prompt, or a handoff), then, in a design run, [`where_the_run_is`] as of
-/// now. The stored prompt never carries the line, so no later session's is stale or
-/// doubled; a run without the design flow gets `first` byte for byte.
+/// now and its [`session_step`] when it has one. The stored prompt never carries them,
+/// so no later session's is stale or doubled; a run without the design flow gets `first`
+/// byte for byte.
 pub fn session_prompt(run: &Run, first: &str) -> String {
-    match where_the_run_is(run) {
-        Some(line) => format!("{first}\n{line}"),
-        None => first.to_string(),
+    let Some(line) = where_the_run_is(run) else {
+        return first.to_string();
+    };
+    match session_step(run) {
+        Some(step) => format!("{first}\n{line}\n{step}"),
+        None => format!("{first}\n{line}"),
     }
 }
 

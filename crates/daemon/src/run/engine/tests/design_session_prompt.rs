@@ -142,7 +142,41 @@ fn a_design_runs_first_session_is_told_where_it_is() {
     let effects = mcp_ready(&mut fx, ORCH);
     let line = "Where the run is now (run_status has anything newer): phase brainstorming; \
                 open gate: none; approved documents: none.";
-    assert_eq!(first_turns(&effects), vec![format!("{first}\n{line}")]);
+    let step = "Then follow rule 48.";
+    assert_eq!(
+        first_turns(&effects),
+        vec![format!("{first}\n{line}\n{step}")]
+    );
+}
+
+/// Ruling T14-3: a relaunch in specifying (past the questions) is sent its stored first
+/// prompt and where the run is, and no step back to rule 48: a Claude window's fresh
+/// restart in its own window, which pastes the run's own first prompt again.
+#[test]
+fn a_relaunch_in_specifying_is_not_sent_back_to_rule_48() {
+    let mut fx = at_brainstorm_gate(false);
+    act(
+        &mut fx,
+        proto::DocGateKind::Brainstorm,
+        proto::DocGateAction::Approve,
+    )
+    .unwrap();
+    assert_eq!(fx.run().state, RunState::Specifying);
+    let first = stored_first_prompt(&fx);
+    restart(&mut fx);
+    let effects = resume(&mut fx);
+    let restarts = ops_in(&effects, "RestartOrchestrator");
+    assert_eq!(restarts.len(), 1, "{effects:#?}");
+    fx.done(restarts[0].0, OpResult::RestartedFresh);
+    let effects = mcp_ready(&mut fx, ORCH);
+    let dir = format!("/tmp/data/runs/{RUN_ID}/design");
+    let line = format!(
+        "Where the run is now (run_status has anything newer): phase specifying; open gate: \
+         none; approved documents: brainstorm v1 ({dir}/brainstorm-v1.md)."
+    );
+    let sent = first_turns(&effects);
+    assert_eq!(sent, vec![format!("{first}\n{line}")]);
+    assert!(!sent[0].contains("follow rule 48"), "{sent:?}");
 }
 
 /// Ruling T14-1: a run without the design flow relaunches as in 9.5: the handoff alone,
