@@ -113,6 +113,39 @@ fn only_the_last_coverage_heading_is_the_table() {
     assert_eq!(marked, [" R2           ⚠ not covered"], "{rows:#?}");
 }
 
+/// Final fix wave (after W1, FW-19; decision 16): the plan gate shows its version's
+/// review lines, the plan review's disputed findings and why it went unreviewed, above
+/// the document. A user's or the engine's v(n+1) carries v(n)'s, so they show there too.
+#[test]
+fn the_plan_doc_tab_shows_the_reviews_disputed_and_not_reviewed_lines() {
+    let mut run = plan_run(3);
+    let gate = run.doc_gate.as_mut().unwrap();
+    gate.disputed = vec![proto::DocFinding {
+        id: "F2".into(),
+        severity: proto::DocSeverity::Minor,
+        place: "t2".into(),
+        text: "Split the endpoint.".into(),
+    }];
+    gate.not_reviewed = Some("the reviewer timed out".into());
+    let app = on_tab(run, PLAN, 120, 40);
+    let rows = interior(&app, 120, 40);
+    assert_eq!(
+        rows[2..8],
+        [
+            " not reviewed: the reviewer timed out",
+            " disputed findings",
+            "   F2 minor at t2",
+            "     Split the endpoint.",
+            "",
+            " # Plan: password reset",
+        ],
+        "{rows:#?}"
+    );
+    // A plan with neither shows the document at once.
+    let app = on_tab(plan_run(3), PLAN, 120, 40);
+    assert_eq!(interior(&app, 120, 40)[2], " # Plan: password reset");
+}
+
 #[test]
 fn the_tab_says_loading_and_shows_a_refusal() {
     let mut app = reviewing(plan_run(1), 120, 40);

@@ -47,6 +47,10 @@ pub(crate) fn plan_run(version: u32) -> proto::RunInfo {
     let mut run = design_run(DocGateKind::Plan);
     if let Some(gate) = run.doc_gate.as_mut() {
         gate.version = version;
+        // The plan's review left nothing for the gate: a test that wants its lines
+        // sets them (the final fix wave's FW-19 check).
+        gate.disputed.clear();
+        gate.changes_summary.clear();
     }
     run.tasks = vec![
         task("t1", "reset token model", Size::M, TaskState::Pending),

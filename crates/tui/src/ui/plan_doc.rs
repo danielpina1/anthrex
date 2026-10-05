@@ -18,7 +18,7 @@ use crate::safe_text::{multi_line, one_line};
 use crate::theme::{Glyph, Palette, Role, ellipsis, glyph, role};
 use crate::ui::doc_text::{MAX_LINES, doc_lines, plain_lines};
 use crate::ui::kit::{self, wrap_words};
-use proto::DocGateKind;
+use proto::{DocGateInfo, DocGateKind, DocSeverity};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -160,9 +160,56 @@ pub(crate) fn lines(text: &str, width: u16, p: Palette) -> Vec<Line<'static>> {
     out
 }
 
-/// The tab's body rows at `width` columns: the document, `loading…`, or why it is not.
+/// Decision 16 (the final fix wave's FW-19 check): the gate version's review lines,
+/// above the document: why it went unreviewed (`Attention`), then its disputed
+/// findings, each `<id> <severity> at <place>` and its text; nothing when it has
+/// neither. A user's or the engine's later version carries the review's lines.
+fn review_lines(gate: &DocGateInfo, width: u16, p: Palette) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    if let Some(why) = &gate.not_reviewed {
+        let text = format!("not reviewed: {why}");
+        out.extend(plain_lines(&text, width, role(Role::Attention, p)));
+    }
+    if !gate.disputed.is_empty() {
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        out.push(Line::styled("disputed findings", bold));
+        for f in &gate.disputed {
+            let severity = match f.severity {
+                DocSeverity::Blocking => "blocking",
+                DocSeverity::Minor => "minor",
+            };
+            let mut head = format!("  {} {severity}", one_line(&f.id));
+            if !f.place.is_empty() {
+                head.push_str(&format!(" at {}", one_line(&f.place)));
+            }
+            out.push(Line::raw(kit::cut(&head, usize::from(width), ellipsis(p))));
+            let text = plain_lines(&f.text, width.saturating_sub(4), Style::default());
+            out.extend(text.into_iter().map(|l| {
+                let mut spans = vec![Span::raw("    ")];
+                spans.extend(l.spans);
+                Line::from(spans)
+            }));
+        }
+    }
+    if !out.is_empty() {
+        out.push(Line::default());
+    }
+    out
+}
+
+/// The tab's body rows at `width` columns: the gate's review lines, then the document,
+/// `loading…`, or why it is not.
 fn body_lines(app: &App, width: u16) -> Vec<Line<'static>> {
     let p = app.palette();
+    let mut out = (app.plan_doc_gate())
+        .map(|(_, gate)| review_lines(gate, width, p))
+        .unwrap_or_default();
+    out.extend(document_lines(app, width, p));
+    out
+}
+
+/// The document's rows at `width` columns, `loading…`, or why it is not.
+fn document_lines(app: &App, width: u16, p: Palette) -> Vec<Line<'static>> {
     match app.plan_doc().map(|d| &d.load) {
         Some(DocLoad::Ready(doc)) => lines(&doc.text, width, p),
         Some(DocLoad::Failed(why)) => plain_lines(why, width, role(Role::Failed, p)),
