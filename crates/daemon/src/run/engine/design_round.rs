@@ -19,7 +19,7 @@
 use proto::{RoundDesign, RunState};
 
 use super::requests::log;
-use super::{Effect, design, design_agents, design_spend, wake};
+use super::{Effect, design, design_agents, design_commit, design_spend, wake};
 use crate::run::design::round::DesignRound;
 use crate::run::model::Run;
 use crate::run::orch::contract_design::{ASK_STEP, NO_QUESTIONS_STEP};
@@ -116,16 +116,19 @@ fn said(mode: RoundDesign, n: u32, last: usize, questions: bool) -> Option<(Stri
     }
 }
 
-/// Rulings T15-2 and T15-10: round `n`'s cancel. Before the round's plan is approved,
-/// with no documents commit due or landed for it, the round is dropped as a reject
-/// drops it ([`rejected`]); after, only its design agents stop, and the approval, the
+/// Rulings T15-2, T15-10 and T15-13: round `n`'s cancel. While the round's documents
+/// commit is in flight or has landed, or after the round's plan's approval when no
+/// commit is due (no documents folder), only its design agents stop: the approval, the
 /// commit state and the reviews stay, so an in-flight commit's reply is still recorded.
+/// Otherwise (before the approval, or with the commit due but unsent, which has moved
+/// nothing in git) the round is dropped as a reject drops it ([`rejected`]), its commit
+/// no longer due.
 pub(super) fn cancelled(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
     let approved = run.current_round().is_some_and(|r| r.approved_at.is_some());
     let k = run.round();
-    let committing =
-        (run.orch.design.as_ref()).is_some_and(|d| d.commit_due || d.committed_round >= k);
-    if approved || committing {
+    let landed = (run.orch.design.as_ref()).is_some_and(|d| d.committed_round >= k);
+    let committing = design_commit::in_flight(run) || landed;
+    if committing || (approved && !design_commit::due(run)) {
         return design_agents::halt_all(run, reason, fx);
     }
     rejected(run, reason, fx);

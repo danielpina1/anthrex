@@ -109,9 +109,11 @@ pub(super) fn queue_busy(run: &Run, n: u16) -> bool {
 }
 
 /// The stage merged nothing (every task cancelled, or reported): its head is the stage
-/// below's, and GitHub refuses a PR without commits (decision 19).
+/// below's, and GitHub refuses a PR without commits (decision 19). Milestone 9.6 ruling
+/// T15-14: a stage holding a later round's documents commit has one.
 fn empty(run: &Run, n: u16) -> bool {
     !(run.tasks.iter()).any(|t| t.stage() == n && t.state == TaskState::Merged)
+        && !crate::run::engine::design_commit::holds_docs(run, n)
 }
 
 /// Every stage, lowest first: a ready stage is skipped when empty, else pushed once tier

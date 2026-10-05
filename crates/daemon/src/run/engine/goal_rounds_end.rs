@@ -253,7 +253,9 @@ fn unused_stages(run: &mut Run, now: u64) {
         let d = &run.delivery;
         let used = (run.tasks.iter())
             .any(|t| t.stage() == n && (!t.state.is_finished() || t.state == TaskState::Merged));
-        if used || d.pr(n).is_some() || d.stage(n).is_some_and(|s| s.skipped) {
+        // Milestone 9.6 ruling T15-14: the stage holding the round's amendment is used.
+        let docs = super::design_commit::holds_docs(run, n);
+        if used || docs || d.pr(n).is_some() || d.stage(n).is_some_and(|s| s.skipped) {
             continue;
         }
         delivery::stage_mut(run, n).skipped = true;

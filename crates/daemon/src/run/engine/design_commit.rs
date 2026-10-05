@@ -87,8 +87,23 @@ pub(crate) fn due(run: &Run) -> bool {
     run.orch.design.as_ref().is_some_and(|d| d.commit_due)
 }
 
-fn in_flight(run: &Run) -> bool {
+/// A `CommitDesignDocs` is in flight.
+pub(super) fn in_flight(run: &Run) -> bool {
     (run.pending_ops.values()).any(|p| matches!(p.kind, OpKind::CommitDesignDocs(_)))
+}
+
+/// Ruling T15-14: stage `n` is the one a later round's documents commit is creating (in
+/// flight with its branch) or created (recorded at the landed commit), so it holds the
+/// amendment and is never skipped as unused.
+pub(crate) fn holds_docs(run: &Run, n: u16) -> bool {
+    let branch = run.stage_branch(n);
+    let creating = (run.pending_ops.values()).any(|p| {
+        matches!(&p.kind, OpKind::CommitDesignDocs(s) if s.stage_branch.as_deref() == Some(branch.as_str()))
+    });
+    let committed = (run.orch.design.as_ref()).and_then(|d| d.committed.as_deref());
+    let created = run.round() > 1
+        && committed.is_some_and(|head| run.stage(n).is_some_and(|s| s.created_from == head));
+    creating || created
 }
 
 /// The scheduler's guard: whether the commit is due, in which case the run's running

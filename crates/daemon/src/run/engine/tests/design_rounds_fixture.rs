@@ -135,9 +135,14 @@ pub(super) fn round_submit(fx: &mut Fixture, edits: Value) -> Result<Value, Stri
 /// The round's plan review, launched by its first passing submit, in with no findings;
 /// then the submit that opens the round's plan gate.
 pub(super) fn round_reviewed(fx: &mut Fixture) -> Vec<Effect> {
-    let label = launches(fx).last().unwrap().1.kind.label();
-    assert_eq!(label, "plan-r2");
-    started(fx, &label, ROUND_REVIEWER);
+    round_reviewed_as(fx, "plan-r2")
+}
+
+/// [`round_reviewed`], its reviewer's label `label` (ruling T15-9: the numbers run on
+/// across rounds, a dropped round's included).
+pub(super) fn round_reviewed_as(fx: &mut Fixture, label: &str) -> Vec<Effect> {
+    assert_eq!(launches(fx).last().unwrap().1.kind.label(), label);
+    started(fx, label, ROUND_REVIEWER);
     outcome(&submit_findings(fx, ROUND_REVIEWER, json!([]))).unwrap();
     let effects = orch_tool(fx, ORCH, "edit_plan", json!({"submit": true}));
     outcome(&effects).unwrap();
