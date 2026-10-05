@@ -26,7 +26,13 @@ pub struct DocWrites {
     last: Mutex<HashMap<PathBuf, Arc<Mutex<u64>>>>,
     /// The version files whose write is in flight (ruling WB-B-I1).
     writing: Mutex<HashSet<PathBuf>>,
+    /// Each round's pack file: what its first start wrote, once written (FW-33).
+    packs: Mutex<HashMap<PathBuf, PackSlot>>,
 }
+
+/// One round's pack file: held by the start writing or reading it, and, once its first
+/// start read it back, that start's length and SHA-256 (the final fix wave's FW-33).
+pub type PackSlot = Arc<tokio::sync::Mutex<Option<crate::run::design::pack::PackFile>>>;
 
 /// A version file's write in flight, marked until it is dropped.
 pub struct Writing<'a> {
@@ -48,6 +54,21 @@ impl DocWrites {
             writes: self,
             path: path.to_path_buf(),
         }
+    }
+
+    /// The pack file `path`'s slot ([`PackSlot`]).
+    pub fn pack_slot(&self, path: &Path) -> PackSlot {
+        crate::lock(&self.packs)
+            .entry(path.to_path_buf())
+            .or_default()
+            .clone()
+    }
+
+    /// A test's removal of a pack file, as if no start had written it: its slot goes.
+    #[cfg(test)]
+    pub fn forget_pack(&self, path: &Path) {
+        let _ = std::fs::remove_file(path);
+        crate::lock(&self.packs).remove(path);
     }
 
     /// Whether `path`'s write is in flight.

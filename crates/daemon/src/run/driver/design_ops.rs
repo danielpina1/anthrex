@@ -84,9 +84,7 @@ impl RunService {
         ctx: &OpCtx,
         mut spec: DesignAgentSpec,
     ) -> OpResult {
-        let Some(scouts) = self.adaptation.get().map(|a| a.scouts.clone()) else {
-            return failed("the scout service is not running");
-        };
+        // The pack first: one that cannot be read halts the run, whatever else fails.
         let mut pack_file = None;
         if matches!(spec.kind, DesignAgentKind::Brainstormer { .. }) {
             let (pack, file) = match self.brainstorm_pack(&ctx.run_id).await {
@@ -96,6 +94,9 @@ impl RunService {
             pack_file = file;
             spec.first_turn = format!("{}\n\n{pack}", spec.first_turn);
         }
+        let Some(scouts) = self.adaptation.get().map(|a| a.scouts.clone()) else {
+            return failed("the scout service is not running");
+        };
         deny_codex_sessions(&mut spec, codex_sessions_dir(|k| std::env::var_os(k)));
         if let Some(sandbox) = spec.headless.claude_sandbox.as_mut() {
             let given = std::mem::take(&mut sandbox.deny_read);
@@ -156,7 +157,8 @@ impl RunService {
         };
         // Ruling T8-6: a later start of the round sends the file its first start wrote.
         if let Some(file) = frozen.file {
-            return Ok((pack_file_io(path, None, Some(file)).await?, None));
+            let text = self.pack_file(path, None, Some(file), write_new).await?;
+            return Ok((text, None));
         }
         let mut inputs = PackInputs {
             goal: run.goal.clone(),
@@ -199,7 +201,7 @@ impl RunService {
         }
         // The first start writes it; a start that raced it, or followed a launch that
         // failed after writing it, finds the file there and sends that instead.
-        let text = pack_file_io(path, Some(pack(&inputs)), None).await?;
+        let text = (self.pack_file(path, Some(pack(&inputs)), None, write_new)).await?;
         let file = PackFile {
             bytes: text.len() as u64,
             sha256: sha256_hex(text.as_bytes()),
@@ -208,26 +210,65 @@ impl RunService {
     }
 }
 
-/// Ruling T8-6, off the engine on `spawn_blocking` within `IO_WAIT`: `write`, when
-/// given, written at `path` unless a file is there (`write_new` never replaces one),
-/// then the file read back whole, checked against `expected` when given.
-async fn pack_file_io(
-    path: PathBuf,
-    write: Option<String>,
-    expected: Option<PackFile>,
-) -> Result<String, String> {
-    let io = tokio::task::spawn_blocking(move || {
-        if let Some(text) = write
-            && let Err(error) = write_new(&path, &text)
-        {
-            tracing::debug!(%error, "the pack file is already written");
+impl RunService {
+    /// Ruling T8-6, off the engine on `spawn_blocking` within `IO_WAIT`: `write`, when
+    /// given, written at `path` by `writer` ([`write_new`]; a test's seam) unless a file
+    /// is there (`write_new` never replaces one), then the file read back whole, checked
+    /// against `expected` when given.
+    ///
+    /// The final fix wave's FW-33: each round's pack file has one slot, held from the
+    /// write to the read-back (inside the blocking task, so even past the wait), which
+    /// records what the round's first start read back. A start that raced it waits for
+    /// the slot and reads the file against that record without writing, so it never
+    /// sends a pack half written in place (no hard links). FW-41: a write that failed,
+    /// when the read then fails too, is the reason.
+    pub(super) async fn pack_file<W>(
+        &self,
+        path: PathBuf,
+        write: Option<String>,
+        expected: Option<PackFile>,
+        writer: W,
+    ) -> Result<String, String>
+    where
+        W: FnOnce(&Path, &str) -> Result<(), String> + Send + 'static,
+    {
+        let slot = self.doc_writes.pack_slot(&path);
+        let Ok(mut slot) = tokio::time::timeout(IO_WAIT, slot.lock_owned()).await else {
+            let secs = IO_WAIT.as_secs();
+            return Err(format!(
+                "waiting for the round's first start took over {secs} s"
+            ));
+        };
+        let io = tokio::task::spawn_blocking(move || {
+            let expected = expected.or_else(|| slot.clone());
+            let wrote = match (write, &expected) {
+                (Some(text), None) => writer(&path, &text).err(),
+                _ => None,
+            };
+            let read = read_pack(&path, expected.as_ref());
+            match (&read, wrote) {
+                (Ok(text), wrote) => {
+                    if let Some(error) = wrote {
+                        tracing::debug!(%error, "the pack file is already written");
+                    }
+                    slot.get_or_insert_with(|| PackFile {
+                        bytes: text.len() as u64,
+                        sha256: sha256_hex(text.as_bytes()),
+                    });
+                }
+                (Err(_), Some(error)) => {
+                    tracing::warn!(%error, "the pack file could not be written");
+                    return Err(format!("writing it failed: {error}"));
+                }
+                (Err(_), None) => {}
+            }
+            read
+        });
+        match tokio::time::timeout(IO_WAIT, io).await {
+            Ok(Ok(read)) => read,
+            Ok(Err(error)) => Err(error.to_string()),
+            Err(_) => Err(format!("reading it took over {} s", IO_WAIT.as_secs())),
         }
-        read_pack(&path, expected.as_ref())
-    });
-    match tokio::time::timeout(IO_WAIT, io).await {
-        Ok(Ok(read)) => read,
-        Ok(Err(error)) => Err(error.to_string()),
-        Err(_) => Err(format!("reading it took over {} s", IO_WAIT.as_secs())),
     }
 }
 

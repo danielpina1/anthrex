@@ -110,7 +110,7 @@ fn pack_file(rig: &Rig) -> std::path::PathBuf {
 /// The pack built anew from the frozen inputs: the round's file is removed first, as
 /// if no start of the round had written it yet (ruling T8-6 sends that file after).
 async fn built(rig: &Rig) -> String {
-    let _ = std::fs::remove_file(pack_file(rig));
+    rig.runs.doc_writes.forget_pack(&pack_file(rig));
     rig.runs.brainstorm_pack(&rig.run_id).await.unwrap().0
 }
 
@@ -475,7 +475,7 @@ async fn a_rethinks_pack_reads_the_previous_report_off_the_engine() {
     // The round's own pack file, pack-r2.md, holds it.
     let round = path.parent().unwrap().join("brainstorm/pack-r2.md");
     assert_eq!(std::fs::read_to_string(&round).unwrap(), read);
-    std::fs::remove_file(&round).unwrap();
+    rig.runs.doc_writes.forget_pack(&round);
     std::fs::remove_file(&path).unwrap();
     std::fs::write(&path, file.replace("Tokens.", "Changed.")).unwrap();
     let read = rig.runs.brainstorm_pack(&rig.run_id).await.unwrap().0;

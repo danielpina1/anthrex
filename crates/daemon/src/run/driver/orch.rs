@@ -528,5 +528,9 @@ mod read_tests_design;
 mod design_ops_tests;
 
 #[cfg(test)]
+#[path = "design_ops_pack_tests.rs"]
+mod design_ops_pack_tests;
+
+#[cfg(test)]
 #[path = "refresh_tests.rs"]
 mod refresh_tests;
