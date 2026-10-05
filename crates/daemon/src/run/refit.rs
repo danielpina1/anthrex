@@ -11,12 +11,13 @@ use std::collections::{HashMap, HashSet};
 
 use config::{ConfiguredBudgets, Tuning};
 use proto::{
-    AgentRole, Budget, ClassBudget, ClassRoute, Effort, HistoryLine, PathWeights, PhaseSecs, Size,
-    Strength, TaskKind, TaskOrigin, TaskOutcome, TaskPattern, TaskRecord, TokenUsage, TuningFile,
+    AgentRole, Budget, ClassBudget, ClassRoute, Effort, HistoryLine, PhaseSecs, Size, Strength,
+    TaskKind, TaskOrigin, TaskOutcome, TaskPattern, TaskRecord, TokenUsage, TuningFile,
 };
 
 use super::history_io::effective_reverts;
 use super::routing::CLASS_DEFAULT;
+use weights::{fit_weights, weights_moved, weights_text};
 
 /// A task class the refit learns per (decision 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -398,58 +399,6 @@ pub fn ceiling(class: SizeClass, own: Budget, effective_m: Budget, budget_l: Bud
     }
 }
 
-// ---- critical-path weights (decision 7) ----
-
-fn fit_weights(lines: &[HistoryLine], t: &Tuning, now: u64) -> Option<PathWeights> {
-    let measured = |class| {
-        let samples = budget_samples(lines, class, t);
-        qualifies(&samples, t)
-            .then(|| median_of(&samples, |r| active_secs(&r.phases)))
-            .flatten()
-    };
-    let (s, m, hub) = (
-        measured(SizeClass::S),
-        measured(SizeClass::M),
-        measured(SizeClass::Hub),
-    );
-    let m_secs = m.or(hub).or(s.map(|s| s.saturating_mul(3)))?;
-    let hub_secs = hub.unwrap_or(m_secs);
-    let s_secs = s.unwrap_or(m_secs.div_ceil(3));
-    let derived = [(s, "S"), (m, "M"), (hub, "hub")]
-        .into_iter()
-        .filter(|(secs, _)| secs.is_none())
-        .map(|(_, label)| label.to_string())
-        .collect();
-    Some(PathWeights {
-        s_secs,
-        m_secs,
-        hub_secs,
-        derived,
-        at: now,
-    })
-}
-
-/// A weight moved by `pct`, or which classes are derived changed.
-fn weights_moved(new: &PathWeights, cur: &PathWeights, pct: u32) -> bool {
-    new.derived != cur.derived
-        || moved(new.s_secs, cur.s_secs, pct)
-        || moved(new.m_secs, cur.m_secs, pct)
-        || moved(new.hub_secs, cur.hub_secs, pct)
-}
-
-fn weights_text(w: &PathWeights) -> String {
-    let part = |label: &str, secs: u64| {
-        let derived = w.derived.iter().any(|d| d == label);
-        format!("{label} {secs}s{}", if derived { " (derived)" } else { "" })
-    };
-    format!(
-        "{}, {}, {}",
-        part("S", w.s_secs),
-        part("M", w.m_secs),
-        part("hub", w.hub_secs)
-    )
-}
-
 /// Ruling T8-7: a configured class's refit, computed from history for display only
 /// ("refit would be"), with no change gate; `None` with the refit off or too few
 /// samples.
@@ -515,6 +464,8 @@ pub fn refit(
 mod propose;
 #[path = "refit_tuned.rs"]
 mod tuned;
+#[path = "refit_weights.rs"]
+mod weights;
 pub use propose::{apply, dismiss, proposals};
 pub use tuned::{Tuned, report, tuned, tuned_with};
 
