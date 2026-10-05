@@ -111,6 +111,20 @@ impl DocNoteForm {
         }
     }
 
+    /// Final fix wave FW-79: a rethink's or a back's form reopened with `note` after its
+    /// confirm page was left, as it opened (an empty start), so Esc still asks before
+    /// discarding the note.
+    pub fn reopened(
+        run_id: String,
+        (kind, version): (DocGateKind, u32),
+        purpose: NoteFor,
+        note: &str,
+    ) -> Self {
+        let mut form = Self::new(run_id, (kind, version), purpose, note);
+        form.start = String::new();
+        form
+    }
+
     /// The form's keys, the text drawn as `view` says. The discard page takes the next
     /// key: a plain `y` closes, any other goes back. Esc and Ctrl-C close at once while
     /// submitting or on an unchanged text. While submitting nothing else acts. Ctrl-S

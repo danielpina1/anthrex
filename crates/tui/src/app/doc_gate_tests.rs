@@ -305,3 +305,37 @@ fn the_screen_follows_its_gate_to_a_newer_version() {
 
 #[path = "doc_gate_tests_keys.rs"]
 mod keys;
+
+/// Final fix wave FW-79 (WB-D m7): leaving a rethink's or a back's confirm page with `n`
+/// or Esc reopens its editor with the note typed, never an empty one; the reopened
+/// editor still asks before Esc discards it.
+#[test]
+fn cancelling_the_confirm_keeps_the_note() {
+    for (kind, k, leave) in [
+        (DocGateKind::Brainstorm, 'r', key('n')),
+        (DocGateKind::Brainstorm, 'r', code(KeyCode::Esc)),
+        (DocGateKind::Spec, 'b', key('n')),
+    ] {
+        let mut app = opened(kind, 120, 40);
+        app.on_key(key(k));
+        type_text(&mut app, "think smaller");
+        app.on_key(ctrl('s'));
+        assert!(confirm_of(&app).is_some(), "{k}: the page");
+        assert!(sent(&app.on_key(leave)).is_empty(), "{k}");
+        let Some(Modal::DocNote(form)) = &app.modal else {
+            panic!("{k}: the editor again: {:?}", app.modal);
+        };
+        assert_eq!(form.text.text(), "think smaller", "{k}");
+        // Esc on it asks first, as on the note as typed.
+        app.on_key(code(KeyCode::Esc));
+        let Some(Modal::DocNote(form)) = &app.modal else {
+            panic!("{k}: Esc asks before discarding");
+        };
+        assert!(form.discarding, "{k}");
+    }
+    // An approve's or a reject's page left with `n` opens nothing.
+    let mut app = opened(DocGateKind::Spec, 120, 40);
+    app.on_key(key('x'));
+    app.on_key(key('n'));
+    assert!(app.modal.is_none());
+}

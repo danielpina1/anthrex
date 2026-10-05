@@ -143,7 +143,9 @@ impl App {
                     self.modal = Some(Modal::Confirm { message, action });
                     vec![]
                 }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => vec![],
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.confirm_declined(action)
+                }
                 _ => {
                     self.modal = Some(Modal::Confirm { message, action });
                     vec![]

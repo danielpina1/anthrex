@@ -5,9 +5,10 @@
 //! confirm page. Pure: every request leaves as an `Effect`.
 
 use super::{App, Effect, Modal, PendingAction};
-use crate::doc_note::NoteOutcome;
+use crate::doc_note::{DocNoteForm, NoteFor, NoteOutcome};
 use crate::run_goal::EditorView;
 use crossterm::event::KeyEvent;
+use proto::DocGateAction;
 
 impl App {
     /// The open note editor's text area as the last frame drew it: the terminal is the
@@ -55,6 +56,34 @@ impl App {
                 vec![]
             }
         }
+    }
+
+    /// A confirm page left with `n` or Esc (final fix wave FW-79, WB-D m7): a rethink's
+    /// or a back's reopens its editor with the note, while the run still waits at that
+    /// gate; any other page closes.
+    pub(super) fn confirm_declined(&mut self, action: PendingAction) -> Vec<Effect> {
+        let PendingAction::DocGate {
+            run_id,
+            kind,
+            action,
+        } = action
+        else {
+            return vec![];
+        };
+        let (purpose, note) = match action {
+            DocGateAction::Rethink { note } => (NoteFor::Rethink, note),
+            DocGateAction::Back { note } => (NoteFor::Back, note),
+            _ => return vec![],
+        };
+        let gate = (self.runs.runs.iter())
+            .find(|r| r.run_id == run_id)
+            .and_then(|r| r.doc_gate.as_ref())
+            .filter(|g| g.kind == kind);
+        if let Some(gate) = gate {
+            let form = DocNoteForm::reopened(run_id, (kind, gate.version), purpose, &note);
+            self.modal = Some(Modal::DocNote(Box::new(form)));
+        }
+        vec![]
     }
 
     /// A bracketed paste into the open editor, drawn as the last frame drew it.
