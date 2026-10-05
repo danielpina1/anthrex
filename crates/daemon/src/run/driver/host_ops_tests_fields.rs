@@ -441,3 +441,33 @@ fn only_the_delivery_directory_is_private() {
     crate::run::driver::host_ops::private_dir(&dir).unwrap();
     assert_eq!(mode(&dir), 0o700, "an existing directory is tightened");
 }
+
+/// Task M9.7.6 (decision 6): a base fetch that asks `contains` runs a second fetch and a
+/// `merge-base` in the same op, so its bound holds a second `PUSH_TIMEOUT` and two more
+/// reads; one that does not ask keeps today's.
+#[test]
+fn a_fetch_with_contains_gets_the_longer_bound() {
+    let fetch = |contains| HostOp::Fetch {
+        stage: None,
+        branch: "main".into(),
+        into: format!("refs/anthrex/{RUN_ID}/remote/base"),
+        adopt: None,
+        parents_of: Some(SHA.into()),
+        contains,
+    };
+    let asked = crate::host::Contains {
+        stage: 1,
+        branch: format!("anthrex/{RUN_ID}/stage-1"),
+        into: format!("refs/anthrex/{RUN_ID}/remote/stage-1"),
+        head: SHA.into(),
+        merged: SHA.into(),
+    };
+    assert_eq!(
+        bound(&fetch(Some(asked))),
+        MARGIN + PUSH_TIMEOUT * 2 + HOST_READ_TIMEOUT * 8
+    );
+    assert_eq!(
+        bound(&fetch(None)),
+        MARGIN + PUSH_TIMEOUT + HOST_READ_TIMEOUT * 6
+    );
+}

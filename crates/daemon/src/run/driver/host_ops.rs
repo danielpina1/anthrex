@@ -64,6 +64,11 @@ pub(crate) fn bound(op: &HostOp) -> Duration {
     MARGIN
         + match op {
             HostOp::Push { .. } | HostOp::DeleteBranch { .. } => p + r * 2,
+            // Milestone 9.7 decision 6: the base fetch's `contains` adds the stage
+            // branch's fetch and a `merge-base`.
+            HostOp::Fetch {
+                contains: Some(_), ..
+            } => p * 2 + r * 8,
             // The fetch, its `rev-parse`, `merge-base`, swap and `rev-list`, the seal.
             HostOp::Fetch { .. } => p + r * 6,
             HostOp::OpenPr { .. } => r + w,

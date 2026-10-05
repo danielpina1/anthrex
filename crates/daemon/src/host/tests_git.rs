@@ -8,12 +8,12 @@ use std::time::{Duration, Instant};
 use super::*;
 use crate::worktree::run_git;
 
-const RUN: &str = "r1a2b";
-const NO_GH: &str = "/nonexistent/anthrex-test/gh";
+pub(super) const RUN: &str = "r1a2b";
+pub(super) const NO_GH: &str = "/nonexistent/anthrex-test/gh";
 
 /// Test setup's git, through `worktree::run_git` like the code under test; identity and
 /// signing are given per command, so the user's global config cannot change a commit.
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(super) fn git(dir: &Path, args: &[&str]) -> String {
     let mut all = vec![
         "-c",
         "user.name=anthrex test",
@@ -37,21 +37,21 @@ fn git(dir: &Path, args: &[&str]) -> String {
     out.stdout.trim().to_string()
 }
 
-fn commit(dir: &Path, message: &str) -> String {
+pub(super) fn commit(dir: &Path, message: &str) -> String {
     git(dir, &["commit", "-q", "--allow-empty", "-m", message]);
     git(dir, &["rev-parse", "HEAD"])
 }
 
-struct Rig {
-    _tmp: tempfile::TempDir,
-    bare: PathBuf,
-    work: PathBuf,
-    repo: HostRepo,
-    host: GhHost<SystemRunner>,
+pub(super) struct Rig {
+    pub(super) _tmp: tempfile::TempDir,
+    pub(super) bare: PathBuf,
+    pub(super) work: PathBuf,
+    pub(super) repo: HostRepo,
+    pub(super) host: GhHost<SystemRunner>,
 }
 
 impl Rig {
-    fn new() -> Rig {
+    pub(super) fn new() -> Rig {
         let tmp = tempfile::tempdir().unwrap();
         let bare = tmp.path().join("remote.git");
         let work = tmp.path().join("work");
@@ -76,7 +76,7 @@ impl Rig {
         }
     }
 
-    fn push(&self, stage: u16, sha: &str) -> Result<PushOutcome, HostError> {
+    pub(super) fn push(&self, stage: u16, sha: &str) -> Result<PushOutcome, HostError> {
         self.host.push(&PushReq {
             repo: self.repo.clone(),
             run_id: RUN.to_string(),
@@ -114,7 +114,7 @@ impl Rig {
     /// Fix round 1 (I3): a fetch with every remote-tracking ref deleted first, then
     /// checked to have written none, nor a `FETCH_HEAD` (decision 13). Deleting first
     /// matters: `git push` writes the same tracking ref git's opportunistic update would.
-    fn fetch(&self, req: &FetchReq) -> Result<FetchOutcome, HostError> {
+    pub(super) fn fetch(&self, req: &FetchReq) -> Result<FetchOutcome, HostError> {
         let tracking = || {
             git(
                 &self.work,
@@ -131,7 +131,7 @@ impl Rig {
         fetched
     }
 
-    fn local(&self, branch: &str) -> String {
+    pub(super) fn local(&self, branch: &str) -> String {
         git(
             &self.work,
             &[

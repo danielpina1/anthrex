@@ -10,8 +10,8 @@ use super::gh::{GhHost, run_ctx};
 use super::gh_parse::{self, last_line};
 use super::runner::Runner;
 use super::{
-    Adopt, DeleteBranchReq, FetchOutcome, FetchReq, HOST_READ_TIMEOUT, HostError, PUSH_TIMEOUT,
-    PushOutcome, PushReq,
+    Adopt, Contains, DeleteBranchReq, FetchOutcome, FetchReq, HOST_READ_TIMEOUT, HostError,
+    PUSH_TIMEOUT, PushOutcome, PushReq,
 };
 use crate::run::git::{NO_HOOKS, WRITE_FLAGS, refs_tx};
 
@@ -21,6 +21,22 @@ const FETCH_UPDATE: char = '+';
 /// `refs/heads/anthrex/<run>/stage-<n>`: the only branch anthrex pushes.
 pub(crate) fn stage_ref(run_id: &str, stage: u16) -> String {
     format!("refs/heads/anthrex/{run_id}/stage-{stage}")
+}
+
+/// The one shape of anthrex's fetch (the allow-list's fetch rule): `spec` from `remote`.
+fn fetch_argv<'a>(remote: &'a str, spec: &'a str) -> [&'a str; 10] {
+    [
+        "fetch",
+        "--no-tags",
+        "--no-prune",
+        "--no-prune-tags",
+        "--no-recurse-submodules",
+        "--no-auto-maintenance",
+        "--no-write-fetch-head",
+        "--refmap=",
+        remote,
+        spec,
+    ]
 }
 
 impl<R: Runner> GhHost<R> {
@@ -59,18 +75,7 @@ impl<R: Runner> GhHost<R> {
             &ctx,
             &req.repo.root,
             &WRITE_FLAGS,
-            &[
-                "fetch",
-                "--no-tags",
-                "--no-prune",
-                "--no-prune-tags",
-                "--no-recurse-submodules",
-                "--no-auto-maintenance",
-                "--no-write-fetch-head",
-                "--refmap=",
-                &req.repo.remote,
-                &spec,
-            ],
+            &fetch_argv(&req.repo.remote, &spec),
             PUSH_TIMEOUT,
         )?;
         if !out.success {
@@ -101,11 +106,14 @@ impl<R: Runner> GhHost<R> {
                     Some(oid) => self.parents(&ctx, req, oid)?,
                     None => None,
                 };
-                // Milestone 9.7: `contains` is answered by task M9.7.6's git steps.
+                let contains = req
+                    .contains
+                    .as_ref()
+                    .and_then(|c| self.contains(&ctx, req, c, parents));
                 Ok(FetchOutcome::Fetched {
                     sha,
                     parents,
-                    contains: None,
+                    contains,
                 })
             }
             Some(adopt) => self.adopt(req, &ctx, adopt, &sha),
@@ -138,6 +146,61 @@ impl<R: Runner> GhHost<R> {
         let mut words = text.split_whitespace();
         let found = words.next() == Some(oid);
         Ok(found.then(|| u32::try_from(words.count()).unwrap_or(u32::MAX)))
+    }
+
+    /// Milestone 9.7 decision 6 (DH §1.2): whether merged head `c.merged` holds stage
+    /// `c.stage`'s local head `c.head`, read after the base fetch, inside the same op (so
+    /// on the git queue). Unless the merge commit has two parents (its second, the merged
+    /// head, came with the base fetch), the stage branch is fetched into the stage's own
+    /// private ref first. Every failure here is `None` ("could not check"), never the
+    /// op's error: only the base fetch's own failure fails the op (ruling R1 counts it).
+    fn contains(
+        &self,
+        ctx: &AllowCtx<'_>,
+        req: &FetchReq,
+        c: &Contains,
+        parents: Option<u32>,
+    ) -> Option<bool> {
+        let run = &req.run_id;
+        // Only the asked stage's branch, only into its `remote/stage-<n>`; two object ids.
+        let own = c.branch == format!("anthrex/{run}/stage-{}", c.stage)
+            && c.into == format!("refs/anthrex/{run}/remote/stage-{}", c.stage);
+        if !own || !allow::is_object_id(&c.head) || !allow::is_object_id(&c.merged) {
+            return None;
+        }
+        if parents.is_none_or(|n| n < 2) {
+            let spec = format!("{FETCH_UPDATE}refs/heads/{}:{}", c.branch, c.into);
+            let out = self
+                .git(
+                    ctx,
+                    &req.repo.root,
+                    &WRITE_FLAGS,
+                    &fetch_argv(&req.repo.remote, &spec),
+                    PUSH_TIMEOUT,
+                )
+                .ok()?;
+            if !out.success {
+                return None;
+            }
+        }
+        let out = self
+            .git(
+                ctx,
+                &req.repo.root,
+                &NO_HOOKS,
+                &["merge-base", "--is-ancestor", &c.head, &c.merged],
+                HOST_READ_TIMEOUT,
+            )
+            .ok()?;
+        // Exit 1 with nothing on stderr is "not an ancestor"; any other failure (128, an
+        // object the repository lacks) is unknown.
+        if out.success {
+            Some(true)
+        } else if out.stderr.trim().is_empty() {
+            Some(false)
+        } else {
+            None
+        }
     }
 
     /// Decision 24: the remote head descends from `expected_local`; move the local ref

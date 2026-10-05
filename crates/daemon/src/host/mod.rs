@@ -32,6 +32,8 @@ mod tests_allow_git;
 #[cfg(test)]
 mod tests_git;
 #[cfg(test)]
+mod tests_git_contains;
+#[cfg(test)]
 mod tests_limits;
 #[cfg(test)]
 mod tests_open_logs;
