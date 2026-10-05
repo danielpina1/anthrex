@@ -334,3 +334,26 @@ fn a_user_edit_that_leaves_plan_md_unchanged_stores_nothing() {
     );
     assert_eq!(gate(&fx), Some((DocGateKind::Plan, 2, None)));
 }
+
+/// The final fix wave's FW-11 (task 11 re-review, first Minor): a run halted for good
+/// (not retryably) in planning, before its approved spec was read back, whose read-back
+/// then fails across two restarts, keeps its halt as it was: not made retryable. Its
+/// plain resume returns to planning, never to `running`.
+#[test]
+fn an_unread_halt_leaves_a_halt_for_good_as_it_was() {
+    let mut fx = at_spec_gate(false);
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
+    assert_eq!(fx.run().state, RunState::Planning);
+    let now = fx.now;
+    crate::run::engine::merge::halt(fx.run_mut(), "the base branch moved".into(), now);
+    assert!(!fx.run().halt_retryable);
+    for _ in 0..2 {
+        super::control_restore::restart(&mut fx, Vec::new());
+        read_failed(&mut fx);
+    }
+    assert_eq!(fx.run().state, RunState::Halted);
+    assert_eq!(log_lines(&fx).last().map(String::as_str), Some(UNREAD));
+    assert!(!fx.run().halt_retryable, "made retryable");
+    assert!(replies(&resume(&mut fx))[0].is_ok());
+    assert_eq!(fx.run().state, RunState::Planning);
+}
