@@ -168,3 +168,26 @@ fn plan_tools_before_planning_are_refused() {
         "tool submit_epic is not available to the orchestrator role"
     );
 }
+
+/// The final fix wave's FW-6 (T7 carry (b)): ruling T7-8's check comes before the batch
+/// is applied, through a pure predicate on the edits. A task edit the batch would
+/// itself refuse (an unknown task) is refused as locked, and nothing changes; a batch
+/// that changes no task (an answer to a question) is not refused by T7-8.
+#[test]
+fn the_plan_lock_is_checked_before_the_batch() {
+    let mut fx = at_plan_gate(false);
+    let before = fx.run().clone();
+    let args = json!({"edits": [
+        add_task("t2"),
+        {"op": "amend_task", "task_id": "t9", "size": "M"},
+    ]});
+    let effects = orch_tool(&mut fx, ORCH, "edit_plan", args);
+    assert_eq!(refused(&effects), LOCKED);
+    assert_eq!(fx.run().tasks, before.tasks);
+    assert!(fx.run().task("t2").is_none());
+    let lock = super::super::design::plan::changes_tasks;
+    let answer = serde_json::from_value(json!({"op": "answer", "task_id": "t1", "text": "yes"}));
+    assert!(!lock(&[answer.unwrap()]));
+    let cancel = serde_json::from_value(json!({"op": "cancel_task", "task_id": "t1"}));
+    assert!(lock(&[cancel.unwrap()]));
+}

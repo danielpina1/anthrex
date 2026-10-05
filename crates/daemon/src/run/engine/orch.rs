@@ -370,6 +370,12 @@ fn edit_plan(
         record_rejected(run, edits, &source, text.clone(), now);
         return refuse(fx, reply, text);
     }
+    // Milestone 9.6 ruling T7-8: the plan at its open gate is the user's to change.
+    let changes = super::design::plan::changes_tasks(edits);
+    if let Some(text) = super::design_gate::plan_locked(run).filter(|_| changes) {
+        record_rejected(run, edits, &source, text.clone(), now);
+        return refuse(fx, reply, text);
+    }
     let mut edited = run.clone();
     let mut effects = Vec::new();
     let mut added = Vec::new();
@@ -396,11 +402,6 @@ fn edit_plan(
                 });
             }
         }
-    }
-    // Milestone 9.6 ruling T7-8: the plan at its open gate is the user's to change.
-    if let Some(text) = super::design_gate::plan_locked(run).filter(|_| edited.tasks != run.tasks) {
-        record_rejected(run, edits, &source, text.clone(), now);
-        return refuse(fx, reply, text);
     }
     let held = gate_holds::assign(&mut edited, edits, &added, now);
     // Milestone 9.2 decision 31: a review fix outside its stage waits for the user,

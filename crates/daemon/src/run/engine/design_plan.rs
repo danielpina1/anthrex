@@ -263,6 +263,22 @@ fn opened(run: &mut Run, author: DocAuthor, opening: Opening, now: u64, fx: &mut
     }
 }
 
+/// Ruling T7-8's predicate (the final fix wave's FW-6): whether `edits` change the
+/// plan's tasks, checked before the batch is applied.
+pub(in crate::run::engine) fn changes_tasks(edits: &[proto::PlanEdit]) -> bool {
+    use proto::PlanEdit::{AddDep, AddTask, AmendTask, CancelTask, SplitTask};
+    (edits.iter()).any(|e| {
+        matches!(
+            e,
+            AddTask { .. }
+                | SplitTask { .. }
+                | CancelTask { .. }
+                | AmendTask { .. }
+                | AddDep { .. }
+        )
+    })
+}
+
 /// The open plan gate the orchestrator does not revise: where the user's edits and the
 /// engine's changes are versions of their own.
 pub(in crate::run::engine) fn open_gate(run: &Run) -> bool {
