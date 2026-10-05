@@ -393,3 +393,27 @@ fn an_approve_of_a_version_no_longer_open_is_refused() {
     act(&mut fx, DocGateKind::Brainstorm, plain).unwrap();
     assert_eq!(fx.run().state, RunState::Specifying);
 }
+
+/// The final fix wave's FW-20 (review A's M-3): DF §4.2 reviews a spec revision only;
+/// `Changes { review: true }` at the brainstorm or plan gate is refused exactly, and at
+/// the spec gate it is taken.
+#[test]
+fn a_review_is_asked_only_of_a_spec_revision() {
+    let reviewed = DocGateAction::Changes {
+        note: "n".into(),
+        review: true,
+    };
+    let only = Err("only a spec revision can be sent for review".to_string());
+    let mut fx = at_brainstorm_gate(false);
+    assert_eq!(
+        act(&mut fx, DocGateKind::Brainstorm, reviewed.clone()),
+        only
+    );
+    assert_eq!(gate(&fx).and_then(|g| g.2), None);
+    let mut fx = at_plan_gate(false);
+    assert_eq!(act(&mut fx, DocGateKind::Plan, reviewed.clone()), only);
+    assert_eq!(gate(&fx).and_then(|g| g.2), None);
+    let mut fx = at_spec_gate(false);
+    assert!(act(&mut fx, DocGateKind::Spec, reviewed).is_ok());
+    assert_eq!(gate(&fx).and_then(|g| g.2), Some("n".into()));
+}

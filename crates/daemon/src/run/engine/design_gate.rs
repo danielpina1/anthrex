@@ -230,6 +230,13 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
         (DocGateAction::Back { .. }, DocGateKind::Brainstorm) => {
             return Some("back is only for the spec and plan gates".into());
         }
+        // Review A's M-3: DF §4.2 reviews a spec revision only.
+        (
+            DocGateAction::Changes { review: true, .. },
+            DocGateKind::Brainstorm | DocGateKind::Plan,
+        ) => {
+            return Some(ONLY_SPEC_REVIEW.into());
+        }
         (DocGateAction::Edit { .. }, DocGateKind::Plan) => {
             // Ruling T11-3 (m3): `plan.md` is generated from the tasks, never edited.
             return Some(
@@ -313,6 +320,9 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
         }
     }
 }
+
+/// Review A's M-3: `Changes { review: true }` outside the spec gate.
+pub const ONLY_SPEC_REVIEW: &str = "only a spec revision can be sent for review";
 
 /// Ruling T15-7 (m6): a back from an `amend` round's spec gate.
 pub const NO_BRAINSTORM: &str = "this round has no brainstorm to go back to";
