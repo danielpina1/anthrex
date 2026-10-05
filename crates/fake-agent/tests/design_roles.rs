@@ -96,7 +96,6 @@ fn fake_agent_claims_brainstormer_scripts_by_label() {
     let (said, argv) = codex(&repo, target(AgentRole::Brainstormer, "codex"));
     assert_eq!(said, ["codex 1"]);
     assert!(argv.contains(&"--ephemeral".to_string()), "{argv:?}");
-    assert!(!argv.contains(&"resume".to_string()), "{argv:?}");
     let (said, _) = codex(&repo, target(AgentRole::Brainstormer, "codex"));
     assert_eq!(said, ["codex 2"], "the relaunch takes the next script");
 

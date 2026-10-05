@@ -100,10 +100,29 @@ None.
 }
 
 /// The merged report when brainstormer `failed` failed with `reason` and only
-/// `survivor`'s draft came in (DF §3.5): its first line names the failure.
+/// `survivor`'s draft came in (DF §3.5): its first line names the failure, and the rest
+/// names the survivor only (final fix wave FW-59), its approach tagged as its own.
 pub fn single_report(survivor: &str, failed: &str, reason: &str) -> String {
-    let body = report([survivor, survivor]);
-    format!("single brainstorm: {failed} failed: {reason}\n\n{body}")
+    format!(
+        "single brainstorm: {failed} failed: {reason}
+
+## Where they agree
+Only {survivor}'s draft came in: it writes a.txt in one small task.
+
+## Where they disagree
+Nothing: there is one draft.
+
+## Approaches
+### 1. Write the file directly [{survivor}]
+One task writes a.txt. Size S.
+
+## Recommendation
+Write the file directly: it is the smallest change.
+
+## Questions for you
+None.
+"
+    )
 }
 
 /// The spec (DF §4.1) with two requirements, each with its acceptance check, and no
@@ -275,8 +294,8 @@ pub enum Findings {
     /// Reads its document, ends its turn without submitting, reads the nudge on the
     /// same session's stdin, then submits these: a Claude reviewer (ruling T8-4).
     AfterNudge(Vec<Value>),
-    /// Fails its turn with this error.
-    Fails(String),
+    /// Fails its turn with this error (final fix wave FW-60: `&str`, as `Draft`'s).
+    Fails(&'static str),
 }
 
 /// The steps of the reviewer of review `n` of `kind` (`spec` or `plan`). A spec

@@ -73,11 +73,15 @@ fn the_fixture_documents_pass_the_templates() {
             failed: Some((pair[1].to_string(), "overloaded".to_string())),
             ..ctx(pair)
         };
-        admit(
-            DocKind::Brainstorm,
-            &single_report(pair[0], pair[1], "overloaded"),
-            &failed,
-        );
+        let single = single_report(pair[0], pair[1], "overloaded");
+        admit(DocKind::Brainstorm, &single, &failed);
+        // Final fix wave FW-59: past its first line the report names the survivor
+        // only; with one draft no approach is both brainstormers'.
+        let rest = single.split_once('\n').unwrap().1;
+        assert!(!rest.contains("[both]"), "{single}");
+        assert!(rest.contains(&format!("[{}]", pair[0])), "{single}");
+        assert!(!rest.contains(&format!("[{}]", pair[1])), "{single}");
+        assert!(!rest.contains(&format!("{} ", pair[1])), "{single}");
     }
 
     for ready in [false, true] {
