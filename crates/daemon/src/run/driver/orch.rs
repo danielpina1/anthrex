@@ -440,6 +440,7 @@ impl RunService {
                     run_id,
                     digest_revision,
                     notes_seq: seq,
+                    at: now,
                 }));
                 RunReply::tool_result(true, text)
             }

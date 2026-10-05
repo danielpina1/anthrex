@@ -385,6 +385,7 @@ pub(super) fn read(fx: &mut Fixture, revision: u64, notes_seq: u64) -> Vec<Effec
         run_id: RUN_ID.into(),
         digest_revision: revision,
         notes_seq,
+        at: fx.now,
     }))
 }
 
@@ -397,13 +398,15 @@ fn digest_read_drops_notes_up_to_the_revision() {
     let second = fx.run().orch.digest_rev;
     assert!(second > first);
     assert_eq!(notes(&fx).len(), 2);
+    // Milestone 9.7 decision 11: the read is recorded at its clone's time, the second
+    // before the read's own step.
+    let cloned_at = fx.now;
     read(&mut fx, first, first_seq);
     assert_eq!(
         notes(&fx),
         vec!["the user edited the plan: resume".to_string()]
     );
-    let now = fx.now;
-    assert_eq!(fx.run().orch.digest_read_at, Some(now));
+    assert_eq!(fx.run().orch.digest_read_at, Some(cloned_at));
     read_now(&mut fx);
     assert!(notes(&fx).is_empty());
     assert!(

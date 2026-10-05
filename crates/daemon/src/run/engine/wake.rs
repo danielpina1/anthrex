@@ -91,9 +91,10 @@ pub(super) fn unnote(run: &mut Run, text: &str) {
 
 /// Decisions 16 and 39: the orchestrator read a digest whose answer included the
 /// notes up to `notes_seq`; those are dropped, so an orchestrator that polls is never
-/// pasted at.
-pub(super) fn digest_read(run: &mut Run, notes_seq: u64, now: u64) {
-    run.orch.digest_read_at = Some(now);
+/// pasted at. Milestone 9.7 decision 11: the read is recorded at `at`, the time its
+/// clone was taken, as given (BR-18), so a hold decided after the clone stays shown.
+pub(super) fn digest_read(run: &mut Run, notes_seq: u64, at: u64) {
+    run.orch.digest_read_at = Some(at);
     drop_up_to(run, notes_seq);
 }
 

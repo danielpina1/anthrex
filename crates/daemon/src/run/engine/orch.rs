@@ -136,10 +136,13 @@ pub(super) fn on_orch_event(
             }
         }
         OrchEvent::DigestRead {
-            run_id, notes_seq, ..
+            run_id,
+            notes_seq,
+            at,
+            ..
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                wake::digest_read(run, notes_seq, now);
+                wake::digest_read(run, notes_seq, at);
             }
         }
         OrchEvent::OrchestratorWindow {
