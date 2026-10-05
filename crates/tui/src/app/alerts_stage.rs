@@ -14,7 +14,8 @@ pub enum StageAlert {
 
 /// Milestone 9.5 decision 45: each stage's tier-3 states the user must act on — held
 /// after executor failures; red at propagation (its commit, review ruling I7); a red
-/// tier 3 (its latest fix task). The two reds are the orchestrator's while it lives.
+/// tier 3 on the stage's head (its latest fix task). The two reds are the
+/// orchestrator's while it lives.
 pub(super) fn stage_alerts(run: &RunInfo) -> Vec<(u16, StageAlert, String)> {
     let mut out = Vec::new();
     let orchestrated = super::alerts::orchestrator_lives(run);
@@ -37,7 +38,10 @@ pub(super) fn stage_alerts(run: &RunInfo) -> Vec<(u16, StageAlert, String)> {
                 format!("stage {n} propagate red at {sha7}"),
             ));
         }
-        if stage.full.state == FullState::Red {
+        // Milestone 9.7 ruling T9-1: only a red job on the stage's current head. An
+        // open PR's stage shows a red from an earlier head (decision 12); it is stale.
+        let on_head = stage.full.commit.is_some() && stage.full.commit == stage.head;
+        if stage.full.state == FullState::Red && on_head {
             let mut text = format!("stage {n} tier 3 red");
             if let Some(fix) = stage.fix_tasks.last() {
                 text.push_str(&format!(" · fix task {fix}"));

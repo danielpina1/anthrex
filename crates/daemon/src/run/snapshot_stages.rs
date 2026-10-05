@@ -117,9 +117,11 @@ fn full(run: &Run, s: &StageRecord, head: &str) -> FullInfo {
     }
 }
 
-/// Milestone 9.7 decision 12 (DH §2.3, BR-13): a `pr`-mode stage whose PR is open shows
-/// its last tier-3 job's verdict. That job ran on the head the PR opened with; CI
-/// carries later heads. Local mode, and a stage before its PR opens, show nothing.
+/// Milestone 9.7 decision 12 (DH §2.3, BR-13, ruling T9-1): a `pr`-mode stage whose PR
+/// is open shows the latest tier-3 verdict, from a job that ran on an earlier head than
+/// the current one (this answers only where the on-head rule says nothing, so `last` is
+/// off-head here; `commit` says which head). CI carries the heads tier 3 has not run
+/// on. Local mode, and a stage before its PR opens, show nothing.
 fn open_pr_verdict(run: &Run, s: &StageRecord) -> FullState {
     let open = run.delivery.mode == DeliveryMode::Pr
         && run

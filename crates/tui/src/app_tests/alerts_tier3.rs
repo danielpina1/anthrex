@@ -26,9 +26,11 @@ fn runs(orch: bool) -> Vec<RunInfo> {
     s1.propagate_red = Some(RED.into());
     let mut s2 = stage(2, Some("bbbb"), 1, 1);
     s2.full.state = FullState::Red;
+    s2.full.commit = Some("bbbb".into());
     s2.fix_tasks = vec!["fix1".into()];
     let mut s3 = stage(3, Some("cccc"), 1, 1);
     s3.full.state = FullState::Red;
+    s3.full.commit = Some("cccc".into());
     reds.stages = vec![s1, s2, s3];
     if orch {
         vec![with_orch(held, 91), with_orch(reds, 92)]
@@ -131,4 +133,31 @@ fn stage_alerts_open_their_node_and_name_their_stage() {
     );
     assert_eq!(rows(2)[..2], ["phase propagate red", "stage 1 of 3"]);
     assert_eq!(rows(4)[..2], ["phase tier 3 red", "stage 3 of 3"]);
+}
+
+/// Milestone 9.7 ruling T9-1: an open PR's stage shows its latest tier-3 verdict even
+/// when that job ran on an earlier head (decision 12). Such a red is stale: it raises
+/// no alert. A red job on the stage's current head still does.
+#[test]
+fn only_a_red_on_the_stages_head_raises_an_alert() {
+    let app_for = |commit: &str| {
+        let mut run = at("r-pr", RunState::Running, 1);
+        let mut s1 = stage(1, Some("bbbb"), 1, 1);
+        s1.full.state = FullState::Red;
+        s1.full.commit = Some(commit.into());
+        run.stages = vec![s1];
+        app_with_runs(vec![], snapshot(1, 100, vec![run]))
+    };
+    let stage_reds = |app: &crate::app::App| {
+        alerts(app)
+            .into_iter()
+            .filter(|a| matches!(a.key, AlertKey::Stage { .. }))
+            .count()
+    };
+    assert_eq!(stage_reds(&app_for("aaaa")), 0, "a red on an earlier head");
+    assert_eq!(stage_reds(&app_for("bbbb")), 1, "a red on the head");
+    assert_eq!(
+        listed(&app_for("bbbb")),
+        vec![line(3, "r-pr", "stage 1 tier 3 red")]
+    );
 }

@@ -122,8 +122,8 @@ fn moved_head(mode: proto::DeliveryMode, pr: Option<proto::PrState>, ok: bool) -
     stage_infos(&run)[0].full.state
 }
 
-/// Milestone 9.7 decision 12: an open PR's tier 3 ran on the head the PR opened with,
-/// and CI carries later heads, so its mark is the last tier-3 verdict.
+/// Milestone 9.7 decision 12 (ruling T9-1): an open PR's stage shows the latest tier-3
+/// verdict, from a job on an earlier head than the current one; CI carries later heads.
 #[test]
 fn an_open_prs_moved_head_shows_the_last_tier_3_verdict() {
     use proto::{DeliveryMode, FullState, PrState};

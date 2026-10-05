@@ -118,7 +118,8 @@ fn finished(kind: &RowKind<'_>) -> bool {
             planner.ended_at.is_some()
                 || matches!(planner.state, PlannerState::Finished | PlannerState::Failed)
         }
-        // Milestone 9.1: a stage every task of which merged, green on its head.
+        // Milestone 9.1: a stage every task of which merged, green on its head, or (an
+        // open PR's stage, milestone 9.7 ruling T9-1) green on an earlier head.
         RowKind::Stage { stage, .. } => {
             stage.merged == stage.tasks && stage.full.state == FullState::Green
         }
