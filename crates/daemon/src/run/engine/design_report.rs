@@ -81,11 +81,11 @@ pub(in crate::run::engine) fn report_doc(
     }
     let drafts = drafts(run).unwrap_or_default();
     let (raw, cut) = match raw.len() <= WITH_APPENDIX_MAX {
-        true => report::split(raw),
+        true => cut_at(run, raw),
         false => (raw, None),
     };
     // Ruling T9-2(b): the cut part is the engine's appendix when it has its shape.
-    let own = cut.is_some_and(|cut| !engine_shaped(run, cut));
+    let own = cut.is_some();
     let text = match checked_text(run, DocKind::Brainstorm, raw, false, true) {
         Ok(text) => text,
         // Ruling T9-2(a): the report's own heading cut off a required section.
@@ -103,6 +103,30 @@ pub(in crate::run::engine) fn report_doc(
     let mut doc = NewDoc::new(DocKind::Brainstorm, author, reason, &file);
     doc.report = Some(summary);
     Ok((doc, own))
+}
+
+/// Rulings T9-2(b) and FW-10: `raw` cut at its first `## Appendix: the drafts` line
+/// outside code: the report before it, and, when that line is not the engine's
+/// appendix sent back, the report's own part it cut (up to the engine's, the first
+/// such line whose remainder has its shape, or to the end).
+fn cut_at<'a>(run: &Run, raw: &'a str) -> (&'a str, Option<&'a str>) {
+    let doc = lines(raw);
+    let at = |l: &DocLine<'_>| l.text.as_ptr() as usize - raw.as_ptr() as usize;
+    let heads: Vec<usize> = (doc.iter())
+        .filter(|l| !l.code && l.text.trim_end() == report::APPENDIX)
+        .map(at)
+        .collect();
+    let Some(&first) = heads.first() else {
+        return (raw, None);
+    };
+    let engine = (heads.iter()).find(|&&h| engine_shaped(run, &raw[h..]));
+    match engine {
+        Some(&h) if h == first => (&raw[..first], None),
+        engine => (
+            &raw[..first],
+            Some(&raw[first..engine.map_or(raw.len(), |h| *h)]),
+        ),
+    }
 }
 
 /// Ruling T9-2(b): `cut` (from its `## Appendix: the drafts` line on) has the engine's

@@ -151,3 +151,44 @@ fn a_rethink_clears_a_read_back_wake_owed() {
     let stale = notes(&fx).iter().filter(|n| *n == READ_BACK).count();
     assert_eq!(stale, 0, "{:?}", notes(&fx));
 }
+
+/// Ruling FW-10: a report whose own `## Appendix: the drafts` heading comes before an
+/// engine appendix it sent back. The engine's is the first appendix heading whose
+/// remainder has its shape; the earlier one is the report's own, so it is cut there
+/// with the warning, and the stored file has one appendix heading, the engine's.
+#[test]
+fn an_own_appendix_heading_before_the_engines_is_cut_with_the_warning() {
+    let mut fx = brainstorming();
+    both_drafts(&mut fx);
+    let drafts = vec![(
+        "claude".to_string(),
+        Ok("## Understanding\nold\n".to_string()),
+    )];
+    let text = attach(&format!("{REPORT}\n{APPENDIX}\nmy own notes\n"), &drafts);
+    let effects = submit(&mut fx, "brainstorm", &text);
+    let file = writes(&effects)
+        .into_iter()
+        .find(|(p, _)| p.ends_with("brainstorm-v1.md"))
+        .expect("the report's write")
+        .1;
+    assert_eq!(file.matches(APPENDIX).count(), 1, "{file}");
+    assert!(!file.contains("my own notes"), "{file}");
+    assert_eq!(warnings(&fx), 1, "{:?}", log_lines(&fx));
+}
+
+/// Ruling FW-10 with T9-2(a): such an own heading that cuts off a required section is
+/// refused with the cause.
+#[test]
+fn an_own_heading_before_the_engines_that_cuts_a_section_is_refused() {
+    let mut fx = brainstorming();
+    both_drafts(&mut fx);
+    let questions = "## Questions for you";
+    let own = REPORT.replace(questions, &format!("{APPENDIX}\nmine\n\n{questions}"));
+    let drafts = vec![(
+        "codex".to_string(),
+        Ok("## Understanding\nold\n".to_string()),
+    )];
+    let text = attach(&own, &drafts);
+    assert_eq!(refused(&submit(&mut fx, "brainstorm", &text)), CUT_REFUSAL);
+    assert_eq!(gate(&fx), None);
+}
