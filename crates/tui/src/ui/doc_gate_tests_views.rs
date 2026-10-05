@@ -159,6 +159,9 @@ fn rendering_takes_app_by_reference_and_does_no_io() {
         ("ui/doc_gate_panes.rs", include_str!("doc_gate_panes.rs")),
         ("ui/doc_text.rs", include_str!("doc_text.rs")),
         ("ui/doc_note.rs", include_str!("doc_note.rs")),
+        // Final fix wave FW-77 (WB-D m3): task 18's Plan doc tab.
+        ("app/plan_doc.rs", include_str!("../app/plan_doc.rs")),
+        ("ui/plan_doc.rs", include_str!("plan_doc.rs")),
     ];
     let banned = [
         "std::fs",

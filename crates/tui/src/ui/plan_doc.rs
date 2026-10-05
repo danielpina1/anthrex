@@ -119,7 +119,9 @@ pub(crate) fn lines(text: &str, width: u16, p: Palette) -> Vec<Line<'static>> {
     let all: Vec<String> = cleaned.lines().map(one_line).collect();
     let cut = all.len().saturating_sub(MAX_LINES);
     let source = &all[..all.len().min(MAX_LINES)];
-    let start = source.iter().position(|l| l.trim_end() == COVERAGE);
+    // Final fix wave FW-78 (WB-D m4): the engine's table is the last `## Coverage`; an
+    // earlier one is a brief's own text.
+    let start = source.iter().rposition(|l| l.trim_end() == COVERAGE);
     let table: Vec<(String, String)> = start
         .map(|at| source[at..].iter().filter_map(|l| cells(l)).collect())
         .unwrap_or_default();

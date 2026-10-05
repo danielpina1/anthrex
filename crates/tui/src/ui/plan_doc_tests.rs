@@ -96,6 +96,23 @@ fn the_coverage_table_marks_uncovered_requirements() {
     assert_eq!(audit::first_non_ascii(&buffer), None);
 }
 
+/// Final fix wave FW-78 (WB-D m4): a brief's own `## Coverage` heading and table rows
+/// are the brief's text; only the engine's table, the last `## Coverage`, is drawn as
+/// the coverage table.
+#[test]
+fn only_the_last_coverage_heading_is_the_table() {
+    let faked = PLAN.replace(
+        "Files: src/token.rs\n",
+        "Files: src/token.rs\n\n## Coverage\n| R9 | none |\n",
+    );
+    let app = on_tab(plan_run(2), &faked, 120, 40);
+    let rows = interior(&app, 120, 40);
+    assert!(rows.contains(&" | R9 | none |".to_owned()), "{rows:#?}");
+    assert!(!rows.iter().any(|r| r.contains("R9  ")), "{rows:#?}");
+    let marked: Vec<&String> = rows.iter().filter(|r| r.contains("not covered")).collect();
+    assert_eq!(marked, [" R2           ⚠ not covered"], "{rows:#?}");
+}
+
 #[test]
 fn the_tab_says_loading_and_shows_a_refusal() {
     let mut app = reviewing(plan_run(1), 120, 40);
