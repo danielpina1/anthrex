@@ -125,7 +125,8 @@ fn file_mode(_: &Path) -> Option<u32> {
 }
 
 /// Decision 28 step 3's guard: `out` must parse, every owned key must read back as
-/// `doc`, and every other key must read back as `before` has it.
+/// `doc`, and every other key must read back as `before` has it (the design default
+/// among them: the screen does not own it).
 pub(super) fn read_back(
     before: &toml::Table,
     out: &str,
@@ -134,8 +135,14 @@ pub(super) fn read_back(
     let after: toml::Table = out
         .parse()
         .map_err(|e| vec![format!("the edited config.toml would not parse: {e}")])?;
+    // Ruling T18-7: `design_default` is reported by the daemon and read-only on the
+    // settings screen, so a client's stale or absent copy is never compared.
+    let owned = |d: &SettingsDoc| SettingsDoc {
+        design_default: None,
+        ..d.clone()
+    };
     let read = super::doc_of(&crate::parse(out).0.orchestrator);
-    if read != *doc {
+    if owned(&read) != owned(doc) {
         return Err(vec![format!(
             "config.toml would not read back as saved ({}); nothing changed",
             differing(&read, doc).join(", ")
