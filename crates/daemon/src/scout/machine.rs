@@ -97,6 +97,9 @@ pub struct ScoutMachine {
     pub wrap_up_pending: bool,
     pub usage: TokenUsage,
     pub failure: Option<String>,
+    /// The final fix wave's FW-36: the failure is [`unsubmitted`]'s, a typed end the
+    /// service reports as `ScoutOutcome::Unsubmitted`, so no one compares its text.
+    pub unsubmitted: bool,
 }
 
 impl Default for ScoutMachine {
@@ -110,6 +113,7 @@ impl Default for ScoutMachine {
             wrap_up_pending: false,
             usage: TokenUsage::default(),
             failure: None,
+            unsubmitted: false,
         }
     }
 }
@@ -180,7 +184,10 @@ pub fn step(
             machine.started_at = now;
             Vec::new()
         }
-        ScoutEvent::TurnEnded { .. } if !limits.nudges => fail(&mut machine, unsubmitted(&t), true),
+        ScoutEvent::TurnEnded { .. } if !limits.nudges => {
+            machine.unsubmitted = true;
+            fail(&mut machine, unsubmitted(&t), true)
+        }
         ScoutEvent::TurnEnded { .. } => {
             machine.turns_without_report = machine.turns_without_report.saturating_add(1);
             if machine.turns_without_report == 1 {

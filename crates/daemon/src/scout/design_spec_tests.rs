@@ -346,6 +346,8 @@ fn a_codex_design_agent_is_never_resumed_and_a_claude_one_is_nudged() {
     let reason = "the brainstormer ended its turn without an accepted draft";
     assert_eq!(unsubmitted(&BRAINSTORMER_TEXTS), reason);
     assert_eq!(codex.failure.as_deref(), Some(reason));
+    // FW-36: typed, so the service reports it as `ScoutOutcome::Unsubmitted`.
+    assert!(codex.unsubmitted && !claude.unsubmitted);
     // The final fix wave's FW-35: no resumed argv is asserted; a design agent is never
     // resumed (`headless::never_resumed`), so that argv is unreachable.
 }

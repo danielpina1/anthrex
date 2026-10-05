@@ -77,6 +77,9 @@ pub(super) fn step_locked(scout: &mut Scout, event: ScoutEvent, limits: &ScoutLi
                 scout.ended_at = Some(unix_now());
                 let ended = match (result, &scout.report) {
                     (Ok(()), Some(report)) => ScoutOutcome::Report(report.clone()),
+                    (Err(reason), _) if scout.machine.unsubmitted => ScoutOutcome::Unsubmitted {
+                        reason: reason.clone(),
+                    },
                     (Err(reason), _) => ScoutOutcome::Failed {
                         reason: reason.clone(),
                     },

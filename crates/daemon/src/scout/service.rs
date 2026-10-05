@@ -38,6 +38,12 @@ pub enum ScoutOutcome {
     Failed {
         reason: String,
     },
+    /// Ruling T8-7 and the final fix wave's FW-36: a design agent's turn ended unnudged
+    /// without its submission (`machine::unsubmitted`'s words), typed so the engine
+    /// relaunches it by its type, never by its text.
+    Unsubmitted {
+        reason: String,
+    },
     /// A sub-planner's epic was accepted by the engine (milestone 9 decision 22).
     Accepted,
 }

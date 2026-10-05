@@ -476,7 +476,9 @@ async fn ended(
     match handle.outcome.await {
         Ok(ScoutOutcome::Report(report)) => (ScoutEnd::Reported, report.usage),
         Ok(ScoutOutcome::Accepted) => (ScoutEnd::Reported, spent(&handle.id)),
-        Ok(ScoutOutcome::Failed { reason }) => (ScoutEnd::Failed { reason }, spent(&handle.id)),
+        Ok(ScoutOutcome::Failed { reason } | ScoutOutcome::Unsubmitted { reason }) => {
+            (ScoutEnd::Failed { reason }, spent(&handle.id))
+        }
         Err(_) => (
             ScoutEnd::Failed {
                 reason: "the session ended without an outcome".to_string(),

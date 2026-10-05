@@ -486,36 +486,32 @@ async fn a_rethinks_pack_reads_the_previous_report_off_the_engine() {
     assert!(!read.contains("Changed."), "{read}");
 }
 
-/// Task 8's re-review: the driver gives the engine the end's cause by type. The
-/// machine's unnudged end without the submission, in the agent's own words, is
-/// `Unsubmitted`; any other failure, or the other role's words, is `Failed`.
+/// Task 8's re-review and the final fix wave's FW-36: the driver gives the engine the
+/// end's cause by type, and compares no text. The machine's typed unsubmitted end is
+/// `Unsubmitted`; a failure with the same words but not typed, or any other failure,
+/// is `Failed`, and is not relaunched.
 #[test]
 fn an_unsubmitted_end_reaches_the_engine_as_its_own_cause() {
     use super::super::design_ops::design_end;
     use crate::run::engine::ScoutEnd;
-    use crate::scout::design_spec::{BRAINSTORMER_TEXTS, DOC_REVIEWER_TEXTS, DesignAgentKind};
+    use crate::scout::design_spec::DOC_REVIEWER_TEXTS;
     use crate::scout::machine::unsubmitted;
     use crate::scout::service::ScoutOutcome;
-    let reviewer = DesignAgentKind::DocReviewer {
-        doc: "spec-r1".into(),
-    };
-    let failed = |reason: String| Some(ScoutOutcome::Failed { reason });
     let own = unsubmitted(&DOC_REVIEWER_TEXTS);
+    let typed = Some(ScoutOutcome::Unsubmitted {
+        reason: own.clone(),
+    });
     assert_eq!(
-        design_end(&reviewer, failed(own.clone())),
-        ScoutEnd::Unsubmitted { reason: own }
+        design_end(typed),
+        ScoutEnd::Unsubmitted {
+            reason: own.clone()
+        }
     );
-    let other = unsubmitted(&BRAINSTORMER_TEXTS);
+    let failed = |reason: String| Some(ScoutOutcome::Failed { reason });
     assert_eq!(
-        design_end(&reviewer, failed(other.clone())),
-        ScoutEnd::Failed { reason: other }
+        design_end(failed(own.clone())),
+        ScoutEnd::Failed { reason: own }
     );
-    assert_eq!(
-        design_end(&reviewer, Some(ScoutOutcome::Accepted)),
-        ScoutEnd::Reported
-    );
-    assert!(matches!(
-        design_end(&reviewer, None),
-        ScoutEnd::Failed { .. }
-    ));
+    assert_eq!(design_end(Some(ScoutOutcome::Accepted)), ScoutEnd::Reported);
+    assert!(matches!(design_end(None), ScoutEnd::Failed { .. }));
 }
