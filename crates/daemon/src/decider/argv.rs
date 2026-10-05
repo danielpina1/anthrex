@@ -68,6 +68,30 @@ pub const DECIDER_CAPS: DeciderCaps = DeciderCaps {
     codex_ephemeral: true,
 };
 
+/// The caps the engine picks design agents by (milestone 9.6 ruling WB-A-W2):
+/// [`DECIDER_CAPS`]. A test replaces them on its own thread only ([`with_caps`]).
+pub fn caps() -> DeciderCaps {
+    #[cfg(test)]
+    if let Some(caps) = TEST_CAPS.with(std::cell::Cell::get) {
+        return caps;
+    }
+    DECIDER_CAPS
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_CAPS: std::cell::Cell<Option<DeciderCaps>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` with [`caps`] answering `caps` on this thread.
+#[cfg(test)]
+pub fn with_caps<T>(caps: DeciderCaps, f: impl FnOnce() -> T) -> T {
+    let before = TEST_CAPS.with(|c| c.replace(Some(caps)));
+    let out = f();
+    TEST_CAPS.with(|c| c.set(before));
+    out
+}
+
 /// Every built-in tool that could read or change anything; `--tools ""` already leaves
 /// only `StructuredOutput`, and this list keeps them out if a CLI ignores it.
 pub const CLAUDE_DECIDER_DISALLOWED: &str =

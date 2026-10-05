@@ -193,4 +193,27 @@ pub enum OpResult {
     Crowned {
         head: String,
     },
+    /// Milestone 9.6: `StartDesignAgent`'s window, and a brainstormer's round's pack
+    /// file when this start wrote or first read it (ruling T8-6).
+    DesignAgentStarted {
+        window_id: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pack: Option<crate::run::design::pack::PackFile>,
+    },
+    /// Milestone 9.6 ruling T8-6: a brainstormer's round's pack could not be read back
+    /// (missing, or not what was written), so it was not started.
+    DesignPackUnreadable {
+        reason: String,
+    },
+    /// Milestone 9.6 decision 23: `CommitDesignDocs` moved the run branch to `head`;
+    /// `spec` is the committed spec's path in the repository (decision 31).
+    DocsCommitted {
+        head: String,
+        spec: String,
+    },
+    /// The task's addendum: the documents folder goes through `path`, a symbolic link
+    /// tracked in the run head's tree; nothing was written.
+    DocsThroughSymlink {
+        path: String,
+    },
 }

@@ -91,6 +91,7 @@ fn area_scout_spec_is_read_only() {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         })
     );
     assert_eq!(
@@ -105,6 +106,7 @@ fn area_scout_spec_is_read_only() {
     assert_eq!(
         spec.claude_sandbox,
         Some(ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: Vec::new(),
             deny_write: denials("/wt/runs/r1/integration"),
         })
@@ -166,6 +168,7 @@ fn onboarding_scout_spec_is_read_only_too() {
     assert_eq!(
         spec.claude_sandbox,
         Some(ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: Vec::new(),
             deny_write: denials("/wt/runs/.onboarding"),
         })
@@ -189,6 +192,7 @@ fn onboarding_scout_spec_is_read_only_too() {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         })
     );
     assert_eq!(spec.output_filter, None);

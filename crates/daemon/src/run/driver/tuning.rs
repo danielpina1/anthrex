@@ -176,14 +176,22 @@ fn tune_blocking(repo_dir: &Path, cfg: &config::Orchestrator, now: u64) -> Tuned
         }
     };
     let mut tuned = refit::tuned_with(&lines, &used, cfg);
+    // Ruling T13-5 (m5): a design class's refit-write line is a design run's only.
+    let (mut design, mut log): (Vec<String>, Vec<String>) =
+        log.into_iter().partition(|l| refit::is_design_line(l));
     // Ruling T9-5: a start line the refit already wrote (the weights' two lines are one
     // text) is written once.
-    for line in tuned.log.drain(..) {
-        if !log.contains(&line) {
-            log.push(line);
+    for (start, out) in [
+        (&mut tuned.log, &mut log),
+        (&mut tuned.design_lines, &mut design),
+    ] {
+        for line in start.drain(..) {
+            if !out.contains(&line) {
+                out.push(line);
+            }
         }
     }
-    tuned.log = log;
+    (tuned.log, tuned.design_lines) = (log, design);
     tuned
 }
 

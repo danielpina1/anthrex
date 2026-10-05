@@ -115,11 +115,13 @@ fn a_headless_spec_round_trips_through_json() {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         }),
         allowed_tools: vec!["Bash".into()],
         claude_permission_mode: Some("acceptEdits".into()),
         claude_disallowed_tools: vec![],
         claude_sandbox: Some(ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: vec!["/tmp/x/.git".into()],
             deny_write: vec![],
         }),
@@ -149,6 +151,7 @@ fn a_persisted_spec_without_an_epic_still_loads() {
         epic: None,
         chain: None,
         lane: None,
+        agent_label: None,
     };
     let mut json = serde_json::to_value(&target).unwrap();
     json.as_object_mut().unwrap().remove("epic");
@@ -167,6 +170,7 @@ fn persisted_mcp_target_without_chain_still_loads() {
         epic: None,
         chain: None,
         lane: None,
+        agent_label: None,
     };
     let mut json = serde_json::to_value(&target).unwrap();
     json.as_object_mut().unwrap().remove("chain");
@@ -192,6 +196,7 @@ fn persisted_mcp_target_without_lane_still_loads() {
         epic: None,
         chain: None,
         lane: None,
+        agent_label: None,
     };
     let mut json = serde_json::to_value(&target).unwrap();
     json.as_object_mut().unwrap().remove("lane");
@@ -284,4 +289,48 @@ fn a_claude_session_pins_tool_search_off_and_a_codex_session_does_not() {
         session_vars(Runtime::Claude, &[]),
         [("ENABLE_TOOL_SEARCH".to_string(), "false".to_string())]
     );
+}
+
+/// Milestone 9.6, task 8's re-review (m3): `never_resumed` refuses only a design
+/// agent's session; a worker's and a task reviewer's still resume, on either runtime.
+#[test]
+fn only_a_design_agents_session_is_never_resumed() {
+    let spec = |runtime, role| HeadlessSpec {
+        runtime,
+        model: "m".into(),
+        effort: Effort::High,
+        cwd: "/tmp/p/wt/t1".into(),
+        instructions: "contract".into(),
+        mcp: Some(McpTarget {
+            role,
+            run_id: "r-3f9a".into(),
+            task_id: Some("t1".into()),
+            scout_id: None,
+            epic: None,
+            chain: None,
+            lane: None,
+            agent_label: None,
+        }),
+        allowed_tools: Vec::new(),
+        claude_permission_mode: None,
+        claude_disallowed_tools: Vec::new(),
+        claude_sandbox: None,
+        codex_sandbox: "read-only".into(),
+        codex_writable_roots: Vec::new(),
+        env: Vec::new(),
+        claude_auth: config::ClaudeAuth::default(),
+        api_key_helper: None,
+        run_ref: None,
+        codex_config_guard: None,
+        output_filter: None,
+    };
+    for runtime in [Runtime::Claude, Runtime::Codex] {
+        for role in [AgentRole::Worker, AgentRole::Reviewer] {
+            assert!(never_resumed(7, &spec(runtime, role)).is_ok(), "{role:?}");
+        }
+        for role in [AgentRole::Brainstormer, AgentRole::DocReviewer] {
+            let error = never_resumed(7, &spec(runtime, role)).unwrap_err();
+            assert!(error.to_string().contains("never resumed"), "{role:?}");
+        }
+    }
 }

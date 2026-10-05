@@ -305,6 +305,9 @@ pub struct RouteListsFrozen {
     pub planner: FrozenList,
     #[serde(skip_serializing_if = "FrozenList::is_empty")]
     pub orchestrator: FrozenList,
+    /// Milestone 9.6 decision 10: the brainstormers' list.
+    #[serde(skip_serializing_if = "FrozenList::is_empty")]
+    pub brainstorm: FrozenList,
 }
 
 impl RouteListsFrozen {
@@ -321,11 +324,12 @@ impl RouteListsFrozen {
             decider: f(&lists.decider),
             planner: f(&lists.planner),
             orchestrator: f(&lists.orchestrator),
+            brainstorm: f(&lists.brainstorm),
         }
     }
 
     /// Every list with its table name, in config order.
-    pub fn named(&self) -> [(&'static str, &FrozenList); 8] {
+    pub fn named(&self) -> [(&'static str, &FrozenList); 9] {
         [
             ("s", &self.s),
             ("m", &self.m),
@@ -335,6 +339,7 @@ impl RouteListsFrozen {
             ("decider", &self.decider),
             ("planner", &self.planner),
             ("orchestrator", &self.orchestrator),
+            ("brainstorm", &self.brainstorm),
         ]
     }
 
@@ -365,9 +370,10 @@ impl ListPick {
     }
 }
 
+// Its run.json helpers are shared with milestone 9.6's `model_design_tests.rs`.
 #[cfg(test)]
 #[path = "model_tuning_tests.rs"]
-mod tests;
+pub(super) mod tests;
 
 /// Ruling T12-2: a task's share of its run's paused time (`engine/pause.rs`), which the
 /// estimate's `done` leaves out.

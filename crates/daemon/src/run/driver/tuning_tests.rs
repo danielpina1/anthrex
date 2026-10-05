@@ -116,3 +116,60 @@ async fn a_begun_write_past_its_bound_says_it_is_still_finishing() {
     drop(lock.await.expect("the work let go of the lock"));
     assert!(applied(&dir), "the write landed");
 }
+
+/// Milestone 9.6 ruling T13-5 (m5): a start that refits the design classes writes
+/// them to `tuning.toml`, but their write and start lines are kept apart for a design
+/// run (`Tuned.design_lines`); the start's own lines are those of a history without
+/// them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_design_refit_at_a_start_keeps_its_lines_apart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (plain, design) = (tmp.path().join("plain"), tmp.path().join("design"));
+    for dir in [&plain, &design] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let agent = proto::PhaseAgent {
+        role: proto::AgentRole::Brainstormer,
+        route: proto::Route {
+            runtime: proto::Runtime::Codex,
+            model: "gpt-6".into(),
+            strength: proto::Strength::Frontier,
+            effort: proto::Effort::High,
+        },
+        calls: 30,
+        tokens: 0,
+        outcome: "ok".into(),
+        secs: 900,
+        sessions: 1,
+    };
+    for run in 0..32u32 {
+        let line = proto::HistoryLine::Phase(proto::PhaseRecord {
+            v: proto::HISTORY_VERSION,
+            record_id: format!("r{run}/phase/1/brainstorming/v1"),
+            at: u64::from(run),
+            run_id: format!("r{run}"),
+            round: 1,
+            phase: "brainstorming".into(),
+            secs: 60,
+            agents: vec![agent.clone()],
+            gate_versions: 1,
+            disputed: 0,
+        });
+        crate::run::history_io::append_line(&design.join(HISTORY_FILE), &line).unwrap();
+    }
+    let (locks, cfg) = (TuningLocks::default(), config::Orchestrator::default());
+    let without = tune_for_start(&cfg, &locks, &plain, NOW).await;
+    let with = tune_for_start(&cfg, &locks, &design, NOW).await;
+    assert_eq!(with.log, without.log);
+    assert_eq!(
+        with.design_lines,
+        [
+            "tuning: budget brainstorm 40 calls 15m → 75 calls 38m from 32 samples",
+            "tuning: budget brainstorm 75 calls 38m from 32 samples",
+        ]
+    );
+    assert!(matches!(
+        tuning_io::load(&design, NOW).unwrap(),
+        Loaded::File(f) if f.budgets.contains_key("brainstorm")
+    ));
+}

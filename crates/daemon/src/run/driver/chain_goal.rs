@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use proto::run_wire::request;
-use proto::{DeliveryMode, OrchestratorChoice, Plan, RunReply, RunState};
+use proto::{DeliveryMode, DesignMode, OrchestratorChoice, Plan, RunReply, RunState};
 
 use super::super::RunService;
 use super::super::adapt::GoalReady;
@@ -46,12 +46,17 @@ pub(in crate::run::driver) struct Next {
     pub unconfined_checks: bool,
     pub yes: bool,
     pub delivery: Option<DeliveryMode>,
+    /// Milestone 9.6 decision 30: the request's design flow; `None` is DF §1's default
+    /// for a planned code goal (`[orchestrator.design] default`).
+    pub design: Option<DesignMode>,
 }
 
 impl Next {
     /// Decision 22, step 4, from the tool: the previous run's delivery mode, trust and
     /// unconfined checks (which its user allowed at its start), in its project; never
-    /// "approve at once", so the plan stops at the gate (KG §3.3, §8).
+    /// "approve at once", so the plan stops at the gate (KG §3.3, §8). Milestone 9.6
+    /// decision 30: its design flow is any goal's default, so with `full` the goal
+    /// stops at every gate.
     pub(in crate::run::driver) fn inherited(prev: &Run, goal: String) -> Next {
         Next {
             goal,
@@ -60,6 +65,7 @@ impl Next {
             unconfined_checks: prev.limits.unconfined_checks,
             yes: false,
             delivery: Some(prev.delivery.mode),
+            design: None,
         }
     }
 }
@@ -122,17 +128,18 @@ impl Handoff {
 }
 
 impl RunService {
-    /// `RunRequest::StartGoal { continue_from: Some(after) }`: `Started` in `planning`
-    /// (D11: a continued goal is not triaged), or the refusal.
+    /// `RunRequest::StartGoal { continue_from: Some(after) }`: `Started` in the state it
+    /// starts in (D11: a continued goal is not triaged, so `planning`, or with the design
+    /// flow `brainstorming`, task M9.6.15), or the refusal.
     pub(in crate::run::driver) async fn continue_request(
         &self,
         after: &str,
         next: Next,
     ) -> RunReply {
         match self.continue_goal(after, next, CONTINUE_START_BOUND).await {
-            Ok(run_id) => RunReply::Started {
+            Ok((run_id, state)) => RunReply::Started {
                 run_id,
-                state: RunState::Planning,
+                state,
                 request_id: None,
             },
             Err(message) => RunReply::refused(request::START_GOAL, message),
@@ -163,7 +170,7 @@ impl RunService {
             Next::inherited(prev, goal)
         };
         let h4 = &last[last.len().saturating_sub(4)..];
-        let run_id = self
+        let (run_id, _) = self
             .continue_goal(last, next, START_GOAL_TOOL_BOUND)
             .await
             .map_err(|message| tool_refusal(message, h4))?;
@@ -171,7 +178,7 @@ impl RunService {
     }
 
     /// Decision 22's steps 1 to 6 for a goal continuing from run `after`; the new run's
-    /// id. The final fix wave (review B, I1): every step before `Start` runs within
+    /// id and the state it starts in. The final fix wave (review B, I1): every step before `Start` runs within
     /// `bound` (capped by the context's test seam); past it the start is refused with
     /// [`CONTINUE_TOO_SLOW`]. Dropping those steps is safe: none of them writes (the
     /// preflights and the build read, the seal is a dry run), no lock is held across
@@ -181,18 +188,18 @@ impl RunService {
         after: &str,
         next: Next,
         bound: Duration,
-    ) -> Result<String, String> {
+    ) -> Result<(String, RunState), String> {
         let bound = self.ctx.continue_cap.map_or(bound, |cap| cap.min(bound));
         let run = tokio::time::timeout(bound, self.continued_run(after, next))
             .await
             .map_err(|_| CONTINUE_TOO_SLOW.to_string())??;
-        let run_id = run.id.clone();
+        let (run_id, state) = (run.id.clone(), run.state);
         self.ask(|reply| EventKind::Start {
             reply,
             run: Box::new(run),
         })
         .await?;
-        Ok(run_id)
+        Ok((run_id, state))
     }
 
     /// Decision 22's steps 1 to 5: the run a goal continuing from `after` starts, built
@@ -234,6 +241,9 @@ impl RunService {
             usage: None,
             yes: next.yes,
             choice: Some(joined.choice.clone()),
+            // Milestone 9.6 decision 30: the request's own; a continued goal is `Full`
+            // by default, like any planned code goal (task M9.6.15).
+            design: next.design,
         }));
         let all = (false, next.trust_project, next.unconfined_checks);
         let done = DeliveryStart::Done(frozen);
@@ -345,3 +355,7 @@ mod deadline_tests;
 #[cfg(test)]
 #[path = "chain_goal_list_tests.rs"]
 mod list_tests;
+
+#[cfg(test)]
+#[path = "chain_goal_design_tests.rs"]
+mod design_tests;

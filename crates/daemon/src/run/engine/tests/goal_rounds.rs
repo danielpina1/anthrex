@@ -114,6 +114,8 @@ fn round(n: u32, goal: &str, summary: Option<&str>) -> Round {
         scouts_before: 0,
         approved_at: None,
         paused_before: 0,
+        committed_stage: None,
+        dropped: false,
     }
 }
 

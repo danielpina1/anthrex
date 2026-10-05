@@ -275,8 +275,16 @@ fn appended_variants_keep_their_indices() {
     use AgentRole as A;
     assert_last(
         &[A::Orchestrator, A::Worker, A::Reviewer, A::Scout],
-        // Milestone 9.5 appends `Racer` and `TestWriter` after `Decider` (`tuning_tests.rs`).
-        &[A::Planner, A::Decider, A::Racer, A::TestWriter],
+        // Milestone 9.5 appends `Racer` and `TestWriter` after `Decider` (`tuning_tests.rs`),
+        // and 9.6 `Brainstormer` and `DocReviewer` after them (`design_tests.rs`).
+        &[
+            A::Planner,
+            A::Decider,
+            A::Racer,
+            A::TestWriter,
+            A::Brainstormer,
+            A::DocReviewer,
+        ],
     );
     use RunState as R;
     assert_last(
@@ -290,7 +298,8 @@ fn appended_variants_keep_their_indices() {
             R::Discarded,
             R::Failed,
         ],
-        &[R::Planning],
+        // Milestone 9.6 appends `Brainstorming` and `Specifying` (`design_tests.rs`).
+        &[R::Planning, R::Brainstorming, R::Specifying],
     );
     use TaskState as T;
     assert_last(
@@ -406,6 +415,7 @@ fn new_requests_round_trip() {
             orchestrator: None,
             delivery: None,
             continue_from: None,
+            design: None,
         },
         RunRequest::StartGoal {
             goal: "Add password reset".into(),
@@ -416,6 +426,7 @@ fn new_requests_round_trip() {
             orchestrator: Some(choice.clone()),
             delivery: None,
             continue_from: None,
+            design: None,
         },
         RunRequest::Promote {
             run_id: "run-a1b2".into(),

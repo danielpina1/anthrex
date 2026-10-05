@@ -27,6 +27,9 @@
 //! remembered, with its round, until a check reads the engine after it and finds that
 //! round's request cleared; every re-emission of that round's meanwhile is dropped, so
 //! it is never pasted twice, and a later round's is pasted once (fix round 1).
+//!
+//! **A note** is pasted at most once (ruling T20-1, `wake_notes.rs`): a notes-only
+//! wake-up loses the notes already pasted, and goes only with a new one left.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -49,6 +52,13 @@ use first_turn::FIRST_TURN;
 
 #[path = "wake_report.rs"]
 mod report;
+
+#[path = "wake_notes.rs"]
+mod notes;
+
+#[path = "wake_pending.rs"]
+mod pending;
+use pending::Waiting;
 pub use report::WaitReason;
 
 /// Decision 39: the paste, then this long, then the `\r` that submits it.
@@ -105,6 +115,8 @@ pub(super) struct Pending {
     /// Milestone 9.3 (D13, fix round 1): `Some(n)` when the text starts with round
     /// `n`'s request wake.
     request: Option<u32>,
+    /// Ruling T20-1: the notes `text` holds, each with its seq.
+    notes: Vec<(u64, String)>,
 }
 
 impl Pending {
@@ -135,6 +147,8 @@ pub(super) struct Wakes {
     /// generation counter at its paste, until a check that read the engine after it
     /// finds the engine no longer holds that round's request.
     pasted: std::sync::Mutex<HashMap<String, (u32, u64)>>,
+    /// Ruling T20-1: the newest note pasted, per run.
+    notes_pasted: notes::NotesPasted,
     next_generation: std::sync::atomic::AtomicU64,
     /// Milestone 9.5 decision 41: why each run's wake-up waits, as last logged.
     pub(super) waits: report::Waits,
@@ -162,155 +176,6 @@ impl Wakes {
         {
             pending.remove(run_id);
         }
-    }
-}
-
-impl Wakes {
-    /// Keeps `pending` as `run_id`'s wake-up, replacing one not yet delivered, under a
-    /// generation of its own.
-    fn insert(&self, run_id: String, mut pending: Pending) {
-        pending.generation = self.next_generation.fetch_add(1, Ordering::SeqCst);
-        crate::lock(&self.pending).insert(run_id, pending);
-    }
-
-    /// The generation counter now, taken with [`Wakes::generations`]: a paste stamped
-    /// below it was made before the check read the engine (D13).
-    fn epoch(&self) -> u64 {
-        self.next_generation.load(Ordering::SeqCst)
-    }
-
-    /// D13: forgets each pasted request that a check reading the engine after its
-    /// paste (`epoch`) finds the engine no longer holds (that round's), or whose run it
-    /// no longer lists.
-    fn confirm(&self, seen: &[Seen], epoch: u64) {
-        crate::lock(&self.pasted).retain(|run_id, (n, stamp)| {
-            *stamp >= epoch
-                || seen
-                    .iter()
-                    .any(|s| &s.run_id == run_id && s.request == Some(*n))
-        });
-    }
-
-    /// After a paste of `p` for `run_id`: a waiting wake-up it covered is removed (one
-    /// holding no newer note, or, for a pasted request, the request's re-emission), and
-    /// a pasted request is remembered until the engine has cleared it (D13).
-    fn pasted(&self, run_id: &str, p: &Pending) {
-        let mut pending = crate::lock(&self.pending);
-        let covered = |next: &Pending| match (p.request, next.request) {
-            (Some(n), Some(m)) => n == m,
-            (None, Some(_)) => false,
-            (_, None) => next.notes_seq <= p.notes_seq,
-        };
-        if pending.get(run_id).is_some_and(covered) {
-            pending.remove(run_id);
-        }
-        if let Some(n) = p.request {
-            let stamp = self.next_generation.fetch_add(1, Ordering::SeqCst);
-            crate::lock(&self.pasted).insert(run_id.to_string(), (n, stamp));
-        }
-    }
-
-    /// `deliver`'s end: a paste that went out (`pasted`) covers what it covered (D13),
-    /// and only then is the run's delivery over, so a check in between finds the run
-    /// still delivering, and any check after it finds the paste remembered (fix round
-    /// 1, I1). A failed or stopped paste only ends the delivery.
-    fn delivered(&self, run_id: &str, pasted: Option<&Pending>) {
-        if let Some(p) = pasted {
-            self.pasted(run_id, p);
-        }
-        #[cfg(test)]
-        if let Some(hook) = crate::lock(&self.between_paste_and_release).as_ref() {
-            hook(self);
-        }
-        crate::lock(&self.delivering).remove(run_id);
-    }
-
-    /// Each waiting wake-up's generation, taken before a check reads the engine.
-    fn generations(&self) -> HashMap<String, u64> {
-        crate::lock(&self.pending)
-            .iter()
-            .map(|(run_id, p)| (run_id.clone(), p.generation))
-            .collect()
-    }
-
-    /// Drops the waiting wake-ups `seen` says have no live window to go to, or nothing
-    /// left to say. This runs from the tick, the window watch and `queue_wake` at once,
-    /// so `seen` may be older than a wake-up queued since. Only a wake-up in `judged`,
-    /// the generations taken before `seen` was read, is judged: the engine made it in a
-    /// step `seen` already reflects (its state is committed before its effects run).
-    /// Any other is left for the next check. "No notes" still drops only a wake-up
-    /// whose every note the snapshot had seen made (the first fix round's rule, which
-    /// the generation now implies; kept as a second guard). A request wake (D13) is
-    /// kept while the engine holds a request, and dropped as already pasted while
-    /// [`Wakes::pasted`] remembers its run.
-    fn keep_live(&self, seen: &[Seen], judged: &HashMap<String, u64>) {
-        let mut pending = crate::lock(&self.pending);
-        let pasted = crate::lock(&self.pasted);
-        pending.retain(|run_id, p| {
-            if judged.get(run_id) != Some(&p.generation) {
-                return true;
-            }
-            let pasted_round = pasted.get(run_id).map(|(n, _)| *n);
-            if p.request.is_some() && p.request == pasted_round {
-                return false;
-            }
-            seen.iter().any(|s| {
-                &s.run_id == run_id
-                    && s.window_id == p.window_id
-                    && s.live
-                    && match p.request {
-                        Some(n) => s.request == Some(n),
-                        None => s.notes || p.notes_seq > s.last_note_seq,
-                    }
-            })
-        });
-    }
-}
-
-/// A wake-up a check may deliver: its run, window, quiet time and generation.
-pub(super) struct Waiting {
-    run_id: String,
-    window_id: u32,
-    quiet: Duration,
-    generation: u64,
-}
-
-impl Wakes {
-    /// The waiting wake-ups a check may deliver: only those it judged on its own engine
-    /// snapshot (`judged`). One queued since waits for the next check, which judges it
-    /// first; `queue_wake`'s own check does so at once.
-    fn deliverable(&self, judged: &HashMap<String, u64>) -> Vec<Waiting> {
-        crate::lock(&self.pending)
-            .iter()
-            .filter(|(run_id, p)| judged.get(*run_id) == Some(&p.generation))
-            .map(|(run_id, p)| Waiting {
-                run_id: run_id.clone(),
-                window_id: p.window_id,
-                quiet: p.quiet,
-                generation: p.generation,
-            })
-            .collect()
-    }
-
-    /// Takes each of `takes` out for delivery, unless it was replaced or dropped since,
-    /// or its run's delivery is under way.
-    fn take(&self, takes: Vec<Waiting>) -> Vec<(String, Pending)> {
-        let mut pending = crate::lock(&self.pending);
-        let mut delivering = crate::lock(&self.delivering);
-        takes
-            .into_iter()
-            .filter_map(|w| {
-                let same = pending
-                    .get(&w.run_id)
-                    .is_some_and(|p| p.window_id == w.window_id && p.generation == w.generation);
-                if !same || delivering.contains(&w.run_id) {
-                    return None;
-                }
-                let p = pending.remove(&w.run_id)?;
-                delivering.insert(w.run_id.clone());
-                Some((w.run_id, p))
-            })
-            .collect()
     }
 }
 
@@ -377,7 +242,7 @@ impl RunService {
         self: &Arc<Self>,
         run_id: String,
         window_id: u32,
-        text: String,
+        (text, notes): (String, Vec<(u64, String)>),
         (digest_revision, notes_seq, request, first_turn): (u64, u64, Option<u32>, bool),
     ) {
         let request = first_turn::kept_as(request, first_turn);
@@ -393,6 +258,7 @@ impl RunService {
             quiet: Duration::from_secs(quiet),
             generation: 0,
             request,
+            notes,
         };
         self.wakes.insert(run_id, pending);
         self.check_orchestrators();
@@ -412,7 +278,7 @@ impl RunService {
         if let Some(hook) = crate::lock(&self.wakes.between_reads).as_ref() {
             hook();
         }
-        let seen = self.orchestrators_seen();
+        let (seen, going) = self.orchestrators_seen();
         let windows = self.manager.list();
         let window = |id: u32| windows.iter().find(|w| w.id == id);
         let listed = |id: u32| match window(id) {
@@ -459,6 +325,8 @@ impl RunService {
         // Which wake-ups the windows take now, read with no lock of ours held.
         let waiting = {
             self.wakes.confirm(&seen, epoch);
+            self.wakes.forget_ended(&going);
+            self.doc_writes.forget_packs(&going);
             self.wakes.keep_live(&seen, &judged);
             self.wakes.forget_waits();
             self.wakes.deliverable(&judged)
@@ -487,10 +355,15 @@ impl RunService {
         self.report_first_signal(&windows);
     }
 
-    /// Every run's orchestrator window, as the engine has it.
-    fn orchestrators_seen(&self) -> Vec<Seen> {
+    /// Every run's orchestrator window, as the engine has it, and the runs that go on
+    /// (not ended, not discarded), in the same read.
+    fn orchestrators_seen(&self) -> (Vec<Seen>, HashSet<String>) {
         let state = crate::lock(&self.state);
-        state
+        let going = (state.runs.values())
+            .filter(|run| !run.state.is_terminal())
+            .map(|run| run.id.clone())
+            .collect();
+        let seen = state
             .runs
             .values()
             .filter_map(|run| {
@@ -514,7 +387,8 @@ impl RunService {
                     }),
                 })
             })
-            .collect()
+            .collect();
+        (seen, going)
     }
 
     /// The paste, on a task of its own; then `OrchestratorWoken`. A failed write is
@@ -572,3 +446,7 @@ mod tests;
 #[cfg(test)]
 #[path = "wake_exit_tests.rs"]
 mod exit_tests;
+
+#[cfg(test)]
+#[path = "wake_notes_tests.rs"]
+mod notes_tests;

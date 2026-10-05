@@ -24,6 +24,7 @@ fn target(role: AgentRole, lane: Option<RaceLane>) -> McpTarget {
         epic: None,
         chain: None,
         lane,
+        agent_label: None,
     }
 }
 

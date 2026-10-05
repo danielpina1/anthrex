@@ -36,6 +36,8 @@ mod promote;
 #[cfg(test)]
 use promote::filled;
 use promote::get_context;
+// Milestone 9.6: the brainstormers' pack reads them too (`design_ops.rs`).
+pub(super) use promote::context_reads;
 
 /// How long `get_context`'s file reads and build may take (the stored profile and the
 /// scout reports, each at most 1 MiB).
@@ -53,10 +55,14 @@ pub(super) const ORCHESTRATOR_LAUNCH_PENDING: &str =
     "the orchestrator's launch has not finished; call again once it has";
 
 /// Decision 15: whether `call` is one of milestone 9's, which `orch_tool` routes: every
-/// orchestrator and sub-planner call, and a worker's `task_note`.
+/// orchestrator and sub-planner call, and a worker's `task_note`; and milestone 9.6's,
+/// every brainstormer's and document reviewer's call.
 pub(super) fn is_orch_call(call: &ToolCall) -> bool {
-    matches!(call.role, AgentRole::Orchestrator | AgentRole::Planner)
-        || (crate::run::model::writes_task(call.role) && call.tool == "task_note")
+    use AgentRole::{Brainstormer, DocReviewer, Orchestrator, Planner};
+    matches!(
+        call.role,
+        Orchestrator | Planner | Brainstormer | DocReviewer
+    ) || (crate::run::model::writes_task(call.role) && call.tool == "task_note")
 }
 
 /// Decision 15's refusal: `ToolResult { ok: false }` holding `{"error": "<text>"}`.
@@ -66,7 +72,8 @@ fn refused(text: impl Into<String>) -> RunReply {
 
 /// Decision 15's caller check, the engine's for writes: an orchestrator call comes
 /// from the run's orchestrator window, a planner call from the live session of its
-/// epic's sub-planner. Any other role is left to `parse_call`, which refuses it.
+/// epic's sub-planner, a design agent's from the live session of its role (milestone
+/// 9.6). Any other role is left to `parse_call`, which refuses it.
 fn caller(run: &Run, call: &ToolCall) -> Result<(), String> {
     match call.role {
         AgentRole::Orchestrator => {
@@ -91,6 +98,17 @@ fn caller(run: &Run, call: &ToolCall) -> Result<(), String> {
                 "this window is not the sub-planner of epic {epic} of run {}",
                 run.id
             ))
+        }
+        AgentRole::Brainstormer | AgentRole::DocReviewer => {
+            let design = run.orch.design.as_ref();
+            if design.is_some_and(|d| d.live_agent(call.role, call.window_id).is_some()) {
+                return Ok(());
+            }
+            let who = match call.role {
+                AgentRole::Brainstormer => "a brainstormer",
+                _ => "the document reviewer",
+            };
+            Err(format!("this window is not {who} of run {}", run.id))
         }
         _ => Ok(()),
     }
@@ -166,10 +184,10 @@ impl RunService {
         answer(label, result)
     }
 
-    /// Decision 15's routing: `get_context`, `run_status` and `task_result` go to the
-    /// driver's read path; every other call, with the runtime refusals an `edit_plan`
-    /// or `submit_epic` batch needs (ruling T22-I1b), goes to the engine as
-    /// `OrchEvent::Tool`.
+    /// Decision 15's routing: `get_context`, `run_status`, `task_result` and (milestone
+    /// 9.6) `get_doc` go to the driver's read path; every other call, with the runtime
+    /// refusals an `edit_plan` or `submit_epic` batch needs (ruling T22-I1b), goes to the
+    /// engine as `OrchEvent::Tool`.
     pub(super) async fn orch_tool(&self, call: ToolCall) -> RunReply {
         self.orch_tool_within(call, LAUNCH_WAIT).await
     }
@@ -186,7 +204,7 @@ impl RunService {
         };
         let read = matches!(
             call.tool.as_str(),
-            "get_context" | "run_status" | "task_result"
+            "get_context" | "run_status" | "task_result" | "get_doc"
         );
         // Milestone 9.5 (task 16 minor m5): a task's writing session's reads go the
         // worker's way, a test writer's too.
@@ -218,10 +236,11 @@ impl RunService {
             submit,
             summary,
             iterate,
+            responses,
         }) = parse_call(call.role, &call.tool, &call.args)
             && self.looked_up(&call, |_| ()).is_ok()
         {
-            let alone = !submit && summary.is_none() && iterate.is_none();
+            let alone = !submit && summary.is_none() && iterate.is_none() && responses.is_empty();
             if let Err(text) = self.refresh_precheck(&call.run_id, &edits, alone).await {
                 return refused(text);
             }
@@ -349,7 +368,20 @@ impl RunService {
                 Ok(run) => self.task_result(run, task_id).await,
                 Err(text) => refused(text),
             },
-            // `parse_call` lets no other call of these three tools through.
+            // Milestone 9.6: the document's text, read off the engine (`design_io.rs`).
+            OrchCall::GetDoc {
+                kind,
+                version,
+                from,
+                draft,
+            } => match self
+                .get_doc((&call.run_id, call.role), kind, (version, from, draft))
+                .await
+            {
+                Ok(text) => RunReply::tool_result(true, text),
+                Err(text) => refused(text),
+            },
+            // `parse_call` lets no other call of these four tools through.
             _ => refused(format!("tool {} is not available here", call.tool)),
         }
     }
@@ -486,6 +518,18 @@ mod read_tests_tools;
 #[cfg(test)]
 #[path = "orch_read_tests_launch.rs"]
 mod read_tests_launch;
+
+#[cfg(test)]
+#[path = "orch_read_tests_design.rs"]
+mod read_tests_design;
+
+#[cfg(test)]
+#[path = "design_ops_tests.rs"]
+mod design_ops_tests;
+
+#[cfg(test)]
+#[path = "design_ops_pack_tests.rs"]
+mod design_ops_pack_tests;
 
 #[cfg(test)]
 #[path = "refresh_tests.rs"]

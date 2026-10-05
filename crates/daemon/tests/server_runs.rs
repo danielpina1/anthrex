@@ -83,6 +83,7 @@ async fn a_disconnected_client_is_not_held_open_by_its_run_request() {
         // Final fix batch F1c round 2: Linux cannot confine checks.
         unconfined_checks: !cfg!(target_os = "macos"),
         delivery: None,
+        design: None,
     });
     write_frame(&mut wr, &start).await.unwrap();
     wr.shutdown().await.unwrap();
@@ -140,6 +141,7 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
             orchestrator: None,
             delivery: None,
             continue_from: None,
+            design: None,
         })
         .await,
         proto::RunReply::Refused {
@@ -335,6 +337,8 @@ async fn rig_on(
     });
     let mut orchestrator = config::Orchestrator::default();
     orchestrator.deciders.mode = mode;
+    // Milestone 9.6 ruling T3-2: the design flow is off unless a test opts in.
+    orchestrator.design.default = proto::DesignMode::Off;
     let ctx = RunContext::new(
         data.clone(),
         manager.config(),
@@ -448,6 +452,7 @@ async fn a_tagged_goal_start_is_triaged_with_its_id() {
             orchestrator: None,
             delivery: None,
             continue_from: None,
+            design: None,
         },
     };
     write_frame(&mut wr, &msg).await.unwrap();
@@ -509,6 +514,7 @@ async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
         }),
         delivery: None,
         continue_from: None,
+        design: None,
     });
     write_frame(&mut wr, &msg).await.unwrap();
     let reply = next_run_reply(&mut rd).await;

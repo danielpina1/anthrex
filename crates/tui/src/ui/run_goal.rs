@@ -28,9 +28,9 @@ use unicode_width::UnicodeWidthStr;
 pub const GOAL_ROWS: u16 = 4;
 /// What the empty goal field shows, muted (milestone 9.0.7 decision 35).
 pub const PLACEHOLDER: &str = "what should the run achieve?";
-/// The focus marker's columns, then the label's.
-const MARK_W: usize = 2;
-const LABEL_W: usize = 18;
+/// The focus marker's columns, then the label's: the iterate dialog's design row too.
+pub(crate) const MARK_W: usize = 2;
+pub(crate) const LABEL_W: usize = 18;
 
 fn hint(key: &str, word: &str, priority: u8) -> Hint {
     Hint {
@@ -184,8 +184,8 @@ pub fn goal_width(width: u16) -> u16 {
 }
 
 /// The option rows (decision 7's order) for `width` interior columns: runtime, model
-/// (and the custom model's text), orchestrator, delivery, trust, approve at once and
-/// unconfined checks. Continuing a chain, its runtime and model show muted.
+/// (and the custom model's text), orchestrator, delivery, design (milestone 9.6), trust,
+/// approve at once and unconfined checks. Continuing a chain, its runtime and model show muted.
 pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
     let value_w = usize::from(width).saturating_sub(MARK_W + LABEL_W);
     let mut body = Vec::new();
@@ -244,6 +244,18 @@ pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<
         Some(proto::DeliveryMode::Pr) => "pr",
     };
     body.push(choice_line(form, GoalField::Delivery, delivery, value_w, p));
+    // Milestone 9.6: `configured` is `[orchestrator.design].default`, the daemon's,
+    // named once the settings cache says it (ruling T18-2).
+    let mode = |mode| match mode {
+        proto::DesignMode::Full => "full",
+        proto::DesignMode::Off => "off",
+    };
+    let design = match (form.design, form.design_default) {
+        (None, None) => "configured".to_owned(),
+        (None, Some(default)) => format!("configured ({})", mode(default)),
+        (Some(chosen), _) => mode(chosen).to_owned(),
+    };
+    body.push(choice_line(form, GoalField::Design, &design, value_w, p));
     body.push(choice_line(
         form,
         GoalField::Trust,

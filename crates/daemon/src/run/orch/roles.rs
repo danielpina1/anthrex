@@ -26,6 +26,7 @@ use proto::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::run::design::state::DesignAgent;
 use crate::run::model::Run;
 use crate::run::roster::peer;
 
@@ -37,6 +38,10 @@ pub const ORCHESTRATOR_POLICY: &str = "m9-orchestrator-v1";
 pub const PLANNER_POLICY: &str = "m9-planner-v1";
 pub const SCOUT_POLICY: &str = "m9-scout-v1";
 pub const DECIDER_POLICY: &str = "m9-decider-v1";
+/// Milestone 9.6 decision 10: a brainstormer's.
+pub const BRAINSTORMER_POLICY: &str = "m9.6-brainstormer-v1";
+/// Milestone 9.6 decision 10 (task M9.6.10): the document reviewer's policy.
+pub const DOC_REVIEWER_POLICY: &str = "m9.6-doc-reviewer-v1";
 
 /// A run record's goal cap (`history::GOAL_CHARS`), which the input's goal shares.
 const GOAL_CHARS: usize = 200;
@@ -64,6 +69,8 @@ pub fn role_name(role: AgentRole) -> &'static str {
         AgentRole::Decider => "decider",
         AgentRole::Racer => "racer",
         AgentRole::TestWriter => "test_writer",
+        AgentRole::Brainstormer => "brainstormer",
+        AgentRole::DocReviewer => "doc_reviewer",
     }
 }
 
@@ -292,6 +299,78 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
         lists::mark(&mut decision, (p.pick, p.rotation), p.route.as_ref());
     }
     decision
+}
+
+/// Milestone 9.6 decision 10: the record of brainstormer `agent`'s current session,
+/// `<label>/<session>`: chosen from the run's `brainstorm` list when its pick was
+/// (`DesignAgent.listed`; every candidate in the snapshot, a missing runtime's marked
+/// so), else the strongest model of its runtime (`roster_default`). A document reviewer
+/// (task M9.6.10) is the orchestrator's peer (`peer_route`), else its own runtime
+/// (`same_runtime`, its review's record), with no list.
+///
+/// Its trigger is `start` for a first session, `rethink` for the first session of a
+/// rethink's round (`rethink`, ruling T13-1), else `relaunch` (ruling T8-7's relaunch,
+/// a restart's, a resume's).
+pub fn design_agent_record(
+    run: &Run,
+    agent: &DesignAgent,
+    rethink: bool,
+    now: u64,
+) -> RoleRoutingDecision {
+    let trigger = match (agent.session, rethink) {
+        (1, _) => "start",
+        (_, true) => "rethink",
+        _ => "relaunch",
+    };
+    if agent.role == AgentRole::DocReviewer {
+        // WB-C M-2 (the final fix wave's FW-44): its pick's own reason, as its review
+        // record (and the version it reviews) says it, never a route compared now.
+        let design = run.orch.design.as_ref();
+        let review = design.and_then(|d| {
+            (d.reviews.iter()).rfind(|r| format!("{}-r{}", r.doc.label(), r.n) == agent.label)
+        });
+        let same = review.is_some_and(|r| r.same_runtime);
+        let source = if same { "same_runtime" } else { "peer_route" };
+        let session = format!("{}/{}", agent.label, agent.session);
+        let (input, route) = (input_of(run), &agent.route);
+        return record(
+            Some(run),
+            agent.role,
+            &session,
+            trigger,
+            source,
+            DOC_REVIEWER_POLICY,
+            input,
+            Vec::new(),
+            route,
+            now,
+        );
+    }
+    let list = &run.limits.route_lists.brainstorm;
+    let listed = (list.candidates.iter())
+        .map(|c| RoutingCandidate {
+            route: c.route(agent.route.effort),
+            skipped_reason: None,
+        })
+        .collect();
+    let candidates = mark_not_installed(listed, &run.orch.installed);
+    // Fix round 1 (m3): the pick's own source, carried on the agent.
+    let source = match agent.listed {
+        true => lists::LIST_SOURCE,
+        false => "roster_default",
+    };
+    record(
+        Some(run),
+        agent.role,
+        &format!("{}/{}", agent.label, agent.session),
+        trigger,
+        source,
+        BRAINSTORMER_POLICY,
+        input_of(run),
+        candidates,
+        &agent.route,
+        now,
+    )
 }
 
 /// The record of run scout `scout_id`'s session, on the route the driver starts it on

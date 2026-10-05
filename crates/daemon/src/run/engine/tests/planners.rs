@@ -468,3 +468,25 @@ fn a_planner_that_cannot_start_fails() {
     // The orchestrator may start a fresh one.
     assert_eq!(spawn(&mut fx, "mail")["state"], "planning");
 }
+
+/// The final fix wave's FW-13 (task 11 re-review nit): a run without the design flow
+/// ignores a sub-planner's `covers` and stores none, so its snapshot's planner carries
+/// none (9.5's payload).
+#[test]
+fn a_run_without_the_flow_drops_a_spawns_covers() {
+    let mut fx = launched(false);
+    let mut args = spawn_args("mail", &["crates/mail/**"], "Plan mail");
+    args["covers"] = json!(["R1"]);
+    let (ok, value) = answer(&orch_tool(&mut fx, ORCH, "spawn_subplanner", args));
+    assert!(ok, "{value}");
+    let epic = fx
+        .run()
+        .orch
+        .epics
+        .iter()
+        .find(|e| e.epic == "mail")
+        .unwrap();
+    assert!(epic.covers.is_empty(), "{:?}", epic.covers);
+    let planners = crate::run::snapshot_orch::planners(fx.run());
+    assert!(planners.iter().all(|p| p.covers.is_empty()));
+}

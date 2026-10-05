@@ -8,7 +8,7 @@
 //! verdict, which only the user's requests carry (`OrchEvent::{ApproveHold,
 //! RejectHold}`, from `anthrex run approve|reject --hold`).
 
-use proto::{AgentRole, MessageTarget, PlanEdit, RunState, Runtime, ToolCall};
+use proto::{AgentRole, FindingAnswer, MessageTarget, PlanEdit, RunState, Runtime, ToolCall};
 use serde_json::json;
 
 use super::batch::{Applied, Refused, apply_batch, record_rejected};
@@ -25,6 +25,9 @@ use crate::run::validate::EditScope;
 #[path = "orch_event.rs"]
 mod event;
 pub use event::{OrchEvent, ScoutEnd};
+#[path = "orch_submit.rs"]
+mod submit;
+pub(super) use submit::{submit_plan, submit_refusal};
 
 pub(super) fn on_orch_event(
     state: &mut EngineState,
@@ -80,6 +83,10 @@ pub(super) fn on_orch_event(
             if let Some(run) = state.runs.get_mut(&run_id) {
                 planners::ended(run, (&epic, session), (outcome, usage), now, fx);
             }
+        }
+        // Milestone 9.6 decision 9: a design agent's session ended.
+        ended @ OrchEvent::DesignAgentEnded { .. } => {
+            super::design_agents::on_ended(state, ended, now, fx)
         }
         OrchEvent::OrchestratorWoken {
             run_id,
@@ -213,18 +220,31 @@ pub(super) fn tool(
     let EngineState {
         runs, quiet_base, ..
     } = state;
+    // Milestone 9.6 ruling T8-2: the pack's previous spec, frozen at the brainstorm's start.
+    let earlier = (call.tool == "start_brainstorm")
+        .then(|| crate::run::design::pack::previous_spec(runs.values(), &call.run_id))
+        .flatten();
     let Some(run) = runs.get_mut(&call.run_id) else {
         return refuse(fx, reply, format!("unknown run {}", call.run_id));
     };
-    if !matches!(call.role, AgentRole::Orchestrator | AgentRole::Planner) {
+    use AgentRole::{Brainstormer, DocReviewer, Orchestrator, Planner};
+    if !matches!(
+        call.role,
+        Orchestrator | Planner | Brainstormer | DocReviewer
+    ) {
         let text = format!("tool {} is not available to this role", call.tool);
         return refuse(fx, reply, text);
     }
     match run.state {
-        RunState::Planning
+        RunState::Brainstorming
+        | RunState::Specifying
+        | RunState::Planning
         | RunState::AwaitingApproval
         | RunState::Running
         | RunState::Complete => {}
+        // Ruling WB-A-W1: a design agent's one write is held, not refused.
+        RunState::Halted | RunState::Paused
+            if super::design_agents::held::takes(run, call.role) => {}
         RunState::Paused => {
             let text = format!("run {} is paused; the user must resume it", run.id);
             return refuse(fx, reply, text);
@@ -240,6 +260,10 @@ pub(super) fn tool(
         }
         return planners::tool(run, reply, call, refusals, now, fx);
     }
+    // Milestone 9.6: a design agent's write (task M9.6.8).
+    if matches!(call.role, Brainstormer | DocReviewer) {
+        return super::design_agents::tool(run, reply, call, (ending, now), fx);
+    }
     let window = run.orch.orchestrator.as_ref().and_then(|o| o.window_id);
     if window != Some(call.window_id) {
         let text = format!("this window is not the orchestrator of run {}", run.id);
@@ -248,6 +272,9 @@ pub(super) fn tool(
     let parsed = match parse_call(call.role, &call.tool, &call.args) {
         Ok(parsed) => parsed,
         Err(text) => return refuse(fx, reply, text),
+    };
+    let Some(parsed) = super::design::tool(run, reply, call, (parsed, earlier), now, fx) else {
+        return;
     };
     match parsed {
         OrchCall::EditPlan { edits, submit, .. }
@@ -266,8 +293,9 @@ pub(super) fn tool(
             edits,
             submit,
             summary,
+            responses,
         } => {
-            let alone = edits.is_empty() && !submit && summary.is_none();
+            let alone = edits.is_empty() && !submit && summary.is_none() && responses.is_empty();
             goal_rounds::edit(run, reply, (&goal, alone), (now, quiet_base), fx)
         }
         OrchCall::EditPlan {
@@ -275,8 +303,9 @@ pub(super) fn tool(
             submit,
             summary,
             iterate: None,
+            responses,
         } => {
-            let call = (&edits[..], submit, summary);
+            let call = (&edits[..], submit, summary, &responses[..]);
             edit_plan(run, reply, call, refusals, (now, quiet_base), fx)
         }
         _ if run.state == RunState::Complete => {
@@ -289,8 +318,10 @@ pub(super) fn tool(
             area,
             brief,
             scout_refs,
+            covers,
         } => {
             let spec = EpicRecord::requested(&epic, &title, area, &brief, scout_refs);
+            let spec = EpicRecord { covers, ..spec };
             planners::spawn_subplanner(run, reply, spec, (now, quiet_base), fx)
         }
         OrchCall::SpawnScout {
@@ -316,7 +347,7 @@ pub(super) fn tool(
 fn edit_plan(
     run: &mut Run,
     reply: ReplyId,
-    (edits, submit, summary): (&[proto::PlanEdit], bool, Option<String>),
+    (edits, submit, summary, responses): (&[PlanEdit], bool, Option<String>, &[FindingAnswer]),
     refusals: &[(Runtime, String)],
     (now, base): (u64, &mut Option<Run>),
     fx: &mut Vec<Effect>,
@@ -336,6 +367,12 @@ fn edit_plan(
     let source = EditSource::Orchestrator;
     // Decision 37: the engine owns its integration reviews.
     if let Some(text) = kinds::engine_owned(run, edits) {
+        record_rejected(run, edits, &source, text.clone(), now);
+        return refuse(fx, reply, text);
+    }
+    // Milestone 9.6 ruling T7-8: the plan at its open gate is the user's to change.
+    let changes = super::design::plan::changes_tasks(edits);
+    if let Some(text) = super::design_gate::plan_locked(run).filter(|_| changes) {
         record_rejected(run, edits, &source, text.clone(), now);
         return refuse(fx, reply, text);
     }
@@ -371,7 +408,11 @@ fn edit_plan(
     // whatever other task of the call an epic or the promotion holds (fix round, I2).
     let review = super::delivery::review_holds(&mut edited, &added, now);
     let held = held.or(review);
-    if submit && let Err(text) = submit_plan(&mut edited, "the orchestrator", now) {
+    // Milestone 9.6 decisions 18 to 21: a design run's checks, plan review and gate.
+    let author = submit.then_some(proto::DocAuthor::Orchestrator);
+    let submitted = super::design::plan::submit(&mut edited, author, responses, now, &mut effects);
+    if let Err(text) = submitted {
+        super::design_agents::reviewer::refused(run, &text, now);
         record_rejected(run, edits, &source, text.clone(), now);
         return refuse(fx, reply, text);
     }
@@ -417,6 +458,10 @@ pub(super) fn accepted(
         "notes": notes,
         "held": held,
     });
+    // Milestone 9.6 decision 20: the plan went to its review, not to the gate.
+    if super::design::plan::awaiting_review(run) {
+        value["awaiting_review"] = json!(true);
+    }
     // Decision 42b: a message's recipients.
     if let Some(outcome) = message {
         let refused: Vec<_> = outcome
@@ -512,88 +557,5 @@ fn write_summary(run: &mut Run, summary: String, now: u64, fx: &mut Vec<Effect>)
         fx.push(Effect::WriteReport {
             run_id: run.id.clone(),
         });
-    }
-}
-
-/// Decision 27's `submit`. In `planning` the plan must hold an unfinished task and no
-/// sub-planner may be live; the run then waits at the gate, or runs at once when it was
-/// started with `--yes`. In `awaiting_approval` nothing changes. On a promoted running
-/// run the plan is submitted and hold `promotion` awaits the user, created empty when
-/// nothing was added. A run being discarded or accepted takes no submit. Otherwise it is
-/// ignored. `who` submits: the orchestrator, or the user's `run edit` (decision 13,
-/// `requests::edit`, which admits `planning` only).
-pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), String> {
-    submit_refusal(run).map_or(Ok(()), Err)?;
-    match run.state {
-        RunState::Planning => {
-            set_submitted(run);
-            // Milestone 9.3 decision 12: a round the orchestrator started never skips it.
-            if super::goal_rounds_end::skips_gate(run) {
-                run.state = RunState::Running;
-                super::goal_rounds_end::approved(run, "--yes", now);
-                log(
-                    run,
-                    now,
-                    format!("{who} submitted the plan; approved by --yes"),
-                );
-            } else {
-                run.state = RunState::AwaitingApproval;
-                log(
-                    run,
-                    now,
-                    format!("{who} submitted the plan; awaiting approval"),
-                );
-            }
-        }
-        RunState::Running if run.orch.orchestrator.is_some() => {
-            set_submitted(run);
-            if gate_holds::submit_promotion(run, now) {
-                log(run, now, "the orchestrator submitted its additions");
-            }
-            // The epic rounds its own additions opened, whose epics no sub-planner is
-            // planning (M9.7 second review, items 8 and 10).
-            gate_holds::submit_epic_rounds(run, now);
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-/// Why [`submit_plan`] refuses `run` now, if it does (milestone 9.0.6 decision 42's pure
-/// twin, which `actions::check` asks).
-pub(super) fn submit_refusal(run: &Run) -> Option<String> {
-    // A discard or accept in flight takes no submit (M9.7 second review, ruling 4).
-    if let Some(how) = super::dispatch::finishing_as(run) {
-        return Some(format!("run {} is being {how}", run.id));
-    }
-    match run.state {
-        RunState::Planning if run.tasks.iter().all(|t| t.state.is_finished()) => {
-            Some("the plan has no tasks yet; add tasks before submitting".into())
-        }
-        RunState::Planning => planners_finished(run).err(),
-        // While the promotion window is open, its submit waits for the sub-planners
-        // too, so the user sees the promotion's whole plan (M9.7 second review, rulings
-        // 8 and 9).
-        RunState::Running if run.orch.orchestrator.is_some() && gate_holds::promotion_open(run) => {
-            planners_finished(run).err()
-        }
-        _ => None,
-    }
-}
-
-/// Decision 27: no sub-planner is queued or planning.
-pub(super) fn planners_finished(run: &Run) -> Result<(), String> {
-    match run.orch.epics.iter().find(|e| e.phase.is_live()) {
-        Some(e) => Err(format!(
-            "sub-planner {} is still planning; submit when every sub-planner has finished",
-            e.epic
-        )),
-        None => Ok(()),
-    }
-}
-
-fn set_submitted(run: &mut Run) {
-    if let Some(o) = run.orch.orchestrator.as_mut() {
-        o.plan_submitted = true;
     }
 }

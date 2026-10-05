@@ -362,6 +362,7 @@ impl WindowManager {
             if window.busy || (!window.handle.is_ended() && !window.turn_ended_in_process) {
                 return Err(running(id));
             }
+            crate::headless::never_resumed(id, &window.spec)?;
             let session_id = session_id
                 .ok_or_else(|| anyhow::anyhow!("session for window {id} has no session id yet"))?;
             let cancel = window.claim();
@@ -425,6 +426,7 @@ impl WindowManager {
             if window.busy {
                 return Err(running(id));
             }
+            crate::headless::never_resumed(id, &window.spec)?;
             let cancel = window.claim();
             (window.handle.clone(), window.spec.clone(), cancel)
         };

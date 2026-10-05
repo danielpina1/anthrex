@@ -484,8 +484,9 @@ fn all_errors_are_collected() {
 /// survive `run.json`, and a run recorded before milestone 9 gets the config defaults.
 #[test]
 fn limits_are_frozen_at_run_start() {
-    use crate::run::orch::{AgentLimits, OrchLimits, PlannerLimits};
+    use crate::run::orch::{AgentLimits, DesignLimits, OrchLimits, PlannerLimits};
     let mut config = config::Orchestrator::default();
+    config.design.phase_minutes = 45;
     config.agent.agent.model = "claude-sonnet-5".into();
     config.agent.message_max_per_turn = 1;
     config.agent.note_max_per_task = 4;
@@ -499,6 +500,7 @@ fn limits_are_frozen_at_run_start() {
     config.agent.message_max_per_turn = 7;
     config.agent.note_max_per_task = 9;
     config.agent.agent.model = String::new();
+    config.design.phase_minutes = 90;
     let frozen = OrchLimits {
         planner_task_cap: 12,
         max_scouts: 12,
@@ -527,6 +529,11 @@ fn limits_are_frozen_at_run_start() {
             strength: Strength::Fast,
             effort: Effort::Low,
         }),
+        // Milestone 9.6 (task M9.6.3): `[orchestrator.design]` is frozen too.
+        design: DesignLimits {
+            phase_minutes: 45,
+            ..DesignLimits::default()
+        },
     };
     assert_eq!(run.limits.orch, frozen);
 

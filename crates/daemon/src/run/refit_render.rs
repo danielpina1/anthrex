@@ -30,6 +30,14 @@ pub fn render(report: &TuningReport) -> String {
         "budget refit off: [orchestrator.tuning] refit_budgets = false".to_string()
     };
     out.push_str(&format!("tuning: {}  ({header})\n", report.path.display()));
+    // Task M9.6.16: wide enough for a design class's label (`doc review`); 9.5's five
+    // characters otherwise.
+    let width = (report.classes.iter())
+        .map(|c| c.class.chars().count())
+        .fold(5, usize::max);
+    let row = |class: &str, samples: &str, budget: &str, weight: &str, refit: &str| {
+        row(class, width, (samples, budget, weight, refit))
+    };
     out.push_str(&row("CLASS", "SAMPLES", "BUDGET", "WEIGHT", "REFIT"));
     for c in &report.classes {
         let samples = if c.samples >= report.min_samples {
@@ -78,9 +86,13 @@ pub fn render(report: &TuningReport) -> String {
     out
 }
 
-/// One row in fixed widths, unlike M8b's table.
-fn row(class: &str, samples: &str, budget: &str, weight: &str, refit: &str) -> String {
-    format!("  {class:<5}  {samples:<7}  {budget:<14}  {weight:<6}  {refit}\n")
+/// One row in fixed widths, unlike M8b's table; the class column is `width` wide.
+fn row(
+    class: &str,
+    width: usize,
+    (samples, budget, weight, refit): (&str, &str, &str, &str),
+) -> String {
+    format!("  {class:<width$}  {samples:<7}  {budget:<14}  {weight:<6}  {refit}\n")
 }
 
 /// `<m>m`, or `<s>s` under a minute, `*` when derived; `-` without weights.

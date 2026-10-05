@@ -68,7 +68,7 @@ pub(super) async fn get_context(run: Run, asker: Asker, only: Option<Vec<String>
 /// and each run scout's. Each ref is resolved only to a report anthrex stored
 /// (`scout::report::resolve_ref`, through `read_report`'s guards); one that cannot be
 /// read is left out with a warning.
-pub(super) fn context_reads(run: &Run) -> (Option<RepoProfile>, Vec<ScoutReport>) {
+pub(in crate::run::driver) fn context_reads(run: &Run) -> (Option<RepoProfile>, Vec<ScoutReport>) {
     use crate::profile::store::{Stored, load};
     use crate::scout::report::{ONBOARDING_ALIAS, resolve_ref};
     use crate::scout::spec::valid_id;

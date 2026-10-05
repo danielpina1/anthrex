@@ -48,6 +48,7 @@ pub(super) fn doc(models: Vec<ModelEntry>) -> SettingsDoc {
             max_readers: 2,
             max_bounces: 2,
         },
+        design_default: None,
     }
 }
 
@@ -60,7 +61,7 @@ pub(super) fn roster() -> Vec<ModelEntry> {
     ]
 }
 
-fn reply(reply: SettingsReply, id: u64) -> DaemonMsg {
+pub(super) fn reply(reply: SettingsReply, id: u64) -> DaemonMsg {
     DaemonMsg::Run(RunReply::Settings {
         reply: Box::new(reply),
         request_id: Some(id),
@@ -86,7 +87,7 @@ fn get() -> RunRequest {
     RunRequest::Settings(SettingsRequest::Get)
 }
 
-fn gets(effects: &[Effect]) -> Vec<u64> {
+pub(super) fn gets(effects: &[Effect]) -> Vec<u64> {
     effects
         .iter()
         .filter_map(|e| match e {
@@ -124,7 +125,8 @@ pub(super) fn open_form(app: &mut App) {
 }
 
 pub(super) fn focus(app: &mut App, field: GoalField) {
-    for _ in 0..8 {
+    // Milestone 9.6 task 18: nine fields.
+    for _ in 0..9 {
         if form(app).focus == field {
             return;
         }
@@ -339,6 +341,7 @@ fn the_toggles_reach_the_request() {
             orchestrator: None,
             delivery: None,
             continue_from: None,
+            design: None,
         }
     );
 
@@ -356,6 +359,7 @@ fn the_toggles_reach_the_request() {
             orchestrator: None,
             delivery: None,
             continue_from: None,
+            design: None,
         }
     );
 }
@@ -402,6 +406,7 @@ fn the_model_picker_lists_the_runtimes_enabled_models_then_custom() {
             }),
             delivery: None,
             continue_from: None,
+            design: None,
         }
     );
 }
@@ -440,6 +445,7 @@ fn custom_reveals_the_text_line_and_its_text_is_the_model_sent() {
             }),
             delivery: None,
             continue_from: None,
+            design: None,
         }
     );
 }

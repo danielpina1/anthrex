@@ -159,12 +159,14 @@ pub(super) fn ended(
     // Decision 43: the session's record, with its factual outcome.
     let ended = match &outcome {
         ScoutEnd::Reported => (RoleOutcome::Completed, Some("reported".to_string())),
-        ScoutEnd::Failed { reason } => (RoleOutcome::Failed, Some(reason.clone())),
+        ScoutEnd::Failed { reason } | ScoutEnd::Unsubmitted { reason } => {
+            (RoleOutcome::Failed, Some(reason.clone()))
+        }
     };
     history::close_session(run, (AgentRole::Scout, scout_id), ended, fx);
     let result = match outcome {
         ScoutEnd::Reported => Ok(()),
-        ScoutEnd::Failed { reason } => Err(reason),
+        ScoutEnd::Failed { reason } | ScoutEnd::Unsubmitted { reason } => Err(reason),
     };
     end(run, scout_id, result, now);
 }

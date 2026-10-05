@@ -37,7 +37,8 @@ fn rows(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The nine groups in the spec's order, each with its context's keys; every key that
+/// The ten groups in the spec's order (the document gate's added by the final fix
+/// wave), each with its context's keys; every key that
 /// names the prefix takes it from `prefix_label` (milestone 6.9 decision 38).
 pub fn help_groups(prefix_label: &str) -> Vec<HelpGroup> {
     let p = prefix_label;
@@ -99,6 +100,7 @@ pub fn help_groups(prefix_label: &str) -> Vec<HelpGroup> {
                 ("PgUp / PgDn", "scroll the panel"),
                 ("b", "the whole brief"),
                 ("p", "review the plan"),
+                ("a / p", "review the document (brainstorm or spec gate)"),
                 ("a / x", "approve / reject (gate, hold)"),
                 ("e / d", "edit / remove a task (gate)"),
                 ("s", "submit (planning)"),
@@ -112,7 +114,27 @@ pub fn help_groups(prefix_label: &str) -> Vec<HelpGroup> {
                 ("PgUp / PgDn", "scroll"),
                 ("a / x", "approve / reject"),
                 ("e / d", "edit / drop a task (gate)"),
+                ("tab", "the plan / the tasks (design run)"),
+                ("c", "ask for changes (design run)"),
+                ("b", "back to the spec (design run)"),
                 ("esc", "back"),
+            ]),
+        },
+        // Final fix wave FW-76: the document gate screen (milestone 9.6 decision 34).
+        HelpGroup {
+            name: "document gate",
+            rows: rows(&[
+                ("a", "approve the version shown"),
+                ("c", "ask for changes"),
+                ("e", "edit the document yourself"),
+                ("r", "rethink (brainstorm gate)"),
+                ("b", "back to the brainstorm (spec gate)"),
+                ("x", "reject"),
+                ("d", "diff against the previous version"),
+                ("f", "findings"),
+                ("g", "the drafts (brainstorm gate)"),
+                ("j / k", "scroll"),
+                ("q / esc", "close, or back to the document"),
             ]),
         },
         HelpGroup {

@@ -209,11 +209,13 @@ pub(crate) fn ready_in_stage(run: &Run, i: usize) -> bool {
 /// then stage `n + 1` from the highest stage `n`'s head once one of its unfinished tasks
 /// would be runnable there. One at a time, and never beside a merge, so `integration`
 /// (the highest stage's alias) is always at the head a new stage starts from.
-pub(super) fn create_pass(run: &mut Run, fx: &mut Vec<Effect>) {
+pub(super) fn create_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    // Milestone 9.6 decision 23: no stage before round 1's documents commit lands.
     if run.stage_layout != StageLayout::Multi
         || run.state != RunState::Running
         || creating(run)
         || merge::merging(run)
+        || super::design_commit::holds_stages(run)
     {
         return;
     }
@@ -247,6 +249,10 @@ pub(super) fn create_pass(run: &mut Run, fx: &mut Vec<Effect>) {
         }
         record.head.clone()
     };
+    // Milestone 9.6 (task M9.6.15): a later round's documents commit is its first stage.
+    if super::design_commit::round_stage(run, next, &from, now, fx) {
+        return;
+    }
     let kind = OpKind::CreateStageBranch {
         root: run.root.clone(),
         branch: run.stage_branch(next),

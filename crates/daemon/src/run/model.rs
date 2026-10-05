@@ -53,6 +53,11 @@ pub use goal_rounds::Round;
 mod tuning;
 pub use tuning::*;
 
+// Milestone 9.6 (task M9.6.3): the design flow's fields in `run.json`.
+#[cfg(test)]
+#[path = "model_design_tests.rs"]
+mod design_tests;
+
 // `Run`'s lookups and path helpers, and the task branch and path (split out to keep
 // this file under the 600-line rule, milestone 9.5); re-exported, so every `model::`
 // path stays.
@@ -285,6 +290,10 @@ pub struct Run {
     pub path: Option<proto::RunPath>,
     #[serde(default)]
     pub triage: Option<proto::TriageInfo>,
+    /// Milestone 9.6 decision 3: whether the run uses the design flow, decided once at
+    /// the start (`run::design::mode_for`) and frozen; `Off` for a run from before it.
+    #[serde(default, skip_serializing_if = "proto::DesignMode::is_off")]
+    pub design_mode: proto::DesignMode,
     #[serde(default)]
     pub triage_usage: TokenUsage,
     /// M8b decision 29: run scouts' usage (milestone 9 starts them), and the

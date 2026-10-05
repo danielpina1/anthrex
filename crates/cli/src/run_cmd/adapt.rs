@@ -36,10 +36,11 @@ pub(super) async fn start_goal(
     dir: Option<PathBuf>,
     goal: String,
     flags: (bool, bool, bool),
-    (orchestrator, delivery, continue_from): (
+    (orchestrator, delivery, continue_from, design): (
         Option<proto::OrchestratorChoice>,
         Option<proto::DeliveryMode>,
         Option<String>,
+        Option<proto::DesignMode>,
     ),
 ) -> anyhow::Result<()> {
     continue_checked(&goal, continue_from.is_some())?;
@@ -50,7 +51,8 @@ pub(super) async fn start_goal(
         Some(run) => Some(runs.resolve(&run).await?),
         None => None,
     };
-    let request = goal_request(goal, dir, flags, (orchestrator, delivery), continue_from);
+    let options = (orchestrator, delivery, design);
+    let request = goal_request(goal, dir, flags, options, continue_from);
     match runs.request(request).await? {
         RunReply::Triaged {
             run_id: Some(run_id),
@@ -80,14 +82,16 @@ pub(super) fn continue_checked(goal: &str, continuing: bool) -> anyhow::Result<(
 }
 
 /// The `StartGoal` request `run start --goal` sends; `continue_from` is the resolved run
-/// id of `--continue`, which conflicts with `--orchestrator` (decision 31).
+/// id of `--continue`, which conflicts with `--orchestrator` (decision 31), and `design`
+/// is `--design`'s (milestone 9.6 decision 3).
 pub(super) fn goal_request(
     goal: String,
     dir: PathBuf,
     (yes, trust_project, unconfined_checks): (bool, bool, bool),
-    (orchestrator, delivery): (
+    (orchestrator, delivery, design): (
         Option<proto::OrchestratorChoice>,
         Option<proto::DeliveryMode>,
+        Option<proto::DesignMode>,
     ),
     continue_from: Option<String>,
 ) -> RunRequest {
@@ -100,6 +104,7 @@ pub(super) fn goal_request(
         orchestrator,
         delivery,
         continue_from,
+        design,
     }
 }
 
@@ -315,6 +320,7 @@ mod tests {
             orchestrator: None,
             delivery: None,
             continue_from: None,
+            design: None,
         };
         assert_eq!(request_timeout(&goal), GOAL_REQUEST_TIMEOUT);
         assert_eq!(

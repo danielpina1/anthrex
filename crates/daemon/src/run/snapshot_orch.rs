@@ -152,6 +152,7 @@ pub(super) fn planners(run: &Run) -> Vec<PlannerInfo> {
             last_rejection: e.last_rejection.clone(),
             replans: e.replans.clone(),
             note: e.note.clone(),
+            covers: e.covers.clone(),
         })
         .collect()
 }

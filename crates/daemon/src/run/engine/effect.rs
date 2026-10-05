@@ -88,6 +88,9 @@ pub enum Effect {
         /// Milestone 9.5 decision 38: `text` is the session's first prompt, pasted whole
         /// into a window that has sent a signal, held until its `OrchestratorWoken`.
         first_turn: bool,
+        /// Ruling T20-1: each pending note `text` holds, with its seq (the note's id),
+        /// oldest first; empty for a first turn. The driver pastes a note at most once.
+        notes: Vec<(u64, String)>,
     },
     /// Milestone 9.3 decision 23: a continued run takes its idle chain's orchestrator
     /// window, renamed `name` and rebound to `run_id`, its session never restarted
@@ -96,5 +99,24 @@ pub enum Effect {
         run_id: String,
         window_id: u32,
         name: String,
+    },
+    /// Milestone 9.6 decision 12: write a design document, `text`, to `path`, a new
+    /// file (a temp file, fsync, then a link that never replaces one: versions are
+    /// immutable), then rewrite `index`'s `versions.json` (`driver/design_io.rs`).
+    WriteDoc {
+        path: PathBuf,
+        text: String,
+        index: Option<(PathBuf, String)>,
+        /// The version written (`None`: a findings file or a review draft); a failed
+        /// write of it reopens its gate as revising (ruling WB-B-I1).
+        doc: Option<crate::run::design::versions::WrittenDoc>,
+    },
+    /// Milestone 9.6 task M9.6.10: read stored versions back, each checked against its
+    /// index entry, and send their texts as `EventKind::DesignChecked`
+    /// (`driver/design_restore.rs`): the approved spec's, whose requirements the engine
+    /// stores from it.
+    ReadBack {
+        run_id: String,
+        docs: Vec<(crate::run::design::state::DocVersion, PathBuf)>,
     },
 }

@@ -5,11 +5,12 @@ use super::adapt::{
     KNOWN_DECIDERS_KEYS, KNOWN_METERING_KEYS, KNOWN_ONBOARDING_KEYS, KNOWN_SCOUTS_KEYS,
 };
 use super::agent::{KNOWN_AGENT_KEYS, KNOWN_PLANNERS_KEYS};
+use super::budget::KNOWN_BUDGET_KEYS;
+use super::design::report_unknown_design;
 use super::report_unknown_profile;
 use super::tuning::{KNOWN_TUNING_KEYS, report_unknown_routes};
 use crate::{Problem, report_unknown_nested, unknown_key_problem};
 
-const KNOWN_BUDGET_RUNG_KEYS: &[&str] = &["tool_calls", "minutes", "tokens"];
 const KNOWN_CLAUDE_KEYS: &[&str] = &["auth", "api_key_helper"];
 const KNOWN_REVIEW_KEYS: &[&str] = &["small"];
 
@@ -81,6 +82,7 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
                 report_unknown_nested(sub, "orchestrator.tuning", KNOWN_TUNING_KEYS, problems)
             }
             "routes" => report_unknown_routes(sub, problems),
+            "design" => report_unknown_design(sub, problems),
             other => problems.push(unknown_key_problem(&format!("orchestrator.{other}"))),
         }
     }
@@ -95,7 +97,7 @@ fn report_unknown_budget(value: &toml::Value, problems: &mut Vec<Problem>) {
             "s" | "m" | "l" => report_unknown_nested(
                 sub,
                 &format!("orchestrator.budget.{key}"),
-                KNOWN_BUDGET_RUNG_KEYS,
+                KNOWN_BUDGET_KEYS,
                 problems,
             ),
             // Review E-M5 (F4): the rung itself, a scalar or an empty table too.

@@ -58,7 +58,9 @@ pub(super) fn rounds_with<'a>(
             | AgentRole::Orchestrator
             | AgentRole::Scout
             | AgentRole::Planner
-            | AgentRole::Decider => {
+            | AgentRole::Decider
+            | AgentRole::Brainstormer
+            | AgentRole::DocReviewer => {
                 rounds.push(single(info.round));
             }
         }
@@ -86,5 +88,7 @@ fn rank(info: &AgentRoundInfo) -> u8 {
         AgentRole::Scout => 7,
         AgentRole::Planner => 8,
         AgentRole::Decider => 9,
+        AgentRole::Brainstormer => 10,
+        AgentRole::DocReviewer => 11,
     }
 }

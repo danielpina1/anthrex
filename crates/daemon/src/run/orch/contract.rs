@@ -229,12 +229,19 @@ fn first_prompt(run: &Run, goal_line: String) -> String {
         None => path.to_string(),
     };
     // Milestone 9.3 decision 12: `--yes` holds for the user's goal and rounds only.
-    let gate = if run.orch.yes {
+    // Milestone 9.6 decision 6: `--yes` skips no gate of a design run.
+    // Milestone 9.6 task M9.6.14: a design run's gate line (final fix wave FW-52),
+    // phases, tools, start and rules 47 to 53.
+    let design = super::contract_design::first_prompt_lines(run);
+    let gate = if let Some((gate, _, _)) = design {
+        gate
+    } else if run.orch.yes {
         "off: the run was started with --yes, so your submitted plan starts at once; a round you start with iterate and a goal you start with start_goal still stop at the gate for the user (rules 43 and 45)"
     } else {
         "the user approves your submitted plan in the run view"
     };
-    [
+    let start = design.map_or("Start with get_context, then scout, then plan.", |d| d.2);
+    let mut lines = vec![
         format!(
             "[anthrex] You are the orchestrator of run {} in {}.",
             run.id,
@@ -243,10 +250,18 @@ fn first_prompt(run: &Run, goal_line: String) -> String {
         goal_line,
         format!("Path: {path}"),
         format!("Plan gate: {gate}"),
-        // Milestone 9.5 decision 38: the first turn may come before the server is up.
-        "Start with get_context, then scout, then plan. If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting.".into(),
-    ]
-    .join("\n")
+    ];
+    lines.extend(design.map(|d| d.1.to_string()));
+    // Milestone 9.5 decision 38: the first turn may come before the server is up.
+    lines.push(format!("{start} If an anthrex tool is reported missing, call get_context again before anything else: the server may still be connecting."));
+    if let Some(rules) = super::contract_design::design_rules(run) {
+        lines.extend([
+            String::new(),
+            super::contract_design::RULES_HEAD.into(),
+            rules,
+        ]);
+    }
+    lines.join("\n")
 }
 
 /// The orchestrator's first turn on a promoted fast-path run (decision 29).

@@ -62,6 +62,7 @@ fn parse_call_for_each_tool() {
             area: vec!["crates/daemon/**".into()],
             brief: "Plan it.".into(),
             scout_refs: vec!["3f9a-daemon".into()],
+            covers: Vec::new(),
         })
     );
     assert_eq!(
@@ -82,6 +83,7 @@ fn parse_call_for_each_tool() {
             submit: true,
             summary: Some("All done.".into()),
             iterate: None,
+            responses: Vec::new(),
         })
     );
     assert_eq!(
@@ -91,6 +93,7 @@ fn parse_call_for_each_tool() {
             submit: false,
             summary: None,
             iterate: None,
+            responses: Vec::new(),
         })
     );
     assert_eq!(

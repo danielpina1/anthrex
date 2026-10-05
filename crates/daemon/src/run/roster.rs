@@ -67,8 +67,11 @@ pub(crate) fn lowest_at_or_above<'a>(
     best
 }
 
-/// The highest-strength roster entry on `runtime`, first in roster order among ties.
-fn highest_strength(roster: &[ModelEntry], runtime: Runtime) -> Option<&ModelEntry> {
+/// The highest-strength roster entry on `runtime`, first in roster order among ties:
+/// `frontier` first, the rule `orch::launch::resolve_orchestrator` applies to an
+/// orchestrator with no model configured. Milestone 9.6 decision 10: a brainstormer's
+/// default route on each installed runtime.
+pub fn strongest_of(roster: &[ModelEntry], runtime: Runtime) -> Option<&ModelEntry> {
     let mut best: Option<&ModelEntry> = None;
     for entry in roster {
         if entry.runtime != runtime {
@@ -116,7 +119,7 @@ pub fn pick_reviewer(roster: &[ModelEntry], author: &Route, level: ReviewLevel) 
     if let Some(entry) = lowest_at_or_above(roster, author.runtime, required, Some(&author.model)) {
         return route_from(entry, effort);
     }
-    if let Some(entry) = highest_strength(roster, author.runtime) {
+    if let Some(entry) = strongest_of(roster, author.runtime) {
         return route_from(entry, effort);
     }
     Route {

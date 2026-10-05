@@ -27,6 +27,7 @@ use crate::scout::report::ScoutReportArgs;
 mod attention;
 pub mod context;
 pub mod contract;
+pub mod contract_design;
 pub mod contract_rounds;
 pub mod digest;
 pub mod extract;
@@ -42,7 +43,7 @@ pub(crate) mod test_support;
 pub mod tools;
 
 pub use attention::{START_PROMPT, WAKE_HELD, orchestrator_lines};
-pub use limits::{AgentLimits, OrchLimits, PlannerLimits};
+pub use limits::{AgentLimits, DesignLimits, OrchLimits, PlannerLimits};
 
 /// Who sent an edit batch. Plan files and the user's `run edit` are [`EditSource::User`]
 /// and keep M8a's rules only; the orchestrator's `edit_plan` and a sub-planner's
@@ -122,6 +123,10 @@ pub struct RunOrch {
     /// list over (taken by the promotion).
     #[serde(skip)]
     pub promote_window: Option<BTreeMap<String, bool>>,
+    /// Milestone 9.6 decision 2: a design run's state; `None` (and not written) for a
+    /// run without the design flow, which behaves as 9.5's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub design: Option<crate::run::design::state::DesignState>,
 }
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
@@ -364,6 +369,10 @@ pub struct EpicRecord {
     /// once a merge came after it (decision 37).
     #[serde(default)]
     pub integration_reviewed: u32,
+    /// Milestone 9.6 ruling T11-1: in a design run, the requirement ids the epic owns,
+    /// as its latest `spawn_subplanner` named them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covers: Vec<String>,
 }
 
 impl EpicRecord {
@@ -404,6 +413,7 @@ impl EpicRecord {
             integration_state: IntegrationState::default(),
             integration_rounds: 0,
             integration_reviewed: 0,
+            covers: Vec::new(),
         }
     }
 
@@ -465,6 +475,7 @@ impl EpicRecord {
             integration_state: IntegrationState::default(),
             integration_rounds: 0,
             integration_reviewed: 0,
+            covers: Vec::new(),
         }
     }
 }
@@ -492,6 +503,10 @@ pub fn make_planned(
         candidates: resolved.candidates,
     };
     run.orch.orchestrator = Some(record);
+    // Milestone 9.6 decision 4: a design run brainstorms first.
+    if run.design_mode == proto::DesignMode::Full {
+        crate::run::engine::design::enter(run);
+    }
 }
 
 impl OrchestratorRecord {

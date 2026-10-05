@@ -65,6 +65,7 @@ pub enum Modal {
     Action(Box<actions::ActionFlow>), // Milestone 9.0.6 decision 12: the action menu.
     Iterate(crate::run_iterate::IterateForm), // Milestone 9.3 decision 32 (`app/iterate.rs`).
     IdleMenu(idle_menu::IdleMenu),    // Milestone 9.3 decision 32: the idle orchestrator's menu.
+    DocNote(Box<crate::doc_note::DocNoteForm>), // Milestone 9.6: a document gate's note editor.
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -546,6 +547,9 @@ pub(crate) mod alerts_view;
 mod confirm;
 mod conversation;
 mod daemon;
+pub(crate) mod doc_gate;
+mod doc_gate_note;
+mod doc_gate_replies;
 mod goal;
 mod headless;
 pub(crate) mod help;

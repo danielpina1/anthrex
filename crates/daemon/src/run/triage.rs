@@ -178,6 +178,7 @@ pub fn route(decision: &Decision, fast_path: bool) -> TriageRoute {
         addresses: Vec::new(),
         race: false,
         pair: false,
+        covers: Vec::new(),
     }))
 }
 

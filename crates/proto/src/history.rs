@@ -23,7 +23,7 @@ use crate::tuning::{RaceLane, TaskPattern, TuningReport};
 pub const HISTORY_VERSION: u32 = 5;
 
 /// One line of `history.jsonl`, tagged `"type": "task" | "run" | "revert" |
-/// "role_route" | "tier" | "flaky" | "bisect" | "stage" | "round"`.
+/// "role_route" | "tier" | "flaky" | "bisect" | "stage" | "round" | "phase"`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HistoryLine {
@@ -40,6 +40,8 @@ pub enum HistoryLine {
     Stage(StageLine),
     /// Milestone 9.3 (KG §2.6).
     Round(crate::rounds::RoundLine),
+    /// Milestone 9.6 decision 32; `HISTORY_VERSION` stays 5 (an older reader skips it).
+    Phase(crate::design::PhaseRecord),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

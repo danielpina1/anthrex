@@ -56,6 +56,7 @@ pub(super) fn iterate(fx: &mut Fixture, goal: &str) -> Vec<Effect> {
         reply,
         run_id: RUN_ID.into(),
         goal: goal.into(),
+        design: None,
     })
 }
 
@@ -274,6 +275,8 @@ fn iterate_on_a_complete_run_starts_round_two() {
             scouts_before: 0,
             approved_at: None,
             paused_before: 0,
+            committed_stage: None,
+            dropped: false,
         }
     );
     let wake = round_wake(2, 1, "add a --json flag\nto every command");
@@ -518,6 +521,7 @@ fn an_unknown_run_is_refused() {
         reply: reply_id,
         run_id: "nope".into(),
         goal: "more".into(),
+        design: None,
     });
     assert_eq!(reply(&effects), Err("unknown run nope".into()));
 }

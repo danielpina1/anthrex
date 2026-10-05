@@ -130,6 +130,7 @@ fn task(
         round: 1,
         race: None,
         pair: None,
+        covers: Vec::new(),
     }
 }
 
@@ -248,6 +249,12 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         round: 1,
         rounds: Vec::new(),
         writer_caps: Default::default(),
+        design: Default::default(),
+        doc_gate: None,
+        docs: Vec::new(),
+        round_design: None,
+        halted_phase: None,
+        design_agents: Vec::new(),
     }
 }
 
@@ -508,6 +515,7 @@ fn status_shows_orchestrator_planners_holds_summary_and_paused_lines() {
         last_rejection: None,
         replans: vec![],
         note: None,
+        covers: Vec::new(),
     };
     run.planners = vec![
         planner("mail", PlannerState::Finished),

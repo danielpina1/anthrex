@@ -96,6 +96,7 @@ fn single_code_goal_takes_the_fast_path() {
             addresses: Vec::new(),
             race: false,
             pair: false,
+            covers: Vec::new(),
         }
     );
     // A docs goal is fast too, with the kind carried.

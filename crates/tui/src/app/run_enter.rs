@@ -4,7 +4,7 @@
 
 use super::{App, Effect};
 use crate::tree::{self, NodeKey, RowKind};
-use proto::{PlannerState, ScoutState, WindowKind};
+use proto::{AgentRole, DesignAgentStatus, PlannerState, ScoutState, WindowKind};
 
 /// Where an agent's conversation would come from: its window, a label for the toasts,
 /// and whether it has ended.
@@ -64,6 +64,27 @@ impl App {
                     label: format!("scout {id}"),
                     ended: scout.ended_at.is_some()
                         || matches!(scout.state, ScoutState::Reported | ScoutState::Failed),
+                }
+            }
+            // Milestone 9.6 ruling T18-1: a design agent opens its window's conversation.
+            NodeKey::DesignAgent { run, label } => {
+                let agent = self
+                    .run_info(&run)
+                    .and_then(|info| info.design_agents.iter().find(|a| a.label == label));
+                let Some(agent) = agent else {
+                    return vec![];
+                };
+                let role = match agent.role {
+                    AgentRole::DocReviewer => "doc reviewer",
+                    _ => "brainstormer",
+                };
+                Agent {
+                    window: agent.window_id,
+                    label: format!("{role} {label}"),
+                    ended: matches!(
+                        agent.state,
+                        DesignAgentStatus::Done | DesignAgentStatus::Failed
+                    ),
                 }
             }
             NodeKey::AgentRound {

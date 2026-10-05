@@ -51,6 +51,18 @@ pub(crate) fn approve(run: &Run) -> Option<String> {
     if let Some(text) = being_finished(run) {
         return Some(text);
     }
+    // Milestone 9.6 ruling T1-O1: the brainstorm and spec gates take `--gate`.
+    if let Some(text) = crate::run::engine::design_gate::plain_approve_refusal(run) {
+        return Some(text);
+    }
+    // Ruling T7-3: the plan gate's approve is its own action's (`design_gate::act`).
+    if let Some(text) = crate::run::engine::design_gate::plan_approve_refusal(run) {
+        return Some(text);
+    }
+    // Milestone 9.6 decision 18: the plan at its gate passes its checks again.
+    if let Some(text) = crate::run::engine::design::plan::approve_refusal(run) {
+        return Some(text);
+    }
     if run.state == RunState::Planning {
         return Some(format!(
             "run {run_id} is still being planned; approve it when the orchestrator has submitted the plan"
@@ -66,7 +78,8 @@ pub(crate) fn reject(run: &Run) -> Option<String> {
         return Some(text);
     }
     let planning = run.state == RunState::Planning
-        || (run.state == RunState::Paused && run.paused_from == Some(RunState::Planning));
+        || (run.state == RunState::Paused && run.paused_from == Some(RunState::Planning))
+        || crate::run::engine::design_gate::in_doc_phase(run);
     (!planning && run.state != RunState::AwaitingApproval).then(|| {
         let label = run.state.label();
         format!(
@@ -159,7 +172,10 @@ pub(crate) fn resume(run: &Run, rebaseline: bool) -> Option<String> {
     let retries = match run.state {
         RunState::Running => full::retryable(run) || delivery::held(run),
         RunState::Paused => true,
-        RunState::AwaitingApproval | RunState::Planning => orch_window::relaunchable(run),
+        RunState::AwaitingApproval
+        | RunState::Planning
+        | RunState::Brainstorming
+        | RunState::Specifying => orch_window::relaunchable(run),
         _ => false,
     };
     if retries {
@@ -168,7 +184,25 @@ pub(crate) fn resume(run: &Run, rebaseline: bool) -> Option<String> {
     if run.state != RunState::Halted {
         return Some(is(run));
     }
-    (!rebaseline && !run.halt_retryable).then(|| {
+    // Milestone 9.6 ruling T7-9: a run cancelled before its plan was approved is
+    // discarded, never resumed into its phase.
+    if run.cancelled && crate::run::engine::design::halted_phase(run).is_some() {
+        let id = &run.id;
+        return Some(format!(
+            "run {id} was cancelled before its plan was approved; discard it with anthrex run discard {id}"
+        ));
+    }
+    // Milestone 9.6 ruling T7-1: a phase budget's halt resumes into its phase only.
+    if let Some(phase) = crate::run::engine::design::halted_phase(run).filter(|_| rebaseline) {
+        return Some(format!(
+            "run {} halted in its {phase} phase; resume it without --rebaseline",
+            run.id
+        ));
+    }
+    // Milestone 9.6 (task 7's carry): a halt before the plan's approval resumes into
+    // its phase.
+    let phase = crate::run::engine::design::halted_phase(run).is_some();
+    (!rebaseline && !run.halt_retryable && !phase).then(|| {
         let reason = run.halted_reason.clone().unwrap_or_default();
         format!(
             "run {} is halted: {reason}; check the refs, then resume with --rebaseline",

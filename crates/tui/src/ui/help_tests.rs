@@ -39,6 +39,7 @@ fn groups_are_the_specs_in_order() {
             "sidebar",
             "run view",
             "plan review",
+            "document gate",
             "alerts",
             "conversation",
             "action menu",
@@ -159,7 +160,7 @@ fn the_help_renders_at_80x24_and_120x40() {
     for (k, w) in &group(&help_groups("C-b"), "global")[..19] {
         body.push(row_text(k, w));
     }
-    body.push("↓ 76 more".into());
+    body.push("↓ 92 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -198,7 +199,7 @@ fn the_help_renders_at_80x24_and_120x40() {
             .iter()
             .map(|(k, w)| row_text(k, w)),
     );
-    body.push("↓ 60 more".into());
+    body.push("↓ 76 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -282,7 +283,7 @@ fn help_in_ascii() {
     }
     let rows = drawn(&app, 80, 24).join("\n");
     assert!(rows.contains("+ keys ---"), "{rows}");
-    assert!(rows.contains("^ 76 more"), "{rows}");
+    assert!(rows.contains("^ 92 more"), "{rows}");
     assert!(
         rows.contains("  <- / ->      strength, or the orchestrator's choice"),
         "{rows}"
@@ -395,4 +396,38 @@ fn every_global_key_is_a_prefix_command() {
             assert!(ran, "{key} ({words}): {action:?}");
         }
     }
+}
+
+/// Task M9.6.18, ruling T18-4: the plan review's group lists a design plan gate's Tab
+/// (the Plan doc tab), `c` and `b`.
+#[test]
+fn the_plan_review_group_lists_the_design_gate_keys() {
+    let review = group(&help_groups("C-b"), "plan review");
+    for key in ["tab", "c", "b"] {
+        assert!(review.iter().any(|(k, _)| k == key), "{key}: {review:?}");
+    }
+}
+
+/// Final fix wave FW-76 (WB-D m2, 9.0.7 decision 34): the document gate screen has its
+/// own group, listing every key its handler takes, and the run view's group names the
+/// keys that open it at a brainstorm or spec gate.
+#[test]
+fn the_document_gate_group_lists_its_keys() {
+    let groups = help_groups("C-b");
+    let gate = group(&groups, "document gate");
+    let keys: Vec<&str> = gate.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "a", "c", "e", "r", "b", "x", "d", "f", "g", "j / k", "q / esc"
+        ]
+    );
+    let run_view = group(&groups, "run view");
+    assert!(
+        run_view.contains(&(
+            "a / p".to_string(),
+            "review the document (brainstorm or spec gate)".to_string()
+        )),
+        "{run_view:?}"
+    );
 }

@@ -238,3 +238,199 @@ fn the_orchestrator_precedence() {
     );
     assert_eq!(Ok(got), before);
 }
+
+/// Milestone 9.6 decision 10: a run with a `brainstorm` list of `candidates`.
+fn brainstorm_run(candidates: Vec<Candidate>) -> Run {
+    let mut run = listed_run();
+    let lists = RouteLists {
+        brainstorm: RouteList {
+            candidates,
+            pick: Pick::First,
+        },
+        ..Default::default()
+    };
+    run.limits.route_lists = RouteListsFrozen::freeze(&lists, &run.roster);
+    run
+}
+
+fn picked(run: &Run) -> Vec<(String, String, Runtime)> {
+    (brainstorm_picks(run).into_iter())
+        .map(|p| (p.label, p.route.model, p.route.runtime))
+        .collect()
+}
+
+fn three(label: &str, model: &str, runtime: Runtime) -> (String, String, Runtime) {
+    (label.to_string(), model.to_string(), runtime)
+}
+
+/// Decision 10: a list's picks are its first two entries on different runtimes, else
+/// its first two; the labels are the runtimes' names on two runtimes, `A` and `B` on
+/// one; a candidate on a runtime the start found missing is passed over.
+#[test]
+fn a_route_list_picks_two_entries_on_different_runtimes_first() {
+    let sonnet = "claude-sonnet-5";
+    let run = brainstorm_run(vec![
+        cand(Runtime::Claude, HAIKU, None),
+        cand(Runtime::Claude, sonnet, None),
+        cand(Runtime::Codex, LUNA, Some(Effort::Low)),
+    ]);
+    assert_eq!(
+        picked(&run),
+        [
+            three("claude", HAIKU, Runtime::Claude),
+            three("codex", LUNA, Runtime::Codex)
+        ]
+    );
+    let picks = brainstorm_picks(&run);
+    assert_eq!(picks[1].route.effort, Effort::Low, "the candidate's effort");
+    let orchestrator = run.orch.orchestrator.as_ref().unwrap().route.effort;
+    assert_eq!(
+        picks[0].route.effort, orchestrator,
+        "else the orchestrator's"
+    );
+    assert!(picks.iter().all(|p| p.listed));
+    // One runtime in the list: its first two entries, with the lenses' labels.
+    let run = brainstorm_run(vec![
+        cand(Runtime::Claude, HAIKU, None),
+        cand(Runtime::Claude, sonnet, None),
+    ]);
+    assert_eq!(
+        picked(&run),
+        [
+            three("A", HAIKU, Runtime::Claude),
+            three("B", sonnet, Runtime::Claude)
+        ]
+    );
+    // A missing runtime's candidate is passed over.
+    let mut run = brainstorm_run(vec![
+        cand(Runtime::Codex, SOL, None),
+        cand(Runtime::Claude, HAIKU, None),
+        cand(Runtime::Claude, sonnet, None),
+    ]);
+    run.orch.installed = [("codex".to_string(), false)].into();
+    assert_eq!(
+        picked(&run),
+        [
+            three("A", HAIKU, Runtime::Claude),
+            three("B", sonnet, Runtime::Claude)
+        ]
+    );
+    // One usable entry runs twice, with the lenses.
+    let run = brainstorm_run(vec![cand(Runtime::Codex, SOL, None)]);
+    assert_eq!(
+        picked(&run),
+        [
+            three("A", SOL, Runtime::Codex),
+            three("B", SOL, Runtime::Codex)
+        ]
+    );
+}
+
+/// Decision 10 without a list: the strongest installed model of each installed runtime
+/// (`roster::strongest_of`), Claude's first; with one runtime, its strongest twice as
+/// `A` and `B`.
+#[test]
+fn without_a_list_the_strongest_of_each_installed_runtime() {
+    let run = brainstorm_run(Vec::new());
+    assert_eq!(
+        picked(&run),
+        [
+            three("claude", "claude-opus-5-5", Runtime::Claude),
+            three("codex", SOL, Runtime::Codex)
+        ]
+    );
+    assert!(brainstorm_picks(&run).iter().all(|p| !p.listed));
+    let mut run = brainstorm_run(Vec::new());
+    run.orch.installed = [("claude".to_string(), false)].into();
+    assert_eq!(
+        picked(&run),
+        [
+            three("A", SOL, Runtime::Codex),
+            three("B", SOL, Runtime::Codex)
+        ]
+    );
+    // A list whose every candidate is missing falls back to the same.
+    let mut run = brainstorm_run(vec![cand(Runtime::Claude, HAIKU, None)]);
+    run.orch.installed = [("claude".to_string(), false)].into();
+    assert_eq!(
+        picked(&run),
+        [
+            three("A", SOL, Runtime::Codex),
+            three("B", SOL, Runtime::Codex)
+        ]
+    );
+}
+
+/// Task M9.6.8 fix round 1 (m3): a brainstormer's routing record takes its source from
+/// its pick (`BrainstormPick.listed`), never from comparing its route with the list's.
+#[test]
+fn a_brainstormers_record_names_its_picks_source() {
+    use crate::run::design::state::{DesignAgent, DesignAgentState};
+    use crate::run::orch::roles::design_agent_record;
+    let run = brainstorm_run(vec![cand(Runtime::Codex, SOL, None)]);
+    let pick = &brainstorm_picks(&run)[0];
+    assert!(pick.listed);
+    let mut agent = DesignAgent {
+        label: pick.label.clone(),
+        role: proto::AgentRole::Brainstormer,
+        route: pick.route.clone(),
+        session: 1,
+        window_id: None,
+        state: DesignAgentState::Queued,
+        calls: 0,
+        tokens: 0,
+        started: None,
+        listed: true,
+        unsubmitted: false,
+        round: 1,
+    };
+    assert_eq!(
+        design_agent_record(&run, &agent, false, 5).source,
+        LIST_SOURCE
+    );
+    // The same route, not chosen by the list, is the roster's default.
+    agent.listed = false;
+    assert_eq!(
+        design_agent_record(&run, &agent, false, 5).source,
+        "roster_default"
+    );
+}
+
+/// Ruling T8-4: a runtime whose CLI cannot run without saving the session cannot
+/// brainstorm; its picks fall back as an uninstalled runtime's, list or not.
+#[test]
+fn a_runtime_that_cannot_run_unsaved_cannot_brainstorm() {
+    let caps = crate::decider::DeciderCaps {
+        codex_ephemeral: false,
+        ..crate::decider::DECIDER_CAPS
+    };
+    let run = brainstorm_run(Vec::new());
+    assert_eq!(unsaved_missing(&run, &crate::decider::DECIDER_CAPS), []);
+    assert_eq!(unsaved_missing(&run, &caps), [Runtime::Codex]);
+    let picked = |picks: Vec<BrainstormPick>| -> Vec<(String, Runtime)> {
+        picks
+            .into_iter()
+            .map(|p| (p.label, p.route.runtime))
+            .collect()
+    };
+    let claude_twice = [
+        ("A".to_string(), Runtime::Claude),
+        ("B".to_string(), Runtime::Claude),
+    ];
+    assert_eq!(
+        picked(brainstorm_picks_with(&run, &caps).unwrap()),
+        claude_twice
+    );
+    let listed = brainstorm_run(vec![
+        cand(Runtime::Codex, SOL, None),
+        cand(Runtime::Claude, HAIKU, None),
+    ]);
+    assert_eq!(
+        picked(brainstorm_picks_with(&listed, &caps).unwrap()),
+        claude_twice
+    );
+    // An uninstalled runtime is not named twice.
+    let mut gone = brainstorm_run(Vec::new());
+    gone.orch.installed = [("codex".to_string(), false)].into();
+    assert_eq!(unsaved_missing(&gone, &caps), []);
+}

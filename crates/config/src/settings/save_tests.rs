@@ -220,3 +220,30 @@ fn a_control_character_in_a_note_still_refuses() {
     assert_eq!(std::fs::read(&path).unwrap(), text.as_bytes());
     assert_eq!(entries(dir.path()), ["config.toml"]);
 }
+
+/// Ruling T18-7: `design_default` is the daemon's report, never the screen's to save.
+/// A default hand-edited while the daemon runs, so the screen's copy is stale (or a
+/// client that sends none), still saves the owned keys, and the file keeps the edit.
+#[test]
+fn a_hand_edited_design_default_still_saves() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[orchestrator]\nmax_writers = 2\n").unwrap();
+    // The daemon read the file before the edit: `full`, the default's default.
+    let mut doc = doc_of(&crate::load(&path).0.orchestrator);
+    assert_eq!(doc.design_default, Some(proto::DesignMode::Full));
+    let edited = "[orchestrator]\nmax_writers = 2\n\n[orchestrator.design]\ndefault = \"off\"\n";
+    std::fs::write(&path, edited).unwrap();
+    for sent in [Some(proto::DesignMode::Full), None] {
+        doc.design_default = sent;
+        doc.limits.max_writers += 1;
+        save(&path, &doc, &AtomicBool::new(false)).unwrap_or_else(|p| panic!("{sent:?}: {p:?}"));
+        let saved = crate::load(&path).0.orchestrator;
+        assert_eq!(saved.max_writers, doc.limits.max_writers);
+        assert_eq!(
+            doc_of(&saved).design_default,
+            Some(proto::DesignMode::Off),
+            "the hand edit stays"
+        );
+    }
+}

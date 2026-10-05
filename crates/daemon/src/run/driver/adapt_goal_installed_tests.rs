@@ -23,8 +23,10 @@ use crate::run::plan::parse_plan;
 const NO_CLAUDE: &str = "/nonexistent/ax-claude";
 
 /// A service with the shipped caps over `orchestrator`, whose Claude binary is `claude`
-/// and whose Codex binary is an installed stand-in no build launches.
-fn service(data: &Path, orchestrator: config::Orchestrator, claude: &str) -> Arc<RunService> {
+/// and whose Codex binary is an installed stand-in no build launches. The design flow
+/// is off (milestone 9.6 ruling T3-2).
+fn service(data: &Path, mut orchestrator: config::Orchestrator, claude: &str) -> Arc<RunService> {
+    orchestrator.design.default = proto::DesignMode::Off;
     let mut config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
     config.claude_bin = claude.into();
     config.codex_bin = INSTALLED_STAND_IN.into();
@@ -74,6 +76,7 @@ fn planned(choice: Option<Runtime>) -> Shape {
             runtime,
             model: None,
         }),
+        design: None,
     }))
 }
 

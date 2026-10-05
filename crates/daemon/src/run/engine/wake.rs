@@ -8,6 +8,7 @@ use super::Effect;
 use crate::run::messages::one_line;
 use crate::run::model::Run;
 use crate::run::orch::contract::wake_text;
+use crate::run::orch::contract_design::session_prompt;
 
 /// Decision 39: the most notes kept; the oldest become one `+<n> earlier changes`.
 pub const NOTES_MAX: usize = 20;
@@ -134,11 +135,13 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
         return (o.live && run.orch.mcp_ready).then(|| Effect::WakeOrchestrator {
             run_id: run.id.clone(),
             window_id,
-            text: o.first_prompt.clone(),
+            // Ruling T14-1: in a design run, where the run is, as of this turn.
+            text: session_prompt(run, &o.first_prompt),
             digest_revision: run.orch.digest_rev,
             notes_seq: 0,
             request: None,
             first_turn: true,
+            notes: Vec::new(),
         });
     }
     if let Some(request) = run.orch.request_wake.as_ref().filter(|_| o.live) {
@@ -158,6 +161,7 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
             notes_seq: notes_seq(run),
             request: Some(run.round()),
             first_turn: false,
+            notes: pending(o),
         });
     }
     let due = !o.notes.is_empty()
@@ -172,7 +176,15 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
         notes_seq: notes_seq(run),
         request: None,
         first_turn: false,
+        notes: pending(o),
     })
+}
+
+/// Ruling T20-1: the pending notes, each with its seq, oldest first.
+fn pending(o: &crate::run::orch::OrchestratorRecord) -> Vec<(u64, String)> {
+    let mut seqs = o.note_seqs.clone();
+    seqs.resize(o.notes.len(), 0);
+    seqs.into_iter().zip(o.notes.iter().cloned()).collect()
 }
 
 /// Decision 39: a note for each task blocked since `before`, for any reason but

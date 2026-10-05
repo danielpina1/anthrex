@@ -23,6 +23,7 @@ use super::*;
 mod adapt;
 mod agent;
 mod budget;
+mod design;
 mod profile;
 mod roster;
 mod tuning;
@@ -30,6 +31,7 @@ pub use tuning::{Candidate, ConfiguredBudgets, Pick, RouteList, RouteLists, Tuni
 
 pub use adapt::{Deciders, Metering, Onboarding, Scouts};
 pub use agent::AgentConfig;
+pub use design::{DesignBudget, DesignConfig};
 
 use budget::read_budgets;
 use profile::{read_profile, report_unknown_profile};
@@ -105,6 +107,8 @@ pub struct Orchestrator {
     pub agent: agent::AgentSettings,
     /// Milestone 9.5: `[orchestrator.tuning]`, the model lists and the explicit budgets.
     pub tuning: TuningConfig,
+    /// Milestone 9.6: `[orchestrator.design]`, the design flow (DF §1, §2.2).
+    pub design: DesignConfig,
 }
 
 /// `[orchestrator.claude] auth`, decision 50: whether a headless Claude session reads
@@ -175,6 +179,7 @@ impl Default for Orchestrator {
             metering: Metering::default(),
             agent: agent::AgentSettings::default(),
             tuning: TuningConfig::default(),
+            design: DesignConfig::default(),
         }
     }
 }
@@ -302,6 +307,7 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
     adapt::read_adapt(t, &mut o, problems);
     o.agent = agent::read(t, problems);
     o.tuning = tuning::read_tuning(t, &o.models, problems);
+    o.design = design::read(t, problems);
 
     o
 }

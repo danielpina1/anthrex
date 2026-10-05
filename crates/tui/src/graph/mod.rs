@@ -252,9 +252,10 @@ fn raw_content_text(row: &Row<'_>, ascii: bool) -> String {
         RowKind::Subagent { info } => crate::tree::subagent_label(info),
         RowKind::Run {
             run, orchestrator, ..
-        } => run_text::run_text(run, orchestrator.is_some()),
+        } => run_text::run_text_in(run, orchestrator.is_some(), ascii),
         RowKind::Planner { run, planner } => run_text::planner_text(run, planner),
         RowKind::Scout { scout, .. } => scout.question.clone(),
+        RowKind::DesignAgent { agent, .. } => run_text::design_agent_text(agent),
         RowKind::Task { task, .. } => run_text::task_text_in(task, ascii),
         RowKind::Stage { run, stage } => run_text::stage_text_in(run, stage, ascii),
         RowKind::AgentRound { round, .. } => run_text::round_text(round),

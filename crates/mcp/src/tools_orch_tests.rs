@@ -44,6 +44,17 @@ const EDIT_PLAN: &str = "Apply plan edits as one batch. Set submit to open the p
     a summary for the user when the run is complete. Set iterate, with no edits and nothing \
     else, to start a round the user asked for. Returns at once.";
 
+/// Milestone 9.6: the orchestrator's design tools' descriptions, as listed.
+const DESIGN: [&str; 3] = [
+    "Start the two brainstormers with the user's answers to your questions (empty if they \
+     skipped). Only in the brainstorming phase. Returns at once.",
+    "Submit a design document: the merged brainstorm report (kind brainstorm) or the spec \
+     (kind spec). A spec with ready false goes to review; with ready true it opens the gate, \
+     and responses must answer every finding of the latest review.",
+    "Read a design document: the latest of a kind, one version, or a brainstormer's draft \
+     (from).",
+];
+
 /// Milestone 9.3 decision 29.
 const START_GOAL: &str = "Start a new goal on this orchestrator when the user gives you one; \
     only while your last run has ended.";
@@ -74,6 +85,10 @@ fn tools_for_orchestrator_and_planner_are_exact() {
              reviews, agent rounds and any report.",
         ),
         ("start_goal", START_GOAL),
+        // Milestone 9.6 task M9.6.6 (`tools_design_tests.rs` checks their text).
+        ("start_brainstorm", DESIGN[0]),
+        ("submit_doc", DESIGN[1]),
+        ("get_doc", DESIGN[2]),
     ];
     assert_eq!(
         described(&tools_for(AgentRole::Orchestrator)),
@@ -105,6 +120,9 @@ fn no_role_gets_a_tool_it_must_not_have() {
                 "run_status",
                 "task_result",
                 "start_goal",
+                "start_brainstorm",
+                "submit_doc",
+                "get_doc",
             ],
         ),
         (AgentRole::Planner, &["get_context", "submit_epic"]),
@@ -179,11 +197,12 @@ fn every_schema_is_closed_at_every_level() {
     }
     // edit_plan and submit_epic each hold plan_edit, its plan_task and route, and
     // `into`'s plan_task and route: seven objects with the tool's own. start_goal
-    // (milestone 9.3) is the orchestrator's thirteenth.
+    // (milestone 9.3) is the orchestrator's thirteenth; milestone 9.6 adds edit_plan's
+    // response item, start_brainstorm, submit_doc and its response item, and get_doc.
     assert_eq!(
         counts,
         [
-            ("orchestrator", 13),
+            ("orchestrator", 18),
             ("worker", 3),
             ("reviewer", 2),
             ("scout", 4),
@@ -204,6 +223,8 @@ fn schemas_match_the_interface_table() {
         (AgentRole::Orchestrator, "orchestrator"),
         (AgentRole::Planner, "planner"),
         (AgentRole::Worker, "worker"),
+        (AgentRole::Brainstormer, "brainstormer"),
+        (AgentRole::DocReviewer, "doc_reviewer"),
     ] {
         for want in fixture[key].as_array().expect("a list") {
             let name = want["name"].as_str().unwrap();
@@ -222,8 +243,8 @@ fn schemas_match_the_interface_table() {
         }
     }
     assert_eq!(
-        checked, 10,
-        "seven orchestrator tools, two planner tools, task_note"
+        checked, 16,
+        "ten orchestrator tools, two planner tools, task_note, and the design agents' three"
     );
 }
 
@@ -340,13 +361,14 @@ fn mcp_schema_has_reply_comment_and_addresses() {
     }
 }
 
-/// Milestone 9.3 decision 29: the orchestrator lists seven tools, `start_goal` last,
-/// taking one required `goal` of 1 to 16,384 characters.
+/// Milestone 9.3 decision 29: the orchestrator lists `start_goal` seventh, taking one
+/// required `goal` of 1 to 16,384 characters. Milestone 9.6's three design tools follow
+/// it (task M9.6.6: appended, so the earlier seven keep their places).
 #[test]
-fn orchestrator_tools_list_start_goal_last() {
+fn orchestrator_tools_list_start_goal_seventh() {
     let tools = tools_for(AgentRole::Orchestrator);
-    assert_eq!(tools.len(), 7);
-    let last = tools.last().unwrap();
+    assert_eq!(tools.len(), 10);
+    let last = &tools[6];
     assert_eq!(last.name, "start_goal");
     assert_eq!(last.description.as_deref(), Some(START_GOAL));
     assert_eq!(
@@ -377,7 +399,7 @@ fn edit_plan_takes_iterate() {
     assert_eq!(schema["required"], json!([]));
     let mut keys: Vec<&String> = schema["properties"].as_object().unwrap().keys().collect();
     keys.sort();
-    assert_eq!(keys, ["edits", "iterate", "submit", "summary"]);
+    assert_eq!(keys, ["edits", "iterate", "responses", "submit", "summary"]);
     let ops = &schema["properties"]["edits"]["items"]["properties"]["op"]["enum"];
     assert!(
         !ops.as_array().unwrap().contains(&json!("iterate")),

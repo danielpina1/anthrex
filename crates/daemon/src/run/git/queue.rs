@@ -24,6 +24,9 @@ pub const LOCK_RETRY_DELAYS_MS: [u64; 5] = [200, 400, 800, 1600, 3200];
 #[derive(Default)]
 pub struct GitQueue {
     repos: std::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
+    /// Test-only: the writes waiting for a repository's lock now ([`GitQueue::waiters`]).
+    #[cfg(test)]
+    waiting: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl GitQueue {
@@ -71,12 +74,23 @@ impl GitQueue {
         tokio::time::timeout_at(deadline.into(), write).await.ok()
     }
 
+    /// Test-only (milestone 9.6, ruling T12-3 m4): how many writes wait for a
+    /// repository's lock now, so a test waits on an event, not a window, to know that a
+    /// write is parked behind another.
+    #[cfg(test)]
+    pub(crate) fn waiters(&self) -> usize {
+        self.waiting.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     /// `repo`'s write lock, waited for.
     async fn take(&self, repo: &Path) -> tokio::sync::OwnedMutexGuard<()> {
         let repo_lock = crate::lock(&self.repos)
             .entry(repo.to_path_buf())
             .or_default()
             .clone();
+        // Counted while waiting, and uncounted however the wait ends (a cancel too).
+        #[cfg(test)]
+        let _waiting = Waiting::new(&self.waiting);
         repo_lock.lock_owned().await
     }
 
@@ -106,6 +120,25 @@ impl GitQueue {
         });
         task.await
             .map_err(|err| format!("a git write did not finish: {err}"))?
+    }
+}
+
+/// Test-only: one write counted in [`GitQueue::waiters`] while it lives.
+#[cfg(test)]
+struct Waiting(Arc<std::sync::atomic::AtomicUsize>);
+
+#[cfg(test)]
+impl Waiting {
+    fn new(count: &Arc<std::sync::atomic::AtomicUsize>) -> Waiting {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Waiting(Arc::clone(count))
+    }
+}
+
+#[cfg(test)]
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

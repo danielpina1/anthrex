@@ -23,6 +23,8 @@ pub enum Screen {
     Profile(Box<super::profile_screen::ProfileScreen>),
     Settings(Box<super::settings_screen::SettingsScreen>),
     Stats(Box<super::stats::StatsScreen>),
+    /// Milestone 9.6 decision 34: a run's brainstorm or spec gate (`app/doc_gate.rs`).
+    DocGate(Box<super::doc_gate::DocGateScreen>),
 }
 
 impl App {
@@ -42,6 +44,7 @@ impl App {
             Some(Screen::Profile(_)) => super::profile_screen::LEAVE_SCREEN_FIRST,
             Some(Screen::Settings(_)) => LEAVE_SETTINGS_FIRST,
             Some(Screen::Stats(_)) => super::stats::LEAVE_STATS_FIRST,
+            Some(Screen::DocGate(_)) => super::doc_gate::LEAVE_DOC_FIRST,
             None => return false,
         };
         let text = match (&self.screen, cmd) {
@@ -59,6 +62,7 @@ impl App {
             Some(Screen::Profile(_)) => self.on_profile_key(key),
             Some(Screen::Settings(_)) => self.on_settings_key(key),
             Some(Screen::Stats(_)) => self.on_stats_key(key),
+            Some(Screen::DocGate(_)) => self.on_doc_gate_key(key),
             None => vec![],
         }
     }
@@ -71,7 +75,9 @@ impl App {
             Some(Screen::Profile(_)) => self.profile_tick(now),
             Some(Screen::Settings(_)) => self.settings_tick(),
             Some(Screen::Stats(_)) => self.stats_tick(),
-            None => vec![],
+            Some(Screen::DocGate(_)) => self.doc_gate_tick(),
+            // Milestone 9.6: the plan review's Plan doc tab, over no screen.
+            None => self.plan_doc_tick(),
         }
     }
 }
@@ -204,6 +210,7 @@ impl App {
     fn set_cache(&mut self, cache: SettingsCache) {
         if let Some(Modal::StartGoal(form)) = &mut self.modal {
             form.set_roster(cache.doc.models.clone());
+            form.design_default = cache.doc.design_default;
         }
         self.settings_cache = Some(cache);
         self.sync_settings_screen();

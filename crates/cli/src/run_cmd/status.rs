@@ -94,6 +94,7 @@ pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
         );
     }
     out.push_str(&orchestrator_lines(run));
+    out.push_str(&super::design::status_lines(run));
     out.push_str(&super::delivery::status_lines(run));
     // Milestone 9.1 (Interfaces "CLI"): a `Multi` run's stages, before its tasks.
     let multi = run.stages.len() > 1;

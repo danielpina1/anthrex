@@ -39,6 +39,8 @@ fn add_round(run: &mut Run, n: u32, first_stage: u16) {
         scouts_before: 0,
         approved_at: None,
         paused_before: 0,
+        committed_stage: None,
+        dropped: false,
     });
     run.state = RunState::Planning;
 }

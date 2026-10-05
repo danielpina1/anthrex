@@ -13,6 +13,7 @@ use proto::{Budget, DeciderSource, Finding, Severity, Size, Spend, TestMode};
 
 use super::messages::summary;
 use super::model::{CheckRecord, ProofRecord, ReviewLevel, ReviewRecord, Run, Task};
+use super::orch::contract_design::{JUDGE_LINE, requirements_block}; // 9.6 decisions 25, 26
 
 // Milestone 9.1's tier texts (decision 13 and the tier line of a bounce).
 #[path = "contract_tiers.rs"]
@@ -90,7 +91,9 @@ fn level_label(level: Option<ReviewLevel>) -> &'static str {
 /// `extract` and `notes` (decisions 34, 42d; `run::orch::contract`), then the brief last.
 pub fn worker_prompt(run: &Run, task: &Task, extract: &str, notes: &str) -> String {
     let mut out = worker_head(run, task);
-    for section in [extract, notes].into_iter().filter(|s| !s.is_empty()) {
+    let reqs = requirements_block(run, task).unwrap_or_default();
+    let sections = [extract, &reqs, notes];
+    for section in sections.into_iter().filter(|s| !s.is_empty()) {
         out.push_str("\n\n");
         out.push_str(section);
     }
@@ -276,6 +279,9 @@ pub fn reviewer_prompt(
     }
     if !messages.is_empty() {
         lines.push(messages.to_string());
+    }
+    if let Some(block) = requirements_block(run, task) {
+        lines.extend([block, JUDGE_LINE.to_string()]);
     }
     lines.push(String::new());
     lines.push(spec.brief.clone());

@@ -263,6 +263,7 @@ mod tuning {
                 runtime: proto::Runtime::Claude,
                 model: None,
             }),
+            design: None,
         }))
     }
 
@@ -392,5 +393,115 @@ mod tuning {
                 );
             }
         }
+    }
+
+    /// Task M9.6.3 (decision 3): a planned build decides the design mode and freezes
+    /// the design limits from the start's settings read; a later config, as a second
+    /// start sees it, changes neither, and the run keeps both across a save and load.
+    #[tokio::test]
+    async fn the_mode_is_frozen_at_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, _repo_dir, service) = rig(tmp.path());
+        let build = |config: config::Orchestrator| {
+            let once = super::super::TuneOnce::with_config(config);
+            let (service, work) = (service.clone(), work.clone());
+            async move {
+                let delivery = crate::run::driver::delivery::DeliveryStart::Resolve(None);
+                let flags = (false, false, true);
+                let built = service
+                    .build_delivered(plan(false), work, flags, planned(true), delivery, &once)
+                    .await;
+                built.unwrap_or_else(|e| panic!("{}", e.text()))
+            }
+        };
+        let mut first = config::Orchestrator::default();
+        first.design.phase_minutes = 30;
+        let mut run = build(first).await;
+        assert_eq!(run.design_mode, proto::DesignMode::Full);
+        assert_eq!(run.limits.orch.design.phase_minutes, 30);
+
+        // The config changes: the flow is off by default and the budget is longer.
+        let mut later = config::Orchestrator::default();
+        later.design.default = proto::DesignMode::Off;
+        later.design.phase_minutes = 90;
+        let other = build(later).await;
+        assert_eq!(other.design_mode, proto::DesignMode::Off);
+        assert_eq!(other.limits.orch.design.phase_minutes, 90);
+
+        // The first run keeps its own, as written and read back by a restart.
+        run.data_dir = crate::run::journal::runs_dir(&tmp.path().join("saved")).join(&run.id);
+        crate::run::journal::save_run(&run).unwrap();
+        let (mut runs, problems) = crate::run::journal::load_all(&tmp.path().join("saved"));
+        assert!(problems.is_empty(), "{problems:?}");
+        let loaded = runs.remove(0).0;
+        assert_eq!(loaded.design_mode, proto::DesignMode::Full);
+        assert_eq!(loaded.limits.orch.design.phase_minutes, 30);
+    }
+
+    /// Ruling T12-1: a design run whose documents folder goes through a symbolic link
+    /// tracked at the base is refused at its start with the commit's own text, before
+    /// any run exists; with `docs_dir = ""` (nothing is committed) it starts.
+    #[tokio::test]
+    async fn a_design_start_through_a_symlinked_docs_dir_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, _repo_dir, service) = rig(tmp.path());
+        std::fs::create_dir_all(work.join("elsewhere")).unwrap();
+        std::fs::write(work.join("elsewhere/keep"), "k\n").unwrap();
+        std::os::unix::fs::symlink("elsewhere", work.join("docs")).unwrap();
+        git(&work, &["add", "-A"]);
+        git(&work, &["commit", "-q", "-m", "a link"]);
+        let build = |config: config::Orchestrator| {
+            let once = super::super::TuneOnce::with_config(config);
+            let (service, work) = (service.clone(), work.clone());
+            async move {
+                let delivery = crate::run::driver::delivery::DeliveryStart::Resolve(None);
+                let flags = (false, false, true);
+                (service.build_delivered(plan(false), work, flags, planned(true), delivery, &once))
+                    .await
+                    .map_err(|e| e.text())
+            }
+        };
+        let refused = build(config::Orchestrator::default()).await;
+        assert_eq!(
+            refused.err().as_deref(),
+            Some(
+                "design flow: the documents folder docs/anthrex goes through a symlink in the repository; change [orchestrator.design].docs_dir"
+            )
+        );
+        let mut none = config::Orchestrator::default();
+        none.design.docs_dir = String::new();
+        let run = build(none).await.unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(run.design_mode, proto::DesignMode::Full);
+    }
+
+    /// Decision 3: a planned build refuses `--design full` for a goal DF §1 puts off,
+    /// with the exact text, and builds nothing.
+    #[tokio::test]
+    async fn a_planned_build_refuses_full_for_a_research_goal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (work, _repo_dir, service) = rig(tmp.path());
+        let Shape::Planned(mut research) = planned(true) else {
+            unreachable!()
+        };
+        let triage = research.triage.as_mut().unwrap();
+        triage.kinds = vec![proto::TaskKind::Research];
+        research.design = Some(proto::DesignMode::Full);
+        let built = service
+            .build_plan(
+                plan(false),
+                work,
+                false,
+                false,
+                true,
+                Shape::Planned(research),
+            )
+            .await;
+        let Err(error) = built else {
+            panic!("a research goal built with the design flow");
+        };
+        assert_eq!(
+            error.text(),
+            "the design flow runs only for planned code or docs goals; this goal is research"
+        );
     }
 }

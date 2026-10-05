@@ -26,6 +26,10 @@ pub struct Tuned {
     pub budget_s: Option<Budget>,
     pub budget_m: Option<Budget>,
     pub budget_hub: Option<Budget>,
+    /// Milestone 9.6 decision 33: the design agents' refit budgets, used as a task
+    /// class's are.
+    pub budget_brainstorm: Option<Budget>,
+    pub budget_doc_review: Option<Budget>,
     pub configured: ConfiguredBudgets,
     pub weights: Option<PathWeights>,
     pub thresholds: SizeThresholds,
@@ -33,6 +37,8 @@ pub struct Tuned {
     pub lists: RouteLists,
     /// Decision 12's start lines.
     pub log: Vec<String>,
+    /// Ruling T13-5 (m5): the design classes' lines, a design run's only.
+    pub design_lines: Vec<String>,
 }
 
 impl Tuned {
@@ -44,6 +50,12 @@ impl Tuned {
             SizeClass::S => self.budget_s.unwrap_or(cfg.budget_s),
             SizeClass::M => m,
             SizeClass::Hub => self.budget_hub.unwrap_or(m),
+            SizeClass::Brainstorm => {
+                (self.budget_brainstorm).unwrap_or(cfg.design.budget.brainstormer)
+            }
+            SizeClass::DocReview => {
+                (self.budget_doc_review).unwrap_or(cfg.design.budget.doc_reviewer)
+            }
         }
     }
 }
@@ -67,11 +79,16 @@ pub fn tuned(file: &TuningFile, cfg: &config::Orchestrator) -> Tuned {
 pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orchestrator) -> Tuned {
     let t = &cfg.tuning.table;
     let conf = cfg.tuning.configured;
-    let mut log = Vec::new();
+    let (mut log, mut design_lines) = (Vec::new(), Vec::new());
     // The bare `configured` lines, which say nothing history taught (ruling T8-8).
     let mut bare = 0;
     let mut used = |class: SizeClass| {
         let c = class.label();
+        // Ruling T13-5 (m5): a design class's lines are a design run's only.
+        let log = match class.design_role() {
+            Some(_) => &mut design_lines,
+            None => &mut log,
+        };
         if configured(conf, class) {
             let own = budget_text(&default_budget(cfg, class));
             match shown_refit(lines, cfg, class) {
@@ -79,7 +96,7 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
                     "tuning: budget {c} {own} configured (refit would be {})",
                     budget_text(&would)
                 )),
-                None if class != SizeClass::Hub => {
+                None if matches!(class, SizeClass::S | SizeClass::M) => {
                     log.push(format!("tuning: budget {c} {own} configured"));
                     bare += 1;
                 }
@@ -98,6 +115,8 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
     };
     let (budget_s, budget_m, budget_hub) =
         (used(SizeClass::S), used(SizeClass::M), used(SizeClass::Hub));
+    let (budget_brainstorm, budget_doc_review) =
+        (used(SizeClass::Brainstorm), used(SizeClass::DocReview));
     let weights = file.weights.clone().filter(|_| t.path_weights);
     if let Some(w) = &weights {
         log.push(format!("tuning: path weights {}", weights_text(w)));
@@ -108,10 +127,11 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
             th.s_lines, th.m_lines
         ));
     }
+    let defaults = ClassRoutes::default();
     let routes = ClassRoutes {
-        s: current_route(file, SizeClass::S),
-        m: current_route(file, SizeClass::M),
-        ..ClassRoutes::default()
+        s: current_route(file, SizeClass::S).unwrap_or(defaults.s),
+        m: current_route(file, SizeClass::M).unwrap_or(defaults.m),
+        ..defaults
     };
     for class in [SizeClass::S, SizeClass::M] {
         if let Some(r) = file.routes.get(class.key()) {
@@ -131,13 +151,32 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
         budget_s,
         budget_m,
         budget_hub,
+        budget_brainstorm,
+        budget_doc_review,
         configured: conf,
         weights,
         thresholds: thresholds_of(file),
         routes,
         lists: cfg.tuning.routes.clone(),
         log,
+        design_lines,
     }
+}
+
+/// Ruling T13-5 (m5): whether `line` is a design class's (`tuning: budget brainstorm …`
+/// or `tuning: budget doc review …`, as [`refit`](super::refit) and [`tuned_with`] write
+/// them), which only a design run logs.
+pub fn is_design_line(line: &str) -> bool {
+    let label = line.strip_prefix("tuning: budget ").unwrap_or_default();
+    SizeClass::DESIGN
+        .iter()
+        .any(|c| label.starts_with(&format!("{} ", c.label())))
+}
+
+/// Whether `line` is a `tuning: none (…)` line: a design run that learned its design
+/// budgets drops it.
+pub fn is_none_line(line: &str) -> bool {
+    line.starts_with("tuning: none (")
 }
 
 /// Decision 12's `none` line, with why nothing was learned (whole-branch review B, M4):
@@ -171,23 +210,33 @@ pub fn report(
     let t = &cfg.tuning.table;
     let tuned = tuned_with(lines, file, cfg);
     let weights = tuned.weights.as_ref();
+    // Task M9.6.16: the design classes follow, once history has a design phase, so a
+    // repository without one reports as 9.5 did.
+    let design = lines.iter().any(|l| matches!(l, HistoryLine::Phase(_)));
     let classes = SizeClass::ALL
         .into_iter()
+        .chain(SizeClass::DESIGN.into_iter().filter(|_| design))
         .map(|class| {
-            let samples = budget_samples(lines, class, t);
+            let samples = match class.design_role() {
+                Some(role) => super::design::samples(lines, role, t).len(),
+                None => budget_samples(lines, class, t).len(),
+            };
             let is_configured = configured(cfg.tuning.configured, class);
             let written = written(file, t, class);
             let refit = match (t.refit_budgets, is_configured, written) {
                 (false, _, _) => RefitState::Off,
                 (true, true, _) => RefitState::Configured,
                 (true, false, Some(b)) => RefitState::Written { at: b.at },
-                (true, false, None) if qualifies(&samples, t) => RefitState::Kept,
+                (true, false, None) if samples as u64 >= u64::from(t.min_samples) => {
+                    RefitState::Kept
+                }
                 (true, false, None) => RefitState::NotYet,
             };
-            let weight_secs = weights.map(|w| match class {
-                SizeClass::S => w.s_secs,
-                SizeClass::M => w.m_secs,
-                SizeClass::Hub => w.hub_secs,
+            let weight_secs = weights.and_then(|w| match class {
+                SizeClass::S => Some(w.s_secs),
+                SizeClass::M => Some(w.m_secs),
+                SizeClass::Hub => Some(w.hub_secs),
+                SizeClass::Brainstorm | SizeClass::DocReview => None,
             });
             let weight_derived =
                 weights.is_some_and(|w| w.derived.iter().any(|d| d == class.label()));
@@ -195,7 +244,7 @@ pub fn report(
             let route = current_route(file, class);
             ClassTuning {
                 class: class.label().to_string(),
-                samples: samples.len() as u32,
+                samples: samples as u32,
                 budget: tuned.effective(cfg, class),
                 refit,
                 configured: is_configured,
@@ -206,10 +255,12 @@ pub fn report(
                 },
                 weight_secs,
                 weight_derived,
-                route: if list.candidates.is_empty() {
-                    route_text(route)
-                } else {
-                    list_text(list, route.effort)
+                // A task class always has both (`ALL`); a design class neither, so its
+                // route reads `-` (task M9.6.16).
+                route: match (list, route) {
+                    (Some(l), Some(r)) if !l.candidates.is_empty() => list_text(l, r.effort),
+                    (_, Some(r)) => route_text(r),
+                    (_, None) => "-".to_string(),
                 },
             }
         })

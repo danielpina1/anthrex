@@ -211,6 +211,7 @@ pub fn run_limits(
         recover_after_secs: config.tuning.table.recover_after_mins.saturating_mul(60),
         halve_hold_secs: config.tuning.table.halve_hold_secs,
         race_slot_wait_secs: config.tuning.table.race_slot_wait_secs,
+        design_tuning: Default::default(),
     }
 }
 
@@ -462,7 +463,9 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         protected_files: pre.protected_files,
         rate_limits: Default::default(),
         outcome: None,
-        // Decision 12's tuning lines open the run's log.
+        // Decision 12's tuning lines open the run's log. In a design run, milestone
+        // 9.6's design tuning lines follow them once the run enters the flow
+        // (`engine::design_spend::tuned`, ruling T13-5).
         log: (ctx.tuning.log.iter())
             .map(|text| super::model::LogEntry {
                 at: ctx.now,
@@ -495,6 +498,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         onboarding_report: None,
         path: None,
         triage: None,
+        design_mode: proto::DesignMode::Off,
         triage_usage: Default::default(),
         scout_usage: Default::default(),
         orchestrator_usage: Default::default(),

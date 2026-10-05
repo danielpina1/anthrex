@@ -42,6 +42,7 @@
 use proto::{AgentRole, ToolCall};
 
 use super::{AgentSignal, Effect, EngineState, OpKind, ReplyId, done, signals};
+use crate::run::design::state::DesignAgentState;
 use crate::run::model::{AgentRound, OpId, Run};
 use crate::run::orch::{EpicRecord, PlannerPhase, PlannerSession};
 
@@ -123,6 +124,39 @@ fn planner_launches(run: &Run) -> impl Iterator<Item = OpId> + '_ {
     })
 }
 
+/// Milestone 9.6: every design agent launch in flight in `run`, by op: a pending
+/// `StartDesignAgent` whose agent runs with no window yet.
+fn design_launches(run: &Run) -> impl Iterator<Item = OpId> + '_ {
+    let design = run.orch.design.as_ref();
+    let agents = design
+        .into_iter()
+        .flat_map(|d| d.brainstormers.iter().chain(&d.reviewer));
+    let waiting = move |label: String, session: u32| {
+        agents.clone().any(|a| {
+            a.label == label
+                && a.session == session
+                && a.window_id.is_none()
+                && a.state == DesignAgentState::Running
+        })
+    };
+    (run.pending_ops.values())
+        .filter(move |_| !run.state.is_terminal())
+        .filter_map(move |p| match &p.kind {
+            OpKind::StartDesignAgent { spec } => {
+                waiting(spec.kind.label(), spec.session).then_some(p.op)
+            }
+            _ => None,
+        })
+}
+
+/// The design agents' windows in `run`.
+fn design_windows(run: &Run) -> impl Iterator<Item = u32> + '_ {
+    let design = run.orch.design.as_ref();
+    (design.into_iter())
+        .flat_map(|d| d.brainstormers.iter().chain(&d.reviewer))
+        .filter_map(|a| a.window_id)
+}
+
 /// Every launch in flight, `(run, op)`.
 fn in_flight(state: &EngineState) -> Vec<(String, OpId)> {
     state
@@ -133,6 +167,7 @@ fn in_flight(state: &EngineState) -> Vec<(String, OpId)> {
                 .filter(|r| launching(run, r))
                 .map(|r| r.launch_op)
                 .chain(planner_launches(run))
+                .chain(design_launches(run))
                 .map(|op| (run.id.clone(), op))
                 .collect::<Vec<_>>()
         })
@@ -143,6 +178,7 @@ fn still_in_flight(state: &EngineState, (run_id, op): &(String, OpId)) -> bool {
     state.runs.get(run_id).is_some_and(|run| {
         rounds(run).any(|r| r.launch_op == *op && launching(run, r))
             || planner_launches(run).any(|p| p == *op)
+            || design_launches(run).any(|p| p == *op)
     })
 }
 
@@ -156,6 +192,7 @@ fn bound(state: &EngineState, window: u32) -> bool {
                 .iter()
                 .flat_map(|e| e.sessions.iter())
                 .any(|s| s.window_id == Some(window))
+            || design_windows(run).any(|w| w == window)
     })
 }
 
@@ -249,7 +286,14 @@ pub(super) fn hold_call(
 /// PR #22's hold so the planner's one write cannot be lost): from a window no session
 /// has, naming an epic whose latest session is being launched.
 pub(crate) fn holds_planner_call(state: &EngineState, call: &ToolCall) -> bool {
-    call.role == AgentRole::Planner && call.tool == "submit_epic" && awaits_launch(state, call)
+    let write = matches!(
+        (call.role, call.tool.as_str()),
+        (AgentRole::Planner, "submit_epic")
+            // Milestone 9.6 (task 6's review c): a design agent's one write.
+            | (AgentRole::Brainstormer, "submit_doc")
+            | (AgentRole::DocReviewer, "submit_findings")
+    );
+    write && awaits_launch(state, call)
 }
 
 /// Task M9.11 (review finding 1): whether `call`, a sub-planner's or the
@@ -274,6 +318,11 @@ pub(crate) fn awaits_launch(state: &EngineState, call: &ToolCall) -> bool {
             .find(|e| Some(&e.epic) == call.epic.as_ref())
             .and_then(|e| e.sessions.last().map(|s| planner_launching(run, e, s)))
             .unwrap_or(false),
+        // Milestone 9.6: a launch of a design agent of its role is in flight.
+        AgentRole::Brainstormer | AgentRole::DocReviewer => design_launches(run).any(|op| {
+            let kind = run.pending_ops.get(&op).map(|p| &p.kind);
+            matches!(kind, Some(OpKind::StartDesignAgent { spec }) if spec.kind.role() == call.role)
+        }),
         AgentRole::Orchestrator => run.orch.orchestrator.as_ref().is_some_and(|o| {
             !run.state.is_terminal()
                 && o.window_id != Some(call.window_id)

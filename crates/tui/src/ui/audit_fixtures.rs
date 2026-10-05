@@ -283,6 +283,38 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
                 },
             ),
         ),
+        // Milestone 9.6 decision 34: the document gate screen, and its note editor.
+        (
+            "doc gate",
+            crate::ui::doc_gate::tests::opened(proto::DocGateKind::Spec, 80, 24),
+        ),
+        (
+            "doc gate note",
+            with(
+                crate::ui::doc_gate::tests::opened(proto::DocGateKind::Spec, 80, 24),
+                |a| tap(a, 'c'),
+            ),
+        ),
+        // Milestone 9.6 task 18: the run view at a spec gate with its design agents
+        // (ruling T18-1), the plan review's Plan doc tab (its document ASCII-only) and
+        // the iterate dialog's design row.
+        (
+            "run view at a spec gate",
+            run_view(crate::ui::doc_gate::tests::app_with(
+                crate::tree::run_rows::design_tests::with_agents(),
+                80,
+                24,
+            )),
+        ),
+        ("plan doc tab", plan_doc_tab()),
+        (
+            "iterate dialog with its design row",
+            with(run_view(iterable()), |a| {
+                let form = crate::run_iterate::IterateForm::new(RUN_ID.into(), 2)
+                    .with_design(Some(proto::RoundDesign::Off));
+                a.modal = Some(Modal::Iterate(form));
+            }),
+        ),
         (
             "stats",
             with(gate(), |a| {
@@ -307,6 +339,12 @@ fn idle_row() -> App {
 
 /// The gate fixture's run as a `pr` run, complete (every PR landed, so no `ready to
 /// accept` alert), every task merged, listing `iterate` first.
+/// The plan review's Plan doc tab on a design run's plan gate, its `plan.md` loaded.
+fn plan_doc_tab() -> App {
+    use crate::app::doc_gate::plan_doc::tests::{PLAN, on_tab, plan_run};
+    on_tab(plan_run(2), &PLAN.replace('·', "-"), 80, 24)
+}
+
 fn iterable() -> App {
     let (mut snap, windows) = gate_fixture();
     let run = &mut snap.runs[0];

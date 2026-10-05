@@ -14,6 +14,7 @@ use crate::actions::ActionInfo;
 use crate::adapt::{
     DeciderSource, DiffStats, PhaseSecs, RunPath, RunUsage, SizeCheckInfo, TriageInfo,
 };
+use crate::design::{DesignMode, DocGateInfo, DocInfo, RoundDesign};
 use crate::orch::{HoldInfo, IntegrationInfo, MessageKind, OrchestratorInfo, TaskNoteInfo};
 use crate::planner::PlannerInfo;
 use crate::profile::{ProfileSource, ProposalAlertInfo};
@@ -304,6 +305,10 @@ pub struct TaskInfo {
     pub race: Option<RaceInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pair: Option<PairInfo>,
+    /// Milestone 9.6 decision 17: the spec requirements the task delivers; left out
+    /// while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covers: Vec<String>,
 }
 
 fn first_stage() -> u16 {
@@ -462,6 +467,27 @@ pub struct RunInfo {
     /// left out while empty.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub writer_caps: BTreeMap<String, u8>,
+    /// Milestone 9.6 (DF §10): the run's design mode, its open document gate and every
+    /// gate version, each left out while off, `None` or empty, so a run without the
+    /// design flow is shown as 9.5's.
+    #[serde(default, skip_serializing_if = "DesignMode::is_off")]
+    pub design: DesignMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_gate: Option<DocGateInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub docs: Vec<DocInfo>,
+    /// Task M9.6.17: the current round's design mode, from round 2 of a design run on
+    /// (`None` in round 1 and without the flow); and while the run is halted from a
+    /// design phase or gate, the phase its plain resume returns to (`brainstorming`,
+    /// `specifying` or `planning`). Each left out while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round_design: Option<RoundDesign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub halted_phase: Option<RunState>,
+    /// Ruling T18-1: the current round's brainstormers and document reviewer, left out
+    /// while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub design_agents: Vec<crate::design::DesignAgentInfo>,
 }
 
 /// Every run the daemon knows about, at one revision.

@@ -208,6 +208,21 @@ pub(in crate::run::engine) fn planner_accepted(run: &mut Run, epic: &str) {
     }
 }
 
+/// Milestone 9.6: run-bound `role` session `session_id`'s open record notes `result`
+/// (a brainstormer's accepted draft); the session's end finishes it.
+pub(in crate::run::engine) fn note_result(
+    run: &mut Run,
+    (role, session_id): (AgentRole, &str),
+    result: &str,
+) {
+    let id = roles::record_id(&run.id, role, session_id);
+    let open =
+        (run.role_routing_decisions.iter_mut()).find(|d| d.record_id == id && d.outcome.is_none());
+    if let Some(d) = open {
+        d.result = Some(result.to_string());
+    }
+}
+
 /// A planner record's result once its epic was accepted.
 const ACCEPTED: &str = "epic accepted";
 
@@ -241,10 +256,12 @@ pub(in crate::run::engine) fn planner_ended(
         (Ok(ScoutEnd::Reported), false) => {
             (RoleOutcome::Failed, "ended without an accepted epic".into())
         }
-        (Ok(ScoutEnd::Failed { reason }), true) => {
+        (Ok(ScoutEnd::Failed { reason } | ScoutEnd::Unsubmitted { reason }), true) => {
             (RoleOutcome::Failed, format!("{ACCEPTED}; then {reason}"))
         }
-        (Ok(ScoutEnd::Failed { reason }), false) => (RoleOutcome::Failed, reason.clone()),
+        (Ok(ScoutEnd::Failed { reason } | ScoutEnd::Unsubmitted { reason }), false) => {
+            (RoleOutcome::Failed, reason.clone())
+        }
         (Err(why), _) => (RoleOutcome::Failed, why),
     };
     let (outcome, text) = ended;

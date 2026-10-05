@@ -14,6 +14,8 @@ use super::RunService;
 use super::adapt::BuildError;
 use super::build::Shape;
 use super::delivery::{DeliveryRequestOf, DeliveryStart};
+use super::design_io::DocQuery;
+use crate::run::design::{GoalOrigin, mode_for};
 use crate::run::engine::actions::{self, ActionNode};
 use crate::run::engine::{EventKind, OrchEvent};
 use crate::run::git::{self, Git};
@@ -45,7 +47,14 @@ impl RunService {
                 unconfined_checks,
                 // Milestone 9.2 decision 3: `--delivery`, resolved once, at the start.
                 delivery,
+                // Milestone 9.6 (DF §1): a plan file never runs the design flow.
+                design,
             } => {
+                // A plan file is off whatever the config says, so its default is enough.
+                let config = &config::DesignConfig::default();
+                if let Err(refusal) = mode_for(GoalOrigin::PlanFile, design, config) {
+                    return RunReply::refused(request::START, refusal);
+                }
                 let flags = (yes, trust_project, unconfined_checks);
                 self.start(plan_toml, dir, flags, delivery).await
             }
@@ -110,10 +119,11 @@ impl RunService {
                 orchestrator,
                 delivery,
                 continue_from: None,
+                design,
             } => {
                 let flags = (trust_project, unconfined_checks);
-                self.start_goal(goal, dir, flags, yes, (orchestrator, delivery))
-                    .await
+                let choices = (orchestrator, delivery, design);
+                self.start_goal(goal, dir, flags, yes, choices).await
             }
             // Milestone 9.3 decision 22: a next goal on a chain's orchestrator, which
             // keeps its runtime and model (`orchestrator` is ignored).
@@ -125,6 +135,7 @@ impl RunService {
                 unconfined_checks,
                 delivery,
                 continue_from: Some(after),
+                design,
                 ..
             } => {
                 let next = super::orch::Next {
@@ -134,6 +145,7 @@ impl RunService {
                     unconfined_checks,
                     yes,
                     delivery,
+                    design,
                 };
                 self.continue_request(&after, next).await
             }
@@ -166,12 +178,14 @@ impl RunService {
                 self.delivery_request(req).await
             }
             // Milestone 9.3 decision 10: a round of a settled run.
-            RunRequest::Iterate { run, goal } => answer(
+            // Milestone 9.6 decision 28: with the round's design.
+            RunRequest::Iterate { run, goal, design } => answer(
                 request::ITERATE,
                 self.ask(|reply| EventKind::Iterate {
                     reply,
                     run_id: run,
                     goal,
+                    design,
                 })
                 .await,
             ),
@@ -192,6 +206,37 @@ impl RunService {
                     self.send(EventKind::Orch(OrchEvent::McpReady { run_id, window_id }));
                 }
                 RunReply::done(request::MCP_READY, "")
+            }
+            // Milestone 9.6 decision 7: an action at a document gate.
+            RunRequest::DocGate { run, kind, action } => answer(
+                request::DOC_GATE,
+                (self.ask(|reply| EventKind::DocGate {
+                    reply,
+                    run_id: run,
+                    kind,
+                    action,
+                }))
+                .await,
+            ),
+            // Milestone 9.6 (DF §7): one document version, read off the engine.
+            RunRequest::ShowDoc {
+                run,
+                kind,
+                version,
+                diff,
+                findings,
+            } => {
+                let from = None;
+                let query = DocQuery {
+                    kind,
+                    version,
+                    from,
+                    draft: None,
+                    diff,
+                    findings,
+                    reviewer: false,
+                };
+                self.show_doc(run, query).await
             }
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")

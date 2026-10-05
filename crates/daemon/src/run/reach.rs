@@ -70,6 +70,16 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
         let lists = &run.limits.route_lists;
         found.extend((lists.scout.candidates.iter()).map(|c| c.runtime));
         found.extend((lists.planner.candidates.iter()).map(|c| c.runtime));
+        // Milestone 9.6 decision 10: a design run's brainstormers (every `brainstorm`
+        // candidate, else the strongest of each installed runtime) and its document
+        // reviewer (the orchestrator's peer, else its own runtime).
+        if run.design_mode == proto::DesignMode::Full {
+            found.extend((lists.brainstorm.candidates.iter()).map(|c| c.runtime));
+            let picks = super::orch::roles::lists::brainstorm_picks(run);
+            found.extend(picks.iter().map(|p| p.route.runtime));
+            let peer = peer_route(&run.roster, &o.route, &run.orch.installed);
+            found.extend(peer.map(|r| r.runtime));
+        }
     }
     [Runtime::Claude, Runtime::Codex]
         .into_iter()

@@ -481,6 +481,7 @@ fn continue_sends_continue_from_and_no_orchestrator() {
             orchestrator: None,
             delivery: None,
             continue_from: Some("r-20261001-3f9a".into()),
+            design: None,
         }
     );
     // `new` sends the runtime and no `continue_from`.
@@ -550,7 +551,8 @@ fn an_active_chain_says_this_goal_gets_a_new_orchestrator() {
 }
 
 /// Decision 5 through the dialog: PgDn and PgUp move by the large editor's visible
-/// rows less one (10 at 80x24, so 9), from the view the app hands the keys.
+/// rows less one (9 at 80x24 since milestone 9.6's design row, so 8; changed
+/// expectation), from the view the app hands the keys.
 #[test]
 fn pgdn_and_pgup_move_by_the_visible_rows_less_one() {
     let mut app = app();
@@ -561,11 +563,11 @@ fn pgdn_and_pgup_move_by_the_visible_rows_less_one() {
     press(&mut app, KeyCode::Home, KeyModifiers::CONTROL);
     assert_eq!(form(&app).goal.position(), (1, 1));
     tap(&mut app, KeyCode::PageDown);
-    assert_eq!(form(&app).goal.position(), (10, 1));
+    assert_eq!(form(&app).goal.position(), (9, 1));
     tap(&mut app, KeyCode::PageDown);
-    assert_eq!(form(&app).goal.position(), (19, 1));
+    assert_eq!(form(&app).goal.position(), (17, 1));
     tap(&mut app, KeyCode::PageUp);
-    assert_eq!(form(&app).goal.position(), (10, 1));
+    assert_eq!(form(&app).goal.position(), (9, 1));
 }
 
 /// Decision 5: a bracketed paste is the editor's: it stops at the cap and says so, and

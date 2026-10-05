@@ -1,0 +1,368 @@
+//! Ruling WB-B-I1 (the final fix wave's FW-27): a design document's write that fails
+//! or times out reaches the engine as `EventKind::DesignChecked` with its error, so the
+//! gate reopens as revising, as a restore's read-back does; and a `run show` of a
+//! version whose write is still in flight is answered with the retry text.
+
+use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use proto::run_wire::request;
+use proto::{DocGateAction, DocGateKind, DocKind, RunReply, RunRequest, RunState};
+use tokio_util::sync::CancellationToken;
+
+use super::super::RunService;
+use super::IO_WAIT;
+use super::tests::{SPEC_1, design_run, service, spec, store, tmp};
+use crate::run::design::state::DocGate;
+use crate::run::engine::Effect;
+use crate::run::test_support::RUN_ID;
+
+/// The parts of a `WriteDoc`, as `write_doc_with` takes them.
+type Write = (
+    std::path::PathBuf,
+    String,
+    Option<(std::path::PathBuf, String)>,
+    Option<crate::run::design::versions::WrittenDoc>,
+);
+
+/// A design run at its spec gate on v1, which is stored but not written yet, its
+/// engine running: the service and v1's write.
+fn at_spec_gate(data: &Path) -> (Arc<RunService>, Write) {
+    let mut run = design_run(data);
+    run.state = RunState::AwaitingApproval;
+    let s = service(data, run);
+    let (_, effect) = store(&s, spec(SPEC_1));
+    let mut state = crate::lock(&s.state);
+    let design = state.runs.get_mut(RUN_ID).unwrap().orch.design.as_mut();
+    design.unwrap().gate = Some(DocGate {
+        kind: DocGateKind::Spec,
+        version: 1,
+        opened_at: 2_000,
+        revising: None,
+        review: false,
+        cause: Default::default(),
+    });
+    drop(state);
+    let Effect::WriteDoc {
+        path,
+        text,
+        index,
+        doc,
+    } = effect
+    else {
+        panic!("a write: {effect:?}");
+    };
+    (s, (path, text, index, doc))
+}
+
+/// The spec gate's revising note now.
+fn revising_now(s: &RunService) -> Option<String> {
+    let state = crate::lock(&s.state);
+    let design = state.runs[RUN_ID].orch.design.clone();
+    design.and_then(|d| d.gate).and_then(|g| g.revising)
+}
+
+/// The spec gate's revising note, once set, within a deadline.
+async fn revising(s: &RunService) -> Option<String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let note = revising_now(s);
+        if note.is_some() || Instant::now() >= deadline {
+            return note;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn approve(s: &RunService) -> RunReply {
+    s.request(RunRequest::DocGate {
+        run: RUN_ID.into(),
+        kind: DocGateKind::Spec,
+        action: DocGateAction::APPROVE,
+    })
+    .await
+}
+
+const REOPENED: &str = "anthrex could not read back the stored spec v1; submit it again";
+const REVISING: &str = "the orchestrator is revising spec v1; wait for it";
+
+/// The file's write fails (its link refused with EIO, through `write_new_at`'s seam):
+/// the gate reopens as revising, and `run approve --gate spec` is refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_write_reopens_its_gate_as_revising() {
+    let dir = tmp();
+    let (s, write) = at_spec_gate(dir.path());
+    let shutdown = CancellationToken::new();
+    s.spawn(shutdown.clone());
+    let failing = |path: &Path, text: &str| {
+        let eio = |_: &Path, _: &Path| Err(std::io::Error::from_raw_os_error(libc::EIO));
+        super::write_new_at(path, text, 1, &eio)
+    };
+    s.write_doc_with(write, IO_WAIT, failing).await;
+    assert_eq!(revising(&s).await.as_deref(), Some(REOPENED));
+    let refused = RunReply::refused(request::DOC_GATE, REVISING);
+    assert_eq!(approve(&s).await, refused);
+    shutdown.cancel();
+}
+
+/// The write passes its wait: the same, without waiting for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_timed_out_write_reopens_its_gate_as_revising() {
+    let dir = tmp();
+    let (s, write) = at_spec_gate(dir.path());
+    let shutdown = CancellationToken::new();
+    s.spawn(shutdown.clone());
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let stalled = move |path: &Path, text: &str| {
+        let _ = held.recv_timeout(Duration::from_secs(30));
+        super::write_new(path, text)
+    };
+    let call = s.write_doc_with(write, Duration::from_millis(200), stalled);
+    tokio::time::timeout(Duration::from_secs(10), call)
+        .await
+        .expect("the write returns at its wait");
+    assert_eq!(revising(&s).await.as_deref(), Some(REOPENED));
+    drop(release);
+    shutdown.cancel();
+}
+
+/// While v1's write is held, `run show` of it answers the retry text; once written, it
+/// shows the version.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_version_being_written_is_shown_with_the_retry_text() {
+    let dir = tmp();
+    let (s, write) = at_spec_gate(dir.path());
+    let shutdown = CancellationToken::new();
+    s.spawn(shutdown.clone());
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let (entered, began) = std::sync::mpsc::channel::<()>();
+    let stalled = move |path: &Path, text: &str| {
+        let _ = entered.send(());
+        let _ = held.recv_timeout(Duration::from_secs(30));
+        super::write_new(path, text)
+    };
+    let writer = s.clone();
+    let writing = tokio::spawn(async move { writer.write_doc_with(write, IO_WAIT, stalled).await });
+    let began = tokio::task::spawn_blocking(move || began.recv_timeout(Duration::from_secs(10)));
+    assert!(began.await.unwrap().is_ok(), "the write started");
+    let show = || RunRequest::ShowDoc {
+        run: RUN_ID.into(),
+        kind: DocKind::Spec,
+        version: Some(1),
+        diff: false,
+        findings: false,
+    };
+    let retry = "v1 is still being written; try again in a moment";
+    let refused = RunReply::refused(request::SHOW_DOC, retry);
+    assert_eq!(s.request(show()).await, refused);
+    drop(release);
+    tokio::time::timeout(Duration::from_secs(10), writing)
+        .await
+        .expect("the write ends")
+        .unwrap();
+    match s.request(show()).await {
+        RunReply::Doc { doc, .. } => assert_eq!(doc.text, SPEC_1),
+        other => panic!("{other:?}"),
+    }
+    // A write that succeeded sends the engine nothing.
+    assert_eq!(revising_now(&s), None);
+    shutdown.cancel();
+}
+
+/// WB-B m5 (the final fix wave's FW-43): the driver's read refuses a draft together with
+/// a version, or with a label, whatever the parser let through.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_draft_is_never_read_with_a_version_or_a_label() {
+    let dir = tmp();
+    let (s, write) = at_spec_gate(dir.path());
+    s.write_doc_with(write, IO_WAIT, super::write_new).await;
+    let query = |version, from: Option<&str>| super::DocQuery {
+        kind: DocKind::Spec,
+        version,
+        from: from.map(String::from),
+        draft: Some(1),
+        diff: false,
+        findings: false,
+        reviewer: true,
+    };
+    let refused = "a review draft is read without a version or a label";
+    for q in [query(Some(1), None), query(None, Some("claude"))] {
+        assert_eq!(s.doc_view(RUN_ID, q).await, Err(refused.to_string()));
+    }
+}
+
+/// Final fix wave FW-71 (WB-C M-4): `run show` of a review draft (no gate version yet,
+/// ruling T5-1) names its review in the view, so the CLI never prints "v0 of 0"; a
+/// gate version's view names none.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_review_draft_view_names_its_review() {
+    use super::tests::{SPEC_2, apply};
+    use crate::run::design::state::NewDoc;
+    let dir = tmp();
+    let s = service(dir.path(), design_run(dir.path()));
+    let draft = NewDoc {
+        draft_review: Some(1),
+        ..spec(SPEC_1)
+    };
+    let (_, write) = store(&s, draft);
+    apply(&s, write).await;
+    let show = RunRequest::ShowDoc {
+        run: RUN_ID.into(),
+        kind: DocKind::Spec,
+        version: None,
+        diff: true,
+        findings: false,
+    };
+    match s.request(show.clone()).await {
+        RunReply::Doc { doc, .. } => {
+            assert_eq!((doc.version, doc.draft_review), (0, Some(1)));
+            assert_eq!(doc.text, SPEC_1);
+        }
+        other => panic!("{other:?}"),
+    }
+    let (_, write) = store(&s, spec(SPEC_2));
+    apply(&s, write).await;
+    match s.request(show).await {
+        RunReply::Doc { doc, .. } => assert_eq!((doc.version, doc.draft_review), (1, None)),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The W2 re-review's N2: a version is in flight from the step that stored it, not
+/// from its write. The user's edit stores v2; its step's `run.json` save is held, so
+/// the step's `WriteDoc` has not run; meanwhile `run show` of v2 answers the retry
+/// text, never a missing file. Released, v2 is shown.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_version_is_in_flight_from_the_step_that_stored_it() {
+    let dir = tmp();
+    let (s, write) = at_spec_gate(dir.path());
+    s.write_doc_with(write, IO_WAIT, super::write_new).await;
+    let shutdown = CancellationToken::new();
+    s.spawn(shutdown.clone());
+    // The loop's first tick saves the run; it is waited for, so the stall below holds
+    // only the edit's own step.
+    let saved = dir.path().join("runs").join(RUN_ID).join("run.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !saved.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the first tick never saved the run"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // The run's `run.json` writes, stalled on a thread of the test's own.
+    let slot = s.writes.slot(RUN_ID);
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let (locked, taken) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let _stalled = crate::lock(&slot);
+        let _ = locked.send(());
+        let _ = held.recv_timeout(Duration::from_secs(30));
+    });
+    taken.recv_timeout(Duration::from_secs(10)).expect("held");
+    let editor = s.clone();
+    let edit = tokio::spawn(async move {
+        editor
+            .request(RunRequest::DocGate {
+                run: RUN_ID.into(),
+                kind: DocGateKind::Spec,
+                action: DocGateAction::Edit {
+                    text: crate::run::design::template::tests::SPEC.into(),
+                },
+            })
+            .await
+    });
+    // The step has stored v2 (its state is committed before its effects run).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let stored = {
+            let state = crate::lock(&s.state);
+            let design = state.runs[RUN_ID].orch.design.as_ref();
+            design.is_some_and(|d| d.find(DocKind::Spec, Some(2)).is_some())
+        };
+        if Instant::now() >= deadline {
+            panic!("v2 was never stored: {:?}", edit.await);
+        }
+        if stored {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let show = || RunRequest::ShowDoc {
+        run: RUN_ID.into(),
+        kind: DocKind::Spec,
+        version: Some(2),
+        diff: false,
+        findings: false,
+    };
+    let retry = "v2 is still being written; try again in a moment";
+    let refused = RunReply::refused(request::SHOW_DOC, retry);
+    assert_eq!(s.request(show()).await, refused);
+    drop(release);
+    holder.join().unwrap();
+    tokio::time::timeout(Duration::from_secs(10), edit)
+        .await
+        .expect("the edit is answered")
+        .unwrap();
+    match s.request(show()).await {
+        RunReply::Doc { doc, .. } => assert!(doc.text.starts_with("# Password reset\n"), "{doc:?}"),
+        other => panic!("{other:?}"),
+    }
+    shutdown.cancel();
+}
+
+/// The W3 carry: `run show --findings` of a review draft shows that review's findings
+/// (no answers yet), none while the review has given none.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_review_drafts_findings_are_its_reviews() {
+    use crate::run::design::state::{DocReviewRecord, NewDoc};
+    let dir = tmp();
+    let s = service(dir.path(), design_run(dir.path()));
+    let draft = NewDoc {
+        draft_review: Some(1),
+        ..spec(SPEC_1)
+    };
+    let (_, write) = store(&s, draft);
+    super::tests::apply(&s, write).await;
+    let finding = proto::DocFinding {
+        id: "F1".into(),
+        severity: proto::DocSeverity::Blocking,
+        place: "R1".into(),
+        text: "The link's lifetime is missing.".into(),
+    };
+    let review = |findings: Vec<proto::DocFinding>| DocReviewRecord {
+        doc: DocKind::Spec,
+        n: 1,
+        findings,
+        failed: None,
+        after: 0,
+        same_runtime: false,
+        dropped: false,
+    };
+    let set = |record: DocReviewRecord| {
+        let mut state = crate::lock(&s.state);
+        let design = state.runs.get_mut(RUN_ID).unwrap().orch.design.as_mut();
+        design.unwrap().reviews = vec![record];
+    };
+    let show = RunRequest::ShowDoc {
+        run: RUN_ID.into(),
+        kind: DocKind::Spec,
+        version: None,
+        diff: false,
+        findings: true,
+    };
+    set(review(Vec::new()));
+    match s.request(show.clone()).await {
+        RunReply::Doc { doc, .. } => assert_eq!(doc.findings, Vec::new()),
+        other => panic!("{other:?}"),
+    }
+    set(review(vec![finding.clone()]));
+    match s.request(show).await {
+        RunReply::Doc { doc, .. } => {
+            assert_eq!(doc.draft_review, Some(1));
+            assert_eq!(doc.findings, vec![(finding, None)]);
+        }
+        other => panic!("{other:?}"),
+    }
+}

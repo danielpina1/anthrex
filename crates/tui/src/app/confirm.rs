@@ -25,6 +25,12 @@ pub enum PendingAction {
         hold: String,
     },
     SubmitPlan(String),
+    /// Milestone 9.6 decision 35: a document gate's action, after its page.
+    DocGate {
+        run_id: String,
+        kind: proto::DocGateKind,
+        action: proto::DocGateAction,
+    },
 }
 
 impl PendingAction {
@@ -39,6 +45,14 @@ impl PendingAction {
             PendingAction::RemoveTask { .. } => "remove",
             PendingAction::RejectHold { .. } => "reject hold",
             PendingAction::SubmitPlan(_) => "submit",
+            PendingAction::DocGate { action, .. } => match action {
+                proto::DocGateAction::Approve { .. } => "approve",
+                proto::DocGateAction::Reject => "reject",
+                proto::DocGateAction::Rethink { .. } => "rethink",
+                proto::DocGateAction::Back { .. } => "go back",
+                proto::DocGateAction::Changes { .. } => "ask for changes",
+                proto::DocGateAction::Edit { .. } => "save",
+            },
         }
     }
 
@@ -51,6 +65,10 @@ impl PendingAction {
                 | PendingAction::RejectHold { .. }
                 | PendingAction::StopDaemon
                 | PendingAction::Kill(_)
+                | PendingAction::DocGate {
+                    action: proto::DocGateAction::Reject,
+                    ..
+                }
         )
     }
 }

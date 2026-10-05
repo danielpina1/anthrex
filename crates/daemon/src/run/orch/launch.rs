@@ -139,6 +139,7 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
             epic: None,
             chain: run.chain.clone(),
             lane: None,
+            agent_label: None,
         },
         instructions: ORCHESTRATOR_CONTRACT.to_string(),
         effort: route.effort,
@@ -250,10 +251,13 @@ pub const PLANNER_ALLOWED_TOOLS: &[&str] = &[
 pub fn planner_spec(run: &Run, epic: &EpicRecord, session: u32) -> PlannerSpec {
     let route = epic.route.clone();
     let replan = !epic.replans.is_empty();
-    let first_turn = match replan {
+    let mut first_turn = match replan {
         false => planner_prompt(run, epic, ""),
         true => replan_prompt(run, epic, ""),
     };
+    // Milestone 9.6 decision 22: the approved spec's part for this epic, after the
+    // extract's slot.
+    first_turn.push_str(&crate::run::design::epic::block(run, epic));
     let at = planner_extract_at(run, epic, replan);
     let mcp = McpTarget {
         role: AgentRole::Planner,
@@ -263,6 +267,7 @@ pub fn planner_spec(run: &Run, epic: &EpicRecord, session: u32) -> PlannerSpec {
         epic: Some(epic.epic.clone()),
         chain: None,
         lane: None,
+        agent_label: None,
     };
     let run_ref = RunRef {
         run_id: run.id.clone(),
@@ -344,6 +349,7 @@ pub fn research_spec(run: &Run, task: &Task) -> HeadlessSpec {
         epic: None,
         chain: None,
         lane: None,
+        agent_label: None,
     };
     read_only(
         run,
@@ -363,8 +369,9 @@ pub fn review_task_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
 /// A read-only session in the user's checkout (decisions 20a, 31): an explicit
 /// `--permission-mode` with the reviewers' denials, an empty-root Claude sandbox
 /// denying the checkout and every repository path, Codex `read-only` with the run's
-/// config guard, no output filter.
-fn read_only(
+/// config guard, no output filter. Milestone 9.6: the design agents' too
+/// (`scout::design_spec`).
+pub(crate) fn read_only(
     run: &Run,
     route: &Route,
     (instructions, tools): (&str, &[&str]),
@@ -392,6 +399,7 @@ fn read_only(
             false => Vec::new(),
         },
         claude_sandbox: claude.then(|| ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: Vec::new(),
             deny_write: deny,
         }),

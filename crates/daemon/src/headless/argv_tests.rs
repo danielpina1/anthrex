@@ -29,6 +29,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         }),
         allowed_tools: [
             "mcp__anthrex__task_done",
@@ -42,6 +43,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
         claude_permission_mode: Some("acceptEdits".into()),
         claude_disallowed_tools: vec![],
         claude_sandbox: Some(ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: vec![PathBuf::from(COMMON)],
             deny_write: vec![],
         }),
@@ -78,6 +80,7 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         }),
         allowed_tools: [
             "mcp__anthrex__submit_review",
@@ -93,6 +96,7 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
         claude_permission_mode: Some("dontAsk".into()),
         claude_disallowed_tools: ["Edit", "Write", "NotebookEdit"].map(String::from).to_vec(),
         claude_sandbox: Some(ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: Vec::new(),
             deny_write: vec![],
         }),
@@ -215,6 +219,7 @@ fn mcp_args_for_a_worker() {
         epic: None,
         chain: None,
         lane: None,
+        agent_label: None,
     };
     assert_eq!(
         mcp_args(&target, 7, Path::new("/tmp/a.sock")),
@@ -507,6 +512,7 @@ fn codex_worker_args_add_the_git_common_dir_as_writable() {
 #[test]
 fn worker_settings_json_enables_the_sandbox() {
     let sandbox = ClaudeSandbox {
+        deny_read: Vec::new(),
         writable_roots: vec![PathBuf::from(COMMON)],
         deny_write: vec![],
     };
@@ -523,6 +529,7 @@ fn worker_settings_json_enables_the_sandbox() {
             allow_unsandboxed: "escape",
             write_allow: "fs.write.paths",
             write_deny: "fs.write.denied",
+            read_deny: "fs.read.denied",
             fail_if_unavailable: "strict",
             pins: &[("net.sockets", Pin::Empty), ("net.local", Pin::Bool(false))],
         },
@@ -573,6 +580,7 @@ mod filter;
 #[test]
 fn deny_write_becomes_filesystem_deny_write() {
     let sandbox = ClaudeSandbox {
+        deny_read: Vec::new(),
         writable_roots: vec![PathBuf::from(COMMON)],
         deny_write: vec![
             PathBuf::from("/tmp/p/.anthrex/wt/t1/.codex"),
@@ -592,6 +600,7 @@ fn deny_write_becomes_filesystem_deny_write() {
         json!([COMMON])
     );
     let none = ClaudeSandbox {
+        deny_read: Vec::new(),
         deny_write: vec![],
         ..sandbox
     };

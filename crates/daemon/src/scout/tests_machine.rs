@@ -15,6 +15,7 @@ fn limits(max_tool_calls: u32) -> ScoutLimits {
         timeout_secs: 900,
         max_tool_calls,
         send_mid_turn: true,
+        nudges: true,
         texts: super::machine::SCOUT_TEXTS,
     }
 }
@@ -190,6 +191,7 @@ fn machine_sums_usage() {
 fn machine_owes_the_wrap_up_to_the_turn_end_without_mid_turn_sends() {
     let l = ScoutLimits {
         send_mid_turn: false,
+        nudges: true,
         ..limits(11)
     };
     let mut machine = started(&l);
@@ -244,6 +246,7 @@ fn limits_send_mid_turn_only_on_claude() {
             timeout_secs: 900,
             max_tool_calls: 120,
             send_mid_turn: true,
+            nudges: true,
             texts: super::machine::SCOUT_TEXTS,
         }
     );

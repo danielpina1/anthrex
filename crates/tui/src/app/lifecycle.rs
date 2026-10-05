@@ -40,6 +40,12 @@ impl App {
                 run(RunRequest::RejectHold { run_id, hold })
             }
             PendingAction::SubmitPlan(run_id) => self.send_submit(run_id),
+            // Milestone 9.6 decision 35: a document gate's action, tagged for its screen.
+            PendingAction::DocGate {
+                run_id,
+                kind,
+                action,
+            } => vec![self.send_doc_gate(run_id, kind, action).1],
         }
     }
 

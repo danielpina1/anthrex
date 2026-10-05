@@ -59,7 +59,10 @@ pub enum PendingWhat {
         kind: ActionKind,
     },
     /// The answer form's `TaskDetail` (decision 15): fills its brief rows.
-    FormBrief { run_id: String, task_id: String },
+    FormBrief {
+        run_id: String,
+        task_id: String,
+    },
     /// The connection's `Settings(Get)` (decision 24, `app/screens.rs`).
     SettingsGet,
     /// A `Settings(Put)`; its `Saved` replaces the cache, any other reply re-syncs it.
@@ -70,7 +73,15 @@ pub enum PendingWhat {
         ask: ProfileAsk,
     },
     /// The stats screen's `Stats { dir }` (decision 38, `app/stats.rs`).
-    Stats { dir: std::path::PathBuf },
+    Stats {
+        dir: std::path::PathBuf,
+    },
+    /// Milestone 9.6: the document gate screen's `ShowDoc` and its gate's `DocGate`
+    /// (`app/doc_gate_replies.rs`).
+    DocShow {
+        run_id: String,
+    },
+    DocGate(super::doc_gate_replies::GateAsk),
 }
 
 /// One request waiting for its reply.
@@ -188,6 +199,9 @@ impl App {
         if let Some(effects) = self.route_stats_reply(reply) {
             return Some(effects);
         }
+        if let Some(effects) = self.route_doc_gate_reply(reply) {
+            return Some(effects);
+        }
         match reply {
             RunReply::Done {
                 message,
@@ -289,7 +303,7 @@ impl App {
         }
         // The open Settings screen shows its own save's expiry (`settings_flow.rs`), the
         // stats screen its request's (`stats.rs`), the Profile screen its views' and the
-        // answer form its brief's (final review): no toast for any of them.
+        // answer form its brief's (final review), the gate screen its documents': no toast.
         let mut owned = usize::from(screens && !self.settings_saving())
             + usize::from(stats.is_some() && self.stats_awaited().is_none());
         self.stats_tick();
@@ -319,6 +333,7 @@ impl App {
                 self.fail_form_brief(id, run_id, task_id, why)
             }
             PendingWhat::Profile { dir, ask } => self.profile_view_failed(id, dir, *ask, why),
+            PendingWhat::DocShow { .. } => self.doc_show_failed(id, why),
             _ => false,
         }
     }
@@ -383,6 +398,7 @@ impl App {
                 self.iterate_not_sent(Some(id));
                 true
             }
+            RunRequest::ShowDoc { .. } | RunRequest::DocGate { .. } => self.doc_gate_not_sent(id),
             _ => true,
         }
     }

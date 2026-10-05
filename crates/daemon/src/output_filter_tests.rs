@@ -231,6 +231,7 @@ fn rewrite_never_double_wraps() {
 fn add_hook_appends_a_second_group() {
     let caps = crate::headless::argv::CLI_CAPS;
     let sandbox = crate::headless::ClaudeSandbox {
+        deny_read: Vec::new(),
         writable_roots: vec![PathBuf::from("/tmp/ax/t1")],
         deny_write: vec![PathBuf::from("/tmp/wt/.claude")],
     };

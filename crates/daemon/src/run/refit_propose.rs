@@ -26,11 +26,14 @@ pub(super) fn route_text(r: ClassRoute) -> String {
     format!("{}/{}", strength_label(r.strength), effort_label(r.effort))
 }
 
-pub(super) fn list_of(lists: &RouteLists, class: SizeClass) -> &RouteList {
+/// A task class's model list; `None` for a design class (ruling T13-5, m6), whose
+/// agents' routes are decision 10's, never a class's.
+pub(super) fn list_of(lists: &RouteLists, class: SizeClass) -> Option<&RouteList> {
     match class {
-        SizeClass::S => &lists.s,
-        SizeClass::M => &lists.m,
-        SizeClass::Hub => &lists.hub,
+        SizeClass::S => Some(&lists.s),
+        SizeClass::M => Some(&lists.m),
+        SizeClass::Hub => Some(&lists.hub),
+        SizeClass::Brainstorm | SizeClass::DocReview => None,
     }
 }
 
@@ -70,7 +73,7 @@ fn threshold_proposal(
     let (step, cur) = match class {
         SizeClass::S => (5, current.s_lines),
         SizeClass::M => (10, current.m_lines),
-        SizeClass::Hub => return None,
+        SizeClass::Hub | SizeClass::Brainstorm | SizeClass::DocReview => return None,
     };
     let lines_new = u32::try_from(p.div_ceil(step).max(1) * step).unwrap_or(u32::MAX);
     if !moved(lines_new.into(), cur.into(), t.min_change_percent)
@@ -95,13 +98,15 @@ fn threshold_proposal(
     })
 }
 
-/// The class's route without a list: an applied `route.<class>`, else M8a's default.
-pub(super) fn current_route(file: &TuningFile, class: SizeClass) -> ClassRoute {
+/// A task class's route without a list: an applied `route.<class>`, else M8a's
+/// default. `None` for a design class (ruling T13-5, m6): it has no class route.
+pub(super) fn current_route(file: &TuningFile, class: SizeClass) -> Option<ClassRoute> {
     let defaults = ClassRoutes::default();
     match class {
-        SizeClass::S => file.routes.get("s").copied().unwrap_or(defaults.s),
-        SizeClass::M => file.routes.get("m").copied().unwrap_or(defaults.m),
-        SizeClass::Hub => defaults.hub,
+        SizeClass::S => Some(file.routes.get("s").copied().unwrap_or(defaults.s)),
+        SizeClass::M => Some(file.routes.get("m").copied().unwrap_or(defaults.m)),
+        SizeClass::Hub => Some(defaults.hub),
+        SizeClass::Brainstorm | SizeClass::DocReview => None,
     }
 }
 
@@ -117,12 +122,12 @@ fn route_proposal(
     let ladder = match class {
         SizeClass::S => &S_ROUTE_LADDER,
         SizeClass::M => &M_ROUTE_LADDER,
-        SizeClass::Hub => return None,
+        SizeClass::Hub | SizeClass::Brainstorm | SizeClass::DocReview => return None,
     };
-    if !list_of(&cfg.tuning.routes, class).candidates.is_empty() {
+    if list_of(&cfg.tuning.routes, class).is_none_or(|l| !l.candidates.is_empty()) {
         return None;
     }
-    let cur = current_route(file, class);
+    let cur = current_route(file, class)?;
     let samples = route_samples(lines, class, t, cur);
     if !qualifies(&samples, t) {
         return None;

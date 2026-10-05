@@ -188,6 +188,9 @@ fn inspect_raw(row: &Row<'_>, app: &App) -> Inspection {
         } => run::run_inspection(run, *orchestrator, app),
         RowKind::Planner { run, planner } => run::planner_inspection(run, planner, app),
         RowKind::Scout { run, scout, window } => run::scout_inspection(run, scout, *window, app),
+        RowKind::DesignAgent { run, agent, window } => {
+            run_design::design_agent_inspection(run, agent, *window, app)
+        }
         RowKind::Task { run, task } => run_task::task_inspection(run, task, app),
         RowKind::Stage { run, stage } => run_stage::stage_inspection(run, stage, app),
         RowKind::AgentRound { run, task, round } => {
@@ -414,6 +417,7 @@ fn git_text(state: &GitState, p: theme::Palette) -> String {
 
 mod panel;
 mod run;
+mod run_design;
 pub(crate) mod run_format;
 mod run_orch;
 mod run_patterns;
@@ -479,3 +483,6 @@ mod run_patterns_review_tests;
 
 #[cfg(test)]
 mod run_writes_tests;
+
+#[cfg(test)]
+mod run_design_tests;

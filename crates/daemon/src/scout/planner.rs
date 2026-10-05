@@ -41,13 +41,25 @@ pub struct PlannerSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlannerTag {
     pub run_id: String,
+    /// `Planner`, or (milestone 9.6) a design agent's role (`design_spec.rs`).
+    pub role: proto::AgentRole,
+    /// The epic, or a design agent's label (its `--agent-label`).
     pub epic: String,
     pub session: u32,
     pub limits: ScoutLimits,
 }
 
+impl PlannerTag {
+    /// Whether `target`, an unbound window's `anthrex mcp` target, names this session:
+    /// its run, its role, and its epic (a sub-planner) or label (a design agent).
+    pub fn names(&self, target: &crate::headless::McpTarget) -> bool {
+        let key = target.epic.as_ref().or(target.agent_label.as_ref());
+        self.run_id == target.run_id && self.role == target.role && key == Some(&self.epic)
+    }
+}
+
 /// A run's `<h4>` (`Run::short`): the last four characters of its id.
-fn short(run_id: &str) -> &str {
+pub(crate) fn short(run_id: &str) -> &str {
     let cut = run_id.len().saturating_sub(4);
     run_id.get(cut..).unwrap_or(run_id)
 }
@@ -69,12 +81,14 @@ impl ScoutService {
         anyhow::ensure!(valid_id(&id), "invalid sub-planner id {id:?}");
         let tag = PlannerTag {
             run_id: spec.run_id.clone(),
+            role: proto::AgentRole::Planner,
             epic: spec.epic.clone(),
             session: spec.session,
             limits: ScoutLimits {
                 timeout_secs: spec.timeout_secs,
                 max_tool_calls: spec.max_tool_calls,
                 send_mid_turn: spec.route.runtime == proto::Runtime::Claude,
+                nudges: true,
                 texts: PLANNER_TEXTS,
             },
         };

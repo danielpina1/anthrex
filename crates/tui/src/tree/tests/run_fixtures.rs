@@ -124,6 +124,7 @@ pub(crate) fn planner(epic: &str, title: &str) -> PlannerInfo {
         last_rejection: None,
         replans: vec![],
         note: None,
+        covers: Vec::new(),
     }
 }
 

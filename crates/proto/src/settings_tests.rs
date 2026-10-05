@@ -57,6 +57,7 @@ fn a_doc() -> SettingsDoc {
             max_readers: 4,
             max_bounces: 2,
         },
+        design_default: None,
     }
 }
 
@@ -155,9 +156,10 @@ fn settings_variants_are_appended_last() {
     // Milestone 9.2 appends `Deliver` and `Watch` after `Settings` (protocol 14,
     // `delivery_tests.rs`), milestone 9.3 `Iterate` after `Watch` (protocol 15,
     // `rounds_tests.rs`) and milestone 9.5 `McpReady` after `Iterate` (protocol 16,
-    // `tuning_tests.rs`); `Settings` keeps its index right after `TaskDetail`.
+    // `tuning_tests.rs`), and milestone 9.6 `DocGate` and `ShowDoc` after it (protocol
+    // 17, `design_tests.rs`); `Settings` keeps its index right after `TaskDetail`.
     assert_eq!(
-        requests[requests.len() - 6..],
+        requests[requests.len() - 8..requests.len() - 2],
         [
             "TaskDetail",
             "Settings",
@@ -168,8 +170,10 @@ fn settings_variants_are_appended_last() {
         ]
     );
     let replies = variant_names::<RunReply>();
-    assert_eq!(replies.last().map(String::as_str), Some("Settings"));
-    assert_eq!(replies[replies.len() - 2], "TaskDetail");
+    // Milestone 9.6 appends `Doc` after `Settings` (`design_tests.rs`).
+    assert_eq!(replies.last().map(String::as_str), Some("Doc"));
+    assert_eq!(replies[replies.len() - 2], "Settings");
+    assert_eq!(replies[replies.len() - 3], "TaskDetail");
 }
 
 #[test]

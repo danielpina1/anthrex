@@ -69,6 +69,8 @@ pub(super) fn badge(app: &App) -> Option<&'static str> {
         Some(" SETTINGS ")
     } else if matches!(app.screen, Some(Screen::Stats(_))) {
         Some(" STATS ")
+    } else if matches!(app.screen, Some(Screen::DocGate(_))) {
+        Some(" REVIEW ")
     } else if app.plan_review.is_some() {
         Some(" PLAN ")
     } else if app.alerts_focus.is_some() {
@@ -145,6 +147,8 @@ pub(super) fn body(app: &App, term: ratatui::layout::Rect) -> Body {
         )
     } else if let Some(Screen::Stats(_)) = &app.screen {
         (crate::ui::stats::hints(), false)
+    } else if let Some(Screen::DocGate(screen)) = &app.screen {
+        (crate::ui::doc_gate::hints(app, screen), false)
     } else if app.plan_review.is_some() {
         (review_hints(app), false)
     } else if app.alerts_focus.is_some() {
@@ -194,7 +198,18 @@ fn navigate_hints(app: &App) -> Vec<Hint> {
     let state = run.map(|run| run.state);
     // Milestone 9: a planning run's submit, and a run's awaiting holds.
     let holds = run.is_some_and(|run| crate::tree::awaiting_holds(run).next().is_some());
-    if state == Some(proto::RunState::AwaitingApproval) {
+    // Milestone 9.6: a brainstorm or spec gate's keys open the gate screen.
+    let doc_gate = run.is_some_and(|run| crate::app::doc_gate::doc_gate_of(run).is_some());
+    if doc_gate {
+        vec![
+            hint("a", "review", 9),
+            hint("x", "reject", 9),
+            hint("⏎", "open", 4),
+            hint(".", "actions", 7),
+            hint("f", &filter, 3),
+            esc_back(),
+        ]
+    } else if state == Some(proto::RunState::AwaitingApproval) {
         vec![
             hint("a", "approve", 9),
             hint("x", "reject", 9),
@@ -282,7 +297,12 @@ fn alerts_view_hints(app: &App) -> Vec<Hint> {
 }
 
 /// Milestone 9.0.5 decision 13: the plan review's keys, at the gate or for a hold.
+/// Milestone 9.6: a design plan gate adds `c` and `b` and the Plan doc tab's `tab`;
+/// on the tab, the document scrolls and the task keys go.
 fn review_hints(app: &App) -> Vec<Hint> {
+    if app.plan_doc_gate().is_some() {
+        return design_review_hints(app.plan_doc().is_some());
+    }
     let tail = [
         hint("j/k", "task", 4),
         hint("PgUp/PgDn", "scroll", 3),
@@ -300,4 +320,29 @@ fn review_hints(app: &App) -> Vec<Hint> {
         ],
     };
     head.into_iter().chain(tail).collect()
+}
+
+/// [`review_hints`] at a design run's plan gate, on the task list or the Plan doc tab.
+fn design_review_hints(on_doc: bool) -> Vec<Hint> {
+    let mut hints = vec![hint("a", "approve", 9), hint("x", "reject", 9)];
+    if on_doc {
+        hints.extend([
+            hint("c", "changes", 8),
+            hint("b", "back", 5),
+            hint("tab", "tasks", 7),
+            hint("j/k", "scroll", 4),
+        ]);
+    } else {
+        hints.extend([
+            hint("e", "edit", 6),
+            hint("d", "drop", 5),
+            hint("c", "changes", 8),
+            hint("b", "back", 5),
+            hint("tab", "plan doc", 7),
+            hint("j/k", "task", 4),
+            hint("PgUp/PgDn", "scroll", 3),
+        ]);
+    }
+    hints.push(esc_back());
+    hints
 }

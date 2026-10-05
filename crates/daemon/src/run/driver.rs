@@ -23,6 +23,11 @@ pub(crate) mod build;
 mod cleanup;
 mod context;
 mod delivery;
+mod design_commit;
+mod design_files;
+mod design_io;
+mod design_ops;
+mod design_restore;
 mod effects;
 // Milestone 9.1.7: read by the tier executor (M9.1.9); until then only its tests call it.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -126,6 +131,8 @@ pub struct RunService {
     /// The debug builds' test holds on op `done` lines (M8a.25; `effects::DoneHolds`).
     done_holds: effects::DoneHolds,
     writes: effects::RunWrites,
+    /// Milestone 9.6: orders each run's `versions.json` writes (`driver/design_files.rs`).
+    doc_writes: design_io::DocWrites,
     /// Replayed accepts whose clean-up waits for the event loop (ruling T22-N3).
     held_accepts: Mutex<Vec<restore::AcceptCleanUp>>,
     /// Milestone 8b's services, set once by the daemon (`set_adaptation`).
@@ -165,18 +172,17 @@ fn abort_after() -> Option<(String, u32)> {
 
 impl RunService {
     /// A service for `manager` with the default `[orchestrator]` and its data under
-    /// `data_dir`: what a daemon built without `lifecycle::run` (a test's) needs.
+    /// `data_dir`: what a daemon built without `lifecycle::run` (a test's) needs. Its
+    /// design flow is off (milestone 9.6 ruling T3-2), so a planned goal plans at once,
+    /// as before 9.6; a test of the flow builds its own context.
     pub fn for_manager(
         manager: &Arc<WindowManager>,
         data_dir: PathBuf,
         git_roots: Arc<dyn GitRoots>,
     ) -> Arc<Self> {
-        let ctx = RunContext::new(
-            data_dir,
-            manager.config(),
-            config::Orchestrator::default(),
-            git_roots,
-        );
+        let mut orchestrator = config::Orchestrator::default();
+        orchestrator.design.default = proto::DesignMode::Off;
+        let ctx = RunContext::new(data_dir, manager.config(), orchestrator, git_roots);
         Self::new(manager.clone(), ctx)
     }
 
@@ -219,6 +225,7 @@ impl RunService {
             abort_after: abort_after(),
             done_holds: effects::DoneHolds::from_env(),
             writes: effects::RunWrites::default(),
+            doc_writes: design_io::DocWrites::default(),
             held_accepts: Mutex::new(Vec::new()),
             adaptation: std::sync::OnceLock::new(),
             metered: Default::default(),
@@ -324,7 +331,7 @@ impl RunService {
                 Ok(fx) => {
                     self.metered.refresh_live(&state);
                     self.release_ended_orchestrators(&state);
-                    Some(guard::prepare_guarded(&state, fx, now))
+                    Some(self.mark_writes(guard::prepare_guarded(&state, fx, now)))
                 }
                 Err(panic) => {
                     tracing::error!(%panic, "the run engine panicked on an event; the event is dropped");

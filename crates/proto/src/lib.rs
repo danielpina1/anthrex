@@ -107,7 +107,24 @@
 /// `run.json`, snapshot and history still load (`HISTORY_VERSION` stays 5).
 /// Derivation: `PROTO_VERSION` was 15 at `crates/proto/src/lib.rs:96` before this
 /// change (set by M9.3); 15 + 1 = 16.
-pub const PROTO_VERSION: u32 = 16;
+///
+/// Milestone 9.6 task 2 bumps this to 17: it appends `RunState::{Brainstorming,
+/// Specifying}`, `AgentRole::{Brainstormer, DocReviewer}`, `RunRequest::{DocGate,
+/// ShowDoc}`, `RunReply::Doc`, `ActionKind::ReviewDoc` and `HistoryLine::Phase`, adds
+/// the design types (`proto::design`), the `design` field of `RunRequest::{Start,
+/// StartGoal, Iterate}`, `PlanTask.covers`, `TaskInfo.covers` and `RunInfo.{design,
+/// doc_gate, docs}`. Every new field is `#[serde(default)]` and left out while unset,
+/// and every new variant is appended last, so a protocol-16 `run.json`, plan, snapshot
+/// and history still load (`HISTORY_VERSION` stays 5). Derivation: `PROTO_VERSION`
+/// was 16 at `crates/proto/src/lib.rs:110` before this change (set by M9.5);
+/// 16 + 1 = 17. Later 9.6 tasks append, still under 17 (unreleased), each defaulted:
+/// `DocGateInfo.{report, revising_cause}`, `RunInfo.{round_design, halted_phase,
+/// design_agents}` with the `DesignAgentInfo` and `DesignAgentStatus` types (ruling
+/// T18-1), `SettingsDoc.design_default` (T18-2), `PlannerInfo.covers` (T11-1),
+/// `PhaseAgent.{secs, sessions}` (T13-1, T13-3), `DocView.draft_review` (the final fix
+/// wave's FW-71) and `DocGateAction::Approve`'s `version` (still written as
+/// `"approve"` without one).
+pub const PROTO_VERSION: u32 = 17;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -121,6 +138,7 @@ pub mod adapt;
 pub mod codec;
 pub mod conversation;
 pub mod delivery;
+pub mod design;
 pub mod history;
 pub mod messages;
 pub mod orch;
@@ -152,6 +170,11 @@ pub use conversation::{
 pub use delivery::{
     CheckRunInfo, CiCategory, CiState, DeliveryAlert, DeliveryAlertKind, DeliveryInfo,
     DeliveryMode, DeliveryProfile, MergeMethod, PrState, StageOutcome, StagePrInfo, ThreadCounts,
+};
+pub use design::{
+    ApproachTag, DesignAgentInfo, DesignAgentStatus, DesignMode, DocAuthor, DocFinding,
+    DocGateAction, DocGateInfo, DocGateKind, DocInfo, DocKind, DocSeverity, DocView, FindingAnswer,
+    PhaseAgent, PhaseRecord, ReportSummary, RevisingCause, RoundDesign,
 };
 pub use history::{
     BisectLine, FlakyProposal, FlakyRecord, GateTally, HISTORY_VERSION, HistoryLine, HistoryStats,
@@ -225,8 +248,8 @@ mod orch_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_sixteen() {
-        assert_eq!(super::PROTO_VERSION, 16);
+    fn proto_version_is_seventeen() {
+        assert_eq!(super::PROTO_VERSION, 17);
     }
 
     #[test]

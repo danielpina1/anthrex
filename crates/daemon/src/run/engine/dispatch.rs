@@ -36,6 +36,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if run.state.is_terminal() || finishing(run) {
         return;
     }
+    // Ruling T15-18: a round's due documents commit with no task of the round left.
+    super::design_commit::abandon(run, now);
     clock::watch_open_turns(run, now, fx);
     super::race::each_lane(run, now, fx, |run, fx| {
         clock::watch_open_turns(run, now, fx)
@@ -43,8 +45,13 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     holds::enforce_holds(run, now, fx);
     requeue(run, now);
     if integration_ready(run) {
+        // Milestone 9.6 decision 23: nothing branches from the run head before the
+        // documents commit lands (Review focus 3); ruling T1-O2: nor is it pre-warmed.
+        let held = super::design_commit::hold(run, now, fx);
         match run.state {
+            RunState::AwaitingApproval if super::design_commit::skips_prewarm(run) => {}
             RunState::AwaitingApproval => prewarm(run, now, fx),
+            RunState::Running if held => {}
             RunState::Running => {
                 restore::relaunch(run, now, fx);
                 holds::resume_held(run, now, fx);
@@ -53,7 +60,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 ladder::start_fresh_sessions(run, fx);
                 complete::finish_pass(run, now, fx);
                 // Milestone 9.1 decision 48: stage branches before what runs in them.
-                stages::create_pass(run, fx);
+                stages::create_pass(run, now, fx);
                 // Milestone 9 decision 37: an epic merged gets its integration review.
                 kinds::integration_pass(run, now);
                 kinds::watch(run, now, fx);
@@ -86,8 +93,11 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         }
         // Milestone 9 decision 31: sub-planners, then run scouts, in free reader slots.
         super::planners::dispatch(run, now, fx);
-        // Then research and review tasks (decisions 35, 36).
-        kinds::dispatch(run, now, false, fx);
+        // Then research and review tasks (decisions 35, 36), never before a documents
+        // commit lands (a later round's too, which holds no pass: task M9.6.15).
+        if !held && !super::design_commit::due(run) {
+            kinds::dispatch(run, now, false, fx);
+        }
     }
     remove_cancelled_worktrees(run, now, fx);
     // Milestone 9.5 decision 22: a lane that left its race, once its racer has exited.

@@ -85,6 +85,7 @@ fn create(run_id: &str) -> OpKind {
                 epic: None,
                 chain: None,
                 lane: None,
+                agent_label: None,
             },
             run_ref: r,
             instructions: String::new(),

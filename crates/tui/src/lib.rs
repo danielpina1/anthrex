@@ -6,6 +6,7 @@ pub mod connection;
 pub mod conversation;
 mod conversation_label;
 pub mod dialog;
+pub mod doc_note;
 pub mod graph;
 pub mod inspector;
 pub mod keymap;

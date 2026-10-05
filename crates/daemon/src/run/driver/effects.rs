@@ -76,6 +76,8 @@ pub(super) enum Ready {
     Publish(Box<RunsSnapshot>),
     /// A counter-only `Publish`: at most once a second (decision 47).
     PublishLater,
+    /// A `WriteDoc`, its version in flight from its step (`RunService::mark_writes`).
+    Write(Effect, super::design_files::Writing),
 }
 
 /// Under the engine lock: turns `fx` into [`Ready`] effects, in order. No I/O.
@@ -207,6 +209,7 @@ impl RunService {
                 Ready::Publish(snap) => self.publish(*snap),
                 Ready::PublishLater => crate::lock(&self.book).publish_due = true,
                 Ready::Effect(effect) => self.apply(effect, now).await,
+                Ready::Write(effect, _in_flight) => self.apply(effect, now).await,
             }
         }
     }
@@ -298,10 +301,11 @@ impl RunService {
                 notes_seq,
                 request,
                 first_turn,
+                notes,
             } => self.queue_wake(
                 run_id,
                 window_id,
-                text,
+                (text, notes),
                 (digest_revision, notes_seq, request, first_turn),
             ),
             // Milestone 9.3 decision 23 (`driver/chain_ops.rs`), off every lock.
@@ -310,6 +314,14 @@ impl RunService {
                 window_id,
                 name,
             } => self.adopt(run_id, window_id, name),
+            // Milestone 9.6 decision 12 (`driver/design_io.rs`), off every lock.
+            Effect::WriteDoc {
+                path,
+                text,
+                index,
+                doc,
+            } => self.write_doc(path, text, index, doc).await,
+            Effect::ReadBack { run_id, docs } => self.read_back(run_id, docs),
             Effect::Persist { .. } | Effect::Op { .. } | Effect::Publish { .. } => {}
         }
     }

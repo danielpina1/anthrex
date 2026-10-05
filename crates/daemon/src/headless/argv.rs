@@ -2,11 +2,12 @@
 //! installed CLIs can do (`CLI_CAPS`, set from M8a.1's findings). Pure.
 
 use super::{ClaudeSandbox, HeadlessSpec, McpTarget, SessionArg};
+use crate::decider::DECIDER_CAPS;
 use crate::launch;
 use crate::launch::codex::toml_string;
 use proto::{AgentRole, Effort};
 use serde_json::{Map, Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// What the installed `claude` and `codex` accept, as M8a.1 found it (the "`CLI_CAPS`"
 /// table in the milestone's implementation notes). Every argv builder takes one, so tests
@@ -33,6 +34,10 @@ pub struct CliCaps {
     pub codex_user_config_only: Option<&'static [&'static str]>,
     /// How a Codex worker, racer or test writer gets the output filter (M9.5 decision 28).
     pub codex_filter: CodexFilter,
+    /// `claude --no-session-persistence` exists (ruling T8-4; the decider's cap).
+    pub claude_no_session_persistence: bool,
+    /// `codex exec --ephemeral` exists (ruling T8-4; the decider's cap).
+    pub codex_ephemeral: bool,
 }
 
 // Milestone 9.5 decision 28's `CodexFilter` lives with the filter it selects (task 19
@@ -50,6 +55,8 @@ pub struct SandboxKeys {
     /// 2.1.280's `sandbox.filesystem.denyWrite`, from its settings schema; the user's own
     /// entries are merged with it, the safe direction).
     pub write_deny: &'static str,
+    /// Milestone 9.6: paths commands may not read (`sandbox.filesystem.denyRead`).
+    pub read_deny: &'static str,
     /// M8a.1 item 4b: without it a sandbox that cannot start only warns and runs
     /// commands unsandboxed.
     pub fail_if_unavailable: &'static str,
@@ -117,6 +124,7 @@ pub const CLI_CAPS: CliCaps = CliCaps {
         allow_unsandboxed: "allowUnsandboxedCommands",
         write_allow: "filesystem.allowWrite",
         write_deny: "filesystem.denyWrite",
+        read_deny: "filesystem.denyRead",
         fail_if_unavailable: "failIfUnavailable",
         pins: CLAUDE_SANDBOX_PINS,
     },
@@ -124,6 +132,8 @@ pub const CLI_CAPS: CliCaps = CliCaps {
     codex_project_config_paths: &[".codex/config.toml", ".codex/hooks.json"],
     codex_user_config_only: None,
     codex_filter: CodexFilter::Instruction,
+    claude_no_session_persistence: DECIDER_CAPS.claude_no_session_persistence,
+    codex_ephemeral: DECIDER_CAPS.codex_ephemeral,
 };
 
 /// Which of decision 53's three Codex branches a run started under (ruling T23-C1):
@@ -209,6 +219,12 @@ pub fn claude_settings(
                 .collect();
             insert_path(&mut block, keys.write_deny, Value::Array(denied));
         }
+        if !sandbox.deny_read.is_empty() {
+            let shown = |p: &PathBuf| p.display().to_string();
+            let denied = sandbox.deny_read.iter().map(|p| Value::String(shown(p)));
+            insert_path(&mut block, keys.read_deny, Value::Array(denied.collect()));
+            deny_reads(&mut settings, &sandbox.deny_read);
+        }
         for (path, pin) in keys.pins {
             let value = match pin {
                 Pin::Bool(on) => Value::Bool(*on),
@@ -219,6 +235,24 @@ pub fn claude_settings(
         settings["sandbox"] = Value::Object(block);
     }
     settings
+}
+
+/// Each of `paths` denied to the read tools, a `permissions.deny` rule `Read(/<path>/**)`,
+/// after any the settings already deny (task M9.6.8 fix round 1, m2).
+fn deny_reads(settings: &mut Value, paths: &[PathBuf]) {
+    let rules = paths.iter();
+    let rules = rules.map(|p| Value::String(format!("Read(/{}/**)", p.display())));
+    let permissions = &mut settings["permissions"];
+    if !permissions.is_object() {
+        *permissions = json!({});
+    }
+    let deny = &mut permissions["deny"];
+    if !deny.is_array() {
+        *deny = json!([]);
+    }
+    if let Value::Array(deny) = deny {
+        deny.extend(rules);
+    }
 }
 
 /// Inserts `value` at the dotted `path`, creating the objects on the way.
@@ -254,6 +288,8 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
         AgentRole::Decider => return None,
         AgentRole::Racer => "racer",
         AgentRole::TestWriter => "test_writer",
+        AgentRole::Brainstormer => "brainstormer",
+        AgentRole::DocReviewer => "doc_reviewer",
     };
     let mut args = vec!["mcp".to_string(), "--role".into(), role.into()];
     // M8b decision 15: a repository-level scout belongs to no run.
@@ -279,6 +315,15 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
     if let Some(lane) = target.lane.filter(|_| target.role == AgentRole::Racer) {
         args.extend(["--lane".into(), lane.label().into()]);
     }
+    // Milestone 9.6 ruling T1-O3: a design agent names its label, and no other role
+    // does (the CLI refuses `--agent-label` for any other).
+    let design = matches!(
+        target.role,
+        AgentRole::Brainstormer | AgentRole::DocReviewer
+    );
+    if let Some(label) = target.agent_label.as_ref().filter(|_| design) {
+        args.extend(["--agent-label".into(), label.clone()]);
+    }
     args.extend([
         "--window".into(),
         window_id.to_string(),
@@ -288,8 +333,17 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
     Some(args)
 }
 
+/// Milestone 9.6 ruling T8-4: a design agent's session (a brainstormer's or a document
+/// reviewer's) is not saved, as a decider's is not, when the CLI can run so
+/// (the argv's caps), so no transcript of it exists for another agent to read.
+pub fn unsaved(spec: &HeadlessSpec) -> bool {
+    let role = spec.mcp.as_ref().map(|m| m.role);
+    matches!(role, Some(AgentRole::Brainstormer | AgentRole::DocReviewer))
+}
+
 /// A Claude session's argv (decision 24), in this order: the stream flags, the
-/// permission-prompt flag, the session argument, the user-settings-only flags (decision
+/// permission-prompt flag, the session argument, a design agent's
+/// `--no-session-persistence` (ruling T8-4), the user-settings-only flags (decision
 /// 53), `--settings`, `--mcp-config`, `--allowedTools`, `--disallowedTools`,
 /// `--append-system-prompt`, `--permission-mode`, `--model`, `--effort`, then the auth
 /// flag (decision 50). Every variadic flag is followed by another flag. The prompt is
@@ -325,6 +379,9 @@ pub fn claude_args(
         SessionArg::Resume { session_id } => {
             args.extend(["--resume".into(), session_id.clone()]);
         }
+    }
+    if unsaved(spec) && caps.claude_no_session_persistence {
+        args.push("--no-session-persistence".into());
     }
     if let Some(flags) = caps.claude_user_settings_only {
         args.extend(flags.iter().map(|f| f.to_string()));
@@ -381,7 +438,8 @@ pub fn claude_args(
 }
 
 /// One Codex turn's argv (decision 25): `exec --json` for the first turn, `exec resume
-/// <id> --json` for every later one, then the project-config exclusion when the CLI has
+/// <id> --json` for every later one (a design agent's, never resumed by ruling T8-7,
+/// with `--ephemeral` on every turn, ruling T8-4), then the project-config exclusion when the CLI has
 /// one, the MCP server, the instructions (with M9.5 decision 28's filter note), effort
 /// and approval policy, the sandbox, a worker's writable roots, the model when named,
 /// `--`, and the turn's message. `exec resume` rejects `-s` (M8a.1 item 6), so a resume
@@ -406,6 +464,9 @@ pub fn codex_args(
         SessionArg::New { .. } => false,
     };
     args.push("--json".into());
+    if unsaved(spec) && caps.codex_ephemeral {
+        args.push("--ephemeral".into());
+    }
     if let Some(flags) = caps.codex_user_config_only {
         args.extend(flags.iter().map(|f| f.to_string()));
     }
@@ -490,3 +551,7 @@ mod tests;
 #[cfg(test)]
 #[path = "argv_lane_tests.rs"]
 mod lane_tests;
+
+#[cfg(test)]
+#[path = "argv_design_tests.rs"]
+mod design_tests;

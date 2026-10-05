@@ -23,7 +23,11 @@ pub const ROUND_CANCELLED: &str = "the round was cancelled";
 /// started with approve at once and the current round is the user's; a round the
 /// orchestrator started always waits for the user.
 pub(super) fn skips_gate(run: &Run) -> bool {
+    // Milestone 9.6 decision 6: `--yes` skips none of a design run's gates; ruling T15-8:
+    // an `off` round's is 9.3's, so the round's mode decides.
+    let off = (run.orch.design.as_ref()).is_some_and(|d| d.round_off());
     run.orch.yes
+        && (run.design_mode != proto::DesignMode::Full || off)
         && run
             .current_round()
             .is_none_or(|r| r.origin == RoundOrigin::User)
@@ -88,6 +92,8 @@ pub(super) fn reject_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
     end_round(run, RoundOutcome::Rejected, now, fx);
     wake::clear_request(run, n);
     planners::halt_all(run, ROUND_REJECTED, now, fx);
+    // Milestone 9.6 decision 29: its design agents too, and the approval before it.
+    super::design_round::rejected(run, ROUND_REJECTED, fx);
     // The earlier rounds' plan stays the submitted one (`rules::promoted_unsubmitted`).
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.plan_submitted = true;
@@ -153,6 +159,9 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
         o.plan_submitted = true;
     }
     planners::halt_all(run, ROUND_CANCELLED, now, fx);
+    // Milestone 9.6 rulings T15-2 and T15-10: its design agents too, and before its
+    // plan's approval the approval before it, as a reject leaves them.
+    super::design_round::cancelled(run, ROUND_CANCELLED, fx);
     if delivery::pr(run) {
         unused_stages(run, now);
     }
@@ -244,7 +253,9 @@ fn unused_stages(run: &mut Run, now: u64) {
         let d = &run.delivery;
         let used = (run.tasks.iter())
             .any(|t| t.stage() == n && (!t.state.is_finished() || t.state == TaskState::Merged));
-        if used || d.pr(n).is_some() || d.stage(n).is_some_and(|s| s.skipped) {
+        // Milestone 9.6 ruling T15-14: the stage holding the round's amendment is used.
+        let docs = super::design_commit::holds_docs(run, n);
+        if used || docs || d.pr(n).is_some() || d.stage(n).is_some_and(|s| s.skipped) {
             continue;
         }
         delivery::stage_mut(run, n).skipped = true;

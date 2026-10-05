@@ -287,6 +287,7 @@ fn every_new_request_and_reply_round_trips() {
             orchestrator: None,
             delivery: None,
             continue_from: None,
+            design: None,
         },
         RunRequest::Promote {
             run_id: "run-a1b2".into(),

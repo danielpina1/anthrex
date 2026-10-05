@@ -29,9 +29,9 @@ pub use git::{
 };
 use git::{KNOWN_GIT_KEYS, read_git};
 pub use orchestrator::{
-    AgentConfig, Candidate, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, Metering,
-    Onboarding, Orchestrator, Pick, RouteList, RouteLists, Scouts, Tuning, TuningConfig,
-    default_roster,
+    AgentConfig, Candidate, ClaudeAuth, ClaudeHeadless, ConfiguredBudgets, Deciders, DesignBudget,
+    DesignConfig, Metering, Onboarding, Orchestrator, Pick, RouteList, RouteLists, Scouts, Tuning,
+    TuningConfig, default_roster,
 };
 use runtimes::{read_runtimes, report_unknown_runtimes};
 pub use testing::{

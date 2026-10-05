@@ -138,6 +138,7 @@ fn a_digest_read_drops_the_wake_up_it_covered() {
         quiet: Duration::from_secs(1),
         generation: 0,
         request: None,
+        notes: Vec::new(),
     };
     wakes.insert("r1".into(), pending(3));
     wakes.insert("r2".into(), pending(3));
@@ -181,6 +182,7 @@ fn waiting(notes_seq: u64) -> Pending {
         quiet: Duration::from_secs(1),
         generation: 0,
         request: None,
+        notes: Vec::new(),
     }
 }
 

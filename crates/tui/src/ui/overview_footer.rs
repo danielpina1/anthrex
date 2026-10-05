@@ -99,6 +99,7 @@ pub(in crate::ui) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, S
         RowKind::Run { .. }
         | RowKind::Planner { .. }
         | RowKind::Scout { .. }
+        | RowKind::DesignAgent { .. }
         | RowKind::Task { .. }
         | RowKind::Stage { .. }
         | RowKind::Round { .. }

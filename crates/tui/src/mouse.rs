@@ -207,6 +207,7 @@ impl App {
             }
             key @ (NodeKey::Planner { .. }
             | NodeKey::Scout { .. }
+            | NodeKey::DesignAgent { .. }
             | NodeKey::Task { .. }
             | NodeKey::Stage { .. }
             | NodeKey::Round { .. }

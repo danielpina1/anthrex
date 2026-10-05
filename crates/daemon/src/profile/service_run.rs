@@ -331,7 +331,9 @@ impl ProfileService {
             Ok(ScoutOutcome::Report(report)) => report.profile.ok_or_else(|| {
                 Stop::Failed("the onboarding scout reported no profile".to_string())
             }),
-            Ok(ScoutOutcome::Failed { reason }) => Err(Stop::Failed(reason)),
+            Ok(ScoutOutcome::Failed { reason } | ScoutOutcome::Unsubmitted { reason }) => {
+                Err(Stop::Failed(reason))
+            }
             // Only a sub-planner's session ends accepted (milestone 9 decision 22).
             Ok(ScoutOutcome::Accepted) => Err(Stop::Failed(
                 "the onboarding scout reported nothing".to_string(),

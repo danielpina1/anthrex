@@ -28,6 +28,9 @@ pub(super) fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Eff
             | OpKind::AbortMerge { .. }
             | OpKind::RemoveWorktree { .. }
             | OpKind::CrownRacer { .. }
+            // Milestone 9.6 decision 23 (Review focus 3): its executor finds its own
+            // commit when the lost one landed.
+            | OpKind::CommitDesignDocs(_)
             | OpKind::MeasureDiff { .. }
             | OpKind::AppendHistory { .. },
             _,

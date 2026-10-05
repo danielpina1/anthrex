@@ -113,7 +113,7 @@ async fn a_blank_goal_is_refused_before_anything_else() {
                 tmp.path().join("nowhere"),
                 (false, false),
                 false,
-                (None, None),
+                (None, None, None),
             )
             .await;
         let RunReply::Refused {
@@ -229,6 +229,7 @@ fn planned(runtime: proto::Runtime) -> Shape {
             runtime,
             model: None,
         }),
+        design: None,
     }))
 }
 

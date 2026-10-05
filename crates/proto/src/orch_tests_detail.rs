@@ -164,6 +164,8 @@ fn appended_variants_keep_their_indices() {
     expected.push("Iterate");
     // Milestone 9.5 appends `McpReady` after `Iterate` (`tuning_tests.rs`).
     expected.push("McpReady");
+    // Milestone 9.6 appends `DocGate` and `ShowDoc` after `McpReady` (`design_tests.rs`).
+    expected.extend(["DocGate", "ShowDoc"]);
     assert_eq!(variant_names::<RunRequest>(), expected);
     assert_eq!(
         variant_at::<RunRequest>(
@@ -190,6 +192,8 @@ fn appended_variants_keep_their_indices() {
     let mut expected: Vec<&str> = replies.to_vec();
     expected.push("TaskDetail");
     expected.push("Settings");
+    // Milestone 9.6 appends `Doc` after `Settings` (`design_tests.rs`).
+    expected.push("Doc");
     assert_eq!(variant_names::<RunReply>(), expected);
     let detail = a_detail(None);
     assert_eq!(

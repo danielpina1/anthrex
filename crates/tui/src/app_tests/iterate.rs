@@ -73,6 +73,7 @@ fn is_iterate(request: &RunRequest, goal: &str) -> bool {
         == RunRequest::Iterate {
             run: RUN_ID.into(),
             goal: goal.into(),
+            design: None,
         }
 }
 

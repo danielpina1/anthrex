@@ -42,9 +42,10 @@ fn ascii_dialog(title: &str, width: usize, rows: &[&str]) -> Vec<String> {
 
 /// Milestone 9.3 (changed expectation): at 80x24 and 120x40 the large editor, its text
 /// 10 and 26 rows, the options under a blank row, the position row and the footer.
+/// Milestone 9.6 task 18 (changed expectation): 9 and 25 rows, the design row added.
 #[test]
 fn goal_form_renders_at_80x24_and_120x40() {
-    for (w, h, width, text) in [(80u16, 24u16, 76usize, 10usize), (120, 40, 116, 26)] {
+    for (w, h, width, text) in [(80u16, 24u16, 76usize, 9usize), (120, 40, 116, 25)] {
         let mut app = app_with_cache(roster());
         app.settings.badges.ascii = true;
         app.set_terminal_size(w, h);
@@ -65,13 +66,14 @@ fn goal_form_renders_at_80x24_and_120x40() {
         assert_eq!(rows[text + 1], pad(""));
         assert_eq!(rows[text + 2], pad("  runtime           < configured >"));
         assert_eq!(rows[text + 4], pad("  orchestrator      < new >"));
-        assert_eq!(rows[text + 8], pad("  unconfined checks < off >"));
-        assert_eq!(rows[text + 9], pad("ln 1, col 1 - 0 / 16,384"));
+        assert_eq!(rows[text + 6], pad("  design            < configured >"));
+        assert_eq!(rows[text + 9], pad("  unconfined checks < off >"));
+        assert_eq!(rows[text + 10], pad("ln 1, col 1 - 0 / 16,384"));
         assert_eq!(
-            rows[text + 10],
+            rows[text + 11],
             pad("^S start  Tab options  ^K cut  ^U paste  Esc cancel")
         );
-        assert_eq!(rows[text + 11], format!("+{}+", "-".repeat(width - 2)));
+        assert_eq!(rows[text + 12], format!("+{}+", "-".repeat(width - 2)));
     }
 }
 
@@ -97,6 +99,7 @@ fn goal_form_renders_compact_at_59x24() {
             "   model             < default >",
             "   orchestrator      < new >",
             "   delivery          < configured >",
+            "   design            < configured >",
             "   trust             < off >",
             "   approve at once   < off >",
             "   unconfined checks < off >",
@@ -104,9 +107,10 @@ fn goal_form_renders_compact_at_59x24() {
             " ^S start - tab next - esc cancel",
         ],
     );
-    // 17 rows, centred in 24; the dialog is the terminal's whole width.
+    // 18 rows (milestone 9.6's design row; changed expectation), centred in 24; the
+    // dialog is the terminal's whole width.
     let rows = crate::ui::audit::rows(&crate::ui::audit::draw(&app, 59, 24));
-    assert_eq!(rows[3..20], want);
+    assert_eq!(rows[3..21], want);
 }
 
 #[test]

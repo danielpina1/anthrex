@@ -1,8 +1,13 @@
 //! `[orchestrator.budget.s]`, `.m` and `.l` (decision 40's budgets). Split out of
-//! `orchestrator.rs` to keep that file under the 600-line rule.
+//! `orchestrator.rs` to keep that file under the 600-line rule. Milestone 9.6 reads
+//! `[orchestrator.design.budget.*]` with the same [`read_budget`].
 
 use super::Orchestrator;
 use crate::{Problem, not_a_table_problem};
+
+/// A budget table's keys, `[orchestrator.budget.<rung>]`'s and
+/// `[orchestrator.design.budget.<agent>]`'s.
+pub(super) const KNOWN_BUDGET_KEYS: &[&str] = &["tool_calls", "minutes", "tokens"];
 
 pub(super) fn read_budgets(table: &toml::Table, o: &mut Orchestrator, problems: &mut Vec<Problem>) {
     let Some(value) = table.get("budget") else {
@@ -12,14 +17,21 @@ pub(super) fn read_budgets(table: &toml::Table, o: &mut Orchestrator, problems: 
         problems.push(not_a_table_problem("orchestrator.budget"));
         return;
     };
-    read_one_budget(budget, "s", &mut o.budget_s, problems);
-    read_one_budget(budget, "m", &mut o.budget_m, problems);
-    read_one_budget(budget, "l", &mut o.budget_l, problems);
+    for (rung, field) in [
+        ("s", &mut o.budget_s),
+        ("m", &mut o.budget_m),
+        ("l", &mut o.budget_l),
+    ] {
+        let prefix = format!("orchestrator.budget.{rung}");
+        read_budget(budget, rung, &prefix, field, problems);
+    }
 }
 
-fn read_one_budget(
+/// One budget table, `budget.<rung>`, whose keys are reported under `prefix`.
+pub(super) fn read_budget(
     budget: &toml::Table,
     rung: &str,
+    prefix: &str,
     field: &mut proto::Budget,
     problems: &mut Vec<Problem>,
 ) {
@@ -27,7 +39,7 @@ fn read_one_budget(
         return;
     };
     let Some(t) = value.as_table() else {
-        problems.push(not_a_table_problem(&format!("orchestrator.budget.{rung}")));
+        problems.push(not_a_table_problem(prefix));
         return;
     };
 
@@ -39,7 +51,7 @@ fn read_one_budget(
         {
             Some(n) => field.tool_calls = n,
             None => problems.push(Problem {
-                key: format!("orchestrator.budget.{rung}.tool_calls"),
+                key: format!("{prefix}.tool_calls"),
                 message: "must be at least 1".to_string(),
                 default: field.tool_calls.to_string(),
             }),
@@ -53,7 +65,7 @@ fn read_one_budget(
         {
             Some(n) => field.minutes = n,
             None => problems.push(Problem {
-                key: format!("orchestrator.budget.{rung}.minutes"),
+                key: format!("{prefix}.minutes"),
                 message: "must be at least 1".to_string(),
                 default: field.minutes.to_string(),
             }),
@@ -67,7 +79,7 @@ fn read_one_budget(
         {
             Some(n) => field.tokens = Some(n),
             None => problems.push(Problem {
-                key: format!("orchestrator.budget.{rung}.tokens"),
+                key: format!("{prefix}.tokens"),
                 message: "must be at least 1".to_string(),
                 default: match field.tokens {
                     Some(n) => n.to_string(),

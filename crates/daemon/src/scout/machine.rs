@@ -22,6 +22,10 @@ pub struct ScoutLimits {
     /// stdin, Codex's `headless_send` refuses an open turn. Without it the wrap-up waits
     /// for the turn's end (ruling I1).
     pub send_mid_turn: bool,
+    /// Whether a turn that ends without the submission gets the nudge, a resumed turn.
+    /// A Codex design agent's does not (milestone 9.6 ruling T8-7): its session is never
+    /// resumed, so the turn's end fails it as [`unsubmitted`], for the engine to relaunch.
+    pub nudges: bool,
     pub texts: MachineTexts,
 }
 
@@ -32,6 +36,7 @@ impl ScoutLimits {
             timeout_secs: scouts.timeout_secs,
             max_tool_calls: scouts.max_tool_calls,
             send_mid_turn: runtime == Runtime::Claude,
+            nudges: true,
             texts: SCOUT_TEXTS,
         }
     }
@@ -92,6 +97,9 @@ pub struct ScoutMachine {
     pub wrap_up_pending: bool,
     pub usage: TokenUsage,
     pub failure: Option<String>,
+    /// The final fix wave's FW-36: the failure is [`unsubmitted`]'s, a typed end the
+    /// service reports as `ScoutOutcome::Unsubmitted`, so no one compares its text.
+    pub unsubmitted: bool,
 }
 
 impl Default for ScoutMachine {
@@ -105,6 +113,7 @@ impl Default for ScoutMachine {
             wrap_up_pending: false,
             usage: TokenUsage::default(),
             failure: None,
+            unsubmitted: false,
         }
     }
 }
@@ -149,6 +158,12 @@ pub enum ScoutEffect {
     Finished(Result<(), String>),
 }
 
+/// Ruling T8-7: the failure of a session that ends a turn without its submission and
+/// is not nudged (`ScoutLimits.nudges` false).
+pub fn unsubmitted(t: &MachineTexts) -> String {
+    format!("{} ended its turn without {}", t.noun, t.missing)
+}
+
 /// One step of scout `machine` on `event`.
 pub fn step(
     mut machine: ScoutMachine,
@@ -168,6 +183,10 @@ pub fn step(
             machine.state = ScoutState::Working;
             machine.started_at = now;
             Vec::new()
+        }
+        ScoutEvent::TurnEnded { .. } if !limits.nudges => {
+            machine.unsubmitted = true;
+            fail(&mut machine, unsubmitted(&t), true)
         }
         ScoutEvent::TurnEnded { .. } => {
             machine.turns_without_report = machine.turns_without_report.saturating_add(1);

@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use proto::run_wire::request;
 use proto::{
-    DeciderMode, DeliveryMode, HistoryLine, OrchestratorChoice, Plan, ProfileSpec, ProposalOrigin,
-    ProposalState, RepoProfile, RoleRoutingInput, RunPath, RunReply, TriageInfo,
+    DeciderMode, DeliveryMode, DesignMode, HistoryLine, OrchestratorChoice, Plan, ProfileSpec,
+    ProposalOrigin, ProposalState, RepoProfile, RoleRoutingInput, RunPath, RunReply, TriageInfo,
 };
 
 use super::super::build::{Planned, Shape, TuneOnce};
@@ -24,11 +24,12 @@ use crate::decider::fallback::{OFF_REASON, fallback_decision};
 use crate::decider::{DeciderRequest, Decision, TriageInput};
 use crate::profile::service::{Effective, state_label};
 use crate::run::confine;
+use crate::run::design::{GoalOrigin, mode_for};
 use crate::run::engine::{EventKind, HISTORY_FILE};
 use crate::run::git::{self, Git, os};
 use crate::run::history_io::append_once;
 use crate::run::model::Run;
-use crate::run::orch::contract::planned_message;
+use crate::run::orch::contract_design::start_message;
 use crate::run::orch::roles;
 use crate::run::plan::{PlanError, Preflight};
 use crate::run::triage::{self, TriageRoute};
@@ -168,7 +169,11 @@ impl RunService {
         dir: PathBuf,
         (trust_project, unconfined_checks): (bool, bool),
         yes: bool,
-        (orchestrator, delivery): (Option<OrchestratorChoice>, Option<DeliveryMode>),
+        (orchestrator, delivery, design): (
+            Option<OrchestratorChoice>,
+            Option<DeliveryMode>,
+            Option<DesignMode>,
+        ),
     ) -> RunReply {
         let flags = (trust_project, unconfined_checks);
         let ready = match self.goal_ready(&goal, &dir, flags, delivery).await {
@@ -201,6 +206,13 @@ impl RunService {
         // 4. The route.
         let route = triage::route(&decision, config.fast_path);
         let info = triage::info(&decision, &route, unix_now());
+        // Milestone 9.6 decision 3: the mode, decided once on triage's own route, before
+        // any build (ruling T3-1: a fast goal whose build falls back to planned stays off;
+        // `--design full` on a goal DF §1 puts off is refused here).
+        let design = match mode_for(GoalOrigin::Goal(Some(&info)), design, &config.design) {
+            Ok(mode) => Some(mode),
+            Err(refusal) => return refused(refusal),
+        };
         // 6. Milestone 9 decision 26: the planned and large paths build a planned run.
         let flags = (trust_project, unconfined_checks);
         let planned = |info: TriageInfo| Planned {
@@ -208,6 +220,7 @@ impl RunService {
             usage: decision.usage,
             yes,
             choice: orchestrator.clone(),
+            design,
         };
         let spec = profile.spec();
         // Milestone 9.5 decision 12 (ruling T9-5): one settings read and one tuning for
@@ -439,7 +452,8 @@ impl RunService {
             Err(error) => return refused(error.text()),
         };
         let (run_id, path) = (run.id.clone(), run.path.unwrap_or(RunPath::Plan));
-        let message = planned_message(&info, &run_id, path);
+        // Final fix wave FW-72: a design run's says its orchestrator may ask questions.
+        let message = start_message(&info, &run_id, path, run.design_mode);
         match self
             .ask(|reply| EventKind::Start {
                 reply,

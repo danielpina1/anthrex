@@ -21,8 +21,8 @@ use crate::run::tiers::{Affected, TierOutcome};
 #[path = "role_routes.rs"]
 mod role_routes;
 pub(super) use role_routes::{
-    close, close_session, interrupt_open, keep, open, orchestrator_dispatched, orchestrator_ended,
-    planner_accepted, planner_ended, session_stopped,
+    close, close_session, interrupt_open, keep, note_result, open, orchestrator_dispatched,
+    orchestrator_ended, planner_accepted, planner_ended, session_stopped,
 };
 
 /// `<repo_dir>/history.jsonl` (M8b decision 4).
@@ -53,6 +53,7 @@ pub(super) fn append(run: &mut Run, task: Option<&str>, line: HistoryLine, fx: &
         HistoryLine::Bisect(r) => r.record_id.clone(),
         HistoryLine::Stage(r) => r.record_id.clone(),
         HistoryLine::Round(r) => r.record_id.clone(),
+        HistoryLine::Phase(r) => r.record_id.clone(),
     };
     let kind = OpKind::AppendHistory {
         path: run.repo_dir.join(HISTORY_FILE),

@@ -135,6 +135,7 @@ fn iterate_request_round_trips() {
     let iterate = RunRequest::Iterate {
         run: "run-a1b2".into(),
         goal: "also add a --verbose flag\nand document it".into(),
+        design: None,
     };
     both_ways(&ClientMsg::Run(iterate.clone()));
     both_ways(&ClientMsg::RunTagged {
@@ -156,6 +157,7 @@ fn a_goal(continue_from: Option<String>) -> RunRequest {
         orchestrator: None,
         delivery: Some(DeliveryMode::Pr),
         continue_from,
+        design: None,
     }
 }
 
@@ -369,27 +371,34 @@ fn appended_variants_keep_their_indices() {
         ["reply_comment", "iterate"],
         "{names:?}"
     );
+    // Milestone 9.6 appends `review_doc`, `phase`, `DocGate` and `ShowDoc` after these
+    // (`design_tests.rs`).
     let names = tagged_names::<ActionKind>("kind");
     assert_eq!(
-        names[names.len() - 2..],
+        names[names.len() - 3..names.len() - 1],
         ["open_conversation", "iterate"],
         "{names:?}"
     );
     let names = tagged_names::<HistoryLine>("type");
-    assert_eq!(names[names.len() - 2..], ["stage", "round"], "{names:?}");
+    assert_eq!(
+        names[names.len() - 3..names.len() - 1],
+        ["stage", "round"],
+        "{names:?}"
+    );
     let names = variant_names::<RunRequest>();
     // Milestone 9.5 appends `McpReady` after `Iterate` (`tuning_tests.rs`).
     assert_eq!(
-        names[names.len() - 4..],
+        names[names.len() - 6..names.len() - 2],
         ["Deliver", "Watch", "Iterate", "McpReady"],
         "{names:?}"
     );
-    let n = names.len() as u8 - 1;
+    let n = names.len() as u8 - 3;
     assert_eq!(
         variant_at::<RunRequest>(n - 1, &json!({"run": "r1", "goal": "more"})),
         Some(RunRequest::Iterate {
             run: "r1".into(),
             goal: "more".into(),
+            design: None,
         })
     );
     assert_eq!(

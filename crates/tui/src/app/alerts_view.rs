@@ -61,7 +61,14 @@ pub(crate) fn alert_actions(app: &App, key: &AlertKey) -> Vec<ActionInfo> {
 pub(crate) fn preselected(app: &App, key: &AlertKey) -> Option<ActionKind> {
     match key {
         AlertKey::Orchestrator(_) | AlertKey::Proposal(_) => None,
-        AlertKey::Gate(_) => Some(ActionKind::ReviewPlan),
+        // Milestone 9.6 decision 34: a brainstorm or spec gate's document is reviewed on
+        // the gate screen; a plan gate (a design run's too) on the plan review.
+        AlertKey::Gate(run) => Some(
+            match run_of(app, run).and_then(super::doc_gate::doc_gate_of) {
+                Some(_) => ActionKind::ReviewDoc,
+                None => ActionKind::ReviewPlan,
+            },
+        ),
         AlertKey::Hold { hold, .. } => Some(ActionKind::ApproveHold { hold: hold.clone() }),
         AlertKey::Blocked { run, task } => {
             let question = run_of(app, run)

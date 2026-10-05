@@ -167,6 +167,39 @@ async fn a_put_writes_swaps_and_answers_saved() {
     assert_eq!(now, doc);
 }
 
+/// Ruling T18-7: `[orchestrator.design].default` hand-edited while the daemon runs (the
+/// only way to change it) leaves the daemon's report stale; a put of the stale report,
+/// or of none, still saves, and the hand edit stays in the file.
+#[tokio::test]
+async fn a_hand_edited_design_default_still_saves() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = written(dir.path());
+    let s = service(&path, None);
+    let stale = live_doc(&s);
+    assert_eq!(stale.design_default, Some(proto::DesignMode::Full));
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str("\n[orchestrator.design]\ndefault = \"off\"\n");
+    std::fs::write(&path, text).unwrap();
+    for (sent, writers) in [(stale.design_default, 1), (None, 2)] {
+        let doc = SettingsDoc {
+            design_default: sent,
+            limits: proto::SettingsLimits {
+                max_writers: writers,
+                ..stale.limits.clone()
+            },
+            ..stale.clone()
+        };
+        let reply = put(&s, doc).await;
+        assert!(
+            matches!(reply, SettingsReply::Saved { .. }),
+            "{sent:?}: {reply:?}"
+        );
+        let file = file_doc(&path);
+        assert_eq!(file.limits.max_writers, writers);
+        assert_eq!(file.design_default, Some(proto::DesignMode::Off));
+    }
+}
+
 /// A save stand-in that counts how many saves run at once, around the real one.
 fn counting(inside: Arc<AtomicUsize>, most: Arc<AtomicUsize>) -> SaveFn {
     Arc::new(move |path, doc, cancel| {

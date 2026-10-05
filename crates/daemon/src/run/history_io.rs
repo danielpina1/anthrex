@@ -135,6 +135,7 @@ pub fn record_id(line: &HistoryLine) -> &str {
         HistoryLine::Bisect(r) => &r.record_id,
         HistoryLine::Stage(r) => &r.record_id,
         HistoryLine::Round(r) => &r.record_id,
+        HistoryLine::Phase(r) => &r.record_id,
     }
 }
 

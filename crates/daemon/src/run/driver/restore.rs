@@ -161,6 +161,9 @@ impl RunService {
         self.lost_adoptions().await;
         self.mark_restored_orchestrators_live();
         self.remove_stale_windows(&skipped);
+        // Milestone 9.6 (fix round 1, m5): the design documents, read back off the
+        // engine in one blocking task, after the rest of the restore.
+        self.check_design_docs().await;
     }
 
     /// Steps `Event::Restore` for every run at once; when that panics (final review
@@ -187,7 +190,10 @@ impl RunService {
         let panic = match guarded_step(&mut state, all) {
             Ok(fx) => {
                 self.metered.refresh_live(&state);
-                return (prepare_guarded(&state, fx, now), BTreeSet::new());
+                return (
+                    self.mark_writes(prepare_guarded(&state, fx, now)),
+                    BTreeSet::new(),
+                );
             }
             Err(panic) => panic,
         };
@@ -213,7 +219,7 @@ impl RunService {
             }
         }
         self.metered.refresh_live(&state);
-        (prepare_guarded(&state, fx, now), skipped)
+        (self.mark_writes(prepare_guarded(&state, fx, now)), skipped)
     }
 
     /// Ruling T22-N3, with m5's report: each accept whose merge landed before the

@@ -66,6 +66,7 @@ fn iterate_takes_exactly_one_source() {
                 run,
                 text: t,
                 file: f,
+                design: None,
             }) => {
                 assert_eq!(run, "3f9a", "{args:?}");
                 assert_eq!(t.as_deref(), text, "{args:?}");
@@ -200,7 +201,7 @@ fn continue_sends_continue_from() {
         "next".into(),
         "/r".into(),
         (true, true, false),
-        (None, Some(proto::DeliveryMode::Pr)),
+        (None, Some(proto::DeliveryMode::Pr), None),
         Some(resolved),
     );
     assert_eq!(
@@ -214,6 +215,7 @@ fn continue_sends_continue_from() {
             orchestrator: None,
             delivery: Some(proto::DeliveryMode::Pr),
             continue_from: Some("add-reset-3f9a".into()),
+            design: None,
         }
     );
     // The final fix wave (B-I1): a continue waits the daemon's own deadline, not
@@ -228,7 +230,7 @@ fn continue_sends_continue_from() {
         "g".into(),
         "/r".into(),
         (false, false, false),
-        (Some(choice.clone()), None),
+        (Some(choice.clone()), None, None),
         None,
     );
     assert_eq!(
@@ -242,6 +244,7 @@ fn continue_sends_continue_from() {
             orchestrator: Some(choice),
             delivery: None,
             continue_from: None,
+            design: None,
         }
     );
 }
@@ -282,6 +285,7 @@ fn request_timeout_of_iterate_is_the_run_request_timeout() {
     let iterate = RunRequest::Iterate {
         run: "add-reset-3f9a".into(),
         goal: "also add b".into(),
+        design: None,
     };
     assert_eq!(request_timeout(&iterate), RUN_REQUEST_TIMEOUT);
 }

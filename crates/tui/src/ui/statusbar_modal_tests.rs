@@ -41,7 +41,9 @@ fn expected(name: &str) -> &'static str {
         | "goal form over the pane"
         | "goal form continuing"
         | "goal form discard page"
-        | "iterate dialog over the run view" => " DIALOG  esc back",
+        | "iterate dialog over the run view"
+        | "iterate dialog with its design row"
+        | "doc gate note" => " DIALOG  esc back",
         other => panic!("the Dialog-region fixture {other:?} has no expected bar"),
     }
 }

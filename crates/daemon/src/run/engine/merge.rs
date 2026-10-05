@@ -48,6 +48,11 @@ pub(super) fn start_merge(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         .cloned()
         .collect();
     run.merge_queue = queued;
+    // Milestone 9.6 ruling T15-6: no merge moves a stage, nor `integration`, while a
+    // later round's documents commit is due (it is made from the stage below).
+    if super::design_commit::due(run) {
+        return;
+    }
     // Milestone 9.1 decision 49: the lowest due propagate goes first; 9.2 decision 33:
     // a due base sync before it.
     let sync = super::delivery::sync::start;
@@ -371,6 +376,8 @@ pub(crate) fn candidate_in_flight(run: &Run, i: usize) -> bool {
 /// Decision 21: the run is `halted` with `reason`; nothing dispatches or merges, and
 /// the windows keep running.
 pub(super) fn halt(run: &mut Run, reason: String, now: u64) {
+    // Milestone 9.6 (task 7's carry): a halt before the plan's approval keeps its phase.
+    super::design_round::halting(run, now);
     run.halt_retryable = false;
     log(run, now, format!("halted: {reason}"));
     // Milestone 9 decision 39.
@@ -448,6 +455,7 @@ pub(super) fn resume(
     }
     // Review m1: a halt on refs that could not be read is retried as it is.
     if rebaseline.is_none() && run.halt_retryable {
+        left_halt(run);
         run.halt_retryable = false;
         run.halted_reason = None;
         run.state = RunState::Running;
@@ -462,10 +470,19 @@ pub(super) fn resume(
         "resumed{}",
         stages::rebaseline(run, &read, now, &mut effects)
     );
+    left_halt(run);
     run.halted_reason = None;
     run.halt_retryable = false;
     run.state = RunState::Running;
     log(run, now, text.clone());
     answer(Ok(format!("run {run_id} {text}")));
     fx.extend(effects);
+}
+
+/// Milestone 9.6 ruling T7-1: no resume leaves a phase budget's halt behind, so a later
+/// halt's plain resume never returns the run to a design phase.
+fn left_halt(run: &mut Run) {
+    if let Some(design) = run.orch.design.as_mut() {
+        design.halted_from = None;
+    }
 }

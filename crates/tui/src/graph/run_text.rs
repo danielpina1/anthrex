@@ -7,7 +7,8 @@ use crate::theme::{Glyph, glyph};
 use crate::tree::{DisplayRound, round_label_with_lane, run_progress};
 use crate::ui::tree_view::truncate_in;
 use proto::{
-    FullState, PlannerInfo, RunInfo, RunState, StageInfo, TaskInfo, TaskOrigin, TaskState,
+    AgentRole, DesignAgentInfo, DesignMode, DocGateKind, FullState, PlannerInfo, RoundDesign,
+    RunInfo, RunState, StageInfo, TaskInfo, TaskOrigin, TaskState,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -18,12 +19,22 @@ pub(crate) const TASK_TEXT_MAX: usize = MAX_NODE_WIDTH as usize - 4 - 2;
 /// `orchestrator  {merged}/{total}` when the run's orchestrator window is listed,
 /// else `run {last four of the id}  {merged}/{total}`; cancelled tasks are not counted.
 /// A run being planned (milestone 9) says `planning` instead of its progress.
+#[cfg(test)]
 pub(crate) fn run_text(run: &RunInfo, orchestrator: bool) -> String {
+    run_text_in(run, orchestrator, false)
+}
+
+/// [`run_text`], the gate's mark in ASCII when `ascii`. Milestone 9.6 (DF §6.1, §6.2):
+/// a design run names its phase (`brainstorming`, `specifying`, `planning`), `⏸ <kind>
+/// v<n>` while a gate waits for the user (the phase it revises in while the orchestrator
+/// revises), and `halted in <phase>` while halted from a design phase. An `off` round
+/// reads as 9.3's.
+pub(crate) fn run_text_in(run: &RunInfo, orchestrator: bool, ascii: bool) -> String {
     let (merged, total) = run_progress(run);
-    let progress = if run.state == RunState::Planning {
-        "planning".to_owned()
-    } else {
-        format!("{merged}/{total}")
+    let progress = match design_text(run, ascii) {
+        Some(text) => text,
+        None if run.state == RunState::Planning => "planning".to_owned(),
+        None => format!("{merged}/{total}"),
     };
     if orchestrator {
         format!("orchestrator  {progress}")
@@ -32,10 +43,57 @@ pub(crate) fn run_text(run: &RunInfo, orchestrator: bool) -> String {
     }
 }
 
+/// The design flow's words for the orchestrator node, `None` outside it.
+fn design_text(run: &RunInfo, ascii: bool) -> Option<String> {
+    if run.design == DesignMode::Off || run.round_design == Some(RoundDesign::Off) {
+        return None;
+    }
+    let phase = |state: RunState| state.label().to_owned();
+    match run.state {
+        RunState::Brainstorming | RunState::Specifying => Some(phase(run.state)),
+        RunState::AwaitingApproval => {
+            let gate = run.doc_gate.as_ref()?;
+            Some(match gate.revising {
+                Some(_) => phase(match gate.kind {
+                    DocGateKind::Brainstorm => RunState::Brainstorming,
+                    DocGateKind::Spec => RunState::Specifying,
+                    DocGateKind::Plan => RunState::Planning,
+                }),
+                None => format!(
+                    "{} {} v{}",
+                    glyph(Glyph::Gate, ascii),
+                    gate.kind.label(),
+                    gate.version
+                ),
+            })
+        }
+        RunState::Halted => run
+            .halted_phase
+            .map(|state| format!("halted in {}", phase(state))),
+        _ => None,
+    }
+}
+
 /// A run id's last four characters, as `Run::short()` names its windows.
 fn run_short(run_id: &str) -> String {
     let skip = run_id.chars().count().saturating_sub(4);
     run_id.chars().skip(skip).collect()
+}
+
+/// Milestone 9.6 ruling T18-1: a design agent's node, `brainstormer <label>` (its
+/// runtime too when the label is not the runtime's name) or `doc reviewer <label>
+/// <runtime>`, then `  <n> sessions` once a relaunch (ruling T8-7) gave it more than one.
+pub(crate) fn design_agent_text(agent: &DesignAgentInfo) -> String {
+    let runtime = agent.runtime.label();
+    let mut text = match agent.role {
+        AgentRole::DocReviewer => format!("doc reviewer {} {runtime}", agent.label),
+        _ if agent.label == runtime => format!("brainstormer {}", agent.label),
+        _ => format!("brainstormer {} {runtime}", agent.label),
+    };
+    if agent.sessions > 1 {
+        text.push_str(&format!("  {} sessions", agent.sessions));
+    }
+    text
 }
 
 /// `planner {epic} {title}  {merged}/{total}` over the tasks of its epic, or
@@ -151,3 +209,7 @@ pub(crate) fn round_text(round: &DisplayRound<'_>) -> String {
 #[cfg(test)]
 #[path = "run_text_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "run_text_design_tests.rs"]
+mod design_tests;

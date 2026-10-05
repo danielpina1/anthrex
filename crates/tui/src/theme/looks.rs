@@ -65,7 +65,9 @@ pub fn run_look(state: RunState, ascii: bool) -> (&'static str, Role) {
     let g = |mark| glyph(mark, ascii);
     match state {
         RunState::AwaitingApproval | RunState::Halted => (g(Glyph::NeedsYou), Role::Attention),
-        RunState::Planning | RunState::Running => (g(Glyph::Run), Role::Working),
+        RunState::Planning | RunState::Brainstorming | RunState::Specifying | RunState::Running => {
+            (g(Glyph::Run), Role::Working)
+        }
         RunState::Paused => (g(Glyph::Run), Role::Paused),
         RunState::Complete | RunState::Accepted => (g(Glyph::Passed), Role::Done),
         RunState::Discarded => (g(Glyph::Ended), Role::Muted),
@@ -154,10 +156,11 @@ pub fn bar(filled: usize, empty: usize, ascii: bool) -> String {
 }
 
 /// Every glyph of the table (`Glyph`), the spinner's frames and the git marks as
-/// their one-column ASCII twins: for text composed from many glyph literals at once
-/// (an inspection), folded in one place rather than at each literal.
+/// their ASCII twins, one column each except `Glyph::Gate`'s `||` (two): for text
+/// composed from many glyph literals at once (an inspection), folded in one place
+/// rather than at each literal.
 pub fn ascii_twins(text: &str) -> String {
-    const GLYPHS: [Glyph; 21] = [
+    const GLYPHS: [Glyph; 22] = [
         Glyph::Passed,
         Glyph::Failed,
         Glyph::NotStarted,
@@ -179,6 +182,7 @@ pub fn ascii_twins(text: &str) -> String {
         Glyph::Run,
         Glyph::Hub,
         Glyph::Focus,
+        Glyph::Gate,
     ];
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {

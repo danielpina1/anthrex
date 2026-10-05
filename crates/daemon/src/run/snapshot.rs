@@ -63,6 +63,8 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
             info
         })
         .collect();
+    let (design, doc_gate, docs) = super::snapshot_design::design_fields(run);
+    let (round_design, halted_phase) = super::snapshot_design::round_fields(run);
     RunInfo {
         actions: available(run, &ActionNode::Run),
         run_id: run.id.clone(),
@@ -155,6 +157,13 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         rounds: run.round_infos(),
         // Milestone 9.5 decision 16.
         writer_caps: super::engine::concurrency::writer_caps(run),
+        // Milestone 9.6 (`snapshot_design.rs`).
+        design,
+        doc_gate,
+        docs,
+        round_design,
+        halted_phase,
+        design_agents: super::snapshot_design::design_agents(run),
     }
 }
 
@@ -184,6 +193,9 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
             AgentRole::Planner => "planner",
             // A decider has no rounds (decision 43); its usage is `decider_usage`.
             AgentRole::Decider => "decider",
+            // Milestone 9.6: design agents have no task rounds.
+            AgentRole::Brainstormer => "brainstormer",
+            AgentRole::DocReviewer => "doc_reviewer",
         };
         credit(role, round.usage);
     }
@@ -462,6 +474,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         // Milestone 9.5 decision 1 (task 20b).
         race: patterns::race_info(t),
         pair: patterns::pair_info(t),
+        // Milestone 9.6 decision 17.
+        covers: t.spec.covers.clone(),
     }
 }
 

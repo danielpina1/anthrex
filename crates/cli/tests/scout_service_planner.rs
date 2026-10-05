@@ -58,6 +58,7 @@ fn planner_spec(repo: &std::path::Path) -> PlannerSpec {
             epic: Some("mail".into()),
             chain: None,
             lane: None,
+            agent_label: None,
         }),
         allowed_tools: vec![
             "mcp__anthrex__get_context".into(),
@@ -67,6 +68,7 @@ fn planner_spec(repo: &std::path::Path) -> PlannerSpec {
         claude_permission_mode: Some("dontAsk".into()),
         claude_disallowed_tools: vec!["Edit".into(), "Write".into(), "NotebookEdit".into()],
         claude_sandbox: Some(ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: Vec::new(),
             deny_write: vec![repo.to_path_buf()],
         }),

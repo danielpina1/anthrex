@@ -24,6 +24,7 @@ fn a_planner() -> PlannerInfo {
         last_rejection: Some("t9 owns overlap t2".into()),
         replans: vec!["split t4".into()],
         note: None,
+        covers: Vec::new(),
     }
 }
 

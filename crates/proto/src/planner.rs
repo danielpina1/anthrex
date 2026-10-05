@@ -33,4 +33,8 @@ pub struct PlannerInfo {
     /// Milestone 9: why the planner ended as it did, when it says.
     #[serde(default)]
     pub note: Option<String>,
+    /// Milestone 9.6 ruling T11-1: in a design run, the requirement ids its epic owns
+    /// (`spawn_subplanner`'s `covers`). Left out while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covers: Vec<String>,
 }

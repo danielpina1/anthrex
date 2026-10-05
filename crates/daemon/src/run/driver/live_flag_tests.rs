@@ -36,6 +36,7 @@ fn role(run_id: &str) -> RoleLaunch {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         },
         instructions: "the orchestrator contract".into(),
         effort: Effort::High,

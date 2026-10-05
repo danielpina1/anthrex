@@ -163,6 +163,31 @@ fn pty_read_message_takes_a_bracketed_paste_and_typed_input() {
     assert_eq!(seen, ["agent-turn-complete"]);
 }
 
+/// Final fix wave W3 (the e2e_rethink flake): `read_message` with `skip` takes messages
+/// until one contains `expect`, ending a turn for each one it passes over, so a script
+/// can wait for a wake note without a `run_status` read that would clear it.
+#[test]
+fn pty_read_message_with_skip_passes_over_other_messages() {
+    let orch = Orch::new(
+        &[
+            json!({"read_message": {"expect": "wanted", "skip": true}}),
+            json!({"exit": 7}),
+        ],
+        &[(true, "{}")],
+    );
+    let log = orch.path("hooks.log");
+    let stops = |n: usize| {
+        let log = log.clone();
+        move || hooks(&log).iter().filter(|(e, _)| e == "Stop").count() >= n
+    };
+    let mut pty = orch.spawn(Runtime::Claude, &[]);
+    wait_for("the first Stop", RUN, stops(1));
+    pty.write(b"\x1b[200~another note\x1b[201~\r");
+    wait_for("the second Stop", RUN, stops(2));
+    pty.write(b"\x1b[200~the wanted note\x1b[201~\r");
+    assert_eq!(pty.wait(RUN), 7, "screen {:?}", pty.screen());
+}
+
 #[test]
 fn script_names_for_planners_integration_reviewers_and_run_scouts() {
     let dir = tempdir();
@@ -175,6 +200,7 @@ fn script_names_for_planners_integration_reviewers_and_run_scouts() {
         epic: epic.map(String::from),
         chain: None,
         lane: None,
+        agent_label: None,
     };
     let cases = [
         (

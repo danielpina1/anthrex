@@ -61,6 +61,7 @@ pub(in crate::run::driver) fn role(run_id: &str) -> RoleLaunch {
             epic: None,
             chain: Some(CHAIN.into()),
             lane: None,
+            agent_label: None,
         },
         instructions: "the orchestrator contract".into(),
         effort: Effort::High,
@@ -224,6 +225,7 @@ impl ChainRig {
             orchestrator: None,
             delivery: Some(DeliveryMode::Local),
             continue_from: Some(after.into()),
+            design: None,
         };
         tokio::time::timeout(ANSWER, self.s.request(req))
             .await
@@ -259,10 +261,12 @@ pub(in crate::run::driver) fn context(
     manager: &Arc<WindowManager>,
     wiring: &GitWiring,
 ) -> RunContext {
-    let orch_config = config::Orchestrator {
+    // Milestone 9.6 ruling T3-2: the design flow is off unless a test opts in.
+    let mut orch_config = config::Orchestrator {
         git_timeout_secs: GIT_TIMEOUT_SECS,
         ..config::Orchestrator::default()
     };
+    orch_config.design.default = proto::DesignMode::Off;
     let data = checkout.tmp.path().join("data");
     let mut ctx = RunContext::new(data, manager.config(), orch_config, wiring.registry.clone())
         .with_host(checkout.host());
@@ -379,6 +383,7 @@ async fn start_goal_inherits_delivery_trust_and_checks_but_not_approve_at_once()
             unconfined_checks: true,
             yes: false,
             delivery: Some(DeliveryMode::Pr),
+            design: None,
         }
     );
     let opts = mcp::McpOptions {

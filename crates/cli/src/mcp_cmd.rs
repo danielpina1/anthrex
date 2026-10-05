@@ -13,6 +13,7 @@ pub struct McpArgs {
     #[arg(long = "run", required_if_eq_any([
         ("role", "worker"), ("role", "reviewer"), ("role", "orchestrator"),
         ("role", "planner"), ("role", "racer"), ("role", "test_writer"),
+        ("role", "brainstormer"), ("role", "doc_reviewer"),
     ]))]
     run_id: Option<String>,
     #[arg(long = "task")]
@@ -28,6 +29,11 @@ pub struct McpArgs {
     /// A racer's lane (milestone 9.5): required for `racer`, refused otherwise.
     #[arg(long = "lane", value_enum)]
     lane: Option<LaneArg>,
+    /// A design agent's label (milestone 9.6 ruling T1-O3): accepted only with
+    /// `brainstormer` and `doc_reviewer`, and refused otherwise; the server never sends
+    /// it on. It names the session in its argv.
+    #[arg(long = "agent-label")]
+    agent_label: Option<String>,
     #[arg(long = "window")]
     window_id: u32,
     /// Defaults to the daemon's usual socket
@@ -37,7 +43,8 @@ pub struct McpArgs {
 
 /// `--role`. `orchestrator` and `planner` serve milestone 9's tools (decision 15);
 /// `scout` (milestone 8b) serves `submit_scout_report`, for a scout or a research
-/// task; `racer` and `test_writer` (milestone 9.5) serve the worker's tools. There is
+/// task; `racer` and `test_writer` (milestone 9.5) serve the worker's tools;
+/// `brainstormer` and `doc_reviewer` (milestone 9.6) serve the design flow's. There is
 /// no `decider`: a decider never runs `anthrex mcp` (`daemon::headless::argv::mcp_args`
 /// refuses one).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -51,6 +58,9 @@ enum RoleArg {
     /// Spelt as `proto::AgentRole` serializes it, not clap's default `test-writer`.
     #[value(name = "test_writer")]
     TestWriter,
+    Brainstormer,
+    #[value(name = "doc_reviewer")]
+    DocReviewer,
 }
 
 /// `--lane`: `a` or `b`.
@@ -79,6 +89,8 @@ impl From<RoleArg> for proto::AgentRole {
             RoleArg::Planner => proto::AgentRole::Planner,
             RoleArg::Racer => proto::AgentRole::Racer,
             RoleArg::TestWriter => proto::AgentRole::TestWriter,
+            RoleArg::Brainstormer => proto::AgentRole::Brainstormer,
+            RoleArg::DocReviewer => proto::AgentRole::DocReviewer,
         }
     }
 }
@@ -88,8 +100,9 @@ impl McpArgs {
     /// state per role are a usage error (exit code 2), as clap's own are: `--epic` is
     /// required for `planner` and refused for every other role; `--chain` is refused for
     /// every role but `orchestrator` (milestone 9.3); `--lane` is required for `racer`
-    /// and refused for every other role (milestone 9.5); `--role scout` takes
-    /// exactly one of `--scout` and `--task` (milestone 9 decision 35, defect 19).
+    /// and refused for every other role (milestone 9.5); `--agent-label` is refused for
+    /// every role but `brainstormer` and `doc_reviewer` (milestone 9.6); `--role scout`
+    /// takes exactly one of `--scout` and `--task` (milestone 9 decision 35, defect 19).
     pub fn into_options(self, default_socket: PathBuf) -> Result<mcp::McpOptions, clap::Error> {
         use clap::error::ErrorKind;
         let usage = |kind, text: &str| Err(clap::Error::raw(kind, format!("{text}\n")));
@@ -129,6 +142,13 @@ impl McpArgs {
                 );
             }
         }
+        let design = matches!(self.role, RoleArg::Brainstormer | RoleArg::DocReviewer);
+        if !design && self.agent_label.is_some() {
+            return usage(
+                ErrorKind::ArgumentConflict,
+                "--agent-label <text> is accepted only with --role brainstormer or doc_reviewer",
+            );
+        }
         if self.role == RoleArg::Scout && self.scout_id.is_some() == self.task_id.is_some() {
             return usage(
                 ErrorKind::ArgumentConflict,
@@ -152,3 +172,7 @@ impl McpArgs {
 #[cfg(test)]
 #[path = "mcp_cmd_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mcp_cmd_design_tests.rs"]
+mod design_tests;

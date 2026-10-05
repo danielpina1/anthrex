@@ -48,6 +48,10 @@ pub(crate) fn run_inspection(
     fields.push(field("agents", agents_text(run, app)));
     fields.push(field("spend", spend_text(run)));
     fields.push(field("gate", gate_text(run, app)));
+    // Milestone 9.6 task 17: `anthrex run status`'s two design lines.
+    if let Some(text) = design_text(run) {
+        fields.push(field("design", text));
+    }
     // Milestone 9.2 decision 42: the delivery, and a single-stage run's PR.
     fields.extend(super::run_stage_pr::run_fields(run, app));
     if let Some(orchestrator) = &run.orchestrator {
@@ -80,6 +84,25 @@ pub(crate) fn run_inspection(
         right,
         fields,
     )
+}
+
+/// A design run halted from a design phase or gate: `halted in <phase>`, the phase its
+/// plain resume returns to; an `off` round while it plans or waits at its 9.3 gate:
+/// `off this round`. `None` otherwise, and for a run without the design flow.
+fn design_text(run: &RunInfo) -> Option<String> {
+    if run.design == proto::DesignMode::Off {
+        return None;
+    }
+    if let Some(phase) = run.halted_phase.filter(|_| run.state == RunState::Halted) {
+        return Some(format!("halted in {}", phase.label()));
+    }
+    let at = match run.state {
+        RunState::Paused => run.paused_from,
+        state => Some(state),
+    };
+    let planning = matches!(at, Some(RunState::Planning | RunState::AwaitingApproval));
+    (run.round_design == Some(proto::RoundDesign::Off) && planning)
+        .then(|| "off this round".to_owned())
 }
 
 /// `round <n> · <origin> · <outcome or running> · <summary head or ->` (KG §7).
@@ -268,6 +291,10 @@ fn gate_text(run: &RunInfo, app: &App) -> String {
         return "planning · s submits the plan yourself".to_owned();
     }
     if run.state == RunState::AwaitingApproval {
+        // Ruling T18-5: a design gate's own keys.
+        if let Some(text) = super::run_design::design_gate_keys(run) {
+            return text;
+        }
         return "awaiting approval · a approve · x reject · e edit · d remove".to_owned();
     }
     if run.path == Some(RunPath::Fast) {

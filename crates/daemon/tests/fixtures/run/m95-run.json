@@ -1,0 +1,441 @@
+{
+  "id": "test-goal-03f0",
+  "goal": "Test goal",
+  "root": "/tmp/m95/work",
+  "project": "/tmp/m95/work",
+  "git_common_dir": "/tmp/m95/work/.git",
+  "wt_dir": "/tmp/m95/data/worktrees/work-a785a771",
+  "data_dir": "/tmp/m95/data/runs/test-goal-03f0",
+  "base_branch": "main",
+  "base_sha": "ded930647cfb77065831baf3557858a05d8bde7e",
+  "run_head": "ded930647cfb77065831baf3557858a05d8bde7e",
+  "last_green_candidate": null,
+  "base_moved": null,
+  "state": "planning",
+  "paused_from": null,
+  "halted_reason": null,
+  "approved_by": null,
+  "profile": {
+    "modules": [
+      "crates/*"
+    ],
+    "hub": [
+      "crates/proto/**"
+    ],
+    "source": [
+      "crates/*/src/**"
+    ],
+    "check": "cargo test",
+    "check_timeout_secs": 1800,
+    "single_test": "cargo test -- --exact {test}",
+    "test_passed": "test {test} \\.\\.\\. ok",
+    "setup": null,
+    "generated": [],
+    "protected": [
+      ".claude/**",
+      ".mcp.json",
+      ".codex/**",
+      "**/CLAUDE.md",
+      "**/AGENTS.md"
+    ],
+    "env": {},
+    "cache_dirs": [],
+    "confined_network": false,
+    "confined_unix_sockets": [],
+    "confined_localhost_ports": [],
+    "tiers": {
+      "build_check": null,
+      "module_test": null,
+      "module_tests": null,
+      "module_graph": "none",
+      "module_names": "dir",
+      "full_triggers": [],
+      "slow_tests": null,
+      "timing_tests": null,
+      "skip_markers": [],
+      "test_paths": [],
+      "full_shards": 1,
+      "toolchain_id": null
+    },
+    "manifests": []
+  },
+  "limits": {
+    "max_writers": 3,
+    "max_readers": 3,
+    "max_bounces": 2,
+    "max_tasks": 50,
+    "max_windows": 60,
+    "default_runtime": "claude",
+    "review_small": true,
+    "budget_s": {
+      "tool_calls": 55,
+      "minutes": 18,
+      "tokens": null
+    },
+    "budget_m": {
+      "tool_calls": 150,
+      "minutes": 60,
+      "tokens": null
+    },
+    "budget_l": {
+      "tool_calls": 300,
+      "minutes": 120,
+      "tokens": null
+    },
+    "stall_after_secs": 600,
+    "rate_limit_retry_secs": 300,
+    "denials_before_block": 3,
+    "git_timeout_secs": 60,
+    "worker_permission_mode": "acceptEdits",
+    "worker_allowed_tools": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "Agent",
+      "TodoWrite"
+    ],
+    "worker_codex_sandbox": "workspace-write",
+    "worker_sandbox": true,
+    "unconfined_checks": false,
+    "claude_auth": "login",
+    "api_key_helper": null,
+    "decider_mode": "claude",
+    "decider_slot_wait_secs": 30,
+    "orch": {
+      "planner_task_cap": 12,
+      "max_scouts": 12,
+      "wake_orchestrator": true,
+      "wake_quiet_secs": 5,
+      "message_max_per_turn": 3,
+      "note_max_per_task": 10,
+      "planners": {
+        "runtime": null,
+        "strength": "frontier",
+        "effort": "high",
+        "max_tool_calls": 200,
+        "timeout_secs": 2400,
+        "max_rejections": 5
+      },
+      "agent": {
+        "runtime": null,
+        "model": "",
+        "effort": "high"
+      },
+      "scouts": {
+        "runtime": null,
+        "default_runtime": "claude",
+        "strength": "fast",
+        "effort": "low"
+      }
+    },
+    "testing": {
+      "full_idle_secs": 120,
+      "bisect_fix_max": 2,
+      "flaky_quarantine_after": 3,
+      "flaky_window_days": 14
+    },
+    "path_weights": {
+      "s_secs": 550,
+      "m_secs": 1650,
+      "hub_secs": 1650,
+      "derived": [
+        "M",
+        "hub"
+      ],
+      "at": 1791122365
+    },
+    "route_lists": {
+      "review": {
+        "candidates": [
+          {
+            "runtime": "claude",
+            "model": "claude-sonnet-5",
+            "strength": "standard",
+            "effort": "high"
+          }
+        ],
+        "pick": "spread"
+      }
+    },
+    "adaptive_concurrency": true,
+    "recover_after_secs": 600,
+    "halve_hold_secs": 60,
+    "race_slot_wait_secs": 120
+  },
+  "roster": [
+    {
+      "runtime": "claude",
+      "model": "claude-haiku-4-5",
+      "strength": "fast",
+      "note": ""
+    },
+    {
+      "runtime": "claude",
+      "model": "claude-sonnet-5",
+      "strength": "standard",
+      "note": ""
+    },
+    {
+      "runtime": "claude",
+      "model": "claude-opus-5-5",
+      "strength": "frontier",
+      "note": ""
+    },
+    {
+      "runtime": "codex",
+      "model": "",
+      "strength": "standard",
+      "note": ""
+    }
+  ],
+  "tasks": [],
+  "merge_queue": [],
+  "outbox": [],
+  "next_message": 1,
+  "pending_ops": {},
+  "next_op": 1,
+  "windows_created": 0,
+  "revision": 1,
+  "unverified": false,
+  "final_check_failed": false,
+  "trusted_project": [],
+  "trust_project": false,
+  "protected_files": [],
+  "rate_limits": {},
+  "outcome": null,
+  "log": [
+    {
+      "at": 1791122365,
+      "text": "tuning: budget S 40 calls 15m → 55 calls 18m from 34 samples"
+    },
+    {
+      "at": 1791122365,
+      "text": "tuning: path weights S 550s, M 1650s (derived), hub 1650s (derived)"
+    },
+    {
+      "at": 1791122365,
+      "text": "tuning: budget S 55 calls 18m from 34 samples"
+    }
+  ],
+  "created_at": 1791122365,
+  "finish_edit": false,
+  "finish_reply": null,
+  "cancelled": false,
+  "verify_failures": 0,
+  "halt_retryable": false,
+  "restored": null,
+  "session_nonce": 11306162292576235435,
+  "codex_project_config": "loaded",
+  "codex_config_base": [],
+  "profile_source": "plan",
+  "output_filter": "failures-only",
+  "filter_prefixes": [],
+  "repo_dir": "/tmp/m95/data/repos/work-a785a771",
+  "stale_profile": [],
+  "decider_queue": [],
+  "next_decider": 0,
+  "decider_calls": 0,
+  "decider_fallbacks": 0,
+  "decider_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "scout_reports": [],
+  "onboarding_report": null,
+  "path": "plan",
+  "triage": {
+    "kinds": [
+      "code"
+    ],
+    "scale": "plan",
+    "path": "plan",
+    "reason": "several modules",
+    "source": "decider",
+    "fallback_reason": null,
+    "at": 1
+  },
+  "triage_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "scout_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "orchestrator_usage": {
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "promote_requested_at": null,
+  "run_record_written": false,
+  "profile_languages": [],
+  "role_routing_decisions": [],
+  "history": true,
+  "approved_at": null,
+  "plan_edits": [],
+  "plan_edits_since_approval": 0,
+  "orch": {
+    "orchestrator": {
+      "route": {
+        "runtime": "claude",
+        "model": "claude-opus-5-5",
+        "strength": "frontier",
+        "effort": "high"
+      },
+      "window_id": null,
+      "launch_op": null,
+      "live": false,
+      "started_at": 1791122365,
+      "exited_at": null,
+      "first_prompt": "",
+      "plan_submitted": false,
+      "summary": null,
+      "notes": [],
+      "note_seqs": [],
+      "last_note_seq": 0,
+      "last_wake_rev": 0,
+      "wakes": 0,
+      "otlp_token": "90e137ff9f9d4534588482250b83120b",
+      "session": 1,
+      "start_error": null,
+      "launches": 0,
+      "routing": {
+        "source": "explicit_choice",
+        "candidates": [
+          {
+            "route": {
+              "runtime": "claude",
+              "model": "claude-haiku-4-5",
+              "strength": "fast",
+              "effort": "high"
+            },
+            "skipped_reason": "an earlier candidate was taken"
+          },
+          {
+            "route": {
+              "runtime": "claude",
+              "model": "claude-sonnet-5",
+              "strength": "standard",
+              "effort": "high"
+            },
+            "skipped_reason": "an earlier candidate was taken"
+          },
+          {
+            "route": {
+              "runtime": "claude",
+              "model": "claude-opus-5-5",
+              "strength": "frontier",
+              "effort": "high"
+            },
+            "skipped_reason": null
+          }
+        ]
+      }
+    },
+    "epics": [],
+    "gate_holds": [],
+    "run_scouts": [],
+    "digest_rev": 0,
+    "digest_fp": 0,
+    "digest_read_at": null,
+    "installed": {
+      "claude": true,
+      "codex": true
+    },
+    "yes": false,
+    "research_report": null,
+    "planner_usage": {
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0
+    },
+    "note_seq": 0
+  },
+  "profile_hash": "b13ac0d041722aa9",
+  "toolchain": null,
+  "graph_note": null,
+  "test_slots": 0,
+  "stage_layout": "single",
+  "stages": [
+    {
+      "n": 1,
+      "branch": "anthrex/test-goal-03f0/integration",
+      "head": "ded930647cfb77065831baf3557858a05d8bde7e",
+      "created_from": "ded930647cfb77065831baf3557858a05d8bde7e",
+      "created_at": 1791122365,
+      "merges": [],
+      "floor": null,
+      "tasks_in": [],
+      "synced_from": null,
+      "last_green_candidate": null,
+      "full": {
+        "green_at": null,
+        "red_at": null,
+        "bisect_fixes": 0,
+        "last": null,
+        "note": null,
+        "infra": null,
+        "bisects": 0,
+        "ended": [],
+        "runs": 0
+      },
+      "bisect": null,
+      "propagate_red": null,
+      "propagate_note": null,
+      "round": 1
+    }
+  ],
+  "full_op": null,
+  "queue_idle_since": null,
+  "fix_seq": 0,
+  "propagate_due": [],
+  "delivery": {
+    "mode": "local",
+    "repo": null,
+    "limits": {
+      "poll_secs": 60,
+      "poll_max_secs": 300,
+      "ci_log_max_bytes": 2097152,
+      "ci_fix_max": 2,
+      "review_fix_max": 3,
+      "review_batch_secs": 120,
+      "reviewers": [],
+      "reply_to_comments": true,
+      "sync": "on_conflict",
+      "delete_merged_branches": false,
+      "stage_target_lines": [
+        300,
+        800
+      ]
+    },
+    "watching": false,
+    "poll_base_secs": 0,
+    "stages": [],
+    "permissions": {},
+    "base_synced": null,
+    "base_sync_due": {},
+    "failures": {},
+    "alerts": {},
+    "permission_retry_at": null,
+    "base_fetch_due": false,
+    "base_fetch_retry_at": null,
+    "remote_seal": null
+  },
+  "tuning_lines": [
+    "tuning: budget S 40 calls 15m → 55 calls 18m from 34 samples",
+    "tuning: path weights S 550s, M 1650s (derived), hub 1650s (derived)",
+    "tuning: budget S 55 calls 18m from 34 samples"
+  ]
+}

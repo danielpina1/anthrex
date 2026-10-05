@@ -3,10 +3,12 @@
 //! run in start order; the orchestrator's below an explicit choice (rulings RH-5,
 //! RL-3); and how a role record made over a list says so. Part of `roles.rs`. Pure.
 
-use proto::{OrchestratorChoice, RoleRoutingDecision, Route, RoutingCandidate};
+use proto::{Effort, OrchestratorChoice, RoleRoutingDecision, Route, RoutingCandidate, Runtime};
 
+use crate::decider::DeciderCaps;
 use crate::run::model::{FrozenList, ListPolicy, Run};
 use crate::run::orch::launch::{Resolved, scout_routing};
+use crate::run::roster::strongest_of;
 use crate::run::route_pick::{Installed, LIST_POLICY, RolePick, role};
 
 /// A role record's source when the role's list chose its route.
@@ -18,6 +20,15 @@ pub const EXPLICIT_SOURCE: &str = "explicit_choice";
 /// An orchestrator record's source when a continued chain kept its route (ruling RH-5
 /// ranks it on its own, below an explicit choice).
 pub const CHAIN_SOURCE: &str = "continued_chain";
+
+/// Ruling WB-A-W2: the halt when no installed runtime can run a brainstormer unsaved.
+pub const UNSAVED_BRAINSTORMER: &str =
+    "design flow: no installed runtime can run a brainstormer without saving its session";
+
+/// Ruling WB-A-W2: the halt when no installed runtime can run a document reviewer
+/// unsaved.
+pub const UNSAVED_REVIEWER: &str =
+    "design flow: no installed runtime can run a document reviewer without saving its session";
 
 /// Run scout `scout_id`'s pick from the run's `scout` list: its rotation is its place
 /// among the run's scouts (start order), at `[orchestrator.scouts] effort` where a
@@ -92,6 +103,153 @@ pub fn mark(decision: &mut RoleRoutingDecision, pick: (ListPolicy, u32), chosen:
     if chosen == Some(&decision.chosen) {
         decision.source = LIST_SOURCE.to_string();
         decision.policy_version = LIST_POLICY.to_string();
+    }
+}
+
+/// Milestone 9.6 decision 10: one brainstormer's label and route.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrainstormPick {
+    /// `claude` or `codex` on two runtimes, the lens `A` or `B` on one.
+    pub label: String,
+    pub route: Route,
+    /// The run's `brainstorm` list chose the route.
+    pub listed: bool,
+}
+
+/// Decision 10: the two brainstormers' picks. With a `brainstorm` list: its first two
+/// entries on different runtimes, else its first two (one usable entry runs twice); a
+/// candidate on a runtime the run's start found missing is passed over, as every
+/// role's list does. Without one (or with none usable): the strongest model of each
+/// installed runtime (`roster::strongest_of`), Claude's first; with one runtime, its
+/// strongest twice. A candidate without an effort, and every default, takes the
+/// orchestrator's effort (no `[orchestrator.design]` key names one). Labels: the
+/// runtimes' names on two runtimes, the lenses `A` and `B` on one. Empty when no
+/// installed runtime can run a brainstormer unsaved (ruling WB-A-W2).
+pub fn brainstorm_picks(run: &Run) -> Vec<BrainstormPick> {
+    brainstorm_picks_with(run, &crate::decider::caps()).unwrap_or_default()
+}
+
+/// Ruling T8-4: whether `runtime`'s CLI runs a session without saving it (`claude
+/// --no-session-persistence`, `codex exec --ephemeral`), by the decider's caps.
+pub fn runs_unsaved(runtime: Runtime, caps: &DeciderCaps) -> bool {
+    match runtime {
+        Runtime::Claude => caps.claude_no_session_persistence,
+        Runtime::Codex => caps.codex_ephemeral,
+        Runtime::Shell => false,
+    }
+}
+
+/// Ruling T8-4: the installed runtimes that cannot brainstorm, their CLI unable to run
+/// without saving the session; their picks fall back as an uninstalled runtime's.
+pub fn unsaved_missing(run: &Run, caps: &DeciderCaps) -> Vec<Runtime> {
+    let installed = |runtime: Runtime| run.orch.installed.get(runtime.label()) != Some(&false);
+    [Runtime::Claude, Runtime::Codex]
+        .into_iter()
+        .filter(|&runtime| installed(runtime) && !runs_unsaved(runtime, caps))
+        .collect()
+}
+
+/// [`brainstorm_picks`] by `caps` (ruling T8-4). `None` when no installed runtime can
+/// run a brainstormer unsaved: there is no fallback to one that saves its session
+/// (ruling WB-A-W2).
+pub fn brainstorm_picks_with(run: &Run, caps: &DeciderCaps) -> Option<Vec<BrainstormPick>> {
+    let effort = (run.orch.orchestrator.as_ref()).map_or(Effort::High, |o| o.route.effort);
+    let usable = |runtime: Runtime| {
+        run.orch.installed.get(runtime.label()) != Some(&false) && runs_unsaved(runtime, caps)
+    };
+    let list = &run.limits.route_lists.brainstorm;
+    let listed: Vec<Route> = (list.candidates.iter())
+        .filter(|c| usable(c.runtime))
+        .map(|c| c.route(effort))
+        .collect();
+    let (routes, from_list) = match listed.first() {
+        Some(first) => {
+            let other = listed.iter().skip(1).find(|r| r.runtime != first.runtime);
+            let second = other.or(listed.get(1)).unwrap_or(first);
+            ((first.clone(), second.clone()), true)
+        }
+        None => (default_pair(run, effort, &usable)?, false),
+    };
+    let (a, b) = routes;
+    let labels = match a.runtime == b.runtime {
+        true => ("A".to_string(), "B".to_string()),
+        false => (a.runtime.label().to_string(), b.runtime.label().to_string()),
+    };
+    Some(vec![
+        BrainstormPick {
+            label: labels.0,
+            route: a,
+            listed: from_list,
+        },
+        BrainstormPick {
+            label: labels.1,
+            route: b,
+            listed: from_list,
+        },
+    ])
+}
+
+/// Milestone 9.6 decision 10 (task M9.6.10, DF §4.2): the document reviewer's route
+/// and, when it is the orchestrator's own route, why (fix round 1, m1). Its peer
+/// (`validate_patterns::peer_route`: the other runtime's first roster entry at the
+/// orchestrator's strength, at its effort), unless that runtime is not installed, its
+/// CLI cannot run a session without saving it (ruling T8-4, as for a brainstormer), or
+/// the roster has no model of it at that strength. `None` when the orchestrator's own
+/// runtime cannot run one unsaved either: there is no fallback to a runtime that saves
+/// its session (ruling WB-A-W2, ruling WB-B m4).
+pub fn review_pick(run: &Run, caps: &DeciderCaps) -> Option<(Route, Option<String>)> {
+    let own = (run.orch.orchestrator.as_ref()).map_or_else(
+        || crate::run::orch::launch::frozen_scout_route(run),
+        |o| o.route.clone(),
+    );
+    let name = crate::run::roster::peer(own.runtime).label();
+    let installed = &run.orch.installed;
+    let why = if installed.get(name) == Some(&false) {
+        format!("the {name} runtime is not installed")
+    } else if !runs_unsaved(crate::run::roster::peer(own.runtime), caps) {
+        format!("the {name} CLI cannot run a session without saving it")
+    } else if let Some(peer) =
+        crate::run::validate_patterns::peer_route(&run.roster, &own, installed)
+    {
+        return Some((peer, None));
+    } else {
+        let strength = crate::run::validate::strength_label(own.strength);
+        format!("the roster has no {name} model at {strength} strength")
+    };
+    let own_installed = installed.get(own.runtime.label()) != Some(&false);
+    (own_installed && runs_unsaved(own.runtime, caps)).then_some((own, Some(why)))
+}
+
+/// Decision 10's defaults: the strongest model of each usable runtime (installed, and
+/// able to run unsaved), else (no roster entry on any) the orchestrator's route twice
+/// when its runtime is usable; `None` otherwise (ruling WB-A-W2: no fallback to a
+/// runtime that saves its session).
+fn default_pair(
+    run: &Run,
+    effort: Effort,
+    usable: &dyn Fn(Runtime) -> bool,
+) -> Option<(Route, Route)> {
+    let strongest: Vec<Route> = [Runtime::Claude, Runtime::Codex]
+        .into_iter()
+        .filter(|&runtime| usable(runtime))
+        .filter_map(|runtime| strongest_of(&run.roster, runtime))
+        .map(|e| Route {
+            runtime: e.runtime,
+            model: e.model.clone(),
+            strength: e.strength,
+            effort,
+        })
+        .collect();
+    match &strongest[..] {
+        [a, b, ..] => Some((a.clone(), b.clone())),
+        [a] => Some((a.clone(), a.clone())),
+        [] => {
+            let route = (run.orch.orchestrator.as_ref()).map_or_else(
+                || crate::run::orch::launch::frozen_scout_route(run),
+                |o| o.route.clone(),
+            );
+            usable(route.runtime).then(|| (route.clone(), route))
+        }
     }
 }
 

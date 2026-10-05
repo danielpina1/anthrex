@@ -11,39 +11,61 @@ use std::collections::{HashMap, HashSet};
 
 use config::{ConfiguredBudgets, Tuning};
 use proto::{
-    AgentRole, Budget, ClassBudget, ClassRoute, Effort, HistoryLine, PathWeights, PhaseSecs, Size,
-    Strength, TaskKind, TaskOrigin, TaskOutcome, TaskPattern, TaskRecord, TokenUsage, TuningFile,
+    AgentRole, Budget, ClassBudget, ClassRoute, Effort, HistoryLine, PhaseSecs, Size, Strength,
+    TaskKind, TaskOrigin, TaskOutcome, TaskPattern, TaskRecord, TokenUsage, TuningFile,
 };
 
 use super::history_io::effective_reverts;
 use super::routing::CLASS_DEFAULT;
+use weights::{fit_weights, weights_moved, weights_text};
 
-/// A task class the refit learns per (decision 4).
+/// A class the refit learns per (decision 4): a task class, or (milestone 9.6 decision
+/// 33) a design agent's, whose samples are the phase records' agents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SizeClass {
     S,
     M,
     Hub,
+    /// The brainstormers' budget, `[orchestrator.design.budget.brainstormer]`.
+    Brainstorm,
+    /// The document reviewers' budget, `[orchestrator.design.budget.doc_reviewer]`.
+    DocReview,
 }
 
 impl SizeClass {
+    /// The task classes.
     pub const ALL: [SizeClass; 3] = [SizeClass::S, SizeClass::M, SizeClass::Hub];
+    /// The design agents' classes (milestone 9.6 decision 33).
+    pub const DESIGN: [SizeClass; 2] = [SizeClass::Brainstorm, SizeClass::DocReview];
 
-    /// As `run stats` prints it: `S`, `M`, `hub`.
+    /// As `run stats` prints it: `S`, `M`, `hub`, `brainstorm`, `doc review`.
     pub fn label(self) -> &'static str {
         match self {
             SizeClass::S => "S",
             SizeClass::M => "M",
             SizeClass::Hub => "hub",
+            SizeClass::Brainstorm => "brainstorm",
+            SizeClass::DocReview => "doc review",
         }
     }
 
-    /// As `tuning.toml` keys it: `s`, `m`, `hub`.
+    /// As `tuning.toml` keys it: `s`, `m`, `hub`, `brainstorm`, `doc_review`.
     pub fn key(self) -> &'static str {
         match self {
             SizeClass::S => "s",
             SizeClass::M => "m",
             SizeClass::Hub => "hub",
+            SizeClass::Brainstorm => "brainstorm",
+            SizeClass::DocReview => "doc_review",
+        }
+    }
+
+    /// The design agent role whose phase records are a design class's samples.
+    pub fn design_role(self) -> Option<AgentRole> {
+        match self {
+            SizeClass::Brainstorm => Some(AgentRole::Brainstormer),
+            SizeClass::DocReview => Some(AgentRole::DocReviewer),
+            SizeClass::S | SizeClass::M | SizeClass::Hub => None,
         }
     }
 }
@@ -124,16 +146,36 @@ impl<'a> Reverted<'a> {
     }
 }
 
+/// A sample the per-round cap and the window order: a task record, or (milestone 9.6)
+/// a design agent of a phase record.
+pub(super) trait Sample {
+    /// `(at, record_id)`.
+    fn order(&self) -> (u64, &str);
+    /// `(run, round)`.
+    fn run_round(&self) -> (&str, u32);
+}
+
+impl Sample for &TaskRecord {
+    fn order(&self) -> (u64, &str) {
+        (self.at, &self.record_id)
+    }
+
+    fn run_round(&self) -> (&str, u32) {
+        (&self.run_id, self.round)
+    }
+}
+
 /// Steps 2 and 3: sorted by `(at, record_id)`, at most `per_run_cap` per `(run, round)`
 /// (round 0, a line written before 9.5, reads as 1), the newest; then the newest
 /// `window`. Oldest first.
-fn cap_and_window<'a>(mut records: Vec<&'a TaskRecord>, t: &Tuning) -> Vec<&'a TaskRecord> {
-    records.sort_by(|a, b| (a.at, &a.record_id).cmp(&(b.at, &b.record_id)));
-    let mut per_round: HashMap<(&str, u32), u32> = HashMap::new();
-    let mut kept: Vec<&TaskRecord> = Vec::new();
+fn cap_and_window<S: Sample>(mut records: Vec<S>, t: &Tuning) -> Vec<S> {
+    records.sort_by(|a, b| a.order().cmp(&b.order()));
+    let mut per_round: HashMap<(String, u32), u32> = HashMap::new();
+    let mut kept: Vec<S> = Vec::new();
     for record in records.into_iter().rev() {
+        let (run, round) = record.run_round();
         let n = per_round
-            .entry((record.run_id.as_str(), record.round.max(1)))
+            .entry((run.to_string(), round.max(1)))
             .or_default();
         if *n < t.per_run_cap {
             *n += 1;
@@ -288,7 +330,7 @@ fn median_of(samples: &[&TaskRecord], value: impl Fn(&TaskRecord) -> u64) -> Opt
     lower_median(&samples.iter().map(|r| value(r)).collect::<Vec<_>>())
 }
 
-fn qualifies(samples: &[&TaskRecord], t: &Tuning) -> bool {
+fn qualifies<S>(samples: &[S], t: &Tuning) -> bool {
     samples.len() as u64 >= u64::from(t.min_samples)
 }
 
@@ -304,7 +346,6 @@ fn fit_budget(samples: &[&TaskRecord], t: &Tuning, now: u64) -> Option<ClassBudg
     if !qualifies(samples, t) {
         return None;
     }
-    let f = u64::from(t.budget_factor_percent);
     let calls = median_of(samples, |r| u64::from(r.tool_calls))?;
     let working = median_of(samples, |r| r.phases.working)?;
     // Ruling T8-5: only samples that recorded worker usage, and only when they qualify
@@ -316,23 +357,46 @@ fn fit_budget(samples: &[&TaskRecord], t: &Tuning, now: u64) -> Option<ClassBudg
     let tokens = (t.refit_tokens && qualifies(&recorded, t))
         .then(|| median_of(&recorded, |r| r.worker_usage.billable()))
         .flatten()
-        .filter(|&m| m > 0)
-        .map(|m| m.saturating_mul(f).div_ceil(100));
-    let clamp = |v: u64, lo: u64, hi: u64| v.clamp(lo, hi) as u32;
-    Some(ClassBudget {
-        tool_calls: clamp(calls.saturating_mul(f).div_ceil(100), 10, 2000),
-        minutes: clamp(working.saturating_mul(f).div_ceil(6000), 5, 1440),
-        tokens,
-        samples: samples.len() as u32,
-        at: now,
-    })
+        .filter(|&m| m > 0);
+    Some(budget_of((calls, working, tokens), samples.len(), t, now))
 }
 
-/// The class's default with no refit: S's or M's configured budget; hub takes M's.
+/// Decision 6's budget from a qualifying class's lower medians, `(calls, secs,
+/// tokens)`, each times `budget_factor_percent` and clamped.
+fn budget_of(
+    (calls, secs, tokens): (u64, u64, Option<u64>),
+    samples: usize,
+    t: &Tuning,
+    now: u64,
+) -> ClassBudget {
+    let f = u64::from(t.budget_factor_percent);
+    let clamp = |v: u64, lo: u64, hi: u64| v.clamp(lo, hi) as u32;
+    ClassBudget {
+        tool_calls: clamp(calls.saturating_mul(f).div_ceil(100), 10, 2000),
+        minutes: clamp(secs.saturating_mul(f).div_ceil(6000), 5, 1440),
+        tokens: tokens.map(|m| m.saturating_mul(f).div_ceil(100)),
+        samples: samples as u32,
+        at: now,
+    }
+}
+
+/// A class's refit from history: a task class's from its budget samples, a design
+/// class's from the phase records (`refit_design.rs`).
+fn fit_class(lines: &[HistoryLine], class: SizeClass, t: &Tuning, now: u64) -> Option<ClassBudget> {
+    match class.design_role() {
+        Some(role) => design::fit(lines, role, t, now),
+        None => fit_budget(&budget_samples(lines, class, t), t, now),
+    }
+}
+
+/// The class's default with no refit: S's or M's configured budget; hub takes M's; a
+/// design class, its `[orchestrator.design.budget]`.
 fn default_budget(cfg: &config::Orchestrator, class: SizeClass) -> Budget {
     match class {
         SizeClass::S => cfg.budget_s,
         SizeClass::M | SizeClass::Hub => cfg.budget_m,
+        SizeClass::Brainstorm => cfg.design.budget.brainstormer,
+        SizeClass::DocReview => cfg.design.budget.doc_reviewer,
     }
 }
 
@@ -361,6 +425,8 @@ fn configured(c: ConfiguredBudgets, class: SizeClass) -> bool {
     match class {
         SizeClass::S => c.s,
         SizeClass::M | SizeClass::Hub => c.m,
+        SizeClass::Brainstorm => c.brainstormer,
+        SizeClass::DocReview => c.doc_reviewer,
     }
 }
 
@@ -398,58 +464,6 @@ pub fn ceiling(class: SizeClass, own: Budget, effective_m: Budget, budget_l: Bud
     }
 }
 
-// ---- critical-path weights (decision 7) ----
-
-fn fit_weights(lines: &[HistoryLine], t: &Tuning, now: u64) -> Option<PathWeights> {
-    let measured = |class| {
-        let samples = budget_samples(lines, class, t);
-        qualifies(&samples, t)
-            .then(|| median_of(&samples, |r| active_secs(&r.phases)))
-            .flatten()
-    };
-    let (s, m, hub) = (
-        measured(SizeClass::S),
-        measured(SizeClass::M),
-        measured(SizeClass::Hub),
-    );
-    let m_secs = m.or(hub).or(s.map(|s| s.saturating_mul(3)))?;
-    let hub_secs = hub.unwrap_or(m_secs);
-    let s_secs = s.unwrap_or(m_secs.div_ceil(3));
-    let derived = [(s, "S"), (m, "M"), (hub, "hub")]
-        .into_iter()
-        .filter(|(secs, _)| secs.is_none())
-        .map(|(_, label)| label.to_string())
-        .collect();
-    Some(PathWeights {
-        s_secs,
-        m_secs,
-        hub_secs,
-        derived,
-        at: now,
-    })
-}
-
-/// A weight moved by `pct`, or which classes are derived changed.
-fn weights_moved(new: &PathWeights, cur: &PathWeights, pct: u32) -> bool {
-    new.derived != cur.derived
-        || moved(new.s_secs, cur.s_secs, pct)
-        || moved(new.m_secs, cur.m_secs, pct)
-        || moved(new.hub_secs, cur.hub_secs, pct)
-}
-
-fn weights_text(w: &PathWeights) -> String {
-    let part = |label: &str, secs: u64| {
-        let derived = w.derived.iter().any(|d| d == label);
-        format!("{label} {secs}s{}", if derived { " (derived)" } else { "" })
-    };
-    format!(
-        "{}, {}, {}",
-        part("S", w.s_secs),
-        part("M", w.m_secs),
-        part("hub", w.hub_secs)
-    )
-}
-
 /// Ruling T8-7: a configured class's refit, computed from history for display only
 /// ("refit would be"), with no change gate; `None` with the refit off or too few
 /// samples.
@@ -462,7 +476,7 @@ pub fn shown_refit(
     if !t.refit_budgets {
         return None;
     }
-    let fit = fit_budget(&budget_samples(lines, class, t), t, 0)?;
+    let fit = fit_class(lines, class, t, 0)?;
     Some(as_budget(&fit, default_budget(cfg, class)))
 }
 
@@ -470,7 +484,8 @@ pub fn shown_refit(
 /// only where they moved by `min_change_percent` (or were absent), with one refit-write
 /// line each (decision 12). A configured class (ruling RH-5) is not refitted here: its
 /// `[budgets.<class>]` is left as it is (ruling T8-7), and [`shown_refit`] computes
-/// what it would be, for display only.
+/// what it would be, for display only. Milestone 9.6 decision 33: the design classes
+/// too.
 pub fn refit(
     lines: &[HistoryLine],
     file: &TuningFile,
@@ -482,8 +497,9 @@ pub fn refit(
     let mut log = Vec::new();
     // Ruling T8-7: a configured class's refit is only shown, never written.
     let refitted = |c: &SizeClass| t.refit_budgets && !configured(cfg.tuning.configured, *c);
-    for class in SizeClass::ALL.into_iter().filter(refitted) {
-        let Some(new) = fit_budget(&budget_samples(lines, class, t), t, now) else {
+    let classes = SizeClass::ALL.into_iter().chain(SizeClass::DESIGN);
+    for class in classes.filter(refitted) {
+        let Some(new) = fit_class(lines, class, t, now) else {
             continue;
         };
         let default = default_budget(cfg, class);
@@ -511,12 +527,16 @@ pub fn refit(
     (out, log)
 }
 
+#[path = "refit_design.rs"]
+mod design;
 #[path = "refit_propose.rs"]
 mod propose;
 #[path = "refit_tuned.rs"]
 mod tuned;
+#[path = "refit_weights.rs"]
+mod weights;
 pub use propose::{apply, dismiss, proposals};
-pub use tuned::{Tuned, report, tuned, tuned_with};
+pub use tuned::{Tuned, is_design_line, is_none_line, report, tuned, tuned_with};
 
 #[cfg(test)]
 #[path = "refit_tests.rs"]
@@ -533,3 +553,7 @@ mod text_tests;
 #[cfg(test)]
 #[path = "refit_tests_edges.rs"]
 mod edge_tests;
+
+#[cfg(test)]
+#[path = "refit_tests_design.rs"]
+mod design_tests;

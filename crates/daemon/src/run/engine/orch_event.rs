@@ -42,6 +42,16 @@ pub enum OrchEvent {
         outcome: ScoutEnd,
         usage: TokenUsage,
     },
+    /// Milestone 9.6 decision 9: a design agent's session ended, with what it spent.
+    DesignAgentEnded {
+        run_id: String,
+        role: proto::AgentRole,
+        label: String,
+        session: u32,
+        outcome: ScoutEnd,
+        usage: TokenUsage,
+        calls: u32,
+    },
     /// Decision 39: the driver pasted the wake-up of `digest_revision` into the
     /// orchestrator's window; `notes_seq` is its `Effect::WakeOrchestrator`'s.
     OrchestratorWoken {
@@ -136,11 +146,14 @@ pub enum OrchEvent {
 }
 
 /// How a run scout's or sub-planner's session ended: its report or epic accepted, or
-/// the machine's failure.
+/// the machine's failure. Milestone 9.6 ruling T8-7: a design agent's turn that ended
+/// without its submission, unnudged (`scout::machine::unsubmitted`), is its own cause,
+/// so the engine relaunches it by its type, never by its text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScoutEnd {
     Reported,
     Failed { reason: String },
+    Unsubmitted { reason: String },
 }
 
 impl OrchEvent {
@@ -153,6 +166,7 @@ impl OrchEvent {
             | OrchEvent::RoleRoute { reply, .. } => Some(*reply),
             OrchEvent::ScoutEnded { .. }
             | OrchEvent::PlannerEnded { .. }
+            | OrchEvent::DesignAgentEnded { .. }
             | OrchEvent::OrchestratorWoken { .. }
             | OrchEvent::DigestRead { .. }
             | OrchEvent::OrchestratorWindow { .. }

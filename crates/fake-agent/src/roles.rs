@@ -121,8 +121,11 @@ pub fn find(role: Option<&str>, task: Option<&str>, session: &str, resume: bool)
 /// `daemon::headless::argv::mcp_args` writes): an orchestrator's key is `run`, a
 /// sub-planner's its `--epic`, a run scout's its `--scout` id without the run's
 /// `<h4>-` prefix, a research task's scout its `--task`, a racer's `<task>-<lane>`
-/// (milestone 9.5 decision 31: `racer-t1-a-1.jsonl`), and anyone else's its `--task`
-/// (a test writer's `test_writer-t1-1.jsonl`).
+/// (milestone 9.5 decision 31: `racer-t1-a-1.jsonl`), a design agent's its
+/// `--agent-label` (milestone 9.6 ruling T1-O3: a brainstormer's label,
+/// `brainstormer-codex-1.jsonl`; a document reviewer's `<doc>-r<k>`,
+/// `doc_reviewer-spec-r1-1.jsonl`), and anyone else's its `--task` (a test writer's
+/// `test_writer-t1-1.jsonl`).
 pub fn key(server: Option<&McpServer>) -> (Option<String>, Option<String>) {
     if let Some(server) = server
         && server.flag("--role") == Some("racer")
@@ -140,6 +143,7 @@ pub fn key(server: Option<&McpServer>) -> (Option<String>, Option<String>) {
     let key = match role {
         Some("orchestrator") => Some("run"),
         Some("planner") => server.flag("--epic"),
+        Some("brainstormer" | "doc_reviewer") => server.flag("--agent-label"),
         Some("scout") => match (server.flag("--scout"), server.flag("--run")) {
             (Some(id), Some(run)) => {
                 let h4 = run.get(run.len().saturating_sub(4)..).unwrap_or(run);

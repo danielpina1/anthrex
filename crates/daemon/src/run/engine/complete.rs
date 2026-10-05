@@ -152,6 +152,12 @@ pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 /// orchestrator, milestone 9 decision 38's conditions hold too (`kinds::may_complete`);
 /// in `pr` mode, every stage PR has landed (milestone 9.2 decision 37).
 pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    // Ruling T15-18: never complete with a round's documents commit due; one that no
+    // task of the round is left to wait for is dropped with the round first.
+    super::design_commit::abandon(run, now);
+    if super::design_commit::due(run) {
+        return;
+    }
     let finished = run.tasks.iter().all(|t| t.state.is_finished())
         && super::kinds::may_complete(run)
         && super::delivery::may_complete(run);
@@ -311,7 +317,9 @@ fn complete(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 
 /// `run cancel` (decision 37): every run session is killed and every unmerged task
 /// cancelled (salvaged once its session has exited), and the run completes. A paused
-/// run runs again to complete; a halted one completes after `resume --rebaseline`.
+/// run runs again to complete; a halted one completes after `resume --rebaseline`,
+/// except a design run halted before its plan was approved (milestone 9.6 ruling T7-9):
+/// it is never resumed into its phase, and its reply says to discard it.
 pub(super) fn cancel(
     state: &mut EngineState,
     reply: ReplyId,
@@ -349,7 +357,13 @@ pub(super) fn cancel(
     super::delivery::land::cancelled(run, now, fx);
     super::planners::halt_all(run, super::planners::RUN_CANCELLED, now, fx);
     log(run, now, "cancelled by the user");
-    let mut text = format!("run {run_id} cancelled; it completes once its sessions have ended");
+    let before_plan = super::design::halted_phase(run).is_some();
+    let mut text = match before_plan {
+        true => format!(
+            "run {run_id} cancelled before its plan was approved; discard it with anthrex run discard {run_id}"
+        ),
+        false => format!("run {run_id} cancelled; it completes once its sessions have ended"),
+    };
     for id in merging {
         text.push_str(&deferred_note(&id));
     }

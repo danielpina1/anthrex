@@ -80,9 +80,11 @@ pub(super) fn start(
         run.approved_at = Some(now);
         stages::fix_layout(&mut run, now);
         log(&mut run, now, "started on the fast path; no plan gate");
-    } else if run.state == RunState::Planning {
-        // Milestone 9 decision 26: no task and no gate yet; the orchestrator plans.
-        log(&mut run, now, "started; planning with its orchestrator");
+    } else if matches!(run.state, RunState::Planning | RunState::Brainstorming) {
+        // Milestone 9 decision 26: no task and no gate yet; the orchestrator plans (or,
+        // milestone 9.6 decision 4, brainstorms first).
+        let text = format!("started; {} with its orchestrator", run.state.label());
+        log(&mut run, now, text);
     } else if run.approved_by.as_deref() == Some("--yes") {
         run.state = RunState::Running;
         run.approved_at = Some(now);
@@ -102,7 +104,8 @@ pub(super) fn start(
         env: profile_env(&run.profile, &path),
     };
     emit_op(&mut run, op, None, kind, fx);
-    if run.state == RunState::Planning && join != super::chains::Join::Adopted {
+    let planned = matches!(run.state, RunState::Planning | RunState::Brainstorming);
+    if planned && join != super::chains::Join::Adopted {
         super::orch_window::launch(&mut run, now, fx);
     }
     // M8b decision 19: every task is cross-checked; one waiting is not runnable. The
@@ -162,6 +165,12 @@ pub(super) fn approve(
     if let Some(text) = rules::approve(run) {
         return reply(fx, id, Err(text));
     }
+    // Milestone 9.6 decision 7: a design run's plan gate is its document gate's.
+    if super::design_gate::waiting(run).is_some() {
+        let (kind, action) = (proto::DocGateKind::Plan, proto::DocGateAction::APPROVE);
+        let result = super::design_gate::act(run, kind, action, now, fx);
+        return reply(fx, id, result);
+    }
     run.state = RunState::Running;
     // Milestone 9.1 decision 46 (the layout) and task 12 review m7 (a decider queued
     // at the gate waits from now); milestone 9.3 decision 12: round 1's approval only.
@@ -189,11 +198,27 @@ pub(super) fn reject(
     if let Some(text) = rules::reject(run) {
         return reply(fx, id, Err(text));
     }
+    // Milestone 9.6 ruling T1-O1: at a document gate, the gate's reject.
+    if let Some(kind) = super::design_gate::waiting(run).map(|g| g.kind) {
+        let action = proto::DocGateAction::Reject;
+        let result = super::design_gate::act(run, kind, action, now, fx);
+        return reply(fx, id, result);
+    }
+    // Milestone 9.6 (fix round 1, m6): before its plan, the phase's document.
+    let what = super::design_gate::phase_doc(run).map_or("plan", |k| k.label());
+    let note = format!("the user rejected the {what}; run discarded");
+    let text = reject_run(run, &note, now, fx);
+    reply(fx, id, Ok(text));
+}
+
+/// The rejected run's discard (decision 20), or its later round's reject (milestone
+/// 9.3 decision 12), with the orchestrator's `note`; the reply's text.
+pub(super) fn reject_run(run: &mut Run, note: &str, now: u64, fx: &mut Vec<Effect>) -> String {
     // Milestone 9.3 decision 12: a later round's reject keeps the run.
     if super::goal_rounds_end::open_round(run) {
-        let text = super::goal_rounds_end::reject_round(run, now, fx);
-        return reply(fx, id, Ok(text));
+        return super::goal_rounds_end::reject_round(run, now, fx);
     }
+    let run_id = run.id.clone();
     let mut worktrees: Vec<_> = run
         .tasks
         .iter()
@@ -209,6 +234,8 @@ pub(super) fn reject(
     for task in &mut run.tasks {
         task.drop_pending_size_check();
     }
+    // Milestone 9.6: a run rejected while it brainstorms stops its brainstormers.
+    super::design_agents::halt_all(run, super::design_agents::RUN_REJECTED, fx);
     let op = next_op(run);
     let kind = OpKind::Discard {
         root: run.root.clone(),
@@ -217,8 +244,8 @@ pub(super) fn reject(
     };
     emit_op(run, op, None, kind, fx);
     log(run, now, "rejected by the user; discarding");
-    super::wake::note(run, "the user rejected the plan; run discarded".to_string());
-    reply(fx, id, Ok(format!("run {run_id} rejected; discarding it")));
+    super::wake::note(run, note.to_string());
+    format!("run {run_id} rejected; discarding it")
 }
 
 /// `run edit` (decision 13): the user's batch, through `batch::apply_batch`, and with
@@ -244,8 +271,14 @@ pub(super) fn edit(
         let result = submit_edit(run, batch, now, fx);
         return reply(fx, id, result);
     }
+    // Milestone 9.6 ruling T7-7: an edit at the open plan gate is its next version.
+    let at_gate = super::design::plan::open_gate(run).then(|| run.tasks.clone());
     match apply_batch(run, batch, &EditSource::User, now, fx) {
-        Ok(applied) => reply(fx, id, Ok(applied.text)),
+        Ok(applied) => {
+            let text =
+                super::design::plan::user_edited(run, at_gate.as_deref(), applied.text, now, fx);
+            reply(fx, id, Ok(text))
+        }
         Err(Refused::Text(text)) => reply(fx, id, Err(text)),
         Err(Refused::Plan(errors)) => {
             let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
@@ -283,7 +316,9 @@ fn submit_edit(
             }
         }
     }
-    super::orch::submit_plan(&mut edited, "the user", now)?;
+    // Milestone 9.6 decisions 18 and 21: a design run's checks, and its plan gate.
+    let author = Some(proto::DocAuthor::User);
+    super::design::plan::submit(&mut edited, author, &[], now, &mut effects)?;
     *run = edited;
     fx.extend(effects);
     let awaiting = |id: &str| {

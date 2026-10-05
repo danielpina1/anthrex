@@ -430,3 +430,13 @@ fn validate_never_refuses_hidden_format_characters_and_cleaned_drops_them() {
     );
     assert_eq!(validate(&doc), Vec::<String>::new());
 }
+
+/// Ruling T18-2: the settings name `[orchestrator.design].default`, which the goal
+/// dialog's `configured` shows; the product default is `full` (DF §1).
+#[test]
+fn doc_of_names_the_design_default() {
+    assert_eq!(default_doc().design_default, Some(proto::DesignMode::Full));
+    let mut o = crate::Orchestrator::default();
+    o.design.default = proto::DesignMode::Off;
+    assert_eq!(doc_of(&o).design_default, Some(proto::DesignMode::Off));
+}

@@ -60,10 +60,7 @@ pub(crate) fn readers(run: &Run) -> usize {
 /// (task M9.9). Planners and scouts start while the run is being planned, at the gate
 /// and while it runs; nothing starts in any other state.
 pub(super) fn dispatch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    if !matches!(
-        run.state,
-        RunState::Planning | RunState::AwaitingApproval | RunState::Running
-    ) {
+    if !super::design::readers_start(run.state) {
         return;
     }
     while super::schedule::readers_busy(run) < usize::from(run.limits.max_readers) {
@@ -74,7 +71,9 @@ pub(super) fn dispatch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             .position(|e| e.phase == PlannerPhase::Queued)
         {
             start(run, k, now, fx);
-        } else if !run_scouts::start_next(run, now, fx) {
+        } else if !super::design_agents::start_next(run, now, fx)
+            && !run_scouts::start_next(run, now, fx)
+        {
             break;
         }
     }
@@ -176,7 +175,7 @@ pub(super) fn ended(
         return;
     }
     let reason = match outcome {
-        ScoutEnd::Failed { reason } => reason,
+        ScoutEnd::Failed { reason } | ScoutEnd::Unsubmitted { reason } => reason,
         ScoutEnd::Reported => "the sub-planner ended without an accepted epic".to_string(),
     };
     fail(run, k, reason, now);
@@ -227,6 +226,7 @@ pub(super) fn halt_all(run: &mut Run, reason: &str, now: u64, fx: &mut Vec<Effec
         fail(run, k, reason.to_string(), now);
     }
     run_scouts::halt_all(run, reason, now, fx);
+    super::design_agents::halt_all(run, reason, fx);
 }
 
 /// Decision 32 after a daemon restart: a queued or live sub-planner is not resumed; it
@@ -239,6 +239,7 @@ pub(super) fn restore(run: &mut Run, now: u64) {
         }
     }
     run_scouts::restore(run, now);
+    super::design_agents::restore(run, now);
 }
 
 /// Decision 21: `spawn_subplanner`. A new epic's id is checked by the tools' parser;
@@ -273,6 +274,7 @@ pub(super) fn spawn_subplanner(
         e.phase = PlannerPhase::Queued;
         e.replans.push(spec.brief.chars().take(40).collect());
         e.request = spec.brief;
+        e.covers = spec.covers;
         e.ended_at = None;
         hold = gate_holds::replan_epic_hold(run, &epic, now);
     } else {

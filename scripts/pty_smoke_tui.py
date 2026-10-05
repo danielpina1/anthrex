@@ -1,16 +1,19 @@
 """The TUI end-to-end stage for the PTY smoke test (milestone 9.0.6, task 16): stage 11t.
 
 `scripts/pty-smoke.py` imports `tui_stage` and calls it with its own `PtyProc`, `BIN`,
-`run_cmd` and `fail`, right after stage 11g (`tuning_stage`), so every `anthrex` here runs
+`run_cmd` and `fail`, after stage 11g (`tuning_stage`) and stage 11k (`design_stage`, which
+runs on its own daemon), so every `anthrex` here runs
 with that script's isolated `ENV`: `ANTHREX_SOCKET`, `ANTHREX_DATA_DIR` and
 `ANTHREX_CONFIG` under `/tmp` (the config under the pid-named directory
 `/tmp/anthrex-smoke-data-<pid>/`), and `fake-agent` as both runtimes and as the decider.
 Nothing here starts or stops a daemon of its own. No client is attached when the stage
 starts, so it starts its own and detaches it.
 
-The stage saves Settings through the daemon, which writes `ANTHREX_CONFIG`. Every other
-stage but 12b needs that path absent (`ensure_config_path_absent` in `pty-smoke.py`), so
-this stage removes the file's directory on every exit, as stage 12b does. The daemon
+The stage saves Settings through the daemon, which rewrites `ANTHREX_CONFIG`: the file
+already exists, since `pty-smoke.py`'s `main` wrote its design-off table
+(`[orchestrator.design] default = "off"`) there before stage 1. This stage removes the
+file's directory on every exit, as stage 12b does, so its `rmtree` deletes `main`'s
+design-off table too; no planned goal runs after this stage, and 12b writes its own. The daemon
 keeps the saved settings live until stage 12 stops it; no stage in between starts a run.
 Like `scripts/pty_smoke_run.py`, whose helpers it reuses, this module has no `__main__`.
 """
@@ -208,6 +211,7 @@ def tui_stage(pty_proc, bin_path, run_cmd, fail, config_path):
             os.remove(plan)
         except FileNotFoundError:
             pass
-        # The Settings save created `ANTHREX_CONFIG`; every later stage but 12b (which
-        # writes and removes its own) needs it absent.
+        # The Settings save rewrote `ANTHREX_CONFIG` (`main`'s design-off table was
+        # there first); removing the directory deletes both. No later stage needs the
+        # design-off table, and 12b writes and removes its own file.
         shutil.rmtree(os.path.dirname(config_path), ignore_errors=True)

@@ -220,11 +220,13 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         }),
         allowed_tools: allowed,
         claude_permission_mode: claude.then(|| limits.worker_permission_mode.clone()),
         claude_disallowed_tools: Vec::new(),
         claude_sandbox: (claude && limits.worker_sandbox).then(|| ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: worker_git_roots(&run.data_dir, &task.checkout_name()),
             deny_write: protected_write_denials(&task.worktree, &task.spec.owns),
         }),
@@ -290,6 +292,7 @@ pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         }),
         allowed_tools: REVIEWER_TOOLS.iter().map(|s| s.to_string()).collect(),
         claude_permission_mode: claude.then(|| REVIEWER_PERMISSION_MODE.to_string()),
@@ -305,6 +308,7 @@ pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
         // `--output=<path>`, which writes a file. It runs under a read-only sandbox
         // (no writable roots), so such a write is denied, matching Codex's `read-only`.
         claude_sandbox: claude.then(|| ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: Vec::new(),
             deny_write: protected_write_denials(&path, &[]),
         }),

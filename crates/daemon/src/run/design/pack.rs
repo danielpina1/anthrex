@@ -1,0 +1,351 @@
+//! Milestone 9.6 decision 11 (DF §3.2): the brainstormers' input pack, the same for
+//! both. Its inputs are frozen when the brainstormers are queued ([`FrozenPack`],
+//! ruling T8-2): the run's scout report ids and a continued goal's previous spec. The
+//! driver reads them off the engine (`driver/design_ops.rs`: the stored profile and
+//! those reports, as `get_context` reads them, and the previous spec, checked against
+//! its frozen index entry); this module only lays it out, so it is pure like the rest
+//! of `run/design/`.
+//!
+//! **Prompt hygiene.** Every text is cleaned by `safe_text` before it reaches the
+//! prompt, and the repository-derived ones (reports, the profile, the earlier spec) sit
+//! indented inside their own block, so no line of theirs passes for a section of the
+//! prompt. The pack is capped at [`PACK_MAX`]; a cut keeps the head (the goal and the
+//! answers come first) and ends `[cut: <n> bytes]`.
+
+use std::path::PathBuf;
+
+use proto::{DocGateKind, DocKind, RunState, ScoutReport, safe_text};
+use serde::{Deserialize, Serialize};
+
+use super::report;
+use super::state::{DocVersion, design_dir};
+use super::template::{lines, section};
+use crate::run::contract::floor_boundary;
+use crate::run::model::Run;
+
+/// Decision 11's cap.
+pub const PACK_MAX: usize = 48 * 1024;
+/// Room kept for the cut marker, `\n[cut: <n> bytes]`.
+const MARKER_ROOM: usize = 32;
+/// The earlier spec's sections the pack carries (decision 11).
+const EARLIER_SECTIONS: [&str; 2] = ["## Goal and success criteria", "## Requirements"];
+
+/// What the pack holds, read by the driver.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PackInputs {
+    pub goal: String,
+    /// The user's answers (`start_brainstorm`).
+    pub answers: Option<String>,
+    /// The stored repository profile's summary (`profile::summary`).
+    pub profile: Option<String>,
+    /// The run's scout reports, the onboarding one first.
+    pub reports: Vec<ScoutReport>,
+    /// A continued goal's previous run's approved spec (decision 30).
+    pub earlier: Option<Earlier>,
+    /// A rethink's note and the report it replaces (decision 7, task M9.6.9).
+    pub rethink: Option<RethinkInput>,
+}
+
+/// What a rethink adds to its round's pack: the user's note and the previous merged
+/// report (its text as stored, `None` when it could not be read back).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RethinkInput {
+    pub version: u32,
+    pub note: String,
+    pub report: Option<String>,
+}
+
+/// The earlier approved spec (ruling T15-1): round 1's, where it is and its text, then
+/// each later round's amendment in round order; `own` when it is this run's (a later
+/// round's brainstorm), not the previous run's of a chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Earlier {
+    pub path: PathBuf,
+    pub text: String,
+    pub own: bool,
+    pub amendments: Vec<EarlierText>,
+}
+
+/// One approved amendment of [`Earlier`]: its round, where it is, and its text (`None`
+/// once the pack's cap cut it, [`pack`], or when it could not be read back, `unread`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EarlierText {
+    pub round: u32,
+    pub path: PathBuf,
+    pub text: Option<String>,
+    pub unread: bool,
+}
+
+/// The pack, at most [`PACK_MAX`] bytes. Ruling T15-1: over it, the earlier spec's
+/// oldest amendments are cut first, each leaving a note; then the tail is cut.
+pub fn pack(inputs: &PackInputs) -> String {
+    let mut inputs = inputs.clone();
+    let mut full = pack_uncapped(&inputs);
+    while full.len() > PACK_MAX {
+        let amendments = inputs.earlier.as_mut().map(|e| &mut e.amendments);
+        let Some(oldest) = (amendments.into_iter().flatten()).find(|a| a.text.is_some()) else {
+            break;
+        };
+        oldest.text = None;
+        full = pack_uncapped(&inputs);
+    }
+    if full.len() <= PACK_MAX {
+        return full;
+    }
+    let kept = floor_boundary(&full, PACK_MAX - MARKER_ROOM);
+    format!("{}\n[cut: {} bytes]", &full[..kept], full.len() - kept)
+}
+
+fn pack_uncapped(inputs: &PackInputs) -> String {
+    let mut blocks = vec![format!("Goal:\n{}", indented(&inputs.goal, 2))];
+    let answers = inputs.answers.as_deref().filter(|a| !a.trim().is_empty());
+    blocks.push(format!(
+        "The user's answers:\n{}",
+        indented(answers.unwrap_or("none"), 2)
+    ));
+    if let Some(rethink) = &inputs.rethink {
+        blocks.push(rethink_block(rethink));
+    }
+    if let Some(earlier) = &inputs.earlier {
+        blocks.push(earlier_block(earlier));
+    }
+    let profile = inputs.profile.as_deref().unwrap_or("none stored");
+    blocks.push(format!("Repository profile:\n{}", indented(profile, 2)));
+    for r in &inputs.reports {
+        blocks.push(report(r));
+    }
+    blocks.join("\n\n")
+}
+
+/// Decision 30 and ruling T15-1: the earlier spec's block: round 1's spec, then each
+/// approved amendment under its own heading, each with its Goal and Requirements
+/// sections; an amendment the cap cut, or one that could not be read back, is a note.
+fn earlier_block(earlier: &Earlier) -> String {
+    let whose = if earlier.own { "this" } else { "the previous" };
+    let path = safe_text::one_line(&earlier.path.display().to_string());
+    let mut block = format!("Related earlier work: {whose} run's approved spec, {path}");
+    block.push_str(&sections(&earlier.text));
+    for amendment in &earlier.amendments {
+        let (k, path) = (amendment.round, amendment.path.display().to_string());
+        let path = safe_text::one_line(&path);
+        match &amendment.text {
+            Some(text) => {
+                block.push_str(&format!("\n  Its round {k} amendment, {path}"));
+                block.push_str(&sections(text));
+            }
+            // Ruling T15-11 (N4): never a silent gap.
+            None if amendment.unread => block.push_str(&format!(
+                "\n  Its round {k} amendment, {path}: could not be read back"
+            )),
+            None => block.push_str(&format!(
+                "\n  Its round {k} amendment, {path}: cut to fit the pack"
+            )),
+        }
+    }
+    block
+}
+
+/// The Goal and Requirements sections of spec `text`, each under its heading, indented.
+fn sections(text: &str) -> String {
+    let text = safe_text::multi_line(text);
+    let lines = lines(&text);
+    let mut out = String::new();
+    for heading in EARLIER_SECTIONS {
+        let body = section(&lines, heading).unwrap_or_default();
+        let body: Vec<&str> = body.iter().map(|l| l.text).collect();
+        out.push_str(&format!("\n  {heading}\n{}", indented(&body.join("\n"), 2)));
+    }
+    out
+}
+
+/// A rethink's block: the user's note, then the previous report without the engine's
+/// appendix of drafts (task M9.6.9).
+fn rethink_block(rethink: &RethinkInput) -> String {
+    let n = rethink.version;
+    let note = indented(&rethink.note, 2);
+    let mut block = format!("The user asked to rethink the brainstorm:\n{note}");
+    match &rethink.report {
+        Some(text) => {
+            let report = indented(report::split(text).0.trim_end(), 2);
+            block.push_str(&format!("\nThe previous merged report, v{n}:\n{report}"));
+        }
+        None => block.push_str(&format!(
+            "\nThe previous merged report, v{n}, could not be read."
+        )),
+    }
+    block
+}
+
+/// One scout report: its summary and findings (`files`, `interfaces`, `risks`; the
+/// brief's C-19).
+fn report(r: &ScoutReport) -> String {
+    let id = safe_text::one_line(&r.id);
+    let question = safe_text::one_line(&r.question);
+    let mut out = format!(
+        "Scout report {id} ({question}):\n{}",
+        indented(&r.summary, 2)
+    );
+    let files: Vec<String> = (r.files.iter())
+        .map(|f| format!("{}: {}", f.path, f.why))
+        .collect();
+    for (title, list) in [
+        ("Files", &files),
+        ("Interfaces", &r.interfaces),
+        ("Risks", &r.risks),
+    ] {
+        if list.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("\n  {title}:"));
+        for item in list {
+            out.push_str(&format!("\n    {}", safe_text::one_line(item)));
+        }
+    }
+    out
+}
+
+/// `text` cleaned (`safe_text::multi_line`), every line indented by `n` spaces.
+fn indented(text: &str, n: usize) -> String {
+    let pad = " ".repeat(n);
+    let text = safe_text::multi_line(text);
+    text.lines()
+        .map(|line| format!("{pad}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Ruling T8-2: what the pack reads, frozen when the brainstormers are queued, so both
+/// starts, and any relaunch, read exactly the same (`DesignState::pack`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FrozenPack {
+    /// The run's scout reports then (`Run::scout_reports`), in order.
+    pub reports: Vec<String>,
+    /// A continued goal's previous approved spec then.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub earlier: Option<EarlierSpec>,
+    /// Ruling T8-6: the brainstorm round these inputs are for (a rethink is a new one),
+    /// whose pack is written once, to [`pack_path`].
+    pub round: u32,
+    /// Ruling T8-6: the round's pack file as its first start wrote it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<PackFile>,
+    /// Task M9.6.9 (decision 7): a rethink's round also carries the user's note and the
+    /// report it replaces.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rethink: Option<FrozenRethink>,
+}
+
+/// A rethink's frozen inputs: the user's note, and the previous merged report's file and
+/// index entry, against which the driver reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrozenRethink {
+    pub note: String,
+    pub path: PathBuf,
+    pub version: DocVersion,
+}
+
+/// Ruling T8-6: a written pack's length and SHA-256, against which every later start of
+/// its round reads it back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackFile {
+    pub bytes: u64,
+    pub sha256: String,
+}
+
+/// Ruling T8-6: round `round`'s pack file, `design/brainstorm/pack-r<round>.md`.
+pub fn pack_path(run: &Run, round: u32) -> PathBuf {
+    design_dir(run).join(format!("brainstorm/pack-r{round}.md"))
+}
+
+/// The earlier approved spec: its run, round 1's file and its index entry (its length
+/// and SHA-256), against which the file is read; and (ruling T15-1) each later round's
+/// approved amendment, in round order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EarlierSpec {
+    pub run: String,
+    pub path: PathBuf,
+    pub version: DocVersion,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub amendments: Vec<EarlierAmendment>,
+}
+
+/// One approved amendment of [`EarlierSpec`]: its round, file and index entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EarlierAmendment {
+    pub round: u32,
+    pub path: PathBuf,
+    pub version: DocVersion,
+}
+
+/// Ruling T8-2: `run`'s pack inputs now, with `earlier` ([`previous_spec`]).
+pub fn freeze(run: &Run, earlier: Option<EarlierSpec>) -> FrozenPack {
+    FrozenPack {
+        reports: run.scout_reports.clone(),
+        earlier,
+        // Task M9.6.15: numbered after every earlier round's brainstorms.
+        round: (run.orch.design.as_ref()).map_or(1, |d| d.brainstorm_round()),
+        file: None,
+        rethink: None,
+    }
+}
+
+/// Decision 30: the spec a pack carries as earlier work. A later round's brainstorm
+/// carries its own run's (ruling T15-1); a continued goal's first, the run that `run_id`
+/// continued (`continued_by`). Either is its approved spec: round 1's, then each later
+/// round's approved amendment.
+pub fn previous_spec<'a>(
+    runs: impl IntoIterator<Item = &'a Run>,
+    run_id: &str,
+) -> Option<EarlierSpec> {
+    let runs: Vec<&Run> = runs.into_iter().collect();
+    let later_round = |r: &&&Run| r.id == run_id && r.round() > 1;
+    if let Some(own) = runs.iter().find(later_round) {
+        return earlier_of(own);
+    }
+    let prev = (runs.iter()).find(|r| r.continued_by.as_deref() == Some(run_id))?;
+    earlier_of(prev)
+}
+
+/// `run`'s approved specs (task M9.6.10: the versions the user approved), when its spec
+/// was approved.
+fn earlier_of(run: &Run) -> Option<EarlierSpec> {
+    let design = run.orch.design.as_ref()?;
+    if !spec_approved(run) {
+        return None;
+    }
+    let mut specs = (design.approved_specs().into_iter()).filter_map(|a| {
+        let version = design.find(DocKind::Spec, Some(a.version))?;
+        let path = design_dir(run).join(design.file_name(version));
+        Some((a.round, path, version.clone()))
+    });
+    let (_, path, version) = specs.next()?;
+    let amendments = (specs.map(|(round, path, version)| EarlierAmendment {
+        round,
+        path,
+        version,
+    }))
+    .collect();
+    Some(EarlierSpec {
+        run: run.id.clone(),
+        path,
+        version,
+        amendments,
+    })
+}
+
+/// Whether `run`'s spec was approved: its requirements are stored, which happens only
+/// at the spec's approval (task 7's carry, task M9.6.10), and the run was not
+/// discarded nor sent back to its spec gate.
+fn spec_approved(run: &Run) -> bool {
+    let Some(design) = run.orch.design.as_ref() else {
+        return false;
+    };
+    let at_doc_gate = run.state == RunState::AwaitingApproval
+        && (design.gate.as_ref()).is_some_and(|g| g.kind != DocGateKind::Plan);
+    !design.requirements.is_empty() && !at_doc_gate && run.state != RunState::Discarded
+}
+
+#[cfg(test)]
+#[path = "pack_tests.rs"]
+mod tests;

@@ -147,6 +147,7 @@ fn crash_after(kind: &str) {
         trust_project: false,
         unconfined_checks: false,
         delivery: None,
+        design: None,
     });
     wait_dead(&h);
     h.forget_dead_daemon();

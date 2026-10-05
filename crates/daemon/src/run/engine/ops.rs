@@ -391,6 +391,24 @@ pub enum OpKind {
         adopt: bool,
         checkout: PathBuf,
     },
+    /// Milestone 9.6 decision 9: a design agent's session on M8b's scout machine, as
+    /// `StartPlanner`'s (`driver/design_ops.rs` appends the input pack first); never
+    /// replayed, reconciled `NotStarted`. The result is `DesignAgentStarted`, or `Failed`.
+    StartDesignAgent {
+        spec: Box<crate::scout::design_spec::DesignAgentSpec>,
+    },
+    /// Milestone 9.6 decision 23 (task M9.6.12): the approved spec and plan (and the
+    /// brainstorm report) committed on the run branch on top of the run head. **Executor
+    /// contract** (`driver/design_commit.rs`): each stored version is read back with its
+    /// recorded size and SHA-256; one write through `GitQueue::write` builds the tree in
+    /// the driver's own temporary index (`read-tree`, `hash-object -w`, `update-index
+    /// --add --cacheinfo`, `write-tree`, every call with `core.protectHFS` and
+    /// `core.protectNTFS`), refuses a folder through a tracked symbolic link, commits
+    /// with the run head as its one parent, moves the branch by compare-and-swap and
+    /// puts the integration worktree back on it. Idempotent: a branch already at a
+    /// commit of this tree on the run head is that commit. Reconciled `NotStarted`.
+    /// Results: `DocsCommitted`, `DocsThroughSymlink`, `Failed`.
+    CommitDesignDocs(Box<crate::run::design::commit::DocsCommitSpec>),
 }
 
 impl OpKind {
@@ -429,6 +447,8 @@ impl OpKind {
             OpKind::Propagate(_) => "Propagate",
             OpKind::Host { .. } => "Host",
             OpKind::CrownRacer { .. } => "CrownRacer",
+            OpKind::StartDesignAgent { .. } => "StartDesignAgent",
+            OpKind::CommitDesignDocs(_) => "CommitDesignDocs",
         }
     }
 }

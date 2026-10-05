@@ -20,6 +20,10 @@ use crate::run::roster::{lowest_at_or_above, peer};
 /// The scout's own MCP tool, as Claude names it.
 pub const SUBMIT_TOOL: &str = "mcp__anthrex__submit_scout_report";
 
+/// An area scout's read tools, after its submission tool; milestone 9.6's design agents
+/// end their allowlists with them (`design_spec.rs`).
+pub const AREA_SCOUT_READ_TOOLS: [&str; 3] = ["Read", "Glob", "Grep"];
+
 /// One scout to launch. Serializable: milestone 9's `StartScout` op carries it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScoutSpec {
@@ -197,7 +201,10 @@ pub fn headless_spec(scout: &ScoutSpec, ctx: &ScoutContext) -> HeadlessSpec {
 pub fn headless_spec_on(scout: &ScoutSpec, ctx: &ScoutContext, route: &Route) -> HeadlessSpec {
     let claude = route.runtime == Runtime::Claude;
     let (instructions, mut allowed) = match scout.kind {
-        ScoutKind::Area => (SCOUT_CONTRACT, vec![SUBMIT_TOOL, "Read", "Glob", "Grep"]),
+        ScoutKind::Area => (
+            SCOUT_CONTRACT,
+            [&[SUBMIT_TOOL][..], &AREA_SCOUT_READ_TOOLS].concat(),
+        ),
         ScoutKind::Onboarding => (
             ONBOARDING_CONTRACT,
             vec![SUBMIT_TOOL, "Bash", "Read", "Glob", "Grep"],
@@ -223,6 +230,7 @@ pub fn headless_spec_on(scout: &ScoutSpec, ctx: &ScoutContext, route: &Route) ->
             epic: None,
             chain: None,
             lane: None,
+            agent_label: None,
         }),
         allowed_tools: allowed.into_iter().map(String::from).collect(),
         claude_permission_mode: claude.then(|| REVIEWER_PERMISSION_MODE.to_string()),
@@ -235,6 +243,7 @@ pub fn headless_spec_on(scout: &ScoutSpec, ctx: &ScoutContext, route: &Route) ->
         // the checkout itself and every repository path denied, since Claude's sandbox
         // leaves the working directory writable even with an empty `allowWrite`.
         claude_sandbox: claude.then(|| ClaudeSandbox {
+            deny_read: Vec::new(),
             writable_roots: Vec::new(),
             deny_write: scout_denials(scout),
         }),

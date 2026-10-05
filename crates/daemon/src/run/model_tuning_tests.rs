@@ -31,7 +31,7 @@ fn old_run() -> Run {
     serde_json::from_str(M93_RUN).expect("m93-run.json parses")
 }
 
-fn tmp() -> tempfile::TempDir {
+pub(in crate::run::model) fn tmp() -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix("ax-model-tuning-")
         .tempdir_in("/tmp")
@@ -39,7 +39,7 @@ fn tmp() -> tempfile::TempDir {
 }
 
 /// Writes `run` as `run.json` under `data` and reads it back the way a daemon start does.
-fn save_and_load(run: &mut Run, data: &std::path::Path) -> (Run, String) {
+pub(in crate::run::model) fn save_and_load(run: &mut Run, data: &std::path::Path) -> (Run, String) {
     run.data_dir = journal::runs_dir(data).join(&run.id);
     journal::save_run(run).expect("save_run");
     let text = std::fs::read_to_string(run.data_dir.join(RUN_FILE)).expect("run.json");
@@ -50,7 +50,7 @@ fn save_and_load(run: &mut Run, data: &std::path::Path) -> (Run, String) {
 }
 
 /// The object keys anywhere in `value`, with repeats.
-fn keys(value: &serde_json::Value) -> Vec<String> {
+pub(in crate::run::model) fn keys(value: &serde_json::Value) -> Vec<String> {
     fn walk(value: &serde_json::Value, out: &mut Vec<String>) {
         match value {
             serde_json::Value::Object(map) => {
@@ -68,7 +68,7 @@ fn keys(value: &serde_json::Value) -> Vec<String> {
     out
 }
 
-fn count(keys: &[String], key: &str) -> usize {
+pub(in crate::run::model) fn count(keys: &[String], key: &str) -> usize {
     keys.iter().filter(|k| *k == key).count()
 }
 

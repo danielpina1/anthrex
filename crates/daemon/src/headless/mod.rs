@@ -74,6 +74,12 @@ pub struct ClaudeSandbox {
     /// may not write (final fix batch F2 round 2, `role_launch::protected_write_denials`).
     #[serde(default)]
     pub deny_write: Vec<PathBuf>,
+    /// Milestone 9.6 (task M9.6.8, task 6's review a): paths the session may not read,
+    /// each denied to the read tools as a `permissions.deny` rule `Read(/<path>/**)`
+    /// (`//` is the filesystem root in Claude's rule syntax) and to commands as
+    /// `sandbox.filesystem.denyRead`. A brainstormer's is the run's design folder.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny_read: Vec<PathBuf>,
 }
 
 /// Who the session's `anthrex mcp` server speaks for.
@@ -98,6 +104,12 @@ pub struct McpTarget {
     /// as `proto::ToolCall.lane`.
     #[serde(default)]
     pub lane: Option<proto::RaceLane>,
+    /// A design agent's label (`--agent-label`), milestone 9.6 ruling T1-O3: a
+    /// brainstormer's `claude`, `codex`, `A` or `B`, a document reviewer's `<doc>-r<n>`.
+    /// Only its session's argv names it (fake-agent keys its scripts by it); the daemon
+    /// never reads it back, and it is no protocol field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_label: Option<String>,
 }
 
 /// Which session a launch starts or continues.
@@ -301,6 +313,16 @@ mod claude_auth_serde {
             ))),
         }
     }
+}
+
+/// Milestone 9.6 rulings T8-4 and T8-7: a design agent's session is not saved, so it is
+/// never resumed; a resume, or a Codex design agent's next turn, is refused before
+/// anything changes.
+pub fn never_resumed(id: u32, spec: &HeadlessSpec) -> anyhow::Result<()> {
+    if crate::headless::argv::unsaved(spec) {
+        anyhow::bail!("window {id} is a design agent's session, which is never resumed");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
