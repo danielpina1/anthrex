@@ -49,4 +49,16 @@ impl NotesPasted {
         }
         Some(p)
     }
+
+    /// Every run not in `going` (ended, or discarded) is forgotten (the W1 re-review's
+    /// minor), so the map holds only runs that go on.
+    pub(super) fn forget(&self, going: &std::collections::HashSet<String>) {
+        crate::lock(&self.0).retain(|run_id, _| going.contains(run_id));
+    }
+
+    /// The newest note seq pasted for `run_id`.
+    #[cfg(test)]
+    pub(super) fn remembered(&self, run_id: &str) -> Option<u64> {
+        crate::lock(&self.0).get(run_id).copied()
+    }
 }

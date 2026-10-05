@@ -133,3 +133,23 @@ fn a_request_wake_is_never_cut_and_its_notes_count_as_pasted() {
         "the request's notes pasted twice"
     );
 }
+
+/// The W1 re-review's minor: the newest note pasted is forgotten once its run ends or
+/// is discarded (no longer going), and kept while it goes on.
+#[test]
+fn a_runs_pasted_notes_are_forgotten_when_it_ends() {
+    let wakes = Wakes::default();
+    wakes.insert("r1".into(), noted(5));
+    let taken = check(&wakes, 5);
+    wakes.delivered("r1", Some(&taken[0].1));
+    assert_eq!(wakes.notes_pasted.remembered("r1"), Some(5));
+    let going: HashSet<String> = ["r1".to_string()].into();
+    wakes.forget_ended(&going);
+    assert_eq!(wakes.notes_pasted.remembered("r1"), Some(5), "still going");
+    wakes.forget_ended(&HashSet::new());
+    assert_eq!(
+        wakes.notes_pasted.remembered("r1"),
+        None,
+        "ended or discarded"
+    );
+}

@@ -278,7 +278,7 @@ impl RunService {
         if let Some(hook) = crate::lock(&self.wakes.between_reads).as_ref() {
             hook();
         }
-        let seen = self.orchestrators_seen();
+        let (seen, going) = self.orchestrators_seen();
         let windows = self.manager.list();
         let window = |id: u32| windows.iter().find(|w| w.id == id);
         let listed = |id: u32| match window(id) {
@@ -325,6 +325,7 @@ impl RunService {
         // Which wake-ups the windows take now, read with no lock of ours held.
         let waiting = {
             self.wakes.confirm(&seen, epoch);
+            self.wakes.forget_ended(&going);
             self.wakes.keep_live(&seen, &judged);
             self.wakes.forget_waits();
             self.wakes.deliverable(&judged)
@@ -353,10 +354,15 @@ impl RunService {
         self.report_first_signal(&windows);
     }
 
-    /// Every run's orchestrator window, as the engine has it.
-    fn orchestrators_seen(&self) -> Vec<Seen> {
+    /// Every run's orchestrator window, as the engine has it, and the runs that go on
+    /// (not ended, not discarded), in the same read.
+    fn orchestrators_seen(&self) -> (Vec<Seen>, HashSet<String>) {
         let state = crate::lock(&self.state);
-        state
+        let going = (state.runs.values())
+            .filter(|run| !run.state.is_terminal())
+            .map(|run| run.id.clone())
+            .collect();
+        let seen = state
             .runs
             .values()
             .filter_map(|run| {
@@ -380,7 +386,8 @@ impl RunService {
                     }),
                 })
             })
-            .collect()
+            .collect();
+        (seen, going)
     }
 
     /// The paste, on a task of its own; then `OrchestratorWoken`. A failed write is

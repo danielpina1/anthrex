@@ -2,7 +2,7 @@
 //! keeping, confirming and covering them, judging them on an engine snapshot, and
 //! taking them out for delivery.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -68,6 +68,11 @@ impl Wakes {
             hook(self);
         }
         crate::lock(&self.delivering).remove(run_id);
+    }
+
+    /// The runs no longer `going` (ended or discarded) lose their pasted notes' record.
+    pub(super) fn forget_ended(&self, going: &HashSet<String>) {
+        self.notes_pasted.forget(going);
     }
 
     /// Each waiting wake-up's generation, taken before a check reads the engine.
