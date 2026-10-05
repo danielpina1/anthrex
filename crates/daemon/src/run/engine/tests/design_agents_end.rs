@@ -324,8 +324,18 @@ fn the_drafts_settle_once_per_round() {
         assert_eq!(fx.run().state, RunState::Brainstorming);
         assert_eq!(seen(&fx), first);
     }
+    // The restart reads the run as `run.json` holds it (the final fix wave's FW-17), so
+    // a `drafts_settled` not persisted, or ignored at restore, settles again on resume.
     fx.now += 60;
-    super::orch_restore::restart(&mut fx);
+    let saved = serde_json::to_string(fx.run()).unwrap();
+    let run: crate::run::model::Run = serde_json::from_str(&saved).unwrap();
+    fx.state = crate::run::engine::EngineState::default();
+    fx.next(crate::run::engine::EventKind::Restore {
+        runs: vec![run],
+        replay: Vec::new(),
+        held: Vec::new(),
+    });
+    assert_eq!(fx.run().state, RunState::Paused);
     resume(&mut fx);
     assert_eq!(fx.run().state, RunState::Brainstorming);
     assert_eq!(seen(&fx), first);
