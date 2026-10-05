@@ -213,9 +213,14 @@ fn e2e_a_goal_that_falls_back_to_the_plan_path_is_tuned_once() {
 /// triaged fast whose fast build falls back to the plan path (a hub file) does not run
 /// the design flow under the default `full`, and asking for it is refused naming the
 /// fast path, before anything is built.
+///
+/// Final fix wave FW-46 (WB-C-I1): the harness sets `design.default = "full"`, the
+/// product default, so the fallback really is decided under it (the shared harness's
+/// `off`, ruling T3-2, would hide a fallback that re-decided the mode).
 #[test]
 fn e2e_a_fast_goal_that_falls_back_to_the_plan_path_has_no_design_flow() {
-    let h = harness("claude", "hub = [\"core/**\"]\n", &[], &[]);
+    let h = RunHarness::adapt("claude", "design.default = \"full\"\n", &[], ADAPT_FILES);
+    h.stored_profile(&format!("{STORED_PROFILE}hub = [\"core/**\"]\n"));
     h.decider("triage", 1, triage_single(&["core/x.txt"]));
     h.decider("triage", 2, triage_single(&["core/x.txt"]));
     let reply = h.request(RunRequest::StartGoal {
