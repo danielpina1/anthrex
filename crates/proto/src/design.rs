@@ -176,8 +176,12 @@ impl<'de> Deserialize<'de> for DocGateAction {
         enum Bare {
             Approve,
         }
+        // Final fix wave FW-53: an unknown action's one plain text.
         #[derive(Deserialize)]
-        #[serde(untagged)]
+        #[serde(
+            untagged,
+            expecting = "a gate action: approve, changes, edit, rethink, back or reject"
+        )]
         enum Wire {
             Bare(Bare),
             Full(#[serde(deserialize_with = "DocGateAction::deserialize")] DocGateAction),
@@ -322,6 +326,10 @@ pub struct DocView {
     /// The version's review findings, each with the orchestrator's answer.
     #[serde(default)]
     pub findings: Vec<(DocFinding, Option<String>)>,
+    /// A review draft's review number (`version` is then 0, ruling T5-1); `None` for a
+    /// gate version (final fix wave FW-71, appended under protocol 17).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_review: Option<u32>,
 }
 
 /// One design phase of one round (`"type": "phase"`, decision 32), keyed by

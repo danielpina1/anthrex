@@ -194,6 +194,7 @@ pub(crate) fn view(kind: DocKind, version: u32, text: &str) -> DocView {
         text: text.into(),
         diff: None,
         findings: Vec::new(),
+        draft_review: None,
     }
 }
 

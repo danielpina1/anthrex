@@ -275,6 +275,7 @@ fn read_view(found: Found, query: &DocQuery) -> Result<DocView, ReadError> {
         text: cut_text(&bytes, DOC_READ_CAP, "cut"),
         diff,
         findings,
+        draft_review: found.version.draft_review,
     })
 }
 

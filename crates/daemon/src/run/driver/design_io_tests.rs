@@ -239,6 +239,7 @@ async fn show_doc_returns_the_text_the_diff_and_the_findings() {
             text: SPEC_2.into(),
             diff: Some(line_diff(SPEC_1, SPEC_2)),
             findings: findings.clone(),
+            draft_review: None,
         }
     );
     assert!(v2.diff.as_ref().unwrap().contains("+R2 The link expires."));

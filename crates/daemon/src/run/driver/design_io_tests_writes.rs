@@ -191,3 +191,40 @@ async fn a_draft_is_never_read_with_a_version_or_a_label() {
         assert_eq!(s.doc_view(RUN_ID, q).await, Err(refused.to_string()));
     }
 }
+
+/// Final fix wave FW-71 (WB-C M-4): `run show` of a review draft (no gate version yet,
+/// ruling T5-1) names its review in the view, so the CLI never prints "v0 of 0"; a
+/// gate version's view names none.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_review_draft_view_names_its_review() {
+    use super::tests::{SPEC_2, apply};
+    use crate::run::design::state::NewDoc;
+    let dir = tmp();
+    let s = service(dir.path(), design_run(dir.path()));
+    let draft = NewDoc {
+        draft_review: Some(1),
+        ..spec(SPEC_1)
+    };
+    let (_, write) = store(&s, draft);
+    apply(&s, write).await;
+    let show = RunRequest::ShowDoc {
+        run: RUN_ID.into(),
+        kind: DocKind::Spec,
+        version: None,
+        diff: true,
+        findings: false,
+    };
+    match s.request(show.clone()).await {
+        RunReply::Doc { doc, .. } => {
+            assert_eq!((doc.version, doc.draft_review), (0, Some(1)));
+            assert_eq!(doc.text, SPEC_1);
+        }
+        other => panic!("{other:?}"),
+    }
+    let (_, write) = store(&s, spec(SPEC_2));
+    apply(&s, write).await;
+    match s.request(show).await {
+        RunReply::Doc { doc, .. } => assert_eq!((doc.version, doc.draft_review), (1, None)),
+        other => panic!("{other:?}"),
+    }
+}

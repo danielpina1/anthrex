@@ -298,7 +298,8 @@ async fn show(
     };
     match runs.request(request).await? {
         RunReply::Doc { doc, .. } => {
-            let (out, err) = show_text(&info, &doc, (diff, findings));
+            let terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
+            let (out, err) = show_text(&info, &doc, (diff, findings), terminal);
             eprint!("{err}");
             print!("{out}");
             Ok(())
@@ -379,6 +380,10 @@ use show::show_text;
 #[cfg(test)]
 #[path = "design_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "design_tests_show.rs"]
+mod tests_show;
 
 #[cfg(test)]
 #[path = "design_tests_daemon.rs"]

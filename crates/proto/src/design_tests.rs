@@ -68,6 +68,7 @@ fn a_doc_view() -> DocView {
         version: 2,
         text: "# Reset\n\n## Requirements\nR1 a token expires after one hour\n".into(),
         diff: Some("- R1 old\n+ R1 a token expires after one hour\n".into()),
+        draft_review: None,
         findings: vec![
             (a_finding("f1", DocSeverity::Blocking), Some("fixed".into())),
             (
@@ -372,6 +373,45 @@ fn doc_gate_and_show_doc_round_trip() {
     assert_eq!(reply.request_id(), None);
     assert_eq!(request::DOC_GATE, "run doc gate");
     assert_eq!(request::SHOW_DOC, "run show");
+}
+
+/// Final fix wave FW-53 (T17 carry 1): an action no build knows is refused with one
+/// plain text, not serde's "did not match any variant of untagged enum Wire".
+#[test]
+fn an_unknown_gate_action_names_the_actions() {
+    let error = serde_json::from_value::<DocGateAction>(json!("merge")).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "a gate action: approve, changes, edit, rethink, back or reject"
+    );
+    let error = serde_json::from_value::<DocGateAction>(json!({"ship": {}})).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "a gate action: approve, changes, edit, rethink, back or reject"
+    );
+}
+
+/// Final fix wave FW-71 (WB-C M-4): a review draft's view names its review
+/// (`draft_review`, appended under protocol 17); a gate version's leaves it out, and a
+/// view an earlier build wrote reads as a gate version's.
+#[test]
+fn a_doc_view_names_its_review_draft() {
+    let draft = DocView {
+        version: 0,
+        draft_review: Some(2),
+        ..a_doc_view()
+    };
+    both_ways(&draft);
+    assert_eq!(
+        serde_json::to_value(&draft).unwrap()["draft_review"],
+        json!(2)
+    );
+    let gate = serde_json::to_value(a_doc_view()).unwrap();
+    assert!(gate.get("draft_review").is_none(), "{gate}");
+    let mut older = gate.clone();
+    older.as_object_mut().unwrap().remove("draft_review");
+    let read: DocView = rmp_serde::from_slice(&p16_bytes(&older)).unwrap();
+    assert_eq!(read, a_doc_view());
 }
 
 #[path = "design_tests_wire.rs"]

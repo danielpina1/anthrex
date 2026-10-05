@@ -70,6 +70,7 @@ pub(super) fn spec_v2() -> DocView {
         text: "# Reset\n".into(),
         diff: None,
         findings: Vec::new(),
+        draft_review: None,
     }
 }
 
@@ -107,7 +108,7 @@ fn show_prints_the_document_the_diff_and_findings() {
             None,
         ),
     ];
-    let (out, err) = show_text(&info, &doc, (true, true));
+    let (out, err) = show_text(&info, &doc, (true, true), true);
     assert_eq!(
         out,
         "# Reset\n [2JR1 reset by mail\n\
@@ -125,7 +126,7 @@ fn show_prints_the_document_the_diff_and_findings() {
          disputed: F2\n"
     );
     // Without the flags: the text alone on stdout, with no newline added (ruling T16-2).
-    let (out, _) = show_text(&info, &doc, (false, false));
+    let (out, _) = show_text(&info, &doc, (false, false), true);
     assert_eq!(out, "# Reset\n [2JR1 reset by mail");
     // v1: no diff, no findings, and no gate lines (the gate shows v2).
     let first = DocView {
@@ -134,7 +135,7 @@ fn show_prints_the_document_the_diff_and_findings() {
         findings: Vec::new(),
         ..doc.clone()
     };
-    let (out, err) = show_text(&info, &first, (true, true));
+    let (out, err) = show_text(&info, &first, (true, true), true);
     assert!(
         out.ends_with("=== no earlier version to diff against ===\n=== findings: none ===\n"),
         "{out}"
@@ -180,8 +181,9 @@ fn show_prints_the_document_the_diff_and_findings() {
         diff: None,
         findings: Vec::new(),
         run: ID.into(),
+        draft_review: None,
     };
-    let (out, err) = show_text(&info, &report, (false, false));
+    let (out, err) = show_text(&info, &report, (false, false), true);
     assert_eq!(out, report.text);
     assert!(out.contains(unread));
     assert_eq!(
@@ -202,9 +204,9 @@ fn show_prints_the_stored_bytes_exactly() {
         text: "# Reset\n\nR1 reset by mail".into(),
         ..spec_v2()
     };
-    let (out, _) = show_text(&info, &doc, (false, false));
+    let (out, _) = show_text(&info, &doc, (false, false), true);
     assert_eq!(out, doc.text);
-    let (out, _) = show_text(&info, &doc, (false, true));
+    let (out, _) = show_text(&info, &doc, (false, true), true);
     assert_eq!(out, format!("{}\n=== findings: none ===\n", doc.text));
 }
 

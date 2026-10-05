@@ -6,17 +6,20 @@ use proto::{DocGateKind, DocKind, DocView, RunInfo};
 use super::GateArg;
 use crate::run_cmd::status::printable;
 
-/// `run show`'s two texts, each through `printable`. stdout: the version's text exactly
-/// as stored (so it can be edited and sent back with `edit-doc`), then with `--diff` the
-/// line diff against the previous version and with `--findings` its review's findings,
-/// each with the orchestrator's answer. stderr: the header (`<Kind> · run <id> · v<n>
-/// of <m> · <reason>`), and when the version is the one waiting at its gate, the
-/// gate's change summary, why it went unreviewed, its disputed findings and, at the
-/// brainstorm gate, the merged report's counts and tags.
+/// `run show`'s two texts. stdout: the version's text exactly as stored (so it can be
+/// edited and sent back with `edit-doc`), then with `--diff` the line diff against the
+/// previous version and with `--findings` its review's findings, each with the
+/// orchestrator's answer; through `printable` only when stdout is a `terminal` (ruling
+/// T16-3: piped or redirected, the bytes as stored). stderr, always through
+/// `printable`: the header (`<Kind> · run <id> · v<n> of <m> · <reason>`, or a review
+/// draft's `<Kind> · run <id> · draft r<k>`), and when the version is the one waiting
+/// at its gate, the gate's change summary, why it went unreviewed, its disputed
+/// findings and, at the brainstorm gate, the merged report's counts and tags.
 pub(in crate::run_cmd) fn show_text(
     info: &RunInfo,
     doc: &DocView,
     (diff, findings): (bool, bool),
+    terminal: bool,
 ) -> (String, String) {
     // Ruling T16-2 (m4): the stored text exactly, so a show and edit-doc round trip
     // sends the same bytes back; a section asked for after it starts on its own line.
@@ -27,8 +30,12 @@ pub(in crate::run_cmd) fn show_text(
     if diff {
         match &doc.diff {
             Some(text) => {
-                let previous = doc.version.saturating_sub(1);
-                out.push_str(&format!("=== diff against v{previous} ===\n{text}"));
+                // WB-C M-4: a review draft's diff is against the draft before it.
+                let against = match doc.draft_review {
+                    Some(_) => "the previous review draft".to_string(),
+                    None => format!("v{}", doc.version.saturating_sub(1)),
+                };
+                out.push_str(&format!("=== diff against {against} ===\n{text}"));
                 if !text.ends_with('\n') {
                     out.push('\n');
                 }
@@ -39,7 +46,8 @@ pub(in crate::run_cmd) fn show_text(
     if findings {
         out.push_str(&findings_text(&doc.findings));
     }
-    (printable(&out), printable(&header(info, doc)))
+    let out = if terminal { printable(&out) } else { out };
+    (out, printable(&header(info, doc)))
 }
 
 fn findings_text(findings: &[(proto::DocFinding, Option<String>)]) -> String {
@@ -73,6 +81,9 @@ fn header(info: &RunInfo, doc: &DocView) -> String {
         DocKind::Spec => "Spec",
         DocKind::Plan => "Plan",
     };
+    if let Some(k) = doc.draft_review {
+        return format!("{kind} · run {} · draft r{k}\n", info.run_id);
+    }
     let of = (info.docs.iter())
         .filter(|d| d.kind == doc.kind)
         .map(|d| d.version)
