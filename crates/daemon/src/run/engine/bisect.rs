@@ -49,16 +49,27 @@ fn first(tests: &[String], k: usize) -> String {
     shown.join(", ")
 }
 
+/// Where a bisect's range starts (milestone 9.7 decision 13, DH §3.1): tier 3's own red
+/// after its last green, a reproduced CI red over the stage's whole line.
+pub(super) enum BisectRange {
+    SinceGreen,
+    WholeLine,
+}
+
 /// Decision 36's range: `G`, the stage's last green tier 3 when it is on the stage's
-/// line (else its floor, ruling C-28 (1), else its creation point), and the merges
-/// after it up to `head`, in order. `None` when `head` is not one of those merges.
-fn range(s: &StageRecord, head: &str) -> Option<(String, Vec<StageMerge>)> {
-    let green = s.full.green_at.as_deref().and_then(|g| {
-        s.merges
-            .iter()
-            .position(|m| commit_of(m) == g)
-            .map(|k| (g, k + 1))
-    });
+/// line and `how` is `SinceGreen` (else its floor, ruling C-28 (1), else its creation
+/// point), and the merges after it up to `head`, in order. `None` when `head` is not one
+/// of those merges.
+fn range(s: &StageRecord, head: &str, how: BisectRange) -> Option<(String, Vec<StageMerge>)> {
+    let since = s.full.green_at.as_deref();
+    let green = since
+        .filter(|_| matches!(how, BisectRange::SinceGreen))
+        .and_then(|g| {
+            s.merges
+                .iter()
+                .position(|m| commit_of(m) == g)
+                .map(|k| (g, k + 1))
+        });
     let floor = s.floor.as_deref().unwrap_or(s.created_from.as_str());
     let (base, from) = green.unwrap_or((floor, 0));
     let to = s.merges.iter().rposition(|m| commit_of(m) == head)?;
@@ -92,6 +103,7 @@ pub(super) fn start(
     stage: u16,
     head: &str,
     tests: Vec<String>,
+    how: BisectRange,
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Result<usize, String> {
@@ -107,7 +119,7 @@ pub(super) fn start(
     let Some(s) = run.stage(stage) else {
         return Err(format!("stage {stage} is not created"));
     };
-    let Some((base, candidates)) = range(s, head) else {
+    let Some((base, candidates)) = range(s, head, how) else {
         // Ruling C-28 (1): red at the floor itself, with no merge after it; the line
         // below the floor is not the engine's.
         if s.floor.as_deref() == Some(head) {

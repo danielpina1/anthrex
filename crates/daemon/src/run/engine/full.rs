@@ -16,6 +16,7 @@ use crate::run::contract::sha7;
 use crate::run::model::{InfraFailures, Run, StageRecord};
 use crate::run::slots::Priority;
 use crate::run::tiers::{TierOutcome, TierSpec};
+use bisect::BisectRange::SinceGreen;
 
 /// Why a tier-3 job starts (decision 17): (b) the queue is idle, (c) completion, (a)
 /// before a stage PR opens (9.2).
@@ -444,7 +445,7 @@ fn red(
         }
         return;
     } else {
-        match bisect::start(run, n, commit, failing.to_vec(), now, fx) {
+        match bisect::start(run, n, commit, failing.to_vec(), SinceGreen, now, fx) {
             Ok(m) => {
                 log(
                     run,

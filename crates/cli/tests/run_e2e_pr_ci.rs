@@ -80,10 +80,9 @@ fn e2e_pr_ci_red_reproduced_bisects_fixes_pushes_and_propagates() {
     let mut steps = wait_for(&go, within);
     steps.extend([commit("mods/c/src.txt", "c2\n"), done("c")]);
     scripts(&h, "t3", &steps);
-    // Tiered, with `single_test` for the bisect, and no `check`: decision 36's range
-    // starts after the stage's last green tier 3, and with a `check` that is the very
-    // head the PR opened with (decision 19), so nothing would be left to bisect. Without
-    // one the PR opens unverified and the range is every merge of the stage.
+    // Tiered, with `single_test` for the bisect, and no `check`: the PR opens unverified.
+    // A CI bisect searches every merge of the stage either way (milestone 9.7 decision
+    // 13); the run with a `check` is the next test.
     let profile = tier_profile(&tier_log_path(&h), "")
         .replace("check = \"sh check.sh {filter:--filter %}\"\n", "")
         .replace(
@@ -176,11 +175,11 @@ fn e2e_pr_ci_red_reproduced_bisects_fixes_pushes_and_propagates() {
     assert_eq!(run.state, RunState::Running, "{:?}", run.halted_reason);
 }
 
-/// Fix round 1 (m3): the same red under a profile WITH a `check`. Tier 3 was green on
-/// the head the PR opened with, so 9.1's bisect has no merge after it to probe, and the
-/// red becomes a stage fix with no bisect line.
+/// Fix round 1 (m3), rewritten by milestone 9.7 decision 13 (DH §3.1, BR-12): the same
+/// red under a profile WITH a `check`. Tier 3 was green on the head the PR opened with,
+/// and the CI bisect still searches the stage's whole line and names the culprit.
 #[test]
-fn e2e_pr_ci_red_reproduced_under_a_check_is_a_stage_fix_without_a_bisect() {
+fn e2e_pr_ci_red_reproduced_under_a_check_bisects_the_whole_line() {
     let (h, rig) = pr_harness_with("", &ci_files(), "", Some("claude"));
     marker_ci(&h, &rig);
     let profile = tier_profile(&tier_log_path(&h), "").replace(
@@ -205,26 +204,36 @@ fn e2e_pr_ci_red_reproduced_under_a_check_is_a_stage_fix_without_a_bisect() {
     let log: Vec<String> = (run_json(&run)["log"].as_array().into_iter().flatten())
         .filter_map(|l| l["text"].as_str().map(str::to_string))
         .collect();
-    // Ruling F1 (the final fix wave): tier 3 passed on this head, so the range after it
-    // is empty; the line says so.
-    let not_bisected = format!(
-        "stage 1: CI red at {h7} reproduces; CI fails a test tier 3 passed on this head (outside tier 3's set or environment-dependent); a stage fix task was added"
+    let green = format!("stage 1: tier 3 green at {h7} (");
+    assert!(
+        log.iter().any(|l| l.starts_with(&green)),
+        "{green:?} in {log:#?}"
     );
-    assert!(log.contains(&not_bisected), "{not_bisected:?} in {log:#?}");
+    let bisecting = format!("stage 1: CI red at {h7} reproduces; bisecting 2 merges");
+    assert!(log.contains(&bisecting), "{bisecting:?} in {log:#?}");
+    assert!(
+        !log.iter()
+            .any(|l| l.contains("CI fails a test tier 3 passed")),
+        "{log:#?}"
+    );
+    let lines = until("the bisect history line", REQUEST_WAIT, || {
+        let lines = bisect_lines(&h);
+        (!lines.is_empty()).then_some(lines)
+    });
+    assert_eq!(lines.len(), 1, "{lines:#?}");
+    assert_eq!(
+        (&lines[0]["culprit"], &lines[0]["fix_task"]),
+        (&json!("t2"), &json!("fix1")),
+        "{}",
+        lines[0]
+    );
     let (fix, brief) = (t(&run, "fix1"), brief_of(&run, "fix1"));
     assert_eq!(fix.origin, TaskOrigin::Ci);
-    assert_eq!(
-        fix.owns,
-        ["mods/a/src.txt", "mods/b/CI_FAIL"],
-        "the stage's owns, not a culprit's"
+    assert_eq!(fix.owns, ["mods/b/CI_FAIL"], "the culprit's owns");
+    assert!(
+        brief.contains("Bisect found the merge of task t2 (Task t2) as the first red"),
+        "{brief}"
     );
-    for text in [
-        "Category: test. It reproduces locally with: ",
-        "No single task's merge is the cause.\n",
-    ] {
-        assert!(brief.contains(text), "{text:?} in:\n{brief}");
-    }
-    assert!(bisect_lines(&h).is_empty(), "{:#?}", bisect_lines(&h));
     assert_eq!(ci_fixes(&run).len(), 1);
 }
 
