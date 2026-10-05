@@ -298,13 +298,35 @@ fn a_design_agents_session_is_not_saved() {
     }
 }
 
+/// The final fix wave's FW-26: the argv reads its own caps. Caps without the flags give
+/// an argv without them (ruling WB-A-W2 then never launches a design agent so).
+#[test]
+fn a_design_agents_argv_reads_its_own_caps() {
+    use crate::headless::argv::codex_args;
+    let run = run();
+    let new = SessionArg::New { uuid: None };
+    let (exe, sock) = (Path::new("/opt/anthrex"), Path::new("/tmp/sock"));
+    let none = crate::headless::argv::CliCaps {
+        claude_no_session_persistence: false,
+        codex_ephemeral: false,
+        ..CLI_CAPS
+    };
+    let on_claude = brainstormer_spec(&run, &agent("claude", Runtime::Claude)).headless;
+    let args = claude_args(&on_claude, &new, exe, 7, sock, &none);
+    assert!(
+        !args.contains(&"--no-session-persistence".to_string()),
+        "{args:?}"
+    );
+    let on_codex = brainstormer_spec(&run, &agent("codex", Runtime::Codex)).headless;
+    let args = codex_args(&on_codex, &new, "go", exe, 7, sock, &none);
+    assert!(!args.contains(&"--ephemeral".to_string()), "{args:?}");
+}
+
 /// Ruling T8-7: a Codex design agent's turn that ends without its submission is not
 /// nudged (no resumed turn); it fails as `unsubmitted`, for the engine to relaunch it
-/// fresh. A Claude design agent keeps the nudge. Every Codex design turn's argv carries
-/// `--ephemeral`.
+/// fresh. A Claude design agent keeps the nudge.
 #[test]
 fn a_codex_design_agent_is_never_resumed_and_a_claude_one_is_nudged() {
-    use crate::headless::argv::codex_args;
     use crate::scout::machine::{ScoutEffect, unsubmitted};
     let run = run();
     let ended = |runtime, label| {
@@ -324,13 +346,8 @@ fn a_codex_design_agent_is_never_resumed_and_a_claude_one_is_nudged() {
     let reason = "the brainstormer ended its turn without an accepted draft";
     assert_eq!(unsubmitted(&BRAINSTORMER_TEXTS), reason);
     assert_eq!(codex.failure.as_deref(), Some(reason));
-    let spec = brainstormer_spec(&run, &agent("codex", Runtime::Codex)).headless;
-    let resume = SessionArg::Resume {
-        session_id: "th-1".into(),
-    };
-    let (exe, sock) = (Path::new("/opt/anthrex"), Path::new("/tmp/sock"));
-    let args = codex_args(&spec, &resume, "go", exe, 7, sock, &CLI_CAPS);
-    assert!(args.contains(&"--ephemeral".to_string()), "{args:?}");
+    // The final fix wave's FW-35: no resumed argv is asserted; a design agent is never
+    // resumed (`headless::never_resumed`), so that argv is unreachable.
 }
 
 /// Task M9.6.10: the document reviewer's launch. Its contract (under 1 KiB) and first

@@ -34,6 +34,10 @@ pub struct CliCaps {
     pub codex_user_config_only: Option<&'static [&'static str]>,
     /// How a Codex worker, racer or test writer gets the output filter (M9.5 decision 28).
     pub codex_filter: CodexFilter,
+    /// `claude --no-session-persistence` exists (ruling T8-4; the decider's cap).
+    pub claude_no_session_persistence: bool,
+    /// `codex exec --ephemeral` exists (ruling T8-4; the decider's cap).
+    pub codex_ephemeral: bool,
 }
 
 // Milestone 9.5 decision 28's `CodexFilter` lives with the filter it selects (task 19
@@ -128,6 +132,8 @@ pub const CLI_CAPS: CliCaps = CliCaps {
     codex_project_config_paths: &[".codex/config.toml", ".codex/hooks.json"],
     codex_user_config_only: None,
     codex_filter: CodexFilter::Instruction,
+    claude_no_session_persistence: DECIDER_CAPS.claude_no_session_persistence,
+    codex_ephemeral: DECIDER_CAPS.codex_ephemeral,
 };
 
 /// Which of decision 53's three Codex branches a run started under (ruling T23-C1):
@@ -329,7 +335,7 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
 
 /// Milestone 9.6 ruling T8-4: a design agent's session (a brainstormer's or a document
 /// reviewer's) is not saved, as a decider's is not, when the CLI can run so
-/// (`DECIDER_CAPS`), so no transcript of it exists for another agent to read.
+/// (the argv's caps), so no transcript of it exists for another agent to read.
 pub fn unsaved(spec: &HeadlessSpec) -> bool {
     let role = spec.mcp.as_ref().map(|m| m.role);
     matches!(role, Some(AgentRole::Brainstormer | AgentRole::DocReviewer))
@@ -374,7 +380,7 @@ pub fn claude_args(
             args.extend(["--resume".into(), session_id.clone()]);
         }
     }
-    if unsaved(spec) && DECIDER_CAPS.claude_no_session_persistence {
+    if unsaved(spec) && caps.claude_no_session_persistence {
         args.push("--no-session-persistence".into());
     }
     if let Some(flags) = caps.claude_user_settings_only {
@@ -458,7 +464,7 @@ pub fn codex_args(
         SessionArg::New { .. } => false,
     };
     args.push("--json".into());
-    if unsaved(spec) && DECIDER_CAPS.codex_ephemeral {
+    if unsaved(spec) && caps.codex_ephemeral {
         args.push("--ephemeral".into());
     }
     if let Some(flags) = caps.codex_user_config_only {
