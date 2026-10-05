@@ -306,7 +306,7 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
 /// (`DesignAgent.listed`; every candidate in the snapshot, a missing runtime's marked
 /// so), else the strongest model of its runtime (`roster_default`). A document reviewer
 /// (task M9.6.10) is the orchestrator's peer (`peer_route`), else its own runtime
-/// (`same_runtime`), with no list.
+/// (`same_runtime`, its review's record), with no list.
 ///
 /// Its trigger is `start` for a first session, `rethink` for the first session of a
 /// rethink's round (`rethink`, ruling T13-1), else `relaunch` (ruling T8-7's relaunch,
@@ -323,7 +323,13 @@ pub fn design_agent_record(
         _ => "relaunch",
     };
     if agent.role == AgentRole::DocReviewer {
-        let same = (run.orch.orchestrator.as_ref()).is_some_and(|o| o.route == agent.route);
+        // WB-C M-2 (the final fix wave's FW-44): its pick's own reason, as its review
+        // record (and the version it reviews) says it, never a route compared now.
+        let design = run.orch.design.as_ref();
+        let review = design.and_then(|d| {
+            (d.reviews.iter()).rfind(|r| format!("{}-r{}", r.doc.label(), r.n) == agent.label)
+        });
+        let same = review.is_some_and(|r| r.same_runtime);
         let source = if same { "same_runtime" } else { "peer_route" };
         let session = format!("{}/{}", agent.label, agent.session);
         let (input, route) = (input_of(run), &agent.route);
