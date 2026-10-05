@@ -180,6 +180,10 @@ def design_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         until(f"the gate screen {header!r} closing", SCREEN_WAIT, gone)
 
     def confirm(page, run_id, left):
+        """`a` once the shown document has loaded (final fix wave FW-54: before that the
+        gate screen answers `a` with a note and opens no confirm page), then `y`."""
+        loaded = lambda: "loading" not in proc.screen_text()  # noqa: E731
+        until("the shown document loading", SCREEN_WAIT, loaded)
         proc.send(b"a")
         proc.wait_for(page, label=f"the confirm page {page!r}")
         proc.send(b"y")
