@@ -110,3 +110,29 @@ fn a_full_rounds_pack_follows_the_earlier_ones() {
     assert_eq!(design.brainstorm_round(), 4);
     assert!(in_round_two(RoundDesign::Off).round_off());
 }
+
+/// Ruling T15-7 (m2): a restated requirement whose text equals its base's, after
+/// whitespace normalisation, is unchanged: neither marked nor owed.
+#[test]
+fn a_restated_unchanged_requirement_is_not_a_change() {
+    let mut design = in_round_two(RoundDesign::Amend);
+    design.store_requirements(vec![req("R1", "  one "), req("R2", "two,\n  again")]);
+    assert_eq!(
+        design.requirements,
+        vec![
+            req("R1", "one"),
+            req("R2", "two,\n  again (changed in round 2)")
+        ]
+    );
+    let owed: Vec<String> = design.owed().into_iter().map(|r| r.id).collect();
+    assert_eq!(owed, ["R2"]);
+}
+
+/// Ruling T15-7 (m4): an `off` round amends nothing, though it has a base.
+#[test]
+fn an_off_round_is_not_amending() {
+    assert!(in_round_two(RoundDesign::Amend).amending());
+    let off = in_round_two(RoundDesign::Off);
+    assert!(!off.amending());
+    assert_eq!(off.owed(), off.requirements);
+}

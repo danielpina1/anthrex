@@ -145,9 +145,10 @@ impl DesignState {
         }
     }
 
-    /// Whether the current round amends an approved spec.
+    /// Whether the current round amends an approved spec (ruling T15-7, m4: an `off`
+    /// round never does).
     pub fn amending(&self) -> bool {
-        self.round.as_ref().is_some_and(|r| !r.base.is_empty())
+        self.round.as_ref().is_some_and(amends)
     }
 
     /// Decision 29: the requirements the current plan must cover. In a round that
@@ -165,28 +166,45 @@ impl DesignState {
     /// The approved spec's requirements `found` in its text (`requirements::scan`),
     /// stored. In a round that amends the spec they are merged into its base: a changed
     /// one replaces its earlier text and carries [`marker`] (ruling T4-4: added when its
-    /// text lacks it), a new one is appended, and the round records their ids.
+    /// text lacks it), a new one is appended, and the round records their ids. One
+    /// restated word for word (ruling T15-7, m2: equal after whitespace normalisation)
+    /// is unchanged.
     pub fn store_requirements(&mut self, found: Vec<Requirement>) {
         let k = self.round.as_ref().map_or(1, |r| r.n);
-        let Some(round) = self.round.as_mut().filter(|r| !r.base.is_empty()) else {
+        let Some(round) = self.round.as_mut().filter(|r| amends(r)) else {
             self.requirements = found;
             return;
         };
         let mut merged = round.base.clone();
-        round.amended = found.iter().map(|r| r.id.clone()).collect();
+        round.amended.clear();
         for mut r in found {
             match merged.iter_mut().find(|b| b.id == r.id) {
+                Some(earlier) if normalised(&earlier.text) == normalised(&r.text) => {}
                 Some(earlier) => {
                     if !r.text.contains(&marker(k)) {
                         r.text = format!("{} {}", r.text, marker(k)).trim().to_string();
                     }
                     earlier.text = r.text;
+                    round.amended.push(r.id);
                 }
-                None => merged.push(r),
+                None => {
+                    round.amended.push(r.id.clone());
+                    merged.push(r);
+                }
             }
         }
         self.requirements = merged;
     }
+}
+
+/// Whether `round` amends the spec: it has a base, and its design is not `off`.
+fn amends(round: &DesignRound) -> bool {
+    !round.base.is_empty() && round.mode != RoundDesign::Off
+}
+
+/// `text` with every run of whitespace one space, trimmed.
+fn normalised(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]

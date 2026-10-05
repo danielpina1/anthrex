@@ -6,6 +6,8 @@ use proto::{DocGateAction, DocGateKind, RoundDesign, RoundOutcome, RunState};
 use serde_json::json;
 
 use super::design_fixture::*;
+use super::design_plan_fixture::read_back;
+use super::design_review_fixture::outcome;
 use super::design_rounds::round_task;
 use super::design_rounds_commit::{approved_round, assert_committed};
 use super::design_rounds_fixture::*;
@@ -14,7 +16,9 @@ use super::goal_rounds_cancel::settle;
 use super::goal_rounds_start::{reply, started};
 use super::kinds_cancel::cancel;
 use super::kinds_integration::{C1, C2, merge_real};
+use super::orch::{ORCH, orch_tool};
 use super::orch_restore::{restart, resume};
+use crate::run::design::requirements::Requirement;
 use crate::run::engine::OpResult;
 
 /// 9.3's answer to a round's cancel.
@@ -138,4 +142,49 @@ fn cancelling_a_round_at_its_plan_gate_drops_the_round_and_its_review() {
     let run = fx.run();
     assert_eq!(run.rounds[1].outcome, Some(RoundOutcome::Cancelled));
     assert_eq!(run.state, RunState::Complete, "{:#?}", run.log);
+}
+
+/// A round-2 spec whose Requirements section is `requirements`.
+fn spec_with(requirements: &str) -> String {
+    let at = AMENDMENT.find("R2 Links").unwrap();
+    let end = AMENDMENT.find("\n\n## Interfaces").unwrap();
+    format!("{}{requirements}{}", &AMENDMENT[..at], &AMENDMENT[end..])
+}
+
+/// Ruling T15-5 and m2: in an amending round the orchestrator's spec submit is an
+/// amendment even with `amend: false`. With base R1 to R5, a submit restating R1 to R3
+/// (R1 changed, R2 and R3 word for word) and adding R6 is admitted as one, so R4 and R5
+/// stay; only R1 and R6 are the round's changes, marked and owed.
+#[test]
+fn an_amending_rounds_spec_submit_is_an_amendment() {
+    let mut fx = design_complete();
+    let base: Vec<Requirement> = (1..=5)
+        .map(|k| Requirement {
+            id: format!("R{k}"),
+            text: format!("Rule {k}. Check: test {k}."),
+        })
+        .collect();
+    fx.run_mut().orch.design.as_mut().unwrap().requirements = base.clone();
+    iterate_with(&mut fx, None).unwrap();
+    let text = spec_with(
+        "R1 Rule 1, in the app too. Check: test 1.\n\
+         R2 Rule 2. Check: test 2.\n\
+         R3  Rule 3.  Check: test 3.\n\
+         R6 Rule 6. Check: test 6.",
+    );
+    let args = json!({"kind": "spec", "text": text, "ready": true, "amend": false});
+    let answer = outcome(&orch_tool(&mut fx, ORCH, "submit_doc", args));
+    assert_eq!(answer.unwrap()["version"], 2);
+    act(&mut fx, DocGateKind::Spec, DocGateAction::Approve).unwrap();
+    read_back(&mut fx, 2, &text);
+    let design = fx.run().orch.design.as_ref().unwrap();
+    let mut expected = base;
+    expected[0].text = "Rule 1, in the app too. Check: test 1. (changed in round 2)".into();
+    expected.push(Requirement {
+        id: "R6".into(),
+        text: "Rule 6. Check: test 6.".into(),
+    });
+    assert_eq!(design.requirements, expected);
+    let owed: Vec<String> = design.owed().into_iter().map(|r| r.id).collect();
+    assert_eq!(owed, ["R1", "R6"]);
 }

@@ -110,7 +110,7 @@ fn draft(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Result<Value, String> {
-    let text = checked_text(run, DocKind::Spec, &doc.text, doc.amend, false)?;
+    let text = checked_text(run, DocKind::Spec, &doc.text, amends(run, doc), false)?;
     let reviews = (run.orch.design.iter()).flat_map(|d| &d.reviews);
     let k = reviews.filter(|r| r.doc == DocKind::Spec).count() as u32 + 1;
     let reason = format!("draft for review {k}");
@@ -121,6 +121,12 @@ fn draft(
     log(run, now, format!("the spec draft for review {k} is stored"));
     reviewer::queue(run, DocKind::Spec, (k, cycle), now);
     Ok(json!({"accepted": true, "kind": "spec", "review": k, "awaiting_review": true}))
+}
+
+/// Ruling T15-5: in a round that amends the spec, the orchestrator's spec is checked as
+/// an amendment whatever its `amend`, as the user's edit at the gate is.
+fn amends(run: &Run, doc: &SubmitDoc) -> bool {
+    doc.amend || (run.orch.design.as_ref()).is_some_and(|d| d.amending())
 }
 
 /// Decision 15: the gate's next version, once every finding of `latest` (the cycle's
@@ -152,7 +158,7 @@ fn ready(
             ));
         }
     }
-    let text = checked_text(run, DocKind::Spec, &doc.text, doc.amend, true)?;
+    let text = checked_text(run, DocKind::Spec, &doc.text, amends(run, doc), true)?;
     let mut new = NewDoc::new(DocKind::Spec, DocAuthor::Orchestrator, reason, &text);
     let mut answered: Vec<(DocFinding, Option<String>)> = Vec::new();
     match (&latest, reviewed) {
