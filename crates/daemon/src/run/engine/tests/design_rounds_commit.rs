@@ -227,6 +227,11 @@ fn an_orchestrator_started_round_or_goal_stops_at_every_gate() {
 /// Round 2 of a `pr` run whose stage 1's PR is open, at its plan gate, approved: the
 /// round's commit asked (`approved_round`).
 pub(super) fn pr_round_approved() -> (Fixture, u64, DocsCommitSpec) {
+    approved_round(pr_complete())
+}
+
+/// [`design_complete`] in `pr` mode, its stage 1's PR open, running (delivering).
+pub(super) fn pr_complete() -> Fixture {
     let mut fx = design_complete();
     let head = fx.run().run_head.clone();
     let run = fx.run_mut();
@@ -239,7 +244,7 @@ pub(super) fn pr_round_approved() -> (Fixture, u64, DocsCommitSpec) {
         ..StageDelivery::default()
     }];
     fx.tick();
-    approved_round(fx)
+    fx
 }
 
 /// Ruling T15-6: a base sync due while the round's commit is in flight waits for its

@@ -21,7 +21,7 @@
 //! stages, which do not exist yet. Stage 1's record and ref never move.
 //! Pure (design decision 2).
 
-use proto::{DesignMode, DocKind, RoundDesign, RunState};
+use proto::{DesignMode, DocKind, RoundDesign, RoundOutcome, RunState};
 
 use super::requests::log;
 use super::{Effect, OpKind, OpResult, emit_op, merge, next_op, stages};
@@ -92,18 +92,16 @@ pub(super) fn in_flight(run: &Run) -> bool {
     (run.pending_ops.values()).any(|p| matches!(p.kind, OpKind::CommitDesignDocs(_)))
 }
 
-/// Ruling T15-14: stage `n` is the one a later round's documents commit is creating (in
-/// flight with its branch) or created (recorded at the landed commit), so it holds the
-/// amendment and is never skipped as unused.
+/// Rulings T15-14 and T15-15: stage `n` holds a later round's documents commit: the
+/// stage the in-flight commit targets, or the one a round's landed commit created (its
+/// round record's `committed_stage`; never inferred from a stage's `created_from`, which
+/// a stage created above it at the same head shares). It is never skipped as unused.
 pub(crate) fn holds_docs(run: &Run, n: u16) -> bool {
     let branch = run.stage_branch(n);
     let creating = (run.pending_ops.values()).any(|p| {
         matches!(&p.kind, OpKind::CommitDesignDocs(s) if s.stage_branch.as_deref() == Some(branch.as_str()))
     });
-    let committed = (run.orch.design.as_ref()).and_then(|d| d.committed.as_deref());
-    let created = run.round() > 1
-        && committed.is_some_and(|head| run.stage(n).is_some_and(|s| s.created_from == head));
-    creating || created
+    creating || (run.rounds.iter()).any(|r| r.committed_stage == Some(n))
 }
 
 /// The scheduler's guard: whether the commit is due, in which case the run's running
@@ -299,6 +297,20 @@ pub(super) fn done(run: &mut Run, sent: &DocsCommitSpec, result: OpResult, now: 
             );
             log(run, now, text);
         }
+        // Ruling T15-16: a cancelled round's commit that failed landed nothing; the
+        // round is dropped, and nothing halts.
+        OpResult::DocsThroughSymlink { .. } | OpResult::Failed { .. } if cancelled(run) => {
+            let why = match result {
+                OpResult::Failed { message } => message,
+                _ => symlink_halt(&run.limits.orch.design.docs_dir),
+            };
+            let k = run.round();
+            super::design_round::dropped(run);
+            let text = format!(
+                "round {k}'s documents commit failed after its cancel: {why}; the round is dropped"
+            );
+            log(run, now, text);
+        }
         OpResult::DocsThroughSymlink { .. } => {
             let dir = &run.limits.orch.design.docs_dir;
             let text = symlink_halt(dir);
@@ -324,12 +336,21 @@ fn round_committed(run: &mut Run, sent: &DocsCommitSpec, branch: &str, head: &st
     if let Some(record) = run.stages.iter_mut().find(|s| s.n == n) {
         record.synced_from = Some(sent.expected_head.clone());
     }
+    // Ruling T15-15: the round record's own stage, which holds the amendment.
+    if let Some(round) = run.rounds.last_mut() {
+        round.committed_stage = Some(n);
+    }
     let text = format!(
         "committed round {} spec amendment and plan as {} on {branch}",
         run.round(),
         sha7(head)
     );
     log(run, now, text);
+}
+
+/// The current round was cancelled (decision 16).
+fn cancelled(run: &Run) -> bool {
+    (run.current_round()).is_some_and(|r| r.n > 1 && r.outcome == Some(RoundOutcome::Cancelled))
 }
 
 /// Ruling T12-1's text, at a design run's start and at its commit.

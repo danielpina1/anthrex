@@ -53,9 +53,14 @@ fn a_round_cancelled_before_its_commit_is_sent_is_dropped() {
     let (op, _) = fx.op("CreateStageBranch");
     assert!(reply(&cancel(&mut fx)).is_ok());
     fx.done(op, OpResult::StageCreated);
+    // Ruling T15-17 (R3): a merge runs after the cancel (round 1's fix on stage 1).
+    merged_fix(&mut fx);
     settle(&mut fx);
     let run = fx.run();
     assert_eq!(run.state, RunState::Complete, "{:#?}", run.log);
+    // Ruling T15-17: the dropped round's record says so, and its approval is gone.
+    assert!(run.rounds[1].dropped);
+    assert_eq!(run.rounds[1].approved_at, None);
     let design = run.orch.design.as_ref().unwrap();
     assert!(!design.commit_due, "nothing is left due");
     assert!(!crate::run::engine::design_commit::due(run));
@@ -148,4 +153,24 @@ fn t3() -> serde_json::Value {
 fn round_submit_effects(fx: &mut Fixture) -> Vec<crate::run::engine::Effect> {
     let args = json!({"edits": [t3()], "submit": true});
     super::orch::orch_tool(fx, super::orch::ORCH, "edit_plan", args)
+}
+
+/// An engine-made fix of round 1 on stage 1, through the real merge queue: its merge
+/// candidate is sent (`start_merge` is not held) and merges.
+pub(super) fn merged_fix(fx: &mut Fixture) {
+    let spec = super::fixes::spec(
+        proto::TaskOrigin::Bisect,
+        "crates/fix/**",
+        Default::default(),
+    );
+    let now = fx.now;
+    let id = crate::run::engine::fixes::add_fix(fx.run_mut(), spec, now, &mut Vec::new());
+    let id = id.expect("added");
+    super::kinds_integration::merge_real(fx, &id, super::kinds_integration::C3);
+    assert_eq!(
+        fx.task(&id).state,
+        proto::TaskState::Merged,
+        "{:#?}",
+        fx.run().log
+    );
 }

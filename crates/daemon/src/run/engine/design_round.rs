@@ -142,12 +142,24 @@ pub(super) fn cancelled(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
 /// review number is reused.
 pub(super) fn rejected(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
     design_agents::halt_all(run, reason, fx);
+    dropped(run);
+}
+
+/// [`rejected`]'s state: the design state back to the approval before the round, and
+/// (ruling T15-17) the round record marked dropped, its approval cleared. Also a
+/// cancelled round's failed commit (ruling T15-16), whose agents already stopped.
+pub(super) fn dropped(run: &mut Run) {
     let Some(design) = run.orch.design.as_mut() else {
         return;
     };
     let Some(round) = design.round.take() else {
         return;
     };
+    if let Some(record) = run.rounds.last_mut().filter(|r| r.n == round.n) {
+        record.dropped = true;
+        record.approved_at = None;
+        record.committed_stage = None;
+    }
     design.requirements = round.base;
     design.approved_spec = round.spec_before;
     design.goal_section = round.goal_before;

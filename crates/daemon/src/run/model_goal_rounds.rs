@@ -36,6 +36,14 @@ pub struct Round {
     /// Decision 15: the run's paused seconds at the round's approval.
     #[serde(default, skip_serializing_if = "super::is_zero")]
     pub paused_before: u64,
+    /// Milestone 9.6 ruling T15-15: the stage this round's documents commit created, set
+    /// when the commit's reply lands (a design run's round 2 on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed_stage: Option<u16>,
+    /// Ruling T15-17: the round was dropped (rejected, or cancelled before anything of
+    /// its documents landed); its approval does not stand (`approved_at` is cleared).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dropped: bool,
 }
 
 impl Round {
@@ -55,6 +63,8 @@ impl Round {
             scouts_before: 0,
             approved_at: None,
             paused_before: 0,
+            committed_stage: None,
+            dropped: false,
         }
     }
 
