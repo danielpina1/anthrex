@@ -223,3 +223,67 @@ fn an_orchestrator_started_round_or_goal_stops_at_every_gate() {
     assert_eq!(fx.run().state, RunState::AwaitingApproval);
     assert_eq!(gate(&fx).map(|g| g.0), Some(DocGateKind::Plan));
 }
+
+/// Round 2 of a `pr` run whose stage 1's PR is open, at its plan gate, approved: the
+/// round's commit asked (`approved_round`).
+fn pr_round_approved() -> (Fixture, u64, DocsCommitSpec) {
+    let mut fx = design_complete();
+    let head = fx.run().run_head.clone();
+    let run = fx.run_mut();
+    pr_mode(run);
+    run.state = RunState::Running;
+    let mut pr = pr_record(12, PrState::Open);
+    pr.pushed_head = head;
+    run.delivery.stages = vec![StageDelivery {
+        pr: Some(pr),
+        ..StageDelivery::default()
+    }];
+    fx.tick();
+    approved_round(fx)
+}
+
+/// Ruling T15-6: a base sync due while the round's commit is in flight waits for its
+/// reply (its merge would move the stage below the commit, or lose the CAS to it), then
+/// starts.
+#[test]
+fn a_base_sync_waits_for_the_round_commit() {
+    let (mut fx, op, _) = pr_round_approved();
+    let stage1 = fx.run().stage(1).unwrap().head.clone();
+    fx.run_mut()
+        .delivery
+        .base_sync_due
+        .insert(1, "baba".repeat(10));
+    let effects = fx.tick();
+    assert!(ops_in(&effects, "Propagate").is_empty(), "{effects:?}");
+    assert!(fx.run().delivery.base_sync_due.contains_key(&1));
+    let effects = assert_committed(&mut fx, op, &stage1);
+    let mut started = ops_in(&effects, "Propagate");
+    started.extend(ops_in(&fx.tick(), "Propagate"));
+    assert_eq!(started.len(), 1, "{effects:?}");
+}
+
+/// Ruling T15-7 (m5): a later round's documents commit is built only from an approved
+/// amendment, as the round's first stage. A round with no new approved spec, or one
+/// whose run is not `Multi`, halts with decision 23's text instead of committing a
+/// round-1-shaped commit.
+#[test]
+fn a_round_commit_is_only_an_amendment_on_its_own_stage() {
+    let edits = || json!([round_task("t2", &["R2", "R3"])]);
+    let mut fx = round_plan_gate(edits());
+    let design = fx.run_mut().orch.design.as_mut().unwrap();
+    design.approved_spec = design.round.as_ref().unwrap().spec_before;
+    approve(&mut fx);
+    let (op, _) = fx.op("CreateStageBranch");
+    let effects = fx.done(op, OpResult::StageCreated);
+    assert!(commits(&effects).is_empty(), "{effects:?}");
+    let reason = "design flow: could not commit the spec and plan: round 2 approved no amendment of the spec";
+    assert_eq!(fx.run().state, RunState::Halted);
+    assert_eq!(fx.run().halted_reason.as_deref(), Some(reason));
+    let mut fx = round_plan_gate(edits());
+    fx.run_mut().stage_layout = crate::run::model::StageLayout::Single;
+    let mut effects = approve(&mut fx);
+    effects.extend(fx.tick());
+    assert!(commits(&effects).is_empty(), "{effects:?}");
+    let reason = "design flow: could not commit the spec and plan: round 2's documents commit is not a stage of the run";
+    assert_eq!(fx.run().halted_reason.as_deref(), Some(reason));
+}

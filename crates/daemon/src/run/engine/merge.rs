@@ -48,6 +48,11 @@ pub(super) fn start_merge(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         .cloned()
         .collect();
     run.merge_queue = queued;
+    // Milestone 9.6 ruling T15-6: no merge moves a stage, nor `integration`, while a
+    // later round's documents commit is due (it is made from the stage below).
+    if super::design_commit::due(run) {
+        return;
+    }
     // Milestone 9.1 decision 49: the lowest due propagate goes first; 9.2 decision 33:
     // a due base sync before it.
     let sync = super::delivery::sync::start;

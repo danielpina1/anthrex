@@ -28,7 +28,7 @@ use super::{Effect, OpKind, OpResult, emit_op, merge, next_op, stages};
 use crate::run::contract::sha7;
 use crate::run::design::commit::{DocSource, DocsCommitSpec, FOLDERS};
 use crate::run::design::plan_md::goal_head;
-use crate::run::design::state::{DesignState, design_dir};
+use crate::run::design::state::{DesignRound, DesignState, design_dir};
 use crate::run::design::template::kind_name;
 use crate::run::model::{Run, StageLayout};
 use crate::run::report::format_utc;
@@ -146,6 +146,23 @@ pub(super) fn round_stage(
 /// at the commit, whose one parent is `from`, the head of the stage below.
 fn spec(run: &Run, stage: Option<(String, String)>) -> Result<DocsCommitSpec, String> {
     let design = run.orch.design.as_ref().ok_or("no design state")?;
+    // Ruling T15-7 (m5): a later round's commit is only its approved amendment, as its
+    // first stage; anything else halts with decision 23's text.
+    let k = run.round();
+    if k > 1 && stage.is_none() {
+        return Err(format!(
+            "round {k}'s documents commit is not a stage of the run"
+        ));
+    }
+    let amended = |r: &DesignRound| {
+        r.mode != RoundDesign::Off
+            && design
+                .approved_spec
+                .is_some_and(|v| Some(v) != r.spec_before)
+    };
+    if k > 1 && !design.round.as_ref().is_some_and(amended) {
+        return Err(format!("round {k} approved no amendment of the spec"));
+    }
     let limits = &run.limits.orch.design;
     let dir = design_dir(run);
     let source = |folder: &str, kind: DocKind, n: Option<u32>| {
