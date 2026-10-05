@@ -7,6 +7,7 @@ pub mod run_adapt;
 pub mod run_daemon;
 pub mod run_design;
 pub mod run_design_orch;
+pub mod run_git;
 pub mod run_harness;
 pub mod run_orch;
 pub mod run_plans;
