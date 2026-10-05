@@ -179,18 +179,34 @@ pub(super) fn responses(map: &Map<String, Value>) -> Result<Vec<FindingAnswer>, 
 /// (decision 17): at most 32 ids of at most 8 characters, each `R<n>`, each once; empty
 /// when absent.
 pub(super) fn covers(map: &Map<String, Value>) -> Result<Vec<String>, String> {
-    let ids = list(map, "covers", 0, 32, 8)?.unwrap_or_default();
+    let ids = list(map, "covers", 0, COVERS_MAX, COVERS_ID_MAX)?.unwrap_or_default();
     let mut seen = BTreeSet::new();
     for id in &ids {
-        let digits = id.strip_prefix('R').unwrap_or_default();
-        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-            return Err("covers entries look like R4".into());
-        }
-        if !seen.insert(id) {
-            return Err(format!("covers lists {id} twice"));
-        }
+        covers_id(id, &mut seen, "")?;
     }
     Ok(ids)
+}
+
+/// The most ids a `covers` lists, and the longest id (decision 17).
+pub(super) const COVERS_MAX: usize = 32;
+pub(super) const COVERS_ID_MAX: usize = 8;
+
+/// Final fix wave FW-70 (WB-C M-3): the one rule for a `covers` id, shared by
+/// `plan_task.covers` and `spawn_subplanner.covers`: `R<n>`, and each id once (ruling
+/// T6-1); `path` prefixes the field's name in the error.
+pub(super) fn covers_id<'a>(
+    id: &'a str,
+    seen: &mut BTreeSet<&'a str>,
+    path: &str,
+) -> Result<(), String> {
+    let digits = id.strip_prefix('R').unwrap_or_default();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(format!("{path}covers entries look like R4"));
+    }
+    if !seen.insert(id) {
+        return Err(format!("{path}covers lists {id} twice"));
+    }
+    Ok(())
 }
 
 /// `field`, when given: a positive `u32`.
