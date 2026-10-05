@@ -218,6 +218,11 @@ impl RunHarness {
             ("FAKE_AGENT_STDIN_FILE".into(), path(&io)),
             // M9.16: every MCP call a `fake-agent` makes (`RunHarness::mcp_log`).
             ("FAKE_AGENT_MCP_LOG".into(), path(&io.join("mcp.jsonl"))),
+            // Every line a `fake-agent` writes to stderr (`RunHarness::trail`).
+            (
+                "FAKE_AGENT_ERROR_LOG".into(),
+                path(&io.join("fake-agent.errors")),
+            ),
             ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
             ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
         ];
@@ -479,10 +484,11 @@ impl RunHarness {
             }
             if Instant::now() >= deadline {
                 panic!(
-                    "run {id} did not get there within {wait:?}; last snapshot:\n{}\n--- daemon.log:\n{}\n--- daemon.out:\n{}",
+                    "run {id} did not get there within {wait:?}; last snapshot:\n{}\n--- daemon.log:\n{}\n--- daemon.out:\n{}\n{}",
                     serde_json::to_string_pretty(&last).unwrap(),
                     self.log_tail(),
-                    self.out_tail()
+                    self.out_tail(),
+                    self.trail()
                 );
             }
             std::thread::sleep(Duration::from_millis(200));

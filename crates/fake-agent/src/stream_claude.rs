@@ -95,10 +95,11 @@ pub fn read_stdin(name: String, first: Option<String>) -> Receiver<Line> {
         for line in first.into_iter().map(Ok).chain(rest) {
             let Ok(line) = line else { return };
             if let Err(error) = roles::record_stdin(&name, &line) {
-                eprintln!("fake-agent: {error:#}");
+                crate::diag::say!("fake-agent: {error:#}");
             }
             let Some(parsed) = parse_line(&line) else {
-                eprintln!("fake-agent: bad input line");
+                let shown: String = line.chars().take(300).collect();
+                crate::diag::say!("fake-agent: bad input line: {shown}");
                 std::process::exit(5);
             };
             if tx.send(parsed).is_err() {

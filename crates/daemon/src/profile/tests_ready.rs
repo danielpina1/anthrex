@@ -58,6 +58,9 @@ pub(super) fn repo(dir: &Path, name: &str) -> PathBuf {
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("src/lib.rs"), "// lib\n").unwrap();
     git(&root, &["init", "-q", "-b", "main"]);
+    // The repository's own identity: preflight needs one, and CI has no global one.
+    git(&root, &["config", "user.name", "t"]);
+    git(&root, &["config", "user.email", "t@t"]);
     git(&root, &["add", "-A"]);
     git(&root, &["commit", "-q", "-m", "base"]);
     crate::project::detect_roots_with("git".as_ref(), &root, Duration::from_secs(10)).project

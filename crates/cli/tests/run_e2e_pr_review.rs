@@ -336,7 +336,13 @@ fn e2e_pr_comment_on_an_unowned_file_holds_its_fix_task() {
     let fix = run.tasks.iter().find(|t| t.id == "fix1").expect("fix1");
     assert_eq!(fix.owns, ["b.txt"], "the path exactly");
     assert_eq!(fix.hold.as_deref(), Some("hold-fix1"));
-    assert_eq!(fix.state, TaskState::Pending, "held, not started");
+    // Held, not started: a hold keeps the task from dispatch whether the queue pass has
+    // already marked it runnable (`queued`) or not yet (`pending`); either is waiting.
+    assert!(
+        matches!(fix.state, TaskState::Pending | TaskState::Queued),
+        "held, not started: {:?}",
+        fix.state
+    );
     assert!(
         h.io_lines("worker-fix1-1", "stdin").is_empty(),
         "no worker before the approval"

@@ -21,6 +21,10 @@ fn the_agent_tool_names_its_sub_agent() {
             && window.subagents[0].state == SubagentState::Running
             && window.subagents[0].tool.as_deref() == Some("Grep")
     });
+    // `started_secs` is whole seconds since the sub-agent started, read at the snapshot:
+    // 0 or 1 depending on where a second boundary falls, so it is checked by bound.
+    let started = running.subagents[0].started_secs;
+    assert!(started <= 2, "just started: {started}");
     assert_eq!(
         running.subagents[0],
         SubagentInfo {
@@ -31,7 +35,7 @@ fn the_agent_tool_names_its_sub_agent() {
             model: Some("haiku".into()),
             state: SubagentState::Running,
             tool: Some("Grep".into()),
-            started_secs: 0,
+            started_secs: started,
             ended_secs: None,
             needs_permission: false,
         }

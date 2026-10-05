@@ -71,6 +71,10 @@ impl Rig {
         let root = top.join("repo");
         std::fs::create_dir_all(&root).unwrap();
         git(&root, &["init", "-q", "-b", "main"]);
+        // The repository's own identity, which the lane's config includes: the salvage
+        // commit needs one, and CI has no global one.
+        git(&root, &["config", "user.name", "t"]);
+        git(&root, &["config", "user.email", "t@t"]);
         std::fs::write(root.join("a.txt"), "a\n").unwrap();
         git(&root, &["add", "-A"]);
         git(&root, &["commit", "-q", "-m", "base"]);

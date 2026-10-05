@@ -91,7 +91,9 @@ fn e2e_test_writer_red_commit_is_handed_to_an_implementer() {
             AgentRole::TestWriter,
             AgentRole::Worker,
             AgentRole::Reviewer
-        ]
+        ],
+        "{}",
+        h.trail()
     );
     let routes: Vec<_> = t1.rounds.iter().map(|r| r.route.clone()).collect();
     assert_eq!(
@@ -190,7 +192,9 @@ fn e2e_a_red_that_passes_goes_back_to_the_test_writer() {
             AgentRole::TestWriter,
             AgentRole::Worker,
             AgentRole::Reviewer
-        ]
+        ],
+        "{}",
+        h.trail()
     );
 }
 

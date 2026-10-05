@@ -105,7 +105,7 @@ pub fn owns(step: &Step) -> bool {
 }
 
 fn fail(text: String) -> Result<Flow> {
-    eprintln!("fake-agent: {text}");
+    crate::diag::say!("fake-agent: {text}");
     Ok(Flow::Exit(3))
 }
 
@@ -136,7 +136,9 @@ pub fn run(host: &mut impl Host, step: &Step) -> Result<Flow> {
                 }
                 if Instant::now() >= deadline {
                     let (tool, text) = (&until.tool, &reply.text);
-                    eprintln!("fake-agent: mcp_until {tool} timed out; last result {text:?}");
+                    crate::diag::say!(
+                        "fake-agent: mcp_until {tool} timed out; last result {text:?}"
+                    );
                     return Ok(Flow::Exit(4));
                 }
             }
@@ -204,7 +206,7 @@ pub fn pty(args: &[String]) -> Result<Option<i32>> {
             Ok(file) => match crate::script::parse_script(BufReader::new(file)) {
                 Ok(steps) => steps,
                 Err(error) => {
-                    eprintln!("fake-agent: {error:#}");
+                    crate::diag::say!("fake-agent: {error:#}");
                     return Ok(Some(2));
                 }
             },
@@ -321,7 +323,7 @@ impl Pty {
                         if let Some(expect) = expect
                             && !text.contains(expect.as_str())
                         {
-                            eprintln!(
+                            crate::diag::say!(
                                 "fake-agent: expected a message containing {expect:?}, got {text:?}"
                             );
                             return Ok(3);
@@ -330,7 +332,7 @@ impl Pty {
                     }
                     Read::Eof => return Ok(0),
                     Read::Timeout => {
-                        eprintln!("fake-agent: read_message timed out");
+                        crate::diag::say!("fake-agent: read_message timed out");
                         return Ok(4);
                     }
                 }
@@ -347,7 +349,7 @@ impl Pty {
                     let reply = self.call(&tool, &args)?;
                     if reply.ok == expect_error {
                         let wanted = if expect_error { "an error" } else { "success" };
-                        eprintln!(
+                        crate::diag::say!(
                             "fake-agent: mcp_call {tool} expected {wanted}, got {:?}",
                             reply.text
                         );

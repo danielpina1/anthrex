@@ -10,7 +10,8 @@ use crate::live_config::LiveSettings;
 async fn a_continued_chain_keeps_its_route_over_the_orchestrator_list() {
     // The list names an installed runtime's other model, so taking it would show.
     let rig = ChainRig::with_context(
-        |_| {},
+        // Off macOS a run's checks run only unconfined (as the sibling chain tests do).
+        |prev| prev.limits.unconfined_checks = true,
         |ctx| {
             let mut config = ctx.settings.current().orchestrator.clone();
             config.tuning.routes.orchestrator = config::RouteList {
