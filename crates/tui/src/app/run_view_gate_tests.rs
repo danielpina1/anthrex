@@ -183,3 +183,40 @@ fn a_later_rounds_reject_page_drops_the_round() {
         "Reject the spec? This drops round 2 of run 3f9a."
     );
 }
+
+/// The cell of the glyph before `text` in `buffer`, the first such.
+fn glyph_cell(buffer: &ratatui::buffer::Buffer, text: &str) -> ratatui::buffer::Cell {
+    let area = buffer.area;
+    for y in 0..area.height {
+        for x in 0..area.width {
+            let after: String = (x + 1..area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            if after.starts_with(text) {
+                return buffer[(x, y)].clone();
+            }
+        }
+    }
+    panic!("no {text:?}");
+}
+
+/// Ruling T18-8 (9.0.7 decision 3): a submitted agent, its draft in and held, is a
+/// reported agent: `✓` in `Done`, and undimmed; a done one is dimmed as it ends.
+#[test]
+fn a_submitted_design_agent_is_drawn_done_and_undimmed() {
+    use proto::DesignAgentStatus;
+    use ratatui::style::Modifier;
+    let mut run = crate::tree::run_rows::design_tests::with_agents();
+    run.design_agents[0].state = DesignAgentStatus::Submitted;
+    let mut app = app_with(run, 120, 40);
+    app.open_run_view(RUN_ID.into());
+    let buffer = crate::ui::audit::draw(&app, 120, 40);
+    let done = crate::theme::role(crate::theme::Role::Done, app.palette()).fg;
+    let submitted = glyph_cell(&buffer, " brainstormer claude");
+    assert_eq!(submitted.symbol(), "✓");
+    assert_eq!(submitted.fg, done.unwrap());
+    assert!(!submitted.modifier.contains(Modifier::DIM), "{submitted:?}");
+    let reviewer = glyph_cell(&buffer, " doc reviewer spec-r2");
+    assert_eq!(reviewer.symbol(), "✓");
+    assert!(reviewer.modifier.contains(Modifier::DIM), "{reviewer:?}");
+}

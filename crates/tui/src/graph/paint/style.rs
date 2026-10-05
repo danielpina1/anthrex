@@ -175,8 +175,9 @@ pub(crate) fn node_glyph(row: &Row<'_>, app: &App) -> (&'static str, Role) {
 }
 
 /// Milestone 9.6 ruling T18-1: a design agent by its state: queued `◌`, running as a
-/// live agent, submitted `●` (its draft held until the brainstorm settles), done `✓`,
-/// failed `✗`.
+/// live agent, submitted and done `✓` in `Done` (ruling T18-8, 9.0.7 decision 3: a
+/// submitted draft is held until the brainstorm settles, the agent reported; only done
+/// dims, in `finished`), failed `✗`.
 fn design_agent_glyph(
     agent: &DesignAgentInfo,
     window: Option<&WindowInfo>,
@@ -186,8 +187,7 @@ fn design_agent_glyph(
     match agent.state {
         DesignAgentStatus::Queued => (theme::glyph(Glyph::NotStarted, ascii), Role::Muted),
         DesignAgentStatus::Running => live(window, false, app),
-        DesignAgentStatus::Submitted => (theme::glyph(Glyph::Live, ascii), Role::Working),
-        DesignAgentStatus::Done => check(app),
+        DesignAgentStatus::Submitted | DesignAgentStatus::Done => check(app),
         DesignAgentStatus::Failed => cross(app),
     }
 }
