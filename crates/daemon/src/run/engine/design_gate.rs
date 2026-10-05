@@ -52,6 +52,15 @@ pub(crate) fn waiting(run: &Run) -> Option<&DocGate> {
     (run.state == RunState::AwaitingApproval).then_some(gate)
 }
 
+/// The final fix wave's FW-18: the gate a run waits at, or was waiting at when it
+/// halted (a plain resume returns there, ruling T15-4a).
+pub(super) fn waiting_or_halted(run: &Run) -> Option<&DocGate> {
+    let design = run.orch.design.as_ref()?;
+    let halted =
+        run.state == RunState::Halted && design.halted_from == Some(RunState::AwaitingApproval);
+    waiting(run).or(design.gate.as_ref().filter(|_| halted))
+}
+
 /// The note the orchestrator is revising the open gate's version with, if it is.
 pub(super) fn revising(run: &Run) -> Option<String> {
     waiting(run).and_then(|g| g.revising.clone())
@@ -371,8 +380,12 @@ pub(super) fn set_revising(
         review,
         cause,
     });
-    run.state = RunState::AwaitingApproval;
-    start_clock(run, now);
+    // FW-18: a halted run stays halted; its resume returns to the revising gate and
+    // starts the clock then.
+    if run.state != RunState::Halted {
+        run.state = RunState::AwaitingApproval;
+        start_clock(run, now);
+    }
 }
 
 /// Stores `doc` as its gate's next version, with its change summary against the

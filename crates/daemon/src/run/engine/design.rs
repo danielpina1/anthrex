@@ -480,7 +480,7 @@ pub struct DocChecked {
 pub(super) fn checked(run: &mut Run, checked: Vec<DocChecked>, now: u64) {
     // Task M9.6.10: the approved spec's requirements, from its text read back.
     let logged = review::requirements_read(run, &checked, now);
-    let gate = design_gate::waiting(run).cloned();
+    let gate = design_gate::waiting_or_halted(run).cloned();
     let mut lost = false;
     for doc in checked {
         match doc.read {

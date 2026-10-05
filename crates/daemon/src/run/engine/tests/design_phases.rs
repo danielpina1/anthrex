@@ -378,3 +378,37 @@ fn a_lost_window_while_revising_hands_off_with_the_note_and_x_still_works() {
     assert_eq!(reply, Ok(format!("run {RUN_ID} rejected; discarding it")));
     assert!(matches!(fx.op("Discard").1, OpKind::Discard { .. }));
 }
+
+/// The final fix wave's FW-18 (review A's M-1): a run halted at an open spec gate
+/// restarts with that gate's version (v2) missing. The gate reopens as revising, so
+/// after the resume the user cannot approve the unread version.
+#[test]
+fn a_lost_version_at_a_halted_gate_reopens_it_revising() {
+    let mut fx = at_spec_gate(false);
+    let changes = DocGateAction::Changes {
+        note: "n".into(),
+        review: false,
+    };
+    act(&mut fx, DocGateKind::Spec, changes).unwrap();
+    let text = SPEC.replace("Mail delays.", "Mail delays, again.");
+    assert_eq!(submitted(&mut fx, "spec", &text)["version"], 2);
+    let now = fx.now;
+    crate::run::engine::merge::halt(fx.run_mut(), "the base branch moved".into(), now);
+    super::control_restore::restart(&mut fx, Vec::new());
+    assert_eq!(fx.run().state, RunState::Halted);
+    fx.next(EventKind::DesignChecked {
+        run_id: RUN_ID.into(),
+        checked: vec![DocChecked {
+            kind: DocKind::Spec,
+            n: 2,
+            read: Err("its file is missing".into()),
+        }],
+    });
+    let note = "anthrex could not read back the stored spec v2; submit it again".to_string();
+    assert_eq!(gate(&fx), Some((DocGateKind::Spec, 2, Some(note))));
+    resume(&mut fx);
+    assert_eq!(fx.run().state, RunState::AwaitingApproval);
+    let approve = act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE);
+    let refused = "the orchestrator is revising spec v2; wait for it".to_string();
+    assert_eq!(approve, Err(refused));
+}
