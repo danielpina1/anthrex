@@ -159,7 +159,7 @@ fn the_help_renders_at_80x24_and_120x40() {
     for (k, w) in &group(&help_groups("C-b"), "global")[..19] {
         body.push(row_text(k, w));
     }
-    body.push("↓ 76 more".into());
+    body.push("↓ 79 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -198,7 +198,7 @@ fn the_help_renders_at_80x24_and_120x40() {
             .iter()
             .map(|(k, w)| row_text(k, w)),
     );
-    body.push("↓ 60 more".into());
+    body.push("↓ 63 more".into());
     body.push("j/k scroll · tab group · esc close".into());
     for line in &body {
         want.push(format!("│ {line:<60} │"));
@@ -282,7 +282,7 @@ fn help_in_ascii() {
     }
     let rows = drawn(&app, 80, 24).join("\n");
     assert!(rows.contains("+ keys ---"), "{rows}");
-    assert!(rows.contains("^ 76 more"), "{rows}");
+    assert!(rows.contains("^ 79 more"), "{rows}");
     assert!(
         rows.contains("  <- / ->      strength, or the orchestrator's choice"),
         "{rows}"
@@ -394,5 +394,15 @@ fn every_global_key_is_a_prefix_command() {
                 || (rest == "C-a" && action == KeyAction::Send(vec![0x01]));
             assert!(ran, "{key} ({words}): {action:?}");
         }
+    }
+}
+
+/// Task M9.6.18, ruling T18-4: the plan review's group lists a design plan gate's Tab
+/// (the Plan doc tab), `c` and `b`.
+#[test]
+fn the_plan_review_group_lists_the_design_gate_keys() {
+    let review = group(&help_groups("C-b"), "plan review");
+    for key in ["tab", "c", "b"] {
+        assert!(review.iter().any(|(k, _)| k == key), "{key}: {review:?}");
     }
 }
