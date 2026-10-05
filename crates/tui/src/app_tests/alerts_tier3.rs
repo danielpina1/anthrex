@@ -137,14 +137,15 @@ fn stage_alerts_open_their_node_and_name_their_stage() {
 
 /// Milestone 9.7 ruling T9-1: an open PR's stage shows its latest tier-3 verdict even
 /// when that job ran on an earlier head (decision 12). Such a red is stale: it raises
-/// no alert. A red job on the stage's current head still does.
+/// no alert. A red job on the stage's current head, or one whose commit is unknown
+/// (ruling T9-2), still does.
 #[test]
 fn only_a_red_on_the_stages_head_raises_an_alert() {
-    let app_for = |commit: &str| {
+    let app_for = |commit: Option<&str>| {
         let mut run = at("r-pr", RunState::Running, 1);
         let mut s1 = stage(1, Some("bbbb"), 1, 1);
         s1.full.state = FullState::Red;
-        s1.full.commit = Some(commit.into());
+        s1.full.commit = commit.map(str::to_string);
         run.stages = vec![s1];
         app_with_runs(vec![], snapshot(1, 100, vec![run]))
     };
@@ -154,10 +155,17 @@ fn only_a_red_on_the_stages_head_raises_an_alert() {
             .filter(|a| matches!(a.key, AlertKey::Stage { .. }))
             .count()
     };
-    assert_eq!(stage_reds(&app_for("aaaa")), 0, "a red on an earlier head");
-    assert_eq!(stage_reds(&app_for("bbbb")), 1, "a red on the head");
     assert_eq!(
-        listed(&app_for("bbbb")),
+        stage_reds(&app_for(Some("aaaa"))),
+        0,
+        "a red on an earlier head"
+    );
+    assert_eq!(stage_reds(&app_for(Some("bbbb"))), 1, "a red on the head");
+    // Ruling T9-2: a red whose commit is unknown (a `run.json` from before ruling
+    // C-18) is not known to be stale, so it still alerts.
+    assert_eq!(stage_reds(&app_for(None)), 1, "a red with no commit");
+    assert_eq!(
+        listed(&app_for(Some("bbbb"))),
         vec![line(3, "r-pr", "stage 1 tier 3 red")]
     );
 }

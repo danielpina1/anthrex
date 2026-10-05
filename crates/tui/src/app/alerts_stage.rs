@@ -38,10 +38,15 @@ pub(super) fn stage_alerts(run: &RunInfo) -> Vec<(u16, StageAlert, String)> {
                 format!("stage {n} propagate red at {sha7}"),
             ));
         }
-        // Milestone 9.7 ruling T9-1: only a red job on the stage's current head. An
-        // open PR's stage shows a red from an earlier head (decision 12); it is stale.
-        let on_head = stage.full.commit.is_some() && stage.full.commit == stage.head;
-        if stage.full.state == FullState::Red && on_head {
+        // Milestone 9.7 rulings T9-1, T9-2: an open PR's stage shows a red from an
+        // earlier head (decision 12); a red known to be on another commit is stale. One
+        // whose commit is unknown (before ruling C-18) still alerts.
+        let stale = stage
+            .full
+            .commit
+            .as_ref()
+            .is_some_and(|c| Some(c) != stage.head.as_ref());
+        if stage.full.state == FullState::Red && !stale {
             let mut text = format!("stage {n} tier 3 red");
             if let Some(fix) = stage.fix_tasks.last() {
                 text.push_str(&format!(" · fix task {fix}"));
