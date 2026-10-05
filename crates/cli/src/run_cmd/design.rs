@@ -189,7 +189,9 @@ pub(super) fn read_capped(file: &Path) -> anyhow::Result<String> {
     };
     let opened = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NONBLOCK)
+        // Final fix wave FW-51 (T16 m4): a terminal device named as the file never
+        // becomes this process's controlling terminal.
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
         .open(file)
         .map_err(|e| anyhow::anyhow!("cannot read {shown}: {e}"))?;
     let regular = (opened.metadata()).map_err(|e| anyhow::anyhow!("cannot read {shown}: {e}"))?;

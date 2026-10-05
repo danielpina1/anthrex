@@ -83,6 +83,30 @@ fn design_commands_reach_the_daemon_and_print_its_refusals() {
         refused_with(&out, &not_design, &args.join(" "));
     }
 
+    // Final fix wave FW-50 (T16 m3): edit-doc's file errors are usage errors from the
+    // real binary, exit 2, before anything is sent: a file over the 64 KiB cap, and a
+    // FIFO (opened without blocking, so this never hangs).
+    let big = h.repo.join("big.md");
+    std::fs::write(&big, "x".repeat(64 * 1024 + 1)).unwrap();
+    let fifo = h.repo.join("fifo.md");
+    let c_path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: a valid NUL-terminated path; mkfifo only creates the node.
+    assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+    for (file, says) in [
+        (
+            &big,
+            "the file is over the 64 KiB edit-doc sends; nothing was sent",
+        ),
+        (&fifo, "is not a regular file"),
+    ] {
+        let file = file.display().to_string();
+        let args = ["run", "edit-doc", h4, "--gate", "spec", "--file", &file];
+        let out = anthrex(&h, &args);
+        assert_eq!(out.code, 2, "{file}: {}", out.stderr);
+        assert!(out.stderr.contains(says), "{file}: {}", out.stderr);
+        assert_eq!(out.stdout, "", "{file}");
+    }
+
     // The run is untouched: still at its plan gate, and its status has no design lines.
     let out = anthrex(&h, &["run", "status", h4]);
     assert_eq!(out.code, 0, "{}", out.stderr);

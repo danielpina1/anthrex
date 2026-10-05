@@ -372,10 +372,14 @@ async fn edit_doc_takes_only_a_regular_file() {
         let _ = tx.send(result);
     });
     // A deadline, never a hang: past it the reader is released by opening the write
-    // end, and the test fails.
+    // end, and the test fails (final fix wave FW-49: on the timeout only; a reader
+    // that ended without a result is its own failure).
     let result = match rx.recv_timeout(std::time::Duration::from_secs(10)) {
         Ok(result) => result,
-        Err(_) => {
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("the reader ended without a result")
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             let _ = std::fs::OpenOptions::new().write(true).open(&fifo);
             panic!("edit-doc blocked opening a FIFO");
         }
