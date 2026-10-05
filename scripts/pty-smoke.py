@@ -96,16 +96,20 @@ ENV["ANTHREX_GIT"] = "off"
 # `ANTHREX_CONFIG` is unset. Pointing it here instead means this script's daemon and
 # every client it drives never consult whatever a developer running this locally has
 # actually configured (a different prefix key would break every `\x02`-prefixed send
-# below in a way that has nothing to do with the product). Every stage but two (the
-# resume stage below, and stage 11t's Settings save, `scripts/pty_smoke_tui.py`, which
-# removes it again on every exit) never creates it — the suite's own correctness
-# depends on it staying absent for those stages, and `ensure_config_path_absent` below
-# is what makes that an enforced invariant instead of a hope. See the M6.12/fix-wave-11
-# reviews for why a fixed, silently-poisonable path was a Major finding: a stray file
-# here used to fail stage 2 with "timed out waiting for 'new-agent form'", an error that
-# named the form, never this path. Since milestone 9.6, `main` writes one table there
-# before any stage, after that check: `[orchestrator.design] default = "off"`, which
-# binds no key (see `write_design_off_config`).
+# below in a way that has nothing to do with the product). The path must be absent
+# when the suite starts, and `ensure_config_path_absent` below is what makes that an
+# enforced invariant instead of a hope. See the M6.12/fix-wave-11 reviews for why a
+# fixed, silently-poisonable path was a Major finding: a stray file here used to fail
+# stage 2 with "timed out waiting for 'new-agent form'", an error that named the form,
+# never this path. Three writers own the file after that check (milestone 9.6, review
+# WB-D m6): `main` writes one table there before stage 1, `[orchestrator.design]
+# default = "off"`, which binds no key (see `write_design_off_config`), so every stage
+# from 1 to 11t runs with that file present; stage 11t's Settings save
+# (`scripts/pty_smoke_tui.py`) rewrites it and then removes its whole directory on
+# every exit, `main`'s design-off table with it; and the resume stage (12b) writes its
+# own file there and removes it again. Stage 11k (`scripts/pty_smoke_design.py`) runs
+# between 11g and 11t on its own daemon with its own `ANTHREX_CONFIG`, so it never
+# touches this path.
 #
 # Whole-branch-review m20: the path used to be `/tmp/anthrex-smoke-data/config.toml`
 # with no pid in it, the one piece of shared mutable state left after fix wave 11 —
@@ -135,13 +139,16 @@ def ensure_config_path_absent():
     might not be this script's to delete — a developer's own accidental override they
     still care about, say — and the cost of being wrong there (silently destroying
     it) is worse than the cost of being right here (one failed run with a clear
-    message). The two stages that legitimately write a real file at this path (the
-    resume stage below, and stage 11t's Settings save in `scripts/pty_smoke_tui.py`)
-    each create it themselves, after this check has already passed, and each owns
-    removing it again itself, in its own `try`/`finally` — deliberately not the
-    module-level `finally` below, which cannot tell "this run created the file" from
-    "a file was already here and `ensure_config_path_absent` just refused to touch
-    it", and must not delete the latter.
+    message). Three writers legitimately put a real file at this path, each after this
+    check has already passed: `main`'s design-off table (`write_design_off_config`,
+    before stage 1), stage 11t's Settings save in `scripts/pty_smoke_tui.py` (which
+    rewrites that file and then removes its directory, design-off table included, in
+    its own `try`/`finally`), and the resume stage below (which writes and removes its
+    own, also in its own `try`/`finally`). The module-level `finally` below removes the
+    directory only when `main` wrote the design-off table (`WROTE_DESIGN_OFF_CONFIG`),
+    because it cannot otherwise tell "this run created the file" from "a file was
+    already here and `ensure_config_path_absent` just refused to touch it", and must
+    not delete the latter.
     """
     path = ENV["ANTHREX_CONFIG"]
     if os.path.exists(path):
@@ -1097,11 +1104,12 @@ def run_resume_stage():
                 f"stage:\n{status_result.stdout}"
             )
     finally:
-        # This stage is the only thing in the suite that ever writes a real file to
-        # ANTHREX_CONFIG's fixed path (`ensure_config_path_absent`'s own doc comment
-        # explains why every other stage needs that path to start absent). Removed
-        # here, unconditionally, on every exit from this stage - success or failure -
-        # so this run never poisons the next one.
+        # This stage writes its own file to ANTHREX_CONFIG's fixed path, as `main`
+        # (the design-off table) and stage 11t (its Settings save) do before it
+        # (`ensure_config_path_absent`'s own doc comment lists the three). By now
+        # stage 11t has removed the directory, so the file here is this stage's alone.
+        # Removed here, unconditionally, on every exit from this stage - success or
+        # failure - so this run never poisons the next one.
         shutil.rmtree(RESUME_CONFIG_DIR, ignore_errors=True)
 
 
@@ -1298,8 +1306,9 @@ def run_conversation_view_stage():
 # Milestone 9.6 ruling T3-2: this suite's planned goals (stage 11f) run with the design
 # flow off, as before 9.6. `main` writes the table to `ANTHREX_CONFIG` once the path is
 # proven absent and before any daemon starts; it changes no key bindings. Stage 11t's
-# Settings save edits this file and then removes it, as 12b does its own; the module's
-# `finally` removes it only when this run wrote it and it is still there.
+# Settings save edits this file and then removes its directory (so stage 11t's `rmtree`
+# deletes this design-off table; no planned goal runs after 11t), as 12b does its own;
+# the module's `finally` removes the directory only when this run wrote the table.
 DESIGN_OFF_CONFIG = '[orchestrator.design]\ndefault = "off"\n'
 WROTE_DESIGN_OFF_CONFIG = False
 
@@ -1870,6 +1879,7 @@ if __name__ == "__main__":
         # failed before anything below ever ran, in which case a stray file there was
         # never this run's to begin with, and unconditionally `rmtree`-ing it here
         # would silently delete it anyway, defeating that check's whole point. The two
-        # stages that do create a real file there (the resume stage below, and stage
-        # 11t's Settings save) each own their cleanup instead, in their own try/finally,
-        # precisely so this block never has to guess whether a given run created it.
+        # stages that write a real file there (the resume stage below, and stage 11t's
+        # Settings save) each own their cleanup instead, in their own try/finally, and
+        # `main`'s design-off table is removed above only when this run wrote it, so
+        # this block never has to guess whether a given run created it.
