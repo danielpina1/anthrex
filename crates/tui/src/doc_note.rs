@@ -154,7 +154,7 @@ impl DocNoteForm {
         if is_ctrl(&key, 's') {
             return self.save();
         }
-        if key.code == KeyCode::Tab && self.purpose == NoteFor::Changes {
+        if key.code == KeyCode::Tab && self.offers_review() {
             self.review = !self.review;
             return NoteOutcome::Stay;
         }
@@ -171,6 +171,13 @@ impl DocNoteForm {
         self.text.on_editor_paste(text, view.width, view.rows);
     }
 
+    /// Whether the form offers the review toggle: a changes request at the spec gate
+    /// only, since only a spec revision can be sent for review (the final fix wave's
+    /// FW-20, the daemon's `only a spec revision can be sent for review`).
+    pub fn offers_review(&self) -> bool {
+        self.purpose == NoteFor::Changes && self.kind == DocGateKind::Spec
+    }
+
     /// The gate's action this form saves: a note trimmed (it may be empty), the edited
     /// document as written.
     pub fn action(&self) -> DocGateAction {
@@ -178,7 +185,7 @@ impl DocNoteForm {
         match self.purpose {
             NoteFor::Changes => DocGateAction::Changes {
                 note,
-                review: self.review,
+                review: self.review && self.offers_review(),
             },
             NoteFor::Rethink => DocGateAction::Rethink { note },
             NoteFor::Back => DocGateAction::Back { note },

@@ -91,3 +91,35 @@ fn the_report_questions_are_its_section() {
     assert_eq!(report_questions(report), "- one?\n- two?");
     assert_eq!(report_questions("# R\n\n## Approaches\nx"), "");
 }
+
+/// Final fix wave (after W1, FW-20): only a spec revision can be sent for review, so
+/// the changes editor offers the review toggle at the spec gate only. At the brainstorm
+/// and plan gates Tab does nothing, the review row and its hint are not drawn, and the
+/// request says `review: false`.
+#[test]
+fn the_review_toggle_is_the_spec_gates_only() {
+    let p = crate::theme::Palette::PLAIN;
+    let text = |lines: Vec<ratatui::text::Line<'static>>| -> String {
+        lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for kind in [DocGateKind::Brainstorm, DocGateKind::Plan] {
+        let mut f = DocNoteForm::new("r-3f9a".into(), (kind, 1), NoteFor::Changes, "n");
+        let drawn = text(crate::ui::doc_note::small_body(&f, 60, p));
+        assert!(!drawn.contains("review"), "{kind:?}: {drawn}");
+        press(&mut f, KeyCode::Tab);
+        assert!(!f.review, "{kind:?}");
+        let changes = DocGateAction::Changes {
+            note: "n".into(),
+            review: false,
+        };
+        assert_eq!(ctrl(&mut f, 's'), NoteOutcome::Send(changes), "{kind:?}");
+    }
+    let f = form(NoteFor::Changes, "n");
+    let drawn = text(crate::ui::doc_note::small_body(&f, 60, p));
+    assert!(drawn.contains("review again"), "{drawn}");
+    assert!(drawn.contains("tab"), "{drawn}");
+}

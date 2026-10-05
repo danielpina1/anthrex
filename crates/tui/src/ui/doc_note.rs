@@ -107,7 +107,7 @@ fn top_rows(form: &DocNoteForm, view: EditorView, p: Palette) -> Vec<Line<'stati
         view.width,
         !form.submitting,
     ));
-    if form.purpose == NoteFor::Changes {
+    if form.offers_review() {
         let value = if form.review { "yes" } else { "no" };
         let row = format!("review again  {}", kit::choice_in(value, p));
         lines.push(Line::raw(kit::cut(&row, width, ellipsis(p))));
@@ -137,14 +137,14 @@ pub fn small_body(form: &DocNoteForm, width: u16, p: Palette) -> Vec<Line<'stati
     };
     let mut lines = top_rows(form, view, p);
     lines.push(position(form, width, p));
-    let keys = match (form.submitting, form.purpose) {
+    let keys = match (form.submitting, form.offers_review()) {
         (true, _) => vec![hint("esc", "close", 1)],
-        (false, NoteFor::Changes) => vec![
+        (false, true) => vec![
             hint("^S", form.purpose.verb(), 9),
             hint("tab", "review", 5),
             hint("esc", "cancel", 1),
         ],
-        (false, purpose) => vec![hint("^S", purpose.verb(), 9), hint("esc", "cancel", 1)],
+        (false, false) => vec![hint("^S", form.purpose.verb(), 9), hint("esc", "cancel", 1)],
     };
     lines.push(kit::hints_joined(width, &keys, dot_sep(p), p));
     lines
