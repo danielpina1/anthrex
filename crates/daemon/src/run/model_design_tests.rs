@@ -266,6 +266,12 @@ fn the_state_survives_save_and_load() {
                 run: "prev-run-0001".into(),
                 path: "/tmp/data/runs/prev-run-0001/design/spec-v1.md".into(),
                 version: version(DocKind::Spec, 1),
+                // Ruling T15-1: each later round's approved amendment.
+                amendments: vec![crate::run::design::pack::EarlierAmendment {
+                    round: 2,
+                    path: "/tmp/data/runs/prev-run-0001/design/spec-v2.md".into(),
+                    version: version(DocKind::Spec, 2),
+                }],
             }),
             // Ruling T8-6: the round and its written pack.
             round: 2,
@@ -326,8 +332,14 @@ fn the_state_survives_save_and_load() {
             rethinks_before: 2,
             packs_before: 0,
             amended: vec!["R1".into()],
+            reviews_before: 1,
         }),
         committed_round: 1,
+        // Ruling T15-1: the specs approved before round 2.
+        approved_before: vec![crate::run::design::round::ApprovedSpec {
+            round: 1,
+            version: 1,
+        }],
     };
     let mut run = old_run();
     run.design_mode = DesignMode::Full;

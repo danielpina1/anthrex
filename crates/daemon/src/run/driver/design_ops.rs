@@ -24,14 +24,57 @@ use super::ops::failed;
 use super::orch::{CONTEXT_READ_TIMEOUT, context_reads};
 use super::{OpCtx, RunService};
 use crate::run::design::pack::{
-    Earlier, EarlierSpec, FrozenRethink, PACK_MAX, PackFile, PackInputs, RethinkInput, pack,
-    pack_path,
+    Earlier, EarlierSpec, EarlierText, FrozenRethink, PACK_MAX, PackFile, PackInputs, RethinkInput,
+    pack, pack_path,
 };
 use crate::run::design::state::sha256_hex;
 use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent, ScoutEnd};
 use crate::scout::design_spec::{DesignAgentKind, DesignAgentSpec};
 use crate::scout::machine::unsubmitted;
 use crate::scout::service::{ScoutHandle, ScoutOutcome, ScoutService};
+
+/// Decision 30 and ruling T15-1: the frozen earlier spec read back, round 1's and each
+/// approved amendment, each against its index entry. What cannot be read in time is left
+/// out (without round 1's, the whole block is).
+async fn earlier_read(run_id: &str, earlier: EarlierSpec) -> Option<Earlier> {
+    let Some(text) = stored_text(earlier.path.clone(), earlier.version).await else {
+        tracing::warn!(run = %run_id, "the earlier spec is left out");
+        return None;
+    };
+    let mut read = Earlier {
+        path: earlier.path,
+        text,
+        own: earlier.run == run_id,
+        amendments: Vec::new(),
+    };
+    for a in earlier.amendments {
+        match stored_text(a.path.clone(), a.version).await {
+            Some(text) => read.amendments.push(EarlierText {
+                round: a.round,
+                path: a.path,
+                text: Some(text),
+            }),
+            None => {
+                let k = a.round;
+                tracing::warn!(run = %run_id, "the round {k} amendment is left out");
+            }
+        }
+    }
+    Some(read)
+}
+
+/// A stored document's text, read on `spawn_blocking` within `IO_WAIT` against its
+/// index entry, cut at `DOC_READ_CAP`.
+async fn stored_text(
+    path: PathBuf,
+    version: crate::run::design::state::DocVersion,
+) -> Option<String> {
+    let read = tokio::task::spawn_blocking(move || read_stored(&path, &version));
+    match tokio::time::timeout(IO_WAIT, read).await {
+        Ok(Ok(Ok(bytes))) => Some(cut_text(&bytes, DOC_READ_CAP, "cut")),
+        _ => None,
+    }
+}
 
 impl RunService {
     /// Decision 9: design agent `spec` on the scout machine, a brainstormer's first turn
@@ -121,16 +164,7 @@ impl RunService {
             ..PackInputs::default()
         };
         if let Some(earlier) = frozen.earlier {
-            let EarlierSpec { path, version, .. } = earlier;
-            let file = path.clone();
-            let read = tokio::task::spawn_blocking(move || read_stored(&file, &version));
-            match tokio::time::timeout(IO_WAIT, read).await {
-                Ok(Ok(Ok(bytes))) => {
-                    let text = cut_text(&bytes, DOC_READ_CAP, "cut");
-                    inputs.earlier = Some(Earlier { path, text });
-                }
-                _ => tracing::warn!(run = %run_id, "the earlier spec is left out"),
-            }
+            inputs.earlier = earlier_read(run_id, earlier).await;
         }
         // Task M9.6.9: a rethink's note, and the report it replaces, read as stored.
         if let Some(FrozenRethink {

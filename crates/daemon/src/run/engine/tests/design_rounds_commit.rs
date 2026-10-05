@@ -23,7 +23,7 @@ use crate::run::design::commit::DocsCommitSpec;
 use crate::run::engine::{Effect, EventKind, OpResult};
 
 /// Round 2's documents commit in these tests.
-const ROUND_DOCS: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+pub(super) const ROUND_DOCS: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 /// Round 1's committed spec (`design_commit::committed`).
 const SPEC_PATH: &str = "docs/anthrex/specs/1970-01-01-password-reset.md";
 const ROUND_PLAN: &str = "docs/anthrex/plans/1970-01-01-password-reset-round2.md";
@@ -31,7 +31,7 @@ const ROUND_PLAN: &str = "docs/anthrex/plans/1970-01-01-password-reset-round2.md
 /// Round 2 at its plan gate (`t2` in stage 2 covering R2 and R3), approved: the
 /// widened run creates stage 1 from the run head, then asks for round 2's commit as
 /// stage 2. Returns the commit's op and spec.
-fn approved_round(fx: Fixture) -> (Fixture, u64, DocsCommitSpec) {
+pub(super) fn approved_round(fx: Fixture) -> (Fixture, u64, DocsCommitSpec) {
     let mut fx = plan_gate_of(fx, json!([round_task("t2", &["R2", "R3"])]));
     let effects = approve(&mut fx);
     assert!(
@@ -88,7 +88,7 @@ fn assert_round_spec(fx: &Fixture, spec: &DocsCommitSpec) {
 
 /// The commit's reply: stage 2 is recorded at the commit (created from it, holding stage
 /// 1's head), the run head follows it, stage 1 is untouched, and round 2's work starts.
-fn assert_committed(fx: &mut Fixture, op: u64, stage1: &str) -> Vec<Effect> {
+pub(super) fn assert_committed(fx: &mut Fixture, op: u64, stage1: &str) -> Vec<Effect> {
     let result = OpResult::DocsCommitted {
         head: ROUND_DOCS.into(),
         spec: SPEC_PATH.into(),

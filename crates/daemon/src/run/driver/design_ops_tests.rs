@@ -155,6 +155,51 @@ async fn the_pack_reads_the_reports_and_the_previous_spec_off_the_engine() {
     assert!(!pack.contains("Related earlier work"), "{pack}");
 }
 
+/// Ruling T15-1: a previous run that iterated is carried as round 1's spec then each
+/// approved amendment, each read against its index entry; one that no longer matches
+/// is left out, round 1's spec staying.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_pack_reads_round_ones_spec_and_each_amendment() {
+    let rig = Rig::new(brainstorming).await;
+    previous(&rig);
+    let amendment = "# Reset in the app\n\n## Goal and success criteria\nThe app too.\n\n\
+                     ## Requirements\nR2 The app opens links. Check: a link test.\n";
+    let path = {
+        let mut engine = crate::lock(&rig.runs.state);
+        let prev = engine.runs.get_mut("prev-run-0001").unwrap();
+        let doc = NewDoc::new(
+            DocKind::Spec,
+            DocAuthor::Orchestrator,
+            "submitted",
+            amendment,
+        );
+        let (_, effect) = state::store(prev, doc, 20).unwrap();
+        let design = prev.orch.design.as_mut().unwrap();
+        design.approved_before = design.approved_specs();
+        let round =
+            crate::run::design::round::DesignRound::starting(design, 2, proto::RoundDesign::Amend);
+        design.round = Some(round);
+        design.approved_spec = Some(2);
+        let Effect::WriteDoc { path, text, .. } = effect else {
+            panic!("not a write");
+        };
+        write_new(&path, &text).unwrap();
+        path
+    };
+    freeze_previous(&rig);
+    let pack = built(&rig).await;
+    let at = |needle: &str| {
+        pack.find(needle)
+            .unwrap_or_else(|| panic!("{needle} in\n{pack}"))
+    };
+    assert!(at("R1 Tokens expire.") < at("  Its round 2 amendment, "));
+    assert!(at("prev/design/spec-v2.md") < at("R2 The app opens links."));
+    std::fs::write(&path, amendment.replace("links", "pages")).unwrap();
+    let pack = built(&rig).await;
+    assert!(pack.contains("R1 Tokens expire."), "{pack}");
+    assert!(!pack.contains("amendment"), "{pack}");
+}
+
 /// Ruling T8-2: the pack reads exactly the inputs frozen when the brainstormers were
 /// queued: a run scout's report that lands between the two starts, and a previous spec
 /// approved since, change nothing; the two packs are byte-equal.

@@ -43,6 +43,18 @@ pub struct DesignRound {
     /// The ids new or changed in its approved amendment, in the amendment's order.
     #[serde(default)]
     pub amended: Vec<String>,
+    /// The document reviews asked before it: a dropped round's own are removed (ruling
+    /// T15-2, m7).
+    #[serde(default)]
+    pub reviews_before: usize,
+}
+
+/// Ruling T15-1: a spec the user approved: the round it was approved in (round 1's, or a
+/// later round's amendment), and its spec gate version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApprovedSpec {
+    pub round: u32,
+    pub version: u32,
 }
 
 /// Decision 14 and ruling T4-4: a changed requirement's marker.
@@ -76,6 +88,7 @@ impl DesignRound {
             rethinks_before: design.rethinks,
             packs_before: packs.saturating_sub(design.rethinks),
             amended: Vec::new(),
+            reviews_before: design.reviews.len(),
         }
     }
 }
@@ -101,6 +114,19 @@ impl DesignState {
     pub fn brainstorm_round(&self) -> u32 {
         let before = self.round.as_ref().map_or(0, |r| r.packs_before);
         self.rethinks + 1 + before
+    }
+
+    /// Ruling T15-1: every spec approved so far, in round order: round 1's, then each
+    /// later round's amendment (the current round's once approved).
+    pub fn approved_specs(&self) -> Vec<ApprovedSpec> {
+        let mut specs = self.approved_before.clone();
+        let round = self.round.as_ref().map_or(1, |r| r.n);
+        if let Some(version) = self.approved_spec
+            && specs.last().is_none_or(|s| s.version != version)
+        {
+            specs.push(ApprovedSpec { round, version });
+        }
+        specs
     }
 
     /// The current round plans as 9.3 does (`iterate --design off`).

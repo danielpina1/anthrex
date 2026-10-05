@@ -302,6 +302,7 @@ fn the_pack_inputs_are_frozen_when_the_brainstormers_are_queued() {
             run: "prev-run-0001".into(),
             path,
             version,
+            amendments: Vec::new(),
         }),
         round: 1,
         file: None,

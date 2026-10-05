@@ -46,6 +46,8 @@ pub(super) fn start(run: &mut Run, mode: RoundDesign, now: u64) {
     let Some(design) = run.orch.design.as_mut() else {
         return;
     };
+    // Ruling T15-1: the specs approved so far, which a later pack carries.
+    design.approved_before = design.approved_specs();
     design.round = Some(DesignRound::starting(design, n, mode));
     design.gate = None;
     design.phase_started = None;
@@ -99,9 +101,11 @@ fn note(mode: RoundDesign, n: u32, last: usize) -> Option<String> {
     }
 }
 
-/// Decision 29 (9.3's rule): round `n`'s reject drops only the round. Its brainstormers
-/// and reviewer stop, and the design state is the approval before it again: its
-/// requirements, approved spec and sections, with no gate and no clock.
+/// Decision 29 (9.3's rule): round `n`'s reject, or (ruling T15-2) its cancel, drops
+/// only the round. Its brainstormers and reviewer stop, and the design state is the
+/// approval before it again: its requirements, approved spec and sections, with no gate
+/// and no clock, and none of the round's document reviews (m7), so a later round's
+/// digest and checks never read them.
 pub(super) fn rejected(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
     design_agents::halt_all(run, reason, fx);
     let Some(design) = run.orch.design.as_mut() else {
@@ -118,6 +122,9 @@ pub(super) fn rejected(run: &mut Run, reason: &str, fx: &mut Vec<Effect>) {
     design.phase_started = None;
     design.commit_due = false;
     design.spec_unread = false;
+    design.reviews.truncate(round.reviews_before);
+    // A halt in the dropped round no longer returns to its phase or gate.
+    design.halted_from = None;
 }
 
 /// Task 7's carry: a halt of a design run before its plan is approved (in a design

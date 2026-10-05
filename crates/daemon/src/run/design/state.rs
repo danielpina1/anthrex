@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub use super::pack::FrozenPack;
 pub use super::requirements::Requirement;
-pub use super::round::DesignRound;
+pub use super::round::{ApprovedSpec, DesignRound};
 pub use super::spend::{AgentSpend, PhaseSpend};
 pub use super::versions::{
     DocVersion, LABELS, NewDoc, findings_name, index_text, sha256_hex, store, store_findings,
@@ -122,6 +122,10 @@ pub struct DesignState {
     /// set: round 1, from before this field).
     #[serde(skip_serializing_if = "is_zero")]
     pub committed_round: u32,
+    /// Ruling T15-1: the specs approved before the current round, round 1's first, then
+    /// each round's amendment (`DesignState::approved_specs`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub approved_before: Vec<ApprovedSpec>,
 }
 
 fn is_zero(n: &u32) -> bool {

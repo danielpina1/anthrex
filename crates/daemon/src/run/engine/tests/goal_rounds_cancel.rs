@@ -24,7 +24,7 @@ use crate::run::engine::fixes::add_fix;
 
 /// The run settles: stages created, ops answered, sessions ended and the ref guard
 /// passed, until it is `complete` or six passes went by.
-fn settle(fx: &mut Fixture) {
+pub(super) fn settle(fx: &mut Fixture) {
     for _ in 0..6 {
         create_stages(fx);
         settle_ops(fx);

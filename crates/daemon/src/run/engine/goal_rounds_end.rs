@@ -157,6 +157,9 @@ pub(super) fn cancel_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
         o.plan_submitted = true;
     }
     planners::halt_all(run, ROUND_CANCELLED, now, fx);
+    // Milestone 9.6 ruling T15-2: its design agents too, and the approval before it, as
+    // a reject leaves them.
+    super::design_round::rejected(run, ROUND_CANCELLED, fx);
     if delivery::pr(run) {
         unused_stages(run, now);
     }

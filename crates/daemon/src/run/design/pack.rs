@@ -55,16 +55,39 @@ pub struct RethinkInput {
     pub report: Option<String>,
 }
 
-/// The previous run's approved spec: where it is, and its text.
+/// The earlier approved spec (ruling T15-1): round 1's, where it is and its text, then
+/// each later round's amendment in round order; `own` when it is this run's (a later
+/// round's brainstorm), not the previous run's of a chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Earlier {
     pub path: PathBuf,
     pub text: String,
+    pub own: bool,
+    pub amendments: Vec<EarlierText>,
 }
 
-/// The pack, at most [`PACK_MAX`] bytes.
+/// One approved amendment of [`Earlier`]: its round, where it is, and its text (`None`
+/// once the pack's cap cut it, [`pack`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EarlierText {
+    pub round: u32,
+    pub path: PathBuf,
+    pub text: Option<String>,
+}
+
+/// The pack, at most [`PACK_MAX`] bytes. Ruling T15-1: over it, the earlier spec's
+/// oldest amendments are cut first, each leaving a note; then the tail is cut.
 pub fn pack(inputs: &PackInputs) -> String {
-    let full = pack_uncapped(inputs);
+    let mut inputs = inputs.clone();
+    let mut full = pack_uncapped(&inputs);
+    while full.len() > PACK_MAX {
+        let amendments = inputs.earlier.as_mut().map(|e| &mut e.amendments);
+        let Some(oldest) = (amendments.into_iter().flatten()).find(|a| a.text.is_some()) else {
+            break;
+        };
+        oldest.text = None;
+        full = pack_uncapped(&inputs);
+    }
     if full.len() <= PACK_MAX {
         return full;
     }
@@ -83,16 +106,7 @@ fn pack_uncapped(inputs: &PackInputs) -> String {
         blocks.push(rethink_block(rethink));
     }
     if let Some(earlier) = &inputs.earlier {
-        let path = safe_text::one_line(&earlier.path.display().to_string());
-        let mut block = format!("Related earlier work: the previous run's approved spec, {path}");
-        let text = safe_text::multi_line(&earlier.text);
-        let lines = lines(&text);
-        for heading in EARLIER_SECTIONS {
-            let body = section(&lines, heading).unwrap_or_default();
-            let body: Vec<&str> = body.iter().map(|l| l.text).collect();
-            block.push_str(&format!("\n  {heading}\n{}", indented(&body.join("\n"), 2)));
-        }
-        blocks.push(block);
+        blocks.push(earlier_block(earlier));
     }
     let profile = inputs.profile.as_deref().unwrap_or("none stored");
     blocks.push(format!("Repository profile:\n{}", indented(profile, 2)));
@@ -100,6 +114,43 @@ fn pack_uncapped(inputs: &PackInputs) -> String {
         blocks.push(report(r));
     }
     blocks.join("\n\n")
+}
+
+/// Decision 30 and ruling T15-1: the earlier spec's block: round 1's spec, then each
+/// approved amendment under its own heading, each with its Goal and Requirements
+/// sections; an amendment the cap cut is a note.
+fn earlier_block(earlier: &Earlier) -> String {
+    let whose = if earlier.own { "this" } else { "the previous" };
+    let path = safe_text::one_line(&earlier.path.display().to_string());
+    let mut block = format!("Related earlier work: {whose} run's approved spec, {path}");
+    block.push_str(&sections(&earlier.text));
+    for amendment in &earlier.amendments {
+        let (k, path) = (amendment.round, amendment.path.display().to_string());
+        let path = safe_text::one_line(&path);
+        match &amendment.text {
+            Some(text) => {
+                block.push_str(&format!("\n  Its round {k} amendment, {path}"));
+                block.push_str(&sections(text));
+            }
+            None => block.push_str(&format!(
+                "\n  Its round {k} amendment, {path}: cut to fit the pack"
+            )),
+        }
+    }
+    block
+}
+
+/// The Goal and Requirements sections of spec `text`, each under its heading, indented.
+fn sections(text: &str) -> String {
+    let text = safe_text::multi_line(text);
+    let lines = lines(&text);
+    let mut out = String::new();
+    for heading in EARLIER_SECTIONS {
+        let body = section(&lines, heading).unwrap_or_default();
+        let body: Vec<&str> = body.iter().map(|l| l.text).collect();
+        out.push_str(&format!("\n  {heading}\n{}", indented(&body.join("\n"), 2)));
+    }
+    out
 }
 
 /// A rethink's block: the user's note, then the previous report without the engine's
@@ -202,11 +253,22 @@ pub fn pack_path(run: &Run, round: u32) -> PathBuf {
     design_dir(run).join(format!("brainstorm/pack-r{round}.md"))
 }
 
-/// A continued goal's previous approved spec: its run, its file, and its index entry
-/// (its length and SHA-256), against which the file is read.
+/// The earlier approved spec: its run, round 1's file and its index entry (its length
+/// and SHA-256), against which the file is read; and (ruling T15-1) each later round's
+/// approved amendment, in round order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EarlierSpec {
     pub run: String,
+    pub path: PathBuf,
+    pub version: DocVersion,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub amendments: Vec<EarlierAmendment>,
+}
+
+/// One approved amendment of [`EarlierSpec`]: its round, file and index entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EarlierAmendment {
+    pub round: u32,
     pub path: PathBuf,
     pub version: DocVersion,
 }
@@ -223,21 +285,47 @@ pub fn freeze(run: &Run, earlier: Option<EarlierSpec>) -> FrozenPack {
     }
 }
 
-/// Decision 30: the spec a continued goal's pack carries: the run that `run_id`
-/// continued (`continued_by`), its latest spec gate version when that spec was
-/// approved.
+/// Decision 30: the spec a pack carries as earlier work. A later round's brainstorm
+/// carries its own run's (ruling T15-1); a continued goal's first, the run that `run_id`
+/// continued (`continued_by`). Either is its approved spec: round 1's, then each later
+/// round's approved amendment.
 pub fn previous_spec<'a>(
     runs: impl IntoIterator<Item = &'a Run>,
     run_id: &str,
 ) -> Option<EarlierSpec> {
-    let prev = (runs.into_iter()).find(|r| r.continued_by.as_deref() == Some(run_id))?;
-    let design = prev.orch.design.as_ref()?;
-    // Task M9.6.10: the version the user approved.
-    let version = design.find(DocKind::Spec, design.approved_spec)?;
-    spec_approved(prev).then(|| EarlierSpec {
-        run: prev.id.clone(),
-        path: design_dir(prev).join(design.file_name(version)),
-        version: version.clone(),
+    let runs: Vec<&Run> = runs.into_iter().collect();
+    let later_round = |r: &&&Run| r.id == run_id && r.round() > 1;
+    if let Some(own) = runs.iter().find(later_round) {
+        return earlier_of(own);
+    }
+    let prev = (runs.iter()).find(|r| r.continued_by.as_deref() == Some(run_id))?;
+    earlier_of(prev)
+}
+
+/// `run`'s approved specs (task M9.6.10: the versions the user approved), when its spec
+/// was approved.
+fn earlier_of(run: &Run) -> Option<EarlierSpec> {
+    let design = run.orch.design.as_ref()?;
+    if !spec_approved(run) {
+        return None;
+    }
+    let mut specs = (design.approved_specs().into_iter()).filter_map(|a| {
+        let version = design.find(DocKind::Spec, Some(a.version))?;
+        let path = design_dir(run).join(design.file_name(version));
+        Some((a.round, path, version.clone()))
+    });
+    let (_, path, version) = specs.next()?;
+    let amendments = (specs.map(|(round, path, version)| EarlierAmendment {
+        round,
+        path,
+        version,
+    }))
+    .collect();
+    Some(EarlierSpec {
+        run: run.id.clone(),
+        path,
+        version,
+        amendments,
     })
 }
 
