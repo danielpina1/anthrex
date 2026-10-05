@@ -146,7 +146,7 @@ pub(crate) fn node_glyph(row: &Row<'_>, app: &App) -> (&'static str, Role) {
         RowKind::Project { status, .. } => theme::status_look(*status, frame, ascii),
         RowKind::Window { info, .. } => theme::status_look(info.status, frame, ascii),
         RowKind::Subagent { info } => theme::subagent_look(info, frame, ascii),
-        RowKind::Run { run, .. } => theme::run_look(run.state, ascii),
+        RowKind::Run { run, .. } => theme::run_look(crate::tree::shown_state(run), ascii),
         RowKind::Planner { planner, .. } => planner_glyph(planner, app),
         RowKind::Scout { scout, window, .. } => scout_glyph(scout, *window, app),
         RowKind::DesignAgent { agent, window, .. } => design_agent_glyph(agent, *window, app),
@@ -166,7 +166,7 @@ pub(crate) fn node_glyph(row: &Row<'_>, app: &App) -> (&'static str, Role) {
         RowKind::Stage { stage, .. } => theme::stage_look(stage, frame, ascii),
         // Milestone 9.3 decision 32: a round by its outcome, the open one as its run.
         RowKind::Round { run, round } => match round.outcome {
-            None => theme::run_look(run.state, ascii),
+            None => theme::run_look(crate::tree::shown_state(run), ascii),
             Some(RoundOutcome::Completed) => check(app),
             Some(RoundOutcome::Rejected | RoundOutcome::Cancelled) => ended(app),
         },

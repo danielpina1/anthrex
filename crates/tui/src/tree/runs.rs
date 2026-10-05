@@ -9,8 +9,8 @@ use super::{
 };
 use crate::safe_text::one_line;
 use proto::{
-    AgentRole, BlockReason, DeliveryMode, HoldInfo, HoldState, IdleOrchestrator, RunInfo, RunState,
-    Runtime, Status, TaskInfo, TaskState, WindowInfo,
+    AgentRole, BlockReason, DeliveryMode, DocGateKind, HoldInfo, HoldState, IdleOrchestrator,
+    RunInfo, RunState, Runtime, Status, TaskInfo, TaskState, WindowInfo,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -65,6 +65,21 @@ pub fn task_held(run: &RunInfo, task: &TaskInfo) -> bool {
     })
 }
 
+/// The state a run is drawn as. Final fix wave FW-47 (WB-D-I1, milestone 9.0.7
+/// decisions 3 and 4): a design gate the orchestrator is revising waits on the
+/// orchestrator, not on you, so it is drawn as the phase it revises in (as the run
+/// node's text already reads it), never as `AwaitingApproval`'s ⚑.
+pub fn shown_state(run: &RunInfo) -> RunState {
+    match (run.state, &run.doc_gate) {
+        (RunState::AwaitingApproval, Some(gate)) if gate.revising.is_some() => match gate.kind {
+            DocGateKind::Brainstorm => RunState::Brainstorming,
+            DocGateKind::Spec => RunState::Specifying,
+            DocGateKind::Plan => RunState::Planning,
+        },
+        (state, _) => state,
+    }
+}
+
 /// Decision 9: the status a run contributes to its project's roll-up. Milestone 9: a
 /// hold awaiting approval asks for the user; a `paused(message)` task does not until
 /// the daemon lists it in the run's attention (after 600 s, decision 42c), since any
@@ -74,7 +89,7 @@ pub fn run_status(run: &RunInfo) -> Status {
     let asks = run.tasks.iter().any(blocked)
         || awaiting_holds(run).next().is_some()
         || !run.attention.is_empty();
-    match run.state {
+    match shown_state(run) {
         RunState::AwaitingApproval | RunState::Paused | RunState::Halted => Status::Attention,
         RunState::Running | RunState::Planning | RunState::Brainstorming | RunState::Specifying
             if asks =>

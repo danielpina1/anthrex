@@ -27,7 +27,8 @@ fn row(text: &str, w: u16) -> String {
 }
 
 /// Review I-1: while the orchestrator revises, the first row is exactly
-/// `revising v<n+1>… (your note: "<note head 60>")`, in the `Attention` role, at
+/// `revising v<n+1>… (your note: "<note head 60>")`, in the `Working` role (final fix
+/// wave FW-47: the run waits on the orchestrator, not on you), at
 /// 120×40 and 80×24, and the document starts on the next row. A note longer than 60
 /// characters shows its first 60; a read-back's note is anthrex's, not the user's.
 #[test]
@@ -46,7 +47,7 @@ fn the_revising_row_is_exact() {
             "{w}x{h}: {rows:#?}"
         );
         let p = app.palette();
-        assert_eq!(buffer[(1, 1)].fg, role(Role::Attention, p).fg.unwrap());
+        assert_eq!(buffer[(1, 1)].fg, role(Role::Working, p).fg.unwrap());
     }
     let long = format!("{}{}", "a".repeat(60), "b".repeat(10));
     let drawn = rows(&revising(&long, RevisingCause::Changes, 120, 40), 120, 40);
@@ -69,6 +70,52 @@ fn the_revising_row_is_exact() {
         "{:?}",
         drawn[1]
     );
+}
+
+/// Final fix wave FW-47 (WB-D-I1, milestone 9.0.7 decisions 3 and 4): a design run
+/// whose gate the orchestrator is revising waits on the orchestrator, not on you. No
+/// cell is drawn in `Attention`, at any gate kind: not the sidebar's run row or its
+/// project's roll-up, not the run view's root node, not the gate screen.
+#[test]
+fn a_revising_design_run_has_no_attention_cell() {
+    for kind in [
+        DocGateKind::Brainstorm,
+        DocGateKind::Spec,
+        DocGateKind::Plan,
+    ] {
+        let mut run = design_run(kind);
+        run.doc_gate.as_mut().unwrap().revising = Some("split R1".into());
+        let attention = |app: &crate::app::App, what: &str| {
+            let buffer = audit::draw(app, 120, 40);
+            let fg = role(Role::Attention, app.palette()).fg.unwrap();
+            let area = buffer.area;
+            for y in area.y..area.bottom() {
+                for x in area.x..area.right() {
+                    let cell = &buffer[(x, y)];
+                    assert!(
+                        cell.fg != fg || cell.symbol().trim().is_empty(),
+                        "{kind:?} {what}: {:?} at ({x},{y}) is Attention\n{:#?}",
+                        cell.symbol(),
+                        audit::rows(&buffer)
+                    );
+                }
+            }
+        };
+        let mut app = app_with(run.clone(), 120, 40);
+        attention(&app, "sidebar");
+        app.open_run_view(crate::tree::run_fixtures::RUN_ID.into());
+        attention(&app, "run view");
+        // The plan gate's screen is 9.5's plan review (`open_doc_gate`'s plan arm).
+        let app = match kind {
+            DocGateKind::Plan => {
+                let mut app = app_with(run, 120, 40);
+                let _ = app.open_doc_gate(crate::tree::run_fixtures::RUN_ID);
+                app
+            }
+            _ => opened_with(run, 120, 40),
+        };
+        attention(&app, "gate screen");
+    }
 }
 
 /// Every row of `app` drawn `w`×`h` is free of hostile characters and fits the width.

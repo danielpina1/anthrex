@@ -177,7 +177,7 @@ pub fn narrow_line(
                     Span::raw(guides),
                     focus_mark(focused),
                     Span::raw(" "),
-                    look(theme::run_look(run.state, ascii)),
+                    look(theme::run_look(tree::shown_state(run), ascii)),
                     Span::raw(format!(" {position:>pos_width$} ")),
                 ],
                 // Decision 28: the run's one name; a blank goal names the run by its

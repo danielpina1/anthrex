@@ -270,7 +270,7 @@ pub fn render(frame: &mut Frame, app: &App, s: &DocGateScreen, area: Rect) {
     if let Some(text) = app.doc_revising().and_then(|g| revising_text(g, p)) {
         let line = Line::styled(
             cut(&text, usize::from(a.revising.width), ellipsis(p)),
-            role(Role::Attention, p),
+            role(Role::Working, p),
         );
         frame.render_widget(Paragraph::new(line), a.revising);
     }

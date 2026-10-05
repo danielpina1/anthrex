@@ -20,7 +20,7 @@ pub use run_rows::{RunFilter, round_label, round_label_with_lane, run_rows};
 use runs::{ShownRun, group_projects, idle_matches_filter, run_matches_filter};
 pub use runs::{
     awaiting_holds, idle_outcome, idle_text, is_paused, run_progress, run_status, run_title,
-    shown_runs, task_held, window_row,
+    shown_runs, shown_state, task_held, window_row,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
