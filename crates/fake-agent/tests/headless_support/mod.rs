@@ -263,6 +263,17 @@ pub fn codex_argv_for(target: McpTarget, exe: &Path, socket: &Path, msg: &str) -
     argv::codex_args(&spec, &session, msg, exe, WINDOW, socket, &argv::CLI_CAPS)
 }
 
+/// The daemon's own Claude argv for a first turn with any MCP target (milestone 9.6's
+/// design agents), session `id`, its server at `exe` on `socket`.
+pub fn claude_argv_for(target: McpTarget, exe: &Path, socket: &Path, id: &str) -> Vec<String> {
+    let mut spec = spec(Runtime::Claude, None);
+    spec.mcp = Some(target);
+    let session = SessionArg::New {
+        uuid: Some(id.into()),
+    };
+    argv::claude_args(&spec, &session, exe, WINDOW, socket, &argv::CLI_CAPS)
+}
+
 /// M8a.1's accepted stream-json user message (`claude_stream::user_message`).
 pub fn user_message(text: &str, session: &str) -> String {
     json!({
