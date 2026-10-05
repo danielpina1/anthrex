@@ -76,7 +76,8 @@ impl App {
             Some(Screen::Settings(_)) => self.settings_tick(),
             Some(Screen::Stats(_)) => self.stats_tick(),
             Some(Screen::DocGate(_)) => self.doc_gate_tick(),
-            None => vec![],
+            // Milestone 9.6: the plan review's Plan doc tab, over no screen.
+            None => self.plan_doc_tick(),
         }
     }
 }

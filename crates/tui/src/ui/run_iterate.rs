@@ -8,17 +8,23 @@
 //! editor in `GOAL_ROWS` rows. The text area's width and rows ([`text_view`]) are the
 //! ones the keys move by. Esc on a text draws the goal dialog's confirm page. The run
 //! id and every drawn row pass `safe_text` (decision 33). Pure: no I/O.
+//!
+//! Milestone 9.6: a design run's dialog has the `design` row under the text (the goal
+//! dialog's grammar: the selection mark while focused, a lower-case label, `‹ value ›`),
+//! then the run's own round mode muted, `this round: <mode>`; the footer gains
+//! `Tab options` and the compact hints `tab next`. Without the flow nothing changes.
 
 use crate::run_goal::EditorView;
 use crate::run_iterate::{IterateForm, PROMPT};
 use crate::safe_text::one_line;
-use crate::theme::{Palette, Role, dot_sep, ellipsis, role};
+use crate::theme::{Glyph, Palette, Role, dot_sep, ellipsis, glyph, role};
 use crate::ui::goal_editor::{dialog_rect, footer, is_large, render_discard};
 use crate::ui::kit::{self, Hint};
 use crate::ui::run_goal::GOAL_ROWS;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
+use ratatui::style::Modifier;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
 /// The large dialog's footer (KG §1.2's, without `Tab options`), dropped from the right
@@ -29,9 +35,20 @@ pub const FOOTER: [(&str, &str); 4] = [
     ("^U", "paste"),
     ("Esc", "cancel"),
 ];
+/// [`FOOTER`] with the design row's `Tab options` (KG §1.2's own entry).
+pub const DESIGN_FOOTER: [(&str, &str); 5] = [
+    ("^S", "start"),
+    ("Tab", "options"),
+    ("^K", "cut"),
+    ("^U", "paste"),
+    ("Esc", "cancel"),
+];
 /// The rows beside the text in the large dialog: the prompt, the position row and the
-/// footer (the error row is counted while set).
+/// footer (the error row and the design row are counted while drawn).
 const FIXED_ROWS: u16 = 3;
+/// The design row's selection mark and label columns, the goal dialog's.
+const MARK_W: usize = 2;
+const LABEL_W: usize = 18;
 
 /// The compact dialog's interior width in a terminal `cols` wide.
 fn compact_width(cols: u16) -> u16 {
@@ -51,7 +68,7 @@ pub fn text_view(form: &IterateForm, cols: u16, rows: u16) -> EditorView {
         };
     }
     let rect = dialog_rect(Rect::new(0, 0, cols, rows));
-    let fixed = FIXED_ROWS + u16::from(form.error.is_some());
+    let fixed = FIXED_ROWS + u16::from(form.error.is_some()) + u16::from(form.design.is_some());
     EditorView {
         width: rect.width.saturating_sub(4),
         rows: rect.height.saturating_sub(2).saturating_sub(fixed).max(1),
@@ -67,16 +84,49 @@ pub fn title(form: &IterateForm, width: u16, p: Palette) -> String {
     kit::cut(&text, usize::from(width), ellipsis(p))
 }
 
-/// The rows every layout shares: the prompt (muted), the editor's `view.rows` rows and
-/// the error row while set.
+/// Milestone 9.6: the `design` row, cut to `width`: the mark and the label (accented
+/// and bold while focused), `‹ <mode> ›`, then `this round: <mode>` muted.
+fn design_row(form: &IterateForm, width: usize, p: Palette) -> Option<Line<'static>> {
+    let label = |mode: proto::RoundDesign| match mode {
+        proto::RoundDesign::Amend => "amend",
+        proto::RoundDesign::Full => "full",
+        proto::RoundDesign::Off => "off",
+    };
+    let value = label(form.design?);
+    let focused = form.on_design && !form.submitting;
+    let (mark, style) = match focused {
+        true => (
+            glyph(Glyph::Selection, p.ascii),
+            role(Role::Accent, p).add_modifier(Modifier::BOLD),
+        ),
+        false => (" ", role(Role::Muted, p)),
+    };
+    let choice_style = match focused {
+        true => style,
+        false => ratatui::style::Style::default(),
+    };
+    let mut spans = vec![
+        Span::styled(format!("{mark:<MARK_W$}{:<LABEL_W$}", "design"), style),
+        Span::styled(kit::choice_in(value, p), choice_style),
+    ];
+    if let Some(current) = form.current {
+        let text = format!("  this round: {}", label(current));
+        spans.push(Span::styled(text, role(Role::Muted, p)));
+    }
+    Some(crate::ui::plan_review::clip(Line::from(spans), width))
+}
+
+/// The rows every layout shares: the prompt (muted), the editor's `view.rows` rows, the
+/// design row (milestone 9.6) and the error row while set.
 fn top_rows(form: &IterateForm, view: EditorView, p: Palette) -> Vec<Line<'static>> {
     let width = usize::from(view.width);
     let mut lines = vec![Line::styled(
         kit::cut(PROMPT, width, ellipsis(p)),
         role(Role::Muted, p),
     )];
-    let focused = !form.submitting;
+    let focused = !form.submitting && !form.on_design;
     lines.extend(kit::editor(&form.text, view.rows, view.width, focused));
+    lines.extend(design_row(form, width, p));
     if let Some(error) = &form.error {
         lines.push(Line::styled(
             kit::cut(&one_line(error), width, ellipsis(p)),
@@ -98,9 +148,10 @@ fn position(form: &IterateForm, width: u16, p: Palette) -> Line<'static> {
 pub fn body(form: &IterateForm, view: EditorView, p: Palette) -> Vec<Line<'static>> {
     let mut lines = top_rows(form, view, p);
     lines.push(position(form, view.width, p));
-    lines.push(match form.submitting {
-        true => footer(&[("Esc", "close")], view.width, p),
-        false => footer(&FOOTER, view.width, p),
+    lines.push(match (form.submitting, form.design.is_some()) {
+        (true, _) => footer(&[("Esc", "close")], view.width, p),
+        (false, true) => footer(&DESIGN_FOOTER, view.width, p),
+        (false, false) => footer(&FOOTER, view.width, p),
     });
     lines
 }
@@ -122,9 +173,14 @@ pub fn compact_body(form: &IterateForm, width: u16, p: Palette) -> Vec<Line<'sta
     };
     let mut lines = top_rows(form, view, p);
     lines.push(position(form, width, p));
-    let keys = match form.submitting {
-        true => vec![hint("esc", "close", 1)],
-        false => vec![hint("^S", "start", 9), hint("esc", "cancel", 1)],
+    let keys = match (form.submitting, form.design.is_some()) {
+        (true, _) => vec![hint("esc", "close", 1)],
+        (false, true) => vec![
+            hint("^S", "start", 9),
+            hint("tab", "next", 6),
+            hint("esc", "cancel", 1),
+        ],
+        (false, false) => vec![hint("^S", "start", 9), hint("esc", "cancel", 1)],
     };
     lines.push(kit::hints_joined(width, &keys, dot_sep(p), p));
     lines

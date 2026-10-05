@@ -180,3 +180,75 @@ fn iterate_dialog_text_is_sanitised() {
         assert_eq!(crate::safe_text::tests::first_hostile(row), None, "{row}");
     }
 }
+
+/// Milestone 9.6 task 18: a design run's dialog draws its `design` row under the text,
+/// with the run's own round mode muted after it, and the footer offers `Tab options`;
+/// the text gives the row one of its rows. Focused, the row takes the selection mark.
+#[test]
+fn a_design_run_draws_its_design_row() {
+    use proto::RoundDesign;
+    for (w, h, width, text_rows) in [(80u16, 24u16, 76u16, 16u16), (120, 40, 116, 32)] {
+        let form = form().with_design(Some(RoundDesign::Off));
+        assert_eq!(
+            text_view(&form, w, h),
+            EditorView {
+                width: width - 4,
+                rows: text_rows
+            },
+            "{w}x{h}"
+        );
+        let mut rows = vec!["what should change or be added?".to_string()];
+        rows.resize(usize::from(text_rows) + 1, String::new());
+        rows.push("  design            ‹ amend ›  this round: off".into());
+        rows.push("ln 1, col 1 · 0 / 16,384".into());
+        rows.push("^S start  Tab options  ^K cut  ^U paste  Esc cancel".into());
+        let want = framed(
+            "iterate run 3f9a · round 2",
+            usize::from(width),
+            &rows,
+            false,
+        );
+        let app = app_with(form, false);
+        let buffer = audit::draw(&app, w, h);
+        let rect = dialog_rect(Rect::new(0, 0, w, h));
+        assert_eq!(cells(&buffer, rect), want, "{w}x{h}");
+        // The round's own mode is muted.
+        let y = rect.y + 2 + text_rows;
+        let x =
+            rect.x + 2 + u16::try_from("  design            ‹ amend ›  ".chars().count()).unwrap();
+        assert_eq!(
+            buffer[(x, y)].fg,
+            crate::theme::fg(crate::theme::Role::Muted)
+        );
+    }
+    // ASCII, and the row focused.
+    let mut form = form().with_design(Some(RoundDesign::Amend));
+    form.on_design = true;
+    let app = app_with(form, true);
+    let buffer = audit::draw(&app, 80, 24);
+    let rows = cells(&buffer, dialog_rect(Rect::new(0, 0, 80, 24)));
+    assert!(
+        rows.iter()
+            .any(|r| r.starts_with("| > design            < amend >  this round: amend  ")),
+        "{rows:#?}"
+    );
+    assert_eq!(audit::first_non_ascii(&buffer), None);
+}
+
+/// Below 60×16 the compact dialog has the row too, with `tab next` in its hints.
+#[test]
+fn the_compact_dialog_has_the_design_row() {
+    let form = form().with_design(Some(proto::RoundDesign::Full));
+    let lines: Vec<String> = compact_body(&form, 60, crate::theme::Palette::PLAIN)
+        .iter()
+        .map(|l| l.to_string().trim_end().to_string())
+        .collect();
+    assert!(
+        lines.contains(&"  design            ‹ amend ›  this round: full".to_string()),
+        "{lines:#?}"
+    );
+    assert_eq!(
+        lines.last().map(String::as_str),
+        Some("^S start · tab next · esc cancel")
+    );
+}

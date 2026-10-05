@@ -76,6 +76,10 @@ impl App {
         if let Some(effects) = self.on_hold_key(&run_id, key, selected.as_ref()) {
             return effects;
         }
+        // Milestone 9.6 (task M9.6.18): a design gate's keys.
+        if let Some(effects) = self.on_design_gate_key(&run_id, key) {
+            return effects;
+        }
         let run = match self.gate_run(&run_id) {
             Ok(run) => run,
             Err(text) => {
@@ -238,3 +242,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "run_view_gate_tests.rs"]
+mod run_view_tests;

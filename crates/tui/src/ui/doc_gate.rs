@@ -100,26 +100,33 @@ pub(crate) fn hints(app: &App, s: &DocGateScreen) -> Vec<Hint> {
 /// The header (exact): `<Kind> · run <id4> · v<n> of <m> · <reason>`, `<m>` the gate
 /// versions of its document, the reason left out while empty.
 pub(crate) fn header(app: &App, s: &DocGateScreen, p: Palette) -> String {
+    header_of(app, (&s.run_id, s.kind, s.version), p)
+}
+
+/// [`header`] for `run_id`'s `kind` gate at `version` (milestone 9.6 task 18: the plan
+/// review's Plan doc tab has the same header).
+pub(crate) fn header_of(
+    app: &App,
+    (run_id, kind, version): (&str, DocGateKind, u32),
+    p: Palette,
+) -> String {
     let d = dot(p);
-    let id = short_id(&one_line(&s.run_id)).to_owned();
-    let docs = run_of(app, s)
+    let id = short_id(&one_line(run_id)).to_owned();
+    let docs = (app.runs.runs.iter())
+        .find(|r| r.run_id == run_id)
         .map(|r| r.docs.as_slice())
         .unwrap_or_default();
-    let doc = gate_doc(s.kind);
+    let doc = gate_doc(kind);
     let of = docs
         .iter()
         .filter(|i| i.kind == doc)
         .count()
-        .max(s.version as usize);
+        .max(version as usize);
     let reason = (docs.iter())
-        .find(|i| i.kind == doc && i.version == s.version)
+        .find(|i| i.kind == doc && i.version == version)
         .map(|i| one_line(&i.reason))
         .filter(|r| !r.is_empty());
-    let mut text = format!(
-        "{} {d} run {id} {d} v{} of {of}",
-        kind_title(s.kind),
-        s.version
-    );
+    let mut text = format!("{} {d} run {id} {d} v{version} of {of}", kind_title(kind));
     if let Some(reason) = reason {
         text.push_str(&format!(" {d} {reason}"));
     }

@@ -304,3 +304,7 @@ mod mouse_tests;
 #[cfg(test)]
 #[path = "run_rounds_tests.rs"]
 pub(crate) mod rounds_tests;
+
+#[cfg(test)]
+#[path = "run_view_golden_tests.rs"]
+mod golden_tests;

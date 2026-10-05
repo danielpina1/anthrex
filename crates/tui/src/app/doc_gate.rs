@@ -20,14 +20,27 @@ use proto::{DocGateAction, DocGateInfo, DocGateKind, DocView, RunInfo, RunState}
 
 #[path = "doc_gate_info.rs"]
 mod info;
+#[path = "plan_doc.rs"]
+pub(crate) mod plan_doc;
 pub use info::{
     alert_text, confirm_text, doc_gate_of, gate_doc, kind_title, round_drafts, waiting_gate,
 };
+pub use plan_doc::PlanDoc;
 
 /// The other screens' refusal of `C-b a`, `C-b m` and `C-b t`, with this one's name.
 pub const LEAVE_DOC_FIRST: &str = "leave the document first (esc)";
 /// PgUp/PgDn move this many lines, as on the stats screen.
 const PAGE: usize = 10;
+
+/// The daemon's refusal while the orchestrator revises `kind` v`version` (brief
+/// "Messages"), said before a request it would refuse.
+pub(crate) fn revising_text(kind: DocGateKind, version: u32) -> String {
+    format!(
+        "the orchestrator is revising {} v{}; wait for it",
+        kind.label(),
+        version + 1
+    )
+}
 
 /// One requested document, as the daemon answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,6 +178,47 @@ impl App {
         let gate = self.run_named(&s.run_id).and_then(|r| r.doc_gate.as_ref());
         let open = gate.is_some_and(|g| g.kind == s.kind);
         (!open).then(|| format!("the {} gate is closed", s.kind.label()))
+    }
+
+    /// Task M9.6.18: the run view's and the plan review's gate keys at a design gate
+    /// (`on_gate_key`'s first try after a hold). At a brainstorm or spec gate `a` opens
+    /// the gate screen, since a plain approve is refused there (ruling T1-O1), and `x`
+    /// asks on the screen's reject page; `e` and `d` have no task to act on. At the plan
+    /// gate `a` asks to approve the version shown (ruling T17-1); `x`, `e` and `d` keep
+    /// 9.5's plan gate. While the orchestrator revises, the plan's `a` says so. `None`:
+    /// not a design gate, so 9.5's keys apply.
+    pub(super) fn on_design_gate_key(&mut self, run_id: &str, key: char) -> Option<Vec<Effect>> {
+        let run = self.run_named(run_id)?;
+        let gate = (run.doc_gate.as_ref()).filter(|_| run.state == RunState::AwaitingApproval)?;
+        let (kind, version) = (gate.kind, gate.version);
+        let action = match (kind, key) {
+            (DocGateKind::Plan, 'a') if gate.revising.is_some() => {
+                self.toast(revising_text(kind, version));
+                return Some(vec![]);
+            }
+            (DocGateKind::Plan, 'a') => DocGateAction::Approve {
+                version: Some(version),
+            },
+            (DocGateKind::Plan, _) => return None,
+            (_, 'a') => return Some(self.open_doc_gate(run_id)),
+            (_, 'x') => DocGateAction::Reject,
+            (_, _) => {
+                self.toast(format!(
+                    "the {} gate has no tasks; a reviews it",
+                    kind.label()
+                ));
+                return Some(vec![]);
+            }
+        };
+        self.modal = Some(Modal::Confirm {
+            message: confirm_text(run_id, kind, version, &action),
+            action: PendingAction::DocGate {
+                run_id: run_id.to_owned(),
+                kind,
+                action,
+            },
+        });
+        Some(vec![])
     }
 
     /// A bare key while the screen is open (`KeyAction::Screen`).

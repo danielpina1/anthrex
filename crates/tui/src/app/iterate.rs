@@ -8,6 +8,7 @@ use super::{App, Effect, Modal};
 use crate::run_goal::EditorView;
 use crate::run_iterate::{IterateForm, IterateOutcome, NOT_SENT};
 use crossterm::event::KeyEvent;
+use proto::RoundDesign;
 
 impl App {
     /// The menu's `iterate` on `run_id`: the dialog for the run's next round, as the
@@ -16,7 +17,13 @@ impl App {
         let Some(run) = self.runs.runs.iter().find(|run| run.run_id == run_id) else {
             return vec![];
         };
-        let form = IterateForm::new(run.run_id.clone(), run.round.max(1) + 1);
+        let mut form = IterateForm::new(run.run_id.clone(), run.round.max(1) + 1);
+        // Milestone 9.6: a design run's row, with its current round's mode (task 17's
+        // `round_design`; a design run's first round is a full one).
+        if run.design != proto::DesignMode::Off {
+            let first = (run.round <= 1).then_some(RoundDesign::Full);
+            form = form.with_design(run.round_design.or(first));
+        }
         self.modal = Some(Modal::Iterate(form));
         vec![]
     }
@@ -86,3 +93,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "iterate_design_tests.rs"]
+mod design_tests;

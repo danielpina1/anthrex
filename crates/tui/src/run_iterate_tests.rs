@@ -104,3 +104,59 @@ fn the_text_is_capped_in_characters() {
     key(&mut form, KeyCode::Char('x'), KeyModifiers::NONE);
     assert_eq!(form.text.text().chars().count(), proto::GOAL_MAX_CHARS);
 }
+
+/// Milestone 9.6 task 18 (DF §6.2, §8.1): a design run's dialog has a `design` row,
+/// `amend` by default (the daemon's own default for a design run), which Tab reaches
+/// from the text and ←, → and Space cycle through `amend`, `full` and `off`; Tab goes
+/// back to the text, Enter on the row sends, and the request carries the choice. The
+/// row keeps the run's own round mode to show.
+#[test]
+fn the_iterate_dialog_offers_amend_full_off() {
+    use proto::RoundDesign::{Amend, Full, Off};
+    let mut form = typed("also add b").with_design(Some(Off));
+    assert_eq!((form.design, form.current), (Some(Amend), Some(Off)));
+    assert!(!form.on_design);
+    key(&mut form, KeyCode::Tab, KeyModifiers::NONE);
+    assert!(form.on_design);
+    let mut seen = Vec::new();
+    for code in [
+        KeyCode::Right,
+        KeyCode::Char(' '),
+        KeyCode::Right,
+        KeyCode::Left,
+    ] {
+        key(&mut form, code, KeyModifiers::NONE);
+        seen.push(form.design);
+    }
+    assert_eq!(seen, [Some(Full), Some(Off), Some(Amend), Some(Off)]);
+    // A character on the row types nothing; Tab goes back to the text.
+    key(&mut form, KeyCode::Char('z'), KeyModifiers::NONE);
+    assert_eq!(form.text.text(), "also add b");
+    key(&mut form, KeyCode::BackTab, KeyModifiers::SHIFT);
+    assert!(!form.on_design);
+    key(&mut form, KeyCode::Char('!'), KeyModifiers::NONE);
+    key(&mut form, KeyCode::Tab, KeyModifiers::NONE);
+    let want = RunRequest::Iterate {
+        run: "r-20261001-3f9a".into(),
+        goal: "also add b!".into(),
+        design: Some(Off),
+    };
+    assert_eq!(
+        key(&mut form, KeyCode::Enter, KeyModifiers::NONE),
+        IterateOutcome::Submit(want)
+    );
+}
+
+/// A run without the flow has no row: Tab stays in the text and no mode is sent, so
+/// the daemon's `does not use the design flow` is never provoked.
+#[test]
+fn a_run_without_the_flow_sends_no_design() {
+    let mut form = typed("more");
+    assert_eq!(form.design, None);
+    key(&mut form, KeyCode::Tab, KeyModifiers::NONE);
+    assert!(!form.on_design);
+    match key(&mut form, KeyCode::Char('s'), KeyModifiers::CONTROL) {
+        IterateOutcome::Submit(RunRequest::Iterate { design, .. }) => assert_eq!(design, None),
+        other => panic!("{other:?}"),
+    }
+}

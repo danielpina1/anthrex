@@ -5,11 +5,17 @@
 //! `RunRequest::Iterate`, and Esc on a text asks before discarding it, on the goal
 //! dialog's confirm page (decision 8). It keeps no draft. Opening, sending and the
 //! replies are `app/iterate.rs`; rendering is `ui/run_iterate.rs`.
+//!
+//! Milestone 9.6 (DF §6.2, §8.1): a design run's dialog has one option, the `design`
+//! row (`amend`, `full`, `off`; `amend` by default, as the daemon defaults), reached by
+//! Tab from the text, and shows the run's own round mode beside it. A run without the
+//! flow has no row and sends no mode, so the daemon's `does not use the design flow` is
+//! never provoked.
 
 use crate::run_goal::EditorView;
 use crate::text_area::TextArea;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::RunRequest;
+use proto::{RoundDesign, RunRequest};
 
 /// KG §2.2's prompt line (exact).
 pub const PROMPT: &str = "what should change or be added?";
@@ -33,6 +39,13 @@ pub struct IterateForm {
     pub request_id: Option<u64>,
     /// Decision 8's confirm page, which `Esc` on a text opened.
     pub discarding: bool,
+    /// Milestone 9.6 (DF §8.1): a design run's round mode for the request; `None` on a
+    /// run without the flow, whose dialog has no `design` row.
+    pub design: Option<RoundDesign>,
+    /// The run's own current round mode, shown after the row.
+    pub current: Option<RoundDesign>,
+    /// The `design` row has the keys, not the text.
+    pub on_design: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,7 +72,18 @@ impl IterateForm {
             submitting: false,
             request_id: None,
             discarding: false,
+            design: None,
+            current: None,
+            on_design: false,
         }
+    }
+
+    /// Milestone 9.6: the `design` row, for a design run whose current round runs
+    /// `current` (`None` when the snapshot does not say).
+    pub fn with_design(mut self, current: Option<RoundDesign>) -> Self {
+        self.design = Some(RoundDesign::Amend);
+        self.current = current;
+        self
     }
 
     /// The dialog's keys, the text drawn as `view` says (the goal dialog's, decisions 7
@@ -92,14 +116,46 @@ impl IterateForm {
         if is_ctrl(&key, 's') {
             return self.submit();
         }
-        self.text.on_editor_key(key, view.width, view.rows);
+        if self.on_design {
+            return self.on_design_key(key);
+        }
+        let handed_back = self.text.on_editor_key(key, view.width, view.rows)
+            == crate::text_area::EditorKey::Unhandled;
+        if handed_back
+            && self.design.is_some()
+            && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+        {
+            self.on_design = true;
+        }
+        IterateOutcome::Stay
+    }
+
+    /// The `design` row's keys: ←, → and Space cycle `amend`, `full`, `off`; Tab,
+    /// Shift-Tab, Up and Down go back to the text; Enter sends; nothing else acts.
+    fn on_design_key(&mut self, key: KeyEvent) -> IterateOutcome {
+        let order = [
+            Some(RoundDesign::Amend),
+            Some(RoundDesign::Full),
+            Some(RoundDesign::Off),
+        ];
+        match key.code {
+            KeyCode::Right | KeyCode::Char(' ') => {
+                self.design = crate::run_goal::cycle(&order, self.design, true);
+            }
+            KeyCode::Left => self.design = crate::run_goal::cycle(&order, self.design, false),
+            KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {
+                self.on_design = false;
+            }
+            KeyCode::Enter => return self.submit(),
+            _ => {}
+        }
         IterateOutcome::Stay
     }
 
     /// A bracketed paste into the text, through the editor (decision 5), the text drawn
-    /// as `view` says. Nothing while submitting or on the confirm page.
+    /// as `view` says. Nothing while submitting, on the confirm page or on the row.
     pub fn on_paste_in(&mut self, text: &str, view: EditorView) {
-        if self.submitting || self.discarding {
+        if self.submitting || self.discarding || self.on_design {
             return;
         }
         self.text.on_editor_paste(text, view.width, view.rows);
@@ -119,11 +175,16 @@ impl IterateForm {
         }
     }
 
-    /// What `anthrex run iterate <run> <text>` sends: the request trimmed, as the goal
-    /// dialog trims its goal; `None` while it is blank.
+    /// What `anthrex run iterate <run> <text> [--design <mode>]` sends: the request
+    /// trimmed, as the goal dialog trims its goal, and the design row's mode; `None`
+    /// while it is blank.
     pub fn request(&self) -> Option<RunRequest> {
         let text = self.text.text().trim();
-        (!text.is_empty()).then(|| crate::actions_request::iterate(&self.run_id, text))
+        (!text.is_empty()).then(|| RunRequest::Iterate {
+            run: self.run_id.clone(),
+            goal: text.to_owned(),
+            design: self.design,
+        })
     }
 }
 

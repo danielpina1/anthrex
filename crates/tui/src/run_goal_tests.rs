@@ -108,12 +108,13 @@ fn space_toggles_trust_and_esc_cancels_even_while_submitting() {
 }
 
 /// Milestone 9.3 (changed expectation): eight fields, the orchestrator row after the
-/// model's.
+/// model's. Milestone 9.6 task 18 (changed expectation, renamed from `…_eight_…`): nine,
+/// the design row after delivery.
 #[test]
-fn tab_visits_the_eight_fields_in_the_dialogs_order() {
+fn tab_visits_the_nine_fields_in_the_dialogs_order() {
     let mut form = form_with("add a");
     let mut seen = vec![form.focus];
-    for _ in 0..7 {
+    for _ in 0..8 {
         form.on_key(key(KeyCode::Tab));
         seen.push(form.focus);
     }
@@ -125,6 +126,7 @@ fn tab_visits_the_eight_fields_in_the_dialogs_order() {
             GoalField::Model,
             GoalField::Orchestrator,
             GoalField::Delivery,
+            GoalField::Design,
             GoalField::Trust,
             GoalField::Yes,
             GoalField::UnconfinedChecks,
@@ -140,6 +142,7 @@ fn tab_visits_the_eight_fields_in_the_dialogs_order() {
             "model",
             "orchestrator",
             "delivery",
+            "design",
             "trust",
             "approve at once",
             "unconfined checks"
@@ -178,4 +181,47 @@ fn the_delivery_choice_cycles_and_is_sent() {
             Some(DeliveryMode::Pr),
         ]
     );
+}
+
+/// Milestone 9.6 task 18 (DF §6.2): the `design` row, after `delivery`. It starts at
+/// `configured`, which sends no mode, so the daemon decides from
+/// `[orchestrator.design].default` and DF §1's table (an explicit `full` on a goal
+/// triaged fast would be refused, ruling T3-1); it cycles `configured`, `full`, `off`
+/// both ways, and the request carries the choice.
+#[test]
+fn the_goal_dialog_has_a_design_row_defaulting_from_config() {
+    let mut form = form_with("add a");
+    let design = |form: &GoalForm| match form.request().unwrap() {
+        RunRequest::StartGoal { design, .. } => design,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(design(&form), None);
+    form.focus = GoalField::Delivery;
+    form.on_key(key(KeyCode::Tab));
+    assert_eq!(form.focus, GoalField::Design);
+    assert_eq!(field_label(GoalField::Design), "design");
+    let mut seen = Vec::new();
+    for code in [
+        KeyCode::Right,
+        KeyCode::Char(' '),
+        KeyCode::Right,
+        KeyCode::Left,
+    ] {
+        form.on_key(key(code));
+        seen.push(design(&form));
+    }
+    use proto::DesignMode::{Full, Off};
+    assert_eq!(seen, [Some(Full), Some(Off), None, Some(Off)]);
+    // The row reads the choice; `configured` while none is made.
+    let row = |form: &GoalForm| {
+        crate::ui::run_goal::option_lines(form, 60, crate::theme::Palette::PLAIN)
+            .iter()
+            .map(|line| line.to_string())
+            .find(|line| line.contains("design"))
+            .expect("a design row")
+    };
+    assert_eq!(row(&form).trim_end(), "▌ design            ‹ off ›");
+    form.design = None;
+    form.focus = GoalField::Goal;
+    assert_eq!(row(&form).trim_end(), "  design            ‹ configured ›");
 }

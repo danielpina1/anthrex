@@ -36,6 +36,8 @@ pub struct PlanReview {
     pub target: ReviewTarget,
     pub selected: Option<String>,
     pub scroll: u16,
+    /// Milestone 9.6: a design run's Plan doc tab (`app/plan_doc.rs`), once Tab asked.
+    pub doc: Option<super::doc_gate::PlanDoc>,
 }
 
 /// The toast of `C-b a` while the review is open (decision 13).
@@ -328,6 +330,7 @@ impl App {
             target,
             selected,
             scroll: 0,
+            doc: None,
         });
         self.sync_review_mode();
         vec![]
@@ -360,6 +363,10 @@ impl App {
     /// run view's handlers given the review's task (decision 16), `Esc` closes. Every
     /// other key does nothing.
     pub(super) fn on_review_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        // Milestone 9.6: a design plan gate's Plan doc tab, `c` and `b` (`app/plan_doc.rs`).
+        if let Some(effects) = self.on_plan_doc_key(key) {
+            return effects;
+        }
         let Some(review) = self.plan_review.as_ref() else {
             return vec![];
         };

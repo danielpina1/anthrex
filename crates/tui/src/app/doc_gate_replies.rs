@@ -153,8 +153,12 @@ impl App {
         }
     }
 
-    /// The part of the open screen waiting on `id` takes `load`.
+    /// The part of the open screen (or the plan review's Plan doc tab) waiting on `id`
+    /// takes `load`.
     fn fill_doc(&mut self, id: u64, load: DocLoad) {
+        if self.fill_plan_doc(id, &load) {
+            return;
+        }
         let Some(s) = self.doc_screen_mut() else {
             return;
         };
@@ -250,6 +254,9 @@ impl App {
     /// `expire_replies`' share (review m6): the part loading on the expired `ShowDoc`
     /// `id` says `why`; `true` when one did, so no toast repeats it.
     pub(super) fn doc_show_failed(&mut self, id: u64, why: &str) -> bool {
+        if self.plan_doc_failed(id, why) {
+            return true;
+        }
         let Some(s) = self.doc_screen() else {
             return false;
         };
@@ -293,6 +300,9 @@ impl App {
         } else {
             NOT_CONNECTED
         };
+        if self.plan_doc_failed(id, why) {
+            return false;
+        }
         let mut owned = false;
         if let Some(Modal::DocNote(form)) = &mut self.modal
             && form.request_id == Some(id)

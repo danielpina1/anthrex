@@ -50,17 +50,20 @@ pub enum GoalField {
     Orchestrator,
     /// Milestone 9.2 ruling R-13: `run start --goal --delivery`.
     Delivery,
+    /// Milestone 9.6 (DF §6.2): `run start --goal --design`.
+    Design,
     Trust,
     Yes,
     UnconfinedChecks,
 }
 
-const FIELDS: [GoalField; 8] = [
+const FIELDS: [GoalField; 9] = [
     GoalField::Goal,
     GoalField::Runtime,
     GoalField::Model,
     GoalField::Orchestrator,
     GoalField::Delivery,
+    GoalField::Design,
     GoalField::Trust,
     GoalField::Yes,
     GoalField::UnconfinedChecks,
@@ -88,6 +91,9 @@ pub struct GoalForm {
     /// Milestone 9.2 ruling R-13: `None` is the repo profile's `[delivery] mode`
     /// (`configured`), else `local` or `pr` for this run (`RunRequest::StartGoal.delivery`).
     pub delivery: Option<DeliveryMode>,
+    /// Milestone 9.6: `None` is `configured`, the daemon's choice (DF §1's table, then
+    /// `[orchestrator.design].default`), else `full` or `off` (`StartGoal.design`).
+    pub design: Option<proto::DesignMode>,
     /// The text typed after `custom…`; kept while the picker moves away and back.
     pub custom: TextInput,
     /// The settings cache's roster as of the last `set_roster` (decision 24); empty
@@ -136,6 +142,7 @@ pub fn field_label(field: GoalField) -> &'static str {
         GoalField::Model => "model",
         GoalField::Orchestrator => "orchestrator",
         GoalField::Delivery => "delivery",
+        GoalField::Design => "design",
         GoalField::Trust => "trust",
         GoalField::Yes => "approve at once",
         GoalField::UnconfinedChecks => "unconfined checks",
@@ -171,6 +178,21 @@ fn insert_bounded(input: &mut TextInput, text: &str) {
 /// `configured`, `local`, `pr`, round.
 fn next_delivery(value: Option<DeliveryMode>, forward: bool) -> Option<DeliveryMode> {
     let order = [None, Some(DeliveryMode::Local), Some(DeliveryMode::Pr)];
+    cycle(&order, value, forward)
+}
+
+/// Milestone 9.6: `configured`, `full`, `off`, round.
+fn next_design(value: Option<proto::DesignMode>, forward: bool) -> Option<proto::DesignMode> {
+    let order = [
+        None,
+        Some(proto::DesignMode::Full),
+        Some(proto::DesignMode::Off),
+    ];
+    cycle(&order, value, forward)
+}
+
+/// The value after (or before) `value` in `order`, round; the first when not listed.
+pub(crate) fn cycle<T: Copy + PartialEq>(order: &[T], value: T, forward: bool) -> T {
     let at = order.iter().position(|v| *v == value).unwrap_or(0);
     let len = order.len();
     order[if forward {
@@ -182,13 +204,7 @@ fn next_delivery(value: Option<DeliveryMode>, forward: bool) -> Option<DeliveryM
 
 fn next_runtime(value: Option<Runtime>, forward: bool) -> Option<Runtime> {
     let order = [None, Some(Runtime::Claude), Some(Runtime::Codex)];
-    let at = order.iter().position(|v| *v == value).unwrap_or(0);
-    let len = order.len();
-    order[if forward {
-        (at + 1) % len
-    } else {
-        (at + len - 1) % len
-    }]
+    cycle(&order, value, forward)
 }
 
 impl GoalForm {
@@ -199,6 +215,7 @@ impl GoalForm {
             runtime: None,
             model: GoalModel::Default,
             delivery: None,
+            design: None,
             custom: TextInput::default(),
             roster: Vec::new(),
             trust_project: false,
@@ -393,6 +410,11 @@ impl GoalForm {
                 KeyCode::Left => self.delivery = next_delivery(self.delivery, false),
                 _ => {}
             },
+            GoalField::Design => match key.code {
+                KeyCode::Right | KeyCode::Char(' ') => self.design = next_design(self.design, true),
+                KeyCode::Left => self.design = next_design(self.design, false),
+                _ => {}
+            },
             GoalField::Trust if toggle => self.trust_project = !self.trust_project,
             GoalField::Yes if toggle => self.yes = !self.yes,
             GoalField::UnconfinedChecks if toggle => {
@@ -518,7 +540,7 @@ impl GoalForm {
             orchestrator,
             delivery: self.delivery,
             continue_from,
-            design: None,
+            design: self.design,
         })
     }
 }

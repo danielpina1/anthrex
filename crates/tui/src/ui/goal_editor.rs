@@ -54,14 +54,15 @@ pub fn dialog_rect(area: Rect) -> Rect {
     }
 }
 
-/// The rows under the text that are not the fixed three: the seven options, the
-/// custom model's text row while it shows, and the error row while one is set.
+/// The rows under the text that are not the fixed three: the eight options (milestone
+/// 9.6 adds `design`), the custom model's text row while it shows, and the error row
+/// while one is set.
 fn option_rows(form: &GoalForm) -> u16 {
-    7 + u16::from(form.custom_shown()) + u16::from(form.error.is_some())
+    8 + u16::from(form.custom_shown()) + u16::from(form.error.is_some())
 }
 
 /// The goal's text area in a terminal `cols`×`rows`, as the dialog draws it: in the
-/// large dialog its interior width and `interior − options − 3` rows (10 at 80×24, 26
+/// large dialog its interior width and `interior − options − 3` rows (9 at 80×24, 25
 /// at 120×40); in the compact one `goal_width` and `GOAL_ROWS`. The app hands this one
 /// view to the keys and the paste; the renderers compute the same.
 pub fn text_view(form: &GoalForm, cols: u16, rows: u16) -> EditorView {
@@ -110,9 +111,10 @@ pub fn footer(entries: &[(&str, &str)], width: u16, p: Palette) -> Line<'static>
 }
 
 /// The large dialog's interior rows for the goal drawn as `view`, `view.width` wide, in
-/// an interior `height` rows high. When they overflow it (16 rows with `custom…` and an
-/// error), the position row goes before the footer (final fix wave C-m1), so the hint
-/// for retrying stays.
+/// an interior `height` rows high. When they overflow it (16 or 17 rows with `custom…`
+/// and an error), the position row goes before the footer (final fix wave C-m1), then
+/// (milestone 9.6's eighth option) the blank row above the options, so the hint for
+/// retrying stays.
 pub fn body(form: &GoalForm, view: EditorView, height: u16, p: Palette) -> Vec<Line<'static>> {
     let focused = form.focus == crate::run_goal::GoalField::Goal && !form.submitting;
     let mut lines = kit::editor(&form.goal, view.rows, view.width, focused);
@@ -121,14 +123,18 @@ pub fn body(form: &GoalForm, view: EditorView, height: u16, p: Palette) -> Vec<L
     {
         *first = placeholder(usize::from(view.width), focused, p);
     }
-    lines.push(Line::raw(""));
-    lines.extend(option_lines(form, view.width, p));
+    let mut rest = option_lines(form, view.width, p);
     if let Some(error) = &form.error {
-        lines.push(Line::styled(
+        rest.push(Line::styled(
             kit::cut(&one_line(error), usize::from(view.width), ellipsis(p)),
             role(Role::Failed, p),
         ));
     }
+    // The blank row, then the rest and the footer (and the position row, if it fits).
+    if lines.len() + rest.len() + 2 <= usize::from(height) {
+        lines.push(Line::raw(""));
+    }
+    lines.extend(rest);
     if form.submitting {
         lines.push(Line::styled(starting_text(form, p), role(Role::Muted, p)));
         lines.push(footer(&[("Esc", "close")], view.width, p));

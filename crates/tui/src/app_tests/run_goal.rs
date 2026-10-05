@@ -156,6 +156,9 @@ fn goal_form_sends_start_goal_and_opens_the_run() {
     assert!(tap(&mut app, KeyCode::Right).is_empty());
     assert!(tap(&mut app, KeyCode::Right).is_empty());
     assert!(tap(&mut app, KeyCode::Tab).is_empty());
+    // Milestone 9.6 task 18 (changed expectation): the design row, left `configured`.
+    assert_eq!(goal_form(&app).focus, GoalField::Design);
+    assert!(tap(&mut app, KeyCode::Tab).is_empty());
     assert_eq!(goal_form(&app).focus, GoalField::Trust);
     assert!(tap(&mut app, KeyCode::Char(' ')).is_empty());
     let (id, request) = tagged(&start(&mut app));

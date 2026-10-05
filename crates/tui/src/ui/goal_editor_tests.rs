@@ -91,6 +91,7 @@ fn empty_interior(text_rows: usize, ascii: bool) -> Vec<String> {
         ("model", "default"),
         ("orchestrator", "new"),
         ("delivery", "configured"),
+        ("design", "configured"),
         ("trust", "off"),
         ("approve at once", "off"),
         ("unconfined checks", "off"),
@@ -103,10 +104,12 @@ fn empty_interior(text_rows: usize, ascii: bool) -> Vec<String> {
     rows
 }
 
+/// Milestone 9.6 task 18 (changed expectation): the design row takes a text row, 9 at
+/// 80×24 and 25 at 120×40.
 #[test]
 fn the_dialog_is_large_at_80x24_and_120x40() {
     for ascii in [false, true] {
-        for (w, h, width, text_rows) in [(80, 24, 76, 10), (120, 40, 116, 26)] {
+        for (w, h, width, text_rows) in [(80, 24, 76, 9), (120, 40, 116, 25)] {
             let app = app_with(form(), ascii);
             assert_eq!(
                 text_view(&form(), w, h),
@@ -146,6 +149,7 @@ fn compact_interior() -> Vec<String> {
         ("model", "default"),
         ("orchestrator", "new"),
         ("delivery", "configured"),
+        ("design", "configured"),
         ("trust", "off"),
         ("approve at once", "off"),
         ("unconfined checks", "off"),
@@ -157,13 +161,15 @@ fn compact_interior() -> Vec<String> {
     rows
 }
 
+/// Milestone 9.6 task 18 (changed expectation): the design row makes the compact
+/// dialog 18 rows high.
 #[test]
 fn below_60_by_16_the_dialog_keeps_its_compact_layout() {
     let app = app_with(form(), true);
-    // 59x24: 59 wide (the 64-column dialog cut to the terminal), 17 high, centred.
+    // 59x24: 59 wide (the 64-column dialog cut to the terminal), 18 high, centred.
     let buffer = audit::draw(&app, 59, 24);
     let want = framed("start a goal in /p/a", 59, &compact_interior(), true);
-    assert_eq!(cells(&buffer, Rect::new(0, 3, 59, 17)), want);
+    assert_eq!(cells(&buffer, Rect::new(0, 3, 59, 18)), want);
     assert_eq!(audit::accented_frames(&buffer, app.palette()), 1);
     // 80x15: the 64-column dialog, cut to the terminal's 15 rows.
     let buffer = audit::draw(&app, 80, 15);
@@ -190,11 +196,12 @@ fn the_status_bar_says_widen_the_terminal() {
         bar(59, 24),
         " DIALOG  widen the terminal for the editor  esc back"
     );
-    // The compact dialog is 17 rows tall and, as before 9.3, drawn over the whole
-    // frame: from 18 rows the bar shows under it.
-    assert_eq!(bar(80, 18), " DIALOG  esc back");
+    // The compact dialog is 18 rows tall (milestone 9.6's design row; changed
+    // expectation) and, as before 9.3, drawn over the whole frame: from 19 rows the bar
+    // shows under it.
+    assert_eq!(bar(80, 19), " DIALOG  esc back");
     assert_eq!(
-        bar(59, 18),
+        bar(59, 19),
         " DIALOG  widen the terminal for the editor  esc back"
     );
     assert_eq!(bar(80, 24), " DIALOG  esc back");
@@ -344,7 +351,10 @@ fn the_large_text_area_keeps_a_row() {
 
 /// Final fix wave C-m1 (carried N1): at 60×16 with `custom…` and an error the body is
 /// one row too tall, so the position row goes and the footer stays: `^S start` is still
-/// the hint for retrying. One row taller, both are drawn.
+/// the hint for retrying. One row taller, both are drawn. Milestone 9.6 task 18 (changed
+/// expectation): with the design row it is two rows too tall at 60×16, so the blank row
+/// above the options goes too; at 60×17 only the position row goes; at 60×18 both
+/// are drawn.
 #[test]
 fn the_footer_outlasts_the_position_row() {
     let mut f = form();
@@ -360,11 +370,17 @@ fn the_footer_outlasts_the_position_row() {
         assert_eq!(interior.len(), 12);
         assert!(interior[11].contains(footer), "{rows:?}");
         assert!(interior[10].contains("type a goal first"), "{rows:?}");
+        assert!(interior[1].contains("runtime"), "no blank row: {rows:?}");
         assert!(!rows.iter().any(|r| r.contains(position)), "{rows:?}");
         let rows = large_rows(&app_with(f.clone(), ascii), 60, 17);
         let interior = &rows[1..rows.len() - 1];
         assert!(interior[12].contains(footer), "{rows:?}");
-        assert!(interior[11].contains(position), "{rows:?}");
+        assert!(interior[2].contains("runtime"), "the blank row: {rows:?}");
+        assert!(!rows.iter().any(|r| r.contains(position)), "{rows:?}");
+        let rows = large_rows(&app_with(f.clone(), ascii), 60, 18);
+        let interior = &rows[1..rows.len() - 1];
+        assert!(interior[13].contains(footer), "{rows:?}");
+        assert!(interior[12].contains(position), "{rows:?}");
     }
 }
 

@@ -41,7 +41,7 @@ pub(crate) struct Placed {
 }
 
 /// One row at `y` in `area`, the width of `area`, its spans cut to that width.
-fn row(out: &mut Vec<Placed>, area: Rect, y: u16, line: Line<'static>) {
+pub(crate) fn row(out: &mut Vec<Placed>, area: Rect, y: u16, line: Line<'static>) {
     if y < area.y || y >= area.bottom() || area.width == 0 {
         return;
     }
@@ -58,7 +58,7 @@ fn row(out: &mut Vec<Placed>, area: Rect, y: u16, line: Line<'static>) {
 
 /// `line` cut to `width` display columns, grapheme by grapheme (a wide grapheme that
 /// would cross the edge is left out).
-fn clip(line: Line<'static>, width: usize) -> Line<'static> {
+pub(crate) fn clip(line: Line<'static>, width: usize) -> Line<'static> {
     let mut left = width;
     let mut spans = Vec::with_capacity(line.spans.len());
     for span in line.spans {
@@ -369,10 +369,18 @@ pub fn render(frame: &mut Frame, app: &App, body: Rect) {
     }
     let run = app.runs.runs.iter().find(|run| run.run_id == review.run_id);
     frame.render_widget(frame_block(app, review, run, body), body);
-    for Placed { area, line } in placed(app, body) {
+    // Milestone 9.6: a design plan gate's Plan doc tab in the same frame.
+    let rows = match plan_doc::shown(app) {
+        true => plan_doc::placed(app, body),
+        false => placed(app, body),
+    };
+    for Placed { area, line } in rows {
         frame.render_widget(Paragraph::new(line), area);
     }
 }
+
+#[path = "plan_doc.rs"]
+pub(crate) mod plan_doc;
 
 #[cfg(test)]
 #[path = "plan_review_tests.rs"]

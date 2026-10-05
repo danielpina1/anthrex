@@ -444,9 +444,14 @@ impl App {
                     return None;
                 }
             }
-            // Milestone 9.0.5 decision 14: the plan review of what awaits approval.
+            // Milestone 9.0.5 decision 14: the plan review of what awaits approval; at a
+            // brainstorm or spec gate (milestone 9.6), the gate screen.
             KeyCode::Char('p') => {
                 let run_id = view.run_id.clone();
+                let run = self.runs.runs.iter().find(|run| run.run_id == run_id);
+                if run.is_some_and(|run| super::doc_gate::doc_gate_of(run).is_some()) {
+                    return Some(self.open_doc_gate(&run_id));
+                }
                 return Some(self.review_from_run_view(&run_id));
             }
             // Milestone 9 decision 13: the user's submit, on a planning run's root only.

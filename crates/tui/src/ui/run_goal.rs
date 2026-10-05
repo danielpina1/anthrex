@@ -184,8 +184,8 @@ pub fn goal_width(width: u16) -> u16 {
 }
 
 /// The option rows (decision 7's order) for `width` interior columns: runtime, model
-/// (and the custom model's text), orchestrator, delivery, trust, approve at once and
-/// unconfined checks. Continuing a chain, its runtime and model show muted.
+/// (and the custom model's text), orchestrator, delivery, design (milestone 9.6), trust,
+/// approve at once and unconfined checks. Continuing a chain, its runtime and model show muted.
 pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<'static>> {
     let value_w = usize::from(width).saturating_sub(MARK_W + LABEL_W);
     let mut body = Vec::new();
@@ -244,6 +244,13 @@ pub(crate) fn option_lines(form: &GoalForm, width: u16, p: Palette) -> Vec<Line<
         Some(proto::DeliveryMode::Pr) => "pr",
     };
     body.push(choice_line(form, GoalField::Delivery, delivery, value_w, p));
+    // Milestone 9.6: `configured` is `[orchestrator.design].default`, the daemon's.
+    let design = match form.design {
+        None => "configured",
+        Some(proto::DesignMode::Full) => "full",
+        Some(proto::DesignMode::Off) => "off",
+    };
+    body.push(choice_line(form, GoalField::Design, design, value_w, p));
     body.push(choice_line(
         form,
         GoalField::Trust,
