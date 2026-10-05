@@ -1,12 +1,13 @@
 //! The digest's trimming past [`DIGEST_MAX_BYTES`] (decision 16, and the M9.6 review
 //! fixes that make the cap hold whatever the run holds). Pure.
 
+use proto::HoldState;
 use serde_json::{Value, json};
 
 use super::{BLOCK_TEXT_TRIMMED, DIGEST_MAX_BYTES, LISTS_TRIMMED, NOTES_TRIMMED};
 use crate::run::delivery::digest as delivery;
 use crate::run::model::Run;
-use crate::run::orch::json::{cut, shrink_strings, size};
+use crate::run::orch::json::{cut, label, shrink_strings, size};
 
 /// Attention lines kept once the attention cut runs.
 const ATTENTION_TRIMMED: usize = 10;
@@ -19,7 +20,8 @@ const ENTRIES_TRIMMED_AGAIN: usize = 3;
 const STRINGS_TRIMMED: usize = delivery::STRINGS_GENERAL;
 const ENTRY_STRINGS_TRIMMED: usize = 40;
 
-/// Decision 16's trimming past the cap, in order, after milestone 9.2's delivery steps
+/// Decision 16's trimming past the cap, in order, after milestone 9.7's decided holds
+/// (decision 10, [`drop_decided_holds`]) and milestone 9.2's delivery steps
 /// (decision 29, `delivery::trim`): finished tasks dropped oldest first
 /// (counted in `omitted_tasks`), `edits` cut to 3, `task_notes` to 3, `block.text` to
 /// 200 characters (and the attention lines with it), `notes` to 5. Beyond the
@@ -34,6 +36,10 @@ const ENTRY_STRINGS_TRIMMED: usize = 40;
 /// before the general string cut, which would cut a quote's fence off.
 pub(super) fn trim(digest: &mut Value, run: &Run) {
     let fits = |d: &Value| size(d) <= DIGEST_MAX_BYTES;
+    // Milestone 9.7 decision 10 (DH §2.1): decided holds, oldest first, before anything.
+    if drop_decided_holds(digest, run, fits) {
+        return;
+    }
     // Milestone 9.2 decision 29: the delivery block's comments, then its threads and
     // its resolved stages, before anything else.
     if delivery::trim(digest, run, fits) {
@@ -147,6 +153,54 @@ pub(super) fn trim(digest: &mut Value, run: &Run) {
         }
     }
     drop_attention_of_dropped_tasks(digest, run);
+}
+
+/// Milestone 9.7 decision 10 (DH §2.1, BR-1): drops `gate.holds` entries whose hold is
+/// approved, rejected or moot, oldest `decided_at` first (ties: the order in
+/// `run.orch.gate_holds`, since the digest's entries carry no time), until the digest
+/// fits; a drafting or awaiting hold is never dropped. Each drop is counted in the
+/// top-level `omitted_holds`, written only when one is. True when the digest fits.
+fn drop_decided_holds(digest: &mut Value, run: &Run, fits: impl Fn(&Value) -> bool) -> bool {
+    if fits(digest) {
+        return true;
+    }
+    let mut decided: Vec<(u64, usize)> = run
+        .orch
+        .gate_holds
+        .iter()
+        .enumerate()
+        .filter(|(_, h)| {
+            matches!(
+                h.state,
+                HoldState::Approved | HoldState::Rejected | HoldState::Moot
+            )
+        })
+        .map(|(i, h)| (h.decided_at.unwrap_or(0), i))
+        .collect();
+    decided.sort();
+    let mut dropped = 0u64;
+    for (_, i) in decided {
+        if fits(digest) {
+            break;
+        }
+        let hold = &run.orch.gate_holds[i];
+        let Some(Value::Array(holds)) = digest.pointer_mut("/gate/holds") else {
+            break;
+        };
+        // The entry `gate` built from this hold: same id, same decided state.
+        let state = label(&hold.state);
+        if let Some(at) = holds
+            .iter()
+            .position(|h| h["id"].as_str() == Some(&hold.id) && h["state"] == state)
+        {
+            holds.remove(at);
+            dropped += 1;
+        }
+    }
+    if dropped > 0 {
+        digest["omitted_holds"] = json!(dropped);
+    }
+    fits(digest)
 }
 
 /// The task a blocked task's attention line names (`<id> blocked (`), if the line is
