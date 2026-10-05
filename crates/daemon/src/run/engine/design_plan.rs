@@ -28,7 +28,9 @@ use super::super::requests::log;
 use super::super::{Effect, design_gate};
 use crate::run::design::coverage;
 use crate::run::design::plan_md;
-use crate::run::design::state::{NewDoc, sha256_hex, store, store_findings};
+use crate::run::design::state::{
+    DesignState, DocReviewRecord, NewDoc, sha256_hex, store, store_findings,
+};
 use crate::run::model::{Run, Task};
 
 /// Ruling T10-2: a plan submit before the approved spec's requirements are stored.
@@ -84,11 +86,23 @@ pub(crate) fn approve_refusal(run: &Run) -> Option<String> {
 }
 
 fn checks(run: &Run) -> Option<String> {
-    let design = run.orch.design.as_ref()?;
+    let design = run.orch.design.as_ref().filter(|d| !d.round_off())?;
     if design.approved_spec.is_some() && design.requirements.is_empty() {
         return Some(READ_BACK_PENDING.into());
     }
-    coverage::check(run, &design.requirements)
+    // Decision 29 (task M9.6.15): a round's plan covers its amendment's requirements.
+    let round = design.amending().then(|| run.round());
+    coverage::check_round(run, (&design.owed(), &design.requirements), round)
+}
+
+/// `plan.md` as the current plan's gate shows it: in a round that amends the spec, the
+/// round's tasks and the requirements its amendment added or changed (task M9.6.15).
+fn plan_text(run: &Run) -> String {
+    let Some(design) = run.orch.design.as_ref() else {
+        return String::new();
+    };
+    let round = design.amending().then(|| run.round());
+    plan_md::render_round(run, &design.owed(), round)
 }
 
 /// A plan submit by `author` (`None`: no submit): the orchestrator's `edit_plan`, with
@@ -110,7 +124,8 @@ pub(in crate::run::engine) fn submit(
         DocAuthor::User => "the user",
         _ => "the orchestrator",
     };
-    if run.orch.design.is_none() {
+    // Task M9.6.15: a round with the design flow off is 9.3's.
+    if run.orch.design.as_ref().is_none_or(|d| d.round_off()) {
         return submit_plan(run, who, now);
     }
     if let Some((DocKind::Plan, k)) = reviewer::in_progress(run) {
@@ -137,7 +152,7 @@ fn review_due(run: &Run, author: &DocAuthor) -> bool {
     *author == DocAuthor::Orchestrator
         && run.state == RunState::Planning
         && !design.plan_review_done
-        && design.gate_versions(DocKind::Plan) == 0
+        && design.round_versions(DocKind::Plan) == 0
 }
 
 /// Task 6's carry (e): the rendered `plan.md` stored as review `k`'s draft before its
@@ -147,9 +162,11 @@ fn start_review(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Result<(), Str
     let Some(design) = run.orch.design.as_ref() else {
         return Ok(());
     };
-    let text = plan_md::render(run, &design.requirements);
+    let text = plan_text(run);
     let reviews = (design.reviews.iter()).filter(|r| r.doc == DocKind::Plan);
     let k = reviews.count() as u32 + 1;
+    // Task M9.6.15: the review belongs to the plan's versions before this round's.
+    let cycle = design.gate_versions(DocKind::Plan);
     let reason = format!("draft for review {k}");
     let mut draft = NewDoc::new(DocKind::Plan, DocAuthor::Orchestrator, &reason, &text);
     draft.draft_review = Some(k);
@@ -159,7 +176,7 @@ fn start_review(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Result<(), Str
         design.plan_review_done = true;
     }
     log(run, now, format!("the plan draft for review {k} is stored"));
-    reviewer::queue(run, DocKind::Plan, (k, 0), now);
+    reviewer::queue(run, DocKind::Plan, (k, cycle), now);
     Ok(())
 }
 
@@ -172,11 +189,11 @@ fn answered(run: &Run, author: &DocAuthor, responses: &[FindingAnswer]) -> Resul
         return Ok(opening);
     };
     // Ruling T11-3 (m2): a v1 the user submitted never had the plan review.
-    if *author == DocAuthor::User && design.gate_versions(DocKind::Plan) == 0 {
+    if *author == DocAuthor::User && design.round_versions(DocKind::Plan) == 0 {
         opening.not_reviewed = Some(USER_SUBMITTED.into());
     }
-    let review = (design.reviews.iter().rev()).find(|r| r.doc == DocKind::Plan);
-    let Some(review) = review.filter(|_| design.gate_versions(DocKind::Plan) == 0) else {
+    let review = round_review(design);
+    let Some(review) = review.filter(|_| design.round_versions(DocKind::Plan) == 0) else {
         return Ok(opening);
     };
     if let Some(reason) = &review.failed {
@@ -226,7 +243,7 @@ fn opened(run: &mut Run, author: DocAuthor, opening: Opening, now: u64, fx: &mut
         Some(note) => format!("revised: {}", design_gate::note_head(&note)),
         None => "submitted".to_string(),
     };
-    let text = plan_md::render(run, &design.requirements);
+    let text = plan_text(run);
     let mut doc = NewDoc::new(DocKind::Plan, author, &reason, &text);
     doc.disputed = opening.disputed;
     doc.not_reviewed = opening.not_reviewed;
@@ -323,7 +340,8 @@ pub(in crate::run::engine) fn spawn_refusal(
     epic: &str,
     covers: &[String],
 ) -> Option<String> {
-    let design = run.orch.design.as_ref()?;
+    // Task M9.6.15: a round with the design flow off spawns as 9.3.
+    let design = run.orch.design.as_ref().filter(|d| !d.round_off())?;
     if design.approved_spec.is_some() && design.requirements.is_empty() {
         return Some(SPAWN_PENDING.into());
     }
@@ -350,7 +368,7 @@ fn new_version(
 ) -> Option<u32> {
     let design = run.orch.design.as_ref()?;
     let version = design_gate::waiting(run)?.version;
-    let text = plan_md::render(run, &design.requirements);
+    let text = plan_text(run);
     // Ruling T11-3 (m5): compared with the stored version's SHA-256, so a restore that
     // has not read the gate's text back yet stores no identical version.
     let stored = design.find(DocKind::Plan, Some(version));
@@ -378,10 +396,10 @@ pub(in crate::run::engine) fn awaiting_review(run: &Run) -> bool {
 /// while the plan has no gate version yet: running, its findings, or its failure.
 pub(crate) fn digest(run: &Run) -> Option<Value> {
     let design = run.orch.design.as_ref()?;
-    if run.state != RunState::Planning || design.gate_versions(DocKind::Plan) > 0 {
+    if run.state != RunState::Planning || design.round_versions(DocKind::Plan) > 0 {
         return None;
     }
-    let review = (design.reviews.iter().rev()).find(|r| r.doc == DocKind::Plan)?;
+    let review = round_review(design)?;
     let running = reviewer::in_progress(run).is_some_and(|(_, k)| k == review.n);
     let findings: Vec<Value> = (review.findings.iter())
         .map(|f| json!({"id": f.id, "severity": f.severity, "place": f.place, "text": f.text}))
@@ -392,4 +410,11 @@ pub(crate) fn digest(run: &Run) -> Option<Value> {
         "findings": findings,
         "failed": review.failed,
     }))
+}
+
+/// The current round's plan review (task M9.6.15): the latest one asked when the plan
+/// had the gate versions it had before this round.
+fn round_review(design: &DesignState) -> Option<&DocReviewRecord> {
+    let cycle = design.gate_versions(DocKind::Plan) - design.round_versions(DocKind::Plan);
+    (design.reviews.iter().rev()).find(|r| r.doc == DocKind::Plan && r.after == cycle)
 }

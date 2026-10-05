@@ -16,6 +16,9 @@
 //! what its gate reads from it.
 //!
 //! Task M9.6.12 adds [`commit`]: what the documents commit carries, and its paths.
+//!
+//! Task M9.6.15 adds [`round`]: a later round's design, its amendment's base and what
+//! its plan must cover.
 
 pub mod changes;
 pub mod commit;
@@ -25,6 +28,7 @@ pub mod pack;
 pub mod plan_md;
 pub mod report;
 pub mod requirements;
+pub mod round;
 pub mod spend;
 pub mod state;
 pub mod template;

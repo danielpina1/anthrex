@@ -371,6 +371,8 @@ pub(crate) fn candidate_in_flight(run: &Run, i: usize) -> bool {
 /// Decision 21: the run is `halted` with `reason`; nothing dispatches or merges, and
 /// the windows keep running.
 pub(super) fn halt(run: &mut Run, reason: String, now: u64) {
+    // Milestone 9.6 (task 7's carry): a halt before the plan's approval keeps its phase.
+    super::design_round::halting(run, now);
     run.halt_retryable = false;
     log(run, now, format!("halted: {reason}"));
     // Milestone 9 decision 39.

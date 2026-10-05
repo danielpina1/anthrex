@@ -26,13 +26,13 @@ impl GitRoots for NoRoots {
 }
 
 pub(super) const T: Duration = Duration::from_secs(30);
-const RUN: &str = "r1";
-const SPEC: &str = "# Password reset\n\n## Requirements\nR1 Tokens expire.\n";
-const PLAN: &str = "# Plan: Reset passwords\n\n## Stage 1\n";
+pub(super) const RUN: &str = "r1";
+pub(super) const SPEC: &str = "# Password reset\n\n## Requirements\nR1 Tokens expire.\n";
+pub(super) const PLAN: &str = "# Plan: Reset passwords\n\n## Stage 1\n";
 const REPORT: &str = "## Recommendation\nStored.\n\n## Appendix: the drafts\n### A\nx\n";
 
 /// git in `dir` with neither the machine's configuration nor ours; stdout, trimmed.
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(super) fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -61,9 +61,9 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// the service (its git program `git`, a recording one when given).
 pub(super) struct Rig {
     _tmp: tempfile::TempDir,
-    root: PathBuf,
-    integration: PathBuf,
-    base: String,
+    pub(super) root: PathBuf,
+    pub(super) integration: PathBuf,
+    pub(super) base: String,
     pub(super) service: Arc<RunService>,
     pub(super) ctx: OpCtx,
 }
@@ -117,7 +117,7 @@ impl Rig {
     }
 
     /// Stores `text` as `name` in the design folder, as `WriteDoc` would: its source.
-    fn stored(&self, folder: &str, name: &str, text: &str) -> DocSource {
+    pub(super) fn stored(&self, folder: &str, name: &str, text: &str) -> DocSource {
         let path = self.ctx.data_dir.join("design").join(name);
         std::fs::write(&path, text).unwrap();
         DocSource {
@@ -126,10 +126,12 @@ impl Rig {
             path,
             bytes: text.len() as u64,
             sha256: sha256_hex(text.as_bytes()),
+            repo_path: None,
+            append: None,
         }
     }
 
-    fn spec(&self, files: Vec<DocSource>) -> DocsCommitSpec {
+    pub(super) fn spec(&self, files: Vec<DocSource>) -> DocsCommitSpec {
         DocsCommitSpec {
             root: self.root.clone(),
             branch: branch(),
@@ -140,6 +142,7 @@ impl Rig {
             run_id: RUN.into(),
             files,
             message: "docs: spec and plan for Reset passwords".into(),
+            stage_branch: None,
         }
     }
 
@@ -149,7 +152,7 @@ impl Rig {
         self.spec(vec![spec, plan])
     }
 
-    fn run(&self, spec: DocsCommitSpec) -> OpResult {
+    pub(super) fn run(&self, spec: DocsCommitSpec) -> OpResult {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -170,7 +173,7 @@ impl Rig {
     }
 
     /// The committed blob's bytes as text, untrimmed (review m6).
-    fn show(&self, commit: &str, path: &str) -> String {
+    pub(super) fn show(&self, commit: &str, path: &str) -> String {
         let out = Command::new("git")
             .arg("-C")
             .arg(&self.root)
@@ -184,12 +187,12 @@ impl Rig {
     }
 }
 
-fn branch() -> String {
+pub(super) fn branch() -> String {
     format!("anthrex/{RUN}/integration")
 }
 
-const SPEC_PATH: &str = "docs/anthrex/specs/2026-10-05-password-reset.md";
-const PLAN_PATH: &str = "docs/anthrex/plans/2026-10-05-password-reset.md";
+pub(super) const SPEC_PATH: &str = "docs/anthrex/specs/2026-10-05-password-reset.md";
+pub(super) const PLAN_PATH: &str = "docs/anthrex/plans/2026-10-05-password-reset.md";
 
 /// Decisions 23 and 24: the approved spec and plan, byte for byte, at
 /// `<docs_dir>/specs/<date>-<slug>.md` and `<docs_dir>/plans/<date>-<slug>.md` (the

@@ -53,6 +53,7 @@ pub(crate) mod design;
 mod design_agents;
 pub(crate) mod design_commit;
 pub(crate) mod design_gate;
+mod design_round;
 mod design_spend;
 mod dispatch;
 mod done;
@@ -230,7 +231,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             reply,
             run_id,
             goal,
-        } => goal_rounds::request(&mut state, reply, (&run_id, &goal), now, &mut fx),
+            design,
+        } => goal_rounds::request(&mut state, reply, (&run_id, &goal, design), now, &mut fx),
         // Milestone 9.6 decision 7: an action at a document gate.
         EventKind::DocGate {
             reply,

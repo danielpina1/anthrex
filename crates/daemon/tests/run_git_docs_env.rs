@@ -55,6 +55,8 @@ fn the_docs_commit_scrubs_the_inherited_env_and_sets_its_own_index() {
         expected: &base,
         integration: &integration,
         files: &files,
+        appends: &[],
+        stage: None,
         message: "docs: spec and plan for A",
     };
     let outcome = commit_docs(git.as_os_str(), &docs, T);

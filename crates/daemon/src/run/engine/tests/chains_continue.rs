@@ -29,15 +29,15 @@ use crate::run::snapshot::snapshot;
 /// The fixture run's chain.
 const CHAIN: &str = "o-3f9a";
 /// The chain's next run.
-const NEXT: &str = "engine-test-4c1d";
+pub(super) const NEXT: &str = "engine-test-4c1d";
 const GOAL: &str = "Add a logout button";
 /// KG §3.3's wake for [`GOAL`] after the accepted fixture run (D1's fence), with task
 /// M9.3.7 fix round 1's gate clause for a goal started without `--yes`.
-const WAKE: &str = "a new goal, run 4c1d (your previous run 3f9a was accepted), whose plan stops at the plan gate for the user:\n```\nAdd a logout button\n```\n";
+pub(super) const WAKE: &str = "a new goal, run 4c1d (your previous run 3f9a was accepted), whose plan stops at the plan gate for the user:\n```\nAdd a logout button\n```\n";
 
 /// A continued goal `id` of [`CHAIN`], as `chain_goal.rs` builds it: a planned run with
 /// no triage (D14), its first prompt `prompt` (the driver's handoff prompt).
-fn continued(fx: &Fixture, id: &str, prompt: Option<&str>) -> Run {
+pub(super) fn continued(fx: &Fixture, id: &str, prompt: Option<&str>) -> Run {
     let text = plan_with(PROFILE, &[task("t0", "S", "auth", "")]);
     let mut plan = crate::run::plan::parse_plan(&text).unwrap();
     plan.tasks.clear();
@@ -74,7 +74,7 @@ pub(super) fn continue_as(fx: &mut Fixture, id: &str, prompt: Option<&str>) -> V
     start(fx, run)
 }
 
-fn start(fx: &mut Fixture, run: Run) -> Vec<Effect> {
+pub(super) fn start(fx: &mut Fixture, run: Run) -> Vec<Effect> {
     let reply = fx.reply();
     fx.next(EventKind::Start {
         reply,

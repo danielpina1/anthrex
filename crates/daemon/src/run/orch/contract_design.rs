@@ -211,6 +211,18 @@ pub fn session_prompt(run: &Run, first: &str) -> String {
     }
 }
 
+/// Ruling T14-2 (task M9.6.15): the first wake of a design run that adopts its chain's
+/// live window, which is sent no first prompt: `wake` (the next-goal wake), then the
+/// design line, rules 47 to 53 under their head, and where the run is with its next
+/// step ([`session_prompt`]). A run without the flow gets `wake` byte for byte.
+pub fn adopted_wake(run: &Run, wake: String) -> String {
+    let Some(rules) = design_rules(run) else {
+        return wake;
+    };
+    let first = format!("{wake}\n{DESIGN_LINE}\n{RULES_HEAD}\n{rules}");
+    session_prompt(run, &first)
+}
+
 #[cfg(test)]
 #[path = "contract_design_tests.rs"]
 mod tests;

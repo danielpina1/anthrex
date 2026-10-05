@@ -28,9 +28,26 @@ pub fn goal_head(goal: &str) -> String {
 }
 
 pub fn render(run: &Run, requirements: &[Requirement]) -> String {
-    let mut out = format!("# Plan: {}\n\n", goal_head(&run.goal));
+    render_round(run, requirements, None)
+}
+
+/// Task M9.6.15: round `round`'s `plan.md` (decision 24's `…-round<k>.md`): its title
+/// names the round, and its tasks and coverage table are the round's; `None` is
+/// [`render`]'s, every task.
+pub fn render_round(run: &Run, requirements: &[Requirement], round: Option<u32>) -> String {
+    let mut out = format!("# Plan: {}", goal_head(&run.goal));
+    if let Some(k) = round {
+        let _ = write!(out, " (round {k})");
+    }
+    out.push_str("\n\n");
     let mut stages: BTreeMap<u16, Vec<&Task>> = BTreeMap::new();
-    for task in run.tasks.iter().filter(|t| t.state != TaskState::Cancelled) {
+    let of_round = |t: &&Task| round.is_none_or(|k| t.round == k);
+    for task in run
+        .tasks
+        .iter()
+        .filter(|t| t.state != TaskState::Cancelled)
+        .filter(of_round)
+    {
         stages.entry(task.spec.stage).or_default().push(task);
     }
     for (stage, tasks) in stages {
@@ -40,7 +57,7 @@ pub fn render(run: &Run, requirements: &[Requirement]) -> String {
         }
     }
     out.push_str("## Coverage\n\n| Requirement | Tasks |\n|---|---|\n");
-    for (id, tasks) in coverage::table(run, requirements) {
+    for (id, tasks) in coverage::table_in(run, requirements, round) {
         let by = if tasks.is_empty() {
             "none".to_string()
         } else {

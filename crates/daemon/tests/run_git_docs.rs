@@ -87,6 +87,8 @@ impl Rig {
             expected,
             integration: &self.integration,
             files: &files,
+            appends: &[],
+            stage: None,
             message: "docs: spec and plan for Reset passwords",
         };
         commit_docs(git, &docs, T)

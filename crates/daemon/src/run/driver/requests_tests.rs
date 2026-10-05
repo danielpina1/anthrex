@@ -42,6 +42,34 @@ async fn run_iterate_reaches_the_engine() {
     drop(handle);
 }
 
+/// Task M9.6.15 (decision 28): the request's `design` reaches the engine: `amend` on a
+/// complete run without the design flow is refused with decision 28's exact text.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_iterate_carries_its_design() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = ManagerConfig::for_tests(dir.path().join("d.sock"), "/bin/sh".into());
+    let (manager, _events) = WindowManager::new(config);
+    let s = RunService::for_manager(&manager, dir.path().join("data"), Arc::new(NoRoots));
+    let mut run = crate::run::orch::test_support::run_of(1);
+    run.orch.orchestrator = Some(crate::run::orch::test_support::orchestrator());
+    run.state = proto::RunState::Complete;
+    let id = run.id.clone();
+    crate::lock(&s.state).runs.insert(id.clone(), run);
+    let handle = s.spawn(CancellationToken::new());
+    let iterate = RunRequest::Iterate {
+        run: id,
+        goal: "more".into(),
+        design: Some(proto::RoundDesign::Amend),
+    };
+    let reply = tokio::time::timeout(Duration::from_secs(10), s.request(iterate))
+        .await
+        .expect("answered within one engine step");
+    let text = "this run has no spec to amend; iterate with --design off";
+    assert_eq!(reply, RunReply::refused(request::ITERATE, text));
+    s.stop().await;
+    drop(handle);
+}
+
 /// Task M9.6.3 (DF §1): `run start --plan` with `--design full` is refused with the
 /// exact text before anything is read (the directory does not exist); without it, or
 /// with `off`, the start goes on to its first check.

@@ -18,19 +18,40 @@ pub const BRIEF_HEADINGS: [&str; 5] =
 
 /// `None` when the plan passes, else the exact refusal.
 pub fn check(run: &Run, requirements: &[Requirement]) -> Option<String> {
+    check_round(run, (requirements, requirements), None)
+}
+
+/// Decision 29 (task M9.6.15): a round's plan. Every requirement of `owed` (a round's:
+/// the ones its amendment added or changed) is covered by a live task of `round` (every
+/// live task when `None`); those tasks cover only requirements of `all`, and their
+/// briefs have the headings. Earlier rounds' tasks were checked in their own rounds.
+pub fn check_round(
+    run: &Run,
+    (owed, all): (&[Requirement], &[Requirement]),
+    round: Option<u32>,
+) -> Option<String> {
     if run.design_mode != DesignMode::Full {
         return None;
     }
-    let tasks = live(run);
-    uncovered(&tasks, requirements)
-        .or_else(|| dangling(&tasks, requirements))
+    let tasks = live(run, round);
+    uncovered(&tasks, owed)
+        .or_else(|| dangling(&tasks, all))
         .or_else(|| briefs(&tasks))
 }
 
 /// Requirement → the live tasks that cover it, in requirement order then run order:
 /// `plan.md`'s table and the gate's.
 pub fn table(run: &Run, requirements: &[Requirement]) -> Vec<(String, Vec<String>)> {
-    let tasks = live(run);
+    table_in(run, requirements, None)
+}
+
+/// [`table`] over round `round`'s tasks (every task's when `None`).
+pub fn table_in(
+    run: &Run,
+    requirements: &[Requirement],
+    round: Option<u32>,
+) -> Vec<(String, Vec<String>)> {
+    let tasks = live(run, round);
     requirements
         .iter()
         .map(|r| {
@@ -55,10 +76,11 @@ pub fn missing_heading(brief: &str) -> Option<&'static str> {
         .find(|h| !lines.iter().any(|l| !l.code && l.text.trim() == *h))
 }
 
-fn live(run: &Run) -> Vec<&PlanTask> {
+fn live(run: &Run, round: Option<u32>) -> Vec<&PlanTask> {
     run.tasks
         .iter()
         .filter(|t| t.state != TaskState::Cancelled)
+        .filter(|t| round.is_none_or(|k| t.round == k))
         .map(|t| &t.spec)
         .collect()
 }

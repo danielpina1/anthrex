@@ -11,7 +11,7 @@ use crate::run::engine::{OpKind, OpResult};
 
 /// A `git` stand-in that logs each call's arguments and `GIT_` variables, then runs
 /// the real git.
-fn recording(dir: &Path) -> PathBuf {
+pub(super) fn recording(dir: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let script = dir.join("recording-git");
     std::fs::write(

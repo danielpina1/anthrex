@@ -135,6 +135,7 @@ impl RunService {
                 unconfined_checks,
                 delivery,
                 continue_from: Some(after),
+                design,
                 ..
             } => {
                 let next = super::orch::Next {
@@ -144,6 +145,7 @@ impl RunService {
                     unconfined_checks,
                     yes,
                     delivery,
+                    design,
                 };
                 self.continue_request(&after, next).await
             }
@@ -176,17 +178,14 @@ impl RunService {
                 self.delivery_request(req).await
             }
             // Milestone 9.3 decision 10: a round of a settled run.
-            // Milestone 9.6: `design` is read from task M9.6.15.
-            RunRequest::Iterate {
-                run,
-                goal,
-                design: _,
-            } => answer(
+            // Milestone 9.6 decision 28: with the round's design.
+            RunRequest::Iterate { run, goal, design } => answer(
                 request::ITERATE,
                 self.ask(|reply| EventKind::Iterate {
                     reply,
                     run_id: run,
                     goal,
+                    design,
                 })
                 .await,
             ),

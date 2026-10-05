@@ -216,7 +216,8 @@ pub(super) fn checked_text(
 ) -> Result<String, String> {
     let text = template::admit(kind, raw, &template_ctx(run, ready))?;
     if kind == DocKind::Spec {
-        let approved = run.orch.design.as_ref().map(|d| &d.requirements[..]);
+        // Task M9.6.15: an amendment continues from its round's base.
+        let approved = run.orch.design.as_ref().map(|d| d.amend_base());
         match (amend, approved) {
             (true, Some(approved)) => requirements::parse_amendment(&text, approved)?,
             _ => requirements::parse(&text)?,

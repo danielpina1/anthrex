@@ -5,13 +5,15 @@
 //! round that ends ([`end_round`], decision 17). Pure (design decision 2).
 
 use proto::{
-    GOAL_MAX_CHARS, HISTORY_VERSION, HistoryLine, PrState, RoundLine, RoundOrigin, RoundOutcome,
-    RunState, TaskState, safe_text,
+    GOAL_MAX_CHARS, HISTORY_VERSION, HistoryLine, PrState, RoundDesign, RoundLine, RoundOrigin,
+    RoundOutcome, RunState, TaskState, safe_text,
 };
 
 use super::actions::rules;
 use super::requests::log;
-use super::{Effect, EngineState, ReplyId, batch, delivery, history, orch, orch_window};
+use super::{
+    Effect, EngineState, ReplyId, batch, delivery, design_round, history, orch, orch_window,
+};
 use crate::run::model::{Round, Run, StageLayout, Task};
 use crate::run::orch::contract_rounds::{
     ITERATE_ALONE, REQUEST_TOO_LONG, round_started, round_wake,
@@ -54,12 +56,12 @@ fn delivered_idle(run: &Run) -> bool {
 pub(super) fn request(
     state: &mut EngineState,
     reply: ReplyId,
-    (run_id, goal): (&str, &str),
+    (run_id, goal, design): (&str, &str, Option<RoundDesign>),
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
     let result = match state.runs.get_mut(run_id) {
-        Some(run) => iterate(run, goal, RoundOrigin::User, now, fx),
+        Some(run) => iterate(run, (goal, design), RoundOrigin::User, now, fx),
         None => Err(format!("unknown run {run_id}")),
     };
     fx.push(Effect::Reply { reply, result });
@@ -72,9 +74,11 @@ pub(super) fn request(
 /// `complete`, or from `running` in `pr` mode) with `cancelled` and `finish_edit`
 /// cleared, and the round wake waits on the run until its orchestrator is woken with
 /// it; a dormant orchestrator is relaunched for it. The reply names the round.
+/// Milestone 9.6 decision 28: a design run's round amends its spec by default
+/// (`design_round.rs`), entering specifying, or brainstorming with `full`.
 pub(super) fn iterate(
     run: &mut Run,
-    goal: &str,
+    (goal, design): (&str, Option<RoundDesign>),
     origin: RoundOrigin,
     now: u64,
     fx: &mut Vec<Effect>,
@@ -88,6 +92,7 @@ pub(super) fn iterate(
     if let Some(text) = rules::iterate(run) {
         return Err(text);
     }
+    let mode = design_round::mode(run, design)?;
     ensure_first(run);
     end_round(run, RoundOutcome::Completed, now, fx);
     let n = run.round() + 1;
@@ -115,6 +120,7 @@ pub(super) fn iterate(
     }
     widen(run, now);
     run.state = RunState::Planning;
+    design_round::start(run, mode, now);
     run.cancelled = false;
     run.finish_edit = false;
     run.round_finish = false;
@@ -150,7 +156,7 @@ pub(super) fn edit(
     }];
     let started = match alone {
         false => Err(ITERATE_ALONE.to_string()),
-        true => iterate(run, goal, RoundOrigin::Orchestrator, now, fx),
+        true => iterate(run, (goal, None), RoundOrigin::Orchestrator, now, fx),
     };
     if let Err(text) = started {
         batch::record_rejected(run, &edit, &source, text.clone(), now);

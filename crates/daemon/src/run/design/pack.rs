@@ -216,7 +216,8 @@ pub fn freeze(run: &Run, earlier: Option<EarlierSpec>) -> FrozenPack {
     FrozenPack {
         reports: run.scout_reports.clone(),
         earlier,
-        round: (run.orch.design.as_ref()).map_or(1, |d| d.rethinks + 1),
+        // Task M9.6.15: numbered after every earlier round's brainstorms.
+        round: (run.orch.design.as_ref()).map_or(1, |d| d.brainstorm_round()),
         file: None,
         rethink: None,
     }

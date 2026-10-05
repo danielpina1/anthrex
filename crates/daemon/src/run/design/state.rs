@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub use super::pack::FrozenPack;
 pub use super::requirements::Requirement;
+pub use super::round::DesignRound;
 pub use super::spend::{AgentSpend, PhaseSpend};
 pub use super::versions::{
     DocVersion, LABELS, NewDoc, findings_name, index_text, sha256_hex, store, store_findings,
@@ -114,6 +115,13 @@ pub struct DesignState {
     /// routed with trigger `rethink`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rethink_starts: Vec<String>,
+    /// Task M9.6.15 (decision 28): the current round's design, from round 2 on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub round: Option<DesignRound>,
+    /// Task M9.6.15: the last round whose documents were committed (0 with `committed`
+    /// set: round 1, from before this field).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub committed_round: u32,
 }
 
 fn is_zero(n: &u32) -> bool {

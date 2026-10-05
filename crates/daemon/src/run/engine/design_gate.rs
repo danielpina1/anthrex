@@ -153,7 +153,9 @@ pub(crate) fn act(
                     doc
                 }
                 _ => {
-                    let text = checked_text(run, gate_doc(kind), &text, false, true)?;
+                    // Task M9.6.15: a round's spec is an amendment of its base.
+                    let amend = run.orch.design.as_ref().is_some_and(|d| d.amending());
+                    let text = checked_text(run, gate_doc(kind), &text, amend, true)?;
                     NewDoc::new(gate_doc(kind), user, reason, &text)
                 }
             };
@@ -249,14 +251,16 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
             DocGateKind::Brainstorm => "approve, rethink or reject",
             _ => "approve, go back or reject",
         };
-        (design.gate_versions(gate_doc(kind)) >= MAX_VERSIONS).then(|| {
+        // Task M9.6.15: the round's own versions and rethinks.
+        (design.round_versions(gate_doc(kind)) >= MAX_VERSIONS).then(|| {
             let kind = kind.label();
             format!("the {kind} has had its {MAX_VERSIONS} versions; {ways}")
         })
     };
     // Fix round 2: with both caps reached, only approve and reject are left.
-    let both =
-        kind == DocGateKind::Brainstorm && design.rethinks >= MAX_RETHINKS && full(kind).is_some();
+    let both = kind == DocGateKind::Brainstorm
+        && design.round_rethinks() >= MAX_RETHINKS
+        && full(kind).is_some();
     let revises = matches!(
         action,
         DocGateAction::Changes { .. } | DocGateAction::Edit { .. } | DocGateAction::Rethink { .. }
@@ -270,7 +274,7 @@ pub(crate) fn refusal(run: &Run, kind: DocGateKind, action: &DocGateAction) -> O
         DocGateAction::Changes { .. } | DocGateAction::Edit { .. } => full(kind),
         DocGateAction::Back { .. } => full(previous(kind)),
         // A rethink's own cap: the brainstorm's rethinks (ruling T7-6's text offers it).
-        DocGateAction::Rethink { .. } if design.rethinks >= MAX_RETHINKS => Some(format!(
+        DocGateAction::Rethink { .. } if design.round_rethinks() >= MAX_RETHINKS => Some(format!(
             "the brainstorm has been rethought {MAX_RETHINKS} times; approve, change or reject"
         )),
         // Decision 18 (task M9.6.11): the plan's checks again at its approval.

@@ -27,7 +27,7 @@ pub(in crate::run::engine) fn rethink(run: &mut Run, note: &str, now: u64) {
         version: v.clone(),
     });
     let before = design.pack.clone().unwrap_or_else(|| freeze(run, None));
-    let round = design.rethinks + 1;
+    let round = design.brainstorm_round();
     // Never empty here: the brainstorm gate opens only on a report taken once the
     // drafts settled (`report_doc`), which `settle` does only with brainstormers, and
     // the list is only ever replaced by `start_brainstorm`, refused after the first.

@@ -90,6 +90,8 @@ pub(super) fn reject_round(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> Str
     end_round(run, RoundOutcome::Rejected, now, fx);
     wake::clear_request(run, n);
     planners::halt_all(run, ROUND_REJECTED, now, fx);
+    // Milestone 9.6 decision 29: its design agents too, and the approval before it.
+    super::design_round::rejected(run, ROUND_REJECTED, fx);
     // The earlier rounds' plan stays the submitted one (`rules::promoted_unsubmitted`).
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.plan_submitted = true;

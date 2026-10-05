@@ -97,7 +97,7 @@ pub(in crate::run::engine) fn submit_spec(
         true if asked.is_some_and(|(review, _)| review) && latest.is_none() => {
             Err(REVIEW_ASKED.into())
         }
-        true => ready(run, &doc, reason, (cycle, latest), now, fx),
+        true => ready(run, &doc, reason, (latest, asked.is_none()), now, fx),
     }
 }
 
@@ -125,12 +125,15 @@ fn draft(
 
 /// Decision 15: the gate's next version, once every finding of `latest` (the cycle's
 /// last review) is answered; decision 16's disputed findings, and the findings file
-/// with every answer.
+/// with every answer. A version of a cycle the user did not ask about (`unasked`: not
+/// a revision at the spec gate) with no review is marked not reviewed, the first
+/// cycle's and every later one's (task 10's carry: after a brainstorm back, and a
+/// round's amendment).
 fn ready(
     run: &mut Run,
     doc: &SubmitDoc,
     reason: &str,
-    (cycle, latest): (u32, Option<DocReviewRecord>),
+    (latest, unasked): (Option<DocReviewRecord>, bool),
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Result<Value, String> {
@@ -164,7 +167,7 @@ fn ready(
             new.same_runtime = review.same_runtime;
         }
         (Some(failed), None) => new.not_reviewed = failed.failed.clone(),
-        (None, _) if cycle == 0 => new.not_reviewed = Some(UNREVIEWED.into()),
+        (None, _) if unasked => new.not_reviewed = Some(UNREVIEWED.into()),
         (None, _) => {}
     }
     let n = design_gate::open(run, new, now, fx)?;
@@ -231,9 +234,11 @@ pub(in crate::run::engine) fn requirements_read(
     match &doc.read {
         Ok(Some(text)) => {
             let found = requirements::scan(text);
-            let ids: Vec<String> = found.iter().map(|r| r.id.clone()).collect();
+            let mut ids: Vec<String> = Vec::new();
             if let Some(design) = run.orch.design.as_mut() {
-                design.requirements = found;
+                // Task M9.6.15 (ruling T4-4): a round's amendment merges into its base.
+                design.store_requirements(found);
+                ids = design.requirements.iter().map(|r| r.id.clone()).collect();
                 design.goal_section = requirements::goal_section(text);
                 design.interfaces_section = requirements::interfaces_section(text);
                 design.spec_unread = false;

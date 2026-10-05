@@ -106,6 +106,7 @@ fn event_for(fx: &mut Fixture, node: &ActionNode, kind: &ActionKind) -> EventKin
             reply,
             run_id,
             goal: "more".into(),
+            design: None,
         },
         // Milestone 9.6 decision 34: it opens the gate's screen; no request backs it.
         ActionKind::ReviewDoc => unreachable!("never a request kind"),

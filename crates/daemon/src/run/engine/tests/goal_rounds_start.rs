@@ -56,6 +56,7 @@ pub(super) fn iterate(fx: &mut Fixture, goal: &str) -> Vec<Effect> {
         reply,
         run_id: RUN_ID.into(),
         goal: goal.into(),
+        design: None,
     })
 }
 
@@ -518,6 +519,7 @@ fn an_unknown_run_is_refused() {
         reply: reply_id,
         run_id: "nope".into(),
         goal: "more".into(),
+        design: None,
     });
     assert_eq!(reply(&effects), Err("unknown run nope".into()));
 }

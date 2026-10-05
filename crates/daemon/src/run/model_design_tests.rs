@@ -311,6 +311,23 @@ fn the_state_survives_save_and_load() {
             }],
         }],
         rethink_starts: vec!["claude".into()],
+        // Task M9.6.15: round 2's design and the round whose documents were committed.
+        round: Some(crate::run::design::round::DesignRound {
+            n: 2,
+            mode: proto::RoundDesign::Amend,
+            base: vec![Requirement {
+                id: "R1".into(),
+                text: "one".into(),
+            }],
+            spec_before: Some(1),
+            goal_before: "Reset.".into(),
+            interfaces_before: String::new(),
+            versions_before: [1, 1, 1],
+            rethinks_before: 2,
+            packs_before: 0,
+            amended: vec!["R1".into()],
+        }),
+        committed_round: 1,
     };
     let mut run = old_run();
     run.design_mode = DesignMode::Full;
@@ -328,6 +345,7 @@ fn the_state_survives_save_and_load() {
     assert_eq!(json["orch"]["design"]["versions"][2]["draft_review"], 2);
     assert_eq!(json["orch"]["design"]["reviews"][0]["after"], 1);
     assert_eq!(json["orch"]["design"]["approved_spec"], 2);
+    assert_eq!(json["orch"]["design"]["round"]["mode"], "amend");
     assert!(json["orch"]["design"].get("texts").is_none());
 
     // Without it, `orch` has no `design` key.

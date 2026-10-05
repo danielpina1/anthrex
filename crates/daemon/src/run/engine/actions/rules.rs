@@ -199,7 +199,10 @@ pub(crate) fn resume(run: &Run, rebaseline: bool) -> Option<String> {
             run.id
         ));
     }
-    (!rebaseline && !run.halt_retryable).then(|| {
+    // Milestone 9.6 (task 7's carry): a halt before the plan's approval resumes into
+    // its phase.
+    let phase = crate::run::engine::design::halted_phase(run).is_some();
+    (!rebaseline && !run.halt_retryable && !phase).then(|| {
         let reason = run.halted_reason.clone().unwrap_or_default();
         format!(
             "run {} is halted: {reason}; check the refs, then resume with --rebaseline",

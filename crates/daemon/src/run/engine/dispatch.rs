@@ -58,7 +58,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 ladder::start_fresh_sessions(run, fx);
                 complete::finish_pass(run, now, fx);
                 // Milestone 9.1 decision 48: stage branches before what runs in them.
-                stages::create_pass(run, fx);
+                stages::create_pass(run, now, fx);
                 // Milestone 9 decision 37: an epic merged gets its integration review.
                 kinds::integration_pass(run, now);
                 kinds::watch(run, now, fx);
@@ -91,8 +91,9 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         }
         // Milestone 9 decision 31: sub-planners, then run scouts, in free reader slots.
         super::planners::dispatch(run, now, fx);
-        // Then research and review tasks (decisions 35, 36).
-        if !held {
+        // Then research and review tasks (decisions 35, 36), never before a documents
+        // commit lands (a later round's too, which holds no pass: task M9.6.15).
+        if !held && !super::design_commit::due(run) {
             kinds::dispatch(run, now, false, fx);
         }
     }

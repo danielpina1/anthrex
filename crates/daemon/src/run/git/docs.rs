@@ -15,6 +15,12 @@
 //! branch already at a commit of the same tree and message on the run head (the same
 //! commit sent again after a restart) is that commit. The integration worktree is then put back on
 //! the branch, as a merge leaves it.
+//!
+//! Task M9.6.15 (decision 24): a later round's spec is appended to the file at its
+//! path in the run head ([`DocsCommit::appends`], read with `cat-file`, nothing on
+//! disk), and its commit is that round's first stage ([`DocsCommit::stage`]): the
+//! stage branch is created at the commit and the branch (its `integration` alias)
+//! moves to it, in one `update-ref --stdin` transaction.
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -42,6 +48,12 @@ pub struct DocsCommit<'a> {
     pub expected: &'a str,
     pub integration: &'a Path,
     pub files: &'a [(String, Vec<u8>)],
+    /// Task M9.6.15: (repository path, bytes) appended after a blank line to the
+    /// regular file at that path in `expected` (written whole when there is none).
+    pub appends: &'a [(String, Vec<u8>)],
+    /// Task M9.6.15: the stage branch created at the commit, with `branch` (its alias)
+    /// moved to it from `expected`; `None` moves `branch` alone.
+    pub stage: Option<&'a str>,
     pub message: &'a str,
 }
 
@@ -70,7 +82,7 @@ pub fn commit_docs(
         timeout,
         index: docs.index,
     };
-    let mut folders: Vec<String> = (docs.files.iter())
+    let mut folders: Vec<String> = (docs.files.iter().chain(docs.appends))
         .filter_map(|(path, _)| path.rsplit_once('/').map(|(dir, _)| dir.to_string()))
         .collect();
     folders.dedup();
@@ -78,26 +90,10 @@ pub fn commit_docs(
         return Ok(DocsOutcome::Symlink { path });
     }
     let tree = build_tree(&c, docs)?;
-    let root = docs.root;
     let refname = format!("refs/heads/{}", docs.branch);
-    let head = match read_ref(&c, root, &refname)? {
-        Some(at) if at == docs.expected => {
-            let args = [
-                "commit-tree",
-                &tree,
-                "-p",
-                docs.expected,
-                "-m",
-                docs.message,
-            ];
-            let commit = c.ok(root, Mode::Write, &args, None)?.trim().to_string();
-            match swap(&c, root, &refname, &commit, docs.expected)? {
-                None => commit,
-                Some(now) => own(&c, docs, &tree, &refname, &now)?,
-            }
-        }
-        Some(now) => own(&c, docs, &tree, &refname, &now)?,
-        None => return Err(format!("{refname} does not exist")),
+    let head = match docs.stage {
+        Some(stage) => on_stage(&c, docs, (&tree, &refname), stage)?,
+        None => on_branch(&c, docs, &tree, &refname)?,
     };
     let checkout = ["checkout", "-q", "--force", docs.branch, "--"];
     let reattach = c.ok(docs.integration, Mode::Write, &checkout, None).err();
@@ -197,7 +193,10 @@ fn build_tree(c: &Call<'_>, docs: &DocsCommit<'_>) -> Result<String, String> {
     let built = (|| {
         let root = docs.root;
         c.ok(root, Mode::Indexed, &["read-tree", docs.expected], None)?;
-        for (path, bytes) in docs.files {
+        let appended = (docs.appends.iter())
+            .map(|(path, tail)| Ok((path.clone(), appended(c, docs, path, tail)?)))
+            .collect::<Result<Vec<_>, String>>()?;
+        for (path, bytes) in docs.files.iter().chain(&appended) {
             let hashed = ["hash-object", "-w", "--stdin"];
             let blob = c.ok(root, Mode::Write, &hashed, Some(bytes))?;
             let blob = blob.trim();
@@ -210,6 +209,126 @@ fn build_tree(c: &Call<'_>, docs: &DocsCommit<'_>) -> Result<String, String> {
     let tree = built?;
     removed?;
     Ok(tree.trim().to_string())
+}
+
+/// Task M9.6.15: the regular file at `path` in the run head (none: empty), a blank line,
+/// then `tail`, ending with a newline.
+fn appended(
+    c: &Call<'_>,
+    docs: &DocsCommit<'_>,
+    path: &str,
+    tail: &[u8],
+) -> Result<Vec<u8>, String> {
+    let listed = ["ls-tree", "-z", docs.expected, "--", path];
+    let entry = c.ok(docs.root, Mode::Read, &listed, None)?;
+    let regular = entry.starts_with("100644 ") || entry.starts_with("100755 ");
+    let mut out = match regular {
+        true => {
+            let at = format!("{}:{path}", docs.expected);
+            c.ok(docs.root, Mode::Read, &["cat-file", "blob", &at], None)?
+                .into_bytes()
+        }
+        false => Vec::new(),
+    };
+    if !out.is_empty() {
+        if !out.ends_with(b"\n") {
+            out.push(b'\n');
+        }
+        out.push(b'\n');
+    }
+    out.extend_from_slice(tail);
+    if !out.ends_with(b"\n") {
+        out.push(b'\n');
+    }
+    Ok(out)
+}
+
+/// The commit of `tree` on `refname` (the run branch), moved from the run head by
+/// compare-and-swap; a branch already elsewhere is this commit's when [`own`] says so.
+fn on_branch(
+    c: &Call<'_>,
+    docs: &DocsCommit<'_>,
+    tree: &str,
+    refname: &str,
+) -> Result<String, String> {
+    let root = docs.root;
+    match read_ref(c, root, refname)? {
+        Some(at) if at == docs.expected => {
+            let args = ["commit-tree", tree, "-p", docs.expected, "-m", docs.message];
+            let commit = c.ok(root, Mode::Write, &args, None)?.trim().to_string();
+            match swap(c, root, refname, &commit, docs.expected)? {
+                None => Ok(commit),
+                Some(now) => own(c, docs, tree, refname, &now),
+            }
+        }
+        Some(now) => own(c, docs, tree, refname, &now),
+        None => Err(format!("{refname} does not exist")),
+    }
+}
+
+/// Task M9.6.15: the commit of `tree` as stage branch `stage`, created at it, with
+/// `alias` (the run branch) moved to it from the run head, in one transaction. A stage
+/// already there is this commit's when [`own`] says so (sent again after a restart),
+/// and the alias then follows it.
+fn on_stage(
+    c: &Call<'_>,
+    docs: &DocsCommit<'_>,
+    (tree, alias): (&str, &str),
+    stage: &str,
+) -> Result<String, String> {
+    let root = docs.root;
+    let stage_ref = format!("refs/heads/{stage}");
+    if let Some(now) = read_ref(c, root, &stage_ref)? {
+        let head = own(c, docs, tree, &stage_ref, &now)?;
+        follow(c, root, alias, (&head, docs.expected))?;
+        return Ok(head);
+    }
+    match read_ref(c, root, alias)? {
+        Some(at) if at == docs.expected => {}
+        Some(now) => return Err(moved(alias, docs.expected, &now)),
+        None => return Err(format!("{alias} does not exist")),
+    }
+    let args = ["commit-tree", tree, "-p", docs.expected, "-m", docs.message];
+    let commit = c.ok(root, Mode::Write, &args, None)?.trim().to_string();
+    let input = format!(
+        "create {stage_ref} {commit}\nupdate {alias} {commit} {}\n",
+        docs.expected
+    );
+    let args = ["update-ref", "--no-deref", "--stdin"];
+    let output = c.run(root, Mode::Write, &args, Some(input.as_bytes()))?;
+    if output.success {
+        return Ok(commit);
+    }
+    match read_ref(c, root, &stage_ref)? {
+        Some(now) => {
+            let head = own(c, docs, tree, &stage_ref, &now)?;
+            follow(c, root, alias, (&head, docs.expected))?;
+            Ok(head)
+        }
+        None => Err(c.failure(Mode::Write, &args, &output)),
+    }
+}
+
+/// `alias` at `head`: moved there from `expected` when it is still there.
+fn follow(
+    c: &Call<'_>,
+    root: &Path,
+    alias: &str,
+    (head, expected): (&str, &str),
+) -> Result<(), String> {
+    match read_ref(c, root, alias)? {
+        Some(at) if at == head => Ok(()),
+        Some(at) if at == expected => match swap(c, root, alias, head, expected)? {
+            Some(now) if now != head => Err(moved(alias, expected, &now)),
+            _ => Ok(()),
+        },
+        Some(now) => Err(moved(alias, expected, &now)),
+        None => Err(format!("{alias} does not exist")),
+    }
+}
+
+fn moved(refname: &str, from: &str, to: &str) -> String {
+    format!("{refname} moved from {} to {}", short(from), short(to))
 }
 
 /// The index and its lock gone, its folder there.

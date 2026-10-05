@@ -57,9 +57,25 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         .find(|(f, _)| f.folder == SPEC_FOLDER)
         .map(|(_, text)| String::from_utf8_lossy(text).into_owned());
     let slug = slug(&spec_text.unwrap_or_default(), &spec.run_id);
-    let path = |f: &DocSource| repo_path(&spec.docs_dir, &f.folder, &spec.date, &slug);
-    let spec_path = repo_path(&spec.docs_dir, SPEC_FOLDER, &spec.date, &slug);
-    let files: Vec<(String, Vec<u8>)> = spec.files.iter().map(path).zip(texts).collect();
+    // Task M9.6.15: a later round's documents carry their own paths.
+    let path = |f: &DocSource| {
+        (f.repo_path.clone())
+            .unwrap_or_else(|| repo_path(&spec.docs_dir, &f.folder, &spec.date, &slug))
+    };
+    let spec_path = (spec.files.iter().find(|f| f.folder == SPEC_FOLDER)).map(path);
+    let spec_path =
+        spec_path.unwrap_or_else(|| repo_path(&spec.docs_dir, SPEC_FOLDER, &spec.date, &slug));
+    let (mut files, mut appends) = (Vec::new(), Vec::new());
+    for (f, text) in spec.files.iter().zip(texts) {
+        match &f.append {
+            // Decision 24, round k: the heading, then the amendment, after the file.
+            Some(heading) => appends.push((
+                path(f),
+                [format!("{heading}\n\n").into_bytes(), text].concat(),
+            )),
+            None => files.push((path(f), text)),
+        }
+    }
     let index = ctx.data_dir.join(DESIGN_DIR).join(INDEX_FILE);
     let committed = service
         .write(ctx, move |g, t| {
@@ -70,6 +86,8 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 expected: &spec.expected_head,
                 integration: &spec.integration,
                 files: &files,
+                appends: &appends,
+                stage: spec.stage_branch.as_deref(),
                 message: &spec.message,
             };
             git::commit_docs(g, &docs, t)
@@ -154,3 +172,7 @@ mod tests;
 #[cfg(test)]
 #[path = "design_commit_queue_tests.rs"]
 mod queue_tests;
+
+#[cfg(test)]
+#[path = "design_commit_round_tests.rs"]
+mod round_tests;

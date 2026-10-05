@@ -118,6 +118,8 @@ pub enum EventKind {
         reply: ReplyId,
         run_id: String,
         goal: String,
+        /// Milestone 9.6 decision 28: the round's design (`None`: its default).
+        design: Option<proto::RoundDesign>,
     },
     /// Milestone 9.6 decision 7: `RunRequest::DocGate` (`design_gate.rs`).
     DocGate {

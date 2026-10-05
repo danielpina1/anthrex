@@ -383,6 +383,7 @@ async fn start_goal_inherits_delivery_trust_and_checks_but_not_approve_at_once()
             unconfined_checks: true,
             yes: false,
             delivery: Some(DeliveryMode::Pr),
+            design: None,
         }
     );
     let opts = mcp::McpOptions {

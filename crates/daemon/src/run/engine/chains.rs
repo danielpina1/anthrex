@@ -120,6 +120,8 @@ fn adopt(run: &mut Run, prev: &Run, window_id: u32, now: u64, fx: &mut Vec<Effec
     }
     let ended = (prev.short(), outcome(prev));
     let wake = next_goal_wake(run.short(), ended, run.orch.yes, &run.goal);
+    // Ruling T14-2: a design run's adopted window learns the design flow here.
+    let wake = crate::run::orch::contract_design::adopted_wake(run, wake);
     run.orch.request_wake = Some(wake);
     log(
         run,
