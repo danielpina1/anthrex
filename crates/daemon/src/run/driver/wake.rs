@@ -326,6 +326,7 @@ impl RunService {
         let waiting = {
             self.wakes.confirm(&seen, epoch);
             self.wakes.forget_ended(&going);
+            self.doc_writes.forget_packs(&going);
             self.wakes.keep_live(&seen, &judged);
             self.wakes.forget_waits();
             self.wakes.deliverable(&judged)

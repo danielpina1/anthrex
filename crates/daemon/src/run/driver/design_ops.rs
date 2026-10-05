@@ -158,7 +158,9 @@ impl RunService {
         };
         // Ruling T8-6: a later start of the round sends the file its first start wrote.
         if let Some(file) = frozen.file {
-            let text = self.pack_file(path, None, Some(file), write_new).await?;
+            let text = self
+                .pack_file(run_id, path, None, Some(file), write_new)
+                .await?;
             return Ok((text, None));
         }
         let mut inputs = PackInputs {
@@ -198,7 +200,7 @@ impl RunService {
         }
         // The first start writes it; a start that raced it, or followed a launch that
         // failed after writing it, finds the file there and sends that instead.
-        let text = (self.pack_file(path, Some(pack(&inputs)), None, write_new)).await?;
+        let text = (self.pack_file(run_id, path, Some(pack(&inputs)), None, write_new)).await?;
         let file = PackFile {
             bytes: text.len() as u64,
             sha256: sha256_hex(text.as_bytes()),
@@ -221,6 +223,7 @@ impl RunService {
     /// when the read then fails too, is the reason.
     pub(super) async fn pack_file<W>(
         &self,
+        run_id: &str,
         path: PathBuf,
         write: Option<String>,
         expected: Option<PackFile>,
@@ -229,7 +232,7 @@ impl RunService {
     where
         W: FnOnce(&Path, &str) -> Result<(), String> + Send + 'static,
     {
-        let slot = self.doc_writes.pack_slot(&path);
+        let slot = self.doc_writes.pack_slot(run_id, &path);
         let Ok(mut slot) = tokio::time::timeout(IO_WAIT, slot.lock_owned()).await else {
             let secs = IO_WAIT.as_secs();
             return Err(format!(

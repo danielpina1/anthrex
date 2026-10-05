@@ -331,7 +331,7 @@ impl RunService {
                 Ok(fx) => {
                     self.metered.refresh_live(&state);
                     self.release_ended_orchestrators(&state);
-                    Some(guard::prepare_guarded(&state, fx, now))
+                    Some(self.mark_writes(guard::prepare_guarded(&state, fx, now)))
                 }
                 Err(panic) => {
                     tracing::error!(%panic, "the run engine panicked on an event; the event is dropped");

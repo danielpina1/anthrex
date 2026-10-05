@@ -55,16 +55,33 @@ async fn a_racing_start_waits_for_the_first_starts_pack() {
         file.write_all(tail).map_err(shown)
     };
     let (s, p, text) = (rig.runs.clone(), path.clone(), first_text.clone());
-    let first = tokio::spawn(async move { s.pack_file(p, Some(text), None, in_place).await });
+    let run = rig.run_id.clone();
+    let first = tokio::spawn(async move { s.pack_file(&run, p, Some(text), None, in_place).await });
     let began = tokio::task::spawn_blocking(move || halfway.recv_timeout(Duration::from_secs(10)));
     assert!(began.await.unwrap().is_ok(), "the first start is halfway");
-    let (s, p) = (rig.runs.clone(), path.clone());
+    // The slot's holders: the map, the first start's guard, and this clone.
+    let slot = rig.runs.doc_writes.pack_slot(&rig.run_id, &path);
+    let (s, p, run) = (rig.runs.clone(), path.clone(), rig.run_id.clone());
     let second_text = "the second start's own pack".to_string();
-    let mut second =
-        tokio::spawn(async move { s.pack_file(p, Some(second_text), None, write_new).await });
-    // Unfixed, the second start reads the half-written file at once.
-    let early = tokio::time::timeout(Duration::from_millis(300), &mut second).await;
-    assert!(early.is_err(), "the second start sent {early:?}");
+    let second = tokio::spawn(async move {
+        s.pack_file(&run, p, Some(second_text), None, write_new)
+            .await
+    });
+    // The W2 re-review's N3: event-driven, no window. The second start is waiting once
+    // it holds a clone of the slot; unfixed, it reads the half-written file and ends.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::sync::Arc::strong_count(&slot) < 4 && !second.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the second start never began"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(
+        !second.is_finished(),
+        "the second start sent before the first ended"
+    );
+    drop(slot);
     drop(release);
     let first = first.await.unwrap().expect("the first start's pack");
     let second = tokio::time::timeout(Duration::from_secs(10), second)
@@ -141,11 +158,43 @@ async fn a_pack_write_failure_names_its_cause() {
     let refused = |_: &Path, _: &str| Err("pack-r1.md: Permission denied (os error 13)".into());
     let error = rig
         .runs
-        .pack_file(path, Some("a pack".into()), None, refused)
+        .pack_file(&rig.run_id, path, Some("a pack".into()), None, refused)
         .await
         .unwrap_err();
     assert!(
         error.contains("writing it failed: pack-r1.md: Permission denied"),
         "{error}"
+    );
+}
+
+/// The W2 re-review's N1: a run's pack slots go once the run ends (or is discarded),
+/// as its pasted notes' record does; a run that goes on keeps them.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_runs_pack_slots_go_when_it_ends() {
+    let rig = Rig::new(brainstorming).await;
+    let path = pack_path(&rig);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let packed = (rig.runs.pack_file(
+        &rig.run_id,
+        path.clone(),
+        Some("a pack".into()),
+        None,
+        write_new,
+    ))
+    .await;
+    assert_eq!(packed.as_deref(), Ok("a pack"));
+    rig.runs.check_orchestrators();
+    assert_eq!(rig.runs.doc_writes.pack_paths(), [path], "still going");
+    let failed = RunState::Failed;
+    crate::lock(&rig.runs.state)
+        .runs
+        .get_mut(&rig.run_id)
+        .unwrap()
+        .state = failed;
+    rig.runs.check_orchestrators();
+    assert_eq!(
+        rig.runs.doc_writes.pack_paths(),
+        Vec::<std::path::PathBuf>::new(),
+        "ended"
     );
 }

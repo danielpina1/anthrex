@@ -190,7 +190,10 @@ impl RunService {
         let panic = match guarded_step(&mut state, all) {
             Ok(fx) => {
                 self.metered.refresh_live(&state);
-                return (prepare_guarded(&state, fx, now), BTreeSet::new());
+                return (
+                    self.mark_writes(prepare_guarded(&state, fx, now)),
+                    BTreeSet::new(),
+                );
             }
             Err(panic) => panic,
         };
@@ -216,7 +219,7 @@ impl RunService {
             }
         }
         self.metered.refresh_live(&state);
-        (prepare_guarded(&state, fx, now), skipped)
+        (self.mark_writes(prepare_guarded(&state, fx, now)), skipped)
     }
 
     /// Ruling T22-N3, with m5's report: each accept whose merge landed before the

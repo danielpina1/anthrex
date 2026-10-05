@@ -24,44 +24,62 @@ pub type Link<'a> = &'a dyn Fn(&Path, &Path) -> io::Result<()>;
 pub struct DocWrites {
     next: AtomicU64,
     last: Mutex<HashMap<PathBuf, Arc<Mutex<u64>>>>,
-    /// The version files whose write is in flight (ruling WB-B-I1).
-    writing: Mutex<HashSet<PathBuf>>,
-    /// Each round's pack file: what its first start wrote, once written (FW-33).
-    packs: Mutex<HashMap<PathBuf, PackSlot>>,
+    /// The version files whose write is in flight (ruling WB-B-I1), each with its marks:
+    /// one from the step that stored it (the W2 re-review's N2), one from its write.
+    writing: Arc<Mutex<HashMap<PathBuf, usize>>>,
+    /// Each round's pack file, by its run: what its first start wrote, once written
+    /// (FW-33). A run's slots go once it ends (the W2 re-review's N1).
+    packs: Mutex<HashMap<PathBuf, (String, PackSlot)>>,
 }
 
 /// One round's pack file: held by the start writing or reading it, and, once its first
 /// start read it back, that start's length and SHA-256 (the final fix wave's FW-33).
 pub type PackSlot = Arc<tokio::sync::Mutex<Option<crate::run::design::pack::PackFile>>>;
 
-/// A version file's write in flight, marked until it is dropped.
-pub struct Writing<'a> {
-    writes: &'a DocWrites,
+/// A version file's write in flight, marked until it is dropped. It owns its share of
+/// the marks, so it can travel with a step's prepared effects (the W2 re-review's N2).
+pub struct Writing {
+    writing: Arc<Mutex<HashMap<PathBuf, usize>>>,
     path: PathBuf,
 }
 
-impl Drop for Writing<'_> {
+impl Drop for Writing {
     fn drop(&mut self) {
-        crate::lock(&self.writes.writing).remove(&self.path);
+        let mut writing = crate::lock(&self.writing);
+        if let Some(marks) = writing.get_mut(&self.path) {
+            *marks = marks.saturating_sub(1);
+            if *marks == 0 {
+                writing.remove(&self.path);
+            }
+        }
     }
 }
 
 impl DocWrites {
     /// Marks `path`'s write in flight until the mark is dropped.
-    pub fn begin(&self, path: &Path) -> Writing<'_> {
-        crate::lock(&self.writing).insert(path.to_path_buf());
+    pub fn begin(&self, path: &Path) -> Writing {
+        *crate::lock(&self.writing)
+            .entry(path.to_path_buf())
+            .or_default() += 1;
         Writing {
-            writes: self,
+            writing: self.writing.clone(),
             path: path.to_path_buf(),
         }
     }
 
-    /// The pack file `path`'s slot ([`PackSlot`]).
-    pub fn pack_slot(&self, path: &Path) -> PackSlot {
-        crate::lock(&self.packs)
-            .entry(path.to_path_buf())
-            .or_default()
-            .clone()
+    /// Run `run_id`'s pack file `path`'s slot ([`PackSlot`]).
+    pub fn pack_slot(&self, run_id: &str, path: &Path) -> PackSlot {
+        let mut packs = crate::lock(&self.packs);
+        let (_, slot) = (packs.entry(path.to_path_buf()))
+            .or_insert_with(|| (run_id.to_string(), PackSlot::default()));
+        slot.clone()
+    }
+
+    /// Every run not in `going` (ended, or discarded) loses its pack slots, as
+    /// `NotesPasted::forget` drops its pasted notes (the W2 re-review's N1). A start
+    /// still holding one keeps its own clone.
+    pub fn forget_packs(&self, going: &HashSet<String>) {
+        crate::lock(&self.packs).retain(|_, (run_id, _)| going.contains(run_id));
     }
 
     /// A test's removal of a pack file, as if no start had written it: its slot goes.
@@ -71,9 +89,15 @@ impl DocWrites {
         crate::lock(&self.packs).remove(path);
     }
 
+    /// The pack files that have a slot.
+    #[cfg(test)]
+    pub fn pack_paths(&self) -> Vec<PathBuf> {
+        crate::lock(&self.packs).keys().cloned().collect()
+    }
+
     /// Whether `path`'s write is in flight.
     pub fn in_flight(&self, path: &Path) -> bool {
-        crate::lock(&self.writing).contains(path)
+        crate::lock(&self.writing).contains_key(path)
     }
 
     /// The write of `text` to the index `path`, numbered now, to run on a blocking thread.

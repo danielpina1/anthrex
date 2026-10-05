@@ -20,11 +20,12 @@ use super::RunService;
 pub use super::design_files::{DocWrites, write_new};
 #[cfg(test)]
 pub use super::design_files::{make_dirs, temp_name, write_new_at};
+use super::effects::Ready;
 use crate::run::design::changes::line_diff;
 use crate::run::design::state::{self, DocVersion, sha256_hex};
 use crate::run::design::template::kind_name;
 use crate::run::design::versions::WrittenDoc;
-use crate::run::engine::{DocChecked, EventKind};
+use crate::run::engine::{DocChecked, Effect, EventKind};
 
 /// How long a design file's write or read may take before it is given up.
 pub const IO_WAIT: Duration = Duration::from_secs(10);
@@ -64,6 +65,9 @@ struct Found {
     /// The previous version and its file, for a diff.
     previous: Option<(DocVersion, PathBuf)>,
     findings: PathBuf,
+    /// A review draft's: its review's findings, as the engine holds them (the W3 carry);
+    /// a gate version's are read from `findings`.
+    review: Option<Vec<DocFinding>>,
 }
 
 /// Why a read gave nothing: the file differs from the index (refused as it is), or it
@@ -88,6 +92,26 @@ impl RunService {
     ) {
         self.write_doc_with((path, text, index, doc), IO_WAIT, write_new)
             .await
+    }
+
+    /// The W2 re-review's N2: each `WriteDoc` of a step's prepared effects marks its
+    /// version in flight now, under the engine lock of the step that stored it, so a
+    /// read served before its write runs (the step's `run.json` save comes first) gets
+    /// the retry text, never a missing file. The mark travels with the effect and is
+    /// dropped once its write ends, or with the effects.
+    pub(super) fn mark_writes(&self, ready: Vec<Ready>) -> Vec<Ready> {
+        (ready.into_iter())
+            .map(|item| match item {
+                Ready::Effect(effect @ Effect::WriteDoc { .. }) => {
+                    let Effect::WriteDoc { path, .. } = &effect else {
+                        unreachable!()
+                    };
+                    let mark = self.doc_writes.begin(path);
+                    Ready::Write(effect, mark)
+                }
+                other => other,
+            })
+            .collect()
     }
 
     /// [`write_doc`](Self::write_doc), bounded by `wait`, with its file write `write`
@@ -234,6 +258,11 @@ impl RunService {
             previous: (design.previous(version))
                 .map(|p| (p.clone(), dir.join(design.file_name(p)))),
             findings: dir.join(state::findings_name(version.kind, version.n)),
+            review: version.draft_review.map(|k| {
+                (design.reviews.iter())
+                    .rfind(|r| r.doc == version.kind && r.n == k && !r.dropped)
+                    .map_or_else(Vec::new, |r| r.findings.clone())
+            }),
             version: version.clone(),
         })
     }
@@ -264,9 +293,10 @@ fn read_view(found: Found, query: &DocQuery) -> Result<DocView, ReadError> {
         }
         _ => None,
     };
-    let findings = match query.findings {
-        true => cap_findings(read_findings(&found.findings).map_err(ReadError::Io)?),
-        false => Vec::new(),
+    let findings = match (query.findings, found.review) {
+        (true, Some(review)) => cap_findings(review.into_iter().map(|f| (f, None)).collect()),
+        (true, None) => cap_findings(read_findings(&found.findings).map_err(ReadError::Io)?),
+        (false, _) => Vec::new(),
     };
     Ok(DocView {
         run: found.run,

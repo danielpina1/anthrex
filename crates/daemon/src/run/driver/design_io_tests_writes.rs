@@ -228,3 +228,141 @@ async fn a_review_draft_view_names_its_review() {
         other => panic!("{other:?}"),
     }
 }
+
+/// The W2 re-review's N2: a version is in flight from the step that stored it, not
+/// from its write. The user's edit stores v2; its step's `run.json` save is held, so
+/// the step's `WriteDoc` has not run; meanwhile `run show` of v2 answers the retry
+/// text, never a missing file. Released, v2 is shown.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_version_is_in_flight_from_the_step_that_stored_it() {
+    let dir = tmp();
+    let (s, write) = at_spec_gate(dir.path());
+    s.write_doc_with(write, IO_WAIT, super::write_new).await;
+    let shutdown = CancellationToken::new();
+    s.spawn(shutdown.clone());
+    // The loop's first tick saves the run; it is waited for, so the stall below holds
+    // only the edit's own step.
+    let saved = dir.path().join("runs").join(RUN_ID).join("run.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !saved.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the first tick never saved the run"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // The run's `run.json` writes, stalled on a thread of the test's own.
+    let slot = s.writes.slot(RUN_ID);
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let (locked, taken) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let _stalled = crate::lock(&slot);
+        let _ = locked.send(());
+        let _ = held.recv_timeout(Duration::from_secs(30));
+    });
+    taken.recv_timeout(Duration::from_secs(10)).expect("held");
+    let editor = s.clone();
+    let edit = tokio::spawn(async move {
+        editor
+            .request(RunRequest::DocGate {
+                run: RUN_ID.into(),
+                kind: DocGateKind::Spec,
+                action: DocGateAction::Edit {
+                    text: crate::run::design::template::tests::SPEC.into(),
+                },
+            })
+            .await
+    });
+    // The step has stored v2 (its state is committed before its effects run).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let stored = {
+            let state = crate::lock(&s.state);
+            let design = state.runs[RUN_ID].orch.design.as_ref();
+            design.is_some_and(|d| d.find(DocKind::Spec, Some(2)).is_some())
+        };
+        if Instant::now() >= deadline {
+            panic!("v2 was never stored: {:?}", edit.await);
+        }
+        if stored {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let show = || RunRequest::ShowDoc {
+        run: RUN_ID.into(),
+        kind: DocKind::Spec,
+        version: Some(2),
+        diff: false,
+        findings: false,
+    };
+    let retry = "v2 is still being written; try again in a moment";
+    let refused = RunReply::refused(request::SHOW_DOC, retry);
+    assert_eq!(s.request(show()).await, refused);
+    drop(release);
+    holder.join().unwrap();
+    tokio::time::timeout(Duration::from_secs(10), edit)
+        .await
+        .expect("the edit is answered")
+        .unwrap();
+    match s.request(show()).await {
+        RunReply::Doc { doc, .. } => assert!(doc.text.starts_with("# Password reset\n"), "{doc:?}"),
+        other => panic!("{other:?}"),
+    }
+    shutdown.cancel();
+}
+
+/// The W3 carry: `run show --findings` of a review draft shows that review's findings
+/// (no answers yet), none while the review has given none.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_review_drafts_findings_are_its_reviews() {
+    use crate::run::design::state::{DocReviewRecord, NewDoc};
+    let dir = tmp();
+    let s = service(dir.path(), design_run(dir.path()));
+    let draft = NewDoc {
+        draft_review: Some(1),
+        ..spec(SPEC_1)
+    };
+    let (_, write) = store(&s, draft);
+    super::tests::apply(&s, write).await;
+    let finding = proto::DocFinding {
+        id: "F1".into(),
+        severity: proto::DocSeverity::Blocking,
+        place: "R1".into(),
+        text: "The link's lifetime is missing.".into(),
+    };
+    let review = |findings: Vec<proto::DocFinding>| DocReviewRecord {
+        doc: DocKind::Spec,
+        n: 1,
+        findings,
+        failed: None,
+        after: 0,
+        same_runtime: false,
+        dropped: false,
+    };
+    let set = |record: DocReviewRecord| {
+        let mut state = crate::lock(&s.state);
+        let design = state.runs.get_mut(RUN_ID).unwrap().orch.design.as_mut();
+        design.unwrap().reviews = vec![record];
+    };
+    let show = RunRequest::ShowDoc {
+        run: RUN_ID.into(),
+        kind: DocKind::Spec,
+        version: None,
+        diff: false,
+        findings: true,
+    };
+    set(review(Vec::new()));
+    match s.request(show.clone()).await {
+        RunReply::Doc { doc, .. } => assert_eq!(doc.findings, Vec::new()),
+        other => panic!("{other:?}"),
+    }
+    set(review(vec![finding.clone()]));
+    match s.request(show).await {
+        RunReply::Doc { doc, .. } => {
+            assert_eq!(doc.draft_review, Some(1));
+            assert_eq!(doc.findings, vec![(finding, None)]);
+        }
+        other => panic!("{other:?}"),
+    }
+}
