@@ -317,7 +317,7 @@ fn phase_name(run: &Run) -> Option<&'static str> {
 }
 
 /// The design phase of a run in `state`: its own, or at a revising gate its gate's.
-fn phase_of(run: &Run, state: RunState) -> Option<&'static str> {
+pub(super) fn phase_of(run: &Run, state: RunState) -> Option<&'static str> {
     let design = run.orch.design.as_ref()?;
     match state {
         RunState::Brainstorming => Some("brainstorming"),
@@ -362,9 +362,9 @@ pub(super) fn tick(run: &mut Run, now: u64) {
         return;
     }
     let text = format!("design flow: the {phase} phase passed its {minutes} min budget");
+    super::design_spend::stop_clock(run, now);
     if let Some(design) = run.orch.design.as_mut() {
         design.halted_from = Some(run.state);
-        design.phase_started = None;
     }
     // Fix round 1 (m1): halted as every halt is (its log line and wake note).
     super::merge::halt(run, text, now);

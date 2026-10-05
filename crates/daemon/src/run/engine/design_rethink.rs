@@ -52,6 +52,8 @@ pub(in crate::run::engine) fn rethink(run: &mut Run, note: &str, now: u64) {
     let labels: Vec<String> = (design.brainstormers.iter())
         .map(|a| a.label.clone())
         .collect();
+    // Ruling T13-1: each one's next session is routed `rethink`.
+    design.rethink_starts = labels.clone();
     let text = format!(
         "brainstormers queued again for round {round}: {}",
         labels.join(", ")

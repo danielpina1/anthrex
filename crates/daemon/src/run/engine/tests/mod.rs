@@ -66,6 +66,7 @@ mod design_commit;
 mod design_commit_rounds;
 mod design_fixture;
 mod design_gate;
+mod design_history;
 mod design_notes;
 mod design_phases;
 mod design_plan;

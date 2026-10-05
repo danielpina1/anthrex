@@ -27,6 +27,7 @@ use crate::scout::report::ScoutReportArgs;
 mod attention;
 pub mod context;
 pub mod contract;
+pub mod contract_design;
 pub mod contract_rounds;
 pub mod digest;
 pub mod extract;

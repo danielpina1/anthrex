@@ -307,15 +307,24 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
 /// so), else the strongest model of its runtime (`roster_default`). A document reviewer
 /// (task M9.6.10) is the orchestrator's peer (`peer_route`), else its own runtime
 /// (`same_runtime`), with no list.
-pub fn design_agent_record(run: &Run, agent: &DesignAgent, now: u64) -> RoleRoutingDecision {
+///
+/// Its trigger is `start` for a first session, `rethink` for the first session of a
+/// rethink's round (`rethink`, ruling T13-1), else `relaunch` (ruling T8-7's relaunch,
+/// a restart's, a resume's).
+pub fn design_agent_record(
+    run: &Run,
+    agent: &DesignAgent,
+    rethink: bool,
+    now: u64,
+) -> RoleRoutingDecision {
+    let trigger = match (agent.session, rethink) {
+        (1, _) => "start",
+        (_, true) => "rethink",
+        _ => "relaunch",
+    };
     if agent.role == AgentRole::DocReviewer {
         let same = (run.orch.orchestrator.as_ref()).is_some_and(|o| o.route == agent.route);
         let source = if same { "same_runtime" } else { "peer_route" };
-        let trigger = if agent.session == 1 {
-            "start"
-        } else {
-            "relaunch"
-        };
         let session = format!("{}/{}", agent.label, agent.session);
         let (input, route) = (input_of(run), &agent.route);
         return record(
@@ -343,11 +352,6 @@ pub fn design_agent_record(run: &Run, agent: &DesignAgent, now: u64) -> RoleRout
     let source = match agent.listed {
         true => lists::LIST_SOURCE,
         false => "roster_default",
-    };
-    let trigger = if agent.session == 1 {
-        "start"
-    } else {
-        "relaunch"
     };
     record(
         Some(run),

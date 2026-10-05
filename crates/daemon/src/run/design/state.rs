@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub use super::pack::FrozenPack;
 pub use super::requirements::Requirement;
+pub use super::spend::{AgentSpend, PhaseSpend};
 pub use super::versions::{
     DocVersion, LABELS, NewDoc, findings_name, index_text, sha256_hex, store, store_findings,
 };
@@ -105,6 +106,14 @@ pub struct DesignState {
     /// gate's engine pass last rendered `plan.md`. In memory only.
     #[serde(skip)]
     pub plan_fingerprint: Option<String>,
+    /// Decision 32 and ruling T13-1 (task M9.6.13): each phase's spend, per round, for
+    /// its history record and REPORT.md's spend line.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub spend: Vec<PhaseSpend>,
+    /// Ruling T13-1: the brainstormers whose next session starts a rethink's round,
+    /// routed with trigger `rethink`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rethink_starts: Vec<String>,
 }
 
 fn is_zero(n: &u32) -> bool {

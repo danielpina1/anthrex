@@ -119,6 +119,7 @@ fn a_phase_record() -> PhaseRecord {
                 calls: 31,
                 tokens: 812_000,
                 outcome: "ok".into(),
+                secs: 600,
             },
             PhaseAgent {
                 role: AgentRole::DocReviewer,
@@ -126,6 +127,7 @@ fn a_phase_record() -> PhaseRecord {
                 calls: 9,
                 tokens: 120_000,
                 outcome: "failed: the session exited".into(),
+                secs: 240,
             },
         ],
         gate_versions: 2,

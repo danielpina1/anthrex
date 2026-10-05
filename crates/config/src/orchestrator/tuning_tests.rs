@@ -88,7 +88,7 @@ fn defaults_when_absent() {
         assert!(list.candidates.is_empty());
         assert_eq!(list.pick, Pick::First);
     }
-    assert_eq!(t.configured, ConfiguredBudgets { s: false, m: false });
+    assert_eq!(t.configured, ConfiguredBudgets::default());
 }
 
 #[test]
@@ -212,10 +212,22 @@ fn unknown_tuning_keys_are_reported() {
 fn an_explicit_budget_is_configured() {
     let (t, problems) = tuning_of("[orchestrator.budget.s]\ntool_calls = 40\n");
     assert!(problems.is_empty(), "{problems:?}");
-    assert_eq!(t.configured, ConfiguredBudgets { s: true, m: false });
+    assert_eq!(
+        t.configured,
+        ConfiguredBudgets {
+            s: true,
+            ..ConfiguredBudgets::default()
+        }
+    );
 
     let (t, _) = tuning_of("[orchestrator.budget.m]\nminutes = 60\n");
-    assert_eq!(t.configured, ConfiguredBudgets { s: false, m: true });
+    assert_eq!(
+        t.configured,
+        ConfiguredBudgets {
+            m: true,
+            ..ConfiguredBudgets::default()
+        }
+    );
 
     // The default values, without the table, are not explicit.
     let (config, _) = parse("");
@@ -229,6 +241,39 @@ fn an_explicit_budget_is_configured() {
     // value that went back to its default, nor `[orchestrator.budget.l]`.
     let (t, _) = tuning_of(
         "[orchestrator.budget.s]\n[orchestrator.budget.m]\n[orchestrator.budget.l]\ntool_calls = 500\n",
+    );
+    assert_eq!(t.configured, ConfiguredBudgets::default());
+}
+
+/// Milestone 9.6 decision 33 (task M9.6.13): ruling RH-5 holds for the design
+/// agents' budgets too: a `[orchestrator.design.budget.<role>]` that sets a value
+/// beats the refit; an empty one does not.
+#[test]
+fn an_explicit_design_budget_is_configured() {
+    let (t, problems) = tuning_of(
+        "[orchestrator.design.budget.brainstormer]
+tool_calls = 60
+",
+    );
+    assert!(problems.is_empty(), "{problems:?}");
+    let brainstormer = ConfiguredBudgets {
+        brainstormer: true,
+        ..ConfiguredBudgets::default()
+    };
+    assert_eq!(t.configured, brainstormer);
+    let (t, _) = tuning_of(
+        "[orchestrator.design.budget.doc_reviewer]
+minutes = 20
+",
+    );
+    let reviewer = ConfiguredBudgets {
+        doc_reviewer: true,
+        ..ConfiguredBudgets::default()
+    };
+    assert_eq!(t.configured, reviewer);
+    let (t, _) = tuning_of(
+        "[orchestrator.design.budget.brainstormer]
+",
     );
     assert_eq!(t.configured, ConfiguredBudgets::default());
 }

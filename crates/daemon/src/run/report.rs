@@ -31,6 +31,8 @@ pub fn render(run: &Run, now: u64) -> String {
         out.push('\n');
         render_task(task, now, &mut out);
     }
+    // Milestone 9.6 decision 27.
+    super::report_design::section(run, &mut out);
     // Milestone 9.1 decision 59.
     super::report_tiers::section(run, &mut out);
     // Milestone 9 decisions 35 and 36.

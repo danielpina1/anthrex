@@ -244,6 +244,11 @@ pub struct PhaseAgent {
     pub tokens: u64,
     /// `"ok"`, `"failed: <reason>"` or `"over budget"`.
     pub outcome: String,
+    /// Ruling T13-1 (task M9.6.13): its active seconds, summed with its calls and tokens
+    /// over all its sessions in the phase; the refit's minutes. Absent from a line
+    /// written before it: 0.
+    #[serde(default)]
+    pub secs: u64,
 }
 
 #[cfg(test)]

@@ -25,6 +25,7 @@ pub mod pack;
 pub mod plan_md;
 pub mod report;
 pub mod requirements;
+pub mod spend;
 pub mod state;
 pub mod template;
 pub mod versions;

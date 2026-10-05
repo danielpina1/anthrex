@@ -118,6 +118,8 @@ pub(crate) fn act(
     let what = format!("{} v{n}", kind.label());
     match action {
         DocGateAction::Approve => {
+            // Decision 32 (task M9.6.13): the phase's history record.
+            super::design_spend::approved(run, kind, now, fx);
             let text = approve(run, kind, &what, now);
             // Task M9.6.10: the approved spec's requirements, from its stored text.
             if kind == DocGateKind::Spec {
@@ -372,6 +374,7 @@ pub(super) fn open(
     let text = doc.text.clone();
     let (version, write) = store(run, doc, now)?;
     fx.push(write);
+    super::design_spend::stop_clock(run, now);
     if let Some(design) = run.orch.design.as_mut() {
         design.keep_text(version.kind, version.n, text);
         design.gate = Some(DocGate {
@@ -382,7 +385,6 @@ pub(super) fn open(
             review: false,
             cause: Revision::Changes,
         });
-        design.phase_started = None;
     }
     run.state = RunState::AwaitingApproval;
     let text = format!("the {} v{} awaits the user", kind.label(), version.n);

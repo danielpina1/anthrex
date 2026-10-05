@@ -140,6 +140,9 @@ impl RunLimits {
         self.budget_s = tuned.effective(config, SizeClass::S);
         self.budget_m = tuned.effective(config, SizeClass::M);
         self.budget_hub = tuned.budget_hub;
+        // Milestone 9.6 decision 33: the design agents' effective budgets.
+        self.orch.design.brainstormer = tuned.effective(config, SizeClass::Brainstorm);
+        self.orch.design.doc_reviewer = tuned.effective(config, SizeClass::DocReview);
         self.class_routes = tuned.routes;
         self.path_weights = tuned.weights.clone();
         self.thresholds = tuned.thresholds;

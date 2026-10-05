@@ -26,6 +26,10 @@ pub struct Tuned {
     pub budget_s: Option<Budget>,
     pub budget_m: Option<Budget>,
     pub budget_hub: Option<Budget>,
+    /// Milestone 9.6 decision 33: the design agents' refit budgets, used as a task
+    /// class's are.
+    pub budget_brainstorm: Option<Budget>,
+    pub budget_doc_review: Option<Budget>,
     pub configured: ConfiguredBudgets,
     pub weights: Option<PathWeights>,
     pub thresholds: SizeThresholds,
@@ -44,6 +48,12 @@ impl Tuned {
             SizeClass::S => self.budget_s.unwrap_or(cfg.budget_s),
             SizeClass::M => m,
             SizeClass::Hub => self.budget_hub.unwrap_or(m),
+            SizeClass::Brainstorm => {
+                (self.budget_brainstorm).unwrap_or(cfg.design.budget.brainstormer)
+            }
+            SizeClass::DocReview => {
+                (self.budget_doc_review).unwrap_or(cfg.design.budget.doc_reviewer)
+            }
         }
     }
 }
@@ -79,7 +89,7 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
                     "tuning: budget {c} {own} configured (refit would be {})",
                     budget_text(&would)
                 )),
-                None if class != SizeClass::Hub => {
+                None if matches!(class, SizeClass::S | SizeClass::M) => {
                     log.push(format!("tuning: budget {c} {own} configured"));
                     bare += 1;
                 }
@@ -98,6 +108,8 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
     };
     let (budget_s, budget_m, budget_hub) =
         (used(SizeClass::S), used(SizeClass::M), used(SizeClass::Hub));
+    let (budget_brainstorm, budget_doc_review) =
+        (used(SizeClass::Brainstorm), used(SizeClass::DocReview));
     let weights = file.weights.clone().filter(|_| t.path_weights);
     if let Some(w) = &weights {
         log.push(format!("tuning: path weights {}", weights_text(w)));
@@ -131,6 +143,8 @@ pub fn tuned_with(lines: &[HistoryLine], file: &TuningFile, cfg: &config::Orches
         budget_s,
         budget_m,
         budget_hub,
+        budget_brainstorm,
+        budget_doc_review,
         configured: conf,
         weights,
         thresholds: thresholds_of(file),
@@ -184,10 +198,11 @@ pub fn report(
                 (true, false, None) if qualifies(&samples, t) => RefitState::Kept,
                 (true, false, None) => RefitState::NotYet,
             };
-            let weight_secs = weights.map(|w| match class {
-                SizeClass::S => w.s_secs,
-                SizeClass::M => w.m_secs,
-                SizeClass::Hub => w.hub_secs,
+            let weight_secs = weights.and_then(|w| match class {
+                SizeClass::S => Some(w.s_secs),
+                SizeClass::M => Some(w.m_secs),
+                SizeClass::Hub => Some(w.hub_secs),
+                SizeClass::Brainstorm | SizeClass::DocReview => None,
             });
             let weight_derived =
                 weights.is_some_and(|w| w.derived.iter().any(|d| d == class.label()));

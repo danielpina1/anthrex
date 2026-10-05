@@ -88,11 +88,14 @@ impl Default for Tuning {
 
 /// Whether config sets `[orchestrator.budget.s]` and `[orchestrator.budget.m]`
 /// explicitly (ruling RH-5): such a class keeps its configured budget, and its refit is
-/// only shown.
+/// only shown. Milestone 9.6 decision 33: so do the design agents'
+/// `[orchestrator.design.budget.brainstormer]` and `.doc_reviewer`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ConfiguredBudgets {
     pub s: bool,
     pub m: bool,
+    pub brainstormer: bool,
+    pub doc_reviewer: bool,
 }
 
 /// Everything 9.5 reads from `[orchestrator]`: `config::Orchestrator.tuning`.
@@ -186,9 +189,8 @@ fn read_table(t: &toml::Table, o: &mut Tuning, problems: &mut Vec<Problem>) {
 /// An empty `[orchestrator.budget.s]`, as the Settings screen leaves behind when it
 /// deletes a value set back to its default, is not.
 fn configured_budgets(orchestrator: &toml::Table) -> ConfiguredBudgets {
-    let explicit = |rung: &str| {
-        orchestrator
-            .get("budget")
+    let explicit = |table: Option<&toml::Value>, rung: &str| {
+        table
             .and_then(|b| b.get(rung))
             .and_then(|r| r.as_table())
             .is_some_and(|r| {
@@ -197,9 +199,13 @@ fn configured_budgets(orchestrator: &toml::Table) -> ConfiguredBudgets {
                     .any(|k| r.contains_key(*k))
             })
     };
+    let budget = orchestrator.get("budget");
+    let design = orchestrator.get("design").and_then(|d| d.get("budget"));
     ConfiguredBudgets {
-        s: explicit("s"),
-        m: explicit("m"),
+        s: explicit(budget, "s"),
+        m: explicit(budget, "m"),
+        brainstormer: explicit(design, "brainstormer"),
+        doc_reviewer: explicit(design, "doc_reviewer"),
     }
 }
 

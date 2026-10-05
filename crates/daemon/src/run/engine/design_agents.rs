@@ -83,6 +83,7 @@ pub(super) fn queue_brainstormers(
     };
     design.pack = Some(pack);
     design.drafts_settled = false;
+    design.rethink_starts.clear();
     design.brainstormers = (picks.iter())
         .map(|p| DesignAgent {
             label: p.label.clone(),
@@ -137,9 +138,14 @@ pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
 /// Brainstormer `k`'s next session, its record opened before its start.
 fn start(run: &mut Run, k: usize, now: u64, fx: &mut Vec<Effect>) {
     let op = next_op(run);
-    let Some(agent) = run.orch.design.as_mut().map(|d| &mut d.brainstormers[k]) else {
+    let Some(design) = run.orch.design.as_mut() else {
         return;
     };
+    // Ruling T13-1: the first session of a rethink's round is routed `rethink`.
+    let label = design.brainstormers[k].label.clone();
+    let rethink = design.rethink_starts.contains(&label);
+    design.rethink_starts.retain(|l| *l != label);
+    let agent = &mut design.brainstormers[k];
     agent.session += 1;
     agent.state = DesignAgentState::Running;
     agent.window_id = None;
@@ -151,7 +157,7 @@ fn start(run: &mut Run, k: usize, now: u64, fx: &mut Vec<Effect>) {
         agent.label, agent.session
     );
     log(run, now, text);
-    history::open(run, roles::design_agent_record(run, &agent, now));
+    history::open(run, roles::design_agent_record(run, &agent, rethink, now));
     let kind = OpKind::StartDesignAgent {
         spec: Box::new(spec),
     };
@@ -275,18 +281,22 @@ pub(super) fn ended(
     if agent.session != session {
         return;
     }
+    // Ruling T13-1: its calls are summed over its sessions, as its tokens are.
     agent.tokens += usage.input + usage.output + usage.cache_read + usage.cache_write;
-    agent.calls = calls;
+    agent.calls += calls;
     let done = matches!(
         agent.state,
         DesignAgentState::Submitted | DesignAgentState::Done
     );
+    let ended = agent.clone();
     // Ruling T8-7: an unnudged end without the draft is its own cause, by type.
     let (reason, unsubmitted) = match outcome {
         ScoutEnd::Failed { reason } => (reason, false),
         ScoutEnd::Unsubmitted { reason } => (reason, true),
         ScoutEnd::Reported => (NO_DRAFT.to_string(), false),
     };
+    let failure = (!done).then_some(reason.as_str());
+    super::design_spend::session_ended(run, &ended, (calls, &usage), failure, now);
     let record = format!("{label}/{session}");
     let closed = match done {
         true => (RoleOutcome::Completed, Some(DRAFT_ACCEPTED.to_string())),

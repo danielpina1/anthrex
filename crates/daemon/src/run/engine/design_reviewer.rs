@@ -136,7 +136,7 @@ pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
         agent.label, agent.session
     );
     log(run, now, text);
-    history::open(run, roles::design_agent_record(run, &agent, now));
+    history::open(run, roles::design_agent_record(run, &agent, false, now));
     let kind = OpKind::StartDesignAgent {
         spec: Box::new(spec),
     };
@@ -201,17 +201,21 @@ pub(super) fn ended(
     let Some(agent) = current(run, label, session) else {
         return;
     };
+    // Ruling T13-1: its calls are summed over its sessions, as its tokens are.
     agent.tokens += usage.input + usage.output + usage.cache_read + usage.cache_write;
-    agent.calls = calls;
+    agent.calls += calls;
     let (done, running) = (
         agent.state == DesignAgentState::Done,
         agent.state == DesignAgentState::Running,
     );
+    let ended = agent.clone();
     let (reason, unsubmitted) = match outcome {
         ScoutEnd::Failed { reason } => (reason, false),
         ScoutEnd::Unsubmitted { reason } => (reason, true),
         ScoutEnd::Reported => (NO_FINDINGS.to_string(), false),
     };
+    let failure = (!done).then_some(reason.as_str());
+    super::super::design_spend::session_ended(run, &ended, (calls, &usage), failure, now);
     let closed = match done {
         true => (RoleOutcome::Completed, Some(FINDINGS_ACCEPTED.to_string())),
         false => (RoleOutcome::Failed, Some(reason.clone())),

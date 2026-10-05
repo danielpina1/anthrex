@@ -31,8 +31,16 @@ pub(super) fn list_of(lists: &RouteLists, class: SizeClass) -> &RouteList {
         SizeClass::S => &lists.s,
         SizeClass::M => &lists.m,
         SizeClass::Hub => &lists.hub,
+        SizeClass::Brainstorm => &lists.brainstorm,
+        // The document reviewer has no list (decision 10: the orchestrator's peer).
+        SizeClass::DocReview => &NO_LIST,
     }
 }
+
+static NO_LIST: RouteList = RouteList {
+    candidates: Vec::new(),
+    pick: config::Pick::First,
+};
 
 /// `list (config): <runtime>/<model> <effort>, …`, a candidate without `effort` taking
 /// the class's.
@@ -70,7 +78,7 @@ fn threshold_proposal(
     let (step, cur) = match class {
         SizeClass::S => (5, current.s_lines),
         SizeClass::M => (10, current.m_lines),
-        SizeClass::Hub => return None,
+        SizeClass::Hub | SizeClass::Brainstorm | SizeClass::DocReview => return None,
     };
     let lines_new = u32::try_from(p.div_ceil(step).max(1) * step).unwrap_or(u32::MAX);
     if !moved(lines_new.into(), cur.into(), t.min_change_percent)
@@ -102,6 +110,8 @@ pub(super) fn current_route(file: &TuningFile, class: SizeClass) -> ClassRoute {
         SizeClass::S => file.routes.get("s").copied().unwrap_or(defaults.s),
         SizeClass::M => file.routes.get("m").copied().unwrap_or(defaults.m),
         SizeClass::Hub => defaults.hub,
+        // Never asked: a design agent's route is decision 10's, not a class route.
+        SizeClass::Brainstorm | SizeClass::DocReview => defaults.m,
     }
 }
 
@@ -117,7 +127,7 @@ fn route_proposal(
     let ladder = match class {
         SizeClass::S => &S_ROUTE_LADDER,
         SizeClass::M => &M_ROUTE_LADDER,
-        SizeClass::Hub => return None,
+        SizeClass::Hub | SizeClass::Brainstorm | SizeClass::DocReview => return None,
     };
     if !list_of(&cfg.tuning.routes, class).candidates.is_empty() {
         return None;

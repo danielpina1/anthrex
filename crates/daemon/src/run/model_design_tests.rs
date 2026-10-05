@@ -288,6 +288,29 @@ fn the_state_survives_save_and_load() {
         spec_unread: true,
         plan_revision: Some("Add mail.".into()),
         plan_fingerprint: None,
+        // Task M9.6.13 (ruling T13-1): each phase's spend, and a rethink's pending
+        // starts.
+        spend: vec![crate::run::design::state::PhaseSpend {
+            round: 1,
+            phase: "brainstorming".into(),
+            secs: 420,
+            agents: vec![crate::run::design::state::AgentSpend {
+                label: "codex".into(),
+                role: AgentRole::Brainstormer,
+                route: Route {
+                    runtime: Runtime::Codex,
+                    model: "gpt-6".into(),
+                    strength: Strength::Frontier,
+                    effort: Effort::High,
+                },
+                sessions: 2,
+                calls: 11,
+                tokens: 1_200,
+                secs: 300,
+                outcome: "ok".into(),
+            }],
+        }],
+        rethink_starts: vec!["claude".into()],
     };
     let mut run = old_run();
     run.design_mode = DesignMode::Full;

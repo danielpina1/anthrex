@@ -383,11 +383,14 @@ fn a_brainstormers_record_names_its_picks_source() {
         listed: true,
         unsubmitted: false,
     };
-    assert_eq!(design_agent_record(&run, &agent, 5).source, LIST_SOURCE);
+    assert_eq!(
+        design_agent_record(&run, &agent, false, 5).source,
+        LIST_SOURCE
+    );
     // The same route, not chosen by the list, is the roster's default.
     agent.listed = false;
     assert_eq!(
-        design_agent_record(&run, &agent, 5).source,
+        design_agent_record(&run, &agent, false, 5).source,
         "roster_default"
     );
 }

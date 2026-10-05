@@ -162,6 +162,20 @@ fn phase_history_line_round_trips() {
     let text = serde_json::to_string(&line).unwrap();
     assert!(!text.contains('\n'), "one line");
     assert_eq!(serde_json::from_str::<HistoryLine>(&text).unwrap(), line);
+    assert_eq!(json["agents"][0]["secs"], 600);
+}
+
+/// Task M9.6.13 (ruling T13-1): a phase agent's active seconds, defaulted on a line
+/// written before them.
+#[test]
+fn a_phase_agent_without_secs_decodes() {
+    let mut json = serde_json::to_value(HistoryLine::Phase(a_phase_record())).unwrap();
+    json["agents"][0].as_object_mut().unwrap().remove("secs");
+    let line: HistoryLine = serde_json::from_value(json).unwrap();
+    let HistoryLine::Phase(record) = line else {
+        panic!("{line:?}");
+    };
+    assert_eq!((record.agents[0].secs, record.agents[1].secs), (0, 240));
 }
 
 #[test]

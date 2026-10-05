@@ -296,13 +296,13 @@ fn unread_halt(run: &mut Run, text: String, now: u64) {
         run.halt_retryable = true;
         return log(run, now, text);
     }
+    super::super::design_spend::stop_clock(run, now);
     let from = match run.state {
         RunState::Paused => run.paused_from.take(),
         state => Some(state),
     };
     if let Some(design) = run.orch.design.as_mut() {
         design.halted_from = from;
-        design.phase_started = None;
     }
     super::super::merge::halt(run, text, now);
     run.halt_retryable = true;

@@ -20,7 +20,7 @@ pick = "spread"
     let table: &Tuning = &tuning.table;
     assert_eq!(table.min_samples, 30);
     let configured: ConfiguredBudgets = tuning.configured;
-    assert_eq!(configured, ConfiguredBudgets { s: false, m: true });
+    assert_eq!((configured.s, configured.m), (false, true));
     let lists: &RouteLists = &tuning.routes;
     let review: &RouteList = &lists.review;
     assert_eq!(review.pick, Pick::Spread);

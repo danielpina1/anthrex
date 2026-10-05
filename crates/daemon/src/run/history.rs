@@ -3,11 +3,14 @@
 //! file, and the engine (`engine/history.rs`) emits the ops.
 
 use proto::{
-    AgentRole, GateTally, HISTORY_VERSION, PairPhase, RunRecord, RunState, Severity, SeverityTally,
-    TaskOutcome, TaskPattern, TaskRecord, TaskState, TokenUsage, Verdict,
+    AgentRole, DocGateKind, GateTally, HISTORY_VERSION, PairPhase, PhaseRecord, RunRecord,
+    RunState, Severity, SeverityTally, TaskOutcome, TaskPattern, TaskRecord, TaskState, TokenUsage,
+    Verdict,
 };
 
 use super::contract::generated_files_message;
+use super::design::spend::phase_name;
+use super::design::state::gate_doc;
 use super::model::{Run, SizeCheckState, Task, writes_task};
 use super::phases::phase_mut;
 
@@ -265,6 +268,34 @@ pub fn run_record(run: &Run, outcome: &str, now: u64) -> RunRecord {
         tasks: count(run.tasks.len()),
         usage: Some(super::snapshot::run_usage(run)),
     }
+}
+
+/// Milestone 9.6 decision 32: the record of design phase `kind`'s gate (its phase) in
+/// the run's current round, `<run>/phase/<round>/<phase>`: the phase clock's time and
+/// each design agent's summed spend (ruling T13-1), the gate's versions, and the
+/// findings its versions kept (`kept: <reason>`). `None` without the design flow.
+pub fn phase_record(run: &Run, kind: DocGateKind, now: u64) -> Option<PhaseRecord> {
+    let design = run.orch.design.as_ref()?;
+    let (round, doc, phase) = (run.round(), gate_doc(kind), phase_name(kind));
+    let spend = design.phase_spend(round, phase);
+    let disputed = (design.versions.iter())
+        .filter(|v| v.kind == doc && v.n > 0)
+        .map(|v| v.disputed.len())
+        .sum::<usize>();
+    Some(PhaseRecord {
+        v: HISTORY_VERSION,
+        record_id: format!("{}/phase/{round}/{phase}", run.id),
+        at: now,
+        run_id: run.id.clone(),
+        round,
+        phase: phase.to_string(),
+        secs: spend.map_or(0, |s| s.secs),
+        agents: spend.map_or_else(Vec::new, |s| {
+            s.agents.iter().map(|a| a.phase_agent()).collect()
+        }),
+        gate_versions: design.gate_versions(doc),
+        disputed: u32::try_from(disputed).unwrap_or(u32::MAX),
+    })
 }
 
 #[cfg(test)]

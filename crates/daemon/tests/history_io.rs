@@ -145,6 +145,80 @@ fn read_history_keeps_the_last_line_per_record_id_and_skips_a_torn_line() {
     assert!(!contains_record(&dir.path().join("absent.jsonl"), "a").unwrap());
 }
 
+/// A design phase's line (milestone 9.6 decision 32).
+fn phase_line() -> HistoryLine {
+    HistoryLine::Phase(proto::PhaseRecord {
+        v: proto::HISTORY_VERSION,
+        record_id: "r/phase/1/brainstorming".into(),
+        at: 5,
+        run_id: "r".into(),
+        round: 1,
+        phase: "brainstorming".into(),
+        secs: 60,
+        agents: Vec::new(),
+        gate_versions: 1,
+        disputed: 0,
+    })
+}
+
+/// Milestone 9.6 decision 32 (task M9.6.13): `HISTORY_VERSION` stays 5, because a
+/// reader that does not know the `phase` line skips it with a problem and keeps every
+/// other line. Pins `read_history`'s existing behaviour: 9.5's line types do not
+/// include `phase` (an enum of them refuses it), and a line of a type the reader does
+/// not know is dropped with one problem naming its line, the rest read.
+#[test]
+fn older_readers_skip_a_phase_line_with_a_problem() {
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    #[allow(dead_code)]
+    enum NineFiveLine {
+        Task(serde_json::Value),
+        Run(serde_json::Value),
+        Revert(serde_json::Value),
+        RoleRoute(serde_json::Value),
+        Tier(serde_json::Value),
+        Flaky(serde_json::Value),
+        Bisect(serde_json::Value),
+        Stage(serde_json::Value),
+        Round(serde_json::Value),
+    }
+    assert_eq!(proto::HISTORY_VERSION, 5);
+    let phase = serde_json::to_string(&phase_line()).unwrap();
+    let older = serde_json::from_str::<NineFiveLine>(&phase).unwrap_err();
+    assert!(
+        older.to_string().contains("unknown variant `phase`"),
+        "{older}"
+    );
+    assert!(
+        serde_json::from_str::<NineFiveLine>(&serde_json::to_string(&revert("a", 1)).unwrap())
+            .is_ok()
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.jsonl");
+    for line in [revert("a", 1), phase_line(), revert("b", 2)] {
+        append_line(&path, &line).unwrap();
+    }
+    let (lines, problems) = read_history(&path);
+    assert_eq!(lines, vec![revert("a", 1), phase_line(), revert("b", 2)]);
+    assert!(problems.is_empty(), "{problems:?}");
+    // What a reader without the `phase` type sees: a line of a type it does not know.
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        text.replace(r#""type":"phase""#, r#""type":"later_kind""#),
+    )
+    .unwrap();
+    let (lines, problems) = read_history(&path);
+    assert_eq!(lines, vec![revert("a", 1), revert("b", 2)]);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains("line 2"), "{problems:?}");
+    assert!(
+        problems[0].contains("unknown variant `later_kind`"),
+        "{problems:?}"
+    );
+}
+
 /// A run with one task whose record is being appended, as the engine leaves it.
 fn run_appending(data: &Path, history: &Path) -> (Run, OpKind) {
     let plan = parse_plan(

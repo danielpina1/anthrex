@@ -87,6 +87,8 @@ pub(super) fn ceiling(run: &Run, task: &Task) -> Budget {
         SizeClass::S => l.budget_s,
         SizeClass::M => l.budget_m,
         SizeClass::Hub => l.budget_hub.unwrap_or(l.budget_m),
+        // Never a task's class.
+        SizeClass::Brainstorm | SizeClass::DocReview => l.budget_m,
     };
     refit::ceiling(class, own, l.budget_m, l.budget_l)
 }

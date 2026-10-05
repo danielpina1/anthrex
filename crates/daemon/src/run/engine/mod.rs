@@ -53,6 +53,7 @@ pub(crate) mod design;
 mod design_agents;
 pub(crate) mod design_commit;
 pub(crate) mod design_gate;
+mod design_spend;
 mod dispatch;
 mod done;
 mod done_checked;
