@@ -79,6 +79,15 @@ fn red_once_with_a_held_fix(h: &RunHarness, rig: &PrRig, go: &Path, within: Dura
     id
 }
 
+/// Stage 1's PR record's `pushed_head` in `run.json`, now; `None` while the file is
+/// missing or mid-write.
+fn pushed_head(h: &RunHarness, id: &str) -> Option<String> {
+    let path = h.data().join("runs").join(id).join("run.json");
+    let all: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let head = &all["delivery"]["stages"][0]["pr"]["pushed_head"];
+    head.as_str().map(str::to_string)
+}
+
 /// Task `id`'s history texts, from `run.json`.
 fn history_of(run: &RunInfo, id: &str) -> Vec<String> {
     let all = run_json(run);
@@ -118,12 +127,7 @@ fn e2e_pr_a_merged_top_stage_cancels_its_working_ci_fix_task() {
         "{}",
         report(&run)
     );
-    let pushes = |h: &RunHarness| {
-        (log_lines(h, &id).iter())
-            .filter(|l| l.contains(": pushed "))
-            .count()
-    };
-    let (pushed, reflog) = (pushes(&h), stage_reflog(&rig, &id));
+    let reflog = stage_reflog(&rig, &id);
     assert!(!reflog.is_empty(), "the open's push is logged");
 
     // The user merges the PR with a merge commit and keeps the branch.
@@ -140,8 +144,21 @@ fn e2e_pr_a_merged_top_stage_cancels_its_working_ci_fix_task() {
         "{}",
         report(&run)
     );
-    let history = history_of(&run, "fix1");
-    assert!(history.iter().any(|e| e == why), "{why:?} in {history:#?}");
+    // `run.json` is saved on a blocking thread after the step, so it may lag the
+    // snapshot (fix round 1: one run in ten read it first); waited for, as the stage
+    // line is, within `REQUEST_WAIT`.
+    let deadline = Instant::now() + REQUEST_WAIT;
+    loop {
+        let history = history_of(&run, "fix1");
+        if history.iter().any(|e| e == why) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{why:?} in {history:#?} within {REQUEST_WAIT:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
     // Release the worker's hold; its session is already gone with the cancel.
     std::fs::write(&go, "").unwrap();
     assert!(
@@ -155,10 +172,12 @@ fn e2e_pr_a_merged_top_stage_cancels_its_working_ci_fix_task() {
         MERGED_DONE_WAIT,
     );
     assert_eq!(run.state, RunState::Complete, "{}", report(&run));
-    // Nothing was pushed after the merge: no push line, and the remote stage branch
-    // never moved again. (`gh` never pushes, so `calls_of(&["push"])` is empty either
-    // way; the bare repository's reflog is what a push would change.)
-    assert_eq!(pushes(&h), pushed, "{:#?}", log_lines(&h, &id));
+    // Nothing was pushed after the merge: the remote stage branch never moved again,
+    // and there is no update push's line (`watch::pushed`; the open's push logs none,
+    // and fix1 never reached a push). `gh` never pushes, so `calls_of(&["push"])` is
+    // empty either way; the bare repository's reflog is what a push would change.
+    let log = log_lines(&h, &id);
+    assert!(!log.iter().any(|l| l.contains(": pushed ")), "{log:#?}");
     assert_eq!(stage_reflog(&rig, &id), reflog);
     assert!(
         !log_lines(&h, &id).iter().any(|l| l.contains(NOT_DELIVERED)),
@@ -194,6 +213,18 @@ fn user_pushes_merged_before_a_view(method: MergeMethodArg) {
         );
         std::thread::sleep(Duration::from_millis(20));
     };
+    // The push's answer processed: from here the interval base is `poll_secs`
+    // (`watch::succeeded`, then `watch::pushed`), which the backoff below counts from.
+    // The answer may come up to the push op's own bound after the ref moved.
+    let deadline = Instant::now() + PUSH_WAIT;
+    while pushed_head(&h, &id).as_deref() != Some(h2.as_str()) {
+        assert!(
+            Instant::now() < deadline,
+            "the push of {h2} was not answered within {PUSH_WAIT:?}: {}",
+            h.log_tail()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let pushed_at = Instant::now();
     let branch = format!("anthrex/{id}/stage-1");
     rig.ctl()
@@ -225,9 +256,15 @@ fn user_pushes_merged_before_a_view(method: MergeMethodArg) {
         |r| r.state == RunState::Complete || undelivered(r) || settled(r),
         wait,
     );
-    let log = log_lines(&h, &id);
     // The premise: no view confirmed H2 before the merge (or the test proves nothing).
-    let pr = run_json(&run)["delivery"]["stages"][0]["pr"].clone();
+    // The head the PR was merged at is the user's, so `land::merged` had to ask git.
+    // `run.json` is saved after the step and may lag the snapshot: the merge's view is
+    // waited for in it within `REQUEST_WAIT`.
+    let pr = until("the merge's view in run.json", REQUEST_WAIT, || {
+        let pr = run_json(&run)["delivery"]["stages"][0]["pr"].clone();
+        (pr["watermark"]["head"] == json!(u2)).then_some(pr)
+    });
+    let log = log_lines(&h, &id);
     assert_eq!(pr["pushed_head"], json!(h2), "{pr:#}");
     assert_ne!(
         pr["confirmed"],
