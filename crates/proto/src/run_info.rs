@@ -14,7 +14,7 @@ use crate::actions::ActionInfo;
 use crate::adapt::{
     DeciderSource, DiffStats, PhaseSecs, RunPath, RunUsage, SizeCheckInfo, TriageInfo,
 };
-use crate::design::{DesignMode, DocGateInfo, DocInfo};
+use crate::design::{DesignMode, DocGateInfo, DocInfo, RoundDesign};
 use crate::orch::{HoldInfo, IntegrationInfo, MessageKind, OrchestratorInfo, TaskNoteInfo};
 use crate::planner::PlannerInfo;
 use crate::profile::{ProfileSource, ProposalAlertInfo};
@@ -476,6 +476,14 @@ pub struct RunInfo {
     pub doc_gate: Option<DocGateInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub docs: Vec<DocInfo>,
+    /// Task M9.6.17: the current round's design mode, from round 2 of a design run on
+    /// (`None` in round 1 and without the flow); and while the run is halted from a
+    /// design phase or gate, the phase its plain resume returns to (`brainstorming`,
+    /// `specifying` or `planning`). Each left out while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round_design: Option<RoundDesign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub halted_phase: Option<RunState>,
 }
 
 /// Every run the daemon knows about, at one revision.

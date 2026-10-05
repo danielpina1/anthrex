@@ -180,6 +180,36 @@ pub struct DocGateInfo {
     /// the version (DF §6.1's Review panel; task M9.6.9, appended).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report: Option<ReportSummary>,
+    /// Why the orchestrator revises the version (task M9.6.17, appended): the user's
+    /// changes (the default, never written), the user's back from the next gate, or a
+    /// version anthrex could not read back, whose `revising` note is anthrex's own.
+    #[serde(default, skip_serializing_if = "RevisingCause::is_changes")]
+    pub revising_cause: RevisingCause,
+}
+
+/// What a revising gate revises for (`DocGateInfo.revising_cause`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevisingCause {
+    /// The user asked for changes; `revising` is their note.
+    #[default]
+    Changes,
+    /// The user went back to this gate from the next one; `revising` is their note.
+    Back,
+    /// anthrex could not read the stored version back; `revising` is anthrex's note.
+    ReadBack,
+}
+
+impl RevisingCause {
+    /// For `skip_serializing_if`: the default cause is not written.
+    pub fn is_changes(&self) -> bool {
+        *self == RevisingCause::Changes
+    }
+
+    /// Whether `revising` is the user's own note (changes or back).
+    pub fn is_users(&self) -> bool {
+        *self != RevisingCause::ReadBack
+    }
 }
 
 /// The merged brainstorm report, parsed: how many points its two comparison sections

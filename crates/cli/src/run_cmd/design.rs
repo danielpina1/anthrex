@@ -298,14 +298,27 @@ async fn show(
 /// `waiting for you: <kind> v<n> (anthrex run show <run> --doc <kind>)`. While the
 /// orchestrator revises, the phase line says so with the user's note's head instead
 /// (the gate screen's words). Nothing for a run without the flow, or past its plan gate.
+/// Task M9.6.17: an `off` round says `design: off this round` where the phase would be,
+/// a halted design run `design: halted in <phase>`, and a read-back revision's note is
+/// anthrex's, not the user's.
 pub(super) fn status_lines(run: &RunInfo) -> String {
     if run.design == DesignMode::Off {
         return String::new();
+    }
+    if let Some(phase) = run.halted_phase.filter(|_| run.state == RunState::Halted) {
+        return format!("  design: halted in {}\n", phase.label());
     }
     let at = match run.state {
         RunState::Paused => run.paused_from,
         state => Some(state),
     };
+    if run.round_design == Some(RoundDesign::Off) {
+        let planning = matches!(at, Some(RunState::Planning | RunState::AwaitingApproval));
+        return match planning {
+            true => "  design: off this round\n".to_string(),
+            false => String::new(),
+        };
+    }
     let gate = run.doc_gate.as_ref();
     let phase = match (at, gate) {
         (Some(RunState::AwaitingApproval), Some(gate)) => {
@@ -322,7 +335,10 @@ pub(super) fn status_lines(run: &RunInfo) -> String {
         Some((g, note)) => {
             let note: String = safe_text::one_line(note).chars().take(NOTE_HEAD).collect();
             let next = g.version + 1;
-            format!("  design: {phase}, revising v{next}… (your note: \"{note}\")\n")
+            match g.revising_cause.is_users() {
+                true => format!("  design: {phase}, revising v{next}… (your note: \"{note}\")\n"),
+                false => format!("  design: {phase}, revising v{next}… ({note})\n"),
+            }
         }
         None => format!("  design: {phase}\n"),
     };

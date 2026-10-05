@@ -74,6 +74,7 @@ fn a_design_run_shows_its_mode_gate_and_documents() {
             changes_summary: vec!["+ R2".into()],
             same_runtime: true,
             report: None,
+            revising_cause: Default::default(),
         })
     );
     let docs: Vec<_> = (info.docs.iter())

@@ -89,6 +89,7 @@ fn a_gate_info() -> DocGateInfo {
         changes_summary: vec!["+ R4a, R4b".into(), "~ Testing: 2 lines".into()],
         same_runtime: true,
         report: None,
+        revising_cause: RevisingCause::Changes,
     }
 }
 

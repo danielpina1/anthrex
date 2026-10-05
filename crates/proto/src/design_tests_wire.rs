@@ -365,3 +365,87 @@ fn planner_info_covers_defaults_and_skips() {
     );
     both_ways(&owned);
 }
+
+/// Task M9.6.17: why the orchestrator revises the open gate, appended on
+/// `DocGateInfo`: `changes` (the default, never written), `back` or `read_back`. A gate
+/// info without it (an earlier 17 build) reads `changes`, which is what its `revising`
+/// note was then: the user's.
+#[test]
+fn a_gate_info_carries_its_revising_cause() {
+    for (cause, word) in [
+        (RevisingCause::Changes, None),
+        (RevisingCause::Back, Some("back")),
+        (RevisingCause::ReadBack, Some("read_back")),
+    ] {
+        let info = DocGateInfo {
+            revising_cause: cause,
+            ..a_gate_info()
+        };
+        both_ways(&info);
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(
+            json.get("revising_cause").and_then(|v| v.as_str()),
+            word,
+            "{json}"
+        );
+    }
+    let mut old = serde_json::to_value(a_gate_info()).unwrap();
+    old.as_object_mut().unwrap().remove("revising_cause");
+    let packed: DocGateInfo = rmp_serde::from_slice(&p16_bytes(&old)).unwrap();
+    let json: DocGateInfo = serde_json::from_value(old).unwrap();
+    for back in [packed, json] {
+        assert_eq!(back.revising_cause, RevisingCause::Changes);
+        assert_eq!(back, a_gate_info());
+    }
+}
+
+/// Task M9.6.17 (task 16's m3): a run's current round's design mode and, while it is
+/// halted, the design phase its plain resume returns to, appended on `RunInfo`: left
+/// out while `None`, so an earlier snapshot decodes and a run without either writes
+/// what it wrote before.
+#[test]
+fn run_info_carries_the_rounds_design_and_the_halted_phase() {
+    for (name, text) in [
+        ("m95_run_info.json", include_str!("m95_run_info.json")),
+        ("m93_run_info.json", include_str!("m93_run_info.json")),
+    ] {
+        let value: serde_json::Value = serde_json::from_str(text).unwrap();
+        let json: RunInfo = serde_json::from_str(text).unwrap();
+        let packed: RunInfo = rmp_serde::from_slice(&p16_bytes(&value)).unwrap();
+        for run in [&json, &packed] {
+            assert_eq!(run.round_design, None, "{name}");
+            assert_eq!(run.halted_phase, None, "{name}");
+        }
+        let again = serde_json::to_value(&json).unwrap();
+        for key in ["round_design", "halted_phase"] {
+            assert!(again.get(key).is_none(), "{name} writes no {key}");
+        }
+    }
+    for design in [RoundDesign::Amend, RoundDesign::Full, RoundDesign::Off] {
+        let run = RunInfo {
+            round_design: Some(design),
+            ..a_run_info()
+        };
+        both_ways(&run);
+    }
+    for phase in [
+        RunState::Brainstorming,
+        RunState::Specifying,
+        RunState::Planning,
+    ] {
+        let run = RunInfo {
+            state: RunState::Halted,
+            halted_phase: Some(phase),
+            ..a_run_info()
+        };
+        both_ways(&run);
+    }
+    let run = RunInfo {
+        round_design: Some(RoundDesign::Off),
+        halted_phase: Some(RunState::Specifying),
+        ..a_run_info()
+    };
+    let json = serde_json::to_value(&run).unwrap();
+    assert_eq!(json["round_design"], "off");
+    assert_eq!(json["halted_phase"], "specifying");
+}

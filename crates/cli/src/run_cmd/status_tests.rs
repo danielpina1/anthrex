@@ -252,6 +252,8 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         design: Default::default(),
         doc_gate: None,
         docs: Vec::new(),
+        round_design: None,
+        halted_phase: None,
     }
 }
 

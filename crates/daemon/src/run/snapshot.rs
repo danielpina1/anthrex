@@ -64,6 +64,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         })
         .collect();
     let (design, doc_gate, docs) = super::snapshot_design::design_fields(run);
+    let (round_design, halted_phase) = super::snapshot_design::round_fields(run);
     RunInfo {
         actions: available(run, &ActionNode::Run),
         run_id: run.id.clone(),
@@ -160,6 +161,8 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         design,
         doc_gate,
         docs,
+        round_design,
+        halted_phase,
     }
 }
 

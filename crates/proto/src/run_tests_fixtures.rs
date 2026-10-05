@@ -268,6 +268,8 @@ pub(super) fn a_run_info() -> RunInfo {
         design: Default::default(),
         doc_gate: None,
         docs: Vec::new(),
+        round_design: None,
+        halted_phase: None,
     }
 }
 

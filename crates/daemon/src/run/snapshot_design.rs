@@ -3,9 +3,9 @@
 //! without the design flow shows `Off`, no gate and no documents, so its `RunInfo` is
 //! written as 9.5's.
 
-use proto::{DesignMode, DocGateInfo, DocInfo};
+use proto::{DesignMode, DocGateInfo, DocInfo, RevisingCause, RoundDesign, RunState};
 
-use super::design::state::{DesignState, gate_doc};
+use super::design::state::{DesignState, Revision, gate_doc};
 use super::model::Run;
 
 /// `RunInfo.{design, doc_gate, docs}`.
@@ -29,7 +29,31 @@ fn doc_gate(design: &DesignState) -> Option<DocGateInfo> {
         changes_summary: version.map(|v| v.changes.clone()).unwrap_or_default(),
         same_runtime: version.is_some_and(|v| v.same_runtime),
         report: version.and_then(|v| v.report.clone()),
+        revising_cause: match gate.cause {
+            Revision::Changes => RevisingCause::Changes,
+            Revision::Back => RevisingCause::Back,
+            Revision::ReadBack => RevisingCause::ReadBack,
+        },
     })
+}
+
+/// Task M9.6.17: `RunInfo.{round_design, halted_phase}`: the current round's design
+/// mode (round 2 on), and the phase a halted design run's plain resume returns to
+/// (`engine::design::halted_phase`, ruling T7-1).
+pub fn round_fields(run: &Run) -> (Option<RoundDesign>, Option<RunState>) {
+    let Some(design) = &run.orch.design else {
+        return (None, None);
+    };
+    let round = (design.round.as_ref())
+        .filter(|r| r.n == run.round())
+        .map(|r| r.mode);
+    let phase = match super::engine::design::halted_phase(run) {
+        Some("brainstorming") => Some(RunState::Brainstorming),
+        Some("specifying") => Some(RunState::Specifying),
+        Some("planning") => Some(RunState::Planning),
+        _ => None,
+    };
+    (round, phase)
 }
 
 /// Every stored version, in the order stored; a spec's review drafts are not among the

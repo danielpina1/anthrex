@@ -90,6 +90,7 @@ mod design_rounds_multi;
 mod design_rounds_texts;
 mod design_session_prompt;
 mod design_snapshot;
+mod design_snapshot_gate;
 mod detail_claims;
 mod digest;
 mod dispatch;

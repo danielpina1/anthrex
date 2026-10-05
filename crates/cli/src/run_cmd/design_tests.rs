@@ -6,7 +6,7 @@ use clap::Parser;
 use clap::error::ErrorKind;
 use proto::{
     ApproachTag, DesignMode, DocAuthor, DocFinding, DocGateInfo, DocGateKind, DocInfo, DocKind,
-    DocSeverity, DocView, ReportSummary, RoundDesign, RunInfo, RunState,
+    DocSeverity, DocView, ReportSummary, RevisingCause, RoundDesign, RunInfo, RunState,
 };
 
 use super::super::RunCommand;
@@ -51,6 +51,7 @@ pub(super) fn design_run() -> RunInfo {
             changes_summary: vec!["+ R2".into(), "~ Testing: 2 lines".into()],
             same_runtime: false,
             report: None,
+            revising_cause: RevisingCause::Changes,
         }),
         docs: vec![
             doc(1, "first version"),
@@ -267,6 +268,88 @@ fn status_names_the_waiting_gate() {
         ..design_run()
     };
     assert_eq!(status_lines(&running), "");
+}
+
+/// Task M9.6.17 (task 16's m3): a design run's `off` round says so where the phase line
+/// would be (planning, its 9.3 plan gate, paused there), and a halted design run names
+/// the phase its plain resume returns to. A read-back revision's note is anthrex's, so
+/// it is not called the user's.
+#[test]
+fn status_names_an_off_round_and_a_halted_phase() {
+    let off = RunInfo {
+        state: RunState::Planning,
+        doc_gate: None,
+        round: 2,
+        round_design: Some(RoundDesign::Off),
+        ..design_run()
+    };
+    assert_eq!(status_lines(&off), "  design: off this round\n");
+    for (state, paused_from) in [
+        (RunState::AwaitingApproval, None),
+        (RunState::Paused, Some(RunState::Planning)),
+    ] {
+        let run = RunInfo {
+            state,
+            paused_from,
+            ..off.clone()
+        };
+        assert_eq!(
+            status_lines(&run),
+            "  design: off this round\n",
+            "{state:?}"
+        );
+    }
+    let running = RunInfo {
+        state: RunState::Running,
+        ..off.clone()
+    };
+    assert_eq!(status_lines(&running), "");
+    let amend = RunInfo {
+        state: RunState::Specifying,
+        round_design: Some(RoundDesign::Amend),
+        ..off
+    };
+    assert_eq!(status_lines(&amend), "  design: specifying\n");
+
+    for (phase, word) in [
+        (RunState::Brainstorming, "brainstorming"),
+        (RunState::Specifying, "specifying"),
+        (RunState::Planning, "planning"),
+    ] {
+        let halted = RunInfo {
+            state: RunState::Halted,
+            halted_phase: Some(phase),
+            ..design_run()
+        };
+        assert_eq!(
+            status_lines(&halted),
+            format!("  design: halted in {word}\n")
+        );
+        let block = run_block(&halted, 0);
+        assert!(
+            block.contains(&format!("  design: halted in {word}\n")),
+            "{block}"
+        );
+    }
+    // Halted past the plan gate (or in an off round): 9.3's status.
+    let halted = RunInfo {
+        state: RunState::Halted,
+        doc_gate: None,
+        ..design_run()
+    };
+    assert_eq!(status_lines(&halted), "");
+
+    let mut read_back = design_run();
+    let gate = read_back.doc_gate.as_mut().unwrap();
+    gate.revising = Some("anthrex could not read back the stored spec v2; submit it again".into());
+    gate.revising_cause = RevisingCause::ReadBack;
+    assert_eq!(
+        status_lines(&read_back),
+        "  design: at the spec gate, revising v3… \
+         (anthrex could not read back the stored spec v2; submit it ag)\n"
+    );
+    read_back.doc_gate.as_mut().unwrap().revising_cause = RevisingCause::Back;
+    assert!(status_lines(&read_back).contains("(your note: \"anthrex could not"));
 }
 
 /// A run without the design flow prints exactly what it printed before milestone 9.6,

@@ -479,3 +479,6 @@ mod run_patterns_review_tests;
 
 #[cfg(test)]
 mod run_writes_tests;
+
+#[cfg(test)]
+mod run_design_tests;
