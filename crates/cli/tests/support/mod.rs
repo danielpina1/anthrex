@@ -12,6 +12,7 @@ pub mod run_harness;
 pub mod run_orch;
 pub mod run_plans;
 pub mod run_pr;
+pub mod run_pr_ci;
 pub mod run_pr_cli;
 pub mod run_rounds;
 pub mod run_tiers;
