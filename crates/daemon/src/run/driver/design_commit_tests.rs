@@ -178,8 +178,14 @@ impl Rig {
             .arg("-C")
             .arg(&self.root)
             .args(["cat-file", "blob", &format!("{commit}:{path}")])
+            // The final fix wave's FW-37: the file's scrubbed git environment, as `git`.
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
             .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_PREFIX")
             .output()
             .unwrap();
         assert!(out.status.success(), "{out:?}");

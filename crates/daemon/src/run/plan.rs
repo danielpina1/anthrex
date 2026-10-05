@@ -463,7 +463,9 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         protected_files: pre.protected_files,
         rate_limits: Default::default(),
         outcome: None,
-        // Decision 12's tuning lines open the run's log.
+        // Decision 12's tuning lines open the run's log. In a design run, milestone
+        // 9.6's design tuning lines follow them once the run enters the flow
+        // (`engine::design_spend::tuned`, ruling T13-5).
         log: (ctx.tuning.log.iter())
             .map(|text| super::model::LogEntry {
                 at: ctx.now,
