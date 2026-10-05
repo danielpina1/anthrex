@@ -42,6 +42,8 @@ pub(in crate::run::engine) fn rethink(run: &mut Run, note: &str, now: u64) {
         rethink: previous,
     });
     design.drafts_settled = false;
+    // The final fix wave's FW-8: a wake owed for the old drafts' read-back goes too.
+    design.read_back_owed = false;
     design.held.clear();
     for agent in design.brainstormers.iter_mut() {
         agent.state = DesignAgentState::Queued;

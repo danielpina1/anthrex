@@ -84,6 +84,8 @@ pub(super) fn queue_brainstormers(
     };
     design.pack = Some(pack);
     design.drafts_settled = false;
+    // The final fix wave's FW-8: a wake owed for the old drafts' read-back goes too.
+    design.read_back_owed = false;
     design.rethink_starts.clear();
     design.brainstormers = (picks.iter())
         .map(|p| DesignAgent {

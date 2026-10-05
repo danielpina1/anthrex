@@ -109,7 +109,7 @@ fn a_report_refused_during_the_read_back_is_woken_once_it_lands() {
 /// Ruling T9-2's nit: a `Done` brainstormer with no stored draft (no writer makes one
 /// today) is attached as unread rather than refusing the report forever.
 #[test]
-fn a_done_brainstormer_without_a_stored_draft_is_attached_as_unread() {
+fn a_done_brainstormer_without_a_stored_draft_is_attached_as_not_stored() {
     let mut fx = brainstorming();
     both_drafts(&mut fx);
     let design = fx.run_mut().orch.design.as_mut().unwrap();
@@ -125,4 +125,29 @@ fn a_done_brainstormer_without_a_stored_draft_is_attached_as_unread() {
         ),
     ];
     assert_eq!(writes(&effects)[0].1, attach(REPORT, &drafts));
+}
+
+/// The final fix wave's FW-8 (carry L194): a rethink clears a wake a refused report was
+/// owed, as it clears `drafts_settled`. The flag is set by hand at the open gate (a
+/// refusal sets it only in brainstorming or at a revising gate, where no rethink is
+/// taken), then a rethink, the new drafts, and a spec approval (whose read-back runs
+/// `read_back`): no stale "drafts are read back" note.
+#[test]
+fn a_rethink_clears_a_read_back_wake_owed() {
+    let mut fx = brainstorming();
+    both_drafts(&mut fx);
+    submitted(&mut fx, "brainstorm", REPORT);
+    fx.run_mut().orch.design.as_mut().unwrap().read_back_owed = true;
+    let rethink = DocGateAction::Rethink {
+        note: "Again.".into(),
+    };
+    act(&mut fx, DocGateKind::Brainstorm, rethink).unwrap();
+    redrafts_in(&mut fx);
+    submitted(&mut fx, "brainstorm", REPORT);
+    act(&mut fx, DocGateKind::Brainstorm, DocGateAction::APPROVE).unwrap();
+    submitted(&mut fx, "spec", SPEC);
+    act(&mut fx, DocGateKind::Spec, DocGateAction::APPROVE).unwrap();
+    super::design_plan_fixture::read_back(&mut fx, 1, SPEC);
+    let stale = notes(&fx).iter().filter(|n| *n == READ_BACK).count();
+    assert_eq!(stale, 0, "{:?}", notes(&fx));
 }
