@@ -42,7 +42,8 @@ impl App {
                 vec![effect]
             }
             NoteOutcome::Confirm(action) => {
-                let message = super::doc_gate::confirm_text(&run_id, kind, version, &action);
+                let round = super::doc_gate::round_of(self, &run_id);
+                let message = super::doc_gate::confirm_text(&run_id, round, kind, version, &action);
                 self.modal = Some(Modal::Confirm {
                     message,
                     action: PendingAction::DocGate {

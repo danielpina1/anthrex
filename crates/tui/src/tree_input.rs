@@ -284,6 +284,7 @@ impl App {
             key @ (NodeKey::Run(_)
             | NodeKey::Planner { .. }
             | NodeKey::Scout { .. }
+            | NodeKey::DesignAgent { .. }
             | NodeKey::Task { .. }
             | NodeKey::Stage { .. }
             | NodeKey::Round { .. }

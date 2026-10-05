@@ -306,6 +306,7 @@ impl TreeState {
             NodeKey::Run(run)
             | NodeKey::Planner { run, .. }
             | NodeKey::Scout { run, .. }
+            | NodeKey::DesignAgent { run, .. }
             | NodeKey::Task { run, .. }
             | NodeKey::Stage { run, .. }
             | NodeKey::Round { run, .. }

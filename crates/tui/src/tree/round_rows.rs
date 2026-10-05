@@ -54,6 +54,8 @@ fn node_round(run: &RunInfo, child: &Node<'_>) -> Option<u32> {
     match &child.row.kind {
         RowKind::Stage { stage, .. } => Some(stage.round),
         RowKind::Task { task, .. } => Some(task.round),
+        // Milestone 9.6 ruling T18-1: the snapshot lists the current round's agents.
+        RowKind::DesignAgent { .. } => Some(run.round),
         RowKind::Planner { .. } => {
             Some(
                 child

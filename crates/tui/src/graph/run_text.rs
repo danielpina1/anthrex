@@ -7,8 +7,8 @@ use crate::theme::{Glyph, glyph};
 use crate::tree::{DisplayRound, round_label_with_lane, run_progress};
 use crate::ui::tree_view::truncate_in;
 use proto::{
-    DesignMode, DocGateKind, FullState, PlannerInfo, RoundDesign, RunInfo, RunState, StageInfo,
-    TaskInfo, TaskOrigin, TaskState,
+    AgentRole, DesignAgentInfo, DesignMode, DocGateKind, FullState, PlannerInfo, RoundDesign,
+    RunInfo, RunState, StageInfo, TaskInfo, TaskOrigin, TaskState,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -82,6 +82,22 @@ fn run_short(run_id: &str) -> String {
 
 /// `planner {epic} {title}  {merged}/{total}` over the tasks of its epic, or
 /// `planner {epic}  {merged}/{total}` when the title is blank.
+/// Milestone 9.6 ruling T18-1: a design agent's node, `brainstormer <label>` (its
+/// runtime too when the label is not the runtime's name) or `doc reviewer <label>
+/// <runtime>`, then `  <n> sessions` once a relaunch (ruling T8-7) gave it more than one.
+pub(crate) fn design_agent_text(agent: &DesignAgentInfo) -> String {
+    let runtime = agent.runtime.label();
+    let mut text = match agent.role {
+        AgentRole::DocReviewer => format!("doc reviewer {} {runtime}", agent.label),
+        _ if agent.label == runtime => format!("brainstormer {}", agent.label),
+        _ => format!("brainstormer {} {runtime}", agent.label),
+    };
+    if agent.sessions > 1 {
+        text.push_str(&format!("  {} sessions", agent.sessions));
+    }
+    text
+}
+
 pub(crate) fn planner_text(run: &RunInfo, planner: &PlannerInfo) -> String {
     let (merged, total) = run
         .tasks

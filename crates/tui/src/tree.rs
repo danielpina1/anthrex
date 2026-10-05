@@ -4,7 +4,7 @@ mod names;
 mod nodes;
 mod round_rows;
 mod rows;
-mod run_rows;
+pub(crate) mod run_rows;
 mod runs;
 mod task_rounds;
 mod types;
@@ -116,7 +116,7 @@ impl TreeState {
                 }
                 true
             }
-            NodeKey::Subagent { .. } | NodeKey::Chain(_) => false,
+            NodeKey::Subagent { .. } | NodeKey::DesignAgent { .. } | NodeKey::Chain(_) => false,
         }
     }
 
@@ -178,6 +178,7 @@ impl TreeState {
             NodeKey::Run(_)
             | NodeKey::Planner { .. }
             | NodeKey::Scout { .. }
+            | NodeKey::DesignAgent { .. }
             | NodeKey::Task { .. }
             | NodeKey::Stage { .. }
             | NodeKey::Round { .. }
@@ -389,6 +390,7 @@ pub fn agent_order(rows: &[Row<'_>]) -> Vec<u32> {
             RowKind::Subagent { .. }
             | RowKind::Planner { .. }
             | RowKind::Scout { .. }
+            | RowKind::DesignAgent { .. }
             | RowKind::Task { .. }
             | RowKind::Stage { .. }
             | RowKind::Round { .. }

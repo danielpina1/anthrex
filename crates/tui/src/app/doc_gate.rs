@@ -23,7 +23,8 @@ mod info;
 #[path = "plan_doc.rs"]
 pub(crate) mod plan_doc;
 pub use info::{
-    alert_text, confirm_text, doc_gate_of, gate_doc, kind_title, round_drafts, waiting_gate,
+    alert_text, confirm_text, doc_gate_of, gate_doc, kind_title, round_drafts, round_of,
+    waiting_gate,
 };
 pub use plan_doc::PlanDoc;
 
@@ -211,7 +212,7 @@ impl App {
             }
         };
         self.modal = Some(Modal::Confirm {
-            message: confirm_text(run_id, kind, version, &action),
+            message: confirm_text(run_id, round_of(self, run_id), kind, version, &action),
             action: PendingAction::DocGate {
                 run_id: run_id.to_owned(),
                 kind,
@@ -265,7 +266,7 @@ impl App {
         }
         let confirm = |app: &mut App, action: DocGateAction| {
             app.modal = Some(Modal::Confirm {
-                message: confirm_text(&run_id, kind, version, &action),
+                message: confirm_text(&run_id, round_of(app, &run_id), kind, version, &action),
                 action: PendingAction::DocGate {
                     run_id: run_id.clone(),
                     kind,

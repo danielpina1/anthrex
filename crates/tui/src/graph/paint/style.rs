@@ -10,8 +10,9 @@ use crate::app::App;
 use crate::theme::{self, Glyph, Role, TaskLook};
 use crate::tree::{DisplayRound, NodeKey, Row, RowKind};
 use proto::{
-    AgentRole, FullState, LaneState, PairPhase, PlannerInfo, PlannerState, RaceLane, RoundOutcome,
-    RunState, ScoutInfo, ScoutState, Status, TaskInfo, TaskState, WindowInfo,
+    AgentRole, DesignAgentInfo, DesignAgentStatus, FullState, LaneState, PairPhase, PlannerInfo,
+    PlannerState, RaceLane, RoundOutcome, RunState, ScoutInfo, ScoutState, Status, TaskInfo,
+    TaskState, WindowInfo,
 };
 use ratatui::style::{Modifier, Style};
 use std::collections::HashSet;
@@ -121,6 +122,11 @@ fn finished(kind: &RowKind<'_>) -> bool {
         RowKind::Stage { stage, .. } => {
             stage.merged == stage.tasks && stage.full.state == FullState::Green
         }
+        // Milestone 9.6 ruling T18-1: a design agent that is done or failed.
+        RowKind::DesignAgent { agent, .. } => matches!(
+            agent.state,
+            DesignAgentStatus::Done | DesignAgentStatus::Failed
+        ),
         RowKind::Project { .. }
         | RowKind::Window { .. }
         | RowKind::Subagent { .. }
@@ -143,6 +149,7 @@ pub(crate) fn node_glyph(row: &Row<'_>, app: &App) -> (&'static str, Role) {
         RowKind::Run { run, .. } => theme::run_look(run.state, ascii),
         RowKind::Planner { planner, .. } => planner_glyph(planner, app),
         RowKind::Scout { scout, window, .. } => scout_glyph(scout, *window, app),
+        RowKind::DesignAgent { agent, window, .. } => design_agent_glyph(agent, *window, app),
         RowKind::Task { run, task } => theme::task_look(
             TaskLook {
                 state: task.state,
@@ -164,6 +171,24 @@ pub(crate) fn node_glyph(row: &Row<'_>, app: &App) -> (&'static str, Role) {
             Some(RoundOutcome::Rejected | RoundOutcome::Cancelled) => ended(app),
         },
         RowKind::IdleOrchestrator { .. } => (theme::glyph(Glyph::NotStarted, ascii), Role::Muted),
+    }
+}
+
+/// Milestone 9.6 ruling T18-1: a design agent by its state: queued `◌`, running as a
+/// live agent, submitted `●` (its draft held until the brainstorm settles), done `✓`,
+/// failed `✗`.
+fn design_agent_glyph(
+    agent: &DesignAgentInfo,
+    window: Option<&WindowInfo>,
+    app: &App,
+) -> (&'static str, Role) {
+    let ascii = app.palette().ascii;
+    match agent.state {
+        DesignAgentStatus::Queued => (theme::glyph(Glyph::NotStarted, ascii), Role::Muted),
+        DesignAgentStatus::Running => live(window, false, app),
+        DesignAgentStatus::Submitted => (theme::glyph(Glyph::Live, ascii), Role::Working),
+        DesignAgentStatus::Done => check(app),
+        DesignAgentStatus::Failed => cross(app),
     }
 }
 

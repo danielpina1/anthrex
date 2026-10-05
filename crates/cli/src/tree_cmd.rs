@@ -128,6 +128,7 @@ pub fn tree_text(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> S
             RowKind::Run { .. }
             | RowKind::Planner { .. }
             | RowKind::Scout { .. }
+            | RowKind::DesignAgent { .. }
             | RowKind::Task { .. }
             | RowKind::Stage { .. }
             | RowKind::Round { .. }
@@ -193,6 +194,7 @@ pub fn tree_json(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> T
             | RowKind::Run { .. }
             | RowKind::Planner { .. }
             | RowKind::Scout { .. }
+            | RowKind::DesignAgent { .. }
             | RowKind::Task { .. }
             | RowKind::Stage { .. }
             | RowKind::Round { .. }

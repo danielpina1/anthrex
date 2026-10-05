@@ -217,6 +217,7 @@ pub fn narrow_line(
         // The run view's rows (task M8c.4) are drawn only on its canvas, never here.
         RowKind::Planner { .. }
         | RowKind::Scout { .. }
+        | RowKind::DesignAgent { .. }
         | RowKind::Task { .. }
         | RowKind::Stage { .. }
         | RowKind::Round { .. }

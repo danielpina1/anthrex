@@ -7,6 +7,7 @@
 use super::*;
 use crate::app::doc_gate::DocLoad;
 use crate::app::screens::Screen;
+use crate::tree::NodeKey;
 use crate::tree::run_fixtures::RUN_ID;
 use crate::ui::doc_gate::tests::{app_with, design_run, key, rows, sent};
 use proto::{DocGateAction, DocGateKind};
@@ -108,5 +109,77 @@ fn the_run_view_hints_at_a_spec_gate_name_its_keys() {
     assert_eq!(
         bar,
         " RUN  ⏸ spec v2  a review  x reject  ⏎ open  . actions  f filter: all  esc back"
+    );
+}
+
+/// Ruling T18-1: the run view draws one node an agent, its glyph its state's (failed
+/// `✗`, running live `●` while its window is not listed, done `✓`), and the selected agent's panel names its state,
+/// runtime, sessions and, for a reviewer, its document.
+#[test]
+fn the_run_view_draws_the_design_agents() {
+    let mut app = app_with(crate::tree::run_rows::design_tests::with_agents(), 120, 40);
+    app.open_run_view(RUN_ID.into());
+    let drawn = rows(&app, 120, 40);
+    // A node is cut at the canvas's widest box; the inspector says the rest.
+    for text in [
+        "✗ brainstormer claude",
+        "● brainstormer codex  2 s…",
+        "✓ doc reviewer spec-r2 co…",
+    ] {
+        assert!(drawn.iter().any(|r| r.contains(text)), "{text}: {drawn:#?}");
+    }
+    let key = |label: &str| NodeKey::DesignAgent {
+        run: RUN_ID.into(),
+        label: label.into(),
+    };
+    let nav = crate::app::nav_rows_of(&app.windows, &app.runs, &app.tree, app.run_view.as_ref());
+    app.tree.select(&nav, key("codex"));
+    let drawn = rows(&app, 120, 40).join("\n");
+    for text in ["state", "running", "runtime", "codex", "sessions  2"] {
+        assert!(drawn.contains(text), "{text}: {drawn}");
+    }
+    app.tree.select(&nav, key("spec-r2"));
+    let drawn = rows(&app, 120, 40).join("\n");
+    assert!(drawn.contains("spec, review 2"), "{drawn}");
+}
+
+/// Enter on a design agent opens its conversation, as on a scout: here its window is
+/// not listed, so the run view says why.
+#[test]
+fn enter_on_a_design_agent_says_why_there_is_no_conversation() {
+    let mut app = app_with(crate::tree::run_rows::design_tests::with_agents(), 120, 40);
+    app.open_run_view(RUN_ID.into());
+    let key = |label: &str| NodeKey::DesignAgent {
+        run: RUN_ID.into(),
+        label: label.into(),
+    };
+    assert!(app.activate_run_node(key("codex")).is_empty());
+    assert_eq!(app.toast_text(), Some("window #41 is not listed yet"));
+    assert!(app.activate_run_node(key("claude")).is_empty());
+    assert_eq!(
+        app.toast_text(),
+        Some("brainstormer claude has no window yet")
+    );
+}
+
+/// Ruling T18-3: from round 2 a brainstorm or spec gate's reject page names the round it
+/// drops, from the run view and from the gate screen alike.
+#[test]
+fn a_later_rounds_reject_page_drops_the_round() {
+    let mut run = design_run(DocGateKind::Spec);
+    run.round = 2;
+    let mut app = app_with(run.clone(), 120, 40);
+    app.open_run_view(RUN_ID.into());
+    app.on_run_view_key(key('x'));
+    assert_eq!(
+        confirm_of(&app).0,
+        "Reject the spec? This drops round 2 of run 3f9a."
+    );
+    let mut app = app_with(run, 120, 40);
+    app.open_doc_gate(RUN_ID);
+    app.on_key(key('x'));
+    assert_eq!(
+        confirm_of(&app).0,
+        "Reject the spec? This drops round 2 of run 3f9a."
     );
 }

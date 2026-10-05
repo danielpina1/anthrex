@@ -4,8 +4,8 @@
 use super::DisplayRound;
 use super::RuntimeCounts;
 use proto::{
-    AgentRole, IdleOrchestrator, PlannerInfo, RoundInfo, RunInfo, ScoutInfo, StageInfo, Status,
-    SubagentInfo, TaskInfo, WindowInfo,
+    AgentRole, DesignAgentInfo, IdleOrchestrator, PlannerInfo, RoundInfo, RunInfo, ScoutInfo,
+    StageInfo, Status, SubagentInfo, TaskInfo, WindowInfo,
 };
 use std::path::{Path, PathBuf};
 
@@ -26,6 +26,12 @@ pub enum NodeKey {
     Scout {
         run: String,
         id: String,
+    },
+    /// Milestone 9.6 ruling T18-1: a design agent of the run's round (a brainstormer or
+    /// a document reviewer), by its label, one node however many sessions it had.
+    DesignAgent {
+        run: String,
+        label: String,
     },
     Task {
         run: String,
@@ -96,6 +102,12 @@ pub enum RowKind<'a> {
     Scout {
         run: &'a RunInfo,
         scout: &'a ScoutInfo,
+        window: Option<&'a WindowInfo>,
+    },
+    /// Milestone 9.6 ruling T18-1: a design agent and its listed window.
+    DesignAgent {
+        run: &'a RunInfo,
+        agent: &'a DesignAgentInfo,
         window: Option<&'a WindowInfo>,
     },
     Task {

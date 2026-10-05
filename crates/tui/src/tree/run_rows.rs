@@ -12,8 +12,8 @@ use super::{
     subagent_forest,
 };
 use proto::{
-    AgentRole, PlannerInfo, RaceLane, RunInfo, Runtime, ScoutInfo, ScoutState, TaskInfo, TaskState,
-    WindowInfo,
+    AgentRole, DesignAgentInfo, DesignAgentStatus, PlannerInfo, RaceLane, RunInfo, Runtime,
+    ScoutInfo, ScoutState, TaskInfo, TaskState, WindowInfo,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -152,6 +152,19 @@ impl<'a> Builder<'a> {
         let mut scout_node = node(key, RowKind::Scout { run, scout, window });
         scout_node.subagents = self.subagents(window);
         scout_node
+    }
+
+    /// Ruling T18-1: one node a design agent, with its listed window's sub-agents.
+    fn design_agent(&mut self, agent: &'a DesignAgentInfo) -> Node<'a> {
+        let window = self.window(agent.window_id);
+        let key = NodeKey::DesignAgent {
+            run: self.run.run_id.clone(),
+            label: agent.label.clone(),
+        };
+        let run = self.run;
+        let mut agent_node = node(key, RowKind::DesignAgent { run, agent, window });
+        agent_node.subagents = self.subagents(window);
+        agent_node
     }
 
     fn task(&mut self, task: &'a TaskInfo) -> Node<'a> {
@@ -301,6 +314,12 @@ fn build_tree<'a>(run: &'a RunInfo, windows: &'a [WindowInfo], keep: u64) -> Nod
         .into_iter()
         .map(|scout| builder.scout(scout))
         .collect();
+    // Milestone 9.6 ruling T18-1: the round's design agents after the scouts, in the
+    // daemon's order (brainstormers, then the reviewer), a repeated label once.
+    let mut labels = HashSet::new();
+    let agents = (run.design_agents.iter()).filter(|agent| labels.insert(agent.label.as_str()));
+    root.children
+        .extend(agents.map(|agent| builder.design_agent(agent)));
     // Milestone 9.1 decision 55: a staged run hangs each entry under its stage node,
     // a planner under its first task's; a stage the snapshot does not list, never.
     let mut stages: Vec<Node<'a>> = Vec::new();
@@ -387,6 +406,9 @@ fn run_filter_matches(kind: &RowKind<'_>, filter: RunFilter) -> bool {
         (RunFilter::Running, RowKind::Scout { scout, .. }) => {
             matches!(scout.state, ScoutState::Starting | ScoutState::Working)
         }
+        (RunFilter::Running, RowKind::DesignAgent { agent, .. }) => {
+            agent.state == DesignAgentStatus::Running
+        }
         (RunFilter::Blocked, RowKind::Task { task, .. }) => task.state == TaskState::Blocked,
         (RunFilter::Runtime(runtime), RowKind::Task { task, .. }) => task.route.runtime == runtime,
         (RunFilter::Runtime(runtime), RowKind::AgentRound { round, .. }) => {
@@ -394,6 +416,9 @@ fn run_filter_matches(kind: &RowKind<'_>, filter: RunFilter) -> bool {
         }
         (RunFilter::Runtime(runtime), RowKind::Scout { scout, .. }) => {
             scout.route.runtime == runtime
+        }
+        (RunFilter::Runtime(runtime), RowKind::DesignAgent { agent, .. }) => {
+            agent.runtime == runtime
         }
         _ => false,
     }
@@ -504,3 +529,7 @@ fn emit<'a>(
         ancestors.pop();
     }
 }
+
+#[cfg(test)]
+#[path = "run_rows_design_tests.rs"]
+pub(crate) mod design_tests;

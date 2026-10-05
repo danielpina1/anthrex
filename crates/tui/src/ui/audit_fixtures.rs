@@ -295,12 +295,13 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
                 |a| tap(a, 'c'),
             ),
         ),
-        // Milestone 9.6 task 18: the run view at a spec gate, the plan review's Plan doc
-        // tab (its document ASCII-only) and the iterate dialog's design row.
+        // Milestone 9.6 task 18: the run view at a spec gate with its design agents
+        // (ruling T18-1), the plan review's Plan doc tab (its document ASCII-only) and
+        // the iterate dialog's design row.
         (
             "run view at a spec gate",
             run_view(crate::ui::doc_gate::tests::app_with(
-                crate::ui::doc_gate::tests::design_run(proto::DocGateKind::Spec),
+                crate::tree::run_rows::design_tests::with_agents(),
                 80,
                 24,
             )),

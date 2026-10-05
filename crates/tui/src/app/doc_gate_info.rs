@@ -71,9 +71,17 @@ pub fn doc_gate_of(run: &RunInfo) -> Option<&DocGateInfo> {
     (run.state == RunState::AwaitingApproval && gate.kind != DocGateKind::Plan).then_some(gate)
 }
 
-/// The confirm pages' texts (exact, brief "TUI texts").
+/// The run's current round, 1 while the snapshot does not list it.
+pub fn round_of(app: &App, run_id: &str) -> u32 {
+    let run = app.runs.runs.iter().find(|run| run.run_id == run_id);
+    run.map_or(1, |run| run.round)
+}
+
+/// The confirm pages' texts (exact, brief "TUI texts"). From round 2 a brainstorm or
+/// spec gate's reject drops only `round` (ruling T18-3); before, it discards the run.
 pub fn confirm_text(
     run_id: &str,
+    round: u32,
     kind: DocGateKind,
     version: u32,
     action: &DocGateAction,
@@ -88,6 +96,10 @@ pub fn confirm_text(
             };
             format!("Approve {word} v{version}? {next} starts next.")
         }
+        DocGateAction::Reject if round >= 2 && kind != DocGateKind::Plan => format!(
+            "Reject the {word}? This drops round {round} of run {}.",
+            short_id(&one_line(run_id))
+        ),
         DocGateAction::Reject => format!(
             "Reject the {word}? This discards run {}.",
             short_id(&one_line(run_id))

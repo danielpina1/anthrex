@@ -1,7 +1,7 @@
 //! Task M9.6.17 (task 16's m3): the run inspector says what `anthrex run status` says
 //! of a design run's `off` round and of a halted design run's phase.
 
-use super::run_tests::{app_of, inspect_node, value};
+use super::run_tests::{app_of, inspect_node, pairs, value};
 use crate::tree::NodeKey;
 use crate::tree::run_fixtures::{RUN_ID, gate_fixture};
 use proto::{DesignMode, RoundDesign, RunState};
@@ -42,4 +42,42 @@ fn the_run_inspector_names_an_off_round_and_a_halted_phase() {
         run.halted_phase = Some(RunState::Specifying);
     });
     assert_eq!(off, None);
+}
+
+/// Ruling T18-1: a design agent's inspection, its state, runtime and session count,
+/// and a reviewer's document and review number.
+#[test]
+fn a_design_agents_inspection_names_its_state_runtime_and_sessions() {
+    let (mut snap, windows) = gate_fixture();
+    snap.runs[0] = crate::tree::run_rows::design_tests::with_agents();
+    let app = app_of((snap, windows));
+    let key = |label: &str| NodeKey::DesignAgent {
+        run: RUN_ID.into(),
+        label: label.into(),
+    };
+    let codex = inspect_node(&app, &key("codex"));
+    assert_eq!(codex.name, "brainstormer codex");
+    assert_eq!(codex.right.as_deref(), Some("running · 2 sessions"));
+    assert_eq!(
+        pairs(&codex),
+        [
+            ("state", "running"),
+            ("runtime", "codex"),
+            ("sessions", "2"),
+            ("session", "#41 · window closed"),
+        ]
+    );
+    let reviewer = inspect_node(&app, &key("spec-r2"));
+    assert_eq!(reviewer.name, "doc reviewer spec-r2");
+    assert_eq!(reviewer.right.as_deref(), Some("done"));
+    assert_eq!(
+        pairs(&reviewer),
+        [
+            ("state", "done"),
+            ("runtime", "codex"),
+            ("document", "spec, review 2"),
+            ("sessions", "1"),
+            ("session", "no window yet"),
+        ]
+    );
 }
