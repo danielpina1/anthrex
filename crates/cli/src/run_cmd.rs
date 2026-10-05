@@ -122,6 +122,7 @@ enum RunCommand {
         /// The hold to approve (`anthrex run status` lists them)
         #[arg(long)]
         hold: Option<String>,
+        /// The design gate to approve: brainstorm, spec or plan
         #[arg(long, value_enum, conflicts_with = "hold")]
         gate: Option<design::GateArg>,
     },
@@ -238,7 +239,7 @@ enum RunCommand {
 /// Runs one `anthrex run` command; any error is printed as it is and exits 1.
 pub async fn main(args: RunArgs, socket: PathBuf, dir: Option<PathBuf>) -> anyhow::Result<()> {
     if let Err(error) = dispatch(args.command, &socket, dir).await {
-        if let Some(usage) = error.downcast_ref::<clap::Error>() {
+        if let Some(design::Usage(usage)) = error.downcast_ref() {
             usage.exit();
         }
         eprintln!("{}", status::printable(&error.to_string()));

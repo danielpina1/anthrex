@@ -83,6 +83,7 @@ pub(super) enum DesignCommand {
     /// changes and its review
     Show {
         run: String,
+        /// The document: the brainstorm report, the spec or the plan
         #[arg(long, value_enum)]
         doc: GateArg,
         /// The version (the latest by default)
@@ -98,8 +99,10 @@ pub(super) enum DesignCommand {
     /// Ask the orchestrator to revise the document waiting at a design gate
     Changes {
         run: String,
+        /// The gate the document waits at
         #[arg(long, value_enum)]
         gate: GateArg,
+        /// What to change, for the orchestrator
         #[arg(long)]
         note: String,
         /// Send the revision to the document reviewer again (default: --no-review)
@@ -112,6 +115,7 @@ pub(super) enum DesignCommand {
     /// Make a file's text the next version of the brainstorm report or the spec
     EditDoc {
         run: String,
+        /// The gate the document waits at
         #[arg(long, value_enum)]
         gate: GateArg,
         /// The document's full text (at most 64 KiB)
@@ -121,14 +125,17 @@ pub(super) enum DesignCommand {
     /// Run both brainstormers again with a note, then merge their drafts again
     Rethink {
         run: String,
+        /// What the brainstormers should do differently
         #[arg(long)]
         note: String,
     },
     /// Go back from the spec or plan gate to the gate before it, with a note
     Back {
         run: String,
+        /// The gate to go back from
         #[arg(long, value_enum)]
         gate: GateArg,
+        /// What to change at the gate before it, for the orchestrator
         #[arg(long)]
         note: String,
     },
@@ -141,22 +148,51 @@ pub(super) enum DesignCommand {
 /// carries) and refuses in its own words.
 pub(super) const EDIT_CAP: usize = 64 * 1024;
 
+/// A design command's usage error, which `run_cmd::main` exits with as clap does (exit
+/// 2). Its own type, so a `clap::Error` another command returns (`--delivery`'s, exit
+/// 1) keeps its exit code.
+#[derive(Debug)]
+pub(super) struct Usage(pub(super) clap::Error);
+
+impl std::fmt::Display for Usage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for Usage {}
+
 /// `edit-doc`'s file, read before anything is sent: at most [`EDIT_CAP`] bytes, else a
-/// usage error (clap's, exit 2). The CLI's own file I/O, so it blocks this process only.
+/// usage error (clap's, exit 2). It is opened without blocking and must be a regular
+/// file (a symlink to one is read through), else a usage error too (ruling T16-1): a
+/// FIFO's plain open would wait for a writer forever. The CLI's own file I/O, so it
+/// blocks this process only.
 pub(super) fn read_capped(file: &Path) -> anyhow::Result<String> {
     use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
     let shown = file.display();
+    let usage = |text: String| -> anyhow::Error {
+        let kind = clap::error::ErrorKind::ValueValidation;
+        Usage(clap::Error::raw(kind, format!("{text}\n"))).into()
+    };
+    let opened = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(file)
+        .map_err(|e| anyhow::anyhow!("cannot read {shown}: {e}"))?;
+    let regular = (opened.metadata()).map_err(|e| anyhow::anyhow!("cannot read {shown}: {e}"))?;
+    if !regular.is_file() {
+        return Err(usage(format!("{shown} is not a regular file")));
+    }
     let mut bytes = Vec::new();
-    std::fs::File::open(file)
-        .and_then(|f| f.take(EDIT_CAP as u64 + 1).read_to_end(&mut bytes))
+    (opened.take(EDIT_CAP as u64 + 1))
+        .read_to_end(&mut bytes)
         .map_err(|e| anyhow::anyhow!("cannot read {shown}: {e}"))?;
     if bytes.len() > EDIT_CAP {
-        let text = format!(
-            "--file {shown}: the file is over the {} KiB a document may be; nothing was sent\n",
+        return Err(usage(format!(
+            "--file {shown}: the file is over the {} KiB edit-doc sends; nothing was sent",
             EDIT_CAP / 1024
-        );
-        let usage = clap::Error::raw(clap::error::ErrorKind::ValueValidation, text);
-        return Err(usage.into());
+        )));
     }
     String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("{shown} is not UTF-8 text"))
 }

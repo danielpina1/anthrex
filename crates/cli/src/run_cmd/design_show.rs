@@ -6,8 +6,8 @@ use proto::{DocGateKind, DocKind, DocView, RunInfo};
 use super::GateArg;
 use crate::run_cmd::status::printable;
 
-/// `run show`'s two texts, each through `printable`. stdout: the version's text as
-/// stored (so it can be edited and sent back with `edit-doc`), then with `--diff` the
+/// `run show`'s two texts, each through `printable`. stdout: the version's text exactly
+/// as stored (so it can be edited and sent back with `edit-doc`), then with `--diff` the
 /// line diff against the previous version and with `--findings` its review's findings,
 /// each with the orchestrator's answer. stderr: the header (`<Kind> · run <id> · v<n>
 /// of <m> · <reason>`), and when the version is the one waiting at its gate, the
@@ -18,8 +18,10 @@ pub(in crate::run_cmd) fn show_text(
     doc: &DocView,
     (diff, findings): (bool, bool),
 ) -> (String, String) {
+    // Ruling T16-2 (m4): the stored text exactly, so a show and edit-doc round trip
+    // sends the same bytes back; a section asked for after it starts on its own line.
     let mut out = doc.text.clone();
-    if !out.is_empty() && !out.ends_with('\n') {
+    if (diff || findings) && !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
     if diff {

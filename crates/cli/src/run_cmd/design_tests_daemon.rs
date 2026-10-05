@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 
 use super::super::dispatch;
 use super::tests::{ID, design_run, parse, spec_v2};
-use super::{EDIT_CAP, read_capped};
+use super::{EDIT_CAP, Usage, read_capped};
 
 /// What the fake daemon answers: the runs list, `run show`'s document, and every other
 /// request `Done`, or `Refused` with `refusal`.
@@ -304,19 +304,19 @@ async fn edit_doc_reads_the_file_and_caps_it() {
     let over = dir.path().join("over.md");
     std::fs::write(&over, format!("{text}x")).unwrap();
     let error = read_capped(&over).unwrap_err();
-    let usage = error.downcast_ref::<clap::Error>().expect("a usage error");
+    let Usage(usage) = error.downcast_ref::<Usage>().expect("a usage error");
     assert_eq!(usage.kind(), ErrorKind::ValueValidation);
     assert_eq!(
         usage.to_string(),
         format!(
-            "error: --file {}: the file is over the 64 KiB a document may be; nothing was sent\n",
+            "error: --file {}: the file is over the 64 KiB edit-doc sends; nothing was sent\n",
             over.display()
         )
     );
 
     let missing = dir.path().join("missing.md");
     let error = read_capped(&missing).unwrap_err();
-    assert!(error.downcast_ref::<clap::Error>().is_none());
+    assert!(error.downcast_ref::<Usage>().is_none());
     assert!(
         error
             .to_string()
@@ -342,6 +342,69 @@ async fn edit_doc_reads_the_file_and_caps_it() {
         over.as_str(),
     ];
     let error = command(&socket, &args).await.unwrap_err();
-    assert!(error.downcast_ref::<clap::Error>().is_some(), "{error}");
+    assert!(error.downcast_ref::<Usage>().is_some(), "{error}");
+    assert!(received(&mut rx).is_empty());
+}
+
+/// Ruling T16-1: `edit-doc` opens its file without blocking and takes only a regular
+/// file. A FIFO (whose plain open would wait for a writer forever) and a directory are
+/// a usage error, `<path> is not a regular file`, at once and before anything is sent;
+/// a symlink to a regular file is read through.
+#[tokio::test]
+async fn edit_doc_takes_only_a_regular_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let fifo = dir.path().join("fifo.md");
+    let c_path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: a valid NUL-terminated path; mkfifo only creates the node.
+    assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let path = fifo.clone();
+    std::thread::spawn(move || {
+        let result = read_capped(&path).map_err(|e| {
+            let usage = (e.downcast_ref::<Usage>()).map(|Usage(u)| (u.kind(), u.to_string()));
+            (e.to_string(), usage)
+        });
+        let _ = tx.send(result);
+    });
+    // A deadline, never a hang: past it the reader is released by opening the write
+    // end, and the test fails.
+    let result = match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(result) => result,
+        Err(_) => {
+            let _ = std::fs::OpenOptions::new().write(true).open(&fifo);
+            panic!("edit-doc blocked opening a FIFO");
+        }
+    };
+    let not_regular = |path: &Path| format!("error: {} is not a regular file\n", path.display());
+    let (_, usage) = result.expect_err("a FIFO is refused");
+    assert_eq!(
+        usage,
+        Some((ErrorKind::ValueValidation, not_regular(&fifo)))
+    );
+
+    let usage = read_capped(dir.path()).unwrap_err();
+    let Usage(usage) = usage.downcast_ref::<Usage>().expect("a usage error");
+    assert_eq!(usage.to_string(), not_regular(dir.path()));
+
+    let real = dir.path().join("real.md");
+    std::fs::write(&real, "# Reset\n").unwrap();
+    let link = dir.path().join("link.md");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    assert_eq!(read_capped(&link).unwrap(), "# Reset\n");
+
+    // Through the command: the usage error, and nothing reaches the daemon.
+    let socket = dir.path().join("d.sock");
+    let mut rx = fake_daemon(&socket, answers(None));
+    let fifo = fifo.display().to_string();
+    let args = [
+        "edit-doc",
+        "3f9a",
+        "--gate",
+        "spec",
+        "--file",
+        fifo.as_str(),
+    ];
+    let error = command(&socket, &args).await.unwrap_err();
+    assert!(error.downcast_ref::<Usage>().is_some(), "{error}");
     assert!(received(&mut rx).is_empty());
 }

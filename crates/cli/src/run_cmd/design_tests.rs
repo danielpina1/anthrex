@@ -123,9 +123,9 @@ fn show_prints_the_document_the_diff_and_findings() {
          changes: + R2; ~ Testing: 2 lines\n\
          disputed: F2\n"
     );
-    // Without the flags: the text alone on stdout.
+    // Without the flags: the text alone on stdout, with no newline added (ruling T16-2).
     let (out, _) = show_text(&info, &doc, (false, false));
-    assert_eq!(out, "# Reset\n [2JR1 reset by mail\n");
+    assert_eq!(out, "# Reset\n [2JR1 reset by mail");
     // v1: no diff, no findings, and no gate lines (the gate shows v2).
     let first = DocView {
         version: 1,
@@ -189,6 +189,22 @@ fn show_prints_the_document_the_diff_and_findings() {
          not reviewed: the reviewer timed out\n\
          report: 3 agree, 2 disagree; approaches: Mail link [both], Admin reset [codex]\n"
     );
+}
+
+/// Ruling T16-2 (m4): `run show` prints the stored text exactly, so an unchanged show
+/// and edit-doc round trip sends the same bytes back; a text without a final newline
+/// gets none. A section asked for after it starts on its own line.
+#[test]
+fn show_prints_the_stored_bytes_exactly() {
+    let info = design_run();
+    let doc = DocView {
+        text: "# Reset\n\nR1 reset by mail".into(),
+        ..spec_v2()
+    };
+    let (out, _) = show_text(&info, &doc, (false, false));
+    assert_eq!(out, doc.text);
+    let (out, _) = show_text(&info, &doc, (false, true));
+    assert_eq!(out, format!("{}\n=== findings: none ===\n", doc.text));
 }
 
 /// The brief's test: `run status` names the phase, and while a gate waits for the user
