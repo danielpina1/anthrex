@@ -97,7 +97,7 @@ pub(super) fn tool(
         match (design_tool, answers) {
             (true, _) => refuse(fx, reply, not_design(&run.id)),
             (_, true) => refuse(fx, reply, plan::RESPONSES_ONLY),
-            _ => return Some(parsed),
+            _ => return Some(plan::without_covers(parsed)),
         }
         return None;
     }

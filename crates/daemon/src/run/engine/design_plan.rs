@@ -32,6 +32,7 @@ use crate::run::design::state::{
     DesignState, DocReviewRecord, NewDoc, sha256_hex, store, store_findings,
 };
 use crate::run::model::{Run, Task};
+use crate::run::orch::tools::OrchCall;
 
 /// Ruling T10-2: a plan submit before the approved spec's requirements are stored.
 pub const READ_BACK_PENDING: &str =
@@ -373,6 +374,15 @@ pub(in crate::run::engine) fn spawn_refusal(
     Some(format!(
         "epic {epic} covers {unknown}, which the spec does not have"
     ))
+}
+
+/// The final fix wave's FW-13: a run without the flow keeps no `covers`; its epic, and
+/// its snapshot's planner, carry none, as in 9.5.
+pub(in crate::run::engine) fn without_covers(mut parsed: OrchCall) -> OrchCall {
+    if let OrchCall::SpawnSubplanner { covers, .. } = &mut parsed {
+        covers.clear();
+    }
+    parsed
 }
 
 /// `plan.md`'s next version at the open gate, when its text differs from the gate
