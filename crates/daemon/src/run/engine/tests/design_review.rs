@@ -126,7 +126,7 @@ fn the_same_runtime_fallback_names_its_reason() {
 #[test]
 fn a_back_or_read_back_revision_is_not_sent_for_review() {
     // Ruling T10-6 (amends T10-4): a refusal that says what to do.
-    let not_sent = "this revision is not sent for review; submit it with ready: true";
+    let not_sent = "this revision is not sent for review; submit it with ready = true";
     let mut fx = at_plan_gate(false);
     let back = DocGateAction::Back {
         note: "Rethink R2.".into(),
@@ -313,7 +313,7 @@ fn a_revision_after_changes_is_reviewed_only_when_asked() {
     let draft = outcome(&submit_spec(&mut fx, false, Value::Null)).unwrap_err();
     assert_eq!(
         draft,
-        "the user asked for no review of this revision; submit it with ready: true"
+        "the user asked for no review of this revision; submit it with ready = true"
     );
     let before = launches(&fx).len();
     outcome(&submit_spec(&mut fx, true, Value::Null)).unwrap();

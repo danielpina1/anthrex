@@ -39,7 +39,7 @@ pub const TWO_REVIEWS: &str = "the spec has had its two reviews; submit with rea
 /// DF §4.2: a review draft of a revision the user asked no review of (ruling T10-6:
 /// it ends telling the orchestrator what to submit).
 pub const NO_REVIEW_ASKED: &str =
-    "the user asked for no review of this revision; submit it with ready: true";
+    "the user asked for no review of this revision; submit it with ready = true";
 /// DF §4.2: a ready revision the user asked a review of, before that review.
 pub const REVIEW_ASKED: &str =
     "the user asked for a review of this revision; submit it with ready = false first";
@@ -48,7 +48,7 @@ pub const ASKED_REVIEW_DONE: &str =
     "the spec has had the review the user asked for; submit with ready = true";
 /// Rulings T10-4 and T10-6: a review draft at a spec gate revising after a Back or a
 /// failed read-back, which is not sent for review.
-pub const NOT_SENT: &str = "this revision is not sent for review; submit it with ready: true";
+pub const NOT_SENT: &str = "this revision is not sent for review; submit it with ready = true";
 /// A spec's first gate version submitted without any review: its `not reviewed` line.
 pub const UNREVIEWED: &str = "the orchestrator submitted it without a review";
 /// Decision 15: reviews before the spec's first gate version, at most.
