@@ -285,6 +285,36 @@ pub fn store_findings(
     })
 }
 
+/// Whether a restore's read-back keeps `v`'s text (`driver/design_restore.rs`): it is
+/// the latest version of a gate's document (what the next version's change summary
+/// compares against; the spec's is the current round's latest, else the approved one,
+/// never a dropped round's), or its brainstormer's latest draft (what the merged report's
+/// appendix attaches, task M9.6.9), or the approved spec whose requirements are not
+/// stored yet (task M9.6.10).
+pub fn read_back_keeps(design: &DesignState, v: &DocVersion) -> bool {
+    let due = design
+        .approved_spec
+        .filter(|_| design.requirements.is_empty());
+    if v.kind == DocKind::Spec && due == Some(v.n) {
+        return true;
+    }
+    let latest = match (v.kind, v.label()) {
+        (DocKind::BrainstormDraft, Some(label)) => design.draft_from(label),
+        (DocKind::BrainstormDraft, None) => None,
+        // The W1 re-review's FW-23 residual: the spec's is the current round's latest
+        // version, else the approved one; never a dropped round's.
+        (DocKind::Spec, _) => {
+            let own = design.round.is_some() && design.round_versions(DocKind::Spec) > 0;
+            match design.approved_spec.filter(|_| !own) {
+                Some(n) => design.find(DocKind::Spec, Some(n)),
+                None => design.find(DocKind::Spec, None),
+            }
+        }
+        (kind, _) => design.find(kind, None),
+    };
+    v.n > 0 && latest.is_some_and(|l| l.n == v.n)
+}
+
 /// `versions.json`'s text: the index as JSON.
 pub fn index_text(design: &DesignState) -> String {
     serde_json::to_string_pretty(&design.versions).unwrap_or_else(|_| "[]".into())

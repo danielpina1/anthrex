@@ -115,23 +115,9 @@ impl RunService {
     }
 }
 
-/// Whether `v`'s text is kept once read back: it is the latest version of a gate's
-/// document (what the next version's change summary compares against), or its
-/// brainstormer's latest draft (what the merged report's appendix attaches, task
-/// M9.6.9), or the approved spec whose requirements are not stored yet (task M9.6.10).
+/// Whether `v`'s text is kept once read back (`versions::read_back_keeps`, pure).
 pub(super) fn kept(design: &DesignState, v: &DocVersion) -> bool {
-    let due = design
-        .approved_spec
-        .filter(|_| design.requirements.is_empty());
-    if v.kind == DocKind::Spec && due == Some(v.n) {
-        return true;
-    }
-    let latest = match (v.kind, v.label()) {
-        (DocKind::BrainstormDraft, Some(label)) => design.draft_from(label),
-        (DocKind::BrainstormDraft, None) => None,
-        (kind, _) => design.find(kind, None),
-    };
-    v.n > 0 && latest.is_some_and(|l| l.n == v.n)
+    crate::run::design::versions::read_back_keeps(design, v)
 }
 
 /// Each run's brainstorm drafts whose text the read-back keeps: what a merged report

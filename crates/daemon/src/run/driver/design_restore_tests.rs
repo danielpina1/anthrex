@@ -125,18 +125,21 @@ fn the_latest_draft_of_each_brainstormer_is_kept() {
 
 /// Task M9.6.10: the approved spec is kept while its requirements are not stored (a
 /// restore between the approval and its read-back), even when it is not the latest
-/// spec; once they are stored, only the latest is.
+/// spec (an open round's amendment is). Once they are stored, the round's latest is
+/// kept; with no round open, the approved spec is, since a later version is then a
+/// dropped round's (the W1 re-review's FW-23 residual).
 #[test]
 fn the_approved_spec_is_kept_until_its_requirements_are_stored() {
+    use crate::run::design::round::DesignRound;
     use crate::run::design::state::{DesignState, Requirement};
     let mut design = DesignState {
-        versions: vec![
-            version(DocKind::Spec, 1, "v1"),
-            version(DocKind::Spec, 2, "v2"),
-        ],
+        versions: vec![version(DocKind::Spec, 1, "v1")],
         approved_spec: Some(1),
         ..DesignState::default()
     };
+    let round = DesignRound::starting(&design, 2, proto::RoundDesign::Amend);
+    design.round = Some(round);
+    design.versions.push(version(DocKind::Spec, 2, "v2"));
     let kept = |design: &DesignState| -> Vec<u32> {
         (design.versions.iter())
             .filter(|v| super::kept(design, v))
@@ -148,6 +151,12 @@ fn the_approved_spec_is_kept_until_its_requirements_are_stored() {
         id: "R1".into(),
         text: "one".into(),
     }];
+    assert_eq!(kept(&design), [2]);
+    // The round dropped: the approved spec, never its v2.
+    design.round = None;
+    assert_eq!(kept(&design), [1]);
+    // With no approval yet (round 1), the latest.
+    design.approved_spec = None;
     assert_eq!(kept(&design), [2]);
 }
 

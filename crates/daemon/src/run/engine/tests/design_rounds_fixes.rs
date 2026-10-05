@@ -213,3 +213,44 @@ fn a_dropped_rounds_spec_is_never_summarised_against() {
     let stored = design.find(proto::DocKind::Spec, Some(3)).unwrap();
     assert_eq!(stored.changes, against_v1);
 }
+
+/// The W1 re-review's FW-23 residual: round 2 is dropped with its v2 stored, and the
+/// daemon restarts, so the change summaries' cache is refilled by the read-back from
+/// what it keeps (`versions::read_back_keeps`). It keeps v1, the approved spec, never
+/// the dropped v2: round 3's first spec version is summarised against v1.
+#[test]
+fn after_a_restart_a_dropped_rounds_spec_is_never_summarised_against() {
+    use crate::run::design::versions::read_back_keeps;
+    use crate::run::engine::{DocChecked, EventKind};
+    let mut fx = amendment_at_gate();
+    act(&mut fx, DocGateKind::Spec, DocGateAction::Reject).unwrap();
+    restart(&mut fx);
+    let design = fx.run_mut().orch.design.as_mut().unwrap();
+    // The cache is the daemon's memory only.
+    design.texts.clear();
+    let stored = [(1, SPEC), (2, AMENDMENT)];
+    let checked: Vec<DocChecked> = (design.versions.iter())
+        .filter(|v| v.kind == proto::DocKind::Spec && v.draft_review.is_none())
+        .map(|v| {
+            let text = stored.iter().find(|(n, _)| *n == v.n).unwrap().1;
+            DocChecked {
+                kind: v.kind,
+                n: v.n,
+                read: Ok(read_back_keeps(design, v).then(|| text.to_string())),
+            }
+        })
+        .collect();
+    fx.next(EventKind::DesignChecked {
+        run_id: RUN_ID.into(),
+        checked,
+    });
+    resume(&mut fx);
+    iterate_with(&mut fx, None).unwrap();
+    let answer = submit_amendment(&mut fx, AMENDMENT).unwrap();
+    assert_eq!(answer["version"], 3, "{answer}");
+    let design = fx.run().orch.design.as_ref().unwrap();
+    let against_v1 = crate::run::design::changes::summary(SPEC, AMENDMENT);
+    assert!(!against_v1.is_empty());
+    let v3 = design.find(proto::DocKind::Spec, Some(3)).unwrap();
+    assert_eq!(v3.changes, against_v1);
+}
