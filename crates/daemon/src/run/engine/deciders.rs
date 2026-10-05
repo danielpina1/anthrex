@@ -53,6 +53,12 @@ pub(crate) fn dispatch(run: &mut Run, now: u64) -> Vec<Effect> {
     if run.decider_queue.is_empty() || run.state.is_terminal() {
         return fx;
     }
+    // Decision 14 (BR-11): every exit below reads the log (the `Decide`, both fallbacks).
+    let mut queue = std::mem::take(&mut run.decider_queue);
+    for q in &mut queue {
+        refill(run, q.decider_id, &mut q.request);
+    }
+    run.decider_queue = queue;
     if run.limits.decider_mode == DeciderMode::Off {
         for q in std::mem::take(&mut run.decider_queue) {
             let decision = fallback_decision(&q.request, OFF_REASON.to_string());
@@ -100,6 +106,14 @@ pub(crate) fn dispatch(run: &mut Run, now: u64) -> Vec<Effect> {
         ));
     }
     fx
+}
+
+/// Decision 14: a `ci_summary` request persists no log, so one read back from `run.json`
+/// or the journal is refilled from its summarising record before anything reads it.
+fn refill(run: &Run, decider_id: u64, request: &mut DeciderRequest) {
+    if let DeciderRequest::CiSummary(input) = request {
+        super::delivery::refill_log(run, decider_id, input);
+    }
 }
 
 /// A decider's answer (decision 18): counted on the run (a fallback too), its usage
@@ -195,11 +209,13 @@ pub(super) fn op_done(
     else {
         return;
     };
+    let mut request = request.clone();
+    refill(run, *decider_id, &mut request);
     let decision = match result {
         OpResult::Decided(decision) => *decision,
         OpResult::Failed { message } => {
             let reason = format!("the decider could not start: {message}");
-            fallback_decision(request, reason)
+            fallback_decision(&request, reason)
         }
         _ => return,
     };
@@ -207,7 +223,7 @@ pub(super) fn op_done(
         run,
         *decider_id,
         task_ids,
-        request,
+        &request,
         decision,
         now,
     ));

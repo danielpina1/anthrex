@@ -255,6 +255,18 @@ pub(super) fn log_text(rec: &CiRecord) -> String {
     text
 }
 
+/// Decision 14 (DH §3.2): an empty `log` refilled from the summarising record of
+/// `decider`. The request persists no log, so a restored or re-queued one is empty.
+pub(in crate::run::engine) fn refill_log(run: &Run, decider: u64, input: &mut CiSummaryInput) {
+    let summarising = (1..=stage_count(run))
+        .filter_map(|n| run.delivery.stage(n))
+        .flat_map(|s| s.ci.iter())
+        .find(|r| r.decider == Some(decider) && r.phase == CiPhase::Summarising);
+    if let Some(rec) = summarising.filter(|_| input.log.is_empty()) {
+        input.log = log_text(rec);
+    }
+}
+
 /// Step 2: the `ci_summary` decider, in a reader slot like every decider.
 fn summarise(run: &mut Run, n: u16, i: usize, now: u64, fx: &mut Vec<Effect>) {
     let (Some(rec), Some(pr)) = (record(run, n, i), run.delivery.pr(n)) else {

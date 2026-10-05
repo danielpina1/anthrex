@@ -34,7 +34,10 @@ pub struct CiSummaryInput {
     /// The failing checks' names, each on one line.
     pub checks: Vec<String>,
     pub log_path: PathBuf,
-    #[serde(default)]
+    /// Milestone 9.7 decision 14: never serialized, so neither `run.json` nor the
+    /// journal carries the log's text; `deciders::dispatch` refills it from the
+    /// summarising record (`CiRecord.text`) before every path that reads it.
+    #[serde(default, skip_serializing)]
     pub log: String,
 }
 

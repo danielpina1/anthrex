@@ -33,6 +33,7 @@ pub(super) mod sync;
 mod view;
 mod watch;
 
+pub(in crate::run::engine) use ci::refill_log;
 pub(crate) use ci::summarised as ci_summarised;
 pub(crate) use ci_repro::{reproduced, reproducing};
 pub(in crate::run::engine) use fix::{ci_culprit, ci_no_culprit};
