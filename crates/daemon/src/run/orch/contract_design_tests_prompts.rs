@@ -127,8 +127,10 @@ fn rules_47_to_52_are_exact_and_only_in_design_runs() {
 
 /// The first prompt names the phases, the design tools by their Claude ids, and where to
 /// start, then rules 47 to 53. `--yes` leaves the plan gate's line as it is (decision
-/// 6). Ruling T14-3: the step after scouting is the session's own (`session_prompt`),
-/// never stored, so a later session is not sent back to rule 48.
+/// 6), and the line names both cases (final fix wave FW-52, ruling T15-8): every design
+/// gate stops, and only a round the user starts in off mode with --yes starts its plan
+/// at once. Ruling T14-3: the step after scouting is the session's own
+/// (`session_prompt`), never stored, so a later session is not sent back to rule 48.
 #[test]
 fn the_first_prompt_names_the_phases() {
     let mut run = design_run();
@@ -136,7 +138,7 @@ fn the_first_prompt_names_the_phases() {
         "[anthrex] You are the orchestrator of run add-password-reset-3f9a in /tmp/x.\n\
          Goal: Test goal\n\
          Path: plan\n\
-         Plan gate: the user approves your submitted plan in the run view\n\
+         Plan gate: the user approves each design document and your submitted plan in the run view, even if the run was started with --yes; only a round the user starts in off mode with --yes starts its plan at once\n\
          Design flow: brainstorming, then specifying, then planning, under rules 47 to 53 below. Its tools: start_brainstorm (in Claude: mcp__anthrex__start_brainstorm), submit_doc (in Claude: mcp__anthrex__submit_doc) and get_doc (in Claude: mcp__anthrex__get_doc).\n\
          Start with get_context, then scout. {RETRY}\n\
          \n\
@@ -312,6 +314,25 @@ fn a_non_design_contract_is_unchanged() {
     off.design_mode = DesignMode::Off;
     assert_eq!(where_the_run_is(&off), None);
     assert_eq!(design_rules(&off), None);
+    // Final fix wave FW-66 (T14 m2): nor a step.
+    assert_eq!(session_step(&off), None);
+    assert_eq!(session_prompt(&off, &handoff), handoff);
+}
+
+/// Final fix wave FW-67 (T14 m3): a run paused while it asks its questions is still
+/// asking (its `paused_from`), so its session gets rule 48's step; paused after the
+/// answers, none.
+#[test]
+fn a_paused_run_keeps_the_step_of_the_phase_it_paused_in() {
+    let mut run = design_run();
+    run.paused_from = Some(RunState::Brainstorming);
+    run.state = RunState::Paused;
+    assert_eq!(session_step(&run), Some(ASK_STEP));
+    run.orch.design.as_mut().unwrap().answers = Some("skip".into());
+    assert_eq!(session_step(&run), None);
+    run.orch.design.as_mut().unwrap().answers = None;
+    run.paused_from = Some(RunState::Specifying);
+    assert_eq!(session_step(&run), None);
 }
 
 /// `ORCHESTRATOR_CONTRACT`'s SHA-256 at 9.5's head (`f4df79c4`), whose text this branch

@@ -120,7 +120,9 @@ fn a_codex_relaunch_at_an_open_plan_gate_names_it() {
     let restarts = ops_in(&effects, "RestartOrchestrator");
     assert_eq!(restarts.len(), 1, "{effects:#?}");
     fx.done(restarts[0].0, OpResult::RestartedFresh);
-    assert!(notes(&fx).contains(&at_the_plan_gate()), "{:?}", notes(&fx));
+    // Past the questions: the note says they are answered (final fix wave FW-65).
+    let line = format!("{} {ANSWERED}", at_the_plan_gate());
+    assert!(notes(&fx).contains(&line), "{:?}", notes(&fx));
 }
 
 /// A design run's first session is told where it is as well: brainstorming, nothing
@@ -177,6 +179,57 @@ fn a_relaunch_in_specifying_is_not_sent_back_to_rule_48() {
     let sent = first_turns(&effects);
     assert_eq!(sent, vec![format!("{first}\n{line}")]);
     assert!(!sent[0].contains("follow rule 48"), "{sent:?}");
+    // Final fix wave FW-68 (T14 m5): the pasted first turn says where the run is, so
+    // no where-note is added for a Claude restart.
+    let notes = notes(&fx);
+    assert!(
+        !notes.iter().any(|n| n.contains("Where the run is")),
+        "{notes:?}"
+    );
+}
+
+/// The sentence a Codex fresh restart past the questions adds (final fix wave FW-65).
+const ANSWERED: &str = "The questions are already answered; do not ask them again.";
+
+/// `fx`'s orchestrator runs on Codex, then is restarted fresh in its own window (a
+/// daemon restart, then `run resume`): the run's wake notes after it.
+fn codex_fresh_restart(fx: &mut Fixture) -> Vec<String> {
+    let route = &mut fx.run_mut().orch.orchestrator.as_mut().unwrap().route;
+    route.runtime = Runtime::Codex;
+    restart(fx);
+    let effects = resume(fx);
+    let restarts = ops_in(&effects, "RestartOrchestrator");
+    assert_eq!(restarts.len(), 1, "{effects:#?}");
+    fx.done(restarts[0].0, OpResult::RestartedFresh);
+    notes(fx)
+}
+
+/// Final fix wave FW-65 (T14 m1): a Codex window restarted fresh re-runs its launch's
+/// command line, built while the run asked its questions. Past them (in specifying), its
+/// where-note ends with [`ANSWERED`]; a restart still asking does not add it.
+#[test]
+fn a_codex_fresh_restart_past_the_questions_says_they_are_answered() {
+    let mut fx = at_brainstorm_gate(false);
+    act(
+        &mut fx,
+        proto::DocGateKind::Brainstorm,
+        proto::DocGateAction::APPROVE,
+    )
+    .unwrap();
+    assert_eq!(fx.run().state, RunState::Specifying);
+    let notes = codex_fresh_restart(&mut fx);
+    let note = (notes.iter())
+        .find(|n| n.starts_with("Where the run is"))
+        .unwrap_or_else(|| panic!("{notes:?}"));
+    assert!(note.ends_with(&format!(". {ANSWERED}")), "{note}");
+
+    let mut fx = design_launched(false);
+    assert_eq!(fx.run().state, RunState::Brainstorming);
+    let notes = codex_fresh_restart(&mut fx);
+    let note = (notes.iter())
+        .find(|n| n.starts_with("Where the run is"))
+        .unwrap_or_else(|| panic!("{notes:?}"));
+    assert!(!note.contains(ANSWERED), "{note}");
 }
 
 /// Ruling T14-1: a run without the design flow relaunches as in 9.5: the handoff alone,

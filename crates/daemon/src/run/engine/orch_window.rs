@@ -9,7 +9,7 @@ use super::requests::log;
 use super::{Effect, OpId, OpKind, OpResult, emit_op, history, next_op};
 use crate::run::model::Run;
 use crate::run::orch::contract::orchestrator_first_prompt;
-use crate::run::orch::contract_design::{session_prompt, where_the_run_is};
+use crate::run::orch::contract_design::{restart_note, session_prompt};
 use crate::run::orch::launch::{first_turn_pasted, orchestrator_role, orchestrator_window_spec};
 
 /// Decisions 5 and 26: the orchestrator's window, and its first prompt (the planned
@@ -160,7 +160,8 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<
                 super::design_gate::renote(run);
                 // Ruling T14-1: a Codex window restarts on its launch's command line, so
                 // its fresh session is told where the run is now.
-                if let Some(line) = where_the_run_is(run).filter(|_| !pasted) {
+                // Final fix wave FW-65: past the questions, it is told they are answered.
+                if let Some(line) = restart_note(run).filter(|_| !pasted) {
                     super::wake::note(run, line);
                 }
             }

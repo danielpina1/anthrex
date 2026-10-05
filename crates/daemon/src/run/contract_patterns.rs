@@ -52,6 +52,12 @@ pub fn test_writer_prompt(run: &Run, task: &Task) -> String {
     lines.extend(spec.owns.iter().map(|glob| format!("- {glob}")));
     lines.push("Acceptance criteria:".to_string());
     lines.extend(spec.acceptance.iter().map(|item| format!("- {item}")));
+    // Final fix wave FW-69 (WB-C M-1): a design run's requirements block (decision
+    // 25), as the implementer's prompt carries it, before the brief.
+    if let Some(block) = super::orch::contract_design::requirements_block(run, task) {
+        lines.push(String::new());
+        lines.push(block);
+    }
     lines.push(String::new());
     lines.push(spec.brief.clone());
     lines.join("\n")

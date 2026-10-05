@@ -80,6 +80,16 @@ pub const RULES_HEAD: &str = "Your contract's rules continue, for this run:";
 /// at its first mention (the tool-search fix's form).
 pub const DESIGN_LINE: &str = "Design flow: brainstorming, then specifying, then planning, under rules 47 to 53 below. Its tools: start_brainstorm (in Claude: mcp__anthrex__start_brainstorm), submit_doc (in Claude: mcp__anthrex__submit_doc) and get_doc (in Claude: mcp__anthrex__get_doc).";
 
+/// Final fix wave FW-52 (decision 6, ruling T15-8): a design run's plan gate line. Every
+/// design gate stops for the user, `--yes` or not; only a round the user starts in off
+/// mode with `--yes` starts its plan at once.
+pub const DESIGN_GATE: &str = "the user approves each design document and your submitted plan in the run view, even if the run was started with --yes; only a round the user starts in off mode with --yes starts its plan at once";
+
+/// Final fix wave FW-65 (T14 m1): what a Codex window's fresh restart past the
+/// questions adds to its where-note, since it re-runs a launch command line that may
+/// have been built while the run asked them.
+pub const ANSWERED: &str = "The questions are already answered; do not ask them again.";
+
 /// Where a design run's orchestrator starts. The step after it is the session's own
 /// ([`session_step`], ruling T14-3), so a stored prompt never sends a later session back.
 pub const DESIGN_START: &str = "Start with get_context, then scout.";
@@ -104,10 +114,10 @@ pub fn design_rules(run: &Run) -> Option<String> {
     is_design(run).then(|| DESIGN_RULES.replace("{max_questions}", &n.to_string()))
 }
 
-/// The design run's first-prompt lines between the gate line and the start line, and
-/// its start line; `None` without the design flow (9.5's lines stand).
-pub fn first_prompt_lines(run: &Run) -> Option<(&'static str, &'static str)> {
-    is_design(run).then_some((DESIGN_LINE, DESIGN_START))
+/// The design run's plan gate line, its first-prompt line between the gate line and the
+/// start line, and its start line; `None` without the design flow (9.5's lines stand).
+pub fn first_prompt_lines(run: &Run) -> Option<(&'static str, &'static str, &'static str)> {
+    is_design(run).then_some((DESIGN_GATE, DESIGN_LINE, DESIGN_START))
 }
 
 /// The head of the line [`where_the_run_is`] builds.
@@ -185,6 +195,10 @@ fn approved_count(run: &Run, gate: Option<DocGateKind>, state: Option<RunState>)
 /// [`ASK_STEP`], or [`NO_QUESTIONS_STEP`] with a limit of 0. `None` past them: the where
 /// line names the phase.
 pub fn session_step(run: &Run) -> Option<&'static str> {
+    // Final fix wave FW-66 (T14 m2): never for a run without the flow.
+    if !is_design(run) {
+        return None;
+    }
     let design = run.orch.design.as_ref()?;
     let state = match run.state {
         RunState::Paused => run.paused_from,
@@ -194,6 +208,18 @@ pub fn session_step(run: &Run) -> Option<&'static str> {
         state == Some(RunState::Brainstorming) && design.gate.is_none() && design.answers.is_none();
     let none = run.limits.orch.design.max_questions == 0;
     asking.then_some(if none { NO_QUESTIONS_STEP } else { ASK_STEP })
+}
+
+/// Ruling T14-1: the wake note a Codex window's fresh restart is sent, its command line
+/// being its launch's: where the run is now, and past the questions (no step to take,
+/// the answers recorded) [`ANSWERED`] (final fix wave FW-65). `None` without the flow.
+pub fn restart_note(run: &Run) -> Option<String> {
+    let line = where_the_run_is(run)?;
+    let answered = (run.orch.design.as_ref()).is_some_and(|d| d.answers.is_some());
+    Some(match session_step(run).is_none() && answered {
+        true => format!("{line} {ANSWERED}"),
+        false => line,
+    })
 }
 
 /// Ruling T14-1: what a session of `run`'s orchestrator is first sent: `first` (the
@@ -221,6 +247,27 @@ pub fn adopted_wake(run: &Run, wake: String) -> String {
     };
     let first = format!("{wake}\n{DESIGN_LINE}\n{RULES_HEAD}\n{rules}");
     session_prompt(run, &first)
+}
+
+/// Final fix wave FW-72 (WB-C M-5): `run start --goal`'s message for a planned run.
+/// A design run's line (`… is brainstorming with its orchestrator, which may ask you
+/// questions in its window`) replaces 9.5's `… is being planned by its orchestrator`;
+/// any other run's message is 9.5's byte for byte.
+pub fn start_message(
+    info: &proto::TriageInfo,
+    id: &str,
+    path: proto::RunPath,
+    mode: DesignMode,
+) -> String {
+    let message = super::contract::planned_message(info, id, path);
+    if mode != DesignMode::Full {
+        return message;
+    }
+    message.replacen(
+        "is being planned by its orchestrator",
+        "is brainstorming with its orchestrator, which may ask you questions in its window",
+        1,
+    )
 }
 
 #[cfg(test)]

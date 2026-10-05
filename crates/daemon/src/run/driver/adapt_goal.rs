@@ -29,7 +29,7 @@ use crate::run::engine::{EventKind, HISTORY_FILE};
 use crate::run::git::{self, Git, os};
 use crate::run::history_io::append_once;
 use crate::run::model::Run;
-use crate::run::orch::contract::planned_message;
+use crate::run::orch::contract_design::start_message;
 use crate::run::orch::roles;
 use crate::run::plan::{PlanError, Preflight};
 use crate::run::triage::{self, TriageRoute};
@@ -452,7 +452,8 @@ impl RunService {
             Err(error) => return refused(error.text()),
         };
         let (run_id, path) = (run.id.clone(), run.path.unwrap_or(RunPath::Plan));
-        let message = planned_message(&info, &run_id, path);
+        // Final fix wave FW-72: a design run's says its orchestrator may ask questions.
+        let message = start_message(&info, &run_id, path, run.design_mode);
         match self
             .ask(|reply| EventKind::Start {
                 reply,

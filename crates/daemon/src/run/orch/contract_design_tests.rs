@@ -156,3 +156,49 @@ fn the_reviewer_prompt_asks_for_a_verdict_per_requirement() {
     let plain = design_run("Users reset their password.", &[]);
     assert_eq!(reviewer(&plain), REVIEWER);
 }
+
+/// Final fix wave FW-72 (WB-C M-5): `run start --goal`'s message for a design run says
+/// the run is brainstorming and its orchestrator may ask questions in its window; a run
+/// without the flow gets 9.5's text byte for byte.
+#[test]
+fn a_design_runs_start_message_mentions_the_questions() {
+    let info = proto::TriageInfo {
+        kinds: vec![proto::TaskKind::Code],
+        scale: proto::Scale::Plan,
+        path: proto::RunPath::Plan,
+        reason: "two modules".into(),
+        source: proto::DeciderSource::Decider,
+        fallback_reason: None,
+        at: 0,
+    };
+    let path = proto::RunPath::Plan;
+    assert_eq!(
+        start_message(&info, "run-1", path, DesignMode::Full),
+        "triage: code/plan (decider)\nplan path: run run-1 is brainstorming with its orchestrator, which may ask you questions in its window\ntalk to it with: anthrex, then C-b T and Enter on the run\nwatch with: anthrex run status run-1"
+    );
+    assert_eq!(
+        start_message(&info, "run-1", path, DesignMode::Off),
+        crate::run::orch::contract::planned_message(&info, "run-1", path)
+    );
+}
+
+/// Final fix wave FW-69 (WB-C M-1): a paired task's test writer is given the
+/// requirements its task covers and the spec's Goal, as its implementer is, before the
+/// brief, in its first turn and in a fresh session's hand-over; without the design flow
+/// its prompt is 9.5's.
+#[test]
+fn a_paired_test_writer_gets_the_requirements() {
+    use crate::run::contract_patterns::{test_writer_handover, test_writer_prompt};
+    let run = design_run("Users reset their password.", &["R3", "R1"]);
+    let prompt = test_writer_prompt(&run, &run.tasks[0]);
+    assert!(
+        prompt.ends_with(&format!("- Accept t1\n\n{BLOCK}\n\nBrief t1")),
+        "{prompt}"
+    );
+    let handover = test_writer_handover(&run, &run.tasks[0], "lost", "stat", "patch");
+    assert!(handover.starts_with(&prompt), "{handover}");
+    let plain = plain_run();
+    let before = test_writer_prompt(&plain, &plain.tasks[0]);
+    assert!(before.ends_with("- Accept t1\n\nBrief t1"), "{before}");
+    assert_eq!(prompt.replace(&format!("{BLOCK}\n\n"), ""), before);
+}
