@@ -88,6 +88,9 @@ pub enum Effect {
         /// Milestone 9.5 decision 38: `text` is the session's first prompt, pasted whole
         /// into a window that has sent a signal, held until its `OrchestratorWoken`.
         first_turn: bool,
+        /// Ruling T20-1: each pending note `text` holds, with its seq (the note's id),
+        /// oldest first; empty for a first turn. The driver pastes a note at most once.
+        notes: Vec<(u64, String)>,
     },
     /// Milestone 9.3 decision 23: a continued run takes its idle chain's orchestrator
     /// window, renamed `name` and rebound to `run_id`, its session never restarted

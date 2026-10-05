@@ -144,7 +144,7 @@ impl Rig {
         self.runs.queue_wake(
             "r1".into(),
             window,
-            "the first prompt".into(),
+            ("the first prompt".into(), Vec::new()),
             (0, 0, None, true),
         );
     }

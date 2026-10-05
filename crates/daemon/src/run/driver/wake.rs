@@ -27,6 +27,9 @@
 //! remembered, with its round, until a check reads the engine after it and finds that
 //! round's request cleared; every re-emission of that round's meanwhile is dropped, so
 //! it is never pasted twice, and a later round's is pasted once (fix round 1).
+//!
+//! **A note** is pasted at most once (ruling T20-1, `wake_notes.rs`): a notes-only
+//! wake-up loses the notes already pasted, and goes only with a new one left.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -49,6 +52,9 @@ use first_turn::FIRST_TURN;
 
 #[path = "wake_report.rs"]
 mod report;
+
+#[path = "wake_notes.rs"]
+mod notes;
 pub use report::WaitReason;
 
 /// Decision 39: the paste, then this long, then the `\r` that submits it.
@@ -105,6 +111,8 @@ pub(super) struct Pending {
     /// Milestone 9.3 (D13, fix round 1): `Some(n)` when the text starts with round
     /// `n`'s request wake.
     request: Option<u32>,
+    /// Ruling T20-1: the notes `text` holds, each with its seq.
+    notes: Vec<(u64, String)>,
 }
 
 impl Pending {
@@ -135,6 +143,8 @@ pub(super) struct Wakes {
     /// generation counter at its paste, until a check that read the engine after it
     /// finds the engine no longer holds that round's request.
     pasted: std::sync::Mutex<HashMap<String, (u32, u64)>>,
+    /// Ruling T20-1: the newest note pasted, per run.
+    notes_pasted: notes::NotesPasted,
     next_generation: std::sync::atomic::AtomicU64,
     /// Milestone 9.5 decision 41: why each run's wake-up waits, as last logged.
     pub(super) waits: report::Waits,
@@ -193,7 +203,8 @@ impl Wakes {
 
     /// After a paste of `p` for `run_id`: a waiting wake-up it covered is removed (one
     /// holding no newer note, or, for a pasted request, the request's re-emission), and
-    /// a pasted request is remembered until the engine has cleared it (D13).
+    /// a pasted request is remembered until the engine has cleared it (D13), and its
+    /// notes as pasted (ruling T20-1).
     fn pasted(&self, run_id: &str, p: &Pending) {
         let mut pending = crate::lock(&self.pending);
         let covered = |next: &Pending| match (p.request, next.request) {
@@ -204,6 +215,7 @@ impl Wakes {
         if pending.get(run_id).is_some_and(covered) {
             pending.remove(run_id);
         }
+        self.notes_pasted.remember(run_id, p);
         if let Some(n) = p.request {
             let stamp = self.next_generation.fetch_add(1, Ordering::SeqCst);
             crate::lock(&self.pasted).insert(run_id.to_string(), (n, stamp));
@@ -293,7 +305,8 @@ impl Wakes {
     }
 
     /// Takes each of `takes` out for delivery, unless it was replaced or dropped since,
-    /// or its run's delivery is under way.
+    /// or its run's delivery is under way; without the notes already pasted, and not at
+    /// all with none new left (ruling T20-1).
     fn take(&self, takes: Vec<Waiting>) -> Vec<(String, Pending)> {
         let mut pending = crate::lock(&self.pending);
         let mut delivering = crate::lock(&self.delivering);
@@ -307,6 +320,7 @@ impl Wakes {
                     return None;
                 }
                 let p = pending.remove(&w.run_id)?;
+                let p = self.notes_pasted.unpasted(&w.run_id, p)?;
                 delivering.insert(w.run_id.clone());
                 Some((w.run_id, p))
             })
@@ -377,7 +391,7 @@ impl RunService {
         self: &Arc<Self>,
         run_id: String,
         window_id: u32,
-        text: String,
+        (text, notes): (String, Vec<(u64, String)>),
         (digest_revision, notes_seq, request, first_turn): (u64, u64, Option<u32>, bool),
     ) {
         let request = first_turn::kept_as(request, first_turn);
@@ -393,6 +407,7 @@ impl RunService {
             quiet: Duration::from_secs(quiet),
             generation: 0,
             request,
+            notes,
         };
         self.wakes.insert(run_id, pending);
         self.check_orchestrators();
@@ -572,3 +587,7 @@ mod tests;
 #[cfg(test)]
 #[path = "wake_exit_tests.rs"]
 mod exit_tests;
+
+#[cfg(test)]
+#[path = "wake_notes_tests.rs"]
+mod notes_tests;

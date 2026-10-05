@@ -196,28 +196,3 @@ pub fn doc_path(h: &RunHarness, run: &str, folder: &str, suffix: &str) -> String
     let date = daemon::run::report::format_utc(created);
     format!("docs/anthrex/{folder}/{}-{SLUG}{suffix}.md", &date[..10])
 }
-
-/// The orchestrator's step that waits, its turn kept open, for a line the test types
-/// ([`go`]): how a scenario that reads more than one message syncs on the drafts
-/// instead of reading their wake-up, which can be pasted twice (the task report's
-/// product bug 1) and so pass for a later one.
-pub fn typed() -> Value {
-    serde_json::json!({"read_line": true})
-}
-
-/// Types the line [`typed`] waits for into the orchestrator's window.
-pub fn go(h: &RunHarness, window: u32) {
-    h.type_into(window, b"go\r");
-}
-
-/// Waits until run `run`'s log says the brainstorm drafts are in for the `n`th time;
-/// the log.
-pub fn drafts_in(h: &RunHarness, run: &str, n: usize) -> Vec<String> {
-    crate::support::run_plans::until("the brainstorm drafts", ORCH_WAIT, || {
-        let log = crate::support::run_pr::log_lines(h, run);
-        let count = (log.iter())
-            .filter(|l| *l == "the brainstorm drafts are in")
-            .count();
-        (count == n).then_some(log)
-    })
-}

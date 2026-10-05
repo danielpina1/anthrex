@@ -205,6 +205,7 @@ mod usage;
 mod view_fields;
 mod wake_fixes;
 mod wake_held;
+mod wake_note_ids;
 mod wake_notes;
 mod weakening;
 mod worker_messages;

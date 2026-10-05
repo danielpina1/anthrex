@@ -173,8 +173,12 @@ async fn a_waiting_wake_logs_why_once() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     live_run(&rig, window, 4);
-    rig.runs
-        .queue_wake("r1".into(), window, "note".into(), (1, 1, None, false));
+    rig.runs.queue_wake(
+        "r1".into(),
+        window,
+        ("note".into(), Vec::new()),
+        (1, 1, None, false),
+    );
     // `queue_wake` looked once; two more looks make three.
     rig.runs.check_orchestrators();
     rig.runs.check_orchestrators();
@@ -263,8 +267,12 @@ async fn a_codex_question_holds_the_wake_while_its_footer_shows() {
     shown(&rig.manager, window, Some(1)).await;
     rig.manager.tick();
     assert_eq!(rig.status(window).0, Status::Attention);
-    rig.runs
-        .queue_wake("r1".into(), window, "note".into(), (1, 1, None, false));
+    rig.runs.queue_wake(
+        "r1".into(),
+        window,
+        ("note".into(), Vec::new()),
+        (1, 1, None, false),
+    );
     still_held(&mut rig, window, "the question").await;
     rig.manager
         .handle_event(window, WindowEvent::Title("Working".into()));

@@ -70,11 +70,8 @@ fn e2e_round_amend() {
     }
     green(&h, "t1", PLAN_FILE);
     green(&h, "t2", "b.txt");
-    // The orchestrator keeps its turn open through round 1 (it reads the drafts when
-    // the test has seen them in), so the round-2 request is the first wake-up pasted.
     let mut steps = ask(None);
-    steps.push(typed());
-    steps.extend(submit_merged(&labels(), &report(LABELS)));
+    steps.extend(merge(&labels(), &report(LABELS)));
     steps.push(approved("brainstorm"));
     steps.extend(spec_for_review(SPEC, 1));
     steps.push(spec_ready(SPEC, &[]));
@@ -104,9 +101,7 @@ fn e2e_round_amend() {
     steps.push(until("/run/complete", json!(true), DESIGN_SUMMARY_WAIT));
     steps.push(edit_plan(vec![], json!({"summary": SUMMARY_2})));
     steps.extend([marker(), read(None)]);
-    let (run, window) = start(&h, &steps, &[]);
-    drafts_in(&h, &run, 1);
-    go(&h, window);
+    let (run, _) = start(&h, &steps, &[]);
     for kind in [
         DocGateKind::Brainstorm,
         DocGateKind::Spec,

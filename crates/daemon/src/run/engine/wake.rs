@@ -141,6 +141,7 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
             notes_seq: 0,
             request: None,
             first_turn: true,
+            notes: Vec::new(),
         });
     }
     if let Some(request) = run.orch.request_wake.as_ref().filter(|_| o.live) {
@@ -160,6 +161,7 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
             notes_seq: notes_seq(run),
             request: Some(run.round()),
             first_turn: false,
+            notes: pending(o),
         });
     }
     let due = !o.notes.is_empty()
@@ -174,7 +176,15 @@ pub(super) fn effect(run: &Run) -> Option<Effect> {
         notes_seq: notes_seq(run),
         request: None,
         first_turn: false,
+        notes: pending(o),
     })
+}
+
+/// Ruling T20-1: the pending notes, each with its seq, oldest first.
+fn pending(o: &crate::run::orch::OrchestratorRecord) -> Vec<(u64, String)> {
+    let mut seqs = o.note_seqs.clone();
+    seqs.resize(o.notes.len(), 0);
+    seqs.into_iter().zip(o.notes.iter().cloned()).collect()
 }
 
 /// Decision 39: a note for each task blocked since `before`, for any reason but

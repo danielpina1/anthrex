@@ -207,29 +207,27 @@ fn e2e_rethink() {
     for label in LABELS {
         h.brainstormer(label, 2, Draft::Text(&second(label)));
     }
-    // The orchestrator keeps its turn open throughout (no wake-up is pasted to it) and
-    // reads each round's drafts when the test has seen them in (`typed`).
+    // The orchestrator reads each round's drafts from their wake-up (ruling T20-1: a
+    // wake note is pasted once, so a duplicate of the first can never pass for the
+    // second).
     let report_v2 = report_v2();
     let mut steps = ask(None);
-    steps.push(typed());
-    steps.extend(submit_merged(&labels(), &report(LABELS)));
+    steps.extend(merge(&labels(), &report(LABELS)));
     steps.push(until("/gate/state", json!("brainstorming"), ORCH_WAIT));
-    steps.push(typed());
-    steps.extend(submit_merged(&labels(), &report_v2));
+    steps.extend(merge(&labels(), &report_v2));
     steps.push(approved("brainstorm"));
     steps.extend([marker(), read(None)]);
-    let (run, window) = start(&h, &steps, &[]);
-    drafts_in(&h, &run, 1);
-    go(&h, window);
+    let (run, _) = start(&h, &steps, &[]);
 
     h.wait_doc_gate(&run, DocGateKind::Brainstorm, 1, ORCH_WAIT);
     let out = ok(&h, &["run", "rethink", &run, "--note", NOTE]);
     assert!(out.contains("rethought"), "{out}");
-    let log = drafts_in(&h, &run, 2);
+    let info = approve(&h, &run, DocGateKind::Brainstorm, 2);
+    let log = crate::support::run_pr::log_lines(&h, &run);
     let asked = "the user asked to rethink the brainstorm v1".to_string();
     assert!(log.contains(&asked), "{log:#?}");
-    go(&h, window);
-    let info = approve(&h, &run, DocGateKind::Brainstorm, 2);
+    let drafts = (log.iter()).filter(|l| *l == "the brainstorm drafts are in");
+    assert_eq!(drafts.count(), 2, "{log:#?}");
     wait_passed(&h, 1);
     assert_eq!(h.run(&run).unwrap().state, RunState::Specifying);
     let sessions: Vec<_> = (info.design_agents.iter())
