@@ -112,6 +112,8 @@ pub enum Glyph {
     Run,
     Hub,
     Focus,
+    /// Milestone 9.6 (DF §6.2): a design gate waiting for the user.
+    Gate,
 }
 
 /// A glyph, or its ASCII twin when `ascii` (`UiSettings.badges.ascii`).
@@ -138,6 +140,7 @@ pub const fn glyph(g: Glyph, ascii: bool) -> &'static str {
         Glyph::Run => ("◉", "@"),
         Glyph::Hub => ("◆", "H"),
         Glyph::Focus => ("▎", "|"),
+        Glyph::Gate => ("⏸", "||"),
     };
     if ascii { plain } else { unicode }
 }

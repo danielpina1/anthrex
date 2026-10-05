@@ -213,7 +213,13 @@ pub fn alerts(app: &App) -> Vec<Alert> {
             let key = AlertKey::Orchestrator(id.clone());
             push(1, key, text.to_owned(), None, None, age);
         }
-        if run.state == RunState::AwaitingApproval {
+        if run.doc_gate.is_some() && run.state == RunState::AwaitingApproval {
+            // Milestone 9.6 (DF §2.1): a design gate's version waiting for the user; none
+            // while the orchestrator revises it.
+            if let Some(text) = super::doc_gate::alert_text(run) {
+                push(2, AlertKey::Gate(id.clone()), text, None, None, None);
+            }
+        } else if run.state == RunState::AwaitingApproval {
             // Milestone 9.3 decision 32: a later round's gate counts its own tasks.
             let n = super::plan_review::review_tasks(run, &ReviewTarget::Gate).len();
             let text = match run.round {

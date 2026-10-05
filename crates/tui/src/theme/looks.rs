@@ -159,7 +159,7 @@ pub fn bar(filled: usize, empty: usize, ascii: bool) -> String {
 /// their one-column ASCII twins: for text composed from many glyph literals at once
 /// (an inspection), folded in one place rather than at each literal.
 pub fn ascii_twins(text: &str) -> String {
-    const GLYPHS: [Glyph; 21] = [
+    const GLYPHS: [Glyph; 22] = [
         Glyph::Passed,
         Glyph::Failed,
         Glyph::NotStarted,
@@ -181,6 +181,7 @@ pub fn ascii_twins(text: &str) -> String {
         Glyph::Run,
         Glyph::Hub,
         Glyph::Focus,
+        Glyph::Gate,
     ];
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {

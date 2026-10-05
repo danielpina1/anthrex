@@ -46,6 +46,10 @@ impl App {
             self.on_iterate_paste(&text);
             return vec![];
         }
+        if matches!(self.modal, Some(Modal::DocNote(_))) {
+            self.on_doc_note_paste(&text);
+            return vec![];
+        }
         let goal_view = self.goal_view();
         if let Some(modal) = &mut self.modal {
             match modal {

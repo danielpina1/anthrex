@@ -59,7 +59,10 @@ pub enum PendingWhat {
         kind: ActionKind,
     },
     /// The answer form's `TaskDetail` (decision 15): fills its brief rows.
-    FormBrief { run_id: String, task_id: String },
+    FormBrief {
+        run_id: String,
+        task_id: String,
+    },
     /// The connection's `Settings(Get)` (decision 24, `app/screens.rs`).
     SettingsGet,
     /// A `Settings(Put)`; its `Saved` replaces the cache, any other reply re-syncs it.
@@ -70,7 +73,15 @@ pub enum PendingWhat {
         ask: ProfileAsk,
     },
     /// The stats screen's `Stats { dir }` (decision 38, `app/stats.rs`).
-    Stats { dir: std::path::PathBuf },
+    Stats {
+        dir: std::path::PathBuf,
+    },
+    /// Milestone 9.6: the document gate screen's `ShowDoc` and its gate's `DocGate`
+    /// (`app/doc_gate_replies.rs`).
+    DocShow {
+        run_id: String,
+    },
+    DocGate(super::doc_gate_replies::GateAsk),
 }
 
 /// One request waiting for its reply.
@@ -186,6 +197,9 @@ impl App {
             return Some(effects);
         }
         if let Some(effects) = self.route_stats_reply(reply) {
+            return Some(effects);
+        }
+        if let Some(effects) = self.route_doc_gate_reply(reply) {
             return Some(effects);
         }
         match reply {
@@ -383,6 +397,7 @@ impl App {
                 self.iterate_not_sent(Some(id));
                 true
             }
+            RunRequest::ShowDoc { .. } | RunRequest::DocGate { .. } => self.doc_gate_not_sent(id),
             _ => true,
         }
     }

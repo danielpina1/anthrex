@@ -248,6 +248,13 @@ pub(crate) fn shows(name: &str) -> Shows {
             row("SETTINGS", Some("esc back"), &["w save"])
         }
         "stats" => row("STATS", Some("esc back"), &["j/k scroll"]),
+        // Milestone 9.6 decisions 34 and 35: the gate screen and its note editor.
+        "doc gate" => row("REVIEW", Some("esc close"), &["a approve", "x reject"]),
+        "doc gate note" => row(
+            "ask for changes",
+            Some("esc cancel"),
+            &["^S ask for changes"],
+        ),
         // Milestone 9.0.7 decision 35: the old dialogs on the kit's grammar.
         "new agent over the pane" => row("new agent", Some("esc cancel"), &["⏎ create"]),
         "remove over the pane" => row("remove", Some("esc cancel"), &["y remove", "space"]),

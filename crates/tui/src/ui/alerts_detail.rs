@@ -165,6 +165,17 @@ fn facts(app: &App, alert: &Alert) -> Vec<(String, String)> {
                 push(&mut rows, "worker", worker);
             }
         }
+        // Milestone 9.6: a brainstorm or spec gate waits for its document's review.
+        (AlertKey::Gate(_), Some(run)) if crate::app::doc_gate::doc_gate_of(run).is_some() => {
+            if let Some(g) = &run.doc_gate {
+                push(&mut rows, "phase", "awaiting review".to_owned());
+                push(
+                    &mut rows,
+                    "document",
+                    format!("{} v{}", g.kind.label(), g.version),
+                );
+            }
+        }
         (AlertKey::Gate(_), Some(run)) => {
             push(&mut rows, "phase", "awaiting approval".to_owned());
             push(&mut rows, "plan", gate_plan(run));

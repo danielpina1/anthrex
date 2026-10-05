@@ -170,6 +170,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Modal::Help(view) => crate::ui::help::render(frame, app, view, area),
         Modal::Notice { title, lines } => render_notice(frame, title, lines, area, p),
         Modal::Rename(prompt) => render_rename(frame, prompt, area, p),
+        Modal::DocNote(form) => crate::ui::doc_note::render(frame, form, area, p),
     }
 }
 

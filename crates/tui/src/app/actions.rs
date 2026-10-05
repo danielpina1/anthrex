@@ -93,7 +93,9 @@ pub fn local_actions(run: &RunInfo, target: &ActionTarget) -> Vec<ActionInfo> {
     let mut out = Vec::new();
     match target {
         ActionTarget::Run => {
-            let awaiting = run.state == RunState::AwaitingApproval
+            // Milestone 9.6: a brainstorm or spec gate is reviewed with `review document`.
+            let awaiting = (run.state == RunState::AwaitingApproval
+                && super::doc_gate::doc_gate_of(run).is_none())
                 || run.holds.iter().any(|h| h.state == HoldState::Awaiting);
             if awaiting {
                 let effect = "review plan: read every task before approving".to_string();
@@ -437,6 +439,7 @@ impl App {
     fn act_locally(&mut self, flow: ActionFlow, kind: ActionKind) -> Vec<Effect> {
         match (kind, &flow.target) {
             (ActionKind::ReviewPlan, _) => self.review_from_run_view(&flow.run_id),
+            (ActionKind::ReviewDoc, _) => self.open_doc_gate(&flow.run_id),
             (ActionKind::OpenConversation, ActionTarget::Task(id)) => {
                 let key = NodeKey::Task {
                     run: flow.run_id.clone(),

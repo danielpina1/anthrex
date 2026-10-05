@@ -49,6 +49,8 @@ pub fn draw(frame: &mut Frame, app: &App) -> Layout {
         settings::render(frame, app, screen, l.body);
     } else if let Some(Screen::Stats(screen)) = &app.screen {
         stats::render(frame, app, screen, l.body);
+    } else if let Some(Screen::DocGate(screen)) = &app.screen {
+        super::doc_gate::render(frame, app, screen, l.body);
     } else if app.plan_review.is_some() {
         // Milestone 9.0.5 decision 12: the review covers the body; the status bar stays.
         plan_review::render(frame, app, l.body);

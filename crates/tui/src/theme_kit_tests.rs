@@ -62,6 +62,7 @@ fn every_glyph_has_an_ascii_twin() {
         Glyph::Run,
         Glyph::Hub,
         Glyph::Focus,
+        Glyph::Gate,
     ] {
         assert!(glyph(g, true).is_ascii(), "{g:?}");
         assert!(!glyph(g, false).is_ascii(), "{g:?}");
@@ -81,6 +82,8 @@ fn every_glyph_has_an_ascii_twin() {
         (Glyph::Run, "◉", "@"),
         (Glyph::Hub, "◆", "H"),
         (Glyph::Focus, "▎", "|"),
+        // Milestone 9.6: a design gate waiting for the user.
+        (Glyph::Gate, "⏸", "||"),
     ];
     for (g, uni, ascii) in grown {
         assert_eq!((glyph(g, false), glyph(g, true)), (uni, ascii), "{g:?}");

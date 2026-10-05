@@ -171,6 +171,10 @@ impl App {
                 self.on_iterate_key(key)
             }
             Modal::IdleMenu(menu) => self.on_idle_menu_key(menu, key),
+            Modal::DocNote(form) => {
+                self.modal = Some(Modal::DocNote(form));
+                self.on_doc_note_key(key)
+            }
         }
     }
 

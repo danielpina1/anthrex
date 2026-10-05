@@ -69,6 +69,8 @@ pub(super) fn badge(app: &App) -> Option<&'static str> {
         Some(" SETTINGS ")
     } else if matches!(app.screen, Some(Screen::Stats(_))) {
         Some(" STATS ")
+    } else if matches!(app.screen, Some(Screen::DocGate(_))) {
+        Some(" REVIEW ")
     } else if app.plan_review.is_some() {
         Some(" PLAN ")
     } else if app.alerts_focus.is_some() {
@@ -145,6 +147,8 @@ pub(super) fn body(app: &App, term: ratatui::layout::Rect) -> Body {
         )
     } else if let Some(Screen::Stats(_)) = &app.screen {
         (crate::ui::stats::hints(), false)
+    } else if let Some(Screen::DocGate(screen)) = &app.screen {
+        (crate::ui::doc_gate::hints(app, screen), false)
     } else if app.plan_review.is_some() {
         (review_hints(app), false)
     } else if app.alerts_focus.is_some() {

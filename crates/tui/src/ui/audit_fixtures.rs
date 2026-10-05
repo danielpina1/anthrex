@@ -283,6 +283,18 @@ pub(crate) fn fixtures() -> Vec<(&'static str, App)> {
                 },
             ),
         ),
+        // Milestone 9.6 decision 34: the document gate screen, and its note editor.
+        (
+            "doc gate",
+            crate::ui::doc_gate::tests::opened(proto::DocGateKind::Spec, 80, 24),
+        ),
+        (
+            "doc gate note",
+            with(
+                crate::ui::doc_gate::tests::opened(proto::DocGateKind::Spec, 80, 24),
+                |a| tap(a, 'c'),
+            ),
+        ),
         (
             "stats",
             with(gate(), |a| {
