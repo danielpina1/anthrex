@@ -4,7 +4,7 @@
 //! where a rename would replace. The index, `versions.json`, is replaced by a rename,
 //! its writes ordered so the newest wins.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
@@ -24,9 +24,37 @@ pub type Link<'a> = &'a dyn Fn(&Path, &Path) -> io::Result<()>;
 pub struct DocWrites {
     next: AtomicU64,
     last: Mutex<HashMap<PathBuf, Arc<Mutex<u64>>>>,
+    /// The version files whose write is in flight (ruling WB-B-I1).
+    writing: Mutex<HashSet<PathBuf>>,
+}
+
+/// A version file's write in flight, marked until it is dropped.
+pub struct Writing<'a> {
+    writes: &'a DocWrites,
+    path: PathBuf,
+}
+
+impl Drop for Writing<'_> {
+    fn drop(&mut self) {
+        crate::lock(&self.writes.writing).remove(&self.path);
+    }
 }
 
 impl DocWrites {
+    /// Marks `path`'s write in flight until the mark is dropped.
+    pub fn begin(&self, path: &Path) -> Writing<'_> {
+        crate::lock(&self.writing).insert(path.to_path_buf());
+        Writing {
+            writes: self,
+            path: path.to_path_buf(),
+        }
+    }
+
+    /// Whether `path`'s write is in flight.
+    pub fn in_flight(&self, path: &Path) -> bool {
+        crate::lock(&self.writing).contains(path)
+    }
+
     /// The write of `text` to the index `path`, numbered now, to run on a blocking thread.
     pub fn index_writer(
         &self,

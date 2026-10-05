@@ -10,6 +10,7 @@
 use std::fs::File;
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use proto::run_wire::request;
@@ -22,6 +23,8 @@ pub use super::design_files::{make_dirs, temp_name, write_new_at};
 use crate::run::design::changes::line_diff;
 use crate::run::design::state::{self, DocVersion, sha256_hex};
 use crate::run::design::template::kind_name;
+use crate::run::design::versions::WrittenDoc;
+use crate::run::engine::{DocChecked, EventKind};
 
 /// How long a design file's write or read may take before it is given up.
 pub const IO_WAIT: Duration = Duration::from_secs(10);
@@ -69,34 +72,72 @@ pub(super) enum ReadError {
 
 impl RunService {
     /// `Effect::WriteDoc`: the file, then the index, which is numbered now so an older
-    /// index never replaces a newer (m2). A failure is logged; the version stays in the
-    /// run's index, and reading it then names the error.
+    /// index never replaces a newer (m2). While it is in flight, a read of the version
+    /// is answered with the retry text. A failure is logged; the version stays in the
+    /// run's index, and (ruling WB-B-I1) the engine gets it as `DesignChecked` with the
+    /// error, so its gate reopens as revising, as a restore's read-back does.
     pub(super) async fn write_doc(
         &self,
         path: PathBuf,
         text: String,
         index: Option<(PathBuf, String)>,
+        doc: Option<WrittenDoc>,
     ) {
+        self.write_doc_with((path, text, index, doc), IO_WAIT, write_new)
+            .await
+    }
+
+    /// [`write_doc`](Self::write_doc), bounded by `wait`, with its file write `write`
+    /// ([`write_new`]; a test's seam).
+    pub(super) async fn write_doc_with<W>(
+        &self,
+        (path, text, index, doc): (
+            PathBuf,
+            String,
+            Option<(PathBuf, String)>,
+            Option<WrittenDoc>,
+        ),
+        wait: Duration,
+        write: W,
+    ) where
+        W: FnOnce(&Path, &str) -> Result<(), String> + Send + 'static,
+    {
         let shown = path.clone();
+        let _writing = self.doc_writes.begin(&path);
         let index = index.map(|(index, text)| self.doc_writes.index_writer(index, text));
         let wrote = tokio::time::timeout(
-            IO_WAIT,
+            wait,
             tokio::task::spawn_blocking(move || {
-                write_new(&path, &text)?;
+                write(&path, &text)?;
                 index.map_or(Ok(()), |write| write())
             }),
         )
         .await;
-        match wrote {
-            Ok(Ok(Ok(()))) => {}
+        let why = match wrote {
+            Ok(Ok(Ok(()))) => return,
             Ok(Ok(Err(error))) => {
-                tracing::error!(path = %shown.display(), %error, "design document write failed")
+                tracing::error!(path = %shown.display(), %error, "design document write failed");
+                format!("its write failed: {error}")
             }
             Ok(Err(error)) => {
-                tracing::error!(path = %shown.display(), %error, "design document write panicked")
+                tracing::error!(path = %shown.display(), %error, "design document write panicked");
+                format!("its write failed: {error}")
             }
-            Err(_) => tracing::error!(path = %shown.display(), "design document write timed out"),
-        }
+            Err(_) => {
+                tracing::error!(path = %shown.display(), "design document write timed out");
+                format!("its write took over {} ms", wait.as_millis())
+            }
+        };
+        let Some(doc) = doc.filter(|_| !self.stopped.load(Ordering::SeqCst)) else {
+            return;
+        };
+        let checked = vec![DocChecked {
+            kind: doc.kind,
+            n: doc.n,
+            read: Err(why),
+        }];
+        let run_id = doc.run_id;
+        self.send(EventKind::DesignChecked { run_id, checked });
     }
 
     /// `RunRequest::ShowDoc`, answered like `TaskDetail` but read off the engine.
@@ -171,9 +212,17 @@ impl RunService {
                 .ok_or_else(|| format!("run {run_id} has no {name} yet"))?,
         };
         let dir = state::design_dir(run);
+        let path = dir.join(design.file_name(version));
+        // Ruling WB-B-I1: never a read of a version whose write is in flight.
+        if self.doc_writes.in_flight(&path) {
+            let n = version.n;
+            return Err(format!(
+                "v{n} is still being written; try again in a moment"
+            ));
+        }
         Ok(Found {
             run: run_id.to_string(),
-            path: dir.join(design.file_name(version)),
+            path,
             previous: (design.previous(version))
                 .map(|p| (p.clone(), dir.join(design.file_name(p)))),
             findings: dir.join(state::findings_name(version.kind, version.n)),
@@ -292,3 +341,7 @@ mod tests;
 #[cfg(test)]
 #[path = "design_io_tests_files.rs"]
 mod tests_files;
+
+#[cfg(test)]
+#[path = "design_io_tests_writes.rs"]
+mod tests_writes;

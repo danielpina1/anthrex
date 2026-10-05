@@ -107,6 +107,9 @@ pub enum Effect {
         path: PathBuf,
         text: String,
         index: Option<(PathBuf, String)>,
+        /// The version written (`None`: a findings file or a review draft); a failed
+        /// write of it reopens its gate as revising (ruling WB-B-I1).
+        doc: Option<crate::run::design::versions::WrittenDoc>,
     },
     /// Milestone 9.6 task M9.6.10: read stored versions back, each checked against its
     /// index entry, and send their texts as `EventKind::DesignChecked`

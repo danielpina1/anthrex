@@ -41,6 +41,7 @@ fn store_records_the_version_and_asks_for_its_write() {
         path,
         text: t,
         index,
+        ..
     } = effect
     else {
         panic!("{effect:?}")
@@ -118,7 +119,10 @@ fn findings_are_written_beside_their_version_only() {
     let doc = NewDoc::new(DocKind::Plan, DocAuthor::Engine, "rendered", "# Plan");
     store(&mut run, doc, 1).unwrap();
     let effect = store_findings(&run, DocKind::Plan, 1, &[]).unwrap();
-    let Effect::WriteDoc { path, text, index } = effect else {
+    let Effect::WriteDoc {
+        path, text, index, ..
+    } = effect
+    else {
         panic!("{effect:?}")
     };
     assert_eq!(path, run.data_dir.join("design/findings-plan-v1.json"));

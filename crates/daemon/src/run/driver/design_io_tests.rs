@@ -58,10 +58,16 @@ pub(super) fn spec(text: &str) -> NewDoc {
 
 /// Applies a `WriteDoc` the way `driver/effects.rs::apply` does.
 pub(super) async fn apply(s: &RunService, effect: Effect) -> PathBuf {
-    let Effect::WriteDoc { path, text, index } = effect else {
+    let Effect::WriteDoc {
+        path,
+        text,
+        index,
+        doc,
+    } = effect
+    else {
         panic!("not a write: {effect:?}");
     };
-    s.write_doc(path.clone(), text, index).await;
+    s.write_doc(path.clone(), text, index, doc).await;
     path
 }
 
@@ -143,7 +149,7 @@ async fn a_version_is_never_rewritten() {
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), SPEC_1);
     // A `WriteDoc` aimed at it changes nothing either.
-    s.write_doc(path.clone(), SPEC_2.into(), None).await;
+    s.write_doc(path.clone(), SPEC_2.into(), None, None).await;
     assert_eq!(std::fs::read_to_string(&path).unwrap(), SPEC_1);
 
     // The engine always takes n+1, the same text included, and per kind.

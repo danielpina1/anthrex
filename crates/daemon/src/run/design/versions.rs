@@ -190,6 +190,16 @@ impl NewDoc {
     }
 }
 
+/// The version an `Effect::WriteDoc` writes (ruling WB-B-I1): the driver answers a read
+/// of it while the write is in flight, and sends a failed write to the engine as
+/// `EventKind::DesignChecked`, as a restore's read-back does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrittenDoc {
+    pub run_id: String,
+    pub kind: DocKind,
+    pub n: u32,
+}
+
 /// Records `doc` as the next version of its kind and returns it with the write the
 /// driver does: the file, then `versions.json`. The number is always one past the
 /// kind's last, so no stored version is ever rewritten.
@@ -235,10 +245,17 @@ pub fn store(run: &mut Run, doc: NewDoc, now: u64) -> Result<(DocVersion, Effect
         uncapped: doc.uncapped,
     };
     design.versions.push(version.clone());
+    // A review draft is no gate version: a failed write of it is only logged.
+    let written = (version.draft_review.is_none()).then_some(WrittenDoc {
+        run_id: id,
+        kind: version.kind,
+        n: version.n,
+    });
     let effect = Effect::WriteDoc {
         path: dir.join(design.file_name(&version)),
         text: doc.text,
         index: Some((dir.join(VERSIONS_FILE), index_text(design))),
+        doc: written,
     };
     Ok((version, effect))
 }
@@ -264,6 +281,7 @@ pub fn store_findings(
         path: design_dir(run).join(findings_name(kind, n)),
         text,
         index: None,
+        doc: None,
     })
 }
 

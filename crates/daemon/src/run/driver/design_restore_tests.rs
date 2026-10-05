@@ -203,10 +203,13 @@ mod service {
         let (manager, _events) = WindowManager::new(config);
         let s = RunService::for_manager(&manager, data.to_path_buf(), Arc::new(NoRoots));
         crate::lock(&s.state).runs.insert(run.id.clone(), run);
-        let Effect::WriteDoc { path, text, index } = write else {
+        let Effect::WriteDoc {
+            path, text, index, ..
+        } = write
+        else {
             panic!("a write: {write:?}");
         };
-        s.write_doc(path.clone(), text, index).await;
+        s.write_doc(path.clone(), text, index, None).await;
         edit(&path);
         s
     }
@@ -333,10 +336,13 @@ mod service {
             writes
         };
         for write in writes {
-            let Effect::WriteDoc { path, text, index } = write else {
+            let Effect::WriteDoc {
+                path, text, index, ..
+            } = write
+            else {
                 panic!("a write");
             };
-            s.write_doc(path, text, index).await;
+            s.write_doc(path, text, index, None).await;
         }
         let shutdown = CancellationToken::new();
         s.spawn(shutdown.clone());
