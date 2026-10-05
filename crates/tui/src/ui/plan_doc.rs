@@ -161,14 +161,14 @@ pub(crate) fn lines(text: &str, width: u16, p: Palette) -> Vec<Line<'static>> {
 }
 
 /// Decision 16 (the final fix wave's FW-19 check): the gate version's review lines,
-/// above the document: why it went unreviewed (`Attention`), then its disputed
-/// findings, each `<id> <severity> at <place>` and its text; nothing when it has
-/// neither. A user's or the engine's later version carries the review's lines.
+/// above the document: why it went unreviewed (`Muted`: information, never
+/// `Attention`, milestone 9.0.7 principle 1), then its disputed findings, each
+/// `<id> <severity> at <place>` and its text; nothing when it has neither. A user's or the engine's later version carries the review's lines.
 fn review_lines(gate: &DocGateInfo, width: u16, p: Palette) -> Vec<Line<'static>> {
     let mut out = Vec::new();
     if let Some(why) = &gate.not_reviewed {
         let text = format!("not reviewed: {why}");
-        out.extend(plain_lines(&text, width, role(Role::Attention, p)));
+        out.extend(plain_lines(&text, width, role(Role::Muted, p)));
     }
     if !gate.disputed.is_empty() {
         let bold = Style::default().add_modifier(Modifier::BOLD);

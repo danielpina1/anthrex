@@ -83,39 +83,82 @@ fn a_revising_design_run_has_no_attention_cell() {
         DocGateKind::Spec,
         DocGateKind::Plan,
     ] {
-        let mut run = design_run(kind);
-        run.doc_gate.as_mut().unwrap().revising = Some("split R1".into());
-        let attention = |app: &crate::app::App, what: &str| {
-            let buffer = audit::draw(app, 120, 40);
-            let fg = role(Role::Attention, app.palette()).fg.unwrap();
-            let area = buffer.area;
-            for y in area.y..area.bottom() {
-                for x in area.x..area.right() {
-                    let cell = &buffer[(x, y)];
-                    assert!(
-                        cell.fg != fg || cell.symbol().trim().is_empty(),
-                        "{kind:?} {what}: {:?} at ({x},{y}) is Attention\n{:#?}",
-                        cell.symbol(),
-                        audit::rows(&buffer)
-                    );
+        // The W2b addendum: a version that went unreviewed says so as information
+        // (milestone 9.0.7: `Attention` is "needs you" and nothing else), on the gate
+        // screen and on the plan's document tab.
+        for unreviewed in [false, true] {
+            let mut run = design_run(kind);
+            let gate = run.doc_gate.as_mut().unwrap();
+            gate.revising = Some("split R1".into());
+            if unreviewed {
+                gate.not_reviewed = Some("the reviewer timed out".into());
+            }
+            let attention = |app: &crate::app::App, what: &str| {
+                let buffer = audit::draw(app, 120, 40);
+                let fg = role(Role::Attention, app.palette()).fg.unwrap();
+                let area = buffer.area;
+                for y in area.y..area.bottom() {
+                    for x in area.x..area.right() {
+                        let cell = &buffer[(x, y)];
+                        assert!(
+                            cell.fg != fg || cell.symbol().trim().is_empty(),
+                            "{kind:?} {what} (unreviewed {unreviewed}): {:?} at ({x},{y}) is Attention\n{:#?}",
+                            cell.symbol(),
+                            audit::rows(&buffer)
+                        );
+                    }
                 }
+            };
+            let mut app = app_with(run.clone(), 120, 40);
+            attention(&app, "sidebar");
+            app.open_run_view(crate::tree::run_fixtures::RUN_ID.into());
+            attention(&app, "run view");
+            // The plan gate's screen is 9.5's plan review (`open_doc_gate`'s plan arm);
+            // its review lines are on the plan's document tab.
+            let app = match kind {
+                DocGateKind::Plan => {
+                    let mut app = app_with(run.clone(), 120, 40);
+                    let _ = app.open_doc_gate(crate::tree::run_fixtures::RUN_ID);
+                    app
+                }
+                _ => opened_with(run.clone(), 120, 40),
+            };
+            attention(&app, "gate screen");
+            if !unreviewed {
+                continue;
             }
-        };
-        let mut app = app_with(run.clone(), 120, 40);
-        attention(&app, "sidebar");
-        app.open_run_view(crate::tree::run_fixtures::RUN_ID.into());
-        attention(&app, "run view");
-        // The plan gate's screen is 9.5's plan review (`open_doc_gate`'s plan arm).
-        let app = match kind {
-            DocGateKind::Plan => {
-                let mut app = app_with(run, 120, 40);
-                let _ = app.open_doc_gate(crate::tree::run_fixtures::RUN_ID);
-                app
-            }
-            _ => opened_with(run, 120, 40),
-        };
-        attention(&app, "gate screen");
+            // At the open gate (not revising), the line itself is still information, on
+            // the gate's Review panel and the plan's document tab (whose coverage gaps
+            // are `Attention` on purpose): its own cells are checked.
+            let mut run = design_run(kind);
+            run.doc_gate.as_mut().unwrap().not_reviewed = Some("the reviewer timed out".into());
+            let app = match kind {
+                DocGateKind::Plan => {
+                    use crate::app::doc_gate::plan_doc::tests::{PLAN, on_tab};
+                    on_tab(run, PLAN, 120, 40)
+                }
+                _ => opened_with(run, 120, 40),
+            };
+            let fgs = not_reviewed_line(&app).expect("the not reviewed line is shown");
+            let fg = role(Role::Attention, app.palette()).fg;
+            assert!(fgs.iter().all(|f| Some(*f) != fg), "{kind:?}: {fgs:?}");
+        }
     }
+}
+
+/// The colours of the `not reviewed: …` line's text cells in `app` drawn 120×40, when
+/// it is on screen.
+fn not_reviewed_line(app: &crate::app::App) -> Option<Vec<ratatui::style::Color>> {
+    let buffer = audit::draw(app, 120, 40);
+    let rows = audit::rows(&buffer);
+    let y = rows
+        .iter()
+        .position(|r| r.contains("not reviewed: the reviewer"))?;
+    let area = buffer.area;
+    let y = area.y + y as u16;
+    let cells = (area.x..area.right()).map(|x| &buffer[(x, y)]);
+    let text = cells.filter(|c| c.symbol().chars().any(char::is_alphanumeric));
+    Some(text.map(|c| c.fg).collect())
 }
 
 /// Every row of `app` drawn `w`×`h` is free of hostile characters and fits the width.

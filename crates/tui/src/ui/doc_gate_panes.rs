@@ -40,8 +40,9 @@ pub(crate) fn panel_lines(app: &App, s: &DocGateScreen, width: u16) -> Vec<Line<
         plain_lines(text, width.saturating_sub(depth), style)
             .into_iter()
             .map(|l| {
+                // The line's style goes on its text, which would otherwise drop it.
                 let mut spans = vec![Span::raw(pad.clone())];
-                spans.extend(l.spans);
+                spans.extend(l.spans.into_iter().map(|s| s.patch_style(l.style)));
                 Line::from(spans)
             })
             .collect()
@@ -107,11 +108,8 @@ pub(crate) fn panel_lines(app: &App, s: &DocGateScreen, width: u16) -> Vec<Line<
     }
     if let Some(why) = &gate.not_reviewed {
         out.push(Line::default());
-        out.extend(indent(
-            &format!("not reviewed: {why}"),
-            role(Role::Attention, p),
-            0,
-        ));
+        // Information, not "needs you" (milestone 9.0.7 principle 1).
+        out.extend(indent(&format!("not reviewed: {why}"), muted, 0));
     }
     if gate.same_runtime {
         out.push(Line::default());
