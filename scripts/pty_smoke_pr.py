@@ -375,9 +375,11 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         proc.wait_for(f"run {h4}", label="the run's node in the project overview")
         proc.send(b"l")
         proc.wait_for(f" run · Deliver a and b · {h4} ", label="the run view's title")
-        # Stage 1's tier-3 mark is not asserted: its head moved with fix1 after the PR
-        # opened, and on an open PR CI, not tier 3, is the authority (decision 28).
-        _wait_row(proc, "stage 1/2  tier 3 ", "  #1  ci ✓", "stage 1's row: PR #1, CI green", fail)
+        # Stage 1's head moved with fix1 after its PR opened, so no tier-3 job ran on
+        # its current head. On an open PR the mark shows the latest tier-3 verdict,
+        # from an earlier head (milestone 9.7 decision 12, BR-2): ✓, never ◌; CI
+        # carries the current head's verdict.
+        _wait_row(proc, "stage 1/2  tier 3 ✓", "  #1  ci ✓", "stage 1's row: tier 3 ✓, PR #1, CI green", fail)
         _wait_row(proc, "stage 2/2  tier 3 ", "  #2  ci ✓", "stage 2's row: PR #2, CI green", fail)
         proc.send(b"\x1b")
         proc.wait_for(" tree overview ", label="the project overview after leaving the run view")
@@ -393,7 +395,7 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
             fail(f"stage-11i detach did not exit cleanly with status 0 (raw status {exit_status})")
         proc.close()
         proc = None
-        print("ok: the run view shows `#1  ci ✓` on stage 1's row and `#2  ci ✓` on stage 2's")
+        print("ok: the run view shows `tier 3 ✓` and `#1  ci ✓` on stage 1's row and `#2  ci ✓` on stage 2's")
 
         # A writer comments on PR 1: a review fix task, pushed and replied to.
         first = int(fake_github("review-comment", "1", "tester", "a.txt", "1", "polish this line").strip())

@@ -1,6 +1,6 @@
 # anthrex roadmap
 
-anthrex is built in twenty milestones. Milestones 1 to 6.5, 8a to 8c, and 9 to 9.5 (9, 9.0.5, 9.1, 9.0.6, 9.0.7, 9.2, 9.3 and 9.5) are merged, and milestone 9.6 is done and awaits its merge; milestone 7 is deferred. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
+anthrex is built in twenty milestones. Milestones 1 to 6.5, 8a to 8c, and 9 to 9.5 (9, 9.0.5, 9.1, 9.0.6, 9.0.7, 9.2, 9.3 and 9.5) are merged, and milestones 9.6 and 9.7 are done and await their merges; milestone 7 is deferred. With 9.7 done, every milestone in the order below is done except milestone 7, so no milestone is set to `ready`: milestone 7 stays deferred until the user takes it up. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
 
 The design is layered, newest first:
 
@@ -55,7 +55,7 @@ The protocol version is **10** once milestone 9 merges, raised from 9 (milestone
 | 9.3 | Keep going: a nano-like goal editor, rounds that iterate a complete run, and next goals on the same orchestrator | `docs/milestones/M9.3-keep-going.md` | 9.2 | `done` |
 | 9.5 | Tuning: history refit and proposals, model lists, the run estimate, adaptive concurrency, race and test-writer patterns, the Codex output filter, and the follow-ups folded into it (orchestrator first-turn reliability, history and stats correctness, small fixes) | `docs/milestones/M9.5-tuning.md` | 9.3 | `done` |
 | 9.6 | Design flow: brainstorm (two models, merged), spec (peer-reviewed, numbered requirements), plan (engine-checked coverage), each approved by the user; protocol 17 | `docs/milestones/M9.6-design-flow.md` | 9.5 | `done` |
-| 9.7 | Delivery hardening (moved here from after 9.5 at the user's request): a merged stage's fix tasks, an unviewed merge checked with git, decided holds trimmed, the tier-3 mark of an open PR, the CI bisect over the whole line; protocol stays 17 | `docs/milestones/M9.7-delivery-hardening.md` | 9.6 | `ready` |
+| 9.7 | Delivery hardening (moved here from after 9.5 at the user's request): a merged stage's fix tasks, an unviewed merge checked with git, decided holds trimmed, the tier-3 mark of an open PR, the CI bisect over the whole line; protocol stays 17 | `docs/milestones/M9.7-delivery-hardening.md` | 9.6 | `done` |
 
 Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.0.5 → 9.1 → 9.0.6 → 9.0.7 → 9.2 → 9.3 → 9.5 → 9.6 → 9.7**, then 7. Milestones 9.0.6 and 9.0.7 go before the rest of 9.2 by the user's choice (spec `2026-10-01-tui-end-to-end-design.md` §0). Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
 
