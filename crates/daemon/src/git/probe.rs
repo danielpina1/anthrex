@@ -72,6 +72,13 @@ pub fn probe(git: &OsStr, root: &Path, timeout: Duration) -> Option<GitState> {
     // AGENTS.md rule 11 (W2 re-review N1): the pathspec modes and the location
     // variables too.
     subprocess::scrub_inherited_git(&mut command);
+    // A planted `commondir` in a standalone checkout names no config for the probe.
+    if let Some((key, value)) = pin
+        .as_ref()
+        .and_then(crate::worktree::pinned::common_dir_env)
+    {
+        command.env(key, value);
+    }
     command.args([
         "status",
         "--porcelain=v2",

@@ -1,8 +1,10 @@
 //! What a worker's sandbox may write of the repository's git directories (decisions 25
 //! and 54, narrowed by final fix batch F1, findings C-C1 and D-5, and by its fix round
 //! 1, findings N2 and N3, and replaced by F1b): nothing of the common directory, and in
-//! its worktree's own git directory only the files a commit on a detached `HEAD` needs;
-//! its objects go to a private directory outside the repository. Blocking; call only
+//! its worktree's own git directory only what a commit on a detached `HEAD` needs: the
+//! exact files on macOS, the directory whole with its configuration denied on Linux
+//! ([`GrantShape`]); its objects go to a private directory outside the repository.
+//! Blocking; call only
 //! from `spawn_blocking`, behind the run's `GitQueue::write` (it creates the private
 //! directory).
 
@@ -36,21 +38,100 @@ pub const WORKTREE_GIT_FILES: [&str; 13] = [
 /// (`core.logAllRefUpdates=false`, [`crate::run::role_launch::WORKER_GIT_CONFIG`]).
 pub const WORKTREE_GIT_DIRS: [&str; 3] = ["rebase-merge", "rebase-apply", "sequencer"];
 
-/// The writable paths of a worker session in `worktree`: `roots` (what
-/// [`crate::run::role_launch::worker_git_roots`] names: the task's private object
-/// directory, created here and given canonical) plus, in the worktree's own git
-/// directory `<common>/worktrees/<name>`, exactly [`WORKTREE_GIT_FILES`] (and their
-/// `.lock`s) and [`WORKTREE_GIT_DIRS`]. Final fix batch F1b: nothing of the common
-/// directory itself; a root inside it is refused.
-///
-/// The git directory is found from the repository's side ([`pinned::find_git_dir`]:
-/// the `<common>/worktrees/*/gitdir` file naming `<worktree>/.git`), never from the
-/// worktree's `.git` file, which the worker can rewrite.
+/// Which sandbox a worker's grant is written for. Both shapes are testable on any
+/// host; [`GrantShape::host`] picks the one the host's Claude Code sandbox needs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GrantShape {
+    /// macOS Seatbelt: a path rule lets a missing file be created at a granted path, so
+    /// the grant names exactly [`WORKTREE_GIT_FILES`] (with their `.lock`s) and
+    /// [`WORKTREE_GIT_DIRS`], and denies nothing. Also every Codex worker's (its
+    /// writable roots take no denial).
+    Files,
+    /// Linux bubblewrap (Claude Code's sandbox-runtime): each granted path is
+    /// bind-mounted, which works only for a path that exists, and a lock file never
+    /// exists beforehand (git creates it with `O_EXCL`), so an exact-file grant can
+    /// never commit there. The grant is the checkout's own git directory whole, with
+    /// [`WORKTREE_GIT_DENIED_FILES`] and [`WORKTREE_GIT_DENIED_DIRS`] denied, each
+    /// made to exist first ([`placeholders`]).
+    WholeDir,
+}
+
+impl GrantShape {
+    /// [`GrantShape::WholeDir`] on Linux, [`GrantShape::Files`] elsewhere.
+    pub fn host() -> GrantShape {
+        if cfg!(target_os = "linux") {
+            GrantShape::WholeDir
+        } else {
+            GrantShape::Files
+        }
+    }
+}
+
+/// A worker session's git grant: what its sandbox may write, and, inside that, what it
+/// may not (Claude Code's `sandbox.filesystem.denyWrite`; empty for
+/// [`GrantShape::Files`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorkerGrant {
+    pub writable: Vec<PathBuf>,
+    pub deny: Vec<PathBuf>,
+}
+
+/// The files of the git directory a [`GrantShape::WholeDir`] grant denies: those that
+/// decide which repository and which config git uses in the checkout (`commondir`,
+/// `gitdir`, `config`, `config.worktree`, which `pinned::check` verifies), `locked`, and
+/// `packed-refs` (no ref is the worker's). `commondir` is denied only where it exists
+/// (a linked worktree's): any file there, an empty one too, redirects or breaks every
+/// git command in the checkout, so no placeholder is made for it, and Claude Code's
+/// sandbox would mount `/dev/null` at a missing one. A task checkout's own repository
+/// has none; one a worker makes there is refused by `pinned::check`, and the daemon's
+/// git reads no config through it (`GIT_COMMON_DIR`, [`pinned::common_dir_env`]).
+pub const WORKTREE_GIT_DENIED_FILES: [&str; 6] = [
+    "commondir",
+    "gitdir",
+    "config",
+    "config.worktree",
+    "locked",
+    "packed-refs",
+];
+
+/// The directories of the git directory a [`GrantShape::WholeDir`] grant denies:
+/// `logs` (the worker's git writes no reflog, fix round 5's
+/// `role_launch::WORKER_GIT_CONFIG`), `refs` (no ref is the worker's: it commits on a
+/// detached `HEAD`), `info` (exclude, attributes, sparse-checkout, grafts) and `hooks`.
+pub const WORKTREE_GIT_DENIED_DIRS: [&str; 4] = ["logs", "refs", "info", "hooks"];
+
+/// A `packed-refs` that holds no ref: git's own header line. `git fsck` warns about an
+/// empty file (`emptyPackedRefsFile`), not about this.
+const PACKED_REFS_PLACEHOLDER: &str = "# pack-refs with: peeled fully-peeled sorted \n";
+
+/// The writable paths of a worker session in `worktree` for a macOS sandbox:
+/// [`worker_git_grant`] with [`GrantShape::Files`].
 pub fn worker_git_dirs(
     git_common_dir: &Path,
     worktree: &Path,
     roots: &[PathBuf],
 ) -> Result<Vec<PathBuf>, String> {
+    Ok(worker_git_grant(git_common_dir, worktree, roots, GrantShape::Files)?.writable)
+}
+
+/// The grant of a worker session in `worktree`: `roots` (what
+/// [`crate::run::role_launch::worker_git_roots`] names: the task's private object
+/// directory, created here and given canonical) plus, in the worktree's own git
+/// directory (a task checkout's own repository's, or a linked worktree's
+/// `<common>/worktrees/<name>`), per `shape`: exactly [`WORKTREE_GIT_FILES`] (and their
+/// `.lock`s) and [`WORKTREE_GIT_DIRS`]; or the directory whole, with
+/// [`WORKTREE_GIT_DENIED_FILES`] and [`WORKTREE_GIT_DENIED_DIRS`] denied. Final fix
+/// batch F1b: nothing of the common directory itself; a root inside it is refused.
+///
+/// The git directory is found from the repository's side ([`pinned::find_git_dir`]:
+/// the `<common>/worktrees/*/gitdir` file naming `<worktree>/.git`), never from the
+/// worktree's `.git` file, which the worker can rewrite.
+pub fn worker_git_grant(
+    git_common_dir: &Path,
+    worktree: &Path,
+    roots: &[PathBuf],
+    shape: GrantShape,
+) -> Result<WorkerGrant, String> {
     // The git directory the daemon pinned when it made the worktree, else the one the
     // repository names (uniquely) for it (fix round 2, R2).
     let pin = pinned::pinned(worktree);
@@ -59,23 +140,33 @@ pub fn worker_git_dirs(
         Some(pin) => return Err(pin.broken.clone().unwrap_or_default()),
         None => pinned::find_git_dir(git_common_dir, worktree)?,
     };
-    let mut dirs = Vec::with_capacity(roots.len() + 2 * WORKTREE_GIT_FILES.len() + 4);
+    let mut writable = Vec::with_capacity(roots.len() + 2 * WORKTREE_GIT_FILES.len() + 4);
     for root in roots {
-        dirs.push(private_dir(git_common_dir, root)?);
+        writable.push(private_dir(git_common_dir, root)?);
     }
+    let mut files = Vec::with_capacity(2 * WORKTREE_GIT_FILES.len() + 3);
     for file in WORKTREE_GIT_FILES {
-        dirs.push(admin.join(file));
-        dirs.push(admin.join(format!("{file}.lock")));
+        files.push(admin.join(file));
+        files.push(admin.join(format!("{file}.lock")));
     }
-    dirs.extend(WORKTREE_GIT_DIRS.iter().map(|dir| admin.join(dir)));
+    files.extend(WORKTREE_GIT_DIRS.iter().map(|dir| admin.join(dir)));
+    let denied = WORKTREE_GIT_DENIED_FILES
+        .iter()
+        .chain(&WORKTREE_GIT_DENIED_DIRS)
+        .map(|name| admin.join(name));
     // Final fix batch F1c (I1's sweep): every entry is named lexically under the
     // engine's own git directory, never resolved. A link a worker left at one of them
     // is removed before the next session is granted it, so a sandbox that resolves its
-    // grants is never handed the link's target.
-    for granted in dirs.iter().skip(roots.len()) {
-        if std::fs::symlink_metadata(granted).is_ok_and(|meta| meta.file_type().is_symlink()) {
-            std::fs::remove_file(granted)
-                .map_err(|err| format!("cannot remove the link {}: {err}", granted.display()))?;
+    // grants is never handed the link's target. The Linux shape sweeps its denied
+    // entries too: the sandbox must deny the path itself, never what a link names.
+    let swept: Vec<PathBuf> = match shape {
+        GrantShape::Files => files.clone(),
+        GrantShape::WholeDir => files.iter().cloned().chain(denied).collect(),
+    };
+    for path in &swept {
+        if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            std::fs::remove_file(path)
+                .map_err(|err| format!("cannot remove the link {}: {err}", path.display()))?;
         }
     }
     // Fix round 5: no reflog is left for the worker's git (which could not write it) or
@@ -93,7 +184,83 @@ pub fn worker_git_dirs(
             _ => {}
         }
     }
-    Ok(dirs)
+    match shape {
+        GrantShape::Files => {
+            writable.extend(files);
+            Ok(WorkerGrant {
+                writable,
+                deny: Vec::new(),
+            })
+        }
+        GrantShape::WholeDir => {
+            let deny = placeholders(&admin)?;
+            writable.push(admin);
+            Ok(WorkerGrant { writable, deny })
+        }
+    }
+}
+
+/// The denied entries of the git directory `admin`, each made to exist where it was
+/// missing: bubblewrap can deny only a path that exists, and for a missing one Claude
+/// Code's sandbox-runtime binds `/dev/null` there for the session, leaving a file at
+/// the path meanwhile. An empty file (git reads an empty `gitdir`, `config` or
+/// `config.worktree` as nothing; an empty `locked` locks a linked worktree, which the
+/// engine unlocks before it removes one, and means nothing in a repository's own git
+/// directory), `packed-refs` with only its header, an empty directory. `commondir` is
+/// never made, and is denied only where it exists. Each is made without following a
+/// link (the sweep removed any) and checked with `lstat`: a link found afterwards fails
+/// closed.
+fn placeholders(admin: &Path) -> Result<Vec<PathBuf>, String> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut deny = Vec::new();
+    for name in WORKTREE_GIT_DENIED_FILES {
+        let path = admin.join(name);
+        if name != "commondir" {
+            let made = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&path);
+            match made {
+                Ok(mut file) if name == "packed-refs" => file
+                    .write_all(PACKED_REFS_PLACEHOLDER.as_bytes())
+                    .map_err(|err| format!("cannot write {}: {err}", path.display()))?,
+                Ok(_) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(err) => return Err(format!("cannot create {}: {err}", path.display())),
+            }
+        }
+        if exists_unlinked(&path)? {
+            deny.push(path);
+        }
+    }
+    for name in WORKTREE_GIT_DENIED_DIRS {
+        let path = admin.join(name);
+        match std::fs::create_dir(&path) {
+            Err(err) if err.kind() != std::io::ErrorKind::AlreadyExists => {
+                return Err(format!("cannot create {}: {err}", path.display()));
+            }
+            _ => {}
+        }
+        if exists_unlinked(&path)? {
+            deny.push(path);
+        }
+    }
+    Ok(deny)
+}
+
+/// Whether `path` exists; an error when it is a symbolic link.
+fn exists_unlinked(path: &Path) -> Result<bool, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(format!(
+            "{} is a symbolic link; it was tampered with",
+            path.display()
+        )),
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(format!("cannot read {}: {err}", path.display())),
+    }
 }
 
 /// Final fix batch F1b: the private object directory `root`, created when missing, a

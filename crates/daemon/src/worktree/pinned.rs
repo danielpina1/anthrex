@@ -5,9 +5,10 @@
 //! git dir> --work-tree=<it>`, so the worktree's `.git` file, which a sandboxed worker
 //! can rewrite, is never read. Before each call, [`check`] verifies that the git dir's
 //! `commondir` still names the repository's common directory, that its `gitdir` still
-//! points back at the worktree, and that it holds no `config.worktree`; a worker cannot
-//! write those files (its sandbox grant inside the git dir names only the files a commit
-//! needs), so a mismatch means something else tampered with them, and the call is
+//! points back at the worktree, and that it holds no `config.worktree` (but an empty
+//! one); a worker cannot write those files (its sandbox grant inside the git dir names
+//! only the files a commit needs on macOS, and denies them on Linux), so a mismatch
+//! means something else tampered with them, and the call is
 //! refused. It also verifies `HEAD`, which a worker may write: it must name the
 //! worktree's own branch or be detached, so no engine merge, reset or checkout can be
 //! steered onto another branch (fix round 2, R1). The git directory is found once,
@@ -236,7 +237,8 @@ pub fn find_git_dir(common_dir: &Path, worktree: &Path) -> Result<PathBuf, Strin
 
 /// Refuses a call in `worktree` when its git directory no longer belongs to it: its
 /// `commondir` names another repository, its `gitdir` points elsewhere, or it has a
-/// `config.worktree` (per-worktree config the engine never writes); when its `HEAD`
+/// `config.worktree` (per-worktree config the engine never writes) other than a Linux
+/// grant's empty placeholder; when its `HEAD`
 /// names another branch; when a pseudo-ref (`ORIG_HEAD`, `MERGE_HEAD`, …) is symbolic
 /// (fix round 5); or when its own branch is not a plain ref.
 pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
@@ -277,7 +279,7 @@ pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
 
 /// A linked worktree's git directory still belongs to it: its `commondir` names the
 /// repository's common directory, its `gitdir` points back at the worktree, and it has
-/// no `config.worktree`.
+/// no `config.worktree` but an empty one.
 fn check_linked(worktree: &Path, pin: &Pin) -> Result<(), String> {
     let common = std::fs::read_to_string(pin.git_dir.join("commondir")).unwrap_or_default();
     let common = common.trim_end_matches(['\n', '\r']);
@@ -294,10 +296,26 @@ fn check_linked(worktree: &Path, pin: &Pin) -> Result<(), String> {
     if lexical(back) != dot_git(worktree) {
         return Err(format!("gitdir names {}", back.display()));
     }
-    if pin.git_dir.join("config.worktree").exists() {
-        return Err("it has a config.worktree".to_string());
+    // A Linux worker's grant denies `config.worktree` through an empty placeholder
+    // (`run::git::sandbox::placeholders`), which configures nothing; anything else
+    // there (content, a link, a directory) is a plant.
+    match std::fs::symlink_metadata(pin.git_dir.join("config.worktree")) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(meta) if meta.file_type().is_file() && meta.len() == 0 => {}
+        _ => return Err("it has a config.worktree".to_string()),
     }
     Ok(())
+}
+
+/// The `GIT_COMMON_DIR` every daemon git call in a standalone checkout runs with: its
+/// own git directory, which is its common directory. A `commondir` file there (which
+/// only a Linux worker, whose grant is the git directory whole, could make, and which
+/// [`check`] refuses) would otherwise name the directory git reads the repository's
+/// config from, for a call that started between the check and git's own read. `None`
+/// for a linked worktree, whose `commondir` is git's and denied to a worker.
+pub fn common_dir_env(pin: &Pin) -> Option<(&'static str, &Path)> {
+    pin.standalone
+        .then_some(("GIT_COMMON_DIR", pin.git_dir.as_path()))
 }
 
 /// The pseudo-refs of a worktree's git directory a worker may write (its sandbox grant,

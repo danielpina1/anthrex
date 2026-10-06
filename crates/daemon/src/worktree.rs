@@ -448,6 +448,10 @@ fn run_git_capturing(
         // (with its own alternates), never the checkout's.
         command.env("GIT_OBJECT_DIRECTORY", pin.common_dir.join("objects"));
     }
+    // A planted `commondir` in a standalone checkout names no config for this call.
+    if let Some((key, value)) = pinned_as.as_ref().and_then(pinned::common_dir_env) {
+        command.env(key, value);
+    }
     if let Some(file) = input {
         use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;

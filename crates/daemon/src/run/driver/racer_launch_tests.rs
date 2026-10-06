@@ -180,6 +180,11 @@ fn granted(spec: &HeadlessSpec) -> Vec<PathBuf> {
     roots
 }
 
+/// Whether `path` is one of `roots` or under one: granted.
+fn covers(roots: &[PathBuf], path: &Path) -> bool {
+    roots.iter().any(|root| path.starts_with(root))
+}
+
 /// Whether any of `roots` is `dir` or under it.
 fn reaches(roots: &[PathBuf], dir: &Path) -> bool {
     roots.iter().any(|root| root.starts_with(dir))
@@ -196,25 +201,45 @@ fn a_racers_sandbox_covers_its_own_lanes_git_dir_only() {
     let common = rig.root.join(".git").canonicalize().unwrap();
     for (lane, own, other) in [(RaceLane::A, "t1.a", "t1.b"), (RaceLane::B, "t1.b", "t1.a")] {
         let mut spec = rig.racer(lane);
+        let denied_before = spec
+            .claude_sandbox
+            .as_ref()
+            .map(|s| s.deny_write.clone())
+            .unwrap_or_default();
         rig.complete(&mut spec).unwrap();
         let roots = granted(&spec);
         assert!(
-            roots.contains(&rig.git_dir(own).join("index")),
+            covers(&roots, &rig.git_dir(own).join("index")),
             "{lane:?}: {roots:?}"
         );
         assert!(
             roots.contains(&rig.repo(own).join("git/objects")),
             "{lane:?}: {roots:?}"
         );
-        // Task 18 review m1: exactly a worker's grant, computed for the lane's checkout.
+        // Task 18 review m1: exactly a worker's grant, computed for the lane's checkout,
+        // in its runtime's shape (lane a is Claude's: the host's; lane b Codex's: the
+        // exact files).
+        let shape = if spec.claude_sandbox.is_some() {
+            git::GrantShape::host()
+        } else {
+            git::GrantShape::Files
+        };
         let (git_common, own_path) =
             rig.run(|run| (run.git_common_dir.clone(), run.task_path(own)));
         let roots_of_own = worker_git_roots(&rig.data_dir, own);
-        let mut worker = git::worker_git_dirs(&git_common, &own_path, &roots_of_own).unwrap();
+        let worker = git::worker_git_grant(&git_common, &own_path, &roots_of_own, shape).unwrap();
+        let mut expected = worker.writable.clone();
         let mut racer = roots.clone();
-        worker.sort();
+        expected.sort();
         racer.sort();
-        assert_eq!(racer, worker, "{lane:?}: a worker's grant on {own}");
+        assert_eq!(racer, expected, "{lane:?}: a worker's grant on {own}");
+        if let Some(sandbox) = &spec.claude_sandbox {
+            let mut denied = denied_before.clone();
+            denied.extend(worker.deny.iter().cloned());
+            assert_eq!(sandbox.deny_write, denied, "{lane:?}");
+        } else {
+            assert!(worker.deny.is_empty(), "{lane:?}");
+        }
         let (other_path, task_path) = rig.run(|run| (run.task_path(other), run.task_path("t1")));
         for forbidden in [
             rig.repo(other),
@@ -247,7 +272,7 @@ fn a_test_writers_sandbox_is_its_tasks_checkout() {
     rig.complete(&mut spec).unwrap();
     let roots = granted(&spec);
     assert!(
-        roots.contains(&rig.git_dir("t1").join("index")),
+        covers(&roots, &rig.git_dir("t1").join("index")),
         "{roots:?}"
     );
     assert!(

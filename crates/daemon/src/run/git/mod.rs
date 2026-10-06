@@ -82,7 +82,10 @@ pub(crate) use worktrees::{common_dir, forget_missing, is_ancestor, listed as li
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use resolution::resolution_only;
-pub use sandbox::{private_dir, worker_git_dirs};
+pub use sandbox::{
+    GrantShape, WORKTREE_GIT_DENIED_DIRS, WORKTREE_GIT_DENIED_FILES, WORKTREE_GIT_DIRS,
+    WORKTREE_GIT_FILES, WorkerGrant, private_dir, worker_git_dirs, worker_git_grant,
+};
 pub(crate) use tmp::remove as remove_task_tmp;
 pub use tmp::{task_tmp, tmp_root};
 pub use worktrees::{

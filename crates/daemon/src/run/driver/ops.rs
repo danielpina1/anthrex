@@ -126,7 +126,9 @@ impl RunService {
 /// object directory and its temporary directory (each made by the daemon, never
 /// through a link, and named by appending to the engine's own directory, never by
 /// resolving a path the worker could have swapped: I1), plus the commit's files in the
-/// checkout's own git directory. Nothing of the git common directory. Any other session
+/// checkout's own git directory (on Linux, for Claude, the directory whole with its
+/// configuration denied: `git::GrantShape`). Nothing of the git common directory. Any
+/// other session
 /// (a reviewer) is left as it is. Milestone 9.5 (task M9.5.18): a racer's and a test
 /// writer's too, a racer's on its own lane's stored checkout; a session whose lane the
 /// run does not store is refused, with a logged error.
@@ -166,23 +168,37 @@ async fn worker_git_dirs(
     if !sandboxed {
         return Ok(());
     }
+    // A Claude worker's grant has the host's shape: on Linux its checkout's git
+    // directory whole, with what it must not change denied (bubblewrap cannot grant a
+    // lock file that does not exist yet). A Codex worker's writable roots take no
+    // denial, so it keeps the exact files on every host.
+    let claude = spec
+        .claude_sandbox
+        .as_ref()
+        .is_some_and(|s| !s.writable_roots.is_empty());
+    let shape = if claude {
+        git::GrantShape::host()
+    } else {
+        git::GrantShape::Files
+    };
     let cwd = spec.cwd.clone();
-    let dirs = service
+    let grant = service
         .write(ctx, move |_, _| {
             let roots = roots
                 .iter()
                 .map(|root| git::private_dir(&common, root))
                 .collect::<Result<Vec<_>, _>>()?;
-            git::worker_git_dirs(&common, &cwd, &roots)
+            git::worker_git_grant(&common, &cwd, &roots, shape)
         })
         .await?;
     if let Some(sandbox) = spec.claude_sandbox.as_mut()
-        && !sandbox.writable_roots.is_empty()
+        && claude
     {
-        sandbox.writable_roots = dirs.clone();
+        sandbox.writable_roots = grant.writable.clone();
+        sandbox.deny_write.extend(grant.deny.iter().cloned());
     }
     if !spec.codex_writable_roots.is_empty() {
-        spec.codex_writable_roots = dirs;
+        spec.codex_writable_roots = grant.writable;
     }
     Ok(())
 }
