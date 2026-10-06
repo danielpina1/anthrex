@@ -8,7 +8,8 @@ use proto::{Runtime, ScoutState, TokenUsage};
 
 use super::contract::{SCOUT_NUDGE, scout_wrap_up};
 use super::spec::SUBMIT_TOOL;
-use crate::headless::SessionEvent;
+use crate::headless::failure::{sandbox_command_failure, with_sandbox_hint};
+use crate::headless::{FailureKind, SessionEvent, TurnOutcome};
 use crate::run::driver::{INTERRUPT_GRACE, RETIRE_AFTER};
 use crate::run::orch::contract::{PLANNER_NUDGE, planner_wrap_up};
 
@@ -97,6 +98,9 @@ pub struct ScoutMachine {
     pub wrap_up_pending: bool,
     pub usage: TokenUsage,
     pub failure: Option<String>,
+    /// The first sign that Claude's sandbox could not run a command
+    /// (`failure::sandbox_command_failure`; 2026-10-06), added to the failure's reason.
+    pub sandbox_note: Option<String>,
     /// The final fix wave's FW-36: the failure is [`unsubmitted`]'s, a typed end the
     /// service reports as `ScoutOutcome::Unsubmitted`, so no one compares its text.
     pub unsubmitted: bool,
@@ -113,6 +117,7 @@ impl Default for ScoutMachine {
             wrap_up_pending: false,
             usage: TokenUsage::default(),
             failure: None,
+            sandbox_note: None,
             unsubmitted: false,
         }
     }
@@ -129,6 +134,16 @@ pub enum ScoutEvent {
     ToolUse,
     Exited {
         code: Option<i32>,
+    },
+    /// The session's process died before its turn said anything, for `reason`
+    /// (`headless::failure::startup_failure`; 2026-10-06).
+    StartupFailed {
+        reason: String,
+    },
+    /// A command failed because Claude's sandbox could not start it: kept for the
+    /// failure's reason, the session runs on (2026-10-06).
+    SandboxBroken {
+        note: String,
     },
     ReportAccepted,
     Tick {
@@ -238,6 +253,15 @@ pub fn step(
                 false,
             )
         }
+        ScoutEvent::StartupFailed { reason } => fail(
+            &mut machine,
+            format!("{} could not start: {reason}", t.noun),
+            true,
+        ),
+        ScoutEvent::SandboxBroken { note } => {
+            machine.sandbox_note.get_or_insert(note);
+            Vec::new()
+        }
         ScoutEvent::ReportAccepted => {
             machine.state = ScoutState::Reported;
             vec![
@@ -259,15 +283,26 @@ pub fn step(
                 Vec::new()
             }
         }
-        ScoutEvent::Stop => fail(&mut machine, "stopped by the user".into(), true),
-        ScoutEvent::Halt { reason } => fail(&mut machine, reason, true),
+        ScoutEvent::Stop => {
+            machine.sandbox_note = None;
+            fail(&mut machine, "stopped by the user".into(), true)
+        }
+        ScoutEvent::Halt { reason } => {
+            machine.sandbox_note = None;
+            fail(&mut machine, reason, true)
+        }
     };
     (machine, effects)
 }
 
 /// Fails the scout: a kill when its process may still run, the outcome, and the
-/// window's removal after decision 52's `RETIRE_AFTER`.
+/// window's removal after decision 52's `RETIRE_AFTER`. A broken sandbox's note ends
+/// the reason.
 fn fail(machine: &mut ScoutMachine, reason: String, kill: bool) -> Vec<ScoutEffect> {
+    let reason = match machine.sandbox_note.take() {
+        Some(note) => format!("{reason}; {note}"),
+        None => reason,
+    };
     machine.state = ScoutState::Failed;
     machine.failure = Some(reason.clone());
     let mut effects = Vec::new();
@@ -287,7 +322,8 @@ fn add(total: &mut TokenUsage, usage: &TokenUsage) {
 }
 
 /// The machine's event for one session event of a scout's process `pid`, or `None`
-/// for one it does not act on. `turn_ended` records the processes in which a turn
+/// for one it does not act on. A startup failure, or a turn failed on Claude's missing
+/// sandbox, fails the session at once (2026-10-06). `turn_ended` records the processes in which a turn
 /// ended: a Codex process exits after each turn, so its exit then is the turn's end, not
 /// the session's (M8a's T17-I1). The submission call itself (`texts.submit_tool`) does
 /// not count toward the tool budget (ruling M2).
@@ -299,10 +335,27 @@ pub fn scout_event(
     texts: &MachineTexts,
 ) -> Option<ScoutEvent> {
     match event {
+        SessionEvent::StartupFailed { reason } => Some(ScoutEvent::StartupFailed {
+            reason: reason.clone(),
+        }),
+        // Not a turn to nudge: a new process would die the same way (2026-10-06).
+        SessionEvent::TurnEnded {
+            outcome:
+                TurnOutcome::Failed {
+                    error,
+                    kind: FailureKind::SandboxUnavailable,
+                },
+            ..
+        } => Some(ScoutEvent::StartupFailed {
+            reason: with_sandbox_hint(error),
+        }),
         SessionEvent::TurnEnded { usage, .. } => {
             turn_ended.extend(pid);
             Some(ScoutEvent::TurnEnded { usage: *usage })
         }
+        SessionEvent::ToolResult {
+            ok: false, text, ..
+        } => sandbox_command_failure(text).map(|note| ScoutEvent::SandboxBroken { note }),
         SessionEvent::ToolUse { name, .. } if name == texts.submit_tool => None,
         SessionEvent::ToolUse { .. } => Some(ScoutEvent::ToolUse),
         SessionEvent::ProcessExited { code, .. } => {

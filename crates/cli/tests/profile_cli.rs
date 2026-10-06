@@ -354,3 +354,46 @@ fn e2e_a_verification_that_cannot_run_fails_the_proposal() {
     }
     std::fs::remove_file(&runs).unwrap();
 }
+
+/// 2026-10-06, v0.1.0 on Ubuntu 26.04: Claude refused to start without bubblewrap and
+/// socat (`failIfUnavailable`), and the user saw only "the scout ended two turns without
+/// a report". The scout's failure, and so the proposal's, now carries Claude's stderr
+/// and what to install; the daemon log has the stderr line at WARN.
+#[test]
+fn e2e_a_scout_that_dies_at_startup_fails_with_its_stderr() {
+    const NO_BWRAP: &str = "Error: sandbox required but unavailable: sandbox is enabled but dependencies are missing: bubblewrap (bwrap) not installed, socat not installed";
+    let h = harness(&[]);
+    h.onboarding_script(
+        1,
+        &[json!({"startup_fail": {"stderr": ["starting", NO_BWRAP], "code": 1}})],
+    );
+    ok(h.profile(&["detect"]));
+    let status = h.wait_profile("the proposal to settle", settled, PROFILE_WAIT);
+    let reason = match state(&status) {
+        Some(ProposalState::Failed { reason }) => reason.clone(),
+        other => panic!("expected a failed proposal, got {other:?}"),
+    };
+    assert!(
+        reason.contains(
+            "claude exited at startup (code 1): starting | sandbox required but unavailable: sandbox is enabled but dependencies are missing: bubblewrap (bwrap) not installed, socat not installed"
+        ),
+        "{reason}"
+    );
+    assert!(
+        reason.contains("install bubblewrap (bwrap) and socat"),
+        "{reason}"
+    );
+    assert!(!reason.contains("two turns"), "{reason}");
+    // `anthrex profile status` shows it.
+    let shown = ok(h.profile(&["status"]));
+    assert!(
+        shown.contains("bubblewrap (bwrap) not installed"),
+        "{shown}"
+    );
+    let log = std::fs::read_to_string(h.data().join("daemon.log")).unwrap_or_default();
+    assert!(
+        log.lines()
+            .any(|l| l.contains("WARN") && l.contains("bubblewrap (bwrap) not installed")),
+        "{log}"
+    );
+}

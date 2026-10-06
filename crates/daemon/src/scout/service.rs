@@ -292,6 +292,8 @@ impl ScoutService {
             event,
             SessionEvent::TurnEnded { .. }
                 | SessionEvent::ToolUse { .. }
+                | SessionEvent::StartupFailed { .. }
+                | SessionEvent::ToolResult { ok: false, .. }
                 | SessionEvent::ProcessExited { .. }
         ) {
             return;
