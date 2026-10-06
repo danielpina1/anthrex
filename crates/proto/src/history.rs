@@ -135,6 +135,7 @@ pub struct RoutingDecision {
 pub struct RoleRoutingDecision {
     pub v: u32,
     /// `<run id>/<role>/<session id>`, or `triage/<unix nanos>/<n>` for pre-run triage
+    /// (`run_name/<unix nanos>/<n>` for the run name's decider)
     /// (milestone 9 task M9.13b).
     pub record_id: String,
     pub at: u64,

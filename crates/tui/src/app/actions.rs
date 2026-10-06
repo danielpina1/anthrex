@@ -273,7 +273,8 @@ impl App {
             .and_then(|kind| items.iter().position(|a| a.kind == kind))
             .unwrap_or(0);
         self.modal = Some(Modal::Action(Box::new(ActionFlow {
-            goal: run.goal.clone(),
+            // The run title change: the menu names the run by its title, else its goal.
+            goal: crate::tree::run_label(run).to_owned(),
             run_id,
             target,
             items,

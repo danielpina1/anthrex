@@ -457,7 +457,15 @@ async fn a_continued_goal_skips_triage() {
     assert_eq!(run.triage, None);
     assert_eq!(run.path, Some(RunPath::Plan));
     assert_eq!(run.chain.as_deref(), Some(CHAIN));
-    assert!(!rig.marker.exists(), "no decider was called");
+    // The run title change: the continued goal's run is named (that decider falls back
+    // here), but triage is never asked.
+    let calls = std::fs::read_to_string(&rig.marker).unwrap_or_default();
+    assert!(!calls.contains("triage v1"), "triage was called: {calls}");
+    assert!(
+        calls.contains("run_name v1"),
+        "the run was not named: {calls}"
+    );
+    assert_eq!(run.title, "", "a fallback gives no title");
     rig.stop().await;
 }
 

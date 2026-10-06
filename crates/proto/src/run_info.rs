@@ -488,6 +488,11 @@ pub struct RunInfo {
     /// while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub design_agents: Vec<crate::design::DesignAgentInfo>,
+    /// Protocol 18: the run's short title, which the `run_name` decider gave it at its
+    /// start; empty when it has none (the decider fell back, a plan file's run, or a
+    /// run from before), and then left out. A client shows it in place of the goal.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
 }
 
 /// Every run the daemon knows about, at one revision.

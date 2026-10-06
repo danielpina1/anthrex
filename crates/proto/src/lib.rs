@@ -124,7 +124,12 @@
 /// `PhaseAgent.{secs, sessions}` (T13-1, T13-3), `DocView.draft_review` (the final fix
 /// wave's FW-71) and `DocGateAction::Approve`'s `version` (still written as
 /// `"approve"` without one).
-pub const PROTO_VERSION: u32 = 17;
+///
+/// The run title change bumps this to 18: it appends `RunInfo.title`, the short title
+/// a model gave the run at its start (empty when it has none), `#[serde(default)]` and
+/// left out while empty, so a protocol-17 snapshot and `run.json` still load
+/// (`HISTORY_VERSION` stays 5: no history record changes).
+pub const PROTO_VERSION: u32 = 18;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -246,10 +251,14 @@ mod adapt_tests;
 mod orch_tests;
 
 #[cfg(test)]
+#[path = "run_title_tests.rs"]
+mod run_title_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_seventeen() {
-        assert_eq!(super::PROTO_VERSION, 17);
+    fn proto_version_is_eighteen() {
+        assert_eq!(super::PROTO_VERSION, 18);
     }
 
     #[test]

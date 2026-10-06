@@ -11,10 +11,12 @@ pub mod ci;
 pub mod fallback;
 pub mod parse;
 pub mod prompt;
+pub mod run_name;
 pub mod schema;
 
 pub use argv::{AnswerSource, DECIDER_CAPS, DeciderCaps, caps};
 pub use ci::{CI_SUMMARY_INPUT_BYTES, CiSummaryInput};
+pub use run_name::RunNameInput;
 
 use crate::headless::argv::CliCaps;
 use crate::manager::ManagerConfig;
@@ -27,7 +29,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// The decider kinds (decision 17; milestone 9.2 decision 18 appends `CiSummary`).
+/// The decider kinds (decision 17; milestone 9.2 decision 18 appends `CiSummary`, and
+/// the run title change `RunName`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeciderKind {
@@ -36,16 +39,18 @@ pub enum DeciderKind {
     CheckSummary,
     BlockedReason,
     CiSummary,
+    RunName,
 }
 
 impl DeciderKind {
     /// Every kind, in the order the briefs list them.
-    pub const ALL: [DeciderKind; 5] = [
+    pub const ALL: [DeciderKind; 6] = [
         DeciderKind::Triage,
         DeciderKind::SizeCheck,
         DeciderKind::CheckSummary,
         DeciderKind::BlockedReason,
         DeciderKind::CiSummary,
+        DeciderKind::RunName,
     ];
 
     /// The kind's name in prompts, schema file names and `fake-agent`'s scripts.
@@ -56,6 +61,7 @@ impl DeciderKind {
             DeciderKind::CheckSummary => "check_summary",
             DeciderKind::BlockedReason => "blocked_reason",
             DeciderKind::CiSummary => "ci_summary",
+            DeciderKind::RunName => "run_name",
         }
     }
 }
@@ -146,6 +152,7 @@ pub enum DeciderRequest {
     CheckSummary(CheckSummaryInput),
     BlockedReason(BlockedReasonInput),
     CiSummary(CiSummaryInput),
+    RunName(RunNameInput),
 }
 
 impl DeciderRequest {
@@ -156,6 +163,7 @@ impl DeciderRequest {
             DeciderRequest::CheckSummary(_) => DeciderKind::CheckSummary,
             DeciderRequest::BlockedReason(_) => DeciderKind::BlockedReason,
             DeciderRequest::CiSummary(_) => DeciderKind::CiSummary,
+            DeciderRequest::RunName(_) => DeciderKind::RunName,
         }
     }
 }
@@ -216,6 +224,11 @@ pub enum DeciderAnswer {
         lines: Vec<String>,
         failing_tests: Vec<String>,
         category: proto::CiCategory,
+    },
+    /// Empty `title` and `slug`: the fallback (`run_name::fallback`).
+    RunName {
+        title: String,
+        slug: String,
     },
 }
 
@@ -291,5 +304,7 @@ mod tests_context;
 mod tests_prompt;
 #[cfg(test)]
 mod tests_route;
+#[cfg(test)]
+mod tests_run_name;
 #[cfg(test)]
 mod tests_thresholds;

@@ -181,3 +181,44 @@ fn the_run_title_adds_the_round() {
         "{top}"
     );
 }
+
+/// The run title change: the view on `add-mul-0723` with `goal` and the run's `title`.
+fn with_title(goal: &str, title: &str) -> App {
+    let (mut snap, windows) = add_mul(RunState::Running);
+    snap.runs[0].goal = goal.into();
+    snap.runs[0].title = title.into();
+    run_view(app_of((snap, windows), false), "add-mul-0723")
+}
+
+/// A run with a title is shown by its title, the short id beside it; with an empty one,
+/// by its goal, as before.
+#[test]
+fn the_header_shows_the_title_when_set_and_the_goal_when_empty() {
+    let goal = "in anthrex, at the bottom I want the run view to show a short title";
+    let (_, top) = top_at(&with_title(goal, "Short run titles"), 120);
+    assert!(
+        top.starts_with("╭ run · Short run titles · 0723 ─"),
+        "{top}"
+    );
+    assert!(!top.contains("in anthrex"), "{top}");
+    assert!(top.ends_with(" 2/3 merged · 14m ╮"), "{top}");
+
+    let (_, top) = top_at(&with_title(goal, ""), 120);
+    assert!(
+        top.starts_with(&format!("╭ run · {goal} · 0723 ─")),
+        "{top}"
+    );
+}
+
+/// At a narrow width the title is cut as a goal is, the short id kept: 40 columns leave
+/// 29, so the right text goes and `Password reset by emailed link` loses its end.
+#[test]
+fn a_narrow_width_cuts_the_title() {
+    let app = with_title("add a password reset", "Password reset by emailed link");
+    let (_, top) = top_at(&app, 40);
+    assert!(!top.contains("merged"), "{top}");
+    assert!(
+        top.contains(" run · Password reset by ema… · 0723 "),
+        "{top}"
+    );
+}

@@ -538,6 +538,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         paused_at: None,
         paused_secs: 0,
         last_step_at: 0,
+        // Set by the driver from the `run_name` decider (`driver/build_name.rs`).
+        title: String::new(),
     })
 }
 

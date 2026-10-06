@@ -67,7 +67,7 @@ pub(super) struct ProfileChoice {
     /// M8b decision 19: the stored profile's onboarding report (the alias `onboarding`).
     onboarding_report: Option<String>,
     /// M8b decision 33a: the stored profile's languages, for routing decisions.
-    languages: Vec<String>,
+    pub(super) languages: Vec<String>,
     /// Milestone 9.2 decision 3: the stored profile's `[delivery]` table.
     pub(super) delivery: Option<proto::DeliveryProfile>,
 }

@@ -7,7 +7,8 @@
 //! appends pre-run triage's itself (`driver/adapt_goal.rs`).
 //!
 //! **Record ids.** `<run id>/<role>/<session id>` for a run's session, and
-//! `triage/<request>/<n>` for pre-run triage, which has no run. A task's record is
+//! `triage/<request>/<n>` for pre-run triage (and `run_name/<request>/<n>` for the run
+//! name), which have no run. A task's record is
 //! `<run id>/<task id>` (one `/`), a run's and a revert's have their own prefixes, so no
 //! role record can take another record's id; `history_io` keeps the last line of each.
 //!
@@ -139,7 +140,8 @@ pub fn record(
     }
     let record_id = match run {
         Some(run) => record_id(&run.id, role, session_id),
-        None => format!("triage/{session_id}"),
+        // Pre-run triage's `triage/...`, and the run name's `run_name/...`.
+        None => format!("{trigger}/{session_id}"),
     };
     RoleRoutingDecision {
         v: HISTORY_VERSION,
