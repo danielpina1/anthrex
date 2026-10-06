@@ -15,11 +15,12 @@ use crate::support::run_harness::{REQUEST_WAIT, RunHarness, git_in};
 use crate::support::run_orch::{ORCH_LINES, ORCH_WAIT, triage_plan};
 use crate::support::run_plans::until as poll;
 
-/// `role_route` lines whose `run_id` is `run` (`Value::Null` for pre-run triage).
+/// `role_route` lines whose `run_id` is `run` (`Value::Null` for pre-run triage), but
+/// the run name's (the run title change), which every goal's start also writes.
 fn routes(h: &RunHarness, run: &Value) -> Vec<Value> {
     h.history_lines("role_route")
         .into_iter()
-        .filter(|l| &l["run_id"] == run)
+        .filter(|l| &l["run_id"] == run && l["trigger"] != "run_name")
         .collect()
 }
 
@@ -198,5 +199,8 @@ fn e2e_role_history_for_large_and_triage_paths() {
         assert_ne!(later["record_id"], triage_lines[0]["record_id"]);
     }
     assert_ne!(triage_lines[1]["record_id"], triage_lines[2]["record_id"]);
-    assert_eq!(h.history_lines("role_route").len(), 7);
+    let routes_but_names = (h.history_lines("role_route").into_iter())
+        .filter(|l| l["trigger"] != "run_name")
+        .count();
+    assert_eq!(routes_but_names, 7);
 }

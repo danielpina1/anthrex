@@ -221,8 +221,9 @@ async fn local_mode_calls_no_host() {
     }
 }
 
-/// A decider stand-in that records each call in `marker` and fails (the triage falls
-/// back): never a real agent. Fix round 1, m3: it is written under another name, closed
+/// A decider stand-in that records each call in `marker`, with what it read on stdin (a
+/// Claude decider's prompt, so a test can tell a triage from a run name), and fails (the
+/// decider falls back): never a real agent. Fix round 1, m3: it is written under another name, closed
 /// and renamed into place, then executed once (a guard makes that run exit at once),
 /// retrying while a concurrent fork still holds a writable copy of its descriptor
 /// (`ETXTBSY`), so the daemon's exec of it is never the first and never busy.
@@ -233,7 +234,7 @@ pub(in crate::run::driver) fn decider_stand_in(dir: &Path) -> (String, std::path
     std::fs::write(
         &staged,
         format!(
-            "#!/bin/sh\n[ -n \"$ANTHREX_TEST_WARM_UP\" ] && exit 0\necho called >> '{}'\ncat > /dev/null\nexit 1\n",
+            "#!/bin/sh\n[ -n \"$ANTHREX_TEST_WARM_UP\" ] && exit 0\necho called >> '{0}'\ncat >> '{0}'\nexit 1\n",
             marker.display()
         ),
     )

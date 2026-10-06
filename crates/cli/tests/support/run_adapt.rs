@@ -151,9 +151,22 @@ impl RunHarness {
         std::fs::write(path, value.to_string()).unwrap();
     }
 
-    /// Every decider call `fake-agent` recorded (`calls.jsonl`: kind, argv, prompt).
+    /// Every decider call `fake-agent` recorded (`calls.jsonl`: kind, argv, prompt) but
+    /// the run name's, which every goal's start makes (the run title change; see
+    /// [`RunHarness::run_name_calls`]).
     pub fn decider_calls(&self) -> Vec<Value> {
-        jsonl(&self.decider_dir().join("calls.jsonl"))
+        let all = jsonl(&self.decider_dir().join("calls.jsonl"));
+        all.into_iter()
+            .filter(|c| c["kind"] != "run_name")
+            .collect()
+    }
+
+    /// The run name's decider calls (the run title change), one per goal's start.
+    pub fn run_name_calls(&self) -> Vec<Value> {
+        let all = jsonl(&self.decider_dir().join("calls.jsonl"));
+        all.into_iter()
+            .filter(|c| c["kind"] == "run_name")
+            .collect()
     }
 
     /// This repository's data directory, from `profile status` (decision 4).
