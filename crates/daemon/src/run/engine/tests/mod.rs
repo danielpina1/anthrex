@@ -115,6 +115,7 @@ mod estimate;
 mod exit_duplicates;
 mod fast_path;
 mod first_turn;
+mod fix_routes;
 mod fixes;
 mod fixture;
 mod full;

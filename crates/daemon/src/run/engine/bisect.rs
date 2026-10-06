@@ -18,7 +18,7 @@ use crate::run::contract::{
 use crate::run::env::profile_env;
 use crate::run::model::{BisectRecord, FixOf, Probe, Run, StageMerge, StageRecord};
 use crate::run::proof::proof_command;
-use crate::run::roster::escalate;
+use crate::run::route_pick::{Mover, escalate_for};
 use crate::run::tiers::{RETRY_NAMES_MAX, TestAtSpec, TierOutcome};
 use proto::{Route, RouteSpec, TaskOrigin, TestMode};
 
@@ -523,9 +523,10 @@ fn add_fix(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Result<String, String> {
-    let Some(task) = run.task(culprit).cloned() else {
+    let Some(at) = (run.tasks.iter()).position(|t| t.id() == culprit) else {
         return Err(format!("{culprit} is not a task"));
     };
+    let task = run.tasks[at].clone();
     let id = fixes::next_fix_id(run);
     let brief = bisect_fix_brief(&BisectFix {
         id: &id,
@@ -561,7 +562,7 @@ fn add_fix(
         test_mode_reason: Some(FIX_TEST_MODE_REASON.to_string()),
         sync: None,
     };
-    let up = escalate(&run.roster, &task.route);
+    let up = escalate_for(run, at, &task.route, Mover::Worker);
     match fixes::add_fix(run, spec(&up), now, fx) {
         Ok(id) => Ok(id),
         Err(_) if up != task.route => fixes::add_fix(run, spec(&task.route), now, fx),

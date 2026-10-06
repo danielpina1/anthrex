@@ -212,7 +212,7 @@ fn overlap(a: &Task, b: &Task) -> bool {
 
 /// Whose route the overlap rule checks (ruling FW-5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mover {
+pub(crate) enum Mover {
     /// A task's worker. Validation rule 9 refuses overlapping tasks on different
     /// runtimes whatever their deps, so every unfinished overlapping task counts.
     Worker,
@@ -533,6 +533,7 @@ pub fn forecast(
 
 #[path = "route_pick_step.rs"]
 mod step;
+pub(crate) use step::{escalate_for, installed_roster};
 pub use step::{
     every_route_failed, next_candidate, racer_route, rung2_route, writer_route,
     writer_route_failed, writer_step,

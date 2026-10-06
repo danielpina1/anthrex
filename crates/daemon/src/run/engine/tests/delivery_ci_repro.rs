@@ -34,7 +34,7 @@ const SINGLE: &str = "cargo test -- --exact {test}";
 
 /// A `pr`-mode run of `ids` on the tiered profile, merged in order at `commit(1)`, …,
 /// green on tier 3 at its head, with PR #7 open on it.
-fn tiered_watched(ids: &[&str]) -> Fixture {
+pub(super) fn tiered_watched(ids: &[&str]) -> Fixture {
     let tasks: Vec<String> = ids.iter().map(|id| doc_task(id, "")).collect();
     let (mut fx, mut windows) = pr_on(&profile(), &tasks);
     fast(fx.run_mut());
@@ -47,7 +47,7 @@ fn tiered_watched(ids: &[&str]) -> Fixture {
 }
 
 /// A red on `head` summarised with `tests` and `category` by the decider.
-fn red_summarised(fx: &mut Fixture, head: &str, tests: &[&str], category: CiCategory) {
+pub(super) fn red_summarised(fx: &mut Fixture, head: &str, tests: &[&str], category: CiCategory) {
     deciding(fx);
     poll_with(fx, red_view(head, test_red(RUN_A)));
     answer_logs(fx, "--- FAIL: a::works");
@@ -60,7 +60,7 @@ fn reproduction(fx: &Fixture) -> (crate::run::model::OpId, crate::run::tiers::Te
     probe(fx)
 }
 
-fn red_probe(command: &str) -> OpResult {
+pub(super) fn red_probe(command: &str) -> OpResult {
     OpResult::TestAt {
         red: true,
         failing: vec![command.into()],
