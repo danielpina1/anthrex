@@ -153,15 +153,19 @@ fn contains_due(run: &Run) -> Option<Contains> {
     })
 }
 
+/// The base fetch is due: after a merge, or for a merge commit's method or an
+/// undecided stage's question (FW-5: its failures count, as `alerts::due` reads it).
+pub(super) fn fetch_due(run: &Run) -> bool {
+    run.delivery.base_fetch_due || method_due(run).is_some() || contains_due(run).is_some()
+}
+
 /// The pass: the due base fetch, one at a time, after a failed one's wait. It asks for
 /// the parents of `method_due`'s merge commit and `contains_due`'s question.
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    let d = &run.delivery;
-    let waiting = d.base_fetch_retry_at.is_some_and(|t| t > now);
+    let waiting = run.delivery.base_fetch_retry_at.is_some_and(|t| t > now);
     let parents_of = method_due(run);
     let contains = contains_due(run);
-    let due = d.base_fetch_due || parents_of.is_some() || contains.is_some();
-    if !due || waiting || fetching(run) {
+    if !fetch_due(run) || waiting || fetching(run) {
         return;
     }
     let op = HostOp::Fetch {

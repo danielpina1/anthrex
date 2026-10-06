@@ -133,7 +133,7 @@ fn due(run: &Run, key: &str) -> bool {
             ("run", "permission") => (d.stages.iter())
                 .flat_map(|s| &s.threads)
                 .any(|t| !t.candidates.is_empty()),
-            ("run", "fetch") => d.base_fetch_due,
+            ("run", "fetch") => super::sync::fetch_due(run),
             _ => true,
         };
     };

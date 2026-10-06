@@ -347,3 +347,25 @@ fn an_undecided_stage_holds_completion_and_the_branch_delete() {
     answer(&mut fx, found[0].0, HostResult::Deleted);
     completes(&mut fx, &[merged_view(PR, &u2(), &commit(90))]);
 }
+
+/// FW-5 (review A m2): a base fetch that is due only for its question (or a merge
+/// commit's method) still counts its failures, and raises the fetch's attention line,
+/// as a due base fetch does.
+#[test]
+fn a_failing_question_only_fetch_raises_the_fetch_alert() {
+    let mut fx = merged_unverified();
+    // A base fetch already in flight at the merge answered without the question.
+    fx.run_mut().delivery.base_fetch_due = false;
+    for _ in 0..crate::run::delivery::FAILURES_BEFORE_ATTENTION {
+        while !fetching(&fx) {
+            later(&mut fx, 1);
+        }
+        fetch_fails(&mut fx);
+    }
+    assert!(
+        fx.run().delivery.alerts.contains_key("run/fetch"),
+        "{:#?} {:#?}",
+        fx.run().delivery.alerts,
+        fx.run().delivery.failures
+    );
+}
