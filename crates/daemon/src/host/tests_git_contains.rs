@@ -336,21 +336,17 @@ const END: &str = "--anthrex-test-end--";
 
 impl Recorder {
     pub(super) fn new(rig: &Rig) -> Recorder {
-        use std::os::unix::fs::PermissionsExt;
         let dir = rig.tmp.path().join("recorder");
         std::fs::create_dir_all(&dir).unwrap();
         let (argv_log, env_log) = (dir.join("argv.log"), dir.join("env.log"));
         let script = dir.join("git");
-        std::fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{argv}'; done\nprintf '%s\\n' '{END}' >> '{argv}'\nenv | grep '^GIT_' >> '{env}'\nexec git \"$@\"\n",
-                argv = argv_log.display(),
-                env = env_log.display(),
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let body = format!(
+            "for a in \"$@\"; do printf '%s\\n' \"$a\" >> '{argv}'; done\nprintf '%s\\n' '{END}' >> '{argv}'\nenv | grep '^GIT_' >> '{env}'\nexec git \"$@\"\n",
+            argv = argv_log.display(),
+            env = env_log.display(),
+        );
+        install_stand_in(&script, &body);
+        assert!(!argv_log.exists(), "the warm-up ran only the guard");
         Recorder {
             host: GhHost::new(SystemRunner::new(NO_GH, &script), NO_GH, &script),
             argv_log,
@@ -407,4 +403,47 @@ fn a_question_without_parents_of_fetches_the_stage_branch() {
     let calls = recorder.calls();
     let subcommands: Vec<&str> = calls.iter().map(|argv| sub(argv)).collect();
     assert_eq!(subcommands, ["fetch", "rev-parse", "fetch", "merge-base"]);
+}
+
+/// FW-18: writes `body` (after a warm-up guard) as the executable `script`, under
+/// another name first and renamed into place, then runs it once with the guard set,
+/// retrying while a concurrent fork still holds a writable copy of its descriptor
+/// (`ETXTBSY`); so the test's own exec is never the first, and never busy
+/// (`driver/delivery_tests_start.rs::decider_stand_in`).
+fn install_stand_in(script: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let staged = script.with_extension("new");
+    let text = format!("#!/bin/sh\n[ -n \"$ANTHREX_TEST_WARM_UP\" ] && exit 0\n{body}");
+    std::fs::write(&staged, text).unwrap();
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::rename(&staged, script).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut child = loop {
+        match std::process::Command::new(script)
+            .env("ANTHREX_TEST_WARM_UP", "1")
+            .stdin(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(child) => break child,
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the stand-in stayed busy: {e}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(e) => panic!("the stand-in did not start: {e}"),
+        }
+    };
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the stand-in's warm-up never exited"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert!(status.success(), "warm-up: {status:?}");
 }
