@@ -86,14 +86,37 @@ fn e2e_workers_get_their_own_tmpdir_and_pinned_sandbox_settings() {
         .iter()
         .map(|p| p.as_str().unwrap())
         .collect();
-    assert_eq!(denied.len(), 5, "{denied:?}");
-    for tail in [
+    let protected = [
         "/.claude",
         "/.codex",
         "/.mcp.json",
         "/AGENTS.md",
         "/CLAUDE.md",
-    ] {
+    ];
+    // On Linux the worker's whole git directory is granted, and these entries of it are
+    // denied (the task checkout's own repository has no `commondir`, so none is denied).
+    let git_denied: &[&str] = if cfg!(target_os = "linux") {
+        &[
+            "/git/gitdir",
+            "/git/config",
+            "/git/config.worktree",
+            "/git/locked",
+            "/git/packed-refs",
+            "/git/logs",
+            "/git/refs",
+            "/git/info",
+            "/git/hooks",
+            "/git/modules",
+        ]
+    } else {
+        &[]
+    };
+    assert_eq!(
+        denied.len(),
+        protected.len() + git_denied.len(),
+        "{denied:?}"
+    );
+    for tail in protected.iter().chain(git_denied) {
         assert!(
             denied.iter().any(|p| p.ends_with(tail)),
             "{tail}: {denied:?}"
