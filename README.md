@@ -68,10 +68,16 @@ The sidebar groups agents by project. Each row shows the agent's number, status 
 
 anthrex runs on **macOS and Linux**. You need:
 
-- Rust **1.92** or newer, to build it;
+- Rust **1.92** or newer, only to build from source;
 - `git`;
 - the agents you want to run: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) and/or [Codex](https://github.com/openai/codex) (`codex`), installed and logged in;
 - for `pr` delivery only, the GitHub CLI `gh`, logged in.
+
+### From a release
+
+Download a prebuilt binary for Linux (x86_64, arm64) or macOS (Apple silicon, Intel) from the [latest release](https://github.com/danielpina1/anthrex/releases/latest). [docs/install.md](docs/install.md) has the commands, the checksum check, and the macOS quarantine note (the binaries are unsigned).
+
+### From source
 
 Build and install from a clone:
 
