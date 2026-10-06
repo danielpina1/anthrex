@@ -1960,6 +1960,8 @@ What the task reviews deferred past 9.7 (`.superpowers/sdd/M9.7-delivery-hardeni
 - **`bisect::merged_away` has lost its direct test** (the W2 re-review). The landing is processed before the bisect check in the same scheduler pass, so `a_bisect_open_when_its_top_stage_merges_adds_no_fix` now ends through `bisect_end::spent_pass`; `merged_away` is reached only when that pass is skipped (for example `Running if held`). Fix direction: a test that holds the scheduler pass so the culprit arrives first.
 - **A CI bisect on a merged top stage runs its remaining probes** (the W2 re-review). It never adds a fix or wakes the orchestrator (`ci::gone` at its end), but it wastes probes and holds completion until it ends. Fix direction: check `ci::gone` in `bisect::pass` too.
 
+- **Two tier tests from milestone 9.1 flake under load** (9.7's merge gate, 2026-10-06; code untouched by 9.7). `run::driver::tier::tests::cache::red_and_timed_out_steps_are_never_cached` failed 2 of 15 stress runs at `tier_tests_cache.rs:96` (`assert!(!red.ok)`: the step meant to be red came out green). `run::driver::tier::tests::retry::retry_reruns_the_whole_step_without_single_test_or_with_many_names` failed once in a full suite (index out of bounds, `tier_tests_retry.rs:88`). Both read rig state files that the fake step writes, so the suspicion is a write/read race in the rig. Fix direction: reproduce with the 15-run loop, then make the rig's state reads wait on a deadline or write atomically (rename).
+
 ## From milestone 9.7's final fix wave (2026-10-06)
 
 What the final fix wave (`.superpowers/sdd/M9.7-delivery-hardening/final-fix-wave.md`, FW-1 to FW-24) did not change, with the reason.
