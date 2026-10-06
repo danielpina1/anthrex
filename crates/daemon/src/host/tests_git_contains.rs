@@ -24,9 +24,9 @@ pub(super) fn base_into() -> String {
 /// The user's clone of the remote: where the commits on the stage branch and the merge
 /// are made, and pushed from.
 pub(super) fn user_clone(rig: &Rig) -> PathBuf {
-    let user = rig._tmp.path().join("user");
+    let user = rig.tmp.path().join("user");
     git(
-        rig._tmp.path(),
+        rig.tmp.path(),
         &["clone", "-q", &rig.bare.to_string_lossy(), "user"],
     );
     user
@@ -212,7 +212,7 @@ fn a_failed_base_fetch_is_the_ops_failure() {
     let user = user_clone(&rig);
     let u2 = user_pushes_on_the_stage(&user);
     let s = squash(&user);
-    std::fs::rename(&rig.bare, rig._tmp.path().join("gone.git")).unwrap();
+    std::fs::rename(&rig.bare, rig.tmp.path().join("gone.git")).unwrap();
 
     let answer = rig.host.fetch(&base_fetch(&rig, &s, ask(&h2, &u2)));
     assert!(answer.is_err(), "{answer:?}");
@@ -337,7 +337,7 @@ const END: &str = "--anthrex-test-end--";
 impl Recorder {
     pub(super) fn new(rig: &Rig) -> Recorder {
         use std::os::unix::fs::PermissionsExt;
-        let dir = rig._tmp.path().join("recorder");
+        let dir = rig.tmp.path().join("recorder");
         std::fs::create_dir_all(&dir).unwrap();
         let (argv_log, env_log) = (dir.join("argv.log"), dir.join("env.log"));
         let script = dir.join("git");
@@ -379,4 +379,32 @@ impl Recorder {
         let _ = std::fs::remove_file(&self.argv_log);
         calls
     }
+}
+
+/// FW-12 (task 6's Minor): a question with no merge commit to count (`parents_of`
+/// unknown) fetches the stage branch, as a squash does.
+#[test]
+fn a_question_without_parents_of_fetches_the_stage_branch() {
+    let rig = Rig::new();
+    let (_, h2) = start(&rig);
+    let user = user_clone(&rig);
+    let u2 = user_pushes_on_the_stage(&user);
+    let s = squash(&user);
+    let req = FetchReq {
+        parents_of: None,
+        ..base_fetch(&rig, &s, ask(&h2, &u2))
+    };
+    let recorder = Recorder::new(&rig);
+    let answer = recorder.host.fetch(&req);
+    let want = FetchOutcome::Fetched {
+        sha: s,
+        parents: None,
+        contains: Some(true),
+    };
+    assert_eq!(answer, Ok(want));
+    assert_eq!(git(&rig.work, &["rev-parse", &stage_into()]), u2);
+    // The stage branch first, then one `merge-base`: nothing was skipped.
+    let calls = recorder.calls();
+    let subcommands: Vec<&str> = calls.iter().map(|argv| sub(argv)).collect();
+    assert_eq!(subcommands, ["fetch", "rev-parse", "fetch", "merge-base"]);
 }

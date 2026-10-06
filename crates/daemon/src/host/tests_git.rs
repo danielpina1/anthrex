@@ -43,7 +43,7 @@ pub(super) fn commit(dir: &Path, message: &str) -> String {
 }
 
 pub(super) struct Rig {
-    pub(super) _tmp: tempfile::TempDir,
+    pub(super) tmp: tempfile::TempDir,
     pub(super) bare: PathBuf,
     pub(super) work: PathBuf,
     pub(super) repo: HostRepo,
@@ -68,7 +68,7 @@ impl Rig {
             root: work.clone(),
         };
         Rig {
-            _tmp: tmp,
+            tmp,
             bare,
             work,
             repo,
