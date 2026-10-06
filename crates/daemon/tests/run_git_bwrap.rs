@@ -6,8 +6,11 @@
 //!
 //! With the exact-file grant macOS uses, a commit fails: `index.lock` does not exist
 //! when the sandbox starts, so it is never bound, and the git directory around it is
-//! read-only (`Read-only file system`, the bug a worker reported on Ubuntu 26.04 with
-//! Claude Code 2.1.291). With the Linux grant (the git directory whole, its
+//! read-only (`Read-only file system`, the bug a worker reported on Ubuntu 26.04). The
+//! sandbox-runtime behaviour modelled here is Claude Code 2.1.292's, the version
+//! installed on the Ubuntu test host, whose bundled code was read (never run): its
+//! "Skipping non-existent write path" and its argument order. With the Linux grant (the
+//! git directory whole, its
 //! configuration denied) the worker's ordinary git work succeeds, every denied entry
 //! stays unwritable, nothing of the common directory is written, and the engine then
 //! imports the worker's commit.

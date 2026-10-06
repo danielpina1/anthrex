@@ -165,6 +165,18 @@ fn the_engine_creates_no_file_in_the_git_dir() {
             "{name} was renamed over: {events:?}"
         );
     }
+    // Third review m6: nor is any denied entry deleted or moved away, which detaches a
+    // mount on it just the same.
+    let denied = daemon::run::git::WORKTREE_GIT_DENIED_FILES
+        .iter()
+        .chain(&daemon::run::git::WORKTREE_GIT_DENIED_DIRS)
+        .chain(&["exclude"]);
+    for name in denied {
+        let gone = events
+            .iter()
+            .any(|(kind, n)| (*kind == "delete" || *kind == "moved_from") && n == name);
+        assert!(!gone, "{name} was deleted or moved: {events:?}");
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -190,7 +202,11 @@ mod inotify {
                 let c = CString::new(dir.as_os_str().as_bytes()).unwrap();
                 // SAFETY: a valid descriptor and NUL-terminated path.
                 let wd = unsafe {
-                    libc::inotify_add_watch(fd, c.as_ptr(), libc::IN_CREATE | libc::IN_MOVED_TO)
+                    libc::inotify_add_watch(
+                        fd,
+                        c.as_ptr(),
+                        libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_DELETE | libc::IN_MOVED_FROM,
+                    )
                 };
                 assert!(
                     wd >= 0,
@@ -201,7 +217,7 @@ mod inotify {
             Watch { fd }
         }
 
-        /// Every event so far: ("create" | "moved_to", name).
+        /// Every event so far: ("create" | "moved_to" | "delete" | "moved_from", name).
         pub fn events(&self) -> Vec<(&'static str, String)> {
             let mut events = Vec::new();
             let mut buf = vec![0u8; 64 * 1024];
@@ -222,6 +238,10 @@ mod inotify {
                     let name = String::from_utf8_lossy(&name_bytes[..end]).into_owned();
                     let kind = if event.mask & libc::IN_CREATE != 0 {
                         "create"
+                    } else if event.mask & libc::IN_DELETE != 0 {
+                        "delete"
+                    } else if event.mask & libc::IN_MOVED_FROM != 0 {
+                        "moved_from"
                     } else {
                         "moved_to"
                     };
