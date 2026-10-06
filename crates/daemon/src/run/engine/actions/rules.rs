@@ -273,7 +273,34 @@ pub(crate) fn finish(run: &Run, action: FinishAction) -> Option<String> {
     if let Some(text) = delivery::finish_refusal(run, action).filter(|_| !discardable) {
         return Some(text);
     }
-    (run.state != RunState::Complete && !discardable).then(state)
+    if run.state != RunState::Complete && !discardable {
+        return Some(state());
+    }
+    // Third review of the Linux worker-git fix, m1: accept and discard remove every
+    // checkout, which unlinks its git directory's denied entries and would detach a live
+    // Linux sandbox's read-only binds. A run completes while a merged task's retired
+    // worker is still exiting (its own checkouts' removal waits for the exit,
+    // `dispatch::remove_merged_worktrees`); never beside such a session, nor beside that
+    // removal.
+    let removing = |t: &crate::run::model::Task| {
+        t.removal_due
+            || crate::run::engine::schedule::op_in_flight(run, t.id(), |k| {
+                matches!(k, crate::run::engine::OpKind::RemoveWorktree { .. })
+            })
+    };
+    (run.tasks.iter())
+        .any(|t| {
+            t.rounds
+                .iter()
+                .any(|r| crate::run::model::writes_task(r.role) && !r.ended)
+                || removing(t)
+        })
+        .then(|| {
+            format!(
+                "run {} still has a worker exiting; try again once its session has ended",
+                run.id
+            )
+        })
 }
 
 /// Milestone 9.3 decision 9: `run iterate` and `edit_plan`'s `iterate`

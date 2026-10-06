@@ -292,6 +292,34 @@ fn merged(
     fx.push(Effect::UnwatchWorktree {
         root: task.worktree.clone(),
     });
+    // Third review of the Linux worker-git fix, m1: the checkouts are removed once every
+    // writing session of the task has exited (`dispatch::remove_merged_worktrees`), never
+    // beside its retirement: their removal unlinks the git directory's denied entries,
+    // which would detach a live Linux sandbox's read-only binds on them.
+    if writer_running(task) {
+        run.tasks[i].removal_due = true;
+        history(
+            run,
+            i,
+            now,
+            "its checkouts are removed once its worker has exited",
+        );
+        return;
+    }
+    remove_merged(run, i, fx);
+}
+
+/// Whether any writing session of `task` in its own checkout (its worker's, its test
+/// writer's, its crowned racer's: `model::writes`) is still running.
+pub(super) fn writer_running(task: &crate::run::model::Task) -> bool {
+    (task.rounds.iter()).any(|r| crate::run::model::writes(task, r) && !r.ended)
+}
+
+/// The merged task `i`'s checkouts removed (salvaged if dirty): its own, its review's
+/// and its proof's.
+pub(super) fn remove_merged(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
+    let id = run.tasks[i].id().to_string();
+    let task = &run.tasks[i];
     // Milestone 9.5 ruling RR-1: a crowned task's checkouts are its lane's.
     let name = task.checkout_name();
     let paths = [

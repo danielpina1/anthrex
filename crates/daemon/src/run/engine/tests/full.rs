@@ -81,6 +81,9 @@ pub(super) fn merge_tiered(fx: &mut Fixture, id: &str, window: u32, at: &str) ->
             tier: Some(Box::new(outcome(2, &[]))),
         },
     );
+    // Third review of the Linux worker-git fix, m1: the retired worker exits, and its
+    // checkouts are removed then.
+    effects.extend(super::merge::exit_retired(fx, id));
     for (op, _) in pending(fx, "RemoveWorktree", Some(id)) {
         effects.extend(fx.done(
             op,

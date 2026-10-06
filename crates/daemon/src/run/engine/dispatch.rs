@@ -100,6 +100,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         }
     }
     remove_cancelled_worktrees(run, now, fx);
+    remove_merged_worktrees(run, fx);
     // Milestone 9.5 decision 22: a lane that left its race, once its racer has exited.
     super::race_salvage::pass(run, now, fx);
     if run.state == RunState::Running {
@@ -220,6 +221,24 @@ pub(super) fn window_limit_reached(run: &mut Run, i: usize, now: u64) -> bool {
     };
     block(run, i, BlockReason::Environment, text, now);
     true
+}
+
+/// Third review of the Linux worker-git fix, m1: a merged task whose checkouts' removal
+/// waited for its writing sessions has them removed once the last one has exited.
+fn remove_merged_worktrees(run: &mut Run, fx: &mut Vec<Effect>) {
+    for i in 0..run.tasks.len() {
+        let task = &run.tasks[i];
+        if !task.removal_due
+            || merge::writer_running(task)
+            || op_in_flight(run, task.id(), |k| {
+                matches!(k, OpKind::RemoveWorktree { .. })
+            })
+        {
+            continue;
+        }
+        run.tasks[i].removal_due = false;
+        merge::remove_merged(run, i, fx);
+    }
 }
 
 /// M8a.6's F5 and decision 14: a cancelled task whose worktree still exists and that has

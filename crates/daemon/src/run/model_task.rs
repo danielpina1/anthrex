@@ -57,6 +57,12 @@ pub struct Task {
     /// task with one never races: the crown could not create the branch.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub prepare_failed: bool,
+    /// The merged task's checkouts await their removal until every writing session of
+    /// it has exited (third review of the Linux worker-git fix, m1): removing them
+    /// unlinks the git directory's denied entries, which would detach a live Linux
+    /// sandbox's read-only binds (`dispatch::remove_merged_worktrees`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removal_due: bool,
     /// An answer or other message is held for this started task until every dependency
     /// has finished (M8a.6 ruling N5); the task stays `blocked` meanwhile.
     #[serde(default)]

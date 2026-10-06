@@ -442,6 +442,7 @@ fn new_task(
         prewarmed: false,
         worktree_live: false,
         prepare_failed: false,
+        removal_due: false,
         awaiting_deps: false,
         held_answered: false,
         gate_op: None,

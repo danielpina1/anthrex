@@ -354,6 +354,7 @@ fn finish_cancels_unstarted_then_completes_when_live_ones_end() {
     assert!(effects.contains(&Effect::KillWindow { window_id: t2 }));
     assert_eq!(fx.task("t4").state, TaskState::Cancelled);
     assert_alive(&fx);
+    super::merge::exit_retired(&mut fx, "t1");
     for (op, _) in pending(&fx, "RemoveWorktree", Some("t1")) {
         fx.done(
             op,
@@ -528,4 +529,57 @@ fn a_base_back_at_base_sha_clears_base_moved_and_accept_expects_it() {
         unreachable!()
     };
     assert_eq!(expected_base, base_sha);
+}
+
+/// Third review of the Linux worker-git fix, m1: removing a checkout unlinks its git
+/// directory's denied entries, which would detach a live Linux sandbox's read-only
+/// binds. A merged task's checkouts are removed only once its retired worker has exited,
+/// and the run completes only after that (as it always completed after their removal).
+/// `run accept` and `run discard`, which remove every checkout, are also refused while
+/// any writing session is still running.
+#[test]
+fn completion_accept_and_discard_wait_for_a_retired_worker_to_exit() {
+    let (mut fx, windows) = start(&[doc_task("t1", "")]);
+    to_queue(&mut fx, "t1", window_of(&windows, "t1"));
+    let effects = super::merge::merge_retiring(&mut fx, "t1", &commit(1));
+    assert!(
+        ops_in(&effects, "RemoveWorktree").is_empty(),
+        "{effects:#?}"
+    );
+    assert!(fx.task("t1").removal_due);
+    fx.tick();
+    assert!(pending(&fx, "RemoveWorktree", Some("t1")).is_empty());
+    assert!(pending(&fx, "VerifyRefs", None).is_empty());
+    assert_eq!(fx.run().state, RunState::Running);
+
+    // The worker exits: its checkouts are removed, then the run completes.
+    let effects = super::merge::exit_retired(&mut fx, "t1");
+    assert_eq!(ops_in(&effects, "RemoveWorktree").len(), 3, "{effects:#?}");
+    assert!(!fx.task("t1").removal_due);
+    for (op, _) in pending(&fx, "RemoveWorktree", Some("t1")) {
+        fx.done(
+            op,
+            OpResult::Removed {
+                salvage_ref: None,
+                cleared_locks: Vec::new(),
+            },
+        );
+    }
+    verify(&mut fx, OpResult::RefsOk);
+    assert_eq!(fx.run().state, RunState::Complete);
+
+    // A writing session still running at `run accept` or `run discard` (one completion
+    // does not wait for) holds both back.
+    fx.task_mut("t1").rounds[0].ended = false;
+    let text =
+        format!("run {RUN_ID} still has a worker exiting; try again once its session has ended");
+    for action in [FinishAction::Accept, FinishAction::Discard] {
+        let effects = finish(&mut fx, action);
+        assert_eq!(replies(&effects), vec![Err(text.clone())], "{action:?}");
+        assert!(ops_in(&effects, "Accept").is_empty());
+        assert!(ops_in(&effects, "Discard").is_empty());
+    }
+    fx.task_mut("t1").rounds[0].ended = true;
+    let effects = finish(&mut fx, FinishAction::Discard);
+    assert_eq!(ops_in(&effects, "Discard").len(), 1, "{effects:#?}");
 }

@@ -166,7 +166,11 @@ pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         .tasks
         .iter()
         .any(|t| t.state == TaskState::Cancelled && t.rounds.iter().any(|r| !r.ended))
-        || super::race_salvage::pending(run);
+        || super::race_salvage::pending(run)
+        // Third review of the Linux worker-git fix, m1: a merged task's checkouts are
+        // removed once its retired worker has exited; the run completes after that, as
+        // it always completed after their removal.
+        || run.tasks.iter().any(|t| t.removal_due);
     if !finished || ending || !run.merge_queue.is_empty() || !run.pending_ops.is_empty() {
         return;
     }
