@@ -118,19 +118,24 @@ use crate::worktree::{
 /// an `rr-cache` directory exists in the git directory (which a Linux worker's grant
 /// leaves writable), and follows an `rr-cache` link when it records a resolution, so an
 /// engine merge in a task checkout would write preimages wherever the link points.
-pub const NO_HOOKS: [&str; 4] = [
+/// Re-review m3: and no engine call recurses into submodules (`read-tree -u` would
+/// honour the user's `submodule.recurse`, and read a submodule's git directory under
+/// the checkout's `modules/`).
+pub const NO_HOOKS: [&str; 6] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "rerere.enabled=false",
+    "-c",
+    "submodule.recurse=false",
 ];
 
 /// Decision 18: every engine write passes these ahead of its subcommand, so a user's
 /// hooks or a signing pinentry can never hang a run. Final fix batch F1, fix round 5:
 /// and no engine write creates a reflog, so an engine worktree never has one a worker's
 /// symbolic link could redirect (git appends to an existing reflog through a link).
-/// Rerere is off, as in [`NO_HOOKS`].
-pub const WRITE_FLAGS: [&str; 8] = [
+/// Rerere and submodule recursion are off, as in [`NO_HOOKS`].
+pub const WRITE_FLAGS: [&str; 10] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
@@ -139,6 +144,8 @@ pub const WRITE_FLAGS: [&str; 8] = [
     "core.logAllRefUpdates=false",
     "-c",
     "rerere.enabled=false",
+    "-c",
+    "submodule.recurse=false",
 ];
 
 /// Decision 17: `merge-tree --write-tree` needs git 2.38.

@@ -111,7 +111,10 @@ pub fn pin(common_dir: &Path, worktree: &Path, as_: PinAs) -> Pin {
         // hold a `HEAD`, and is never a linked worktree's.
         (_, Some(repo)) => {
             let git_dir = key(&repo);
-            if git_dir.join("HEAD").is_file() && !git_dir.join("commondir").exists() {
+            // `lstat`, so a dangling `commondir` link is found too (re-review m2).
+            if git_dir.join("HEAD").is_file()
+                && std::fs::symlink_metadata(git_dir.join("commondir")).is_err()
+            {
                 Ok(git_dir)
             } else {
                 Err(format!(
@@ -268,6 +271,14 @@ pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
         }
     } else {
         check_linked(worktree, pin).or_else(refused)?;
+    }
+    // Re-review N1: the engine writes `config` in place, never through a link and never
+    // over anything but a regular file; a `config` that is a link, a directory or
+    // anything else was planted.
+    match std::fs::symlink_metadata(pin.git_dir.join("config")) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(meta) if meta.file_type().is_file() => {}
+        _ => return refused("its config is not a regular file".to_string()),
     }
     check_head(pin).or_else(refused)?;
     if pin.engine.is_some() {

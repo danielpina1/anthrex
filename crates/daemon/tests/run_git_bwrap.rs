@@ -55,6 +55,9 @@ macro_rules! require_bwrap {
 
 struct Setup {
     _repo: support::TempRepo,
+    root: PathBuf,
+    run: String,
+    base: String,
     _wt: tempfile::TempDir,
     data: tempfile::TempDir,
     common: PathBuf,
@@ -88,6 +91,9 @@ fn setup(run: &str) -> Setup {
         .canonicalize()
         .unwrap();
     Setup {
+        root: repo.root.clone(),
+        run: run.to_string(),
+        base,
         _repo: repo,
         _wt: wt,
         data,
@@ -107,6 +113,11 @@ impl Setup {
     /// worktree and `grant` writable and `grant.deny` read-only, with the worker's git
     /// environment.
     fn sandboxed(&self, grant: &WorkerGrant, script: &str) -> Output {
+        self.command(grant, script).output().unwrap()
+    }
+
+    /// The bubblewrap command [`Setup::sandboxed`] runs, to spawn.
+    fn command(&self, grant: &WorkerGrant, script: &str) -> Command {
         // The argument order of Claude Code 2.1.292's sandbox-runtime (its bundled
         // `pw` and its filesystem builder): `--new-session --die-with-parent`, then
         // `--ro-bind / /`, every existing `allowWrite` path `--bind` (a missing one is
@@ -136,10 +147,86 @@ impl Setup {
             .env_remove("GIT_INDEX_FILE")
             .env_remove("GIT_OBJECT_DIRECTORY")
             .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-            .envs(with_worker_git_config(Vec::new()))
-            .output()
-            .unwrap()
+            .envs(with_worker_git_config(Vec::new()));
+        command
     }
+
+    /// The engine re-preparing the checkout, as it does before each session.
+    fn reprepare(&self) {
+        prepare_task_worktree(
+            real_git(),
+            &self.root,
+            &format!("anthrex/{}/t1", self.run),
+            &self.base,
+            &self.task,
+            &task_repo_dir(self.data.path(), "t1"),
+            T,
+        )
+        .unwrap();
+    }
+}
+
+/// Re-review N1: the engine's writes to a denied entry while a sandbox is alive. A
+/// rename over `config` on the host detaches the sandbox's read-only bind on it (the
+/// kernel detaches mounts on a dentry renamed over), after which `config` resolves
+/// through the writable bind of the git directory. So the engine never renames over a
+/// denied entry: `config` unchanged is left alone, and one that drifted is rewritten in
+/// place. A sandboxed process started before the re-prepare still cannot append to
+/// `config` or replace it with a link afterwards.
+#[test]
+fn a_reprepare_keeps_config_denied_in_a_live_sandbox() {
+    require_bwrap!();
+    let s = setup("bw04");
+    let grant = s.grant(GrantShape::WholeDir);
+    assert!(grant.deny.contains(&s.admin.join("config")));
+    let flags = tempfile::tempdir().unwrap();
+    let ready = s.task.join(".sandbox-ready");
+    let go = flags.path().join("go");
+    let config = s.admin.join("config");
+    let script = format!(
+        "touch '{ready}'\n\
+         i=0; while [ ! -e '{go}' ]; do i=$((i+1)); [ $i -gt 600 ] && exit 9; sleep 0.05; done\n\
+         if printf '[core]\\n\\tfsmonitor = /bin/true\\n' >> '{config}' 2>/dev/null; then echo APPENDED; fi\n\
+         if ln -sf /dev/null '{config}' 2>/dev/null; then echo LINKED; fi\n\
+         if mv -f '{config}' '{config}.moved' 2>/dev/null; then echo MOVED; fi\n\
+         echo DONE",
+        ready = ready.display(),
+        go = go.display(),
+        config = config.display(),
+    );
+    let child = s
+        .command(&grant, &script)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !ready.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sandbox never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // The config drifted (so the engine must write it), then the engine re-prepares.
+    let before = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, format!("{before}# drift\n")).unwrap();
+    s.reprepare();
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), before);
+    std::fs::write(&go, "").unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("DONE"), "{}", shown(&output));
+    assert!(!stdout.contains("APPENDED"), "{}", shown(&output));
+    assert!(!stdout.contains("LINKED"), "{}", shown(&output));
+    assert!(!stdout.contains("MOVED"), "{}", shown(&output));
+    let meta = std::fs::symlink_metadata(&config).unwrap();
+    assert!(meta.file_type().is_file());
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), before);
+    // And an unchanged config is not written at all: same inode after a re-prepare.
+    use std::os::unix::fs::MetadataExt as _;
+    s.reprepare();
+    assert_eq!(std::fs::metadata(&config).unwrap().ino(), meta.ino());
 }
 
 /// A worker's ordinary git work on its detached `HEAD`: commits, an amend, a revert, a
@@ -242,6 +329,7 @@ fn the_linux_grant_keeps_the_denied_entries_unwritable() {
         ("info", "exclude"),
         ("info", "attributes"),
         ("hooks", "pre-commit"),
+        ("modules", "sub/config"),
     ] {
         let path = s.admin.join(dir).join(file);
         attempts.push(format!(
@@ -281,6 +369,7 @@ fn snapshot(admin: &Path, common: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
         "refs",
         "info",
         "hooks",
+        "modules",
     ] {
         walk.push(admin.join(name));
     }

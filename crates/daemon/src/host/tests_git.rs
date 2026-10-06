@@ -377,6 +377,8 @@ fn the_rev_list_arm_takes_only_a_full_object_id_read_only() {
         "core.hooksPath=/dev/null",
         "-c",
         "rerere.enabled=false",
+        "-c",
+        "submodule.recurse=false",
     ];
     let write = [
         "-c",
@@ -387,6 +389,8 @@ fn the_rev_list_arm_takes_only_a_full_object_id_read_only() {
         "core.logAllRefUpdates=false",
         "-c",
         "rerere.enabled=false",
+        "-c",
+        "submodule.recurse=false",
     ];
     let args = |flags: &[&str], rest: &[&str]| -> Vec<String> {
         flags.iter().chain(rest).map(|a| a.to_string()).collect()

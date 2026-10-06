@@ -97,8 +97,11 @@ pub const WORKTREE_GIT_DENIED_FILES: [&str; 6] = [
 /// The directories of the git directory a [`GrantShape::WholeDir`] grant denies:
 /// `logs` (the worker's git writes no reflog, fix round 5's
 /// `role_launch::WORKER_GIT_CONFIG`), `refs` (no ref is the worker's: it commits on a
-/// detached `HEAD`), `info` (exclude, attributes, sparse-checkout, grafts) and `hooks`.
-pub const WORKTREE_GIT_DENIED_DIRS: [&str; 4] = ["logs", "refs", "info", "hooks"];
+/// detached `HEAD`), `info` (exclude, attributes, sparse-checkout, grafts), `hooks`, and
+/// `modules` (submodules' git directories, whose config an engine git call that
+/// recursed into a submodule would read; re-review m3, beside `submodule.recurse=false`
+/// on every engine call).
+pub const WORKTREE_GIT_DENIED_DIRS: [&str; 5] = ["logs", "refs", "info", "hooks", "modules"];
 
 /// A `packed-refs` that holds no ref: git's own header line. `git fsck` warns about an
 /// empty file (`emptyPackedRefsFile`), not about this.
@@ -140,6 +143,17 @@ pub fn worker_git_grant(
         Some(pin) => return Err(pin.broken.clone().unwrap_or_default()),
         None => pinned::find_git_dir(git_common_dir, worktree)?,
     };
+    // Re-review m1: the Linux grant only for a checkout pinned with the engine's own
+    // directory, where every engine write into its git directory is staged
+    // (`merge_state::put`); never one whose writes would fall back to staging in the
+    // granted git directory itself.
+    if shape == GrantShape::WholeDir && pin.as_ref().and_then(|p| p.engine.as_ref()).is_none() {
+        return Err(format!(
+            "{} has no engine directory; refusing to grant its git directory {} whole",
+            worktree.display(),
+            admin.display()
+        ));
+    }
     let mut writable = Vec::with_capacity(roots.len() + 2 * WORKTREE_GIT_FILES.len() + 4);
     for root in roots {
         writable.push(private_dir(git_common_dir, root)?);

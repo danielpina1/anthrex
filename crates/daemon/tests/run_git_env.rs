@@ -28,14 +28,17 @@ const SCRUBBED: [&str; 5] = [
 ];
 // Review M1 of the Linux worker-git fix: rerere is off for every engine call, so a
 // worker's `rr-cache` (which turns rerere on, and which git follows as a link) is
-// never written through by the engine's merges.
-const NO_HOOKS: [&str; 4] = [
+// never written through by the engine's merges; and (re-review m3) no engine call
+// recurses into submodules, whatever the user's `submodule.recurse` says.
+const NO_HOOKS: [&str; 6] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "rerere.enabled=false",
+    "-c",
+    "submodule.recurse=false",
 ];
-const WRITE_FLAGS: [&str; 8] = [
+const WRITE_FLAGS: [&str; 10] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
@@ -44,6 +47,8 @@ const WRITE_FLAGS: [&str; 8] = [
     "core.logAllRefUpdates=false",
     "-c",
     "rerere.enabled=false",
+    "-c",
+    "submodule.recurse=false",
 ];
 
 /// Subcommands that change the repository or a worktree.

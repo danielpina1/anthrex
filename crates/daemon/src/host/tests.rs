@@ -15,7 +15,7 @@ pub(super) const SHA: &str = "a560bea91b8cd58b3c0d78e5db98c7fdc8e5036b";
 pub(super) const SHA2: &str = "2537a3b6931a787d6b4b0ab686cd4cf7eda0dfda";
 pub(super) const RUN: &str = "r1a2b";
 
-pub(super) const WRITE: [&str; 8] = [
+pub(super) const WRITE: [&str; 10] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
@@ -24,12 +24,16 @@ pub(super) const WRITE: [&str; 8] = [
     "core.logAllRefUpdates=false",
     "-c",
     "rerere.enabled=false",
+    "-c",
+    "submodule.recurse=false",
 ];
-pub(super) const NOHOOK: [&str; 4] = [
+pub(super) const NOHOOK: [&str; 6] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "rerere.enabled=false",
+    "-c",
+    "submodule.recurse=false",
 ];
 
 pub(super) const PR_VIEW_OPEN_RED: &str = include_str!("fixtures/pr_view_open_red.json");

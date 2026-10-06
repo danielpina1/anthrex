@@ -18,7 +18,7 @@ use support::run_git::{T, commit_file, out, real_git, repo, wt_dir};
 
 /// The names a worker's Linux grant denies in its git directory; `commondir` only where
 /// it exists (a linked worktree's).
-const DENIED: [&str; 9] = [
+const DENIED: [&str; 10] = [
     "gitdir",
     "config",
     "config.worktree",
@@ -28,6 +28,7 @@ const DENIED: [&str; 9] = [
     "refs",
     "info",
     "hooks",
+    "modules",
 ];
 
 struct Checkout {
@@ -120,7 +121,7 @@ fn the_linux_grant_is_the_git_dir_whole_with_its_config_denied() {
         std::fs::read_to_string(c.admin.join("packed-refs")).unwrap(),
         "# pack-refs with: peeled fully-peeled sorted \n"
     );
-    for name in ["logs", "hooks"] {
+    for name in ["logs", "hooks", "modules"] {
         assert!(c.admin.join(name).is_dir(), "{name}");
     }
     // The engine's own config is kept, not replaced by a placeholder.
@@ -170,6 +171,7 @@ fn the_macos_grant_names_exact_files_and_makes_nothing() {
         "locked",
         "packed-refs",
         "hooks",
+        "modules",
     ] {
         assert!(
             std::fs::symlink_metadata(c.admin.join(name)).is_err(),
@@ -193,11 +195,12 @@ fn the_host_shape_follows_the_os() {
     assert_eq!(GrantShape::host(), expected);
 }
 
-/// A linked worktree's git directory `<common>/worktrees/<name>`: its `commondir` and
-/// `gitdir` exist and are denied, with the rest; the placeholders leave it a worktree
-/// the daemon's check accepts.
+/// Re-review m1: the Linux grant is given only for a checkout the engine pinned with
+/// its own engine directory (where the engine stages every file it writes into the git
+/// directory). A linked worktree, pinned or not, has none and is refused, so the
+/// fallback of staging in the git directory itself never applies to a granted one.
 #[test]
-fn a_linked_worktrees_grant_denies_its_commondir_and_gitdir() {
+fn the_linux_grant_refuses_a_checkout_without_an_engine_dir() {
     let repo = repo();
     commit_file(&repo.root, "f.txt", "base\n", "base");
     let (_wt, wt) = wt_dir();
@@ -213,33 +216,54 @@ fn a_linked_worktrees_grant_denies_its_commondir_and_gitdir() {
         ],
     );
     let common = git_common_dir(&repo.root);
-    let admin = PathBuf::from(out(&linked, &["rev-parse", "--absolute-git-dir"]))
-        .canonicalize()
-        .unwrap();
-    assert!(admin.starts_with(common.join("worktrees")));
-    let granted = worker_git_grant(&common, &linked, &[], GrantShape::WholeDir).unwrap();
-    assert_eq!(granted.writable, vec![admin.clone()]);
-    let mut denied = vec![admin.join("commondir")];
-    denied.extend(DENIED.iter().map(|name| admin.join(name)));
-    assert_eq!(granted.deny, denied);
-    for path in &granted.deny {
+    let err = worker_git_grant(&common, &linked, &[], GrantShape::WholeDir).unwrap_err();
+    assert!(err.contains("engine"), "{err}");
+    let pin = daemon::worktree::pinned::pin(&common, &linked, Default::default());
+    assert!(pin.broken.is_none(), "{:?}", pin.broken);
+    let err = worker_git_grant(&common, &linked, &[], GrantShape::WholeDir).unwrap_err();
+    assert!(err.contains("engine"), "{err}");
+    // Nothing was made in its git directory.
+    let admin = PathBuf::from(out(&linked, &["rev-parse", "--absolute-git-dir"]));
+    for name in [
+        "config",
+        "config.worktree",
+        "locked",
+        "packed-refs",
+        "modules",
+    ] {
         assert!(
-            std::fs::symlink_metadata(path).is_ok(),
-            "{}",
-            path.display()
+            std::fs::symlink_metadata(admin.join(name)).is_err(),
+            "{name} was made"
         );
     }
-    // `commondir` and `gitdir` are git's own, untouched.
-    let named = std::fs::read_to_string(admin.join("commondir")).unwrap();
-    assert!(!named.trim().is_empty());
-    let back = std::fs::read_to_string(admin.join("gitdir")).unwrap();
-    assert!(back.trim().ends_with("linked/.git"), "{back}");
-    // An empty `locked` locks the worktree, which the engine unlocks before it removes
-    // one; an empty `config.worktree` configures nothing.
-    let pin = daemon::worktree::pinned::pin(&common, &linked, Default::default());
-    daemon::worktree::pinned::check(&linked, &pin).unwrap();
-    out(&linked, &["status", "--short"]);
+    // The macOS shape still names its exact files.
+    worker_git_grant(&common, &linked, &[], GrantShape::Files).unwrap();
     daemon::worktree::pinned::unpin(&linked);
+}
+
+/// Re-review N1: the daemon's check refuses a task checkout whose `config` is a link or
+/// not a regular file.
+#[test]
+fn a_config_that_is_not_a_regular_file_is_refused() {
+    use daemon::worktree::pinned;
+    let c = checkout("gs07");
+    let pin = pinned::pinned(&c.task).unwrap();
+    pinned::check(&c.task, &pin).unwrap();
+    let config = c.admin.join("config");
+    let kept = std::fs::read(&config).unwrap();
+    let elsewhere = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(elsewhere.path(), &kept).unwrap();
+    std::fs::remove_file(&config).unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), &config).unwrap();
+    let err = pinned::check(&c.task, &pin).unwrap_err();
+    assert!(err.contains("config"), "{err}");
+    std::fs::remove_file(&config).unwrap();
+    std::fs::create_dir(&config).unwrap();
+    let err = pinned::check(&c.task, &pin).unwrap_err();
+    assert!(err.contains("config"), "{err}");
+    std::fs::remove_dir(&config).unwrap();
+    std::fs::write(&config, &kept).unwrap();
+    pinned::check(&c.task, &pin).unwrap();
 }
 
 /// A `commondir` a Linux worker makes in its checkout's own git directory (no
@@ -348,7 +372,7 @@ fn links_left_at_denied_paths_are_replaced_by_placeholders() {
         let _ = std::fs::remove_file(c.admin.join(name));
         std::os::unix::fs::symlink(&target_file, c.admin.join(name)).unwrap();
     }
-    for name in ["logs", "hooks"] {
+    for name in ["logs", "hooks", "modules"] {
         let _ = std::fs::remove_dir_all(c.admin.join(name));
         std::os::unix::fs::symlink(elsewhere.path(), c.admin.join(name)).unwrap();
     }

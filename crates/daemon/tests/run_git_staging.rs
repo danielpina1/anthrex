@@ -124,8 +124,18 @@ fn the_engine_creates_no_file_in_the_git_dir() {
         return;
     }
     let s = setup("st02");
+    // `config` and `info/exclude` drifted, so the engine rewrites them.
+    for name in ["config", "info/exclude"] {
+        let path = s.admin.join(name);
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{text}# drift\n")).unwrap();
+    }
     let watch = inotify::Watch::new(&[&s.admin, &s.admin.join("info")]);
     engine_writes(&s, "st02");
+    for name in ["config", "info/exclude"] {
+        let text = std::fs::read_to_string(s.admin.join(name)).unwrap();
+        assert!(!text.contains("# drift"), "{name} was not rewritten");
+    }
     let events = watch.events();
     let created: Vec<&String> = events
         .iter()
@@ -141,10 +151,18 @@ fn the_engine_creates_no_file_in_the_git_dir() {
         .filter(|(kind, _)| *kind == "moved_to")
         .map(|(_, name)| name.as_str())
         .collect();
-    for name in ["config", "exclude", "MERGE_HEAD", "MERGE_MSG", "index"] {
+    for name in ["MERGE_HEAD", "MERGE_MSG", "index"] {
         assert!(
             moved.contains(&name),
             "{name} was not renamed in: {events:?}"
+        );
+    }
+    // Re-review N1: a denied entry is rewritten in place, never renamed over (which
+    // would detach a live sandbox's read-only bind on it).
+    for name in ["config", "exclude"] {
+        assert!(
+            !moved.contains(&name),
+            "{name} was renamed over: {events:?}"
         );
     }
 }

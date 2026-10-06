@@ -29,7 +29,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::merge_state::put;
+use super::merge_state::{put, put_denied};
 use super::sandbox::{engine_child, put_beneath};
 use super::{Git, os};
 use crate::worktree::pinned::{self, PinAs};
@@ -177,8 +177,11 @@ pub(crate) fn ensure(
     let path = path.canonicalize().map_err(|err| failed(path, err))?;
     let sha256 = at.len() == 64;
     // Review I1 of the Linux worker-git fix: every file here is staged in the engine
-    // directory, never in the git directory a Linux worker's grant names whole.
-    put(
+    // directory, never in the git directory a Linux worker's grant names whole. Re-review
+    // N1: `config` and `info/exclude`, which a Linux grant denies, are never renamed
+    // over (that would detach a live sandbox's read-only bind): unchanged, they are left
+    // alone; changed, rewritten in place ([`put_denied`]).
+    put_denied(
         &engine,
         &git_dir,
         "config",
@@ -192,7 +195,7 @@ pub(crate) fn ensure(
         alternates.as_bytes(),
     )?;
     if let Ok(exclude) = std::fs::read(common.join("info/exclude")) {
-        put(&engine, &git_dir.join("info"), "exclude", &exclude)?;
+        put_denied(&engine, &git_dir.join("info"), "exclude", &exclude)?;
     }
     if std::fs::symlink_metadata(git_dir.join("HEAD")).is_err() {
         put(&engine, &git_dir, "HEAD", format!("{at}\n").as_bytes())?;
