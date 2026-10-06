@@ -192,11 +192,7 @@ pub(super) fn candidate_done(
             );
             merged(run, i, (before, commit), now, fx);
             // Milestone 9.7 decision 3: it landed after the host merged its stage's PR.
-            let landed = run.delivery.stage(n).and_then(|s| s.landed);
-            if super::delivery::pr(run) && landed == Some(proto::PrState::Merged) {
-                super::delivery::land_judge::merged_late(run, n, now);
-            }
-            return;
+            return super::delivery::land_judge::task_merged(run, n, now);
         }
         return complete::cancel_now(run, i, "its cancel, after its merge did not land", now, fx);
     }
@@ -205,7 +201,9 @@ pub(super) fn candidate_done(
             if let Some(outcome) = tier {
                 super::tiers::tier2_facts(run, i, &outcome, now);
             }
-            merged(run, i, (before, commit), now, fx)
+            merged(run, i, (before, commit), now, fx);
+            // FW-1: any task's merge onto a stage whose PR merged is judged late.
+            super::delivery::land_judge::task_merged(run, n, now);
         }
         OpResult::Conflict { files, .. } => conflict(run, i, files, now, fx),
         // Milestone 9.1 decision 16: a red tier 2 is M8a's red candidate, naming the

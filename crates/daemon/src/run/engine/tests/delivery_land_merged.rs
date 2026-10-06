@@ -43,7 +43,7 @@ fn with_a_fix(tasks: &[String]) -> (Fixture, String, Vec<(String, u32)>) {
     (fx, fix, windows)
 }
 
-fn one_stage_with_a_fix() -> (Fixture, String, Vec<(String, u32)>) {
+pub(super) fn one_stage_with_a_fix() -> (Fixture, String, Vec<(String, u32)>) {
     with_a_fix(&[doc_task("t1", "")])
 }
 

@@ -7,6 +7,7 @@ use crate::run::contract::sha7;
 use crate::run::delivery::PrRecord;
 use crate::run::delivery::snapshot::stage_count;
 use crate::run::model::Run;
+use proto::PrState;
 
 /// The head a merged PR was merged at: the head its last view reported, else the head
 /// anthrex pushed.
@@ -17,20 +18,39 @@ pub(super) fn merged_head(pr: &PrRecord) -> String {
     }
 }
 
-/// Milestone 9.7 decision 2 (DH §1.1): merged stage `n` with no live stage above it
-/// cancels its unfinished fix tasks, which nothing could deliver any more. A stage
-/// below a live one keeps them: propagate carries their commits up. A task whose merge
-/// is in flight is cancelled only if that merge does not land ([`merged_late`]).
+/// Stage `n`'s PR merged (its landing processed) and no stage above it still delivers:
+/// nothing it gains can be delivered any more (the final fix wave, FW-1 and FW-2).
+pub(in crate::run::engine) fn spent(run: &Run, n: u16) -> bool {
+    run.delivery.stage(n).and_then(|s| s.landed) == Some(PrState::Merged)
+        && !(n + 1..=stage_count(run)).any(|m| super::sync::live(run, m))
+}
+
+/// Milestone 9.7 decision 2 (DH §1.1): stage `n` merged; each merged stage `m ≤ n` with
+/// no live stage above it (FW-2: a lower stage's kept fix tasks too, once the stage
+/// above merges) cancels its unfinished fix tasks, which nothing could deliver any
+/// more. A stage below a live one keeps them: propagate carries their commits up. A
+/// task whose merge is in flight is cancelled only if that merge does not land
+/// ([`merged_late`]).
 pub(super) fn cancel_fixes(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
-    if (n + 1..=stage_count(run)).any(|m| super::sync::live(run, m)) {
-        return;
-    }
-    let why = format!("stage {n} PR merged");
-    for i in 0..run.tasks.len() {
-        let t = &run.tasks[i];
-        if t.stage() == n && t.fixes.is_some() && !t.state.is_finished() {
-            complete::cancel_task(run, i, &why, now, fx);
+    let spent: Vec<u16> = (1..=n).filter(|&m| spent(run, m)).collect();
+    for m in spent {
+        let why = format!("stage {m} PR merged");
+        for i in 0..run.tasks.len() {
+            let t = &run.tasks[i];
+            if t.stage() == m && t.fixes.is_some() && !t.state.is_finished() {
+                complete::cancel_task(run, i, &why, now, fx);
+            }
         }
+    }
+}
+
+/// FW-1 (review A I1): a task's merge landed on stage `n`. When the stage's PR already
+/// merged, the merge cannot hold it: it is judged as a late merge ([`merged_late`]),
+/// whatever added the task.
+pub(in crate::run::engine) fn task_merged(run: &mut Run, n: u16, now: u64) {
+    let landed = run.delivery.stage(n).and_then(|s| s.landed);
+    if super::pr(run) && landed == Some(PrState::Merged) {
+        merged_late(run, n, now);
     }
 }
 

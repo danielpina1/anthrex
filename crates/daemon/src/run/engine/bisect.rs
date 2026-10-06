@@ -473,6 +473,9 @@ fn culprit(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
         }
         return record(run, n, &b, handled.result(&id), now, fx);
     }
+    if ended::merged_away(run, n, &b, &id, now, fx) {
+        return;
+    }
     let added = add_fix(run, n, &b, &id, now, fx);
     if let Some(s) = stage_mut(run, n) {
         s.bisect = None;

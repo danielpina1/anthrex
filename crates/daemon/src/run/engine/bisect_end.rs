@@ -64,6 +64,36 @@ pub(super) fn end_with(
     full::no_culprit(run, n, &b.head, &b.tests, &reason);
 }
 
+/// FW-1 (review A I1): stage `n`'s PR merged while its bisect ran, and no stage above
+/// still delivers, so the culprit's fix task could deliver nothing: the bisect ends
+/// with its culprit and no fix task, and the stage's red is ignored (`full::red`).
+/// `true` when it ended so.
+pub(super) fn merged_away(
+    run: &mut Run,
+    n: u16,
+    b: &BisectRecord,
+    culprit: &str,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> bool {
+    if !super::super::delivery::land_judge::spent(run, n) {
+        return false;
+    }
+    if let Some(s) = stage_mut(run, n) {
+        s.bisect = None;
+        s.full.red_at = None;
+        s.full.note = None;
+    }
+    let reason = format!("stage {n} PR merged; the culprit's fix is not added");
+    let refused = BisectResult::Refused {
+        task: culprit,
+        reason: &reason,
+    };
+    record(run, n, b, refused, now, fx);
+    log(run, now, reason);
+    true
+}
+
 /// Decision 57: the ended bisect's `bisect` history line, numbered in its stage.
 pub(super) fn record(
     run: &mut Run,

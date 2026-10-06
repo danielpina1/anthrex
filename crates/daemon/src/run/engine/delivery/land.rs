@@ -105,13 +105,14 @@ fn merged(run: &mut Run, n: u16, pr: &PrRecord, now: u64, fx: &mut Vec<Effect>) 
     let stage = stage_mut(run, n);
     stage.landed = Some(PrState::Merged);
     stage.held = None;
-    cancel_fixes(run, n, now, fx);
     let commit = pr.merge_commit.as_deref().map_or("an unknown commit", sha7);
     log(
         run,
         now,
         format!("{}: merged on the host at {commit}", named(n, pr)),
     );
+    // FW-8 (review A m6): the cancel lines follow the merge's.
+    cancel_fixes(run, n, now, fx);
     if !pr.merge_commit.as_deref().is_some_and(is_object_id) {
         // Nothing git can count the parents of (ruling R-4; fix round 1, m2): the
         // method is unknown.
