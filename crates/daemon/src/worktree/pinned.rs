@@ -280,6 +280,9 @@ pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
         Ok(meta) if meta.file_type().is_file() => {}
         _ => return refused("its config is not a regular file".to_string()),
     }
+    if pin.standalone && pin.engine.is_some() {
+        check_task_config(worktree, pin).or_else(refused)?;
+    }
     check_head(pin).or_else(refused)?;
     if pin.engine.is_some() {
         // Final fix batch F1c (C1), defence in depth: the engine's own git never uses
@@ -294,6 +297,42 @@ pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
             worktree.display()
         )
     })
+}
+
+/// Third review of the Linux worker-git fix, m2: a task checkout's `config` is the
+/// engine's, byte for byte (`run::git::checkout_config`, for the checkout's object
+/// format, sha-1 or sha-256), with a single link, so nothing outside the git directory
+/// can change it either. Read without following a link.
+fn check_task_config(worktree: &Path, pin: &Pin) -> Result<(), String> {
+    use std::io::Read as _;
+    use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(pin.git_dir.join("config"))
+        .map_err(|err| format!("its config cannot be read: {err}"))?;
+    let meta = file
+        .metadata()
+        .map_err(|err| format!("its config cannot be read: {err}"))?;
+    if !meta.file_type().is_file() || meta.nlink() != 1 {
+        return Err(format!(
+            "its config is not a single-link regular file ({} links)",
+            meta.nlink()
+        ));
+    }
+    let checkout = key(worktree);
+    let expected = |sha256| crate::run::git::checkout_config(&pin.common_dir, &checkout, sha256);
+    let (sha1, sha256) = (expected(false), expected(true));
+    let limit = sha1.len().max(sha256.len()) as u64 + 1;
+    let mut found = Vec::new();
+    (&mut file)
+        .take(limit)
+        .read_to_end(&mut found)
+        .map_err(|err| format!("its config cannot be read: {err}"))?;
+    if found != sha1.as_bytes() && found != sha256.as_bytes() {
+        return Err("its config is not the one the engine wrote".to_string());
+    }
+    Ok(())
 }
 
 /// A linked worktree's git directory still belongs to it: its `commondir` names the

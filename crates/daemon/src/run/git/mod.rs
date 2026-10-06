@@ -80,6 +80,7 @@ pub(crate) use merge_state::{
 };
 pub(crate) use worktrees::{common_dir, forget_missing, is_ancestor, listed as listed_worktree_in};
 
+pub(crate) use checkout::config as checkout_config;
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use resolution::resolution_only;
 pub use sandbox::{

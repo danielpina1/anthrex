@@ -135,8 +135,13 @@ pub(crate) fn put_denied(
             path.display()
         ));
     }
-    let mut current = Vec::new();
-    file.read_to_end(&mut current).map_err(failed)?;
+    // At most one byte past `content`: enough to tell a longer file apart, never a
+    // read of whatever a worker grew it to.
+    let mut current = Vec::with_capacity(content.len() + 1);
+    (&mut file)
+        .take(content.len() as u64 + 1)
+        .read_to_end(&mut current)
+        .map_err(failed)?;
     if current == content {
         return Ok(());
     }

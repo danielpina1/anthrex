@@ -453,3 +453,36 @@ fn the_probe_names_the_common_dir_of_a_standalone_checkout_only() {
     assert!(!log.contains("GIT_COMMON_DIR"), "{log}");
     daemon::worktree::pinned::unpin(&linked);
 }
+
+/// Third review m2: in a task checkout, `config` must hold exactly what the engine
+/// writes there; one changed (a filter, an fsmonitor) is refused before any daemon git
+/// call.
+#[test]
+fn a_task_checkouts_config_with_other_content_is_refused() {
+    use daemon::worktree::pinned;
+    let c = checkout("gs08");
+    let pin = pinned::pinned(&c.task).unwrap();
+    pinned::check(&c.task, &pin).unwrap();
+    let config = c.admin.join("config");
+    let kept = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, format!("{kept}[core]\n\tfsmonitor = /bin/true\n")).unwrap();
+    let err = pinned::check(&c.task, &pin).unwrap_err();
+    assert!(err.contains("config"), "{err}");
+    std::fs::write(&config, &kept).unwrap();
+    pinned::check(&c.task, &pin).unwrap();
+}
+
+/// Third review m2: a task checkout's `config` with a second hard link (through which
+/// it could be changed from outside the git directory) is refused.
+#[test]
+fn a_task_checkouts_hard_linked_config_is_refused() {
+    use daemon::worktree::pinned;
+    let c = checkout("gs09");
+    let pin = pinned::pinned(&c.task).unwrap();
+    let other = c.data.path().join("config-link");
+    std::fs::hard_link(c.admin.join("config"), &other).unwrap();
+    let err = pinned::check(&c.task, &pin).unwrap_err();
+    assert!(err.contains("config"), "{err}");
+    std::fs::remove_file(&other).unwrap();
+    pinned::check(&c.task, &pin).unwrap();
+}

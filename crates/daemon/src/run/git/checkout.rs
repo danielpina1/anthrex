@@ -106,7 +106,7 @@ pub(crate) enum Kind<'a> {
 /// engine needs: not bare, the checkout as the work tree, no reflogs, no automatic gc.
 /// The format settings come first: git reads a repository's format from its own file
 /// only, never from an include.
-fn config(common: &Path, path: &Path, sha256: bool) -> String {
+pub(crate) fn config(common: &Path, path: &Path, sha256: bool) -> String {
     let mut text = String::from("[core]\n");
     if sha256 {
         text.push_str("\trepositoryformatversion = 1\n");
