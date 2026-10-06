@@ -130,6 +130,7 @@ jobs:
         run: |
           awk -v v="$VERSION" '
             /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            /^\[[^]]*\]: / { if (found) exit }
             found { print }
           ' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then
