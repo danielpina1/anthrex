@@ -15,15 +15,22 @@ pub(super) const SHA: &str = "a560bea91b8cd58b3c0d78e5db98c7fdc8e5036b";
 pub(super) const SHA2: &str = "2537a3b6931a787d6b4b0ab686cd4cf7eda0dfda";
 pub(super) const RUN: &str = "r1a2b";
 
-pub(super) const WRITE: [&str; 6] = [
+pub(super) const WRITE: [&str; 8] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "commit.gpgSign=false",
     "-c",
     "core.logAllRefUpdates=false",
+    "-c",
+    "rerere.enabled=false",
 ];
-pub(super) const NOHOOK: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
+pub(super) const NOHOOK: [&str; 4] = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "rerere.enabled=false",
+];
 
 pub(super) const PR_VIEW_OPEN_RED: &str = include_str!("fixtures/pr_view_open_red.json");
 pub(super) const PR_VIEW_CONFLICTING: &str =

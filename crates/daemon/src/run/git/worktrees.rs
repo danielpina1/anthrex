@@ -594,5 +594,5 @@ pub(crate) fn repair_git_file(path: &Path) -> Result<(), String> {
         std::fs::remove_dir_all(&file)
             .map_err(|err| format!("cannot restore {}: {err}", file.display()))?;
     }
-    super::merge_state::put(path, ".git", wanted.as_bytes())
+    super::merge_state::put(path, path, ".git", wanted.as_bytes())
 }

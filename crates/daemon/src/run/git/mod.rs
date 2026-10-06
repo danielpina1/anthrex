@@ -113,19 +113,32 @@ use crate::worktree::{
 /// never runs inside the daemon, nor inside accept. Final fix batch F1 (C-C1, D-5); for
 /// accept this departs from decision 18, which let the user's hooks run there
 /// (Implementation notes).
-pub const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
+///
+/// Review M1 of the Linux worker-git fix: and rerere is off. Git turns rerere on when
+/// an `rr-cache` directory exists in the git directory (which a Linux worker's grant
+/// leaves writable), and follows an `rr-cache` link when it records a resolution, so an
+/// engine merge in a task checkout would write preimages wherever the link points.
+pub const NO_HOOKS: [&str; 4] = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "rerere.enabled=false",
+];
 
 /// Decision 18: every engine write passes these ahead of its subcommand, so a user's
 /// hooks or a signing pinentry can never hang a run. Final fix batch F1, fix round 5:
 /// and no engine write creates a reflog, so an engine worktree never has one a worker's
 /// symbolic link could redirect (git appends to an existing reflog through a link).
-pub const WRITE_FLAGS: [&str; 6] = [
+/// Rerere is off, as in [`NO_HOOKS`].
+pub const WRITE_FLAGS: [&str; 8] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "commit.gpgSign=false",
     "-c",
     "core.logAllRefUpdates=false",
+    "-c",
+    "rerere.enabled=false",
 ];
 
 /// Decision 17: `merge-tree --write-tree` needs git 2.38.

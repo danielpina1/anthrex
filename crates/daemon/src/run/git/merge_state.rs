@@ -7,7 +7,8 @@
 //! could redirect any such write, whatever was checked just before (four fix rounds
 //! each closed one route: `HEAD`, `commondir`, the task's branch, `ORIG_HEAD`).
 //!
-//! Each file is written to a name the worker cannot write (`anthrex-<name>.tmp`,
+//! Each file is written to a name the worker cannot write (`anthrex-<name>.tmp` in the
+//! checkout's engine directory,
 //! created exclusively) and renamed over its place: a rename replaces a symbolic link
 //! the worker planted there, never writes through it. Removal is `unlink`, which
 //! removes a link itself.
@@ -34,11 +35,15 @@ const STATE_FILES: [&str; 5] = [
     "AUTO_MERGE",
 ];
 
-/// The git directory of the engine worktree `worktree`, from its pin (never from its
+/// The git directory of the engine worktree `worktree` and where its files are staged
+/// ([`put`]), from its pin (never from its
 /// `.git` file, which the worker can rewrite).
-fn git_dir(worktree: &Path) -> Result<PathBuf, String> {
+fn git_dir(worktree: &Path) -> Result<(PathBuf, PathBuf), String> {
     match crate::worktree::pinned::pinned(worktree) {
-        Some(pin) if pin.broken.is_none() => Ok(pin.git_dir),
+        Some(pin) if pin.broken.is_none() => {
+            let staging = pin.engine.clone().unwrap_or_else(|| pin.git_dir.clone());
+            Ok((pin.git_dir, staging))
+        }
         Some(pin) => Err(pin.broken.unwrap_or_default()),
         None => Err(format!(
             "{} is not an engine worktree; refusing to write its merge state",
@@ -52,16 +57,28 @@ fn git_dir(worktree: &Path) -> Result<PathBuf, String> {
 /// presence is what makes the merge in progress. The worker's `git commit` then makes
 /// the merge commit, with parents `(HEAD, run_head)`, inside its own sandbox.
 pub(crate) fn write(worktree: &Path, run_head: &str, message: &str) -> Result<(), String> {
-    let dir = git_dir(worktree)?;
-    put(&dir, "MERGE_MSG", message.as_bytes())?;
-    put(&dir, "MERGE_MODE", b"no-ff")?;
-    put(&dir, "MERGE_HEAD", format!("{run_head}\n").as_bytes())
+    let (dir, staging) = git_dir(worktree)?;
+    put(&staging, &dir, "MERGE_MSG", message.as_bytes())?;
+    put(&staging, &dir, "MERGE_MODE", b"no-ff")?;
+    put(
+        &staging,
+        &dir,
+        "MERGE_HEAD",
+        format!("{run_head}\n").as_bytes(),
+    )
 }
 
-/// `content` written to `<dir>/anthrex-<name>.tmp` (created exclusively, so never
-/// through a link) and renamed over `<dir>/<name>`.
-pub(crate) fn put(dir: &Path, name: &str, content: &[u8]) -> Result<(), String> {
-    let temp = dir.join(format!("anthrex-{name}.tmp"));
+/// `content` written to `<staging>/anthrex-<name>.tmp` (created exclusively, so never
+/// through a link) and renamed over `<dir>/<name>`. `staging` is the checkout's engine
+/// directory, which no worker's grant names, on the same filesystem as `dir` (review I1
+/// of the Linux worker-git fix): a temporary file made in the git directory, which a
+/// Linux worker's grant names whole, could be opened by a worker still running, which
+/// would then write through its descriptor into the file renamed over `config`, past
+/// the read-only bind that pins only the old one. `staging` is `dir` only where no
+/// worker writes `dir`'s directory beyond its own files (a linked worktree's tests, the
+/// worktree's own `.git` file, whose content no daemon git call reads).
+pub(crate) fn put(staging: &Path, dir: &Path, name: &str, content: &[u8]) -> Result<(), String> {
+    let temp = staging.join(format!("anthrex-{name}.tmp"));
     let failed = |err: std::io::Error| format!("cannot write {}: {err}", dir.join(name).display());
     remove(&temp).map_err(failed)?;
     let mut file = std::fs::OpenOptions::new()
@@ -85,7 +102,7 @@ fn remove(path: &Path) -> std::io::Result<()> {
 /// The merge state dropped, `MERGE_HEAD` first (what `git merge --quit` does, without
 /// running git): the index, the files and every ref are left as they are.
 pub(crate) fn clear(worktree: &Path) -> Result<(), String> {
-    let dir = git_dir(worktree)?;
+    let (dir, _) = git_dir(worktree)?;
     for name in STATE_FILES {
         let path = dir.join(name);
         remove(&path).map_err(|err| format!("cannot remove {}: {err}", path.display()))?;

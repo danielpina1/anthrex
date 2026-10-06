@@ -255,8 +255,16 @@ pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
     if pin.standalone {
         // F1c (3a): the checkout's own repository. The engine made its `config` and its
         // alternates; nothing may turn it into a linked worktree.
-        if pin.git_dir.join("commondir").exists() {
+        // `lstat`, so a dangling link is found too.
+        if std::fs::symlink_metadata(pin.git_dir.join("commondir")).is_ok() {
             return refused("it has a commondir".to_string());
+        }
+        // Review M2 of the Linux worker-git fix: the engine never makes a shallow
+        // checkout, and a Linux worker's grant (the git directory whole) cannot deny a
+        // `shallow` it makes (an empty placeholder would itself mark the repository
+        // shallow), which would cut the engine's history walks there short.
+        if std::fs::symlink_metadata(pin.git_dir.join("shallow")).is_ok() {
+            return refused("it has a shallow file".to_string());
         }
     } else {
         check_linked(worktree, pin).or_else(refused)?;

@@ -26,14 +26,24 @@ const SCRUBBED: [&str; 5] = [
     "GIT_INDEX_FILE",
     "GIT_PREFIX",
 ];
-const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
-const WRITE_FLAGS: [&str; 6] = [
+// Review M1 of the Linux worker-git fix: rerere is off for every engine call, so a
+// worker's `rr-cache` (which turns rerere on, and which git follows as a link) is
+// never written through by the engine's merges.
+const NO_HOOKS: [&str; 4] = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "rerere.enabled=false",
+];
+const WRITE_FLAGS: [&str; 8] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "commit.gpgSign=false",
     "-c",
     "core.logAllRefUpdates=false",
+    "-c",
+    "rerere.enabled=false",
 ];
 
 /// Subcommands that change the repository or a worktree.
@@ -341,7 +351,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
         let (flags, command) = if rest.starts_with(&WRITE_FLAGS) {
             (true, &rest[WRITE_FLAGS.len()..])
         } else if rest.starts_with(&NO_HOOKS) {
-            (false, &rest[2..])
+            (false, &rest[NO_HOOKS.len()..])
         } else {
             // Only preflight's root detection (`project::detect_roots_with`, shared with
             // the rest of the daemon) runs outside `run::git`'s `Git`; a `rev-parse`

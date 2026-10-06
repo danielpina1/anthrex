@@ -368,3 +368,64 @@ fn links_left_at_denied_paths_are_replaced_by_placeholders() {
     assert!(granted.deny.contains(&c.admin.join("logs")));
     assert!(!c.admin.join("logs/HEAD").exists());
 }
+
+/// Review M2: a `shallow` file in a task checkout's own git directory (which a Linux
+/// worker's grant leaves writable, and no placeholder can deny: an empty one marks the
+/// repository shallow) is refused by the daemon's check before any git call there.
+#[test]
+fn a_shallow_file_in_a_task_checkout_is_refused() {
+    use daemon::worktree::pinned;
+    let c = checkout("gs05");
+    let pin = pinned::pinned(&c.task).unwrap();
+    pinned::check(&c.task, &pin).unwrap();
+    std::fs::write(c.admin.join("shallow"), "").unwrap();
+    let err = pinned::check(&c.task, &pin).unwrap_err();
+    assert!(err.contains("shallow"), "{err}");
+    std::fs::remove_file(c.admin.join("shallow")).unwrap();
+    std::os::unix::fs::symlink("/nonexistent", c.admin.join("shallow")).unwrap();
+    let err = pinned::check(&c.task, &pin).unwrap_err();
+    assert!(err.contains("shallow"), "{err}");
+    std::fs::remove_file(c.admin.join("shallow")).unwrap();
+    pinned::check(&c.task, &pin).unwrap();
+}
+
+/// Review M3: the status probe of a task checkout names its own git directory as
+/// `GIT_COMMON_DIR`; the probe of a linked worktree names none.
+#[test]
+fn the_probe_names_the_common_dir_of_a_standalone_checkout_only() {
+    let c = checkout("gs06");
+    let scripts = tempfile::tempdir().unwrap();
+    let git = support::recording_git(scripts.path());
+    daemon::git::probe::probe(git.as_os_str(), &c.task, T).expect("the checkout probes");
+    let log = std::fs::read_to_string(scripts.path().join("git.log")).unwrap();
+    let common: Vec<PathBuf> = log
+        .lines()
+        .filter_map(|line| line.strip_prefix("env\tGIT_COMMON_DIR="))
+        .map(|dir| PathBuf::from(dir).canonicalize().unwrap())
+        .collect();
+    assert_eq!(common, vec![c.admin.clone()], "{log}");
+
+    let repo = repo();
+    commit_file(&repo.root, "f.txt", "base\n", "base");
+    let (_wt, wt) = wt_dir();
+    let linked = wt.join("linked");
+    out(
+        &repo.root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let pin =
+        daemon::worktree::pinned::pin(&git_common_dir(&repo.root), &linked, Default::default());
+    assert!(pin.broken.is_none(), "{:?}", pin.broken);
+    std::fs::remove_file(scripts.path().join("git.log")).unwrap();
+    daemon::git::probe::probe(git.as_os_str(), &linked, T).expect("the worktree probes");
+    let log = std::fs::read_to_string(scripts.path().join("git.log")).unwrap();
+    assert!(log.contains("argv"), "{log}");
+    assert!(!log.contains("GIT_COMMON_DIR"), "{log}");
+    daemon::worktree::pinned::unpin(&linked);
+}

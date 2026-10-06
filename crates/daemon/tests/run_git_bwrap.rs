@@ -31,7 +31,8 @@ fn unavailable() -> Option<String> {
         return Some("not Linux".to_string());
     }
     match Command::new(BWRAP)
-        .args(["--ro-bind", "/", "/", "--dev", "/dev", "--", "true"])
+        .args(["--ro-bind", "/", "/", "--dev", "/dev", "--unshare-pid"])
+        .args(["--unshare-user", "--proc", "/proc", "--", "true"])
         .output()
     {
         Err(err) => Some(format!("{BWRAP} cannot be run: {err}")),
@@ -106,8 +107,14 @@ impl Setup {
     /// worktree and `grant` writable and `grant.deny` read-only, with the worker's git
     /// environment.
     fn sandboxed(&self, grant: &WorkerGrant, script: &str) -> Output {
+        // The argument order of Claude Code 2.1.292's sandbox-runtime (its bundled
+        // `pw` and its filesystem builder): `--new-session --die-with-parent`, then
+        // `--ro-bind / /`, every existing `allowWrite` path `--bind` (a missing one is
+        // skipped), then every existing `denyWrite` path inside them `--ro-bind`, so a
+        // denial is mounted over the grant that holds it; then `--dev /dev`,
+        // `--unshare-pid`, `--unshare-user` and `--proc /proc`.
         let mut command = Command::new(BWRAP);
-        command.args(["--die-with-parent", "--ro-bind", "/", "/", "--dev", "/dev"]);
+        command.args(["--new-session", "--die-with-parent", "--ro-bind", "/", "/"]);
         let writable = std::iter::once(&self.task).chain(&grant.writable);
         for path in writable.filter(|path| path.exists()) {
             command.arg("--bind").arg(path).arg(path);
@@ -116,6 +123,8 @@ impl Setup {
             command.arg("--ro-bind").arg(path).arg(path);
         }
         command
+            .args(["--dev", "/dev", "--unshare-pid", "--unshare-user"])
+            .args(["--proc", "/proc"])
             .arg("--chdir")
             .arg(&self.task)
             .args(["--", "sh", "-c", script])
