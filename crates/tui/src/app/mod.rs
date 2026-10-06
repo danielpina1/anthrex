@@ -413,6 +413,9 @@ impl App {
         let app_cursor = self.parser.screen().application_cursor();
         match self.keymap.handle(key, app_cursor) {
             KeyAction::Send(bytes) => {
+                if self.holds_esc(&bytes) {
+                    return vec![];
+                }
                 self.scroll_to_live();
                 match self.focused_pty() {
                     Some(id) => vec![Effect::Send(ClientMsg::Input {
@@ -551,7 +554,7 @@ pub(crate) mod doc_gate;
 mod doc_gate_note;
 mod doc_gate_replies;
 mod goal;
-mod headless;
+pub(crate) mod headless;
 pub(crate) mod help;
 pub(crate) mod idle_menu;
 mod iterate;

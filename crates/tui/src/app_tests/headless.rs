@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::app::Link;
+use crate::app::headless::ESC_HELD;
 
 pub(super) fn headless(id: u32, name: &str, status: Status) -> WindowInfo {
     let mut window = win(id, name, status);
@@ -319,4 +320,66 @@ fn kill_and_remove_of_a_live_orchestrator_open_nothing() {
     let mut app = app_with(vec![orchestrator]);
     control(&mut app, 'x');
     assert!(matches!(app.modal, Some(Modal::Confirm { .. })));
+}
+
+/// A stray Esc must not interrupt a live run's orchestrator mid-turn: while its window
+/// is `Working`, a bare Esc is held back with a toast that names Ctrl-C, which still
+/// goes through. Esc passes whenever the orchestrator is not working (Claude Code needs
+/// it to close menus and permission dialogs), once the run is terminal, and in every
+/// other window.
+#[test]
+fn esc_never_interrupts_a_working_orchestrator() {
+    use super::runs::{app_with_runs, deliver, run_info, snapshot};
+    let mut orchestrator = win(5, "7a2c/orchestrator", Status::Working);
+    orchestrator.run = Some(proto::RunRef {
+        run_id: "r-7a2c".into(),
+        task_id: None,
+        role: proto::AgentRole::Orchestrator,
+        session: 1,
+        lane: None,
+    });
+    let mut app = app_with_runs(
+        vec![orchestrator.clone()],
+        snapshot(1, 0, vec![run_info("r-7a2c")]),
+    );
+    assert_eq!(app.focused, Some(5));
+    let sent = |effects: &[Effect]| -> Vec<Vec<u8>> {
+        (effects.iter())
+            .filter_map(|e| match e {
+                Effect::Send(ClientMsg::Input { bytes, .. }) => Some(bytes.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+
+    let effects = press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(
+        sent(&effects).is_empty(),
+        "Esc reached the orchestrator: {effects:?}"
+    );
+    assert_eq!(app.toast_text(), Some(ESC_HELD));
+
+    let effects = press(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
+    assert_eq!(sent(&effects), [vec![0x03]], "Ctrl-C still interrupts");
+
+    // Not working: Esc closes Claude Code's menus and dialogs, so it passes.
+    for status in [Status::Idle, Status::Attention] {
+        let mut idle = orchestrator.clone();
+        idle.status = status;
+        let mut app = app_with_runs(vec![idle], snapshot(1, 0, vec![run_info("r-7a2c")]));
+        let effects = press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(sent(&effects), [vec![0x1b]], "{status:?}");
+    }
+
+    // A terminal run's orchestrator is an ordinary window again.
+    let mut done = run_info("r-7a2c");
+    done.state = proto::RunState::Accepted;
+    deliver(&mut app, snapshot(2, 0, vec![done]));
+    let effects = press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert_eq!(sent(&effects), [vec![0x1b]], "terminal run");
+
+    // Any other working window: Esc passes.
+    let mut app = app_with(vec![win(1, "pty", Status::Working)]);
+    let effects = press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert_eq!(sent(&effects), [vec![0x1b]], "plain PTY");
 }
