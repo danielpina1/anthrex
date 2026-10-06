@@ -7,6 +7,16 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-10-06
+
+### Fixed
+
+- **Claude Code 2.1.291 and later could not see anthrex's tools.** Claude Code now
+  speaks MCP `2026-07-28` and ignores a tool list that lacks cache hints, which the
+  MCP library anthrex used left out. Every scout, so every `anthrex profile detect`,
+  failed with "the scout ended two turns without a report". anthrex now uses rmcp
+  3.5.1, which adds the hints.
+
 ## [0.1.0] — 2026-10-06 — first alpha
 
 The first public build of anthrex: a terminal multiplexer for coding agents.
@@ -62,5 +72,6 @@ see [docs/install.md](https://github.com/danielpina1/anthrex/blob/main/docs/inst
 - macOS and Linux only. anthrex runs `claude` and `codex` as installed on your
   machine; it does not ship or install them.
 
-[Unreleased]: https://github.com/danielpina1/anthrex/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/danielpina1/anthrex/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/danielpina1/anthrex/releases/tag/v0.1.1
 [0.1.0]: https://github.com/danielpina1/anthrex/releases/tag/v0.1.0

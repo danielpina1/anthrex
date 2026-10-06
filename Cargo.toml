@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/proto", "crates/config", "crates/daemon", "crates/tui", "crates/cli", "crates/fake-agent", "crates/mcp"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
@@ -46,7 +46,7 @@ regex = "1"
 proptest = "1"
 pulldown-cmark = "0.13"
 # Decision 5: pinned exactly; never loosen. `rmcp` stays out of the daemon and the TUI.
-rmcp = { version = "=3.4.0", default-features = false, features = ["server", "transport-io"] }
+rmcp = { version = "=3.5.1", default-features = false, features = ["server", "transport-io"] }
 
 [profile.release]
 lto = "thin"

@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anthrex-config",
  "anthrex-daemon",
@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anthrex-proto",
  "tempfile",
@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-daemon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anthrex-config",
  "anthrex-mcp",
@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-fake-agent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anthrex-config",
  "anthrex-daemon",
@@ -157,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anthrex-proto",
  "anyhow",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dirs",
  "libc",
@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "anthrex-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anthrex-config",
  "anthrex-daemon",
@@ -1847,9 +1847,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rmcp"
-version = "3.4.0"
+version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b23c62fe489ac1d401ab32688cfacac3737a8978dc3343e5361464c7724fd3cb"
+checksum = "ab5023804cbe0304cbe06197ac16e645a0a0d0ffa2953bf735c15c2fa0213350"
 dependencies = [
  "chrono",
  "futures",
