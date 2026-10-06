@@ -3,15 +3,19 @@
 //! worker's rung 2 would (`route_pick::escalate_for`): past a runtime the run's start
 //! recorded as not installed, and past a route that failed in the culprit's task.
 
-use proto::{CiCategory, Effort, ModelEntry, Route, Runtime, Strength};
+use proto::{CiCategory, Effort, ModelEntry, Route, Runtime, Strength, TaskState};
 
-use super::bisect::{TEST, answer, merged, red_full, with_orchestrator};
+use super::bisect::{TEST, answer, merge_next, merged, red_full, with_orchestrator};
 use super::delivery_ci::ci_fixes;
 use super::delivery_ci_repro::{red_probe, red_summarised, tiered_watched};
 use super::fixture::*;
-use super::merge::commit;
+use super::full::{full_job, outcome, tier};
+use super::merge::{commit, doc_task, start_on};
+use crate::run::engine::EventKind;
 use crate::run::proof::proof_command;
 use crate::run::roster::escalate;
+use crate::run::route_pick::{Mover, escalate_for};
+use crate::run::test_support::task_toml;
 
 const SINGLE: &str = "cargo test -- --exact {test}";
 
@@ -131,4 +135,86 @@ fn a_bisect_fix_task_skips_the_culprits_failed_route() {
 #[test]
 fn a_ci_culprit_fix_task_skips_the_culprits_failed_route() {
     assert_eq!(ci_fix_route(Skip::Failed), claude_up());
+}
+
+/// Makes `id` the one unfinished task that overlaps `culprit`'s `owns`: planned on the
+/// culprit's runtime (its spec names none, so the default, Claude), but moved to Codex
+/// by rung 2 or `run retry` ([`codex_step`]). The overlap skip reads current routes, so
+/// it leaves Codex open; rule 9 reads planned runtimes, so it refuses a Codex fix task.
+fn moved_overlap(fx: &mut Fixture, id: &str, culprit: &str) {
+    let owns = (fx.task(culprit).spec.owns.iter())
+        .map(|g| g.replace("**", "more/**"))
+        .collect();
+    let t = fx.task_mut(id);
+    t.spec.owns = owns;
+    assert_eq!(t.spec.route.runtime, None, "planned on the default runtime");
+    assert!(t.list_pick.is_none());
+    t.route = codex_step();
+    if t.state.is_finished() {
+        t.state = TaskState::Working;
+    }
+    assert_eq!(fx.run().limits.default_runtime, Runtime::Claude);
+    let at = (fx.run().tasks.iter())
+        .position(|t| t.id() == culprit)
+        .unwrap();
+    assert_eq!(
+        escalate_for(fx.run(), at, &culprit_route(), Mover::Worker),
+        codex_step(),
+        "the premise: the overlap skip leaves Codex open"
+    );
+}
+
+/// Review of task M9.7.13 (Important 1): the fix task is refused on the step
+/// `escalate_for` gives, and falls back to the culprit's own route.
+#[test]
+fn a_bisect_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route() {
+    let tasks = [
+        doc_task("t1", ""),
+        doc_task("t2", ""),
+        task_toml(
+            "t3",
+            "S",
+            "[\"docs/t3/**\"]",
+            "test_mode = \"check\"\ntest_mode_reason = \"glue code\"",
+        ),
+    ];
+    let (mut fx, mut windows) = start_on(&super::full::profile(), &tasks);
+    fx.run_mut().roster = roster();
+    fx.task_mut("t2").route = culprit_route();
+    merge_next(&mut fx, &mut windows, "t1", &commit(1));
+    merge_next(&mut fx, &mut windows, "t2", &commit(2));
+    moved_overlap(&mut fx, "t3", "t2");
+    assert!(!fx.task("t3").state.is_finished());
+    let since = fx.run().queue_idle_since.expect("idle");
+    fx.send(since + 120, EventKind::Tick);
+    let (op, _) = full_job(&fx);
+    fx.done(op, tier(outcome(3, &[TEST])));
+    answer(&mut fx, 2);
+    assert_eq!(
+        fx.task("fix1").route,
+        culprit_route(),
+        "the culprit's own route"
+    );
+}
+
+/// The same through `ci_culprit`: `t4`, still open, overlaps the culprit `t3`.
+#[test]
+fn a_ci_culprit_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route() {
+    let mut fx = tiered_watched(&["t1", "t2", "t3", "t4"]);
+    with_orchestrator(&mut fx);
+    fx.run_mut().roster = roster();
+    fx.task_mut("t3").route = culprit_route();
+    fx.run_mut().stages[0].full.green_at = Some(commit(1));
+    red_summarised(&mut fx, &commit(4), &[TEST], CiCategory::Test);
+    moved_overlap(&mut fx, "t4", "t3");
+    let (op, _) = super::bisect::probe(&fx);
+    fx.done(op, red_probe(&proof_command(SINGLE, TEST)));
+    answer(&mut fx, 3);
+    let fixes = ci_fixes(&fx);
+    assert_eq!(fixes.len(), 1, "{fixes:?}");
+    assert_eq!(
+        fx.task(&fixes[0]).route,
+        culprit_route(),
+        "the culprit's own route"
+    );
 }
