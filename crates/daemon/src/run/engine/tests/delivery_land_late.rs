@@ -153,3 +153,39 @@ fn a_lower_merged_stages_kept_fix_is_cancelled_once_the_stage_above_merges() {
         Some("cancelled: stage 1 PR merged")
     );
 }
+
+/// FW-7 (review A m5): a review fix whose deferred cancel arrived too late lands after
+/// the merge; its reply is queued and dropped at once with the "missed the merge" line,
+/// never left unready on the merged stage.
+#[test]
+fn a_late_review_fix_drops_its_reply_with_the_missed_line() {
+    use super::delivery_review::said;
+    use super::delivery_review_reply::by_alice;
+    use super::delivery_watch::view;
+    let mut fx = by_alice();
+    let mut v = view(&commit(1));
+    v.comments = vec![said(5, "alice", "Please update the README.")];
+    let (at, _) = poll_with(&mut fx, v);
+    fx.run_mut().delivery.watching = false;
+    fx.send(at + 1, crate::run::engine::EventKind::Tick);
+    fx.tick();
+    let windows = fx.launch_all();
+    to_queue(&mut fx, "fix1", window_of(&windows, "fix1"));
+    fx.run_mut().delivery.watching = true;
+    poll_with(&mut fx, merged_view(PR, &commit(1), &commit(90)));
+    assert!(
+        fx.task("fix1").cancel_deferred,
+        "{:#?}",
+        fx.task("fix1").history
+    );
+    merge(&mut fx, "fix1", &commit(2));
+    let missed = "PR #7 was merged at 1eeeeee before fix task fix1 reached it: the fix missed the merge, so thread 7:c5 gets no reply";
+    assert!(logged(&fx, missed), "{:#?}", fx.run().log);
+    assert_eq!(
+        fx.run().delivery.alerts.get("1/missed").map(String::as_str),
+        Some(missed)
+    );
+    fx.tick();
+    let stage = fx.run().delivery.stage(1).unwrap();
+    assert!(stage.replies.is_empty(), "{:#?}", stage.replies);
+}

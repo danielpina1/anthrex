@@ -60,17 +60,18 @@ pub(in crate::run::engine) fn task_merged(run: &mut Run, n: u16, now: u64) {
 /// delivered, with an attention line. Nothing is dropped silently.
 ///
 /// An undecided stage (milestone 9.7 BR-6) is decided as not delivered at once, its
-/// held judgment released for the new head.
+/// held judgment released for the new head. A late review fix's replies are queued
+/// first (FW-7), so the judgment drops them with the "missed the merge" line rather
+/// than leaving them unready on a merged stage.
 pub(in crate::run::engine) fn merged_late(run: &mut Run, n: u16, now: u64) {
     let Some(pr) = run.delivery.pr(n).cloned() else {
         return;
     };
     let head = run.stage_head(n).unwrap_or_default().to_string();
     let at = merged_head(&pr);
-    if take_undecided(run, n).is_some() {
+    super::reply::queue_replies(run, n);
+    if take_undecided(run, n).is_some() || head != at {
         judge(run, n, &pr, &head, &at, false, now);
-    } else if head != at {
-        unpushed(run, n, &pr, &head, &at, now);
     }
 }
 
