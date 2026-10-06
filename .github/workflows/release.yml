@@ -1,0 +1,157 @@
+name: Release
+
+# A pushed `v*` tag builds every target and publishes a GitHub pre-release.
+# A manual run (workflow_dispatch) is a dry run: it builds and packages the same
+# archives and keeps them as workflow artifacts, but never creates a release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Read the Cargo version and check it against the tag
+        id: version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "anthrex") | .version')
+          if [ -z "$version" ]; then
+            echo "::error::could not read the anthrex package version"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            if [ "$tag_version" != "$version" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match the Cargo version $version"
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing anthrex $version"
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          # Cross-compiled from the Apple silicon runner: the Intel macOS runner
+          # images are being retired, and anthrex has no C dependencies on macOS,
+          # so adding the rustup target is all the cross build needs.
+          - target: x86_64-apple-darwin
+            os: macos-latest
+    env:
+      ARCHIVE: anthrex-v${{ needs.version.outputs.version }}-${{ matrix.target }}.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked -p anthrex --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          staging=$(mktemp -d)
+          cp "target/${{ matrix.target }}/release/anthrex" "$staging/"
+          cp README.md "$staging/"
+          if [ -f LICENSE ]; then cp LICENSE "$staging/"; fi
+          mkdir -p dist
+          tar -czf "dist/$ARCHIVE" -C "$staging" .
+          (cd dist && shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256")
+          tar -tzf "dist/$ARCHIVE"
+          cat "dist/$ARCHIVE.sha256"
+
+      - name: Smoke-test the native binary
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: |
+          sandbox=$(mktemp -d)
+          ANTHREX_SOCKET="$sandbox/anthrex.sock" \
+          ANTHREX_DATA_DIR="$sandbox/data" \
+          ANTHREX_CONFIG="$sandbox/config.toml" \
+            "target/${{ matrix.target }}/release/anthrex" --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anthrex-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: [version, build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write the release notes from CHANGELOG.md
+        run: |
+          awk -v v="$VERSION" '
+            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no section for $VERSION"
+            exit 1
+          fi
+          {
+            echo
+            echo "Install: see [docs/install.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/docs/install.md)."
+            echo "The binaries are unsigned; on macOS, clear the quarantine flag as described there."
+          } >> notes.md
+          cat notes.md
+
+      - name: Create the GitHub release
+        run: |
+          ls -l dist
+          # Every release is a pre-release while the major version is 0.
+          prerelease=""
+          case "$VERSION" in 0.*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" \
+            --title "anthrex $VERSION" \
+            --notes-file notes.md \
+            $prerelease \
+            --verify-tag \
+            dist/*.tar.gz dist/*.sha256
