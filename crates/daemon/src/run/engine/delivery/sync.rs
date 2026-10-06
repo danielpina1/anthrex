@@ -146,9 +146,10 @@ fn contains_due(run: &Run) -> Option<Contains> {
     Some(Contains {
         stage: n,
         branch: super::open::remote_branch(run, n),
-        into: format!("refs/anthrex/{}/remote/stage-{n}", run.id),
+        into: crate::host::stage_remote_ref(&run.id, n),
         head,
         merged,
+        pr: run.delivery.pr(n).map(|p| p.number),
     })
 }
 

@@ -403,6 +403,7 @@ fn an_undecided_delivery_round_trips_and_older_forms_load() {
         into: format!("refs/anthrex/{RUN}/remote/stage-1"),
         head: HEAD2.into(),
         merged: "f".repeat(40),
+        pr: Some(7),
     };
     let answered = |contains| {
         OpResult::Host(HostResult::Fetched(FetchOutcome::Fetched {

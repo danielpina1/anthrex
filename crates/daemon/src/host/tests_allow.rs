@@ -15,6 +15,7 @@ pub(super) fn ctx() -> AllowCtx<'static> {
         remote: "origin",
         base_branch: Some("main"),
         repo: Some("o/r"),
+        pulls: &[],
     }
 }
 

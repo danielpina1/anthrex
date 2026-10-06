@@ -444,6 +444,7 @@ pub(super) fn run_ctx<'a>(repo: &'a HostRepo, run_id: Option<&'a str>) -> AllowC
         remote: &repo.remote,
         base_branch: None,
         repo: None,
+        pulls: &[],
     }
 }
 

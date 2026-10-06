@@ -34,6 +34,8 @@ mod tests_git;
 #[cfg(test)]
 mod tests_git_contains;
 #[cfg(test)]
+mod tests_git_contains_pr;
+#[cfg(test)]
 mod tests_limits;
 #[cfg(test)]
 mod tests_open_logs;
@@ -146,6 +148,17 @@ pub struct Adopt {
     pub also_integration: bool,
 }
 
+/// `anthrex/<run>/stage-<n>`: stage `n`'s branch, the one name anthrex pushes, opens
+/// a PR from and fetches back (FW-19: every copy of the name is this one).
+pub(crate) fn stage_branch(run_id: &str, stage: u16) -> String {
+    format!("anthrex/{run_id}/stage-{stage}")
+}
+
+/// `refs/anthrex/<run>/remote/stage-<n>`: stage `n`'s private fetch ref.
+pub(crate) fn stage_remote_ref(run_id: &str, stage: u16) -> String {
+    format!("refs/anthrex/{run_id}/remote/stage-{stage}")
+}
+
 /// Milestone 9.7 decision 5 (DH §1.2): the base fetch also asks whether merged head
 /// `merged` holds stage `stage`'s local head `head`, fetching `branch` into `into`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,6 +168,10 @@ pub struct Contains {
     pub into: String,   // refs/anthrex/<run>/remote/stage-<n>
     pub head: String,   // the local stage head
     pub merged: String, // the host's merged head
+    /// The stage's PR number (the final fix wave, FW-4): when GitHub deleted the stage
+    /// branch, its `refs/pull/<pr>/head` is fetched into `into` instead.
+    #[serde(default)]
+    pub pr: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

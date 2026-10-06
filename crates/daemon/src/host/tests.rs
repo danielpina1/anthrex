@@ -579,6 +579,7 @@ fn allow_list_accepts_every_built_command() {
         remote: "origin",
         base_branch: Some("trunk"),
         repo: Some("cli/cli"),
+        pulls: &[],
     };
     for call in &calls {
         assert_eq!(

@@ -11,21 +11,14 @@ mod support;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use daemon::host::Conclusion;
 use daemon::host::fake::{CiRule, MergeMethodArg};
-use daemon::host::{Conclusion, HOST_READ_TIMEOUT, PUSH_TIMEOUT};
 use proto::{RunInfo, RunState, TaskState};
 use serde_json::{Value, json};
 use support::run_harness::{REQUEST_WAIT, RUN_WAIT, RunHarness};
 use support::run_plans::*;
 use support::run_pr::*;
 use support::run_pr_ci::*;
-
-/// A base fetch that asks `contains` (task M9.7.6's `host_ops::bound`, restated: it is
-/// `pub(crate)`): the base fetch and the stage branch's fetch at `PUSH_TIMEOUT` each,
-/// eight reads at `HOST_READ_TIMEOUT`, and the executor's 5 s margin (485 s).
-const CONTAINS_FETCH_WAIT: Duration = PUSH_TIMEOUT
-    .saturating_add(PUSH_TIMEOUT)
-    .saturating_add(Duration::from_secs(8 * HOST_READ_TIMEOUT.as_secs() + 5));
 
 /// A merge at the confirmed head to the run's completion: the view that sees it, then
 /// the landing's base fetch (no `contains`: the merged head is the local one).

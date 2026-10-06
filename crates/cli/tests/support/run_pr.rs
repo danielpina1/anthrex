@@ -81,6 +81,16 @@ pub const FETCH_WAIT: Duration = PUSH_TIMEOUT.saturating_add(Duration::from_secs
     6 * HOST_READ_TIMEOUT.as_secs() + OP_MARGIN_SECS,
 ));
 
+/// A base fetch that asks `contains` (task M9.7.6's `host_ops::bound`, restated: it is
+/// `pub(crate)`): the base fetch, the stage branch's fetch and its PR ref's (FW-4) at
+/// `PUSH_TIMEOUT` each, eight reads at `HOST_READ_TIMEOUT`, and the margin (605 s).
+pub const CONTAINS_FETCH_WAIT: Duration =
+    PUSH_TIMEOUT
+        .saturating_mul(3)
+        .saturating_add(Duration::from_secs(
+            8 * HOST_READ_TIMEOUT.as_secs() + OP_MARGIN_SECS,
+        ));
+
 /// A CI re-run (`RerunFailed`'s bound: one write, plus the margin).
 pub const RERUN_WAIT: Duration =
     HOST_WRITE_TIMEOUT.saturating_add(Duration::from_secs(OP_MARGIN_SECS));

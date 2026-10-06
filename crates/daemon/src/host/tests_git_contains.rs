@@ -11,19 +11,19 @@ use super::tests_git::{NO_GH, RUN, Rig, commit, git};
 use super::*;
 
 /// The stage-1 branch, its private fetch ref, and the base's.
-fn stage_branch() -> String {
+pub(super) fn stage_branch() -> String {
     format!("anthrex/{RUN}/stage-1")
 }
-fn stage_into() -> String {
+pub(super) fn stage_into() -> String {
     format!("refs/anthrex/{RUN}/remote/stage-1")
 }
-fn base_into() -> String {
+pub(super) fn base_into() -> String {
     format!("refs/anthrex/{RUN}/remote/base")
 }
 
 /// The user's clone of the remote: where the commits on the stage branch and the merge
 /// are made, and pushed from.
-fn user_clone(rig: &Rig) -> PathBuf {
+pub(super) fn user_clone(rig: &Rig) -> PathBuf {
     let user = rig._tmp.path().join("user");
     git(
         rig._tmp.path(),
@@ -34,7 +34,7 @@ fn user_clone(rig: &Rig) -> PathBuf {
 
 /// The common start: `main` at `a` on the remote, anthrex's stage branch pushed at `h2`
 /// (the local head). Returns `(a, h2)`.
-fn start(rig: &Rig) -> (String, String) {
+pub(super) fn start(rig: &Rig) -> (String, String) {
     let a = commit(&rig.work, "a");
     git(&rig.work, &["push", "-q", "origin", "main"]);
     git(&rig.work, &["checkout", "-q", "-b", &stage_branch()]);
@@ -47,7 +47,7 @@ fn start(rig: &Rig) -> (String, String) {
 
 /// On the user's side: two commits on top of the remote stage branch, pushed. Returns
 /// the new tip `u2`.
-fn user_pushes_on_the_stage(user: &Path) -> String {
+pub(super) fn user_pushes_on_the_stage(user: &Path) -> String {
     let remote = format!("origin/{}", stage_branch());
     git(user, &["fetch", "-q", "origin"]);
     git(user, &["checkout", "-q", "-B", "s", &remote]);
@@ -66,7 +66,7 @@ fn user_pushes_on_the_stage(user: &Path) -> String {
 }
 
 /// The user's squash merge of branch `s` into `main`, pushed: one parent.
-fn squash(user: &Path) -> String {
+pub(super) fn squash(user: &Path) -> String {
     git(user, &["checkout", "-q", "-B", "main", "origin/main"]);
     git(user, &["merge", "-q", "--squash", "s"]);
     let s = commit(user, "squash of stage 1");
@@ -74,17 +74,18 @@ fn squash(user: &Path) -> String {
     s
 }
 
-fn ask(head: &str, merged: &str) -> Contains {
+pub(super) fn ask(head: &str, merged: &str) -> Contains {
     Contains {
         stage: 1,
         branch: stage_branch(),
         into: stage_into(),
         head: head.to_string(),
         merged: merged.to_string(),
+        pr: None,
     }
 }
 
-fn base_fetch(rig: &Rig, parents_of: &str, contains: Contains) -> FetchReq {
+pub(super) fn base_fetch(rig: &Rig, parents_of: &str, contains: Contains) -> FetchReq {
     FetchReq {
         repo: rig.repo.clone(),
         run_id: RUN.to_string(),
@@ -97,7 +98,11 @@ fn base_fetch(rig: &Rig, parents_of: &str, contains: Contains) -> FetchReq {
     }
 }
 
-fn fetched(sha: &str, parents: u32, contains: Option<bool>) -> Result<FetchOutcome, HostError> {
+pub(super) fn fetched(
+    sha: &str,
+    parents: u32,
+    contains: Option<bool>,
+) -> Result<FetchOutcome, HostError> {
     Ok(FetchOutcome::Fetched {
         sha: sha.to_string(),
         parents: Some(parents),
@@ -105,7 +110,7 @@ fn fetched(sha: &str, parents: u32, contains: Option<bool>) -> Result<FetchOutco
     })
 }
 
-fn has_ref(dir: &Path, refname: &str) -> bool {
+pub(super) fn has_ref(dir: &Path, refname: &str) -> bool {
     !git(dir, &["for-each-ref", "--format=%(refname)", refname]).is_empty()
 }
 
@@ -311,7 +316,7 @@ fn every_call_is_allowed_and_scrubbed() {
 
 /// A recorded call's git subcommand: the first word after `-C <dir>
 /// --no-optional-locks` and `GhHost::git`'s `-c <k=v>` pairs.
-fn sub(argv: &[String]) -> &str {
+pub(super) fn sub(argv: &[String]) -> &str {
     let mut at = 3;
     while argv.get(at).map(String::as_str) == Some("-c") {
         at += 2;
@@ -321,8 +326,8 @@ fn sub(argv: &[String]) -> &str {
 
 /// A `GhHost` whose `git` is a stand-in that records each call's argv (one argument per
 /// line, then a separator) and its `GIT_*` environment, then runs the real git.
-struct Recorder {
-    host: GhHost<SystemRunner>,
+pub(super) struct Recorder {
+    pub(super) host: GhHost<SystemRunner>,
     argv_log: PathBuf,
     env_log: PathBuf,
 }
@@ -330,7 +335,7 @@ struct Recorder {
 const END: &str = "--anthrex-test-end--";
 
 impl Recorder {
-    fn new(rig: &Rig) -> Recorder {
+    pub(super) fn new(rig: &Rig) -> Recorder {
         use std::os::unix::fs::PermissionsExt;
         let dir = rig._tmp.path().join("recorder");
         std::fs::create_dir_all(&dir).unwrap();
@@ -354,7 +359,7 @@ impl Recorder {
     }
 
     /// Every recorded call so far, `-C <dir> --no-optional-locks …` each.
-    fn calls(&self) -> Vec<Vec<String>> {
+    pub(super) fn calls(&self) -> Vec<Vec<String>> {
         let text = std::fs::read_to_string(&self.argv_log).unwrap_or_default();
         let mut calls = vec![Vec::new()];
         for line in text.lines() {

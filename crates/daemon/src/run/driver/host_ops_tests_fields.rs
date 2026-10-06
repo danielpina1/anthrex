@@ -442,9 +442,10 @@ fn only_the_delivery_directory_is_private() {
     assert_eq!(mode(&dir), 0o700, "an existing directory is tightened");
 }
 
-/// Task M9.7.6 (decision 6): a base fetch that asks `contains` runs a second fetch and a
-/// `merge-base` in the same op, so its bound holds a second `PUSH_TIMEOUT` and two more
-/// reads; one that does not ask keeps today's.
+/// Task M9.7.6 (decision 6): a base fetch that asks `contains` runs the stage's fetch
+/// (its branch, else its PR's ref: FW-4) and up to two `merge-base`s (FW-3) in the same
+/// op, so its bound holds two more `PUSH_TIMEOUT`s and two more reads; one that does not
+/// ask keeps today's.
 #[test]
 fn a_fetch_with_contains_gets_the_longer_bound() {
     let fetch = |contains| HostOp::Fetch {
@@ -461,10 +462,11 @@ fn a_fetch_with_contains_gets_the_longer_bound() {
         into: format!("refs/anthrex/{RUN_ID}/remote/stage-1"),
         head: SHA.into(),
         merged: SHA.into(),
+        pr: Some(7),
     };
     assert_eq!(
         bound(&fetch(Some(asked))),
-        MARGIN + PUSH_TIMEOUT * 2 + HOST_READ_TIMEOUT * 8
+        MARGIN + PUSH_TIMEOUT * 3 + HOST_READ_TIMEOUT * 8
     );
     assert_eq!(
         bound(&fetch(None)),

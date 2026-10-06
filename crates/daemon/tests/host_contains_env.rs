@@ -120,6 +120,7 @@ fn the_contains_steps_ignore_the_daemons_git_dir() {
             into: into.clone(),
             head: h2,
             merged: u2.clone(),
+            pr: None,
         }),
         deadline: None,
     };

@@ -51,6 +51,7 @@ fn question() -> Contains {
         into: format!("refs/anthrex/{RUN_ID}/remote/stage-1"),
         head: h2(),
         merged: u2(),
+        pr: Some(PR),
     }
 }
 

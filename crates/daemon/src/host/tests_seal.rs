@@ -21,6 +21,7 @@ fn ctx(remote: &str) -> AllowCtx<'_> {
         remote,
         base_branch: None,
         repo: None,
+        pulls: &[],
     }
 }
 

@@ -57,6 +57,7 @@ fn pr_title_is_exact() {
         remote: "origin",
         base_branch: None,
         repo: Some("fake/app"),
+        pulls: &[],
     };
     assert_eq!(check(Program::Gh, &argv, &ctx), Ok(()));
     // The raw title would have been refused as Forbidden, which halts a run.
@@ -304,6 +305,7 @@ fn pr_title_is_cut_at_a_grapheme_boundary() {
         remote: "origin",
         base_branch: None,
         repo: Some("fake/app"),
+        pulls: &[],
     };
     // "[anthrex r1a2b 2/3] " is 20 characters; 235 more make 255.
     let pad = "x".repeat(235);

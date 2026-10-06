@@ -369,6 +369,7 @@ fn the_rev_list_arm_takes_only_a_full_object_id_read_only() {
         remote: "origin",
         base_branch: Some("main"),
         repo: Some("o/r"),
+        pulls: &[],
     };
     let sha = "a560bea91b8cd58b3c0d78e5db98c7fdc8e5036b";
     let read = ["-c", "core.hooksPath=/dev/null"];

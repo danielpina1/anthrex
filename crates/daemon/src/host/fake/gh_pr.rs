@@ -376,6 +376,8 @@ fn create(
         threads: Vec::new(),
         replies: Vec::new(),
     });
+    // FW-4: GitHub writes the PR's own ref when it opens.
+    bare.set_pull(number, head_oid)?;
     Ok(Answer {
         ok: true,
         stdout: pr_url(host, repo, number) + "\n",
