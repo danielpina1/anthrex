@@ -58,6 +58,11 @@ pub use tuning::*;
 #[path = "model_design_tests.rs"]
 mod design_tests;
 
+// The run title's field in `run.json`.
+#[cfg(test)]
+#[path = "model_title_tests.rs"]
+mod title_tests;
+
 // `Run`'s lookups and path helpers, and the task branch and path (split out to keep
 // this file under the 600-line rule, milestone 9.5); re-exported, so every `model::`
 // path stays.
@@ -410,6 +415,11 @@ pub struct Run {
     /// Decision 15: the time of the last step that changed the run.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub last_step_at: u64,
+    /// The run's short title, from the `run_name` decider at the start
+    /// (`driver/build_name.rs`); empty when it has none (the decider fell back, a plan
+    /// file's run, or a run from before), and then left out of `run.json`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
 }
 
 pub(crate) fn is_zero(n: &u64) -> bool {
