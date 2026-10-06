@@ -206,9 +206,13 @@ fn user_pushes_merged_before_a_view(method: MergeMethodArg) {
         );
         std::thread::sleep(Duration::from_millis(20));
     };
+    // FW-13: the window starts at the ref's move, which is never after the engine
+    // resets the interval base, so the measured window can only over-count.
+    let pushed_at = Instant::now();
     // The push's answer processed: from here the interval base is `poll_secs`
     // (`watch::succeeded`, then `watch::pushed`), which the backoff below counts from.
-    // The answer may come up to the push op's own bound after the ref moved.
+    // The answer may come up to the push op's own bound after the ref moved; the user's
+    // commits wait for it, so the reset is always inside the window.
     let deadline = Instant::now() + PUSH_WAIT;
     while pushed_head(&h, &id).as_deref() != Some(h2.as_str()) {
         assert!(
@@ -218,7 +222,6 @@ fn user_pushes_merged_before_a_view(method: MergeMethodArg) {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    let pushed_at = Instant::now();
     let branch = format!("anthrex/{id}/stage-1");
     rig.ctl()
         .commit(&branch, "user1.txt", "one\n", "a user's first commit");
