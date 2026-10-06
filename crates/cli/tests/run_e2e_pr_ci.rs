@@ -43,9 +43,10 @@ fn missed(path: &Path) -> PathBuf {
     path.with_extension("missed")
 }
 
-/// Task `id`'s brief, from `run.json` (the snapshot leaves briefs out).
+/// Task `id`'s brief, from `run.json` (the snapshot leaves briefs out), once the file
+/// has the task the snapshot showed.
 fn brief_of(run: &RunInfo, id: &str) -> String {
-    let all = run_json(run);
+    let all = run_json_with_task(run, id);
     let task = (all["tasks"].as_array().into_iter().flatten())
         .find(|t| t["spec"]["id"] == id)
         .unwrap_or_else(|| panic!("{id} in run.json"));
@@ -53,6 +54,13 @@ fn brief_of(run: &RunInfo, id: &str) -> String {
         .as_str()
         .unwrap_or_default()
         .to_string()
+}
+
+/// The texts of `run.json`'s log lines.
+fn log_of(all: &Value) -> Vec<String> {
+    (all["log"].as_array().into_iter().flatten())
+        .filter_map(|l| l["text"].as_str().map(str::to_string))
+        .collect()
 }
 
 /// The repository's `history.jsonl` lines of type `bisect`.
@@ -163,9 +171,9 @@ fn e2e_pr_ci_red_reproduced_bisects_fixes_pushes_and_propagates() {
     let run = h.run(&id).unwrap();
     // Stage 2's PR opened only with its merge queue quiet, so the propagate is done.
     let propagated = format!("stage 2: propagated stage 1 at {}", &merged[..7]);
-    let log: Vec<String> = (run_json(&run)["log"].as_array().into_iter().flatten())
-        .filter_map(|l| l["text"].as_str().map(str::to_string))
-        .collect();
+    let log = log_of(&run_json_when(&run, &propagated, |all| {
+        log_of(all).iter().any(|l| l.starts_with(&propagated))
+    }));
     assert!(
         log.iter().any(|l| l.starts_with(&propagated)),
         "{propagated:?} in {log:#?}"
@@ -201,9 +209,7 @@ fn e2e_pr_ci_red_reproduced_under_a_check_bisects_the_whole_line() {
     let run = wait_fix(&h, &id, "fix1", PR_OPEN_WAIT.saturating_add(CI_FIX_WAIT));
     let head = rig.wait_pr(1, |_| true).head_oid;
     let h7 = &head[..7];
-    let log: Vec<String> = (run_json(&run)["log"].as_array().into_iter().flatten())
-        .filter_map(|l| l["text"].as_str().map(str::to_string))
-        .collect();
+    let log = log_of(&run_json_with_task(&run, "fix1"));
     let green = format!("stage 1: tier 3 green at {h7} (");
     assert!(
         log.iter().any(|l| l.starts_with(&green)),

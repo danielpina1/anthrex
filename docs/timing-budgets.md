@@ -619,6 +619,12 @@ The final fix wave's new bounds (its FW-103). W1 added none: FW-1's driver tests
 |------|------|-------|------------|--------|
 | `e2e_pr_rewritten_remote_stage_branch_halts_without_forcing`: the halt's log line in `run.json` | `crates/cli/tests/support/run_pr.rs` (`wait_log_line`, reading `run.json`'s log every 250 ms), called from `run_e2e_pr.rs` | `REQUEST_WAIT` (75 s) | The snapshot that shows `Halted` is published from the engine's memory on a tick, and the halt's `run.json` save runs on its own path, so the file can lag the snapshot. A halt is a structural change, saved right after its step (one small write and a few fsyncs, milliseconds); even a counter-only change is saved within `COUNTER_PERSIST_EVERY` (5 s). `REQUEST_WAIT` is the existing bound for an edit to persist (`a_manual_restart_of_the_orchestrator_is_not_an_exit`), a hang guard the loop ends early. | **Fixed.** It read `run.json` once, right after the halt was seen, and failed once in M9.5.9's runs. RED: a temporary 3 s sleep before a halted run's `journal::save_run` failed the old assertion and passed the loop; the fixed test passed 20 of 20 alone. |
 
+### Fixed, from the macOS CI failure on main (run 37505147297, 2026-10-06)
+
+| Test | File | Bound | Derivation | Status |
+|------|------|-------|------------|--------|
+| `run_e2e_pr_ci.rs`'s reads of `run.json` after a snapshot showed the state they read: `brief_of` (three tests) and the two log reads | `crates/cli/tests/support/run_plans.rs` (`run_json_when`, `run_json_with_task`, polling every 100 ms through `until`) | `REQUEST_WAIT` (75 s) | The same shape as M9.5.8's row below: the driver publishes a step's snapshot at once and saves its `run.json` on a blocking thread, so what is left after the snapshot is that step's one fsynced write, inside one request's bound. The saves are ordered (ruling T22-N2), so a file that has the step's task has every earlier step's log line too. | **Fixed.** `e2e_pr_ci_red_not_reproduced_adds_an_environment_fix_task` read the file once and panicked `fix1 in run.json` on macOS CI. |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |

@@ -556,3 +556,47 @@ fn a_failed_step_is_kept_in_the_error_log() {
     );
     assert!(kept.contains("fake-agent: exiting with 1"), "{kept}");
 }
+
+/// 2026-10-06: a fake whose stderr nobody reads any more (the daemon's reader is gone)
+/// still keeps its diagnostics: the error log is written first, and stderr's failure
+/// is ignored rather than a panic that would end the process saying nothing.
+#[test]
+fn a_failed_step_is_kept_when_stderr_is_broken() {
+    let dir = tempdir();
+    let script = write_steps(
+        &dir.path().join("s.jsonl"),
+        &[json!({"git_commit": {"file": "a.txt", "content": "x", "message": "m"}})],
+    );
+    let log = dir.path().join("errors.log");
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let mut child = std::process::Command::new(fake_agent())
+        .args(codex_argv(None, None, false, "go"))
+        .current_dir(dir.path())
+        .env("FAKE_AGENT_SCRIPT", &script)
+        .env("FAKE_AGENT_ERROR_LOG", &log)
+        .env("GIT_CEILING_DIRECTORIES", dir.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(writer)
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + RUN;
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "fake-agent never exited"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let kept = fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(status.code(), Some(1), "{kept}");
+    assert!(
+        kept.contains("git add -- a.txt exited with")
+            && kept.contains("fake-agent: exiting with 1"),
+        "{kept}"
+    );
+}

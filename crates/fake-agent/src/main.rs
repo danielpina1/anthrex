@@ -28,6 +28,7 @@ use script::Step;
 const STEP_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn main() {
+    crate::diag::keep_panics();
     let code = match run() {
         Ok(code) => code,
         Err(error) => {
@@ -387,7 +388,8 @@ fn git(args: &[&str]) -> Result<()> {
         .output()
         .with_context(|| format!("run git {}", args.join(" ")))?;
     let stderr = String::from_utf8_lossy(&output.stderr);
-    eprint!("{stderr}");
+    // Never `eprint!`: it panics on a stderr nobody reads any more.
+    let _ = io::stderr().write_all(stderr.as_bytes());
     if !output.status.success() {
         bail!(
             "git {} exited with {}: {}",
