@@ -382,3 +382,19 @@ fn a_next_goal_waits_for_an_undecided_merge() {
     assert!(fx.run().delivery.stage(1).unwrap().undecided.is_some());
     assert!(!super::super::goal_rounds::settled(fx.run()), "undecided");
 }
+
+/// FW-11 (task 5's Minor): an answer for a stage with no PR record any more still
+/// clears its undecided pair (nothing to judge, but nothing waits on it either).
+#[test]
+fn an_answer_without_a_pr_record_clears_the_undecided_stage() {
+    let mut fx = merged_unverified();
+    let (op, _) = base_fetch(&fx);
+    fx.run_mut().delivery.stages[0].pr = None;
+    let outcome = FetchOutcome::Fetched {
+        sha: commit(71),
+        parents: Some(1),
+        contains: Some(true),
+    };
+    answer(&mut fx, op, HostResult::Fetched(outcome));
+    assert_eq!(undecided(&fx), None);
+}

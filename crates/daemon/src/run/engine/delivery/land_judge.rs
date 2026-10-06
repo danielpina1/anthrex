@@ -114,40 +114,40 @@ pub(super) fn judge(
     }
 }
 
+/// Whether `c` still asks about stage `c.stage`'s undecided pair: an answer about any
+/// other pair is stale (FW-9: the one comparison `decided` and `check_failed` share).
+fn still_asked(run: &Run, c: &Contains) -> bool {
+    (run.delivery
+        .stage(c.stage)
+        .and_then(|s| s.undecided.as_ref()))
+    .is_some_and(|(head, merged)| *head == c.head && *merged == c.merged)
+}
+
 /// Milestone 9.7 decision 7: the base fetch's answer for stage `contains.stage`. Only
 /// `Some(true)` delivers. An answer about another pair than the stage's undecided one
-/// is stale and ignored (the next pass asks again).
+/// is stale and ignored (the next pass asks again). A stage with no PR record left is
+/// only cleared (FW-11): nothing to judge, and nothing waits on it.
 pub(super) fn decided(run: &mut Run, contains: &Contains, answer: Option<bool>, now: u64) {
+    if !still_asked(run, contains) {
+        return;
+    }
     let n = contains.stage;
-    let asked = (contains.head.clone(), contains.merged.clone());
-    let current = run.delivery.stage(n).and_then(|s| s.undecided.as_ref());
+    take_undecided(run, n);
     let Some(pr) = run.delivery.pr(n).cloned() else {
         return;
     };
-    if current != Some(&asked) {
-        return;
-    }
-    take_undecided(run, n);
-    judge(
-        run,
-        n,
-        &pr,
-        &contains.head,
-        &contains.merged,
-        answer == Some(true),
-        now,
-    );
+    let (head, at) = (&contains.head, &contains.merged);
+    judge(run, n, &pr, head, at, answer == Some(true), now);
 }
 
 /// Ruling R1 (BR-4): the base fetch carrying `contains` failed. The stage stays
 /// undecided and is asked again after the wait; the third failure in a row decides it
 /// as not delivered, saying it could not be checked.
 pub(super) fn check_failed(run: &mut Run, contains: &Contains, now: u64) {
-    let n = contains.stage;
-    let asked = (contains.head.clone(), contains.merged.clone());
-    if run.delivery.stage(n).and_then(|s| s.undecided.as_ref()) != Some(&asked) {
+    if !still_asked(run, contains) {
         return;
     }
+    let n = contains.stage;
     let stage = stage_mut(run, n);
     stage.undecided_fails = stage.undecided_fails.saturating_add(1);
     if stage.undecided_fails < CHECK_TRIES {
