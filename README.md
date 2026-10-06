@@ -5,6 +5,7 @@ Run many Claude Code and Codex sessions side by side, see what each one is doing
 
 <p align="center">
   <a href="https://github.com/danielpina1/anthrex/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/danielpina1/anthrex/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/danielpina1/anthrex/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/danielpina1/anthrex?include_prereleases&sort=semver&label=version"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <img alt="Rust 1.92+" src="https://img.shields.io/badge/rust-1.92%2B-orange.svg">
   <img alt="macOS and Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg">
