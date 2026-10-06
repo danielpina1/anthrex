@@ -61,8 +61,7 @@ pub(super) enum BisectRange {
 /// point), and the merges after it up to `head`, in order. `None` when `head` is not one
 /// of those merges.
 fn range(s: &StageRecord, head: &str, how: BisectRange) -> Option<(String, Vec<StageMerge>)> {
-    let since = s.full.green_at.as_deref();
-    let green = since
+    let green = (s.full.green_at.as_deref())
         .filter(|_| matches!(how, BisectRange::SinceGreen))
         .and_then(|g| {
             s.merges
