@@ -369,3 +369,19 @@ fn a_failing_question_only_fetch_raises_the_fetch_alert() {
         fx.run().delivery.failures
     );
 }
+
+/// FW-6 (review A m4): a next goal waits while a merge is undecided, as completion does
+/// (a stage it widens to would otherwise turn the verdict into "goes up with stage m").
+#[test]
+fn a_next_goal_waits_for_an_undecided_merge() {
+    let mut fx = merged_unverified();
+    assert_eq!(undecided(&fx), Some((h2(), u2())));
+    assert!(!super::super::goal_rounds::settled(fx.run()), "undecided");
+    fetched_with(&mut fx, Some(true));
+    assert_eq!(undecided(&fx), None);
+    assert!(
+        super::super::goal_rounds::settled(fx.run()),
+        "{:?}",
+        fx.run().state
+    );
+}
