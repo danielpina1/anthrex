@@ -441,8 +441,9 @@ def pr_stage(pty_proc, bin_path, run_cmd, fail, base_env):
         if tasks != {"t1": "merged", "t2": "merged", "fix1": "merged", "fix2": "merged"}:
             fail(f"run {run_id} completed with {tasks}")
         # Milestone 9.7's final fix wave (FW-4): stage 1's squash merge deleted its
-        # branch, so a `contains` check reads its PR's own ref; either way its work is
-        # judged delivered, never "not delivered".
+        # branch. 11i merges at the local head, so no `contains` check is asked here
+        # (FW-4's PR-ref fetch is covered by the host tests, not this scenario); this
+        # only guards that the merged work is judged delivered, never "not delivered".
         with open(os.path.join(root, "data", "runs", run_id, "run.json")) as f:
             log = [entry["text"] for entry in json.load(f).get("log", [])]
         undelivered = [line for line in log if "that work is not delivered" in line]
