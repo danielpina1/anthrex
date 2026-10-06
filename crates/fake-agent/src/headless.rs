@@ -319,6 +319,14 @@ struct Runner {
 
 impl Runner {
     fn run(&mut self, first: Option<String>) -> Result<i32> {
+        // Dies before its first turn says anything, as Claude does without its sandbox.
+        if let Some(Step::StartupFail { stderr, code }) = self.steps.get(self.pos).cloned() {
+            self.advance()?;
+            for line in &stderr {
+                crate::diag::emit(line);
+            }
+            return Ok(code);
+        }
         let first = match first {
             Some(message) => message,
             None => match self.wait_message(None)? {

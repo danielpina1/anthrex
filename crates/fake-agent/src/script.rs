@@ -68,6 +68,13 @@ pub enum Step {
     },
     Expect(Match),
     ExpectErrorContains(String),
+    /// A headless session that dies before its first turn, as Claude does without its
+    /// sandbox's dependencies (2026-10-06): `stderr`'s lines, nothing on stdout, then
+    /// exit `code`. Only as a script's first step.
+    StartupFail {
+        stderr: Vec<String>,
+        code: i32,
+    },
 }
 
 /// The token usage a turn end reports (the `usage` step).
@@ -128,6 +135,13 @@ struct ApiRetryStep {
     error: String,
     delay_ms: u64,
     times: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StartupFailStep {
+    stderr: Vec<String>,
+    code: i32,
 }
 
 #[derive(Deserialize)]
@@ -247,6 +261,10 @@ fn parse_step(value: Value) -> Result<Step> {
         Some("fail_turn") if has_keys(object, &["fail_turn"]) => {
             let FailTurnStep { error } = field(object, "fail_turn")?;
             Ok(Step::FailTurn(error))
+        }
+        Some("startup_fail") if has_keys(object, &["startup_fail"]) => {
+            let StartupFailStep { stderr, code } = field(object, "startup_fail")?;
+            Ok(Step::StartupFail { stderr, code })
         }
         Some("deny") if has_keys(object, &["deny"]) => {
             let DenyStep { tool, reason } = field(object, "deny")?;
@@ -441,6 +459,22 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("line 3"), "{error:#}");
+    }
+
+    #[test]
+    fn parses_a_startup_failure() {
+        let steps = parse_script(Cursor::new(
+            "{\"startup_fail\":{\"stderr\":[\"one\",\"Error: two\"],\"code\":1}}\n",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            steps,
+            vec![Step::StartupFail {
+                stderr: vec!["one".into(), "Error: two".into()],
+                code: 1,
+            }]
+        );
     }
 
     #[test]

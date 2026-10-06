@@ -81,6 +81,12 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
         AgentSignal::ProcessStarted { pid } => {
             round.pid = Some(pid);
             round.exited_pid = None;
+            round.startup_failure = None;
+            return;
+        }
+        // Not activity: the process is about to exit, and its exit's reason says why.
+        AgentSignal::StartupFailed { reason } => {
+            round.startup_failure = Some(reason);
             return;
         }
         // Final review B-10 (T25-N1, both orders): the second copy of an exit the round
@@ -200,6 +206,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
         AgentSignal::Said { text } => rounds::note_said(round, &text),
         AgentSignal::Activity
         | AgentSignal::ProcessStarted { .. }
+        | AgentSignal::StartupFailed { .. }
         | AgentSignal::ProcessExited { .. } => {}
     }
 }
@@ -472,18 +479,20 @@ fn exited(
     round.deaths = round.deaths.saturating_add(1);
     if round.deaths >= 2 {
         end_round(round, now);
-        let reason = "its process exited twice in one round".to_string();
+        let reason = exit_reason(round, "its process exited twice in one round");
         return ladder::stall(run, i, reason, now, fx);
     }
     let Some((window_id, session_id)) = round.window_id.zip(round.session_id.clone()) else {
         // Nothing to resume: a fresh session at the same rung, no failure counted.
         end_round(round, now);
+        let reason = exit_reason(round, "its process exited before its session started");
         run.tasks[i].fresh_session = Some(FreshSession {
-            reason: "its process exited before its session started".into(),
+            reason,
             append: None,
         });
         return;
     };
+    let resuming = exit_reason(round, "its process exited mid-turn; resuming the session");
     round.last_event = now;
     let (id, session) = (run.tasks[i].id().to_string(), run.tasks[i].session);
     let kind = OpKind::ResumeSession {
@@ -495,12 +504,15 @@ fn exited(
     let op = next_op(run);
     run.tasks[i].rounds[r].resume_op = Some(op);
     emit_op(run, op, Some(&id), kind, fx);
-    history(
-        run,
-        i,
-        now,
-        "its process exited mid-turn; resuming the session",
-    );
+    history(run, i, now, resuming);
+}
+
+/// `base`, then the process's startup failure when it had one (2026-10-06).
+pub(super) fn exit_reason(round: &AgentRound, base: &str) -> String {
+    match &round.startup_failure {
+        Some(why) => format!("{base}: {why}"),
+        None => base.to_string(),
+    }
 }
 
 pub(super) fn end_round(round: &mut AgentRound, now: u64) {

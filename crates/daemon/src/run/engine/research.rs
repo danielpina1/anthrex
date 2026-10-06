@@ -371,12 +371,13 @@ pub(super) fn exited(
     round.deaths = round.deaths.saturating_add(1);
     if round.deaths >= 2 {
         end_round(round, now);
-        let reason = "its process exited twice in one round".to_string();
+        let reason = super::signals::exit_reason(round, "its process exited twice in one round");
         return stall(run, i, reason, now, fx);
     }
     let Some((window_id, session_id)) = round.window_id.zip(round.session_id.clone()) else {
         end_round(round, now);
-        let reason = "its process exited before its session started".to_string();
+        let why = "its process exited before its session started";
+        let reason = super::signals::exit_reason(round, why);
         return fresh(run, i, reason, now, fx);
     };
     round.last_event = now;

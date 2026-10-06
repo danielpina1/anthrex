@@ -310,3 +310,125 @@ fn session_events_become_machine_events() {
         );
     }
 }
+
+/// 2026-10-06: a session that died at startup fails the scout at once with why, instead
+/// of being nudged into a second dead process.
+#[test]
+fn a_startup_failure_fails_the_scout_at_once_with_its_reason() {
+    let l = limits(120);
+    let reason = "claude exited at startup (code 1): no config";
+    let (machine, effects) = step(
+        started(&l),
+        ScoutEvent::StartupFailed {
+            reason: reason.into(),
+        },
+        &l,
+    );
+    let text = format!("the scout could not start: {reason}");
+    assert_eq!(effects, failed(&text, true));
+    assert_eq!(machine.failure.as_deref(), Some(text.as_str()));
+    // The exit that follows changes nothing.
+    let (_, effects) = step(machine, ScoutEvent::Exited { code: Some(1) }, &l);
+    assert!(effects.is_empty());
+}
+
+/// The driver's `StartupFailed`, and a turn failed on Claude's missing sandbox (from
+/// stderr or from a `result`), are both a startup failure, the latter with what to
+/// install.
+#[test]
+fn startup_failures_become_machine_events() {
+    use super::machine::scout_event;
+    use crate::headless::failure::SANDBOX_HINT;
+    use crate::headless::{FailureKind, SessionEvent, TurnOutcome};
+    use std::collections::HashSet;
+    let mut ended = HashSet::new();
+    let mut event = |e: &SessionEvent| {
+        scout_event(
+            e,
+            Some(1),
+            proto::Runtime::Claude,
+            &mut ended,
+            &super::machine::SCOUT_TEXTS,
+        )
+    };
+    assert_eq!(
+        event(&SessionEvent::StartupFailed { reason: "r".into() }),
+        Some(ScoutEvent::StartupFailed { reason: "r".into() })
+    );
+    let sandbox = SessionEvent::TurnEnded {
+        outcome: TurnOutcome::Failed {
+            error: "sandbox required but unavailable: socat not installed".into(),
+            kind: FailureKind::SandboxUnavailable,
+        },
+        usage: None,
+        denials: Vec::new(),
+    };
+    assert_eq!(
+        event(&sandbox),
+        Some(ScoutEvent::StartupFailed {
+            reason: format!("sandbox required but unavailable: socat not installed{SANDBOX_HINT}")
+        })
+    );
+}
+
+/// 2026-10-06 (Ubuntu 24.04 and later): commands fail inside a sandbox that cannot
+/// start. The scout runs on, but its failure says so, with the first such error.
+#[test]
+fn a_broken_sandbox_is_named_in_the_scouts_failure() {
+    let l = limits(120);
+    let note = "Claude's sandbox could not run a command: apply-seccomp: denied";
+    let machine = started(&l);
+    let (machine, effects) = step(machine, ScoutEvent::SandboxBroken { note: note.into() }, &l);
+    assert!(effects.is_empty());
+    let (machine, _) = step(
+        machine,
+        ScoutEvent::SandboxBroken {
+            note: "a later one".into(),
+        },
+        &l,
+    );
+    let (machine, _) = step(machine, ScoutEvent::TurnEnded { usage: None }, &l);
+    let (_, effects) = step(machine, ScoutEvent::TurnEnded { usage: None }, &l);
+    let reason = format!("the scout ended two turns without a report; {note}");
+    assert_eq!(effects, failed(&reason, true));
+    // The user's own stop says only that.
+    let (machine, _) = step(
+        started(&l),
+        ScoutEvent::SandboxBroken { note: note.into() },
+        &l,
+    );
+    let (_, effects) = step(machine, ScoutEvent::Stop, &l);
+    assert_eq!(effects, failed("stopped by the user", true));
+}
+
+#[test]
+fn a_tool_result_from_a_broken_sandbox_becomes_a_machine_event() {
+    use super::machine::scout_event;
+    use crate::headless::SessionEvent;
+    use std::collections::HashSet;
+    let mut ended = HashSet::new();
+    let result = |text: &str, ok: bool| SessionEvent::ToolResult {
+        id: "u1".into(),
+        text: text.into(),
+        ok,
+        parent: None,
+    };
+    let mut event = |e: &SessionEvent| {
+        scout_event(
+            e,
+            Some(1),
+            proto::Runtime::Claude,
+            &mut ended,
+            &super::machine::SCOUT_TEXTS,
+        )
+    };
+    let text = "apply-seccomp: write /proc/self/setgroups: Permission denied";
+    assert_eq!(
+        event(&result(text, false)),
+        Some(ScoutEvent::SandboxBroken {
+            note: crate::headless::failure::sandbox_command_failure(text).unwrap()
+        })
+    );
+    assert_eq!(event(&result("all fine", false)), None);
+    assert_eq!(event(&result(text, true)), None);
+}

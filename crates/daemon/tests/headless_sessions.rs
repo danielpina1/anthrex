@@ -3,6 +3,7 @@
 
 use daemon::headless::argv::InterruptMode;
 use daemon::headless::claude_stream::ClaudeStream;
+use daemon::headless::failure::{SANDBOX_HINT, startup_failure};
 use daemon::headless::session::{HeadlessHandle, STDOUT_LINE_MAX, WRITER_QUEUE_MAX};
 use daemon::headless::{FailureKind, SessionEvent, TurnOutcome};
 use proto::Runtime;
@@ -302,25 +303,102 @@ fn a_sandbox_failure_before_init_is_a_failed_turn_before_the_exit() {
     );
     events.wait_exit();
     let got: Vec<SessionEvent> = events.all().into_iter().map(|(_, e)| e).collect();
-    let tail = &got[got.len() - 3..];
+    let tail = &got[got.len() - 4..];
+    // 2026-10-06: the failure says what exited, and what to install.
+    let reason = startup_failure(Runtime::Claude, Some(1), None, &[text.into()]);
+    assert!(reason.ends_with(SANDBOX_HINT), "{reason}");
     assert_eq!(
         tail,
         [
             SessionEvent::StderrLine { line: text.into() },
             SessionEvent::TurnEnded {
                 outcome: TurnOutcome::Failed {
-                    error: text.into(),
+                    error: reason.clone(),
                     kind: FailureKind::SandboxUnavailable,
                 },
                 usage: None,
                 denials: Vec::new(),
             },
+            SessionEvent::StartupFailed { reason },
             SessionEvent::ProcessExited {
                 code: Some(1),
                 signal: None,
             },
         ]
     );
+}
+
+/// 2026-10-06: a process that dies before its first turn says anything is explained by
+/// its last stderr lines (at most three), in `StartupFailed` just before its exit.
+#[test]
+fn a_process_that_dies_before_saying_anything_reports_its_last_stderr_lines() {
+    let events = Events::default();
+    sh(
+        "for n in 1 2 3 4; do echo \"line $n\" >&2; done; exit 3",
+        Runtime::Codex,
+        &events,
+    );
+    events.wait_exit();
+    let got: Vec<SessionEvent> = events.all().into_iter().map(|(_, e)| e).collect();
+    assert_eq!(
+        got[got.len() - 2..],
+        [
+            SessionEvent::StartupFailed {
+                reason: "codex exited at startup (code 3): line 2 | line 3 | line 4".into()
+            },
+            SessionEvent::ProcessExited {
+                code: Some(3),
+                signal: None,
+            },
+        ]
+    );
+}
+
+/// A process whose turn said something did start: its stderr at a failed exit is only
+/// stderr. So is a clean exit's, and a silent failure has nothing to add.
+#[test]
+fn a_startup_failure_needs_silence_on_stdout_a_failed_exit_and_stderr() {
+    let text = r#"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"text","text":"hi"}]}}"#;
+    for script in [
+        format!("echo '{text}'; echo 'boom' >&2; exit 1"),
+        "echo 'note' >&2; exit 0".to_string(),
+        "exit 1".to_string(),
+    ] {
+        let events = Events::default();
+        sh(&script, Runtime::Claude, &events);
+        events.wait_exit();
+        assert!(
+            !events
+                .all()
+                .iter()
+                .any(|(_, e)| matches!(e, SessionEvent::StartupFailed { .. })),
+            "{script}: {:?}",
+            events.all()
+        );
+    }
+}
+
+/// When Claude also says the sandbox failure in a `result` on stdout, the driver adds no
+/// second failed turn: two would read as two turns without a report (2026-10-06).
+#[test]
+fn a_sandbox_failure_already_in_a_result_is_not_reported_twice() {
+    let text = "Error: sandbox required but unavailable: socat not installed";
+    let result = serde_json::json!({"type": "result", "subtype": "error_during_execution",
+        "is_error": true, "errors": [text]})
+    .to_string();
+    let events = Events::default();
+    sh(
+        &format!("echo '{text}' >&2; echo '{result}'; exit 1"),
+        Runtime::Claude,
+        &events,
+    );
+    events.wait_exit();
+    let failed = events
+        .all()
+        .into_iter()
+        .filter(|(_, e)| matches!(e, SessionEvent::TurnEnded { .. }))
+        .count();
+    assert_eq!(failed, 1, "{:?}", events.all());
 }
 
 /// The same text after `Init` is an ordinary stderr line: the session did start.

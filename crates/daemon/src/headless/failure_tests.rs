@@ -138,3 +138,61 @@ fn claude_classifies_a_client_error_by_status_or_type() {
         FailureKind::Other
     );
 }
+
+/// 2026-10-06, v0.1.0 on Ubuntu 26.04: Claude refused to start without bubblewrap and
+/// socat, and the user saw only "the scout ended two turns without a report".
+const NO_BWRAP: &str = "Error: sandbox required but unavailable: sandbox is enabled but dependencies are missing: bubblewrap (bwrap) not installed, socat not installed. sandbox.failIfUnavailable is set — refusing to start without a working sandbox.";
+
+#[test]
+fn a_startup_failure_names_the_runtime_the_exit_and_the_last_stderr_lines() {
+    let lines = ["loading".to_string(), "Error: no config".to_string()];
+    assert_eq!(
+        startup_failure(proto::Runtime::Codex, Some(2), None, &lines),
+        "codex exited at startup (code 2): loading | no config"
+    );
+    assert_eq!(
+        startup_failure(proto::Runtime::Claude, None, Some(9), &[]),
+        "claude exited at startup (signal 9)"
+    );
+}
+
+#[test]
+fn a_sandbox_startup_failure_says_what_to_install() {
+    let text = startup_failure(proto::Runtime::Claude, Some(1), None, &[NO_BWRAP.into()]);
+    assert!(
+        text.starts_with(
+            "claude exited at startup (code 1): sandbox required but unavailable: sandbox is enabled but dependencies are missing: bubblewrap (bwrap) not installed, socat not installed"
+        ),
+        "{text}"
+    );
+    assert!(text.ends_with(SANDBOX_HINT), "{text}");
+    // The hint is added once, however often the text passes through.
+    assert_eq!(with_sandbox_hint(&text), text);
+    assert_eq!(with_sandbox_hint("no sandbox here"), "no sandbox here");
+}
+
+#[test]
+fn a_startup_failure_is_bounded() {
+    let long = vec!["é".repeat(5000); 3];
+    let text = startup_failure(proto::Runtime::Claude, Some(1), None, &long);
+    assert!(text.len() <= STARTUP_FAILURE_MAX, "{}", text.len());
+    assert!(text.ends_with('…'), "{text}");
+}
+
+/// 2026-10-06, Ubuntu 26.04 with bubblewrap and socat installed: AppArmor's
+/// `bwrap-userns-restrict` confines bwrap, so every sandboxed command fails like this.
+const NESTED_USERNS: &str = "apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted; caller must provide CAP_SYS_ADMIN): Permission denied";
+
+#[test]
+fn a_command_the_sandbox_could_not_start_is_named_with_the_docs() {
+    let output = format!("bash: line 1\n{NESTED_USERNS}\n");
+    let note = sandbox_command_failure(&output).expect("a sandbox failure");
+    assert_eq!(
+        note,
+        format!("Claude's sandbox could not run a command: {NESTED_USERNS}{USERNS_HINT}")
+    );
+    assert!(USERNS_HINT.contains("https://code.claude.com/docs/en/sandboxing"));
+    assert!(sandbox_command_failure("cargo: command not found").is_none());
+    let long = format!("apply-seccomp: {}", "x".repeat(5000));
+    assert!(sandbox_command_failure(&long).unwrap().len() <= STARTUP_FAILURE_MAX);
+}

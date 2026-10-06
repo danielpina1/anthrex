@@ -117,6 +117,9 @@ impl Runner {
             Step::ReadMessage { .. } | Step::EndTurn | Step::FailTurn(_) | Step::Exit(_) => {
                 unreachable!("turn steps are handled by the loop")
             }
+            Step::StartupFail { .. } => {
+                anyhow::bail!("startup_fail must be the script's first step")
+            }
         }
         Ok(Outcome::Done)
     }

@@ -126,7 +126,7 @@ pub enum SessionArg {
 }
 
 /// One thing a headless session said, parsed from one line of its stdout (decision 27),
-/// or reported by the session driver (`StderrLine`, `ProcessExited`).
+/// or reported by the session driver (`StderrLine`, `StartupFailed`, `ProcessExited`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SessionEvent {
     Init {
@@ -200,6 +200,12 @@ pub enum SessionEvent {
     },
     StderrLine {
         line: String,
+    },
+    /// From the driver, just before `ProcessExited`: the process failed (a non-zero
+    /// code, or a signal) before its turn said anything, and its last stderr lines say
+    /// why ([`failure::startup_failure`]; 2026-10-06, Claude without its sandbox).
+    StartupFailed {
+        reason: String,
     },
     /// From the driver, before any other event of the process `pid` (M8a.17, the
     /// ordering the engine relies on: see `run::engine::AgentSignal`).

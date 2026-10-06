@@ -19,7 +19,8 @@
 //! event carries the pid of the process that produced it; `ProcessStarted { pid }` is
 //! the first event of each process; `ProcessExited` is its last, after every line its
 //! stdout and stderr delivered, or after [`OUTPUT_GRACE`] when a process that escaped
-//! the group still holds a pipe open (lines after that are dropped).
+//! the group still holds a pipe open (lines after that are dropped). A process that
+//! failed before its turn said anything has `StartupFailed` just before it.
 
 mod pipes;
 
@@ -56,9 +57,12 @@ pub const STDERR_LINE_MAX: usize = 4096;
 /// killed, the same rule and value as the engine's own commands (`run::exec`).
 pub use crate::run::exec::OUTPUT_GRACE;
 
-/// M8a.1 item 4b: Claude's text, on stderr before `system/init`, when
-/// `failIfUnavailable` stops it starting without its sandbox.
-const SANDBOX_UNAVAILABLE: &str = "sandbox required but unavailable";
+// M8a.1 item 4b's text, on stderr before `system/init`.
+use super::failure::SANDBOX_UNAVAILABLE;
+/// Stderr lines a process logs at `WARN` (2026-10-06); later ones go to `DEBUG`.
+pub const STDERR_WARN_LINES: usize = 20;
+/// A stderr line is cut to this many bytes in the log.
+const STDERR_LOG_MAX: usize = 500;
 /// Bytes of a cut stdout line kept for its `Unknown` event: enough for
 /// [`UNKNOWN_LINE_CHARS`] characters of any width.
 const CUT_KEEP_BYTES: usize = UNKNOWN_LINE_CHARS * 4;

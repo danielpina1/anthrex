@@ -3,12 +3,14 @@
 //! parses and delivers every event of one process in order.
 
 use super::{
-    CUT_KEEP_BYTES, OUTPUT_GRACE, Process, SANDBOX_UNAVAILABLE, STDERR_LINE_MAX, STDOUT_LINE_MAX,
-    signal_locked,
+    CUT_KEEP_BYTES, OUTPUT_GRACE, Process, SANDBOX_UNAVAILABLE, STDERR_LINE_MAX, STDERR_LOG_MAX,
+    STDERR_WARN_LINES, STDOUT_LINE_MAX, signal_locked,
 };
 use crate::headless::claude_stream::ClaudeStream;
+use crate::headless::failure::{STARTUP_STDERR_LINES, startup_failure};
 use crate::headless::{FailureKind, SessionEvent, TurnOutcome, codex_stream};
 use proto::Runtime;
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::process::ExitStatusExt;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -172,7 +174,8 @@ pub(super) fn wait_leader(process: &Process, tx: Sender<Msg>) {
 
 /// Delivers a process's events in order: `ProcessStarted`, every stdout and stderr line
 /// until the exit (and for at most [`OUTPUT_GRACE`] after it), then the sandbox failure
-/// when there was one, then `ProcessExited`.
+/// when there was one and stdout had not said it, then `StartupFailed` when the process
+/// failed before its turn said anything, then `ProcessExited`.
 pub(super) fn dispatch(
     pid: u32,
     runtime: Runtime,
@@ -183,6 +186,11 @@ pub(super) fn dispatch(
     let mut claude = ClaudeStream::default();
     let mut saw_init = false;
     let mut sandbox: Option<String> = None;
+    // Whether stdout already ended a turn on the sandbox failure, or said anything.
+    let mut sandbox_said = false;
+    let mut spoke = false;
+    let mut stderr_tail: VecDeque<String> = VecDeque::new();
+    let mut stderr_lines = 0usize;
     let mut open_pipes = 2;
     let mut exit: Option<(Option<i32>, Option<i32>)> = None;
     let mut grace_until: Option<Instant> = None;
@@ -212,6 +220,17 @@ pub(super) fn dispatch(
                 };
                 for event in events {
                     saw_init |= matches!(event, SessionEvent::Init { .. });
+                    sandbox_said |= matches!(
+                        event,
+                        SessionEvent::TurnEnded {
+                            outcome: TurnOutcome::Failed {
+                                kind: FailureKind::SandboxUnavailable,
+                                ..
+                            },
+                            ..
+                        }
+                    );
+                    spoke |= said_something(&event);
                     if let SessionEvent::Diagnostic { text } = &event {
                         tracing::warn!(pid, text = %text, "a headless session reported an error");
                     }
@@ -223,6 +242,11 @@ pub(super) fn dispatch(
                 if !saw_init && sandbox.is_none() && line.contains(SANDBOX_UNAVAILABLE) {
                     sandbox = Some(line.trim().to_string());
                 }
+                log_stderr(pid, &line, &mut stderr_lines);
+                if stderr_tail.len() == STARTUP_STDERR_LINES {
+                    stderr_tail.pop_front();
+                }
+                stderr_tail.push_back(line.clone());
                 on_event(pid, SessionEvent::StderrLine { line });
             }
             Msg::StdoutDone | Msg::StderrDone => open_pipes -= 1,
@@ -235,7 +259,15 @@ pub(super) fn dispatch(
             break;
         }
     }
-    if let Some(error) = sandbox.filter(|_| !saw_init) {
+    let (code, signal) = exit.unwrap_or((None, None));
+    let tail: Vec<String> = stderr_tail.into_iter().collect();
+    let failed = signal.is_some() || code.is_some_and(|c| c != 0);
+    let startup = (failed && !spoke && !tail.is_empty())
+        .then(|| startup_failure(runtime, code, signal, &tail));
+    if sandbox.is_some() && !saw_init && !sandbox_said {
+        // The startup text names the exit and what to install; Claude's own line is the
+        // fallback when the process somehow exited cleanly.
+        let error = startup.clone().or(sandbox).unwrap_or_default();
         on_event(
             pid,
             SessionEvent::TurnEnded {
@@ -248,6 +280,43 @@ pub(super) fn dispatch(
             },
         );
     }
-    let (code, signal) = exit.unwrap_or((None, None));
+    if let Some(reason) = startup {
+        tracing::warn!(pid, %reason, "a headless session failed at startup");
+        on_event(pid, SessionEvent::StartupFailed { reason });
+    }
     on_event(pid, SessionEvent::ProcessExited { code, signal });
+}
+
+/// Whether `event` is the turn saying something: once it has, a failed exit is the
+/// session's death, not a failure to start.
+fn said_something(event: &SessionEvent) -> bool {
+    matches!(
+        event,
+        SessionEvent::AssistantText { .. }
+            | SessionEvent::ToolUse { .. }
+            | SessionEvent::ToolResult { .. }
+            | SessionEvent::StructuredOutput { .. }
+            | SessionEvent::TurnEnded {
+                outcome: TurnOutcome::Completed,
+                ..
+            }
+    )
+}
+
+/// A session's stderr line in the daemon log (2026-10-06): its first
+/// [`STDERR_WARN_LINES`] at `WARN`, cut to [`STDERR_LOG_MAX`] bytes, the rest at `DEBUG`.
+fn log_stderr(pid: u32, line: &str, logged: &mut usize) {
+    let shown = proto::conversation::truncate_to_char_boundary(line.trim(), STDERR_LOG_MAX);
+    *logged = logged.saturating_add(1);
+    if *logged <= STDERR_WARN_LINES {
+        tracing::warn!(pid, line = %shown, "headless session stderr");
+        if *logged == STDERR_WARN_LINES {
+            tracing::warn!(
+                pid,
+                "further stderr lines of this session are logged at debug"
+            );
+        }
+    } else {
+        tracing::debug!(pid, line = %shown, "headless session stderr");
+    }
 }

@@ -181,6 +181,10 @@ pub struct AgentRound {
     /// failed turn blocked the task), so rung 2 and `run retry` skip its route.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub environment_failed: bool,
+    /// Why the current process died before its turn said anything (2026-10-06), for
+    /// the reason its exit records. Cleared when the next process starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_failure: Option<String>,
 }
 
 impl AgentRound {
