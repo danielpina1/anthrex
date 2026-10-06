@@ -284,6 +284,20 @@ pub(super) fn dispatch(
         tracing::warn!(pid, %reason, "a headless session failed at startup");
         on_event(pid, SessionEvent::StartupFailed { reason });
     }
+    // 2026-10-06: a session whose process died silently on macOS CI left no trace of how
+    // it ended. A failed exit, or one the waiter could not observe (`waitid` failed, so
+    // neither code nor signal is known), is logged with what is known.
+    if failed || exit.is_none_or(|(code, signal)| code.is_none() && signal.is_none()) {
+        tracing::warn!(
+            pid,
+            ?code,
+            ?signal,
+            spoke,
+            "a headless session process exited"
+        );
+    } else {
+        tracing::debug!(pid, ?code, "a headless session process exited");
+    }
     on_event(pid, SessionEvent::ProcessExited { code, signal });
 }
 
