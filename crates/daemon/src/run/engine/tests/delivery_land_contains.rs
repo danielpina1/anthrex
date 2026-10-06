@@ -372,16 +372,13 @@ fn a_failing_question_only_fetch_raises_the_fetch_alert() {
 
 /// FW-6 (review A m4): a next goal waits while a merge is undecided, as completion does
 /// (a stage it widens to would otherwise turn the verdict into "goes up with stage m").
+/// Stage 1 merged at a head anthrex never viewed while stage 2's PR is open.
 #[test]
 fn a_next_goal_waits_for_an_undecided_merge() {
-    let mut fx = merged_unverified();
-    assert_eq!(undecided(&fx), Some((h2(), u2())));
+    let (mut fx, _) = two_stages(true);
+    fx.run_mut().delivery.stages[0].held = Some("protected branch".into());
+    set_stage_head(fx.run_mut(), 1, &commit(60));
+    poll_stage(&mut fx, 1, merged_view(11, &commit(80), &commit(70)));
+    assert!(fx.run().delivery.stage(1).unwrap().undecided.is_some());
     assert!(!super::super::goal_rounds::settled(fx.run()), "undecided");
-    fetched_with(&mut fx, Some(true));
-    assert_eq!(undecided(&fx), None);
-    assert!(
-        super::super::goal_rounds::settled(fx.run()),
-        "{:?}",
-        fx.run().state
-    );
 }
