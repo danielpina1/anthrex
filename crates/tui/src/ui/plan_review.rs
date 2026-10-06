@@ -120,7 +120,10 @@ pub(crate) fn frame_title(
     let name = match run {
         // Folded before it is cut, so the cut measures what is drawn (`…` is three
         // columns in ASCII).
-        Some(run) => kit::run_name_in(&theme::fold(&run.goal, p.ascii), &run.run_id, room, p),
+        Some(run) => {
+            let label = theme::fold(crate::tree::run_label(run), p.ascii);
+            kit::run_name_in(&label, &run.run_id, room, p)
+        }
         None => crate::safe_text::one_line(&review.run_id),
     };
     (format!("{what}{name}{round}"), right)
