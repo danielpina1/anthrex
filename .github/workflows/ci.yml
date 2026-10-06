@@ -12,7 +12,9 @@ jobs:
   ci:
     name: ci (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # macOS runs the suite and the smoke in about 45 to 50 minutes since 9.6; 90 leaves
+    # room without hiding a real hang for long.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
