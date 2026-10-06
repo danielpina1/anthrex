@@ -287,7 +287,7 @@ fn call(
                 into,
                 adopt,
                 parents_of,
-                contains,
+                contains: contains.map(|c| *c),
                 deadline,
             })
             .map(HostResult::Fetched),

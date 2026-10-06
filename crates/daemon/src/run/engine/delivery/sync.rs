@@ -174,7 +174,7 @@ pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         into: base_ref(run),
         adopt: None,
         parents_of,
-        contains,
+        contains: contains.map(Box::new),
     };
     emit(run, op, fx);
 }

@@ -127,7 +127,7 @@ fn an_unverified_merge_holds_its_verdict_and_asks_the_base_fetch() {
             into: base_ref(),
             adopt: None,
             parents_of: Some(commit(90)),
-            contains: Some(question()),
+            contains: Some(Box::new(question())),
         }
     );
 }
@@ -194,7 +194,7 @@ fn a_failed_check_is_asked_again_after_the_wait() {
     fx.send(retry, EventKind::Tick);
     let (_, op) = base_fetch(&fx);
     assert!(
-        matches!(&op, HostOp::Fetch { contains: Some(c), .. } if *c == question()),
+        matches!(&op, HostOp::Fetch { contains: Some(c), .. } if **c == question()),
         "{op:?}"
     );
 }
@@ -283,7 +283,7 @@ fn a_restart_while_undecided_asks_again() {
     assert_eq!(undecided(&fx), Some((h2(), u2())));
     let (_, op) = base_fetch(&fx);
     assert!(
-        matches!(&op, HostOp::Fetch { contains: Some(c), .. } if *c == question()),
+        matches!(&op, HostOp::Fetch { contains: Some(c), .. } if **c == question()),
         "{op:?}"
     );
     fetched_with(&mut fx, Some(true));

@@ -29,7 +29,8 @@ pub enum HostOp {
         parents_of: Option<String>,
         /// Milestone 9.7 decision 5: the base fetch's question (`FetchReq.contains`).
         #[serde(default)]
-        contains: Option<Contains>,
+        /// Boxed (the final fix wave): it keeps `OpKind` small; the JSON is the same.
+        contains: Option<Box<Contains>>,
     },
     /// Decision 20; `body` is [`super::body::pr_body`]'s text.
     OpenPr {

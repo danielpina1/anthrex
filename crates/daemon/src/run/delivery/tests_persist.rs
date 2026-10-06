@@ -412,7 +412,7 @@ fn an_undecided_delivery_round_trips_and_older_forms_load() {
             contains,
         }))
     };
-    let op = asked(Some(question));
+    let op = asked(Some(Box::new(question)));
     let text = serde_json::to_string(&op).unwrap();
     assert_eq!(serde_json::from_str::<HostOp>(&text).unwrap(), op);
     let result = answered(Some(false));

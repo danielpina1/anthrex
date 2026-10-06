@@ -242,7 +242,7 @@ pub(super) fn host_done(
                 ..
             },
             HostResult::Fetched(outcome),
-        ) => sync::fetched(run, parents_of, contains, outcome, now),
+        ) => sync::fetched(run, parents_of, contains.map(|c| *c), outcome, now),
         (HostOp::Retarget { stage, base, .. }, HostResult::Retargeted) => {
             land::retargeted(run, stage, base, now)
         }
@@ -297,7 +297,7 @@ fn failed(run: &mut Run, op: &HostOp, error: HostError, now: u64) {
             stage: None,
             contains,
             ..
-        } => sync::fetch_failed(run, contains.as_ref(), now, retry_secs(run)),
+        } => sync::fetch_failed(run, contains.as_deref(), now, retry_secs(run)),
         HostOp::Reply { stage, marker, .. } => {
             dropped = reply::reply_failed(run, *stage, marker, &error, now);
         }

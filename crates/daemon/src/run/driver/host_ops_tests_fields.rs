@@ -465,7 +465,7 @@ fn a_fetch_with_contains_gets_the_longer_bound() {
         pr: Some(7),
     };
     assert_eq!(
-        bound(&fetch(Some(asked))),
+        bound(&fetch(Some(Box::new(asked)))),
         MARGIN + PUSH_TIMEOUT * 3 + HOST_READ_TIMEOUT * 8
     );
     assert_eq!(
