@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::{BLOCK_TEXT_TRIMMED, DIGEST_MAX_BYTES, LISTS_TRIMMED, NOTES_TRIMMED};
 use crate::run::delivery::digest as delivery;
 use crate::run::model::Run;
-use crate::run::orch::json::{cut, label, shrink_strings, size};
+use crate::run::orch::json::{cut, shrink_strings, size};
 
 /// Attention lines kept once the attention cut runs.
 const ATTENTION_TRIMMED: usize = 10;
@@ -158,7 +158,7 @@ pub(super) fn trim(digest: &mut Value, run: &Run) {
 /// Milestone 9.7 decision 10 (DH §2.1, BR-1): drops `gate.holds` entries whose hold is
 /// approved, rejected or moot, oldest `decided_at` first (ties: the order in
 /// `run.orch.gate_holds`, since the digest's entries carry no time), until the digest
-/// fits; a drafting or awaiting hold is never dropped. Each drop is counted in the
+/// fits; each entry is matched to its hold by position (FW-14); a drafting or awaiting hold is never dropped. Each drop is counted in the
 /// top-level `omitted_holds`, written only when one is. True when the digest fits.
 fn drop_decided_holds(digest: &mut Value, run: &Run, fits: impl Fn(&Value) -> bool) -> bool {
     if fits(digest) {
@@ -178,22 +178,22 @@ fn drop_decided_holds(digest: &mut Value, run: &Run, fits: impl Fn(&Value) -> bo
         .map(|(i, h)| (h.decided_at.unwrap_or(0), i))
         .collect();
     decided.sort();
+    // FW-14: entry `k` of `gate.holds` is hold `shown[k]`; a drop removes both.
+    let mut shown = super::shown_holds(run, false);
     let mut dropped = 0u64;
     for (_, i) in decided {
         if fits(digest) {
             break;
         }
-        let hold = &run.orch.gate_holds[i];
         let Some(Value::Array(holds)) = digest.pointer_mut("/gate/holds") else {
             break;
         };
-        // The entry `gate` built from this hold: same id, same decided state.
-        let state = label(&hold.state);
-        if let Some(at) = holds
-            .iter()
-            .position(|h| h["id"].as_str() == Some(&hold.id) && h["state"] == state)
-        {
+        if holds.len() != shown.len() {
+            break;
+        }
+        if let Some(at) = shown.iter().position(|&s| s == i) {
             holds.remove(at);
+            shown.remove(at);
             dropped += 1;
         }
     }

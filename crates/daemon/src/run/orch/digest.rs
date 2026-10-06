@@ -81,6 +81,24 @@ pub fn note_change(run: &mut Run) -> bool {
     true
 }
 
+/// The indices in `run.orch.gate_holds` of the holds the digest's `gate.holds` shows,
+/// in its order: every hold not approved, and an approved one decided since the last
+/// read (none for the fingerprint). `digest_trim` matches its drops by these positions
+/// (FW-14: ids repeat, and `fold_all` may rewrite one).
+pub(super) fn shown_holds(run: &Run, for_fingerprint: bool) -> Vec<usize> {
+    let read_at = run.orch.digest_read_at;
+    let shown = |h: &crate::run::orch::GateHoldRecord| {
+        h.state != HoldState::Approved
+            || (!for_fingerprint
+                && h.decided_at
+                    .is_some_and(|d| read_at.is_none_or(|read| d >= read)))
+    };
+    (run.orch.gate_holds.iter().enumerate())
+        .filter(|(_, h)| shown(h))
+        .map(|(i, _)| i)
+        .collect()
+}
+
 /// The untrimmed digest. `for_fingerprint` keeps only the holds not yet approved.
 fn build(run: &Run, now: u64, for_fingerprint: bool) -> Value {
     let orch = run.orch.orchestrator.as_ref();
@@ -186,17 +204,8 @@ fn gate(run: &Run, for_fingerprint: bool) -> Value {
             None => ("none", None),
         },
     };
-    let read_at = run.orch.digest_read_at;
-    let holds: Vec<Value> = run
-        .orch
-        .gate_holds
-        .iter()
-        .filter(|h| {
-            h.state != HoldState::Approved
-                || (!for_fingerprint
-                    && h.decided_at
-                        .is_some_and(|d| read_at.is_none_or(|read| d >= read)))
-        })
+    let holds: Vec<Value> = (shown_holds(run, for_fingerprint).into_iter())
+        .map(|i| &run.orch.gate_holds[i])
         .map(|h| json!({"id": h.id, "state": label(&h.state), "tasks": h.tasks.len()}))
         .collect();
     let mut gate = json!({"state": state, "at": at, "holds": holds});

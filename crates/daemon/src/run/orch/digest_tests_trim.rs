@@ -430,3 +430,63 @@ fn a_digest_that_fits_has_no_omitted_holds() {
         serde_json::to_string(&untrimmed(&run)).unwrap()
     );
 }
+
+/// FW-14 (task 8's Minor): a dropped hold is matched by its position, never by its id:
+/// promotion holds all share the id `promotion`. The list is newest first here, so the
+/// oldest holds are the last entries, and only they go (`tasks` tells the halves apart).
+#[test]
+fn duplicate_hold_ids_drop_the_oldest_entries() {
+    const N: usize = 1_500;
+    let mut run = fixed_run();
+    run.orch.gate_holds = (0..N)
+        .map(|i| {
+            let tasks: &[&str] = if i < N / 2 { &["t1"] } else { &["t1", "t2"] };
+            hold(
+                "promotion",
+                HoldState::Rejected,
+                tasks,
+                Some(1_000_000 - i as u64),
+            )
+        })
+        .collect();
+    let before = untrimmed(&run);
+    assert!(
+        size(&before) > DIGEST_MAX_BYTES,
+        "the premise: {}",
+        size(&before)
+    );
+    let d = digest(&run, NOW);
+    assert!(size(&d) <= DIGEST_MAX_BYTES, "{}", size(&d));
+    let kept = d["gate"]["holds"].as_array().unwrap();
+    let dropped = d["omitted_holds"].as_u64().unwrap() as usize;
+    assert!(dropped > 0 && dropped < N / 2, "{dropped}");
+    assert_eq!(kept.len() + dropped, N);
+    assert!(
+        kept[..N / 2].iter().all(|h| h["tasks"] == 1),
+        "the newest half is kept whole"
+    );
+    assert!(kept[N / 2..].iter().all(|h| h["tasks"] == 2));
+}
+
+/// FW-14: holds decided in the same second go in their list order.
+#[test]
+fn equal_decided_at_drops_in_list_order() {
+    const N: usize = 1_000;
+    let mut run = fixed_run();
+    run.orch.gate_holds = (0..N)
+        .map(|i| {
+            let id = format!("epic:{i:04}-{}", "x".repeat(20));
+            hold(&id, HoldState::Moot, &["t1"], Some(50_000))
+        })
+        .collect();
+    let d = digest(&run, NOW);
+    assert!(size(&d) <= DIGEST_MAX_BYTES, "{}", size(&d));
+    let dropped = d["omitted_holds"].as_u64().unwrap() as usize;
+    let kept: Vec<&str> = (d["gate"]["holds"].as_array().unwrap().iter())
+        .map(|h| h["id"].as_str().unwrap())
+        .collect();
+    let want: Vec<String> = (dropped..N)
+        .map(|i| format!("epic:{i:04}-{}", "x".repeat(20)))
+        .collect();
+    assert_eq!(kept, want, "the first {dropped} in the list go");
+}
