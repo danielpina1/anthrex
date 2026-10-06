@@ -1957,6 +1957,9 @@ What the task reviews deferred past 9.7 (`.superpowers/sdd/M9.7-delivery-hardeni
 - **An older binary that loads a 9.7 `run.json` drops `StageDelivery.undecided` and `undecided_fails`** (the brief's "Risks and gotchas", recorded, not fixed). serde drops the unknown fields, so a merged stage awaiting its `contains` check is re-read as decided and can complete with an unjudged merge. Same class as 9.3's and 9.6's older-binary entries above; one fix (refusing, or preserving, unknown fields of a newer `run.json`) covers all three.
 - **Files near 600 lines after 9.7** (task M9.7.14's measurement at `cfac4b38`): `run/delivery/mod.rs` 594, `engine/tests/delivery_land.rs` 592, `host/tests.rs` 591, `driver/host_ops_tests.rs` 576, `engine/bisect.rs` 571 (all under `crates/daemon/src/`). The next change to each goes in a new module or test file, or splits it move-only first.
 
+- **`bisect::merged_away` has lost its direct test** (the W2 re-review). The landing is processed before the bisect check in the same scheduler pass, so `a_bisect_open_when_its_top_stage_merges_adds_no_fix` now ends through `bisect_end::spent_pass`; `merged_away` is reached only when that pass is skipped (for example `Running if held`). Fix direction: a test that holds the scheduler pass so the culprit arrives first.
+- **A CI bisect on a merged top stage runs its remaining probes** (the W2 re-review). It never adds a fix or wakes the orchestrator (`ci::gone` at its end), but it wastes probes and holds completion until it ends. Fix direction: check `ci::gone` in `bisect::pass` too.
+
 ## From milestone 9.7's final fix wave (2026-10-06)
 
 What the final fix wave (`.superpowers/sdd/M9.7-delivery-hardening/final-fix-wave.md`, FW-1 to FW-24) did not change, with the reason.

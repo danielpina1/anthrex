@@ -105,7 +105,7 @@ pub(super) fn merged_away(
 /// could be delivered. It ends with [`merged_away`]'s line, its pending probe dropped
 /// (a late result finds no bisect and is ignored), nothing marked red, nobody woken.
 /// A CI red's bisect keeps its own end: its record is dropped as stale, with its
-/// `not acted on` line, when its probe answers (milestone 9.2 decision 27 step 8).
+/// `not acted on` line, when the bisect ends (nothing checks the PR between probes, so it runs its remaining probes first) (milestone 9.2 decision 27 step 8).
 pub(super) fn spent_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let open: Vec<u16> = (run.stages.iter())
         .filter(|s| s.bisect.as_ref().is_some_and(|b| b.ci.is_none()))
