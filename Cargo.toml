@@ -46,7 +46,7 @@ regex = "1"
 proptest = "1"
 pulldown-cmark = "0.13"
 # Decision 5: pinned exactly; never loosen. `rmcp` stays out of the daemon and the TUI.
-rmcp = { version = "=3.4.0", default-features = false, features = ["server", "transport-io"] }
+rmcp = { version = "=3.5.1", default-features = false, features = ["server", "transport-io"] }
 
 [profile.release]
 lto = "thin"

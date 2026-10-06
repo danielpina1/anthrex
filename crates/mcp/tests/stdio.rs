@@ -366,3 +366,38 @@ async fn a_planner_call_carries_its_epic() {
     assert_eq!(call.epic.as_deref(), Some("mail"));
     assert_eq!(call.tool, "get_context");
 }
+
+/// Claude Code 2.1.291 speaks MCP `2026-07-28`: it opens with `server/discover`, with no
+/// `initialize`, and drops every tool from a `tools/list` result that lacks the cache
+/// hints (`ttlMs`, `cacheScope`). rmcp 3.4.0 left them out, so a scout never saw
+/// `submit_scout_report` and every detection failed with "the scout ended two turns
+/// without a report". The `_meta` below is the one that Claude Code sent.
+#[tokio::test]
+async fn a_2026_07_28_peer_gets_cache_hints_on_tools_list() {
+    let stub = StubDaemon::start((true, "unused"));
+    let mut options = opts(AgentRole::Scout, stub.socket.clone());
+    options.run_id = String::new();
+    options.task_id = None;
+    options.scout_id = Some("onboarding-1".into());
+    let mut c = Client::start(options);
+    let meta = json!({"_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "claude-code", "version": "2.1.291"},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }});
+    let discover = c.request("server/discover", meta.clone()).await;
+    assert!(
+        discover["result"]["supportedVersions"]
+            .as_array()
+            .is_some_and(|v| v.contains(&json!("2026-07-28"))),
+        "{discover}"
+    );
+    let list = c.request("tools/list", meta).await;
+    assert_eq!(
+        list["result"]["tools"][0]["name"], "submit_scout_report",
+        "{list}"
+    );
+    assert!(list["result"]["ttlMs"].is_u64(), "{list}");
+    assert!(list["result"]["cacheScope"].is_string(), "{list}");
+    assert_eq!(stub.accepted(), 0, "listing never touches the daemon");
+}
