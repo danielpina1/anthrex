@@ -198,6 +198,12 @@ pub enum AgentSignal {
     ProcessStarted {
         pid: u32,
     },
+    /// The current process died before its turn said anything, for `reason` (its last
+    /// stderr lines, `headless::failure::startup_failure`), just before its exit
+    /// (2026-10-06).
+    StartupFailed {
+        reason: String,
+    },
     /// Top-level assistant text, cut at `proto::WORKER_SUMMARY_MAX` (9.0.5 decision 5).
     Said {
         text: String,

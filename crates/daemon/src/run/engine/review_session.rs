@@ -119,12 +119,14 @@ pub(super) fn exited(
     round.deaths = round.deaths.saturating_add(1);
     if round.deaths >= 2 {
         end_round(round, now);
-        return verdictless(run, i, r, "its process exited twice in one round", now, fx);
+        let why = super::signals::exit_reason(round, "its process exited twice in one round");
+        return verdictless(run, i, r, &why, now, fx);
     }
     let Some((window_id, session_id)) = round.window_id.zip(round.session_id.clone()) else {
         end_round(round, now);
         let why = "its process exited before its session started";
-        return verdictless(run, i, r, why, now, fx);
+        let why = super::signals::exit_reason(round, why);
+        return verdictless(run, i, r, &why, now, fx);
     };
     round.last_event = now;
     let id = run.tasks[i].id().to_string();

@@ -221,6 +221,7 @@ pub fn round(session: u32, tool_calls: u32, usage: TokenUsage) -> AgentRound {
         last_text: None,
         lane: None,
         environment_failed: false,
+        startup_failure: None,
     }
 }
 

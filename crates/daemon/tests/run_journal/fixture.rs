@@ -146,6 +146,7 @@ pub fn round(
         last_text: None,
         lane: None,
         environment_failed: false,
+        startup_failure: None,
     }
 }
 

@@ -104,6 +104,9 @@ pub fn translate(
             killed_by_engine: false,
             pid,
         },
+        SessionEvent::StartupFailed { reason } => AgentSignal::StartupFailed {
+            reason: reason.clone(),
+        },
         SessionEvent::StderrLine { .. }
         | SessionEvent::Unknown { .. }
         | SessionEvent::Diagnostic { .. }

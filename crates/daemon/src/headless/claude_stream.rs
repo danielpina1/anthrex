@@ -177,9 +177,9 @@ impl ClaudeStream {
     }
 }
 
-/// M8a.1 item 4b: the start of the error Claude Code prints when `failIfUnavailable` is
-/// set and the sandbox cannot start.
-const SANDBOX_UNAVAILABLE: &str = "sandbox required but unavailable";
+// M8a.1 item 4b: the start of the error Claude Code prints when `failIfUnavailable` is
+// set and the sandbox cannot start.
+use super::failure::SANDBOX_UNAVAILABLE;
 
 /// `system` subtypes seen in M8a.1's recordings that carry nothing to act on.
 const RECOGNISED_SYSTEM: &[&str] = &[
