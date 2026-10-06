@@ -273,3 +273,38 @@ fn set_phase(fx: &mut Fixture, phase: CiPhase) {
     let rec = (stages.iter_mut()).find_map(|s| s.ci.last_mut());
     rec.expect("a record").phase = phase;
 }
+
+/// FW-17 (task 11's Minor): a `run.json` written before decision 14, whose queued
+/// `ci_summary` request still carries its `log`, loads, and that log is used as it is
+/// (the refill only fills an empty one).
+#[test]
+fn an_old_queued_request_with_its_log_still_loads_and_keeps_it() {
+    let mut fx = watched();
+    deciding(&mut fx);
+    fx.run_mut().limits.max_readers = 0;
+    poll_with(&mut fx, red_view(&commit(1), test_red(RUN_A)));
+    answer_logs(&mut fx, &marked_log());
+    let mut json = serde_json::to_value(fx.run()).expect("serializes");
+    let queue = json["decider_queue"].as_array_mut().expect("a queue");
+    assert_eq!(queue.len(), 1, "{queue:#?}");
+    let request = queue[0]
+        .pointer_mut("/request/CiSummary")
+        .expect("a queued ci_summary request");
+    assert!(
+        request.get("log").is_none(),
+        "the new format persists no log"
+    );
+    request["log"] = serde_json::json!("an old log, as written then");
+    let run: Run = serde_json::from_value(json).expect("an old run.json loads");
+    fx.state = EngineState::default();
+    fx.next(EventKind::Restore {
+        held: Vec::new(),
+        runs: vec![run],
+        replay: Vec::new(),
+    });
+    fx.run_mut().limits.max_readers = 4;
+    let effects = resume(&mut fx);
+    let emitted = emitted_requests(&effects);
+    assert_eq!(emitted.len(), 1, "{effects:#?}");
+    assert_eq!(emitted[0].log, "an old log, as written then");
+}

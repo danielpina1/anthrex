@@ -258,13 +258,23 @@ pub(super) fn log_text(rec: &CiRecord) -> String {
 /// Decision 14 (DH §3.2): an empty `log` refilled from the summarising record of
 /// `decider`. The request persists no log, so a restored or re-queued one is empty.
 pub(in crate::run::engine) fn refill_log(run: &Run, decider: u64, input: &mut CiSummaryInput) {
-    let summarising = (1..=stage_count(run))
-        .filter_map(|n| run.delivery.stage(n))
-        .flat_map(|s| s.ci.iter())
-        .find(|r| r.decider == Some(decider) && r.phase == CiPhase::Summarising);
-    if let Some(rec) = summarising.filter(|_| input.log.is_empty()) {
+    if !input.log.is_empty() {
+        return;
+    }
+    let found = summarising(run, decider).and_then(|(n, i)| record(run, n, i));
+    if let Some(rec) = found {
         input.log = log_text(rec);
     }
+}
+
+/// The record `(stage, index)` whose summary decider `decider` is (FW-17: the one lookup
+/// the refill and the answer share).
+fn summarising(run: &Run, decider: u64) -> Option<(u16, usize)> {
+    (1..=stage_count(run)).find_map(|n| {
+        let s = run.delivery.stage(n)?;
+        let mine = |r: &CiRecord| r.decider == Some(decider) && r.phase == CiPhase::Summarising;
+        Some((n, s.ci.iter().position(mine)?))
+    })
 }
 
 /// Step 2: the `ci_summary` decider, in a reader slot like every decider.
@@ -304,14 +314,7 @@ pub(crate) fn summarised(
     else {
         return;
     };
-    let found = (1..=stage_count(run)).find_map(|n| {
-        let s = run.delivery.stage(n)?;
-        let i =
-            s.ci.iter()
-                .position(|r| r.decider == Some(decider_id) && r.phase == CiPhase::Summarising)?;
-        Some((n, i))
-    });
-    let Some((n, i)) = found else {
+    let Some((n, i)) = summarising(run, decider_id) else {
         return;
     };
     let Some(rec) = record(run, n, i).cloned() else {
