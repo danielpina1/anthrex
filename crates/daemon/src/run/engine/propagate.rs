@@ -277,7 +277,8 @@ pub(super) fn done(
 
 /// `Merged`: stage `n` holds stage `k`'s head. Its head moves (and `integration` with
 /// it when it is the highest), the commit joins its line as a propagate entry (never a
-/// bisect culprit, decision 36), and it holds what stage `k` held.
+/// bisect culprit, decision 36), and it holds what stage `k` held. On a stage whose
+/// PR merged, the landing is judged late, as a task's merge is (FW-O1).
 fn landed(run: &mut Run, spec: &PropagateSpec, commit: &str, now: u64) {
     let (k, n) = (spec.from, spec.to);
     if let Some(record) = stage_mut(run, n) {
@@ -299,6 +300,8 @@ fn landed(run: &mut Run, spec: &PropagateSpec, commit: &str, now: u64) {
         sha7(commit)
     );
     log(run, now, text);
+    // FW-O1: a propagate landing on a stage whose PR merged is judged as a task merge.
+    super::delivery::land_judge::task_merged(run, n, now);
 }
 
 /// Controller ruling C-22 (2): stage `n` already holds stage `k`'s head. No commit was

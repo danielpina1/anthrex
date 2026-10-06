@@ -365,7 +365,8 @@ fn strip(value: &mut serde_json::Value, key: &str) {
 
 /// Milestone 9.7 (DH §1.2, ruling R1a): an undecided stage, its failed checks, the base
 /// fetch's question and its answer round-trip through `run.json` and the journal; a
-/// `run.json` or journal line written before them loads with none.
+/// `run.json` or journal line written before them loads with none, and a question
+/// written before FW-4 loads without its PR number.
 #[test]
 fn an_undecided_delivery_round_trips_and_older_forms_load() {
     let stage = StageDelivery {
@@ -412,9 +413,25 @@ fn an_undecided_delivery_round_trips_and_older_forms_load() {
             contains,
         }))
     };
-    let op = asked(Some(Box::new(question)));
+    let op = asked(Some(Box::new(question.clone())));
     let text = serde_json::to_string(&op).unwrap();
     assert_eq!(serde_json::from_str::<HostOp>(&text).unwrap(), op);
+    // W2-6: a question written before the final fix wave (FW-4) has no `pr`.
+    let mut old = serde_json::to_value(&op).unwrap();
+    strip(&mut old, "pr");
+    let asked_json = &old["fetch"]["contains"];
+    assert!(
+        asked_json["stage"] == 1 && asked_json.get("pr").is_none(),
+        "{old}"
+    );
+    let unnumbered = crate::host::Contains {
+        pr: None,
+        ..question
+    };
+    assert_eq!(
+        serde_json::from_value::<HostOp>(old).unwrap(),
+        asked(Some(Box::new(unnumbered)))
+    );
     let result = answered(Some(false));
     let text = serde_json::to_string(&result).unwrap();
     assert_eq!(serde_json::from_str::<OpResult>(&text).unwrap(), result);

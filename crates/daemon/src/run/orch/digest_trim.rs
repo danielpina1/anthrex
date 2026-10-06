@@ -158,8 +158,9 @@ pub(super) fn trim(digest: &mut Value, run: &Run) {
 /// Milestone 9.7 decision 10 (DH §2.1, BR-1): drops `gate.holds` entries whose hold is
 /// approved, rejected or moot, oldest `decided_at` first (ties: the order in
 /// `run.orch.gate_holds`, since the digest's entries carry no time), until the digest
-/// fits; each entry is matched to its hold by position (FW-14); a drafting or awaiting hold is never dropped. Each drop is counted in the
-/// top-level `omitted_holds`, written only when one is. True when the digest fits.
+/// fits; each entry is matched to its hold by position (FW-14); a drafting or awaiting
+/// hold is never dropped. Each drop is counted in the top-level `omitted_holds`, written
+/// only when one is. True when the digest fits.
 fn drop_decided_holds(digest: &mut Value, run: &Run, fits: impl Fn(&Value) -> bool) -> bool {
     if fits(digest) {
         return true;

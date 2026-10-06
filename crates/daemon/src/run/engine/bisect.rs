@@ -271,6 +271,7 @@ fn issue(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
 /// ending anyway (the `finish` edit, `run cancel`) ends its bisects, a round's cancel
 /// that round's stages' only.
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    ended::spent_pass(run, now, fx);
     let idle: Vec<(u16, u64)> = run
         .stages
         .iter()

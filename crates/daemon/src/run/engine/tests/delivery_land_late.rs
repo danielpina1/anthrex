@@ -83,6 +83,45 @@ fn a_bisect_open_when_its_top_stage_merges_adds_no_fix() {
     assert!(!holds_completion(fx.run(), now), "its red holds nothing");
 }
 
+/// W2-2 (the re-review's minor): a bisect still open when its top stage's PR merges
+/// ends there, whatever its culprit would be. Here the first red merge is a base
+/// sync's, which would end "without a culprit" and wake the orchestrator to plan a
+/// fix nothing could deliver: it ends with the FW-1 line instead, and nobody is woken.
+#[test]
+fn a_bisect_open_when_its_top_stage_merges_ends_without_a_wake() {
+    use crate::run::model::StageMerge;
+    let mut fx = tier3_after_open();
+    let s = &mut fx.run_mut().stages[0];
+    let at = (s.merges.iter())
+        .position(|m| matches!(m, StageMerge::Task { commit: c, .. } if *c == commit(2)))
+        .expect("t2's merge");
+    s.merges[at] = StageMerge::Propagate {
+        from: 0,
+        commit: commit(2),
+    };
+    let (op, _) = full_job(&fx);
+    fx.done(op, tier(outcome(3, &[TEST])));
+    assert!(super::super::bisect::bisecting(fx.run()));
+    merge_pr7(&mut fx);
+    super::wake_notes::clear(&mut fx);
+    probes(&mut fx, 2);
+    assert!(!super::super::bisect::bisecting(fx.run()));
+    assert!(
+        logged(&fx, "stage 1 PR merged; the culprit's fix is not added"),
+        "{:#?}",
+        fx.run().log
+    );
+    assert!(
+        super::wake_notes::notes(&fx).is_empty(),
+        "{:#?}",
+        fx.run().log
+    );
+    assert_eq!(fx.run().stages[0].full.red_at, None);
+    assert!(bisect_fixes(&fx).is_empty());
+    let now = fx.now;
+    assert!(!holds_completion(fx.run(), now));
+}
+
 /// FW-1 (3): a tier-3 red that comes back after its top stage's PR merged is ignored:
 /// no bisect, no red mark, nothing woken, and completion is not held.
 #[test]
@@ -188,4 +227,43 @@ fn a_late_review_fix_drops_its_reply_with_the_missed_line() {
     fx.tick();
     let stage = fx.run().delivery.stage(1).unwrap();
     assert!(stage.replies.is_empty(), "{:#?}", stage.replies);
+}
+
+/// FW-O1 (the re-review's race): stage 1 merged under a live stage 2; a fix lands on
+/// stage 1, promised to go up with stage 2; while its propagate runs, PR #12 merges at
+/// stage 2's old head. The propagate then lands on a merged stage: it is judged as a
+/// task merge is, so the promise that did not happen raises the not-delivered line.
+#[test]
+fn a_propagate_that_lands_on_a_merged_top_stage_says_it_is_not_delivered() {
+    use super::propagate::{merged_at, propagate};
+    let (mut fx, _) = two_stages(true);
+    let fix = ci_fix(&mut fx);
+    let mut windows = Vec::new();
+    for _ in 0..2 {
+        windows.extend(fx.launch_all());
+    }
+    let h1 = head(&fx, 1);
+    poll_stage(&mut fx, 1, merged_view(11, &h1, &commit(70)));
+    to_queue(&mut fx, &fix, window_of(&windows, &fix));
+    let fixed = commit(5);
+    merge(&mut fx, &fix, &fixed);
+    let up = format!(
+        "stage 1 (PR #11): merged at {}, without {}, so its commits go up with stage 2",
+        sha7(&h1),
+        sha7(&fixed)
+    );
+    assert!(logged(&fx, &up), "{:#?}", fx.run().log);
+    let (op, spec) = propagate(&fx);
+    assert_eq!((spec.from, spec.to), (1, 2));
+    let h2 = head(&fx, 2);
+    poll_stage(&mut fx, 2, merged_view(12, &h2, &commit(80)));
+    let landed = commit(6);
+    fx.done(op, merged_at(&landed));
+    let unlanded = format!(
+        "stage 2 PR #12 was merged at {}, without {}; that work is not delivered (anthrex run cancel gives up)",
+        sha7(&h2),
+        sha7(&landed)
+    );
+    assert!(logged(&fx, &unlanded), "{:#?}", fx.run().log);
+    assert_eq!(fx.run().delivery.alerts.get("2/unlanded"), Some(&unlanded));
 }

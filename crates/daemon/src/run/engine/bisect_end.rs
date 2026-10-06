@@ -15,14 +15,20 @@ pub(in crate::run::engine) fn rebaselined(run: &mut Run, n: u16, now: u64, fx: &
     let Some(b) = stage_mut(run, n).and_then(|s| s.bisect.take()) else {
         return;
     };
+    drop_probe(run, &b);
+    record(run, n, &b, BisectResult::None(REBASELINED), now, fx);
+    log(run, now, format!("stage {n}: bisect ended: {REBASELINED}"));
+}
+
+/// An ended bisect's pending probe is dropped: a late result finds no bisect and no
+/// pending op, and is ignored.
+fn drop_probe(run: &mut Run, b: &BisectRecord) {
     if let Some((op, _)) = b.probe {
         run.pending_ops.remove(&op);
         if run.full_op == Some(op) {
             run.full_op = None;
         }
     }
-    record(run, n, &b, BisectResult::None(REBASELINED), now, fx);
-    log(run, now, format!("stage {n}: bisect ended: {REBASELINED}"));
 }
 
 /// Ruling C-27 (3): the reason of a bisect a rebaseline ended.
@@ -92,6 +98,35 @@ pub(super) fn merged_away(
     record(run, n, b, refused, now, fx);
     log(run, now, reason);
     true
+}
+
+/// W2-2 (the final fix wave's re-review): a bisect open on a stage whose PR merged with
+/// no live stage above ends at once, whatever its culprit would be: nothing it found
+/// could be delivered. It ends with [`merged_away`]'s line, its pending probe dropped
+/// (a late result finds no bisect and is ignored), nothing marked red, nobody woken.
+/// A CI red's bisect keeps its own end: its record is dropped as stale, with its
+/// `not acted on` line, when its probe answers (milestone 9.2 decision 27 step 8).
+pub(super) fn spent_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    let open: Vec<u16> = (run.stages.iter())
+        .filter(|s| s.bisect.as_ref().is_some_and(|b| b.ci.is_none()))
+        .map(|s| s.n)
+        .collect();
+    for n in open {
+        if !super::super::delivery::land_judge::spent(run, n) {
+            continue;
+        }
+        let Some(b) = stage_mut(run, n).and_then(|s| s.bisect.take()) else {
+            continue;
+        };
+        drop_probe(run, &b);
+        if let Some(s) = stage_mut(run, n) {
+            s.full.red_at = None;
+            s.full.note = None;
+        }
+        let reason = format!("stage {n} PR merged; the culprit's fix is not added");
+        record(run, n, &b, BisectResult::None(&reason), now, fx);
+        log(run, now, reason);
+    }
 }
 
 /// Decision 57: the ended bisect's `bisect` history line, numbered in its stage.
