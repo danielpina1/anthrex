@@ -57,6 +57,7 @@ pub fn render(request: &DeciderRequest) -> String {
         DeciderRequest::CheckSummary(input) => check_summary(input),
         DeciderRequest::BlockedReason(input) => blocked_reason(input),
         DeciderRequest::CiSummary(input) => super::ci::prompt(input),
+        DeciderRequest::RunName(input) => super::run_name::prompt(input),
     };
     clamp(prompt)
 }
