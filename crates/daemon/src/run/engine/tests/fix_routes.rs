@@ -212,9 +212,20 @@ fn a_ci_culprit_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route(
     answer(&mut fx, 3);
     let fixes = ci_fixes(&fx);
     assert_eq!(fixes.len(), 1, "{fixes:?}");
+    // FW-10 (review A m1): the spec names the culprit's runtime, model, strength and
+    // effort, so the last resort (`RouteSpec::default()`, which resolves to the same
+    // runtime and model) can never pass for the fallback, whatever its effort.
+    let culprit = culprit_route();
+    let spec = proto::RouteSpec {
+        runtime: Some(culprit.runtime),
+        model: Some(culprit.model.clone()),
+        strength: Some(culprit.strength),
+        effort: Some(culprit.effort),
+    };
     assert_eq!(
-        fx.task(&fixes[0]).route,
-        culprit_route(),
+        fx.task(&fixes[0]).spec.route,
+        spec,
         "the culprit's own route"
     );
+    assert_eq!(fx.task(&fixes[0]).route, culprit, "the culprit's own route");
 }
