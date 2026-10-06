@@ -347,3 +347,30 @@ fn a_design_runs_brainstormers_and_reviewer_reach_their_runtimes() {
         vec![Runtime::Claude, Runtime::Codex]
     );
 }
+
+/// Milestone 9.7 decision 16 (DH §4.2): the forecast escalates over the installed
+/// roster only. Codex is reached today only by the escalated peer route (as in
+/// [`the_escalated_route_is_reached`]); recorded uninstalled, it is left out.
+#[test]
+fn reach_drops_an_uninstalled_runtime() {
+    let roster = vec![
+        entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
+        entry(Runtime::Codex, "gpt-5-codex", Strength::Standard),
+    ];
+    let mut run = run_of(
+        &config(roster, true),
+        "M",
+        HUB,
+        "claude",
+        "claude-sonnet-5",
+        "high",
+    );
+    let t1 = &run.tasks[0];
+    assert_eq!(
+        t1.review_route.as_ref().map(|r| r.runtime),
+        Some(Runtime::Claude)
+    );
+    assert_eq!(escalate(&run.roster, &t1.route).runtime, Runtime::Codex);
+    run.orch.installed = [("codex".to_string(), false)].into();
+    assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
+}

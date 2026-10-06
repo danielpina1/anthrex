@@ -1,7 +1,7 @@
 //! Milestone 9.1 task M9.1.15's review (ruling C-19): an open bisect fix task holds its
 //! stage's idle tier 3 and bisect; a paused or halted run issues no probe; `G` is the
-//! last green; the fix task falls back to the culprit's own route; `fix_seq` survives a
-//! restart; completion holds while a probe backs off.
+//! last green; an overlapping open task keeps the fix task on the culprit's runtime;
+//! `fix_seq` survives a restart; completion holds while a probe backs off.
 
 use proto::{PlanEdit, RunState};
 
@@ -127,10 +127,14 @@ fn the_search_starts_at_the_last_green_tier3() {
     ));
 }
 
+/// Milestone 9.7 decision 16 (BR-15): the fix task escalates as its culprit's worker
+/// would at rung 2, so rule 9's overlap skip holds it off the peer runtime up front:
+/// it goes one strength up on the culprit's runtime instead of being refused there and
+/// falling back to the culprit's own route (this test's form before 9.7).
 #[test]
-fn a_refused_escalation_falls_back_to_the_culprits_own_route() {
+fn an_overlapping_open_task_keeps_the_fix_task_on_the_culprits_runtime() {
     // t3 overlaps t2's `owns` and stays open on t2's runtime, so a fix task on the peer
-    // runtime breaks rule 9.
+    // runtime would break rule 9.
     let tasks = [
         doc_task("t1", ""),
         doc_task("t2", ""),
@@ -159,7 +163,11 @@ fn a_refused_escalation_falls_back_to_the_culprits_own_route() {
     fx.done(op, tier(outcome(3, &[TEST])));
     answer(&mut fx, 2);
     let fix = fx.task("fix1");
-    assert_eq!(fix.route, route, "the culprit's own route");
+    let mut on_own = fx.run().roster.clone();
+    on_own.retain(|e| e.runtime == route.runtime);
+    let up = escalate(&on_own, &route);
+    assert_ne!(up, route, "the culprit's runtime has a stronger entry");
+    assert_eq!(fix.route, up, "one strength up on the culprit's runtime");
     assert!(matches!(&fix.fixes, Some(FixOf::Bisect { culprit, .. }) if culprit == "t2"));
 }
 

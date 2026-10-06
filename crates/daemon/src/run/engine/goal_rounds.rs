@@ -42,14 +42,15 @@ pub(crate) fn settled(run: &Run) -> bool {
 
 /// KG §2.3's "delivering with nothing in progress": every stage has its PR (or was
 /// skipped), no task is unfinished, nothing waits to merge, propagate or absorb the
-/// base, and no stage's push is held.
+/// base, no stage's push is held, and no merge's delivery is undecided (FW-6, as
+/// `land::settled` waits).
 fn delivered_idle(run: &Run) -> bool {
     run.delivery.delivering(stage_count(run))
         && run.tasks.iter().all(|t| t.state.is_finished())
         && run.merge_queue.is_empty()
         && run.propagate_due.is_empty()
         && run.delivery.base_sync_due.is_empty()
-        && run.delivery.stages.iter().all(|s| s.held.is_none())
+        && (run.delivery.stages.iter()).all(|s| s.held.is_none() && s.undecided.is_none())
 }
 
 /// `run iterate` (`EventKind::Iterate`): decision 10 with origin `user`.

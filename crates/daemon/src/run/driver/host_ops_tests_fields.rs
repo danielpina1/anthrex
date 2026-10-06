@@ -53,6 +53,7 @@ async fn every_op_reaches_its_request() {
         into: format!("refs/anthrex/{RUN_ID}/remote/base"),
         adopt: None,
         parents_of: Some(SHA.into()),
+        contains: None,
     })
     .await;
     assert!(matches!(
@@ -439,4 +440,36 @@ fn only_the_delivery_directory_is_private() {
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
     crate::run::driver::host_ops::private_dir(&dir).unwrap();
     assert_eq!(mode(&dir), 0o700, "an existing directory is tightened");
+}
+
+/// Task M9.7.6 (decision 6): a base fetch that asks `contains` runs the stage's fetch
+/// (its branch, else its PR's ref: FW-4) and up to two `merge-base`s (FW-3) in the same
+/// op, so its bound holds two more `PUSH_TIMEOUT`s and two more reads; one that does not
+/// ask keeps today's.
+#[test]
+fn a_fetch_with_contains_gets_the_longer_bound() {
+    let fetch = |contains| HostOp::Fetch {
+        stage: None,
+        branch: "main".into(),
+        into: format!("refs/anthrex/{RUN_ID}/remote/base"),
+        adopt: None,
+        parents_of: Some(SHA.into()),
+        contains,
+    };
+    let asked = crate::host::Contains {
+        stage: 1,
+        branch: format!("anthrex/{RUN_ID}/stage-1"),
+        into: format!("refs/anthrex/{RUN_ID}/remote/stage-1"),
+        head: SHA.into(),
+        merged: SHA.into(),
+        pr: Some(7),
+    };
+    assert_eq!(
+        bound(&fetch(Some(Box::new(asked)))),
+        MARGIN + PUSH_TIMEOUT * 3 + HOST_READ_TIMEOUT * 8
+    );
+    assert_eq!(
+        bound(&fetch(None)),
+        MARGIN + PUSH_TIMEOUT + HOST_READ_TIMEOUT * 6
+    );
 }

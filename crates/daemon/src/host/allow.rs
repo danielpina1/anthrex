@@ -25,6 +25,9 @@ pub struct AllowCtx<'a> {
     pub remote: &'a str,
     pub base_branch: Option<&'a str>,
     pub repo: Option<&'a str>,
+    /// The run's PR numbers whose `refs/pull/<n>/head` a fetch may read (the final fix
+    /// wave, FW-4): set only by the `contains` check, from the asked stage's own PR.
+    pub pulls: &'a [u64],
 }
 
 /// Ruling I1: a user's `push.followTags` must not send their tags, nor
@@ -125,7 +128,7 @@ fn git_allowed(args: &[&str], ctx: &AllowCtx<'_>) -> bool {
             "--refmap=",
             r,
             spec,
-        ] => write && remote(r) && fetch_spec(spec, ctx.run_id),
+        ] => write && remote(r) && (fetch_spec(spec, ctx.run_id) || pull_spec(spec, ctx)),
         ["rev-parse", "--verify", r] => read && rev_ref(r, ctx.run_id),
         ["merge-base", "--is-ancestor", a, b] => read && is_object_id(a) && is_object_id(b),
         // Ruling R-4: a merged PR's merge commit's parents, read locally.
@@ -368,6 +371,20 @@ fn fetch_spec(spec: &str, run: Option<&str>) -> bool {
         src.strip_prefix("refs/heads/").is_some_and(branch_ok)
             && run.is_some_and(|run| private_ref_run(dst) == Some(run))
     })
+}
+
+/// FW-4: `+refs/pull/<n>/head:refs/anthrex/<run>/remote/stage-<k>`, for one of this
+/// run's PR numbers (`ctx.pulls`) only, into one of its stages' private refs only.
+fn pull_spec(spec: &str, ctx: &AllowCtx<'_>) -> bool {
+    let Some((src, dst)) = spec.strip_prefix('+').and_then(|rest| rest.split_once(':')) else {
+        return false;
+    };
+    let ours = |n: &u64| src == format!("refs/pull/{n}/head");
+    let stage = |run: &str| {
+        dst.strip_prefix(&format!("refs/anthrex/{run}/remote/stage-"))
+            .is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()))
+    };
+    ctx.pulls.iter().any(ours) && ctx.run_id.is_some_and(|run| run_ok(run) && stage(run))
 }
 
 /// `<ref>^{commit}` for this run's private fetch ref or one of its local branches.

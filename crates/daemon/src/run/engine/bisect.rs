@@ -18,7 +18,7 @@ use crate::run::contract::{
 use crate::run::env::profile_env;
 use crate::run::model::{BisectRecord, FixOf, Probe, Run, StageMerge, StageRecord};
 use crate::run::proof::proof_command;
-use crate::run::roster::escalate;
+use crate::run::route_pick::{Mover, escalate_for};
 use crate::run::tiers::{RETRY_NAMES_MAX, TestAtSpec, TierOutcome};
 use proto::{Route, RouteSpec, TaskOrigin, TestMode};
 
@@ -49,16 +49,26 @@ fn first(tests: &[String], k: usize) -> String {
     shown.join(", ")
 }
 
+/// Where a bisect's range starts (milestone 9.7 decision 13, DH §3.1): tier 3's own red
+/// after its last green, a reproduced CI red over the stage's whole line.
+pub(super) enum BisectRange {
+    SinceGreen,
+    WholeLine,
+}
+
 /// Decision 36's range: `G`, the stage's last green tier 3 when it is on the stage's
-/// line (else its floor, ruling C-28 (1), else its creation point), and the merges
-/// after it up to `head`, in order. `None` when `head` is not one of those merges.
-fn range(s: &StageRecord, head: &str) -> Option<(String, Vec<StageMerge>)> {
-    let green = s.full.green_at.as_deref().and_then(|g| {
-        s.merges
-            .iter()
-            .position(|m| commit_of(m) == g)
-            .map(|k| (g, k + 1))
-    });
+/// line and `how` is `SinceGreen` (else its floor, ruling C-28 (1), else its creation
+/// point), and the merges after it up to `head`, in order. `None` when `head` is not one
+/// of those merges.
+fn range(s: &StageRecord, head: &str, how: BisectRange) -> Option<(String, Vec<StageMerge>)> {
+    let green = (s.full.green_at.as_deref())
+        .filter(|_| matches!(how, BisectRange::SinceGreen))
+        .and_then(|g| {
+            s.merges
+                .iter()
+                .position(|m| commit_of(m) == g)
+                .map(|k| (g, k + 1))
+        });
     let floor = s.floor.as_deref().unwrap_or(s.created_from.as_str());
     let (base, from) = green.unwrap_or((floor, 0));
     let to = s.merges.iter().rposition(|m| commit_of(m) == head)?;
@@ -92,6 +102,7 @@ pub(super) fn start(
     stage: u16,
     head: &str,
     tests: Vec<String>,
+    how: BisectRange,
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Result<usize, String> {
@@ -107,7 +118,7 @@ pub(super) fn start(
     let Some(s) = run.stage(stage) else {
         return Err(format!("stage {stage} is not created"));
     };
-    let Some((base, candidates)) = range(s, head) else {
+    let Some((base, candidates)) = range(s, head, how) else {
         // Ruling C-28 (1): red at the floor itself, with no merge after it; the line
         // below the floor is not the engine's.
         if s.floor.as_deref() == Some(head) {
@@ -260,6 +271,7 @@ fn issue(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
 /// ending anyway (the `finish` edit, `run cancel`) ends its bisects, a round's cancel
 /// that round's stages' only.
 pub(super) fn pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    ended::spent_pass(run, now, fx);
     let idle: Vec<(u16, u64)> = run
         .stages
         .iter()
@@ -461,6 +473,9 @@ fn culprit(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
         }
         return record(run, n, &b, handled.result(&id), now, fx);
     }
+    if ended::merged_away(run, n, &b, &id, now, fx) {
+        return;
+    }
     let added = add_fix(run, n, &b, &id, now, fx);
     if let Some(s) = stage_mut(run, n) {
         s.bisect = None;
@@ -511,9 +526,10 @@ fn add_fix(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Result<String, String> {
-    let Some(task) = run.task(culprit).cloned() else {
+    let Some(at) = (run.tasks.iter()).position(|t| t.id() == culprit) else {
         return Err(format!("{culprit} is not a task"));
     };
+    let task = run.tasks[at].clone();
     let id = fixes::next_fix_id(run);
     let brief = bisect_fix_brief(&BisectFix {
         id: &id,
@@ -549,7 +565,7 @@ fn add_fix(
         test_mode_reason: Some(FIX_TEST_MODE_REASON.to_string()),
         sync: None,
     };
-    let up = escalate(&run.roster, &task.route);
+    let up = escalate_for(run, at, &task.route, Mover::Worker);
     match fixes::add_fix(run, spec(&up), now, fx) {
         Ok(id) => Ok(id),
         Err(_) if up != task.route => fixes::add_fix(run, spec(&task.route), now, fx),

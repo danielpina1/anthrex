@@ -22,6 +22,7 @@ pub(in crate::run::engine) fn fix_ended_pass(run: &mut Run) {
             .iter()
             .filter(|s| red_at_head(s) && lacks_green(run, s) && s.full.note.is_none())
             .filter(|s| s.bisect.is_none() && bisect::fix_open(run, s.n).is_none())
+            .filter(|s| !super::spent(run, s.n))
             .filter_map(|s| {
                 let fix = run.tasks.iter().rev().find(
                     |t| matches!(&t.fixes, Some(FixOf::Bisect { stage, .. }) if *stage == s.n),

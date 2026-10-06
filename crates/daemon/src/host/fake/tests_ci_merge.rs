@@ -316,3 +316,54 @@ fn fake_close_reopen_resolve_and_the_edit_refusals() {
     assert_eq!(rig.ctl.prs()[0].state, PrState::Closed);
     assert!(rig.ctl.forbidden().is_empty());
 }
+
+/// FW-4: GitHub writes a PR's `refs/pull/<n>/head` when it opens and moves it on each
+/// push while it is open; the user's squash merge with "delete branch" leaves it at the
+/// merged head, where anthrex's `contains` check reads it, into its private ref only.
+#[test]
+fn the_prs_own_ref_follows_its_head_and_outlives_the_deleted_branch() {
+    let rig = Rig::new();
+    let pull = |rig: &Rig| git(&rig.bare, &["rev-parse", "--verify", "refs/pull/1/head"]);
+    let one = rig.commit(&rig.base, &[("src/one.rs", Some("1\n"))], "stage 1");
+    rig.push(1, &one);
+    rig.open(1, "main", "Stage 1");
+    assert_eq!(pull(&rig), one, "written when the PR opens");
+    let two = rig.commit(&one, &[("src/two.rs", Some("2\n"))], "stage 1, again");
+    rig.push(1, &two);
+    rig.ctl.merge(1, MergeMethodArg::Squash, true);
+    assert_eq!(rig.remote(&head(1)), None, "the branch is deleted");
+    assert_eq!(pull(&rig), two, "moved with the push, kept after the merge");
+
+    git(&rig.work, &["checkout", "-q", "--detach", &one]);
+    let into = format!("refs/anthrex/{}/remote/stage-1", super::tests::RUN);
+    let req = crate::host::FetchReq {
+        repo: rig.repo(),
+        run_id: super::tests::RUN.to_string(),
+        branch: "main".to_string(),
+        into: format!("refs/anthrex/{}/remote/base", super::tests::RUN),
+        adopt: None,
+        parents_of: None,
+        contains: Some(crate::host::Contains {
+            stage: 1,
+            branch: head(1),
+            into: into.clone(),
+            head: one.clone(),
+            merged: two.clone(),
+            pr: Some(1),
+        }),
+        deadline: None,
+    };
+    let answer = rig.host.fetch(&req).unwrap();
+    assert!(
+        matches!(
+            answer,
+            crate::host::FetchOutcome::Fetched {
+                contains: Some(true),
+                ..
+            }
+        ),
+        "{answer:?}"
+    );
+    assert_eq!(git(&rig.work, &["rev-parse", &into]), two);
+    assert!(rig.ctl.forbidden().is_empty());
+}

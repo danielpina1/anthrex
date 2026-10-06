@@ -25,6 +25,7 @@ use proto::{
 
 use super::super::requests::log;
 use super::super::{Effect, wake};
+use super::land_judge::{cancel_fixes, hold, judge, merged_head};
 use super::open::remote_branch;
 use super::watch::{named, pr_mut};
 use super::{emit, host_busy, stage_mut};
@@ -81,9 +82,9 @@ fn landing(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
         // first, so the closed line goes and the merge gets its own history line.
         (PrState::Merged, Some(PrState::Closed)) => {
             reopened(run, n, &pr, now);
-            merged(run, n, &pr, now);
+            merged(run, n, &pr, now, fx);
         }
-        (PrState::Merged, _) => merged(run, n, &pr, now),
+        (PrState::Merged, _) => merged(run, n, &pr, now, fx),
         (PrState::Closed, _) => closed(run, n, &pr, now, fx),
         (PrState::Open, Some(_)) => reopened(run, n, &pr, now),
     }
@@ -95,9 +96,12 @@ fn landing(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) {
 /// anthrex pushed: GitHub accepts a push to a merged PR's branch, so a push answered
 /// after the user's merge counts for nothing. The local head was delivered when it is
 /// that head, or when a view of the open PR showed it (`PrRecord.confirmed`; a PR head
-/// only fast-forwards). Otherwise it is not delivered ([`unpushed`]), and each reply
-/// whose fix missed the merge is dropped with an attention line.
-fn merged(run: &mut Run, n: u16, pr: &PrRecord, now: u64) {
+/// only fast-forwards). Otherwise git decides whether the merge holds it ([`hold`],
+/// milestone 9.7 decision 4); when it does not, or when either head is no object id,
+/// it is not delivered ([`judge`]) and each reply whose fix missed the merge is
+/// dropped with an attention line. A top stage's
+/// unfinished fix tasks are cancelled ([`cancel_fixes`], milestone 9.7 decision 2).
+fn merged(run: &mut Run, n: u16, pr: &PrRecord, now: u64, fx: &mut Vec<Effect>) {
     let stage = stage_mut(run, n);
     stage.landed = Some(PrState::Merged);
     stage.held = None;
@@ -107,6 +111,8 @@ fn merged(run: &mut Run, n: u16, pr: &PrRecord, now: u64) {
         now,
         format!("{}: merged on the host at {commit}", named(n, pr)),
     );
+    // FW-8 (review A m6): the cancel lines follow the merge's.
+    cancel_fixes(run, n, now, fx);
     if !pr.merge_commit.as_deref().is_some_and(is_object_id) {
         // Nothing git can count the parents of (ruling R-4; fix round 1, m2): the
         // method is unknown.
@@ -116,82 +122,13 @@ fn merged(run: &mut Run, n: u16, pr: &PrRecord, now: u64) {
     }
     run.delivery.base_fetch_due = true;
     let head = run.stage_head(n).unwrap_or_default().to_string();
-    let at = match pr.watermark.head.as_str() {
-        "" => pr.pushed_head.clone(),
-        reported => reported.to_string(),
-    };
+    let at = merged_head(pr);
     let delivered = head == at || pr.confirmed.as_deref() == Some(head.as_str());
-    let missed = super::reply::landed(run, n, &at, delivered);
-    if !delivered {
-        unpushed(run, n, pr, &head, &at, now);
+    if !delivered && is_object_id(&head) && is_object_id(&at) {
+        // Milestone 9.7 decision 4: git decides (`land_judge::decided`).
+        return hold(run, n, head, at);
     }
-    if !missed.is_empty() {
-        missed_merge(run, n, pr, &at, &missed, now);
-    }
-}
-
-/// Stage `n` was merged at `at`, the host's head, which does not hold its local head
-/// `head` (a held stage, a push after the merge, a fix merged since): that work did not
-/// land. The next stage that still delivers carries it up (9.1's propagate); with none,
-/// an attention line (invented).
-fn unpushed(run: &mut Run, n: u16, pr: &PrRecord, head: &str, at: &str, now: u64) {
-    let above = (n + 1..=stage_count(run)).find(|&m| super::sync::live(run, m));
-    let line = match above {
-        Some(m) => format!(
-            "{}: merged at {}, without {}, so its commits go up with stage {m}",
-            named(n, pr),
-            sha7(at),
-            sha7(head)
-        ),
-        None => {
-            let line = format!(
-                "stage {n} PR #{} was merged at {}, without {}; that work is not delivered (anthrex run cancel gives up)",
-                pr.number,
-                sha7(at),
-                sha7(head)
-            );
-            run.delivery
-                .alerts
-                .insert(format!("{n}/unlanded"), line.clone());
-            wake::note(run, line.clone());
-            line
-        }
-    };
-    log(run, now, line);
-}
-
-/// I-1: the fix tasks whose replies were dropped because their fix missed the merge at
-/// `at`, as `(task, thread)`: one attention line for the stage (invented).
-fn missed_merge(
-    run: &mut Run,
-    n: u16,
-    pr: &PrRecord,
-    at: &str,
-    missed: &[(String, String)],
-    now: u64,
-) {
-    let mut tasks: Vec<&str> = Vec::new();
-    for (task, _) in missed {
-        if !tasks.contains(&task.as_str()) {
-            tasks.push(task);
-        }
-    }
-    let threads: Vec<&str> = missed.iter().map(|(_, t)| t.as_str()).collect();
-    let (tasks_word, threads_word, verb) = match (tasks.len(), threads.len()) {
-        (1, 1) => ("fix task", "thread", "gets"),
-        (1, _) => ("fix task", "threads", "get"),
-        (_, 1) => ("fix tasks", "thread", "gets"),
-        _ => ("fix tasks", "threads", "get"),
-    };
-    let line = format!(
-        "PR #{} was merged at {} before {tasks_word} {} reached it: the fix missed the merge, so {threads_word} {} {verb} no reply",
-        pr.number,
-        sha7(at),
-        tasks.join(", "),
-        threads.join(", ")
-    );
-    log(run, now, line.clone());
-    run.delivery.alerts.insert(format!("{n}/missed"), line);
+    judge(run, n, pr, &head, &at, delivered, now);
 }
 
 /// Ruling R-4, decision 44: the base fetch counted merge commit `oid`'s parents; two or
@@ -262,6 +199,7 @@ fn closed(run: &mut Run, n: u16, pr: &PrRecord, now: u64, fx: &mut Vec<Effect>) 
 fn reopened(run: &mut Run, n: u16, pr: &PrRecord, now: u64) {
     let stage = stage_mut(run, n);
     stage.landed = None;
+    (stage.undecided, stage.undecided_fails) = (None, 0);
     stage.history_written = false;
     stage.reopens = stage.reopens.saturating_add(1);
     run.delivery.alerts.remove(&format!("{n}/closed"));
@@ -435,7 +373,9 @@ fn delete(run: &mut Run, n: u16, fx: &mut Vec<Effect>) {
     let Some(pr) = run.delivery.pr(n) else {
         return;
     };
-    if pr.state != PrState::Merged || pr.branch_deleted {
+    // Milestone 9.7 decision 8: never while anthrex still has to read the branch.
+    let undecided = run.delivery.stage(n).is_some_and(|s| s.undecided.is_some());
+    if pr.state != PrState::Merged || pr.branch_deleted || undecided {
         return;
     }
     let branch = remote_branch(run, n);
@@ -540,7 +480,12 @@ fn append(run: &mut Run, n: u16, outcome: StageOutcome, now: u64, fx: &mut Vec<E
 /// merged stage left work undelivered.
 pub(super) fn settled(run: &Run) -> bool {
     let unlanded = run.delivery.alerts.keys().any(|k| k.ends_with("/unlanded"));
-    !run.delivery.base_fetch_due && !unlanded && (1..=stage_count(run)).all(|n| processed(run, n))
+    // Milestone 9.7 decision 8: and no merge's delivery is undecided.
+    let undecided = (run.delivery.stages.iter()).any(|s| s.undecided.is_some());
+    !run.delivery.base_fetch_due
+        && !unlanded
+        && !undecided
+        && (1..=stage_count(run)).all(|n| processed(run, n))
 }
 
 /// [`settled`]'s per stage: stage `n`'s landing, if its PR merged or closed, is

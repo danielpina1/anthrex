@@ -25,6 +25,7 @@ impl<R: Runner> GhHost<R> {
             remote: remote_name,
             base_branch: Some(&req.base_branch),
             repo: Some(&full),
+            pulls: &[],
         };
         let dry = format!(
             "{}:refs/heads/anthrex/preflight-{}",
@@ -172,6 +173,7 @@ impl<R: Runner> GhHost<R> {
             remote: remote_name,
             base_branch,
             repo: None,
+            pulls: &[],
         };
         let key = format!("remote.{remote_name}.url");
         let config = self

@@ -349,6 +349,7 @@ fn the_round_wake_survives_notes_and_is_cleared_once_delivered() {
         run_id: RUN_ID.into(),
         digest_revision: revision,
         notes_seq: seq,
+        at: fx.now,
     }));
     assert_eq!(fx.run().orch.request_wake.as_deref(), Some(wake.as_str()));
     let effects = woken(&mut fx, Some(2));

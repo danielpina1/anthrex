@@ -52,6 +52,7 @@ fn assert_refused(args: &[&str]) {
         remote: "origin",
         base_branch: Some("main"),
         repo: Some(FULL),
+        pulls: &[],
     };
     match allow::check(Program::Gh, &strings(args), &ctx) {
         Err(HostError::Forbidden(_)) => {}

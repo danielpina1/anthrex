@@ -30,7 +30,7 @@ pub(crate) const REWRITTEN: &str = "remote stage branch was rewritten by someone
 
 /// `anthrex/<run>/stage-<n>`: a stage's branch on the remote (decision 20).
 pub(super) fn remote_branch(run: &Run, n: u16) -> String {
-    format!("anthrex/{}/stage-{n}", run.id)
+    crate::host::stage_branch(&run.id, n)
 }
 
 /// Decision 19's first four conditions for stage `n`; `Err` names the first that fails,

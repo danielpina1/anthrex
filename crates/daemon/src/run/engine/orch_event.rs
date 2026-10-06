@@ -73,6 +73,9 @@ pub enum OrchEvent {
         run_id: String,
         digest_revision: u64,
         notes_seq: u64,
+        /// Milestone 9.7 decision 11: the time the read's clone was taken, which the
+        /// read is recorded at, so a hold decided after the clone is still shown.
+        at: u64,
     },
     /// Decision 13: the driver saw the orchestrator's window exit (`live: false`), or
     /// come back after an exit (`live: true`, the user's `anthrex restart`).

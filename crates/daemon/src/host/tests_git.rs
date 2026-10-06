@@ -8,12 +8,12 @@ use std::time::{Duration, Instant};
 use super::*;
 use crate::worktree::run_git;
 
-const RUN: &str = "r1a2b";
-const NO_GH: &str = "/nonexistent/anthrex-test/gh";
+pub(super) const RUN: &str = "r1a2b";
+pub(super) const NO_GH: &str = "/nonexistent/anthrex-test/gh";
 
 /// Test setup's git, through `worktree::run_git` like the code under test; identity and
 /// signing are given per command, so the user's global config cannot change a commit.
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(super) fn git(dir: &Path, args: &[&str]) -> String {
     let mut all = vec![
         "-c",
         "user.name=anthrex test",
@@ -37,21 +37,21 @@ fn git(dir: &Path, args: &[&str]) -> String {
     out.stdout.trim().to_string()
 }
 
-fn commit(dir: &Path, message: &str) -> String {
+pub(super) fn commit(dir: &Path, message: &str) -> String {
     git(dir, &["commit", "-q", "--allow-empty", "-m", message]);
     git(dir, &["rev-parse", "HEAD"])
 }
 
-struct Rig {
-    _tmp: tempfile::TempDir,
-    bare: PathBuf,
-    work: PathBuf,
-    repo: HostRepo,
-    host: GhHost<SystemRunner>,
+pub(super) struct Rig {
+    pub(super) tmp: tempfile::TempDir,
+    pub(super) bare: PathBuf,
+    pub(super) work: PathBuf,
+    pub(super) repo: HostRepo,
+    pub(super) host: GhHost<SystemRunner>,
 }
 
 impl Rig {
-    fn new() -> Rig {
+    pub(super) fn new() -> Rig {
         let tmp = tempfile::tempdir().unwrap();
         let bare = tmp.path().join("remote.git");
         let work = tmp.path().join("work");
@@ -68,7 +68,7 @@ impl Rig {
             root: work.clone(),
         };
         Rig {
-            _tmp: tmp,
+            tmp,
             bare,
             work,
             repo,
@@ -76,7 +76,7 @@ impl Rig {
         }
     }
 
-    fn push(&self, stage: u16, sha: &str) -> Result<PushOutcome, HostError> {
+    pub(super) fn push(&self, stage: u16, sha: &str) -> Result<PushOutcome, HostError> {
         self.host.push(&PushReq {
             repo: self.repo.clone(),
             run_id: RUN.to_string(),
@@ -114,7 +114,7 @@ impl Rig {
     /// Fix round 1 (I3): a fetch with every remote-tracking ref deleted first, then
     /// checked to have written none, nor a `FETCH_HEAD` (decision 13). Deleting first
     /// matters: `git push` writes the same tracking ref git's opportunistic update would.
-    fn fetch(&self, req: &FetchReq) -> Result<FetchOutcome, HostError> {
+    pub(super) fn fetch(&self, req: &FetchReq) -> Result<FetchOutcome, HostError> {
         let tracking = || {
             git(
                 &self.work,
@@ -131,7 +131,7 @@ impl Rig {
         fetched
     }
 
-    fn local(&self, branch: &str) -> String {
+    pub(super) fn local(&self, branch: &str) -> String {
         git(
             &self.work,
             &[
@@ -231,6 +231,7 @@ fn fetch_adopts_only_a_descendant() {
                 also_integration,
             }),
             parents_of: None,
+            contains: None,
             deadline: None,
         })
     };
@@ -289,6 +290,7 @@ fn fetch_adopts_only_a_descendant() {
             into: format!("refs/anthrex/{RUN}/remote/base"),
             adopt: None,
             parents_of: None,
+            contains: None,
             deadline: None,
         })
     };
@@ -300,6 +302,7 @@ fn fetch_adopts_only_a_descendant() {
     let fetched = FetchOutcome::Fetched {
         sha: a.clone(),
         parents: None,
+        contains: None,
     };
     assert_eq!(base(), Ok(fetched));
     assert_eq!(rig.local("main"), main_before);
@@ -333,6 +336,7 @@ fn a_base_fetch_counts_the_merge_commits_parents() {
             into: format!("refs/anthrex/{RUN}/remote/base"),
             adopt: None,
             parents_of: oid.map(str::to_string),
+            contains: None,
             deadline: None,
         })
     };
@@ -340,6 +344,7 @@ fn a_base_fetch_counts_the_merge_commits_parents() {
         Ok(FetchOutcome::Fetched {
             sha: squash.clone(),
             parents,
+            contains: None,
         })
     };
     assert_eq!(fetch(Some(&merge)), fetched(Some(2)));
@@ -364,6 +369,7 @@ fn the_rev_list_arm_takes_only_a_full_object_id_read_only() {
         remote: "origin",
         base_branch: Some("main"),
         repo: Some("o/r"),
+        pulls: &[],
     };
     let sha = "a560bea91b8cd58b3c0d78e5db98c7fdc8e5036b";
     let read = ["-c", "core.hooksPath=/dev/null"];
@@ -431,6 +437,7 @@ fn an_adoption_past_its_deadline_moves_nothing() {
                 also_integration: true,
             }),
             parents_of: None,
+            contains: None,
             deadline,
         })
     };
@@ -478,13 +485,15 @@ fn a_users_prune_config_prunes_nothing() {
         into: format!("refs/anthrex/{RUN}/remote/base"),
         adopt: None,
         parents_of: None,
+        contains: None,
         deadline: None,
     });
     assert_eq!(
         fetched,
         Ok(FetchOutcome::Fetched {
             sha: a.clone(),
-            parents: None
+            parents: None,
+            contains: None,
         })
     );
     assert_eq!(

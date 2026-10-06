@@ -57,6 +57,7 @@ fn ctx() -> AllowCtx<'static> {
         remote: "origin",
         base_branch: Some("main"),
         repo: Some(FULL),
+        pulls: &[],
     }
 }
 

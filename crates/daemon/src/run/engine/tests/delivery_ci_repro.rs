@@ -34,7 +34,7 @@ const SINGLE: &str = "cargo test -- --exact {test}";
 
 /// A `pr`-mode run of `ids` on the tiered profile, merged in order at `commit(1)`, …,
 /// green on tier 3 at its head, with PR #7 open on it.
-fn tiered_watched(ids: &[&str]) -> Fixture {
+pub(super) fn tiered_watched(ids: &[&str]) -> Fixture {
     let tasks: Vec<String> = ids.iter().map(|id| doc_task(id, "")).collect();
     let (mut fx, mut windows) = pr_on(&profile(), &tasks);
     fast(fx.run_mut());
@@ -47,7 +47,7 @@ fn tiered_watched(ids: &[&str]) -> Fixture {
 }
 
 /// A red on `head` summarised with `tests` and `category` by the decider.
-fn red_summarised(fx: &mut Fixture, head: &str, tests: &[&str], category: CiCategory) {
+pub(super) fn red_summarised(fx: &mut Fixture, head: &str, tests: &[&str], category: CiCategory) {
     deciding(fx);
     poll_with(fx, red_view(head, test_red(RUN_A)));
     answer_logs(fx, "--- FAIL: a::works");
@@ -60,7 +60,7 @@ fn reproduction(fx: &Fixture) -> (crate::run::model::OpId, crate::run::tiers::Te
     probe(fx)
 }
 
-fn red_probe(command: &str) -> OpResult {
+pub(super) fn red_probe(command: &str) -> OpResult {
     OpResult::TestAt {
         red: true,
         failing: vec![command.into()],
@@ -148,7 +148,7 @@ fn reproduced_with_a_culprit_adds_a_ci_fix_with_the_culprits_owns_one_rung_up() 
     fx.done(op, red_probe(&spec.commands[0]));
     // 9.1's bisect, marked as serving this CI red.
     let line = format!(
-        "stage 1: CI red at {} reproduces; bisecting 3 merges",
+        "stage 1: CI red at {} reproduces; bisecting 4 merges",
         sha7(&commit(4))
     );
     assert!(logged(&fx, &line), "{:#?}", fx.run().log);
@@ -305,25 +305,65 @@ fn reproduced_without_a_culprit_adds_a_stage_fix_with_the_strongest_route() {
     assert_stage_fix(&fx, &["docs/t1/**"], &route);
 }
 
-/// Ruling F1 (the final fix wave): a red on the head tier 3 passed on has nothing to
-/// bisect (decision 36's range after it is empty); the line says why, not that the head
-/// is off the stage's line.
+/// Decision 13 (DH §3.1, BR-12): a CI red on the head tier 3 passed on is bisected over
+/// the stage's whole line, with the bisect's own start line; ruling F1's line is gone.
 #[test]
-fn a_red_on_the_head_tier_3_passed_is_a_stage_fix_with_its_reason() {
+fn a_ci_red_on_the_head_tier_3_passed_bisects_the_whole_line() {
     let mut fx = tiered_watched(&["t1", "t2"]);
     fx.run_mut().stages[0].full.green_at = Some(commit(2));
-    let (_, strong) = routes(&fx);
-    fx.task_mut("t2").route = strong.clone();
     red_summarised(&mut fx, &commit(2), &[TEST], CiCategory::Test);
     let (op, spec) = reproduction(&fx);
     fx.done(op, red_probe(&spec.commands[0]));
     let line = format!(
-        "stage 1: CI red at {} reproduces; CI fails a test tier 3 passed on this head (outside tier 3's set or environment-dependent); a stage fix task was added",
+        "stage 1: CI red at {} reproduces; bisecting 2 merges",
         sha7(&commit(2))
     );
     assert!(logged(&fx, &line), "{:#?}", fx.run().log);
-    assert!(fx.run().stage(1).unwrap().bisect.is_none());
-    assert_stage_fix(&fx, &["docs/t1/**", "docs/t2/**"], &strong);
+    assert!(
+        !fx.run().log.iter().any(|l| l
+            .text
+            .contains("CI fails a test tier 3 passed on this head")),
+        "{:#?}",
+        fx.run().log
+    );
+    let b = fx.run().stage(1).unwrap().bisect.clone().expect("a bisect");
+    assert_eq!(b.candidates.len(), 2);
+    assert_eq!(ci_record(&fx).phase, CiPhase::Bisecting);
+}
+
+/// Decision 13 (DH §3.1): a CI red reproduced on the head is searched from the stage's
+/// floor (its creation point here), not from tier 3's last green, so a culprit below
+/// that green is found.
+#[test]
+fn a_ci_red_bisects_from_the_floor_and_names_a_culprit_below_the_last_green() {
+    let mut fx = tiered_watched(&["t1", "t2", "t3", "t4"]);
+    with_orchestrator(&mut fx);
+    fx.run_mut().stages[0].full.green_at = Some(commit(3));
+    red_summarised(&mut fx, &commit(4), &[TEST], CiCategory::Test);
+    let (op, spec) = reproduction(&fx);
+    fx.done(op, red_probe(&spec.commands[0]));
+    let line = format!(
+        "stage 1: CI red at {} reproduces; bisecting 4 merges",
+        sha7(&commit(4))
+    );
+    assert!(logged(&fx, &line), "{:#?}", fx.run().log);
+    let s = fx.run().stage(1).unwrap();
+    let base = s.created_from.clone();
+    let b = s.bisect.clone().expect("a bisect");
+    assert_eq!((b.base.as_str(), b.candidates.len()), (base.as_str(), 4));
+    let probed = super::bisect::answer(&mut fx, 2);
+    assert_eq!(probed[0], base, "the first probe is the base");
+    let fixes = ci_fixes(&fx);
+    assert_eq!(fixes.len(), 1, "{fixes:?}");
+    let fix = fx.task(&fixes[0]);
+    assert_eq!(fix.origin, TaskOrigin::Ci);
+    assert!(
+        fix.spec
+            .brief
+            .contains("\nBisect found the merge of task t2 ("),
+        "{}",
+        fix.spec.brief
+    );
 }
 
 #[test]

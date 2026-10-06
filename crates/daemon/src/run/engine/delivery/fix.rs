@@ -19,7 +19,7 @@ use crate::run::contract::sha7;
 use crate::run::delivery::quote;
 use crate::run::delivery::{CiPhase, CiRecord};
 use crate::run::model::{BisectRecord, FixOf, Run, Task};
-use crate::run::roster::escalate;
+use crate::run::route_pick::{Mover, escalate_for};
 
 /// Decision 26's reason for a CI fix task's `check` test mode.
 pub(crate) const CI_FIX_TEST_MODE_REASON: &str = "fix task: the failing checks are the proof";
@@ -295,11 +295,12 @@ pub(in crate::run::engine) fn ci_culprit(
         super::ci::drop_record(run, n, i, &why, now);
         return not_acted_on(&why);
     }
-    let Some(task) = run.task(culprit).cloned() else {
+    let Some(at) = (run.tasks.iter()).position(|t| t.id() == culprit) else {
         let why = format!("the culprit {culprit} is not a task");
         no_culprit_at(run, n, i, &why, now, fx);
         return CiCulprit::NoCulprit(why);
     };
+    let task = run.tasks[at].clone();
     let blamed = Culprit {
         id: culprit,
         title: &task.spec.title,
@@ -309,7 +310,7 @@ pub(in crate::run::engine) fn ci_culprit(
     let command = rec.command.clone().unwrap_or_default();
     let mut spec = spec(n, &rec, task.spec.owns.clone(), task.spec.epic.clone());
     spec.brief = brief(run, n, &rec, &Repro::Reproduced(command), Some(&blamed));
-    let up = escalate(&run.roster, &task.route);
+    let up = escalate_for(run, at, &task.route, Mover::Worker);
     let mut routes = vec![route_spec(&up)];
     if up != task.route {
         routes.push(route_spec(&task.route));

@@ -19,7 +19,7 @@ use proto::{Route, Runtime, Size};
 
 use super::model::{ReviewLevel, Run, Task};
 use super::roster::escalate;
-use super::route_pick::{review_route, task_list};
+use super::route_pick::{installed_roster, review_route, task_list};
 use super::validate::resolve_task_lenient;
 use super::validate_patterns::peer_route;
 
@@ -89,11 +89,13 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
 
 /// `route` and every route repeated escalation reaches from it, to the fixpoint. The
 /// routes are drawn from a finite set (the roster's entries and the starting route's
-/// model, each at three efforts), so the walk ends at a route already seen.
+/// model, each at three efforts), so the walk ends at a route already seen. Milestone
+/// 9.7 decision 16: over the installed roster only, as rung 2 and a fix task escalate.
 fn escalations(run: &Run, route: &Route) -> Vec<Route> {
+    let roster = installed_roster(&run.roster, &run.orch.installed);
     let mut chain = vec![route.clone()];
     loop {
-        let next = escalate(&run.roster, chain.last().expect("never empty"));
+        let next = escalate(&roster, chain.last().expect("never empty"));
         if chain.contains(&next) {
             return chain;
         }

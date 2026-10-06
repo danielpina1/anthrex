@@ -2,7 +2,7 @@
 //! read by the orchestrator's digest (decision 58) and by the snapshot. Pure: it reads
 //! the model only.
 
-use proto::{FullInfo, FullState, StageInfo, TaskOrigin, TaskState};
+use proto::{DeliveryMode, FullInfo, FullState, PrState, StageInfo, TaskOrigin, TaskState};
 
 use super::engine::OpKind;
 use super::model::{Run, StageLayout, StageRecord, task_branch};
@@ -77,8 +77,9 @@ fn count(n: usize) -> u32 {
 }
 
 /// Decisions 17–19 and 35–38 on stage `s` at `head`: bisecting, a tier-3 job running,
-/// green or red on the head itself, or nothing yet for it. The last job's figures
-/// stay whatever commit they were about (`commit` says which).
+/// green or red on the head itself, an open PR's last verdict (milestone 9.7 decision
+/// 12), or nothing yet for it. The last job's figures stay whatever commit they were
+/// about (`commit` says which).
 fn full(run: &Run, s: &StageRecord, head: &str) -> FullInfo {
     let running = run
         .pending_ops
@@ -94,7 +95,7 @@ fn full(run: &Run, s: &StageRecord, head: &str) -> FullInfo {
     } else if on_head(&s.full.green_at) {
         FullState::Green
     } else {
-        FullState::None
+        open_pr_verdict(run, s)
     };
     let last = s.full.last.as_ref();
     FullInfo {
@@ -113,6 +114,24 @@ fn full(run: &Run, s: &StageRecord, head: &str) -> FullInfo {
         note: s.full.note.clone(),
         // Milestone 9.5 decision 45: held after executor failures (ruling C-18).
         held: super::engine::infra_held(s),
+    }
+}
+
+/// Milestone 9.7 decision 12 (DH §2.3, BR-13, ruling T9-1): a `pr`-mode stage whose PR
+/// is open shows the latest tier-3 verdict, from a job that ran on an earlier head than
+/// the current one (this answers only where the on-head rule says nothing, so `last` is
+/// off-head here; `commit` says which head). CI carries the heads tier 3 has not run
+/// on. Local mode, and a stage before its PR opens, show nothing.
+fn open_pr_verdict(run: &Run, s: &StageRecord) -> FullState {
+    let open = run.delivery.mode == DeliveryMode::Pr
+        && run
+            .delivery
+            .pr(s.n)
+            .is_some_and(|p| p.state == PrState::Open);
+    match s.full.last.as_ref() {
+        Some(last) if open && last.ok => FullState::Green,
+        Some(_) if open => FullState::Red,
+        _ => FullState::None,
     }
 }
 

@@ -205,24 +205,21 @@ pub(crate) fn reproduced(
     if !(names && tiers::tiered(run)) {
         return fix::add_stage(run, n, i, Repro::Reproduced(command), now, fx);
     }
-    // Ruling F1 (the final fix wave): tier 3 passed on this head, so decision 36's range
-    // after it is empty and there is nothing to bisect.
-    let green = run.stage(n).and_then(|s| s.full.green_at.as_deref());
-    if green == Some(rec.head.as_str()) {
-        let text = format!(
-            "stage {n}: CI red at {} reproduces; CI fails a test tier 3 passed on this head (outside tier 3's set or environment-dependent); a stage fix task was added",
-            sha7(&rec.head)
-        );
-        log(run, now, text);
-        return fix::add_stage(run, n, i, Repro::Reproduced(command), now, fx);
-    }
     let tests: Vec<String> = rec
         .failing_tests
         .iter()
         .take(RETRY_NAMES_MAX)
         .cloned()
         .collect();
-    match bisect::start(run, n, &rec.head, tests, now, fx) {
+    match bisect::start(
+        run,
+        n,
+        &rec.head,
+        tests,
+        bisect::BisectRange::WholeLine,
+        now,
+        fx,
+    ) {
         Ok(k) => {
             if let Some(b) = run
                 .stages

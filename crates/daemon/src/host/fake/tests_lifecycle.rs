@@ -216,6 +216,7 @@ fn fake_pr_lifecycle_through_gh_host() {
         remote: "origin",
         base_branch: Some("main"),
         repo: Some(FULL),
+        pulls: &[],
     };
     for call in &calls {
         allow::check(Program::Gh, call, &ctx).unwrap();

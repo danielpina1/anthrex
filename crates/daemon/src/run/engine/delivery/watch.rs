@@ -200,13 +200,14 @@ fn adopt(run: &mut Run, n: u16, now: u64, fx: &mut Vec<Effect>) -> bool {
     let op = HostOp::Fetch {
         stage: Some(n),
         branch: branch.clone(),
-        into: format!("refs/anthrex/{}/remote/stage-{n}", run.id),
+        into: crate::host::stage_remote_ref(&run.id, n),
         adopt: Some(Adopt {
             local_ref: run.stage_branch(n),
             expected_local: head,
             also_integration: multi && n >= highest(run),
         }),
         parents_of: None,
+        contains: None,
     };
     let sent = emit(run, op, fx);
     if sent {

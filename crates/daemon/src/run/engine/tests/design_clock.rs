@@ -157,6 +157,7 @@ fn two_restarts_in_a_row_credit_each_downtime_once() {
         run_id: RUN_ID.into(),
         digest_revision: 0,
         notes_seq: seq,
+        at: fx.now,
     }));
     assert_eq!(fx.run().last_step_at, fx.now, "the run's last change");
     fx.now += 10 * 3600;

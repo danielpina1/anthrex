@@ -327,3 +327,166 @@ fn a_stages_lists_are_cut_before_the_stages_themselves() {
         assert_eq!(s["full"]["flaky"].as_array().unwrap().len(), 3);
     }
 }
+
+/// The untrimmed digest of `run`, as `digest` builds it before `trim`.
+fn untrimmed(run: &Run) -> Value {
+    let mut d = build(run, NOW, false);
+    fold_all(&mut d);
+    d
+}
+
+/// The decided states, in turn, for hold `i`.
+fn decided_state(i: usize) -> HoldState {
+    match i % 3 {
+        0 => HoldState::Approved,
+        1 => HoldState::Rejected,
+        _ => HoldState::Moot,
+    }
+}
+
+/// Milestone 9.7 decision 10 (DH §2.1): decided holds go first, oldest `decided_at`
+/// first, never an awaiting one, and each drop is counted in `omitted_holds`.
+#[test]
+fn decided_holds_go_first_oldest_first_and_are_counted() {
+    const N: usize = 600;
+    let mut run = fixed_run();
+    // Shuffled `decided_at`s (distinct), so the drop order is not the list order.
+    run.orch.gate_holds = (0..N)
+        .map(|i| {
+            let decided = 10_000 + ((i * 7919) % N) as u64;
+            let id = format!("epic:{i:04}-{}", "x".repeat(60));
+            hold(&id, decided_state(i), &["t1"], Some(decided))
+        })
+        .collect();
+    run.orch.gate_holds.insert(
+        N / 2,
+        hold("epic:waiting-a", HoldState::Awaiting, &["t2"], None),
+    );
+    run.orch
+        .gate_holds
+        .push(hold("epic:waiting-b", HoldState::Awaiting, &["t3"], None));
+    // BR-14's premise: the holds alone are over the cap, so no other step can fit it.
+    let before = untrimmed(&run);
+    assert!(
+        size(&before["gate"]["holds"]) > DIGEST_MAX_BYTES,
+        "the premise: {}",
+        size(&before["gate"]["holds"])
+    );
+
+    let d = digest(&run, NOW);
+    assert!(size(&d) <= DIGEST_MAX_BYTES, "{}", size(&d));
+    let kept: Vec<&str> = d["gate"]["holds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["id"].as_str().unwrap())
+        .collect();
+    assert!(kept.contains(&"epic:waiting-a"), "{kept:?}");
+    assert!(kept.contains(&"epic:waiting-b"), "{kept:?}");
+    let decided_at = |id: &str| {
+        run.orch
+            .gate_holds
+            .iter()
+            .find(|h| h.id == id)
+            .unwrap()
+            .decided_at
+    };
+    let kept_decided: Vec<u64> = kept.iter().filter_map(|id| decided_at(id)).collect();
+    let dropped: Vec<u64> = run
+        .orch
+        .gate_holds
+        .iter()
+        .filter(|h| !kept.contains(&h.id.as_str()))
+        .map(|h| h.decided_at.expect("only decided holds are dropped"))
+        .collect();
+    assert!(!dropped.is_empty());
+    let newest_dropped = dropped.iter().max().unwrap();
+    let oldest_kept = kept_decided.iter().min().unwrap();
+    assert!(
+        newest_dropped < oldest_kept,
+        "{newest_dropped} {oldest_kept}"
+    );
+    assert_eq!(d["omitted_holds"], dropped.len() as u64);
+    assert_eq!(kept.len() + dropped.len(), N + 2);
+    assert_eq!(d["omitted_tasks"], 0);
+    assert_eq!(shown(&d).len(), run.tasks.len());
+}
+
+/// Milestone 9.7 decision 10 and BR-1: while the digest fits, the step changes nothing
+/// and `omitted_holds` is absent.
+#[test]
+fn a_digest_that_fits_has_no_omitted_holds() {
+    let mut run = fixed_run();
+    run.orch.gate_holds.extend([
+        hold("epic:a", HoldState::Approved, &["t1"], Some(at(12, 0))),
+        hold("epic:b", HoldState::Rejected, &["t2"], Some(at(9, 0))),
+        hold("epic:d", HoldState::Moot, &[], Some(at(10, 0))),
+    ]);
+    let d = digest(&run, NOW);
+    assert!(d.get("omitted_holds").is_none(), "{d}");
+    assert_eq!(d["gate"]["holds"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        serde_json::to_string(&d).unwrap(),
+        serde_json::to_string(&untrimmed(&run)).unwrap()
+    );
+}
+
+/// FW-14 (task 8's Minor): a dropped hold is matched by its position, never by its id:
+/// promotion holds all share the id `promotion`. The list is newest first here, so the
+/// oldest holds are the last entries, and only they go (`tasks` tells the halves apart).
+#[test]
+fn duplicate_hold_ids_drop_the_oldest_entries() {
+    const N: usize = 1_500;
+    let mut run = fixed_run();
+    run.orch.gate_holds = (0..N)
+        .map(|i| {
+            let tasks: &[&str] = if i < N / 2 { &["t1"] } else { &["t1", "t2"] };
+            hold(
+                "promotion",
+                HoldState::Rejected,
+                tasks,
+                Some(1_000_000 - i as u64),
+            )
+        })
+        .collect();
+    let before = untrimmed(&run);
+    assert!(
+        size(&before) > DIGEST_MAX_BYTES,
+        "the premise: {}",
+        size(&before)
+    );
+    let d = digest(&run, NOW);
+    assert!(size(&d) <= DIGEST_MAX_BYTES, "{}", size(&d));
+    let kept = d["gate"]["holds"].as_array().unwrap();
+    let dropped = d["omitted_holds"].as_u64().unwrap() as usize;
+    assert!(dropped > 0 && dropped < N / 2, "{dropped}");
+    assert_eq!(kept.len() + dropped, N);
+    assert!(
+        kept[..N / 2].iter().all(|h| h["tasks"] == 1),
+        "the newest half is kept whole"
+    );
+    assert!(kept[N / 2..].iter().all(|h| h["tasks"] == 2));
+}
+
+/// FW-14: holds decided in the same second go in their list order.
+#[test]
+fn equal_decided_at_drops_in_list_order() {
+    const N: usize = 1_000;
+    let mut run = fixed_run();
+    run.orch.gate_holds = (0..N)
+        .map(|i| {
+            let id = format!("epic:{i:04}-{}", "x".repeat(20));
+            hold(&id, HoldState::Moot, &["t1"], Some(50_000))
+        })
+        .collect();
+    let d = digest(&run, NOW);
+    assert!(size(&d) <= DIGEST_MAX_BYTES, "{}", size(&d));
+    let dropped = d["omitted_holds"].as_u64().unwrap() as usize;
+    let kept: Vec<&str> = (d["gate"]["holds"].as_array().unwrap().iter())
+        .map(|h| h["id"].as_str().unwrap())
+        .collect();
+    let want: Vec<String> = (dropped..N)
+        .map(|i| format!("epic:{i:04}-{}", "x".repeat(20)))
+        .collect();
+    assert_eq!(kept, want, "the first {dropped} in the list go");
+}

@@ -152,12 +152,15 @@ impl FakeGithub {
     /// GitHub's own reaction to the bare repository's branches, run before every
     /// answer: an open PR's head follows its branch; when a merged PR's head branch is
     /// gone, the open PRs based on it are retargeted to its base (M9.2.1 check 5);
-    /// then an open PR whose head or base branch is gone is closed.
+    /// then an open PR whose head or base branch is gone is closed. An open PR's
+    /// `refs/pull/<n>/head` follows its head; a merged or closed one's keeps its last
+    /// (FW-4: what anthrex reads when the merged branch is gone).
     pub fn refresh(&mut self) -> Result<(), String> {
         let Some(repo) = &self.repo else {
             return Ok(());
         };
-        let heads = Bare::new(&repo.bare).heads()?;
+        let bare = Bare::new(&repo.bare);
+        let heads = bare.heads()?;
         let gone_merged: Vec<(String, String)> = self
             .prs
             .iter()
@@ -171,6 +174,12 @@ impl FakeGithub {
             match heads.get(&pr.head) {
                 Some(oid) if heads.contains_key(&pr.base) => pr.head_oid = oid.clone(),
                 _ => pr.state = PrState::Closed,
+            }
+        }
+        let pulls = bare.pulls()?;
+        for pr in self.prs.iter().filter(|p| p.state == PrState::Open) {
+            if pulls.get(&pr.number) != Some(&pr.head_oid) {
+                bare.set_pull(pr.number, &pr.head_oid)?;
             }
         }
         Ok(())
@@ -330,6 +339,29 @@ impl<'a> Bare<'a> {
                 ))
             })
             .collect())
+    }
+
+    /// Every `refs/pull/<n>/head`, by PR number, with its commit.
+    pub fn pulls(&self) -> Result<BTreeMap<u64, String>, String> {
+        let listed = self.ok(&[
+            "for-each-ref",
+            "--format=%(objectname) %(refname)",
+            "refs/pull/",
+        ])?;
+        Ok(listed
+            .lines()
+            .filter_map(|l| {
+                let (oid, name) = l.split_once(' ')?;
+                let number = name.strip_prefix("refs/pull/")?.strip_suffix("/head")?;
+                Some((number.parse().ok()?, oid.to_string()))
+            })
+            .collect())
+    }
+
+    /// GitHub's `refs/pull/<n>/head`, moved to `oid` (GitHub's own ref, not a branch).
+    pub fn set_pull(&self, number: u64, oid: &str) -> Result<(), String> {
+        let refname = format!("refs/pull/{number}/head");
+        self.ok(&["update-ref", &refname, oid]).map(|_| ())
     }
 
     pub fn branch(&self, branch: &str) -> Result<Option<String>, String> {

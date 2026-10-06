@@ -27,6 +27,7 @@ fn read_notes(fx: &mut Fixture) {
         run_id: RUN_ID.into(),
         digest_revision: 0,
         notes_seq: seq,
+        at: fx.now,
     }));
     assert!(notes(fx).is_empty(), "{:?}", notes(fx));
 }

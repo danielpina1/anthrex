@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 use proto::{Budget, RunInfo, RunState, TaskInfo, TaskState};
 use serde_json::{Value, json};
 use support::orch_script::{add, edit_plan, plan_task, read};
-use support::run_adapt::seen_task;
 use support::run_harness::{RUN_WAIT, RunHarness};
 use support::run_orch::ORCH_WAIT;
 use support::run_plans::*;
@@ -194,17 +193,16 @@ fn e2e_a_rate_limit_halves_writers_for_that_runtime() {
     assert_eq!(run.rate_limits.get("claude"), Some(&1));
 
     // Every snapshot from t1's merge until t2 was past its check had t3 queued.
-    let snapshots: Vec<(TaskInfo, TaskInfo, TaskInfo)> = {
-        let (t1s, t2s, t3s) = (
-            seen_task(&watcher, &id, "t1"),
-            seen_task(&watcher, &id, "t2"),
-            seen_task(&watcher, &id, "t3"),
-        );
-        assert!(t1s.len() == t2s.len() && t2s.len() == t3s.len());
-        (t1s.into_iter().zip(t2s).zip(t3s))
-            .map(|((a, b), c)| (a, b, c))
-            .collect()
-    };
+    // One read of the watcher: it keeps receiving snapshots after the run completes, so
+    // three separate reads (one per task) could see lists of different lengths.
+    let snapshots: Vec<(TaskInfo, TaskInfo, TaskInfo)> = (watcher.snapshots().into_iter())
+        .flat_map(|s| s.runs)
+        .filter(|r| r.run_id == id)
+        .filter_map(|r| {
+            let find = |task: &str| r.tasks.iter().find(|t| t.id == task).cloned();
+            Some((find("t1")?, find("t2")?, find("t3")?))
+        })
+        .collect();
     let window: Vec<&TaskInfo> = (snapshots.iter())
         .filter(|(t1, t2, _)| t1.state == TaskState::Merged && !past_check(t2))
         .map(|(_, _, t3)| t3)

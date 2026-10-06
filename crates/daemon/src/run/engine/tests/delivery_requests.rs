@@ -81,6 +81,7 @@ fn land(fx: &mut Fixture, n: u16, state: PrState) -> Vec<Effect> {
             HostOp::Fetch { .. } => HostResult::Fetched(crate::host::FetchOutcome::Fetched {
                 sha: BASE.into(),
                 parents: Some(2),
+                contains: None,
             }),
             _ => HostResult::Retargeted,
         };

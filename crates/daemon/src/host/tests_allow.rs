@@ -15,6 +15,7 @@ pub(super) fn ctx() -> AllowCtx<'static> {
         remote: "origin",
         base_branch: Some("main"),
         repo: Some("o/r"),
+        pulls: &[],
     }
 }
 
@@ -103,6 +104,7 @@ fn allow_list_refuses_merge_approve_and_auto_merge() {
         into: "refs/anthrex/r9999/remote/base".to_string(),
         adopt: None,
         parents_of: None,
+        contains: None,
         deadline: None,
     };
     assert!(matches!(

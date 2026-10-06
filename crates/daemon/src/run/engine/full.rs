@@ -16,6 +16,9 @@ use crate::run::contract::sha7;
 use crate::run::model::{InfraFailures, Run, StageRecord};
 use crate::run::slots::Priority;
 use crate::run::tiers::{TierOutcome, TierSpec};
+use bisect::BisectRange::SinceGreen;
+// FW-1: a merged stage with no live stage above is past tier 3 (nothing can deliver).
+use super::delivery::land_judge::spent;
 
 /// Why a tier-3 job starts (decision 17): (b) the queue is idle, (c) completion, (a)
 /// before a stage PR opens (9.2).
@@ -145,7 +148,7 @@ pub(super) fn idle_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         .stages
         .iter()
         .filter(|s| lacks_green(run, s) && !red_at_head(s) && !infra_waiting(s, now))
-        .filter(|s| !ending_at(run, s.n))
+        .filter(|s| !ending_at(run, s.n) && !spent(run, s.n))
         // Ruling C-19: an open bisect fix task's stage waits for it.
         .filter(|s| bisect::fix_open(run, s.n).is_none())
         .map(|s| s.n)
@@ -171,7 +174,7 @@ pub(super) fn completion(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
     let mut red = Vec::new();
     for n in stages {
         let Some(s) = run.stage(n) else { continue };
-        if !lacks_green(run, s) {
+        if !lacks_green(run, s) || spent(run, n) {
             continue;
         }
         // Ruling C-18: a held stage is passed over only by a run ending anyway.
@@ -216,6 +219,7 @@ pub(super) fn holds_completion(run: &Run, now: u64) -> bool {
         && (bisect::bisecting(run)
             || run.stages.iter().any(|s| {
                 lacks_green(run, s)
+                    && !spent(run, s.n)
                     && ((!ending_at(run, s.n) && red_at_head(s))
                         || (infra_waiting(s, now) && !(ending_at(run, s.n) && infra_held(s))))
             }))
@@ -405,6 +409,11 @@ fn red(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    if spent(run, n) {
+        let tests = first(failing, WAKE_TESTS);
+        let text = format!("stage {n}: tier 3 red ({tests}); its PR merged, so it is not bisected");
+        return log(run, now, text);
+    }
     let fixes = run.stage(n).map_or(0, |s| s.full.bisect_fixes);
     if fixes >= run.limits.testing.bisect_fix_max {
         log(
@@ -444,7 +453,7 @@ fn red(
         }
         return;
     } else {
-        match bisect::start(run, n, commit, failing.to_vec(), now, fx) {
+        match bisect::start(run, n, commit, failing.to_vec(), SinceGreen, now, fx) {
             Ok(m) => {
                 log(
                     run,

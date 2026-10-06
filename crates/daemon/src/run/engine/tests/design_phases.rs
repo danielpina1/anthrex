@@ -358,6 +358,7 @@ fn a_lost_window_while_revising_hands_off_with_the_note_and_x_still_works() {
         run_id: RUN_ID.into(),
         digest_revision: 0,
         notes_seq: seq,
+        at: fx.now,
     }));
     assert!(!notes(&fx).contains(&wake));
     fx.next(EventKind::Orch(OrchEvent::AdoptLost {

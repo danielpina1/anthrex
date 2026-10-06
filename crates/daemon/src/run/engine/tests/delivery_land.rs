@@ -263,7 +263,7 @@ fn closing() -> (Fixture, Vec<(String, u32)>) {
 }
 
 /// A `ci` fix task of stage 1, as task M9.2.9 adds one.
-fn ci_fix(fx: &mut Fixture) -> String {
+pub(super) fn ci_fix(fx: &mut Fixture) -> String {
     let spec = super::super::fixes::FixSpec {
         origin: TaskOrigin::Ci,
         fixes: FixOf::Ci {
@@ -429,6 +429,7 @@ fn a_held_stage_lands_only_what_it_pushed() {
     set_stage_head(fx.run_mut(), 1, &commit(80));
     land_propagates(&mut fx);
     poll_stage(&mut fx, 1, merged_view(11, &pushed, &commit(70)));
+    fetched(&mut fx, &commit(71), Some(1)); // 9.7: no `contains` answer decides (BR-4)
     let line = format!(
         "stage 1 (PR #11): merged at {}, without 80eeeee, so its commits go up with stage 2",
         &pushed[..7]
