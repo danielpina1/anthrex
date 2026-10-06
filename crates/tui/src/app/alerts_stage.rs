@@ -14,7 +14,8 @@ pub enum StageAlert {
 
 /// Milestone 9.5 decision 45: each stage's tier-3 states the user must act on — held
 /// after executor failures; red at propagation (its commit, review ruling I7); a red
-/// tier 3 on the stage's head (its latest fix task). The two reds are the
+/// tier 3 on the stage's head, or one whose commit is unknown (a `run.json` from before
+/// ruling C-18, ruling T9-2), with its latest fix task. The two reds are the
 /// orchestrator's while it lives.
 pub(super) fn stage_alerts(run: &RunInfo) -> Vec<(u16, StageAlert, String)> {
     let mut out = Vec::new();

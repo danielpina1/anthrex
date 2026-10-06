@@ -140,7 +140,7 @@ fn stage_alerts_open_their_node_and_name_their_stage() {
 /// no alert. A red job on the stage's current head, or one whose commit is unknown
 /// (ruling T9-2), still does.
 #[test]
-fn only_a_red_on_the_stages_head_raises_an_alert() {
+fn only_a_red_on_the_stages_head_or_of_an_unknown_commit_raises_an_alert() {
     let app_for = |commit: Option<&str>| {
         let mut run = at("r-pr", RunState::Running, 1);
         let mut s1 = stage(1, Some("bbbb"), 1, 1);
