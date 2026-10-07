@@ -7,6 +7,10 @@ platform, plus a `.sha256` checksum file for each archive.
 anthrex runs the `claude` and `codex` apps you already have installed; it does not
 install them for you.
 
+Codex 0.160 or later is recommended. From 0.160 anthrex sandboxes every Codex session
+through Codex permission profiles, and a Codex worker on Linux can commit. An older Codex
+still runs, with the legacy sandbox flags, but its workers cannot commit on Linux.
+
 | Platform | Target |
 |----------|--------|
 | Linux, x86_64 | `x86_64-unknown-linux-gnu` |

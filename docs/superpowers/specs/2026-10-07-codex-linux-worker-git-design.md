@@ -141,3 +141,26 @@ the manual macOS acceptance in §5 confirms it under profiles before merge.
 ## 6. Out of scope
 
 - Moving macOS workers (either runtime) to `WholeDir`.
+
+## Implementation notes
+
+Deviations from the design above, recorded by the implementation.
+
+- A Codex worker's read-only list also includes the worktree `.git` and the protected
+  agent-config paths (`.claude`, `.codex`, `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, minus
+  owned literals) that exist at launch. Legacy `workspace-write` protected `.git` and
+  `.codex` implicitly; a profile does not (ruling R3). Section 5's "5 protected paths"
+  expectation therefore holds only for paths that exist; the e2e fixture has none.
+- Under Legacy, the interactive Codex orchestrator now also receives the three
+  `CODEX_SANDBOX_PINS` after `-s read-only` (harmless for read-only).
+- Unknown or empty `codex_sandbox` values map to read-only.
+- The worker grant waits for the Codex version probe (the launch gate) before choosing
+  the dialect. The session's working directory is canonicalized once, off the lock, for
+  the read-only entries (macOS `/tmp` is `/private/tmp`), so they spell the checkout as
+  the grant's canonical entries do. The protected tails are never canonicalized (a worker
+  could swap one for a link). The plan's own `"write"` entry for the working directory
+  keeps `spec.cwd` as given: `spec.cwd` is also the session's process directory, and
+  nothing else needed it changed.
+- New tests live in `argv_sandbox_tests.rs` and `worker_grant.rs` / `worker_grant_tests.rs`
+  because `argv_tests.rs` and `ops.rs` were at the 600-line limit.
+- Manual acceptance: recorded by the controller (nexus1, macOS)

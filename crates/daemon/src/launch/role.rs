@@ -117,8 +117,9 @@ pub fn claude_role_args(role: &RoleLaunch, ctx: &LaunchContext<'_>, caps: &CliCa
 /// Decision 8's block for a Codex orchestrator, between M3's hook block and `-m`: the
 /// anthrex MCP server (`"approve"`, M9.1 ruling 3: `"auto"` asks per call), the contract
 /// and effort, the project-config exclusion when the CLI has one, then the read-only
-/// sandbox in the caps' dialect (`headless::codex_sandbox`) and `-a on-request`, which Codex takes ahead of `resume <id>` too. No project-trust flag
-/// (ruling 7): Codex may show its own trust dialog, which the user answers.
+/// sandbox in the caps' dialect (`headless::codex_sandbox`) and `-a on-request`, which
+/// Codex takes ahead of `resume <id>` too. No project-trust flag (ruling 7): Codex may
+/// show its own trust dialog, which the user answers.
 pub fn codex_role_args(role: &RoleLaunch, ctx: &LaunchContext<'_>, caps: &CliCaps) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     let mut config = |value: String| args.extend(["-c".into(), value]);

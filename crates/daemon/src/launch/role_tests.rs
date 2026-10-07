@@ -163,8 +163,9 @@ fn claude_argv_without_user_settings_only_caps() {
 }
 
 /// Decision 8, with ruling 3 (`"approve"`): the role's block after M3's hook block and
-/// before `-m`; the project-config exclusion when the caps have one; `-s read-only -a
-/// on-request` ahead of `-m` and of `resume <id>`. No trust flag (ruling 7).
+/// before `-m`; the project-config exclusion when the caps have one; the read-only
+/// sandbox (`-s read-only` plus, under Legacy, the sandbox pins) and `-a on-request`
+/// ahead of `-m` and of `resume <id>`. No trust flag (ruling 7).
 #[test]
 fn codex_orchestrator_argv_is_exact() {
     let role = role();

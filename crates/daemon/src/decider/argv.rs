@@ -148,8 +148,9 @@ pub fn claude_decider_args(
 }
 
 /// A Codex decider's argv (decision 16): read-only sandbox in the caps' dialect
-/// (`headless::codex_sandbox`; the legacy one carries the sandbox pins), no approvals, the schema file when the CLI takes one,
-/// then `--` and the prompt as the last argument.
+/// (`headless::codex_sandbox`; the legacy one carries the sandbox pins), no approvals,
+/// the schema file when the CLI takes one, then `--` and the prompt as the last
+/// argument.
 pub fn codex_decider_args(
     ctx: &DeciderContext,
     dcaps: &DeciderCaps,
