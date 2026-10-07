@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 use super::LaunchContext;
 use crate::headless::McpTarget;
 use crate::headless::argv::{CliCaps, effort, mcp_args, toml_array};
+use crate::headless::codex_sandbox::{Mode, SandboxPlan};
 use crate::launch::codex::toml_string;
 use serde_json::json;
+use std::path::PathBuf;
 
 /// The orchestrator's whole role: its run reference, its `anthrex mcp` target, its
 /// contract, its effort, its Claude tool lists, and the environment it adds and removes
@@ -114,9 +116,10 @@ pub fn claude_role_args(role: &RoleLaunch, ctx: &LaunchContext<'_>, caps: &CliCa
 
 /// Decision 8's block for a Codex orchestrator, between M3's hook block and `-m`: the
 /// anthrex MCP server (`"approve"`, M9.1 ruling 3: `"auto"` asks per call), the contract
-/// and effort, the project-config exclusion when the CLI has one, then `-s read-only -a
-/// on-request`, which Codex takes ahead of `resume <id>` too. No project-trust flag
-/// (ruling 7): Codex may show its own trust dialog, which the user answers.
+/// and effort, the project-config exclusion when the CLI has one, then the read-only
+/// sandbox in the caps' dialect (`headless::codex_sandbox`) and `-a on-request`, which
+/// Codex takes ahead of `resume <id>` too. No project-trust flag (ruling 7): Codex may
+/// show its own trust dialog, which the user answers.
 pub fn codex_role_args(role: &RoleLaunch, ctx: &LaunchContext<'_>, caps: &CliCaps) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     let mut config = |value: String| args.extend(["-c".into(), value]);
@@ -141,7 +144,13 @@ pub fn codex_role_args(role: &RoleLaunch, ctx: &LaunchContext<'_>, caps: &CliCap
     if let Some(flags) = caps.codex_user_config_only {
         args.extend(flags.iter().map(|f| f.to_string()));
     }
-    args.extend(["-s", "read-only", "-a", "on-request"].map(String::from));
+    let plan = SandboxPlan::new(Mode::ReadOnly, PathBuf::new(), vec![], vec![]);
+    args.extend(
+        caps.codex_dialect()
+            .render(&plan, false, true)
+            .expect("every dialect expresses read-only"),
+    );
+    args.extend(["-a", "on-request"].map(String::from));
     args
 }
 

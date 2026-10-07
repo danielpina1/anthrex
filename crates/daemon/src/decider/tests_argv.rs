@@ -4,6 +4,7 @@ use super::argv::{DECIDER_CAPS, claude_decider_args, codex_decider_args, schema_
 use super::schema::schema;
 use super::*;
 use crate::headless::argv::{CLI_CAPS, CODEX_SANDBOX_PINS, CliCaps};
+use crate::headless::codex_sandbox::{CodexSandboxDialect, DialectChoice};
 use crate::headless::credential_scrub_for;
 use proto::{DeciderMode, Effort, Route, Runtime, Strength};
 use serde_json::json;
@@ -25,6 +26,7 @@ fn ctx(runtime: Runtime, model: &str, caps: CliCaps) -> DeciderContext {
         schema_dir: PathBuf::from("/data/deciders/schemas"),
         caps,
         routing: Default::default(),
+        launch_gate: crate::launch::LaunchGate::open_already(),
     }
 }
 
@@ -124,9 +126,13 @@ fn claude_decider_args_exact() {
 
 #[test]
 fn codex_decider_args_exact() {
+    let legacy = CliCaps {
+        codex_sandbox: DialectChoice::Fixed(CodexSandboxDialect::Legacy),
+        ..CLI_CAPS
+    };
     let file = Path::new("/data/deciders/schemas/triage-0123456789abcdef.json");
     let args = codex_decider_args(
-        &ctx(Runtime::Codex, "gpt-5-mini", CLI_CAPS),
+        &ctx(Runtime::Codex, "gpt-5-mini", legacy),
         &DECIDER_CAPS,
         file,
         "PROMPT",
@@ -160,7 +166,7 @@ fn codex_decider_args_exact() {
     // --ephemeral, --output-schema or a model they are omitted.
     let caps = CliCaps {
         codex_user_config_only: Some(&["--ignore-project-config"]),
-        ..CLI_CAPS
+        ..legacy
     };
     let dcaps = DeciderCaps {
         codex_ephemeral: false,
@@ -188,6 +194,29 @@ fn codex_decider_args_exact() {
         "-p",
     ]));
     assert_eq!(args, expected);
+}
+
+#[test]
+fn a_codex_decider_on_profiles_is_read_only_without_legacy_flags() {
+    let caps = CliCaps {
+        codex_sandbox: DialectChoice::Fixed(CodexSandboxDialect::Profiles),
+        ..CLI_CAPS
+    };
+    let args = codex_decider_args(
+        &ctx(Runtime::Codex, "m", caps),
+        &DECIDER_CAPS,
+        Path::new("/s.json"),
+        "p",
+    );
+    assert!(
+        args.iter()
+            .any(|a| a == "default_permissions=\":read-only\""),
+        "{args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a == "-s" || a.starts_with("sandbox_")),
+        "{args:?}"
+    );
 }
 
 #[test]

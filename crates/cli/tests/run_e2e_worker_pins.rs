@@ -130,19 +130,102 @@ fn e2e_workers_get_their_own_tmpdir_and_pinned_sandbox_settings() {
         "{sandbox}"
     );
 
-    // Codex: network, `$TMPDIR` and `/tmp` pinned off, and the task's own
-    // temporary directory among the writable roots.
+    // Codex (fake-agent reports 0.160.1, so the profiles dialect): network off, no
+    // legacy flags, the task's own temporary directory writable, its checkout's `.git`
+    // read-only (Codex's legacy `workspace-write` protected it silently; a profile does
+    // not), and on Linux the same git entries read-only as Claude's. The fixture's
+    // checkout has none of the five protected agent-config paths, so none is listed.
     let argv: Vec<String> = serde_json::from_str(&h.io_lines("worker-t2-1", "args")[0]).unwrap();
-    for pin in [
-        "sandbox_workspace_write.network_access=false",
-        "sandbox_workspace_write.exclude_tmpdir_env_var=true",
-        "sandbox_workspace_write.exclude_slash_tmp=true",
+    for want in [
+        "default_permissions=\"anthrex\"",
+        "permissions.anthrex.extends=\":read-only\"",
+        "permissions.anthrex.network.enabled=false",
     ] {
-        assert!(argv.iter().any(|a| a == pin), "{pin} missing from {argv:?}");
+        assert!(
+            argv.iter().any(|a| a == want),
+            "{want} missing from {argv:?}"
+        );
+    }
+    assert!(
+        !argv.iter().any(|a| a == "-s" || a.starts_with("sandbox_")),
+        "{argv:?}"
+    );
+    let fs = argv
+        .iter()
+        .find(|a| a.starts_with("permissions.anthrex.filesystem="))
+        .unwrap();
+    assert!(fs.contains(&format!("\"{}\"=\"write\"", tmps[1])), "{fs}");
+    // The profile's first entry is the session's working directory, the checkout.
+    let cwd = fs
+        .split_once("={\"")
+        .and_then(|(_, rest)| rest.split_once("\"=\"write\""))
+        .map(|(cwd, _)| cwd)
+        .unwrap();
+    // The `.git` entry spells the checkout as the grant does: canonically (on macOS
+    // `/private/var` for `/var`), whatever spelling the working directory has.
+    let git_entry = fs
+        .split("\"=\"read\"")
+        .filter_map(|head| head.rsplit_once('"').map(|(_, path)| path))
+        .find(|path| path.ends_with("/.git"))
+        .unwrap_or_else(|| panic!("no .git read entry: {fs}"));
+    let canonical = std::fs::canonicalize(h.dir.path()).unwrap();
+    assert!(
+        std::path::Path::new(git_entry).starts_with(&canonical),
+        "{git_entry} is not under {}: {fs}",
+        canonical.display()
+    );
+    assert!(git_entry.ends_with(&format!("{}/.git", cwd.rsplit('/').next().unwrap())));
+    for tail in protected {
+        assert!(!fs.contains(&format!("{tail}\"=")), "{tail}: {fs}");
+    }
+    for tail in git_denied {
+        assert!(fs.contains(&format!("{tail}\"=\"read\"")), "{tail}: {fs}");
+    }
+    assert_eq!(
+        fs.matches("\"=\"read\"").count(),
+        1 + git_denied.len(),
+        "{fs}"
+    );
+}
+
+/// Final review M2: a Codex older than permission profiles (the daemon's startup probe
+/// reads 0.155.0) keeps the legacy flags end to end: `-s workspace-write`, the three
+/// pins, and the exact git files plus the task's temporary directory as writable roots;
+/// no profile key.
+#[test]
+fn e2e_a_codex_worker_below_profiles_gets_the_legacy_flags() {
+    let h = RunHarness::with_env("", &[("FAKE_CODEX_VERSION", "0.155.0")], true);
+    let seen = h.dir.path().join("seen");
+    h.script(
+        "worker-t1-1",
+        &[
+            sh(&format!("printf %s \"$TMPDIR\" > '{}'", seen.display())),
+            commit("a.txt", "x\n"),
+            done("added it"),
+        ],
+    );
+    h.script("reviewer-t1-1", &[approve()]);
+    let id = h.start(&plan("", &[task("t1", &["a.txt"], CODEX)]), true);
+    h.wait_run(&id, complete, RUN_WAIT);
+    let tmp = std::fs::read_to_string(&seen).unwrap();
+
+    let argv: Vec<String> = serde_json::from_str(&h.io_lines("worker-t1-1", "args")[0]).unwrap();
+    assert!(
+        argv.windows(2).any(|w| w == ["-s", "workspace-write"]),
+        "{argv:?}"
+    );
+    for pin in daemon::headless::argv::CODEX_SANDBOX_PINS {
+        assert!(argv.iter().any(|a| a == pin), "{pin} missing: {argv:?}");
     }
     let roots = argv
         .iter()
         .find(|a| a.starts_with("sandbox_workspace_write.writable_roots="))
-        .unwrap();
-    assert!(roots.contains(&tmps[1]), "{roots}");
+        .unwrap_or_else(|| panic!("no writable roots: {argv:?}"));
+    assert!(roots.contains(&format!("\"{tmp}\"")), "{tmp}: {roots}");
+    assert!(
+        !argv
+            .iter()
+            .any(|a| a.starts_with("default_permissions=") || a.starts_with("permissions.")),
+        "{argv:?}"
+    );
 }

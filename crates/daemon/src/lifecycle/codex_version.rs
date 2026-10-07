@@ -90,12 +90,24 @@ pub(super) fn start(
 /// one stable line for it, a test that needs to let the probe finish before stopping the
 /// daemon would have to guess which of the three outcomes its own stub will produce.
 fn report(result: anyhow::Result<(u64, u64, u64)>) {
+    use crate::headless::codex_sandbox::{CodexSandboxDialect, record_version};
+    if let Ok(version) = &result {
+        record_version(*version);
+    }
     match result {
         Ok(version) if version < MIN_CODEX_VERSION => {
             tracing::warn!(
                 ?version,
                 ?MIN_CODEX_VERSION,
                 "Codex version below supported minimum"
+            );
+        }
+        Ok(version)
+            if CodexSandboxDialect::for_version(Some(version)) == CodexSandboxDialect::Legacy =>
+        {
+            tracing::warn!(
+                ?version,
+                "Codex older than 0.160.0: Codex workers cannot commit on Linux; upgrade Codex"
             );
         }
         Ok(_) => {}

@@ -111,6 +111,8 @@ pub(super) fn placeholder_spec(
         claude_sandbox: None,
         codex_sandbox: String::new(),
         codex_writable_roots: Vec::new(),
+        codex_read_only: Vec::new(),
+        codex_grant_dialect: None,
         env: Vec::new(),
         claude_auth: config::ClaudeAuth::Login,
         api_key_helper: None,

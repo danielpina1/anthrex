@@ -2,7 +2,8 @@
 //! whole argv and environment on both runtimes, and the user's own windows unchanged.
 
 use super::*;
-use crate::headless::argv::CLI_CAPS;
+use crate::headless::argv::{CLI_CAPS, CODEX_SANDBOX_PINS};
+use crate::headless::codex_sandbox::{CodexSandboxDialect, DialectChoice};
 use crate::launch::{LaunchContext, LaunchPlan, claude, plan};
 use proto::{AgentRole, WindowSpec};
 use std::path::Path;
@@ -162,15 +163,17 @@ fn claude_argv_without_user_settings_only_caps() {
 }
 
 /// Decision 8, with ruling 3 (`"approve"`): the role's block after M3's hook block and
-/// before `-m`; the project-config exclusion when the caps have one; `-s read-only -a
-/// on-request` ahead of `-m` and of `resume <id>`. No trust flag (ruling 7).
+/// before `-m`; the project-config exclusion when the caps have one; the read-only
+/// sandbox (`-s read-only` plus, under Legacy, the sandbox pins) and `-a on-request`
+/// ahead of `-m` and of `resume <id>`. No trust flag (ruling 7).
 #[test]
 fn codex_orchestrator_argv_is_exact() {
     let role = role();
-    let p = plan(
-        &spec(Runtime::Codex, "gpt-5.6"),
-        &ctx(Some(&role), &CLI_CAPS),
-    );
+    let legacy = CliCaps {
+        codex_sandbox: DialectChoice::Fixed(CodexSandboxDialect::Legacy),
+        ..CLI_CAPS
+    };
+    let p = plan(&spec(Runtime::Codex, "gpt-5.6"), &ctx(Some(&role), &legacy));
     let head = [
         "-C",
         "/tmp/repo",
@@ -201,34 +204,58 @@ fn codex_orchestrator_argv_is_exact() {
         "-c",
         r#"model_reasoning_effort="high""#,
     ];
-    let tail = ["-s", "read-only", "-a", "on-request"];
+    let mut tail: Vec<&str> = vec!["-s", "read-only"];
+    for pin in CODEX_SANDBOX_PINS {
+        tail.extend(["-c", pin]);
+    }
+    tail.extend(["-a", "on-request"]);
     let mut expected: Vec<&str> = head.to_vec();
     expected.extend(block);
-    expected.extend(tail);
+    expected.extend(tail.iter().copied());
     expected.extend(["-m", "gpt-5.6", "--", "plan the goal"]);
     assert_eq!(p.program, "/opt/agents/codex");
     assert_eq!(p.args, expected);
     assert!(!p.args.iter().any(|a| a.contains("trust_level")));
 
-    let mut resumed = ctx(Some(&role), &CLI_CAPS);
+    let mut resumed = ctx(Some(&role), &legacy);
     resumed.resume = Some("thr-1");
     let p = plan(&spec(Runtime::Codex, "gpt-5.6"), &resumed);
     let mut expected: Vec<&str> = head.to_vec();
     expected.extend(block);
-    expected.extend(tail);
+    expected.extend(tail.iter().copied());
     expected.extend(["-m", "gpt-5.6", "resume", "thr-1"]);
     assert_eq!(p.args, expected);
 
     // Decision 9: the exclusion flags when the CLI has them, before `-s`.
     let caps = CliCaps {
         codex_user_config_only: Some(&["--no-project-config"]),
-        ..CLI_CAPS
+        ..legacy
     };
     let args = codex_role_args(&role, &ctx(Some(&role), &caps), &caps);
     let mut expected: Vec<&str> = block.to_vec();
     expected.push("--no-project-config");
-    expected.extend(tail);
+    expected.extend(tail.iter().copied());
     assert_eq!(args, expected);
+}
+
+#[test]
+fn a_codex_orchestrator_on_profiles_is_read_only_and_asks() {
+    let caps = CliCaps {
+        codex_sandbox: DialectChoice::Fixed(CodexSandboxDialect::Profiles),
+        ..CLI_CAPS
+    };
+    let role = role();
+    let args = codex_role_args(&role, &ctx(Some(&role), &caps), &caps);
+    assert!(
+        args.iter()
+            .any(|a| a == "default_permissions=\":read-only\""),
+        "{args:?}"
+    );
+    assert!(
+        args.windows(2).any(|w| w == ["-a", "on-request"]),
+        "{args:?}"
+    );
+    assert!(!args.iter().any(|a| a == "-s"), "{args:?}");
 }
 
 /// The user's own windows: `role: None` adds no flag, no variable and no scrub, for

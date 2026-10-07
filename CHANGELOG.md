@@ -7,6 +7,16 @@ release is a pre-release and any release may change behaviour or the protocol.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex workers can commit on Linux.** Every Codex session is now sandboxed through
+  Codex permission profiles on Codex 0.160 and later: a Linux Codex worker gets its task
+  git directory whole, with its configuration and the protected agent-config paths
+  (`.git`, `.claude`, `.codex`, `.mcp.json`, `AGENTS.md`, `CLAUDE.md`) read-only. Older
+  Codex keeps the legacy sandbox flags, and its workers still cannot commit on Linux.
+  Do not downgrade anthrex with a run in flight: older daemons ignore the new read-only
+  list.
+
 ## [0.1.2] — 2026-10-07
 
 The protocol version is now 18: a 0.1.2 client needs a 0.1.2 daemon. Stop the old

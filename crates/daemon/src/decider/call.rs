@@ -13,6 +13,7 @@ use super::argv::{DECIDER_CAPS, claude_decider_args, codex_decider_args, schema_
 use super::fallback::{OFF_REASON, fallback_decision};
 use super::parse::{STRUCTURED_OUTPUT_TOOL, answer_from_events, json_from_text, parse_for};
 use super::{DeciderAnswer, DeciderContext, DeciderRequest, Decision, prompt, schema};
+use crate::headless::codex_sandbox::DialectChoice;
 use crate::headless::session::HeadlessHandle;
 use crate::headless::{SessionEvent, TurnOutcome, claude_stream, credential_scrub_for};
 use crate::manager::ManagerConfig;
@@ -248,7 +249,14 @@ async fn call(
     request: &DeciderRequest,
 ) -> (Result<DeciderAnswer, String>, Option<TokenUsage>) {
     let (tx, mut events) = mpsc::unbounded_channel::<SessionEvent>();
-    let spawn_ctx = ctx.clone();
+    let mut spawn_ctx = ctx.clone();
+    if runtime == Runtime::Codex {
+        // Final review I1 (ruling R6): the sandbox dialect is the probed Codex
+        // version's, so wait for the probe (the launch gate; no lock is held), then fix
+        // the dialect for the blocking argv build.
+        ctx.launch_gate.wait().await;
+        spawn_ctx.caps.codex_sandbox = DialectChoice::Fixed(ctx.caps.codex_dialect());
+    }
     let spawn_request = request.clone();
     let spawned = tokio::task::spawn_blocking(move || {
         start(&spawn_ctx, runtime, &spawn_request, move |_pid, event| {

@@ -53,7 +53,8 @@ fn run() -> Result<i32> {
     }
     roles::record_args(&roles::fallback().name, &args)?;
     if args.iter().any(|arg| arg == "--version") {
-        println!("codex-cli 0.155.0");
+        let version = env::var("FAKE_CODEX_VERSION").unwrap_or_else(|_| "0.160.1".into());
+        println!("codex-cli {version}");
         return Ok(0);
     }
 

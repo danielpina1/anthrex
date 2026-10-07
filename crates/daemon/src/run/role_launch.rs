@@ -236,6 +236,8 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
         } else {
             worker_git_roots(&run.data_dir, &task.checkout_name())
         },
+        codex_read_only: Vec::new(),
+        codex_grant_dialect: None,
         env: worker_env(run, task),
         claude_auth: limits.claude_auth.into(),
         api_key_helper: limits.api_key_helper.clone(),
@@ -314,6 +316,8 @@ pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
         }),
         codex_sandbox: REVIEWER_CODEX_SANDBOX.to_string(),
         codex_writable_roots: Vec::new(),
+        codex_read_only: Vec::new(),
+        codex_grant_dialect: None,
         env: profile_env(&run.profile, &path),
         claude_auth: run.limits.claude_auth.into(),
         api_key_helper: run.limits.api_key_helper.clone(),

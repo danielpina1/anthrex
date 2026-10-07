@@ -1,4 +1,5 @@
 use super::*;
+use crate::headless::codex_sandbox::{CodexSandboxDialect, DialectChoice};
 use crate::launch;
 use proto::{AgentRole, Effort, RunRef, Runtime};
 use serde_json::{Value, json};
@@ -49,6 +50,8 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
         }),
         codex_sandbox: "workspace-write".into(),
         codex_writable_roots: vec![PathBuf::from(COMMON)],
+        codex_read_only: Vec::new(),
+        codex_grant_dialect: None,
         env: vec![],
         claude_auth: config::ClaudeAuth::Login,
         api_key_helper: None,
@@ -102,6 +105,8 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
         }),
         codex_sandbox: "read-only".into(),
         codex_writable_roots: vec![],
+        codex_read_only: Vec::new(),
+        codex_grant_dialect: None,
         ..worker(runtime)
     }
 }
@@ -132,6 +137,15 @@ pub(super) fn codex(
         Path::new(SOCKET),
         caps,
     )
+}
+
+/// Today's flags (`-s`, `sandbox_mode`, the pins): the Legacy dialect, whatever version
+/// the unit-test process has recorded.
+pub(super) fn legacy_caps() -> CliCaps {
+    CliCaps {
+        codex_sandbox: DialectChoice::Fixed(CodexSandboxDialect::Legacy),
+        ..CLI_CAPS
+    }
 }
 
 pub(super) fn new_session() -> SessionArg {
@@ -354,7 +368,7 @@ fn argv_builders() {
         &worker(Runtime::Codex),
         &SessionArg::New { uuid: None },
         "Do t1",
-        &CLI_CAPS,
+        &legacy_caps(),
     );
     let mcp_array = r#"["mcp","--role","worker","--run","r-3f9a","--task","t1","--window","7","--socket","/tmp/a.sock"]"#;
     assert_eq!(
@@ -400,7 +414,7 @@ fn argv_builders() {
             session_id: "th-157".into(),
         },
         "Fix the test.",
-        &CLI_CAPS,
+        &legacy_caps(),
     );
     let mut expected = codex_worker.clone();
     expected.splice(0..2, strs(&["exec", "resume", "th-157", "--json"]));
@@ -415,7 +429,7 @@ fn argv_builders() {
         &reviewer(Runtime::Codex),
         &SessionArg::New { uuid: None },
         "Review t2",
-        &CLI_CAPS,
+        &legacy_caps(),
     );
     let reviewer_array = mcp_array.replace("worker", "reviewer").replace("t1", "t2");
     assert_eq!(
@@ -458,7 +472,7 @@ fn the_anthrex_mcp_server_is_approved_under_never() {
                 session_id: "th-1".into(),
             },
         ] {
-            let argv = codex(&spec, &session, "go", &CLI_CAPS);
+            let argv = codex(&spec, &session, "go", &legacy_caps());
             let modes: Vec<&String> = argv
                 .iter()
                 .filter(|a| a.contains("default_tools_approval_mode"))
@@ -481,7 +495,7 @@ fn codex_worker_args_add_the_git_common_dir_as_writable() {
             session_id: "th-1".into(),
         },
     ] {
-        let argv = codex(&worker(Runtime::Codex), &session, "go", &CLI_CAPS);
+        let argv = codex(&worker(Runtime::Codex), &session, "go", &legacy_caps());
         let at = argv
             .iter()
             .position(|a| a == roots)
@@ -490,7 +504,7 @@ fn codex_worker_args_add_the_git_common_dir_as_writable() {
         // Final fix batch F1d (R5): Codex's network, `$TMPDIR` and `/tmp` are pinned off
         // on every turn, so the user's `~/.codex/config.toml` cannot widen them (the
         // daemon's `$TMPDIR` holds its socket on macOS).
-        let reviewer = codex(&reviewer(Runtime::Codex), &session, "go", &CLI_CAPS);
+        let reviewer = codex(&reviewer(Runtime::Codex), &session, "go", &legacy_caps());
         for argv in [&argv, &reviewer] {
             let pins = codex_pins();
             assert!(
@@ -503,7 +517,7 @@ fn codex_worker_args_add_the_git_common_dir_as_writable() {
     // Several roots make one TOML array.
     let mut two = worker(Runtime::Codex);
     two.codex_writable_roots.push("/tmp/y dir/.git".into());
-    let argv = codex(&two, &SessionArg::New { uuid: None }, "go", &CLI_CAPS);
+    let argv = codex(&two, &SessionArg::New { uuid: None }, "go", &legacy_caps());
     assert!(argv.contains(
         &"sandbox_workspace_write.writable_roots=[\"/tmp/x/.git\",\"/tmp/y dir/.git\"]".to_string()
     ));
@@ -574,6 +588,8 @@ mod caps;
 mod chain;
 #[path = "argv_filter_tests.rs"]
 mod filter;
+#[path = "argv_sandbox_tests.rs"]
+mod sandbox;
 
 /// F2 round 2 (item 2): a sandbox's `deny_write` becomes `filesystem.denyWrite`, beside
 /// `allowWrite`; an empty one is omitted.

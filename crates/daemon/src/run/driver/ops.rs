@@ -30,6 +30,12 @@ mod lane_ops;
 mod sync_done;
 use gate_ops::{check, proof};
 
+// Task 5 of the Codex sandbox profiles plan: a worker's grant shape and a Codex
+// worker's read-only entries (kept out of this file by the 600-line rule).
+#[path = "worker_grant.rs"]
+mod worker_grant;
+use worker_grant::{codex_read_only_on_disk, grant_shape};
+
 // Controller ruling 1 and ruling C-12b: M8a's commands through the test scheduler.
 #[path = "scheduled.rs"]
 pub(super) mod scheduled;
@@ -126,12 +132,13 @@ impl RunService {
 /// object directory and its temporary directory (each made by the daemon, never
 /// through a link, and named by appending to the engine's own directory, never by
 /// resolving a path the worker could have swapped: I1), plus the commit's files in the
-/// checkout's own git directory (on Linux, for Claude, the directory whole with its
-/// configuration denied: `git::GrantShape`). Nothing of the git common directory. Any
-/// other session
-/// (a reviewer) is left as it is. Milestone 9.5 (task M9.5.18): a racer's and a test
-/// writer's too, a racer's on its own lane's stored checkout; a session whose lane the
-/// run does not store is refused, with a logged error.
+/// checkout's own git directory (on Linux, for Claude and for Codex on the profiles
+/// dialect, the directory whole with its configuration denied: `git::GrantShape`; a
+/// Codex worker's denials, its checkout's `.git` and its protected agent-config paths
+/// become its read-only entries, ruling R3). Nothing of the git common directory. Any
+/// other session (a reviewer) is left as it is. Milestone 9.5 (task M9.5.18): a
+/// racer's and a test writer's too, a racer's on its own lane's stored checkout; a
+/// session whose lane the run does not store is refused, with a logged error.
 async fn worker_git_dirs(
     service: &Arc<RunService>,
     ctx: &OpCtx,
@@ -146,13 +153,16 @@ async fn worker_git_dirs(
         return Ok(());
     };
     // Milestone 9.5 ruling RR-1: the session's checkout, a lane's or the task's.
-    let (common, checkout) = crate::lock(&service.state)
+    let (common, checkout, owns) = crate::lock(&service.state)
         .runs
         .get(&ctx.run_id)
         .map(|run| {
             (
                 run.git_common_dir.clone(),
                 lane_ops::session_checkout(run, &task, role, lane),
+                run.task(&task)
+                    .map(|t| t.spec.owns.clone())
+                    .unwrap_or_default(),
             )
         })
         .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
@@ -168,27 +178,35 @@ async fn worker_git_dirs(
     if !sandboxed {
         return Ok(());
     }
-    // A Claude worker's grant has the host's shape: on Linux its checkout's git
-    // directory whole, with what it must not change denied (bubblewrap cannot grant a
-    // lock file that does not exist yet). A Codex worker's writable roots take no
-    // denial, so it keeps the exact files on every host.
+    // The host's shape (on Linux the git directory whole, protected entries denied:
+    // bubblewrap cannot grant a lock file not yet made) for Claude and for a Codex
+    // dialect that can keep a path read-only inside a writable one; else exact files.
     let claude = spec
         .claude_sandbox
         .as_ref()
         .is_some_and(|s| !s.writable_roots.is_empty());
-    let shape = if claude {
-        git::GrantShape::host()
-    } else {
-        git::GrantShape::Files
-    };
+    // The dialect is the probed version's: wait for the launch gate, no lock held.
+    service.manager.config().launch_gate.wait().await;
+    let dialect = service.ctx.cli_caps.codex_dialect();
+    let shape = grant_shape(claude, dialect);
+    let codex = !spec.codex_writable_roots.is_empty();
     let cwd = spec.cwd.clone();
-    let grant = service
+    // Ruling R3: a Codex worker's read-only entries, checked for existence with the
+    // grant's own file work on a blocking thread in the project's git write turn,
+    // never under the manager or run-state lock.
+    let (grant, read_only) = service
         .write(ctx, move |_, _| {
             let roots = roots
                 .iter()
                 .map(|root| git::private_dir(&common, root))
                 .collect::<Result<Vec<_>, _>>()?;
-            git::worker_git_grant(&common, &cwd, &roots, shape)
+            let grant = git::worker_git_grant(&common, &cwd, &roots, shape)?;
+            let read_only = if codex {
+                codex_read_only_on_disk(dialect, &cwd, &owns, grant.deny.clone())
+            } else {
+                Vec::new()
+            };
+            Ok((grant, read_only))
         })
         .await?;
     if let Some(sandbox) = spec.claude_sandbox.as_mut()
@@ -197,8 +215,10 @@ async fn worker_git_dirs(
         sandbox.writable_roots = grant.writable.clone();
         sandbox.deny_write.extend(grant.deny.iter().cloned());
     }
-    if !spec.codex_writable_roots.is_empty() {
+    if codex {
         spec.codex_writable_roots = grant.writable;
+        spec.codex_read_only = read_only;
+        spec.codex_grant_dialect = Some(dialect);
     }
     Ok(())
 }

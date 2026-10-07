@@ -327,6 +327,9 @@ impl WindowManager {
     pub async fn headless_send(self: &Arc<Self>, id: u32, text: &str) -> anyhow::Result<()> {
         let text = clamp(text);
         check_text(id, &text)?;
+        // Final review I1 (ruling R6): a Codex turn's sandbox dialect is the probed
+        // version's; wait for the probe before claiming the window, holding no lock.
+        self.config.launch_gate.wait().await;
         let (runtime, handle, spec, session_id, cancel) = {
             let mut inner = crate::lock(&self.inner);
             let entry = inner
@@ -414,6 +417,9 @@ impl WindowManager {
     ) -> anyhow::Result<()> {
         let text = clamp(message);
         check_text(id, &text)?;
+        // As `headless_send`: a window restored at daemon start can be resumed while the
+        // probe runs. Before the claim, holding no lock.
+        self.config.launch_gate.wait().await;
         let (old, spec, cancel) = {
             let mut inner = crate::lock(&self.inner);
             let entry = inner

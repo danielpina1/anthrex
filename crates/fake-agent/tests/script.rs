@@ -472,6 +472,18 @@ fn version_prints_a_codex_style_version() {
     let output = run(command);
 
     assert!(output.status.success());
+    assert_eq!(output.stdout, b"codex-cli 0.160.1\n");
+}
+
+#[test]
+fn fake_codex_version_overrides_the_reported_version() {
+    let mut command = Command::new(fake_agent());
+    command
+        .env("FAKE_CODEX_VERSION", "0.155.0")
+        .arg("--version");
+    let output = run(command);
+
+    assert!(output.status.success());
     assert_eq!(output.stdout, b"codex-cli 0.155.0\n");
 }
 
@@ -490,7 +502,7 @@ fn writes_arguments_before_the_version_short_circuit() {
     let output = run(command);
 
     assert!(output.status.success());
-    assert_eq!(output.stdout, b"codex-cli 0.155.0\n");
+    assert_eq!(output.stdout, b"codex-cli 0.160.1\n");
     assert_eq!(
         json_file(&args_path),
         json!(["--name", "agent", "--version", "--", "literal prompt"])

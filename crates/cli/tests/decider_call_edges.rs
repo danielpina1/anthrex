@@ -205,3 +205,27 @@ fn a_claude_decider_runs_with_tool_search_off() {
         );
     }
 }
+
+/// Final review I1 (ruling R6): a Codex decider renders its sandbox in the probed Codex
+/// version's dialect, so the call waits for the daemon's launch gate (the probe) first.
+#[test]
+fn a_codex_decider_waits_for_the_launch_gate() {
+    let fx = Fixture::new();
+    fx.script("blocked_reason", 1, json!({"answer": answer()}));
+    let gate = daemon::launch::LaunchGate::closed();
+    let mut ctx = fx.context(DeciderMode::Codex);
+    ctx.launch_gate = gate.clone();
+    let decision = runtime().block_on(async {
+        let call = tokio::spawn(async move { decide(&ctx, &blocked("ld")).await });
+        // An absence: nothing may start while the gate is closed. The positive half
+        // below proves the same call does start once it opens.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            fx.calls().is_empty(),
+            "the decider started before the launch gate opened"
+        );
+        gate.open();
+        call.await.unwrap()
+    });
+    assert_eq!(decision.source, DeciderSource::Decider, "{decision:?}");
+}

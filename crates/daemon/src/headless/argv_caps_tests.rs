@@ -1,6 +1,7 @@
 //! The argv branches that depend on `CliCaps`, auth and the TOML strings.
 
 use super::*;
+use crate::headless::codex_sandbox::{CodexSandboxDialect, DialectChoice};
 use crate::launch::codex::toml_string;
 
 /// Flags that take a variable number of values, so the next argument must be a flag.
@@ -168,7 +169,7 @@ fn codex_launches_exclude_project_config_when_caps_say_so() {
             assert_eq!(argv.last().map(String::as_str), Some("go"));
 
             // M8a.1 item 7a: nothing on the command line excludes it today.
-            let argv = codex(&spec, &session, "go", &CLI_CAPS);
+            let argv = codex(&spec, &session, "go", &legacy_caps());
             assert_eq!(occurrences(&argv, flags), 0, "{argv:?}");
             assert!(!argv.iter().any(|a| a.contains("exclude-project-config")));
         }
@@ -186,7 +187,7 @@ fn codex_launches_exclude_project_config_when_caps_say_so() {
 fn codex_resume_takes_the_sandbox_flag_when_caps_say_so() {
     let takes = CliCaps {
         codex_resume_takes_sandbox: true,
-        ..CLI_CAPS
+        ..legacy_caps()
     };
     let resume = SessionArg::Resume {
         session_id: "th-1".into(),
@@ -194,7 +195,7 @@ fn codex_resume_takes_the_sandbox_flag_when_caps_say_so() {
     let argv = codex(&worker(Runtime::Codex), &resume, "go", &takes);
     assert_eq!(occurrences(&argv, &["-s", "workspace-write"]), 1);
     assert!(!argv.iter().any(|a| a.starts_with("sandbox_mode=")));
-    let argv = codex(&worker(Runtime::Codex), &resume, "go", &CLI_CAPS);
+    let argv = codex(&worker(Runtime::Codex), &resume, "go", &legacy_caps());
     assert_eq!(occurrences(&argv, &["-s", "workspace-write"]), 0);
     assert_eq!(
         occurrences(&argv, &["-c", "sandbox_mode=\"workspace-write\""]),
@@ -214,7 +215,7 @@ fn a_session_without_mcp_or_tools_omits_their_flags() {
     }
     let mut spec = worker(Runtime::Codex);
     spec.mcp = None;
-    let argv = codex(&spec, &SessionArg::New { uuid: None }, "go", &CLI_CAPS);
+    let argv = codex(&spec, &SessionArg::New { uuid: None }, "go", &legacy_caps());
     assert!(!argv.iter().any(|a| a.starts_with("mcp_servers.")));
 }
 
@@ -261,7 +262,7 @@ fn toml_string_round_trips_through_the_toml_crate() {
         &worker(Runtime::Codex),
         &SessionArg::New { uuid: None },
         "go",
-        &CLI_CAPS,
+        &legacy_caps(),
     );
     for value in argv
         .iter()
@@ -382,7 +383,7 @@ fn mcp_args_refuses_a_decider() {
             ..worker(runtime)
         };
         let argv = match runtime {
-            Runtime::Codex => codex(&spec, &SessionArg::New { uuid: None }, "go", &CLI_CAPS),
+            Runtime::Codex => codex(&spec, &SessionArg::New { uuid: None }, "go", &legacy_caps()),
             _ => claude(&spec, &new_session(), &CLI_CAPS),
         };
         assert!(
@@ -425,4 +426,14 @@ fn mcp_args_for_a_planner() {
             "/tmp/a.sock"
         ]
     );
+}
+
+#[test]
+fn production_caps_detect_the_codex_dialect() {
+    assert_eq!(CLI_CAPS.codex_sandbox, DialectChoice::Detected);
+    let legacy = CliCaps {
+        codex_sandbox: DialectChoice::Fixed(CodexSandboxDialect::Legacy),
+        ..CLI_CAPS
+    };
+    assert_eq!(legacy.codex_dialect(), CodexSandboxDialect::Legacy);
 }

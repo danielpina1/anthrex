@@ -197,6 +197,8 @@ fn spec(runtime: Runtime, mcp: Option<&Mcp>) -> HeadlessSpec {
         claude_sandbox: None,
         codex_sandbox: "workspace-write".into(),
         codex_writable_roots: vec![],
+        codex_read_only: Vec::new(),
+        codex_grant_dialect: None,
         env: vec![],
         claude_auth: config::ClaudeAuth::Login,
         api_key_helper: None,

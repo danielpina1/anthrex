@@ -4,10 +4,10 @@
 //! Pure.
 
 use super::{DeciderContext, DeciderKind};
-use crate::headless::argv::CODEX_SANDBOX_PINS;
+use crate::headless::codex_sandbox::{Mode, SandboxPlan};
 use crate::launch::codex::toml_string;
 use proto::Effort;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The decider-specific capabilities of the installed `claude` and `codex`. The argv
 /// builders take one, so tests can exercise each branch whatever the installed CLI does;
@@ -147,9 +147,10 @@ pub fn claude_decider_args(
     args
 }
 
-/// A Codex decider's argv (decision 16): read-only sandbox with every
-/// [`CODEX_SANDBOX_PINS`] entry, no approvals, the schema file when the CLI takes one,
-/// then `--` and the prompt as the last argument.
+/// A Codex decider's argv (decision 16): read-only sandbox in the caps' dialect
+/// (`headless::codex_sandbox`; the legacy one carries the sandbox pins), no approvals,
+/// the schema file when the CLI takes one, then `--` and the prompt as the last
+/// argument.
 pub fn codex_decider_args(
     ctx: &DeciderContext,
     dcaps: &DeciderCaps,
@@ -165,10 +166,13 @@ pub fn codex_decider_args(
     if let Some(flags) = ctx.caps.codex_user_config_only {
         args.extend(flags.iter().map(|f| f.to_string()));
     }
-    args.extend(["-s".into(), "read-only".into()]);
-    for pin in CODEX_SANDBOX_PINS {
-        args.extend(["-c".into(), pin.to_string()]);
-    }
+    let plan = SandboxPlan::new(Mode::ReadOnly, PathBuf::new(), vec![], vec![]);
+    args.extend(
+        ctx.caps
+            .codex_dialect()
+            .render(&plan, false, true)
+            .expect("every dialect expresses read-only"),
+    );
     args.extend([
         "-c".into(),
         format!("approval_policy={}", toml_string("never")),

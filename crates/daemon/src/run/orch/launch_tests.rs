@@ -6,7 +6,7 @@ use proto::{AgentRole, Runtime};
 
 use super::*;
 use crate::headless::SessionArg;
-use crate::headless::argv::{CLI_CAPS, claude_args, codex_args, mcp_args};
+use crate::headless::argv::{CLI_CAPS, CliCaps, claude_args, codex_args, mcp_args};
 use crate::run::orch::test_support::run_with;
 use crate::run::orch::{EpicRecord, PlannerPhase};
 use crate::run::role_launch::{
@@ -15,6 +15,15 @@ use crate::run::role_launch::{
 };
 use crate::run::test_support::task_toml;
 use crate::scout::planner::planner_names;
+
+fn legacy_caps() -> CliCaps {
+    CliCaps {
+        codex_sandbox: crate::headless::codex_sandbox::DialectChoice::Fixed(
+            crate::headless::codex_sandbox::CodexSandboxDialect::Legacy,
+        ),
+        ..CLI_CAPS
+    }
+}
 
 fn mail(runtime: Runtime) -> (crate::run::model::Run, EpicRecord) {
     let run = run_with(&[task_toml("t1", "S", "[\"crates/auth/**\"]", "")]);
@@ -145,7 +154,7 @@ fn planner_and_research_specs_carry_the_read_only_sandbox() {
         Path::new("/bin/anthrex"),
         9,
         Path::new("/tmp/s.sock"),
-        &CLI_CAPS,
+        &legacy_caps(),
     );
     let at = argv
         .iter()
