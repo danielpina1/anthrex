@@ -24,10 +24,7 @@ const CAP: Duration = Duration::from_secs(1);
 /// A `git` that answers nothing for 8 s (past the rig's 5 s `git_timeout_secs`, which
 /// kills it first), in `dir`.
 fn stuck_git(dir: &Path) -> std::ffi::OsString {
-    let git = dir.join("stuck-git");
-    std::fs::write(&git, "#!/bin/sh\nexec sleep 8\n").unwrap();
-    std::fs::set_permissions(&git, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-    git.into_os_string()
+    testexec::write_executable(dir.join("stuck-git"), "#!/bin/sh\nexec sleep 8\n").into_os_string()
 }
 
 /// A rig whose daemon's git is stuck, the continue deadline capped at [`CAP`].

@@ -1,15 +1,8 @@
 use super::*;
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use tempfile::tempdir;
 
 fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
-    let script = dir.join(name);
-    fs::write(&script, body).unwrap();
-    let mut permissions = fs::metadata(&script).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&script, permissions).unwrap();
-    script
+    testexec::write_executable(dir.join(name), body)
 }
 
 #[test]

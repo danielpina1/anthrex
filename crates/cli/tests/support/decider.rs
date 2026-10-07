@@ -4,7 +4,6 @@
 //! directory, so no test changes its own environment and the process can be found by a
 //! marker that is in no test's command line.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -158,8 +157,7 @@ pub fn write_executable(path: &Path, text: &str) {
         .strip_prefix("#!/bin/sh\n")
         .expect("write_executable writes #!/bin/sh scripts only");
     let guarded = format!("#!/bin/sh\n[ -n \"${WARM_UP_VAR}\" ] && exit 0\n{body}");
-    std::fs::write(path, guarded).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(path, guarded);
     warm_up(Command::new(path).env(WARM_UP_VAR, "1"));
 }
 

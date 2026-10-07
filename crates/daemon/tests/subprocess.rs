@@ -3,9 +3,7 @@
 //! the byte caps, the deadline, the spawn-error distinction) and not git's behaviour.
 
 use daemon::subprocess::{HeadTail, Outcome, run, run_captured, run_captured_head_tail};
-use std::fs;
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -13,10 +11,7 @@ use tempfile::tempdir;
 
 fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let script = dir.join(name);
-    fs::write(&script, body).unwrap();
-    let mut permissions = fs::metadata(&script).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&script, permissions).unwrap();
+    testexec::write_executable(&script, body);
     script
 }
 

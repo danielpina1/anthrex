@@ -6,7 +6,6 @@
 
 mod support;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -57,7 +56,7 @@ impl Rig {
         let repo = dir.path().join("repo");
         init_repo(&repo, &[("Cargo.toml", "[workspace]\n")]);
         let wrapper = dir.path().join("claude.sh");
-        std::fs::write(
+        testexec::write_executable(
             &wrapper,
             format!(
                 "#!/bin/sh\nexport FAKE_AGENT_ARGS_FILE='{}'\nexport FAKE_AGENT_STDIN_FILE='{}'\nexec '{}' \"$@\"\n",
@@ -65,9 +64,7 @@ impl Rig {
                 dir.path().join("stdin.jsonl").display(),
                 fake_agent_bin().display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
 
         let socket = dir.path().join("d.sock");
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();

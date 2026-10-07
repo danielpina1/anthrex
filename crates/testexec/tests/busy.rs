@@ -1,7 +1,6 @@
 //! The ETXTBSY race, reproduced deterministically: a [`StalledFork`] is a sibling
 //! test's `spawn` caught between fork and exec, held for as long as the test needs.
 
-use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
@@ -21,6 +20,7 @@ fn run(script: &Path) -> std::io::Result<std::process::ExitStatus> {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_script_written_in_process_is_busy_while_a_fork_holds_its_descriptor_renamed_or_not() {
+    use std::io::Write;
     let dir = tempfile::tempdir().unwrap();
     let staged = dir.path().join("stand-in.new");
     let script = dir.path().join("stand-in");

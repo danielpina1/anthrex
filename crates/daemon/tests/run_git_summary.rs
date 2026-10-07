@@ -6,7 +6,6 @@
 
 mod support;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
 
@@ -184,8 +183,7 @@ fn summary_times_out() {
     let stand_in = scripts.path().join("slow-git");
     // It reads nothing and answers nothing; the deadline kills it (the exact child
     // `run_git` spawned, nothing else).
-    std::fs::write(&stand_in, "#!/bin/sh\nexec sleep 30\n").unwrap();
-    std::fs::set_permissions(&stand_in, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&stand_in, "#!/bin/sh\nexec sleep 30\n");
     let one = Duration::from_secs(1);
     let error = task_summary(stand_in.as_os_str(), &repo.root, "a", BRANCH, one).unwrap_err();
     assert!(error.contains("timed out"), "{error}");

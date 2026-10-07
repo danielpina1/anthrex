@@ -233,7 +233,6 @@ fn accept_refuses_while_a_merge_cherry_pick_or_rebase_is_in_progress() {
 
 #[test]
 fn accept_merge_that_outlives_its_deadline_is_aborted() {
-    use std::os::unix::fs::PermissionsExt;
     assert_eq!(ACCEPT_MERGE_TIMEOUT, Duration::from_secs(600));
     let repo = repo();
     let (base, run_head) = run_branch(&repo, "to01", "a.txt", "run\n");
@@ -246,12 +245,10 @@ fn accept_merge_that_outlives_its_deadline_is_aborted() {
     let tools = tempfile::tempdir().unwrap();
     let marker = tools.path().join("signing-started");
     let signer = tools.path().join("slow-gpg");
-    std::fs::write(
+    testexec::write_executable(
         &signer,
         format!("#!/bin/sh\n: > '{}'\nsleep 30\n", marker.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&signer, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     out(&repo.root, &["config", "commit.gpgSign", "true"]);
     out(
         &repo.root,

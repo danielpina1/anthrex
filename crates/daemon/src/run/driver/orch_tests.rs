@@ -2,7 +2,6 @@
 //! `ScoutService` and a `/bin/sh` stand-in for Claude that reads its prompt and exits
 //! when its stdin closes (never a real agent: Codex is a path that does not exist).
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
 
@@ -22,8 +21,7 @@ impl GitRoots for NoRoots {
 async fn run_scouts_appear_in_the_snapshot() {
     let dir = tempfile::tempdir().unwrap();
     let stand_in = dir.path().join("claude.sh");
-    std::fs::write(&stand_in, "#!/bin/sh\ncat > /dev/null\n").unwrap();
-    std::fs::set_permissions(&stand_in, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&stand_in, "#!/bin/sh\ncat > /dev/null\n");
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     let socket = dir.path().join("d.sock");

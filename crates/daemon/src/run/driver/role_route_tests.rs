@@ -5,7 +5,6 @@
 //! paths that do not exist, and the one decider is a `/bin/sh` stand-in this test
 //! writes, which exits by itself.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -281,7 +280,6 @@ async fn a_record_that_could_not_be_saved_starts_no_session() {
 /// A decider stand-in that writes whether `run.json` held its record when it started,
 /// then exits (so the call falls back).
 fn witness(dir: &Path, run_id: &str) -> PathBuf {
-    let script = dir.join("decider.sh");
     let run_json = dir.join("data/runs").join(run_id).join(RUN_FILE);
     let mark = dir.join("mark");
     let text = format!(
@@ -290,9 +288,7 @@ fn witness(dir: &Path, run_id: &str) -> PathBuf {
         mark.display(),
         mark.display()
     );
-    std::fs::write(&script, text).unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    script
+    testexec::write_executable(dir.join("decider.sh"), text)
 }
 
 /// Review M-2: a run-bound decider starts only once its record is saved. The run's
@@ -490,10 +486,7 @@ async fn a_scout_of_a_run_that_is_gone_is_refused() {
 
 /// A stand-in that exits at once: never an agent.
 fn exits(dir: &Path, _run_id: &str) -> PathBuf {
-    let script = dir.join("exits.sh");
-    std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    script
+    testexec::write_executable(dir.join("exits.sh"), "#!/bin/sh\nexit 0\n")
 }
 
 /// Ruling T10b-1: deciders whose `mode` names Claude, with only Codex installed, are

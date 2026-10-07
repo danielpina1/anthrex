@@ -86,7 +86,6 @@ fn accept_after_the_user_merged_the_run_by_hand_leaves_their_merge() {
 /// untouched".
 #[test]
 fn accept_whose_merge_landed_before_its_deadline_is_merged() {
-    use std::os::unix::fs::PermissionsExt;
     let repo = repo();
     let (base, run_head) = run_branch(&repo, "ld01");
     let tools = tempfile::tempdir().unwrap();
@@ -97,14 +96,12 @@ fn accept_whose_merge_landed_before_its_deadline_is_merged() {
     let real = String::from_utf8(which.stdout).unwrap().trim().to_string();
     // The merge itself completes; then something it started keeps stdout open.
     let script = tools.path().join("slow-after-merge-git");
-    std::fs::write(
+    testexec::write_executable(
         &script,
         format!(
             "#!/bin/sh\n\"{real}\" \"$@\"\nrc=$?\nfor a in \"$@\"; do [ \"$a\" = \"--no-ff\" ] && sleep 30; done\nexit $rc\n"
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let outcome = accept_with_merge_timeout(
         script.as_os_str(),

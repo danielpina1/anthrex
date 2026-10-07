@@ -7,7 +7,6 @@ use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::run::driver::{RunContext, RunService};
 use daemon::server::{GitWiring, serve};
 use proto::{ClientKind, ClientMsg, DaemonMsg, PROTO_VERSION, RunRequest, read_frame, write_frame};
-use std::os::unix::fs::PermissionsExt;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
@@ -37,8 +36,7 @@ async fn a_disconnected_client_is_not_held_open_by_its_run_request() {
         .tempdir_in("/tmp")
         .unwrap();
     let slow_git = dir.path().join("git");
-    std::fs::write(&slow_git, format!("#!/bin/sh\nsleep {GIT_SLEEP_SECS}\n")).unwrap();
-    std::fs::set_permissions(&slow_git, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&slow_git, format!("#!/bin/sh\nsleep {GIT_SLEEP_SECS}\n"));
 
     let socket = dir.path().join("d.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
@@ -289,8 +287,7 @@ async fn tagged_rig(
     shutdown: &CancellationToken,
 ) -> (OwnedReadHalf, OwnedWriteHalf) {
     let agent = dir.join("agent");
-    std::fs::write(&agent, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(&agent, "#!/bin/sh\nexit 0\n");
     rig_on(
         dir,
         (adaptation, proto::DeciderMode::Off),

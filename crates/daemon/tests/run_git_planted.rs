@@ -13,20 +13,16 @@ use daemon::run::git::{
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::plan::BUILTIN_PROTECTED;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use support::run_git::{T, commit_file, head, out, real_git, repo, write, wt_dir};
 
 /// An executable at `dir/<name>` that appends its name to `marker` and exits 0.
 fn planted(dir: &Path, name: &str, marker: &Path) -> PathBuf {
     let path = dir.join(name);
-    std::fs::write(
+    testexec::write_executable(
         &path,
         format!("#!/bin/sh\necho {name} >> '{}'\nexit 0\n", marker.display()),
     )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    path
 }
 
 fn ran(marker: &Path) -> String {

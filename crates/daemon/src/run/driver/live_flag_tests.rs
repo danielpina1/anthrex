@@ -50,8 +50,7 @@ fn role(run_id: &str) -> RoleLaunch {
 /// A manager whose `claude` is a stand-in that sleeps, and a run service over it.
 fn service(dir: &Path) -> (Arc<WindowManager>, Arc<RunService>) {
     let claude = dir.join("claude");
-    std::fs::write(&claude, "#!/bin/sh\nexec sleep 300\n").unwrap();
-    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    testexec::write_executable(&claude, "#!/bin/sh\nexec sleep 300\n");
     let mut config = ManagerConfig::for_tests(dir.join("d.sock"), "/bin/sh".into());
     config.claude_bin = claude.to_str().unwrap().into();
     config.worktrees_root = dir.join("worktrees");

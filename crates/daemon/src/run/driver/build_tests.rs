@@ -2,7 +2,6 @@
 //! leading `~` expanded to `HOME`.
 
 use std::ffi::OsStr;
-use std::os::unix::fs::PermissionsExt;
 
 use super::executable_in;
 
@@ -11,9 +10,7 @@ fn a_tilde_entry_on_path_is_expanded_to_home() {
     let home = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(home.path().join("bin")).unwrap();
     for file in ["bin/agent", "top"] {
-        let path = home.path().join(file);
-        std::fs::write(&path, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testexec::write_executable(home.path().join(file), "#!/bin/sh\n");
     }
     let h = Some(home.path().as_os_str());
     let path = |p: &'static str| Some(OsStr::new(p));
@@ -57,9 +54,7 @@ fn an_empty_home_expands_nothing() {
 fn only_a_window_on_macos_finds_a_binary_through_a_tilde_entry() {
     let home = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(home.path().join("bin")).unwrap();
-    let agent = home.path().join("bin/claude");
-    std::fs::write(&agent, "#!/bin/sh\n").unwrap();
-    std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testexec::write_executable(home.path().join("bin/claude"), "#!/bin/sh\n");
     let path = Some(OsStr::new("~/bin"));
     let h = Some(home.path().as_os_str());
     let yes = |map: &std::collections::BTreeMap<String, bool>| map.get("claude") == Some(&true);

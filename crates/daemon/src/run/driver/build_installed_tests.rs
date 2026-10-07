@@ -50,8 +50,7 @@ async fn the_installed_probe_gives_up_after_its_timeout() {
 async fn found_within_stats_the_configured_binaries() {
     let dir = tempfile::tempdir().unwrap();
     let codex = dir.path().join("codex");
-    std::fs::write(&codex, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&codex, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    testexec::write_executable(&codex, "#!/bin/sh\nexit 0\n");
     let claude = dir.path().join("claude").display().to_string();
     let codex = codex.display().to_string();
     let got = found_within(claude.clone(), codex.clone(), INSTALLED_PROBE_TIMEOUT).await;

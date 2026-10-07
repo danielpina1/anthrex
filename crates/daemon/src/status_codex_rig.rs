@@ -55,8 +55,7 @@ pub(crate) fn stand_in(dir: &Path) -> String {
          last=$c\n  fi\n  sleep 0.05\ndone\n",
         dir = dir.display()
     );
-    std::fs::write(&codex, script).unwrap();
-    std::fs::set_permissions(&codex, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    testexec::write_executable(&codex, script);
     codex.to_str().unwrap().into()
 }
 
