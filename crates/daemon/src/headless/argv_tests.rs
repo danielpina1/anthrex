@@ -51,6 +51,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
         codex_sandbox: "workspace-write".into(),
         codex_writable_roots: vec![PathBuf::from(COMMON)],
         codex_read_only: Vec::new(),
+        codex_grant_dialect: None,
         env: vec![],
         claude_auth: config::ClaudeAuth::Login,
         api_key_helper: None,
@@ -105,6 +106,7 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
         codex_sandbox: "read-only".into(),
         codex_writable_roots: vec![],
         codex_read_only: Vec::new(),
+        codex_grant_dialect: None,
         ..worker(runtime)
     }
 }

@@ -232,9 +232,19 @@ fn a_racers_sandbox_covers_its_own_lanes_git_dir_only() {
         // Task 18 review m1: exactly a worker's grant, computed for the lane's checkout,
         // in its runtime's shape (lane a is Claude's, lane b Codex's on the profiles
         // dialect: both the host's).
-        let shape =
-            super::grant_shape(spec.claude_sandbox.is_some(), CodexSandboxDialect::Profiles);
-        assert_eq!(shape, git::GrantShape::host(), "{lane:?}");
+        let claude = spec.claude_sandbox.is_some();
+        let shape = super::grant_shape(claude, CodexSandboxDialect::Profiles);
+        // Final review M3: on a whole-directory host either lane gets the whole
+        // directory (so this discriminates on macOS too, whose host shape is `Files`).
+        assert_eq!(
+            super::worker_grant::grant_shape_on(
+                claude,
+                CodexSandboxDialect::Profiles,
+                git::GrantShape::WholeDir
+            ),
+            git::GrantShape::WholeDir,
+            "{lane:?}"
+        );
         let (git_common, own_path) =
             rig.run(|run| (run.git_common_dir.clone(), run.task_path(own)));
         let roots_of_own = worker_git_roots(&rig.data_dir, own);
@@ -255,6 +265,12 @@ fn a_racers_sandbox_covers_its_own_lanes_git_dir_only() {
             read_only.extend(worker.deny.iter().cloned());
             assert!(own_path.join(".git").exists(), "{lane:?}");
             assert_eq!(spec.codex_read_only, read_only, "{lane:?}");
+            // Ruling R7: the grant names the dialect it was computed for.
+            assert_eq!(
+                spec.codex_grant_dialect,
+                Some(CodexSandboxDialect::Profiles),
+                "{lane:?}"
+            );
         }
         let (other_path, task_path) = rig.run(|run| (run.task_path(other), run.task_path("t1")));
         for forbidden in [
@@ -297,6 +313,7 @@ fn a_legacy_codex_racer_gets_the_files_grant_and_no_read_only_entries() {
         "{:?}",
         spec.codex_read_only
     );
+    assert_eq!(spec.codex_grant_dialect, Some(CodexSandboxDialect::Legacy));
 }
 
 /// Hardening: the protected agent-config paths that exist in a Codex worker's checkout

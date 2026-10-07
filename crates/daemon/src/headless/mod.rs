@@ -51,6 +51,13 @@ pub struct HeadlessSpec {
     /// a dialect that can express it receives it (`headless::codex_sandbox`).
     #[serde(default)]
     pub codex_read_only: Vec<PathBuf>,
+    /// The Codex sandbox dialect `codex_writable_roots` and `codex_read_only` were
+    /// computed for (`run::driver::worker_git_dirs`). A confined session renders in it,
+    /// whatever dialect the CLI speaks now, so a grant is never re-read in a dialect
+    /// that drops its protection. `None` (persisted before this field, or never
+    /// granted): `Legacy`, the dialect every such grant was made for (final review I2).
+    #[serde(default)]
+    pub codex_grant_dialect: Option<codex_sandbox::CodexSandboxDialect>,
     pub env: Vec<(String, String)>,
     #[serde(with = "claude_auth_serde")]
     pub claude_auth: config::ClaudeAuth,

@@ -218,6 +218,7 @@ async fn worker_git_dirs(
     if codex {
         spec.codex_writable_roots = grant.writable;
         spec.codex_read_only = read_only;
+        spec.codex_grant_dialect = Some(dialect);
     }
     Ok(())
 }

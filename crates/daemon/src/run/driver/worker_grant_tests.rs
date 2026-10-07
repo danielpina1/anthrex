@@ -3,24 +3,50 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{codex_read_only, grant_shape};
+use super::{codex_read_only, grant_shape, grant_shape_on};
 use crate::headless::codex_sandbox::CodexSandboxDialect;
 use crate::run::git;
 
+/// Final review M3: checked against a whole-directory host on every host (on macOS the
+/// host's own shape is `Files`, which could not tell the runtimes apart).
 #[test]
 fn a_codex_worker_on_profiles_gets_the_host_shape() {
+    use git::GrantShape::{Files, WholeDir};
+    assert_eq!(
+        grant_shape_on(false, CodexSandboxDialect::Profiles, WholeDir),
+        WholeDir
+    );
+    assert_eq!(
+        grant_shape_on(true, CodexSandboxDialect::Legacy, WholeDir),
+        WholeDir
+    );
+    assert_eq!(
+        grant_shape(false, CodexSandboxDialect::Profiles),
+        grant_shape(true, CodexSandboxDialect::Profiles)
+    );
     assert_eq!(
         grant_shape(false, CodexSandboxDialect::Profiles),
         git::GrantShape::host()
     );
+    if cfg!(target_os = "linux") {
+        assert_eq!(git::GrantShape::host(), WholeDir);
+    }
     assert_eq!(
-        grant_shape(true, CodexSandboxDialect::Legacy),
-        git::GrantShape::host()
+        grant_shape_on(true, CodexSandboxDialect::Profiles, Files),
+        Files
     );
 }
 
 #[test]
 fn legacy_dialect_keeps_the_files_grant() {
+    assert_eq!(
+        grant_shape_on(
+            false,
+            CodexSandboxDialect::Legacy,
+            git::GrantShape::WholeDir
+        ),
+        git::GrantShape::Files
+    );
     assert_eq!(
         grant_shape(false, CodexSandboxDialect::Legacy),
         git::GrantShape::Files

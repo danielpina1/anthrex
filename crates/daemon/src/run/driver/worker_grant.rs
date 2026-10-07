@@ -11,8 +11,17 @@ use crate::run::role_launch::protected_write_denials;
 /// entries read-only) for Claude, and for Codex when its sandbox dialect can make a
 /// path read-only inside a writable one; the exact files otherwise.
 pub(super) fn grant_shape(claude: bool, dialect: CodexSandboxDialect) -> git::GrantShape {
+    grant_shape_on(claude, dialect, git::GrantShape::host())
+}
+
+/// [`grant_shape`] on a host whose own shape is `host`.
+pub(super) fn grant_shape_on(
+    claude: bool,
+    dialect: CodexSandboxDialect,
+    host: git::GrantShape,
+) -> git::GrantShape {
     if claude || dialect.expresses_read_only() {
-        git::GrantShape::host()
+        host
     } else {
         git::GrantShape::Files
     }

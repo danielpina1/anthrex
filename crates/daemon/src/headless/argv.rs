@@ -1,7 +1,7 @@
 //! The argv of every headless session (decisions 24, 25, 50, 53 and 54) and what the
 //! installed CLIs can do (`CLI_CAPS`, set from M8a.1's findings). Pure.
 
-use super::codex_sandbox::{Mode, SandboxPlan};
+use super::codex_sandbox::{CodexSandboxDialect, Mode, SandboxPlan};
 use super::{ClaudeSandbox, HeadlessSpec, McpTarget, SessionArg};
 use crate::decider::DECIDER_CAPS;
 use crate::launch;
@@ -446,7 +446,9 @@ pub fn claude_args(
     args
 }
 
-/// The sandbox plan a Codex session's spec describes.
+/// The sandbox plan a Codex session's spec describes. The `cwd` write entry keeps the
+/// process directory's spelling while the read-only entries spell the checkout
+/// canonically (the spec's Implementation notes).
 pub fn codex_plan(spec: &HeadlessSpec) -> SandboxPlan {
     SandboxPlan::new(
         Mode::from_codex_sandbox(&spec.codex_sandbox),
@@ -456,12 +458,29 @@ pub fn codex_plan(spec: &HeadlessSpec) -> SandboxPlan {
     )
 }
 
+/// The dialect a Codex session's plan renders in (final review I2, ruling R7): a
+/// confined plan in the one its grant was computed for (`None`: `Legacy`, every older
+/// grant's), never re-read in one that drops its protection; any other plan, which
+/// holds no grant, in the CLI's own.
+pub fn codex_render_dialect(
+    spec: &HeadlessSpec,
+    plan: &SandboxPlan,
+    caps: &CliCaps,
+) -> CodexSandboxDialect {
+    match plan.mode {
+        Mode::Confined => spec
+            .codex_grant_dialect
+            .unwrap_or(CodexSandboxDialect::Legacy),
+        Mode::ReadOnly | Mode::FullAccess => caps.codex_dialect(),
+    }
+}
+
 /// One Codex turn's argv (decision 25): `exec --json` for the first turn, `exec resume
 /// <id> --json` for every later one (a design agent's, never resumed by ruling T8-7,
 /// with `--ephemeral` on every turn, ruling T8-4), then the project-config exclusion when the CLI has
 /// one, the MCP server, the instructions (with M9.5 decision 28's filter note), effort
 /// and approval policy, the sandbox, the model when named, `--`, and the turn's message.
-/// The sandbox flags come from [`codex_plan`] rendered in the caps' dialect
+/// The sandbox flags come from [`codex_plan`] rendered in [`codex_render_dialect`]
 /// (`headless::codex_sandbox`): the legacy dialect's resume rule (`exec resume` rejects
 /// `-s`, M8a.1 item 6) and pins ([`CODEX_SANDBOX_PINS`]) live there. Every TOML string
 /// comes from `launch::codex::toml_string`.
@@ -520,10 +539,12 @@ pub fn codex_args(
         toml_string(effort(spec.effort))
     ));
     config(format!("approval_policy={}", toml_string("never")));
-    match caps
-        .codex_dialect()
-        .render(&codex_plan(spec), resuming, caps.codex_resume_takes_sandbox)
-    {
+    let plan = codex_plan(spec);
+    match codex_render_dialect(spec, &plan, caps).render(
+        &plan,
+        resuming,
+        caps.codex_resume_takes_sandbox,
+    ) {
         Ok(sandbox) => args.extend(sandbox),
         // Task 5 never hands a dialect a plan it cannot express; if one arrives, the
         // narrowest built-in mode runs rather than a widened one.
