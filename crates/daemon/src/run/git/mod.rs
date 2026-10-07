@@ -80,9 +80,13 @@ pub(crate) use merge_state::{
 };
 pub(crate) use worktrees::{common_dir, forget_missing, is_ancestor, listed as listed_worktree_in};
 
+pub(crate) use checkout::config as checkout_config;
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use resolution::resolution_only;
-pub use sandbox::{private_dir, worker_git_dirs};
+pub use sandbox::{
+    GrantShape, WORKTREE_GIT_DENIED_DIRS, WORKTREE_GIT_DENIED_FILES, WORKTREE_GIT_DIRS,
+    WORKTREE_GIT_FILES, WorkerGrant, private_dir, worker_git_dirs, worker_git_grant,
+};
 pub(crate) use tmp::remove as remove_task_tmp;
 pub use tmp::{task_tmp, tmp_root};
 pub use worktrees::{
@@ -110,19 +114,39 @@ use crate::worktree::{
 /// never runs inside the daemon, nor inside accept. Final fix batch F1 (C-C1, D-5); for
 /// accept this departs from decision 18, which let the user's hooks run there
 /// (Implementation notes).
-pub const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
+///
+/// Review M1 of the Linux worker-git fix: and rerere is off. Git turns rerere on when
+/// an `rr-cache` directory exists in the git directory (which a Linux worker's grant
+/// leaves writable), and follows an `rr-cache` link when it records a resolution, so an
+/// engine merge in a task checkout would write preimages wherever the link points.
+/// Re-review m3: and no engine call recurses into submodules (`read-tree -u` would
+/// honour the user's `submodule.recurse`, and read a submodule's git directory under
+/// the checkout's `modules/`).
+pub const NO_HOOKS: [&str; 6] = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "rerere.enabled=false",
+    "-c",
+    "submodule.recurse=false",
+];
 
 /// Decision 18: every engine write passes these ahead of its subcommand, so a user's
 /// hooks or a signing pinentry can never hang a run. Final fix batch F1, fix round 5:
 /// and no engine write creates a reflog, so an engine worktree never has one a worker's
 /// symbolic link could redirect (git appends to an existing reflog through a link).
-pub const WRITE_FLAGS: [&str; 6] = [
+/// Rerere and submodule recursion are off, as in [`NO_HOOKS`].
+pub const WRITE_FLAGS: [&str; 10] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "commit.gpgSign=false",
     "-c",
     "core.logAllRefUpdates=false",
+    "-c",
+    "rerere.enabled=false",
+    "-c",
+    "submodule.recurse=false",
 ];
 
 /// Decision 17: `merge-tree --write-tree` needs git 2.38.

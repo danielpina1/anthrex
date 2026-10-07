@@ -29,7 +29,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::merge_state::put;
+use super::merge_state::{put, put_denied};
 use super::sandbox::{engine_child, put_beneath};
 use super::{Git, os};
 use crate::worktree::pinned::{self, PinAs};
@@ -106,7 +106,7 @@ pub(crate) enum Kind<'a> {
 /// engine needs: not bare, the checkout as the work tree, no reflogs, no automatic gc.
 /// The format settings come first: git reads a repository's format from its own file
 /// only, never from an include.
-fn config(common: &Path, path: &Path, sha256: bool) -> String {
+pub(crate) fn config(common: &Path, path: &Path, sha256: bool) -> String {
     let mut text = String::from("[core]\n");
     if sha256 {
         text.push_str("\trepositoryformatversion = 1\n");
@@ -176,7 +176,17 @@ pub(crate) fn ensure(
     std::fs::create_dir_all(path).map_err(|err| failed(path, err))?;
     let path = path.canonicalize().map_err(|err| failed(path, err))?;
     let sha256 = at.len() == 64;
-    put(&git_dir, "config", config(common, &path, sha256).as_bytes())?;
+    // Review I1 of the Linux worker-git fix: every file here is staged in the engine
+    // directory, never in the git directory a Linux worker's grant names whole. Re-review
+    // N1: `config` and `info/exclude`, which a Linux grant denies, are never renamed
+    // over (that would detach a live sandbox's read-only bind): unchanged, they are left
+    // alone; changed, rewritten in place ([`put_denied`]).
+    put_denied(
+        &engine,
+        &git_dir,
+        "config",
+        config(common, &path, sha256).as_bytes(),
+    )?;
     let alternates = format!("{}\n", common.join("objects").display());
     put_beneath(
         &git_dir,
@@ -185,17 +195,19 @@ pub(crate) fn ensure(
         alternates.as_bytes(),
     )?;
     if let Ok(exclude) = std::fs::read(common.join("info/exclude")) {
-        put(&git_dir.join("info"), "exclude", &exclude)?;
+        put_denied(&engine, &git_dir.join("info"), "exclude", &exclude)?;
     }
     if std::fs::symlink_metadata(git_dir.join("HEAD")).is_err() {
-        put(&git_dir, "HEAD", format!("{at}\n").as_bytes())?;
+        put(&engine, &git_dir, "HEAD", format!("{at}\n").as_bytes())?;
     }
     let dot_git = format!("gitdir: {}\n", git_dir.display());
     if std::fs::read_to_string(path.join(".git")).ok().as_deref() != Some(dot_git.as_str()) {
         if path.join(".git").is_dir() {
             std::fs::remove_dir_all(path.join(".git")).map_err(|err| failed(&path, err))?;
         }
-        put(&path, ".git", dot_git.as_bytes())?;
+        // The worktree may be on another filesystem than the engine directory; the
+        // daemon's git never reads this file (it is pinned to `--git-dir`).
+        put(&path, &path, ".git", dot_git.as_bytes())?;
     }
     let as_ = match kind {
         Kind::Task { own } => PinAs {
@@ -227,7 +239,7 @@ pub(crate) fn ensure(
         match super::import::head_file(&pin)? {
             super::import::HeadFile::Commit(_) => super::import::sync_in(g, &path)?,
             super::import::HeadFile::Symbolic(_) | super::import::HeadFile::Other(_) => {
-                put(&git_dir, "HEAD", format!("{at}\n").as_bytes())?;
+                put(&engine, &git_dir, "HEAD", format!("{at}\n").as_bytes())?;
                 at.to_string()
             }
         }
@@ -238,7 +250,7 @@ pub(crate) fn ensure(
         &path,
         &[os("read-tree"), os("-u"), os("--reset"), os(&head)],
     )?;
-    put(&engine, READY, b"")?;
+    put(&engine, &engine, READY, b"")?;
     Ok(true)
 }
 

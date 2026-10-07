@@ -154,15 +154,76 @@ fn candidates_in(fx: &Fixture, effects: &[Effect]) -> Vec<String> {
 }
 
 /// Merges `id` at `at`, then completes every worktree removal that follows.
-pub(super) fn merge(fx: &mut Fixture, id: &str, at: &str) -> Vec<Effect> {
+/// `id`'s candidate merged at `at`; its retired worker still running.
+pub(super) fn merge_retiring(fx: &mut Fixture, id: &str, at: &str) -> Vec<Effect> {
     let (op, _) = candidate(fx, id);
-    let mut effects = fx.done(
+    fx.done(
         op,
         OpResult::Merged {
             commit: at.into(),
             tier: None,
         },
+    )
+}
+
+/// Every writing session of `id` in its own checkout still running exits, as a
+/// retired worker does.
+pub(super) fn exit_retired(fx: &mut Fixture, id: &str) -> Vec<Effect> {
+    let task = fx.task(id);
+    let windows: Vec<u32> = (task.rounds.iter())
+        .filter(|r| !r.ended && crate::run::model::writes(task, r))
+        .filter_map(|r| r.window_id)
+        .collect();
+    let mut effects = Vec::new();
+    for window in windows {
+        effects.extend(fx.signal(
+            window,
+            AgentSignal::ProcessExited {
+                code: Some(0),
+                killed_by_engine: false,
+                pid: 0,
+            },
+        ));
+    }
+    effects
+}
+
+/// A merge's `effects`, which remove no checkout while `id`'s retired worker runs,
+/// followed by that worker's exit's, which do (third review of the Linux worker-git
+/// fix, m1).
+pub(super) fn then_exited(fx: &mut Fixture, id: &str, mut effects: Vec<Effect>) -> Vec<Effect> {
+    assert!(
+        ops_in(&effects, "RemoveWorktree").is_empty(),
+        "a checkout removed beside its worker's retirement: {effects:#?}"
     );
+    effects.extend(exit_retired(fx, id));
+    effects
+}
+
+/// Every checkout removal pending, for any task, done: the removals a merged task's
+/// worker's exit released (by a restart that found its window gone, say).
+pub(super) fn finish_removals(fx: &mut Fixture) -> Vec<Effect> {
+    let ops: Vec<OpId> = (fx.run().pending_ops.iter())
+        .filter(|(_, p)| matches!(p.kind, OpKind::RemoveWorktree { .. }))
+        .map(|(op, _)| *op)
+        .collect();
+    let mut effects = Vec::new();
+    for op in ops {
+        effects.extend(fx.done(
+            op,
+            OpResult::Removed {
+                salvage_ref: None,
+                cleared_locks: Vec::new(),
+            },
+        ));
+    }
+    effects
+}
+
+/// `id` merged at `at`, its retired worker exited and its checkouts removed.
+pub(super) fn merge(fx: &mut Fixture, id: &str, at: &str) -> Vec<Effect> {
+    let mut effects = merge_retiring(fx, id, at);
+    effects.extend(exit_retired(fx, id));
     for (op, _) in pending(fx, "RemoveWorktree", Some(id)) {
         effects.extend(fx.done(
             op,
@@ -264,6 +325,31 @@ fn merged_updates_run_head_cleans_up_and_retires_the_worker() {
     assert!(fx.run().merge_queue.is_empty());
 
     let salvage = |n: u32| format!("refs/anthrex/salvage/{RUN_ID}/t1/{n}");
+    assert!(effects.contains(&Effect::UnwatchWorktree {
+        root: task_path("t1"),
+    }));
+    assert!(effects.contains(&Effect::RetireWindow { window_id: window }));
+    assert!(!effects.contains(&Effect::KillWindow { window_id: window }));
+    assert!(fx.task("t1").rounds[0].retiring);
+    // Third review of the Linux worker-git fix, m1: the checkouts are removed only once
+    // the retiring worker has exited, never beside its retirement: removing them unlinks
+    // the git directory's denied entries, which would detach a live sandbox's binds.
+    assert!(
+        ops_in(&effects, "RemoveWorktree").is_empty(),
+        "{effects:#?}"
+    );
+    assert!(fx.task("t1").removal_due);
+    assert!(ops_in(&fx.tick(), "RemoveWorktree").is_empty());
+    let prepare_effects = effects;
+    let effects = fx.signal(
+        window,
+        AgentSignal::ProcessExited {
+            code: Some(0),
+            killed_by_engine: false,
+            pid: 0,
+        },
+    );
+    assert!(!fx.task("t1").removal_due);
     let removals: Vec<(std::path::PathBuf, String)> = ops_in(&effects, "RemoveWorktree")
         .into_iter()
         .map(|(_, k)| match k {
@@ -287,31 +373,10 @@ fn merged_updates_run_head_cleans_up_and_retires_the_worker() {
             (task_path("t1.proof"), salvage(3)),
         ]
     );
-    let position = |pred: &dyn Fn(&Effect) -> bool| effects.iter().position(pred);
-    let unwatch = position(&|e| {
-        *e == Effect::UnwatchWorktree {
-            root: task_path("t1"),
-        }
-    })
-    .expect("the task worktree is unwatched");
-    let first_removal = position(&|e| {
-        matches!(
-            e,
-            Effect::Op {
-                kind: OpKind::RemoveWorktree { .. },
-                ..
-            }
-        )
-    })
-    .unwrap();
-    assert!(unwatch < first_removal, "{effects:#?}");
-    assert!(effects.contains(&Effect::RetireWindow { window_id: window }));
-    assert!(!effects.contains(&Effect::KillWindow { window_id: window }));
-    assert!(fx.task("t1").rounds[0].retiring);
 
     // Its dependent is runnable, and dispatched from the new run head.
     assert_eq!(fx.task("t2").state, TaskState::Preparing);
-    let prepares = ops_in(&effects, "PrepareWorktree");
+    let prepares = ops_in(&prepare_effects, "PrepareWorktree");
     assert!(
         prepares
             .iter()
@@ -360,6 +425,7 @@ fn salvage_numbers_follow_the_highest_recorded_ref() {
             tier: None,
         },
     );
+    let effects = then_exited(&mut fx, "t1", effects);
     let refs: Vec<String> = ops_in(&effects, "RemoveWorktree")
         .into_iter()
         .map(|(_, k)| match k {

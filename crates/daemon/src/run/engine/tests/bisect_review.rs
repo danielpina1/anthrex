@@ -181,6 +181,7 @@ fn fix_seq_survives_a_restart() {
     assert_eq!(fx.run().fix_seq, 7);
     assert_eq!(next_fix_id(fx.run()), "fix7");
     resume(&mut fx);
+    crate::run::engine::tests::merge::finish_removals(&mut fx);
     red_full(&mut fx);
     answer(&mut fx, 2);
     assert!(fx.run().task("fix7").is_some());

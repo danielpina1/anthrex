@@ -26,14 +26,29 @@ const SCRUBBED: [&str; 5] = [
     "GIT_INDEX_FILE",
     "GIT_PREFIX",
 ];
-const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
-const WRITE_FLAGS: [&str; 6] = [
+// Review M1 of the Linux worker-git fix: rerere is off for every engine call, so a
+// worker's `rr-cache` (which turns rerere on, and which git follows as a link) is
+// never written through by the engine's merges; and (re-review m3) no engine call
+// recurses into submodules, whatever the user's `submodule.recurse` says.
+const NO_HOOKS: [&str; 6] = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "rerere.enabled=false",
+    "-c",
+    "submodule.recurse=false",
+];
+const WRITE_FLAGS: [&str; 10] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "commit.gpgSign=false",
     "-c",
     "core.logAllRefUpdates=false",
+    "-c",
+    "rerere.enabled=false",
+    "-c",
+    "submodule.recurse=false",
 ];
 
 /// Subcommands that change the repository or a worktree.
@@ -71,7 +86,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     .unwrap();
     let generated = OwnsMatcher::new(&["Cargo.lock".to_string()]).unwrap();
 
-    let previous: Vec<(&str, Option<OsString>)> = ["GIT_DIR", "GIT_INDEX_FILE"]
+    let previous: Vec<(&str, Option<OsString>)> = ["GIT_DIR", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]
         .iter()
         .map(|k| (*k, std::env::var_os(k)))
         .collect();
@@ -80,6 +95,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     unsafe {
         std::env::set_var("GIT_DIR", "/nonexistent/leak-marker");
         std::env::set_var("GIT_INDEX_FILE", "/nonexistent/leak-index");
+        std::env::set_var("GIT_COMMON_DIR", "/nonexistent/leak-common");
     }
 
     let results: Vec<(&str, Result<(), String>)> = vec![
@@ -260,6 +276,8 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     let mut no_replace = 0;
     let mut engine_index = 0;
     let mut last_dir = String::new();
+    let mut last_git_dir: Option<String> = None;
+    let mut common_dir = 0;
     for line in log.lines() {
         if let Some(env) = line.strip_prefix("env\t") {
             // Ruling T14-R3: no call reads `refs/replace` objects.
@@ -281,6 +299,18 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
                 engine_index += 1;
                 continue;
             }
+            // The Linux worker-git fix: a call in a standalone checkout names its own git
+            // directory as its common directory, set deliberately; never the inherited
+            // one, and never for any other call.
+            if let Some(value) = env.strip_prefix("GIT_COMMON_DIR=") {
+                assert!(
+                    !value.contains("leak") && last_git_dir.as_deref() == Some(value),
+                    "GIT_COMMON_DIR reached git other than as the checkout's own git \
+                     directory: {env} in {last_dir} ({last_git_dir:?})"
+                );
+                common_dir += 1;
+                continue;
+            }
             for key in SCRUBBED {
                 assert!(
                     !env.starts_with(&format!("{key}=")),
@@ -298,6 +328,10 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
         calls += 1;
         assert_eq!(argv[0], "-C", "{argv:?}");
         last_dir = argv[1].to_string();
+        last_git_dir = argv
+            .get(5)
+            .and_then(|a| a.strip_prefix("--git-dir="))
+            .map(str::to_string);
         assert!(std::path::Path::new(argv[1]).is_absolute(), "{argv:?}");
         assert_eq!(argv[2], "--no-optional-locks", "{argv:?}");
         // Final fix batch F1 (C-C1, D-5): no call runs a configured fsmonitor, and a
@@ -322,7 +356,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
         let (flags, command) = if rest.starts_with(&WRITE_FLAGS) {
             (true, &rest[WRITE_FLAGS.len()..])
         } else if rest.starts_with(&NO_HOOKS) {
-            (false, &rest[2..])
+            (false, &rest[NO_HOOKS.len()..])
         } else {
             // Only preflight's root detection (`project::detect_roots_with`, shared with
             // the rest of the daemon) runs outside `run::git`'s `Git`; a `rev-parse`
@@ -350,4 +384,8 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     assert!(writes >= 5, "only {writes} writes were recorded:\n{log}");
     assert_eq!(no_replace, calls, "replace objects allowed:\n{log}");
     assert!(engine_index > 0, "no call used the engine's index:\n{log}");
+    assert!(
+        common_dir > 0,
+        "no call named its checkout's git directory:\n{log}"
+    );
 }

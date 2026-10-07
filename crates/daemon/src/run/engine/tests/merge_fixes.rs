@@ -142,6 +142,7 @@ fn a_cancel_during_a_merge_that_lands_is_too_late() {
     assert_eq!(t1.merge_commit, Some(commit(1)));
     let logged = |text: &str| fx.run().log.iter().any(|l| l.text.contains(text));
     assert!(logged("the cancel of t1 arrived too late"));
+    super::merge::exit_retired(&mut fx, "t1");
     for (op, _) in pending(&fx, "RemoveWorktree", Some("t1")) {
         fx.done(
             op,

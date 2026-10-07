@@ -98,7 +98,9 @@ async fn gitattributes_cannot_hide_signals() {
 #[tokio::test(flavor = "multi_thread")]
 async fn colour_config_does_not_change_the_reads() {
     let rig = Rig::logging(&base());
-    git(&rig.worktree, &["config", "color.ui", "always"]);
+    // The user's colour config reaches the task checkout through its config's include
+    // of the repository's; the checkout's own config is the engine's, byte for byte
+    // (third review of the Linux worker-git fix, m2), so it is not set there.
     git(&rig.root, &["config", "color.ui", "always"]);
     weaken(&rig, &[]);
     let (signals, _) = signals_of(&rig.verify(Some(spec())).await).expect("signals");

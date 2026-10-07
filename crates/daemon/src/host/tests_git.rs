@@ -372,7 +372,14 @@ fn the_rev_list_arm_takes_only_a_full_object_id_read_only() {
         pulls: &[],
     };
     let sha = "a560bea91b8cd58b3c0d78e5db98c7fdc8e5036b";
-    let read = ["-c", "core.hooksPath=/dev/null"];
+    let read = [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "rerere.enabled=false",
+        "-c",
+        "submodule.recurse=false",
+    ];
     let write = [
         "-c",
         "core.hooksPath=/dev/null",
@@ -380,6 +387,10 @@ fn the_rev_list_arm_takes_only_a_full_object_id_read_only() {
         "commit.gpgSign=false",
         "-c",
         "core.logAllRefUpdates=false",
+        "-c",
+        "rerere.enabled=false",
+        "-c",
+        "submodule.recurse=false",
     ];
     let args = |flags: &[&str], rest: &[&str]| -> Vec<String> {
         flags.iter().chain(rest).map(|a| a.to_string()).collect()

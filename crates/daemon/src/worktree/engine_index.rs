@@ -10,7 +10,7 @@
 //! a link (`O_NOFOLLOW`; a link, or anything but a regular file, is refused), copied
 //! into the engine's own directory (never in the worker's grant), and git reads and
 //! writes only that copy. When git changed the copy, [`Staged::install`] puts it in
-//! place by writing an engine-only temporary file next to the index and renaming it
+//! place by writing a temporary file in the engine directory and renaming it
 //! over `index`: a rename replaces a symbolic link, it never writes through one.
 //!
 //! A worker writing its index while the engine acts loses that write (the engine's
@@ -134,7 +134,7 @@ impl Staged {
     }
 
     /// The engine's copy put in place as the checkout's index when git changed it:
-    /// written to an engine-only temporary name in the git directory, then renamed over
+    /// written to a temporary name in the engine directory, then renamed over
     /// `index`, which replaces whatever is there (a link included) and never writes
     /// through it. Unchanged, nothing in the checkout is touched.
     pub fn install(self) -> Result<(), String> {
@@ -143,7 +143,13 @@ impl Staged {
             return Ok(());
         }
         let target = self.git_dir.join("index");
-        let temp = self.git_dir.join(format!("anthrex-index-{}.tmp", unique()));
+        // Review I1 of the Linux worker-git fix: the temporary file is made in the
+        // engine's own directory (the copy's, on the same filesystem as the git
+        // directory), never in the git directory, which a Linux worker's grant names
+        // whole: a worker still running could open it there and write through its
+        // descriptor after the rename.
+        let staging = self.engine.parent().unwrap_or(&self.git_dir);
+        let temp = staging.join(format!("anthrex-index-{}.tmp", unique()));
         let failed = |err: io::Error| format!("cannot install {}: {err}", target.display());
         let result = (|| {
             let mut from = open_nofollow(&self.engine)?;

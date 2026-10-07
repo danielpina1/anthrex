@@ -263,6 +263,7 @@ fn a_stages_second_bisect_is_numbered_two_after_a_restart() {
     *fx.run_mut() = stored;
     restart(&mut fx, Vec::new());
     resume(&mut fx);
+    super::merge::finish_removals(&mut fx);
     merge_next(&mut fx, &mut windows, "fix1", &commit(3));
     flush(&mut fx, &mut all);
     red_full(&mut fx);

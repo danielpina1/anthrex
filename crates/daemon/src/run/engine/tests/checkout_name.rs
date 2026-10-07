@@ -95,6 +95,7 @@ fn the_merge_removes_the_lanes_checkouts() {
         tier: None,
     };
     let effects = fx.done(op, merged);
+    let effects = super::merge::then_exited(&mut fx, "t1", effects);
     let salvage = |n: u32| format!("refs/anthrex/salvage/{RUN_ID}/t1/{n}");
     let removals: Vec<_> = ops_in(&effects, "RemoveWorktree")
         .into_iter()

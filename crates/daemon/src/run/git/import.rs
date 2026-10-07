@@ -476,5 +476,6 @@ pub(crate) fn redetach(g: Git<'_>, worktree: &Path) -> Result<(), String> {
     }
     let own = pin.own.clone().unwrap_or_default();
     let tip = read(g, &pin.common_dir, &own)?.ok_or_else(|| format!("{own} does not exist"))?;
-    super::merge_state::put(&pin.git_dir, "HEAD", format!("{tip}\n").as_bytes())
+    let staging = pin.engine.as_deref().unwrap_or(&pin.git_dir);
+    super::merge_state::put(staging, &pin.git_dir, "HEAD", format!("{tip}\n").as_bytes())
 }

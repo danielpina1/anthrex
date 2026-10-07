@@ -7,7 +7,8 @@
 //! could redirect any such write, whatever was checked just before (four fix rounds
 //! each closed one route: `HEAD`, `commondir`, the task's branch, `ORIG_HEAD`).
 //!
-//! Each file is written to a name the worker cannot write (`anthrex-<name>.tmp`,
+//! Each file is written to a name the worker cannot write (`anthrex-<name>.tmp` in the
+//! checkout's engine directory,
 //! created exclusively) and renamed over its place: a rename replaces a symbolic link
 //! the worker planted there, never writes through it. Removal is `unlink`, which
 //! removes a link itself.
@@ -34,11 +35,15 @@ const STATE_FILES: [&str; 5] = [
     "AUTO_MERGE",
 ];
 
-/// The git directory of the engine worktree `worktree`, from its pin (never from its
+/// The git directory of the engine worktree `worktree` and where its files are staged
+/// ([`put`]), from its pin (never from its
 /// `.git` file, which the worker can rewrite).
-fn git_dir(worktree: &Path) -> Result<PathBuf, String> {
+fn git_dir(worktree: &Path) -> Result<(PathBuf, PathBuf), String> {
     match crate::worktree::pinned::pinned(worktree) {
-        Some(pin) if pin.broken.is_none() => Ok(pin.git_dir),
+        Some(pin) if pin.broken.is_none() => {
+            let staging = pin.engine.clone().unwrap_or_else(|| pin.git_dir.clone());
+            Ok((pin.git_dir, staging))
+        }
         Some(pin) => Err(pin.broken.unwrap_or_default()),
         None => Err(format!(
             "{} is not an engine worktree; refusing to write its merge state",
@@ -52,16 +57,31 @@ fn git_dir(worktree: &Path) -> Result<PathBuf, String> {
 /// presence is what makes the merge in progress. The worker's `git commit` then makes
 /// the merge commit, with parents `(HEAD, run_head)`, inside its own sandbox.
 pub(crate) fn write(worktree: &Path, run_head: &str, message: &str) -> Result<(), String> {
-    let dir = git_dir(worktree)?;
-    put(&dir, "MERGE_MSG", message.as_bytes())?;
-    put(&dir, "MERGE_MODE", b"no-ff")?;
-    put(&dir, "MERGE_HEAD", format!("{run_head}\n").as_bytes())
+    let (dir, staging) = git_dir(worktree)?;
+    put(&staging, &dir, "MERGE_MSG", message.as_bytes())?;
+    put(&staging, &dir, "MERGE_MODE", b"no-ff")?;
+    put(
+        &staging,
+        &dir,
+        "MERGE_HEAD",
+        format!("{run_head}\n").as_bytes(),
+    )
 }
 
-/// `content` written to `<dir>/anthrex-<name>.tmp` (created exclusively, so never
-/// through a link) and renamed over `<dir>/<name>`.
-pub(crate) fn put(dir: &Path, name: &str, content: &[u8]) -> Result<(), String> {
-    let temp = dir.join(format!("anthrex-{name}.tmp"));
+/// `content` written to `<staging>/anthrex-<name>.tmp` (created exclusively, so never
+/// through a link) and renamed over `<dir>/<name>`. `staging` is the checkout's engine
+/// directory, which no worker's grant names, on the same filesystem as `dir` (review I1
+/// of the Linux worker-git fix): a temporary file made in the git directory, which a
+/// Linux worker's grant names whole, could be opened by a worker still running, which
+/// would then write through its descriptor into the file renamed into place. `staging`
+/// is `dir` only where no worker writes `dir`'s directory beyond its own files (the
+/// worktree's own `.git` file, whose content no daemon git call reads; a checkout
+/// without an engine directory is never given the Linux grant).
+///
+/// Never for an entry a Linux grant denies that may already exist: a rename over it
+/// detaches a live sandbox's read-only bind on it (re-review N1). Use [`put_denied`].
+pub(crate) fn put(staging: &Path, dir: &Path, name: &str, content: &[u8]) -> Result<(), String> {
+    let temp = staging.join(format!("anthrex-{name}.tmp"));
     let failed = |err: std::io::Error| format!("cannot write {}: {err}", dir.join(name).display());
     remove(&temp).map_err(failed)?;
     let mut file = std::fs::OpenOptions::new()
@@ -72,6 +92,63 @@ pub(crate) fn put(dir: &Path, name: &str, content: &[u8]) -> Result<(), String> 
     file.write_all(content).map_err(failed)?;
     drop(file);
     std::fs::rename(&temp, dir.join(name)).map_err(failed)
+}
+
+/// `content` as `<dir>/<name>`, an entry a Linux worker's grant denies (`config`, and
+/// `info/exclude` inside the denied `info/`), written without ever replacing the entry
+/// (re-review N1 of the Linux worker-git fix). A worker's sandbox denies it with a
+/// read-only bind mounted on that directory entry; a rename (or an unlink) over the
+/// entry on the host makes the kernel detach every mount on it, including the bind in a
+/// sandbox still running, after which the worker reaches the new file through the
+/// writable bind of the git directory and can append a filter or an fsmonitor command
+/// that the engine's next, unsandboxed git call runs. So: missing, it is made by
+/// [`put`] (no mount can be on a name that does not exist); present with `content`
+/// already, it is left alone (the engine's content is deterministic); otherwise it is
+/// opened without following a link (`O_NOFOLLOW`; a link fails closed), checked to be a
+/// regular file, truncated and rewritten in place, so the entry and its mount stay.
+pub(crate) fn put_denied(
+    staging: &Path,
+    dir: &Path,
+    name: &str,
+    content: &[u8],
+) -> Result<(), String> {
+    use std::io::{Read as _, Seek as _};
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let path = dir.join(name);
+    let failed = |err: std::io::Error| format!("cannot write {}: {err}", path.display());
+    match std::fs::symlink_metadata(&path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return put(staging, dir, name, content);
+        }
+        Err(err) => return Err(failed(err)),
+        Ok(_) => {}
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&path)
+        .map_err(failed)?;
+    if !file.metadata().map_err(failed)?.file_type().is_file() {
+        return Err(format!(
+            "cannot write {}: it is not a regular file; it was tampered with",
+            path.display()
+        ));
+    }
+    // At most one byte past `content`: enough to tell a longer file apart, never a
+    // read of whatever a worker grew it to.
+    let mut current = Vec::with_capacity(content.len() + 1);
+    (&mut file)
+        .take(content.len() as u64 + 1)
+        .read_to_end(&mut current)
+        .map_err(failed)?;
+    if current == content {
+        return Ok(());
+    }
+    file.set_len(0).map_err(failed)?;
+    file.rewind().map_err(failed)?;
+    file.write_all(content).map_err(failed)?;
+    file.sync_all().map_err(failed)
 }
 
 /// `path` unlinked; already gone is fine.
@@ -85,7 +162,7 @@ fn remove(path: &Path) -> std::io::Result<()> {
 /// The merge state dropped, `MERGE_HEAD` first (what `git merge --quit` does, without
 /// running git): the index, the files and every ref are left as they are.
 pub(crate) fn clear(worktree: &Path) -> Result<(), String> {
-    let dir = git_dir(worktree)?;
+    let (dir, _) = git_dir(worktree)?;
     for name in STATE_FILES {
         let path = dir.join(name);
         remove(&path).map_err(|err| format!("cannot remove {}: {err}", path.display()))?;
