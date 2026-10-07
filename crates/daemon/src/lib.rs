@@ -29,6 +29,7 @@ pub mod logfile;
 pub mod manager;
 pub mod metering;
 pub mod output_filter;
+mod probe_child;
 mod process;
 pub mod profile;
 pub mod project;
