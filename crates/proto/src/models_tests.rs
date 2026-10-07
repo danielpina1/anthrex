@@ -56,8 +56,6 @@ fn effort_is_a_string_and_a_protocol_18_value_decodes() {
     assert_eq!(Effort::of(Some("high")), Effort::HIGH);
     assert_eq!(Effort::DEFAULT.to_string(), "default");
     assert_eq!(Effort::HIGH.to_string(), "high");
-    assert_eq!(Effort::LOW.raised(), Some(Effort::MEDIUM));
-    assert_eq!(Effort::HIGH.raised(), None);
 }
 
 #[test]

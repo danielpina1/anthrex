@@ -5,8 +5,7 @@
 use proto::{ModelEntry, Runtime, Strength};
 
 use super::*;
-use crate::run::roster::escalate;
-use crate::run::test_support::{PROFILE, build_with, plan_with, task_toml};
+use crate::run::test_support::{PROFILE, build_with, escalated, plan_with, task_toml};
 
 fn entry(runtime: Runtime, model: &str, strength: Strength) -> ModelEntry {
     ModelEntry {
@@ -37,6 +36,25 @@ fn reviewed_by(mut config: config::Orchestrator, model: &str) -> config::Orchest
     config
 }
 
+/// `config` whose implementer rows (small, medium, hub) are Sonnet falling back to
+/// Codex's default (milestone 9.8 decision 29: escalation's only way to Codex).
+fn falling_back_to_codex(mut config: config::Orchestrator) -> config::Orchestrator {
+    use proto::models::{ModelRef, Role, RoleChoice};
+    for role in [
+        Role::ImplementerSmall,
+        Role::ImplementerMedium,
+        Role::ImplementerHub,
+    ] {
+        let row = RoleChoice {
+            model: ModelRef::parse("claude:claude-sonnet-5").unwrap(),
+            effort: None,
+            fallback: Some(ModelRef::parse("codex:default").unwrap()),
+        };
+        config.roles.rows.insert(role, row);
+    }
+    config
+}
+
 /// One `size` task owning `owns`, routed to `model` at `effort` on `runtime`.
 fn run_of(
     config: &config::Orchestrator,
@@ -61,7 +79,7 @@ const HUB: &str = "[\"crates/proto/**\"]";
 #[test]
 fn probe_a_an_unreviewed_claude_task_reaches_codex() {
     let run = run_of(
-        &config(config::default_roster(), false),
+        &falling_back_to_codex(config(config::default_roster(), false)),
         "S",
         DOCS,
         "claude",
@@ -70,7 +88,7 @@ fn probe_a_an_unreviewed_claude_task_reaches_codex() {
     );
     let t1 = &run.tasks[0];
     assert_eq!(t1.review_level, None, "the probe's task is not reviewed");
-    let twice = escalate(&run.roster, &escalate(&run.roster, &t1.route));
+    let twice = escalated(&run, "t1", &escalated(&run, "t1", &t1.route));
     assert_eq!(twice.runtime, Runtime::Codex);
     assert_eq!(
         reachable_runtimes(&run),
@@ -109,8 +127,9 @@ fn the_escalated_route_is_reached() {
         entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
         entry(Runtime::Codex, "gpt-5-codex", Strength::Standard),
     ];
+    let reviewed = reviewed_by(config(roster, true), "claude:claude-sonnet-5");
     let run = run_of(
-        &reviewed_by(config(roster, true), "claude:claude-sonnet-5"),
+        &falling_back_to_codex(reviewed),
         "M",
         HUB,
         "claude",
@@ -374,7 +393,7 @@ fn reach_drops_an_uninstalled_runtime() {
         entry(Runtime::Codex, "gpt-5-codex", Strength::Standard),
     ];
     let mut run = run_of(
-        &reviewed_by(config(roster, true), "claude:claude-sonnet-5"),
+        &falling_back_to_codex(reviewed_by(config(roster, true), "claude:claude-sonnet-5")),
         "M",
         HUB,
         "claude",
@@ -386,7 +405,7 @@ fn reach_drops_an_uninstalled_runtime() {
         t1.review_route.as_ref().map(|r| r.runtime),
         Some(Runtime::Claude)
     );
-    assert_eq!(escalate(&run.roster, &t1.route).runtime, Runtime::Codex);
+    assert_eq!(escalated(&run, "t1", &t1.route).runtime, Runtime::Codex);
     run.orch.installed = [("codex".to_string(), false)].into();
     assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
 }

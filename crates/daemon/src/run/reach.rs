@@ -18,14 +18,17 @@
 //! Milestone 9.8 (task M9.8.7a): a reviewer, a second racer and a test writer come from
 //! the run's role table (decisions 27, 28), so each reviewed route counts the reviewer
 //! row's model and its fallback, a racing task its row's fallback, and a paired task the
-//! `test_writer` row; escalation stays the roster's until M9.8.8.
+//! `test_writer` row. Task M9.8.8: escalation is `role_step::escalate` along a row
+//! (decision 29), so a route reaches every step of the rows it can escalate along: the
+//! task's row at each size from its own up, and the test writer's row for the writer.
+//! A larger size's row route is counted too for a task that names no model (the
+//! decider's raise re-resolves it, decision 10).
 
 use proto::{Route, Runtime, Size};
 
 use super::model::{ReviewLevel, Run, Task};
-use super::model_roles::RunModels;
-use super::model_roles::installed_roster;
-use super::roster::escalate;
+use super::model_roles::{RunModels, missing};
+use super::role_step;
 use super::route_pick::task_list;
 use super::validate::resolve_task_lenient;
 use proto::models::Role;
@@ -64,12 +67,22 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
         // Milestone 9.8 decision 28: lane b's route (the row's fallback), and the test
         // writer's (its row); each may be the task's own route instead.
         let racer = (t.spec.race).then(|| models.racer_route(RunModels::task_role(t), &t.route));
-        let writer = (t.spec.pair).then(|| models.route(Role::TestWriter));
+        let roles = task_roles(t);
+        // A raise re-resolves a task that names no model to the larger size's row.
+        let raised = (t.spec.route.model.is_none())
+            .then(|| roles.iter().skip(1).map(|role| models.route(*role)))
+            .into_iter()
+            .flatten();
         let starts: Vec<Route> = (std::iter::once(t.route.clone()).chain(listed))
             .chain(racer)
-            .chain(writer)
+            .chain(raised)
             .collect();
-        for route in starts.iter().flat_map(|r| escalations(run, r)) {
+        let writer = (t.spec.pair).then(|| models.route(Role::TestWriter));
+        let worker = starts.iter().flat_map(|r| escalations(run, &roles, r));
+        let writer = writer
+            .iter()
+            .flat_map(|r| escalations(run, &[Role::TestWriter], r));
+        for route in worker.chain(writer).collect::<Vec<_>>() {
             found.push(route.runtime);
             if reviewed {
                 found.extend(reviewers.iter().copied());
@@ -98,20 +111,31 @@ pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
         .collect()
 }
 
-/// `route` and every route repeated escalation reaches from it, to the fixpoint. The
-/// routes are drawn from a finite set (the roster's entries and the starting route's
-/// model, each at three efforts), so the walk ends at a route already seen. Milestone
-/// 9.7 decision 16: over the installed roster only, as rung 2 and a fix task escalate.
-fn escalations(run: &Run, route: &Route) -> Vec<Route> {
-    let roster = installed_roster(&run.roster, &run.orch.installed);
-    let mut chain = vec![route.clone()];
-    loop {
-        let next = escalate(&roster, chain.last().expect("never empty"));
-        if chain.contains(&next) {
-            return chain;
+/// `route` and every route escalation along `roles`' rows reaches from it
+/// (`role_step::steps`, decision 29), past a runtime the run's start found missing, as
+/// rung 2 and a fix task step over it (milestone 9.7 decision 16).
+fn escalations(run: &Run, roles: &[Role], route: &Route) -> Vec<Route> {
+    let models = run.limits.models();
+    let steps = (roles.iter()).flat_map(|role| role_step::steps(models, *role, route));
+    (std::iter::once(route.clone()).chain(steps))
+        .filter(|r| r.runtime == route.runtime || !missing(&run.orch.installed, r.runtime))
+        .collect()
+}
+
+/// The rows task `t` can take, its own first: its own size's, and each larger size's a
+/// raise moves it to (decision 10).
+fn task_roles(t: &Task) -> Vec<Role> {
+    let mut roles = Vec::new();
+    for size in [Size::S, Size::M, Size::L]
+        .into_iter()
+        .filter(|s| *s >= t.size)
+    {
+        let role = RunModels::role_of(t.spec.kind, t.hub, size);
+        if !roles.contains(&role) {
+            roles.push(role);
         }
-        chain.push(next);
     }
+    roles
 }
 
 /// The review levels task `t` can be reviewed at: its own, and the one rung 3's

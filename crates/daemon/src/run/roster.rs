@@ -1,5 +1,5 @@
-//! Reviewer and escalation roster policy, decisions 23, 35 (reviewer route) and 39
-//! (rung-2 route). Pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or
+//! Reviewer roster policy, decisions 23 and 35 (reviewer route); decision 39's rung-2
+//! route left in milestone 9.8 (task M9.8.8, `role_step::escalate`). Pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or
 //! `std::time::SystemTime` (design decision 2).
 
 use proto::{Effort, ModelEntry, Route, Runtime, Strength};
@@ -31,14 +31,6 @@ pub fn peer(runtime: Runtime) -> Runtime {
         Runtime::Claude => Runtime::Codex,
         Runtime::Codex => Runtime::Claude,
         Runtime::Shell => Runtime::Shell,
-    }
-}
-
-fn strength_one_up(strength: Strength) -> Option<Strength> {
-    match strength {
-        Strength::Fast => Some(Strength::Standard),
-        Strength::Standard => Some(Strength::Frontier),
-        Strength::Frontier => None,
     }
 }
 
@@ -128,33 +120,10 @@ pub fn pick_reviewer(roster: &[ModelEntry], author: &Route, level: ReviewLevel) 
     }
 }
 
-/// The rung-2 route, decision 39: effort below `high` raises effort on the same runtime
-/// and model; otherwise the peer runtime's first roster entry at the same strength, at
-/// `high` effort; otherwise the same runtime's first entry one strength up, at `high`
-/// effort; otherwise the route is unchanged.
-pub fn escalate(roster: &[ModelEntry], route: &Route) -> Route {
-    if let Some(effort) = route.effort.raised() {
-        return Route {
-            effort,
-            ..route.clone()
-        };
-    }
-    let peer_runtime = peer(route.runtime);
-    if let Some(entry) = first_at(roster, peer_runtime, route.strength) {
-        return route_from(entry, Effort::HIGH);
-    }
-    if let Some(up) = strength_one_up(route.strength)
-        && let Some(entry) = first_at(roster, route.runtime, up)
-    {
-        return route_from(entry, Effort::HIGH);
-    }
-    route.clone()
-}
-
-// Milestone 9.5 ruling RL-1: the roster picks without the routes failed in a task.
+// Milestone 9.5 ruling RL-1: the reviewer's roster pick without the routes failed in a task.
 #[path = "roster_skipping.rs"]
 mod skipping;
-pub use skipping::{escalate_skipping, pick_reviewer_skipping};
+pub use skipping::pick_reviewer_skipping;
 
 #[cfg(test)]
 #[path = "roster_tests.rs"]

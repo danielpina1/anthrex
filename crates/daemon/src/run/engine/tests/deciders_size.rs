@@ -141,6 +141,45 @@ fn a_planner_set_effort_survives_a_raise() {
     assert_eq!(t1.route.effort, Effort::HIGH);
 }
 
+/// Milestone 9.8 decision 10 (controller ruling, M9.8.8): a raise to M re-resolves the
+/// task to `implementer.medium`'s row, model and effort; a route that names its model
+/// (a user's, decision 10) keeps that model.
+#[test]
+fn a_raise_to_m_takes_the_medium_row_unless_the_route_names_a_model() {
+    use proto::models::{ModelRef, ModelTable, Role, RoleChoice};
+    let mut config = config::Orchestrator::default();
+    let row = RoleChoice {
+        model: ModelRef::parse("codex:gpt-6-sol").unwrap(),
+        effort: Some("low".into()),
+        fallback: None,
+    };
+    config.roles = ModelTable {
+        rows: [(Role::ImplementerSmall, row)].into(),
+        brainstorm: None,
+    };
+    let named = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-opus-5-5\"";
+    let tasks = [task("t1", "S", "a", ""), task("t2", "S", "b", named)];
+    let mut fx = evidenced(&tasks, true, config);
+    let small = fx.run().limits.models().route(Role::ImplementerSmall);
+    assert_eq!(fx.task("t1").route, small);
+    let (op, ..) = size_check_op(&fx);
+    fx.decided(
+        op,
+        verdicts(&[("t1", Size::M, "bigger"), ("t2", Size::M, "bigger")]),
+    );
+    let medium = fx.run().limits.models().route(Role::ImplementerMedium);
+    assert_ne!(medium.model, small.model);
+    let (t1, t2) = (fx.task("t1"), fx.task("t2"));
+    assert_eq!((t1.size, &t1.route), (Size::M, &medium));
+    assert_eq!(
+        (t2.size, t2.route.model.as_str()),
+        (Size::M, "claude-opus-5-5")
+    );
+    assert_eq!(t2.route.effort, medium.effort, "the plan set no effort");
+    let models = fx.run().limits.models();
+    assert_eq!(t1.review_route, Some(models.reviewer_route(&t1.route).0));
+}
+
 #[test]
 fn an_amend_never_lowers_a_cross_check_raise() {
     let tasks = [

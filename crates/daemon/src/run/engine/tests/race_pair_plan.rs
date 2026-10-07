@@ -98,7 +98,10 @@ fn a_racing_task_that_widens_the_reach_is_refused_by_the_trust_check() {
         ..config::Orchestrator::default()
     };
     let route = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-opus-5\"";
-    let plan = plan_with(PROFILE, &[task_toml("t1", "S", "[\"docs/a.md\"]", route)]);
+    // Milestone 9.8 decision 29: an M task, whose row (the built-in Sonnet) has no
+    // fallback, so its escalation stays on Claude; the S row's Codex fallback is the
+    // racer's.
+    let plan = plan_with(PROFILE, &[task_toml("t1", "M", "[\"docs/a.md\"]", route)]);
     let mut fx = Fixture::with_config(&plan, config);
     fx.ready(false);
     assert_eq!(

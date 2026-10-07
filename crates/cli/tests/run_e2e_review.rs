@@ -13,9 +13,13 @@ fn blocked_question(reason: &str) -> Value {
     json!({"mcp_call": {"tool": "task_blocked", "args": {"kind": "question", "reason": reason}}})
 }
 
+/// Milestone 9.8 decision 29: the small row (Sonnet) falls back to Codex's default, so
+/// rung 2 past Sonnet's top effort (or with no effort list) moves to Codex.
+const SMALL_FALLS_BACK_TO_CODEX: &str = "[models.implementer.small]\nmodel = \"claude:claude-sonnet-5\"\neffort = \"low\"\nfallback = \"codex:default\"";
+
 #[test]
 fn e2e_two_rejections_then_a_fresh_peer_worker_is_approved() {
-    let h = RunHarness::new("");
+    let h = RunHarness::with_config("", SMALL_FALLS_BACK_TO_CODEX, &[]);
     h.script(
         "worker-t1-1",
         &[

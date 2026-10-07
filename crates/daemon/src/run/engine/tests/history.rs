@@ -17,8 +17,7 @@ use super::merge::{
     window_of,
 };
 use crate::run::engine::{Effect, EventKind, OpKind, OpResult};
-use crate::run::roster::escalate;
-use crate::run::routing::{PASSED_OVER, escalation_pool, select};
+use crate::run::routing::{PASSED_OVER, select};
 
 const REPO: &str = "/tmp/data/repos/x-3f9a";
 
@@ -166,6 +165,7 @@ fn a_reviewer_round_is_decided_before_its_launch() {
 #[test]
 fn a_rung_two_worker_records_its_escalation() {
     let (mut fx, window) = working_on(PROFILE, CHECK_MODE);
+    fx.with_efforts();
     let before = fx.task("t1").route.clone();
     // Two failed checks: rung 2, a fresh session on the escalated route.
     for _ in 0..2 {
@@ -439,6 +439,7 @@ fn selectors_own_pool(d: &proto::RoutingDecision) {
 #[test]
 fn a_retried_started_task_records_its_escalation() {
     let (mut fx, window) = super::turns::working();
+    fx.with_efforts();
     let before = fx.task("t1").route.clone();
     super::control::blocked(&mut fx, window, "mis_sized", "too big");
     super::turns::killed_exit(&mut fx, window);
@@ -453,7 +454,7 @@ fn a_retried_started_task_records_its_escalation() {
     );
     only_op(&effects, "CreateWindow");
     let t1 = fx.task("t1");
-    let chosen = escalate(&fx.run().roster, &before);
+    let chosen = fx.escalated("t1", &before);
     assert_ne!(chosen, before);
     assert_eq!(t1.route, chosen);
     assert_eq!(t1.escalated_from, None, "the marker is spent");
@@ -467,7 +468,7 @@ fn a_retried_started_task_records_its_escalation() {
     assert_eq!(d.chosen, chosen);
     assert_eq!(
         (d.candidates.clone(), d.selected_index),
-        select(escalation_pool(&fx.run().roster, &before), &chosen),
+        select(fx.escalation_pool("t1", &before), &chosen),
         "the pool steps from the route the blocked session ran"
     );
     selectors_own_pool(d);
@@ -480,6 +481,7 @@ fn a_retried_started_task_records_its_escalation() {
 fn a_twice_retried_unstarted_task_escalates_from_its_intermediate_route() {
     let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", "")]));
     fx.ready(true);
+    fx.with_efforts();
     let planned = fx.task("t1").route.clone();
     for _ in 0..2 {
         let (op, _) = pending_one(&fx, "PrepareWorktree", Some("t1"));
@@ -497,13 +499,12 @@ fn a_twice_retried_unstarted_task_escalates_from_its_intermediate_route() {
             Ok("task t1 retried at rung 2: it is dispatched again".to_string())
         );
     }
-    let intermediate = escalate(&fx.run().roster, &planned);
+    let intermediate = fx.escalated("t1", &planned);
     assert_ne!(intermediate, planned);
     assert_eq!(fx.task("t1").escalated_from.as_ref(), Some(&intermediate));
     fx.launch_all();
     let t1 = fx.task("t1");
-    let roster = &fx.run().roster;
-    let chosen = escalate(roster, &intermediate);
+    let chosen = fx.escalated("t1", &intermediate);
     assert_eq!(t1.route, chosen);
     let decisions = &t1.routing_decisions;
     assert_eq!(decisions.len(), 1, "{decisions:#?}");
@@ -515,7 +516,7 @@ fn a_twice_retried_unstarted_task_escalates_from_its_intermediate_route() {
     assert_eq!(d.chosen, chosen);
     assert_eq!(
         (d.candidates.clone(), d.selected_index),
-        select(escalation_pool(roster, &intermediate), &chosen)
+        select(fx.escalation_pool("t1", &intermediate), &chosen)
     );
     selectors_own_pool(d);
     assert_eq!(t1.escalated_from, None);
@@ -527,11 +528,9 @@ fn a_twice_retried_unstarted_task_escalates_from_its_intermediate_route() {
 #[test]
 fn a_rung_two_escalation_steps_from_the_route_it_replaced() {
     let (mut fx, window) = working_on(PROFILE, CHECK_MODE);
+    fx.with_efforts();
     let before = fx.task("t1").route.clone();
-    let stale = {
-        let roster = &fx.run().roster;
-        escalate(roster, &escalate(roster, &before))
-    };
+    let stale = fx.escalated("t1", &fx.escalated("t1", &before));
     assert_ne!(stale, before);
     fx.task_mut("t1").escalated_from = Some(stale);
     for _ in 0..2 {
@@ -552,10 +551,10 @@ fn a_rung_two_escalation_steps_from_the_route_it_replaced() {
     );
     let t1 = fx.task("t1");
     let d = &t1.routing_decisions[1];
-    assert_eq!(d.chosen, escalate(&fx.run().roster, &before));
+    assert_eq!(d.chosen, fx.escalated("t1", &before));
     assert_eq!(
         (d.candidates.clone(), d.selected_index),
-        select(escalation_pool(&fx.run().roster, &before), &d.chosen)
+        select(fx.escalation_pool("t1", &before), &d.chosen)
     );
     selectors_own_pool(d);
 }

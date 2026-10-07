@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::run::model::AgentRound;
-use crate::run::roster::{escalate, escalate_skipping, pick_reviewer_skipping};
+use crate::run::roster::pick_reviewer_skipping;
 use crate::run::routing::{record_listed_reviewer, record_reviewer};
 
 /// A round of `role` on `route`, ended; `failed` when it ended for an environment reason.
@@ -100,28 +100,6 @@ fn retry_skips_the_route_that_just_failed_in_this_task() {
     // A session that ended for another reason is no failure.
     other.tasks[0].rounds = vec![round(AgentRole::Reviewer, opus(Effort::HIGH), false)];
     assert!(failed_routes(&other.tasks[0]).is_empty());
-
-    // With no list, `roster::escalate` excludes it: sonnet high would step to Codex's
-    // default, which failed, so it steps up to opus.
-    let codex_default = route(Runtime::Codex, "", Strength::Standard, Effort::MEDIUM);
-    assert_eq!(
-        escalate(&roster, &sonnet(Effort::HIGH)).runtime,
-        Runtime::Codex
-    );
-    assert_eq!(
-        escalate_skipping(&roster, &sonnet(Effort::HIGH), &[codex_default]),
-        opus(Effort::HIGH)
-    );
-    // A route that failed itself is not given more effort: it steps as a `high` one.
-    let codex_high = route(Runtime::Codex, "", Strength::Standard, Effort::HIGH);
-    assert_eq!(
-        escalate_skipping(&roster, &sonnet(Effort::LOW), &[sonnet(Effort::LOW)]),
-        codex_high
-    );
-    assert_eq!(
-        escalate_skipping(&roster, &sonnet(Effort::LOW), &[]),
-        sonnet(Effort::MEDIUM)
-    );
 }
 
 #[test]

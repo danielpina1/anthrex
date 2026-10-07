@@ -44,16 +44,34 @@ fn fresh_launch(fx: &mut Fixture) -> Launch {
     launch_of(kind)
 }
 
-/// T16-2: with Codex not installed, rung 2 never steps the writer onto Codex (plain
-/// `roster::escalate` from Claude sonnet at `high` gave the Codex peer), and the pick
-/// is recorded as an escalation.
+/// Milestone 9.8: `config` whose `test_writer` row is Codex's default at `medium`,
+/// falling back to `fallback`.
+fn writer_row(fallback: &str) -> config::Orchestrator {
+    let mut config = config::Orchestrator::default();
+    let row = proto::models::RoleChoice {
+        model: proto::models::ModelRef::parse("codex:default").unwrap(),
+        effort: Some("medium".into()),
+        fallback: Some(proto::models::ModelRef::parse(fallback).unwrap()),
+    };
+    config
+        .roles
+        .rows
+        .insert(proto::models::Role::TestWriter, row);
+    config
+}
+
+/// T16-2: with Codex not installed, rung 2 never steps the writer onto Codex, and the
+/// pick is recorded as an escalation. Milestone 9.8 decision 29: the writer, held to
+/// the task's route (Sonnet at `high`, the top of its list), steps to its row's
+/// fallback, Opus.
 #[test]
 fn the_writers_rung_2_skips_a_runtime_that_is_not_installed() {
     let tasks = [task("t1", "S", "a", &format!("{PAIRED}\n{SONNET_HIGH}"))];
-    let (mut fx, launch, writer) =
-        running(PROFILE, &tasks, config::Orchestrator::default(), |run| {
-            run.orch.installed.insert("codex".into(), false);
-        });
+    let config = writer_row("claude:claude-opus-5-5");
+    let (mut fx, launch, writer) = running(PROFILE, &tasks, config, |run| {
+        run.orch.installed.insert("codex".into(), false);
+        crate::run::test_support::with_efforts(run);
+    });
     assert_eq!(launch.spec.runtime, Runtime::Claude);
     assert_eq!(launch.spec.effort, Effort::HIGH);
     rung2(&mut fx, writer);
@@ -66,7 +84,7 @@ fn the_writers_rung_2_skips_a_runtime_that_is_not_installed() {
     );
     assert_eq!(
         launch.spec.model, "claude-opus-5-5",
-        "one step up on Claude"
+        "the row's fallback on Claude"
     );
     let t1 = fx.task("t1");
     let writers: Vec<_> = (t1.routing_decisions.iter())
@@ -94,10 +112,15 @@ fn the_writers_rung_2_skips_a_runtime_that_is_not_installed() {
 }
 
 /// T16-2 (ruling T10a-5): a writer whose session failed for an environment reason is
-/// substituted by the peer at its strength on `run retry`, never re-run on its route.
+/// substituted on `run retry`, never re-run on its route. Milestone 9.8 decision 29:
+/// by its row's fallback, past the failed model's efforts.
 #[test]
 fn a_writer_that_failed_in_this_task_is_substituted_on_retry() {
-    let (mut fx, launch, writer) = paired();
+    let tasks = [task("t1", "S", "a", PAIRED)];
+    let config = writer_row("claude:claude-sonnet-5");
+    let (mut fx, launch, writer) = running(PROFILE, &tasks, config, |run| {
+        crate::run::test_support::with_efforts(run);
+    });
     assert_eq!(launch.spec.runtime, Runtime::Codex);
     let args = json!({"kind": "environment", "reason": "codex cannot start"});
     assert!(one_reply(&writer_tool(&mut fx, writer, "task_blocked", args)).is_ok());
@@ -110,7 +133,7 @@ fn a_writer_that_failed_in_this_task_is_substituted_on_retry() {
     assert_eq!(
         (launch.spec.runtime, launch.spec.model.as_str()),
         (Runtime::Claude, "claude-sonnet-5"),
-        "the peer at the same strength"
+        "the row's fallback"
     );
     assert_eq!(
         fx.task("t1").route.runtime,

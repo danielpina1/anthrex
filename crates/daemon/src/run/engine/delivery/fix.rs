@@ -139,7 +139,9 @@ pub(super) fn route_spec(route: &Route) -> RouteSpec {
     RouteSpec {
         runtime: Some(route.runtime),
         model: Some(route.model.clone()),
-        strength: Some(route.strength),
+        // Milestone 9.8 (task M9.8.8): a row's route says `standard` whatever the
+        // roster says of its model; the strength is left to the model's roster entry.
+        strength: None,
         effort: Some(route.effort.clone()),
     }
 }

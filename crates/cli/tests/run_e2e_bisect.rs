@@ -5,7 +5,7 @@
 
 mod support;
 
-use proto::{AgentRole, FullState, ModelEntry, RunInfo, RunState, TaskOrigin, TaskState};
+use proto::{AgentRole, FullState, RunInfo, RunState, TaskOrigin, TaskState};
 use serde_json::{Value, json};
 use support::orch_script::{
     add, edit_plan, marker, passed, plan_task, prompt, until as status_until,
@@ -14,6 +14,10 @@ use support::run_harness::{REQUEST_WAIT, RunHarness};
 use support::run_orch::{ORCH_LINES, triage_plan};
 use support::run_plans::*;
 use support::run_tiers::*;
+
+/// Milestone 9.8: the small row (every task here is S) falls back to Opus, so the
+/// culprit's route has a rung above it whatever the catalog reports.
+const SMALL_ROW: &str = "[models.implementer.small]\nmodel = \"claude:claude-sonnet-5\"\neffort = \"low\"\nfallback = \"claude:claude-opus-5-5\"";
 
 fn green(h: &RunHarness, id: &str, steps: &[Value]) {
     h.script(&format!("worker-{id}-1"), steps);
@@ -58,7 +62,7 @@ fn in_full(line: &Value) -> bool {
 
 #[test]
 fn e2e_red_tier3_is_bisected_to_the_culprit_and_fixed() {
-    let h = RunHarness::with_config("", "", &tier_repo_files());
+    let h = RunHarness::with_config("", SMALL_ROW, &tier_repo_files());
     green(&h, "t1", &[commit("mods/a/src.txt", "a2\n"), done("a")]);
     // Only the whole suite (and the single test `b::full`) reads the marker: t2's
     // tier 1 and tier 2 run b's module tests, which pass.
@@ -120,13 +124,23 @@ fn e2e_red_tier3_is_bisected_to_the_culprit_and_fixed() {
     assert_eq!(line["probes"], json!(4), "{line}");
     let (fix, t2) = (t(&run, "fix1"), t(&run, "t2"));
     assert_eq!(fix.owns, t2.owns, "the culprit's owns, copied exactly");
-    // Decision 37: the culprit's route one rung up (`roster::escalate`), from the
-    // run's own roster.
-    let roster: Vec<ModelEntry> =
-        serde_json::from_value(run_json(&run)["roster"].clone()).expect("run.json's roster");
-    let up = daemon::run::roster::escalate(&roster, &t2.route);
-    assert_ne!(up, t2.route, "the harness's route has a rung above it");
-    assert_eq!(fix.route, up, "the culprit's route, one rung up");
+    // Decision 37: the culprit's route one rung up, along its row of the run's frozen
+    // role table (milestone 9.8 decision 29, `role_step::escalate`). The fix task's
+    // route takes its model's roster strength, so the strength is not compared.
+    let engine: daemon::run::model::Run =
+        serde_json::from_value(run_json(&run)).expect("run.json is a run");
+    let culprit = engine.task("t2").expect("t2 in run.json");
+    let role = daemon::run::model_roles::RunModels::task_role(culprit);
+    let failed = daemon::run::model_roles::failed_routes(culprit);
+    let models = engine.limits.models();
+    let up = daemon::run::role_step::escalate(models, role, &t2.route, &failed);
+    let up = up.expect("the harness's row has a rung above the culprit's route");
+    let key = |r: &proto::Route| (r.runtime, r.model.clone(), r.effort.clone());
+    assert_eq!(
+        key(&fix.route),
+        key(&up),
+        "the culprit's route, one rung up"
+    );
     // Then fix1's own path.
     let run = h.wait_run(&id, settled, TIER_WAIT);
     assert_eq!(run.state, RunState::Complete, "{}", report(&run));

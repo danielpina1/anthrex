@@ -559,7 +559,8 @@ fn add_fix(
         route: RouteSpec {
             runtime: Some(route.runtime),
             model: Some(route.model.clone()),
-            strength: Some(route.strength),
+            // Milestone 9.8 (task M9.8.8): as `delivery::fix::route_spec`.
+            strength: None,
             effort: Some(route.effort.clone()),
         },
         test_mode: TestMode::Check,

@@ -3,11 +3,11 @@
 //! snapshots the candidates the selector could use from the run's frozen roster, in
 //! the selector's own order and each skipped one with its reason, and the task as it
 //! stood at dispatch. Nothing here changes a route: the engine's selectors
-//! (`validate::resolve_route`, `roster::escalate`, `roster::pick_reviewer`) choose, and
+//! (`validate::resolve_route`, `role_step::escalate`, `roster::pick_reviewer`) choose, and
 //! this module only records. Pure (M8b decision 1). Milestone 9.8 (preflight ruling
 //! F16): a first worker's, a racer's, a test writer's and a reviewer's decision records
 //! the role table's row (source `role_table`, policy `m9.8-roles-v1`): the row's model,
-//! then its fallback; an escalation keeps milestone 8a's pool until M9.8.8.
+//! then its fallback; an escalation, M9.8.8's `role_step` steps along the row.
 
 use proto::{
     AgentRole, Effort, ModelEntry, Route, RoutingCandidate, RoutingDecision, RoutingInput, Strength,
@@ -15,6 +15,7 @@ use proto::{
 
 use super::model::{ReviewLevel, Run, Task};
 use super::model_roles::{NOT_INSTALLED, OVERLAPPING_OWNS, RunModels, missing};
+use super::role_step;
 use super::roster::peer;
 use proto::models::Role;
 
@@ -145,39 +146,19 @@ pub fn worker_pool(roster: &[ModelEntry], chosen: &Route, explicit: bool) -> Vec
         .collect()
 }
 
-/// An escalated worker's pool, in `roster::escalate`'s order from `from`: the same
-/// route one effort up; the peer runtime's entries at the same strength; the same
-/// runtime's entries one strength up (both at `high`); `from` unchanged; then every
-/// other roster entry, which escalation never picks.
-pub fn escalation_pool(roster: &[ModelEntry], from: &Route) -> Vec<Raw> {
-    let mut raw: Vec<Raw> = Vec::new();
-    if let Some(effort) = from.effort.raised() {
-        raw.push((
-            Route {
-                effort,
-                ..from.clone()
-            },
-            None,
-        ));
-    }
-    let up = match from.strength {
-        Strength::Fast => Some(Strength::Standard),
-        Strength::Standard => Some(Strength::Frontier),
-        Strength::Frontier => None,
-    };
-    let peers = roster
-        .iter()
-        .filter(|e| e.runtime == peer(from.runtime) && e.strength == from.strength);
-    let ups = roster
-        .iter()
-        .filter(|e| e.runtime == from.runtime && Some(e.strength) == up);
-    for entry in peers.chain(ups) {
-        raw.push((route_of(entry, Effort::HIGH), None));
-    }
+/// An escalated session's pool (milestone 9.8 decision 29, ruling F16), in
+/// `role_step::escalate`'s order from `from` along `role`'s row: every step it can
+/// reach, then `from` unchanged (rung 2 with nothing left); then the row's model and
+/// fallback where escalation from `from` never goes.
+pub fn escalation_pool(models: &RunModels, role: Role, from: &Route) -> Vec<Raw> {
+    let mut raw: Vec<Raw> = (role_step::steps(models, role, from).into_iter())
+        .map(|route| (route, None))
+        .collect();
     raw.push((from.clone(), None));
-    let not_a_step = format!("not an escalation step from {}", from.model);
-    for entry in roster {
-        let route = route_of(entry, Effort::HIGH);
+    let choice = models.choice(role);
+    let fallback = (choice.fallback.as_ref()).map(|f| RunModels::route_of(f, None));
+    let not_a_step = format!("not an escalation step from {}", RunModels::label_of(from));
+    for route in std::iter::once(models.route(role)).chain(fallback) {
         if !raw.iter().any(|(r, _)| *r == route) {
             raw.push((route, Some(not_a_step.clone())));
         }
@@ -352,9 +333,13 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
             run,
             task,
             id,
-            ("escalation", "escalation_policy", ESCALATE_POLICY),
+            ("escalation", "escalation_policy", ROLES_POLICY),
             &chosen,
-            mark_failed(escalation_pool(&run.roster, &from), task, &chosen),
+            mark_failed(
+                escalation_pool(run.limits.models(), RunModels::task_role(task), &from),
+                task,
+                &chosen,
+            ),
             now,
         ),
         None if first => {
@@ -415,9 +400,13 @@ pub fn record_test_writer(run: &mut Run, i: usize, chosen: &Route, now: u64) {
             run,
             task,
             id,
-            ("escalation", "escalation_policy", ESCALATE_POLICY),
+            ("escalation", "escalation_policy", ROLES_POLICY),
             chosen,
-            mark_failed(escalation_pool(&run.roster, &from), task, chosen),
+            mark_failed(
+                escalation_pool(run.limits.models(), Role::TestWriter, &from),
+                task,
+                chosen,
+            ),
             now,
         ),
         None if first => {

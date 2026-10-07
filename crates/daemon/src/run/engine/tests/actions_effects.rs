@@ -207,6 +207,8 @@ fn message_stage_counts_its_unfinished_tasks() {
 #[test]
 fn task_effects_name_the_task() {
     let (mut fx, window) = t1_working();
+    // Milestone 9.8 decision 29: Sonnet reports `low`, `medium`, `high`.
+    fx.with_efforts();
     let t1 = || ActionNode::Task("t1");
     assert_eq!(
         effect(&fx, t1(), ActionKind::Answer),

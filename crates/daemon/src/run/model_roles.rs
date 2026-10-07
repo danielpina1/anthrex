@@ -9,9 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use proto::models::{BrainstormChoice, ModelRef, ModelTable, Role, RoleChoice};
-use proto::{
-    CatalogSource, Effort, ModelCatalog, ModelEntry, Route, Runtime, Size, Strength, TaskKind,
-};
+use proto::{CatalogSource, Effort, ModelCatalog, Route, Runtime, Size, Strength, TaskKind};
 use serde::{Deserialize, Serialize};
 
 use super::globs::any_intersect;
@@ -302,15 +300,6 @@ pub(crate) fn alongside(
     };
     (tasks.iter().enumerate())
         .filter(move |(j, t)| *j != i && !t.state.is_finished() && !waiting.contains(j))
-}
-
-/// Milestone 9.7 decision 16: the `roster` entries whose runtime `installed` does not
-/// record as missing (the installed skip alone; `reach`'s forecast has no task).
-pub(crate) fn installed_roster(roster: &[ModelEntry], installed: &Installed) -> Vec<ModelEntry> {
-    (roster.iter())
-        .filter(|e| !missing(installed, e.runtime))
-        .cloned()
-        .collect()
 }
 
 /// Decision 27 at a reviewer's launch, with ruling RL-1: [`RunModels::reviewer_route`]

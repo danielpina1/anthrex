@@ -112,13 +112,26 @@ fn retry_reroutes_a_reviewer_that_failed_in_this_task() {
     assert_eq!(skipped, Some(FAILED_IN_TASK));
 }
 
+/// Milestone 9.8: the default config, its `implementer.small` row (Sonnet at `low`)
+/// falling back to Codex's default.
+fn small_falls_back_to_codex() -> config::Orchestrator {
+    let mut config = config::Orchestrator::default();
+    let row = proto::models::RoleChoice {
+        model: proto::models::ModelRef::parse("claude:claude-sonnet-5").unwrap(),
+        effort: Some("low".into()),
+        fallback: Some(proto::models::ModelRef::parse("codex:default").unwrap()),
+    };
+    (config.roles.rows).insert(proto::models::Role::ImplementerSmall, row);
+    config
+}
+
 /// The action menu's retry preview names the route a retry takes: here a worker whose
-/// own route failed with a client error, so no higher effort on that model, but Codex's
-/// default at `high` (`roster::escalate` from a `high` route).
+/// own route failed with a client error, so no higher effort on that model, but its
+/// row's fallback, Codex's default, at its default effort (milestone 9.8 decision 29).
 #[test]
 fn the_retry_preview_names_the_route_a_retry_takes() {
     use crate::run::engine::actions::{self, ActionNode};
-    let (mut fx, window) = working_with(PROFILE, CHECK_MODE, config::Orchestrator::default());
+    let (mut fx, window) = working_with(PROFILE, CHECK_MODE, small_falls_back_to_codex());
     let failed = TurnOutcome::Failed {
         error: "model not found".into(),
         kind: FailureKind::ClientError,
@@ -133,7 +146,7 @@ fn the_retry_preview_names_the_route_a_retry_takes() {
         .effect;
     assert_eq!(
         preview,
-        "retry t1: a fresh session at rung 2 on codex default (high effort)"
+        "retry t1: a fresh session at rung 2 on codex default (default effort)"
     );
     retry(&mut fx, "t1");
     let route = &fx.task("t1").route;

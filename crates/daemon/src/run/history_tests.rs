@@ -11,8 +11,8 @@ use super::{due, run_outcome, run_record, run_record_due, task_record, task_reco
 use crate::run::contract::generated_files_message;
 use crate::run::model::{DoneClaim, ReviewLevel, Run, SizeCheckState};
 use crate::run::phases::set_state;
-use crate::run::roster::escalate;
 use crate::run::routing::{record_reviewer, record_worker};
+use crate::run::test_support::{escalated, with_efforts};
 
 #[path = "history_tests_fixtures.rs"]
 mod fixtures;
@@ -240,6 +240,8 @@ fn routing_history_keeps_choice_time_candidates() {
         Effort::MEDIUM,
     );
     assert_eq!(run.tasks[0].route, sonnet);
+    // Milestone 9.8 decision 29: Sonnet reports `low`, `medium`, `high`.
+    with_efforts(&mut run);
 
     // The first worker: the class default on the task's runtime and strength.
     run.tasks[0].session = 1;
@@ -247,7 +249,14 @@ fn routing_history_keeps_choice_time_candidates() {
     // A repeated start of the same session adds nothing.
     record_worker(&mut run, 0, 101);
     // A fresh escalated worker (rung 2): escalated from the route it had.
-    let up = escalate(&run.roster, &sonnet);
+    let up = escalated(&run, "t1", &sonnet);
+    assert_eq!(
+        up,
+        proto::Route {
+            effort: Effort::HIGH,
+            ..sonnet.clone()
+        }
+    );
     let task = &mut run.tasks[0];
     task.escalated_from = Some(std::mem::replace(&mut task.route, up.clone()));
     task.session = 2;
@@ -291,7 +300,7 @@ fn routing_history_keeps_choice_time_candidates() {
             ),
             (
                 (2, 200, AgentRole::Worker, 2, None, None),
-                ("escalation", "escalation_policy", "m8a-escalate-v1"),
+                ("escalation", "escalation_policy", "m9.8-roles-v1"),
                 0,
                 None
             ),
@@ -317,25 +326,21 @@ fn routing_history_keeps_choice_time_candidates() {
         vec![(format!("{claude}claude-sonnet-5"), Effort::MEDIUM, None)]
     );
     let after = s("ranked after the selected route");
+    // Ruling F16 (M9.8.8): `role_step`'s steps from the route left, that route, then the
+    // row's own route, which escalation never steps to.
     assert_eq!(
         candidates(&decisions[1]),
         vec![
             (format!("{claude}claude-sonnet-5"), Effort::HIGH, None),
-            (codex.to_string(), Effort::HIGH, after.clone()),
-            (
-                format!("{claude}claude-opus-5-5"),
-                Effort::HIGH,
-                after.clone()
-            ),
             (
                 format!("{claude}claude-sonnet-5"),
                 Effort::MEDIUM,
                 after.clone()
             ),
             (
-                format!("{claude}claude-haiku-4-5"),
-                Effort::HIGH,
-                s("not an escalation step from claude-sonnet-5")
+                format!("{claude}claude-sonnet-5"),
+                Effort::LOW,
+                s("not an escalation step from claude:claude-sonnet-5")
             ),
         ]
     );

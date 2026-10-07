@@ -126,7 +126,6 @@ fn strength_and_effort_order() {
     assert!(Strength::Standard < Strength::Frontier);
     assert!(Effort::LOW < Effort::MEDIUM);
     assert!(Effort::MEDIUM < Effort::HIGH);
-    assert_eq!(Effort::HIGH.raised(), None);
     assert_eq!(Size::M.raised(), Size::L);
 }
 

@@ -201,8 +201,9 @@ fn history_text(info: &SizeCheckInfo) -> String {
 
 /// Decision 19's S → M raise: the size and `raised_size` (so an amend never lowers
 /// it), what depends on the size re-resolved (`ladder::reresolve`: review level,
-/// reviewer, a budget the plan did not set), and the re-resolved route's effort when
-/// the plan set none. The task has not been dispatched: a pending check blocks it.
+/// reviewer, a budget the plan did not set), and the re-resolved route: the new size's
+/// row (milestone 9.8 decision 10), or the model the route names at the effort it
+/// names, else the row's. The task has not been dispatched: a pending check blocks it.
 pub(crate) fn apply_raise(run: &mut Run, task_id: &str, size: Size, reason: &str) {
     let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) else {
         return;
@@ -228,8 +229,11 @@ pub(crate) fn apply_raise(run: &mut Run, task_id: &str, size: Size, reason: &str
     let task = &mut run.tasks[i];
     // Milestone 9.5 (review m1): a model list's candidate keeps its effort, as a plan's.
     let listed = task.list_pick.as_ref().and_then(|p| p.chosen_route()) == Some(&task.route);
-    if task.spec.route.effort.is_none() && !listed {
-        task.route.effort = resolved.effort;
+    // Milestone 9.8 decision 10 (controller ruling, M9.8.8): the raised size's row, its
+    // model and effort; a route that names its model (a user's) keeps it, and an effort
+    // the route names stays (`validate::resolve_route`).
+    if !listed && task.route != resolved {
+        task.route = resolved;
         let models = run.limits.models();
         task.review_route = (task.review_level).map(|_| models.reviewer_route(&task.route).0);
     }

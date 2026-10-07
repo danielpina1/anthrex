@@ -132,11 +132,24 @@ fn with_every_route_failed_a_retry_takes_the_original_and_logs_it() {
     );
 }
 
-/// A working `t1` on opus with no list and the default roster (codex holds only its
-/// Standard default); its window.
+/// Milestone 9.8: the default config, its `implementer.small` row (Sonnet at `low`)
+/// falling back to Codex's default.
+fn small_falls_back_to_codex() -> config::Orchestrator {
+    let mut config = config::Orchestrator::default();
+    let row = proto::models::RoleChoice {
+        model: proto::models::ModelRef::parse("claude:claude-sonnet-5").unwrap(),
+        effort: Some("low".into()),
+        fallback: Some(proto::models::ModelRef::parse("codex:default").unwrap()),
+    };
+    (config.roles.rows).insert(proto::models::Role::ImplementerSmall, row);
+    config
+}
+
+/// A working `t1` on opus with no list, its row ([`small_falls_back_to_codex`]) falling
+/// back to Codex's default; its window.
 fn working_unlisted() -> (Fixture, u32) {
     let plan = plan_with(PROFILE, &[task("t1", "S", "a", CHECK_MODE)]);
-    let mut fx = Fixture::with_config(&plan, config::Orchestrator::default());
+    let mut fx = Fixture::with_config(&plan, small_falls_back_to_codex());
     fx.start_with(true, |run| run.tasks[0].route = opus());
     let (op, _) = fx.op("CreateRunBranch");
     fx.done(
@@ -157,18 +170,18 @@ fn opus() -> Route {
     }
 }
 
-/// Ruling T10a-5: Codex's Standard default, the strongest route left, on the peer runtime.
+/// Milestone 9.8 decision 29: the row's fallback, Codex's default, at its default effort.
 fn codex_default() -> Route {
     Route {
         runtime: Runtime::Codex,
         model: String::new(),
         strength: Strength::Standard,
-        effort: Effort::HIGH,
+        effort: Effort::DEFAULT,
     }
 }
 
 #[test]
-fn with_no_list_run_retry_substitutes_a_failed_route_from_the_roster() {
+fn with_no_list_run_retry_substitutes_a_failed_route_with_the_rows_fallback() {
     let (mut fx, window) = working_unlisted();
     client_error(&mut fx, window);
     retry(&mut fx, "t1");
@@ -182,7 +195,7 @@ fn with_no_list_run_retry_substitutes_a_failed_route_from_the_roster() {
 }
 
 #[test]
-fn with_no_list_rung_2_substitutes_a_failed_route_from_the_roster() {
+fn with_no_list_rung_2_substitutes_a_failed_route_with_the_rows_fallback() {
     let (mut fx, _) = working_unlisted();
     let t1 = fx.task_mut("t1");
     let k = t1.rounds.len() - 1;

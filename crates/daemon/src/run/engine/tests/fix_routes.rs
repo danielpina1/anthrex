@@ -2,8 +2,10 @@
 //! bisect fix and 9.2's CI culprit fix) escalates from the culprit's route as its
 //! worker's rung 2 would (`route_pick::escalate_for`): past a runtime the run's start
 //! recorded as not installed, and past a route that failed in the culprit's task.
+//! Milestone 9.8 (task M9.8.8): along the culprit's row (decision 29).
 
-use proto::{CiCategory, Effort, ModelEntry, Route, Runtime, Strength, TaskState};
+use proto::models::ModelRef;
+use proto::{CiCategory, Route, Runtime, TaskState};
 
 use super::bisect::{TEST, answer, merge_next, merged, red_full, with_orchestrator};
 use super::delivery_ci::ci_fixes;
@@ -12,80 +14,65 @@ use super::fixture::*;
 use super::full::{full_job, outcome, tier};
 use super::merge::{commit, doc_task, start_on};
 use crate::run::engine::EventKind;
-use crate::run::model_roles::Mover;
+use crate::run::model_roles::{Mover, RunModels};
 use crate::run::proof::proof_command;
-use crate::run::roster::escalate;
 use crate::run::route_pick::escalate_for;
-use crate::run::test_support::task_toml;
+use crate::run::test_support::{set_row, task_toml, with_efforts};
 
 const SINGLE: &str = "cargo test -- --exact {test}";
+const CODEX: &str = "codex:default";
+const OPUS: &str = "claude:claude-opus-5-5";
+const SONNET: &str = "claude:claude-sonnet-5";
 
-fn entry(runtime: Runtime, model: &str, strength: Strength) -> ModelEntry {
-    ModelEntry {
-        runtime,
-        model: model.to_string(),
-        strength,
-        note: String::new(),
-    }
+fn at(model: &str, effort: &str) -> Route {
+    let model = ModelRef::parse(model).expect("a model");
+    RunModels::route_of(&model, (!effort.is_empty()).then_some(effort))
 }
 
-fn route(runtime: Runtime, model: &str, strength: Strength) -> Route {
-    Route {
-        runtime,
-        model: model.to_string(),
-        strength,
-        effort: Effort::HIGH,
-    }
+/// A route's runtime, model and effort: a fix task's route takes its model's roster
+/// strength, a row's route says `standard` (removed in M9.8.14).
+fn key(route: &Route) -> (Runtime, String, String) {
+    let effort = route.effort.as_str().to_string();
+    (route.runtime, route.model.clone(), effort)
 }
 
-/// Claude and Codex at `standard` and `frontier`.
-fn roster() -> Vec<ModelEntry> {
-    vec![
-        entry(Runtime::Claude, "claude-std", Strength::Standard),
-        entry(Runtime::Claude, "claude-top", Strength::Frontier),
-        entry(Runtime::Codex, "codex-std", Strength::Standard),
-        entry(Runtime::Codex, "codex-top", Strength::Frontier),
-    ]
-}
-
-/// The culprit's route, `claude/standard` at `high`.
-fn culprit_route() -> Route {
-    route(Runtime::Claude, "claude-std", Strength::Standard)
-}
-
-/// The roster's step from the culprit's route: the peer runtime at the same strength.
-fn codex_step() -> Route {
-    route(Runtime::Codex, "codex-std", Strength::Standard)
-}
-
-/// The next installed, unfailed step: Claude one strength up.
-fn claude_up() -> Route {
-    route(Runtime::Claude, "claude-top", Strength::Frontier)
+/// Milestone 9.8: `culprit`'s row set to `model` falling back to `fallback`, every row
+/// model reporting `low`, `medium`, `high`; the culprit on `route`.
+fn row(fx: &mut Fixture, culprit: &str, (model, fallback): (&str, &str), route: Route) {
+    let role = RunModels::task_role(fx.task(culprit));
+    set_row(fx.run_mut(), role, model, None, Some(fallback));
+    with_efforts(fx.run_mut());
+    fx.task_mut(culprit).route = route;
 }
 
 #[derive(Clone, Copy)]
 enum Skip {
-    /// `run.orch.installed` records Codex as `false`.
+    /// The culprit at the top of its Codex row: `run.orch.installed` records Claude,
+    /// its fallback's runtime, as `false`; the culprit's own route is left.
     Uninstalled,
-    /// A session of the culprit ended for an environment reason on the Codex step.
+    /// The culprit on Codex at `medium`: a session of it on Codex ended for an
+    /// environment reason, so Codex's `high` is passed by for the Opus fallback.
     Failed,
 }
 
-/// Gives `fx` [`roster`], `culprit` [`culprit_route`], and `skip`'s reason to pass by
-/// the roster's own step ([`codex_step`]).
+/// Gives `culprit` a Codex row falling back to Opus and `skip`'s reason to pass by the
+/// row's own step.
 fn arrange(fx: &mut Fixture, culprit: &str, skip: Skip) {
-    fx.run_mut().roster = roster();
-    fx.task_mut(culprit).route = culprit_route();
+    let (route, step) = match skip {
+        Skip::Uninstalled => (at(CODEX, "high"), at(OPUS, "")),
+        Skip::Failed => (at(CODEX, "medium"), at(CODEX, "high")),
+    };
+    row(fx, culprit, (CODEX, OPUS), route.clone());
     assert_eq!(
-        escalate(&fx.run().roster, &culprit_route()),
-        codex_step(),
-        "the premise: the roster's step is Codex"
+        fx.escalated(culprit, &route),
+        step,
+        "the premise: the row's step"
     );
     match skip {
-        Skip::Uninstalled => fx.run_mut().orch.installed = [("codex".to_string(), false)].into(),
+        Skip::Uninstalled => fx.run_mut().orch.installed = [("claude".to_string(), false)].into(),
         Skip::Failed => {
             let mut r = crate::run::orch::test_support::round(1, 0, Default::default());
-            r.route = codex_step();
+            r.route = route;
             r.ended = true;
             r.environment_failed = true;
             fx.task_mut(culprit).rounds.push(r);
@@ -120,28 +107,39 @@ fn ci_fix_route(skip: Skip) -> Route {
 
 #[test]
 fn a_bisect_fix_task_skips_an_uninstalled_runtime() {
-    assert_eq!(bisect_fix_route(Skip::Uninstalled), claude_up());
+    assert_eq!(
+        key(&bisect_fix_route(Skip::Uninstalled)),
+        key(&at(CODEX, "high"))
+    );
 }
 
 #[test]
 fn a_ci_culprit_fix_task_skips_an_uninstalled_runtime() {
-    assert_eq!(ci_fix_route(Skip::Uninstalled), claude_up());
+    assert_eq!(
+        key(&ci_fix_route(Skip::Uninstalled)),
+        key(&at(CODEX, "high"))
+    );
 }
 
 #[test]
 fn a_bisect_fix_task_skips_the_culprits_failed_route() {
-    assert_eq!(bisect_fix_route(Skip::Failed), claude_up());
+    assert_eq!(key(&bisect_fix_route(Skip::Failed)), key(&at(OPUS, "")));
 }
 
 #[test]
 fn a_ci_culprit_fix_task_skips_the_culprits_failed_route() {
-    assert_eq!(ci_fix_route(Skip::Failed), claude_up());
+    assert_eq!(key(&ci_fix_route(Skip::Failed)), key(&at(OPUS, "")));
+}
+
+/// The culprit on Sonnet at the top of its row, which falls back to Codex.
+fn culprit_route() -> Route {
+    at(SONNET, "high")
 }
 
 /// Makes `id` the one unfinished task that overlaps `culprit`'s `owns`: planned on the
-/// culprit's runtime (its spec names none, so the default, Claude), but moved to Codex
-/// by rung 2 or `run retry` ([`codex_step`]). The overlap skip reads current routes, so
-/// it leaves Codex open; rule 9 reads planned runtimes, so it refuses a Codex fix task.
+/// culprit's runtime (its row's, Claude), but moved to Codex by rung 2 or `run retry`.
+/// The overlap skip reads current routes, so it leaves Codex open; rule 9 reads planned
+/// runtimes, so it refuses a Codex fix task.
 fn moved_overlap(fx: &mut Fixture, id: &str, culprit: &str) {
     let owns = (fx.task(culprit).spec.owns.iter())
         .map(|g| g.replace("**", "more/**"))
@@ -150,17 +148,21 @@ fn moved_overlap(fx: &mut Fixture, id: &str, culprit: &str) {
     t.spec.owns = owns;
     assert_eq!(t.spec.route.runtime, None, "planned on the default runtime");
     assert!(t.list_pick.is_none());
-    t.route = codex_step();
+    t.route = at(CODEX, "");
     if t.state.is_finished() {
         t.state = TaskState::Working;
     }
-    assert_eq!(fx.run().limits.default_runtime, Runtime::Claude);
-    let at = (fx.run().tasks.iter())
+    let planned = RunModels::task_role(fx.task(id));
+    assert_eq!(
+        fx.run().limits.models().route(planned).runtime,
+        Runtime::Claude
+    );
+    let i = (fx.run().tasks.iter())
         .position(|t| t.id() == culprit)
         .unwrap();
     assert_eq!(
-        escalate_for(fx.run(), at, &culprit_route(), Mover::Worker),
-        codex_step(),
+        escalate_for(fx.run(), i, &culprit_route(), Mover::Worker),
+        at(CODEX, ""),
         "the premise: the overlap skip leaves Codex open"
     );
 }
@@ -180,8 +182,7 @@ fn a_bisect_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route() {
         ),
     ];
     let (mut fx, mut windows) = start_on(&super::full::profile(), &tasks);
-    fx.run_mut().roster = roster();
-    fx.task_mut("t2").route = culprit_route();
+    row(&mut fx, "t2", (SONNET, CODEX), culprit_route());
     merge_next(&mut fx, &mut windows, "t1", &commit(1));
     merge_next(&mut fx, &mut windows, "t2", &commit(2));
     moved_overlap(&mut fx, "t3", "t2");
@@ -192,8 +193,8 @@ fn a_bisect_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route() {
     fx.done(op, tier(outcome(3, &[TEST])));
     answer(&mut fx, 2);
     assert_eq!(
-        fx.task("fix1").route,
-        culprit_route(),
+        key(&fx.task("fix1").route),
+        key(&culprit_route()),
         "the culprit's own route"
     );
 }
@@ -203,8 +204,7 @@ fn a_bisect_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route() {
 fn a_ci_culprit_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route() {
     let mut fx = tiered_watched(&["t1", "t2", "t3", "t4"]);
     with_orchestrator(&mut fx);
-    fx.run_mut().roster = roster();
-    fx.task_mut("t3").route = culprit_route();
+    row(&mut fx, "t3", (SONNET, CODEX), culprit_route());
     fx.run_mut().stages[0].full.green_at = Some(commit(1));
     red_summarised(&mut fx, &commit(4), &[TEST], CiCategory::Test);
     moved_overlap(&mut fx, "t4", "t3");
@@ -213,14 +213,14 @@ fn a_ci_culprit_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route(
     answer(&mut fx, 3);
     let fixes = ci_fixes(&fx);
     assert_eq!(fixes.len(), 1, "{fixes:?}");
-    // FW-10 (review A m1): the spec names the culprit's runtime, model, strength and
-    // effort, so the last resort (`RouteSpec::default()`, which resolves to the same
-    // runtime and model) can never pass for the fallback, whatever its effort.
+    // FW-10 (review A m1): the spec names the culprit's runtime, model and effort (its
+    // strength the roster's, M9.8.8), so the last resort (`RouteSpec::default()`, which
+    // resolves to the row) can never pass for the fallback, whatever its effort.
     let culprit = culprit_route();
     let spec = proto::RouteSpec {
         runtime: Some(culprit.runtime),
         model: Some(culprit.model.clone()),
-        strength: Some(culprit.strength),
+        strength: None,
         effort: Some(culprit.effort.clone()),
     };
     assert_eq!(
@@ -228,5 +228,9 @@ fn a_ci_culprit_fix_task_refused_by_rule_9_falls_back_to_the_culprits_own_route(
         spec,
         "the culprit's own route"
     );
-    assert_eq!(fx.task(&fixes[0]).route, culprit, "the culprit's own route");
+    assert_eq!(
+        key(&fx.task(&fixes[0]).route),
+        key(&culprit),
+        "the culprit's own route"
+    );
 }

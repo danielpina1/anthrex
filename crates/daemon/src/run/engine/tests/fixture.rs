@@ -253,6 +253,28 @@ impl Fixture {
             .expect("the fixture run exists")
     }
 
+    /// Milestone 9.8 decision 21 for a fixture (`test_support::with_efforts`): every
+    /// row model reports `low`, `medium`, `high`, so rung 2 has an effort to raise.
+    pub fn with_efforts(&mut self) {
+        crate::run::test_support::with_efforts(self.run_mut());
+    }
+
+    /// Decision 29: task `id`'s next route from `from` along its row
+    /// (`test_support::escalated`).
+    pub fn escalated(&self, id: &str, from: &proto::Route) -> proto::Route {
+        crate::run::test_support::escalated(self.run(), id, from)
+    }
+
+    /// Ruling F16: the routing record's escalation pool for task `id`'s row from `from`.
+    pub fn escalation_pool(
+        &self,
+        id: &str,
+        from: &proto::Route,
+    ) -> Vec<(proto::Route, Option<String>)> {
+        let role = crate::run::model_roles::RunModels::task_role(self.task(id));
+        crate::run::routing::escalation_pool(self.run().limits.models(), role, from)
+    }
+
     pub fn task(&self, id: &str) -> &Task {
         self.run()
             .task(id)

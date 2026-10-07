@@ -65,6 +65,7 @@ mod report_task;
 mod report_tiers;
 pub mod role_launch;
 pub mod role_launch_patterns;
+pub mod role_step;
 pub mod roster;
 pub mod route_pick;
 pub mod routing;

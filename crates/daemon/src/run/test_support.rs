@@ -249,6 +249,30 @@ pub fn set_row(
     run.limits.models = Some(models);
 }
 
+/// Milestone 9.8 decision 21 for a fixture run: every row's model and fallback reported
+/// with the efforts `low`, `medium`, `high` and no default, as a live catalog would, so
+/// rung 2 has an effort to raise (decision 29).
+pub fn with_efforts(run: &mut Run) {
+    let models = run.limits.models.as_mut().expect("frozen at start");
+    let named: Vec<_> = (models.rows.values())
+        .flat_map(|c| std::iter::once(c.model.clone()).chain(c.fallback.clone()))
+        .collect();
+    for model in named {
+        let known = super::model_roles::ModelEfforts {
+            efforts: ["low", "medium", "high"].map(String::from).to_vec(),
+            default: None,
+        };
+        models.efforts.insert(model, known);
+    }
+}
+
+/// Milestone 9.8 decision 29: task `id`'s next route from `from` along its row, nothing
+/// skipped; `from` when nothing is left.
+pub fn escalated(run: &Run, id: &str, from: &proto::Route) -> proto::Route {
+    let role = RunModels::task_role(task(run, id));
+    super::role_step::escalate(run.limits.models(), role, from, &[]).unwrap_or_else(|| from.clone())
+}
+
 pub fn task<'a>(run: &'a Run, id: &str) -> &'a Task {
     run.task(id).unwrap_or_else(|| panic!("no task {id}"))
 }

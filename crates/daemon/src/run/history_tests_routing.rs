@@ -6,8 +6,9 @@ use proto::{Effort, Runtime, Strength};
 
 use super::fixtures::*;
 use crate::run::model::ReviewLevel;
-use crate::run::roster::{escalate, pick_reviewer};
+use crate::run::roster::pick_reviewer;
 use crate::run::routing::{record_reviewer, record_worker};
+use crate::run::test_support::{escalated, with_efforts};
 
 #[test]
 fn a_run_without_history_records_no_routing_decisions() {
@@ -20,7 +21,9 @@ fn a_run_without_history_records_no_routing_decisions() {
     for history in [false, true] {
         let mut run = run_of(&["t1"]);
         run.history = history;
-        let up = escalate(&run.roster, &sonnet);
+        with_efforts(&mut run);
+        let up = escalated(&run, "t1", &sonnet);
+        assert_ne!(up, sonnet);
         let task = &mut run.tasks[0];
         task.session = 2;
         task.escalated_from = Some(std::mem::replace(&mut task.route, up.clone()));

@@ -273,7 +273,9 @@ const ROOMY: &str = "[task.budget]\ntool_calls = 1000\nminutes = 1000";
 #[test]
 fn stall_interrupts_then_nudges_then_goes_to_rung_2() {
     let (mut fx, window) = working_on(ROOMY);
-    let effort = fx.task("t1").route.effort.clone();
+    // Milestone 9.8 decision 29: the row's model reports `low`, `medium`, `high`.
+    fx.with_efforts();
+    assert_eq!(fx.task("t1").route.effort, proto::Effort::LOW);
     let quiet = fx.task("t1").rounds[0].last_event;
     // Ruling T24-clock: 600 whole engine seconds may be 599.x real ones; the stall
     // comes one second later.
@@ -326,8 +328,8 @@ fn stall_interrupts_then_nudges_then_goes_to_rung_2() {
     assert!(first_turn.contains("This is session 2 of this task."));
     assert!(first_turn.contains("diff --git a/a.rs b/a.rs"));
     assert_eq!(
-        Some(spec.effort.clone()),
-        effort.raised(),
+        spec.effort,
+        proto::Effort::MEDIUM,
         "rung 2 escalates the route"
     );
     assert_eq!(fx.task("t1").session, 2);

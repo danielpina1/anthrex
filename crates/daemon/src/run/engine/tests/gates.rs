@@ -15,7 +15,6 @@ use crate::run::contract::{
 use crate::run::engine::{AgentSignal, Effect, OpKind, OpResult};
 use crate::run::model::{CheckRecord, OpId, ProofRecord};
 use crate::run::proof::{proof_command, proof_pattern};
-use crate::run::roster::escalate;
 
 /// `PROFILE` without its `check` line.
 pub(super) fn no_check() -> String {
@@ -313,6 +312,7 @@ fn in_check(fx: &mut Fixture, window: u32) -> OpId {
 #[test]
 fn check_failure_goes_up_the_ladder() {
     let (mut fx, window) = working_on(PROFILE, CHECK_MODE);
+    fx.with_efforts();
     let route = fx.task("t1").route.clone();
 
     // First failure: rung 1, the check's message to the same session.
@@ -383,7 +383,8 @@ fn check_failure_goes_up_the_ladder() {
         unreachable!()
     };
     assert_eq!(name, format!("{H4}/t1.w2"));
-    let escalated = escalate(&fx.run().roster, &route);
+    let escalated = fx.escalated("t1", &route);
+    assert_ne!(escalated, route);
     assert_eq!(fx.task("t1").route, escalated);
     assert_eq!(
         (spec.runtime, spec.effort),

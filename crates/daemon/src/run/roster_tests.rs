@@ -103,64 +103,6 @@ fn s(entries: &[(Runtime, &str, Strength)]) -> Vec<ModelEntry> {
         .collect()
 }
 
-#[test]
-fn escalate_raises_effort_then_changes_runtime() {
-    let default_roster = config::default_roster();
-
-    // medium -> high, same runtime and model.
-    let r = route(
-        Runtime::Claude,
-        "claude-sonnet-5",
-        Strength::Standard,
-        Effort::MEDIUM,
-    );
-    let escalated = escalate(&default_roster, &r);
-    assert_eq!(escalated.runtime, Runtime::Claude);
-    assert_eq!(escalated.model, "claude-sonnet-5");
-    assert_eq!(escalated.effort, Effort::HIGH);
-
-    // high Claude standard -> Codex "" high.
-    let r = route(
-        Runtime::Claude,
-        "claude-sonnet-5",
-        Strength::Standard,
-        Effort::HIGH,
-    );
-    let escalated = escalate(&default_roster, &r);
-    assert_eq!(escalated.runtime, Runtime::Codex);
-    assert_eq!(escalated.model, "");
-    assert_eq!(escalated.effort, Effort::HIGH);
-
-    // high Claude claude-haiku-4-5 on a Claude-only roster -> claude-sonnet-5 high
-    // (no peer, one strength up).
-    let claude_only: Vec<ModelEntry> = default_roster
-        .iter()
-        .filter(|entry| entry.runtime == Runtime::Claude)
-        .cloned()
-        .collect();
-    let r = route(
-        Runtime::Claude,
-        "claude-haiku-4-5",
-        Strength::Fast,
-        Effort::HIGH,
-    );
-    let escalated = escalate(&claude_only, &r);
-    assert_eq!(escalated.runtime, Runtime::Claude);
-    assert_eq!(escalated.model, "claude-sonnet-5");
-    assert_eq!(escalated.effort, Effort::HIGH);
-
-    // high Claude claude-opus-5-5 on the default roster -> unchanged (no Codex frontier
-    // entry, nothing above frontier).
-    let r = route(
-        Runtime::Claude,
-        "claude-opus-5-5",
-        Strength::Frontier,
-        Effort::HIGH,
-    );
-    let escalated = escalate(&default_roster, &r);
-    assert_eq!(escalated, r);
-}
-
 /// Milestone 9.6 decision 10 (task M9.6.8, carry M-4): the strongest roster entry of a
 /// runtime, `frontier` first and the first in roster order among ties.
 #[test]

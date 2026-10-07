@@ -17,10 +17,10 @@ use super::turns::{killed_exit, working};
 use crate::run::contract::handover_prompt;
 use crate::run::engine::{OpKind, OpResult, ResolutionAt};
 use crate::run::model::FreshSession;
-use crate::run::roster::escalate;
 #[test]
 fn retry_resets_counts_and_starts_a_fresh_session_at_rung_2() {
     let (mut fx, window) = working();
+    fx.with_efforts();
     blocked(&mut fx, window, "mis_sized", "too big");
     let (reason, text) = super::done::block_of(&fx);
     assert_eq!(reason, BlockReason::MisSized);
@@ -66,7 +66,8 @@ fn retry_resets_counts_and_starts_a_fresh_session_at_rung_2() {
     assert_eq!(t1.bounces, GateCounts::default());
     assert_eq!(t1.block, None);
     assert!(!t1.handed_back && t1.resolution.is_none());
-    assert_eq!(t1.route, escalate(&fx.run().roster, &route));
+    assert_ne!(t1.route, route);
+    assert_eq!(t1.route, fx.escalated("t1", &route));
     // The old session has exited: the diff at once, from the task's own start commit.
     let (op, kind) = only_op(&effects, "DiffSoFar");
     let OpKind::DiffSoFar { start: from, .. } = kind else {
@@ -398,8 +399,9 @@ fn an_override_count_is_not_confused_with_a_fallback_count() {
 }
 
 /// Ruling T22-I1b, probe B: an unreviewed S task at its rung-2 route (Claude, `high`),
-/// blocked and retried, is escalated again, onto Codex. The runtime it lands on was in
-/// the reachable set decisions 50 and 53 were checked against at the start.
+/// blocked and retried, is escalated again, onto its row's Codex fallback (milestone 9.8
+/// decision 29). The runtime it lands on was in the reachable set decisions 50 and 53
+/// were checked against at the start.
 #[test]
 fn probe_b_a_retried_task_stays_inside_the_reachable_set() {
     let route = "test_mode = \"tdd\"\ntest_to_write = \"a::works\"\n[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"\neffort = \"medium\"";
@@ -415,8 +417,18 @@ fn probe_b_a_retried_task_stays_inside_the_reachable_set() {
         None,
         "the probe's task is not reviewed"
     );
+    let small = proto::models::Role::ImplementerSmall;
+    let sonnet = "claude:claude-sonnet-5";
+    crate::run::test_support::set_row(
+        fx.run_mut(),
+        small,
+        sonnet,
+        Some("low"),
+        Some("codex:default"),
+    );
+    fx.with_efforts();
     let reachable = crate::run::reach::reachable_runtimes(fx.run());
-    let rung2 = escalate(&fx.run().roster, &fx.task("t1").route);
+    let rung2 = fx.escalated("t1", &fx.task("t1").route);
     assert_eq!(rung2.runtime, proto::Runtime::Claude);
     fx.task_mut("t1").route = rung2;
     blocked(&mut fx, window, "environment", "stuck");

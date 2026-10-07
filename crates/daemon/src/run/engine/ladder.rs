@@ -259,10 +259,10 @@ pub(super) fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut V
     }
 }
 
-/// Rung 2: the session killed; a fresh one on `roster::escalate(route)` starts in the
-/// same worktree once the old one has exited ([`start_fresh_sessions`]). Milestone 9.5
-/// decision 9a: a task with a model list takes its next candidate instead, and ruling
-/// RL-1 skips a route that failed in this task (`route_pick::rung2_route`).
+/// Rung 2: the session killed; a fresh one on the next route of the task's row
+/// (milestone 9.8 decision 29, `route_pick::rung2_route` over `role_step::escalate`)
+/// starts in the same worktree once the old one has exited ([`start_fresh_sessions`]).
+/// Ruling RL-1 skips a route that failed in this task.
 pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
     // Milestone 9.5 decision 20: past rung 1, a lane leaves its race.
     if run.tasks[i].lane_view.is_some() {

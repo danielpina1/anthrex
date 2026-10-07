@@ -28,7 +28,6 @@ use crate::run::engine::delivery::DeliveryRequest;
 use crate::run::engine::{EventKind, OpResult};
 use crate::run::model::FixOf;
 use crate::run::proof::proof_command;
-use crate::run::roster::escalate;
 
 const SINGLE: &str = "cargo test -- --exact {test}";
 
@@ -140,6 +139,7 @@ fn build_and_lint_reproduce_with_build_check() {
 fn reproduced_with_a_culprit_adds_a_ci_fix_with_the_culprits_owns_one_rung_up() {
     let mut fx = tiered_watched(&["t1", "t2", "t3", "t4"]);
     with_orchestrator(&mut fx);
+    fx.with_efforts();
     // Tier 3 was last green at m1 on the stage's line (the PR head is m4).
     fx.run_mut().stages[0].full.green_at = Some(commit(1));
     red_summarised(&mut fx, &commit(4), &[TEST], CiCategory::Test);
@@ -163,7 +163,8 @@ fn reproduced_with_a_culprit_adds_a_ci_fix_with_the_culprits_owns_one_rung_up() 
     let culprit = fx.task("t3").clone();
     assert_eq!(fix.origin, TaskOrigin::Ci);
     assert_eq!(fix.spec.owns, culprit.spec.owns);
-    assert_eq!(fix.route, escalate(&fx.run().roster, &culprit.route));
+    assert_ne!(fix.route, culprit.route, "a rung up");
+    assert_eq!(fix.route, fx.escalated("t3", &culprit.route));
     assert_eq!(
         fix.fixes,
         Some(FixOf::Ci {

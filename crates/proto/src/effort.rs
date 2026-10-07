@@ -36,16 +36,6 @@ impl Effort {
         self.0.is_empty()
     }
 
-    /// The one step milestone 8a's ladder knew (`low` to `medium` to `high`); removed
-    /// with its last caller in M9.8.8.
-    pub fn raised(&self) -> Option<Effort> {
-        match self.as_str() {
-            "low" => Some(Effort::MEDIUM),
-            "medium" => Some(Effort::HIGH),
-            _ => None,
-        }
-    }
-
     fn rank(&self) -> (u8, &str) {
         match self.as_str() {
             "" => (0, ""),
