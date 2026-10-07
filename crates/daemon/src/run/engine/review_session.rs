@@ -113,7 +113,8 @@ pub(super) fn exited(
 ) {
     let owes = owes_verdict(run, i, r);
     let round = &mut run.tasks[i].rounds[r];
-    if killed || !owes || !round.turn_open {
+    // A retiring round's exit ends it, mid-turn too (see `signals::exited`).
+    if killed || !owes || !round.turn_open || round.retiring {
         return end_round(round, now);
     }
     round.deaths = round.deaths.saturating_add(1);

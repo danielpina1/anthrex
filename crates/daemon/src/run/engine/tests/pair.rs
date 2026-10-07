@@ -16,7 +16,7 @@ use crate::run::contract::{DONE_ACCEPTED, WORKER_CONTRACT};
 use crate::run::contract_patterns::{
     TEST_WRITER_CONTRACT, pair_implementer_note, red_check_failed_message, test_writer_prompt,
 };
-use crate::run::engine::{Effect, OpKind, OpResult};
+use crate::run::engine::{AgentSignal, Effect, OpKind, OpResult};
 use crate::run::model::OpId;
 use crate::run::proof::proof_command;
 
@@ -476,3 +476,59 @@ mod fixes;
 
 #[path = "pair_fixwave.rs"]
 mod fixwave;
+
+/// The writer's turn can still be open when its red check confirms (on a slow host the
+/// check's op lands before the writer's `TurnEnded`, which a retiring round then
+/// ignores). Its process exiting after that is the end of a retired session: the round
+/// ends. It is not a death: no resume of the writer, and no stall whose rung 2 would
+/// kill the implementer that has just started (macOS CI, 2026-10-07: the implementer
+/// died of the engine's SIGTERM 70 ms after its launch).
+#[test]
+fn a_retired_writers_exit_mid_turn_ends_its_round() {
+    let (mut fx, _, writer) = paired();
+    // `claim_red` without its `turn_completed`: the red check lands first.
+    let args = json!({"summary": "the failing test", "test": TEST, "red": HEAD});
+    let effects = writer_tool(&mut fx, writer, "task_done", args);
+    let (op, _) = only_op(&effects, "VerifyDone");
+    let result = fx.clean_check("t1");
+    let effects = fx.done(op, result);
+    let (op, _) = only_op(&effects, "Proof");
+    fx.done(op, red_check(true));
+    let t1 = fx.task("t1");
+    assert!(
+        t1.rounds[0].retiring && t1.rounds[0].turn_open,
+        "the race's state"
+    );
+    // The writer's late turn end, which a retiring round ignores.
+    fx.turn_completed(writer);
+    for pid in [4101, 4102] {
+        let effects = fx.signal(
+            writer,
+            AgentSignal::ProcessExited {
+                code: Some(0),
+                killed_by_engine: false,
+                pid,
+            },
+        );
+        assert!(
+            !effects.iter().any(|e| matches!(
+                e,
+                Effect::Op {
+                    kind: OpKind::ResumeSession { .. },
+                    ..
+                } | Effect::KillWindow { .. }
+            )),
+            "exit of pid {pid}: {effects:?}"
+        );
+    }
+    let t1 = fx.task("t1");
+    assert!(t1.rounds[0].ended, "the writer's round ended");
+    assert_eq!(t1.rounds[0].deaths, 0, "no death counted");
+    assert_eq!((t1.stalls, t1.state), (0, TaskState::Working));
+    assert_eq!(t1.rounds.len(), 2, "no fresh session: {:?}", t1.rounds);
+    assert!(
+        !fx.run().log.iter().any(|l| l.text.contains("exited")),
+        "{:?}",
+        fx.run().log
+    );
+}
